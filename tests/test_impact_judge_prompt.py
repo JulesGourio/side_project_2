@@ -8,9 +8,9 @@ fixed 2026-08-19). Locks in the fix.
 
 import re
 
-from server.services.vector_search import _SYNTHESIS_SYSTEM_PROMPT
+from server.services.vector_search import _JUDGE_SYSTEM_PROMPT
 
-_FLAT = re.sub(r'\s+', ' ', _SYNTHESIS_SYSTEM_PROMPT).lower()
+_FLAT = re.sub(r'\s+', ' ', _JUDGE_SYSTEM_PROMPT).lower()
 
 
 def test_judge_prompt_has_a_language_instruction():

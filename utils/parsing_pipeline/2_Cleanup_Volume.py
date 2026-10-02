@@ -22,9 +22,9 @@
 # MAGIC * **Orphan detection**: folders whose extracted IDDOC does not exist in
 # MAGIC   `gd_doc_latest` (nor in the optional fallback table) are kept on the
 # MAGIC   volume but excluded from parsing and logged as `SKIPPED_IDDOC_NOT_FOUND`.
-# MAGIC * **Date cutoff** (before 2018-01-01): documents with a known diffusion
-# MAGIC   date (`DTDIFF`) earlier than 2018-01-01 are excluded from the parse
-# MAGIC   manifest but remain in `processed_files` as `FILTERED_BY_DATE`.
+# MAGIC * **No date cutoff here**: documents published before
+# MAGIC   `DOC_DATE_CUTOFF` are parsed too — `3_parse` routes their chunks to
+# MAGIC   `chunks_archive` (impact-search index only) instead of the RAG tables.
 # MAGIC
 # MAGIC Physical deletion of out-of-scope folders only happens when `DRY_RUN` is
 # MAGIC set to `non`. Derived-table cleanup (stale chunks, image metadata) always
@@ -47,7 +47,7 @@
 # MAGIC **Outputs**
 # MAGIC * `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}`
 # MAGIC * `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}`
-# MAGIC * `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` / `src_chunks_as` / `src_chunks_is` / `image_metadata` for stale-IDDOC pruning only
+# MAGIC * `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` / `src_chunks_as` / `src_chunks_is` / `chunks_archive` / `image_metadata` for stale-IDDOC pruning only
 
 # COMMAND ----------
 
@@ -76,7 +76,7 @@ from config import (
     GD_DOC_LATEST, GD_DOC_FALLBACK, GD_DOC_CAT_LATEST, GD_CAT_LATEST,
     DOC_SCOPE_FILTER, MANUAL_REF_EXCLUSIONS,
     TARGET_PROCESSED_FILES_TABLE, TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS,
-    TARGET_CHUNK_TABLE_IS, TARGET_IMAGE_METADATA_TABLE,
+    TARGET_CHUNK_TABLE_IS, TARGET_CHUNK_TABLE_ARCHIVE, TARGET_IMAGE_METADATA_TABLE,
 )
 
 # Self-joins against a materialized view are blocked by default; several joins below rely on one.
@@ -285,7 +285,8 @@ print(f"  {GD_DOC_CAT_LATEST} x {GD_CAT_LATEST}")
 
 if stale_iddocs:
     _stale_list = ",".join(str(i) for i in stale_iddocs)
-    for _tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS, TARGET_CHUNK_TABLE_IS, TARGET_IMAGE_METADATA_TABLE]:
+    for _tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS, TARGET_CHUNK_TABLE_IS, TARGET_CHUNK_TABLE_ARCHIVE,
+                 TARGET_IMAGE_METADATA_TABLE]:
         try:
             spark.sql(f"DELETE FROM {_tbl} WHERE IDDOC IN ({_stale_list})")
         except Exception:
@@ -309,7 +310,7 @@ else:
 
 from pyspark.sql import Window as _W
 
-_chunk_tables = [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS, TARGET_CHUNK_TABLE_IS]
+_chunk_tables = [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS, TARGET_CHUNK_TABLE_IS, TARGET_CHUNK_TABLE_ARCHIVE]
 
 try:
     if spark.catalog.tableExists(TARGET_CHUNK_TABLE):
@@ -595,7 +596,6 @@ importlib.reload(_cfg)
 import selection as _sel
 importlib.reload(_sel)
 
-DOC_DATE_CUTOFF      = _cfg.DOC_DATE_CUTOFF
 PARSE_MANIFEST_TABLE = _cfg.PARSE_MANIFEST_TABLE
 
 from pyspark.sql.types import StructType, StructField, LongType, StringType
@@ -673,40 +673,10 @@ df_manifest_full = (
     .withColumn("auteur",  F.lit(None).cast(StringType()))
 )
 
-_cutoff_d = F.to_date(F.lit(DOC_DATE_CUTOFF))
-df_date_excl = df_manifest_full.filter(
-    F.col("doc_date").isNotNull() & (F.col("doc_date") < _cutoff_d)
-)
-_n_date = df_date_excl.count()
-if _n_date:
-    df_date_pf = (
-        df_date_excl.select("IDDOC", "ref", "titre", "categorie", "doc_date")
-        .withColumn("parse_status",        F.lit("FILTERED_BY_DATE"))
-        .withColumn("filtered_by_date",    F.lit(True))
-        .withColumn("include_in_rag",      F.lit(False))
-        .withColumn("ingestion_run_id",    F.lit(LOG_RUN_ID))
-        .withColumn("ingestion_timestamp", F.lit(LOG_TS).cast("timestamp"))
-        .withColumn("job_run_id",          F.lit(JOB_RUN_ID))
-    )
-    # Reconcile `processed_files` by replacing the current row for each IDDOC.
-    try:
-        if not spark.catalog.tableExists(TARGET_PROCESSED_FILES_TABLE):
-            print(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet — skipping FILTERED_BY_DATE write.")
-        else:
-            _date_iddocs = ",".join(str(r.IDDOC) for r in df_date_pf.select("IDDOC").distinct().collect())
-            if _date_iddocs:
-                spark.sql(f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} WHERE IDDOC IN ({_date_iddocs})")
-            df_date_pf.write.format("delta").mode("append") \
-                .option("mergeSchema", "true").saveAsTable(TARGET_PROCESSED_FILES_TABLE)
-            print(f"   FILTERED_BY_DATE         : {_n_date} (known date < {DOC_DATE_CUTOFF})")
-    except Exception as _exc:
-        print(f"Unable to write FILTERED_BY_DATE: {_exc}")
-else:
-    print(f"   FILTERED_BY_DATE         : 0")
-
-df_manifest = df_manifest_full.filter(
-    F.col("doc_date").isNull() | (F.col("doc_date") >= _cutoff_d)
-)
+# Pre-cutoff documents stay in the manifest: 3_parse routes their chunks to
+# chunks_archive. FILTERED_BY_DATE rows left by older runs are not terminal, so
+# those documents get parsed on the next run.
+df_manifest = df_manifest_full
 
 # COMMAND ----------
 

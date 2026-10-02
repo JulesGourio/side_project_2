@@ -329,9 +329,11 @@ df_described = (
                                         F.lpad(F.col("image_id").cast("string"), 3, "0")))
 )
 
-if spark.catalog.tableExists(TARGET_CHUNK_TABLE):
+# Image chunks of pre-cutoff documents live in chunks_archive, not chunks.
+_chunk_tables_with_images = [t for t in (TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE) if spark.catalog.tableExists(t)]
+for _tbl in _chunk_tables_with_images:
     df_existing_image_chunk_ids = (
-        spark.table(TARGET_CHUNK_TABLE)
+        spark.table(_tbl)
         .filter(F.col("chunk_content_type") == "image")
         .select("chunk_id")
     )
@@ -349,8 +351,13 @@ if described_count == 0:
         print(f"  {_total_error} ERROR images → not injected (will retry description next run)")
 else:
     print(f"{described_count} new image chunks to inject into chunk tables.")
+    df_text_chunks = spark.table(TARGET_CHUNK_TABLE).select("IDDOC", "chunk_index", "chunk_content_type")
+    if spark.catalog.tableExists(TARGET_CHUNK_TABLE_ARCHIVE):
+        df_text_chunks = df_text_chunks.unionByName(
+            spark.table(TARGET_CHUNK_TABLE_ARCHIVE).select("IDDOC", "chunk_index", "chunk_content_type")
+        )
     df_max_idx = (
-        spark.table(TARGET_CHUNK_TABLE)
+        df_text_chunks
         .filter(F.col("chunk_content_type") != "image")
         .groupBy("IDDOC").agg(F.max("chunk_index").alias("max_text_index"))
     )
@@ -434,7 +441,13 @@ if described_count > 0:
 
     # Cache to avoid Spark lazy re-evaluation after writes
     # (the left_anti join in df_described would return 0 post-merge otherwise)
-    df_image_chunks = df_image_chunks.cache()
+    _df_image_chunks_cached = df_image_chunks.cache()
+    _is_recent = F.col("doc_date").isNull() | (F.col("doc_date") >= F.lit(DOC_DATE_CUTOFF).cast("date"))
+    df_archive_image_chunks = _df_image_chunks_cached.filter(~_is_recent)
+    _archive_chunk_count = df_archive_image_chunks.count()
+    _merge_image_chunks(df_archive_image_chunks, TARGET_CHUNK_TABLE_ARCHIVE)
+    print(f"Merged {_archive_chunk_count} image chunks into {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
+    df_image_chunks = _df_image_chunks_cached.filter(_is_recent)
     _chunk_count = df_image_chunks.count()
     _as_chunk_count = df_image_chunks.filter(F.col("division") == "AS").count()
     _is_chunk_count = df_image_chunks.filter(F.col("division") == "IS").count()
@@ -448,7 +461,7 @@ if described_count > 0:
         _merge_image_chunks(df_div_chunks, _tbl)
         print(f"Merged {_cnt} image chunks into {_tbl}")
 
-    df_image_chunks.unpersist()
+    _df_image_chunks_cached.unpersist()
 
     # Enable Change Data Feed on chunks table (required for Vector Search index sync)
     spark.sql(f"""

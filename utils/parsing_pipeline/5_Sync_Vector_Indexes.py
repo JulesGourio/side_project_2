@@ -19,20 +19,22 @@
 # MAGIC it already holds whatever grant creating the index needs (no separate
 # MAGIC manual step or elevated personal access required for a new environment).
 # MAGIC
-# MAGIC No Inputs/Preparation/Transformations sections below: this notebook is
-# MAGIC plain Vector Search SDK calls (serverless, no Spark, no table reads) — see
-# MAGIC Outputs for the actual sync trigger + wait logic.
+# MAGIC When `chunks_full_index` is in `indexes`, its source table `chunks_full`
+# MAGIC (`chunks` + `chunks_archive`, every document whatever its date — impact
+# MAGIC search only) is first refreshed by MERGE. Otherwise this notebook is plain
+# MAGIC Vector Search SDK calls — see Outputs for the sync trigger + wait logic.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `5_sync_index`)
 # MAGIC
 # MAGIC **Input Tables Pipeline**
-# MAGIC - *(none — Vector Search reads its already-configured source table server-side)*
+# MAGIC - `{catalog_schema}.chunks{table_suffix}` + `chunks_archive{table_suffix}` — only to refresh `chunks_full`
 # MAGIC
 # MAGIC **Inputs Reference Data**
 # MAGIC - *(none)*
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
+# MAGIC - `{catalog_schema}.chunks_full{table_suffix}` — only when `chunks_full_index` is in `indexes`
 # MAGIC - `{indexes}` (or `{PARSING_VECTOR_SEARCH_INDEXES}`) — comma-separated Vector Search index names, empty = nothing to do (the DEV case, no index deployed there)
 # MAGIC - `{vector_search_endpoint}`/`{embedding_model}`/`{catalog_schema}`/`{table_suffix}` — only read if one of `indexes` doesn't exist yet and needs creating
 
@@ -87,6 +89,56 @@ for n in INDEXES:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Refresh `chunks_full` (impact-search source table)
+# MAGIC
+# MAGIC `chunks_full` = `chunks` (RAG, post-cutoff) + `chunks_archive` (pre-cutoff),
+# MAGIC kept in sync by MERGE rather than overwrite so Change Data Feed only carries
+# MAGIC the day's real changes and the index re-embeds just those rows.
+
+# COMMAND ----------
+
+FULL_INDEX = f"{CATALOG_SCHEMA}.chunks_full_index{TABLE_SUFFIX}"
+FULL_TABLE = f"{CATALOG_SCHEMA}.chunks_full{TABLE_SUFFIX}"
+
+if CATALOG_SCHEMA and FULL_INDEX in INDEXES:
+    from delta.tables import DeltaTable
+
+    _sources = [t for t in (f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}", f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}")
+                if spark.catalog.tableExists(t)]
+    df_src = spark.table(_sources[0])
+    for _t in _sources[1:]:
+        df_src = df_src.unionByName(spark.table(_t), allowMissingColumns=True)
+    # A document that crossed the cutoff between runs could briefly sit in both tables.
+    df_src = df_src.dropDuplicates(["chunk_id"])
+
+    if not spark.catalog.tableExists(FULL_TABLE):
+        df_src.write.format("delta").saveAsTable(FULL_TABLE)
+        # 60-day history, like the _v1 chunk tables: a TRIGGERED sync can never resume once the CDF
+        # it needs has aged out (VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION, see databricks.yml).
+        spark.sql(f"""
+            ALTER TABLE {FULL_TABLE} SET TBLPROPERTIES (
+                delta.enableChangeDataFeed = true,
+                delta.deletedFileRetentionDuration = 'interval 60 days',
+                delta.logRetentionDuration = 'interval 60 days'
+            )
+        """)
+        print(f"Created {FULL_TABLE} from {_sources}")
+    else:
+        _changed = " OR ".join(f"NOT (t.`{c}` <=> s.`{c}`)" for c in df_src.columns if c != "chunk_id")
+        (
+            DeltaTable.forName(spark, FULL_TABLE).alias("t")
+            .merge(df_src.alias("s"), "t.chunk_id = s.chunk_id")
+            .whenMatchedUpdateAll(condition=_changed)
+            .whenNotMatchedInsertAll()
+            .whenNotMatchedBySourceDelete()
+            .execute()
+        )
+        print(f"Merged {_sources} into {FULL_TABLE}")
+    print(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Create any missing index, then read current status
 
 # COMMAND ----------
@@ -100,7 +152,7 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-# Only these 3 index/source pairs are ever provisioned by this pipeline --
+# Only these 4 index/source pairs are ever provisioned by this pipeline --
 # an index name in `indexes` that isn't one of them is synced (existing
 # behavior) but never auto-created, since we wouldn't know its source table.
 # Mirrors config.py's TARGET_CHUNK_TABLE*/TARGET_CHUNK_TABLE_AS/_IS naming
@@ -110,6 +162,7 @@ KNOWN_SOURCE_TABLE = {
     f"{CATALOG_SCHEMA}.chunks_index{TABLE_SUFFIX}": f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}",
     f"{CATALOG_SCHEMA}.chunks_as_index{TABLE_SUFFIX}": f"{CATALOG_SCHEMA}.src_chunks_as{TABLE_SUFFIX}",
     f"{CATALOG_SCHEMA}.chunks_is_index{TABLE_SUFFIX}": f"{CATALOG_SCHEMA}.src_chunks_is{TABLE_SUFFIX}",
+    FULL_INDEX: FULL_TABLE,
 } if CATALOG_SCHEMA else {}
 
 w = WorkspaceClient()
@@ -149,7 +202,7 @@ for name in INDEXES:
     except NotFound:
         source_table = KNOWN_SOURCE_TABLE.get(name)
         if not source_table:
-            raise RuntimeError(f"{name}: index doesn't exist and isn't one of the 3 pipeline-managed indexes -- "
+            raise RuntimeError(f"{name}: index doesn't exist and isn't one of the 4 pipeline-managed indexes -- "
                                 f"can't auto-create it (unknown source table).")
         _create_index(name, source_table)
         idx = w.vector_search_indexes.get_index(index_name=name)

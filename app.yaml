@@ -52,16 +52,13 @@ env:
     value: "databricks-claude-sonnet-4-6"
   - name: COMPARE_ANALYSIS_SYSTEM_PROMPT
     value: "You are a technical document comparison specialist.\n\nYour task: identify changes to CONTENT — numbers, requirements, specifications, normative references, procedures, scope. Ignore everything editorial.\n\nREPORT (these always matter):\n- A number, measurement, tolerance, limit, or threshold that changed\n- A normative reference (standard, spec, regulation) added, removed, or changed in revision\n- A technical requirement or procedure step added, removed, or substantively changed\n- A scope change: new applicability, new conditions, new equipment types, new roles\n- Changed safety or quality requirements, changed approval authorities\n\nDISCARD (never report these):\n- Pure formatting: extra spaces, hyphens, line breaks, capitalisation, punctuation\n- Reference code formatting when the underlying document is identical (\"NAS 410\" vs \"NAS410\" is NOT a change if the same revision is cited)\n- Modal verb substitutions throughout the document (shall/must/will/should/may — if the same requirement is present with different modal verbs, it is not a substantive change)\n- Rewording, restructuring, or synonym substitution that preserves the same technical meaning\n- Terminology rename applied uniformly across the document (e.g. NDI to NDT, inspection to examination, personnel to employees — if the same population is referred to)\n- Document cover page, metadata, revision tables, boilerplate, page numbers, TOC pagination\n\nOUTPUT: Markdown, ## per section, one bullet per real change, bold changed values. If nothing substantive changed: **No significant changes detected.**"
-  # Impact search — Vector Search retrieval against the full QualiBOT chunk
-  # index, then a single plain LLM call judges which retrieved candidates are
-  # genuinely impacted. Cheaper and more controllable than routing through a
-  # full RAG agent (the earlier "agent" and "index-only, no LLM" variants were
-  # dropped 2026-07-20: agent routing was slower and less reliable in testing,
-  # and index-only scores alone aren't a verdict — see docs/COMPARE.md).
-  # NUM_RESULTS/MAX_QUERY_CHARS are safety knobs against cost/latency on large
-  # change summaries, not hard API limits — the Vector Search API itself
-  # rejects query_text past ~29,000 chars and caps num_results at 200 for
-  # HYBRID search (verified empirically 2026-07-10).
+  # Impact search — one Vector Search query per reported change, then one LLM
+  # call per candidate document (in parallel) judges it from all its retrieved
+  # passages and returns every conflicting passage with a verbatim quote
+  # (redesigned 2026-10-02, see client/src/components/compare/README.md).
+  # Per-target index: utils/deploy/target_env.json overrides this default.
+  # Target index once built by the parsing pipeline: chunks_full_index[_v1]
+  # (every document, pre-2018 archive included).
   - name: COMPARE_IMPACT_INDEX
     value: "uat_landingzone.qualibot.chunks_index_v1"
   # Switched from databricks-claude-sonnet-4-6 (2026-07-22): side-by-side eval
@@ -72,25 +69,23 @@ env:
   # rejected — it produced reproducible false positives on both trap cases.
   - name: COMPARE_IMPACT_ENDPOINT
     value: "databricks-gpt-5-6-luna"
-  - name: COMPARE_IMPACT_NUM_RESULTS
-    value: "30"
-  - name: COMPARE_IMPACT_MAX_CANDIDATES
-    value: "12"
-  # Multi-query retrieval: the changes summary is split into focused queries
-  # (one per change/section, up to MAX_QUERIES) instead of embedding the whole
-  # blob at once. PER_QUERY_RESULTS applies when >1 query is derived; NUM_RESULTS
-  # above applies to single-query searches.
+  # Up to MAX_QUERIES changes get their own query (past that, the lowest-
+  # criticality ones share the last query); PER_QUERY_RESULTS hits each — the
+  # API caps HYBRID num_results at 200 (verified 2026-07-10).
   - name: COMPARE_IMPACT_MAX_QUERIES
-    value: "8"
+    value: "30"
   - name: COMPARE_IMPACT_PER_QUERY_RESULTS
+    value: "40"
+  # Best-ranked documents sent to the judge; lower-ranked ones are dropped
+  # (end users want a short, reliable list, 2026-10-02).
+  - name: COMPARE_IMPACT_MAX_CANDIDATES
     value: "15"
+  # Cap on the change list shown to each judge call.
   - name: COMPARE_IMPACT_MAX_QUERY_CHARS
     value: "20000"
-  # Raised from 2000 (2026-07-22): the judge prompt now asks for a 2-4 sentence
-  # "reason" per candidate instead of one sentence — up to _MAX_CANDIDATES (8)
-  # of those need to fit without truncating the JSON array mid-object.
+  # Per judge call (one document).
   - name: COMPARE_IMPACT_MAX_TOKENS
-    value: "3500"
+    value: "1500"
   # Single-document summary ("Summarize" buttons, Compare tab) — independent
   # of the diff, a cheap model gives the gist of either uploaded file. Cached
   # like impact search, keyed on the

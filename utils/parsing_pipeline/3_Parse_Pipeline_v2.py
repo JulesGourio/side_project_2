@@ -803,14 +803,9 @@ def build_image_metadata(target_iddocs):
         df_full_pipeline = df_full_pipeline.filter(F.col("IDDOC").isin(list(target_iddocs)))
     df_full_pipeline = with_fresh_business_metadata(df_full_pipeline)
 
-    # doc_date NULL = unknown = kept; excluded docs stay visible in processed_files (filtered_by_date=True).
-    img_cutoff = F.lit(DOC_DATE_CUTOFF).cast("date")
-
+    # Pre-cutoff documents are described too: their image chunks go to chunks_archive (4_describe_images).
     df_image_metadata = (
-        df_full_pipeline.filter(
-            (F.col("image_count") > 0)
-            & (F.col("doc_date").isNull() | (F.col("doc_date") >= img_cutoff))
-        )
+        df_full_pipeline.filter(F.col("image_count") > 0)
         .select("IDDOC", "ref", "titre", "division", "niveau_plus_1", "niveau_plus_2", "source_file_name",
                 F.posexplode("images").alias("img_pos", "img"))
         .select(
@@ -866,8 +861,8 @@ def build_image_metadata(target_iddocs):
 def _apply_date_and_rag_filters(df_processed_files):
     """Flag filtered_by_date and include_in_rag on df_processed_files.
 
-    doc_date < DOC_DATE_CUTOFF: kept in processed_files, excluded from chunks
-    (include_in_rag=False). NULL doc_date = kept. Manual exclusions come from
+    doc_date < DOC_DATE_CUTOFF: parsed, chunks routed to chunks_archive instead of
+    the RAG tables (include_in_rag=False). NULL doc_date = recent. Manual exclusions come from
     _rag_exclusions (INSERT INTO {CATALOG_SCHEMA}._rag_exclusions VALUES (IDDOC, 'reason')).
     Returns (df_processed_files, df_exclusions_or_none, cutoff_col).
     """
@@ -883,7 +878,7 @@ def _apply_date_and_rag_filters(df_processed_files):
     )
     filtered_by_date_count = df_processed_files.filter(F.col("filtered_by_date") == True).count()
     if filtered_by_date_count:
-        logger.info(f"[DATE FILTER] {filtered_by_date_count} documents ignored (predating {DOC_DATE_CUTOFF})")
+        logger.info(f"[DATE FILTER] {filtered_by_date_count} documents routed to chunks_archive (predating {DOC_DATE_CUTOFF})")
 
     try:
         df_exclusions = spark.table(RAG_EXCLUSION_TABLE).select("IDDOC").distinct()
@@ -909,21 +904,17 @@ def _apply_date_and_rag_filters(df_processed_files):
     return df_processed_files, df_exclusions, cutoff
 
 
-def _build_chunks(df_full_pipeline, df_exclusions, cutoff):
-    """Filter to chunkable rows (SUCCESS, not date-filtered, not manually
-    excluded), clean known artefacts, then explode into chunk rows."""
+def _build_chunks(df_full_pipeline, df_exclusions):
+    """Filter to chunkable rows (SUCCESS, not manually excluded — any date),
+    clean known artefacts, then explode into chunk rows."""
     if df_exclusions is not None:
         excluded_iddocs = [r.IDDOC for r in df_exclusions.collect()]
         df_for_chunking = df_full_pipeline.filter(
             (F.col("parse_status") == "SUCCESS")
             & ~F.col("IDDOC").isin(excluded_iddocs)
-            & (F.col("doc_date").isNull() | (F.col("doc_date") >= cutoff))
         )
     else:
-        df_for_chunking = df_full_pipeline.filter(
-            (F.col("parse_status") == "SUCCESS")
-            & (F.col("doc_date").isNull() | (F.col("doc_date") >= cutoff))
-        )
+        df_for_chunking = df_full_pipeline.filter(F.col("parse_status") == "SUCCESS")
 
     if CLEAN_IMAGE_PLACEHOLDERS:
         df_for_chunking = df_for_chunking.withColumn(
@@ -1072,15 +1063,17 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, revised_i
         ).otherwise(F.lit(False))
     )
 
-    df_chunks = _build_chunks(df_full_pipeline, df_exclusions, cutoff)
+    df_chunks = _build_chunks(df_full_pipeline, df_exclusions)
     df_chunks = _dedupe_and_limit_chunks(df_chunks)
 
-    df_chunks_all = df_chunks
-    df_chunks_as = df_chunks.filter(F.col("division") == "AS")
-    df_chunks_is = df_chunks.filter(F.col("division") == "IS")
+    is_recent = F.col("doc_date").isNull() | (F.col("doc_date") >= cutoff)
+    df_chunks_archive = df_chunks.filter(~is_recent)
+    df_chunks_all = df_chunks.filter(is_recent)
+    df_chunks_as = df_chunks_all.filter(F.col("division") == "AS")
+    df_chunks_is = df_chunks_all.filter(F.col("division") == "IS")
 
     logger.info("DataFrames ready (lazy). Will materialise during write.")
-    return df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is
+    return df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_chunks_archive
 
 
 def _merge_image_metadata(df_image_metadata):
@@ -1204,7 +1197,8 @@ def _log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_r
     logger.info(f"[CHANGE LOG] Logged {n} document change(s) (NEW/REVISED) to {TARGET_CHANGE_LOG_TABLE}")
 
 
-def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_image_metadata, revised_iddocs=frozenset()):
+def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_chunks_archive,
+                  df_image_metadata, revised_iddocs=frozenset()):
     """Write processed_files/chunks/image_metadata — overwrite on a FULL
     run, append (+ MERGE for image_metadata) on an incremental run."""
     spark.conf.set("spark.databricks.delta.optimizeWrite.enabled", "true")
@@ -1227,6 +1221,10 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is,
             .option("overwriteSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_IS)
         logger.info(f"Wrote {TARGET_CHUNK_TABLE_IS} (IS)")
 
+        df_chunks_archive.write.format("delta").mode("overwrite") \
+            .option("overwriteSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_ARCHIVE)
+        logger.info(f"Wrote {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
+
         df_image_metadata.write.format("delta").mode("overwrite") \
             .option("overwriteSchema", "true").saveAsTable(TARGET_IMAGE_METADATA_TABLE)
         logger.info(f"Wrote {TARGET_IMAGE_METADATA_TABLE}")
@@ -1238,7 +1236,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is,
         if new_iddocs:
             iddoc_list = ",".join(str(i) for i in new_iddocs)
             for tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS, TARGET_CHUNK_TABLE_IS,
-                        TARGET_PROCESSED_FILES_TABLE]:
+                        TARGET_CHUNK_TABLE_ARCHIVE, TARGET_PROCESSED_FILES_TABLE]:
                 if spark.catalog.tableExists(tbl):
                     spark.sql(f"DELETE FROM {tbl} WHERE IDDOC IN ({iddoc_list})")
             logger.info(f"Cleaned old rows for {len(new_iddocs)} re-processed IDDOCs (chunks + processed_files)")
@@ -1258,6 +1256,10 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is,
         df_chunks_is.write.format("delta").mode("append") \
             .option("mergeSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_IS)
         logger.info(f"Appended to {TARGET_CHUNK_TABLE_IS} (IS)")
+
+        df_chunks_archive.write.format("delta").mode("append") \
+            .option("mergeSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_ARCHIVE)
+        logger.info(f"Appended to {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
 
         # Revised IDDOCs have new content, so _merge_image_metadata's keep_prev logic must not preserve their old image rows.
         if revised_iddocs:
@@ -1440,7 +1442,7 @@ else:
 if not HAS_TARGET_IDDOCS:
     logger.info("Skipped (no target IDDOCs).")
 else:
-    df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is = \
+    df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_chunks_archive = \
         build_processed_files_and_chunks(target_iddocs, df_image_metadata, revised_iddocs)
 
 # COMMAND ----------
@@ -1463,7 +1465,8 @@ else:
 if not HAS_TARGET_IDDOCS:
     logger.info("No target IDDOCs — nothing to write.")
 else:
-    write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_image_metadata, revised_iddocs)
+    write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_chunks_archive,
+                  df_image_metadata, revised_iddocs)
 
 
 # COMMAND ----------

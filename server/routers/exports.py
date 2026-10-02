@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, Response
 
 from ..services.export_helpers import (
     _build_excel_bytes,
+    _build_impact_excel_bytes,
     _build_pdf_bytes_from_markdown,
     _parse_json_response,
 )
@@ -65,6 +66,22 @@ async def export_excel(
         content=excel_bytes,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         headers={'Content-Disposition': f'attachment; filename="{safe_name}"'},
+    )
+
+
+@router.post('/compare/impact/export-excel')
+async def export_impact_excel(result_json: str = Form(...), filename: str = Form('impact')):
+    """Impact search result (as shown in the UI) → Excel action list, one row per conflicting passage."""
+    try:
+        result = json.loads(result_json)
+    except json.JSONDecodeError as e:
+        return JSONResponse({'error': f'Invalid result JSON: {e}'}, status_code=400)
+
+    safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('._') or 'impact'
+    return Response(
+        content=_build_impact_excel_bytes(result),
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': f'attachment; filename="{safe_name}.xlsx"'},
     )
 
 

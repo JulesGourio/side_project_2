@@ -251,8 +251,9 @@ targets:
                   embedding_model: "databricks-qwen3-embedding-0-6b"
                   catalog_schema: ${var.app_write_catalog}.${var.app_write_schema}
                   table_suffix: ${var.parsing_table_suffix}
-              # Serverless: plain SDK calls, no Spark needed. run_as (the target's
-              # owning SP) already has whatever grant creating a new index needs.
+              # Serverless: SDK calls, plus a MERGE into chunks_full when
+              # chunks_full_index is listed. run_as (the target's owning SP)
+              # already has whatever grant creating a new index/table needs.
               environment_key: default
 
             - task_key: "6_update_kb_metadata"

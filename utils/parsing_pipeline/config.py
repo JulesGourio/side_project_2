@@ -90,7 +90,10 @@ TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.processed_files{TABLE_SUFFIX}"
 
 TARGET_CHUNK_TABLE     = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"          # ground truth: all divisions
 TARGET_CHUNK_TABLE_AS  = f"{CATALOG_SCHEMA}.src_chunks_as{TABLE_SUFFIX}"   # = chunks filtered to division AS
-TARGET_CHUNK_TABLE_IS  = f"{CATALOG_SCHEMA}.src_chunks_is{TABLE_SUFFIX}"   # = chunks filtered to division IS
+TARGET_CHUNK_TABLE_IS  = f"{CATALOG_SCHEMA}.src_chunks_is{TABLE_SUFFIX}"
+# Chunks of documents published before DOC_DATE_CUTOFF: kept out of the RAG tables above,
+# merged with `chunks` into `chunks_full` by 5_Sync_Vector_Indexes for the impact-search index.
+TARGET_CHUNK_TABLE_ARCHIVE = f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}"   # = chunks filtered to division IS
 
 TARGET_IMAGE_METADATA_TABLE  = f"{CATALOG_SCHEMA}.image_metadata{TABLE_SUFFIX}"
 TARGET_AUDIT_TABLE           = f"{CATALOG_SCHEMA}.audit_files_unified{TABLE_SUFFIX}"
@@ -100,8 +103,9 @@ TARGET_CHANGE_LOG_TABLE      = f"{CATALOG_SCHEMA}.document_change_log{TABLE_SUFF
 # =============================================================================
 # Date cutoff
 # =============================================================================
-# Docs before this date are excluded from chunks tables but stay in processed_files
-# (filtered_by_date=True). No DATEDIFF = unknown date = kept, not filtered.
+# Docs before this date are parsed like the others but their chunks go to
+# TARGET_CHUNK_TABLE_ARCHIVE instead of the RAG chunk tables (processed_files:
+# filtered_by_date=True, include_in_rag=False). No DATEDIFF = unknown date = recent.
 DOC_DATE_CUTOFF = _env("PARSING_DOC_DATE_CUTOFF", "2018-01-01")
 
 # =============================================================================

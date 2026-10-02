@@ -1,5 +1,4 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Upload,
   FileText,
@@ -18,7 +17,6 @@ import {
   Send,
   Square,
   Database,
-  ExternalLink,
   Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -27,6 +25,7 @@ import { ExactDocxPreview } from '@/components/shared/ExactDocxPreview';
 import { getAppConfig, getProcessorsConfig, type ProcessorVersion } from '@/lib/config';
 import { ComparisonHistory, type FullComparison } from './ComparisonHistory';
 import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanner';
+import { ImpactResultsCard, type ImpactResult } from './ImpactResults';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -72,7 +71,7 @@ const LS_NEW_PDF = 'compare_new_pdf';
 const LS_ANALYSIS = 'compare_analysis';
 const LS_ANALYSIS_STD = 'compare_analysis_std';
 const LS_MESSAGE_ID_STD = 'compare_message_id_std';
-const LS_IMPACT = 'compare_impact_v4';
+const LS_IMPACT = 'compare_impact_v5';
 const LS_SESSION_PATH = 'compare_session_path';
 const LS_MESSAGE_ID = 'compare_message_id';
 const LS_OLD_HASH = 'compare_old_hash';
@@ -490,37 +489,6 @@ interface ImagePair {
   old_b64: string | null;
   new_b64: string | null;
   index: number;
-}
-
-// ---------------------------------------------------------------------------
-// Impact search — Vector Search retrieval, each candidate judged by an LLM
-// ---------------------------------------------------------------------------
-
-interface OtherLanguageRef {
-  ref: string;
-  division: string;
-  url: string;
-  site_code: string | null;
-  flag: string;
-  source: 'retrieved' | 'catalog';
-}
-
-interface JudgedDoc {
-  iddoc: string;
-  ref: string;
-  title?: string;
-  division: string;
-  url: string;
-  max_score: number;
-  chunk_count: number;
-  query_hits?: number;
-  impacted: boolean;
-  sections: string[];
-  confidence: string;
-  reason: string;
-  site_code?: string | null;
-  flag?: string;
-  other_languages?: OtherLanguageRef[];
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,247 +1156,6 @@ function ResultCard({
 }
 
 // ---------------------------------------------------------------------------
-// ImpactedDocsCard — deduplicated, LLM-judged impact search result
-// ---------------------------------------------------------------------------
-
-const CONFIDENCE_STYLE: Record<string, string> = {
-  high: '#16a34a',
-  medium: '#d97706',
-  low: '#6b7280',
-};
-
-// Custom popover instead of a native `title` tooltip: rendered via a portal so it's never
-// clipped by an ancestor's overflow-hidden, and some corporate remote-desktop setups
-// (Citrix/VDI) don't reliably show native title tooltips at all.
-function InfoTooltip({ children }: { children: React.ReactNode }) {
-  const anchorRef = useRef<HTMLSpanElement>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
-
-  const open = () => {
-    const rect = anchorRef.current?.getBoundingClientRect();
-    if (rect) setCoords({ top: rect.bottom + 6, left: rect.left });
-  };
-  const close = () => setCoords(null);
-
-  return (
-    <span
-      ref={anchorRef}
-      className="inline-flex cursor-help"
-      onMouseEnter={open}
-      onMouseLeave={close}
-      onFocus={open}
-      onBlur={close}
-      tabIndex={0}
-    >
-      <Info className="h-3.5 w-3.5" style={{ color: 'var(--color-text-muted)' }} />
-      {coords && createPortal(
-        <div
-          className="fixed z-50 w-80 rounded-lg border p-3 text-xs shadow-lg leading-relaxed"
-          style={{ top: coords.top, left: coords.left, borderColor: 'var(--color-border)', background: 'var(--color-background)', color: 'var(--color-text-body)' }}
-        >
-          {children}
-        </div>,
-        document.body,
-      )}
-    </span>
-  );
-}
-
-function ImpactedDocsCard({
-  title,
-  documents,
-  isLoading,
-  loadingLabel = 'Searching…',
-  error,
-  truncated,
-  accentColor,
-}: {
-  title: string;
-  documents: JudgedDoc[];
-  isLoading: boolean;
-  loadingLabel?: string;
-  error: string;
-  truncated?: boolean;
-  accentColor: string;
-}) {
-  const handleDownloadJson = () => {
-    const blob = new Blob([JSON.stringify(documents, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'impacted_documents.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div className="rounded-2xl border border-[var(--color-border)]/40 bg-[var(--color-background)] shadow-sm overflow-hidden">
-      <div className="h-0.5 w-full" style={{ background: accentColor }} />
-
-      <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]/30 bg-[var(--color-bg-secondary)]/40">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${accentColor}18` }}>
-            <Database className="h-3.5 w-3.5" style={{ color: accentColor }} />
-          </div>
-          <span className="text-sm font-semibold text-[var(--color-text-heading)]">{title}</span>
-          <InfoTooltip>
-            <p className="mb-2">
-              <strong>Impacted</strong>: this document likely needs to be updated following the reported change.
-            </p>
-            <p className="mb-1">
-              <strong>Confidence</strong> — how sure the LLM is about the impacted / not impacted verdict
-              itself, either way:
-            </p>
-            <ul className="list-disc pl-4 space-y-1">
-              <li>
-                <strong>High</strong> — impacted: a passage explicitly states the exact thing that changed.
-                Not impacted: the document is clearly about something else, nothing plausibly touched.
-              </li>
-              <li>
-                <strong>Medium</strong> — same topic either way, but nothing spells out the exact detail —
-                the verdict rests on a reasonable inference rather than a direct textual match.
-              </li>
-              <li>
-                <strong>Low</strong> — the evidence is thin either way; worth a manual double-check
-                regardless of the verdict.
-              </li>
-            </ul>
-          </InfoTooltip>
-          {isLoading && (
-            <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-              <Loader2 className="h-3 w-3 animate-spin" style={{ color: accentColor }} />
-              {loadingLabel}
-            </span>
-          )}
-        </div>
-        {!isLoading && documents.length > 0 && (
-          <button
-            onClick={handleDownloadJson}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
-            style={{ color: accentColor }}
-            onMouseEnter={e => (e.currentTarget.style.background = `${accentColor}12`)}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-            title="Download raw results as JSON"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Download JSON
-          </button>
-        )}
-      </div>
-
-      {truncated && (
-        <div className="px-5 py-2 text-xs" style={{ color: '#d97706', background: '#fffbeb' }}>
-          ⚠️ Query was truncated before hitting the index — results may be partial.
-        </div>
-      )}
-
-      <div className="p-5 max-h-[650px] overflow-y-auto text-sm">
-        {isLoading && documents.length === 0 ? (
-          <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
-            <Loader2 className="h-4 w-4 animate-spin" style={{ color: accentColor }} />
-            <span className="italic text-sm">{loadingLabel}</span>
-          </div>
-        ) : error ? (
-          <p className="text-sm" style={{ color: 'var(--color-error)' }}>{error}</p>
-        ) : documents.length === 0 ? (
-          <p className="text-sm italic text-[var(--color-text-muted)]">No potentially impacted documents found.</p>
-        ) : (
-          <div className="space-y-2.5">
-            {documents.map((doc, i) => (
-              <div
-                key={`${doc.iddoc}-${doc.ref}-${i}`}
-                className="p-3 rounded-xl border border-[var(--color-border)]/30"
-              >
-                <div className="flex items-center gap-2 flex-wrap">
-                  {doc.flag && <span title={doc.site_code ?? undefined}>{doc.flag}</span>}
-                  {doc.url ? (
-                    <a
-                      href={doc.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm font-semibold hover:underline"
-                      style={{ color: accentColor }}
-                    >
-                      {doc.ref || doc.iddoc} <ExternalLink className="inline h-3 w-3 ml-0.5" />
-                    </a>
-                  ) : (
-                    <span className="text-sm font-semibold">{doc.ref || doc.iddoc}</span>
-                  )}
-                  {doc.title && (
-                    <span className="text-xs text-[var(--color-text-muted)]">— {doc.title}</span>
-                  )}
-                  {doc.division && (
-                    <span
-                      className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase"
-                      style={{ color: accentColor, background: `${accentColor}18` }}
-                    >
-                      {doc.division}
-                    </span>
-                  )}
-                  <span
-                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase"
-                    style={{
-                      color: doc.impacted ? '#16a34a' : 'var(--color-text-muted)',
-                      background: doc.impacted ? '#16a34a18' : 'var(--color-muted)',
-                    }}
-                  >
-                    {doc.impacted ? 'Impacted' : 'Not impacted'}
-                  </span>
-                  <span className="text-xs text-[var(--color-text-muted)]">
-                    {doc.confidence && (
-                      <span style={{ color: CONFIDENCE_STYLE[doc.confidence] ?? undefined }}>{doc.confidence} confidence</span>
-                    )}
-                  </span>
-                </div>
-                {doc.reason && (
-                  <p className="text-xs mt-1 text-[var(--color-text-muted)]">
-                    {doc.impacted && doc.sections && doc.sections.length > 0 && (
-                      <strong className="text-[var(--color-text-heading)]">{doc.sections.join(', ')}: </strong>
-                    )}
-                    {doc.reason}
-                  </p>
-                )}
-                {doc.other_languages && doc.other_languages.length > 0 && (
-                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                    <span className="text-[10px] uppercase font-semibold text-[var(--color-text-muted)]">Also in:</span>
-                    {doc.other_languages.map((sib, si) => (
-                      sib.url ? (
-                        <a
-                          key={si}
-                          href={sib.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={sib.source === 'catalog' ? 'Known translation — not independently matched by this search' : 'Also matched by this search'}
-                          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium hover:underline"
-                          style={{ color: 'var(--color-text-muted)', background: 'var(--color-muted)', opacity: sib.source === 'catalog' ? 0.7 : 1 }}
-                        >
-                          {sib.flag && <span>{sib.flag}</span>}
-                          {sib.ref}
-                        </a>
-                      ) : (
-                        <span
-                          key={si}
-                          title={sib.source === 'catalog' ? 'Known translation — not independently matched by this search' : 'Also matched by this search'}
-                          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
-                          style={{ color: 'var(--color-text-muted)', background: 'var(--color-muted)', opacity: sib.source === 'catalog' ? 0.7 : 1 }}
-                        >
-                          {sib.flag && <span>{sib.flag}</span>}
-                          {sib.ref}
-                        </span>
-                      )
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // DocSummaryCard — single-document summary (independent of the diff)
 // ---------------------------------------------------------------------------
 
@@ -1512,13 +1239,8 @@ export function CompareView() {
   const [oldPdf, setOldPdf] = useState<DocFile | null>(null);
   const [newPdf, setNewPdf] = useState<DocFile | null>(null);
   const [analysis, setAnalysis] = useState('');
-  const [impact, setImpact] = useState<JudgedDoc[]>([]);
+  const [impact, setImpact] = useState<ImpactResult | null>(null);
   const [impactError, setImpactError] = useState('');
-  const [impactMeta, setImpactMeta] = useState<{
-    truncated: boolean; candidatesConsidered: number; durationS: number;
-    queriesUsed: number; queriesFailed: number;
-    inputTokens: number; outputTokens: number; totalTokens: number; costEur: number;
-  } | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isImpacting, setIsImpacting] = useState(false);
   const [_sessionPath, setSessionPath] = useState('');
@@ -1573,7 +1295,7 @@ export function CompareView() {
     if (storedMidStd) setMessageIdStd(Number(storedMidStd));
     try {
       const storedImpact = localStorage.getItem(LS_IMPACT);
-      if (storedImpact) setImpact(JSON.parse(storedImpact));
+      if (storedImpact) setImpact(JSON.parse(storedImpact) as ImpactResult);
     } catch { /* ignore malformed cache */ }
     setSessionPath(localStorage.getItem(LS_SESSION_PATH) || '');
     const storedMid = localStorage.getItem(LS_MESSAGE_ID);
@@ -1618,9 +1340,8 @@ export function CompareView() {
   const clearAnalysisState = () => {
     setAnalysis('');
     setAnalysisStd('');
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     setParsedJsonItems([]);
     setMessageId(null);
     setMessageIdStd(null);
@@ -1646,9 +1367,8 @@ export function CompareView() {
   const switchImpactMode = (mode: 'compare' | 'manual') => {
     setImpactMode(mode);
     localStorage.setItem(LS_IMPACT_MODE, mode);
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     localStorage.removeItem(LS_IMPACT);
   };
 
@@ -1657,9 +1377,8 @@ export function CompareView() {
     setNewPdfAndPersist(null);
     setAnalysis('');
     setAnalysisStd('');
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     setSummaries({ old: EMPTY_SUMMARY, new: EMPTY_SUMMARY });
     setSessionPath('');
     setMessageId(null);
@@ -1888,9 +1607,8 @@ export function CompareView() {
     if (!oldPdf || !newPdf) return;
     setError('');
     setAnalysis('');
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     setSessionPath('');
     setMessageId(null);
     setParsedJsonItems([]);
@@ -2050,9 +1768,8 @@ export function CompareView() {
     if (!oldPdf || !newPdf) return;
     setError('');
     setAnalysisStd('');
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     setSessionPath('');
     setMessageIdStd(null);
     setIsAnalyzingStd(true);
@@ -2208,11 +1925,11 @@ export function CompareView() {
   const handleImpact = async (forceRefresh = false) => {
     if (!changesTextForImpact) return;
     setIsImpacting(true);
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     localStorage.removeItem(LS_IMPACT);
     try {
+      const manual = effectiveImpactMode === 'manual';
       const res = await fetch('/api/compare/impact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2221,29 +1938,48 @@ export function CompareView() {
           // Link the impact_requests audit row back to this comparison's messages row
           // — also the cache key the server looks up unless force_refresh is set.
           // No comparison ran in manual mode, so no hash to key the cache on.
-          old_file_hash: effectiveImpactMode === 'manual' ? '' : (oldFileHash || ''),
-          new_file_hash: effectiveImpactMode === 'manual' ? '' : (newFileHash || ''),
+          old_file_hash: manual ? '' : (oldFileHash || ''),
+          new_file_hash: manual ? '' : (newFileHash || ''),
+          // The compared document itself would be the top hit — the server drops it.
+          old_file_name: manual ? '' : (oldPdf?.name || ''),
+          new_file_name: manual ? '' : (newPdf?.name || ''),
           force_refresh: forceRefresh,
         }),
       });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `Server error: ${res.status}`);
-      const docs: JudgedDoc[] = data.documents ?? [];
-      setImpact(docs);
-      setImpactMeta({
-        truncated: !!data.truncated,
-        candidatesConsidered: data.candidates_considered ?? 0,
-        durationS: data.duration_s ?? 0,
-        queriesUsed: data.queries_used ?? 0,
-        queriesFailed: data.queries_failed ?? 0,
-        inputTokens: data.usage?.input_tokens ?? 0,
-        outputTokens: data.usage?.output_tokens ?? 0,
-        totalTokens: data.usage?.total_tokens ?? 0,
-        costEur: data.usage?.cost_eur ?? 0,
-      });
-      if (data.cached) toast.info('Result retrieved from cache');
-      else if (data.no_changes) toast.info('Analysis reported no substantive changes — nothing to judge.');
-      localStorage.setItem(LS_IMPACT, JSON.stringify(docs));
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Server error: ${res.status}`);
+      }
+      // NDJSON stream: plan → one document per judged candidate → done | error.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let current: ImpactResult | null = null;
+      const handleEvent = (ev: Record<string, unknown>) => {
+        if (ev.type === 'error') throw new Error(String(ev.error));
+        if (ev.type === 'plan') {
+          current = { ...(ev as unknown as ImpactResult), documents: [], done: false };
+        } else if (ev.type === 'document' && current) {
+          current = { ...current, documents: [...current.documents, ev.document as ImpactResult['documents'][number]] };
+        } else if (ev.type === 'done' && current) {
+          current = { ...current, done: true, usage: ev.usage as ImpactResult['usage'], duration_s: ev.duration_s as number };
+        }
+        setImpact(current);
+      };
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (value) buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) if (line.trim()) handleEvent(JSON.parse(line));
+        if (done) break;
+      }
+      if (buffer.trim()) handleEvent(JSON.parse(buffer));
+      const final = current as ImpactResult | null;
+      if (!final?.done) throw new Error('The search was interrupted before it finished.');
+      if (final.cached) toast.info('Result retrieved from cache');
+      else if (final.no_changes) toast.info('Analysis reported no substantive changes — nothing to judge.');
+      localStorage.setItem(LS_IMPACT, JSON.stringify(final));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setImpactError(msg);
@@ -2813,7 +2549,7 @@ export function CompareView() {
             {isImpacting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
             {isImpacting ? 'Judging…' : 'Judge Impacted Docs'}
           </button>
-          {impact.length > 0 && !isImpacting && (
+          {impact?.done && !isImpacting && (
             <button
               onClick={() => handleImpact(true)}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 border cursor-pointer"
@@ -2829,18 +2565,14 @@ export function CompareView() {
         </div>
       )}
 
-      {(impact.length > 0 || isImpacting || impactError) && (
-        <div className="grid grid-cols-1 gap-4">
-          <ImpactedDocsCard
-            title="Impacted Docs"
-            documents={impact}
-            isLoading={isImpacting}
-            loadingLabel="Judging…"
-            error={impactError}
-            truncated={impactMeta?.truncated}
-            accentColor={accentAmber}
-          />
-        </div>
+      {(impact || isImpacting || impactError) && (
+        <ImpactResultsCard
+          result={impact}
+          isLoading={isImpacting}
+          error={impactError}
+          accentColor={accentAmber}
+          exportName={`impact_${(newPdf?.name || oldPdf?.name || 'search').replace(/\.[^.]+$/, '')}`}
+        />
       )}
     </div>
   );

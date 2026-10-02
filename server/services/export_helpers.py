@@ -283,6 +283,76 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
     return buf.getvalue()
 
 
+_IMPACT_STATUS_LABEL = {'impacted': 'Impacted', 'check': 'To check', 'not_impacted': 'Not impacted', 'error': 'Failed'}
+_IMPACT_STATUS_FILL = {'impacted': 'D5E8D4', 'check': 'FFF2CC', 'error': 'F8CECC'}
+
+
+def _build_impact_excel_bytes(result: dict) -> bytes:
+    """Impact search result → workbook: one row per conflicting passage (the action list),
+    plus one row per judged document and the change list."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    changes = {c.get('id'): c for c in result.get('changes', [])}
+    docs = result.get('documents', [])
+    wrap = Alignment(wrap_text=True, vertical='top')
+
+    def _sheet(ws, headers, widths, rows):
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+        for values, status in rows:
+            ws.append(values)
+            fill = _IMPACT_STATUS_FILL.get(status)
+            for cell in ws[ws.max_row]:
+                cell.alignment = wrap
+                if fill:
+                    cell.fill = PatternFill('solid', fgColor=fill)
+        ws.freeze_panes = 'A2'
+
+    def _change_detail(ids):
+        return '\n'.join(f"{i}: {changes[i].get('text', '')}" for i in ids if i in changes)
+
+    wb = openpyxl.Workbook()
+    passage_rows = []
+    for d in docs:
+        for p in d.get('passages', []):
+            passage_rows.append(([
+                d.get('ref', ''), d.get('title', ''), d.get('division', ''), d.get('doc_date', ''),
+                'yes' if d.get('archive') else '', _IMPACT_STATUS_LABEL.get(d.get('status'), ''),
+                ', '.join(p.get('changes', [])), _change_detail(p.get('changes', [])),
+                p.get('section', ''), p.get('quote', ''), p.get('explanation', ''), d.get('url', ''),
+            ], d.get('status')))
+    _sheet(wb.active, ['Ref', 'Title', 'Division', 'Published', 'Archive', 'Verdict', 'Changes', 'Change detail',
+                       'Section', 'Quote', 'Explanation', 'Link'],
+           [16, 34, 10, 12, 8, 13, 10, 45, 28, 45, 50, 40], passage_rows)
+    wb.active.title = 'Passages'
+
+    doc_rows = [([
+        d.get('ref', ''), d.get('title', ''), d.get('division', ''), d.get('doc_date', ''),
+        'yes' if d.get('archive') else '',
+        _IMPACT_STATUS_LABEL.get(d.get('status'), ''), d.get('confidence', ''),
+        d.get('reason', ''), ', '.join(d.get('change_ids', [])), d.get('url', ''),
+    ], d.get('status')) for d in docs]
+    _sheet(wb.create_sheet('Documents'),
+           ['Ref', 'Title', 'Division', 'Published', 'Archive', 'Verdict', 'Confidence', 'Reason',
+            'Found by changes', 'Link'],
+           [16, 34, 10, 12, 8, 13, 11, 70, 16, 40], doc_rows)
+
+    change_rows = [([c.get('id', ''), c.get('criticality', ''), c.get('section', ''), c.get('before', ''),
+                     c.get('after', ''), c.get('summary', ''), 'yes' if c.get('searched', True) else 'no'], None)
+                   for c in result.get('changes', [])]
+    _sheet(wb.create_sheet('Changes'),
+           ['Id', 'Criticality', 'Section', 'Before', 'After', 'Rationale / detail', 'Searched'],
+           [6, 11, 24, 40, 40, 50, 9], change_rows)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # PDF helpers
 # ---------------------------------------------------------------------------

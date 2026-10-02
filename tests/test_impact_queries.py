@@ -1,21 +1,23 @@
-"""Tests for impact-search query derivation and multi-query aggregation.
+"""Tests for impact-search change extraction, query derivation and per-document aggregation.
 
 Coverage:
-  - changes_to_queries : structured JSON / markdown / raw blob / no-changes / capping
-  - changes_to_readable: structured JSON → grouped markdown, passthrough otherwise
-  - _aggregate_docs    : query_hits tracking, ranking, top excerpt collection
+  - changes_to_queries : numbered changes, one query per searched change, overflow packing
+  - _aggregate_docs    : change-id tracking, ranking, self-exclusion, language variants
+  - _judged_doc        : passage mapping, quote highlighting, status derivation
 """
 
 import json
 
-from server.services.impact_queries import changes_to_queries, changes_to_readable
-from server.services.vector_search import _aggregate_docs
+from server.services.impact_queries import changes_to_queries
+from server.services.vector_search import (
+    _aggregate_docs, _exclusion_keys, _find_quote, _judged_doc, _split_prefix, sort_documents,
+)
 
 
 STRUCTURED = json.dumps([
-    {'section': '4.3 Torque', 'type': 'Value changed', 'criticality': 'High',
-     'before': '35 N·m', 'after': '40 N·m', 'rationale': 'J3 connector torque limit raised as part of the fastening procedure revision.'},
-    {'section': '2.1 References', 'type': 'Reference updated', 'criticality': 'Medium',
+    {'section': '4.3 Torque', 'type': 'Value changed', 'criticality': 'Medium',
+     'before': '35 N·m', 'after': '40 N·m', 'rationale': 'J3 connector torque limit raised.'},
+    {'section': '2.1 References', 'type': 'Reference updated', 'criticality': 'High',
      'before': 'NAS 410 Rev 2', 'after': 'NAS 410 Rev 3', 'rationale': ''},
     {'section': 'TOC', 'type': 'Editorial/Structural', 'criticality': 'Low',
      'before': 'section 5', 'after': 'section 6', 'rationale': ''},
@@ -38,66 +40,71 @@ MARKDOWN = """\
 # changes_to_queries
 # ---------------------------------------------------------------------------
 
-def test_structured_json_one_query_per_change():
+def test_structured_changes_keep_table_order_and_ids():
     out = changes_to_queries(STRUCTURED)
     assert out['source'] == 'structured'
-    # Editorial/Structural row dropped → 3 substantive changes
-    assert out['total_changes'] == 3
+    assert [c['id'] for c in out['changes']] == ['C1', 'C2', 'C3', 'C4']
+    assert out['changes'][0]['before'] == '35 N·m' and out['changes'][0]['after'] == '40 N·m'
+
+
+def test_editorial_rows_kept_but_not_searched():
+    out = changes_to_queries(STRUCTURED)
+    assert out['changes'][2]['searched'] is False
+    searched_ids = [cid for q in out['queries'] for cid in q['change_ids']]
+    assert 'C3' not in searched_ids
     assert len(out['queries']) == 3
-    assert not any('{' in q for q in out['queries'])  # no JSON syntax leaks
 
 
-def test_structured_high_criticality_first():
+def test_one_query_per_change_high_criticality_first():
     out = changes_to_queries(STRUCTURED)
-    assert '35 N·m' in out['queries'][0]  # High row before Medium/Low
+    assert out['queries'][0]['change_ids'] == ['C2']
+    assert all(len(q['change_ids']) == 1 for q in out['queries'])
+    assert not any('{' in q['text'] for q in out['queries'])
 
 
-def test_structured_added_removed_rendering():
+def test_added_rendering():
     out = changes_to_queries(STRUCTURED)
-    added = [q for q in out['queries'] if 'added:' in q]
+    added = [q['text'] for q in out['queries'] if 'added:' in q['text']]
     assert added and 'visual inspection' in added[0]
 
 
-def test_structured_editorial_only_falls_back_to_all_rows():
+def test_editorial_only_is_still_searched():
     text = json.dumps([{'section': 'TOC', 'type': 'Editorial/Structural',
                         'criticality': 'Low', 'before': 'a', 'after': 'b', 'rationale': ''}])
     out = changes_to_queries(text)
-    assert out['total_changes'] == 1
-
-
-def test_structured_empty_array_means_no_changes():
-    out = changes_to_queries('[]')
-    assert out['queries'] == []
-    assert out['total_changes'] == 0
-
-
-def test_markdown_one_query_per_section():
-    out = changes_to_queries(MARKDOWN)
-    assert out['source'] == 'markdown'
-    assert len(out['queries']) == 2
-    assert out['queries'][0].startswith('4.3 Torque:')
-    assert '**' not in out['queries'][0]  # markup stripped
-
-
-def test_markdown_no_changes_detected():
-    out = changes_to_queries('**No significant changes detected.**')
-    assert out['queries'] == []
-
-
-def test_raw_blob_single_query():
-    out = changes_to_queries('The torque changed from 35 to 40 N·m.')
-    assert out['source'] == 'raw'
     assert len(out['queries']) == 1
 
 
-def test_capping_groups_preserve_all_changes():
+def test_empty_array_means_no_changes():
+    out = changes_to_queries('[]')
+    assert out['queries'] == [] and out['changes'] == []
+
+
+def test_markdown_one_change_per_section():
+    out = changes_to_queries(MARKDOWN)
+    assert out['source'] == 'markdown'
+    assert [c['section'] for c in out['changes']] == ['4.3 Torque', '2.1 References']
+    assert out['queries'][0]['text'].startswith('4.3 Torque:')
+    assert '**' not in out['queries'][0]['text']
+
+
+def test_markdown_no_changes_detected():
+    assert changes_to_queries('**No significant changes detected.**')['queries'] == []
+
+
+def test_raw_blob_single_change():
+    out = changes_to_queries('The torque changed from 35 to 40 N·m.')
+    assert out['source'] == 'raw'
+    assert out['queries'][0]['change_ids'] == ['C1']
+
+
+def test_overflow_packs_remaining_changes_without_dropping_any():
     rows = [{'section': f'S{i}', 'type': 'Value changed', 'criticality': 'Medium',
-             'before': f'{i}', 'after': f'{i + 1}', 'rationale': ''} for i in range(20)]
-    out = changes_to_queries(json.dumps(rows), max_queries=8)
-    assert len(out['queries']) <= 8
-    assert out['total_changes'] == 20
-    combined = '\n'.join(out['queries'])
-    assert all(f'S{i}' in combined for i in range(20))  # nothing silently dropped
+             'before': f'{i}', 'after': f'{i + 1}', 'rationale': ''} for i in range(40)]
+    out = changes_to_queries(json.dumps(rows), max_queries=30)
+    assert len(out['queries']) == 30
+    ids = [cid for q in out['queries'] for cid in q['change_ids']]
+    assert sorted(ids) == sorted(f'C{i}' for i in range(1, 41))
 
 
 def test_empty_input():
@@ -105,68 +112,131 @@ def test_empty_input():
 
 
 # ---------------------------------------------------------------------------
-# changes_to_readable
+# _aggregate_docs
 # ---------------------------------------------------------------------------
 
-def test_readable_groups_by_section():
-    text = changes_to_readable(STRUCTURED)
-    assert '## 4.3 Torque' in text
-    assert '35 N·m → 40 N·m' in text
-    assert '{' not in text
+def _chunk(iddoc, ref, score, change_ids=('C1',), text='chunk text', chunk_id='1-000001'):
+    return {'IDDOC': iddoc, 'REF': ref, 'division': 'AS', 'url': '', 'semantic_headers': '',
+            'chunk_text': text, 'chunk_id': chunk_id, 'score': score, '_change_ids': list(change_ids)}
 
 
-def test_readable_passthrough_for_markdown():
-    assert changes_to_readable(MARKDOWN) == MARKDOWN.strip()
+def test_same_chunk_from_several_changes_is_kept_once():
+    docs = _aggregate_docs([
+        _chunk('D1', 'REF-001', 0.9, ['C1']),
+        _chunk('D1', 'REF-001', 0.8, ['C2']),
+    ])
+    assert len(docs[0]['passages']) == 1
+    assert docs[0]['passages'][0]['change_ids'] == ['C1', 'C2']
+    assert docs[0]['change_ids'] == ['C1', 'C2']
+
+
+def test_docs_matched_by_more_changes_rank_first():
+    docs = _aggregate_docs([
+        _chunk('D1', 'REF-001', 0.6, ['C1'], chunk_id='1-000001'),
+        _chunk('D1', 'REF-001', 0.6, ['C2'], chunk_id='1-000002'),
+        _chunk('D2', 'REF-002', 0.99, ['C1'], chunk_id='2-000001'),
+    ])
+    assert docs[0]['ref'] == 'REF-001'
+
+
+def test_passages_in_document_order():
+    docs = _aggregate_docs([
+        _chunk('D1', 'REF-001', 0.9, chunk_id='1-000007', text='late'),
+        _chunk('D1', 'REF-001', 0.5, chunk_id='1-IMG-002', text='image'),
+        _chunk('D1', 'REF-001', 0.8, chunk_id='1-000002', text='early'),
+    ])
+    assert [p['text'] for p in docs[0]['passages']] == ['early', 'late', 'image']
+
+
+def test_language_variants_merged():
+    docs = _aggregate_docs([
+        _chunk('D1', 'GO-1316_FR', 0.9, chunk_id='1-000001'),
+        _chunk('D2', 'GO-1316_GB', 0.8, ['C2'], chunk_id='2-000001'),
+    ])
+    assert len(docs) == 1
+    assert docs[0]['variants'][0]['ref'] == 'GO-1316_GB'
+    assert docs[0]['change_ids'] == ['C1', 'C2']
+
+
+def test_compared_document_is_excluded():
+    excluded = _exclusion_keys(['PR-2207_FR rev G.docx', ''], ['PR-2207_FR', 'MI-0815'])
+    docs = _aggregate_docs([
+        _chunk('D1', 'PR-2207_FR', 0.99, chunk_id='1-000001'),
+        _chunk('D2', 'MI-0815', 0.5, chunk_id='2-000001'),
+    ], excluded)
+    assert [d['ref'] for d in docs] == ['MI-0815']
+
+
+def test_prefix_stripped_and_metadata_read():
+    body, meta = _split_prefix(
+        '[Source: MI-0611 | Title: Porte A320 | Division: AS | Category: Prod | Date de diffusion: 2016-03-01]\n\nTexte'
+    )
+    assert body == 'Texte'
+    assert meta == {'title': 'Porte A320', 'doc_date': '2016-03-01'}
 
 
 # ---------------------------------------------------------------------------
-# _aggregate_docs — multi-query behaviour
+# _judged_doc
 # ---------------------------------------------------------------------------
 
-def _chunk(iddoc, ref, score, qidx=None, text='chunk text', chunk_id='c1'):
-    rec = {'IDDOC': iddoc, 'REF': ref, 'division': 'AS', 'url': '',
-           'semantic_headers': '', 'chunk_text': text, 'chunk_id': chunk_id, 'score': score}
-    if qidx is not None:
-        rec['_qidx'] = qidx
-    return rec
+def _candidate():
+    return _aggregate_docs([
+        _chunk('D1', 'MI-0815', 0.9, chunk_id='1-000001',
+               text='[Source: MI-0815 | Title: Cadre | Division: AS | Category: X | Date de diffusion: 2016-01-01]\n\n'
+                    '[4.2 Fixation] Serrer au couple de\n12 N·m.'),
+        _chunk('D1', 'MI-0815', 0.8, chunk_id='1-000002', text='Autre passage.'),
+    ])[0]
 
 
-def test_aggregate_counts_distinct_query_hits():
-    chunks = [
-        _chunk('D1', 'REF-1', 0.9, qidx=0),
-        _chunk('D1', 'REF-1', 0.8, qidx=1),
-        _chunk('D1', 'REF-1', 0.7, qidx=1),  # same query twice → still 2 hits
-        _chunk('D2', 'REF-2', 0.95, qidx=0),
-    ]
-    docs = _aggregate_docs(chunks, max_docs=10)
-    by_ref = {d['ref']: d for d in docs}
-    assert by_ref['REF-1']['query_hits'] == 2
-    assert by_ref['REF-2']['query_hits'] == 1
+def test_judged_doc_maps_passages_and_highlights_quote():
+    doc = _judged_doc(_candidate(), {
+        'impacted': True, 'confidence': 'high', 'reason': 'r',
+        'passages': [{'passage': 1, 'changes': ['C1'], 'section': '4.2 Fixation',
+                      'quote': 'couple de 12 N·m', 'explanation': 'e'},
+                     {'passage': 9, 'changes': ['C1']}],
+    }, '2018-01-01')
+    assert doc['status'] == 'impacted' and doc['archive'] is True
+    assert len(doc['passages']) == 1
+    p = doc['passages'][0]
+    start, end = p['highlight']
+    assert p['text'][start:end] == 'couple de\n12 N·m'
+    assert doc['sections'] == ['4.2 Fixation']
 
 
-def test_aggregate_ranks_multi_hit_doc_above_single_high_score():
-    chunks = [
-        _chunk('D1', 'REF-1', 0.6, qidx=0),
-        _chunk('D1', 'REF-1', 0.6, qidx=1),
-        _chunk('D2', 'REF-2', 0.99, qidx=0),
-    ]
-    docs = _aggregate_docs(chunks, max_docs=10)
-    assert docs[0]['ref'] == 'REF-1'  # 2 query hits beat one lucky 0.99
+def test_low_confidence_means_check_either_way():
+    assert _judged_doc(_candidate(), {'impacted': False, 'confidence': 'low'}, '')['status'] == 'check'
 
 
-def test_aggregate_keeps_top_excerpts_for_judge():
-    chunks = [
-        _chunk('D1', 'REF-1', 0.9, qidx=0, text='best'),
-        _chunk('D1', 'REF-1', 0.8, qidx=0, text='second'),
-        _chunk('D1', 'REF-1', 0.7, qidx=0, text='third'),
-        _chunk('D1', 'REF-1', 0.6, qidx=0, text='fourth'),
-    ]
-    docs = _aggregate_docs(chunks, max_docs=10)
-    assert docs[0]['_top_excerpts'] == [
-        ('', 'best'), ('', 'second'), ('', 'third'), ('', 'fourth'),
-    ]
+def test_not_impacted_drops_passages():
+    doc = _judged_doc(_candidate(), {'impacted': False, 'confidence': 'high',
+                                     'passages': [{'passage': 1, 'changes': ['C1']}]}, '')
+    assert doc['status'] == 'not_impacted' and doc['passages'] == []
 
 
-def test_aggregate_untagged_chunks_default_to_one_hit():
-    docs = _aggregate_docs([_chunk('D1', 'REF-1', 0.9)], max_docs=10)
-    assert docs[0]['query_hits'] == 1
+def test_quote_not_found_gives_no_highlight():
+    assert _find_quote('abc def', 'xyz') is None
+
+
+def test_sort_documents_by_status():
+    docs = [{'status': 'not_impacted'}, {'status': 'error'}, {'status': 'impacted'}, {'status': 'check'}]
+    assert [d['status'] for d in sort_documents(docs)] == ['impacted', 'check', 'not_impacted', 'error']
+
+
+def test_impact_excel_has_one_row_per_passage():
+    import io
+    import openpyxl
+    from server.services.export_helpers import _build_impact_excel_bytes
+
+    doc = _judged_doc(_candidate(), {
+        'impacted': True, 'confidence': 'high', 'reason': 'r',
+        'passages': [{'passage': 1, 'changes': ['C1'], 'quote': '12 N·m'},
+                     {'passage': 2, 'changes': ['C1']}],
+    }, '2018-01-01')
+    wb = openpyxl.load_workbook(io.BytesIO(_build_impact_excel_bytes({
+        'changes': changes_to_queries(STRUCTURED)['changes'], 'documents': [doc],
+        'not_judged': [{'ref': 'X-1', 'judged': False}],
+    })))
+    assert wb.sheetnames == ['Passages', 'Documents', 'Changes']
+    assert wb['Passages'].max_row == 3
+    assert wb['Documents'].max_row == 2
+    assert wb['Passages']['H2'].value.startswith('C1: 4.3 Torque')

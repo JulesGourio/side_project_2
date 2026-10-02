@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..services.chunked_analysis import split_messages_for_chunking, stream_analysis_chunked
-from ..services.impact_queries import changes_to_queries, changes_to_readable
+from ..services.impact_queries import changes_to_queries
 from ..services.lakebase import (
     get_cached_impact_result, get_cached_summary, get_pool, store_error,
     store_impact_cache, store_impact_request, store_llm_request,
@@ -36,7 +36,7 @@ from ..services.processors.factory import (
 from ..services.streaming import stream_analysis
 from ..services.summarize import summarize_image, summarize_text
 from ..services.user import get_user_identity, require_compare
-from ..services.vector_search import synthesize_impact_with_llm
+from ..services.vector_search import run_impact_search, sort_documents
 
 
 logger = logging.getLogger(__name__)
@@ -107,17 +107,17 @@ def _get_config() -> Dict[str, Any]:
     return {
         'analysis_endpoint':     os.getenv('COMPARE_ANALYSIS_ENDPOINT', ''),
         'analysis_system_prompt': os.getenv('COMPARE_ANALYSIS_SYSTEM_PROMPT', _DEFAULT_ANALYSIS_PROMPT),
-        # Impact search: Vector Search retrieval, then a single LLM call judges
-        # which retrieved candidates are genuinely impacted.
+        # Impact search: one Vector Search query per change, then one LLM call
+        # per candidate document judges it from all of its retrieved passages.
         'impact_index':          os.getenv('COMPARE_IMPACT_INDEX', ''),
         'impact_endpoint':       os.getenv('COMPARE_IMPACT_ENDPOINT', os.getenv('COMPARE_ANALYSIS_ENDPOINT', '')),
-        'impact_num_results':    int(os.getenv('COMPARE_IMPACT_NUM_RESULTS', '30')),
-        'impact_max_candidates': int(os.getenv('COMPARE_IMPACT_MAX_CANDIDATES', '8')),
-        'impact_max_query_chars': int(os.getenv('COMPARE_IMPACT_MAX_QUERY_CHARS', '6000')),
-        'impact_max_tokens':     int(os.getenv('COMPARE_IMPACT_MAX_TOKENS', '2000')),
-        # Multi-query retrieval: one focused vector search per derived change.
-        'impact_max_queries':        int(os.getenv('COMPARE_IMPACT_MAX_QUERIES', '8')),
-        'impact_per_query_results':  int(os.getenv('COMPARE_IMPACT_PER_QUERY_RESULTS', '15')),
+        'impact_max_queries':    int(os.getenv('COMPARE_IMPACT_MAX_QUERIES', '30')),
+        'impact_per_query_results': int(os.getenv('COMPARE_IMPACT_PER_QUERY_RESULTS', '40')),
+        'impact_max_candidates': int(os.getenv('COMPARE_IMPACT_MAX_CANDIDATES', '15')),
+        'impact_max_query_chars': int(os.getenv('COMPARE_IMPACT_MAX_QUERY_CHARS', '20000')),
+        'impact_max_tokens':     int(os.getenv('COMPARE_IMPACT_MAX_TOKENS', '1500')),
+        # Documents published before this date are badged "archive" in the UI.
+        'impact_archive_before': os.getenv('COMPARE_IMPACT_ARCHIVE_BEFORE', '2018-01-01'),
         # Single-document summary: independent of the diff, a cheap model
         # summarizes whichever of the two uploaded files the user picks.
         # Images need a vision-capable model, hence the separate endpoint.
@@ -502,18 +502,36 @@ async def analyze_documents(
 class ImpactRequest(BaseModel):
     changes_text: str
     # File hashes of the comparison that produced changes_text — link an
-    # impact_requests row back to its messages row (the client already
-    # computes them for /compare/analyze caching), and double as the cache
-    # key for this endpoint's own result cache. Optional: an impact search
-    # replayed from history may not carry them (cache is then skipped).
+    # impact_requests row back to its messages row, and double as the cache
+    # key for this endpoint's own result cache. Optional: a manual-mode search
+    # has none (cache is then skipped).
     old_file_hash: str = ''
     new_file_hash: str = ''
+    # Names of the compared files: the compared document itself is always the
+    # top hit, so it is dropped from the candidates.
+    old_file_name: str = ''
+    new_file_name: str = ''
     # "Re-run" sets this to bypass the cache and force a fresh judgment.
     force_refresh: bool = False
 
 
+def _ndjson(event: Dict[str, Any]) -> str:
+    return json.dumps(event, ensure_ascii=False) + '\n'
+
+
+def _replay_events(result: Dict[str, Any]):
+    """Re-emit a cached result as the same event stream a fresh search produces."""
+    plan = {k: v for k, v in result.items() if k not in ('documents', 'usage', 'duration_s')}
+    yield _ndjson({**plan, 'type': 'plan', 'cached': True})
+    for doc in result.get('documents', []):
+        yield _ndjson({'type': 'document', 'document': doc})
+    yield _ndjson({'type': 'done', 'usage': result.get('usage', {}), 'duration_s': result.get('duration_s', 0.0),
+                   'cached': True})
+
+
 @router.post('/compare/impact', dependencies=[Depends(require_compare)])
 async def find_impacted_documents(body: ImpactRequest, request: Request):
+    """Stream NDJSON events: plan → document (one per judged candidate, as each finishes) → done | error."""
     try:
         cfg = _get_config()
     except ValueError as e:
@@ -531,80 +549,94 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
 
     if not body.force_refresh:
         cached = await get_cached_impact_result(old_hash, new_hash, APP_VERSION)
-        if cached is not None:
-            return {**cached, 'cached': True}
+        # Results cached before the per-document redesign have no change list.
+        if cached is not None and 'changes' in cached:
+            return StreamingResponse(_replay_events(cached), media_type='application/x-ndjson')
 
     host, token = _get_credentials(request)
     if not host or not token:
         return JSONResponse({'error': 'Missing Databricks credentials'}, status_code=400)
 
     identity = await get_user_identity(request)
-    changes_chars = len(body.changes_text)
-    start = time.monotonic()
+    extracted = changes_to_queries(body.changes_text, max_queries=cfg['impact_max_queries'])
 
-    derived = changes_to_queries(body.changes_text, max_queries=cfg['impact_max_queries'])
-    queries = derived['queries']
-    if not queries:
-        return {'documents': [], 'truncated': False, 'chunks_returned': 0,
-                'candidates_considered': 0, 'queries_used': 0, 'queries_failed': 0,
-                'duration_s': 0.0, 'no_changes': True,
-                'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0, 'cost_eur': 0.0}}
-    num_results = cfg['impact_num_results'] if len(queries) == 1 else cfg['impact_per_query_results']
+    def _search(search_token: str):
+        return run_impact_search(
+            host=host, token=search_token, index_name=index_name, llm_endpoint=llm_endpoint,
+            extracted=extracted,
+            num_results=cfg['impact_per_query_results'],
+            max_candidates=cfg['impact_max_candidates'],
+            max_changes_chars=cfg['impact_max_query_chars'],
+            max_tokens=cfg['impact_max_tokens'],
+            archive_before=cfg['impact_archive_before'],
+            exclude_names=[body.old_file_name, body.new_file_name],
+        )
 
-    try:
-        try:
-            result = await synthesize_impact_with_llm(
-                host, token, index_name, llm_endpoint, queries,
-                changes_summary=changes_to_readable(body.changes_text),
-                num_results=num_results,
-                max_candidates=cfg['impact_max_candidates'],
-                max_query_chars=cfg['impact_max_query_chars'],
-                max_tokens=cfg['impact_max_tokens'],
-            )
-        except Exception as sp_err:
-            fwd = request.headers.get('x-forwarded-access-token', '')
-            if not (fwd and fwd != token and '403' in str(sp_err)):
-                raise
-            logger.info('impact: SP token denied on index — retrying with forwarded user token')
-            result = await synthesize_impact_with_llm(
-                host, fwd, index_name, llm_endpoint, queries,
-                changes_summary=changes_to_readable(body.changes_text),
-                num_results=num_results,
-                max_candidates=cfg['impact_max_candidates'],
-                max_query_chars=cfg['impact_max_query_chars'],
-                max_tokens=cfg['impact_max_tokens'],
-            )
-        usage = result.get('usage', {})
-        result['duration_s'] = round(time.monotonic() - start, 2)
+    def _audit(**kwargs):
         asyncio.create_task(store_impact_request(
-            method='index_llm',
+            method='index_llm_per_doc',
             user_id=identity['user_id'], workspace_id=identity.get('workspace_id') or '',
             old_file_hash=old_hash, new_file_hash=new_hash,
-            changes_chars=changes_chars, truncated=result.get('truncated', False),
-            chunks_returned=result.get('chunks_returned', 0), num_documents=len(result.get('documents', [])),
-            duration_s=result['duration_s'], endpoint_name=llm_endpoint, http_status=200,
+            changes_chars=len(body.changes_text), endpoint_name=llm_endpoint, **kwargs,
+        ))
+
+    async def _events():
+        start = time.monotonic()
+        if not extracted['queries']:
+            yield _ndjson({'type': 'plan', 'changes': extracted['changes'], 'source': extracted['source'],
+                           'queries_used': 0, 'queries_failed': 0, 'chunks_returned': 0, 'candidates': 0,
+                           'excluded_refs': [], 'not_judged': [], 'no_changes': True})
+            yield _ndjson({'type': 'done', 'duration_s': 0.0,
+                           'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0, 'cost_eur': 0.0}})
+            return
+
+        plan: Dict[str, Any] = {}
+        documents: List[Dict[str, Any]] = []
+        usage: Dict[str, Any] = {}
+        try:
+            stream = _search(token)
+            try:
+                first = await stream.__anext__()
+            except Exception as sp_err:
+                fwd = request.headers.get('x-forwarded-access-token', '')
+                if not (fwd and fwd != token and '403' in str(sp_err)):
+                    raise
+                logger.info('impact: SP token denied on index — retrying with forwarded user token')
+                stream = _search(fwd)
+                first = await stream.__anext__()
+            plan = {k: v for k, v in first.items() if k != 'type'}
+            yield _ndjson(first)
+            async for event in stream:
+                if event['type'] == 'document':
+                    documents.append(event['document'])
+                    yield _ndjson(event)
+                elif event['type'] == 'done':
+                    usage = event['usage']
+        except Exception as e:
+            logger.error(f'Impact search failed: {e}', exc_info=True)
+            asyncio.create_task(store_error(endpoint='/api/compare/impact', error_type=type(e).__name__, error_msg=str(e)))
+            _audit(duration_s=time.monotonic() - start, http_status=502, error_type=type(e).__name__, error_msg=str(e))
+            yield _ndjson({'type': 'error', 'error': f'Impact search failed: {e}'})
+            return
+
+        duration_s = round(time.monotonic() - start, 2)
+        documents = sort_documents(documents)
+        yield _ndjson({'type': 'done', 'usage': usage, 'duration_s': duration_s})
+
+        _audit(
+            chunks_returned=plan.get('chunks_returned', 0), num_documents=len(documents),
+            duration_s=duration_s, http_status=200,
             input_tokens=usage.get('input_tokens', 0), output_tokens=usage.get('output_tokens', 0),
             total_tokens=usage.get('total_tokens', 0), cost_eur=usage.get('cost_eur', 0.0),
-            documents=result.get('documents', []),
-        ))
-        if old_hash and new_hash:
-            asyncio.create_task(store_impact_cache(old_hash, new_hash, APP_VERSION, result))
-        return result
-    except Exception as e:
-        logger.error(f'Impact synthesis failed: {e}', exc_info=True)
-        asyncio.create_task(store_error(
-            endpoint='/api/compare/impact',
-            error_type=type(e).__name__,
-            error_msg=str(e),
-        ))
-        asyncio.create_task(store_impact_request(
-            method='index_llm',
-            user_id=identity['user_id'], workspace_id=identity.get('workspace_id') or '',
-            old_file_hash=old_hash, new_file_hash=new_hash,
-            changes_chars=changes_chars, duration_s=time.monotonic() - start,
-            endpoint_name=llm_endpoint, http_status=502, error_type=type(e).__name__, error_msg=str(e),
-        ))
-        return JSONResponse({'error': f'Impact synthesis failed: {e}'}, status_code=502)
+            documents=documents,
+        )
+        if old_hash and new_hash and not any(d.get('status') == 'error' for d in documents):
+            asyncio.create_task(store_impact_cache(
+                old_hash, new_hash, APP_VERSION,
+                {**plan, 'documents': documents, 'usage': usage, 'duration_s': duration_s},
+            ))
+
+    return StreamingResponse(_events(), media_type='application/x-ndjson')
 
 
 # ---------------------------------------------------------------------------

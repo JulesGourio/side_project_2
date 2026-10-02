@@ -52,147 +52,84 @@ button.
 
 ### 3. Impact search: which documents does this change affect?
 
-**Route**: `POST /compare/impact`. **Button**: "Judge Impacted Docs (Index + LLM)".
+**Route**: `POST /compare/impact` (NDJSON stream). **Button**: "Judge Impacted Docs".
+**UI**: `ImpactResults.tsx`. Redesigned 2026-10-02 — the earlier single-call design
+(all changes packed into ≤8 queries, 12 candidates max, 5 passages × 800 chars each,
+one LLM call for every candidate, only verdict + section names shown) silently lost
+documents and passages; see git history before that date for its full write-up.
 
-How it works: the changes text is split into focused queries (one per
-change/section), each queried against the Vector Search index
-(`COMPARE_IMPACT_INDEX`) and deduped into a candidate document list. A
-single LLM call (`COMPARE_IMPACT_ENDPOINT`, currently
-`databricks-claude-sonnet-4-6`) then judges each candidate `impacted:
-true/false` from all of its retrieved passages together and — when
-impacted — lists every section that conflicts, alongside a confidence +
-reason that opens with a general verdict before any location detail.
-Output is JSON: ref, division, url, `max_score`, chunk count, `impacted`,
-`sections` (array), `confidence`, `reason` — sorted impacted-first.
-Cost/latency: one Vector Search query round-trip + one short LLM call —
-typically a few cents and a few seconds.
+How it works:
 
-**Chunk count is deduped, but no longer shown in the card** (2026-07-20,
-UI display dropped 2026-07-28): multi-query retrieval runs one Vector
-Search query per derived change, so the same chunk_id routinely comes back
-under several different queries — `chunk_count` used to increment per hit
-instead of per distinct chunk, so a 27-chunk document could show "83 chunks
-matched". `_aggregate_docs` still dedupes on `chunk_id` internally (used
-for ranking via `_evidence_rank`, and still in the JSON export), but the
-"N chunk(s) matched" footer wording was removed from
-`ImpactedDocsCard` — end users found "chunk" too implementation-specific to
-be useful, unlike "matched by N/M changes" which stayed since it explains
-retrieval corroboration in plain terms. Separately, the raw HYBRID
-`max_score` ("N% match") is no longer shown in the card at all — it's a
-retrieval signal, not a relevance one (a document can score 90%+ on shared
-vocabulary alone while being about an unrelated topic — the same caveat
-that applied to the old V2 method), and the LLM's
-`impacted`/`confidence`/`reason` is the signal that actually matters now.
-`max_score` is still computed and used for internal ranking, and still
-returned in the JSON export for anyone who wants it.
+1. **Numbered change list** (`impact_queries.py::extract_changes`): every Change
+   Table row becomes `C1`, `C2`… in table order (Markdown: one per `##` section;
+   manual/raw text: a single `C1`). Editorial/structural rows keep their id but are
+   not searched (renumbering never impacts another document).
+2. **One Vector Search query per change** (HYBRID, `COMPARE_IMPACT_PER_QUERY_RESULTS`
+   hits each, up to `COMPARE_IMPACT_MAX_QUERIES`; past that, the lowest-criticality
+   changes share the last query — none is dropped).
+3. **Per-document grouping** (`vector_search.py::_aggregate_docs`): a chunk hit by
+   several changes is kept once with all their ids; language variants of one
+   document (`GO-1316_FR` / `_GB`) are merged; the compared document itself (its REF
+   found in either uploaded file name) is left out. Ranking: number of changes that
+   found the document, then best similarity.
+4. **One judge call per candidate, in parallel** (top `COMPARE_IMPACT_MAX_CANDIDATES`,
+   6 at a time): the judge sees the whole change list and up to 10 retrieved passages
+   of that document (3,000 chars each, provenance prefix stripped, in document
+   order). It returns a verdict, a confidence, a reason, and **every** conflicting
+   passage with the change ids it conflicts with, its section, a verbatim quote
+   (highlighted in the UI by exact match, `_find_quote`) and a one-line explanation.
+   A failed call only marks that document "Judgment failed".
+5. **Streaming**: `plan` (change list, candidates count, not-judged documents,
+   excluded REF) → one `document` event per judged candidate as soon as it finishes
+   → `done` (usage, duration). The UI fills in progressively.
 
-**How section names are found, and why there can be several** (reworked
-2026-07-28): parsed documents embed structural markers directly in the
-chunk text itself, e.g.
-`[6. DESCRIPTION DETAILLEE > 6.1 GENERER DES IDEES A VALEUR AJOUTEE]` — the
-judging LLM is told to read section numbers/titles from *those inline
-markers*. Each candidate is judged from up to `_EXCERPTS_PER_CANDIDATE` (5)
-retrieved passages together, not just its single highest-scoring one — the
-prompt explicitly says a lower-ranked passage can hold the actual
-conflicting detail — so `sections` is a JSON array: one entry per distinct
-section the conflict actually spans, instead of collapsing everything into
-whichever passage scored highest. The `semantic_headers` chunk metadata is
-passed along too, but only as a secondary heading hint — it's frequently
-missing (verified against the live index 2026-07-20: `semantic_headers =
-'{}'` for ~48% of `text`-type chunks and ~22% of `table`-type chunks) and,
-when present, isn't as reliable as the inline markers for pinpointing the
-exact sub-section. `sections` comes back as an empty array only when the
-candidate isn't impacted, or truly no section information (neither inline
-marker nor heading hint) exists anywhere relevant.
+Status shown per document: **Impacted** (impacted, high/medium confidence), **To
+check** (low confidence, either way), **Not impacted**, **Judgment failed**.
+Documents ranked below the judge cap are dropped from the UI and the export (still
+in the `plan` event's `not_judged` for debugging): end users want a short list.
 
-The prompt also no longer uses the word "excerpt" anywhere — internally the
-retrieved chunk text shown to the judge is now called a "passage", and the
-"reason" is required to open with a one-sentence general verdict on the
-whole document before any passage-specific detail, then mention briefly if
-the conflict recurs elsewhere, instead of reading as if only the top-scoring
-passage mattered.
+**Kept out of the UI on purpose** (end users, 2026-10-02): cost, durations, query
+counts, similarity scores and any current/archive filter — every search covers
+all documents, archive ones just carry an "Archive YYYY" badge.
 
-~~Known bug (fixed 2026-07-20)~~: the prompt originally showed the judging
-LLM a placeholder like `(section: "unlabelled")` for passages with no
-heading hint, then told it to "copy the exact label shown" — so it
-dutifully echoed the placeholder back as a fake section name on every
-passage lacking one. Fixed by phrasing the placeholder as an instruction
-rather than a quotable label (`[no heading]`), telling the LLM explicitly
-never to echo it, and stripping it server-side as a last resort if it
-still does.
+**Two views**: *By document* (verdict, reason, then the passages in conflict with
+the quote highlighted) and *By change* (old → new value, then every document/passage
+it conflicts with). Filter: verdict.
 
-**Caching**: like the main analysis, the result is cached server-side
-(`impact_cache` Lakebase table) keyed on `(old_file_hash, new_file_hash,
-app_version)` — clicking "Judge Impacted Docs" again for the same file pair
-replays the cached JSON instantly (`cached: true` in the response, "Result
-retrieved from cache" toast) instead of re-querying the index and paying for
-another LLM call. A "Re-run" button appears next to the primary button once
-a result exists; it sends `force_refresh: true`, which skips the cache lookup
-and always does a fresh judgment (useful if the knowledge base was updated
-since the last run). The cache is skipped entirely when either file hash is
-missing (e.g. an impact search replayed from a history entry that predates
-hash tracking).
+**Archive (pre-2018) documents**: the parsing pipeline only feeds the RAG tables
+with documents published from `DOC_DATE_CUTOFF` (2018-01-01); older ones go to
+`chunks_archive`. `chunks_full` (= `chunks` + `chunks_archive`) and its index
+`chunks_full_index` are the impact-search source, so `COMPARE_IMPACT_INDEX` must
+point at that index for archive documents to be found. Their publication date is
+read from the chunk's provenance prefix; before `COMPARE_IMPACT_ARCHIVE_BEFORE` they
+get an "Archive YYYY" badge.
 
-**History (2026-07-20)**: this used to be three independent methods built to
-compare against each other — V1 routed the full changes text through the
-existing Knowledge Assistant agent (its own retrieval + reasoning); V2 queried
-the index directly with no LLM, showing raw similarity scores only. Both were
-dropped in favour of the method above ("V3" at the time):
-- **V1 (agent)** was the slowest and, in testing, the least reliable — it
-  tended to be conservative, often asking a clarifying question instead of
-  listing documents, or reporting "no evidence of this exact change" even when
-  a related document existed. Its per-call cost was also opaque (the agent's
-  internal token usage isn't exposed in its streamed response), unlike the
-  single bounded LLM call used now.
-- **V2 (index only)** was free and instant, but a raw similarity score is not
-  the same as "actually impacted" — a doc can score 90%+ purely on shared
-  vocabulary (e.g. "torque", "autoclave") while describing an unrelated
-  program/process. It retrieved the same candidates the LLM call already
-  retrieves internally, so once the LLM judgment is in place it added no
-  information a user could act on — only an unjudged version of the same list.
-- The remaining method had the best signal-to-noise of the three in testing:
-  it correctly demoted high-scoring-but-irrelevant candidates to
-  `impacted: false` with a specific reason, and correctly flagged the
-  genuinely conflicting document as `impacted: true` — at roughly
-  €0.01–0.02 per call (see the token/cost line under the result card).
+**Export Excel** (`POST /compare/impact/export-excel`, `_build_impact_excel_bytes`):
+sheet *Passages* = one row per conflicting passage (the action list), *Documents* =
+every judged document, *Changes* = the change list.
+
+**Cost/latency**: up to 15 small calls on `databricks-gpt-5-6-luna`, ~4-8k input tokens
+each — a few cents; 15-40 s, but the first results appear after a few seconds.
+
+**Caching**: the final result is cached in `impact_cache` keyed on
+`(old_file_hash, new_file_hash, APP_VERSION)` and replayed as the same event stream
+(`cached: true`). Results cached by the previous design (no `changes` key) are
+ignored. Not cached when a judge call failed. "Re-run" sends `force_refresh: true`.
 
 **Which text is used as input** (`changesTextForImpact` in `CompareView.tsx`):
-`analysis || analysisStd` — it prefers the Change Table (JSON) text, and
-only falls back to the Change Summary (Markdown) text if Change Table
-wasn't generated for this file pair. This is a plain fallback, not a merge —
-if you want the Change Summary text used instead, don't generate a Change
-Table for that pair. The impact button only appears once at least one of
-the two main analyses has completed, and a small "Using: Change Table /
-Change Summary" label above it makes explicit which one will actually be
-sent.
+`analysis || analysisStd` — the Change Table (JSON) when it exists, else the Change
+Summary (Markdown). A "Using: …" label says which.
 
-**Truncation**: the input is truncated to `COMPARE_IMPACT_MAX_QUERY_CHARS`
-(20,000 characters, keeping the *first* 20,000) before being split into
-per-change queries and sent to the Vector Search index — if that cut
-anything, the response sets `truncated: true` and the card shows a ⚠️ banner
-("Query was truncated…"). Each passage shown to the judging LLM is separately
-capped to 800 characters (`_CHUNK_TEXT_EXCERPT_CHARS` in `vector_search.py`).
-
-These are cost/latency safety nets, not hard requirements — verified
-empirically against the live index on 2026-07-10:
-- `query_text` errors past **~29,000 characters** ("Search has too many
-  filter clauses or long query text") — 20,000 leaves comfortable headroom
-  while cutting truncation frequency on large diffs versus the original
-  6,000.
-- `num_results` is capped at **200** for `query_type: HYBRID` (requests above
-  200 error with `"exceeds the maximum allowed for hybrid search 200"`) —
-  `COMPARE_IMPACT_NUM_RESULTS` is currently 30, well under that ceiling.
-
-Adjust `COMPARE_IMPACT_MAX_QUERY_CHARS` / `_NUM_RESULTS` / `_MAX_CANDIDATES`
-in `app.yaml` within those hard limits as needed.
+**Hard API limits** (verified 2026-07-10): `query_text` errors past ~29,000 chars
+(each change query is capped at 2,000), HYBRID `num_results` ≤ 200.
 
 **Boilerplate collapse** (2026-07-17): the text diff collapses per-page
 repeats of the same change (revision stamps, classification fields — same
 text on ≥`COMPARE_BOILERPLATE_MIN_PAGES` distinct pages, default 3) and
 dot-leader table-of-contents rows into single annotated entries. Measured on
 `utils/compare_eval` (recall unchanged): 15-53% fewer diff entries and up to
-51% smaller diff text — fewer LLM tokens per analysis, and the first 20,000
-chars sent to retrieval carry more real signal.
+51% smaller diff text — fewer LLM tokens per analysis and fewer noise changes
+to search.
 
 ### 4. Document summary: quick per-file summary, no diff needed
 
@@ -277,10 +214,11 @@ logged before this was added (or replayed without hashes) keep NULL hashes.
 | `COMPARE_ENABLED` | Feature flag — tab shows "coming soon" when false |
 | `COMPARE_ANALYSIS_ENDPOINT` | LLM endpoint for the main analysis (Change Summary / Change Table) |
 | `COMPARE_ANALYSIS_SYSTEM_PROMPT` | System prompt for the main analysis |
-| `COMPARE_IMPACT_INDEX` | Vector Search index queried for impact search |
-| `COMPARE_IMPACT_ENDPOINT` | LLM endpoint for the impact judgment call |
-| `COMPARE_IMPACT_NUM_RESULTS` / `_MAX_CANDIDATES` / `_MAX_QUERY_CHARS` / `_MAX_TOKENS` | Safety knobs, see truncation section above |
-| `COMPARE_IMPACT_MAX_QUERIES` / `_PER_QUERY_RESULTS` | Multi-query retrieval — one focused Vector Search query per derived change |
+| `COMPARE_IMPACT_INDEX` | Vector Search index queried for impact search (target: `chunks_full_index`, archive included) |
+| `COMPARE_IMPACT_ENDPOINT` | LLM endpoint for the per-document judge calls |
+| `COMPARE_IMPACT_MAX_QUERIES` / `_PER_QUERY_RESULTS` | One Vector Search query per change, hits per query |
+| `COMPARE_IMPACT_MAX_CANDIDATES` / `_MAX_TOKENS` / `_MAX_QUERY_CHARS` | Documents judged, tokens per judge call, change-list cap per call |
+| `COMPARE_IMPACT_ARCHIVE_BEFORE` | Publication date under which a document gets the "Archive" badge (default `2018-01-01`) |
 | `COMPARE_SUMMARY_ENDPOINT` | LLM endpoint for the per-document text summary (default `databricks-gpt-5-6-luna`) |
 | `COMPARE_SUMMARY_IMAGE_ENDPOINT` | Vision LLM endpoint for image files (default `databricks-gpt-5-6-luna`) |
 | `COMPARE_SUMMARY_MAX_CHARS` / `_MAX_TOKENS` | Safety knobs, see truncation note above |
@@ -304,7 +242,8 @@ this is the precise *what*.
 | Route | Router:function | Auth | Request shape | Notes |
 |---|---|---|---|---|
 | `POST /api/compare/analyze` | `compare.py::analyze_documents` | `Depends(require_compare)` | multipart: `old_file`, `new_file`, `old_file_hash`/`new_file_hash` (client-computed, trusted verbatim), `force_refresh`, `processor_version` | Always returns `200 StreamingResponse` — even config/credential errors ride inside the SSE body as an `error` event, since a browser can't cleanly read a non-2xx streaming body. Bounded by `_analyze_semaphore = asyncio.Semaphore(COMPARE_MAX_CONCURRENT)`. |
-| `POST /api/compare/impact` | `compare.py::find_impacted_documents` | `Depends(require_compare)` | JSON `ImpactRequest{changes_text, old_file_hash='', new_file_hash='', force_refresh:bool=False}` | Plain JSON, not multipart — the only compare route where `force_refresh` is a typed bool rather than a string form field. Retries once with the caller's own `x-forwarded-access-token` if the service-principal token gets a 403 from the index. |
+| `POST /api/compare/impact` | `compare.py::find_impacted_documents` | `Depends(require_compare)` | JSON `ImpactRequest{changes_text, old_file_hash='', new_file_hash='', old_file_name='', new_file_name='', force_refresh:bool=False}` | NDJSON stream (`plan` → `document`… → `done`, or `error`). Config errors are a plain 400 JSON before the stream starts. Retries with the caller's `x-forwarded-access-token` if the service-principal token gets a 403 from the index. |
+| `POST /api/compare/impact/export-excel` | `exports.py::export_impact_excel` | **none** | multipart: `result_json`, `filename` | |
 | `POST /api/compare/summarize` | `compare.py::summarize_document` | `Depends(require_compare)` | multipart: `file`, `file_hash`, `force_refresh` | Branches image vs. text purely on extension (`EXTENSION_MAP`); "no extractable text" is a normal 200 response (`no_content:true`), not an error. |
 | `POST /api/compare/save` | `compare.py::save_to_volume` | `Depends(require_compare)` | multipart: `old_file`, `new_file`, `analysis_text`, `impact_text` | Creates the timestamped UC Volume session folder (`{volume_path}/{YYYY-MM-DD_HHMMSS}`). |
 | `GET /api/compare/load` | `compare.py::load_session_files` | `Depends(require_compare)` | query: `session_path`, `old_filename`, `new_filename` | Rejects any `session_path` that doesn't start with the configured `COMPARE_VOLUME_PATH` (or `/Volumes/` as a fallback prefix check) — a directory-traversal guard, returns `403` on mismatch. |
@@ -359,39 +298,20 @@ prompt-comparison test script. Don't assume its prompts are live.
 
 ### Impact search internals (`server/services/vector_search.py`, `impact_queries.py`)
 
-**Query derivation** (`impact_queries.py::changes_to_queries`) is pure regex/heuristic
-— no LLM call. It prefers structured JSON diff rows (drops `editorial`/`structural`
-type rows unless nothing would remain, sorts by criticality `high`→`medium`→`low`),
-falls back to splitting Markdown on `##` headings, and falls back again to the raw
-text as one query. A `"no significant changes detected"` short blob returns an empty
-query list, which short-circuits the whole retrieval+LLM call (zero cost, `no_changes:true`).
+Flow and rationale are in section 3 above. Implementation notes:
 
-**The Vector Search call itself** (`vector_search.py::_fetch_chunks`) is a plain
-`httpx` POST to `/api/2.0/vector-search/indexes/{index}/query` — there's no
-Databricks Vector Search SDK client involved. `query_type` is hardcoded `'HYBRID'`.
-Fan-out is deliberately narrow: `asyncio.Semaphore(3)`, retried up to twice per query
-with linear backoff — a comment in the code explains this directly: the embedding
-endpoint behind `query_text` has been observed rejecting concurrent requests with
-`"Request id already running"` under load (the same class of race documented in the
-Chat README's Vector Search known issue).
-
-**`_aggregate_docs`** is where the "chunk_count can't exceed the real total" fix
-actually lives: documents are keyed by `IDDOC|REF`, and within each document, chunks
-are deduped by `chunk_id` before incrementing `chunk_count` — this is what makes the
-count accurate even though the same chunk legitimately surfaces under several
-different per-change queries. Final ranking is `(query_hits, max_score)` — a
-document corroborated by more independent derived changes outranks one with a merely
-higher single score.
-
-**The judging LLM call** runs at `temperature=0.0` (hardcoded, not configurable —
-unlike the main analysis prompt) and receives per-candidate passages each tagged
-either `[heading: "..."]` or `[no heading]`; the prompt explicitly warns the model
-that a passage's own inline structural markers (`[6. DESCRIPTION > 6.1 ...]`) are
-more reliable than the heading hint, and that all of a candidate's passages must be
-judged together rather than just the top-scoring one. The now-fixed placeholder-echo
-bug is guarded server-side too: any returned `sections` entry that normalizes to
-`"no heading"` or `"no section label captured"` is dropped before it reaches the
-client, as a last-resort safety net on top of the prompt fix.
+- The Vector Search call is a plain `httpx` POST to
+  `/api/2.0/vector-search/indexes/{index}/query` (no SDK), `query_type: HYBRID`.
+  Fan-out is `asyncio.Semaphore(3)` with 2 retries: the embedding endpoint behind
+  `query_text` rejects concurrent requests with `"Request id already running"` under
+  load. Judge calls use their own `Semaphore(6)`, 1 retry, `temperature=0.0`.
+- Only the 7 columns of `_COLUMNS` are requested, so the old and new indexes are
+  interchangeable; title and publication date come from the chunk's
+  `[Source: … | Title: … | Date de diffusion: …]` prefix (`_split_prefix`).
+- A judged passage number outside the candidate's list is dropped; a `section` equal
+  to the `[no heading]` placeholder is blanked.
+- `run_impact_search` raises before `plan` on retrieval failure (the route turns it
+  into an `error` event and an `impact_requests` row with `http_status=502`).
 
 **Config drift worth knowing about**: `app.yaml` currently overrides several code
 defaults — `COMPARE_IMPACT_MAX_CANDIDATES` is `12` in `app.yaml` vs. a `8` code

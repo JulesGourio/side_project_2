@@ -22,8 +22,8 @@ Which model does what:
 | Step | Model / endpoint | Configured via | Role |
 |---|---|---|---|
 | Compare — diff analysis (Change Summary / Change Table) | `databricks-claude-sonnet-4-6` | `COMPARE_ANALYSIS_ENDPOINT` | Identifies substantive content changes between two document versions |
-| Compare — impact search retrieval | Vector Search index `chunks_index_v1` (Databricks-managed embeddings) | `COMPARE_IMPACT_INDEX` | Multi-query retrieval over the full knowledge base, one focused query per derived change |
-| Compare — impact search judgment | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` | Judges each retrieved candidate `impacted: true/false` + a 2-4 sentence reason |
+| Compare — impact search retrieval | Vector Search index `chunks_full_index_v1` (all documents, pre-2018 archive included; `chunks_index_v1` until it is built) | `COMPARE_IMPACT_INDEX` | One query per reported change |
+| Compare — impact search judgment | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` | One call per candidate document: verdict, reason, every conflicting passage with a verbatim quote |
 | Compare — per-document summary (text) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT` | Summarizes one uploaded document (old or new) on its own, independent of the diff |
 | Compare — per-document summary (image) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_IMAGE_ENDPOINT` | Same feature, routed to a vision model for image files |
 | Chat — conversational agent | Databricks Knowledge Assistant (`ka-*-endpoint`, one per division) | `CHAT_ENDPOINT` / `_ALL` / `_AS` / `_IS` | Owns its own retrieval + answer synthesis internally |
@@ -62,10 +62,10 @@ needed to iterate.
    COMPARE_ANALYSIS_ENDPOINT=databricks-claude-sonnet-4-6
    COMPARE_IMPACT_INDEX=uat_landingzone.qualibot.chunks_index_v1
    COMPARE_IMPACT_ENDPOINT=databricks-gpt-5-6-luna
-   COMPARE_IMPACT_NUM_RESULTS=30
-   COMPARE_IMPACT_MAX_CANDIDATES=8
-   COMPARE_IMPACT_MAX_QUERY_CHARS=6000
-   COMPARE_IMPACT_MAX_TOKENS=3500
+   COMPARE_IMPACT_MAX_QUERIES=30
+   COMPARE_IMPACT_PER_QUERY_RESULTS=40
+   COMPARE_IMPACT_MAX_CANDIDATES=25
+   COMPARE_IMPACT_MAX_TOKENS=1500
    COMPARE_SUMMARY_ENDPOINT=databricks-gpt-5-6-luna
    COMPARE_SUMMARY_IMAGE_ENDPOINT=databricks-gpt-5-6-luna
    COMPARE_SUMMARY_MAX_CHARS=300000
