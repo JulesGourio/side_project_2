@@ -1,3 +1,11 @@
+## Working setup (read first)
+
+Claude has no Databricks access from this machine: the code is pushed from here and deployed to Databricks from another machine, same as the sibling `transla` project. Never assume a deploy, job run or table change happened — every manual Databricks/UI step for the user (create table/index/volume, grants, deploy, job run, app.yaml value to switch) goes into `OPERATIONS.md`, ready to copy-paste, and is mentioned in chat. Keep `OPERATIONS.md` the single place for those steps; mark them done (dated) once the user confirms.
+
+The code reaches the deploy machine as a zip. Git: commit and push straight to `main`, never open PRs.
+
+Planned (2026-10-02): a second Vector Search index holding ALL in-scope documents, pre-2018 included (only the `DOC_DATE_CUTOFF` exclusion lifted, ~1,500 extra docs; still `courant=1` only), on the shared `qualibot` endpoint (used by both `qualibot-uat-test` and `uat`), queried by impact search. The existing index (and the chatbot) stays post-2018.
+
 ## Databricks (this project)
 Bundle name: `qualibot`. Targets: `dev`, `uat`, `qualibot-uat-test`, `prod`.
 
