@@ -1,0 +1,110 @@
+# Quality Scoring Job — Qualibot production turns
+#
+# Scores the assistant turns already answered by the Knowledge Assistants (no call to the KA endpoints)
+# with the MLflow judges and scorers registered in the scoring experiment. The judges compare each answer
+# with the passages the assistant retrieved, read from its own MLflow trace, and tell retrieval errors
+# from generation errors (an independent search of the index). Writes the documented tables
+# uat_proj.qualibot.chat_quality_scores, chat_quality_assessments and chat_quality_scoring_runs, and
+# drops the views over them (the dashboard reads the tables).
+#
+# Notebook: utils/quality_monitoring/Score_Production_QA.py
+#   base_parameters: source_schema / output_schema / experiment_path / judge_endpoint; max_run_minutes
+#   (no batch of turns starts after it, the turns left are scored by the next run); test_limit, dry_run,
+#   rescore_changed_config, reset_outputs, feedback_to_agent_traces for ad-hoc runs; fail_on_alert: "true"
+#   makes a run that raises a quality alert fail on purpose, which sends the failure e-mail below.
+#
+# Throughput: judge calls are paced on 70% of the judge model's token limits (200k input and 20k
+# output tokens per minute), measured with the tokens the model reports. A backlog is absorbed over
+# successive runs; every batch is written as soon as it is scored. The run stops if the judge endpoint
+# does not answer.
+
+variables:
+  job_compute_xs_policy_id:
+    description: "Cluster policy of the small single-node job clusters (.large node, on-demand driver)"
+    lookup:
+      cluster_policy: "1. Job Compute XS"
+
+targets:
+  qualibot-uat:
+    resources:
+      jobs:
+        quality_scoring:
+          # D_<n> prefix: daily job, see the databricks-job-conventions skill (check D_3 is free).
+          name: "D_3_qualibot-quality-scoring-${bundle.target}"
+          description: "LLM-judge quality scoring of Qualibot production turns (quality + grounding on cited documents)"
+
+          # Two overlapping runs would score the same turns twice.
+          max_concurrent_runs: 1
+
+          # Failure e-mail: real failures, and quality alerts once fail_on_alert is "true".
+          email_notifications:
+            on_failure:
+              - jules.gourio.external@latecoere.aero
+
+          tags:
+            project: Qualibot
+            activity-type: ${var.parsing_job_activity_tag}
+            job-purpose: quality-monitoring
+
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+
+          # Same identity as parsing_pipeline / traces_migration on this target (job-runner-sa-uat).
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+
+          tasks:
+            - task_key: "1_score_turns"
+              description: "Score new assistant turns with MLflow judges, MERGE into the scores table, run ledger, alerts"
+              timeout_seconds: 7200
+              job_cluster_key: scoring_cluster
+              # Installed when the cluster starts; the notebook's first cell then finds it and installs nothing.
+              libraries:
+                - pypi:
+                    package: "mlflow[databricks]>=3.11"
+              notebook_task:
+                notebook_path: ../utils/quality_monitoring/Score_Production_QA.py
+                source: WORKSPACE
+                base_parameters:
+                  source_schema: "uat_landingzone.qualibot"
+                  output_schema: "uat_proj.qualibot"
+                  experiment_path: "/Shared/qualibot-quality-scoring"
+                  judge_endpoint: "databricks-gpt-6-luna"
+                  max_run_minutes: "100"
+                  test_limit: ""
+                  dry_run: "false"
+                  rescore_changed_config: "false"
+                  reset_outputs: "false"
+                  feedback_to_agent_traces: "false"
+                  fail_on_alert: "false"
+
+          # The run mostly waits on judge calls (HTTP) and writes a few rows per batch: the smallest job cluster is
+          # enough. Policy "1. Job Compute XS": single node, .large node type, latest LTS runtime, spot with fallback
+          # but the first node (the driver, here the only node) on demand. The job identity needs CAN_USE on the
+          # policy.
+          job_clusters:
+            - job_cluster_key: scoring_cluster
+              new_cluster:
+                policy_id: ${var.job_compute_xs_policy_id}
+                # Fields left out (runtime version, node type, availability) take the policy's defaults: the policy's
+                # auto:latest-lts is resolved when the cluster is created, and the Jobs API rejects it as a literal value.
+                apply_policy_default_values: true
+                num_workers: 0
+                # Without this, Unity Catalog table reads and writes fail with [UC_NOT_ENABLED].
+                data_security_mode: SINGLE_USER
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: "local[*]"
+                custom_tags:
+                  ResourceClass: SingleNode
+
+          # Twice a day. Align on the refresh of uat_landingzone.qualibot.chat_messages.
+          # Left PAUSED until a first manual run (dry_run=true, then reset_outputs=true with test_limit=20)
+          # is validated.
+          schedule:
+            quartz_cron_expression: "0 0 3,15 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: PAUSED

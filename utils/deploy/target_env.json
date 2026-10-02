@@ -1,0 +1,36 @@
+{
+  "_comment": "Per-target env var overrides for the deployed app. Single source of truth read by both deploy_qualibot.ps1 (local/manual deploys) and bitbucket-pipelines.yml (CI deploys) -- do not hardcode these values a third time anywhere else. A key omitted for a target means: keep app.yaml's own default.",
+  "uat": {
+    "COMPARE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/doc_compare",
+    "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
+    "CHAT_ENDPOINT": "ka-7679a56e-endpoint",
+    "CHAT_ENDPOINT_IS": "ka-1560aded-endpoint",
+    "CHAT_ENDPOINT_AS": "ka-3a7e9255-endpoint",
+    "CHAT_ENDPOINT_ALL": "ka-7679a56e-endpoint",
+    "CHAT_TRANSLATE_BRIDGE_ENABLED": "true",
+    "COMPARE_IMPACT_INDEX": "uat_landingzone.qualibot.chunks_index_v1",
+    "CAPS_WAREHOUSE_ID": "5890912c31867b77"
+  },
+  "uat-test": {
+    "COMPARE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/test",
+    "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/test/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
+    "CHAT_ENDPOINT": "ka-7679a56e-endpoint",
+    "CHAT_ENDPOINT_IS": "ka-99026e27-endpoint",
+    "CHAT_ENDPOINT_AS": "ka-3a7e9255-endpoint",
+    "CHAT_ENDPOINT_ALL": "ka-7679a56e-endpoint",
+    "LAKEBASE_DATABASE": "doccompare_test",
+    "CHAT_TRANSLATE_BRIDGE_ENABLED": "true",
+    "COMPARE_ANALYSIS_ENDPOINT": "databricks-gpt-5-6-luna",
+    "COMPARE_IMPACT_INDEX": "uat_landingzone.qualibot.chunks_index_v1",
+    "CAPS_WAREHOUSE_ID": "5890912c31867b77"
+  },
+  "prod": {
+    "COMPARE_VOLUME_PATH": "/Volumes/prod_landingzone/qualibot/doc_compare",
+    "CHAT_ENDPOINT": "ka-5d35f4d5-endpoint",
+    "CHAT_ENDPOINT_IS": "ka-3315943a-endpoint",
+    "CHAT_ENDPOINT_AS": "ka-c9dbc4db-endpoint",
+    "CHAT_ENDPOINT_ALL": "ka-5d35f4d5-endpoint",
+    "COMPARE_IMPACT_INDEX": "prod_landingzone.qualibot.chunks_index",
+    "CAPS_WAREHOUSE_ID": "03054ddc44b7f902"
+  }
+}
