@@ -5,12 +5,15 @@ impact search, résumé, exports, historique, et `CompareView.tsx`.
 
 ## En bref
 
-- **17 problèmes corrigés** sur la branche, **15 identifiés mais laissés** (choix
-  de conception à trancher ou refactor trop large pour une passe d'audit).
+- **16 problèmes corrigés** dans l'application (partie A), **10 améliorations des
+  moteurs PDF/DOCX** (partie E), **16 points identifiés mais laissés** (partie B).
+- Les moteurs ont été testés sur des paires de documents PDF et DOCX **générées**
+  avec une seule différence connue ; il n'y a aucun document réel sur cette
+  machine.
 - Le plus grave : **un changement d'un seul mot dans un long paragraphe était
   supprimé avant même d'arriver au LLM** (« shall record » → « shall not
   record », « avant » → « après », « peut » → « doit »). Corrigé (A1).
-- Vérifié : 161 tests Python passent (123 avant + 38 nouveaux), `tsc --noEmit`
+- Vérifié : 188 tests Python passent (123 avant + 65 nouveaux), `tsc --noEmit`
   et `vite build` passent.
 - **Non vérifié** : rien n'a tourné contre Databricks (ni LLM, ni Vector Search,
   ni Lakebase), l'interface n'a pas été ouverte dans un navigateur, et le
@@ -81,12 +84,10 @@ Gravité : 🔴 résultat faux ou faille · 🟠 gêne réelle · 🟡 mineur.
 - **Tests.** `test_load_rejects_paths_outside_the_volume`,
   `test_save_result_rejects_paths_outside_the_volume`.
 
-### A5 🟠 Les routes d'export n'exigeaient pas le droit `can_compare`
+### A5 — retiré
 
-- **Problème.** Les six routes de `exports.py` n'avaient aucun
-  `Depends(require_compare)` (déjà noté dans le README).
-- **Fait.** Dépendance posée sur le routeur entier.
-- **Test.** `test_export_routes_require_can_compare`.
+Le contrôle `can_compare` posé sur les routes d'export a été enlevé à ta
+demande (2026-10-04) : ces routes restent ouvertes, comme avant. Voir B16.
 
 ### A6 🟠 Diff tronqué à 600 000 caractères sans prévenir l'utilisateur
 
@@ -203,11 +204,58 @@ Gravité : 🔴 résultat faux ou faille · 🟠 gêne réelle · 🟡 mineur.
 | B12 | Table `messages` : pas d'index sur les hashes, lignes jamais purgées ; les trois caches n'écrivent qu'en ajout. | Index `(old_file_hash, new_file_hash, app_version, processor_version)` + purge. | Étape Lakebase manuelle. |
 | B13 | Le cache ne rejoue pas les avertissements (contourné par A3 : ces rapports ne sont plus mis en cache, donc recalculés à chaque fois). | Stocker les avertissements avec le rapport. | Demande une colonne. |
 | B14 | `preview.py` et `feedback.py` n'ont pas de contrôle `can_compare`. | Poser la dépendance. | Je n'ai pas vérifié s'ils servent aussi au chat. |
+| B16 | Les routes d'export (`exports.py`) n'exigent pas `can_compare`. | `Depends(require_compare)` sur le routeur. | Fait puis retiré à ta demande. |
 | B15 | Exports Excel/PDF et jugements d'impact : pas de test HTTP de bout en bout sur `/compare/impact` ni `/compare/summarize`. | Tests `TestClient` avec LLM et Vector Search simulés. | Hors temps de cette passe. |
+
+## E. Moteurs PDF et DOCX
+
+Méthode : deux révisions d'une procédure qualité générée (titres numérotés,
+paragraphes, tableau, en-tête et pied de page « Page i/n »), **une seule
+différence connue**, et on regarde ce qui arrive au LLM. Colonne « avant » =
+résultat mesuré sur le code avant correction.
+
+| # | Cas | Avant | Après |
+|---|---|---|---|
+| E1 | **PDF** — un paragraphe ajouté en page 1 d'un document de 6 pages (tous les sauts de page bougent) | 1 ajout + **6 faux « MODIFIED »** : un paragraphe coupé par un saut de page devenait deux blocs | 1 ajout. Les paragraphes coupés par un saut de page sont recollés (en-têtes et pieds de page ignorés, lignes de tableau jamais fusionnées) |
+| E2 | **PDF** — ligatures (« ﬁ », « ﬂ ») | conservées : deux exports avec des polices différentes divergent sur chaque mot en « fi » | développées |
+| E3 | **PDF** — tableau à bordures, une croix change de colonne (matrice de responsabilités) | **changement invisible** : les cellules vides étaient supprimées, les deux lignes se lisaient pareil | `Activity: Release the part \| ~~Inspector:~~ **Quality manager:** X` |
+| E4 | **PDF** — tableau : valeur modifiée | `M10 bolt \| ~~45~~ **48** Nm \| Wrench C` (min ou max ?) | `Fastener: M10 bolt \| Max torque: ~~45~~ **48** Nm \| Tool: Wrench C` |
+| E5 | **PDF** — tableau qui continue page suivante sans répéter l'en-tête | — | les lignes gardent les libellés de colonne |
+| E6 | **DOCX** — tableau avec cellule vide ou deux cellules de même valeur | **libellés décalés d'une colonne** : `Max torque: Wrench A` ; un changement de Max était annoncé sur Min | chaque valeur porte sa propre colonne |
+| E7 | **DOCX** — texte ajouté en suivi des modifications (`w:ins`) | **non lu** : aucun changement détecté | lu ; le texte supprimé en suivi (`w:del`, origine d'un déplacement) est ignoré |
+| E8 | **DOCX** — paragraphe dans un contrôle de contenu (`w:sdt`), texte dans un champ (`w:fldSimple`), tableau imbriqué dans une cellule, notes de bas de page | **non lus** | lus (notes : `Footnote N: …`) ; les lignes de sommaire (styles `TOC n` / `TM n`) sont ignorées |
+| E9 | **Les deux** — un paragraphe coupé en deux (ou deux fusionnés), texte identique | 1 faux ajout + 1 faux « MODIFIED » | rien |
+| E10 | **Les deux** — section insérée, titres suivants renumérotés | 2 entrées par titre (« REMOVED 3. INSPECTION » + « ADDED 4. INSPECTION »), chacune sous son propre `##` | 1 entrée par titre : `~~3.~~ **4.** INSPECTION`. Le numéro reste visible : `2.5 mm max` → `3.5 mm max` a la même forme et ne doit jamais être masqué |
+
+Déjà corrects avant, vérifiés et maintenant couverts par un test : documents
+identiques (0 entrée), valeur modifiée, négation, paragraphe supprimé, section
+déplacée, pied de page dont la révision change (1 entrée regroupée), cinq
+modifications dont un paragraphe déplacé **et** modifié, document en français,
+figure redessinée (1 image « MODIFIED »), figure supprimée, PDF sans couche
+texte (avertissement).
+
+**Limites.**
+- Documents générés, pas des documents Latécoère : la mise en page réelle
+  (cartouches, schémas de câblage, tableaux sans bordures, deux colonnes) n'est
+  pas représentée. E1, E3-E5 changent l'extraction PDF : à rejouer sur
+  `compare_eval`.
+- Retour arrière sans toucher au code : `COMPARE_PDF_MERGE_PAGE_SPLITS=false`
+  (E1), `COMPARE_PDF_TABLE_LABELS=false` (E3-E5), `COMPARE_WORD_LEVEL_CHECK=false` (A1).
+- E3-E5 : un tableau n'est étiqueté que si sa première ligne ressemble à un
+  en-tête (3 colonnes ou plus, toutes remplies, sans chiffres). Les
+  formulaires clé/valeur et les cartouches restent en positions
+  (`Revision | A`). Un tableau dont la première ligne de données est
+  entièrement du texte sera pris pour un en-tête.
+- E6 : même règle « première ligne = en-tête » qu'avant côté DOCX, sans
+  condition : un tableau DOCX sans en-tête reste mal étiqueté.
+- En-têtes et pieds de page DOCX : toujours non lus.
+
+Tests : `tests/test_compare_documents.py` (31 tests ; 20 échouent sur les
+processeurs d'avant).
 
 ## C. Non audité en détail
 
-Extraction DOCX / PPTX / Excel / XML / image (`processors/*.py` hors PDF),
+Extraction PPTX / Excel / XML / image,
 `export_helpers.py`, `ImpactResults.tsx`, `ComparisonHistory.tsx`,
 `FeedbackPanel.tsx`, `streaming.py` (lu seulement pour la fin de flux).
 
@@ -216,7 +264,7 @@ Extraction DOCX / PPTX / Excel / XML / image (`processors/*.py` hors PDF),
 ```powershell
 # Tests Python (depuis la racine)
 python -m pytest -q
-python -m pytest -q tests/test_compare_audit.py   # les 38 tests de cet audit
+python -m pytest -q tests/test_compare_audit.py tests/test_compare_documents.py   # les 65 tests de cet audit
 
 # Front
 cd client; bun run build

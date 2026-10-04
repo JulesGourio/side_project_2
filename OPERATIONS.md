@@ -110,6 +110,11 @@ index, aucun droit à créer : code de l'app seulement.
   - comparer deux révisions connues : la Change Table doit contenir au moins
     autant de lignes qu'avant (les changements d'un seul mot remontent
     maintenant) ; regarder si du bruit est apparu ;
+  - comparer deux révisions **PDF** d'un document avec tableaux : les lignes
+    de tableau modifiées doivent nommer leur colonne, et il ne doit pas y avoir
+    de faux changements en bas/haut de page ;
+  - comparer deux révisions **DOCX**, dont une préparée en suivi des
+    modifications : les insertions suivies doivent apparaître ;
   - déposer un PDF et un DOCX : message « must be of the same type » ;
   - « Judge Impacted Docs » puis « Cancel » pendant la recherche : elle s'arrête ;
   - lancer l'impact search depuis le Change Summary, générer la Change Table,
@@ -126,6 +131,9 @@ index, aucun droit à créer : code de l'app seulement.
   $env:COMPARE_WORD_LEVEL_CHECK = 'false'; python utils\compare_preview.py <ancien> <nouveau> --score
   Remove-Item Env:COMPARE_WORD_LEVEL_CHECK
   ```
+
+  Même comparaison pour l'extraction PDF (`COMPARE_PDF_MERGE_PAGE_SPLITS`,
+  `COMPARE_PDF_TABLE_LABELS` à `false`), surtout sur MOP_AX et les WDT.
 
 - [ ] **4. Me dire si on fusionne dans `main`.**
 

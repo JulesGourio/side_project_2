@@ -1036,8 +1036,10 @@ def _modal_group_profile(text: str) -> List[str]:
 # inside one obligation group.
 _WORD_LEVEL_CHECK = os.getenv('COMPARE_WORD_LEVEL_CHECK', 'true').lower() == 'true'
 # Unicode words (accents kept — canonicalize() turns "délai" into "d lai") plus
-# the comparison operators, which carry the meaning of a limit on their own.
-_WORD_TOKEN_RE = re.compile(r'[^\W_]+|[<>≤≥=±]')
+# the comparison operators, which carry the meaning of a limit on their own, and
+# the table cell separator: "Release | | X" vs "Release | | | X" is the X of a
+# responsibility matrix changing column.
+_WORD_TOKEN_RE = re.compile(r'[^\W_]+|[<>≤≥=±|]')
 _MODAL_TOKEN_GROUP: Dict[str, str] = {
     **{w: '\x00mandatory' for w in ('shall', 'must', 'will', 'doit', 'doivent', 'devra', 'devront')},
     **{w: '\x00permissive' for w in ('may', 'can', 'could', 'peut', 'peuvent', 'pourra', 'pourront')},
@@ -1484,6 +1486,56 @@ def _dedup_repeated_headers(items: List[Dict[str, Any]], window: int = 25) -> Li
     return result
 
 
+# A paragraph cut in two (or two merged into one) between revisions: up to this
+# many consecutive blocks, no further apart than this many source lines.
+_RESEGMENT_MAX_RUN = 3
+_RESEGMENT_MAX_GAP = 3
+_RESEGMENT_MIN_WORDS = 8
+
+
+def _cancel_resegmented(
+    olds: List[Dict[str, Any]], news: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
+    """Remove blocks whose text is unchanged but cut differently.
+
+    One block on a side equal to 2-3 consecutive leftover blocks on the other
+    is the same text with a paragraph break added or removed: no wording
+    changed. Left alone it reached the LLM as an ADDED half plus a MODIFIED
+    whose other half is struck through — two phantom changes (2026-10-04).
+
+    Returns (remaining_olds, remaining_news, n_blocks_cancelled).
+    """
+    def _runs(items: List[Dict[str, Any]]) -> Dict[str, Tuple[int, ...]]:
+        out: Dict[str, Tuple[int, ...]] = {}
+        for a in range(len(items)):
+            text = items[a]['clean']
+            for b in range(a + 1, min(a + _RESEGMENT_MAX_RUN, len(items))):
+                if items[b]['idx'] - items[b - 1]['idx'] > _RESEGMENT_MAX_GAP:
+                    break
+                text = f"{text} {items[b]['clean']}"
+                out.setdefault(text, tuple(range(a, b + 1)))
+        return out
+
+    drop_old: Set[int] = set()
+    drop_new: Set[int] = set()
+    for wholes, parts, drop_w, drop_p in ((olds, news, drop_old, drop_new), (news, olds, drop_new, drop_old)):
+        runs = _runs(parts)
+        for i, whole in enumerate(wholes):
+            if i in drop_w or len(whole['clean'].split()) < _RESEGMENT_MIN_WORDS:
+                continue
+            run = runs.get(whole['clean'])
+            if run and not any(k in drop_p for k in run):
+                drop_w.add(i)
+                drop_p.update(run)
+    if not drop_old and not drop_new:
+        return olds, news, 0
+    return (
+        [o for i, o in enumerate(olds) if i not in drop_old],
+        [n for j, n in enumerate(news) if j not in drop_new],
+        len(drop_old) + len(drop_new),
+    )
+
+
 _DIFF_ENTRY_RE = re.compile(r'^(MODIFIED|ADDED|REMOVED|RELOCATED)(?:\s+\[([^\]]*)\])?:\s?(.*)$', re.S)
 
 # Pagination fragments inside repeated header/footer text ('Page 2',
@@ -1819,6 +1871,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
 
     new_leftovers = [n for n in new_items if n['idx'] not in matched_new]
     unmatched_old.sort(key=lambda o: o['idx'])
+    unmatched_old, new_leftovers, resegmented = _cancel_resegmented(unmatched_old, new_leftovers)
 
     sims: List[Tuple[float, int, int]] = []
     new_words_cache = [n['clean'].split() for n in new_leftovers]
@@ -1847,7 +1900,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     matched_o: set = set()
     matched_n: set = set()
     results: List[Dict[str, Any]] = []
-    filtered = 0
+    filtered = resegmented
 
     def _emit_modified(o: Dict[str, Any], n: Dict[str, Any]) -> None:
         nonlocal filtered
@@ -1905,6 +1958,36 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         if not k:
             continue
         bucket = keyed_new.get((o['sec'], k))
+        if not bucket:
+            continue
+        j = bucket.pop(0)
+        matched_o.add(i)
+        matched_n.add(j)
+        _emit_modified(o, new_leftovers[j])
+
+    # ── Third-chance pairing: same text behind a different leading number ───
+    # "3. INSPECTION" -> "4. INSPECTION" is too short for the similarity pass
+    # (under 3 words), so every heading after an inserted section came out as a
+    # REMOVED plus an ADDED, each under its own "##". Paired, it is one entry
+    # showing only the number — still visible, since "2.5 mm max" -> "3.5 mm max"
+    # has the same shape and must never be hidden.
+    def _numbered_key(txt: str) -> Optional[str]:
+        head, _, rest = txt.strip().partition(' ')
+        rest = _clean(rest)
+        if not rest or not any(ch.isdigit() for ch in head) or not any(ch.isalpha() for ch in rest):
+            return None
+        return rest
+
+    numbered_new: Dict[str, List[int]] = {}
+    for j, n in enumerate(new_leftovers):
+        if j not in matched_n:
+            k = _numbered_key(n['txt'])
+            if k:
+                numbered_new.setdefault(k, []).append(j)
+    for i, o in enumerate(unmatched_old):
+        if i in matched_o:
+            continue
+        bucket = numbered_new.get(_numbered_key(o['txt']) or '')
         if not bucket:
             continue
         j = bucket.pop(0)

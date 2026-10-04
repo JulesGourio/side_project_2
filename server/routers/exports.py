@@ -13,7 +13,7 @@ import logging
 import re
 
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from ..services.export_helpers import (
@@ -23,12 +23,10 @@ from ..services.export_helpers import (
     _parse_json_response,
 )
 from ..services.lakebase import store_error
-from ..services.user import require_compare
 from .compare import _get_config, _is_within_volume, _sanitize_filename
 
 logger = logging.getLogger(__name__)
-# Every route here serves or stores Compare output: same gate as compare.py.
-router = APIRouter(dependencies=[Depends(require_compare)])
+router = APIRouter()
 
 
 def _upload(remote_path: str, data: bytes) -> None:

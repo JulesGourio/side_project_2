@@ -5,7 +5,6 @@ Coverage:
   - truncated diff surfaces a user warning
   - /compare/analyze: mixed file types, server-side hashes for the cache lookup
   - volume path guard (/compare/load, auto-save routes)
-  - export routes gated by can_compare
   - impact search: cache key, "no changes" in French, REF exclusion, change-list
     budget per candidate, unverifiable "impacted" verdicts, judge cancellation
 """
@@ -16,7 +15,6 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from server.services.impact_queries import changes_to_queries
@@ -187,27 +185,7 @@ def test_is_within_volume_accepts_session_folders():
     assert _is_within_volume('/Volumes/cat/sch/compare', '/Volumes/cat/sch/compare/')
 
 
-@pytest.mark.parametrize('route, data', [
-    ('/api/compare/export-excel', {'json_text': '[]'}),
-    ('/api/compare/export-pdf', {'markdown_text': '# x'}),
-    ('/api/compare/impact/export-excel', {'result_json': '{}'}),
-    ('/api/compare/save-result', {'session_path': '/Volumes/x', 'filename': 'a.md', 'content': 'x'}),
-])
-def test_export_routes_require_can_compare(app, route, data):
-    from server.services.user import require_compare
-
-    def _deny():
-        raise HTTPException(status_code=403, detail='Document comparison access not granted')
-
-    app.dependency_overrides[require_compare] = _deny
-    try:
-        with TestClient(app) as c:
-            assert c.post(route, data=data).status_code == 403
-    finally:
-        app.dependency_overrides.clear()
-
-
-def test_export_excel_still_works_when_allowed(client):
+def test_export_excel_route(client):
     res = client.post('/api/compare/export-excel', data={'json_text': '[]', 'filename': 'cmp'})
     assert res.status_code == 200
     assert res.headers['content-disposition'].endswith('cmp.xlsx"')

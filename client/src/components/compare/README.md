@@ -230,6 +230,7 @@ logged before this was added (or replayed without hashes) keep NULL hashes.
 | `COMPARE_SUMMARY_MAX_CHARS` / `_MAX_TOKENS` | Safety knobs, see truncation note above |
 | `COMPARE_MAX_CONCURRENT` | Semaphore bounding concurrent `/compare/analyze` requests |
 | `MAX_COMPARE_FILE_MB` / `MAX_COMPARE_PDF_MB` | Upload size cap (`compare.py`, default 20MB). `app.yaml` declares the second, historical name; the first wins when both are set |
+| `COMPARE_PDF_MERGE_PAGE_SPLITS` / `COMPARE_PDF_TABLE_LABELS` | `false` restores the pre-2026-10-04 PDF extraction (paragraphs cut by a page break left as two blocks; table rows without column labels) |
 | `COMPARE_WORD_LEVEL_CHECK` | `false` restores the pre-2026-10-04 diff filter (drops one-word changes in long paragraphs) — for A/B runs on `compare_eval` only |
 | `COMPARE_ANALYSIS_TIMEOUT_S` / `_CONNECT_TIMEOUT_S` / `_RETRIES` | HTTP timeout/retry knobs for the LLM call |
 | `COMPARE_MAX_TOKENS` / `_THINKING_BUDGET` / `_TEMPERATURE` | LLM call parameters |
@@ -260,8 +261,8 @@ this is the precise *what*.
 | `POST /api/compare/export-pdf` | `exports.py::export_pdf` | **none** | multipart: `markdown_text`, `filename`, `title` | |
 | `POST /api/compare/save-result` / `save-excel` / `save-pdf` | `exports.py` | **none** | | Auto-save-to-volume variants triggered by the client right after analysis; same `COMPARE_VOLUME_PATH` prefix guard as `/compare/load`. |
 
-**Capability gating**: `exports.py` is gated at router level by `require_compare`
-(2026-10-04). `preview.py` and `feedback.py` still carry no such dependency.
+**Capability gating**: `exports.py`, `preview.py` and `feedback.py` carry no
+`Depends(require_compare)` — left open on purpose (decided 2026-10-04).
 Every `session_path` is checked with `_is_within_volume` (normalised, `..` refused).
 
 ### Processor factory (`server/services/processors/`)
@@ -282,9 +283,9 @@ alternate diff routine to switch to.
 
 | Processor | Extraction | Diffing quirk |
 |---|---|---|
-| PDF | PyMuPDF, block-sorted `(y,x)`, page-tagged, `TEXT_DEHYPHENATE` | Images deduped by perceptual hash (dhash), 1024px/JPEG-q65 |
+| PDF | PyMuPDF, block-sorted by `y`, page-tagged, `TEXT_DEHYPHENATE`, ligatures expanded; a paragraph cut by a page break is re-joined; ruled-table rows are labelled with their column header (`Activity: … \| Inspector: X`) when the first row looks like one | Images deduped by perceptual hash (dhash), 1024px/JPEG-q65 |
 | Image | No text extraction — both images sent as 4 content blocks | 1600px/q85 normalization, distinct constants from PDF's embedded-image path |
-| DOCX | Walks paragraphs/tables/textboxes/VML shapes; estimates page numbers from break counts | Largest single extraction function in the codebase (~220 lines); VML connector/arrow geometry is extracted as diffable text specifically so the prompt doesn't misclassify it as a "Visual change" |
+| DOCX | Reads every `w:t` of a paragraph (tracked insertions, content controls, fields — not tracked deletions), block-level `w:sdt`, nested tables, footnotes; skips TOC-styled lines; table cells labelled by their true column. Walks paragraphs/tables/textboxes/VML shapes; estimates page numbers from break counts | Largest single extraction function in the codebase (~220 lines); VML connector/arrow geometry is extracted as diffable text specifically so the prompt doesn't misclassify it as a "Visual change" |
 | PPTX | Recursive shape walk, `page_label='Slide'` | 1024px/q80 |
 | Excel | Key-based row matching first (rejects auto-increment-looking key columns), falls back to `difflib.SequenceMatcher` unified diff if rows aren't table-shaped | Never produces `image_pairs` |
 | XML | Depth-first element walk, `page_label='Item'` | No images at all — no "Visual changes" section in the prompt |

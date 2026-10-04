@@ -13,7 +13,7 @@ import io
 import logging
 import os
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .base import BaseProcessor, ProcessMetadata, ProcessResult
 from ._diff_engines import (
@@ -102,16 +102,49 @@ _TABLE_FOOTER_BAND = 0.88
 _TABLE_BAND_MAX_ROWS = 3
 
 
-def _table_rows_for_page(page) -> List[Any]:
-    """[(y, 'cell | cell | cell', bbox), ...] for every real table on the page."""
+# Data rows are labelled with their column header ("Activity: Release the part |
+# Quality manager: X"), as the DOCX extractor does. A changed row reaches the LLM
+# alone — the unchanged header row is not in the diff — so without labels it
+# could not say WHICH column a value belongs to. Set to false to get positional
+# rows only ("Release the part |  |  | X").
+_TABLE_LABELS = os.getenv('COMPARE_PDF_TABLE_LABELS', 'true').lower() == 'true'
+# A first row is taken as a header only when it looks like one: enough columns,
+# every cell filled, short, and without digits. Key/value forms and cartouches
+# (2 columns, values in the first row) stay positional — labelling them would
+# turn one changed value into a change on every row of the table.
+_HEADER_MIN_COLS = 3
+_HEADER_MAX_CELL_WORDS = 6
+
+
+def _looks_like_header(cells: List[str]) -> bool:
+    return (
+        len(cells) >= _HEADER_MIN_COLS
+        and all(cells)
+        and all(len(c.split()) <= _HEADER_MAX_CELL_WORDS for c in cells)
+        and not any(ch.isdigit() for c in cells for ch in c)
+    )
+
+
+def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[Any]:
+    """[(y, 'cell | cell | cell', bbox), ...] for every real table on the page.
+
+    `state` carries the last header from one page to the next, so a table that
+    continues on the following page without repeating its header keeps the same
+    labels (otherwise a row would be labelled or not depending on which side of
+    a page break it falls).
+    """
     out: List[Any] = []
+    state = state if state is not None else {}
+    continued_header = state.get('header') if state.get('open') else None
+    state['open'] = False
     try:
         tables = page.find_tables().tables
     except Exception as e:  # find_tables is best-effort; never fail extraction over it
         logger.debug(f'find_tables skipped: {e}')
         return out
     page_height = max(1.0, page.rect.height)
-    for table in tables:
+    first_table = True
+    for table in sorted(tables, key=lambda t: t.bbox[1]):
         if table.row_count < _TABLE_MIN_ROWS or table.col_count < _TABLE_MIN_COLS:
             continue
         top, bottom = table.bbox[1] / page_height, table.bbox[3] / page_height
@@ -125,9 +158,35 @@ def _table_rows_for_page(page) -> List[Any]:
             continue
         bbox = table.bbox
         height = max(1.0, bbox[3] - bbox[1])
-        for i, row in enumerate(rows):
-            cells = [' '.join((c or '').split()) for c in row]
-            cells = [c for c in cells if c]
+        # Empty cells keep their place ("M8 | 22 Nm |  | Wrench B"): dropping them
+        # made a value that moved to another column — an X in a responsibility
+        # matrix, a limit going from "min" to "max" — read exactly the same on
+        # both revisions, so the change did not exist for the diff. Columns that
+        # are empty on every row (merged-cell artefacts of find_tables) carry no
+        # position and are removed.
+        norm = [[' '.join((c or '').split()) for c in row] for row in rows]
+        n_cols = max((len(r) for r in norm), default=0)
+        norm = [r + [''] * (n_cols - len(r)) for r in norm]
+        used = [c for c in range(n_cols) if any(r[c] for r in norm)]
+
+        header: Optional[List[str]] = None
+        header_row = -1
+        if _TABLE_LABELS and norm:
+            if _looks_like_header(norm[0]):
+                header, header_row = norm[0], 0
+            elif first_table and continued_header and len(continued_header) == n_cols:
+                header = continued_header
+        first_table = False
+        state['header'] = header
+        state['open'] = True  # reset to False by the next page if it has no table
+
+        for i, row in enumerate(norm):
+            if header is not None and i != header_row:
+                cells = [f'{header[c]}: {val}' for c, val in enumerate(row) if val]
+            else:
+                cells = [row[c] for c in used]
+                while cells and not cells[-1]:
+                    cells.pop()
             if not cells:
                 continue
             # Rows are evenly spread over the table bbox: enough to interleave them
@@ -135,6 +194,77 @@ def _table_rows_for_page(page) -> List[Any]:
             y = bbox[1] + height * (i / max(1, len(rows)))
             out.append((y, ' | '.join(cells), bbox))
     return out
+
+
+# Running header/footer: the same block (digits masked, so "Page 3/12" groups)
+# on at least half of the pages, inside these bands of the page height.
+_MERGE_PAGE_SPLITS = os.getenv('COMPARE_PDF_MERGE_PAGE_SPLITS', 'true').lower() == 'true'
+_RUNNING_TOP_BAND = 0.20
+_RUNNING_BOTTOM_BAND = 0.85
+_RUNNING_MIN_PAGE_SHARE = 0.5
+# "a) …", "b. …", "iv) …": a list item, not the continuation of a sentence.
+_LIST_MARKER_RE = re.compile(r'^(?:[a-z]|[ivx]{1,4})[).]\s')
+_SENTENCE_END = '.:;!?…'
+
+
+def _continues_across_pages(tail: str, head: str) -> bool:
+    """True when `head` (first body block of a page) is the rest of the sentence
+    left open by `tail` (last body block of the previous page)."""
+    tail, head = tail.rstrip(), head.lstrip()
+    if not tail or not head or len(tail.split()) < 4:
+        return False
+    if tail[-1] in _SENTENCE_END or not head[0].islower():
+        return False
+    return not _LIST_MARKER_RE.match(head)
+
+
+def _merge_page_split_paragraphs(pages: List[List[Dict[str, Any]]]) -> None:
+    """Re-join, in place, a paragraph that a page break cut into two blocks.
+
+    Where the break falls depends on everything above it: one paragraph added
+    on page 1 moves every later break, and each paragraph that used to straddle
+    a break (or now does) reached the diff as two half-blocks on one side and a
+    whole block on the other. Measured on a generated 6-page procedure: one
+    inserted paragraph produced 6 phantom MODIFIED entries (2026-10-04).
+
+    Running headers/footers sit between the two halves in reading order, so
+    they are identified first (same text on most pages, in the top or bottom
+    band) and skipped when looking for a page's first/last body block. Table
+    rows are never merged.
+    """
+    n_pages = len(pages)
+    if n_pages < 2:
+        return
+    key = lambda line: re.sub(r'\d+', '#', line['text'])  # noqa: E731
+    seen_on: Dict[str, set] = {}
+    for idx, lines in enumerate(pages):
+        for line in lines:
+            if line['rel_y'] <= _RUNNING_TOP_BAND or line['rel_y'] >= _RUNNING_BOTTOM_BAND:
+                seen_on.setdefault(key(line), set()).add(idx)
+    running = {k for k, on in seen_on.items() if len(on) >= max(2, n_pages * _RUNNING_MIN_PAGE_SHARE)}
+
+    def _body(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [
+            line for line in lines
+            if not ((line['rel_y'] <= _RUNNING_TOP_BAND or line['rel_y'] >= _RUNNING_BOTTOM_BAND)
+                    and key(line) in running)
+        ]
+
+    tail: Any = None
+    for lines in pages:
+        body = _body(lines)
+        if not body:
+            continue
+        head = body[0]
+        if (tail is not None and not tail['table'] and not head['table']
+                and _continues_across_pages(tail['text'], head['text'])):
+            joiner = '' if tail['text'].rstrip().endswith('-') else ' '
+            tail['text'] = tail['text'].rstrip() + joiner + head['text'].lstrip()
+            lines.remove(head)
+            body = body[1:]
+            if not body:
+                continue  # the paragraph may run on to a third page
+        tail = body[-1]
 
 
 def _extract_text_with_pages(pdf_bytes: bytes) -> str:
@@ -145,11 +275,14 @@ def _extract_text_with_pages(pdf_bytes: bytes) -> str:
 
     End-of-line hyphenation is undone by PyMuPDF (TEXT_DEHYPHENATE) so a word
     split differently between the two revisions ("instal-\nlation" vs
-    "installation") does not surface as a false MODIFIED pair.
+    "installation") does not surface as a false MODIFIED pair. Ligatures are
+    expanded for the same reason: one revision exported with "ﬁ" glyphs and the
+    other without would differ on every word containing "fi". A paragraph cut by
+    a page break is re-joined (_merge_page_split_paragraphs).
     """
     fitz = _import_fitz()
     doc = fitz.open(stream=pdf_bytes, filetype='pdf')
-    flags = fitz.TEXTFLAGS_BLOCKS | fitz.TEXT_DEHYPHENATE
+    flags = (fitz.TEXTFLAGS_BLOCKS | fitz.TEXT_DEHYPHENATE) & ~fitz.TEXT_PRESERVE_LIGATURES
     text_blocks: List[str] = []
     try:
         per_page = []
@@ -160,8 +293,11 @@ def _extract_text_with_pages(pdf_bytes: bytes) -> str:
             per_page.append(blocks)
         use_tables = bool(per_page) and (total_blocks / len(per_page)) <= _TABLE_MAX_BLOCKS_PER_PAGE
 
-        for page_num, (page, blocks) in enumerate(zip(doc, per_page), start=1):
-            table_rows = _table_rows_for_page(page) if use_tables else []
+        pages: List[List[Dict[str, Any]]] = []
+        table_state: Dict[str, Any] = {}
+        for page, blocks in zip(doc, per_page):
+            table_rows = _table_rows_for_page(page, table_state) if use_tables else []
+            page_height = max(1.0, page.rect.height)
             # A block inside a table bbox is one of its cells: the row line already
             # carries it, so emitting it again would duplicate the whole table.
             lines = []
@@ -174,12 +310,20 @@ def _extract_text_with_pages(pdf_bytes: bytes) -> str:
                     continue
                 content = b[4].strip()
                 if content and not _is_page_artifact(content):
-                    lines.append((by0, ' '.join(content.splitlines())))
-            lines += [(y, text) for y, text, _ in table_rows]
+                    lines.append((by0, ' '.join(content.splitlines()), False))
+            lines += [(y, text, True) for y, text, _ in table_rows]
             lines.sort(key=lambda t: t[0])
-            for _, text in lines:
-                if text and not _is_page_artifact(text):
-                    text_blocks.append(f'{text} [Page {page_num}]')
+            pages.append([
+                {'text': text, 'table': is_table, 'rel_y': y / page_height}
+                for y, text, is_table in lines
+                if text and not _is_page_artifact(text)
+            ])
+
+        if _MERGE_PAGE_SPLITS:
+            _merge_page_split_paragraphs(pages)
+        for page_num, page_lines in enumerate(pages, start=1):
+            for line in page_lines:
+                text_blocks.append(f"{line['text']} [Page {page_num}]")
     finally:
         doc.close()
     return '\n'.join(text_blocks)

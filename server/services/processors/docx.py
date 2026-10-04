@@ -8,6 +8,7 @@ comparative: section canonical diff + section-grouped output.
 import base64
 import io
 import logging
+import re
 from bisect import bisect_right
 from typing import Any, Dict, List, Tuple
 
@@ -57,6 +58,94 @@ _VML_ARROW_TYPES = frozenset({
 
 
 _W_TYPE = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type'
+
+_W_NS = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+_W_TAB, _W_CR, _W_NBH = f'{_W_NS}tab', f'{_W_NS}cr', f'{_W_NS}noBreakHyphen'
+_W_TBL, _W_SDT, _W_SDT_CONTENT = f'{_W_NS}tbl', f'{_W_NS}sdt', f'{_W_NS}sdtContent'
+_W_PSTYLE, _W_VAL, _W_ID = f'{_W_NS}pStyle', f'{_W_NS}val', f'{_W_NS}id'
+_W_FOOTNOTE = f'{_W_NS}footnote'
+# Subtrees whose text is not part of the paragraph as the reader sees it:
+# tracked deletions and the origin of a tracked move (the text now lives at its
+# destination), paragraph properties, text boxes (extracted on their own by
+# _textbox_texts) and the legacy fallback copy of a drawing.
+_SKIPPED_SUBTREES = frozenset({
+    f'{_W_NS}del', f'{_W_NS}moveFrom', f'{_W_NS}pPr', _W_TXBX,
+    '{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback',
+})
+# Table-of-contents entries ("TOC 1" in English Word, "TM 1" in French Word):
+# section title + page number, which changes on every repagination.
+_TOC_STYLE_RE = re.compile(r'^(?:TOC|TM)\s?\d', re.I)
+
+
+def _paragraph_text(p_elem) -> str:
+    """Text of one w:p as displayed with every tracked change accepted.
+
+    python-docx's Paragraph.text only reads runs that are DIRECT children of the
+    paragraph (plus hyperlinks). Text inside a tracked insertion (w:ins), an
+    inline content control (w:sdt), a simple field (w:fldSimple) or a smart tag
+    was silently missing, so an edit made with track changes on — the normal
+    way a revision is prepared — was invisible to the comparison (2026-10-04).
+    """
+    out: List[str] = []
+
+    def _walk(el) -> None:
+        for child in el:
+            tag = child.tag
+            if tag in _SKIPPED_SUBTREES:
+                continue
+            if tag == _W_T:
+                out.append(child.text or '')
+            elif tag in (_W_TAB, _W_BR, _W_CR):
+                out.append(' ')
+            elif tag == _W_NBH:
+                out.append('-')
+            else:
+                _walk(child)
+
+    _walk(p_elem)
+    return ' '.join(''.join(out).split())
+
+
+def _is_toc_paragraph(p_elem) -> bool:
+    style = p_elem.find(f'{_W_NS}pPr/{_W_PSTYLE}')
+    return style is not None and bool(_TOC_STYLE_RE.match(style.get(_W_VAL, '')))
+
+
+def _iter_block_items(parent):
+    """Yield the w:p / w:tbl elements of a body, descending into block-level
+    content controls (w:sdt) — cover pages, form sections and locked clauses
+    live there and used to be skipped entirely."""
+    for child in parent:
+        if child.tag in (_W_P, _W_TBL):
+            yield child
+        elif child.tag == _W_SDT:
+            content = child.find(_W_SDT_CONTENT)
+            if content is not None:
+                yield from _iter_block_items(content)
+
+
+def _footnote_lines(doc) -> List[str]:
+    """'Footnote N: text' for each real footnote (separators have id <= 0)."""
+    lines: List[str] = []
+    try:
+        from lxml import etree
+        for rel in doc.part.rels.values():
+            if not rel.reltype.endswith('/footnotes') or rel.is_external:
+                continue
+            root = etree.fromstring(rel.target_part.blob)
+            for note in root.iter(_W_FOOTNOTE):
+                try:
+                    num = int(note.get(_W_ID, '0'))
+                except ValueError:
+                    continue
+                if num <= 0:
+                    continue
+                text = ' '.join(filter(None, (_paragraph_text(p) for p in note.iter(_W_P))))
+                if text:
+                    lines.append(f'Footnote {num}: {text}')
+    except Exception as e:  # footnotes are a bonus — never fail extraction over them
+        logger.debug('DOCX footnote extraction skipped: %s', e)
+    return lines
 
 # --- Page-number estimation tuning -------------------------------------------
 # A DOCX has no reliable page numbers without a rendering engine (pagination
@@ -234,18 +323,37 @@ def _textbox_texts(element) -> List[str]:
     return lines
 
 
-def _row_cells(row) -> List[str]:
-    """Return deduplicated non-empty cell texts from a table row, including text boxes."""
-    seen: set = set()
-    result = []
-    for c in row.cells:
-        parts = [c.text.strip()]
+def _row_cells(row) -> List[Tuple[int, str]]:
+    """(column index, text) for each non-empty cell of a table row.
+
+    The column index is kept so a value is labelled with ITS column: the
+    previous version dropped empty cells and cells repeating a value already
+    seen in the row, which shifted every following label one column to the
+    left ("Min: 10 | Max: 10 | Tool: A" came out as "Min: 10 | Max: A").
+    A merged cell spans several grid columns but is one w:tc — it is reported
+    once, at its first column. Nested tables and text boxes are included.
+    """
+    seen_tc: set = set()
+    result: List[Tuple[int, str]] = []
+    for col, c in enumerate(row.cells):
+        if id(c._tc) in seen_tc:
+            continue
+        seen_tc.add(id(c._tc))
+        parts = [_paragraph_text(p) for p in c._tc.iter(_W_P) if not _in_textbox(p, c._tc)]
         parts.extend(_textbox_texts(c._tc))
         t = ' '.join(filter(None, parts)).strip()
-        if t and t not in seen:
-            result.append(t)
-            seen.add(t)
+        if t:
+            result.append((col, t))
     return result
+
+
+def _in_textbox(p_elem, stop) -> bool:
+    node = p_elem.getparent()
+    while node is not None and node is not stop:
+        if node.tag == _W_TXBX:
+            return True
+        node = node.getparent()
+    return False
 
 
 def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
@@ -265,7 +373,6 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
         return [], {}
 
     from docx.table import Table as DocxTable
-    from docx.text.paragraph import Paragraph as DocxParagraph
 
     _A_BLIP  = '{http://schemas.openxmlformats.org/drawingml/2006/main}blip'
     _A_XFRM  = '{http://schemas.openxmlformats.org/drawingml/2006/main}xfrm'
@@ -349,10 +456,12 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
     def _img_count(xml_element) -> int:
         return sum(1 for _ in xml_element.iter(_A_BLIP))
 
-    for element in doc.element.body:
+    for element in _iter_block_items(doc.element.body):
         tag = element.tag.split('}')[-1] if '}' in element.tag else element.tag
 
         if tag == 'p':
+            if _is_toc_paragraph(element):
+                continue
             # Page-break markers preceding this paragraph's content. Forced and
             # lastRendered are kept separate so stale lastRendered can be dropped.
             f, l = _count_breaks_split(element)
@@ -361,8 +470,7 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
             total_forced += f
             total_lrpb += l
 
-            para = DocxParagraph(element, doc)
-            text = para.text.strip()
+            text = _paragraph_text(element)
             txbx_lines = _textbox_texts(element)
             # Interleave VML arrows/connectors at their real document position
             # (sharing vml_seen for global dedup) instead of dumping them all at
@@ -391,7 +499,7 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
 
         elif tag == 'tbl':
             table = DocxTable(element, doc)
-            header: List[str] = []
+            header: Dict[int, str] = {}
             seen_rows: set = set()
 
             for row_idx, row in enumerate(table.rows):
@@ -409,8 +517,8 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
                     continue
 
                 if not header and cells:
-                    header = cells
-                    row_text = ' | '.join(cells)
+                    header = dict(cells)
+                    row_text = ' | '.join(val for _, val in cells)
                     if row_text not in seen_rows:
                         seen_rows.add(row_text)
                         text_pos += 1
@@ -419,13 +527,10 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
                     continue
 
                 if header and cells:
-                    parts = []
-                    for i, val in enumerate(cells):
-                        col = header[i] if i < len(header) else str(i + 1)
-                        parts.append(f'{col}: {val}')
+                    parts = [f'{header.get(col, str(col + 1))}: {val}' for col, val in cells]
                     row_text = ' | '.join(parts)
                 elif cells:
-                    row_text = ' | '.join(cells)
+                    row_text = ' | '.join(val for _, val in cells)
                 else:
                     row_text = ''
 
@@ -442,6 +547,10 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
                         img_weight = 0
                     if img_weight:
                         pend_weight += img_weight
+
+    for line in _footnote_lines(doc):
+        text_pos += 1
+        _emit(line, 0)
 
     # Decide page numbers now that the whole document (and its break-marker
     # totals) is known, then format the [Page N, Para M] tags.
