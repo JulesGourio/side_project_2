@@ -25,6 +25,7 @@ from ._diff_engines import (
     hash16,
     images_are_similar,
     image_diff_blocks_dual,
+    looks_like_table_header,
     image_diff_pairs,
     paragraph_semantic_diff,
     section_canonical_diff,
@@ -501,10 +502,18 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
 
         elif tag == 'tbl':
             table = DocxTable(element, doc)
+            # The first non-empty row gives the column labels when it looks like
+            # a header; otherwise (key/value form, cartouche) rows stay positional,
+            # empty cells kept so a value never changes column silently.
             header: Dict[int, str] = {}
+            header_checked = False
             seen_rows: set = set()
 
-            for row_idx, row in enumerate(table.rows):
+            def _positional(cells: List[Tuple[int, str]]) -> str:
+                by_col = dict(cells)
+                return ' | '.join(by_col.get(c, '') for c in range(max(by_col) + 1))
+
+            for row in table.rows:
                 cells = _row_cells(row)
                 n_images = _img_count(row._tr)
                 vml_lines = _vml_shape_lines(row._tr, vml_seen)
@@ -518,9 +527,12 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
                 if not cells and not n_images and not vml_lines:
                     continue
 
-                if not header and cells:
-                    header = dict(cells)
-                    row_text = ' | '.join(val for _, val in cells)
+                if not header and cells and not header_checked:
+                    header_checked = True
+                    n_cols = len({id(c._tc) for c in row.cells})
+                    if len(cells) == n_cols and looks_like_table_header([val for _, val in cells]):
+                        header = dict(cells)
+                    row_text = ' | '.join(val for _, val in cells) if header else _positional(cells)
                     if row_text not in seen_rows:
                         seen_rows.add(row_text)
                         text_pos += 1
@@ -532,7 +544,7 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
                     parts = [f'{header.get(col, str(col + 1))}: {val}' for col, val in cells]
                     row_text = ' | '.join(parts)
                 elif cells:
-                    row_text = ' | '.join(val for _, val in cells)
+                    row_text = _positional(cells)
                 else:
                     row_text = ''
 

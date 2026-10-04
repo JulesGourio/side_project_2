@@ -281,6 +281,10 @@ schema). Only `'comparative'` actually swaps the diff engine itself
 for these two, `processor_version` only ever changes the prompt; there's no
 alternate diff routine to switch to.
 
+Tables (PDF and DOCX): a first row that looks like a header (`looks_like_table_header`:
+3+ columns, all filled, short, mostly without digits) labels the rows below it;
+otherwise rows are positional with empty cells kept (`M8 |  | 22 Nm`).
+
 | Processor | Extraction | Diffing quirk |
 |---|---|---|
 | PDF | PyMuPDF, block-sorted by `y`, page-tagged, `TEXT_DEHYPHENATE`, ligatures expanded; a paragraph cut by a page break is re-joined; ruled-table rows are labelled with their column header (`Activity: … \| Inspector: X`) when the first row looks like one | Images deduped by perceptual hash (dhash), 1024px/JPEG-q65 |

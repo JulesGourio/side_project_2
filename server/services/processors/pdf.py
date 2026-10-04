@@ -26,6 +26,7 @@ from ._diff_engines import (
     hash16,
     images_are_similar,
     image_diff_blocks_dual,
+    looks_like_table_header,
     image_diff_pairs,
     paragraph_semantic_diff,
     section_canonical_diff,
@@ -108,21 +109,6 @@ _TABLE_BAND_MAX_ROWS = 3
 # could not say WHICH column a value belongs to. Set to false to get positional
 # rows only ("Release the part |  |  | X").
 _TABLE_LABELS = os.getenv('COMPARE_PDF_TABLE_LABELS', 'true').lower() == 'true'
-# A first row is taken as a header only when it looks like one: enough columns,
-# every cell filled, short, and without digits. Key/value forms and cartouches
-# (2 columns, values in the first row) stay positional — labelling them would
-# turn one changed value into a change on every row of the table.
-_HEADER_MIN_COLS = 3
-_HEADER_MAX_CELL_WORDS = 6
-
-
-def _looks_like_header(cells: List[str]) -> bool:
-    return (
-        len(cells) >= _HEADER_MIN_COLS
-        and all(cells)
-        and all(len(c.split()) <= _HEADER_MAX_CELL_WORDS for c in cells)
-        and not any(ch.isdigit() for c in cells for ch in c)
-    )
 
 
 def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[Any]:
@@ -172,7 +158,7 @@ def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[A
         header: Optional[List[str]] = None
         header_row = -1
         if _TABLE_LABELS and norm:
-            if _looks_like_header(norm[0]):
+            if looks_like_table_header(norm[0]):
                 header, header_row = norm[0], 0
             elif first_table and continued_header and len(continued_header) == n_cols:
                 header = continued_header

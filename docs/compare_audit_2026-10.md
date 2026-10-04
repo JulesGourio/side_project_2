@@ -6,14 +6,15 @@ impact search, résumé, exports, historique, et `CompareView.tsx`.
 ## En bref
 
 - **16 problèmes corrigés** dans l'application (partie A), **10 améliorations des
-  moteurs PDF/DOCX** (partie E), **16 points identifiés mais laissés** (partie B).
+  moteurs PDF/DOCX** (partie E), **7 de plus en troisième passe** (partie F),
+  **14 points identifiés mais laissés** (partie B).
 - Les moteurs ont été testés sur des paires de documents PDF et DOCX **générées**
   avec une seule différence connue ; il n'y a aucun document réel sur cette
   machine.
 - Le plus grave : **un changement d'un seul mot dans un long paragraphe était
   supprimé avant même d'arriver au LLM** (« shall record » → « shall not
   record », « avant » → « après », « peut » → « doit »). Corrigé (A1).
-- Vérifié : 188 tests Python passent (123 avant + 65 nouveaux), `tsc --noEmit`
+- Vérifié : 206 tests Python passent (123 avant + 83 nouveaux), `tsc --noEmit`
   et `vite build` passent.
 - **Non vérifié** : rien n'a tourné contre Databricks (ni LLM, ni Vector Search,
   ni Lakebase), l'interface n'a pas été ouverte dans un navigateur, et le
@@ -200,12 +201,10 @@ demande (2026-10-04) : ces routes restent ouvertes, comme avant. Voir B16.
 | B8 | `COMPARE_ANALYSIS_SYSTEM_PROMPT` dans `app.yaml` n'a aucun effet en `standard`/`structured` (prompts codés en dur ; seul `comparative` le lit). | Retirer la variable ou la brancher. | Décision de configuration. |
 | B9 | Le moteur `comparative` (`is_substantive`) a le même défaut que A1 ; `MODAL_RE` ne connaît que l'anglais ; `canonicalize` supprime les lettres accentuées. | Appliquer le contrôle mot à mot à `is_substantive`, ajouter les modaux français. | Moteur non utilisé par défaut ; à faire avec une mesure sur `compare_eval`. |
 | B10 | Aucune mesure automatique de la qualité de détection : `utils/compare_eval` n'est pas dans ce dépôt et n'est pas en CI. | Versionner le corpus (ou un sous-ensemble) et faire échouer la CI sous un seuil de rappel. | Corpus absent ici. |
-| B11 | Analyse découpée : si une partie échoue après que d'autres ont été émises, le client garde un JSON incomplet. | Émettre les lignes valides puis fermer le tableau avant l'erreur. | Cas rare, non reproduit. |
 | B12 | Table `messages` : pas d'index sur les hashes, lignes jamais purgées ; les trois caches n'écrivent qu'en ajout. | Index `(old_file_hash, new_file_hash, app_version, processor_version)` + purge. | Étape Lakebase manuelle. |
 | B13 | Le cache ne rejoue pas les avertissements (contourné par A3 : ces rapports ne sont plus mis en cache, donc recalculés à chaque fois). | Stocker les avertissements avec le rapport. | Demande une colonne. |
 | B14 | `preview.py` et `feedback.py` n'ont pas de contrôle `can_compare`. | Poser la dépendance. | Je n'ai pas vérifié s'ils servent aussi au chat. |
 | B16 | Les routes d'export (`exports.py`) n'exigent pas `can_compare`. | `Depends(require_compare)` sur le routeur. | Fait puis retiré à ta demande. |
-| B15 | Exports Excel/PDF et jugements d'impact : pas de test HTTP de bout en bout sur `/compare/impact` ni `/compare/summarize`. | Tests `TestClient` avec LLM et Vector Search simulés. | Hors temps de cette passe. |
 
 ## E. Moteurs PDF et DOCX
 
@@ -253,6 +252,35 @@ texte (avertissement).
 Tests : `tests/test_compare_documents.py` (31 tests ; 20 échouent sur les
 processeurs d'avant).
 
+## F. Troisième passe
+
+| # | Sujet | Avant | Après |
+|---|---|---|---|
+| F1 | **Temps de calcul du diff** sur gros documents très différents (mauvais fichier déposé, refonte complète) | 1 200 paragraphes contre 1 200 : 28,9 s ; 2 400 contre 2 400 : 119 s. 80 % du temps partait dans la détection des déplacements, qui ré-indexait tout le nouveau document pour chaque paragraphe supprimé | 4,3 s et 18,2 s, résultats identiques. Le nouveau document est indexé une seule fois ; l'appariement écarte les paires sans mots communs avant tout calcul |
+| F2 | **Deux documents sans rapport** (mauvais fichier) | Rapport de centaines de suppressions et d'ajouts, sans explication | Avertissement « almost no paragraph in common » (moins de 5 % de paragraphes identiques, documents de 20 paragraphes ou plus) |
+| F3 | **DOCX — tableau sans ligne d'en-tête** (formulaire clé/valeur, cartouche) | La première ligne servait de libellés : `Reference: Revision \| QR-2040: A`, et changer une valeur de la première ligne modifiait toutes les lignes | Lignes en positions (`Revision \| A`), cellules vides conservées. Même règle d'en-tête que le PDF ; un en-tête avec quelques chiffres (« Phase 1 ») reste reconnu |
+| F4 | **Analyse découpée** (gros diff) : une partie échoue après les premières | Le client gardait un JSON non terminé, table inutilisable | Le tableau est refermé avant l'erreur : les lignes déjà reçues restent exploitables |
+| F5 | **Lecture des notes de bas de page DOCX** (ajoutée en E8) | Parseur XML acceptant les entités externes d'un fichier déposé | Parseur durci (entités, DTD, réseau désactivés) |
+| F6 | **Hachage d'images** | `Image.getdata()`, supprimé dans Pillow 14 | `tobytes()` |
+| F7 | **Tests des routes** `/compare/impact` et `/compare/summarize` | Aucun test HTTP | 6 tests : flux plan → document → done, relecture du cache, erreur de recherche, « aucun changement », hash serveur du résumé, document sans texte |
+
+Vérifié sans rien à corriger : PDF sur deux colonnes (changement détecté), longue
+liste à puces lettrées avec décalage de pagination (1 seul ajout), Excel (valeur
+modifiée + ligne insérée), PowerPoint (diapositive insérée + valeur modifiée).
+
+**Limites trouvées, non corrigées.**
+- **Tableau PDF sans bordures** : PyMuPDF rend chaque ligne comme un texte
+  continu ; une valeur qui change de colonne reste invisible, et les colonnes
+  ne sont pas nommées. La détection de tableaux « par alignement du texte »
+  existe mais prend des paragraphes pour des tableaux.
+- **PDF sur deux colonnes** : les blocs sont lus par hauteur, donc entrelacés
+  entre colonnes. Le diff reste juste, mais le rattachement aux sections peut
+  être faux.
+- **`.xls`** : accepté à l'envoi, mais le paquet `xlrd` n'est pas dans les
+  dépendances ; l'analyse échoue avec un message demandant de convertir en `.xlsx`.
+
+Tests : `tests/test_compare_round3.py` (18 tests).
+
 ## C. Non audité en détail
 
 Extraction PPTX / Excel / XML / image,
@@ -264,7 +292,7 @@ Extraction PPTX / Excel / XML / image,
 ```powershell
 # Tests Python (depuis la racine)
 python -m pytest -q
-python -m pytest -q tests/test_compare_audit.py tests/test_compare_documents.py   # les 65 tests de cet audit
+python -m pytest -q tests/test_compare_audit.py tests/test_compare_documents.py tests/test_compare_round3.py   # les 83 tests de cet audit
 
 # Front
 cd client; bun run build

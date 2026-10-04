@@ -263,6 +263,10 @@ async def stream_analysis_chunked(
             for chunk in res['passthrough']:
                 yield chunk
             if res['error']:
+                # Rows already sent stay a valid JSON array: the client keeps the
+                # parts that succeeded instead of an unterminated "[ {...}, {...}".
+                if structured and emitted_objects:
+                    yield _delta_event('\n]')
                 yield res['error']
                 yield 'data: [DONE]\n\n'
                 return

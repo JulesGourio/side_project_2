@@ -119,7 +119,48 @@ def extraction_warnings(old_text: str, new_text: str) -> List[str]:
                 f'{label} document yielded almost no extractable text (scanned or image-only?). '
                 'Text comparison is unreliable — only embedded images were compared.'
             )
-    return warnings
+    return warnings or unrelated_warnings(old_text, new_text)
+
+
+# Two revisions of one document share most of their paragraphs. Under this
+# share of identical blocks, the user most likely dropped two different
+# documents — the report would be one long list of removals and additions.
+_UNRELATED_MAX_SHARED = 0.05
+_UNRELATED_MIN_BLOCKS = 20
+
+
+def unrelated_warnings(old_text: str, new_text: str) -> List[str]:
+    def _blocks(text: str) -> Set[str]:
+        out = set()
+        for line in text.splitlines():
+            bare = ' '.join(strip_tag(line).lower().split())
+            if len(bare.split()) >= 4:
+                out.add(bare)
+        return out
+
+    old_blocks, new_blocks = _blocks(old_text), _blocks(new_text)
+    smaller = min(len(old_blocks), len(new_blocks))
+    if smaller < _UNRELATED_MIN_BLOCKS or len(old_blocks & new_blocks) / smaller >= _UNRELATED_MAX_SHARED:
+        return []
+    return ['The two documents have almost no paragraph in common. '
+            'Check that they are two revisions of the same document.']
+
+
+# A table's first row is used as column labels only when it looks like a header:
+# enough columns, every cell filled, short, worded, and mostly without digits.
+# Key/value forms and cartouches (two columns, values in the first row) are left
+# positional — labelling them turns one changed value into a change on every row.
+_HEADER_MIN_COLS = 3
+_HEADER_MAX_CELL_WORDS = 6
+
+
+def looks_like_table_header(cells: List[str]) -> bool:
+    return (
+        len(cells) >= _HEADER_MIN_COLS
+        and all(any(ch.isalpha() for ch in c) for c in cells)
+        and all(len(c.split()) <= _HEADER_MAX_CELL_WORDS for c in cells)
+        and 2 * sum(any(ch.isdigit() for ch in c) for c in cells) < len(cells)
+    )
 
 
 def canonicalize(text: str) -> str:
@@ -186,7 +227,7 @@ def dhash(img_bytes: bytes, size: int = _DHASH_SIZE) -> str:
         from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(img_bytes)).convert('L')
         img = img.resize((size + 1, size), PILImage.Resampling.LANCZOS)
-        px = list(img.getdata())
+        px = list(img.tobytes())  # mode 'L': one byte per pixel
         w = size + 1
         bits = []
         for r in range(size):
@@ -205,7 +246,7 @@ def ahash(img_bytes: bytes, size: int = _DHASH_SIZE) -> str:
         from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(img_bytes)).convert('L')
         img = img.resize((size, size), PILImage.Resampling.LANCZOS)
-        px = list(img.getdata())
+        px = list(img.tobytes())  # mode 'L': one byte per pixel
         avg = sum(px) / len(px)
         return ''.join('1' if p >= avg else '0' for p in px)
     except Exception:
@@ -1361,32 +1402,50 @@ _RELOCATION_MIN_RUN_WORDS = 8
 _STRIKETHROUGH_RE = re.compile(r'~~(.+?)~~', re.S)
 
 
-def _relocation_signal(text: str, new_words: List[str]) -> Tuple[float, int]:
-    """(coverage, longest_run_words) against `new_words` (the full new-document
-    text, canonicalized and pre-split once by the caller): coverage is the
-    fraction of `text`'s words matched, in order, anywhere in the new
-    document; longest_run_words is the single longest contiguous match.
+class _RelocationIndex:
+    """The new document, indexed once, to ask "does this removed text still
+    exist somewhere?" for every REMOVED entry and struck-through span.
 
-    Uses difflib's word-level LCS (SequenceMatcher.get_matching_blocks()) —
-    unlike a rigid n-gram scan, one inserted word ("training program" ->
-    "training and examination program") doesn't fracture an otherwise-long
-    match into two just-under-threshold fragments. `new_words` is the longer
-    side, so SequenceMatcher's own b2j index amortizes the cost across the
-    dozens of REMOVED entries checked per document — no O(n^2) blowup.
+    Built once per comparison: constructing a SequenceMatcher per entry
+    re-indexed the whole new document each time, which was 80% of the diff
+    time on a large pair (10 s out of 12 for 600 removed paragraphs).
     """
-    words = canonicalize_keep_modals(text).split()
-    n = len(words)
-    if n < _RELOCATION_MIN_WORDS:
-        return 0.0, 0
-    blocks = difflib.SequenceMatcher(None, words, new_words, autojunk=False).get_matching_blocks()
-    matched = sum(b.size for b in blocks)
-    longest_run = max((b.size for b in blocks), default=0)
-    return (matched / n), longest_run
 
+    def __init__(self, new_text: str) -> None:
+        words = canonicalize_keep_modals(new_text).split()
+        self._matcher = difflib.SequenceMatcher(None, autojunk=False)
+        self._matcher.set_seq2(words)
+        run = _RELOCATION_MIN_RUN_WORDS
+        self._runs = {tuple(words[k:k + run]) for k in range(len(words) - run + 1)}
 
-def _is_relocated(text: str, new_words: List[str]) -> bool:
-    coverage, longest_run = _relocation_signal(text, new_words)
-    return coverage >= _RELOCATION_COVERAGE_THRESHOLD and longest_run >= _RELOCATION_MIN_RUN_WORDS
+    def signal(self, text: str) -> Tuple[float, int]:
+        """(coverage, longest_run_words): coverage is the fraction of `text`'s
+        words matched, in order, anywhere in the new document; longest_run_words
+        is the single longest contiguous match.
+
+        Uses difflib's word-level LCS (get_matching_blocks()) — unlike a rigid
+        n-gram scan, one inserted word ("training program" -> "training and
+        examination program") doesn't fracture an otherwise-long match into two
+        just-under-threshold fragments.
+        """
+        words = canonicalize_keep_modals(text).split()
+        n = len(words)
+        if n < _RELOCATION_MIN_WORDS:
+            return 0.0, 0
+        self._matcher.set_seq1(words)
+        blocks = self._matcher.get_matching_blocks()
+        return sum(b.size for b in blocks) / n, max((b.size for b in blocks), default=0)
+
+    def is_relocated(self, text: str) -> bool:
+        # A contiguous run of _RELOCATION_MIN_RUN_WORDS is required anyway: with
+        # no such run of the text present in the new document the answer is no,
+        # and the costly alignment is skipped.
+        words = canonicalize_keep_modals(text).split()
+        run = _RELOCATION_MIN_RUN_WORDS
+        if not any(tuple(words[k:k + run]) in self._runs for k in range(len(words) - run + 1)):
+            return False
+        coverage, longest_run = self.signal(text)
+        return coverage >= _RELOCATION_COVERAGE_THRESHOLD and longest_run >= run
 
 
 def _tag_relocated(results: List[Dict[str, Any]], new_text: str) -> int:
@@ -1402,7 +1461,7 @@ def _tag_relocated(results: List[Dict[str, Any]], new_text: str) -> int:
 
     Returns the number of entries/spans annotated.
     """
-    new_words = canonicalize_keep_modals(new_text).split()
+    index = _RelocationIndex(new_text)
     tagged = 0
 
     for r in results:
@@ -1412,7 +1471,7 @@ def _tag_relocated(results: List[Dict[str, Any]], new_text: str) -> int:
 
         if m.group(1) == 'REMOVED':
             removed_text = m.group(3)
-            if _is_relocated(removed_text, new_words):
+            if index.is_relocated(removed_text):
                 tag = f' [{m.group(2)}]' if m.group(2) else ''
                 r['content'] = (
                     f'RELOCATED{tag}: {removed_text} '
@@ -1424,7 +1483,7 @@ def _tag_relocated(results: List[Dict[str, Any]], new_text: str) -> int:
             def _annotate(span_match: 're.Match') -> str:
                 nonlocal tagged
                 span = span_match.group(1)
-                if _is_relocated(span, new_words):
+                if index.is_relocated(span):
                     tagged += 1
                     return f'~~{span}~~ [RELOCATED elsewhere in the new document, not eliminated]'
                 return span_match.group(0)
@@ -1873,30 +1932,44 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     unmatched_old.sort(key=lambda o: o['idx'])
     unmatched_old, new_leftovers, resegmented = _cancel_resegmented(unmatched_old, new_leftovers)
 
+    # Every leftover old block against every leftover new block. Two true upper
+    # bounds of ratio() — lengths, then shared words — discard a pair before any
+    # SequenceMatcher work, without changing a pairing decision. The shared-word
+    # bound is quick_ratio()'s own formula on word counts computed once per block;
+    # calling quick_ratio() meant building a matcher (and its index of the new
+    # block) for each of the n² pairs. One matcher per new block, reused for every
+    # old block that survives the bounds.
     sims: List[Tuple[float, int, int]] = []
-    new_words_cache = [n['clean'].split() for n in new_leftovers]
-    for i, o in enumerate(unmatched_old):
-        o_words = o['clean'].split()
-        lo = len(o_words)
-        if lo < 3:
+    old_words_cache = [o['clean'].split() for o in unmatched_old]
+    old_counts = [Counter(words) for words in old_words_cache]
+    for j, n in enumerate(new_leftovers):
+        n_words = n['clean'].split()
+        ln = len(n_words)
+        if ln < 3:
             continue
-        for j, n_words in enumerate(new_words_cache):
-            ln = len(n_words)
-            if ln < 3:
+        n_count = Counter(n_words)
+        sm: Optional[difflib.SequenceMatcher] = None
+        for i, o_words in enumerate(old_words_cache):
+            lo = len(o_words)
+            if lo < 3:
                 continue
-            # Cheap true upper bounds of ratio() — skipping pairs that cannot
-            # exceed the threshold keeps the O(n²) scan tractable on large
-            # documents without changing any pairing decision.
             if 2.0 * min(lo, ln) / (lo + ln) <= _PAIR_RATIO_THRESHOLD:
                 continue
-            sm = difflib.SequenceMatcher(None, o_words, n_words, autojunk=False)
-            if sm.quick_ratio() <= _PAIR_RATIO_THRESHOLD:
+            o_count = old_counts[i]
+            small, large = (o_count, n_count) if len(o_count) <= len(n_count) else (n_count, o_count)
+            shared = sum(min(c, large[w]) for w, c in small.items() if w in large)
+            if 2.0 * shared / (lo + ln) <= _PAIR_RATIO_THRESHOLD:
                 continue
+            if sm is None:
+                sm = difflib.SequenceMatcher(None, autojunk=False)
+                sm.set_seq2(n_words)
+            sm.set_seq1(o_words)
             ratio = sm.ratio()
             if ratio > _PAIR_RATIO_THRESHOLD:
                 sims.append((ratio, i, j))
 
-    sims.sort(key=lambda x: x[0], reverse=True)
+    # Best ratio first; ties in (old, new) order, as the old-major scan gave.
+    sims.sort(key=lambda x: (-x[0], x[1], x[2]))
     matched_o: set = set()
     matched_n: set = set()
     results: List[Dict[str, Any]] = []
