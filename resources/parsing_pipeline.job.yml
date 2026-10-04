@@ -99,6 +99,7 @@ targets:
                   PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
                   PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
                   PARSING_MAX_SOURCE_STALENESS_HOURS: ${var.parsing_max_source_staleness_hours}
+                  PARSING_ARCHIVE_MAX_DOCS: ${var.parsing_archive_max_docs}
                   PARSING_USE_GPU:          "false"
 
             # ── GPU cluster for Docling parsing (task 01) ─────────────────────────
@@ -132,6 +133,7 @@ targets:
                   PARSING_RUN_MODE:         ${var.parsing_run_mode}
                   PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
                   PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
+                  PARSING_ARCHIVE_NOTICES_IN_RAG: ${var.parsing_archive_notices_in_rag}
                   PARSING_USE_GPU:          "true"
                   # See README.md#opencv-python-headless-crash — belt-and-suspenders, set before the interpreter starts.
                   USE_TF:                 "0"
@@ -251,8 +253,9 @@ targets:
                   embedding_model: "databricks-qwen3-embedding-0-6b"
                   catalog_schema: ${var.app_write_catalog}.${var.app_write_schema}
                   table_suffix: ${var.parsing_table_suffix}
+                  build_chunks_full: ${var.parsing_build_chunks_full}
               # Serverless: SDK calls, plus a MERGE into chunks_full when
-              # chunks_full_index is listed. run_as (the target's owning SP)
+              # build_chunks_full is on or chunks_full_index is listed. run_as (the target's owning SP)
               # already has whatever grant creating a new index/table needs.
               environment_key: default
 

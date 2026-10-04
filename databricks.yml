@@ -85,6 +85,22 @@ variables:
       Comma-separated Vector Search index names synced by task 5_sync_index.
       Empty = nothing to sync (DEV has no index deployed).
     default: ""
+  parsing_archive_max_docs:
+    description: >-
+      Total number of pre-2018 documents allowed to be parsed into chunks_archive,
+      most recent first (cumulative, not per run). 0 = none, -1 = all.
+    default: "0"
+  parsing_archive_notices_in_rag:
+    description: >-
+      "true" copies the metadata-only notice chunk of each pre-2018 document into
+      chunks/src_chunks_as/src_chunks_is (chatbot indexes). "false" keeps them in
+      chunks_archive_notices only.
+    default: "false"
+  parsing_build_chunks_full:
+    description: >-
+      "true" makes 5_sync_index refresh chunks_full (chunks + chunks_archive) even
+      when chunks_full_index is not in parsing_vector_search_indexes.
+    default: "false"
   parsing_lakebase_database:
     description: >-
       Lakebase database updated by task 6_update_kb_metadata with the daily
@@ -774,7 +790,10 @@ targets:
       # seeded (deep clone from the _v3 equivalents) so the daily job resumes
       # incrementally instead of reparsing the whole corpus on GPU.
       parsing_table_suffix: "_v1"
-      parsing_vector_search_indexes: "uat_landingzone.qualibot.chunks_index_v1,uat_landingzone.qualibot.chunks_as_index_v1,uat_landingzone.qualibot.chunks_is_index_v1,uat_landingzone.qualibot.chunks_full_index_v1"
+      parsing_vector_search_indexes: "uat_landingzone.qualibot.chunks_index_v1,uat_landingzone.qualibot.chunks_as_index_v1,uat_landingzone.qualibot.chunks_is_index_v1"
+      # Test phase (2026-10-05): chunks_full_v1 is built, its index is not. Append
+      # uat_landingzone.qualibot.chunks_full_index_v1 above to create + sync it.
+      parsing_build_chunks_full: "true"
       parsing_schedule_pause: "UNPAUSED"
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
       # (LAKEBASE_DATABASE in app.yaml / target_config.env) — never doccompare_test.
@@ -1225,4 +1244,4 @@ targets:
       # No suffix (unlike qualibot-uat's _v1) -- prod is the one environment,
       # no version history to carry. 5_sync_index creates these the first time
       # it runs if they don't exist yet (see that notebook + its job task).
-      parsing_vector_search_indexes: "prod_landingzone.qualibot.chunks_index,prod_landingzone.qualibot.chunks_as_index,prod_landingzone.qualibot.chunks_is_index,prod_landingzone.qualibot.chunks_full_index"
+      parsing_vector_search_indexes: "prod_landingzone.qualibot.chunks_index,prod_landingzone.qualibot.chunks_as_index,prod_landingzone.qualibot.chunks_is_index"

@@ -22,9 +22,10 @@
 # MAGIC * **Orphan detection**: folders whose extracted IDDOC does not exist in
 # MAGIC   `gd_doc_latest` (nor in the optional fallback table) are kept on the
 # MAGIC   volume but excluded from parsing and logged as `SKIPPED_IDDOC_NOT_FOUND`.
-# MAGIC * **No date cutoff here**: documents published before
-# MAGIC   `DOC_DATE_CUTOFF` are parsed too — `3_parse` routes their chunks to
-# MAGIC   `chunks_archive` (impact-search index only) instead of the RAG tables.
+# MAGIC * **Date cutoff = a parse budget, not an exclusion**: documents published
+# MAGIC   before `DOC_DATE_CUTOFF` stay in the manifest, but only the
+# MAGIC   `ARCHIVE_MAX_DOCS` most recent get `parse_content=True`. `3_parse` routes
+# MAGIC   those to `chunks_archive` (impact search only) instead of the RAG tables.
 # MAGIC
 # MAGIC Physical deletion of out-of-scope folders only happens when `DRY_RUN` is
 # MAGIC set to `non`. Derived-table cleanup (stale chunks, image metadata) always
@@ -673,10 +674,24 @@ df_manifest_full = (
     .withColumn("auteur",  F.lit(None).cast(StringType()))
 )
 
-# Pre-cutoff documents stay in the manifest: 3_parse routes their chunks to
-# chunks_archive. FILTERED_BY_DATE rows left by older runs are not terminal, so
-# those documents get parsed on the next run.
-df_manifest = df_manifest_full
+# Pre-cutoff documents stay in the manifest (3_parse builds their notice chunk
+# from it), but only the ARCHIVE_MAX_DOCS most recent ones get parse_content=True;
+# 3_parse routes those to chunks_archive and never scans the others.
+_is_archive = F.col("doc_date").isNotNull() & (F.col("doc_date") < F.lit(_cfg.DOC_DATE_CUTOFF).cast("date"))
+_archive_rank = F.row_number().over(
+    _W.partitionBy(_is_archive).orderBy(F.desc("doc_date"), F.desc("IDDOC"))
+)
+df_manifest = (
+    df_manifest_full
+    .withColumn("_archive_rank", _archive_rank)
+    .withColumn(
+        "parse_content",
+        ~_is_archive
+        | F.lit(_cfg.ARCHIVE_MAX_DOCS < 0)
+        | (F.col("_archive_rank") <= F.lit(_cfg.ARCHIVE_MAX_DOCS)),
+    )
+    .drop("_archive_rank")
+)
 
 # COMMAND ----------
 
@@ -721,10 +736,14 @@ if rows_skip:
     .option("overwriteSchema", "true")
     .saveAsTable(PARSE_MANIFEST_TABLE)
 )
-_n_manifest = spark.table(PARSE_MANIFEST_TABLE).count()
-print(f"\nparse_manifest written: {_n_manifest} IDDOCs to parse")
+_df_written = spark.table(PARSE_MANIFEST_TABLE)
+_n_manifest = _df_written.count()
+_n_archive = _df_written.filter(_is_archive).count()
+_n_archive_parsed = _df_written.filter(_is_archive & F.col("parse_content")).count()
+print(f"\nparse_manifest written: {_n_manifest} IDDOCs in scope")
 print(f"   Table : {PARSE_MANIFEST_TABLE}")
-print(f"   (date-excluded    : {_n_date} | scope-excluded   : {len(rows_keep) - _n_manifest - _n_date})")
+print(f"   pre-{_cfg.DOC_DATE_CUTOFF} : {_n_archive} | allowed to be parsed : {_n_archive_parsed} "
+      f"(PARSING_ARCHIVE_MAX_DOCS={_cfg.ARCHIVE_MAX_DOCS})")
 
 # COMMAND ----------
 

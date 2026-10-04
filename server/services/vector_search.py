@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 _QUERY_TIMEOUT_S = 30.0
 _LLM_TIMEOUT_S = 90.0
 _COLUMNS = ['chunk_id', 'IDDOC', 'REF', 'division', 'url', 'semantic_headers', 'chunk_text']
+# Metadata-only chunk the parsing pipeline writes for a pre-2018 document (config.ARCHIVE_NOTICE_MARKER):
+# it holds no content, so it can never be an impacted passage.
+_ARCHIVE_NOTICE_MARKER = 'ARCHIVED DOCUMENT — CONTENT NOT INDEXED'
 # Cost scales with max_candidates * this * _PASSAGE_CHARS; lower-scoring hits past
 # this cap are the least likely to hold the conflict.
 _PASSAGES_PER_CANDIDATE = 10
@@ -192,7 +195,8 @@ async def _fetch_chunks(host: str, token: str, index_name: str, query_text: str,
         resp.raise_for_status()
         data = resp.json()
     columns = [c['name'] for c in data.get('manifest', {}).get('columns', [])]
-    return [dict(zip(columns, row)) for row in data.get('result', {}).get('data_array', [])]
+    chunks = [dict(zip(columns, row)) for row in data.get('result', {}).get('data_array', [])]
+    return [c for c in chunks if _ARCHIVE_NOTICE_MARKER not in (c.get('chunk_text') or '')]
 
 
 async def _fetch_chunks_multi(

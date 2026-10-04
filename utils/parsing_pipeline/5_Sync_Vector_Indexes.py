@@ -19,9 +19,10 @@
 # MAGIC it already holds whatever grant creating the index needs (no separate
 # MAGIC manual step or elevated personal access required for a new environment).
 # MAGIC
-# MAGIC When `chunks_full_index` is in `indexes`, its source table `chunks_full`
-# MAGIC (`chunks` + `chunks_archive`, every document whatever its date — impact
-# MAGIC search only) is first refreshed by MERGE. Otherwise this notebook is plain
+# MAGIC When `build_chunks_full` is on (or `chunks_full_index` is in `indexes`), the
+# MAGIC table `chunks_full` (`chunks` + `chunks_archive`, every document whatever its
+# MAGIC date — impact search only) is first refreshed by MERGE. The index itself is
+# MAGIC only created/synced when it is listed in `indexes`. Otherwise this notebook is plain
 # MAGIC Vector Search SDK calls — see Outputs for the sync trigger + wait logic.
 # MAGIC
 # MAGIC **Intended Pipeline**
@@ -34,7 +35,7 @@
 # MAGIC - *(none)*
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{catalog_schema}.chunks_full{table_suffix}` — only when `chunks_full_index` is in `indexes`
+# MAGIC - `{catalog_schema}.chunks_full{table_suffix}` — only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`
 # MAGIC - `{indexes}` (or `{PARSING_VECTOR_SEARCH_INDEXES}`) — comma-separated Vector Search index names, empty = nothing to do (the DEV case, no index deployed there)
 # MAGIC - `{vector_search_endpoint}`/`{embedding_model}`/`{catalog_schema}`/`{table_suffix}` — only read if one of `indexes` doesn't exist yet and needs creating
 
@@ -64,6 +65,7 @@ dbutils.widgets.text("vector_search_endpoint", "qualibot", "Vector Search endpoi
 dbutils.widgets.text("embedding_model", "databricks-qwen3-embedding-0-6b", "Embedding model endpoint (for index creation)")
 dbutils.widgets.text("catalog_schema", "", "catalog.schema of the chunk tables (for index creation)")
 dbutils.widgets.text("table_suffix", "", "Suffix shared by the chunk tables and their indexes (for index creation)")
+dbutils.widgets.text("build_chunks_full", "false", "Refresh chunks_full (chunks + chunks_archive) even without its index")
 
 _raw = dbutils.widgets.get("indexes").strip() or os.environ.get("PARSING_VECTOR_SEARCH_INDEXES", "")
 INDEXES = [n.strip() for n in _raw.split(",") if n.strip()]
@@ -72,10 +74,7 @@ VECTOR_SEARCH_ENDPOINT = dbutils.widgets.get("vector_search_endpoint")
 EMBEDDING_MODEL = dbutils.widgets.get("embedding_model")
 CATALOG_SCHEMA = dbutils.widgets.get("catalog_schema")
 TABLE_SUFFIX = dbutils.widgets.get("table_suffix")
-
-if not INDEXES:
-    print("No index to sync (`indexes` param empty) — nothing to do.")
-    dbutils.notebook.exit("no_index")
+BUILD_CHUNKS_FULL = dbutils.widgets.get("build_chunks_full").strip().lower() in ("1", "true", "yes")
 
 print(f"{len(INDEXES)} index(es) to sync:")
 for n in INDEXES:
@@ -94,13 +93,15 @@ for n in INDEXES:
 # MAGIC `chunks_full` = `chunks` (RAG, post-cutoff) + `chunks_archive` (pre-cutoff),
 # MAGIC kept in sync by MERGE rather than overwrite so Change Data Feed only carries
 # MAGIC the day's real changes and the index re-embeds just those rows.
+# MAGIC Built when `build_chunks_full` is on, index or not: the table can be checked
+# MAGIC in SQL before `chunks_full_index` is ever created.
 
 # COMMAND ----------
 
 FULL_INDEX = f"{CATALOG_SCHEMA}.chunks_full_index{TABLE_SUFFIX}"
 FULL_TABLE = f"{CATALOG_SCHEMA}.chunks_full{TABLE_SUFFIX}"
 
-if CATALOG_SCHEMA and FULL_INDEX in INDEXES:
+if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
     from delta.tables import DeltaTable
 
     _sources = [t for t in (f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}", f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}")
@@ -108,6 +109,8 @@ if CATALOG_SCHEMA and FULL_INDEX in INDEXES:
     df_src = spark.table(_sources[0])
     for _t in _sources[1:]:
         df_src = df_src.unionByName(spark.table(_t), allowMissingColumns=True)
+    # Archive notices (config.ARCHIVE_NOTICE_CONTENT_TYPE) carry no content: nothing to judge an impact on.
+    df_src = df_src.filter("NOT (chunk_content_type <=> 'archive_notice')")
     # A document that crossed the cutoff between runs could briefly sit in both tables.
     df_src = df_src.dropDuplicates(["chunk_id"])
 
@@ -135,6 +138,10 @@ if CATALOG_SCHEMA and FULL_INDEX in INDEXES:
         )
         print(f"Merged {_sources} into {FULL_TABLE}")
     print(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
+
+if not INDEXES:
+    print("No index to sync (`indexes` param empty) — nothing more to do.")
+    dbutils.notebook.exit("no_index")
 
 # COMMAND ----------
 

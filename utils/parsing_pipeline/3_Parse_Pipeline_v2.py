@@ -198,7 +198,10 @@ def resolve_parse_scope(df_business_meta):
     already-terminal IDDOCs, plus any of those flagged as revised since their
     last parse. Returns (target_iddocs, has_target_iddocs).
     """
-    manifest_iddocs = {r.IDDOC for r in df_business_meta.select("IDDOC").distinct().collect()}
+    # parse_content=False: pre-cutoff document beyond ARCHIVE_MAX_DOCS (notice chunk only).
+    df_parseable = (df_business_meta.filter(F.col("parse_content"))
+                    if "parse_content" in df_business_meta.columns else df_business_meta)
+    manifest_iddocs = {r.IDDOC for r in df_parseable.select("IDDOC").distinct().collect()}
     already_done_iddocs = set()
     revised_iddocs = set()
 
@@ -1283,6 +1286,102 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is,
 
     logger.info("[NEXT] Run 4_Describe_Images_LLM_v2 to describe PENDING images.")
 
+
+def build_archive_notices(df_business_meta):
+    """One metadata-only chunk per pre-cutoff document: REF, title, revision,
+    type, date and a "content not indexed" statement — never the content itself.
+
+    A pre-cutoff document whose REF also exists on a recent document is skipped:
+    the chatbot already knows that REF through real chunks.
+    """
+    cutoff = F.lit(DOC_DATE_CUTOFF).cast("date")
+    is_archive = F.col("doc_date").isNotNull() & (F.col("doc_date") < cutoff)
+    df_recent_refs = (
+        df_business_meta.filter(~is_archive & F.col("ref").isNotNull())
+        .select("ref").distinct()
+    )
+
+    def _line(label, col):
+        return F.concat(F.lit(f"{label} : "), F.coalesce(col.cast("string"), F.lit("inconnu")))
+
+    body = F.concat_ws(
+        "\n",
+        F.lit(ARCHIVE_NOTICE_MARKER),
+        _line("Référence", F.col("ref")),
+        _line("Titre", F.col("titre")),
+        _line("Indice", F.col("indice")),
+        _line("Type de document", F.col("type_document")),
+        _line("Division", F.col("division")),
+        _line("Catégorie", F.col("niveau_plus_1")),
+        _line("Date de diffusion", F.date_format(F.col("doc_date"), "yyyy-MM-dd")),
+        F.lit(f"Ce document a été diffusé avant le {DOC_DATE_CUTOFF}. Seule cette fiche d'identification "
+              "est disponible dans Qualibot : son contenu n'est pas indexé et ne peut pas servir à "
+              "répondre sur le fond. Le document reste consultable dans Intraqual."),
+        F.lit(f"This document was published before {DOC_DATE_CUTOFF}. Only this identification record "
+              "is available in Qualibot: its content is not indexed and cannot be used to answer. "
+              "The document can still be consulted in Intraqual."),
+    )
+    return (
+        df_business_meta.filter(is_archive & F.col("ref").isNotNull())
+        .dropDuplicates(["IDDOC"])
+        .join(df_recent_refs, on="ref", how="left_anti")
+        .withColumn("chunk_text", utils.source_prefixed_text(
+            body, F.col("ref"), F.col("titre"), F.col("division"), F.col("niveau_plus_1"),
+            doc_date_col=F.col("doc_date"), include_prefix=EMBED_SOURCE_PREFIX,
+        ))
+        .select(
+            "IDDOC",
+            F.col("ref").alias("REF"),
+            "division",
+            # Real chunks start at -000001 (chunk_index 0): -000000 can never collide.
+            F.concat(F.col("IDDOC").cast("string"), F.lit("-000000")).alias("chunk_id"),
+            F.lit(-1).alias("chunk_index"),
+            "chunk_text",
+            utils.token_count_udf(F.col("chunk_text")).alias("chunk_token_count"),
+            F.lit(ARCHIVE_NOTICE_CONTENT_TYPE).alias("chunk_content_type"),
+            F.lit("{}").alias("semantic_headers"),
+            F.sha2(F.col("chunk_text"), 256).alias("chunk_sha256"),
+            utils.intraqual_ref_url(F.col("ref")).alias("url"),
+            "doc_date",
+        )
+    )
+
+
+def write_archive_notices(df_notices):
+    """Rewrite TARGET_ARCHIVE_NOTICE_TABLE, then reconcile the notices held by the
+    RAG chunk tables: MERGEd in when ARCHIVE_NOTICES_IN_RAG is on, removed otherwise.
+    MERGE (not delete + append) so Change Data Feed only carries real changes."""
+    df_notices.write.format("delta").mode("overwrite") \
+        .option("overwriteSchema", "true").saveAsTable(TARGET_ARCHIVE_NOTICE_TABLE)
+    df_notices = spark.table(TARGET_ARCHIVE_NOTICE_TABLE)
+    logger.info(f"[NOTICES] Wrote {df_notices.count()} archive notice(s) to {TARGET_ARCHIVE_NOTICE_TABLE} "
+                f"(in RAG tables: {ARCHIVE_NOTICES_IN_RAG})")
+
+    is_notice = f"chunk_content_type = '{ARCHIVE_NOTICE_CONTENT_TYPE}'"
+    for tbl, division in [(TARGET_CHUNK_TABLE, None), (TARGET_CHUNK_TABLE_AS, "AS"), (TARGET_CHUNK_TABLE_IS, "IS")]:
+        if not spark.catalog.tableExists(tbl):
+            continue
+        if not ARCHIVE_NOTICES_IN_RAG:
+            if spark.table(tbl).filter(is_notice).limit(1).count():
+                spark.sql(f"DELETE FROM {tbl} WHERE {is_notice}")
+                logger.info(f"[NOTICES] Removed archive notices from {tbl}")
+            continue
+        df_src = df_notices if division is None else df_notices.filter(F.col("division") == division)
+        # Align on the target's own columns/types (it may hold columns notices don't have).
+        df_src = df_src.select(*[
+            (F.col(f.name) if f.name in df_notices.columns else F.lit(None)).cast(f.dataType).alias(f.name)
+            for f in spark.table(tbl).schema
+        ])
+        (
+            DeltaTable.forName(spark, tbl).alias("t")
+            .merge(df_src.alias("s"), "t.chunk_id = s.chunk_id")
+            .whenMatchedUpdateAll(condition="NOT (t.chunk_sha256 <=> s.chunk_sha256)")
+            .whenNotMatchedInsertAll()
+            .whenNotMatchedBySourceDelete(condition=f"t.{is_notice}")
+            .execute()
+        )
+        logger.info(f"[NOTICES] Merged archive notices into {tbl}")
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -1468,6 +1567,17 @@ else:
     write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_chunks_archive,
                   df_image_metadata, revised_iddocs)
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Archive notices (pre-cutoff documents)
+# MAGIC
+# MAGIC Runs on every run, parsed documents or not: it only depends on the manifest.
+# MAGIC After `write_outputs`, which deletes/overwrites chunk rows per IDDOC.
+
+# COMMAND ----------
+
+write_archive_notices(build_archive_notices(df_business_meta))
 
 # COMMAND ----------
 

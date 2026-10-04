@@ -108,6 +108,21 @@ TARGET_CHANGE_LOG_TABLE      = f"{CATALOG_SCHEMA}.document_change_log{TABLE_SUFF
 # filtered_by_date=True, include_in_rag=False). No DATEDIFF = unknown date = recent.
 DOC_DATE_CUTOFF = _env("PARSING_DOC_DATE_CUTOFF", "2018-01-01")
 
+# Total number of pre-cutoff documents allowed to be parsed, most recent first
+# (cumulative, not per run): 0 = none, N = the N most recent, -1 = all.
+# 2_Cleanup_Volume turns it into parse_manifest.parse_content.
+ARCHIVE_MAX_DOCS = int(_env("PARSING_ARCHIVE_MAX_DOCS", "0") or "0")
+
+# One metadata-only "notice" chunk per pre-cutoff document (REF, title, revision,
+# date — no content), rebuilt on every run into TARGET_ARCHIVE_NOTICE_TABLE.
+# Copied into the RAG chunk tables (chatbot indexes) only when ARCHIVE_NOTICES_IN_RAG is on.
+TARGET_ARCHIVE_NOTICE_TABLE = f"{CATALOG_SCHEMA}.chunks_archive_notices{TABLE_SUFFIX}"
+ARCHIVE_NOTICES_IN_RAG = _env("PARSING_ARCHIVE_NOTICES_IN_RAG", "false").strip().lower() in ("1", "true", "yes")
+# Also hardcoded in 5_Sync_Vector_Indexes.py (serverless, no config.py) and matched
+# by ARCHIVE_NOTICE_MARKER in server/services/vector_search.py.
+ARCHIVE_NOTICE_CONTENT_TYPE = "archive_notice"
+ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
+
 # =============================================================================
 # Manual REF exclusions — reviewed by hand, add sparingly. Excluded permanently
 # as SKIPPED_REF_MANUAL by 2_Cleanup_Volume.py.
