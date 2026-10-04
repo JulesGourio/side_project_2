@@ -21,6 +21,22 @@ Le code change deux choses :
   construit `chunks_full_v1` (récents + archive) et crée l'index
   `chunks_full_index_v1` sur l'endpoint `qualibot`.
 
+- [ ] **0. Tester d'abord sur `qualibot-uat-test`** (app seule, pas de `-Infra` :
+  le pipeline de parsing n'existe pas sur cette cible, et l'app y utilise déjà
+  l'index partagé `chunks_index_v1`). Le script ne démarre jamais cette app :
+  la démarrer d'abord si elle est arrêtée.
+
+  ```powershell
+  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+  databricks apps start qualibot-uat-test --profile UAT
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
+  ```
+
+  À vérifier : comparaison de deux fichiers, puis « Judge Impacted Docs » — les
+  documents arrivent un par un, « Show passages » montre la phrase surlignée,
+  la vue « By change » et « Export Excel » fonctionnent. Les documents d'avant
+  2018 n'apparaîtront pas encore (étapes 3 à 5).
+
 - [ ] **1. Déployer sur `qualibot-uat` avec `-Infra`** (la liste d'index du job a
   changé, donc la définition du job doit être redéployée) :
 
