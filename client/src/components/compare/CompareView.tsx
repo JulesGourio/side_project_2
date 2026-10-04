@@ -100,7 +100,7 @@ function markFeedbackSubmitted(key: string): void {
       // Cap to avoid localStorage bloat
       if (set.length > 200) set.splice(0, set.length - 200);
     }
-    localStorage.setItem(LS_FEEDBACK_SUBMITTED, JSON.stringify(set));
+    lsSet(LS_FEEDBACK_SUBMITTED, JSON.stringify(set));
   } catch {}
 }
 
@@ -113,6 +113,22 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// localStorage is close to full as soon as two documents are persisted in it;
+// a failed write must never turn a finished analysis into an error.
+function lsSet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // quota exceeded — the in-memory state is still correct
+  }
+}
+
+// While a report streams in, persist it at most this often (it used to be
+// rewritten in full on every delta).
+const LS_STREAM_PERSIST_MS = 1000;
+
+const STREAM_INTERRUPTED = 'Connection lost before the report was complete. Please retry.';
 
 async function computeFileHash(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
   const buffer = await crypto.subtle.digest('SHA-256', bytes);
@@ -141,7 +157,7 @@ function readFile(file: File): Promise<{ base64: string; bytes: Uint8Array<Array
 function savePdfToStorage(key: string, pdf: Omit<DocFile, 'bytes'> | null) {
   if (pdf) {
     try {
-      localStorage.setItem(key, JSON.stringify({ name: pdf.name, size: pdf.size, data: pdf.data, mimeType: pdf.mimeType }));
+      lsSet(key, JSON.stringify({ name: pdf.name, size: pdf.size, data: pdf.data, mimeType: pdf.mimeType }));
     } catch {
       // localStorage full — silently ignore
     }
@@ -1281,7 +1297,12 @@ export function CompareView() {
   // Abort in-flight analysis when component unmounts (tab switch)
   const abortControllerRef = useRef<AbortController | null>(null);
   const abortControllerRefStd = useRef<AbortController | null>(null);
-  useEffect(() => () => { abortControllerRef.current?.abort(); abortControllerRefStd.current?.abort(); }, []);
+  const abortControllerRefImpact = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    abortControllerRef.current?.abort();
+    abortControllerRefStd.current?.abort();
+    abortControllerRefImpact.current?.abort();
+  }, []);
 
   useEffect(() => {
     const old = loadPdfFromStorage(LS_OLD_PDF);
@@ -1361,12 +1382,12 @@ export function CompareView() {
 
   const setManualChangesTextAndPersist = (text: string) => {
     setManualChangesText(text);
-    localStorage.setItem(LS_IMPACT_MANUAL_TEXT, text);
+    lsSet(LS_IMPACT_MANUAL_TEXT, text);
   };
 
   const switchImpactMode = (mode: 'compare' | 'manual') => {
     setImpactMode(mode);
-    localStorage.setItem(LS_IMPACT_MODE, mode);
+    lsSet(LS_IMPACT_MODE, mode);
     setImpact(null);
     setImpactError('');
     localStorage.removeItem(LS_IMPACT);
@@ -1410,7 +1431,7 @@ export function CompareView() {
       form.append('new_file', new Blob([nw.bytes], { type: nw.mimeType }), nw.name);
       const res = await fetch('/api/compare/save', { method: 'POST', body: form });
       const data = await res.json();
-      if (data.session_path) { localStorage.setItem(LS_SESSION_PATH, data.session_path); return data.session_path; }
+      if (data.session_path) { lsSet(LS_SESSION_PATH, data.session_path); return data.session_path; }
       if (data.error) toast.warning(`Auto-save skipped: ${data.error}`);
     } catch (e) {
       toast.warning(`Auto-save unavailable: ${e instanceof Error ? e.message : String(e)}`);
@@ -1519,26 +1540,49 @@ export function CompareView() {
     // matching track (structured = Change Table, everything else = Change
     // Summary) and leave the other track untouched.
     const method = entry.processing_method || '';
+    // The other track and the impact results stay only if they belong to the
+    // same two files; otherwise they would sit next to this entry's file names
+    // (and feed the next impact search) while describing another comparison.
+    const entryOldHash = entry.old_file_hash || '';
+    const entryNewHash = entry.new_file_hash || '';
+    const samePair = !!entryOldHash && entryOldHash === oldFileHash && entryNewHash === newFileHash;
     setError('');
-    setOldFileHash('');
-    setNewFileHash('');
-    localStorage.removeItem(LS_OLD_HASH);
-    localStorage.removeItem(LS_NEW_HASH);
+    setImpact(null);
+    setImpactError('');
+    localStorage.removeItem(LS_IMPACT);
+    setOldFileHash(entryOldHash);
+    setNewFileHash(entryNewHash);
+    lsSet(LS_OLD_HASH, entryOldHash);
+    lsSet(LS_NEW_HASH, entryNewHash);
     setSessionPath(entry.volume_session_path || '');
-    localStorage.setItem(LS_SESSION_PATH, entry.volume_session_path || '');
+    lsSet(LS_SESSION_PATH, entry.volume_session_path || '');
+    if (!samePair) {
+      if (method === 'structured') {
+        setAnalysisStd('');
+        setMessageIdStd(null);
+        localStorage.removeItem(LS_ANALYSIS_STD);
+        localStorage.removeItem(LS_MESSAGE_ID_STD);
+      } else {
+        setAnalysis('');
+        setParsedJsonItems([]);
+        setMessageId(null);
+        localStorage.removeItem(LS_ANALYSIS);
+        localStorage.removeItem(LS_MESSAGE_ID);
+      }
+    }
 
     if (method === 'structured') {
       setParsedJsonItems(entry.analysis_text ? parsePartialJsonItems(entry.analysis_text) : []);
       setAnalysis(entry.analysis_text || '');
       setMessageId(entry.id);
-      localStorage.setItem(LS_PROCESSING_METHOD, method);
-      localStorage.setItem(LS_ANALYSIS, entry.analysis_text || '');
-      localStorage.setItem(LS_MESSAGE_ID, String(entry.id));
+      lsSet(LS_PROCESSING_METHOD, method);
+      lsSet(LS_ANALYSIS, entry.analysis_text || '');
+      lsSet(LS_MESSAGE_ID, String(entry.id));
     } else {
       setAnalysisStd(entry.analysis_text || '');
       setMessageIdStd(entry.id);
-      localStorage.setItem(LS_ANALYSIS_STD, entry.analysis_text || '');
-      localStorage.setItem(LS_MESSAGE_ID_STD, String(entry.id));
+      lsSet(LS_ANALYSIS_STD, entry.analysis_text || '');
+      lsSet(LS_MESSAGE_ID_STD, String(entry.id));
     }
 
     // Show filename placeholders immediately (no bytes — display only, not persisted to localStorage)
@@ -1628,8 +1672,8 @@ export function CompareView() {
     ]);
     setOldFileHash(ohash);
     setNewFileHash(nhash);
-    localStorage.setItem(LS_OLD_HASH, ohash);
-    localStorage.setItem(LS_NEW_HASH, nhash);
+    lsSet(LS_OLD_HASH, ohash);
+    lsSet(LS_NEW_HASH, nhash);
 
     let currentSession = '';
 
@@ -1664,6 +1708,8 @@ export function CompareView() {
       let localImageContext: ImagePair[] = [];
       let llmRequestId: number | null = null;
       let streamDone = false;
+      let lastPersist = 0;
+      let hadWarning = false;
       while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -1681,13 +1727,16 @@ export function CompareView() {
               if (firstTokenTime === null) firstTokenTime = Date.now();
               accumulated += event.delta;
               setAnalysis(accumulated);
-              localStorage.setItem(LS_ANALYSIS, accumulated);
+              if (Date.now() - lastPersist > LS_STREAM_PERSIST_MS) {
+                lsSet(LS_ANALYSIS, accumulated);
+                lastPersist = Date.now();
+              }
               setParsedJsonItems(parsePartialJsonItems(accumulated));
             } else if (event.type === 'metadata') {
               fileType = event.file_type || '';
               setCurrentFileType(fileType);
               processingMethod = event.method || 'structured';
-              localStorage.setItem(LS_PROCESSING_METHOD, processingMethod);
+              lsSet(LS_PROCESSING_METHOD, processingMethod);
               llmRequestId = event.llm_request_id ?? null;
               if (event.cached) {
                 isCached = true;
@@ -1698,6 +1747,7 @@ export function CompareView() {
               localImageContext = event.images || [];
               setImageContext(localImageContext);
             } else if (event.type === 'warning') {
+              hadWarning = true;
               toast.warning(event.detail || 'The report may be incomplete.');
             } else if (event.type === 'usage') {
               usageData = event;
@@ -1710,16 +1760,20 @@ export function CompareView() {
         if (sseError) throw new Error(sseError);
       }
 
-      localStorage.setItem(LS_ANALYSIS, accumulated);
+      lsSet(LS_ANALYSIS, accumulated);
       setParsedJsonItems(parsePartialJsonItems(accumulated));
+      // The stream closed without its end marker: the gateway cut it. What we
+      // have is a partial report — keep it on screen, but never save it as the
+      // result for this file pair (it would then be served from cache to everyone).
+      if (!streamDone) throw new Error(STREAM_INTERRUPTED);
 
       if (isCached && cachedMessageId !== null) {
         // Result from DB cache — reuse the original session folder
         setMessageId(cachedMessageId);
-        localStorage.setItem(LS_MESSAGE_ID, String(cachedMessageId));
+        lsSet(LS_MESSAGE_ID, String(cachedMessageId));
         if (cachedSessionPath) {
           setSessionPath(cachedSessionPath);
-          localStorage.setItem(LS_SESSION_PATH, cachedSessionPath);
+          lsSet(LS_SESSION_PATH, cachedSessionPath);
         }
         toast.info('Result retrieved from cache');
       } else {
@@ -1736,13 +1790,16 @@ export function CompareView() {
           await autoSaveResult(currentSession, 'analysis.md', accumulated);
           autoSaveExcel(currentSession, accumulated, fileType, localImageContext);
         }
+        // A report that came with a warning (output cut at the token limit,
+        // unreadable document, truncated diff) is saved without hashes: the
+        // cache replays the text only, so the warning would be lost next time.
         const mid = await saveToHistory(
-          oldPdf.name, newPdf.name, accumulated, '', currentSession, ohash, nhash,
+          oldPdf.name, newPdf.name, accumulated, '', currentSession, hadWarning ? '' : ohash, hadWarning ? '' : nhash,
           fileType, processingMethod, 'structured', ttftS, generationS, usageData, llmRequestId,
         );
         if (mid !== null) {
           setMessageId(mid);
-          localStorage.setItem(LS_MESSAGE_ID, String(mid));
+          lsSet(LS_MESSAGE_ID, String(mid));
         }
       }
     } catch (err) {
@@ -1786,8 +1843,8 @@ export function CompareView() {
     ]);
     setOldFileHash(ohash);
     setNewFileHash(nhash);
-    localStorage.setItem(LS_OLD_HASH, ohash);
-    localStorage.setItem(LS_NEW_HASH, nhash);
+    lsSet(LS_OLD_HASH, ohash);
+    lsSet(LS_NEW_HASH, nhash);
 
     let currentSession = '';
 
@@ -1819,6 +1876,8 @@ export function CompareView() {
       let cachedSessionPath = '';
       let llmRequestId: number | null = null;
       let streamDone = false;
+      let lastPersist = 0;
+      let hadWarning = false;
       while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -1836,7 +1895,10 @@ export function CompareView() {
               if (firstTokenTime === null) firstTokenTime = Date.now();
               accumulated += event.delta;
               setAnalysisStd(accumulated);
-              localStorage.setItem(LS_ANALYSIS_STD, accumulated);
+              if (Date.now() - lastPersist > LS_STREAM_PERSIST_MS) {
+                lsSet(LS_ANALYSIS_STD, accumulated);
+                lastPersist = Date.now();
+              }
             } else if (event.type === 'metadata') {
               fileType = event.file_type || '';
               setCurrentFileType(fileType);
@@ -1847,6 +1909,7 @@ export function CompareView() {
                 cachedSessionPath = event.session_path ?? '';
               }
             } else if (event.type === 'warning') {
+              hadWarning = true;
               toast.warning(event.detail || 'The report may be incomplete.');
             } else if (event.type === 'usage') {
               usageData = event;
@@ -1859,14 +1922,15 @@ export function CompareView() {
         if (sseError) throw new Error(sseError);
       }
 
-      localStorage.setItem(LS_ANALYSIS_STD, accumulated);
+      lsSet(LS_ANALYSIS_STD, accumulated);
+      if (!streamDone) throw new Error(STREAM_INTERRUPTED);
 
       if (isCached && cachedMessageId !== null) {
         setMessageIdStd(cachedMessageId);
-        localStorage.setItem(LS_MESSAGE_ID_STD, String(cachedMessageId));
+        lsSet(LS_MESSAGE_ID_STD, String(cachedMessageId));
         if (cachedSessionPath) {
           setSessionPath(cachedSessionPath);
-          localStorage.setItem(LS_SESSION_PATH, cachedSessionPath);
+          lsSet(LS_SESSION_PATH, cachedSessionPath);
         }
         toast.info('Result retrieved from cache');
       } else {
@@ -1883,12 +1947,12 @@ export function CompareView() {
           autoSavePdf(currentSession, accumulated, docTitle);
         }
         const mid = await saveToHistory(
-          oldPdf.name, newPdf.name, accumulated, '', currentSession, ohash, nhash,
+          oldPdf.name, newPdf.name, accumulated, '', currentSession, hadWarning ? '' : ohash, hadWarning ? '' : nhash,
           fileType, 'standard', 'standard', ttftS, generationS, usageData, llmRequestId,
         );
         if (mid !== null) {
           setMessageIdStd(mid);
-          localStorage.setItem(LS_MESSAGE_ID_STD, String(mid));
+          lsSet(LS_MESSAGE_ID_STD, String(mid));
         }
       }
     } catch (err) {
@@ -1930,8 +1994,11 @@ export function CompareView() {
     localStorage.removeItem(LS_IMPACT);
     try {
       const manual = effectiveImpactMode === 'manual';
+      const controller = new AbortController();
+      abortControllerRefImpact.current = controller;
       const res = await fetch('/api/compare/impact', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           changes_text: changesTextForImpact,
@@ -1979,8 +2046,12 @@ export function CompareView() {
       if (!final?.done) throw new Error('The search was interrupted before it finished.');
       if (final.cached) toast.info('Result retrieved from cache');
       else if (final.no_changes) toast.info('Analysis reported no substantive changes — nothing to judge.');
-      localStorage.setItem(LS_IMPACT, JSON.stringify(final));
+      lsSet(LS_IMPACT, JSON.stringify(final));
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        toast.info('Impact search cancelled.');
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       setImpactError(msg);
       toast.error(`Impact search failed: ${msg}`);
@@ -2549,6 +2620,16 @@ export function CompareView() {
             {isImpacting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
             {isImpacting ? 'Judging…' : 'Judge Impacted Docs'}
           </button>
+          {isImpacting && (
+            <button
+              onClick={() => abortControllerRefImpact.current?.abort()}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 border cursor-pointer"
+              style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-body)' }}
+            >
+              <Square className="h-3.5 w-3.5" />
+              Cancel
+            </button>
+          )}
           {impact?.done && !isImpacting && (
             <button
               onClick={() => handleImpact(true)}

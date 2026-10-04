@@ -92,4 +92,41 @@ Le code change deux choses :
   GRANT SELECT ON TABLE uat_landingzone.qualibot.chunks_full_index_v1 TO `<application id du SP de l'app qualibot>`;
   ```
 
+### Audit comparaison — branche `audit/doc-compare` (2026-10-04)
+
+Détail des corrections : `docs/compare_audit_2026-10.md`. Aucune table, aucun
+index, aucun droit à créer : code de l'app seulement.
+
+- [ ] **1. Déployer la branche sur `qualibot-uat-test`** (zip de la branche
+  `audit/doc-compare`, pas de `main`) :
+
+  ```powershell
+  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+  databricks apps start qualibot-uat-test --profile UAT
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
+  ```
+
+- [ ] **2. Vérifier dans l'app** :
+  - comparer deux révisions connues : la Change Table doit contenir au moins
+    autant de lignes qu'avant (les changements d'un seul mot remontent
+    maintenant) ; regarder si du bruit est apparu ;
+  - déposer un PDF et un DOCX : message « must be of the same type » ;
+  - « Judge Impacted Docs » puis « Cancel » pendant la recherche : elle s'arrête ;
+  - lancer l'impact search depuis le Change Summary, générer la Change Table,
+    relancer : le résultat doit être recalculé (pas « retrieved from cache ») ;
+  - charger une entrée de l'historique : plus de résultats d'une autre
+    comparaison à l'écran ;
+  - exports Excel et PDF toujours téléchargeables.
+
+- [ ] **3. Mesurer le bruit sur le corpus d'évaluation** (machine où se trouve
+  `utils/compare_eval`), avec et sans le contrôle mot à mot :
+
+  ```powershell
+  python utils\compare_preview.py <ancien> <nouveau> --score
+  $env:COMPARE_WORD_LEVEL_CHECK = 'false'; python utils\compare_preview.py <ancien> <nouveau> --score
+  Remove-Item Env:COMPARE_WORD_LEVEL_CHECK
+  ```
+
+- [ ] **4. Me dire si on fusionne dans `main`.**
+
 ## Fait

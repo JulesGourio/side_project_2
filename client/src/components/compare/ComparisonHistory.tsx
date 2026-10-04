@@ -17,6 +17,8 @@ export interface FullComparison extends HistoryEntry {
   analysis_text: string | null;
   impact_text: string | null;
   processing_method: string | null;
+  old_file_hash?: string | null;
+  new_file_hash?: string | null;
 }
 
 interface Props {

@@ -18,8 +18,17 @@ from .vector_search import _parse_json_array
 
 _CRIT_ORDER = {'high': 0, 'medium': 1, 'low': 2}
 
-# Phrase emitted by both analysis prompts when the documents are equivalent.
-_NO_CHANGES_RE = re.compile(r'no significant changes detected', re.I)
+# Phrase emitted by both analysis prompts when the documents are equivalent. The
+# prompts ask for it in the document's own language, so the French/Spanish/German
+# renderings must be recognised too — "Aucun changement significatif détecté" was
+# searched as if it were a change.
+_NO_CHANGES_RE = re.compile(
+    r'no significant changes? (?:were |was )?detected'
+    r'|aucune? (?:changement|modification|[ée]volution)s? (?:significati|substantiel|notable)\w*'
+    r'|ning[uú]n cambio (?:significativo|sustancial)'
+    r'|keine (?:wesentlichen|signifikanten) [äa]nderungen',
+    re.I,
+)
 
 _ABSENT = ('', '--', '—', 'n/a', 'null', 'none')
 

@@ -114,8 +114,11 @@ every judged document, *Changes* = the change list.
 **Cost/latency**: up to 15 small calls on `databricks-gpt-5-6-luna`, ~4-8k input tokens
 each — a few cents; 15-40 s, but the first results appear after a few seconds.
 
-**Caching**: the final result is cached in `impact_cache` keyed on
-`(old_file_hash, new_file_hash, APP_VERSION)` and replayed as the same event stream
+**Caching**: the final result is cached in `impact_cache` keyed on the two file
+hashes plus a fingerprint of the change text, the index, the judge endpoint and the
+limits (`_impact_cache_version`, stored in the `app_version` column — the same pair
+searched from the Change Summary, from the Change Table or against another index is
+three different results, 2026-10-04) and replayed as the same event stream
 (`cached: true`). Results cached by the previous design (no `changes` key) are
 ignored. Not cached when a judge call failed. "Re-run" sends `force_refresh: true`.
 
@@ -226,8 +229,8 @@ logged before this was added (or replayed without hashes) keep NULL hashes.
 | `COMPARE_SUMMARY_IMAGE_ENDPOINT` | Vision LLM endpoint for image files (default `databricks-gpt-5-6-luna`) |
 | `COMPARE_SUMMARY_MAX_CHARS` / `_MAX_TOKENS` | Safety knobs, see truncation note above |
 | `COMPARE_MAX_CONCURRENT` | Semaphore bounding concurrent `/compare/analyze` requests |
-| `MAX_COMPARE_PDF_MB` | Declared here, but **not read anywhere in the code** — see Technical reference below |
-| `MAX_COMPARE_FILE_MB` | The var actually read for the upload size cap (`compare.py`, default 20MB) — not declared in `app.yaml` at all; only same-by-coincidence defaults keep this harmless today |
+| `MAX_COMPARE_FILE_MB` / `MAX_COMPARE_PDF_MB` | Upload size cap (`compare.py`, default 20MB). `app.yaml` declares the second, historical name; the first wins when both are set |
+| `COMPARE_WORD_LEVEL_CHECK` | `false` restores the pre-2026-10-04 diff filter (drops one-word changes in long paragraphs) — for A/B runs on `compare_eval` only |
 | `COMPARE_ANALYSIS_TIMEOUT_S` / `_CONNECT_TIMEOUT_S` / `_RETRIES` | HTTP timeout/retry knobs for the LLM call |
 | `COMPARE_MAX_TOKENS` / `_THINKING_BUDGET` / `_TEMPERATURE` | LLM call parameters |
 | `COMPARE_METHOD_{PDF,IMAGE,DOCX,PPTX,EXCEL}` | Default processor version per file type |
@@ -257,12 +260,9 @@ this is the precise *what*.
 | `POST /api/compare/export-pdf` | `exports.py::export_pdf` | **none** | multipart: `markdown_text`, `filename`, `title` | |
 | `POST /api/compare/save-result` / `save-excel` / `save-pdf` | `exports.py` | **none** | | Auto-save-to-volume variants triggered by the client right after analysis; same `COMPARE_VOLUME_PATH` prefix guard as `/compare/load`. |
 
-**Capability-gating gap**: `exports.py` (all five export/auto-save routes),
-`preview.py`, and `feedback.py` carry **no** `Depends(require_compare)` at all, unlike
-`compare.py` and `history.py`. In practice this means the export/preview surface for
-compare-produced content is reachable without `can_compare`, even though the primary
-analyze/impact/summarize/history routes are properly gated — worth closing if this
-ever needs to be airtight rather than best-effort.
+**Capability gating**: `exports.py` is gated at router level by `require_compare`
+(2026-10-04). `preview.py` and `feedback.py` still carry no such dependency.
+Every `session_path` is checked with `_is_within_volume` (normalised, `..` refused).
 
 ### Processor factory (`server/services/processors/`)
 
@@ -324,13 +324,6 @@ default, `COMPARE_IMPACT_MAX_QUERY_CHARS` is `20000` vs. a `6000` code default,
 actually deployed — but don't trust a code comment that cites the *code* default as
 if it were the live value without checking `app.yaml` too.
 
-**`MAX_COMPARE_PDF_MB` vs `MAX_COMPARE_FILE_MB`**: `app.yaml` declares
-`MAX_COMPARE_PDF_MB`, but no Python code reads that name anywhere — the actual upload
-cap is `MAX_COMPARE_FILE_MB` (`compare.py`, default 20MB), which isn't declared in
-`app.yaml` at all. Harmless today only because both default to the same value; if
-either default ever needs to change, edit `MAX_COMPARE_FILE_MB`, and consider fixing
-the `app.yaml` name to match.
-
 ### Caching — exact Lakebase schemas
 
 ```sql
@@ -361,19 +354,13 @@ always take the most recent matching row. All cache reads/writes are wrapped in 
 bare `try/except` gated on `if not pool`, so a Lakebase outage degrades to "always
 compute fresh, no cache hit," never a user-visible error.
 
-`APP_VERSION`'s code-level default is inconsistent across files (`'2'` in
-`compare.py`, `'1'` in `history.py`/`app.py`) — currently masked by an explicit
-`app.yaml` value, but worth setting explicitly rather than relying on either default
-if that env var is ever removed.
+`APP_VERSION` is defined once, in `compare.py` (`history.py` imports it).
 
 ### Export mechanics
 
 `_parse_json_response` (`export_helpers.py`) tries, in order: direct `json.loads`,
 then a ` ```json ` fenced block, then a bracket-extraction regex — returning `None`
-(never raising) if all three fail. Note a real inconsistency between callers:
-`export_excel` checks `is None`, while `save_excel_to_session` checks truthiness
-(`not rows`) — the latter treats a genuinely valid-but-empty `[]` diff as a failure
-too, the former doesn't.
+(never raising) if all three fail.
 
 The PDF export (`_build_pdf_bytes_from_markdown`) is pure-Python `fpdf2` — no
 system-level PDF library dependency. It hand-parses Markdown line by line (no
@@ -403,13 +390,13 @@ independent `DocSummaryState{text, error, loading, noContent, meta}` — `noCont
 tracked as an explicit first-class flag specifically so a scanned-page-with-no-text
 document doesn't silently vanish from the UI).
 
-**Hashing is 100% client-side**: `computeFileHash` uses the browser's Web Crypto
-`crypto.subtle.digest('SHA-256', ...)`, computed independently (not memoized) at each
-of the three call sites (Change Table, Change Summary, Summarize). The server never
-recomputes or verifies these hashes — they're pure client-trusted cache keys. This is
-also why `old_file_hash`/`new_file_hash` in the `messages`/`impact_requests` tables
-can legitimately be `NULL`: any request replayed without going through the normal
-upload flow (e.g. an old history entry) simply has none to send.
+**Hashing**: the client computes SHA-256 (`computeFileHash`, Web Crypto) for its own
+state, the history row and the impact call; `/compare/analyze` and `/compare/summarize`
+recompute the same hash from the received bytes for their cache lookup and ignore the
+form field (2026-10-04). `POST /api/history` still stores the client's hashes — see
+`docs/compare_audit_2026-10.md` B1. A report that streamed with a warning, or whose
+stream ended without `[DONE]`, is saved without hashes or not at all, so it is never
+served from cache.
 
 **"Run Both"** (`handleAnalyzeBoth`) is `Promise.allSettled([handleAnalyzeStructured(...), handleAnalyzeStandard(...)])`
 — each call manages its own `AbortController` and its own `isAnalyzing*` flag
@@ -417,7 +404,8 @@ end-to-end; `allSettled` here is just a defensive wrapper against a stray unhand
 rejection, not a real coordination point between the two tracks.
 
 **History routing** is an exact string match, not a fuzzy fallback:
-`processing_method === 'structured'` routes to the Change Table card; **any other
+loading an entry clears the impact results and, unless it is the same file pair, the
+other track. `processing_method === 'structured'` routes to the Change Table card; **any other
 value** — including `'standard'`, a legacy empty string, or something unrecognized —
 routes to the Change Summary card by default, with no distinct error path for a
 truly-unknown method value.
@@ -428,8 +416,9 @@ history persistence) is a plain module-scope function or closure, not a `use*` h
 
 **Cancellation is track-specific and partial**: Change Table and Change Summary each
 have their own `AbortController` and Cancel button (aborting keeps whatever partial
-text had already streamed in, doesn't roll it back). Impact search and Document
-summary have no abort wiring at all — once fired, they run to completion.
+text had already streamed in, doesn't roll it back). Impact search has its own Cancel button and
+`AbortController`; the server cancels the remaining judge calls when the client goes
+away. Document summary has no abort wiring.
 
 ### Logging tables
 

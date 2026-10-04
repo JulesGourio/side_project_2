@@ -302,14 +302,36 @@ def _change_num(change_id: str) -> int:
 # Judgment
 # ---------------------------------------------------------------------------
 
-def _changes_block(changes: List[Dict[str, Any]], max_chars: int) -> str:
-    lines = []
+def _changes_block(changes: List[Dict[str, Any]], max_chars: int, priority_ids: Tuple[str, ...] = ()) -> str:
+    """The change list shown to the judge, in table order, within max_chars.
+
+    Over budget, whole changes are left out (never cut mid-sentence) and the
+    ones in priority_ids — those whose query retrieved this candidate — go in
+    first. A flat [:max_chars] dropped the END of the table for every
+    candidate, including the very changes that had retrieved it.
+    """
+    lines: Dict[str, str] = {}
     for c in changes:
         if not c.get('searched', True):
             continue
         crit = f" [{c['criticality']}]" if c.get('criticality') else ''
-        lines.append(f"{c['id']}{crit}: {c['text']}")
-    return '\n'.join(lines)[:max_chars]
+        lines[c['id']] = f"{c['id']}{crit}: {c['text']}"
+    if sum(len(line) + 1 for line in lines.values()) <= max_chars:
+        return '\n'.join(lines.values())
+
+    kept: set = set()
+    used = 0
+    for cid in [i for i in priority_ids if i in lines] + [i for i in lines if i not in priority_ids]:
+        if used + len(lines[cid]) + 1 > max_chars:
+            continue
+        kept.add(cid)
+        used += len(lines[cid]) + 1
+    if not kept:  # one change alone exceeds the budget
+        first = next((i for i in priority_ids if i in lines), next(iter(lines)))
+        return lines[first][:max_chars]
+    out = [line for cid, line in lines.items() if cid in kept]
+    out.append(f'({len(lines) - len(kept)} other change(s) omitted for length — judge only against the ones listed.)')
+    return '\n'.join(out)
 
 
 def _candidate_block(cand: Dict[str, Any]) -> str:
@@ -350,8 +372,9 @@ async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: 
     }
 
 
-def _status(impacted: bool, confidence: str) -> str:
-    if confidence == 'low':
+def _status(impacted: bool, confidence: str, has_passages: bool = True) -> str:
+    # "Impacted" with no passage the UI can show is a claim nobody can verify.
+    if confidence == 'low' or (impacted and not has_passages):
         return 'check'
     return 'impacted' if impacted else 'not_impacted'
 
@@ -400,8 +423,8 @@ def _judged_doc(cand: Dict[str, Any], judgment: Dict[str, Any], archive_before: 
             if not isinstance(item, dict):
                 continue
             try:
-                num = int(str(item.get('passage')))
-            except ValueError:
+                num = int(float(str(item.get('passage'))))  # "2", 2, 2.0
+            except (ValueError, OverflowError):
                 continue
             if not 1 <= num <= len(cand['passages']):
                 continue
@@ -427,7 +450,7 @@ def _judged_doc(cand: Dict[str, Any], judgment: Dict[str, Any], archive_before: 
     return {
         **_doc_base(cand, archive_before),
         'judged': True,
-        'status': _status(impacted, confidence),
+        'status': _status(impacted, confidence, bool(passages)),
         'impacted': impacted,
         'confidence': confidence,
         'reason': str(judgment.get('reason') or '').strip(),
@@ -442,7 +465,9 @@ def _exclusion_keys(names: List[str], known_refs: List[str]) -> frozenset:
     out = set()
     for ref in known_refs:
         key = canon_ref(ref)
-        if len(key) >= 5 and any(key in n for n in canon_names):
+        # Not followed by a digit: "GO131" inside the file name "GO1316…" is a
+        # different document, not the one being compared.
+        if len(key) >= 5 and any(re.search(re.escape(key) + r'(?!\d)', n) for n in canon_names):
             out.add(key)
     return frozenset(out)
 
@@ -485,7 +510,6 @@ async def run_impact_search(
         'not_judged': [{**_doc_base(c, archive_before), 'judged': False} for c in rest],
     }
 
-    changes_text = _changes_block(extracted['changes'], max_changes_chars)
     sem = asyncio.Semaphore(_JUDGE_CONCURRENCY)
     usage = {'input_tokens': 0, 'output_tokens': 0}
 
@@ -494,6 +518,7 @@ async def run_impact_search(
             last_err: Exception | None = None
             for attempt in range(_JUDGE_RETRIES + 1):
                 try:
+                    changes_text = _changes_block(extracted['changes'], max_changes_chars, tuple(cand['change_ids']))
                     res = await _judge(host, token, llm_endpoint, changes_text, cand, max_tokens)
                     usage['input_tokens'] += res['input_tokens']
                     usage['output_tokens'] += res['output_tokens']
@@ -506,8 +531,16 @@ async def run_impact_search(
             return {**_doc_base(cand, archive_before), 'judged': True, 'status': 'error', 'impacted': False,
                     'confidence': '', 'reason': f'Judgment failed: {last_err}', 'sections': [], 'passages': []}
 
-    for next_done in asyncio.as_completed([_one(c) for c in to_judge]):
-        yield {'type': 'document', 'document': await next_done}
+    # Explicit tasks, cancelled if the consumer goes away: with bare coroutines
+    # a closed browser tab left every remaining judge call running (and billed).
+    tasks = [asyncio.create_task(_one(c)) for c in to_judge]
+    try:
+        for next_done in asyncio.as_completed(tasks):
+            yield {'type': 'document', 'document': await next_done}
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
 
     total = usage['input_tokens'] + usage['output_tokens']
     yield {

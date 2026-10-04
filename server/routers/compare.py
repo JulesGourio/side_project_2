@@ -6,11 +6,13 @@ All heavy lifting (streaming, LLM calls, file processing) lives in services/.
 import asyncio
 import base64
 import copy
+import hashlib
 import io
 import json
 import logging
 import mimetypes
 import os
+import posixpath
 import re
 import time
 import traceback
@@ -30,8 +32,8 @@ from ..services.lakebase import (
     store_summary_cache, update_llm_request_usage,
 )
 from ..services.processors.factory import (
-    EXTENSION_MAP, SUPPORTED_EXTENSIONS, extract_document_text, get_extension,
-    get_processor, prepare_image_content,
+    EXTENSION_MAP, SUPPORTED_EXTENSIONS, diff_truncation_warnings, extract_document_text,
+    file_type_of, get_extension, get_processor, prepare_image_content,
 )
 from ..services.streaming import stream_analysis
 from ..services.summarize import summarize_image, summarize_text
@@ -94,7 +96,8 @@ IGNORE:
 
 OUTPUT: Markdown, ## per section, one bullet per change. Bold critical values. If nothing substantive changed: **No significant changes detected.**\
 """
-MAX_FILE_BYTES = int(os.getenv('MAX_COMPARE_FILE_MB', '20')) * 1024 * 1024
+# app.yaml declares MAX_COMPARE_PDF_MB (the historical name); both are honoured.
+MAX_FILE_BYTES = int(os.getenv('MAX_COMPARE_FILE_MB') or os.getenv('MAX_COMPARE_PDF_MB') or '20') * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +189,17 @@ def _validate_file(file: UploadFile, data: bytes) -> None:
         )
 
 
+def _is_within_volume(session_path: str, volume_path: str) -> bool:
+    """True when session_path is the volume root or a path under it.
+
+    A bare startswith() accepted '<volume>/../../other' and '<volume>_other':
+    both leave the configured volume.
+    """
+    root = posixpath.normpath(volume_path)
+    path = posixpath.normpath(session_path)
+    return '..' not in session_path.split('/') and (path == root or path.startswith(root + '/'))
+
+
 async def _error_stream(message: str):
     yield f'data: {json.dumps({"type": "error", "error": message})}\n\n'
     yield 'data: [DONE]\n\n'
@@ -274,17 +288,6 @@ async def analyze_documents(
             media_type='text/event-stream',
         )
 
-    # ── Cache hit: return stored analysis if both hashes match ────────────────
-    _pv = processor_version.strip()
-    cached = None if force_refresh.lower() == 'true' else await _get_cached_analysis(old_file_hash.strip(), new_file_hash.strip(), _pv)
-    if cached:
-        logger.info(f'Cache hit for hashes {old_file_hash[:12]}…/{new_file_hash[:12]}… → messages.id={cached["id"]}')
-        return StreamingResponse(
-            _cached_stream(cached),
-            media_type='text/event-stream',
-            headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
-        )
-
     # ── Read & validate files before starting the generator (fast, early error) ──
     try:
         old_bytes = await old_file.read()
@@ -296,6 +299,34 @@ async def analyze_documents(
 
     old_name = old_file.filename or 'old_document'
     new_name = new_file.filename or 'new_document'
+
+    # The processor is picked from the old file alone: a PDF against a DOCX used
+    # to fail deep inside the extractor with an unreadable parser error.
+    if file_type_of(old_name) != file_type_of(new_name):
+        return StreamingResponse(
+            _error_stream(
+                f'The two documents must be of the same type ("{get_extension(old_name)}" vs '
+                f'"{get_extension(new_name)}"). Convert one of them first.'
+            ),
+            media_type='text/event-stream',
+        )
+
+    # Hashes are computed here from the uploaded bytes (same SHA-256 hex the
+    # client sends) instead of trusting the form fields: a stale or wrong
+    # client hash would replay another file pair's cached analysis.
+    old_file_hash = hashlib.sha256(old_bytes).hexdigest()
+    new_file_hash = hashlib.sha256(new_bytes).hexdigest()
+
+    # ── Cache hit: return stored analysis if both hashes match ────────────────
+    _pv = processor_version.strip()
+    cached = None if force_refresh.lower() == 'true' else await _get_cached_analysis(old_file_hash, new_file_hash, _pv)
+    if cached:
+        logger.info(f'Cache hit for hashes {old_file_hash[:12]}…/{new_file_hash[:12]}… → messages.id={cached["id"]}')
+        return StreamingResponse(
+            _cached_stream(cached),
+            media_type='text/event-stream',
+            headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
+        )
 
     processor = get_processor(old_name, method_override=_pv or None)
     if not processor:
@@ -408,7 +439,7 @@ async def analyze_documents(
 
             # Extraction-quality warnings (e.g. scanned PDF with no text layer)
             # — without this the user gets a silent, misleading "no changes".
-            for w in result.warnings:
+            for w in result.warnings + diff_truncation_warnings(result.messages):
                 yield f'data: {json.dumps({"type": "warning", "warning": "extraction", "detail": w})}\n\n'
 
             if result.image_pairs:
@@ -515,6 +546,21 @@ class ImpactRequest(BaseModel):
     force_refresh: bool = False
 
 
+def _impact_cache_version(changes_text: str, cfg: Dict[str, Any]) -> str:
+    """Cache discriminator stored in impact_cache.app_version.
+
+    The file hashes alone are not the input of an impact search: the same pair
+    gives a different change list from the Change Table than from the Change
+    Summary, and a different result once COMPARE_IMPACT_INDEX points at another
+    index. Keyed on the hashes only, the first search was replayed for all of
+    them (2026-10-04).
+    """
+    parts = [changes_text.strip(), cfg['impact_index'], cfg['impact_endpoint'],
+             str(cfg['impact_max_queries']), str(cfg['impact_per_query_results']),
+             str(cfg['impact_max_candidates'])]
+    return f'{APP_VERSION}:{hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()[:16]}'
+
+
 def _ndjson(event: Dict[str, Any]) -> str:
     return json.dumps(event, ensure_ascii=False) + '\n'
 
@@ -547,8 +593,10 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
     old_hash = body.old_file_hash.strip()
     new_hash = body.new_file_hash.strip()
 
+    cache_version = _impact_cache_version(body.changes_text, cfg)
+
     if not body.force_refresh:
-        cached = await get_cached_impact_result(old_hash, new_hash, APP_VERSION)
+        cached = await get_cached_impact_result(old_hash, new_hash, cache_version)
         # Results cached before the per-document redesign have no change list.
         if cached is not None and 'changes' in cached:
             return StreamingResponse(_replay_events(cached), media_type='application/x-ndjson')
@@ -632,7 +680,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
         )
         if old_hash and new_hash and not any(d.get('status') == 'error' for d in documents):
             asyncio.create_task(store_impact_cache(
-                old_hash, new_hash, APP_VERSION,
+                old_hash, new_hash, cache_version,
                 {**plan, 'documents': documents, 'usage': usage, 'duration_s': duration_s},
             ))
 
@@ -655,19 +703,22 @@ async def summarize_document(
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
 
-    file_hash = file_hash.strip()
     force = force_refresh.lower() == 'true'
-
-    if not force:
-        cached = await get_cached_summary(file_hash, APP_VERSION)
-        if cached is not None:
-            return {**cached, 'cached': True}
 
     data = await file.read()
     try:
         _validate_file(file, data)
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
+
+    # Same rule as /compare/analyze: the cache key is the hash of the bytes
+    # actually received, not the one the client claims.
+    file_hash = hashlib.sha256(data).hexdigest()
+
+    if not force:
+        cached = await get_cached_summary(file_hash, APP_VERSION)
+        if cached is not None:
+            return {**cached, 'cached': True}
 
     is_image = EXTENSION_MAP.get(get_extension(file.filename or '')) == 'image'
     endpoint = cfg['summary_image_endpoint'] if is_image else cfg['summary_endpoint']
@@ -760,7 +811,7 @@ async def save_to_volume(
     session_path = f'{volume_path}/{timestamp}'
     saved_files: List[str] = []
 
-    try:
+    def _save() -> None:
         w = WorkspaceClient()
 
         def _ensure_dir(path: str):
@@ -783,6 +834,10 @@ async def save_to_volume(
         if impact_text.strip():
             _upload(f'{session_path}/impact.md', impact_text.encode('utf-8'))
 
+    try:
+        # The SDK calls are blocking: on the event loop they froze every open
+        # analysis stream for the duration of two 20 MB uploads.
+        await asyncio.to_thread(_save)
         return {'success': True, 'session_path': session_path, 'saved_files': saved_files}
     except Exception as e:
         logger.error(f'Failed to save to volume: {e}')
@@ -804,12 +859,12 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
     # session_path comes from the DB (trusted) — security check only when volume_path is configured
     volume_path = os.getenv('COMPARE_VOLUME_PATH', '').rstrip('/')
     if volume_path and not volume_path.startswith('TODO'):
-        if not session_path.startswith(volume_path):
+        if not _is_within_volume(session_path, volume_path):
             logger.warning(f'load: session_path {session_path!r} outside configured volume {volume_path!r}')
             return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
     else:
         # No volume configured — allow only UC Volume paths (starts with /Volumes/)
-        if not session_path.startswith('/Volumes/'):
+        if not _is_within_volume(session_path, '/Volumes'):
             logger.warning(f'load: session_path {session_path!r} does not look like a UC Volume path')
             return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
         logger.info(f'load: COMPARE_VOLUME_PATH not set, attempting load from trusted DB path {session_path!r}')
@@ -819,7 +874,7 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
         c = resp.contents
         return c.read() if hasattr(c, 'read') else bytes(c)
 
-    try:
+    def _load() -> dict:
         w = WorkspaceClient()
         result: dict = {}
 
@@ -858,6 +913,9 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
                 }
 
         return result
+
+    try:
+        return await asyncio.to_thread(_load)
     except Exception as e:
         logger.error(f'Failed to load session files: {e}')
         return JSONResponse({'error': str(e)}, status_code=500)

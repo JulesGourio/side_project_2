@@ -14,6 +14,7 @@ import base64
 import os
 from typing import Any, Dict, List, Optional
 
+from ._diff_engines import DIFF_TRUNCATED_MARKER, _MAX_DIFF_CHARS
 from .base import BaseProcessor
 from .docx import DocxProcessor
 from .excel import ExcelProcessor
@@ -56,6 +57,30 @@ _ENV_KEYS = {
 
 def get_extension(filename: str) -> str:
     return ('.' + filename.rsplit('.', 1)[-1].lower()) if '.' in filename else ''
+
+
+def file_type_of(filename: str) -> Optional[str]:
+    """'pdf' / 'docx' / … for a supported file name, else None."""
+    return EXTENSION_MAP.get(get_extension(filename))
+
+
+def diff_truncation_warnings(messages: List[Dict[str, Any]]) -> List[str]:
+    """A user-facing warning when truncate_diff() cut the diff sent to the LLM.
+
+    Without it the report silently stops partway through the document: the
+    truncation note only ever reached the model, never the reader.
+    """
+    for msg in messages:
+        content = msg.get('content')
+        blocks = content if isinstance(content, list) else [{'type': 'text', 'text': content or ''}]
+        for block in blocks:
+            if block.get('type') == 'text' and DIFF_TRUNCATED_MARKER in (block.get('text') or ''):
+                return [
+                    'The documents differ too much to be analysed in full: only the first '
+                    f'{_MAX_DIFF_CHARS:,} characters of the differences were read. '
+                    'Changes towards the end of the document are missing from this report.'
+                ]
+    return []
 
 
 def get_processor(filename: str, method_override: Optional[str] = None) -> Optional[BaseProcessor]:

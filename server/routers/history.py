@@ -1,7 +1,6 @@
 """History endpoints — save and retrieve comparison records from Lakebase."""
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -11,8 +10,9 @@ from pydantic import BaseModel
 
 from ..services.lakebase import get_pool, upsert_user
 from ..services.user import get_user_identity, get_workspace_url, require_compare
-
-APP_VERSION = os.getenv('APP_VERSION', '1')
+# One definition: a row written with another default than the one the cache
+# lookup reads with would never be found again.
+from .compare import APP_VERSION
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -159,6 +159,7 @@ async def list_comparisons(request: Request, limit: int = 20, offset: int = 0):
     except Exception:
         identity = {'user_id': '', 'email': None}
     user_id = identity['user_id']
+    limit, offset = max(1, min(limit, 100)), max(0, offset)
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(

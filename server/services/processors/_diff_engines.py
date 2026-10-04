@@ -91,12 +91,17 @@ def strip_tag(text: str) -> str:
     return _TAG_RE.sub('', text).strip()
 
 
+# Appended by truncate_diff(); factory.diff_truncation_warnings() looks for it so
+# the user is told the tail of the document was never analysed.
+DIFF_TRUNCATED_MARKER = '[... diff truncated — document too large. Only the first portion is shown.]'
+
+
 def truncate_diff(text: str) -> str:
     """Truncate diff text to _MAX_DIFF_CHARS to prevent LLM token limit errors."""
     if len(text) <= _MAX_DIFF_CHARS:
         return text
     logger.warning('Diff truncated: %d chars > %d limit', len(text), _MAX_DIFF_CHARS)
-    return text[:_MAX_DIFF_CHARS] + '\n\n[... diff truncated — document too large. Only the first portion is shown.]'
+    return text[:_MAX_DIFF_CHARS] + f'\n\n{DIFF_TRUNCATED_MARKER}'
 
 
 # Below this many extracted characters a document almost certainly has no
@@ -1021,12 +1026,57 @@ def _modal_group_profile(text: str) -> List[str]:
     return sorted(groups)
 
 
+# Word-level net behind the character-distance gate below. That gate measures
+# the change against the WHOLE paragraph, so one decisive word in a long
+# paragraph (under 5% of its characters) was dropped before the LLM ever saw it:
+# "shall record" -> "shall not record", "before" -> "after", "operator" ->
+# "inspector", "peut" -> "doit" all came out as "filtered" (2026-10-04). Here any
+# word that is added, removed or replaced counts, except what the gate is really
+# for: punctuation/case/hyphenation, articles, spelling variants and modal swaps
+# inside one obligation group.
+_WORD_LEVEL_CHECK = os.getenv('COMPARE_WORD_LEVEL_CHECK', 'true').lower() == 'true'
+# Unicode words (accents kept — canonicalize() turns "délai" into "d lai") plus
+# the comparison operators, which carry the meaning of a limit on their own.
+_WORD_TOKEN_RE = re.compile(r'[^\W_]+|[<>≤≥=±]')
+_MODAL_TOKEN_GROUP: Dict[str, str] = {
+    **{w: '\x00mandatory' for w in ('shall', 'must', 'will', 'doit', 'doivent', 'devra', 'devront')},
+    **{w: '\x00permissive' for w in ('may', 'can', 'could', 'peut', 'peuvent', 'pourra', 'pourront')},
+}
+_TRIVIAL_TOKENS = frozenset({'the', 'a', 'an', 'of', 'le', 'la', 'les', 'l', 'un', 'une', 'de', 'du', 'des', 'd'})
+# "colour"/"color", "organisation"/"organization", a plural: same word.
+_SPELLING_VARIANT_RATIO = 0.85
+
+
+def _word_tokens(text: str) -> List[str]:
+    return [_MODAL_TOKEN_GROUP.get(w, w) for w in _WORD_TOKEN_RE.findall(text.lower())]
+
+
+def _has_word_level_change(old: str, new: str) -> bool:
+    old_words, new_words = _word_tokens(old), _word_tokens(new)
+    if old_words == new_words:
+        return False
+    sm = difflib.SequenceMatcher(None, old_words, new_words, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == 'equal':
+            continue
+        o = ''.join(w for w in old_words[i1:i2] if w not in _TRIVIAL_TOKENS)
+        n = ''.join(w for w in new_words[j1:j2] if w not in _TRIVIAL_TOKENS)
+        if o == n:  # hyphenation / spacing / articles only
+            continue
+        if o and n and difflib.SequenceMatcher(None, o, n, autojunk=False).ratio() >= _SPELLING_VARIANT_RATIO:
+            continue
+        return True
+    return False
+
+
 def is_substantive_keep_modals(old: str, new: str) -> bool:
     """True if the pair is a genuine change, counting cross-group modal switches."""
     oc = canonicalize_keep_modals(old)
     nc = canonicalize_keep_modals(new)
     dist = 1.0 - difflib.SequenceMatcher(None, oc, nc).ratio()
     if dist >= _SEM_THRESHOLD:
+        return True
+    if _WORD_LEVEL_CHECK and _has_word_level_change(old, new):
         return True
     if set(NUMBER_RE.findall(old)) != set(NUMBER_RE.findall(new)):
         return True
