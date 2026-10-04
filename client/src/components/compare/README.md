@@ -92,9 +92,12 @@ in the `plan` event's `not_judged` for debugging): end users want a short list.
 counts, similarity scores and any current/archive filter — every search covers
 all documents, archive ones just carry an "Archive YYYY" badge.
 
-**Two views**: *By document* (verdict, reason, then the passages in conflict with
-the quote highlighted) and *By change* (old → new value, then every document/passage
-it conflicts with). Filter: verdict.
+**Two views**: *By document* (verdict, reason, then the passages to update with
+the quote highlighted and, under each, the change it conflicts with spelled out —
+section and old → new value, never a bare "C37") and *By change* (only the changes
+that conflict with a document, in full; the others folded into one "N other
+changes with no document to update" line, since a heavily revised document can
+carry dozens of changes). Filter: verdict.
 
 **Archive (pre-2018) documents**: the parsing pipeline only feeds the RAG tables
 with documents published from `DOC_DATE_CUTOFF` (2018-01-01); older ones go to

@@ -108,6 +108,27 @@ function ChangeChip({ id, changes }: { id: string; changes: Record<string, Impac
   );
 }
 
+// The change a passage conflicts with, spelled out: a bare "C37" means nothing
+// to a reader when the comparison has dozens of changes.
+function ChangeLine({ id, changes }: { id: string; changes: Record<string, ImpactChange> }) {
+  const c = changes[id];
+  if (!c) return <ChangeChip id={id} changes={changes} />;
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-1.5 text-xs break-words">
+      <ChangeChip id={id} changes={changes} />
+      {c.section && <span className="font-semibold" style={{ color: 'var(--color-text-heading)' }}>{c.section}</span>}
+      {c.before || c.after ? (
+        <span>
+          {c.before && <><del style={{ color: 'var(--color-error)' }}>{c.before}</del> → </>}
+          <span className="font-semibold" style={{ color: '#16a34a' }}>{c.after}</span>
+        </span>
+      ) : (
+        <span className="line-clamp-2">{c.summary || c.text}</span>
+      )}
+    </div>
+  );
+}
+
 function DocLink({ doc }: { doc: ImpactDoc }) {
   const label = doc.ref || String(doc.iddoc);
   return doc.url ? (
@@ -143,14 +164,23 @@ function HighlightedText({ text, highlight }: { text: string; highlight: [number
 function PassageView({ p, changes }: { p: ImpactPassage; changes: Record<string, ImpactChange> }) {
   return (
     <div className="rounded-lg p-3 space-y-1.5" style={{ background: 'var(--color-bg-secondary)' }}>
-      <div className="flex flex-wrap items-center gap-1.5 text-xs">
-        {p.changes.map(id => <ChangeChip key={id} id={id} changes={changes} />)}
-        {p.section && <span className="font-mono text-[11px]" style={{ color: 'var(--color-text-heading)' }}>{p.section}</span>}
-        {p.page && <span style={{ color: 'var(--color-text-muted)' }}>p. {p.page}</span>}
-      </div>
+      {(p.section || p.page) && (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          {p.section && <span className="font-mono text-[11px]" style={{ color: 'var(--color-text-heading)' }}>{p.section}</span>}
+          {p.page && <span style={{ color: 'var(--color-text-muted)' }}>p. {p.page}</span>}
+        </div>
+      )}
       <p className="text-[13px] whitespace-pre-wrap max-h-48 overflow-y-auto break-words">
         <HighlightedText text={p.text} highlight={p.highlight} />
       </p>
+      {p.changes.length > 0 && (
+        <div className="space-y-0.5 pt-1.5 border-t border-[var(--color-border)]/50">
+          <span className="text-[10px] uppercase font-semibold tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
+            Conflicts with
+          </span>
+          {p.changes.map(id => <ChangeLine key={id} id={id} changes={changes} />)}
+        </div>
+      )}
       {p.explanation && <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>→ {p.explanation}</p>}
     </div>
   );
@@ -175,10 +205,7 @@ function DocCard({ doc, changes }: { doc: ImpactDoc; changes: Record<string, Imp
         <p className="text-xs" style={{ color: doc.status === 'error' ? 'var(--color-error)' : 'var(--color-text-primary)' }}>{doc.reason}</p>
       )}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--color-text-muted)]">
-        {passages.length > 0 && <span>{passages.length} passage{passages.length > 1 ? 's' : ''} in conflict</span>}
-        <span className="flex items-center gap-1 flex-wrap">
-          found by {doc.change_ids.map(id => <ChangeChip key={id} id={id} changes={changes} />)}
-        </span>
+        {passages.length > 0 && <span>{passages.length} passage{passages.length > 1 ? 's' : ''} to update</span>}
         {doc.other_languages.length > 0 && (
           <span className="flex items-center gap-1 flex-wrap">
             also in:
@@ -257,6 +284,32 @@ function ChangeBlock({ change, docs, changes }: { change: ImpactChange; docs: Im
         </div>
       )}
     </div>
+  );
+}
+
+// Changes that conflict with at least one document first, in full; the others
+// (often the vast majority on a heavily revised document) folded into one line.
+function ChangeList({ changeList, docs, changes }: { changeList: ImpactChange[]; docs: ImpactDoc[]; changes: Record<string, ImpactChange> }) {
+  const hit = new Set(docs.flatMap(d => (d.passages ?? []).flatMap(p => p.changes)));
+  const withHits = changeList.filter(c => hit.has(c.id));
+  const without = changeList.filter(c => !hit.has(c.id));
+  return (
+    <>
+      {withHits.length === 0 && (
+        <p className="text-sm italic text-[var(--color-text-muted)]">No change conflicts with a document.</p>
+      )}
+      {withHits.map(c => <ChangeBlock key={c.id} change={c} docs={docs} changes={changes} />)}
+      {without.length > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer font-semibold" style={{ color: 'var(--color-accent-primary)' }}>
+            {without.length} other change{without.length > 1 ? 's' : ''} with no document to update
+          </summary>
+          <div className="space-y-1 mt-2">
+            {without.map(c => <ChangeLine key={c.id} id={c.id} changes={changes} />)}
+          </div>
+        </details>
+      )}
+    </>
   );
 }
 
@@ -364,7 +417,7 @@ export function ImpactResultsCard({
                 [count('impacted'), 'impacted', '#16a34a'],
                 [count('check'), 'to check', '#d97706'],
                 [count('not_impacted'), 'not impacted', 'var(--color-text-muted)'],
-                [passageCount, 'passages in conflict', 'var(--color-text-heading)'],
+                [passageCount, 'passages to update', 'var(--color-text-heading)'],
               ].map(([n, label, color]) => (
                 <span key={label as string} className="text-xs text-[var(--color-text-muted)]">
                   <b className="text-lg mr-1 tabular-nums" style={{ color: color as string }}>{n}</b>{label}
@@ -388,7 +441,7 @@ export function ImpactResultsCard({
                 disabled={!result.done || exporting}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border cursor-pointer disabled:opacity-40"
                 style={{ color: accentColor, borderColor: 'var(--color-border)' }}
-                title="One row per passage in conflict, plus the documents and the change list"
+                title="One row per passage to update, plus the documents and the change list"
               >
                 {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                 Export Excel
@@ -409,7 +462,7 @@ export function ImpactResultsCard({
                   </p>
                 ) : visible.map(d => <DocCard key={`${d.iddoc}-${d.ref}`} doc={d} changes={changes} />)
               ) : (
-                result.changes.map(c => <ChangeBlock key={c.id} change={c} docs={visible} changes={changes} />)
+                <ChangeList changeList={result.changes} docs={visible} changes={changes} />
               )}
             </div>
 
