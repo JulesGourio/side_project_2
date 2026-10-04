@@ -132,7 +132,9 @@ def _footnote_lines(doc) -> List[str]:
         for rel in doc.part.rels.values():
             if not rel.reltype.endswith('/footnotes') or rel.is_external:
                 continue
-            root = etree.fromstring(rel.target_part.blob)
+            # Uploaded file: no entity expansion, no DTD, no network access.
+            parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False)
+            root = etree.fromstring(rel.target_part.blob, parser)
             for note in root.iter(_W_FOOTNOTE):
                 try:
                     num = int(note.get(_W_ID, '0'))
