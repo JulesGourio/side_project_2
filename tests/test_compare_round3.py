@@ -52,7 +52,7 @@ def client(app, monkeypatch):
     app.dependency_overrides[require_compare] = lambda: None
     with (
         patch('server.routers.compare.get_user_identity', new=AsyncMock(return_value={'user_id': 'u', 'workspace_id': 'w'})),
-        patch('server.routers.compare.store_impact_request', new=AsyncMock()),
+        patch('server.routers.compare.store_impact_request', new=AsyncMock(return_value=7)),
         TestClient(app) as c,
     ):
         yield c

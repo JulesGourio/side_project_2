@@ -78,6 +78,7 @@ MIGRATE_TO_PROD_TABLE_ORDER = [
     "chat_feedbacks",      # FK -> chat_messages, chat_sessions
     "impact_requests",
     "impact_document_results",  # FK -> impact_requests
+    "impact_feedbacks",         # FK -> impact_requests, messages
     "impact_cache",
     "summary_cache",
     "errors",

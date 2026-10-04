@@ -369,6 +369,32 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
                 ON impact_document_results (request_id)
         ''')
 
+        # ── impact_feedbacks (user votes on an impact search: on the whole
+        #    result (ref NULL, optional comment) or on one document's verdict) ──
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS impact_feedbacks (
+                id                  SERIAL PRIMARY KEY,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                impact_request_id   INTEGER REFERENCES impact_requests(id) ON DELETE SET NULL,
+                message_id          INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                user_id             TEXT,
+                workspace_id        TEXT,
+                workspace_url       TEXT,
+                old_file_hash       TEXT,
+                new_file_hash       TEXT,
+                ref                 TEXT,
+                verdict_shown       TEXT,
+                vote                TEXT NOT NULL CHECK (vote IN (\'up\', \'down\')),
+                comment             TEXT,
+                resolved            BOOLEAN NOT NULL DEFAULT FALSE,
+                resolution_reason   TEXT
+            )
+        ''')
+        await conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_impact_feedbacks_request_id
+                ON impact_feedbacks (impact_request_id)
+        ''')
+
         # ── impact_cache (result cache for /compare/impact, keyed like
         #    messages — old/new file hash + app_version; "Re-run" bypasses it) ──
         await conn.execute('''
@@ -923,8 +949,11 @@ async def store_impact_request(
     error_type: str = '',
     error_msg: str = '',
     documents: List[Dict[str, Any]] | None = None,
-) -> None:
+) -> Optional[int]:
     """Log one /compare/impact call — success or failure (best-effort, never raises).
+
+    Returns the impact_requests id (None if the row could not be written) so
+    feedback on the result can be linked back to it.
 
     When `documents` is given (the per-document judgments from
     synthesize_impact_with_llm), also persists one row per document to
@@ -935,7 +964,7 @@ async def store_impact_request(
     """
     pool = get_pool()
     if not pool:
-        return
+        return None
     try:
         async with pool.acquire() as conn, conn.transaction():
             request_id = await conn.fetchval(
@@ -989,8 +1018,10 @@ async def store_impact_request(
                         for d in documents
                     ],
                 )
+            return request_id
     except Exception as e:
         logger.debug('store_impact_request failed: %s', e)
+        return None
 
 
 async def get_cached_impact_result(old_file_hash: str, new_file_hash: str, app_version: str) -> Optional[dict]:

@@ -122,6 +122,22 @@ index, aucun droit à créer : code de l'app seulement.
   - charger une entrée de l'historique : plus de résultats d'une autre
     comparaison à l'écran ;
   - exports Excel et PDF toujours téléchargeables.
+  - **impact search, ajouts du 2026-10-05** (même branche) :
+    - la Change Table a une colonne `#` (C1, C2…) ; dans « Show passages »,
+      cliquer sur un numéro fait défiler la Change Table jusqu'à cette ligne ;
+    - 👍/👎 à droite de chaque document, et « Was this impact search helpful? »
+      en bas de la carte : après un vote, vérifier qu'une ligne apparaît
+
+      ```sql
+      -- base Lakebase doccompare_test (uat-test) ou doccompare (uat)
+      SELECT created_at, ref, verdict_shown, vote, comment, impact_request_id
+      FROM impact_feedbacks ORDER BY created_at DESC LIMIT 10;
+      ```
+
+      La table `impact_feedbacks` est créée toute seule au démarrage de l'app :
+      rien à créer à la main ;
+    - lancer une impact search, recharger la comparaison depuis « History » :
+      le résultat d'impact doit réapparaître sans relancer la recherche.
 
 - [ ] **3. Mesurer le bruit sur le corpus d'évaluation** (machine où se trouve
   `utils/compare_eval`), avec et sans le contrôle mot à mot :

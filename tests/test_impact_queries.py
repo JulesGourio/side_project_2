@@ -102,9 +102,26 @@ def test_overflow_packs_remaining_changes_without_dropping_any():
     rows = [{'section': f'S{i}', 'type': 'Value changed', 'criticality': 'Medium',
              'before': f'{i}', 'after': f'{i + 1}', 'rationale': ''} for i in range(40)]
     out = changes_to_queries(json.dumps(rows), max_queries=30)
-    assert len(out['queries']) == 30
+    assert len(out['queries']) <= 30
     ids = [cid for q in out['queries'] for cid in q['change_ids']]
     assert sorted(ids) == sorted(f'C{i}' for i in range(1, 41))
+
+
+def test_overflow_groups_changes_of_the_same_section():
+    rows = [{'section': f'S{i % 10}', 'type': 'Value changed', 'criticality': 'Medium',
+             'before': f'{i}', 'after': f'{i + 1}', 'rationale': ''} for i in range(40)]
+    out = changes_to_queries(json.dumps(rows), max_queries=30)
+    assert len(out['queries']) == 10
+    assert out['queries'][0]['change_ids'] == ['C1', 'C11', 'C21', 'C31']
+
+
+def test_overflow_splits_a_section_too_long_for_one_query():
+    rows = [{'section': 'S', 'type': 'Value changed', 'criticality': 'Medium',
+             'before': 'x' * 300, 'after': f'{i}', 'rationale': ''} for i in range(40)]
+    out = changes_to_queries(json.dumps(rows), max_queries=30)
+    assert 1 < len(out['queries']) <= 30
+    assert all(len(q['text']) <= 2000 for q in out['queries'])
+    assert sum(len(q['change_ids']) for q in out['queries']) == 40
 
 
 def test_empty_input():

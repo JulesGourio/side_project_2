@@ -567,12 +567,12 @@ def _ndjson(event: Dict[str, Any]) -> str:
 
 def _replay_events(result: Dict[str, Any]):
     """Re-emit a cached result as the same event stream a fresh search produces."""
-    plan = {k: v for k, v in result.items() if k not in ('documents', 'usage', 'duration_s')}
+    plan = {k: v for k, v in result.items() if k not in ('documents', 'usage', 'duration_s', 'impact_request_id')}
     yield _ndjson({**plan, 'type': 'plan', 'cached': True})
     for doc in result.get('documents', []):
         yield _ndjson({'type': 'document', 'document': doc})
     yield _ndjson({'type': 'done', 'usage': result.get('usage', {}), 'duration_s': result.get('duration_s', 0.0),
-                   'cached': True})
+                   'impact_request_id': result.get('impact_request_id'), 'cached': True})
 
 
 @router.post('/compare/impact', dependencies=[Depends(require_compare)])
@@ -621,12 +621,12 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
         )
 
     def _audit(**kwargs):
-        asyncio.create_task(store_impact_request(
+        return store_impact_request(
             method='index_llm_per_doc',
             user_id=identity['user_id'], workspace_id=identity.get('workspace_id') or '',
             old_file_hash=old_hash, new_file_hash=new_hash,
             changes_chars=len(body.changes_text), endpoint_name=llm_endpoint, **kwargs,
-        ))
+        )
 
     async def _events():
         start = time.monotonic()
@@ -663,25 +663,28 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
         except Exception as e:
             logger.error(f'Impact search failed: {e}', exc_info=True)
             asyncio.create_task(store_error(endpoint='/api/compare/impact', error_type=type(e).__name__, error_msg=str(e)))
-            _audit(duration_s=time.monotonic() - start, http_status=502, error_type=type(e).__name__, error_msg=str(e))
+            asyncio.create_task(_audit(duration_s=time.monotonic() - start, http_status=502,
+                                       error_type=type(e).__name__, error_msg=str(e)))
             yield _ndjson({'type': 'error', 'error': f'Impact search failed: {e}'})
             return
 
         duration_s = round(time.monotonic() - start, 2)
         documents = sort_documents(documents)
-        yield _ndjson({'type': 'done', 'usage': usage, 'duration_s': duration_s})
-
-        _audit(
+        # Written before 'done' (a few ms): the client needs the id to attach feedback to this search.
+        request_id = await _audit(
             chunks_returned=plan.get('chunks_returned', 0), num_documents=len(documents),
             duration_s=duration_s, http_status=200,
             input_tokens=usage.get('input_tokens', 0), output_tokens=usage.get('output_tokens', 0),
             total_tokens=usage.get('total_tokens', 0), cost_eur=usage.get('cost_eur', 0.0),
             documents=documents,
         )
+        yield _ndjson({'type': 'done', 'usage': usage, 'duration_s': duration_s, 'impact_request_id': request_id})
+
         if old_hash and new_hash and not any(d.get('status') == 'error' for d in documents):
             asyncio.create_task(store_impact_cache(
                 old_hash, new_hash, cache_version,
-                {**plan, 'documents': documents, 'usage': usage, 'duration_s': duration_s},
+                {**plan, 'documents': documents, 'usage': usage, 'duration_s': duration_s,
+                 'impact_request_id': request_id},
             ))
 
     return StreamingResponse(_events(), media_type='application/x-ndjson')

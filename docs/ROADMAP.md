@@ -146,6 +146,24 @@ elles-mêmes sont documentées dans `docs/{COMPARE,CHATBOT}.md`.
   `dev_qualibot`** — ni `git add -A`, ni `reset --hard`, ni un merge complet.
   À nettoyer/reclôner proprement un jour, hors urgence.
 
+## Plus tard — impact search (noté 2026-10-05)
+
+- [ ] **Jeu d'évaluation de l'impact search.** 5 à 10 comparaisons réelles pour
+  lesquelles on connaît les documents réellement à mettre à jour ; un script
+  rejoue la recherche et compte les documents oubliés et les faux positifs.
+  À lancer avant tout changement de prompt, de modèle ou de réglage
+  (`COMPARE_IMPACT_*`). Les votes 👍/👎 par document (`impact_feedbacks`)
+  serviront à constituer ce jeu.
+- [ ] **Documents qui citent la référence du document modifié.** La recherche
+  retrouve un document s'il reprend le contenu modifié (« 12 N·m »). Elle rate
+  celui qui écrit seulement « serrer selon PR-2207 » sans reprendre la valeur :
+  il dépend pourtant du document modifié. Piste : une recherche en plus sur la
+  référence elle-même, affichée à part (« Documents that reference PR-2207 »).
+- [ ] **Colonne `#` dans l'export Excel de la Change Table**, pour retrouver les
+  mêmes numéros C1, C2… que dans l'impact search.
+- [ ] **Mode « décrire un changement à la main »** : désactivé volontairement
+  (`IMPACT_MANUAL_MODE_ENABLED`), à réactiver si le besoin revient.
+
 ## Veille (connu, non urgent)
 
 Revue le 2026-07-17 : ces quatre points restent volontairement en veille —

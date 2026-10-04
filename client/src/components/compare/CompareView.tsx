@@ -25,7 +25,7 @@ import { ExactDocxPreview } from '@/components/shared/ExactDocxPreview';
 import { getAppConfig, getProcessorsConfig, type ProcessorVersion } from '@/lib/config';
 import { ComparisonHistory, type FullComparison } from './ComparisonHistory';
 import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanner';
-import { ImpactResultsCard, type ImpactResult } from './ImpactResults';
+import { FOCUS_CHANGE_EVENT, ImpactResultsCard, type ImpactResult } from './ImpactResults';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,7 +80,9 @@ const LS_FEEDBACK_SUBMITTED = 'compare_feedback_submitted_v2'; // JSON string[]
 const LS_PROCESSING_METHOD = 'compare_processing_method';
 const LS_IMPACT_MODE = 'compare_impact_mode';
 const LS_IMPACT_MANUAL_TEXT = 'compare_impact_manual_text';
-// Manual mode UI hidden for now (business feedback: too niche/confusing) — logic kept intact behind this flag.
+// Deliberately disabled for now (decision 2026-10-05, after business feedback: too niche/confusing).
+// The "describe a change by hand, no files" mode still works end to end behind this flag — the
+// server handles free text as a single change — so re-enabling it is this one line. Do not delete.
 const IMPACT_MANUAL_MODE_ENABLED = false;
 
 function isFeedbackSubmitted(key: string): boolean {
@@ -585,6 +587,27 @@ function JsonDiffTable({
   // a real one), but they drown out the changes that need action. Hide them
   // by default; nothing is discarded, just collapsed behind a toggle.
   const [hideLow, setHideLow] = useState(true);
+  // Row number clicked in the impact search results ("C12"): revealed, scrolled to, briefly highlighted.
+  const [focusedChange, setFocusedChange] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onFocus = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      setHideLow(false);
+      setFocusedChange(id);
+    };
+    window.addEventListener(FOCUS_CHANGE_EVENT, onFocus);
+    return () => window.removeEventListener(FOCUS_CHANGE_EVENT, onFocus);
+  }, []);
+
+  useEffect(() => {
+    if (!focusedChange) return;
+    scrollContainerRef.current
+      ?.querySelector(`[data-change-id="${focusedChange}"]`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const timer = setTimeout(() => setFocusedChange(null), 2500);
+    return () => clearTimeout(timer);
+  }, [focusedChange]);
 
   const hasImages = imageContext.length > 0;
   const lowCount = items.filter(it => (it.criticality || '').toLowerCase() === 'low').length;
@@ -643,6 +666,8 @@ function JsonDiffTable({
           <thead>
             <tr style={{ background: 'var(--color-muted)' }}>
               {[
+                // Row number = the change id used by the impact search (C1, C2…).
+                '#',
                 ...(fileType === 'pptx'
                   ? ['Section', 'Slide', 'Type', 'Criticality', 'Before', 'After', 'Rationale']
                   : fileType === 'xml'
@@ -690,7 +715,17 @@ function JsonDiffTable({
                 }
 
                 return (
-                  <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'var(--color-muted)' }}>
+                  <tr
+                    key={i}
+                    data-change-id={`C${i + 1}`}
+                    style={{
+                      background: focusedChange === `C${i + 1}` ? '#fde68a66' : i % 2 === 0 ? 'transparent' : 'var(--color-muted)',
+                      transition: 'background 0.4s',
+                    }}
+                  >
+                    <td className="px-2 py-1.5 align-top font-mono whitespace-nowrap" style={{ borderBottom: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}>
+                      C{i + 1}
+                    </td>
                     <td className="px-2 py-1.5 align-top font-medium" style={{ borderBottom: '1px solid var(--color-border)', maxWidth: 140, wordBreak: 'break-word' }}>
                       {item.section || '—'}
                     </td>
@@ -1547,9 +1582,16 @@ export function CompareView() {
     const entryNewHash = entry.new_file_hash || '';
     const samePair = !!entryOldHash && entryOldHash === oldFileHash && entryNewHash === newFileHash;
     setError('');
-    setImpact(null);
+    // The impact result saved with this entry, if a search was run on it.
+    let savedImpact: ImpactResult | null = null;
+    try {
+      const parsed = entry.impact_text ? JSON.parse(entry.impact_text) : null;
+      if (parsed && Array.isArray(parsed.changes) && Array.isArray(parsed.documents)) savedImpact = parsed;
+    } catch { /* older entries hold plain text or nothing */ }
+    setImpact(savedImpact);
     setImpactError('');
-    localStorage.removeItem(LS_IMPACT);
+    if (savedImpact) lsSet(LS_IMPACT, entry.impact_text || '');
+    else localStorage.removeItem(LS_IMPACT);
     setOldFileHash(entryOldHash);
     setNewFileHash(entryNewHash);
     lsSet(LS_OLD_HASH, entryOldHash);
@@ -2029,7 +2071,10 @@ export function CompareView() {
         } else if (ev.type === 'document' && current) {
           current = { ...current, documents: [...current.documents, ev.document as ImpactResult['documents'][number]] };
         } else if (ev.type === 'done' && current) {
-          current = { ...current, done: true, usage: ev.usage as ImpactResult['usage'], duration_s: ev.duration_s as number };
+          current = {
+            ...current, done: true, usage: ev.usage as ImpactResult['usage'], duration_s: ev.duration_s as number,
+            impact_request_id: (ev.impact_request_id as number | null) ?? null,
+          };
         }
         setImpact(current);
       };
@@ -2047,6 +2092,15 @@ export function CompareView() {
       if (final.cached) toast.info('Result retrieved from cache');
       else if (final.no_changes) toast.info('Analysis reported no substantive changes — nothing to judge.');
       lsSet(LS_IMPACT, JSON.stringify(final));
+      // Kept with the comparison it was run on, so reopening the history entry shows it again.
+      const historyId = manual ? null : (analysis ? messageId : messageIdStd);
+      if (historyId !== null && !final.no_changes) {
+        fetch(`/api/history/${historyId}/impact`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ impact_json: JSON.stringify(final) }),
+        }).catch(() => { /* best-effort — the result stays on screen and in the server cache */ });
+      }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         toast.info('Impact search cancelled.');
@@ -2652,6 +2706,10 @@ export function CompareView() {
           isLoading={isImpacting}
           error={impactError}
           accentColor={accentAmber}
+          changeTableShown={parsedJsonItems.length > 0 && !isAnalyzing}
+          messageId={analysis ? messageId : messageIdStd}
+          oldFileHash={oldFileHash}
+          newFileHash={newFileHash}
           exportName={`impact_${(newPdf?.name || oldPdf?.name || 'search').replace(/\.[^.]+$/, '')}`}
         />
       )}

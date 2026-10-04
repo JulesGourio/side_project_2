@@ -149,6 +149,35 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
+class SaveImpactRequest(BaseModel):
+    # The impact search result as displayed (JSON), kept with the comparison it
+    # was run on so reopening the history entry shows it again.
+    impact_json: str
+
+
+@router.put('/history/{comparison_id}/impact', dependencies=[Depends(require_compare)])
+async def save_comparison_impact(comparison_id: int, body: SaveImpactRequest, request: Request):
+    pool = get_pool()
+    if not pool:
+        return _UNAVAILABLE
+    try:
+        identity = await get_user_identity(request)
+    except Exception:
+        identity = {'user_id': '', 'email': None}
+    try:
+        async with pool.acquire() as conn:
+            updated = await conn.fetchval(
+                'UPDATE messages SET impact_text = $1 WHERE id = $2 AND user_id = $3 RETURNING id',
+                body.impact_json, comparison_id, identity['user_id'],
+            )
+        if updated is None:
+            return JSONResponse({'error': 'Comparison not found'}, status_code=404)
+        return {'success': True}
+    except Exception as e:
+        logger.error(f'Failed to save impact result: {e}')
+        return JSONResponse({'error': str(e)}, status_code=500)
+
+
 @router.get('/history', dependencies=[Depends(require_compare)])
 async def list_comparisons(request: Request, limit: int = 20, offset: int = 0):
     pool = get_pool()

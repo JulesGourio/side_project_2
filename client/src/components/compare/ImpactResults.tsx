@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Database, Download, ExternalLink, Loader2 } from 'lucide-react';
+import { createContext, useContext, useMemo, useState } from 'react';
+import { CheckCircle2, Database, Download, ExternalLink, Loader2, Send, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { toast } from 'sonner';
 
 // ---------------------------------------------------------------------------
@@ -59,6 +59,10 @@ export interface ImpactResult {
   queries_failed: number;
   no_changes?: boolean;
   cached?: boolean;
+  // 'structured' = change ids match the Change Table rows (C3 = row 3).
+  source?: string;
+  // impact_requests row, to attach feedback to this search.
+  impact_request_id?: number | null;
   done: boolean;
   duration_s?: number;
   usage?: { input_tokens: number; output_tokens: number; total_tokens: number; cost_eur: number };
@@ -95,16 +99,186 @@ function Chip({ children, color, title }: { children: React.ReactNode; color: st
   );
 }
 
+// Fired when a change id is clicked; the Change Table listens and scrolls to that row.
+export const FOCUS_CHANGE_EVENT = 'qualibot:focus-change';
+
+// True when the change ids of this result are the row numbers of the Change Table on screen.
+const ChangeLinkContext = createContext(false);
+
+// What a vote is attached to, and the votes already cast in this browser.
+interface FeedbackTarget {
+  impactRequestId: number | null;
+  messageId: number | null;
+  oldFileHash: string;
+  newFileHash: string;
+}
+const FeedbackContext = createContext<FeedbackTarget | null>(null);
+
+const LS_IMPACT_VOTES = 'compare_impact_votes'; // { "<request id>:<ref>": "up" | "down" }
+
+function readVotes(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(LS_IMPACT_VOTES) || '{}'); } catch { return {}; }
+}
+
+function rememberVote(key: string, vote: string): void {
+  try {
+    const votes = readVotes();
+    votes[key] = vote;
+    const keys = Object.keys(votes);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 300))) delete votes[k];
+    localStorage.setItem(LS_IMPACT_VOTES, JSON.stringify(votes));
+  } catch { /* storage unavailable — the vote is still sent */ }
+}
+
+async function sendImpactFeedback(target: FeedbackTarget, body: Record<string, unknown>): Promise<void> {
+  const res = await fetch('/api/compare/impact/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      impact_request_id: target.impactRequestId,
+      message_id: target.messageId,
+      old_file_hash: target.oldFileHash || null,
+      new_file_hash: target.newFileHash || null,
+      ...body,
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
 function ChangeChip({ id, changes }: { id: string; changes: Record<string, ImpactChange> }) {
   const c = changes[id];
+  const linked = useContext(ChangeLinkContext);
+  const className = 'inline-flex px-1.5 py-0.5 rounded text-[10px] font-mono font-medium';
+  const style = { color: 'var(--color-accent-primary)', background: 'color-mix(in srgb, var(--color-accent-primary) 12%, transparent)' };
+  if (!linked) return <span title={c ? c.text : id} className={className} style={style}>{id}</span>;
   return (
-    <span
-      title={c ? c.text : id}
-      className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-mono font-medium"
-      style={{ color: 'var(--color-accent-primary)', background: 'color-mix(in srgb, var(--color-accent-primary) 12%, transparent)' }}
+    <button
+      type="button"
+      title="Show this change in the Change Table"
+      onClick={() => window.dispatchEvent(new CustomEvent(FOCUS_CHANGE_EVENT, { detail: id }))}
+      className={`${className} cursor-pointer underline decoration-dotted underline-offset-2`}
+      style={style}
     >
       {id}
+    </button>
+  );
+}
+
+// "Is this verdict right?" — one click, no comment: the per-document signal used to measure the judge.
+function VerdictVote({ doc }: { doc: ImpactDoc }) {
+  const target = useContext(FeedbackContext);
+  const key = `${target?.impactRequestId ?? 'none'}:${doc.ref}`;
+  const [vote, setVote] = useState<string | null>(() => readVotes()[key] ?? null);
+  if (!target || !doc.status || doc.status === 'error') return null;
+
+  const cast = async (v: 'up' | 'down') => {
+    if (vote === v) return;
+    setVote(v);
+    rememberVote(key, v);
+    try {
+      await sendImpactFeedback(target, { vote: v, ref: doc.ref, verdict_shown: doc.status });
+    } catch {
+      toast.error('Your vote could not be saved.');
+    }
+  };
+  const btn = (v: 'up' | 'down', label: string, color: string, Icon: typeof ThumbsUp) => (
+    <button
+      type="button"
+      onClick={() => cast(v)}
+      title={label}
+      aria-label={label}
+      aria-pressed={vote === v}
+      className="p-1 rounded cursor-pointer transition-colors"
+      style={{ color: vote === v ? color : 'var(--color-text-muted)', background: vote === v ? `${color}18` : 'transparent' }}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  );
+  return (
+    <span className="ml-auto flex items-center gap-0.5">
+      {btn('up', 'This verdict is correct', '#16a34a', ThumbsUp)}
+      {btn('down', 'This verdict is wrong', '#dc2626', ThumbsDown)}
     </span>
+  );
+}
+
+// Same pattern as the analysis cards: a vote on the whole result, with an optional comment.
+function SearchFeedback() {
+  const target = useContext(FeedbackContext);
+  const key = `${target?.impactRequestId ?? 'none'}:`;
+  const [vote, setVote] = useState<'up' | 'down' | null>(null);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(() => key in readVotes());
+  if (!target) return null;
+
+  if (done) {
+    return (
+      <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-success)' }}>
+        <CheckCircle2 className="h-4 w-4" />
+        <span className="font-medium">Thank you for your feedback!</span>
+      </div>
+    );
+  }
+  const submit = async () => {
+    if (!vote || submitting) return;
+    setSubmitting(true);
+    try {
+      await sendImpactFeedback(target, { vote, comment: comment.trim() || null });
+      rememberVote(key, vote);
+      setDone(true);
+    } catch {
+      toast.error('Your feedback could not be saved.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  const btn = (v: 'up' | 'down', label: string, color: string, Icon: typeof ThumbsUp) => (
+    <button
+      type="button"
+      onClick={() => setVote(v)}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border cursor-pointer transition-colors"
+      style={{
+        borderColor: vote === v ? color : 'var(--color-border)',
+        color: vote === v ? color : 'var(--color-text-muted)',
+        background: vote === v ? `${color}10` : 'transparent',
+      }}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
+  );
+  return (
+    <div className="pt-3 border-t border-[var(--color-border)]/40 space-y-2.5">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <span className="text-xs font-medium text-[var(--color-text-heading)]">Was this impact search helpful?</span>
+        {btn('up', 'Helpful', '#16a34a', ThumbsUp)}
+        {btn('down', 'Not helpful', '#dc2626', ThumbsDown)}
+      </div>
+      {vote && (
+        <div className="flex flex-wrap items-end gap-2">
+          <textarea
+            value={comment}
+            onChange={e => setComment(e.target.value)}
+            placeholder="Add a comment (optional) — a missing document, a wrong verdict…"
+            rows={2}
+            maxLength={1000}
+            className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border text-xs resize-none outline-none"
+            style={{ borderColor: 'var(--color-border)', background: 'var(--color-background)', color: 'var(--color-text-primary)' }}
+          />
+          <button
+            type="button"
+            onClick={submit}
+            disabled={submitting}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white cursor-pointer disabled:opacity-50"
+            style={{ background: 'var(--color-accent-primary)' }}
+          >
+            <Send className="h-3.5 w-3.5" />
+            {submitting ? 'Sending…' : 'Submit'}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -200,6 +374,7 @@ function DocCard({ doc, changes }: { doc: ImpactDoc; changes: Record<string, Imp
         <ArchiveChip doc={doc} />
         <Chip color={st.color}>{st.label}</Chip>
         {doc.confidence && <span className="text-xs text-[var(--color-text-muted)]">{doc.confidence} confidence</span>}
+        <VerdictVote doc={doc} />
       </div>
       {doc.reason && (
         <p className="text-xs" style={{ color: doc.status === 'error' ? 'var(--color-error)' : 'var(--color-text-primary)' }}>{doc.reason}</p>
@@ -335,12 +510,21 @@ export function ImpactResultsCard({
   error,
   accentColor,
   exportName,
+  changeTableShown,
+  messageId,
+  oldFileHash,
+  newFileHash,
 }: {
   result: ImpactResult | null;
   isLoading: boolean;
   error: string;
   accentColor: string;
   exportName: string;
+  // The Change Table this result was computed from is on screen: change ids link to its rows.
+  changeTableShown: boolean;
+  messageId: number | null;
+  oldFileHash: string;
+  newFileHash: string;
 }) {
   const [view, setView] = useState<'doc' | 'change'>('doc');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -355,6 +539,12 @@ export function ImpactResultsCard({
   const count = (s: string) => docs.filter(d => d.status === s).length;
   const passageCount = docs.reduce((n, d) => n + (d.passages?.length ?? 0), 0);
   const notSearched = (result?.changes ?? []).filter(c => !c.searched).map(c => c.id);
+  const feedbackTarget = useMemo<FeedbackTarget | null>(
+    () => (result?.done && !result.no_changes
+      ? { impactRequestId: result.impact_request_id ?? null, messageId, oldFileHash, newFileHash }
+      : null),
+    [result?.done, result?.no_changes, result?.impact_request_id, messageId, oldFileHash, newFileHash],
+  );
 
   const handleExport = async () => {
     if (!result) return;
@@ -382,6 +572,8 @@ export function ImpactResultsCard({
   };
 
   return (
+    <ChangeLinkContext.Provider value={changeTableShown && result?.source === 'structured'}>
+    <FeedbackContext.Provider value={feedbackTarget}>
     <div className="rounded-2xl border border-[var(--color-border)]/40 bg-[var(--color-background)] shadow-sm overflow-hidden">
       <div className="h-0.5 w-full" style={{ background: accentColor }} />
 
@@ -466,9 +658,13 @@ export function ImpactResultsCard({
               )}
             </div>
 
+            {/* key: a new search starts with a blank feedback form */}
+            <SearchFeedback key={result.impact_request_id ?? 'none'} />
           </>
         )}
       </div>
     </div>
+    </FeedbackContext.Provider>
+    </ChangeLinkContext.Provider>
   );
 }

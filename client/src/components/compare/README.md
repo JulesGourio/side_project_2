@@ -107,6 +107,30 @@ point at that index for archive documents to be found. Their publication date is
 read from the chunk's provenance prefix; before `COMPARE_IMPACT_ARCHIVE_BEFORE` they
 get an "Archive YYYY" badge.
 
+**Link with the Change Table**: the table's `#` column shows the same ids (row 3 =
+`C3`). When the result was computed from the Change Table on screen
+(`source: structured`), clicking a change id fires `FOCUS_CHANGE_EVENT`;
+`JsonDiffTable` un-hides Low rows, scrolls to that row and highlights it.
+
+**More than `COMPARE_IMPACT_MAX_QUERIES` changes** (`_group_by_section`): changes of
+the same section share one query (split when it would exceed 2,000 chars);
+neighbouring sections are merged only if there are still too many groups. This only
+changes retrieval — the number of judge calls, hence the cost, is unchanged.
+
+**Feedback** (`impact_feedbacks`, `POST /compare/impact/feedback`): 👍/👎 on each
+document's verdict (one click, `ref` + `verdict_shown` stored — the data to measure
+the judge with) and a "Was this impact search helpful?" vote with optional comment
+on the whole result (`ref` NULL). Rows link to `impact_requests` through the
+`impact_request_id` sent in the `done` event (also replayed from the cache).
+
+**Kept with the comparison**: once a search finishes, the result JSON is written to
+`messages.impact_text` of the analysis it was run on (`PUT /history/{id}/impact`);
+loading that history entry shows it again.
+
+**Manual mode** ("describe a change by hand", no files): deliberately disabled
+(`IMPACT_MANUAL_MODE_ENABLED = false` in `CompareView.tsx`, decision 2026-10-05). It
+still works behind the flag.
+
 **Export Excel** (`POST /compare/impact/export-excel`, `_build_impact_excel_bytes`):
 sheet *Passages* = one row per conflicting passage (the action list), *Documents* =
 every judged document, *Changes* = the change list.

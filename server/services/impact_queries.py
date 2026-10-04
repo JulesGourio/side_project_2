@@ -138,11 +138,39 @@ def extract_changes(changes_text: str, max_text_chars: int = 2000) -> Dict[str, 
             'source': 'raw'}
 
 
-def changes_to_queries(changes_text: str, max_queries: int = 30, max_query_chars: int = 2000) -> Dict[str, Any]:
-    """extract_changes() plus one vector-search query per searched change.
+def _group_by_section(changes: List[Dict[str, Any]], max_queries: int, max_query_chars: int) -> List[List[Dict[str, Any]]]:
+    """Pack changes into at most max_queries groups, same-section changes together.
 
-    Each query is {'text', 'change_ids'}. Past max_queries, the lowest-
-    criticality changes are packed together (in order) so none is dropped.
+    Changes of one section describe the same part of the document, so one
+    query for them stays focused; a section too long for one query is split.
+    Only if there are still too many groups are neighbouring sections merged.
+    """
+    groups: List[List[Dict[str, Any]]] = []
+    by_section: Dict[str, List[Dict[str, Any]]] = {}
+    sizes: Dict[int, int] = {}
+    for c in changes:
+        key = c['section'].strip().lower()
+        group = by_section.get(key) if key else None
+        if group is None or sizes[id(group)] + len(c['text']) > max_query_chars:
+            group = []
+            groups.append(group)
+            sizes[id(group)] = 0
+            if key:
+                by_section[key] = group
+        group.append(c)
+        sizes[id(group)] += len(c['text']) + 1
+    if len(groups) <= max_queries:
+        return groups
+    size = -(-len(groups) // max_queries)  # ceil
+    return [[c for g in groups[i:i + size] for c in g] for i in range(0, len(groups), size)]
+
+
+def changes_to_queries(changes_text: str, max_queries: int = 30, max_query_chars: int = 2000) -> Dict[str, Any]:
+    """extract_changes() plus the vector-search queries, each {'text', 'change_ids'}.
+
+    One query per searched change. Past max_queries, changes are grouped by
+    section instead (see _group_by_section) so every change is still searched
+    with a focused query — none is dropped.
     """
     extracted = extract_changes(changes_text, max_query_chars)
     searched = sorted(
@@ -152,9 +180,7 @@ def changes_to_queries(changes_text: str, max_queries: int = 30, max_query_chars
     if len(searched) <= max_queries:
         groups = [[c] for c in searched]
     else:
-        head = [[c] for c in searched[:max_queries - 1]]
-        rest = searched[max_queries - 1:]
-        groups = head + [rest]
+        groups = _group_by_section(searched, max_queries, max_query_chars)
     queries = [
         {'text': '\n'.join(c['text'] for c in g)[:max_query_chars], 'change_ids': [c['id'] for c in g]}
         for g in groups
