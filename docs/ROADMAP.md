@@ -164,6 +164,21 @@ elles-mêmes sont documentées dans `docs/{COMPARE,CHATBOT}.md`.
 - [ ] **Mode « décrire un changement à la main »** : désactivé volontairement
   (`IMPACT_MANUAL_MODE_ENABLED`), à réactiver si le besoin revient.
 
+## Plus tard — comparaison de documents (limites connues, audit 2026-10)
+
+Détail dans `docs/compare_audit_2026-10.md`.
+
+- [ ] **Tableau PDF sans bordures** : une valeur qui change de colonne reste
+  invisible, et les colonnes ne sont pas nommées.
+- [ ] **PDF sur deux colonnes** : le diff est juste, mais le rattachement aux
+  sections peut être faux.
+- [ ] **`.xls`** : accepté à l'envoi, mais l'analyse échoue (paquet `xlrd`
+  absent) avec un message demandant de convertir en `.xlsx`.
+- [ ] **En-têtes et pieds de page DOCX** : toujours non lus.
+- [ ] **14 autres points** listés dans la partie B du rapport d'audit, dont le
+  cache d'analyse écrit par le navigateur et les fichiers `.tmp` jamais
+  nettoyés.
+
 ## Veille (connu, non urgent)
 
 Revue le 2026-07-17 : ces quatre points restent volontairement en veille —
