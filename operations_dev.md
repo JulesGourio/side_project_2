@@ -123,8 +123,7 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
   seul volume `docling_models` ; aucun projet Lakebase ; **app `qualibot` déjà
   créée** le 2026-07-09, jamais déployée, SP `8e411164-a7e8-46ff-8013-8c56af2c3656`,
   modifiée le 2026-10-05 par Mehdi ; **endpoint Vector Search `qualibot` déjà
-  présent avec 3 index** — à identifier, voir I0)_ (à binder
-  plutôt que créer, bloc I) :
+  présent avec 3 index** — à identifier, voir I0)_ :
 
   ```powershell
   databricks schemas get dev_landingzone.qualibot --profile DEV
