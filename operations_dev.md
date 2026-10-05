@@ -377,7 +377,8 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
 
 ### C. Copie du corpus + index Vector Search (job DEV)
 
-Job `qualibot-copy-uat-to-dev`, déclenchement manuel, sous le SP DEV :
+Job `qualibot-copy-uat-to-dev`, déclenchement manuel, sous l'identité de qui
+le lance (il faut READ VOLUME sur `uat_landingzone.qualibot.staging`), serverless :
 `1_import_tables` (snapshot → `dev_landingzone.qualibot.*_v1`, rétention
 60 jours, Change Data Feed sur les 3 tables de chunks, archive LibreOffice
 → volume `doc_compare`) → `2_vector_search_endpoint` (crée l'endpoint
@@ -385,7 +386,11 @@ Job `qualibot-copy-uat-to-dev`, déclenchement manuel, sous le SP DEV :
 synchronise — embedding de tout le corpus, peut être long). **Le pipeline de
 parsing n'est pas lancé.**
 
-- [ ] **C1. Lancer la copie** _(lancée le 2026-10-05 13:00, run 304677682617713)_
+- [ ] **C1. Lancer la copie** _(1er run 2026-10-05 13:00 en échec : « User does
+  not have READ VOLUME on Volume staging » — le SP DEV ne lit pas le volume
+  UAT. Le job tourne maintenant sous **votre** identité (pas de `run_as`) et en
+  serverless (plus les ~7 min de démarrage de cluster) : `git pull`,
+  `databricks bundle deploy -t dev --profile DEV`, puis relancer)_
 
   ```powershell
   databricks bundle run copy_uat_to_dev -t dev --profile DEV
@@ -493,6 +498,10 @@ parsing n'est pas lancé.**
 - Activer les plannings DEV (parsing quotidien, export Lakebase, stop/start
   de l'app) : me dire lesquels, je passe `pause_status` / `parsing_schedule_pause`
   à `UNPAUSED`.
+- Si le pipeline de parsing DEV est un jour réactivé (sous le SP DEV) : vérifier
+  que le SP peut synchroniser les index et utiliser l'endpoint `qualibot`
+  créés sous votre identité par `copy_uat_to_dev` (CAN_MANAGE sur l'endpoint
+  au besoin).
 - Copier aussi les images du volume `uat_landingzone.qualibot.images` (pas
   nécessaire au chat ni à l'impact search ; seulement si un run de parsing
   DEV doit retravailler des images déjà extraites).

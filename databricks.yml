@@ -446,8 +446,10 @@ targets:
           max_concurrent_runs: 1
           tags:
             project: Qualibot
-          run_as:
-            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          # No run_as: runs as the human who deploys/triggers it. The DEV SP has
+          # no READ VOLUME on uat_landingzone.qualibot.staging (PERMISSION_DENIED
+          # on the first run, 2026-10-05); the deploying user does — the same
+          # identity lakebase_import_uat_to_dev reads that volume with.
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE
@@ -458,26 +460,9 @@ targets:
           parameters:
             - name: overwrite
               default: "false"
-          job_clusters:
-            # Same single-node shape as lakebase_import_uat_to_dev, which already
-            # reads the UAT staging volume from this workspace.
-            - job_cluster_key: copy_cpu_cluster
-              new_cluster:
-                spark_version: "17.3.x-scala2.13"
-                node_type_id: ${var.parsing_describe_node_type}
-                num_workers: 0
-                data_security_mode: SINGLE_USER
-                aws_attributes:
-                  availability: ON_DEMAND
-                spark_conf:
-                  spark.databricks.cluster.profile: singleNode
-                  spark.master: "local[*]"
-                custom_tags:
-                  ResourceClass: SingleNode
           tasks:
             - task_key: "1_import_tables"
               description: "Staging volume snapshot -> dev_landingzone.qualibot.*_v1 (+ LibreOffice archive)"
-              job_cluster_key: copy_cpu_cluster
               notebook_task:
                 notebook_path: ./utils/databricks_ops/dev_copy/import_staging_to_dev_job.py
                 source: WORKSPACE
@@ -487,6 +472,9 @@ targets:
                   TABLE_SUFFIX: ${var.parsing_table_suffix}
                   OVERWRITE: "{{job.parameters.overwrite}}"
                   SOFFICE_TARGET_DIR: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/doc_compare/libreoffice
+              # Serverless: starts in seconds (the classic single-node cluster
+              # took ~7 min to provision on the first run).
+              environment_key: default
             - task_key: "2_vector_search_endpoint"
               description: "Create the Vector Search endpoint if missing, wait until ONLINE"
               depends_on:
