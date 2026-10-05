@@ -68,6 +68,48 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
 - `utils/databricks_ops/dev_copy/` : notebooks de la copie (export UAT,
   import DEV, endpoint Vector Search) + JSON du `jobs submit` UAT.
 
+## Récapitulatif — ce qui est déployé en DEV (2026-10-05)
+
+Workspace DEV : https://dbc-c623749d-731b.cloud.databricks.com (id `2865348338307293`). Liens construits à partir des
+noms/ids connus ; si un chemin d'UI a bougé, la commande CLI de la ligne donne
+l'objet.
+
+| Quoi | Lien | CLI |
+|---|---|---|
+| **App `qualibot`** (utilisateurs) | https://qualibot-2865348338307293.aws.databricksapps.com | |
+| App — gestion (déploiements, logs, permissions) | https://dbc-c623749d-731b.cloud.databricks.com/apps/qualibot | `databricks apps get qualibot --profile DEV` |
+| **Catalog** — schema `dev_landingzone.qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot | `databricks tables list dev_landingzone qualibot --profile DEV` |
+| Tables corpus : `chunks_v1`, `src_chunks_as_v1`, `src_chunks_is_v1` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot/chunks_v1 | |
+| État pipeline : `_pipeline_checkpoint_v1`, `processed_files_v1`, `image_metadata_v1`, `parse_manifest_v1`, `category_reference_v1` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot | |
+| Volumes `doc_compare`, `test`, `images`, `staging` (+ `docling_models`, existant) | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/volumes/dev_landingzone/qualibot/doc_compare | `databricks volumes list dev_landingzone qualibot --profile DEV` |
+| Schema projet `dev_proj.qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_proj/qualibot | |
+| **Vector Search** — endpoint `qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/compute/vector-search/qualibot | `databricks vector-search-indexes list-indexes qualibot --profile DEV` |
+| Index `chunks_index_v1` (ALL, impact search), `chunks_as_index_v1`, `chunks_is_index_v1` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot/chunks_index_v1 | `databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_index_v1 --profile DEV` |
+| **Agents** `qualibot_ALL_v2` → `ka-4d15cb32-endpoint` | https://dbc-c623749d-731b.cloud.databricks.com/ml/endpoints/ka-4d15cb32-endpoint | `databricks knowledge-assistants list-knowledge-assistants --profile DEV` |
+| `qualibot_AS_v2` → `ka-2ef8a9ac-endpoint` | https://dbc-c623749d-731b.cloud.databricks.com/ml/endpoints/ka-2ef8a9ac-endpoint | |
+| `qualibot_IS_v2` → `ka-710526e7-endpoint` | https://dbc-c623749d-731b.cloud.databricks.com/ml/endpoints/ka-710526e7-endpoint | |
+| **Lakebase** — projet `qualibot` (« Qualibot History », uid `e9185a28-…`), branche `production`, base `doccompare` | UI : menu Lakebase (ou SQL Warehouses ▸ Lakebase) ▸ « Qualibot History » | `databricks postgres get-project projects/qualibot --profile DEV` |
+| Rôles Postgres : app SP, SP DEV, `leap-qualibot-service-accounts`, CoreDev, Mehdi | | `databricks postgres list-roles projects/qualibot/branches/production --profile DEV` |
+| Bundle (fichiers, état) | https://dbc-c623749d-731b.cloud.databricks.com/browse/folders/Workspace/Shared/.bundle/qualibot/dev | `databricks bundle summary -t dev --profile DEV` |
+
+Jobs (planning PAUSED sauf mention) — liste : https://dbc-c623749d-731b.cloud.databricks.com/jobs?filter=qualibot
+
+| Job | Lien / déclenchement |
+|---|---|
+| `qualibot-copy-uat-to-dev` (manuel) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/685542214168730 |
+| `D_1_qualibot-parsing-pipeline-dev` (PAUSED) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/362367007936662 |
+| `qualibot-lakebase-import-uat-to-dev` (**actif**, 2h30/14h30) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/728257090536196 |
+| `qualibot-score-production-qa` (**actif**, 2h45/14h45) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/715033309841102 |
+| `qualibot-grant-app-access-dev` (manuel) | `databricks bundle run grant_app_access_dev -t dev --profile DEV` |
+| `qualibot-provision-knowledge-assistant-dev` (manuel) | `databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV` |
+| `qualibot-migrate-lakebase-dev` (manuel) | `databricks bundle run migrate_lakebase_dev -t dev --profile DEV` |
+| `qualibot-lakebase-export-dev-to-volume-dev` (PAUSED) | |
+| `apps-stop-nightly-dev`, `qualibot-stop-weekend-dev`, `qualibot-start-weekend-dev` (PAUSED) | |
+
+Identités : app SP `8e411164-a7e8-46ff-8013-8c56af2c3656` ; SP des jobs
+`job-runner-sa-dev` (`fde6ff28-739f-4a41-b61e-604a298c8478`). Contrôle par
+groupe désactivé (`CAPS_BYPASS=true`, DEV seulement).
+
 ## Prérequis
 
 - [x] **P1. Profil CLI `DEV`** _(OK 2026-10-05)_ sur la machine de déploiement
