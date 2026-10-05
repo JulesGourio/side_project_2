@@ -417,6 +417,10 @@ parsing n'est pas lancé.**
   SHOW TBLPROPERTIES dev_landingzone.qualibot.chunks_v1;  -- enableChangeDataFeed = true, retentions = interval 60 days
   ```
 
+- [x] **C3a. Spec des index alignée sur l'UAT** _(2026-10-05 : UAT `chunks_index_v1` =
+  `databricks-qwen3-embedding-0-6b` sur `chunk_text`, TRIGGERED, pas de
+  `columns_to_sync` → identique à ce que crée `3_sync_indexes`)_
+
 - [ ] **C3. Vérifier les index** (UI Vector Search DEV, endpoint `qualibot`) :
   `chunks_index_v1`, `chunks_as_index_v1`, `chunks_is_index_v1` ONLINE, nombre
   de lignes indexées = nombre de lignes des tables. Si le job s'arrête avant la
