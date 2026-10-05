@@ -219,8 +219,6 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
-            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
-              level: CAN_MANAGE
             - group_name: "leap-qualibot-service-accounts"
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP
@@ -229,6 +227,8 @@ targets:
             # state, a creator left out loses Can Manage on its own project and
             # the next resources (postgres_roles) fail — happened 2026-10-05.
             - user_name: "jules.gourio.external@latecoere.aero"
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
               level: CAN_USE
@@ -279,6 +279,19 @@ targets:
           postgres_role: "fde6ff28-739f-4a41-b61e-604a298c8478"
           attributes:
             createdb: false
+            createrole: false
+            bypassrls: false
+          membership_roles:
+            - DATABRICKS_SUPERUSER
+          replace_existing: true
+        # Direct SQL access to the DEV doccompare database for Mehdi (developer).
+        mehdi:
+          role_id: "mehdi-lamrani"
+          parent: "projects/${resources.postgres_projects.qualibot-history.project_id}/branches/production"
+          identity_type: USER
+          postgres_role: "mehdi.lamrani@databricks.com"
+          attributes:
+            createdb: true
             createrole: false
             bypassrls: false
           membership_roles:
@@ -339,17 +352,16 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
-            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
-              level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
               level: CAN_USE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
               level: CAN_USE
             - user_name: "jules.gourio.external@latecoere.aero"
               level: CAN_MANAGE
-            # Must be a user of the DEV workspace, or the deploy fails on this grant.
+            # Developer on the DEV copy (2026-10-05). Must be a user of the DEV
+            # workspace, or the deploy fails on this grant.
             - user_name: "mehdi.lamrani@databricks.com"
-              level: CAN_USE
+              level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP (stop/start jobs)
               level: CAN_MANAGE
           # No `resources:` (UC volume bindings) on this target: binding a volume
@@ -374,6 +386,8 @@ targets:
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
               level: CAN_MANAGE
           tasks:
             - task_key: import_lakebase_uat_volume
@@ -415,6 +429,8 @@ targets:
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
               level: CAN_MANAGE
           tasks:
             - task_key: score_production_qa
@@ -459,6 +475,8 @@ targets:
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
               level: CAN_MANAGE
           parameters:
             - name: overwrite
@@ -535,6 +553,8 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
               level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
           parameters:
             - name: app_service_principal
               default: "8e411164-a7e8-46ff-8013-8c56af2c3656"
@@ -571,6 +591,8 @@ targets:
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
               level: CAN_MANAGE
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
@@ -617,6 +639,8 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
               level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
           tasks:
             - task_key: migrate_lakebase
               notebook_task:
@@ -655,6 +679,8 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
               level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
           parameters:
             - name: ka_profiles
               default: "ALL,AS,IS"
@@ -671,7 +697,7 @@ targets:
             # Not in CoreAdmin/CoreDev: without this the KAs (created by the SP)
             # aren't even visible to their DEV owner.
             - name: extra_manager_users
-              default: "jules.gourio.external@latecoere.aero"
+              default: "jules.gourio.external@latecoere.aero,mehdi.lamrani@databricks.com"
           tasks:
             - task_key: provision_knowledge_assistant
               notebook_task:
@@ -708,6 +734,8 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
               level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
           tasks:
@@ -743,6 +771,8 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
               level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
           tasks:
@@ -777,6 +807,8 @@ targets:
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
               level: CAN_MANAGE
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478

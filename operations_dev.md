@@ -531,6 +531,91 @@ token de l'utilisateur sur un 403). Constat : chat en échec de permission.
   databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
   ```
 
+### M. Accès développeur pour Mehdi (`mehdi.lamrani@databricks.com`, 2026-10-05)
+
+Deux familles d'objets :
+- **gérés par le bundle** (app, projet Lakebase, rôles Postgres, jobs DEV) :
+  liste de permissions = état complet, un droit ajouté à la main dans l'UI
+  est **effacé au prochain `bundle deploy`** → Mehdi est déclaré dans
+  `databricks.yml` (M1) ;
+- **hors bundle** (Unity Catalog, endpoint Vector Search, KA) : à la main,
+  ça reste (M2–M4).
+
+- [ ] **M1. Bundle** : app CAN_MANAGE, projet Lakebase CAN_MANAGE, rôle Postgres
+  `mehdi-lamrani` (SUPERUSER sur la base `doccompare`), CAN_MANAGE sur les 10
+  jobs DEV ; puis le job KA, qui l'ajoute en CAN_MANAGE sur les 3 KA et leurs
+  endpoints.
+
+  ```powershell
+  git pull
+  databricks bundle plan -t dev --profile DEV     # permissions en update, create postgres_roles.mehdi, 0 to delete
+  databricks bundle deploy -t dev --profile DEV
+  databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
+  ```
+
+- [ ] **M2. Unity Catalog — catalogs, volumes, index** (USE CATALOG demande des
+  droits que vous n'avez pas : on passe par le job de droits, qui tourne sous le
+  SP DEV, avec Mehdi comme destinataire) :
+
+  ```powershell
+  databricks bundle run grant_app_access_dev -t dev --profile DEV --params app_service_principal=mehdi.lamrani@databricks.com
+  ```
+
+  → USE CATALOG `dev_landingzone`, USE SCHEMA `qualibot`, READ+WRITE sur
+  `doc_compare`/`test`, SELECT sur les 3 index.
+
+- [ ] **M3. Unity Catalog — tables** (SQL editor DEV ; vous êtes owner de
+  `dev_landingzone.qualibot` et de `dev_proj.qualibot`). **Attention** :
+  `dev_landingzone.qualibot` contient aussi la copie des conversations UAT
+  réelles (`chat_messages`, `chat_sessions`, `users`, `feedbacks`… écrites par
+  `lakebase_import_uat_to_dev`). Choisir :
+
+  ```sql
+  -- (a) tout le schema, données de chat UAT comprises
+  GRANT ALL PRIVILEGES ON SCHEMA dev_landingzone.qualibot TO `mehdi.lamrani@databricks.com`;
+
+  -- (b) seulement le corpus et l'état du pipeline
+  GRANT CREATE TABLE ON SCHEMA dev_landingzone.qualibot TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.chunks_v1               TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.src_chunks_as_v1        TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.src_chunks_is_v1        TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot._pipeline_checkpoint_v1 TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.processed_files_v1      TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.image_metadata_v1       TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.parse_manifest_v1       TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.category_reference_v1   TO `mehdi.lamrani@databricks.com`;
+
+  -- schema projet (MLflow, traces) : vide pour l'instant
+  GRANT ALL PRIVILEGES ON SCHEMA dev_proj.qualibot TO `mehdi.lamrani@databricks.com`;
+  ```
+
+  Pour `dev_proj`, USE CATALOG : propriétaire `leap-core-service_accounts-dev`
+  (demander, ou me dire et j'étends le job de M2).
+
+- [ ] **M4. Endpoint Vector Search `qualibot`** (créé sous votre identité) — UI :
+  Compute ▸ Vector Search ▸ `qualibot` ▸ Permissions ▸ Mehdi « Can manage ».
+  Ou :
+
+  ```powershell
+  $ep = (databricks vector-search-endpoints get-endpoint qualibot --profile DEV -o json | ConvertFrom-Json).id
+  databricks permissions update vector-search-endpoints $ep --profile DEV `
+    --json '{\"access_control_list\":[{\"user_name\":\"mehdi.lamrani@databricks.com\",\"permission_level\":\"CAN_MANAGE\"}]}'
+  ```
+
+- [ ] **M5. Pour qu'il puisse déployer lui-même** (`bundle deploy -t dev`) :
+  - rôle « Service principal: User » sur `job-runner-sa-dev` (Settings ▸
+    Identity and access ▸ Service principals ▸ job-runner-sa-dev ▸
+    Permissions) — sinon le `run_as` des jobs est refusé ;
+  - accès au repo Bitbucket (hors Databricks) ;
+  - le dossier du bundle `/Workspace/Shared/.bundle/qualibot/dev` est déjà
+    accessible à tous.
+
+- [ ] **M6. Job de parsing `D_1_qualibot-parsing-pipeline-dev`** : sa
+  définition est partagée avec UAT/PROD, Mehdi n'y est pas déclaré. Un droit
+  ajouté à la main dans l'UI tient jusqu'au prochain `bundle deploy`. Solution
+  durable et la plus simple pour tout : l'ajouter au groupe
+  `Role-Project-LEAP-CoreDev` (CAN_MANAGE partout) — décision / action d'un admin.
+
 ### B. Bitbucket — pipelines DEV
 
 - [ ] **B1. Créer l'environnement de déploiement « Development »**
