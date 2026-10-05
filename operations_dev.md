@@ -429,14 +429,14 @@ parsing n'est pas lancé.**
 
 ### K. Knowledge Assistants DEV
 
-- [ ] **K1. Créer les 3 KA** (`qualibot_ALL_v2` / `qualibot_AS_v2` /
+- [x] **K1. Créer les 3 KA** _(2026-10-05)_ (`qualibot_ALL_v2` / `qualibot_AS_v2` /
   `qualibot_IS_v2`, sur les index `_v1` DEV, CAN_QUERY pour le SP de l'app) :
 
   ```powershell
   databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
   ```
 
-- [ ] **K2. Me donner les 3 `endpoint_name`** affichés dans le résumé du run
+- [x] **K2. Me donner les 3 `endpoint_name`** _(2026-10-05 : ALL `ka-4d15cb32-endpoint`, AS `ka-2ef8a9ac-endpoint`, IS `ka-710526e7-endpoint` — reportés dans `target_env.json`)_ affichés dans le résumé du run
   (`[ALL] … -> endpoint_name=ka-…`, idem AS et IS). Je les mets dans le bloc
   `dev` de `utils/deploy/target_env.json` (`CHAT_ENDPOINT` = `CHAT_ENDPOINT_ALL`
   = ALL, `CHAT_ENDPOINT_AS`, `CHAT_ENDPOINT_IS`), puis bloc A.
