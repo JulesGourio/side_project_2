@@ -84,6 +84,7 @@ try {
             --exclude 'client/src/**' `
             --exclude 'client/public/**' `
             --exclude 'client/node_modules/**' `
+            --exclude 'docs/**' `
             --exclude 'files_to_compare/**' `
             --exclude 'debug_results/**' `
             --exclude 'debug_images/**' `

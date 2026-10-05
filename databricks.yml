@@ -127,6 +127,7 @@ sync:
     - "client/src/**"            # frontend source — only built output (client/out) is needed
     - "client/public/**"         # source assets duplicated in client/out after build
     - "client/node_modules/**"
+    - "docs/**"                  # documentation only (architecture.html alone is 3.5 MB) — never read at runtime
     - ".git/**"
     - ".databricks/**"           # local CLI cache — contains 64MB+ terraform binaries
     - "__pycache__/**"
