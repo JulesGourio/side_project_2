@@ -439,7 +439,10 @@ parsing n'est pas lancé.**
 - [ ] **K1b. Vous donner Can Manage sur les 3 KA** (créés par le SP : « User does
   not have permission 'View' on Endpoint ka-4d15cb32-endpoint », 2026-10-05).
   Le job accepte maintenant `extra_manager_users` (défaut en DEV : vous). Il est
-  idempotent : il ne recrée rien, il complète les droits.
+  idempotent : il ne recrée rien, il complète les droits. 1er essai : droits
+  posés sur les KA mais toujours « no permission 'View' » sur l'endpoint → le
+  job accorde maintenant aussi CAN_MANAGE directement sur les 3 endpoints de
+  serving (ligne `CAN_MANAGE on endpoint … for [...]` dans la sortie).
 
   ```powershell
   git pull

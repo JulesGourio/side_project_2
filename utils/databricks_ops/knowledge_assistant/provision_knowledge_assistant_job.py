@@ -2,6 +2,10 @@
 # DBTITLE 1,Provision Knowledge Assistants (idempotent — safe to re-run)
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.common.types.fieldmask import FieldMask
+from databricks.sdk.service.serving import (
+    ServingEndpointAccessControlRequest,
+    ServingEndpointPermissionLevel,
+)
 from databricks.sdk.service.knowledgeassistants import (
     IndexSpec,
     KnowledgeAssistant,
@@ -149,6 +153,25 @@ for key in KA_PROFILE_KEYS:
             )
         kaid = ka.name.split("/")[1]
         w.knowledge_assistants.update_permissions(kaid, access_control_list=acl)
+
+        # The KA ACL above doesn't reach a human on the KA's serving endpoint
+        # ("User does not have permission 'View' on Endpoint ka-…", DEV
+        # 2026-10-05): grant EXTRA_MANAGER_USERS there directly too (merge).
+        if EXTRA_MANAGER_USERS and ka.endpoint_name:
+            try:
+                endpoint_id = w.serving_endpoints.get(ka.endpoint_name).id
+                w.serving_endpoints.update_permissions(
+                    endpoint_id,
+                    access_control_list=[
+                        ServingEndpointAccessControlRequest(
+                            user_name=user, permission_level=ServingEndpointPermissionLevel.CAN_MANAGE
+                        )
+                        for user in EXTRA_MANAGER_USERS
+                    ],
+                )
+                print(f"[{key}] CAN_MANAGE on endpoint {ka.endpoint_name} for {EXTRA_MANAGER_USERS}")
+            except Exception as e:
+                print(f"[{key}] WARNING: could not grant on endpoint {ka.endpoint_name}: {e}")
 
         results.append((key, display_name, ka.endpoint_name))
     except Exception as e:
