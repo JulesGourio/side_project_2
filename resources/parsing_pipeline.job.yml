@@ -25,6 +25,9 @@
 #   parsing_lakebase_database
 #   PARSING_* : catalog/volumes/run_mode (spark_env_vars below)
 #
+# All targets keep the schedule PAUSED unless explicitly promoted (dev: PAUSED,
+# copy of UAT since 2026-10-05, corpus loaded by copy_uat_to_dev in databricks.yml).
+#
 # Defined per-target below (not under a bundle-wide `resources:` block) so
 # qualibot-uat-test never gets its own copy — that app is chat-only, it
 # doesn't do document comparison and has no use for a parsing pipeline.
@@ -50,6 +53,12 @@ targets:
           # disjoint IDDOC scopes. Raised to allow deliberately running both
           # (or 02's own repair/retry cycles) at once — confirmed 2026-07-03.
           max_concurrent_runs: 3
+
+          # DEV service principal (2026-10-05, DEV copy of UAT). Lives in the
+          # shared anchor because dev owns it, but qualibot-uat/qualibot-prod
+          # each set their own run_as below, which overrides this one.
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
 
           tags:
             project: Qualibot
