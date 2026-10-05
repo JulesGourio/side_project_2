@@ -312,6 +312,33 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
 
   Puis relancer `git pull` + `databricks bundle deploy -t dev --profile DEV`.
 
+  **2e essai (2026-10-05)** : tout passe sauf l'app — « all account users lack
+  USE CATALOG permission on catalog dev_landingzone, and the user does not
+  have MANAGE ». Rattacher un volume à une app oblige le déployeur à avoir
+  MANAGE sur le catalog. Corrigé : plus de rattachement de volumes sur l'app
+  DEV (elle n'en a pas besoin, elle lit `COMPARE_VOLUME_PATH`) ; les droits de
+  son SP passent par le job `qualibot-grant-app-access-dev` (I2b).
+
+- [ ] **I2b. Droits du SP de l'app sur ses volumes** — job manuel, sous le SP
+  DEV. Il ne marche que si le SP DEV peut accorder des droits sur
+  `dev_landingzone` (owner du catalog = son groupe `leap-core-service_accounts-dev`,
+  ou MANAGE). Vérifier l'owner, puis lancer :
+
+  ```powershell
+  (databricks catalogs get dev_landingzone --profile DEV -o json | ConvertFrom-Json).owner
+  databricks bundle run grant_app_access_dev -t dev --profile DEV
+  ```
+
+  En cas d'échec « run_as lacks GRANT rights » : faire passer par un admin du
+  catalog, en SQL :
+
+  ```sql
+  GRANT USE CATALOG ON CATALOG dev_landingzone TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT READ VOLUME, WRITE VOLUME ON VOLUME dev_landingzone.qualibot.doc_compare TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT READ VOLUME, WRITE VOLUME ON VOLUME dev_landingzone.qualibot.test TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  ```
+
   À ce stade : Compare marche ; impact search et chat non (pas encore d'index
   ni de KA) — normal.
 
@@ -398,7 +425,8 @@ parsing n'est pas lancé.**
 - [ ] **A4. Compare** : deux révisions d'un document connu, Change Table,
   puis « Judge Impacted Docs » (index `dev_landingzone.qualibot.chunks_index_v1`) ;
   aperçu « Exact (PDF) » d'un DOCX (archive LibreOffice copiée en C1).
-  En cas de 403 sur l'index, avec le client id de I4 :
+  En cas de 403 sur l'index (USE CATALOG vient de I2b ; le reste, vous pouvez
+  l'accorder comme owner du schema) :
 
   ```sql
   GRANT USE CATALOG ON CATALOG dev_landingzone TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;

@@ -352,19 +352,12 @@ targets:
               level: CAN_USE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP (stop/start jobs)
               level: CAN_MANAGE
-          resources:
-            - name: doc-compare-volume
-              uc_securable:
-                securable_type: VOLUME
-                # Interpolated (not a literal) so the app waits for the volume
-                # on a first deploy ("Volume ... does not exist", 2026-10-05).
-                securable_full_name: ${resources.volumes.qualibot_doc_compare.catalog_name}.${resources.volumes.qualibot_doc_compare.schema_name}.${resources.volumes.qualibot_doc_compare.name}
-                permission: WRITE_VOLUME
-            - name: test-volume
-              uc_securable:
-                securable_type: VOLUME
-                securable_full_name: ${resources.volumes.qualibot_test.catalog_name}.${resources.volumes.qualibot_test.schema_name}.${resources.volumes.qualibot_test.name}
-                permission: WRITE_VOLUME
+          # No `resources:` (UC volume bindings) on this target: binding a volume
+          # makes the deploy grant USE CATALOG on dev_landingzone to the app SP,
+          # which needs MANAGE on the catalog — refused for a human deployer
+          # (2026-10-05, same as qualibot-uat-test). The app only needs the
+          # volume path (COMPARE_VOLUME_PATH, target_env.json); its SP gets
+          # the grants from the grant_app_access_dev job below instead.
       jobs:
         # ── Pre-existing DEV jobs, unchanged ────────────────────────────────
         # No run_as: they ran as the deploying user before the copy and still
@@ -529,6 +522,58 @@ targets:
                 environment_version: "2"
                 dependencies:
                   - databricks-sdk>=0.118.0
+
+        # Manual trigger only. Grants the DEV qualibot app's service principal
+        # USE CATALOG/USE SCHEMA + WRITE VOLUME on doc_compare and test (what a
+        # bundle volume binding would have granted — see the app above). Runs
+        # as the DEV SP, which must itself hold GRANT rights on dev_landingzone.
+        grant_app_access_dev:
+          name: "qualibot-grant-app-access-${bundle.target}"
+          description: "Grant the DEV qualibot app SP access to its UC volumes. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+          parameters:
+            - name: app_service_principal
+              default: "8e411164-a7e8-46ff-8013-8c56af2c3656"
+          tasks:
+            - task_key: grant_doc_compare
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/grant_volume_access_job.py
+                source: WORKSPACE
+                base_parameters:
+                  service_principal: "{{job.parameters.app_service_principal}}"
+                  catalog: ${var.app_write_catalog}
+                  schema_name: ${var.app_write_schema}
+                  volume_name: "doc_compare"
+                  volume_permission: "WRITE VOLUME"
+              environment_key: default
+            - task_key: grant_test
+              depends_on:
+                - task_key: grant_doc_compare
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/grant_volume_access_job.py
+                source: WORKSPACE
+                base_parameters:
+                  service_principal: "{{job.parameters.app_service_principal}}"
+                  catalog: ${var.app_write_catalog}
+                  schema_name: ${var.app_write_schema}
+                  volume_name: "test"
+                  volume_permission: "WRITE VOLUME"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
 
         # ── Same jobs as qualibot-uat, adapted to DEV ───────────────────────
         # Export only: the UAT twin also imports chat_* into Delta tables of
