@@ -223,10 +223,8 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP
               level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
-              level: CAN_USE
-            - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
-              level: CAN_USE
+            # No End-users-Qualibot-* groups: they don't exist in the DEV
+            # workspace (checked 2026-10-05) — the deploy would fail on them.
       postgres_roles:
         qualibot-service-accounts:
           role_id: "leap-qualibot-service-accounts"
@@ -240,16 +238,16 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
-        # The app connects to Lakebase as its own service principal. Dynamic
-        # reference for the first deploy (the app doesn't exist yet). Once it
-        # does, hardcode the client id like qualibot-uat does (see that target
-        # for why: an unrelated change to the app resource otherwise forces a
-        # recreate of this immutable role) — operations_dev.md, step "hardcode".
+        # The app connects to Lakebase as its own service principal. Hardcoded
+        # like qualibot-uat (see that target for why: an interpolated value
+        # forces a recreate of this immutable role on unrelated app changes).
+        # The DEV app `qualibot` already exists (created 2026-07-09) —
+        # `databricks apps get qualibot --profile DEV`.
         app-service-principal:
           role_id: "app-doc-compare-sp"
           parent: "projects/qualibot/branches/production"
           identity_type: SERVICE_PRINCIPAL
-          postgres_role: ${resources.apps.doc-compare.service_principal_client_id}
+          postgres_role: "8e411164-a7e8-46ff-8013-8c56af2c3656"  # DEV qualibot app SP client id
           attributes:
             createdb: true
             createrole: false
@@ -321,15 +319,12 @@ targets:
           volume_type: MANAGED
       apps:
         doc-compare:
+          # End-users-Qualibot-* groups absent from DEV (checked 2026-10-05).
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
-              level: CAN_USE
-            - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
-              level: CAN_USE
             - user_name: "jules.gourio.external@latecoere.aero"
               level: CAN_MANAGE
             # Must be a user of the DEV workspace, or the deploy fails on this grant.

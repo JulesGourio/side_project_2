@@ -69,14 +69,14 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
 
 ## Prérequis
 
-- [ ] **P1. Profil CLI `DEV`** sur la machine de déploiement
+- [x] **P1. Profil CLI `DEV`** _(OK 2026-10-05)_ sur la machine de déploiement
 
   ```powershell
   databricks auth login --host https://dbc-c623749d-731b.cloud.databricks.com --profile DEV
   databricks current-user me --profile DEV
   ```
 
-- [ ] **P2. Le SP DEV existe dans le workspace DEV** et vous pouvez l'utiliser
+- [x] **P2. Le SP DEV existe dans le workspace DEV** _(OK 2026-10-05 : `job-runner-sa-dev`, ACTIVE)_ et vous pouvez l'utiliser
   en `run_as` (rôle « Service principal: User » sur le SP, sinon `bundle deploy`
   refuse le `run_as`) :
 
@@ -109,7 +109,7 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
   le bloc C échouera au 1er task : me le dire, on fait tourner
   `copy_uat_to_dev` sous votre identité à la place.
 
-- [ ] **P4. Catalog `dev_proj`** : le bundle crée le schema `dev_proj.qualibot`
+- [x] **P4. Catalog `dev_proj`** _(existe, owner `leap-core-service_accounts-dev` ; schema `dev_proj.qualibot` absent → créé par le bundle, il faut CREATE SCHEMA sur `dev_proj`)_ : le bundle crée le schema `dev_proj.qualibot`
   mais pas le catalog.
 
   ```powershell
@@ -119,7 +119,11 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
   S'il n'existe pas : me le dire (je pointe le schema projet ailleurs) ou le
   faire créer par un admin.
 
-- [ ] **P5. Ce qui existe déjà dans `dev_landingzone.qualibot`** (à binder
+- [x] **P5. Ce qui existe déjà dans `dev_landingzone.qualibot`** _(2026-10-05 : schema présent ;
+  seul volume `docling_models` ; aucun projet Lakebase ; **app `qualibot` déjà
+  créée** le 2026-07-09, jamais déployée, SP `8e411164-a7e8-46ff-8013-8c56af2c3656`,
+  modifiée le 2026-10-05 par Mehdi ; **endpoint Vector Search `qualibot` déjà
+  présent avec 3 index** — à identifier, voir I0)_ (à binder
   plutôt que créer, bloc I) :
 
   ```powershell
@@ -135,7 +139,9 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
   (normalement absent), une app `qualibot` (normalement absente), un
   endpoint `qualibot` (normalement absent).
 
-- [ ] **P6. Groupes de compte visibles en DEV** : `Role-Project-LEAP-CoreAdmin`,
+- [x] **P6. Groupes de compte visibles en DEV** _(2026-10-05 : CoreAdmin, CoreDev,
+  leap-qualibot-service-accounts et Mehdi présents ; **les deux groupes
+  End-users-Qualibot-* n'existent pas en DEV** → retirés de la cible `dev`)_ : `Role-Project-LEAP-CoreAdmin`,
   `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-End-users-Qualibot-DocCompare`,
   `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `leap-qualibot-service-accounts`,
   et l'utilisateur `mehdi.lamrani@databricks.com` (sinon le `bundle deploy`
@@ -194,25 +200,32 @@ schema `dev_proj.qualibot`, les volumes, les rôles Postgres et les jobs ;
 met à jour le job de parsing DEV existant (il écrit désormais dans
 `dev_landingzone.qualibot`, tables `_v1`, planning PAUSED).
 
-- [ ] **I1. Binder ce qui existe déjà** (d'après P5). Le schema existe
-  forcément :
+- [ ] **I0. Avant tout bind : état actuel du bundle et de l'endpoint**
+
+  ```powershell
+  databricks bundle summary -t dev --profile DEV
+  databricks vector-search-indexes list-indexes qualibot --profile DEV
+  (databricks tables list dev_landingzone qualibot --profile DEV -o json | ConvertFrom-Json).name
+  ```
+
+  Me coller la sortie : elle dit si l'app `qualibot` est déjà dans l'état du
+  bundle (sinon il faut la binder) et si des tables / index `_v1` existent déjà
+  (collision avec la copie).
+
+- [ ] **I1. Binder ce qui existe déjà**
 
   ```powershell
   databricks bundle deployment bind qualibot_schema dev_landingzone.qualibot -t dev --profile DEV --auto-approve
   ```
 
-  Puis, **seulement** pour ceux que P5 a montrés comme existants :
+  Et, **seulement si** `bundle summary` (I0) ne montre pas l'app `doc-compare` :
 
   ```powershell
-  databricks bundle deployment bind qualibot_doc_compare dev_landingzone.qualibot.doc_compare -t dev --profile DEV --auto-approve
-  databricks bundle deployment bind qualibot_test        dev_landingzone.qualibot.test        -t dev --profile DEV --auto-approve
-  databricks bundle deployment bind qualibot_images      dev_landingzone.qualibot.images      -t dev --profile DEV --auto-approve
-  databricks bundle deployment bind qualibot_staging     dev_landingzone.qualibot.staging     -t dev --profile DEV --auto-approve
-  databricks bundle deployment bind qualibot_proj_schema dev_proj.qualibot                    -t dev --profile DEV --auto-approve
+  databricks bundle deployment bind doc-compare qualibot -t dev --profile DEV --auto-approve
   ```
 
-  Projet Lakebase `qualibot` déjà présent en DEV (inattendu) : me prévenir
-  avant d'aller plus loin.
+  Aucun volume à binder (seul `docling_models` existe, il n'est pas géré par
+  le bundle).
 
 - [ ] **I2. Déployer l'infra + l'app** (build du front, `bundle deploy`,
   démarrage de l'app, `apps deploy`) :
@@ -235,13 +248,7 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   `qualibot-lakebase-import-uat-to-dev` et `qualibot-score-production-qa`
   restent actifs, comme avant.
 
-- [ ] **I4. Me donner le client id du SP de l'app DEV** (pour le figer dans
-  `databricks.yml`, comme en UAT — évite la recréation du rôle Postgres au
-  prochain changement de l'app) :
-
-  ```powershell
-  (databricks apps get qualibot --profile DEV -o json | ConvertFrom-Json).service_principal_client_id
-  ```
+- [x] **I4. Client id du SP de l'app DEV** _(2026-10-05 : `8e411164-a7e8-46ff-8013-8c56af2c3656`, figé dans `databricks.yml`)_
 
 ### C. Copie du corpus + index Vector Search (job DEV)
 
@@ -320,9 +327,9 @@ parsing n'est pas lancé.**
   En cas de 403 sur l'index, avec le client id de I4 :
 
   ```sql
-  GRANT USE CATALOG ON CATALOG dev_landingzone TO `<client id SP app DEV>`;
-  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `<client id SP app DEV>`;
-  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_index_v1 TO `<client id SP app DEV>`;
+  GRANT USE CATALOG ON CATALOG dev_landingzone TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_index_v1 TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
   ```
 
 - [ ] **A5. Date « documents as of »** : vide dans une base Lakebase neuve.
