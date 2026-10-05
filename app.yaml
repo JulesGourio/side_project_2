@@ -46,6 +46,10 @@ env:
   # Lakebase-table/job path. Set per-target in utils/deploy/target_env.json.
   - name: CAPS_WAREHOUSE_ID
     value: ""
+  # Temporary (2026-10-05): "true" skips the group check — every visitor gets
+  # chat + compare. DEV only, via utils/deploy/target_env.json.
+  - name: CAPS_BYPASS
+    value: "false"
   # Main analysis model. Haiku 4.5 was evaluated and rejected (quality too low
   # for this pipeline) — stay on Sonnet.
   - name: COMPARE_ANALYSIS_ENDPOINT

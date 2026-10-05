@@ -39,7 +39,7 @@ _DEAD_INDEX = 'chunks_index_v2'
 # Vector Search index explicitly rather than relying on app.yaml's default.
 # 'prod' is deliberately excluded -- it has no workspace/KA agents yet
 # (see utils/deploy/deploy_qualibot.ps1's own "TODO: set prod KA endpoints").
-_LIVE_TARGETS = ('uat', 'uat-test')
+_LIVE_TARGETS = ('dev', 'uat', 'uat-test')
 
 
 def _load_target_env() -> dict:
@@ -72,3 +72,22 @@ def test_dead_index_v2_is_gone():
         with open(path, encoding='utf-8') as f:
             text = f.read()
         assert _DEAD_INDEX not in text, f'{_DEAD_INDEX!r} does not exist (dropped 2026-08-18) — must not be reintroduced in {path}'
+
+
+# CAPS_BYPASS (server/services/user.py) turns off the group check for every
+# visitor. Temporary, DEV only (2026-10-05) -- must never be switched on for a
+# target that serves real users.
+_CAPS_BYPASS_ALLOWED = ('dev',)
+
+
+def test_caps_bypass_only_on_dev():
+    config = _load_target_env()
+    for target, values in config.items():
+        if target.startswith('_') or target in _CAPS_BYPASS_ALLOWED:
+            continue
+        assert str(values.get('CAPS_BYPASS', 'false')).lower() != 'true', (
+            f'CAPS_BYPASS is on for {target!r} in {TARGET_ENV_PATH} — DEV only'
+        )
+    with open(APP_YAML_PATH, encoding='utf-8') as f:
+        app_yaml_text = f.read()
+    assert 'name: CAPS_BYPASS\n    value: "false"' in app_yaml_text, 'app.yaml must default CAPS_BYPASS to "false"'

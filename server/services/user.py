@@ -30,6 +30,12 @@ _CAPS_WAREHOUSE_ID = os.getenv('CAPS_WAREHOUSE_ID', '').strip()
 _CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 
+# Temporary escape hatch (2026-10-05): CAPS_BYPASS=true grants chat + compare
+# to every visitor, skipping the group check entirely. Set only for the DEV
+# target in utils/deploy/target_env.json (tests/test_deploy_config.py guards
+# that it never reaches uat/uat-test/prod).
+_CAPS_BYPASS = os.getenv('CAPS_BYPASS', 'false').strip().lower() == 'true'
+
 
 def _is_dev() -> bool:
     return os.getenv('ENV', 'development') == 'development'
@@ -134,7 +140,12 @@ async def get_capabilities(request: Request) -> dict:
 
     Fail-open: grants all if neither path works (DB unavailable, user not yet
     in the table, or the live SQL check errors).
+
+    CAPS_BYPASS=true short-circuits all of the above and grants everything.
     """
+    if _CAPS_BYPASS:
+        return dict(_OPEN_CAPS)
+
     forwarded = request.headers.get('x-forwarded-user', '').strip()
     key = forwarded or 'anon'
     now = time.monotonic()
