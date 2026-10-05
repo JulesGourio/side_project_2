@@ -388,7 +388,8 @@ parsing n'est pas lancé.**
 
 - [ ] **C1. Lancer la copie** _(1er run 2026-10-05 13:00 en échec : « User does
   not have READ VOLUME on Volume staging » — le SP DEV ne lit pas le volume
-  UAT. Le job tourne maintenant sous **votre** identité (pas de `run_as`) et en
+  UAT. 2e run idem : retirer `run_as` avait laissé le SP en place. Le job a
+  maintenant `run_as` = **votre** utilisateur, explicitement, et tourne en
   serverless (plus les ~7 min de démarrage de cluster) : `git pull`,
   `databricks bundle deploy -t dev --profile DEV`, puis relancer)_
 

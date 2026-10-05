@@ -446,10 +446,13 @@ targets:
           max_concurrent_runs: 1
           tags:
             project: Qualibot
-          # No run_as: runs as the human who deploys/triggers it. The DEV SP has
-          # no READ VOLUME on uat_landingzone.qualibot.staging (PERMISSION_DENIED
-          # on the first run, 2026-10-05); the deploying user does — the same
-          # identity lakebase_import_uat_to_dev reads that volume with.
+          # Runs as Jules, not the DEV SP: the SP has no READ VOLUME on
+          # uat_landingzone.qualibot.staging (PERMISSION_DENIED on the first run,
+          # 2026-10-05); Jules does — the same identity lakebase_import_uat_to_dev
+          # reads that volume with. Explicit, because merely dropping run_as left
+          # the previous SP value in place on redeploy.
+          run_as:
+            user_name: jules.gourio.external@latecoere.aero
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE
