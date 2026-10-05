@@ -170,6 +170,9 @@ sur la machine de déploiement. Toujours commencer la session par :
 
 ```powershell
 Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+# autorise les scripts .ps1 du projet pour cette fenêtre seulement
+# (sinon « n'est pas signé numériquement »)
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
@@ -278,7 +281,7 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   Me coller la sortie de `plan` : chaque ressource doit être `create` ou
   `update`. Rien en `delete` / `recreate`, sauf accord explicite.
 
-- [ ] **I2. Déployer l'infra, puis le code de l'app** — sous votre identité
+- [ ] **I2. Déployer l'infra, puis le code de l'app** _(2026-10-05 : `bundle deploy` OK au 3e essai ; reste le code de l'app)_ — sous votre identité
   (profil `DEV`). Vous devenez owner de ce qui est créé ; le SP DEV a CAN_MANAGE
   sur l'app, le projet Lakebase et chaque job propre à DEV, pour que la
   pipeline Bitbucket (qui déploie en tant que SP) puisse les mettre à jour
@@ -319,7 +322,7 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   DEV (elle n'en a pas besoin, elle lit `COMPARE_VOLUME_PATH`) ; les droits de
   son SP passent par le job `qualibot-grant-app-access-dev` (I2b).
 
-- [ ] **I2b. Droits du SP de l'app sur ses volumes** — job manuel, sous le SP
+- [x] **I2b. Droits du SP de l'app sur ses volumes** _(OK 2026-10-05)_ — job manuel, sous le SP
   DEV. Il ne marche que si le SP DEV peut accorder des droits sur
   `dev_landingzone` (owner du catalog = son groupe `leap-core-service_accounts-dev`,
   ou MANAGE). Vérifier l'owner, puis lancer :
@@ -361,7 +364,7 @@ Job `qualibot-copy-uat-to-dev`, déclenchement manuel, sous le SP DEV :
 synchronise — embedding de tout le corpus, peut être long). **Le pipeline de
 parsing n'est pas lancé.**
 
-- [ ] **C1. Lancer la copie**
+- [ ] **C1. Lancer la copie** _(lancée le 2026-10-05 13:00, run 304677682617713)_
 
   ```powershell
   databricks bundle run copy_uat_to_dev -t dev --profile DEV
