@@ -41,13 +41,14 @@ Mis à jour le 2026-10-05. Rien de ce qui suit n'a encore été confirmé comme 
 |---|---|---|---|
 | P | Prérequis : droits, profil CLI, vérifications | DEV + UAT | lecture seule |
 | E | Export du corpus UAT vers le volume staging (run ponctuel) | UAT | écrit seulement dans `uat_landingzone.qualibot.staging/dev_copy` |
+| R | Suppression du reliquat de l'ancien Qualibot DEV (app, vieux index et tables) | DEV | non |
 | I | Infra DEV : bind + `bundle deploy -t dev` (app, Lakebase, volumes, jobs) | DEV | non |
 | C | Copie : job `qualibot-copy-uat-to-dev` (tables + endpoint + 3 index) | DEV | lecture du volume staging |
 | K | Knowledge Assistants DEV + report des endpoints dans `target_env.json` | DEV | non |
 | A | Déploiement du code de l'app + tests | DEV | non |
 | B | Bitbucket : environnement « Development » + pipelines `deploy-dev` | Bitbucket | non |
 
-Ordre imposé : P → E → I → C → K → A. B peut se faire à tout moment, mais
+Ordre imposé : P → E → R → I → C → K → A. B peut se faire à tout moment, mais
 les pipelines `deploy-dev*` ne marcheront qu'après P.
 
 Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
@@ -122,8 +123,8 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
 - [x] **P5. Ce qui existe déjà dans `dev_landingzone.qualibot`** _(2026-10-05 : schema présent ;
   seul volume `docling_models` ; aucun projet Lakebase ; **app `qualibot` déjà
   créée** le 2026-07-09, jamais déployée, SP `8e411164-a7e8-46ff-8013-8c56af2c3656`,
-  modifiée le 2026-10-05 par Mehdi ; **endpoint Vector Search `qualibot` déjà
-  présent avec 3 index** — à identifier, voir I0)_ :
+  modifiée le 2026-10-05 par Mehdi → **supprimée en R2** ; endpoint Vector Search
+  `qualibot` listé avec 3 index puis introuvable → R1/R3)_ :
 
   ```powershell
   databricks schemas get dev_landingzone.qualibot --profile DEV
@@ -192,6 +193,71 @@ LibreOffice. Rien de la phase archive avant 2018.
   databricks fs ls  dbfs:/Volumes/uat_landingzone/qualibot/staging/dev_copy/tables --profile DEV
   ```
 
+### R. Supprimer le reliquat de l'ancien Qualibot DEV (décidé le 2026-10-05)
+
+Constat I0 (2026-10-05) : l'app `qualibot` DEV existe hors du bundle (créée à
+la main le 2026-07-09, jamais déployée) ; `dev_landingzone.qualibot` contient
+d'anciennes tables de chunks et d'anciens index Vector Search (`chunks_all`,
+`chunks_as`, `chunks_is` + leurs `*_writeback_table`). Tout est supprimé puis
+recréé par le bundle et `copy_uat_to_dev`.
+
+**Ne pas toucher** : les tables écrites par les jobs DEV conservés
+(`lakebase_import_uat_to_dev` : `chat_feedbacks`, `chat_messages`,
+`chat_sessions`, `errors`, `feedbacks`, `impact_*`, `knowledge_base_metadata`,
+`llm_requests`, `messages`, `summary_cache`, `users` ; `score_production_qa` :
+`chat_quality_*`), le volume `docling_models`, et `glossary_terms` /
+`dnt_rules` (Translator, autre projet).
+
+- [ ] **R1. Identifier ce qui reste côté Vector Search**
+
+  ```powershell
+  databricks vector-search-endpoints list-endpoints --profile DEV -o json | ConvertFrom-Json | Select-Object name, num_indexes
+  databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_all --profile DEV
+  databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_as  --profile DEV
+  databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_is  --profile DEV
+  ```
+
+- [ ] **R2. Supprimer l'ancienne app** (son SP part avec elle ; le bundle en
+  recrée une avec un nouveau SP). Attendre que `apps get` réponde « not found »
+  avant le bloc I :
+
+  ```powershell
+  databricks apps delete qualibot --profile DEV
+  databricks apps get qualibot --profile DEV
+  ```
+
+- [ ] **R3. Supprimer les anciens index** (ceux que R1 a trouvés), puis
+  l'endpoint `qualibot` s'il existe encore (il doit être vide ; `copy_uat_to_dev`
+  le recrée) :
+
+  ```powershell
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_all --profile DEV
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_as  --profile DEV
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is  --profile DEV
+  databricks vector-search-endpoints delete-endpoint qualibot --profile DEV
+  ```
+
+- [ ] **R4. Supprimer les anciennes tables du pipeline** (SQL editor DEV ;
+  tables managées : `UNDROP TABLE` possible pendant 7 jours). Les
+  `*_writeback_table` disparaissent normalement avec leur index (R3) ; les
+  `DROP … IF EXISTS` couvrent le cas contraire :
+
+  ```sql
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_all_writeback_table;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_as_writeback_table;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_is_writeback_table;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot._pipeline_checkpoint;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.processed_files;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.intraqual_docs;
+  ```
+
+  Vérifier qu'il ne reste que les tables « ne pas toucher » ci-dessus :
+
+  ```powershell
+  (databricks tables list dev_landingzone qualibot --profile DEV -o json | ConvertFrom-Json).name
+  ```
+
 ### I. Infra DEV (`bundle deploy -t dev`)
 
 Crée l'app `qualibot`, le projet Lakebase `qualibot` (base `doccompare`), le
@@ -199,32 +265,16 @@ schema `dev_proj.qualibot`, les volumes, les rôles Postgres et les jobs ;
 met à jour le job de parsing DEV existant (il écrit désormais dans
 `dev_landingzone.qualibot`, tables `_v1`, planning PAUSED).
 
-- [ ] **I0. Avant tout bind : état actuel du bundle et de l'endpoint**
+- [x] **I0. État du bundle** _(2026-10-05 : app, schemas, volumes, Lakebase et
+  nouveaux jobs « not deployed » ; `parsing_pipeline`, `lakebase_import_uat_to_dev`,
+  `score_production_qa` déjà déployés → mis à jour sur place)_
 
-  ```powershell
-  databricks bundle summary -t dev --profile DEV
-  databricks vector-search-indexes list-indexes qualibot --profile DEV
-  (databricks tables list dev_landingzone qualibot --profile DEV -o json | ConvertFrom-Json).name
-  ```
-
-  Me coller la sortie : elle dit si l'app `qualibot` est déjà dans l'état du
-  bundle (sinon il faut la binder) et si des tables / index `_v1` existent déjà
-  (collision avec la copie).
-
-- [ ] **I1. Binder ce qui existe déjà**
+- [ ] **I1. Binder le schema existant** (seul objet à binder ; l'app est
+  supprimée en R2 et recréée) :
 
   ```powershell
   databricks bundle deployment bind qualibot_schema dev_landingzone.qualibot -t dev --profile DEV --auto-approve
   ```
-
-  Et, **seulement si** `bundle summary` (I0) ne montre pas l'app `doc-compare` :
-
-  ```powershell
-  databricks bundle deployment bind doc-compare qualibot -t dev --profile DEV --auto-approve
-  ```
-
-  Aucun volume à binder (seul `docling_models` existe, il n'est pas géré par
-  le bundle).
 
 - [ ] **I2. Déployer l'infra + l'app** (build du front, `bundle deploy`,
   démarrage de l'app, `apps deploy`) :
@@ -247,7 +297,12 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   `qualibot-lakebase-import-uat-to-dev` et `qualibot-score-production-qa`
   restent actifs, comme avant.
 
-- [x] **I4. Client id du SP de l'app DEV** _(2026-10-05 : `8e411164-a7e8-46ff-8013-8c56af2c3656`, figé dans `databricks.yml`)_
+- [ ] **I4. Me donner le client id du SP de la nouvelle app DEV** (je le fige
+  dans `databricks.yml`, comme en UAT) :
+
+  ```powershell
+  (databricks apps get qualibot --profile DEV -o json | ConvertFrom-Json).service_principal_client_id
+  ```
 
 ### C. Copie du corpus + index Vector Search (job DEV)
 
@@ -326,9 +381,9 @@ parsing n'est pas lancé.**
   En cas de 403 sur l'index, avec le client id de I4 :
 
   ```sql
-  GRANT USE CATALOG ON CATALOG dev_landingzone TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_index_v1 TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT USE CATALOG ON CATALOG dev_landingzone TO `<client id I4>`;
+  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `<client id I4>`;
+  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_index_v1 TO `<client id I4>`;
   ```
 
 - [ ] **A5. Date « documents as of »** : vide dans une base Lakebase neuve.

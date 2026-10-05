@@ -238,16 +238,17 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
-        # The app connects to Lakebase as its own service principal. Hardcoded
-        # like qualibot-uat (see that target for why: an interpolated value
-        # forces a recreate of this immutable role on unrelated app changes).
-        # The DEV app `qualibot` already exists (created 2026-07-09) —
-        # `databricks apps get qualibot --profile DEV`.
+        # The app connects to Lakebase as its own service principal. Dynamic
+        # reference for the first deploy: the old DEV `qualibot` app (created by
+        # hand 2026-07-09, outside the bundle) is deleted and recreated by the
+        # bundle with a new SP. Once deployed, hardcode its client id like
+        # qualibot-uat does (an interpolated value forces a recreate of this
+        # immutable role on unrelated app changes) — operations_dev.md, I4.
         app-service-principal:
           role_id: "app-doc-compare-sp"
           parent: "projects/qualibot/branches/production"
           identity_type: SERVICE_PRINCIPAL
-          postgres_role: "8e411164-a7e8-46ff-8013-8c56af2c3656"  # DEV qualibot app SP client id
+          postgres_role: ${resources.apps.doc-compare.service_principal_client_id}
           attributes:
             createdb: true
             createrole: false
