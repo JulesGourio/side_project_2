@@ -658,6 +658,20 @@ Deux familles d'objets :
   durable et la plus simple pour tout : l'ajouter au groupe
   `Role-Project-LEAP-CoreDev` (CAN_MANAGE partout) — décision / action d'un admin.
 
+- [ ] **A6. Impact search — « Judgment failed: judge returned no JSON object: '' »**
+  (2 documents sur une douzaine, 2026-10-05). Cause : le juge
+  (`databricks-gpt-5-6-luna`, modèle à raisonnement) épuise ses 1 500 tokens
+  en raisonnement sur les documents à nombreux passages et ne répond rien. Corrigé
+  dans le code : la relance se fait avec 3× le budget (plafond 8 000), et l'erreur
+  dit maintenant `ran out of tokens` si ça arrive encore. Redéployer l'app puis
+  relancer la même impact search (les résultats en erreur ne sont jamais mis en
+  cache) :
+
+  ```powershell
+  git pull
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SkipBuild
+  ```
+
 ### B. Bitbucket — pipelines DEV
 
 - [ ] **B1. Créer l'environnement de déploiement « Development »**

@@ -39,6 +39,12 @@ _QUERY_CONCURRENCY = 3
 _QUERY_RETRIES = 2
 _JUDGE_CONCURRENCY = 6
 _JUDGE_RETRIES = 1
+# A reasoning judge (gpt-5-*) spends max_tokens on hidden reasoning first; on
+# a candidate with many passages it can run out before writing anything
+# (finish_reason "length", empty content — 2 documents out of a dozen in DEV,
+# 2026-10-05). The retry then gets this many times the budget, capped.
+_JUDGE_TRUNCATION_BUDGET_FACTOR = 3
+_JUDGE_MAX_TOKENS_CAP = 8000
 
 _JUDGE_SYSTEM_PROMPT = """\
 You are Qualibot, a technical documentation controller. A reference document has just been revised. \
@@ -349,6 +355,18 @@ def _candidate_block(cand: Dict[str, Any]) -> str:
     return head + '\n\nPASSAGES:\n\n' + '\n\n'.join(passages)
 
 
+class JudgeTruncated(ValueError):
+    """The judge hit max_tokens before writing a complete JSON answer."""
+
+
+def _message_text(message: Dict[str, Any]) -> str:
+    """Text of a chat completion message — a plain string, or a list of parts (reasoning models)."""
+    content = message.get('content') or ''
+    if isinstance(content, list):
+        return ''.join(p.get('text', '') for p in content if isinstance(p, dict) and p.get('type', 'text') == 'text')
+    return content
+
+
 async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: Dict[str, Any], max_tokens: int) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         'messages': [
@@ -364,11 +382,16 @@ async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: 
         resp = await client.post(f'{host}/serving-endpoints/{endpoint}/invocations', json=payload, headers=headers)
         resp.raise_for_status()
         completion = resp.json()
-    content = completion.get('choices', [{}])[0].get('message', {}).get('content', '')
+    choice = (completion.get('choices') or [{}])[0]
+    content = _message_text(choice.get('message') or {})
+    usage = completion.get('usage') or {}
     judgment = _parse_json_object(content)
     if judgment is None:
-        raise ValueError(f'judge returned no JSON object: {content[:200]!r}')
-    usage = completion.get('usage') or {}
+        if choice.get('finish_reason') == 'length':
+            reasoning = (usage.get('completion_tokens_details') or {}).get('reasoning_tokens')
+            raise JudgeTruncated(f'judge ran out of tokens (max_tokens={max_tokens}, reasoning_tokens={reasoning}) '
+                                 f'before a complete answer: {content[:200]!r}')
+        raise ValueError(f'judge returned no JSON object (finish_reason={choice.get("finish_reason")!r}): {content[:200]!r}')
     return {
         'judgment': judgment,
         'input_tokens': usage.get('prompt_tokens', 0) or 0,
@@ -520,15 +543,18 @@ async def run_impact_search(
     async def _one(cand: Dict[str, Any]) -> Dict[str, Any]:
         async with sem:
             last_err: Exception | None = None
+            budget = max_tokens
             for attempt in range(_JUDGE_RETRIES + 1):
                 try:
                     changes_text = _changes_block(extracted['changes'], max_changes_chars, tuple(cand['change_ids']))
-                    res = await _judge(host, token, llm_endpoint, changes_text, cand, max_tokens)
+                    res = await _judge(host, token, llm_endpoint, changes_text, cand, budget)
                     usage['input_tokens'] += res['input_tokens']
                     usage['output_tokens'] += res['output_tokens']
                     return _judged_doc(cand, res['judgment'], archive_before)
                 except Exception as e:  # noqa: BLE001 — one bad candidate must not sink the search
                     last_err = e
+                    if isinstance(e, JudgeTruncated):
+                        budget = min(budget * _JUDGE_TRUNCATION_BUDGET_FACTOR, max(_JUDGE_MAX_TOKENS_CAP, max_tokens))
                     if attempt < _JUDGE_RETRIES:
                         await asyncio.sleep(1.0)
             logger.warning(f'impact judge failed for {cand["ref"]}: {last_err}')

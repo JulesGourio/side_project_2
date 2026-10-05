@@ -297,3 +297,44 @@ def test_judge_calls_are_cancelled_when_the_consumer_stops(monkeypatch):
     asyncio.run(run())
     assert len(started) == 4
     assert sorted(cancelled) == sorted(started)
+
+
+def test_truncated_judge_is_retried_with_a_bigger_budget(monkeypatch):
+    budgets = []
+
+    async def fake_fetch(host, token, index_name, queries, num_results):
+        chunks = [{'chunk_id': 'D1-0', 'IDDOC': '1', 'REF': 'PR-100', 'division': '', 'url': '',
+                   'semantic_headers': '', 'chunk_text': 'text', 'score': 1.0, '_change_ids': ['C1']}]
+        return {'chunks': chunks, 'queries_failed': 0}
+
+    async def judge(host, token, endpoint, changes_text, cand, max_tokens):
+        budgets.append(max_tokens)
+        if len(budgets) == 1:
+            raise vector_search.JudgeTruncated('ran out of tokens')
+        return {'judgment': {'impacted': False, 'confidence': 'high', 'reason': 'r', 'passages': []},
+                'input_tokens': 1, 'output_tokens': 1}
+
+    monkeypatch.setattr(vector_search, '_fetch_chunks_multi', fake_fetch)
+    monkeypatch.setattr(vector_search, '_judge', judge)
+
+    async def run():
+        stream = vector_search.run_impact_search(
+            host='h', token='t', index_name='i', llm_endpoint='e',
+            extracted={'changes': _changes(1, size=5), 'source': 'structured',
+                       'queries': [{'text': 'q', 'change_ids': ['C1']}]},
+            num_results=5, max_candidates=1, max_changes_chars=1000, max_tokens=1500,
+            archive_before='', exclude_names=[],
+        )
+        return [e async for e in stream]
+
+    events = asyncio.run(run())
+    doc = next(e['document'] for e in events if e['type'] == 'document')
+    assert budgets == [1500, 4500]
+    assert doc['status'] == 'not_impacted'
+
+
+def test_message_text_accepts_content_parts():
+    assert vector_search._message_text({'content': 'plain'}) == 'plain'
+    parts = [{'type': 'reasoning', 'summary': []}, {'type': 'text', 'text': '{"impacted": false}'}]
+    assert vector_search._message_text({'content': parts}) == '{"impacted": false}'
+    assert vector_search._message_text({}) == ''
