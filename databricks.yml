@@ -219,6 +219,8 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
             - group_name: "leap-qualibot-service-accounts"
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP
@@ -329,6 +331,8 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
               level: CAN_USE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
@@ -361,6 +365,13 @@ targets:
           name: "qualibot-lakebase-import-uat-to-dev"
           description: "Import the UAT staging volume export into DEV Delta tables"
           max_concurrent_runs: 1
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
           tasks:
             - task_key: import_lakebase_uat_volume
               notebook_task:
@@ -395,6 +406,13 @@ targets:
           name: "qualibot-score-production-qa"
           description: "LLM-judge quality scoring of real ChatBot turns already answered (no KA call)"
           max_concurrent_runs: 1
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
           tasks:
             - task_key: score_production_qa
               notebook_task:
@@ -431,6 +449,8 @@ targets:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
               level: CAN_MANAGE
           parameters:
             - name: overwrite
@@ -515,6 +535,8 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
           tasks:
@@ -558,6 +580,8 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
           tasks:
             - task_key: migrate_lakebase
               notebook_task:
@@ -593,6 +617,8 @@ targets:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
               level: CAN_MANAGE
           parameters:
             - name: ka_profiles
@@ -639,6 +665,8 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
           tasks:
@@ -672,6 +700,8 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
           tasks:
@@ -704,6 +734,8 @@ targets:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
               level: CAN_MANAGE
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478

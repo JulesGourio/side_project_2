@@ -267,7 +267,7 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   du bundle `dev` (créée par un ancien `bundle deploy -t dev` le 2026-07-09),
   rien à binder)_
 
-- [ ] **I1b. Prévisualiser le déploiement, sans rien modifier** :
+- [x] **I1b. Prévisualiser le déploiement, sans rien modifier** _(2026-10-05 : 25 create, 5 update, 0 delete)_ :
 
   ```powershell
   python utils/deploy/render_target_config_env.py dev target_config.env
@@ -278,19 +278,29 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   Me coller la sortie de `plan` : chaque ressource doit être `create` ou
   `update`. Rien en `delete` / `recreate`, sauf accord explicite.
 
-- [ ] **I2. Déployer l'infra + l'app** (build du front, `bundle deploy`,
-  démarrage de l'app, `apps deploy`) :
+- [ ] **I2. Déployer l'infra, puis le code de l'app** — sous votre identité
+  (profil `DEV`). Vous devenez owner de ce qui est créé ; le SP DEV a CAN_MANAGE
+  sur l'app, le projet Lakebase et chaque job propre à DEV, pour que la
+  pipeline Bitbucket (qui déploie en tant que SP) puisse les mettre à jour
+  ensuite. Exception : `D_1_qualibot-parsing-pipeline-dev` (définition partagée
+  avec UAT/PROD) — à régler au bloc B.
 
   ```powershell
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -Infra
+  databricks bundle deploy -t dev --profile DEV
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
   ```
 
-  `-Infra` accorde au SP de l'app l'accès aux volumes : il faut MANAGE sur
-  `dev_landingzone` (ou être owner du schema). En cas de refus, le faire
-  lancer par un admin du catalog, ou me le dire.
+  Erreurs possibles au `bundle deploy` (le déploiement s'arrête, relançable
+  après correction) :
+  - `run_as` refusé → il vous faut le rôle « Service principal: User » sur
+    `job-runner-sa-dev` (Settings ▸ Identity and access ▸ Service principals ▸
+    job-runner-sa-dev ▸ Permissions) ;
+  - création de `dev_proj.qualibot` refusée → CREATE SCHEMA sur `dev_proj`
+    (owner `leap-core-service_accounts-dev`) ;
+  - création du projet Lakebase refusée → droit de création Lakebase.
 
-  À ce stade : la comparaison marche, l'impact search et le chat non (pas
-  encore d'index ni de KA) — normal.
+  À ce stade : Compare marche ; impact search et chat non (pas encore d'index
+  ni de KA) — normal.
 
 - [ ] **I3. Vérifier que tous les nouveaux plannings sont en PAUSED** (UI
   Jobs DEV, filtre `qualibot`) : `D_1_qualibot-parsing-pipeline-dev`,
