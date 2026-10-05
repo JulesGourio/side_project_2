@@ -27,6 +27,11 @@ dbutils.widgets.text("DOC_URI_COL", "url")
 # still requires this app's own SP to hold at least CAN_QUERY — confirmed
 # live 2026-08-24 against the qualibot_*_v2 KAs already in service).
 dbutils.widgets.text("APP_NAME", "qualibot-uat-test")
+# Comma-separated users granted CAN_MANAGE on top of the CoreAdmin/CoreDev
+# groups — for a human who isn't in those groups but owns the environment
+# (DEV copy, 2026-10-05: the KAs are created by the job's run_as SP, so their
+# owner can't even view the endpoints otherwise). Empty = none.
+dbutils.widgets.text("EXTRA_MANAGER_USERS", "")
 
 KA_PROFILE_KEYS = [p.strip() for p in dbutils.widgets.get("KA_PROFILES").split(",") if p.strip()]
 CATALOG = dbutils.widgets.get("CATALOG")
@@ -36,6 +41,7 @@ DISPLAY_NAME_SUFFIX = dbutils.widgets.get("DISPLAY_NAME_SUFFIX")
 TEXT_COL = dbutils.widgets.get("TEXT_COL")
 DOC_URI_COL = dbutils.widgets.get("DOC_URI_COL")
 APP_NAME = dbutils.widgets.get("APP_NAME")
+EXTRA_MANAGER_USERS = [u.strip() for u in dbutils.widgets.get("EXTRA_MANAGER_USERS").split(",") if u.strip()]
 
 # Sibling module import (Databricks puts the notebook's own directory on
 # sys.path, same as migrate_lakebase_job.py's `from migrations import ...`).
@@ -129,6 +135,12 @@ for key in KA_PROFILE_KEYS:
                 group_name="Role-Project-LEAP-CoreDev", permission_level=KnowledgeAssistantPermissionLevel.CAN_MANAGE
             ),
         ]
+        for user in EXTRA_MANAGER_USERS:
+            acl.append(
+                KnowledgeAssistantAccessControlRequest(
+                    user_name=user, permission_level=KnowledgeAssistantPermissionLevel.CAN_MANAGE
+                )
+            )
         if app_sp_client_id:
             acl.append(
                 KnowledgeAssistantAccessControlRequest(

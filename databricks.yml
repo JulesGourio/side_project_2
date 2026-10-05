@@ -679,6 +679,10 @@ targets:
               default: "_v2"
             - name: app_name
               default: ${var.app_name}
+            # Not in CoreAdmin/CoreDev: without this the KAs (created by the SP)
+            # aren't even visible to their DEV owner.
+            - name: extra_manager_users
+              default: "jules.gourio.external@latecoere.aero"
           tasks:
             - task_key: provision_knowledge_assistant
               notebook_task:
@@ -691,6 +695,7 @@ targets:
                   INDEX_SUFFIX: "{{job.parameters.index_suffix}}"
                   DISPLAY_NAME_SUFFIX: "{{job.parameters.display_name_suffix}}"
                   APP_NAME: "{{job.parameters.app_name}}"
+                  EXTRA_MANAGER_USERS: "{{job.parameters.extra_manager_users}}"
               environment_key: default
           environments:
             - environment_key: default

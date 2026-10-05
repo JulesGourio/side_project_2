@@ -436,6 +436,17 @@ parsing n'est pas lancé.**
   databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
   ```
 
+- [ ] **K1b. Vous donner Can Manage sur les 3 KA** (créés par le SP : « User does
+  not have permission 'View' on Endpoint ka-4d15cb32-endpoint », 2026-10-05).
+  Le job accepte maintenant `extra_manager_users` (défaut en DEV : vous). Il est
+  idempotent : il ne recrée rien, il complète les droits.
+
+  ```powershell
+  git pull
+  databricks bundle deploy -t dev --profile DEV
+  databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
+  ```
+
 - [x] **K2. Me donner les 3 `endpoint_name`** _(2026-10-05 : ALL `ka-4d15cb32-endpoint`, AS `ka-2ef8a9ac-endpoint`, IS `ka-710526e7-endpoint` — reportés dans `target_env.json`)_ affichés dans le résumé du run
   (`[ALL] … -> endpoint_name=ka-…`, idem AS et IS). Je les mets dans le bloc
   `dev` de `utils/deploy/target_env.json` (`CHAT_ENDPOINT` = `CHAT_ENDPOINT_ALL`
