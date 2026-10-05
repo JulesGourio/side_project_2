@@ -225,14 +225,22 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP
               level: CAN_MANAGE
+            # The deploying human must stay in this list: it is the full desired
+            # state, a creator left out loses Can Manage on its own project and
+            # the next resources (postgres_roles) fail — happened 2026-10-05.
+            - user_name: "jules.gourio.external@latecoere.aero"
+              level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
               level: CAN_USE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
               level: CAN_USE
+      # parent interpolates the project above (not a literal like qualibot-uat)
+      # so the roles wait for the project on a first deploy — a literal let
+      # them race it ("Project projects/qualibot not found", 2026-10-05).
       postgres_roles:
         qualibot-service-accounts:
           role_id: "leap-qualibot-service-accounts"
-          parent: "projects/qualibot/branches/production"
+          parent: "projects/${resources.postgres_projects.qualibot-history.project_id}/branches/production"
           identity_type: GROUP
           postgres_role: "leap-qualibot-service-accounts"
           attributes:
@@ -249,7 +257,7 @@ targets:
         # rather than recreated, so it keeps this SP and whatever was granted to it.
         app-service-principal:
           role_id: "app-doc-compare-sp"
-          parent: "projects/qualibot/branches/production"
+          parent: "projects/${resources.postgres_projects.qualibot-history.project_id}/branches/production"
           identity_type: SERVICE_PRINCIPAL
           postgres_role: "8e411164-a7e8-46ff-8013-8c56af2c3656"  # DEV qualibot app SP client id
           attributes:
@@ -266,7 +274,7 @@ targets:
         # which only got there through leap-qualibot-service-accounts.
         dev-job-service-principal:
           role_id: "dev-job-sp"
-          parent: "projects/qualibot/branches/production"
+          parent: "projects/${resources.postgres_projects.qualibot-history.project_id}/branches/production"
           identity_type: SERVICE_PRINCIPAL
           postgres_role: "fde6ff28-739f-4a41-b61e-604a298c8478"
           attributes:
@@ -278,7 +286,7 @@ targets:
           replace_existing: true
         coredev:
           role_id: "coredev"
-          parent: "projects/qualibot/branches/production"
+          parent: "projects/${resources.postgres_projects.qualibot-history.project_id}/branches/production"
           identity_type: GROUP
           postgres_role: "Role-Project-LEAP-CoreDev"
           attributes:
@@ -348,12 +356,14 @@ targets:
             - name: doc-compare-volume
               uc_securable:
                 securable_type: VOLUME
-                securable_full_name: dev_landingzone.qualibot.doc_compare
+                # Interpolated (not a literal) so the app waits for the volume
+                # on a first deploy ("Volume ... does not exist", 2026-10-05).
+                securable_full_name: ${resources.volumes.qualibot_doc_compare.catalog_name}.${resources.volumes.qualibot_doc_compare.schema_name}.${resources.volumes.qualibot_doc_compare.name}
                 permission: WRITE_VOLUME
             - name: test-volume
               uc_securable:
                 securable_type: VOLUME
-                securable_full_name: dev_landingzone.qualibot.test
+                securable_full_name: ${resources.volumes.qualibot_test.catalog_name}.${resources.volumes.qualibot_test.schema_name}.${resources.volumes.qualibot_test.name}
                 permission: WRITE_VOLUME
       jobs:
         # ── Pre-existing DEV jobs, unchanged ────────────────────────────────

@@ -299,6 +299,26 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
     (owner `leap-core-service_accounts-dev`) ;
   - création du projet Lakebase refusée → droit de création Lakebase.
 
+  **1er essai (2026-10-05) — échec partiel** : volumes, projet Lakebase
+  (id `e9185a28-13c6-42da-9ccc-0dbcf6b97b60`) et jobs créés ; échecs sur l'app
+  (« Volume … doc_compare does not exist ») et les rôles Postgres (« Project
+  projects/qualibot not found », puis « not authorized … Can Manage for
+  Database project »). Causes corrigées dans `databricks.yml` : l'app et les
+  rôles référencent maintenant le volume / le projet (ils attendent leur
+  création), et vous êtes ajouté en CAN_MANAGE du projet Lakebase. Mais la
+  liste appliquée au 1er essai vous a retiré Can Manage : un admin du
+  workspace, un membre de CoreAdmin/CoreDev, doit d'abord vous le rendre (UI :
+  Lakebase ▸ projet « Qualibot History » ▸ Permissions, ou) :
+
+  ```powershell
+  databricks permissions get database-projects e9185a28-13c6-42da-9ccc-0dbcf6b97b60 --profile DEV
+  # par l'admin :
+  databricks permissions update database-projects e9185a28-13c6-42da-9ccc-0dbcf6b97b60 --profile <profil admin> `
+    --json '{\"access_control_list\":[{\"user_name\":\"jules.gourio.external@latecoere.aero\",\"permission_level\":\"CAN_MANAGE\"}]}'
+  ```
+
+  Puis relancer `git pull` + `databricks bundle deploy -t dev --profile DEV`.
+
   À ce stade : Compare marche ; impact search et chat non (pas encore d'index
   ni de KA) — normal.
 
