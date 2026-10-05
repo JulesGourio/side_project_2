@@ -146,6 +146,7 @@ databricks auth login --host <prod-host> --profile PROD
 ### Deploy
 
 ```powershell
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev        # DEV (copy of UAT, see operations_dev.md)
 .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat        # UAT (qualibot-uat)
 .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test   # UAT — disposable test app (qualibot-uat-test)
 .\utils\deploy\deploy_qualibot.ps1 -AppEnv prod       # PROD
@@ -157,6 +158,7 @@ By default the script builds the React frontend (`bun run build`), writes the pe
 
 | Env      | Databricks target      | Profile | Workspace                                        |
 |----------|-------------------------|---------|---------------------------------------------------|
+| DEV      | `dev`                   | `DEV`   | `https://dbc-c623749d-731b.cloud.databricks.com`   |
 | UAT      | `qualibot-uat`          | `UAT`   | `https://dbc-3a17bfce-9e88.cloud.databricks.com`   |
 | UAT-TEST | `qualibot-uat-test`     | `UAT`   | `https://dbc-3a17bfce-9e88.cloud.databricks.com`   |
 | PROD     | `qualibot-prod`         | `PROD`  | TBD                                                |

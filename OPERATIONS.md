@@ -11,6 +11,9 @@ branche tant qu'elle n'est pas fusionnée.
 
 Mis à jour le 2026-10-05. Rien de ce qui suit n'a encore été confirmé comme fait.
 
+La mise en place de l'environnement **DEV** (copie de l'UAT, branche
+`claude/adoring-cray-trexmn`) a son propre fichier : `operations_dev.md`.
+
 ## Vue d'ensemble
 
 | Bloc | Quoi | Cible | Touche le chatbot ? |

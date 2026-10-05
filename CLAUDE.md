@@ -11,6 +11,7 @@ Bundle name: `qualibot`. Targets: `dev`, `uat`, `qualibot-uat-test`, `prod`.
 
 - `qualibot-uat-test`: disposable, isolated test target (own app, own Lakebase tables — `doccompare_test`, never `doccompare`). Deploy/destroy freely.
 - Any future target/app that is clearly a disposable test copy (name suffixed `-test`, own isolated resources) — same as above, no approval needed. If unsure whether a target is a real test copy or shares resources with `qualibot`, ask.
+- `dev` (since 2026-10-05, branch `claude/adoring-cray-trexmn`): full copy of `qualibot-uat` in the DEV workspace — own `qualibot` app, Lakebase project, `dev_landingzone.qualibot` `_v1` tables (loaded from a UAT snapshot by `copy_uat_to_dev`, never by a full parsing run), Vector Search endpoint/indexes and KAs; `run_as` the DEV SP `fde6ff28-739f-4a41-b61e-604a298c8478`; every new schedule PAUSED; group check off via `CAPS_BYPASS` (DEV only, guarded by `tests/test_deploy_config.py`). Manual steps live in `operations_dev.md`, not `OPERATIONS.md`.
 - `uat` and `prod` deploy the real `qualibot` app. Never `bundle deploy`/`bundle destroy` on these (`uat` or `prod`, even before `prod` has a workspace host configured) without explicit user approval first — regardless of the global DEV/UAT policy in `~/.claude/CLAUDE.md`.
 
 ## Parsing pipeline (`utils/parsing_pipeline/`, `resources/parsing_pipeline.job.yml`)

@@ -8,8 +8,7 @@ DEV ; `OPERATIONS.md` reste la référence pour UAT / uat-test / PROD.
 Branche : **`claude/adoring-cray-trexmn`** (= `audit/doc-compare` + copie DEV).
 Pas de PR ; le zip à déployer est celui de cette branche.
 
-Rédigé progressivement le 2026-10-05 — les sections marquées _(à venir)_ ne
-sont pas encore écrites.
+Mis à jour le 2026-10-05. Rien de ce qui suit n'a encore été confirmé comme fait.
 
 ## Décisions prises (2026-10-05)
 
@@ -148,7 +147,222 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
   databricks users list --profile DEV --filter "userName eq 'mehdi.lamrani@databricks.com'"
   ```
 
-## À faire _(à venir)_
+## À faire
+
+PowerShell, depuis la racine du projet (branche `claude/adoring-cray-trexmn`)
+sur la machine de déploiement. Toujours commencer la session par :
+
+```powershell
+Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+```
+
+### E. Export du corpus UAT (workspace UAT, run ponctuel)
+
+Lecture seule sur les tables UAT ; écrit uniquement dans
+`/Volumes/uat_landingzone/qualibot/staging/dev_copy/`. La cible `qualibot-uat`
+du bundle n'est pas touchée. Tables exportées (`_v1`) : `chunks`,
+`src_chunks_as`, `src_chunks_is`, `_pipeline_checkpoint`, `processed_files`,
+`image_metadata`, `parse_manifest`, `category_reference` + l'archive
+LibreOffice. Rien de la phase archive avant 2018.
+
+- [ ] **E1. Importer le notebook dans votre dossier et lancer le run**
+
+  ```powershell
+  databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile UAT
+  databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/export_uat_to_staging `
+    --file utils\databricks_ops\dev_copy\export_uat_to_staging.py --format SOURCE --language PYTHON --overwrite --profile UAT
+  databricks jobs submit --json "@utils/databricks_ops/dev_copy/export_uat_submit.json" --profile UAT
+  ```
+
+  Compute serverless, sous votre identité. Si l'écriture Delta dans le volume
+  est refusée, relancer en Parquet : ajouter dans le JSON, sous
+  `notebook_task`, `"base_parameters": {"FORMAT": "parquet"}` (l'import DEV lit
+  le format dans le manifeste, rien d'autre à changer).
+
+- [ ] **E2. Vérifier le manifeste** (nombre de lignes par table), depuis UAT
+  puis **depuis DEV** (preuve que DEV lit bien ce volume) :
+
+  ```powershell
+  databricks fs cat dbfs:/Volumes/uat_landingzone/qualibot/staging/dev_copy/manifest.json --profile UAT
+  databricks fs ls  dbfs:/Volumes/uat_landingzone/qualibot/staging/dev_copy/tables --profile DEV
+  ```
+
+### I. Infra DEV (`bundle deploy -t dev`)
+
+Crée l'app `qualibot`, le projet Lakebase `qualibot` (base `doccompare`), le
+schema `dev_proj.qualibot`, les volumes, les rôles Postgres et les jobs ;
+met à jour le job de parsing DEV existant (il écrit désormais dans
+`dev_landingzone.qualibot`, tables `_v1`, planning PAUSED).
+
+- [ ] **I1. Binder ce qui existe déjà** (d'après P5). Le schema existe
+  forcément :
+
+  ```powershell
+  databricks bundle deployment bind qualibot_schema dev_landingzone.qualibot -t dev --profile DEV --auto-approve
+  ```
+
+  Puis, **seulement** pour ceux que P5 a montrés comme existants :
+
+  ```powershell
+  databricks bundle deployment bind qualibot_doc_compare dev_landingzone.qualibot.doc_compare -t dev --profile DEV --auto-approve
+  databricks bundle deployment bind qualibot_test        dev_landingzone.qualibot.test        -t dev --profile DEV --auto-approve
+  databricks bundle deployment bind qualibot_images      dev_landingzone.qualibot.images      -t dev --profile DEV --auto-approve
+  databricks bundle deployment bind qualibot_staging     dev_landingzone.qualibot.staging     -t dev --profile DEV --auto-approve
+  databricks bundle deployment bind qualibot_proj_schema dev_proj.qualibot                    -t dev --profile DEV --auto-approve
+  ```
+
+  Projet Lakebase `qualibot` déjà présent en DEV (inattendu) : me prévenir
+  avant d'aller plus loin.
+
+- [ ] **I2. Déployer l'infra + l'app** (build du front, `bundle deploy`,
+  démarrage de l'app, `apps deploy`) :
+
+  ```powershell
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -Infra
+  ```
+
+  `-Infra` accorde au SP de l'app l'accès aux volumes : il faut MANAGE sur
+  `dev_landingzone` (ou être owner du schema). En cas de refus, le faire
+  lancer par un admin du catalog, ou me le dire.
+
+  À ce stade : la comparaison marche, l'impact search et le chat non (pas
+  encore d'index ni de KA) — normal.
+
+- [ ] **I3. Vérifier que tous les nouveaux plannings sont en PAUSED** (UI
+  Jobs DEV, filtre `qualibot`) : `D_1_qualibot-parsing-pipeline-dev`,
+  `qualibot-lakebase-export-dev-to-volume-dev`, `apps-stop-nightly-dev`,
+  `qualibot-stop-weekend-dev`, `qualibot-start-weekend-dev` = PAUSED.
+  `qualibot-lakebase-import-uat-to-dev` et `qualibot-score-production-qa`
+  restent actifs, comme avant.
+
+- [ ] **I4. Me donner le client id du SP de l'app DEV** (pour le figer dans
+  `databricks.yml`, comme en UAT — évite la recréation du rôle Postgres au
+  prochain changement de l'app) :
+
+  ```powershell
+  (databricks apps get qualibot --profile DEV -o json | ConvertFrom-Json).service_principal_client_id
+  ```
+
+### C. Copie du corpus + index Vector Search (job DEV)
+
+Job `qualibot-copy-uat-to-dev`, déclenchement manuel, sous le SP DEV :
+`1_import_tables` (snapshot → `dev_landingzone.qualibot.*_v1`, rétention
+60 jours, Change Data Feed sur les 3 tables de chunks, archive LibreOffice
+→ volume `doc_compare`) → `2_vector_search_endpoint` (crée l'endpoint
+`qualibot` s'il manque) → `3_sync_indexes` (crée les 3 index `_v1` et les
+synchronise — embedding de tout le corpus, peut être long). **Le pipeline de
+parsing n'est pas lancé.**
+
+- [ ] **C1. Lancer la copie**
+
+  ```powershell
+  databricks bundle run copy_uat_to_dev -t dev --profile DEV
+  ```
+
+  Une table déjà présente n'est pas écrasée (message « left as is »). Pour
+  forcer : `--params overwrite=true`, puis supprimer l'index de chaque table
+  de chunks remplacée (UI Vector Search) et relancer : `3_sync_indexes` le recrée.
+
+- [ ] **C2. Vérifier les tables** (SQL editor DEV) — mêmes nombres que le
+  manifeste E2 :
+
+  ```sql
+  SELECT 'chunks' AS t, count(*) FROM dev_landingzone.qualibot.chunks_v1
+  UNION ALL SELECT 'as', count(*) FROM dev_landingzone.qualibot.src_chunks_as_v1
+  UNION ALL SELECT 'is', count(*) FROM dev_landingzone.qualibot.src_chunks_is_v1
+  UNION ALL SELECT 'checkpoint', count(*) FROM dev_landingzone.qualibot._pipeline_checkpoint_v1
+  UNION ALL SELECT 'processed', count(*) FROM dev_landingzone.qualibot.processed_files_v1
+  UNION ALL SELECT 'images', count(*) FROM dev_landingzone.qualibot.image_metadata_v1
+  UNION ALL SELECT 'manifest', count(*) FROM dev_landingzone.qualibot.parse_manifest_v1
+  UNION ALL SELECT 'categories', count(*) FROM dev_landingzone.qualibot.category_reference_v1;
+
+  SHOW TBLPROPERTIES dev_landingzone.qualibot.chunks_v1;  -- enableChangeDataFeed = true, retentions = interval 60 days
+  ```
+
+- [ ] **C3. Vérifier les index** (UI Vector Search DEV, endpoint `qualibot`) :
+  `chunks_index_v1`, `chunks_as_index_v1`, `chunks_is_index_v1` ONLINE, nombre
+  de lignes indexées = nombre de lignes des tables. Si le job s'arrête avant la
+  fin de l'embedding (« Still running after 120 min »), ce n'est pas une erreur :
+  la sync continue côté serveur.
+
+### K. Knowledge Assistants DEV
+
+- [ ] **K1. Créer les 3 KA** (`qualibot_ALL_v2` / `qualibot_AS_v2` /
+  `qualibot_IS_v2`, sur les index `_v1` DEV, CAN_QUERY pour le SP de l'app) :
+
+  ```powershell
+  databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
+  ```
+
+- [ ] **K2. Me donner les 3 `endpoint_name`** affichés dans le résumé du run
+  (`[ALL] … -> endpoint_name=ka-…`, idem AS et IS). Je les mets dans le bloc
+  `dev` de `utils/deploy/target_env.json` (`CHAT_ENDPOINT` = `CHAT_ENDPOINT_ALL`
+  = ALL, `CHAT_ENDPOINT_AS`, `CHAT_ENDPOINT_IS`), puis bloc A.
+
+### A. Déploiement de l'app avec les endpoints KA + tests
+
+- [ ] **A1. Redéployer le code** (après mon commit de K2) :
+
+  ```powershell
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+
+- [ ] **A2. Contrôle par groupe désactivé** : ouvrir l'app avec un compte
+  **hors** des groupes End-users (ex. `mehdi.lamrani@databricks.com`) — Chat
+  et Compare accessibles, pas d'écran « Access denied ».
+
+- [ ] **A3. Chat** : une question en ALL, AS et IS ; les citations et liens
+  REF s'affichent.
+
+- [ ] **A4. Compare** : deux révisions d'un document connu, Change Table,
+  puis « Judge Impacted Docs » (index `dev_landingzone.qualibot.chunks_index_v1`) ;
+  aperçu « Exact (PDF) » d'un DOCX (archive LibreOffice copiée en C1).
+  En cas de 403 sur l'index, avec le client id de I4 :
+
+  ```sql
+  GRANT USE CATALOG ON CATALOG dev_landingzone TO `<client id SP app DEV>`;
+  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `<client id SP app DEV>`;
+  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_index_v1 TO `<client id SP app DEV>`;
+  ```
+
+- [ ] **A5. Date « documents as of »** : vide dans une base Lakebase neuve.
+  Pour la remplir **sans** lancer la chaîne de parsing, uniquement la dernière
+  tâche du job :
+
+  ```powershell
+  databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
+  ```
+
+### B. Bitbucket — pipelines DEV
+
+- [ ] **B1. Créer l'environnement de déploiement « Development »**
+  (Repository settings ▸ Deployments) avec la variable sécurisée
+  `DATABRICKS_TOKEN` = PAT du SP DEV `fde6ff28-…` (optionnel :
+  `DATABRICKS_HOST`, défaut `https://dbc-c623749d-731b.cloud.databricks.com`).
+  Créer le PAT (en tant qu'admin du workspace DEV) :
+
+  ```powershell
+  databricks token-management create-obo-token fde6ff28-739f-4a41-b61e-604a298c8478 --lifetime-seconds 7776000 --comment "bitbucket qualibot dev" --profile DEV
+  ```
+
+  Le SP doit pouvoir déployer le bundle : CAN_MANAGE sur l'app (déclaré),
+  sur le projet Lakebase (déclaré), droits UC de P3, et écriture sur
+  `/Workspace/Shared/.bundle/qualibot/dev`.
+
+- [ ] **B2. Premier essai** : Pipelines ▸ Run pipeline ▸ branche
+  `claude/adoring-cray-trexmn` ▸ `deploy-dev-jobs` (ne touche pas l'app),
+  puis `deploy-dev` (bundle + redéploiement de l'app).
+
+### Plus tard — non fait, sur décision
+
+- Réactiver le contrôle par groupe en DEV : passer `CAPS_BYPASS` à `false`
+  (ou retirer la clé) dans le bloc `dev` de `target_env.json`, redéployer.
+- Activer les plannings DEV (parsing quotidien, export Lakebase, stop/start
+  de l'app) : me dire lesquels, je passe `pause_status` / `parsing_schedule_pause`
+  à `UNPAUSED`.
+- Copier aussi les images du volume `uat_landingzone.qualibot.images` (pas
+  nécessaire au chat ni à l'impact search ; seulement si un run de parsing
+  DEV doit retravailler des images déjà extraites).
 
 ## Fait
 
