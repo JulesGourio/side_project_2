@@ -15,13 +15,14 @@ $ErrorActionPreference = 'Stop'
 # of truth shared with bitbucket-pipelines.yml, rendered by
 # render_target_config_env.py below. Don't hardcode them here too.
 $Targets = @{
+    dev        = @{ Target = 'dev';               AppName = 'qualibot';           Profile = 'DEV' }
     uat        = @{ Target = 'qualibot-uat';      AppName = 'qualibot';           Profile = 'UAT' }
     prod       = @{ Target = 'qualibot-prod';     AppName = 'qualibot';           Profile = 'qualibot-prod' }
     'uat-test' = @{ Target = 'qualibot-uat-test'; AppName = 'qualibot-uat-test';  Profile = 'UAT' }
 }
 
 if (-not $Targets.ContainsKey($AppEnv)) {
-    Write-Host "Unknown environment '$AppEnv'. Use: uat | prod | uat-test" -ForegroundColor Red
+    Write-Host "Unknown environment '$AppEnv'. Use: dev | uat | prod | uat-test" -ForegroundColor Red
     exit 1
 }
 
@@ -114,7 +115,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "databricks sync failed (exit $LASTEXITCODE)" }
     }
 
-    # 3. Ensure the app compute is running before deploying. Off-hours jobs
+    # 3. Ensure the app compute is running before deploying (dev included: its
+    # off-hours jobs exist but are PAUSED). Off-hours jobs
     # (databricks.yml: apps_stop_nightly_uat) stop qualibot-uat-test nightly
     # (21h Paris, never restarted by a job) and qualibot
     # over the weekend (Fri 21h -> Mon 7h). Deploying to a stopped app fails

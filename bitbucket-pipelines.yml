@@ -1,11 +1,12 @@
 # Bitbucket Pipelines — QualiBOT (latec-compare)
 # =============================================================================
-# Déploiement du Databricks Asset Bundle sur UAT puis PROD.
+# Déploiement du Databricks Asset Bundle sur DEV (manuel), UAT puis PROD.
 #
 # AUTH — chaque step reconstruit son profil (~/.databrickscfg) à partir de
 # variables d'environnement Bitbucket SÉCURISÉES, définies dans un environnement
 # de déploiement Bitbucket (Repository settings ▸ Deployments):
 #
+#   DEV  (environnement "Development"): DATABRICKS_TOKEN = PAT du SP DEV fde6ff28-739f-4a41-b61e-604a298c8478
 #   UAT  (environnement "UAT")        : DATABRICKS_TOKEN = PAT du SP job-runner-sa-uat
 #   PROD (environnement "Production") : DATABRICKS_TOKEN = PAT du SP job-runner-sa-prod
 #   DATABRICKS_HOST (optionnel dans chaque env) — sinon le host par défaut est câblé ci-dessous.
@@ -19,6 +20,71 @@ image: python:3.11-slim
 
 definitions:
   steps:
+    # -----------------------------------------------------------------------
+    # DEV — target dev / profil job-runner-sa-dev (SP DEV
+    # fde6ff28-739f-4a41-b61e-604a298c8478). Copie de l'UAT dans le workspace
+    # DEV (operations_dev.md). Variables dans l'environnement Bitbucket
+    # "Development" :
+    #   DATABRICKS_TOKEN (secured) — PAT du SP DEV
+    #   DATABRICKS_HOST  (optional) — défaut: https://dbc-c623749d-731b.cloud.databricks.com
+    # -----------------------------------------------------------------------
+    - step: &deploy-dev
+        name: Deploy bundle to DEV (dev)
+        deployment: development
+        clone:
+          depth: 1
+        script:
+          - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
+          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - databricks version
+          - |
+            if [ -z "$DATABRICKS_TOKEN" ]; then
+              echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'Development')." >&2
+              exit 1
+            fi
+          - |
+            cat > "$HOME/.databrickscfg" <<EOF
+            [job-runner-sa-dev]
+            host  = ${DATABRICKS_HOST:-https://dbc-c623749d-731b.cloud.databricks.com}
+            token = ${DATABRICKS_TOKEN}
+            EOF
+          - chmod 600 "$HOME/.databrickscfg"
+          - databricks current-user me -p job-runner-sa-dev
+          - python3 utils/deploy/render_target_config_env.py dev
+          - databricks bundle validate -t dev -p job-runner-sa-dev
+          - databricks bundle deploy   -t dev -p job-runner-sa-dev
+          - databricks bundle run doc-compare -t dev -p job-runner-sa-dev
+
+    # -----------------------------------------------------------------------
+    # DEV, jobs and notebooks only — same as deploy-dev without
+    # "bundle run doc-compare": the app is neither redeployed nor restarted.
+    # -----------------------------------------------------------------------
+    - step: &deploy-dev-jobs
+        name: Deploy jobs and notebooks to DEV, app untouched (dev)
+        deployment: development
+        clone:
+          depth: 1
+        script:
+          - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
+          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - databricks version
+          - |
+            if [ -z "$DATABRICKS_TOKEN" ]; then
+              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'Development')." >&2
+              exit 1
+            fi
+          - |
+            cat > "$HOME/.databrickscfg" <<EOF
+            [job-runner-sa-dev]
+            host  = ${DATABRICKS_HOST:-https://dbc-c623749d-731b.cloud.databricks.com}
+            token = ${DATABRICKS_TOKEN}
+            EOF
+          - chmod 600 "$HOME/.databrickscfg"
+          - databricks current-user me -p job-runner-sa-dev
+          - python3 utils/deploy/render_target_config_env.py dev
+          - databricks bundle validate -t dev -p job-runner-sa-dev
+          - databricks bundle deploy   -t dev -p job-runner-sa-dev
+
     # -----------------------------------------------------------------------
     # UAT — target qualibot-uat / profil job-runner-sa-uat.
     # Variables dans l'environnement Bitbucket "UAT" :
@@ -210,6 +276,10 @@ definitions:
 pipelines:
   # Déclenchement MANUEL depuis l'UI Bitbucket (UAT d'abord, puis PROD).
   custom:
+    deploy-dev:
+      - step: *deploy-dev
+    deploy-dev-jobs:
+      - step: *deploy-dev-jobs
     deploy-uat:
       - step: *deploy-uat
     deploy-uat-jobs:
