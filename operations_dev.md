@@ -281,7 +281,7 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   Me coller la sortie de `plan` : chaque ressource doit être `create` ou
   `update`. Rien en `delete` / `recreate`, sauf accord explicite.
 
-- [ ] **I2. Déployer l'infra, puis le code de l'app** _(2026-10-05 : `bundle deploy` OK au 3e essai ; reste le code de l'app)_ — sous votre identité
+- [x] **I2. Déployer l'infra, puis le code de l'app** _(2026-10-05 : `bundle deploy` OK au 3e essai ; code déployé 11:03 UTC, « App started successfully »)_ — sous votre identité
   (profil `DEV`). Vous devenez owner de ce qui est créé ; le SP DEV a CAN_MANAGE
   sur l'app, le projet Lakebase et chaque job propre à DEV, pour que la
   pipeline Bitbucket (qui déploie en tant que SP) puisse les mettre à jour
@@ -353,6 +353,27 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   restent actifs, comme avant.
 
 - [x] **I4. Client id du SP de l'app DEV** _(`8e411164-a7e8-46ff-8013-8c56af2c3656`, app existante rattachée, figé dans `databricks.yml`)_
+
+- [ ] **I5. Tests sans index ni KA** (pendant la copie) — app :
+  https://qualibot-2865348338307293.aws.databricksapps.com
+
+  ```powershell
+  databricks apps logs qualibot --profile DEV
+  ```
+
+  Dans les logs : `Starting in production mode`, `Database "doccompare" created`
+  (1er démarrage seulement), `Lakebase schema ready`, `Lakebase ready` ; pas de
+  `history feature disabled` ni de trace d'erreur.
+
+  - Mehdi (hors groupes End-users) ouvre l'app : Compare et Chat visibles,
+    pas d'« Access denied » (`CAPS_BYPASS`) ;
+  - Compare : deux révisions d'un document → Change Summary, Change Table,
+    exports Excel et PDF ;
+  - « History » : la comparaison apparaît, la recharger (Lakebase OK) ;
+  - aperçu « Exact (PDF) » d'un DOCX — seulement une fois la tâche
+    `1_import_tables` de la copie finie (elle copie l'archive LibreOffice) ;
+  - attendu en échec à ce stade : « Judge Impacted Docs » (index pas prêt) et
+    le Chat (pas de KA).
 
 ### C. Copie du corpus + index Vector Search (job DEV)
 
