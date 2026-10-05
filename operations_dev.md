@@ -455,6 +455,47 @@ parsing n'est pas lancé.**
   `dev` de `utils/deploy/target_env.json` (`CHAT_ENDPOINT` = `CHAT_ENDPOINT_ALL`
   = ALL, `CHAT_ENDPOINT_AS`, `CHAT_ENDPOINT_IS`), puis bloc A.
 
+### D. Droits du SP de l'app (`8e411164-…`) — audit du 2026-10-05
+
+L'app appelle tout avec le token de son SP (l'impact search retente avec le
+token de l'utilisateur sur un 403). Constat : chat en échec de permission.
+
+| Appel | Droit | Accordé par |
+|---|---|---|
+| Chat → 3 endpoints KA | CAN_QUERY sur chaque endpoint de serving | `provision_knowledge_assistant_dev` (`GRANT_ON_ENDPOINTS=true`) |
+| Impact search → `chunks_index_v1` (+ AS, IS) | USE CATALOG/SCHEMA + SELECT | `qualibot-grant-app-access-dev` |
+| Volumes `doc_compare`, `test` | READ + WRITE VOLUME | `qualibot-grant-app-access-dev` |
+| Lakebase | rôle Postgres `app-doc-compare-sp` | bundle (OK, logs du 2026-10-05) |
+| LLM `databricks-claude-sonnet-4-6`, `databricks-gpt-5-6-luna` | CAN_QUERY | en général ouverts à tous — D3 |
+
+- [ ] **D1. Rejouer les droits**
+
+  ```powershell
+  git pull
+  databricks bundle deploy -t dev --profile DEV
+  databricks bundle run grant_app_access_dev -t dev --profile DEV
+  databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
+  ```
+
+  Sortie attendue du 2e job : 3 lignes `[ALL|AS|IS] endpoint ka-…: CAN_MANAGE [...], CAN_QUERY app SP 8e411164-…`.
+
+- [ ] **D2. Vérifier sur un endpoint KA**
+
+  ```powershell
+  $id = (databricks serving-endpoints get ka-4d15cb32-endpoint --profile DEV -o json | ConvertFrom-Json).id
+  databricks serving-endpoints get-permissions $id --profile DEV
+  ```
+
+- [ ] **D3. Endpoints LLM** : si Compare ou le judge d'impact renvoie un 403,
+  regarder qui peut les interroger :
+
+  ```powershell
+  foreach ($e in 'databricks-claude-sonnet-4-6','databricks-gpt-5-6-luna') {
+    $id = (databricks serving-endpoints get $e --profile DEV -o json | ConvertFrom-Json).id
+    "== $e"; databricks serving-endpoints get-permissions $id --profile DEV
+  }
+  ```
+
 ### A. Déploiement de l'app avec les endpoints KA + tests
 
 - [ ] **A1. Redéployer le code** (après mon commit de K2) :

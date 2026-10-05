@@ -36,6 +36,10 @@ dbutils.widgets.text("APP_NAME", "qualibot-uat-test")
 # (DEV copy, 2026-10-05: the KAs are created by the job's run_as SP, so their
 # owner can't even view the endpoints otherwise). Empty = none.
 dbutils.widgets.text("EXTRA_MANAGER_USERS", "")
+# "true" also writes the grants straight onto each KA's serving endpoint
+# (extra users CAN_MANAGE, app SP CAN_QUERY): in DEV (2026-10-05) the KA-level
+# ACL reached neither the owner nor the app SP on the endpoint.
+dbutils.widgets.dropdown("GRANT_ON_ENDPOINTS", "false", ["false", "true"])
 
 KA_PROFILE_KEYS = [p.strip() for p in dbutils.widgets.get("KA_PROFILES").split(",") if p.strip()]
 CATALOG = dbutils.widgets.get("CATALOG")
@@ -46,6 +50,7 @@ TEXT_COL = dbutils.widgets.get("TEXT_COL")
 DOC_URI_COL = dbutils.widgets.get("DOC_URI_COL")
 APP_NAME = dbutils.widgets.get("APP_NAME")
 EXTRA_MANAGER_USERS = [u.strip() for u in dbutils.widgets.get("EXTRA_MANAGER_USERS").split(",") if u.strip()]
+GRANT_ON_ENDPOINTS = dbutils.widgets.get("GRANT_ON_ENDPOINTS") == "true"
 
 # Sibling module import (Databricks puts the notebook's own directory on
 # sys.path, same as migrate_lakebase_job.py's `from migrations import ...`).
@@ -154,24 +159,29 @@ for key in KA_PROFILE_KEYS:
         kaid = ka.name.split("/")[1]
         w.knowledge_assistants.update_permissions(kaid, access_control_list=acl)
 
-        # The KA ACL above doesn't reach a human on the KA's serving endpoint
-        # ("User does not have permission 'View' on Endpoint ka-…", DEV
-        # 2026-10-05): grant EXTRA_MANAGER_USERS there directly too (merge).
-        if EXTRA_MANAGER_USERS and ka.endpoint_name:
+        # The KA ACL above doesn't reach the KA's serving endpoint for a human
+        # or the app SP ("User does not have permission 'View' on Endpoint
+        # ka-…", DEV 2026-10-05): with GRANT_ON_ENDPOINTS, grant there directly (merge).
+        if GRANT_ON_ENDPOINTS and ka.endpoint_name:
+            ep_acl = [
+                ServingEndpointAccessControlRequest(
+                    user_name=user, permission_level=ServingEndpointPermissionLevel.CAN_MANAGE
+                )
+                for user in EXTRA_MANAGER_USERS
+            ]
+            if app_sp_client_id:
+                ep_acl.append(
+                    ServingEndpointAccessControlRequest(
+                        service_principal_name=app_sp_client_id,
+                        permission_level=ServingEndpointPermissionLevel.CAN_QUERY,
+                    )
+                )
             try:
                 endpoint_id = w.serving_endpoints.get(ka.endpoint_name).id
-                w.serving_endpoints.update_permissions(
-                    endpoint_id,
-                    access_control_list=[
-                        ServingEndpointAccessControlRequest(
-                            user_name=user, permission_level=ServingEndpointPermissionLevel.CAN_MANAGE
-                        )
-                        for user in EXTRA_MANAGER_USERS
-                    ],
-                )
-                print(f"[{key}] CAN_MANAGE on endpoint {ka.endpoint_name} for {EXTRA_MANAGER_USERS}")
+                w.serving_endpoints.update_permissions(endpoint_id, access_control_list=ep_acl)
+                print(f"[{key}] endpoint {ka.endpoint_name}: CAN_MANAGE {EXTRA_MANAGER_USERS}, CAN_QUERY app SP {app_sp_client_id}")
             except Exception as e:
-                print(f"[{key}] WARNING: could not grant on endpoint {ka.endpoint_name}: {e}")
+                errors.append((key, display_name, f"endpoint grant failed: {e}"))
 
         results.append((key, display_name, ka.endpoint_name))
     except Exception as e:

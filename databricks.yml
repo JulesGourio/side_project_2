@@ -515,9 +515,11 @@ targets:
                   - databricks-sdk>=0.118.0
 
         # Manual trigger only. Grants the DEV qualibot app's service principal
-        # USE CATALOG/USE SCHEMA + WRITE VOLUME on doc_compare and test (what a
-        # bundle volume binding would have granted — see the app above). Runs
-        # as the DEV SP, which must itself hold GRANT rights on dev_landingzone.
+        # USE CATALOG/USE SCHEMA, READ+WRITE VOLUME on doc_compare and test (what
+        # a bundle volume binding would have granted — see the app above) and
+        # SELECT on the 3 _v1 indexes (impact search). Runs as the DEV SP,
+        # which holds GRANT rights on dev_landingzone. Re-run after recreating
+        # an index or the app.
         grant_app_access_dev:
           name: "qualibot-grant-app-access-${bundle.target}"
           description: "Grant the DEV qualibot app SP access to its UC volumes. Manual trigger only."
@@ -537,29 +539,16 @@ targets:
             - name: app_service_principal
               default: "8e411164-a7e8-46ff-8013-8c56af2c3656"
           tasks:
-            - task_key: grant_doc_compare
+            - task_key: grant_app_access
               notebook_task:
-                notebook_path: ./utils/databricks_ops/grant_volume_access_job.py
+                notebook_path: ./utils/databricks_ops/dev_copy/grant_app_access.py
                 source: WORKSPACE
                 base_parameters:
-                  service_principal: "{{job.parameters.app_service_principal}}"
+                  app_service_principal: "{{job.parameters.app_service_principal}}"
                   catalog: ${var.app_write_catalog}
                   schema_name: ${var.app_write_schema}
-                  volume_name: "doc_compare"
-                  volume_permission: "WRITE VOLUME"
-              environment_key: default
-            - task_key: grant_test
-              depends_on:
-                - task_key: grant_doc_compare
-              notebook_task:
-                notebook_path: ./utils/databricks_ops/grant_volume_access_job.py
-                source: WORKSPACE
-                base_parameters:
-                  service_principal: "{{job.parameters.app_service_principal}}"
-                  catalog: ${var.app_write_catalog}
-                  schema_name: ${var.app_write_schema}
-                  volume_name: "test"
-                  volume_permission: "WRITE VOLUME"
+                  volumes: "doc_compare,test"
+                  indexes: "chunks_index${var.parsing_table_suffix},chunks_as_index${var.parsing_table_suffix},chunks_is_index${var.parsing_table_suffix}"
               environment_key: default
           environments:
             - environment_key: default
@@ -696,6 +685,7 @@ targets:
                   DISPLAY_NAME_SUFFIX: "{{job.parameters.display_name_suffix}}"
                   APP_NAME: "{{job.parameters.app_name}}"
                   EXTRA_MANAGER_USERS: "{{job.parameters.extra_manager_users}}"
+                  GRANT_ON_ENDPOINTS: "true"
               environment_key: default
           environments:
             - environment_key: default
