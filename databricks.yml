@@ -223,8 +223,10 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP
               level: CAN_MANAGE
-            # No End-users-Qualibot-* groups: they don't exist in the DEV
-            # workspace (checked 2026-10-05) — the deploy would fail on them.
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+              level: CAN_USE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
+              level: CAN_USE
       postgres_roles:
         qualibot-service-accounts:
           role_id: "leap-qualibot-service-accounts"
@@ -319,12 +321,18 @@ targets:
           volume_type: MANAGED
       apps:
         doc-compare:
-          # End-users-Qualibot-* groups absent from DEV (checked 2026-10-05).
+          # Mirrors the live ACL of the existing DEV app (2026-10-05) minus
+          # `users` CAN_MANAGE (every workspace user could redeploy/delete it),
+          # plus Mehdi and the DEV job SP. Declared = full desired state.
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+              level: CAN_USE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
+              level: CAN_USE
             - user_name: "jules.gourio.external@latecoere.aero"
               level: CAN_MANAGE
             # Must be a user of the DEV workspace, or the deploy fails on this grant.

@@ -27,7 +27,7 @@ Mis à jour le 2026-10-05. Rien de ce qui suit n'a encore été confirmé comme 
 | Vector Search | endpoint `qualibot` créé en DEV, 3 index `_v1`, embeddings `databricks-qwen3-embedding-0-6b` |
 | Knowledge Assistants | `qualibot_ALL_v2` / `qualibot_AS_v2` / `qualibot_IS_v2` (mêmes noms qu'en UAT) |
 | Contrôle par groupe (can_chat / can_compare) | **désactivé temporairement en DEV seulement** (`CAPS_BYPASS=true`) |
-| Accès à l'app (ACL) | mêmes groupes qu'en UAT + `jules.gourio.external@latecoere.aero` + `mehdi.lamrani@databricks.com` + SP DEV |
+| Accès à l'app (ACL) | mêmes groupes qu'en UAT + `jules.gourio.external@latecoere.aero` + `mehdi.lamrani@databricks.com` + SP DEV (app existante rattachée ; `users` CAN_MANAGE retiré) |
 | Jobs répliqués | pipeline de parsing, export Lakebase, stop/start de l'app, provisioning KA, migrations Lakebase — **tous planifiés en PAUSED** |
 | Jobs DEV existants | `lakebase_import_uat_to_dev` et `score_production_qa` gardés tels quels (UNPAUSED) |
 | Bitbucket | pipelines manuelles `deploy-dev` / `deploy-dev-jobs`, environnement de déploiement Bitbucket **Development** |
@@ -149,8 +149,9 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
   endpoint `qualibot` (normalement absent).
 
 - [x] **P6. Groupes de compte visibles en DEV** _(2026-10-05 : CoreAdmin, CoreDev,
-  leap-qualibot-service-accounts et Mehdi présents ; **les deux groupes
-  End-users-Qualibot-* n'existent pas en DEV** → retirés de la cible `dev`)_ : `Role-Project-LEAP-CoreAdmin`,
+  leap-qualibot-service-accounts, Mehdi et les deux groupes
+  End-users-Qualibot-* présents — ces derniers n'apparaissaient pas dans la
+  1re page de `groups list`, mais l'ACL de l'app les référence)_ : `Role-Project-LEAP-CoreAdmin`,
   `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-End-users-Qualibot-DocCompare`,
   `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `leap-qualibot-service-accounts`,
   et l'utilisateur `mehdi.lamrani@databricks.com` (sinon le `bundle deploy`
@@ -225,14 +226,11 @@ sa liste de permissions par celle de `databricks.yml` (R2 pour comparer avant).
 - [x] **R1. Vector Search** _(2026-10-05 : `get-index` → « endpoint
   0571f7cf-… not found » : l'endpoint n'existe plus, index orphelins)_
 
-- [ ] **R2. Permissions actuelles de l'app** (à comparer avec celles déclarées
-  dans `databricks.yml`, cible `dev` : CoreAdmin et CoreDev CAN_MANAGE, Jules
-  CAN_MANAGE, Mehdi CAN_USE, SP DEV CAN_MANAGE) — me signaler tout autre
-  utilisateur, groupe ou SP, sinon il perd son accès au déploiement :
-
-  ```powershell
-  databricks apps get-permissions qualibot --profile DEV
-  ```
+- [x] **R2. Permissions actuelles de l'app** _(2026-10-05 : users CAN_MANAGE,
+  CoreAdmin/CoreDev CAN_MANAGE, End-users DocCompare/ChatBot CAN_USE, Jules
+  CAN_MANAGE, admins hérité. Le déploiement garde tout sauf **`users` CAN_MANAGE,
+  retiré** ; ajoute Mehdi CAN_USE et le SP DEV CAN_MANAGE. L'app « custom » de
+  Mehdi est une autre app, non concernée)_
 
 - [ ] **R3. Index orphelins** (facultatif, aucun conflit de nom avec les index
   `_v1`). Essayer ; si l'erreur « endpoint not found » revient, les laisser :
