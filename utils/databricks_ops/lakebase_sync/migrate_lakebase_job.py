@@ -25,13 +25,16 @@ LAKEBASE_DATABASE = dbutils.widgets.get("LAKEBASE_DATABASE")
 # so this same-directory import needs no sys.path change either.
 from migrations import MIGRATIONS, apply_migrations
 
-if LAKEBASE_DATABASE == "doccompare":
+w = WorkspaceClient()
+
+# "doccompare" is the real UAT database only in the UAT workspace; the DEV
+# copy (target dev, migrate_lakebase_dev) has its own, disposable one.
+_UAT_HOST = "dbc-3a17bfce-9e88.cloud.databricks.com"
+if LAKEBASE_DATABASE == "doccompare" and _UAT_HOST in (w.config.host or ""):
     raise RuntimeError(
         "LAKEBASE_DATABASE='doccompare' rejected on this job — that's the real UAT database. "
         "This job is reserved for doccompare_test until the migration is validated."
     )
-
-w = WorkspaceClient()
 branch_path = f"projects/{LAKEBASE_PROJECT_ID}/branches/{LAKEBASE_BRANCH}"
 endpoint_path = f"{branch_path}/endpoints/{LAKEBASE_ENDPOINT}"
 
