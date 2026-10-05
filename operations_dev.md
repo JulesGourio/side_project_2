@@ -354,7 +354,7 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
 
 - [x] **I4. Client id du SP de l'app DEV** _(`8e411164-a7e8-46ff-8013-8c56af2c3656`, app existante rattachée, figé dans `databricks.yml`)_
 
-- [ ] **I5. Tests sans index ni KA** (pendant la copie) — app :
+- [ ] **I5. Tests sans index ni KA** (pendant la copie) _(logs OK 2026-10-05 : production mode, `doccompare` créée, Lakebase ready ; tests UI à faire)_ — app :
   https://qualibot-2865348338307293.aws.databricksapps.com
 
   ```powershell
