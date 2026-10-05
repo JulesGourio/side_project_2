@@ -181,7 +181,7 @@ du bundle n'est pas touchée. Tables exportées (`_v1`) : `chunks`,
 `image_metadata`, `parse_manifest`, `category_reference` + l'archive
 LibreOffice. Rien de la phase archive avant 2018.
 
-- [ ] **E1. Importer le notebook dans votre dossier et lancer le run**
+- [x] **E1. Importer le notebook dans votre dossier et lancer le run** _(2026-10-05 : chunks 75 086, as 59 897, is 11 241, checkpoint 7 097, processed_files 18 610, image_metadata 49 342, parse_manifest 4 942, category_reference 18 587)_
 
   ```powershell
   databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile UAT
@@ -262,12 +262,21 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   nouveaux jobs « not deployed » ; `parsing_pipeline`, `lakebase_import_uat_to_dev`,
   `score_production_qa` déjà déployés → mis à jour sur place)_
 
-- [ ] **I1. Binder le schema et l'app existants** :
+- [x] **I1. Binder le schema** _(2026-10-05 : `dev_landingzone.qualibot` bindé.
+  L'app : « Resource already managed by Terraform » — elle est déjà dans l'état
+  du bundle `dev` (créée par un ancien `bundle deploy -t dev` le 2026-07-09),
+  rien à binder)_
+
+- [ ] **I1b. Prévisualiser le déploiement, sans rien modifier** :
 
   ```powershell
-  databricks bundle deployment bind qualibot_schema dev_landingzone.qualibot -t dev --profile DEV --auto-approve
-  databricks bundle deployment bind doc-compare qualibot -t dev --profile DEV --auto-approve
+  python utils/deploy/render_target_config_env.py dev target_config.env
+  databricks bundle validate -t dev --profile DEV
+  databricks bundle plan -t dev --profile DEV
   ```
+
+  Me coller la sortie de `plan` : chaque ressource doit être `create` ou
+  `update`. Rien en `delete` / `recreate`, sauf accord explicite.
 
 - [ ] **I2. Déployer l'infra + l'app** (build du front, `bundle deploy`,
   démarrage de l'app, `apps deploy`) :
