@@ -8,6 +8,14 @@ Only retrieval differs from the baseline:
   return the best ``CHAT_VSI_RERANK_TOP_K`` (default 12) instead of the raw top 10;
 - the reranked lists are merged by best rank, as in the baseline.
 
+Two optional settings, off by default (the variant then behaves as first measured):
+
+- ``CHAT_VSI_RERANK_MERGE=union`` — also run the baseline search (raw HYBRID top
+  ``CHAT_VSI_NUM_RESULTS``) and merge both lists by best rank: the reranker can add passages
+  the raw search ranked low, without pushing out what the raw search found;
+- ``CHAT_VSI_MAX_PASSAGES_PER_DOC=N`` — keep at most N passages per document (REF), so a
+  few documents can't fill the whole context ("which documents…" questions need breadth).
+
 Everything else — rewrite, grouping by document, prompt, instructions, generation, citation
 parsing, event stream — is the baseline's own code, imported from ``chat_vsi``. If the
 index rejects the reranker (preview not enabled, 400), the turn falls back to the baseline
@@ -44,10 +52,41 @@ def rerank_columns() -> List[str]:
     return [c.strip() for c in os.getenv('CHAT_VSI_RERANK_COLUMNS', _DEFAULT_RERANK_COLUMNS).split(',') if c.strip()]
 
 
+def merge_mode() -> str:
+    return 'union' if os.getenv('CHAT_VSI_RERANK_MERGE', 'rerank').strip().lower() == 'union' else 'rerank'
+
+
+def max_passages_per_doc() -> int:
+    return int(os.getenv('CHAT_VSI_MAX_PASSAGES_PER_DOC', '0') or 0)
+
+
 def settings() -> Dict[str, Any]:
     """What this variant runs with — saved with evaluation results."""
     return {'variant': 'rerank', 'reranker': _RERANKER_MODEL, 'top_k': rerank_top_k(),
-            'columns_to_rerank': rerank_columns(), 'llm': base.llm_endpoint()}
+            'columns_to_rerank': rerank_columns(), 'merge': merge_mode(),
+            'max_passages_per_doc': max_passages_per_doc(), 'llm': base.llm_endpoint()}
+
+
+def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    ranked: Dict[str, Tuple[int, Dict[str, Any]]] = {}
+    for result in lists:
+        for rank, row in enumerate(result):
+            cid = row['chunk_id']
+            if cid not in ranked or rank < ranked[cid][0]:
+                ranked[cid] = (rank, row)
+    return [row for _, row in sorted(ranked.values(), key=lambda x: x[0])]
+
+
+def cap_per_document(rows: List[Dict[str, Any]], n: int) -> List[Dict[str, Any]]:
+    """At most n passages per REF, keeping the best-ranked ones (n <= 0: unchanged)."""
+    if n <= 0:
+        return rows
+    kept, per_doc = [], {}
+    for row in rows:
+        per_doc[row['REF']] = per_doc.get(row['REF'], 0) + 1
+        if per_doc[row['REF']] <= n:
+            kept.append(row)
+    return kept
 
 
 class RerankUnavailable(Exception):
@@ -89,13 +128,7 @@ async def retrieve_reranked(host: str, token: str, index_name: str, queries: Lis
     except httpx.HTTPError as exc:
         logger.error('chat_vsi_rerank: Vector Search %s failed: %s', index_name, exc)
         raise base.ChatVsiError(f'Document search failed: {exc}', type(exc).__name__) from exc
-    ranked: Dict[str, Tuple[int, Dict[str, Any]]] = {}
-    for result in results:
-        for rank, row in enumerate(result):
-            cid = row['chunk_id']
-            if cid not in ranked or rank < ranked[cid][0]:
-                ranked[cid] = (rank, row)
-    return [row for _, row in sorted(ranked.values(), key=lambda x: x[0])], True
+    return _merge_by_rank(list(results)), True
 
 
 async def stream_chat_vsi_rerank(host: str, token: str, division: str,
@@ -123,14 +156,21 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
     queries = [question] + ([fr_query] if fr_query else [])
 
     try:
-        rows, reranked = await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
+        if merge_mode() == 'union':
+            (rows, reranked), raw = await asyncio.gather(
+                retrieve_reranked(host, token, index_name, queries, rerank_top_k()),
+                base.retrieve(host, token, index_name, queries, base.num_results()))
+            rows = _merge_by_rank([rows, raw])
+        else:
+            rows, reranked = await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
+        rows = cap_per_document(rows, max_passages_per_doc())
     except base.ChatVsiError as exc:
         for e in base._error_events(exc.message, exc.error_type, exc.http_status):
             yield e
         return
     documents = base.group_documents(rows)
-    logger.info('chat_vsi_rerank: division=%s index=%s reranked=%s fr_query=%r passages=%d documents=%d trace_id=%s',
-                div, index_name, reranked, fr_query, len(rows), len(documents), trace_id)
+    logger.info('chat_vsi_rerank: division=%s index=%s reranked=%s merge=%s cap=%d fr_query=%r passages=%d documents=%d trace_id=%s',
+                div, index_name, reranked, merge_mode(), max_passages_per_doc(), fr_query, len(rows), len(documents), trace_id)
 
     parser = base.CitationStreamParser(documents)
     async for chunk in stream_analysis(host, token, endpoint, base.build_prompt(div, conversation, documents),

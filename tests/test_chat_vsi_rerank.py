@@ -90,3 +90,34 @@ def test_variant_switch(monkeypatch):
     assert chat_vsi_variants.variant_settings()['reranker'] == 'databricks_reranker'
     monkeypatch.setenv('CHAT_VSI_VARIANT', 'nope')
     assert chat_vsi_variants.vsi_variant() == 'baseline'
+
+
+def test_cap_per_document_keeps_best_ranked():
+    rows = [{'chunk_id': str(i), 'REF': ref} for i, ref in enumerate(['A', 'A', 'B', 'A', 'C', 'B', 'B'])]
+    kept = chat_vsi_rerank.cap_per_document(rows, 2)
+    assert [(r['chunk_id'], r['REF']) for r in kept] == [('0', 'A'), ('1', 'A'), ('2', 'B'), ('4', 'C'), ('5', 'B')]
+    assert chat_vsi_rerank.cap_per_document(rows, 0) == rows
+
+
+def test_union_merges_reranked_and_raw_search(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_RERANK_MERGE', 'union')
+    monkeypatch.setenv('CHAT_VSI_MAX_PASSAGES_PER_DOC', '1')
+    reranked = [{'chunk_id': 'r1', 'REF': 'NF-10065', 'url': 'u1', 'chunk_text': 'a'},
+                {'chunk_id': 'r2', 'REF': 'NF-10065', 'url': 'u1', 'chunk_text': 'b'}]
+    raw = [{'chunk_id': 'b1', 'REF': 'MR-1465', 'url': 'u2', 'chunk_text': 'c'}]
+    captured = {}
+
+    def _llm_spy(*args, **kwargs):
+        captured['prompt'] = args[3]
+        return _llm('ok')(*args, **kwargs)
+    messages = [{'role': 'user', 'content': 'q'}]
+    with (patch.object(chat_vsi_rerank, 'retrieve_reranked', AsyncMock(return_value=(reranked, True))),
+          patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=raw)),
+          patch.object(chat_vsi, '_complete', AsyncMock(return_value='q fr')),
+          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm_spy)):
+        asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
+    prompt = captured['prompt'][-1]['content']
+    assert 'Document NF-10065' in prompt and 'Document MR-1465' in prompt
+    assert '\n\nb\n\n' not in prompt          # second NF-10065 passage dropped by the cap
+    s = chat_vsi_rerank.settings()
+    assert s['merge'] == 'union' and s['max_passages_per_doc'] == 1
