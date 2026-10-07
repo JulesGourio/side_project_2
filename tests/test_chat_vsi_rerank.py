@@ -143,7 +143,8 @@ def test_instructions_ka_is_the_baseline_prompt_and_v2_replaces_only_the_system_
     system = v2[0]['content']
     assert 'Aerostructures (AS)' in system and 'ONLY from the numbered passages' in system
     assert 'metadata' not in system and 'ARCHIVED' not in system and '[3]' in system
-    assert len(system) < len(chat_vsi.load_instructions('AS')) / 2
+    assert len(system) < len(chat_vsi.load_instructions('AS')) * 0.8
+    assert 'NF, FDAQL' in system
 
 
 def test_refs_named_in_question_use_the_catalog():
