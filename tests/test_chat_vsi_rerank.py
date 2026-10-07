@@ -121,3 +121,11 @@ def test_union_merges_reranked_and_raw_search(monkeypatch):
     assert '\n\nb\n\n' not in prompt          # second NF-10065 passage dropped by the cap
     s = chat_vsi_rerank.settings()
     assert s['merge'] == 'union' and s['max_passages_per_doc'] == 1
+
+
+def test_fit_budget_by_size_not_count():
+    rows = [{'chunk_id': 'a', 'chunk_text': 'x' * 900}, {'chunk_id': 'b', 'chunk_text': 'x' * 300},
+            {'chunk_id': 'c', 'chunk_text': 'x' * 50}, {'chunk_id': 'd', 'chunk_text': 'x' * 100}]
+    assert [r['chunk_id'] for r in chat_vsi_rerank.fit_budget(rows, 1000)] == ['a', 'c']
+    assert [r['chunk_id'] for r in chat_vsi_rerank.fit_budget(rows, 100)] == ['a']      # best one always kept
+    assert chat_vsi_rerank.fit_budget(rows, 0) == rows

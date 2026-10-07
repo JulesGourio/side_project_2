@@ -14,7 +14,11 @@ Two optional settings, off by default (the variant then behaves as first measure
   ``CHAT_VSI_NUM_RESULTS``) and merge both lists by best rank: the reranker can add passages
   the raw search ranked low, without pushing out what the raw search found;
 - ``CHAT_VSI_MAX_PASSAGES_PER_DOC=N`` — keep at most N passages per document (REF), so a
-  few documents can't fill the whole context ("which documents…" questions need breadth).
+  few documents can't fill the whole context ("which documents…" questions need breadth);
+- ``CHAT_VSI_CONTEXT_BUDGET_CHARS=N`` — chunks range from ~250 to 1000+ tokens (tables,
+  image descriptions), so a fixed passage count gives a context of very uneven size: with a
+  budget, passages are taken in rank order until N characters (~N/4 tokens), whatever their
+  count. Pair it with a larger ``CHAT_VSI_RERANK_TOP_K`` so there is enough to choose from.
 
 Everything else — rewrite, grouping by document, prompt, instructions, generation, citation
 parsing, event stream — is the baseline's own code, imported from ``chat_vsi``. If the
@@ -60,11 +64,16 @@ def max_passages_per_doc() -> int:
     return int(os.getenv('CHAT_VSI_MAX_PASSAGES_PER_DOC', '0') or 0)
 
 
+def context_budget_chars() -> int:
+    return int(os.getenv('CHAT_VSI_CONTEXT_BUDGET_CHARS', '0') or 0)
+
+
 def settings() -> Dict[str, Any]:
     """What this variant runs with — saved with evaluation results."""
     return {'variant': 'rerank', 'reranker': _RERANKER_MODEL, 'top_k': rerank_top_k(),
             'columns_to_rerank': rerank_columns(), 'merge': merge_mode(),
-            'max_passages_per_doc': max_passages_per_doc(), 'llm': base.llm_endpoint()}
+            'max_passages_per_doc': max_passages_per_doc(), 'context_budget_chars': context_budget_chars(),
+            'llm': base.llm_endpoint()}
 
 
 def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -75,6 +84,24 @@ def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
             if cid not in ranked or rank < ranked[cid][0]:
                 ranked[cid] = (rank, row)
     return [row for _, row in sorted(ranked.values(), key=lambda x: x[0])]
+
+
+def fit_budget(rows: List[Dict[str, Any]], budget: int) -> List[Dict[str, Any]]:
+    """Passages in rank order until ``budget`` characters of chunk_text (budget <= 0: unchanged).
+
+    The best-ranked passage is always kept; a passage that would overflow is skipped and
+    smaller ones further down can still fit.
+    """
+    if budget <= 0:
+        return rows
+    kept, used = [], 0
+    for row in rows:
+        size = len(row.get('chunk_text') or '')
+        if kept and used + size > budget:
+            continue
+        kept.append(row)
+        used += size
+    return kept
 
 
 def cap_per_document(rows: List[Dict[str, Any]], n: int) -> List[Dict[str, Any]]:
@@ -163,14 +190,16 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
             rows = _merge_by_rank([rows, raw])
         else:
             rows, reranked = await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
-        rows = cap_per_document(rows, max_passages_per_doc())
+        rows = fit_budget(cap_per_document(rows, max_passages_per_doc()), context_budget_chars())
     except base.ChatVsiError as exc:
         for e in base._error_events(exc.message, exc.error_type, exc.http_status):
             yield e
         return
     documents = base.group_documents(rows)
-    logger.info('chat_vsi_rerank: division=%s index=%s reranked=%s merge=%s cap=%d fr_query=%r passages=%d documents=%d trace_id=%s',
-                div, index_name, reranked, merge_mode(), max_passages_per_doc(), fr_query, len(rows), len(documents), trace_id)
+    logger.info('chat_vsi_rerank: division=%s index=%s reranked=%s merge=%s cap=%d budget=%d fr_query=%r '
+                'passages=%d chars=%d documents=%d trace_id=%s',
+                div, index_name, reranked, merge_mode(), max_passages_per_doc(), context_budget_chars(), fr_query,
+                len(rows), sum(len(r.get('chunk_text') or '') for r in rows), len(documents), trace_id)
 
     parser = base.CitationStreamParser(documents)
     async for chunk in stream_analysis(host, token, endpoint, base.build_prompt(div, conversation, documents),
