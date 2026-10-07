@@ -262,3 +262,43 @@ def test_retrieve_documents_follows_the_variant(monkeypatch):
     with patch.object(chat_vsi_rerank, 'retrieve_for_turn', AsyncMock(return_value={'rows': []})) as rr:
         asyncio.run(chat_vsi_variants.retrieve_documents('https://h', 't', 'ALL', msgs))
     rr.assert_awaited_once()
+
+
+def test_titles_find_documents_asked_for_by_name():
+    from server.services.chat_vsi_titles import documents_titled
+    found = [c for c, _, _ in documents_titled(["Dans le processus Stocker, quel est le périmètre d'application ?"], 3)]
+    assert found[0] == 'IQ22223'
+    found = [c for c, _, _ in documents_titled(['list me all procedures explaining work with work centers'], 3)]
+    assert found[0] == 'INMRPC009'
+    assert documents_titled(['bonjour'], 3) == []
+
+
+def test_split_bilingual_rewrite():
+    assert chat_vsi_rerank.split_bilingual('FR: qualification peinture\nEN: painting qualification') == (
+        'qualification peinture', 'painting qualification')
+    assert chat_vsi_rerank.split_bilingual('qualification peinture') == ('qualification peinture', '')
+
+
+def test_one_language_per_document_keeps_the_best_ranked_variant():
+    rows = [{'chunk_id': '1', 'REF': 'Q0102QP_GB'}, {'chunk_id': '2', 'REF': 'QP-1518'},
+            {'chunk_id': '3', 'REF': 'Q0102QP_BG'}, {'chunk_id': '4', 'REF': 'Q0102QP_GB'}]
+    assert [r['chunk_id'] for r in chat_vsi_rerank.one_language_per_document(rows)] == ['1', '2', '4']
+
+
+def test_bilingual_title_and_retry(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_RERANK_ENABLED', 'false')
+    monkeypatch.setenv('CHAT_VSI_REWRITE', 'bilingual')
+    monkeypatch.setenv('CHAT_VSI_TITLE_LOOKUP', 'on')
+    titled_row = {'chunk_id': 't1', 'REF': 'IQ22_223_FR', 'url': 'u', 'chunk_text': 'stocker'}
+    raw = AsyncMock(side_effect=[chat_vsi.ChatVsiError('busy', 'VectorSearchError', 400), [ROW]])
+    fetched = AsyncMock(return_value=[titled_row, ROW])
+    conv = [{'role': 'user', 'content': 'processus Stocker : périmètre ?'}]
+    with (patch.object(chat_vsi, 'retrieve', raw),
+          patch.object(chat_vsi_rerank, 'fetch_named_documents', fetched),
+          patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='FR: stocker périmètre\nEN: store scope')),
+          patch.object(chat_vsi_rerank.asyncio, 'sleep', AsyncMock())):
+        out = asyncio.run(chat_vsi_rerank.retrieve_for_turn('https://h', 't', 'idx', 'llm', conv))
+    assert raw.await_count == 2
+    assert raw.await_args.args[3] == ['processus Stocker : périmètre ?', 'stocker périmètre', 'store scope']
+    assert out['titled'][0] == 'IQ22223' and 'IQ22_223_FR' in fetched.await_args.args[4]
+    assert [r['chunk_id'] for r in out['rows']] == ['c1', 't1']

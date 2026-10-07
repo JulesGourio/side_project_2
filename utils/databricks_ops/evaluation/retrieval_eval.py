@@ -35,6 +35,10 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 # DBTITLE 1,Configurations (search only: the answer model doesn't matter here, the rewrite model does)
 UNION = {'CHAT_VSI_RERANK_MERGE': 'union'}
 CTX = {'CHAT_VSI_RERANK_COLUMNS': 'REF,semantic_headers,chunk_text'}
+REF = {'CHAT_VSI_REF_LOOKUP': 'on'}                  # REF named in the conversation -> filtered search
+TITLE = {'CHAT_VSI_TITLE_LOOKUP': 'on'}              # catalog title matching the question -> filtered search
+BI = {'CHAT_VSI_REWRITE': 'bilingual'}               # French + English rewrite (3 queries instead of 2)
+ONE_LANG = {'CHAT_VSI_ONE_LANGUAGE': 'on'}           # one language variant per document
 CONFIGS = {
     'baseline':           dict(variant='baseline'),
     'rerank':             dict(variant='rerank'),
@@ -46,6 +50,13 @@ CONFIGS = {
                                                        'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000'}),
     'union-ctx-b25k':     dict(variant='rerank', env={**UNION, **CTX, 'CHAT_VSI_RERANK_TOP_K': '25',
                                                        'CHAT_VSI_CONTEXT_BUDGET_CHARS': '25000'}),
+    # Wave 3 (2026-10-07) — each one = union-ctx + one change, then all of them together.
+    'u-1lang':            dict(variant='rerank', env={**UNION, **CTX, **ONE_LANG}),
+    'u-1lang-k20-cap3':   dict(variant='rerank', env={**UNION, **CTX, **ONE_LANG, 'CHAT_VSI_RERANK_TOP_K': '20',
+                                                       'CHAT_VSI_MAX_PASSAGES_PER_DOC': '3'}),
+    'u-title':            dict(variant='rerank', env={**UNION, **CTX, **TITLE}),
+    'u-bi':               dict(variant='rerank', env={**UNION, **CTX, **BI}),
+    'u-all':              dict(variant='rerank', env={**UNION, **CTX, **REF, **TITLE, **BI, **ONE_LANG}),
 }
 
 # COMMAND ----------
@@ -55,7 +66,7 @@ dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/fi
 dbutils.widgets.text('configs', ','.join(CONFIGS))                 # which configurations to measure
 dbutils.widgets.text('sources', 'golden,synthetic,feedback')
 dbutils.widgets.dropdown('rerun_existing', 'false', ['false', 'true'])
-dbutils.widgets.text('max_parallel', '8')
+dbutils.widgets.text('max_parallel', '4')   # questions at once (each sends 2-7 Vector Search queries)
 dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
 dbutils.widgets.text('synthetic_table', 'uat_landingzone.qualibot.synthetic_retrieval_questions_v2')
 dbutils.widgets.text('feedback_table', 'uat_landingzone.qualibot.feedback_failure_cases')
@@ -65,7 +76,7 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 RUN = [c.strip() for c in dbutils.widgets.get('configs').split(',') if c.strip()]
 SOURCES = {s.strip() for s in dbutils.widgets.get('sources').split(',') if s.strip()}
 RERUN = dbutils.widgets.get('rerun_existing') == 'true'
-MAX_PARALLEL = max(1, int(dbutils.widgets.get('max_parallel') or 8))
+MAX_PARALLEL = max(1, int(dbutils.widgets.get('max_parallel') or 4))
 RESULTS = dbutils.widgets.get('results_table').strip()
 assert not [c for c in RUN if c not in CONFIGS], f'unknown configs — pick from {list(CONFIGS)}'
 
@@ -150,7 +161,8 @@ async def search(messages: list, division: str) -> dict:
     return {'docs': [canon_ref(ref) for ref, _ in docs], 'passages': len(found['rows']),
             'chars': sum(len(r.get('chunk_text') or '') for r in found['rows']),
             'fr_query': found.get('fr_query') or '', 'reranked': bool(found.get('reranked')),
-            'named': found.get('named') or [], 'latency_s': round(time.monotonic() - started, 2)}
+            'named': found.get('named') or [], 'titled': found.get('titled') or [],
+            'en_query': found.get('en_query') or '', 'latency_s': round(time.monotonic() - started, 2)}
 
 
 def run_case(case: dict) -> dict:
@@ -205,7 +217,8 @@ print('to run:', {name: len(cases) for name, cases in TODO.items() if cases} or 
 _SCHEMA = """config string, settings string, run_ts timestamp, source string, case_id string, division string,
 question string, query_type string, expected array<string>, partial array<string>, retrieved array<string>,
 recall double, hit double, first_rank int, partial_recall double, n_docs int, n_passages int, chars int,
-fr_query string, reranked boolean, named array<string>, latency_s double, error string"""
+fr_query string, reranked boolean, named array<string>, latency_s double, error string,
+en_query string, titled array<string>"""
 
 for name, cases in TODO.items():
     if not cases:
@@ -231,6 +244,7 @@ for name, cases in TODO.items():
             'n_docs': len(got), 'n_passages': out.get('passages'), 'chars': out.get('chars'),
             'fr_query': out.get('fr_query'), 'reranked': out.get('reranked'), 'named': out.get('named') or [],
             'latency_s': out.get('latency_s'), 'error': out.get('error'),
+            'en_query': out.get('en_query'), 'titled': out.get('titled') or [],
         })
     spark.createDataFrame(rows, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
     errors = [r['error'] for r in rows if r['error']]
@@ -247,7 +261,11 @@ for name, cases in TODO.items():
 _shown = ', '.join(f"'{c}'" for c in RUN)
 spark.sql(f"""
 CREATE OR REPLACE TEMPORARY VIEW latest_retrieval AS
-SELECT * EXCEPT (rn) FROM (
+SELECT * EXCEPT (rn),
+       -- expected documents among the first 5 distinct documents of the context: compares
+       -- configurations at the same size, whatever the size of their whole context
+       size(array_intersect(slice(array_distinct(retrieved), 1, 5), expected)) / size(expected) AS recall_at5
+FROM (
   SELECT *, row_number() OVER (PARTITION BY config, source, case_id
                                ORDER BY error IS NULL DESC, run_ts DESC) AS rn
   FROM {RESULTS} WHERE config IN ({_shown})) WHERE rn = 1""")
@@ -264,21 +282,23 @@ FROM latest_retrieval GROUP BY config HAVING still_in_error > 0"""))
 display(spark.sql("""
 SELECT config, source, count(*) AS cases,
        round(avg(recall) * 100, 1)         AS recall_pct,
+       round(avg(recall_at5) * 100, 1)     AS recall_top5_pct,
        round(avg(hit) * 100, 1)            AS at_least_one_pct,
        round(avg(partial_recall) * 100, 1) AS partial_recall_pct,
        round(percentile(first_rank, 0.5))  AS median_rank_first_hit,
-       round(avg(n_docs), 1)               AS avg_docs,
+       round(avg(size(array_distinct(retrieved))), 1) AS avg_docs,
        round(avg(chars) / 4)               AS avg_context_tokens,
        round(percentile(latency_s, 0.5), 1) AS search_p50_s
 FROM common GROUP BY ALL ORDER BY source, recall_pct DESC"""))
 
 display(spark.sql("""
-SELECT config, count(*) AS cases, round(avg(recall) * 100, 1) AS recall_pct, round(avg(hit) * 100, 1) AS at_least_one_pct,
-       round(avg(chars) / 4) AS avg_context_tokens
+SELECT config, count(*) AS cases, round(avg(recall) * 100, 1) AS recall_pct,
+       round(avg(recall_at5) * 100, 1) AS recall_top5_pct, round(avg(hit) * 100, 1) AS at_least_one_pct,
+       round(avg(chars) / 4) AS avg_context_tokens, round(percentile(latency_s, 0.5), 1) AS search_p50_s
 FROM common GROUP BY config ORDER BY recall_pct DESC"""))
 
 # Cases one configuration finds and another doesn't (edit the two names)
-A, B = 'baseline', 'union-ctx'
+A, B = 'union-ctx', 'u-all'
 display(spark.sql(f"""
 SELECT a.source, left(a.question, 90) AS question, a.expected,
        array_intersect(a.expected, a.retrieved) AS found_by_{A.replace('-', '_')},

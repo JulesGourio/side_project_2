@@ -23,6 +23,16 @@ Two optional settings, off by default (the variant then behaves as first measure
   NF-10065…, found with the app's document catalog, language variants included) get their
   own filtered search (``filters_json`` on REF), ranked first: "summarize / compare MI-14242"
   reads that document instead of whatever looks similar;
+- ``CHAT_VSI_TITLE_LOOKUP=on`` — documents whose catalog title matches the question
+  (``chat_vsi_titles.py``: "processus Stocker" → IQ22-223 "Stocker") get a filtered search
+  too; their passages are added after the others;
+- ``CHAT_VSI_ONE_LANGUAGE=on`` — keep one language variant per document (the best-ranked):
+  Q0102QP_GB and Q0102QP_BG passages say the same thing and take two slots;
+- ``CHAT_VSI_REWRITE=bilingual`` — the rewrite returns a French AND an English query (the
+  corpus mixes both; a French question can target an English-only document such as
+  QP-2270 or MI-14183), acronyms expanded when certain; three queries instead of two;
+- ``CHAT_VSI_SEARCH_RETRIES`` (default 2) — Vector Search queries retried on failure (the
+  embedding endpoint refuses bursts with "Request id already running", see vector_search.py);
 - ``CHAT_VSI_RERANK_ENABLED=false`` — raw HYBRID search as in the baseline (to test the
   other settings, e.g. the v2 prompt, without the reranker);
 - ``CHAT_VSI_INSTRUCTIONS=v2|v3`` — the VSI-specific prompts (``chat_vsi_prompts.py``);
@@ -50,7 +60,8 @@ import httpx
 
 from . import chat_vsi as base
 from . import chat_vsi_prompts
-from .doc_catalog import _catalog
+from .chat_vsi_titles import documents_titled
+from .doc_catalog import _catalog, canon_ref
 from .streaming import stream_analysis
 from .vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 
@@ -93,8 +104,26 @@ def ref_lookup_enabled() -> bool:
     return _on('CHAT_VSI_REF_LOOKUP', 'off')
 
 
+def title_lookup_enabled() -> bool:
+    return _on('CHAT_VSI_TITLE_LOOKUP', 'off')
+
+
+def one_language() -> bool:
+    return _on('CHAT_VSI_ONE_LANGUAGE', 'off')
+
+
+def rewrite_mode() -> str:
+    return 'bilingual' if os.getenv('CHAT_VSI_REWRITE', 'fr').strip().lower() == 'bilingual' else 'fr'
+
+
+def search_retries() -> int:
+    return int(os.getenv('CHAT_VSI_SEARCH_RETRIES', '2') or 0)
+
+
 _REF_LOOKUP_MAX = 6          # REFs (variants included) filtered on
 _REF_LOOKUP_K = 8            # passages fetched from the named documents
+_TITLE_LOOKUP_DOCS = 3       # best title matches searched
+_TITLE_LOOKUP_K = 6          # passages fetched from them
 
 
 def refs_named_in(text: str) -> List[str]:
@@ -111,9 +140,9 @@ def refs_named_in(text: str) -> List[str]:
 
 
 async def fetch_named_documents(host: str, token: str, index_name: str, query: str,
-                                refs: List[str]) -> List[Dict[str, Any]]:
+                                refs: List[str], k: int = _REF_LOOKUP_K) -> List[Dict[str, Any]]:
     """HYBRID search restricted to the given REFs. Failures are logged, never raised."""
-    payload = {'query_text': query[:base._MAX_QUERY_CHARS], 'columns': _COLUMNS, 'num_results': _REF_LOOKUP_K,
+    payload = {'query_text': query[:base._MAX_QUERY_CHARS], 'columns': _COLUMNS, 'num_results': k,
                'query_type': 'HYBRID', 'filters_json': json.dumps({'REF': refs})}
     try:
         async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
@@ -148,12 +177,40 @@ def _message_text(content: Any) -> str:
     return ''
 
 
+BILINGUAL_REWRITE_PROMPT = """Using the conversation for context, rewrite the user's LAST question as one standalone search
+query, for a search engine over Latécoère quality documents written in French or in English.
+Write it twice, as exactly two lines:
+FR: <the query in French>
+EN: <the same query in English>
+Keep document codes, acronyms and technical terms as they are. When the question uses an
+acronym and you are certain of its meaning, keep it and add its expanded form in each language.
+Return only the two lines."""
+
+
+def split_bilingual(text: str) -> Tuple[str, str]:
+    """(French query, English query) from the bilingual rewrite; a reply without the
+    ``FR:``/``EN:`` labels is taken as the French query."""
+    fr, en = '', ''
+    for line in (text or '').splitlines():
+        head, _, rest = line.strip().partition(':')
+        if head.strip().upper() == 'FR' and rest.strip():
+            fr = rest.strip()
+        elif head.strip().upper() == 'EN' and rest.strip():
+            en = rest.strip()
+    if not fr and not en:
+        fr = (text or '').strip()
+    return fr, en
+
+
 async def search_query_fr(host: str, token: str, endpoint: str, conversation: List[Dict[str, str]]) -> Any:
-    """``chat_vsi.search_query_fr`` with a configurable ceiling and reasoning-model content."""
+    """``chat_vsi.search_query_fr`` with a configurable ceiling and reasoning-model content.
+    With ``CHAT_VSI_REWRITE=bilingual`` the reply holds two lines (``split_bilingual``)."""
     transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)
-    payload: Dict[str, Any] = {'messages': [{'role': 'system', 'content': base.REWRITE_PROMPT},
+    bilingual = rewrite_mode() == 'bilingual'
+    payload: Dict[str, Any] = {'messages': [{'role': 'system',
+                                             'content': BILINGUAL_REWRITE_PROMPT if bilingual else base.REWRITE_PROMPT},
                                             {'role': 'user', 'content': transcript}],
-                               'max_tokens': rewrite_max_tokens()}
+                               'max_tokens': max(rewrite_max_tokens(), 250) if bilingual else rewrite_max_tokens()}
     if base.supports_temperature(endpoint):
         payload['temperature'] = 0.0
     try:
@@ -177,6 +234,8 @@ def settings() -> Dict[str, Any]:
             'columns_to_rerank': rerank_columns(), 'merge': merge_mode(),
             'max_passages_per_doc': max_passages_per_doc(), 'context_budget_chars': context_budget_chars(),
             'rerank_enabled': rerank_enabled(), 'ref_lookup': ref_lookup_enabled(),
+            'title_lookup': title_lookup_enabled(), 'one_language': one_language(),
+            'rewrite': rewrite_mode(), 'search_retries': search_retries(),
             'instructions': chat_vsi_prompts.instructions_set(), 'answer_max_tokens': answer_max_tokens(),
             'rewrite_max_tokens': rewrite_max_tokens(), 'llm': base.llm_endpoint()}
 
@@ -219,6 +278,35 @@ def cap_per_document(rows: List[Dict[str, Any]], n: int) -> List[Dict[str, Any]]
         if per_doc[row['REF']] <= n:
             kept.append(row)
     return kept
+
+
+def one_language_per_document(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Only the passages of the best-ranked language variant of each document."""
+    chosen: Dict[str, str] = {}
+    kept = []
+    for row in rows:
+        ref = row['REF']
+        if chosen.setdefault(canon_ref(ref), ref) == ref:
+            kept.append(row)
+    return kept
+
+
+def append_new(rows: List[Dict[str, Any]], extra: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """rows, then the passages of extra not already in rows."""
+    seen = {r['chunk_id'] for r in rows}
+    return rows + [r for r in extra if r['chunk_id'] not in seen]
+
+
+async def _retrying(search, attempts: int):
+    """Run ``search()`` again on a Vector Search failure (bursts, timeouts), then give up."""
+    for attempt in range(attempts + 1):
+        try:
+            return await search()
+        except base.ChatVsiError as exc:
+            if attempt == attempts or exc.http_status in (401, 403, 404):
+                raise
+            logger.warning('chat_vsi_rerank: search failed (%s), retry %d/%d', exc.message, attempt + 1, attempts)
+            await asyncio.sleep(1.5 * (attempt + 1))
 
 
 class RerankUnavailable(Exception):
@@ -270,8 +358,12 @@ async def retrieve_for_turn(host: str, token: str, index_name: str, endpoint: st
     Also used alone by the retrieval evaluation (no answer generated)."""
     question = base._without_date(conversation[-1]['content'])
     rewrite_view = conversation[:-1] + [{'role': 'user', 'content': question}]
-    fr_query = await search_query_fr(host, token, endpoint, rewrite_view)
-    queries = [question] + ([fr_query] if fr_query else [])
+    rewrite = await search_query_fr(host, token, endpoint, rewrite_view)
+    fr_query, en_query = split_bilingual(rewrite) if rewrite_mode() == 'bilingual' else (rewrite, '')
+    queries = [question]
+    for q in (fr_query, en_query):
+        if q and q.casefold() not in {x.casefold() for x in queries}:
+            queries.append(q)
 
     # REFs named in the question first, then in the earlier turns ("résume la slide 15" after an
     # answer about MI-14242 names no REF itself — golden run 2026-10-07: 0 lookups triggered).
@@ -281,19 +373,30 @@ async def retrieve_for_turn(host: str, token: str, index_name: str, endpoint: st
             if ref not in named:
                 named.append(ref)
         named = named[:_REF_LOOKUP_MAX]
-    if not rerank_enabled():
-        rows, reranked = await base.retrieve(host, token, index_name, queries, base.num_results()), False
-    elif merge_mode() == 'union':
-        (rows, reranked), raw = await asyncio.gather(
-            retrieve_reranked(host, token, index_name, queries, rerank_top_k()),
-            base.retrieve(host, token, index_name, queries, base.num_results()))
-        rows = _merge_by_rank([rows, raw])
-    else:
-        rows, reranked = await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
+    titled = documents_titled(queries, _TITLE_LOOKUP_DOCS) if title_lookup_enabled() else []
+
+    async def search():
+        if not rerank_enabled():
+            return await base.retrieve(host, token, index_name, queries, base.num_results()), False
+        if merge_mode() == 'union':
+            (rows, reranked), raw = await asyncio.gather(
+                retrieve_reranked(host, token, index_name, queries, rerank_top_k()),
+                base.retrieve(host, token, index_name, queries, base.num_results()))
+            return _merge_by_rank([rows, raw]), reranked
+        return await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
+
+    rows, reranked = await _retrying(search, search_retries())
     if named:
         rows = _merge_by_rank([await fetch_named_documents(host, token, index_name, question, named), rows])
+    if titled:
+        title_refs = [ref for _, refs, _ in titled for ref in refs]
+        rows = append_new(rows, await fetch_named_documents(host, token, index_name, fr_query or question,
+                                                            title_refs, _TITLE_LOOKUP_K))
+    if one_language():
+        rows = one_language_per_document(rows)
     rows = fit_budget(cap_per_document(rows, max_passages_per_doc()), context_budget_chars())
-    return {'question': question, 'fr_query': fr_query, 'rows': rows, 'reranked': reranked, 'named': named}
+    return {'question': question, 'fr_query': fr_query, 'en_query': en_query, 'rows': rows, 'reranked': reranked,
+            'named': named, 'titled': [canon for canon, _, _ in titled]}
 
 
 async def stream_chat_vsi_rerank(host: str, token: str, division: str,
@@ -321,7 +424,8 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
         for e in base._error_events(exc.message, exc.error_type, exc.http_status):
             yield e
         return
-    question, fr_query, rows, reranked, named = (found[k] for k in ('question', 'fr_query', 'rows', 'reranked', 'named'))
+    question, fr_query, rows, reranked, named, titled = (
+        found[k] for k in ('question', 'fr_query', 'rows', 'reranked', 'named', 'titled'))
     documents = base.group_documents(rows)
     logger.info('chat_vsi_rerank: division=%s index=%s reranked=%s merge=%s cap=%d budget=%d fr_query=%r '
                 'passages=%d chars=%d documents=%d trace_id=%s',
@@ -367,7 +471,8 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
     yield base._event({'type': 'metadata', 'trace_id': trace_id,
                        'tool_name': ('vector_search+rerank' if reranked
                                      else 'vector_search' if not rerank_enabled() else 'vector_search (rerank refused)')
-                                    + (f'+ref_lookup({",".join(named)})' if named else ''),
+                                    + (f'+ref_lookup({",".join(named)})' if named else '')
+                                    + (f'+title_lookup({",".join(titled)})' if titled else ''),
                        'tool_query': fr_query or question,
                        'tool_result': ', '.join(ref for ref, _ in documents),
                        'reasoning_steps': [],
