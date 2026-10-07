@@ -1,6 +1,8 @@
 param(
     [string]$AppEnv   = 'uat',
     [switch]$SkipBuild,         # Pass -SkipBuild to skip frontend rebuild (Python-only changes)
+    [switch]$SyncOnly,          # Pass -SyncOnly to only upload the code to the workspace: no frontend
+                                # build, no app start/redeploy (notebooks reading the synced code)
     [switch]$Infra              # Pass -Infra to (re)deploy bundle resources via terraform
                                 # (app ACLs, UC volume bindings). Requires MANAGE on the
                                 # target catalog. Only needed when resources/permissions
@@ -39,7 +41,7 @@ Push-Location $ProjectRoot
 
 try {
     # 1. Build frontend (skip with -SkipBuild for Python-only changes)
-    if ($SkipBuild) {
+    if ($SkipBuild -or $SyncOnly) {
         Write-Host "[1/4] Frontend build skipped (-SkipBuild)" -ForegroundColor DarkGray
     } else {
         Write-Host "[1/4] Building frontend..." -ForegroundColor Yellow
@@ -128,6 +130,12 @@ try {
     # active manual test session). qualibot (uat) and prod are fine to
     # auto-start here, since they're expected to be up during business hours
     # anyway and a deploy shouldn't be blocked by the off-hours job's timing.
+    if ($SyncOnly) {
+        Write-Host ""
+        Write-Host "Code synced to $SourceCodePath (-SyncOnly: app not restarted, frontend not rebuilt)." -ForegroundColor Green
+        return
+    }
+
     Write-Host "[3/4] Checking app compute state..." -ForegroundColor Yellow
     $appInfo = & databricks apps get $AppName --profile $Profile -o json | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw "databricks apps get failed (exit $LASTEXITCODE)" }
