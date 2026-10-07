@@ -602,6 +602,12 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   `eval_golden_runs` (les essais déjà enregistrés sont sautés) ; chaque essai est enregistré
   dès qu'il finit. Nouvel essai = une ligne de plus dans *Plan*, puis Run all.
 
+- [ ] **G2b. Juger à l'œil, sans run complet** : notebook
+  `utils/databricks_ops/evaluation/replay_compare.py` — widgets `configs` (noms de la cellule
+  CONFIGS), `question_filter` (morceaux de questions golden séparés par `|`), `extra_question`,
+  `stored_evals` (réponses déjà enregistrées, sans relance). Run all → une carte par question,
+  une colonne par configuration. Rien n'est enregistré.
+
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.
 

@@ -56,7 +56,7 @@ BUDGET = {'CHAT_VSI_RERANK_TOP_K': '25', 'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000
 
 PLAN = [
     # Already measured on 2026-10-07 — kept here for the record, skipped because saved.
-    dict(eval_id='ka', engine='ka', repeat=2),
+    dict(eval_id='ka', engine='ka'),
     dict(eval_id='baseline', engine='vsi', variant='baseline'),
     dict(eval_id='rerank', engine='vsi', variant='rerank', notes='reranker 50->12'),
     # Batch 2
@@ -66,7 +66,7 @@ PLAN = [
          env={'CHAT_VSI_RERANK_ENABLED': 'false', **V2}, notes='baseline search + v2 prompt'),
     dict(eval_id='rerank-union', engine='vsi', variant='rerank', env=UNION,
          notes='reranked + raw results, KA prompt'),
-    dict(eval_id='rerank-union-ctx', engine='vsi', variant='rerank', env={**UNION, **CTX}, repeat=3,
+    dict(eval_id='rerank-union-ctx', engine='vsi', variant='rerank', env={**UNION, **CTX},
          notes='union, reranker reads REF + section headers'),
     dict(eval_id='union-v2', engine='vsi', variant='rerank', env={**UNION, **V2},
          notes='union + v2 prompt'),
@@ -79,7 +79,7 @@ PLAN = [
     # with v2. From here on the model is Claude Sonnet 5.5; the 4.6 run2 gives stability + cost.
     dict(eval_id='union-ctx-run2', engine='vsi', variant='rerank', env={**UNION, **CTX},
          notes='rerank-union-ctx again on Sonnet 4.6: stability + measured cost'),
-    dict(eval_id='union-ctx-s55', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55}, repeat=3,
+    dict(eval_id='union-ctx-s55', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55},
          notes='rerank-union-ctx on Sonnet 5.5 (reference for the s55 attempts)'),
     dict(eval_id='union-ctx-s55-v3', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **V3},
          notes='+ v3 prompt (KA prompt + grounding rules + doc-type glossary)'),
@@ -89,11 +89,8 @@ PLAN = [
          notes='+ top_k 25 and 35k-char budget'),
     dict(eval_id='union-ctx-s55-all', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **V3, **REF, **BUDGET},
          notes='+ v3 + REF lookup + budget'),
-    # Batch 4 — identical runs disagree by ±2 questions (union-ctx-s55 vs -s55-ref, whose REF
-    # lookup never fired, 81% vs 71%): the repeats above give averages for ka, rerank-union-ctx
-    # (Sonnet 4.6) and union-ctx-s55. REF lookup now also reads the earlier turns.
-    dict(eval_id='union-ctx-s55-ref2', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **REF}, repeat=2,
-         notes='REF lookup incl. earlier turns'),
+    # Next attempts: judged side by side with replay_compare.py first (cheaper than full runs).
+    # A line may take repeat=N to average N attempts of the same config.
 ]
 
 # COMMAND ----------
