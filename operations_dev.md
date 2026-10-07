@@ -610,6 +610,20 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   `utils/databricks_ops/evaluation/golden_eval_queries.sql` dans l'éditeur SQL DEV, renseigner
   `eval_a`, `eval_b`, `question_like`, Run all.
 
+- [ ] **G3c. Variante `rerank`** (2026-10-07, `server/services/chat_vsi_rerank.py`, baseline
+  `chat_vsi.py` inchangé) : une fois, ajouter les nouvelles colonnes à la table existante :
+
+  ```sql
+  ALTER TABLE dev_landingzone.qualibot.eval_golden_runs ADD COLUMNS (
+    vsi_variant string, vsi_settings string, app_code_hash string,
+    retrieved_refs array<string>, search string);
+  ```
+
+  puis déployer, et lancer le notebook avec `engines=vsi`, `vsi_variant=rerank` (eval id
+  `rerank` par défaut). Vérifier dans la requête 1 que `settings` montre `databricks_reranker`
+  et dans la table que `search` vaut `vector_search+rerank` (sinon le reranker a été refusé
+  par l'index et la baseline a répondu).
+
 - [ ] **G4. Comparer un autre modèle pour VSI** : `engines=vsi`, `vsi_llm_endpoint=<endpoint>`,
   `vsi_eval_id=<nom>` (ex. `databricks-gpt-5-6-luna`). Pour `databricks-claude-sonnet-5-5`, la
   température forcée doit d'abord être retirée dans `streaming.py` (voir le rapport Chat VSI).

@@ -15,7 +15,8 @@ from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..services.chat_vsi import normalize_division, stream_chat_vsi
+from ..services.chat_vsi import normalize_division
+from ..services.chat_vsi_variants import stream_chat_vsi, vsi_variant
 from ..services.doc_catalog import augment_sources
 from ..services.lakebase import get_pool, store_error, upsert_user
 from ..services.streaming import stream_chat
@@ -604,7 +605,9 @@ async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
     division = (data.get('division') or 'ALL').upper()
     if is_vsi:
         # Recorded as endpoint_name, so VSI turns stay distinguishable from KA turns.
-        endpoint = f'vsi-{normalize_division(division).lower()}'
+        # The variant is part of the name when it isn't the baseline (vsi-rerank-all).
+        variant = vsi_variant()
+        endpoint = f"vsi-{'' if variant == 'baseline' else variant + '-'}{normalize_division(division).lower()}"
     else:
         endpoint = _endpoint_for_division(division)
         if not endpoint:

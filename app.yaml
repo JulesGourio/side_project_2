@@ -53,6 +53,11 @@ env:
     value: "databricks-claude-sonnet-4-6"
   - name: CHAT_VSI_NUM_RESULTS
     value: "10"
+  # Which VSI engine version answers (server/services/chat_vsi_variants.py):
+  # baseline = chat_vsi.py as delivered; rerank = + Vector Search reranker
+  # (chat_vsi_rerank.py, CHAT_VSI_RERANK_TOP_K passages kept per query, default 12).
+  - name: CHAT_VSI_VARIANT
+    value: "baseline"
   # Capability cache TTL in seconds (how long can_chat/can_compare are cached per user).
   # Update via sync_user_capabilities.py — changes take effect after the next cache miss.
   - name: CAPS_TTL_S

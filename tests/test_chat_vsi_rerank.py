@@ -1,0 +1,92 @@
+"""Chat VSI variant ``rerank`` (server/services/chat_vsi_rerank.py) and the variant switch."""
+
+import asyncio
+import json
+from unittest.mock import AsyncMock, patch
+
+import httpx
+
+from server.services import chat_vsi, chat_vsi_rerank, chat_vsi_variants
+
+ROW = {'chunk_id': 'c1', 'REF': 'QP-1518', 'url': 'https://intraqual/QP-1518', 'chunk_text': 'texte'}
+VS_BODY = {'manifest': {'columns': [{'name': k} for k in ROW]}, 'result': {'data_array': [list(ROW.values())]}}
+
+
+def _fake_post(status=200, body=None, sent=None):
+    async def _post(self, url, json=None, headers=None):
+        if sent is not None:
+            sent.append(json)
+        if status != 200:
+            return httpx.Response(status, text=body or 'error', request=httpx.Request('POST', url))
+        return httpx.Response(200, json=VS_BODY, request=httpx.Request('POST', url))
+    return _post
+
+
+def test_query_asks_the_reranker(monkeypatch):
+    sent = []
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _fake_post(sent=sent))
+    monkeypatch.delenv('CHAT_VSI_RERANK_TOP_K', raising=False)
+    monkeypatch.delenv('CHAT_VSI_RERANK_COLUMNS', raising=False)
+    rows, reranked = asyncio.run(chat_vsi_rerank.retrieve_reranked('https://h', 't', 'cat.sch.idx', ['q1', 'q2'], 12))
+    assert reranked and [r['chunk_id'] for r in rows] == ['c1']
+    assert len(sent) == 2
+    for p in sent:
+        assert p['query_type'] == 'HYBRID' and p['num_results'] == 12
+        assert p['reranker'] == {'model': 'databricks_reranker', 'parameters': {'columns_to_rerank': ['chunk_text']}}
+
+
+def test_reranker_refused_falls_back_to_baseline(monkeypatch):
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _fake_post(status=400, body='Invalid parameter: reranker'))
+    baseline = AsyncMock(return_value=[ROW])
+    with patch.object(chat_vsi, 'retrieve', baseline):
+        rows, reranked = asyncio.run(chat_vsi_rerank.retrieve_reranked('https://h', 't', 'idx', ['q'], 12))
+    assert not reranked and rows == [ROW]
+    baseline.assert_awaited_once()
+
+
+def test_other_vector_search_error_is_an_error_event(monkeypatch):
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _fake_post(status=403, body='forbidden'))
+    try:
+        asyncio.run(chat_vsi_rerank.retrieve_reranked('https://h', 't', 'idx', ['q'], 12))
+    except chat_vsi.ChatVsiError as exc:
+        assert exc.http_status == 403
+    else:
+        raise AssertionError('expected ChatVsiError')
+
+
+def _llm(*deltas):
+    async def _gen(*args, **kwargs):
+        for d in deltas:
+            yield f'data: {json.dumps({"type": "response.output_text.delta", "delta": d})}\n\n'
+        yield 'data: [DONE]\n\n'
+    return _gen
+
+
+def test_stream_contract_same_as_baseline():
+    messages = [{'role': 'user', 'content': '[Date: 2026-10-07]\n\nQui qualifie le personnel CND ?'}]
+    with (patch.object(chat_vsi_rerank, 'retrieve_reranked', AsyncMock(return_value=([ROW], True))),
+          patch.object(chat_vsi, '_complete', AsyncMock(return_value='qualification personnel CND')),
+          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm('QP-1518 [', '1] fait foi.'))):
+        raw = asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
+    events = [json.loads(c[6:]) for c in raw if c.startswith('data: ') and '[DONE]' not in c]
+    text = ''.join(e['delta'] for e in events if e['type'] == 'response.output_text.delta')
+    assert text == 'QP-1518  fait foi.'
+    src = next(e for e in events if e['type'] == 'sources')
+    assert src['sources'][0]['title'] == 'QP-1518' and src['citations'] == [{'n': 1, 'pos': len('QP-1518 ')}]
+    meta = next(e for e in events if e['type'] == 'metadata')
+    assert meta['tool_name'] == 'vector_search+rerank' and meta['trace_id'].startswith('vsi-rerank-')
+    assert raw[-1] == 'data: [DONE]\n\n'
+
+
+async def _collect(gen):
+    return [c async for c in gen]
+
+
+def test_variant_switch(monkeypatch):
+    monkeypatch.delenv('CHAT_VSI_VARIANT', raising=False)
+    assert chat_vsi_variants.vsi_variant() == 'baseline'
+    monkeypatch.setenv('CHAT_VSI_VARIANT', 'rerank')
+    assert chat_vsi_variants.vsi_variant() == 'rerank'
+    assert chat_vsi_variants.variant_settings()['reranker'] == 'databricks_reranker'
+    monkeypatch.setenv('CHAT_VSI_VARIANT', 'nope')
+    assert chat_vsi_variants.vsi_variant() == 'baseline'
