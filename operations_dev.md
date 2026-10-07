@@ -582,6 +582,32 @@ returned 403 » → endpoint LLM.
   d'erreur, `databricks apps logs qualibot --profile DEV` montre la ligne
   `chat_vsi: Vector Search … returned 403` ou `… returned 403` sur l'endpoint.
 
+### G. Évaluation golden — Chat KA vs Chat VSI (DEV, 2026-10-07)
+
+Notebook `utils/databricks_ops/evaluation/golden_eval_ka_vs_vsi.py` : chaque cas de
+`dev_landingzone.qualibot.qualibot_eval_golden` passe par le code de l'app déployée, mêmes
+étapes qu'un tour de chat (historique, traduction, date, moteur, citations, sources,
+retraduction), avec la config de l'app DEV (`app.yaml` + `target_config.env`). Un run MLflow
+par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `latency_s`.
+
+- [ ] **G1. Déployer le code en DEV** (le notebook lit le code et la config déployés) :
+
+  ```powershell
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+
+- [ ] **G2. Lancer le notebook** dans le workspace DEV, en serverless :
+  `/Workspace/Shared/.bundle/qualibot/dev/files/utils/databricks_ops/evaluation/golden_eval_ka_vs_vsi`
+  → Run all. Widgets par défaut : `engines=ka,vsi`, `division=ALL`. La cellule « smoke test »
+  rejoue le 1er cas sur chaque moteur avant le run complet (~10–15 min pour 21 cas × 2).
+
+- [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
+  les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.
+
+- [ ] **G4. Comparer un autre modèle pour VSI** : `engines=vsi`, `vsi_llm_endpoint=<endpoint>`,
+  `run_tag=<nom>` (ex. `databricks-gpt-5-6-luna`). Pour `databricks-claude-sonnet-5-5`, la
+  température forcée doit d'abord être retirée dans `streaming.py` (voir le rapport Chat VSI).
+
 ### A. Déploiement de l'app avec les endpoints KA + tests
 
 - [ ] **A1. Redéployer le code** (après mon commit de K2) :
