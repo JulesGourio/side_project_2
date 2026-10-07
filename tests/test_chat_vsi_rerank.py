@@ -129,3 +129,53 @@ def test_fit_budget_by_size_not_count():
     assert [r['chunk_id'] for r in chat_vsi_rerank.fit_budget(rows, 1000)] == ['a', 'c']
     assert [r['chunk_id'] for r in chat_vsi_rerank.fit_budget(rows, 100)] == ['a']      # best one always kept
     assert chat_vsi_rerank.fit_budget(rows, 0) == rows
+
+
+def test_instructions_ka_is_the_baseline_prompt_and_v2_replaces_only_the_system_text(monkeypatch):
+    from server.services import chat_vsi_prompts
+    conv = [{'role': 'user', 'content': 'q'}]
+    docs = [('QP-1518', {'url': 'u', 'passages': ['p']})]
+    monkeypatch.delenv('CHAT_VSI_INSTRUCTIONS', raising=False)
+    assert chat_vsi_prompts.build_prompt('ALL', conv, docs) == chat_vsi.build_prompt('ALL', conv, docs)
+    monkeypatch.setenv('CHAT_VSI_INSTRUCTIONS', 'v2')
+    v2 = chat_vsi_prompts.build_prompt('AS', conv, docs)
+    assert v2[1:] == chat_vsi.build_prompt('AS', conv, docs)[1:]
+    system = v2[0]['content']
+    assert 'Aerostructures (AS)' in system and 'ONLY from the numbered passages' in system
+    assert 'metadata' not in system and 'ARCHIVED' not in system and '[3]' in system
+    assert len(system) < len(chat_vsi.load_instructions('AS')) / 2
+
+
+def test_refs_named_in_question_use_the_catalog():
+    refs = chat_vsi_rerank.refs_named_in('Peux tu résumer le MI-14242 et le QP-1518 ?')
+    assert 'MI-14242' in refs and 'QP-1518' in refs
+    assert chat_vsi_rerank.refs_named_in('Quel est le processus de qualification peinture ?') == []
+
+
+def test_ref_lookup_passages_come_first_and_filter_on_ref(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_REF_LOOKUP', 'on')
+    monkeypatch.setenv('CHAT_VSI_RERANK_ENABLED', 'false')
+    sent = []
+    named_row = {'chunk_id': 'n1', 'REF': 'MI-14242', 'url': 'u', 'chunk_text': 'slide 15'}
+
+    async def _post(self, url, json=None, headers=None):
+        sent.append(json)
+        body = {'manifest': {'columns': [{'name': k} for k in named_row]}, 'result': {'data_array': [list(named_row.values())]}}
+        return httpx.Response(200, json=body, request=httpx.Request('POST', url))
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
+    captured = {}
+
+    def _llm_spy(*args, **kwargs):
+        captured['prompt'] = args[3]
+        return _llm('ok')(*args, **kwargs)
+    messages = [{'role': 'user', 'content': 'résume la slide 15 du MI-14242'}]
+    with (patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=[ROW])) as raw,
+          patch.object(chat_vsi, '_complete', AsyncMock(return_value='q fr')),
+          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm_spy)):
+        out = asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
+    raw.assert_awaited_once()
+    assert len(sent) == 1 and 'MI-14242' in json.loads(sent[0]['filters_json'])['REF']
+    prompt = captured['prompt'][-1]['content']
+    assert prompt.index('Document MI-14242') < prompt.index('Document QP-1518')
+    meta = next(json.loads(c[6:]) for c in out if '"metadata"' in c)
+    assert meta['tool_name'].startswith('vector_search+ref_lookup(MI-14242')

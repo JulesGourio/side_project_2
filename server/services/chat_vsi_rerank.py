@@ -18,7 +18,14 @@ Two optional settings, off by default (the variant then behaves as first measure
 - ``CHAT_VSI_CONTEXT_BUDGET_CHARS=N`` — chunks range from ~250 to 1000+ tokens (tables,
   image descriptions), so a fixed passage count gives a context of very uneven size: with a
   budget, passages are taken in rank order until N characters (~N/4 tokens), whatever their
-  count. Pair it with a larger ``CHAT_VSI_RERANK_TOP_K`` so there is enough to choose from.
+  count. Pair it with a larger ``CHAT_VSI_RERANK_TOP_K`` so there is enough to choose from;
+- ``CHAT_VSI_REF_LOOKUP=on`` — documents the question names by REF (QP-1518, MI-14242,
+  NF-10065…, found with the app's document catalog, language variants included) get their
+  own filtered search (``filters_json`` on REF), ranked first: "summarize / compare MI-14242"
+  reads that document instead of whatever looks similar;
+- ``CHAT_VSI_RERANK_ENABLED=false`` — raw HYBRID search as in the baseline (to test the
+  other settings, e.g. the v2 prompt, without the reranker);
+- ``CHAT_VSI_INSTRUCTIONS=v2`` — the VSI-specific prompt (``chat_vsi_prompts.py``).
 
 Everything else — rewrite, grouping by document, prompt, instructions, generation, citation
 parsing, event stream — is the baseline's own code, imported from ``chat_vsi``. If the
@@ -38,6 +45,8 @@ from typing import Any, AsyncGenerator, Dict, List, Tuple
 import httpx
 
 from . import chat_vsi as base
+from . import chat_vsi_prompts
+from .doc_catalog import _catalog
 from .streaming import stream_analysis
 from .vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 
@@ -68,12 +77,61 @@ def context_budget_chars() -> int:
     return int(os.getenv('CHAT_VSI_CONTEXT_BUDGET_CHARS', '0') or 0)
 
 
+def _on(name: str, default: str) -> bool:
+    return os.getenv(name, default).strip().lower() in ('1', 'true', 'on', 'yes')
+
+
+def rerank_enabled() -> bool:
+    return _on('CHAT_VSI_RERANK_ENABLED', 'true')
+
+
+def ref_lookup_enabled() -> bool:
+    return _on('CHAT_VSI_REF_LOOKUP', 'off')
+
+
+_REF_LOOKUP_MAX = 6          # REFs (variants included) filtered on
+_REF_LOOKUP_K = 8            # passages fetched from the named documents
+
+
+def refs_named_in(text: str) -> List[str]:
+    """Catalog REFs the text names, with their language variants (at most _REF_LOOKUP_MAX)."""
+    cat = _catalog()
+    if not cat or not text:
+        return []
+    refs: List[str] = []
+    for entry in cat.find_in_text(text):
+        for ref in [entry['ref']] + [sib['ref'] for sib in cat.group_siblings(entry['ref'])]:
+            if ref not in refs:
+                refs.append(ref)
+    return refs[:_REF_LOOKUP_MAX]
+
+
+async def fetch_named_documents(host: str, token: str, index_name: str, query: str,
+                                refs: List[str]) -> List[Dict[str, Any]]:
+    """HYBRID search restricted to the given REFs. Failures are logged, never raised."""
+    payload = {'query_text': query[:base._MAX_QUERY_CHARS], 'columns': _COLUMNS, 'num_results': _REF_LOOKUP_K,
+               'query_type': 'HYBRID', 'filters_json': json.dumps({'REF': refs})}
+    try:
+        async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
+            resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index_name}/query', json=payload,
+                                     headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001 — the turn goes on without the lookup
+        logger.warning('chat_vsi_rerank: REF lookup %s on %s failed: %s', refs, index_name, exc)
+        return []
+    columns = [c['name'] for c in data.get('manifest', {}).get('columns', [])]
+    chunks = [dict(zip(columns, row)) for row in data.get('result', {}).get('data_array', [])]
+    return [c for c in chunks if _ARCHIVE_NOTICE_MARKER not in (c.get('chunk_text') or '')]
+
+
 def settings() -> Dict[str, Any]:
     """What this variant runs with — saved with evaluation results."""
     return {'variant': 'rerank', 'reranker': _RERANKER_MODEL, 'top_k': rerank_top_k(),
             'columns_to_rerank': rerank_columns(), 'merge': merge_mode(),
             'max_passages_per_doc': max_passages_per_doc(), 'context_budget_chars': context_budget_chars(),
-            'llm': base.llm_endpoint()}
+            'rerank_enabled': rerank_enabled(), 'ref_lookup': ref_lookup_enabled(),
+            'instructions': chat_vsi_prompts.instructions_set(), 'llm': base.llm_endpoint()}
 
 
 def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -182,14 +240,19 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
     fr_query = await base.search_query_fr(host, token, endpoint, rewrite_view)
     queries = [question] + ([fr_query] if fr_query else [])
 
+    named = refs_named_in(question) if ref_lookup_enabled() else []
     try:
-        if merge_mode() == 'union':
+        if not rerank_enabled():
+            rows, reranked = await base.retrieve(host, token, index_name, queries, base.num_results()), False
+        elif merge_mode() == 'union':
             (rows, reranked), raw = await asyncio.gather(
                 retrieve_reranked(host, token, index_name, queries, rerank_top_k()),
                 base.retrieve(host, token, index_name, queries, base.num_results()))
             rows = _merge_by_rank([rows, raw])
         else:
             rows, reranked = await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
+        if named:
+            rows = _merge_by_rank([await fetch_named_documents(host, token, index_name, question, named), rows])
         rows = fit_budget(cap_per_document(rows, max_passages_per_doc()), context_budget_chars())
     except base.ChatVsiError as exc:
         for e in base._error_events(exc.message, exc.error_type, exc.http_status):
@@ -202,7 +265,7 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
                 len(rows), sum(len(r.get('chunk_text') or '') for r in rows), len(documents), trace_id)
 
     parser = base.CitationStreamParser(documents)
-    async for chunk in stream_analysis(host, token, endpoint, base.build_prompt(div, conversation, documents),
+    async for chunk in stream_analysis(host, token, endpoint, chat_vsi_prompts.build_prompt(div, conversation, documents),
                                        max_tokens=base._ANSWER_MAX_TOKENS, thinking_budget=0, temperature=0.0,
                                        operation=base._OPERATION):
         if not chunk.startswith('data: '):
@@ -235,7 +298,9 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
     if parser.sources or parser.citations:
         yield base._event({'type': 'sources', 'sources': parser.sources, 'citations': parser.citations})
     yield base._event({'type': 'metadata', 'trace_id': trace_id,
-                       'tool_name': 'vector_search+rerank' if reranked else 'vector_search (rerank refused)',
+                       'tool_name': ('vector_search+rerank' if reranked
+                                     else 'vector_search' if not rerank_enabled() else 'vector_search (rerank refused)')
+                                    + (f'+ref_lookup({",".join(named)})' if named else ''),
                        'tool_query': fr_query or question,
                        'tool_result': ', '.join(ref for ref, _ in documents),
                        'reasoning_steps': []})
