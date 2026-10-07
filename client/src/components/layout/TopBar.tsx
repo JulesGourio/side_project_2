@@ -5,7 +5,8 @@ import { getAppConfig, type AppBranding } from '@/lib/config';
 
 const ALL_TABS = [
   { id: 'compare',   label: 'Compare',   href: '/compare' },
-  { id: 'chat',      label: 'Chat',      href: '/chat' },
+  { id: 'chat',      label: 'Chat KA',   href: '/chat' },
+  { id: 'chat-vsi',  label: 'Chat VSI',  href: '/chat-vsi' },
 ] as const;
 
 export function TopBar() {
@@ -23,7 +24,8 @@ export function TopBar() {
   // "access not granted" panel (and the backend returns 403) rather than hiding.
   const tabs = ALL_TABS;
 
-  const activeTab = location.pathname.startsWith('/chat') ? 'chat' : 'compare';
+  const activeTab = location.pathname.startsWith('/chat-vsi') ? 'chat-vsi'
+    : location.pathname.startsWith('/chat') ? 'chat' : 'compare';
 
   return (
     <header

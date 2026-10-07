@@ -12,6 +12,15 @@ import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanne
 // WebSocket streaming helper
 // ---------------------------------------------------------------------------
 
+// Who answers the chat: the division's Knowledge Assistant (Chat KA tab) or the
+// Vector Search engine (Chat VSI tab). Same WebSocket protocol, different route.
+export type ChatEngine = 'ka' | 'vsi';
+
+const ENGINES: Record<ChatEngine, { wsPath: string; title: string; header: string }> = {
+  ka: { wsPath: '/api/chat/ws', title: 'Knowledge Assistant', header: 'Knowledge Assistant on Intraqual Documentation' },
+  vsi: { wsPath: '/api/chat-vsi/ws', title: 'Chat VSI', header: 'Chat VSI on Intraqual Documentation' },
+};
+
 interface StreamCallbacks {
   onDelta: (text: string) => void;
   onDone: (data: { session_id: string; message_id?: number; content?: string; sources?: Source[] }) => void;
@@ -22,15 +31,20 @@ function streamChat(
   messages: { role: string; content: string }[],
   sessionId: string,
   division: Division,
+  wsPath: string,
   callbacks: StreamCallbacks,
   signal: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve) => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/api/chat/ws`);
+    const ws = new WebSocket(`${proto}//${location.host}${wsPath}`);
 
+    // A turn always ends with exactly one outcome: done, error, or user abort.
+    // A socket that closes without one must not leave the message on "Thinking".
+    let settled = false;
+    const finish = () => { settled = true; resolve(); };
     const cleanup = () => { try { ws.close(); } catch { /* ignore */ } };
-    signal.addEventListener('abort', () => { cleanup(); resolve(); });
+    signal.addEventListener('abort', () => { settled = true; cleanup(); resolve(); });
 
     ws.onopen = () => {
       // The division routes the turn to its single-source KA endpoint server-side.
@@ -45,10 +59,10 @@ function streamChat(
           callbacks.onDelta(parsed.delta ?? '');
         } else if (type === 'done') {
           callbacks.onDone({ session_id: parsed.session_id, message_id: parsed.message_id, content: parsed.content, sources: parsed.sources ?? [] });
-          resolve();
+          finish();
         } else if (type === 'error') {
           callbacks.onError(parsed.error ?? 'Unknown error');
-          resolve();
+          finish();
         }
       } catch {
         // ignore malformed
@@ -56,11 +70,15 @@ function streamChat(
     };
 
     ws.onerror = () => {
+      if (settled) return;
       callbacks.onError('Connection error. Please try again.');
-      resolve();
+      finish();
     };
 
-    ws.onclose = () => resolve();
+    ws.onclose = () => {
+      if (!settled) callbacks.onError('The connection closed before the answer was complete. Please try again.');
+      finish();
+    };
   });
 }
 
@@ -88,7 +106,7 @@ const SUGGESTED_PROMPTS = [
   'What is the approval process for deviations from engineering specifications?',
 ];
 
-function WelcomeState({ onPrompt }: { onPrompt: (p: string) => void }) {
+function WelcomeState({ title, onPrompt }: { title: string; onPrompt: (p: string) => void }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-8 px-6">
       {/* En-tête recentré, plus grand et parfaitement aligné avec la grille */}
@@ -103,7 +121,7 @@ function WelcomeState({ onPrompt }: { onPrompt: (p: string) => void }) {
           className="text-3xl font-bold tracking-tight"
           style={{ color: 'var(--color-text-heading)', fontFamily: 'var(--font-heading)' }}
         >
-          Knowledge Assistant
+          {title}
         </h2>
         <p className="text-base" style={{ color: 'var(--color-text-muted)' }}>
           Ask questions about your document knowledge base (Intraqual). The assistant can retrieve relevant
@@ -151,7 +169,8 @@ function WelcomeState({ onPrompt }: { onPrompt: (p: string) => void }) {
 // Main ChatView
 // ---------------------------------------------------------------------------
 
-export function ChatView() {
+export function ChatView({ engine = 'ka' }: { engine?: ChatEngine }) {
+  const engineConfig = ENGINES[engine];
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [sessionsAvailable, setSessionsAvailable] = useState(false);
@@ -310,6 +329,7 @@ export function ChatView() {
         history,
         currentSessionId,
         division,
+        engineConfig.wsPath,
         {
           onDelta: delta => {
             accumulatedContent += delta;
@@ -357,7 +377,7 @@ export function ChatView() {
       );
       setStreaming(false);
     }
-  }, [input, streaming, messages, currentSessionId, loadSessions, division]);
+  }, [input, streaming, messages, currentSessionId, loadSessions, division, engineConfig.wsPath]);
 
   const showSidebar = sidebarOpen && sessionsAvailable;
 
@@ -400,7 +420,7 @@ export function ChatView() {
             className="text-sm font-semibold"
             style={{ color: 'var(--color-text-heading)', fontFamily: 'var(--font-heading)' }}
           >
-            Knowledge Assistant on Intraqual Documentation
+            {engineConfig.header}
           </span>
           {docsAsOf && (
             <>
@@ -441,7 +461,7 @@ export function ChatView() {
 
         <div className="flex-1 overflow-y-auto py-4">
           {messages.length === 0 ? (
-            <WelcomeState onPrompt={p => handleSend(p)} />
+            <WelcomeState title={engineConfig.title} onPrompt={p => handleSend(p)} />
           ) : (
             <>
               {messages.map(msg => (

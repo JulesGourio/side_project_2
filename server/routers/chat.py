@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from ..services.chat_vsi import normalize_division, stream_chat_vsi
 from ..services.doc_catalog import augment_sources
 from ..services.lakebase import get_pool, store_error, upsert_user
 from ..services.streaming import stream_chat
@@ -29,6 +30,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 CHAT_ENABLED = os.getenv('CHAT_ENABLED', 'true').lower() == 'true'
+# Chat VSI tab: same chat, answered from the Vector Search indexes instead of the
+# Knowledge Assistant (services/chat_vsi.py). Needs CHAT_ENABLED too.
+CHAT_VSI_ENABLED = os.getenv('CHAT_VSI_ENABLED', 'true').lower() == 'true'
+ENGINE_KA = 'ka'
+ENGINE_VSI = 'vsi'
 # Base / fallback endpoint. Per-division endpoints below let the division
 # selector route to a single-source Knowledge Assistant (IS-only / AS-only /
 # combined), which is the robust fix for source scoping — a single-source KA
@@ -547,11 +553,27 @@ async def chat_stream(body: ChatRequest, request: Request):
 
 @router.websocket('/chat/ws')
 async def chat_ws(websocket: WebSocket):
-    """WebSocket streaming endpoint — avoids Databricks Apps proxy buffering."""
-    await websocket.accept()
+    """WebSocket streaming endpoint — avoids Databricks Apps proxy buffering. Answered by the KA."""
+    await _run_chat_ws(websocket, ENGINE_KA)
 
-    if not CHAT_ENABLED:
-        await websocket.send_json({'type': 'error', 'error': 'Chat is disabled'})
+
+@router.websocket('/chat-vsi/ws')
+async def chat_vsi_ws(websocket: WebSocket):
+    """Same contract as /chat/ws, answered by the Vector Search engine (services/chat_vsi.py)."""
+    await _run_chat_ws(websocket, ENGINE_VSI)
+
+
+async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
+    """One chat turn over a WebSocket. ``engine`` picks who answers: the division's
+    Knowledge Assistant (``stream_chat``) or the VSI engine (``stream_chat_vsi``). Both
+    yield the same event stream, so everything after — citation markers, catalog
+    sources, translation back, persistence — is shared."""
+    await websocket.accept()
+    is_vsi = engine == ENGINE_VSI
+    route = '/api/chat-vsi/ws' if is_vsi else '/api/chat/ws'
+
+    if not CHAT_ENABLED or (is_vsi and not CHAT_VSI_ENABLED):
+        await websocket.send_json({'type': 'error', 'error': 'Chat VSI is disabled' if is_vsi and CHAT_ENABLED else 'Chat is disabled'})
         await websocket.close()
         return
 
@@ -580,11 +602,15 @@ async def chat_ws(websocket: WebSocket):
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in data.get('messages', [])])
     session_id = data.get('session_id') or str(uuid.uuid4())
     division = (data.get('division') or 'ALL').upper()
-    endpoint = _endpoint_for_division(division)
-    if not endpoint:
-        await websocket.send_json({'type': 'error', 'error': 'CHAT_ENDPOINT not configured'})
-        await websocket.close()
-        return
+    if is_vsi:
+        # Recorded as endpoint_name, so VSI turns stay distinguishable from KA turns.
+        endpoint = f'vsi-{normalize_division(division).lower()}'
+    else:
+        endpoint = _endpoint_for_division(division)
+        if not endpoint:
+            await websocket.send_json({'type': 'error', 'error': 'CHAT_ENDPOINT not configured'})
+            await websocket.close()
+            return
 
     try:
         identity = await get_user_identity(websocket)  # type: ignore[arg-type]
@@ -595,8 +621,8 @@ async def chat_ws(websocket: WebSocket):
     workspace_url = get_workspace_url()
 
     user_content = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), '')
-    logger.info('chat turn [ws]: division=%s endpoint=%s session=%s user=%s msgs=%d q=%r',
-                division, endpoint, session_id, identity.get('email') or user_id,
+    logger.info('chat turn [ws]: engine=%s division=%s endpoint=%s session=%s user=%s msgs=%d q=%r',
+                engine, division, endpoint, session_id, identity.get('email') or user_id,
                 len(messages), user_content[:160])
 
     accumulated: list[str] = []
@@ -616,6 +642,9 @@ async def chat_ws(websocket: WebSocket):
                     messages_for_ka[i]['content'] = en_question
                     break
             logger.info('chat translate-bridge [ws]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
+
+    answer_stream = (stream_chat_vsi(host, token, division, _with_today_date(messages_for_ka)) if is_vsi
+                     else stream_chat(host, token, endpoint, _with_today_date(messages_for_ka)))
 
     async def _persist(status: str, content: str) -> Optional[int]:
         """Persist the turn (ok or error). The question is saved even on
@@ -641,7 +670,7 @@ async def chat_ws(websocket: WebSocket):
         )
 
     try:
-        async for chunk in stream_chat(host, token, endpoint, _with_today_date(messages_for_ka)):
+        async for chunk in answer_stream:
             if chunk.startswith('data: [DONE]'):
                 if not error_occurred and user_content and accumulated:
                     final_content = _apply_citation_markers(''.join(accumulated), collected_citations)
@@ -654,8 +683,8 @@ async def chat_ws(websocket: WebSocket):
                     if translate_ctx:
                         final_content = await translate_answer_back(final_content, translate_ctx, host, token)
                     msg_id = await _persist('ok', final_content)
-                    logger.info('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
-                                division, endpoint, len(collected_sources), len(collected_citations))
+                    logger.info('chat turn done [ws]: engine=%s division=%s endpoint=%s sources=%d citations=%d',
+                                engine, division, endpoint, len(collected_sources), len(collected_citations))
                     await websocket.send_json({
                         'type': 'done',
                         'session_id': session_id,
@@ -663,6 +692,23 @@ async def chat_ws(websocket: WebSocket):
                         'content': final_content,
                         'sources': collected_sources,
                     })
+                elif not error_occurred:
+                    # The engine finished without any text and without an error
+                    # (seen 2026-10-05 with a KA whose Vector Search endpoint was
+                    # gone: HTTP 200, 0 deltas). Without an outcome the browser
+                    # stays on "Thinking" — tell it the turn failed.
+                    error_text = 'No answer was produced. Please try again.'
+                    logger.warning('chat turn empty [ws]: engine=%s division=%s endpoint=%s',
+                                   engine, division, endpoint)
+                    asyncio.create_task(store_error(
+                        endpoint=route,
+                        error_type='EmptyAnswer',
+                        error_msg=f'{endpoint}: stream ended with no text',
+                        user_id=user_id,
+                        workspace_id=workspace_id or '',
+                    ))
+                    await _persist('error', '')
+                    await websocket.send_json({'type': 'error', 'error': error_text})
                 break
 
             if not chunk.startswith('data: '):
@@ -704,7 +750,7 @@ async def chat_ws(websocket: WebSocket):
                     error_occurred = True
                     error_text = parsed.get('error', '')
                     asyncio.create_task(store_error(
-                        endpoint='/api/chat/ws',
+                        endpoint=route,
                         error_type=parsed.get('error_type', 'ChatLLMError'),
                         error_msg=error_text,
                         user_id=user_id,
@@ -723,7 +769,7 @@ async def chat_ws(websocket: WebSocket):
         error_occurred = True
         error_text = str(exc)
         asyncio.create_task(store_error(
-            endpoint='/api/chat/ws',
+            endpoint=route,
             error_type=type(exc).__name__,
             error_msg=error_text,
             user_id=user_id,

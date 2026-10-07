@@ -4,6 +4,7 @@ import { CustomThemeProvider } from '@/contexts/ThemeContext';
 import { TopBar } from '@/components/layout/TopBar';
 import { ComparePage } from '@/pages/ComparePage';
 import { ChatPage } from '@/pages/ChatPage';
+import { ChatVsiPage } from '@/pages/ChatVsiPage';
 import { SharedChatPage } from '@/pages/SharedChatPage';
 import { AccessDenied } from '@/components/shared/AccessDenied';
 import { getAppConfig, getUserMe } from '@/lib/config';
@@ -46,6 +47,7 @@ function Layout() {
         <Routes>
           <Route path="/compare"   element={<ComparePage />} />
           <Route path="/chat"      element={<ChatPage />} />
+          <Route path="/chat-vsi"  element={<ChatVsiPage />} />
           <Route path="/chat/shared/:token" element={<SharedChatPage />} />
           <Route path="/no-access" element={<NoAccessPage />} />
           <Route path="*"          element={<DefaultRedirect />} />

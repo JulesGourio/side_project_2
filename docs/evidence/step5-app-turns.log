@@ -1,0 +1,9 @@
+# Step 5 — deployed qualibot-custom (deployment 01f1c1b1704f189ea57526ff99c400d1), 2026-10-06T18:17:43Z
+[/api/chat-vsi/ws ALL] OK deltas=402 first_delta=4.8s total=22.6s markers_in_stream=0 ⟦n⟧_in_done=13 numbered_sources=12 intraqual_urls=True
+   sources: [(1, 'QP-1518'), (2, 'Q0451MQ'), (3, 'MR-1465'), (4, 'MI-14059'), (5, 'Q0403MR'), (6, 'MR-1462'), (7, 'Q0197QP_FR'), (8, 'NF-10830'), (9, 'NF-10856'), (10, 'NF-10312_FR'), (11, 'NF-10313'), (12, 'MI-13667_GB')]
+[/api/chat-vsi/ws AS] OK deltas=387 first_delta=4.2s total=21.0s markers_in_stream=0 ⟦n⟧_in_done=12 numbered_sources=12 intraqual_urls=True
+   sources: [(1, 'QP-1518'), (2, 'MI-13667_GB'), (3, 'MI-14059'), (4, 'Q0451MQ'), (5, 'Q0451MQ_GB'), (6, 'MR-1462'), (7, 'MR-1465'), (8, 'Q0403MR'), (9, 'NF-10830'), (10, 'NF-10856'), (11, 'NF-10381'), (12, 'NF-10313')]
+[/api/chat-vsi/ws IS] OK deltas=237 first_delta=4.6s total=14.9s markers_in_stream=0 ⟦n⟧_in_done=3 numbered_sources=3 intraqual_urls=True
+   sources: [(1, 'PRLAT537_EN'), (2, 'Q0298QR_IS_EN'), (3, 'PRLAT558_EN')]
+[/api/chat/ws ALL] OK deltas=178 first_delta=5.3s total=9.9s markers_in_stream=0 ⟦n⟧_in_done=5 numbered_sources=4 intraqual_urls=True
+   sources: [(1, 'QP-1518'), (2, 'Q0451MQ_GB'), (3, 'QM-1063'), (4, 'DLV-32-9007'), (None, 'Q0451MQ')]

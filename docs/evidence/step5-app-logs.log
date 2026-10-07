@@ -1,0 +1,90 @@
+# Step 5 — qualibot-custom app logs (databricks apps logs qualibot-custom), [APP] lines of deployment 01f1c1b1704f189ea57526ff99c400d1 (started 18:12:40Z)
+2026-10-06T18:12:40Z [BUILD] [INFO] Starting deployment 01f1c1b1704f189ea57526ff99c400d1...
+2026-10-06T18:12:40Z [APP] INFO:     Shutting down
+2026-10-06T18:12:40Z [APP] INFO:     Waiting for application shutdown.
+2026-10-06T18:12:40Z [APP] 2026-10-06 18:12:40 UTC - server.services.lakebase - INFO - Lakebase shut down
+2026-10-06T18:12:40Z [APP] INFO:     Application shutdown complete.
+2026-10-06T18:12:40Z [APP] INFO:     Finished server process [85]
+2026-10-06T18:13:05Z [BUILD] [INFO] Deployment 01f1c1b1704f189ea57526ff99c400d1 ended in 24.91359941s
+2026-10-06T18:13:05Z [BUILD] [INFO] Deployment successful
+2026-10-06T18:13:05Z [APP] 2026-10-06 18:13:05 UTC - server.app - INFO - Starting in production mode
+2026-10-06T18:13:05Z [APP] 2026-10-06 18:13:05 UTC - server.app - INFO - COMPARE_VOLUME_PATH = '/Volumes/dev_landingzone/qualibot/doc_compare'
+2026-10-06T18:13:05Z [APP] 2026-10-06 18:13:05 UTC - server.app - INFO - Serving static files from client/out
+2026-10-06T18:13:05Z [APP] INFO:     Started server process [148]
+2026-10-06T18:13:05Z [APP] INFO:     Waiting for application startup.
+2026-10-06T18:13:06Z [APP] 2026-10-06 18:13:06 UTC - server.services.lakebase - ERROR - Lakebase schema ensure failed — continuing with existing schema: must be owner of table messages
+2026-10-06T18:13:06Z [APP] 2026-10-06 18:13:06 UTC - server.services.lakebase - INFO - Lakebase ready (ep-morning-truth-d3pxmhli.database.eu-west-1.cloud.databricks.com)
+2026-10-06T18:13:06Z [APP] INFO:     Application startup complete.
+2026-10-06T18:13:06Z [APP] INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-10-06T18:17:07Z [APP] 2026-10-06 18:17:07 UTC - server.app - INFO - [66e974da] --> GET /api/health
+2026-10-06T18:17:07Z [APP] 2026-10-06 18:17:07 UTC - server.app - INFO - [66e974da] <-- 200 (0.00s)
+2026-10-06T18:17:07Z [APP] INFO:     10.84.49.218:0 - "GET /api/health HTTP/1.1" 200 OK
+2026-10-06T18:17:08Z [APP] 2026-10-06 18:17:08 UTC - server.app - INFO - [9e913d73] --> GET /api/health
+2026-10-06T18:17:08Z [APP] 2026-10-06 18:17:08 UTC - server.app - INFO - [9e913d73] <-- 200 (0.00s)
+2026-10-06T18:17:08Z [APP] INFO:     10.84.71.124:0 - "GET /api/health HTTP/1.1" 200 OK
+2026-10-06T18:17:44Z [APP] INFO:     ('10.70.63.253', 0) - "WebSocket /api/chat-vsi/ws" [accepted]
+2026-10-06T18:17:44Z [APP] INFO:     connection open
+2026-10-06T18:17:44Z [APP] 2026-10-06 18:17:44 UTC - server.services.user - INFO - Capabilities 4597292570308533@2865348338307293: can_chat=True can_compare=True (DB)
+2026-10-06T18:17:44Z [APP] 2026-10-06 18:17:44 UTC - server.routers.chat - INFO - chat turn [ws]: engine=vsi division=ALL endpoint=vsi-all session=check-all-1791310664 user=4597292570308533 msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06T18:17:46Z [APP] 2026-10-06 18:17:46 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-gpt-5-6-luna/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:17:47Z [APP] 2026-10-06 18:17:47 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-claude-sonnet-4-6/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:17:47Z [APP] 2026-10-06 18:17:47 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/api/2.0/vector-search/indexes/dev_landingzone.qualibot.chunks_index_v1/query "HTTP/1.1 200 OK"
+2026-10-06T18:17:47Z [APP] 2026-10-06 18:17:47 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/api/2.0/vector-search/indexes/dev_landingzone.qualibot.chunks_index_v1/query "HTTP/1.1 200 OK"
+2026-10-06T18:17:47Z [APP] 2026-10-06 18:17:47 UTC - server.services.chat_vsi - INFO - chat_vsi: division=ALL index=dev_landingzone.qualibot.chunks_index_v1 fr_query='Quels documents référencent les exigences de qualification CND/END (contrôle non destructif)?' passages=20 documents=14 trace_id=vsi-065b589d8836447b92a2f4873a7917a7
+2026-10-06T18:17:47Z [APP] 2026-10-06 18:17:47 UTC - server.services.streaming - INFO - Streaming analysis from databricks-claude-sonnet-4-6
+2026-10-06T18:17:48Z [APP] 2026-10-06 18:17:48 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-claude-sonnet-4-6/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:18:06Z [APP] 2026-10-06 18:18:06 UTC - server.services.doc_catalog - INFO - doc_catalog: loaded 7600 refs from /app/python/source_code/server/data/doc_catalog.json
+2026-10-06T18:18:06Z [APP] 2026-10-06 18:18:06 UTC - server.services.doc_catalog - INFO - doc_catalog: added 4 cited documents to sources
+2026-10-06T18:18:06Z [APP] 2026-10-06 18:18:06 UTC - server.routers.chat - INFO - chat turn done [ws]: engine=vsi division=ALL endpoint=vsi-all sources=16 citations=13
+2026-10-06T18:18:06Z [APP] INFO:     connection closed
+2026-10-06T18:18:09Z [APP] INFO:     ('10.70.63.253', 0) - "WebSocket /api/chat-vsi/ws" [accepted]
+2026-10-06T18:18:09Z [APP] INFO:     connection open
+2026-10-06T18:18:09Z [APP] 2026-10-06 18:18:09 UTC - server.routers.chat - INFO - chat turn [ws]: engine=vsi division=AS endpoint=vsi-as session=check-as-1791310688 user=4597292570308533 msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06T18:18:10Z [APP] 2026-10-06 18:18:10 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-gpt-5-6-luna/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:18:11Z [APP] 2026-10-06 18:18:11 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-claude-sonnet-4-6/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:18:12Z [APP] 2026-10-06 18:18:12 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/api/2.0/vector-search/indexes/dev_landingzone.qualibot.chunks_as_index_v1/query "HTTP/1.1 200 OK"
+2026-10-06T18:18:12Z [APP] 2026-10-06 18:18:12 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/api/2.0/vector-search/indexes/dev_landingzone.qualibot.chunks_as_index_v1/query "HTTP/1.1 200 OK"
+2026-10-06T18:18:12Z [APP] 2026-10-06 18:18:12 UTC - server.services.chat_vsi - INFO - chat_vsi: division=AS index=dev_landingzone.qualibot.chunks_as_index_v1 fr_query='Quels documents référencent les exigences de qualification CND/END (NDT/NDI) ?' passages=15 documents=12 trace_id=vsi-ffa2507e99f34a57816afba900d90eb2
+2026-10-06T18:18:12Z [APP] 2026-10-06 18:18:12 UTC - server.services.streaming - INFO - Streaming analysis from databricks-claude-sonnet-4-6
+2026-10-06T18:18:13Z [APP] 2026-10-06 18:18:13 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-claude-sonnet-4-6/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:18:29Z [APP] 2026-10-06 18:18:29 UTC - server.services.doc_catalog - INFO - doc_catalog: added 2 cited documents to sources
+2026-10-06T18:18:29Z [APP] 2026-10-06 18:18:29 UTC - server.routers.chat - INFO - chat turn done [ws]: engine=vsi division=AS endpoint=vsi-as sources=14 citations=12
+2026-10-06T18:18:29Z [APP] INFO:     connection closed
+2026-10-06T18:18:32Z [APP] INFO:     ('10.116.64.93', 0) - "WebSocket /api/chat-vsi/ws" [accepted]
+2026-10-06T18:18:32Z [APP] INFO:     connection open
+2026-10-06T18:18:32Z [APP] 2026-10-06 18:18:32 UTC - server.routers.chat - INFO - chat turn [ws]: engine=vsi division=IS endpoint=vsi-is session=check-is-1791310712 user=4597292570308533 msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06T18:18:34Z [APP] 2026-10-06 18:18:34 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-gpt-5-6-luna/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:18:35Z [APP] 2026-10-06 18:18:35 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-claude-sonnet-4-6/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:18:35Z [APP] 2026-10-06 18:18:35 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/api/2.0/vector-search/indexes/dev_landingzone.qualibot.chunks_is_index_v1/query "HTTP/1.1 200 OK"
+2026-10-06T18:18:35Z [APP] 2026-10-06 18:18:35 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/api/2.0/vector-search/indexes/dev_landingzone.qualibot.chunks_is_index_v1/query "HTTP/1.1 200 OK"
+2026-10-06T18:18:35Z [APP] 2026-10-06 18:18:35 UTC - server.services.chat_vsi - INFO - chat_vsi: division=IS index=dev_landingzone.qualibot.chunks_is_index_v1 fr_query='Quels documents référencent les exigences de qualification CND/END (NDT/NDI) ?' passages=20 documents=11 trace_id=vsi-8b7d9b49a5004176bf437796aeb7dfe4
+2026-10-06T18:18:35Z [APP] 2026-10-06 18:18:35 UTC - server.services.streaming - INFO - Streaming analysis from databricks-claude-sonnet-4-6
+2026-10-06T18:18:36Z [APP] 2026-10-06 18:18:36 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-claude-sonnet-4-6/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:18:47Z [APP] 2026-10-06 18:18:47 UTC - server.routers.chat - INFO - chat turn done [ws]: engine=vsi division=IS endpoint=vsi-is sources=3 citations=3
+2026-10-06T18:18:47Z [APP] INFO:     connection closed
+2026-10-06T18:18:49Z [APP] INFO:     ('10.84.71.124', 0) - "WebSocket /api/chat/ws" [accepted]
+2026-10-06T18:18:49Z [APP] INFO:     connection open
+2026-10-06T18:18:49Z [APP] 2026-10-06 18:18:49 UTC - server.routers.chat - INFO - chat turn [ws]: engine=ka division=ALL endpoint=ka-4d15cb32-endpoint session=check-all-1791310729 user=4597292570308533 msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06T18:18:50Z [APP] 2026-10-06 18:18:50 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/databricks-gpt-5-6-luna/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:18:50Z [APP] 2026-10-06 18:18:50 UTC - httpx - INFO - HTTP Request: POST https://dbc-c623749d-731b.cloud.databricks.com/serving-endpoints/ka-4d15cb32-endpoint/invocations "HTTP/1.1 200 OK"
+2026-10-06T18:18:50Z [APP] 2026-10-06 18:18:50 UTC - server.services.streaming - INFO - stream_chat: agent format, endpoint=ka-4d15cb32-endpoint
+2026-10-06T18:18:54Z [APP] 2026-10-06 18:18:54 UTC - server.services.streaming - INFO - stream_chat first delta, item_id=c2dd30b1-cffc-445f-88bc-af76e86ef021
+2026-10-06T18:18:55Z [APP] 2026-10-06 18:18:55 UTC - server.services.streaming - INFO - stream_chat delta #20
+2026-10-06T18:18:55Z [APP] 2026-10-06 18:18:55 UTC - server.services.streaming - INFO - stream_chat annotation raw: {"type": "url_citation", "title": "https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref=QP-1518", "url": "https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref=QP-1518#:~:text=%5BSource%3A%20QP-1518%20%7C%20Title%3A%20Qualification%20and%20certification%20of%20NDT%20personnel%20%7C%20Division%3A%20AS%20%7C%20Category%3A%20AS%20-%20PROCESSES%20/%20PROCESSUS%20%7C%20Date%20d
+2026-10-06T18:18:55Z [APP] 2026-10-06 18:18:55 UTC - server.services.streaming - INFO - stream_chat annotation source #1: https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref=QP-1518
+2026-10-06T18:18:55Z [APP] 2026-10-06 18:18:55 UTC - server.services.streaming - INFO - stream_chat delta #40
+2026-10-06T18:18:56Z [APP] 2026-10-06 18:18:56 UTC - server.services.streaming - INFO - stream_chat delta #60
+2026-10-06T18:18:56Z [APP] 2026-10-06 18:18:56 UTC - server.services.streaming - INFO - stream_chat delta #80
+2026-10-06T18:18:56Z [APP] 2026-10-06 18:18:56 UTC - server.services.streaming - INFO - stream_chat delta #100
+2026-10-06T18:18:56Z [APP] 2026-10-06 18:18:56 UTC - server.services.streaming - INFO - stream_chat annotation source #2: https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref=Q0451MQ_GB
+2026-10-06T18:18:57Z [APP] 2026-10-06 18:18:57 UTC - server.services.streaming - INFO - stream_chat delta #120
+2026-10-06T18:18:58Z [APP] 2026-10-06 18:18:58 UTC - server.services.streaming - INFO - stream_chat delta #140
+2026-10-06T18:18:58Z [APP] 2026-10-06 18:18:58 UTC - server.services.streaming - INFO - stream_chat delta #160
+2026-10-06T18:18:59Z [APP] 2026-10-06 18:18:59 UTC - server.services.streaming - INFO - stream_chat annotation source #3: https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref=QM-1063
+2026-10-06T18:18:59Z [APP] 2026-10-06 18:18:59 UTC - server.services.streaming - INFO - stream_chat annotation source #4: https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref=DLV-32-9007
+2026-10-06T18:18:59Z [APP] 2026-10-06 18:18:59 UTC - server.services.streaming - INFO - stream_chat output_item type=message id=abb5103b-510f-4b32-9730-8ec23c726891
+2026-10-06T18:18:59Z [APP] 2026-10-06 18:18:59 UTC - server.services.streaming - INFO - stream_chat trace url_to_ref: 4 entries
+2026-10-06T18:18:59Z [APP] 2026-10-06 18:18:59 UTC - server.services.streaming - INFO - stream_chat done: 178 deltas, 4 sources, trace_id=tr-41b9b5ec6da07e0c1f90ded392b32683
+2026-10-06T18:18:59Z [APP] 2026-10-06 18:18:59 UTC - server.services.doc_catalog - INFO - doc_catalog: added 1 cited documents to sources
+2026-10-06T18:18:59Z [APP] 2026-10-06 18:18:59 UTC - server.routers.chat - INFO - chat turn done [ws]: engine=ka division=ALL endpoint=ka-4d15cb32-endpoint sources=5 citations=7
+2026-10-06T18:18:59Z [APP] INFO:     connection closed

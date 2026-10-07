@@ -214,8 +214,13 @@ async def stream_analysis(
     max_tokens: int,
     thinking_budget: int,
     temperature: float,
+    operation: str = 'Document comparison',
 ) -> AsyncGenerator[str, None]:
-    """Stream a chat-completion endpoint; emits SSE chunks + a final usage event."""
+    """Stream a chat-completion endpoint; emits SSE chunks + a final usage event.
+
+    ``operation`` names the feature in user-facing error messages (Compare by
+    default; the Chat VSI engine passes its own label).
+    """
     url = f'{host}/serving-endpoints/{endpoint_name}/invocations'
 
     payload: Dict[str, Any] = {
@@ -276,7 +281,7 @@ async def stream_analysis(
                         logger.error('%s returned %d (attempt %d): %s', endpoint_name, response.status_code, attempt, err)
                         error_msg = (
                             _TIRED_MESSAGE if response.status_code in _RETRYABLE_5XX
-                            else _friendly_error("Document comparison", f"endpoint returned {response.status_code}")
+                            else _friendly_error(operation, f"endpoint returned {response.status_code}")
                         )
                         yield f'data: {json.dumps({"type": "error", "error": error_msg, "error_type": "HTTPError", "http_status": response.status_code})}\n\n'
                         yield 'data: [DONE]\n\n'
@@ -364,17 +369,17 @@ async def stream_analysis(
 
         except httpx.TimeoutException as e:
             logger.warning('Analysis timeout: %s', e, exc_info=True)
-            yield f'data: {json.dumps({"type": "error", "error": _friendly_error("Document comparison", "request timed out"), "error_type": "TimeoutError", "http_status": 0})}\n\n'
+            yield f'data: {json.dumps({"type": "error", "error": _friendly_error(operation, "request timed out"), "error_type": "TimeoutError", "http_status": 0})}\n\n'
             yield 'data: [DONE]\n\n'
             return
         except Exception as e:
             logger.error('Error streaming %s: %s', endpoint_name, e, exc_info=True)
-            yield f'data: {json.dumps({"type": "error", "error": _friendly_error("Document comparison", str(e)), "error_type": type(e).__name__, "http_status": 0})}\n\n'
+            yield f'data: {json.dumps({"type": "error", "error": _friendly_error(operation, str(e)), "error_type": type(e).__name__, "http_status": 0})}\n\n'
             yield 'data: [DONE]\n\n'
             return
 
     logger.error('%s: rate limit exceeded after %d retries', endpoint_name, _MAX_RETRIES_429)
-    yield f'data: {json.dumps({"type": "error", "error": _friendly_error("Document comparison", "Rate limit exceeded — please try again later"), "error_type": "RateLimitError", "http_status": 429})}\n\n'
+    yield f'data: {json.dumps({"type": "error", "error": _friendly_error(operation, "Rate limit exceeded — please try again later"), "error_type": "RateLimitError", "http_status": 429})}\n\n'
     yield 'data: [DONE]\n\n'
 
 
