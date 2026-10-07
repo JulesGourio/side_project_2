@@ -84,5 +84,6 @@ for name in _list("serving_endpoints"):
 
 total = len(statements) + len(_list("serving_endpoints"))
 if failed:
-    raise RuntimeError(f"{len(failed)}/{total} grant(s) failed — see above.")
+    details = "\n".join(f"- {what}\n    -> {err}" for what, err in failed)
+    raise RuntimeError(f"{len(failed)}/{total} grant(s) failed:\n{details}")
 print(f"All {total} grants applied.")
