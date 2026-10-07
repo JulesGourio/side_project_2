@@ -265,6 +265,7 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
                 len(rows), sum(len(r.get('chunk_text') or '') for r in rows), len(documents), trace_id)
 
     parser = base.CitationStreamParser(documents)
+    usage: Dict[str, Any] = {}
     async for chunk in stream_analysis(host, token, endpoint, chat_vsi_prompts.build_prompt(div, conversation, documents),
                                        max_tokens=base._ANSWER_MAX_TOKENS, thinking_budget=0, temperature=0.0,
                                        operation=base._OPERATION):
@@ -291,6 +292,8 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
             return
         elif kind == 'warning':
             logger.warning('chat_vsi_rerank: %s', event.get('detail') or event)
+        elif kind == 'usage':
+            usage = {k: event.get(k) for k in ('input_tokens', 'output_tokens', 'thinking_tokens', 'cost_eur')}
 
     tail = parser.flush()
     if tail:
@@ -303,5 +306,7 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
                                     + (f'+ref_lookup({",".join(named)})' if named else ''),
                        'tool_query': fr_query or question,
                        'tool_result': ', '.join(ref for ref, _ in documents),
-                       'reasoning_steps': []})
+                       'reasoning_steps': [],
+                       # Answer generation only (the short French rewrite call is not counted).
+                       'usage': usage, 'llm': endpoint})
     yield 'data: [DONE]\n\n'

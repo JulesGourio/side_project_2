@@ -46,6 +46,7 @@ UNION = {'CHAT_VSI_RERANK_MERGE': 'union'}
 V2 = {'CHAT_VSI_INSTRUCTIONS': 'v2'}
 CTX = {'CHAT_VSI_RERANK_COLUMNS': 'REF,semantic_headers,chunk_text'}
 V3 = {'CHAT_VSI_INSTRUCTIONS': 'v3'}
+S55 = {'CHAT_VSI_LLM_ENDPOINT': 'databricks-claude-sonnet-5-5'}   # rewrite + answer model
 REF = {'CHAT_VSI_REF_LOOKUP': 'on'}
 BUDGET = {'CHAT_VSI_RERANK_TOP_K': '25', 'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000'}
 
@@ -69,18 +70,21 @@ PLAN = [
          env={**UNION, **V2, 'CHAT_VSI_RERANK_TOP_K': '25', 'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000',
               'CHAT_VSI_REF_LOOKUP': 'on'},
          notes='union + v2 + 35k-char budget + REF lookup'),
-    # Batch 3 — base = rerank-union-ctx (best of batch 2); v2 prompt dropped (-3 questions vs ka
-    # prompt on the same search). Budget and REF lookup were only tried together with v2.
+    # Batch 3 — base = rerank-union-ctx (best of batch 2, 76.2% correct). v2 prompt dropped
+    # (-3 questions vs the KA prompt on the same search); budget and REF lookup were only tried
+    # with v2. From here on the model is Claude Sonnet 5.5; the 4.6 run2 gives stability + cost.
     dict(eval_id='union-ctx-run2', engine='vsi', variant='rerank', env={**UNION, **CTX},
-         notes='rerank-union-ctx again: is 76% stable?'),
-    dict(eval_id='union-ctx-v3', engine='vsi', variant='rerank', env={**UNION, **CTX, **V3},
-         notes='KA prompt + grounding rules + doc-type glossary'),
-    dict(eval_id='union-ctx-ref', engine='vsi', variant='rerank', env={**UNION, **CTX, **REF},
+         notes='rerank-union-ctx again on Sonnet 4.6: stability + measured cost'),
+    dict(eval_id='union-ctx-s55', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55},
+         notes='rerank-union-ctx on Sonnet 5.5 (reference for the s55 attempts)'),
+    dict(eval_id='union-ctx-s55-v3', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **V3},
+         notes='+ v3 prompt (KA prompt + grounding rules + doc-type glossary)'),
+    dict(eval_id='union-ctx-s55-ref', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **REF},
          notes='+ REF lookup'),
-    dict(eval_id='union-ctx-budget', engine='vsi', variant='rerank', env={**UNION, **CTX, **BUDGET},
+    dict(eval_id='union-ctx-s55-budget', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **BUDGET},
          notes='+ top_k 25 and 35k-char budget'),
-    dict(eval_id='union-ctx-all-v3', engine='vsi', variant='rerank', env={**UNION, **CTX, **V3, **REF, **BUDGET},
-         notes='union-ctx + v3 + REF lookup + budget'),
+    dict(eval_id='union-ctx-s55-all', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **V3, **REF, **BUDGET},
+         notes='+ v3 + REF lookup + budget'),
 ]
 
 # COMMAND ----------
@@ -261,6 +265,8 @@ async def chat_turn(engine: str, messages: list) -> dict:
         'retrieved_refs': sorted({canon_ref(r.strip()) for r in (meta.get('tool_result') or '').split(',') if r.strip()})
                           if engine == 'vsi' else [],
         'search': (meta.get('tool_name') or '') if engine == 'vsi' else '',
+        # VSI 'rerank' variant only: tokens and cost of the answer generation (streaming.py rates).
+        'usage': meta.get('usage') or {},
     }
 
 
@@ -323,7 +329,8 @@ ka_endpoint string, vsi_llm_endpoint string, vsi_index string, vsi_variant strin
 app_code_hash string, retrieved_refs array<string>, search string, mlflow_run_id string, golden_table string,
 dataset_record_id string, question string, turns int, case_kind string, golden_refs array<string>,
 answer_refs array<string>, correctness double, guidelines double, doc_recall double, latency_s double,
-first_token_s double, question_lang string, answer string"""
+first_token_s double, question_lang string, answer string, input_tokens double, output_tokens double,
+thinking_tokens double, cost_eur double"""
 
 # COMMAND ----------
 
@@ -376,6 +383,10 @@ for plan in TODO:
             'latency_s': _as_float(out.get('latency_s')), 'first_token_s': _as_float(out.get('first_token_s')),
             'question_lang': out.get('question_lang') or '',
             'answer': out.get('response'),
+            'input_tokens': _as_float((out.get('usage') or {}).get('input_tokens')),
+            'output_tokens': _as_float((out.get('usage') or {}).get('output_tokens')),
+            'thinking_tokens': _as_float((out.get('usage') or {}).get('thinking_tokens')),
+            'cost_eur': _as_float((out.get('usage') or {}).get('cost_eur')),
         })
     spark.createDataFrame(records, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
     ok = [r['correctness'] for r in records if r['correctness'] is not None]
@@ -396,7 +407,10 @@ SELECT eval_id, max(notes) AS notes, count(*) AS cases,
        round(avg(guidelines) * 100, 1)      AS guidelines_pct,
        round(avg(doc_recall) * 100, 1)      AS doc_recall_pct,
        round(percentile(latency_s, 0.5), 1) AS latency_p50_s,
-       round(percentile(latency_s, 0.9), 1) AS latency_p90_s
+       round(percentile(latency_s, 0.9), 1) AS latency_p90_s,
+       round(avg(input_tokens))             AS avg_input_tokens,
+       round(avg(output_tokens))            AS avg_output_tokens,
+       round(avg(cost_eur), 4)              AS avg_cost_eur_per_question
 FROM latest GROUP BY eval_id ORDER BY correct_pct DESC, doc_recall_pct DESC"""))
 
 display(spark.sql("""

@@ -191,3 +191,22 @@ def test_instructions_v3_is_ka_plus_addendum(monkeypatch):
     assert system.startswith(chat_vsi.load_instructions('AS'))
     assert 'ONLY from the numbered passages' in system and 'NF, FDAQL' in system
     assert system.endswith(chat_vsi.CITATION_RULE)
+
+
+def test_metadata_carries_generation_usage():
+    async def _gen(*args, **kwargs):
+        yield f'data: {json.dumps({"type": "response.output_text.delta", "delta": "ok"})}\n\n'
+        yield f'data: {json.dumps({"type": "usage", "input_tokens": 12000, "output_tokens": 800, "thinking_tokens": 0, "cost_eur": 0.05})}\n\n'
+        yield 'data: [DONE]\n\n'
+    with (patch.object(chat_vsi_rerank, 'retrieve_reranked', AsyncMock(return_value=([ROW], True))),
+          patch.object(chat_vsi, '_complete', AsyncMock(return_value='q')),
+          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_gen)):
+        out = asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', [{'role': 'user', 'content': 'q'}])))
+    meta = next(json.loads(c[6:]) for c in out if '"metadata"' in c)
+    assert meta['usage'] == {'input_tokens': 12000, 'output_tokens': 800, 'thinking_tokens': 0, 'cost_eur': 0.05}
+
+
+def test_claude_5_models_get_no_temperature():
+    from server.services.streaming import supports_temperature
+    assert supports_temperature('databricks-claude-sonnet-4-6')
+    assert not supports_temperature('databricks-claude-sonnet-5-5')

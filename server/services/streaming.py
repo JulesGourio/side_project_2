@@ -17,7 +17,12 @@ DEFAULT_CONNECT_TIMEOUT_S = float(os.getenv('COMPARE_ANALYSIS_CONNECT_TIMEOUT_S'
 
 _PRICING_USD: Dict[str, Dict[str, float]] = {
     'databricks-claude-haiku-4-5': {'input': 1.0, 'output': 5.0},
-    'databricks-claude-sonnet-4-6': {'input': 3.0,  'output': 15.0},
+    # Sonnet 4.6: 42.857 / 214.286 DBU per 1M tokens (workspace console, 2026-10-07) x 0.078 EUR/DBU,
+    # in USD via _EUR_PER_USD — the former 3 / 15 USD list price understated the cost by ~20%.
+    'databricks-claude-sonnet-4-6': {'input': 3.634, 'output': 18.168},
+    # Sonnet 5.5: assumed 28.571 / 142.857 DBU (list price 2/3 of Sonnet 4.6) — TO CONFIRM in the
+    # workspace console (Serving Endpoints > databricks-claude-sonnet-5-5) and fix here.
+    'databricks-claude-sonnet-5-5': {'input': 2.422, 'output': 12.112},
     'databricks-claude-opus-4-6':   {'input': 15.0, 'output': 75.0},
     'databricks-claude-haiku-4-5':  {'input': 0.8,  'output': 4.0},
     # Confirmed 2026-07-29 from the workspace's Serving Endpoints console
@@ -64,7 +69,9 @@ _endpoint_format_cache: Dict[str, str] = {}
 # COMPARE_SUMMARY_IMAGE_ENDPOINT defaults to databricks-gpt-5-mini and this
 # regex didn't cover it. The `\b` keeps this from also matching
 # "gpt-5-4-mini" (no bare "gpt-5-mini" substring in that name).
-_NO_TEMPERATURE_RE = re.compile(r'gpt-5-6|gpt-5-mini\b', re.I)
+# Claude 5 generation (Sonnet 5 / 5.5, Opus 5 / 5.5, Fable) rejects non-default sampling
+# parameters too (Anthropic API: temperature != default -> 400), so the same rule applies.
+_NO_TEMPERATURE_RE = re.compile(r'gpt-5-6|gpt-5-mini\b|claude-(?:sonnet|opus)-5|claude-fable', re.I)
 
 
 def supports_temperature(endpoint_name: str) -> bool:
