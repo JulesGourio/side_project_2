@@ -42,11 +42,15 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 #   CHAT_VSI_REF_LOOKUP      off | on         filtered search on the REFs named in the question
 #   CHAT_VSI_INSTRUCTIONS    ka | v2 | v3     v2 = compact VSI prompt, v3 = ka + VSI addendum
 #   CHAT_VSI_LLM_ENDPOINT    (app.yaml)       answer model
+#   CHAT_VSI_ANSWER_MAX_TOKENS / CHAT_VSI_REWRITE_MAX_TOKENS  2000 / 120  output ceilings (thinking included)
 UNION = {'CHAT_VSI_RERANK_MERGE': 'union'}
 V2 = {'CHAT_VSI_INSTRUCTIONS': 'v2'}
 CTX = {'CHAT_VSI_RERANK_COLUMNS': 'REF,semantic_headers,chunk_text'}
 V3 = {'CHAT_VSI_INSTRUCTIONS': 'v3'}
-S55 = {'CHAT_VSI_LLM_ENDPOINT': 'databricks-claude-sonnet-5-5'}   # rewrite + answer model
+# Sonnet 5.5 thinks by default and the thinking counts in max_tokens: with the baseline's
+# 2000 / 120 ceilings the answers were truncated (first s55 batch, 2026-10-07, deleted).
+S55 = {'CHAT_VSI_LLM_ENDPOINT': 'databricks-claude-sonnet-5-5',      # rewrite + answer model
+       'CHAT_VSI_ANSWER_MAX_TOKENS': '16000', 'CHAT_VSI_REWRITE_MAX_TOKENS': '4000'}
 REF = {'CHAT_VSI_REF_LOOKUP': 'on'}
 BUDGET = {'CHAT_VSI_RERANK_TOP_K': '25', 'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000'}
 

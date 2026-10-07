@@ -65,7 +65,7 @@ def _llm(*deltas):
 def test_stream_contract_same_as_baseline():
     messages = [{'role': 'user', 'content': '[Date: 2026-10-07]\n\nQui qualifie le personnel CND ?'}]
     with (patch.object(chat_vsi_rerank, 'retrieve_reranked', AsyncMock(return_value=([ROW], True))),
-          patch.object(chat_vsi, '_complete', AsyncMock(return_value='qualification personnel CND')),
+          patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='qualification personnel CND')),
           patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm('QP-1518 [', '1] fait foi.'))):
         raw = asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
     events = [json.loads(c[6:]) for c in raw if c.startswith('data: ') and '[DONE]' not in c]
@@ -113,7 +113,7 @@ def test_union_merges_reranked_and_raw_search(monkeypatch):
     messages = [{'role': 'user', 'content': 'q'}]
     with (patch.object(chat_vsi_rerank, 'retrieve_reranked', AsyncMock(return_value=(reranked, True))),
           patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=raw)),
-          patch.object(chat_vsi, '_complete', AsyncMock(return_value='q fr')),
+          patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='q fr')),
           patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm_spy)):
         asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
     prompt = captured['prompt'][-1]['content']
@@ -171,7 +171,7 @@ def test_ref_lookup_passages_come_first_and_filter_on_ref(monkeypatch):
         return _llm('ok')(*args, **kwargs)
     messages = [{'role': 'user', 'content': 'résume la slide 15 du MI-14242'}]
     with (patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=[ROW])) as raw,
-          patch.object(chat_vsi, '_complete', AsyncMock(return_value='q fr')),
+          patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='q fr')),
           patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm_spy)):
         out = asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
     raw.assert_awaited_once()
@@ -199,7 +199,7 @@ def test_metadata_carries_generation_usage():
         yield f'data: {json.dumps({"type": "usage", "input_tokens": 12000, "output_tokens": 800, "thinking_tokens": 0, "cost_eur": 0.05})}\n\n'
         yield 'data: [DONE]\n\n'
     with (patch.object(chat_vsi_rerank, 'retrieve_reranked', AsyncMock(return_value=([ROW], True))),
-          patch.object(chat_vsi, '_complete', AsyncMock(return_value='q')),
+          patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='q')),
           patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_gen)):
         out = asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', [{'role': 'user', 'content': 'q'}])))
     meta = next(json.loads(c[6:]) for c in out if '"metadata"' in c)
@@ -210,3 +210,26 @@ def test_claude_5_models_get_no_temperature():
     from server.services.streaming import supports_temperature
     assert supports_temperature('databricks-claude-sonnet-4-6')
     assert not supports_temperature('databricks-claude-sonnet-5-5')
+
+
+def test_rewrite_reads_reasoning_model_content_and_uses_its_ceiling(monkeypatch):
+    sent = []
+
+    async def _post(self, url, json=None, headers=None):
+        sent.append(json)
+        body = {'choices': [{'message': {'content': [{'type': 'reasoning', 'summary': []},
+                                                     {'type': 'text', 'text': 'qualification CND'}]}}]}
+        return httpx.Response(200, json=body, request=httpx.Request('POST', url))
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
+    monkeypatch.setenv('CHAT_VSI_REWRITE_MAX_TOKENS', '4000')
+    q = asyncio.run(chat_vsi_rerank.search_query_fr('https://h', 't', 'databricks-claude-sonnet-5-5',
+                                                    [{'role': 'user', 'content': 'NDT?'}]))
+    assert q == 'qualification CND'
+    assert sent[0]['max_tokens'] == 4000 and 'temperature' not in sent[0]
+
+
+def test_answer_ceiling_is_configurable(monkeypatch):
+    monkeypatch.delenv('CHAT_VSI_ANSWER_MAX_TOKENS', raising=False)
+    assert chat_vsi_rerank.answer_max_tokens() == 2000
+    monkeypatch.setenv('CHAT_VSI_ANSWER_MAX_TOKENS', '16000')
+    assert chat_vsi_rerank.answer_max_tokens() == 16000 and chat_vsi_rerank.settings()['answer_max_tokens'] == 16000

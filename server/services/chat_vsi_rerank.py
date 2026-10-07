@@ -25,7 +25,11 @@ Two optional settings, off by default (the variant then behaves as first measure
   reads that document instead of whatever looks similar;
 - ``CHAT_VSI_RERANK_ENABLED=false`` — raw HYBRID search as in the baseline (to test the
   other settings, e.g. the v2 prompt, without the reranker);
-- ``CHAT_VSI_INSTRUCTIONS=v2`` — the VSI-specific prompt (``chat_vsi_prompts.py``).
+- ``CHAT_VSI_INSTRUCTIONS=v2|v3`` — the VSI-specific prompts (``chat_vsi_prompts.py``);
+- ``CHAT_VSI_ANSWER_MAX_TOKENS`` / ``CHAT_VSI_REWRITE_MAX_TOKENS`` (defaults 2000 / 120, the
+  baseline's) — output ceilings of the answer and of the French rewrite. Models that think
+  by default (Claude Sonnet 5.5) spend part of the ceiling on reasoning: 2000 truncated
+  answers and 120 can leave the rewrite empty (2026-10-07) — raise both for them.
 
 Everything else — rewrite, grouping by document, prompt, instructions, generation, citation
 parsing, event stream — is the baseline's own code, imported from ``chat_vsi``. If the
@@ -125,13 +129,56 @@ async def fetch_named_documents(host: str, token: str, index_name: str, query: s
     return [c for c in chunks if _ARCHIVE_NOTICE_MARKER not in (c.get('chunk_text') or '')]
 
 
+def answer_max_tokens() -> int:
+    return int(os.getenv('CHAT_VSI_ANSWER_MAX_TOKENS', str(base._ANSWER_MAX_TOKENS)))
+
+
+def rewrite_max_tokens() -> int:
+    return int(os.getenv('CHAT_VSI_REWRITE_MAX_TOKENS', str(base._QUERY_MAX_TOKENS)))
+
+
+def _message_text(content: Any) -> str:
+    """Chat-completion ``message.content``: a string, or a list of blocks (reasoning models)
+    from which only the text blocks are kept."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return ''.join(b.get('text', '') for b in content
+                       if isinstance(b, dict) and b.get('type') in (None, 'text', 'output_text'))
+    return ''
+
+
+async def search_query_fr(host: str, token: str, endpoint: str, conversation: List[Dict[str, str]]) -> Any:
+    """``chat_vsi.search_query_fr`` with a configurable ceiling and reasoning-model content."""
+    transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)
+    payload: Dict[str, Any] = {'messages': [{'role': 'system', 'content': base.REWRITE_PROMPT},
+                                            {'role': 'user', 'content': transcript}],
+                               'max_tokens': rewrite_max_tokens()}
+    if base.supports_temperature(endpoint):
+        payload['temperature'] = 0.0
+    try:
+        async with httpx.AsyncClient(timeout=base._LLM_TIMEOUT_S) as client:
+            resp = await client.post(f'{host}/serving-endpoints/{endpoint}/invocations', json=payload,
+                                     headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+            resp.raise_for_status()
+            query = _message_text(resp.json()['choices'][0]['message'].get('content')).strip()
+    except Exception as exc:  # noqa: BLE001 — the turn goes on with the question only
+        logger.warning('chat_vsi_rerank: search query rewrite failed (%s) — searching with the question only', exc)
+        return None
+    if not query:
+        logger.warning('chat_vsi_rerank: empty search query rewrite on %s (max_tokens=%d) — question only',
+                       endpoint, rewrite_max_tokens())
+    return query or None
+
+
 def settings() -> Dict[str, Any]:
     """What this variant runs with — saved with evaluation results."""
     return {'variant': 'rerank', 'reranker': _RERANKER_MODEL, 'top_k': rerank_top_k(),
             'columns_to_rerank': rerank_columns(), 'merge': merge_mode(),
             'max_passages_per_doc': max_passages_per_doc(), 'context_budget_chars': context_budget_chars(),
             'rerank_enabled': rerank_enabled(), 'ref_lookup': ref_lookup_enabled(),
-            'instructions': chat_vsi_prompts.instructions_set(), 'llm': base.llm_endpoint()}
+            'instructions': chat_vsi_prompts.instructions_set(), 'answer_max_tokens': answer_max_tokens(),
+            'rewrite_max_tokens': rewrite_max_tokens(), 'llm': base.llm_endpoint()}
 
 
 def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -237,7 +284,7 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
 
     question = base._without_date(conversation[-1]['content'])
     rewrite_view = conversation[:-1] + [{'role': 'user', 'content': question}]
-    fr_query = await base.search_query_fr(host, token, endpoint, rewrite_view)
+    fr_query = await search_query_fr(host, token, endpoint, rewrite_view)
     queries = [question] + ([fr_query] if fr_query else [])
 
     named = refs_named_in(question) if ref_lookup_enabled() else []
@@ -267,7 +314,7 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
     parser = base.CitationStreamParser(documents)
     usage: Dict[str, Any] = {}
     async for chunk in stream_analysis(host, token, endpoint, chat_vsi_prompts.build_prompt(div, conversation, documents),
-                                       max_tokens=base._ANSWER_MAX_TOKENS, thinking_budget=0, temperature=0.0,
+                                       max_tokens=answer_max_tokens(), thinking_budget=0, temperature=0.0,
                                        operation=base._OPERATION):
         if not chunk.startswith('data: '):
             yield chunk
