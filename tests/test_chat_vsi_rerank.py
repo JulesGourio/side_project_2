@@ -233,3 +233,18 @@ def test_answer_ceiling_is_configurable(monkeypatch):
     assert chat_vsi_rerank.answer_max_tokens() == 2000
     monkeypatch.setenv('CHAT_VSI_ANSWER_MAX_TOKENS', '16000')
     assert chat_vsi_rerank.answer_max_tokens() == 16000 and chat_vsi_rerank.settings()['answer_max_tokens'] == 16000
+
+
+def test_ref_lookup_reads_refs_from_earlier_turns(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_REF_LOOKUP', 'on')
+    monkeypatch.setenv('CHAT_VSI_RERANK_ENABLED', 'false')
+    fetched = AsyncMock(return_value=[])
+    messages = [{'role': 'user', 'content': 'ordre des sites P&L LEAP ?'},
+                {'role': 'assistant', 'content': 'Voir MI-14242 ⟦1⟧.'},
+                {'role': 'user', 'content': 'résume la slide 15'}]
+    with (patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=[ROW])),
+          patch.object(chat_vsi_rerank, 'fetch_named_documents', fetched),
+          patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='q')),
+          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm('ok'))):
+        asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
+    assert 'MI-14242' in fetched.await_args.args[4]

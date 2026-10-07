@@ -56,7 +56,7 @@ BUDGET = {'CHAT_VSI_RERANK_TOP_K': '25', 'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000
 
 PLAN = [
     # Already measured on 2026-10-07 — kept here for the record, skipped because saved.
-    dict(eval_id='ka', engine='ka'),
+    dict(eval_id='ka', engine='ka', repeat=2),
     dict(eval_id='baseline', engine='vsi', variant='baseline'),
     dict(eval_id='rerank', engine='vsi', variant='rerank', notes='reranker 50->12'),
     # Batch 2
@@ -66,7 +66,7 @@ PLAN = [
          env={'CHAT_VSI_RERANK_ENABLED': 'false', **V2}, notes='baseline search + v2 prompt'),
     dict(eval_id='rerank-union', engine='vsi', variant='rerank', env=UNION,
          notes='reranked + raw results, KA prompt'),
-    dict(eval_id='rerank-union-ctx', engine='vsi', variant='rerank', env={**UNION, **CTX},
+    dict(eval_id='rerank-union-ctx', engine='vsi', variant='rerank', env={**UNION, **CTX}, repeat=3,
          notes='union, reranker reads REF + section headers'),
     dict(eval_id='union-v2', engine='vsi', variant='rerank', env={**UNION, **V2},
          notes='union + v2 prompt'),
@@ -79,7 +79,7 @@ PLAN = [
     # with v2. From here on the model is Claude Sonnet 5.5; the 4.6 run2 gives stability + cost.
     dict(eval_id='union-ctx-run2', engine='vsi', variant='rerank', env={**UNION, **CTX},
          notes='rerank-union-ctx again on Sonnet 4.6: stability + measured cost'),
-    dict(eval_id='union-ctx-s55', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55},
+    dict(eval_id='union-ctx-s55', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55}, repeat=3,
          notes='rerank-union-ctx on Sonnet 5.5 (reference for the s55 attempts)'),
     dict(eval_id='union-ctx-s55-v3', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **V3},
          notes='+ v3 prompt (KA prompt + grounding rules + doc-type glossary)'),
@@ -89,6 +89,11 @@ PLAN = [
          notes='+ top_k 25 and 35k-char budget'),
     dict(eval_id='union-ctx-s55-all', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **V3, **REF, **BUDGET},
          notes='+ v3 + REF lookup + budget'),
+    # Batch 4 — identical runs disagree by ±2 questions (union-ctx-s55 vs -s55-ref, whose REF
+    # lookup never fired, 81% vs 71%): the repeats above give averages for ka, rerank-union-ctx
+    # (Sonnet 4.6) and union-ctx-s55. REF lookup now also reads the earlier turns.
+    dict(eval_id='union-ctx-s55-ref2', engine='vsi', variant='rerank', env={**UNION, **CTX, **S55, **REF}, repeat=2,
+         notes='REF lookup incl. earlier turns'),
 ]
 
 # COMMAND ----------
@@ -111,11 +116,19 @@ RESULTS = dbutils.widgets.get('results_table').strip()
 
 _ids = [p['eval_id'] for p in PLAN]
 assert len(_ids) == len(set(_ids)), 'duplicate eval_id in PLAN'
-_done = set()
+# `repeat` (default 1): how many saved attempts the eval_id should have. One run of 21 questions
+# moves by ±2 questions between identical runs (2026-10-07), so compare configs on averages.
+_done = {}
 if spark.catalog.tableExists(RESULTS):
-    _done = {r['eval_id'] for r in spark.sql(f'SELECT DISTINCT eval_id FROM {RESULTS}').collect()}
-TODO = [p for p in PLAN if (not ONLY or p['eval_id'] in ONLY) and (RERUN or p['eval_id'] not in _done)]
-print('already saved :', sorted(_done & set(_ids)))
+    _done = {r['eval_id']: r['n'] for r in spark.sql(
+        f'SELECT eval_id, count(DISTINCT attempt_ts) AS n FROM {RESULTS} GROUP BY eval_id').collect()}
+TODO = []
+for p in PLAN:
+    if ONLY and p['eval_id'] not in ONLY:
+        continue
+    missing = 1 if RERUN else max(0, p.get('repeat', 1) - _done.get(p['eval_id'], 0))
+    TODO += [p] * missing
+print('saved attempts:', {k: v for k, v in _done.items() if k in _ids})
 print('to run        :', [p['eval_id'] for p in TODO])
 
 # COMMAND ----------
@@ -398,32 +411,27 @@ for plan in TODO:
 
 # COMMAND ----------
 
-# DBTITLE 1,Leaderboard (latest attempt of each eval_id) and every attempt vs ka
-spark.sql(f"""
-CREATE OR REPLACE TEMPORARY VIEW latest AS
-SELECT r.* FROM {RESULTS} r
-JOIN (SELECT eval_id, max(attempt_ts) AS ts FROM {RESULTS} GROUP BY eval_id) l
-  ON r.eval_id = l.eval_id AND r.attempt_ts = l.ts""")
+# DBTITLE 1,Leaderboard — average over every saved attempt of each eval_id, then vs ka
+display(spark.sql(f"""
+WITH per_attempt AS (
+  SELECT eval_id, attempt_ts, max(notes) AS notes, max(coalesce(vsi_llm_endpoint, ka_endpoint)) AS model,
+         avg(correctness) AS c, avg(guidelines) AS g, avg(doc_recall) AS d,
+         percentile(latency_s, 0.5) AS p50, percentile(first_token_s, 0.5) AS ft, avg(cost_eur) AS eur
+  FROM {RESULTS} GROUP BY eval_id, attempt_ts)
+SELECT eval_id, max(model) AS model, count(*) AS attempts,
+       round(avg(c) * 100, 1) AS correct_pct_avg, round(min(c) * 100, 1) AS correct_min, round(max(c) * 100, 1) AS correct_max,
+       round(avg(g) * 100, 1) AS guidelines_pct, round(avg(d) * 100, 1) AS doc_recall_pct,
+       round(avg(p50), 1) AS latency_p50_s, round(avg(ft), 1) AS first_token_s, round(avg(eur), 4) AS eur_per_q,
+       max(notes) AS notes
+FROM per_attempt GROUP BY eval_id ORDER BY correct_pct_avg DESC"""))
 
-display(spark.sql("""
-SELECT eval_id, max(notes) AS notes, count(*) AS cases,
-       round(avg(correctness) * 100, 1)     AS correct_pct,
-       round(avg(guidelines) * 100, 1)      AS guidelines_pct,
-       round(avg(doc_recall) * 100, 1)      AS doc_recall_pct,
-       round(percentile(latency_s, 0.5), 1) AS latency_p50_s,
-       round(percentile(latency_s, 0.9), 1) AS latency_p90_s,
-       round(avg(input_tokens))             AS avg_input_tokens,
-       round(avg(output_tokens))            AS avg_output_tokens,
-       round(avg(cost_eur), 4)              AS avg_cost_eur_per_question
-FROM latest GROUP BY eval_id ORDER BY correct_pct DESC, doc_recall_pct DESC"""))
-
-display(spark.sql("""
+display(spark.sql(f"""
+WITH q AS (SELECT eval_id, question, avg(correctness) AS c, avg(doc_recall) AS d FROM {RESULTS} GROUP BY eval_id, question)
 SELECT b.eval_id,
-       sum(CASE WHEN b.correctness > a.correctness THEN 1 ELSE 0 END) AS better_than_ka,
-       sum(CASE WHEN b.correctness < a.correctness THEN 1 ELSE 0 END) AS worse_than_ka,
-       round(avg(b.doc_recall - a.doc_recall) * 100, 1)                AS doc_recall_gain_pts,
-       concat_ws(' | ', collect_list(CASE WHEN b.correctness < a.correctness THEN left(a.question, 60) END)) AS lost_questions,
-       concat_ws(' | ', collect_list(CASE WHEN b.correctness > a.correctness THEN left(a.question, 60) END)) AS won_questions
-FROM latest a JOIN latest b ON a.question = b.question
+       round(sum(b.c - a.c), 1)                                      AS net_questions_vs_ka,
+       round(avg(b.d - a.d) * 100, 1)                                AS doc_recall_gain_pts,
+       concat_ws(' | ', collect_list(CASE WHEN b.c < a.c - 0.5 THEN left(a.question, 50) END)) AS mostly_lost,
+       concat_ws(' | ', collect_list(CASE WHEN b.c > a.c + 0.5 THEN left(a.question, 50) END)) AS mostly_won
+FROM q a JOIN q b ON a.question = b.question
 WHERE a.eval_id = 'ka' AND b.eval_id <> 'ka'
-GROUP BY b.eval_id ORDER BY better_than_ka - worse_than_ka DESC"""))
+GROUP BY b.eval_id ORDER BY net_questions_vs_ka DESC"""))

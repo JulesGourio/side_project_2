@@ -19,7 +19,7 @@ Two optional settings, off by default (the variant then behaves as first measure
   image descriptions), so a fixed passage count gives a context of very uneven size: with a
   budget, passages are taken in rank order until N characters (~N/4 tokens), whatever their
   count. Pair it with a larger ``CHAT_VSI_RERANK_TOP_K`` so there is enough to choose from;
-- ``CHAT_VSI_REF_LOOKUP=on`` — documents the question names by REF (QP-1518, MI-14242,
+- ``CHAT_VSI_REF_LOOKUP=on`` — documents the question (or an earlier turn) names by REF (QP-1518, MI-14242,
   NF-10065…, found with the app's document catalog, language variants included) get their
   own filtered search (``filters_json`` on REF), ranked first: "summarize / compare MI-14242"
   reads that document instead of whatever looks similar;
@@ -287,7 +287,14 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
     fr_query = await search_query_fr(host, token, endpoint, rewrite_view)
     queries = [question] + ([fr_query] if fr_query else [])
 
-    named = refs_named_in(question) if ref_lookup_enabled() else []
+    # REFs named in the question first, then in the earlier turns ("résume la slide 15" after an
+    # answer about MI-14242 names no REF itself — golden run 2026-10-07: 0 lookups triggered).
+    named = []
+    if ref_lookup_enabled():
+        for ref in refs_named_in(question) + refs_named_in('\n'.join(m['content'] for m in conversation[:-1])):
+            if ref not in named:
+                named.append(ref)
+        named = named[:_REF_LOOKUP_MAX]
     try:
         if not rerank_enabled():
             rows, reranked = await base.retrieve(host, token, index_name, queries, base.num_results()), False
