@@ -538,6 +538,41 @@ token de l'utilisateur sur un 403). Constat : chat en échec de permission.
   }
   ```
 
+### V. Chat VSI — 403 et droits du SP de l'app (2026-10-07)
+
+Le Chat VSI appelle tout avec le token du SP de l'app (`8e411164-a7e8-46ff-8013-8c56af2c3656`) :
+Vector Search sur `dev_landingzone.qualibot.chunks_index_v1` / `chunks_as_index_v1` /
+`chunks_is_index_v1` (SELECT), puis `databricks-claude-sonnet-4-6` (CAN_QUERY) pour la
+reformulation et la réponse. Le message d'erreur dit lequel répond 403 :
+« Document search failed (Vector Search returned 403) » → index ; « Chat failed … endpoint
+returned 403 » → endpoint LLM.
+
+- [ ] **V1. Index** : rejouer le job de droits (mêmes 3 index que l'impact search), ou à la main :
+
+  ```powershell
+  databricks bundle run grant_app_access_dev -t dev --profile DEV
+  ```
+
+  ```sql
+  GRANT USE CATALOG ON CATALOG dev_landingzone TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_index_v1 TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_as_index_v1 TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_is_index_v1 TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  ```
+
+- [ ] **V2. Endpoint LLM** : vérifier puis accorder CAN_QUERY au SP de l'app :
+
+  ```powershell
+  $id = (databricks serving-endpoints get databricks-claude-sonnet-4-6 --profile DEV -o json | ConvertFrom-Json).id
+  databricks serving-endpoints get-permissions $id --profile DEV
+  databricks serving-endpoints update-permissions $id --profile DEV --json '{\"access_control_list\":[{\"service_principal_name\":\"8e411164-a7e8-46ff-8013-8c56af2c3656\",\"permission_level\":\"CAN_QUERY\"}]}'
+  ```
+
+- [ ] **V3. Retester** une question en ALL, AS et IS dans l'onglet Chat VSI ; en cas
+  d'erreur, `databricks apps logs qualibot --profile DEV` montre la ligne
+  `chat_vsi: Vector Search … returned 403` ou `… returned 403` sur l'endpoint.
+
 ### A. Déploiement de l'app avec les endpoints KA + tests
 
 - [ ] **A1. Redéployer le code** (après mon commit de K2) :
