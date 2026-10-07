@@ -229,7 +229,7 @@ async def search_query_fr(host: str, token: str, endpoint: str, conversation: Li
 async def retrieve(host: str, token: str, index_name: str, queries: List[str], k: int) -> List[Dict[str, Any]]:
     """HYBRID search for each query; results merged by best rank, deduplicated by chunk."""
     try:
-        results = await asyncio.gather(*(_fetch_chunks(host, token, index_name, q, k, _MAX_QUERY_CHARS) for q in queries))
+        results = await asyncio.gather(*(_fetch_chunks(host, token, index_name, q[:_MAX_QUERY_CHARS], k) for q in queries))
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
         logger.error('chat_vsi: Vector Search %s returned %d: %s', index_name, status, exc.response.text[:500])
@@ -242,7 +242,7 @@ async def retrieve(host: str, token: str, index_name: str, queries: List[str], k
         raise ChatVsiError(f'Document search failed: {exc}', type(exc).__name__) from exc
     ranked: Dict[str, Tuple[int, Dict[str, Any]]] = {}
     for result in results:
-        for rank, row in enumerate(result['chunks']):
+        for rank, row in enumerate(result):
             cid = row['chunk_id']
             if cid not in ranked or rank < ranked[cid][0]:
                 ranked[cid] = (rank, row)

@@ -152,7 +152,7 @@ def _llm_stream(*deltas, error=None):
 
 def _run(messages=MESSAGES, division='ALL', llm=None, fetch=None, rewrite=None):
     """Run stream_chat_vsi with mocked services; returns (events, mocks)."""
-    fetch = fetch or AsyncMock(return_value={'chunks': CHUNKS, 'truncated': False, 'chunks_returned': 3})
+    fetch = fetch or AsyncMock(return_value=CHUNKS)
     rewrite = rewrite or AsyncMock(return_value='qualification du personnel CND')
     llm = llm or _llm_stream('QP-1518 est la procédure [', '1', '] de référence.')
     captured = {}
@@ -314,3 +314,21 @@ def test_rewrite_failure_falls_back_to_question_only():
     events, mocks = _run(rewrite=AsyncMock(side_effect=httpx.ConnectError('down')))
     assert [call.args[3] for call in mocks['fetch'].await_args_list] == [QUESTION]
     assert _types(events)[-1] == '[DONE]' and 'error' not in _types(events)
+
+
+def test_retrieve_uses_the_real_vector_search_helper(monkeypatch):
+    """Contract with vector_search._fetch_chunks itself (only HTTP is faked): the mocks
+    above would not notice a change of its signature or return shape."""
+    sent = []
+
+    async def _post(self, url, json=None, headers=None):
+        sent.append(json)
+        body = {'manifest': {'columns': [{'name': 'chunk_id'}, {'name': 'REF'}, {'name': 'url'}, {'name': 'chunk_text'}]},
+                'result': {'data_array': [['c1', 'QP-1518', 'https://intraqual/QP-1518', 'texte']]}}
+        return httpx.Response(200, json=body, request=httpx.Request('POST', url))
+
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
+    rows = asyncio.run(chat_vsi.retrieve('https://host', 'tok', 'cat.sch.idx', ['q' * 30000, 'requête'], 5))
+    assert [r['chunk_id'] for r in rows] == ['c1']
+    assert [len(p['query_text']) for p in sent] == [chat_vsi._MAX_QUERY_CHARS, len('requête')]
+    assert all(p['num_results'] == 5 and p['query_type'] == 'HYBRID' for p in sent)
