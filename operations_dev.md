@@ -598,8 +598,9 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
 
 - [ ] **G2. Lancer le notebook** dans le workspace DEV, en serverless :
   `/Workspace/Shared/.bundle/qualibot/dev/files/utils/databricks_ops/evaluation/golden_eval_ka_vs_vsi`
-  → Run all. Widgets par défaut : `engines=ka,vsi`, `division=ALL`. La cellule « smoke test »
-  rejoue le 1er cas sur chaque moteur avant le run complet (~10–15 min pour 21 cas × 2).
+  → Run all. Il enchaîne tous les essais de la cellule *Plan* qui ne sont pas encore dans
+  `eval_golden_runs` (les essais déjà enregistrés sont sautés) ; chaque essai est enregistré
+  dès qu'il finit. Nouvel essai = une ligne de plus dans *Plan*, puis Run all.
 
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.

@@ -1,44 +1,23 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Qualibot — golden evaluation, Chat KA vs Chat VSI (DEV by default)
+# MAGIC # Qualibot — golden evaluation, Chat KA vs Chat VSI variants (DEV)
 # MAGIC
-# MAGIC Runs every case of the golden dataset through **the app's own code**, the same steps as
-# MAGIC one WebSocket chat turn (`server/routers/chat.py::_run_chat_ws`), for each engine:
+# MAGIC **Run all.** The notebook runs every attempt listed in the *Plan* cell that is not yet in
+# MAGIC `results_table`, one after the other, and appends its rows as soon as it finishes (an
+# MAGIC interrupted batch keeps what is done). Attempts already saved are skipped, so re-running
+# MAGIC the notebook never repeats them. To add an attempt: add a line to the plan, Run all.
 # MAGIC
-# MAGIC 1. `_trim_history` on the conversation;
-# MAGIC 2. translation bridge (`translate_question_to_en`) when the question is neither French nor English;
-# MAGIC 3. `_with_today_date`, then the engine: `stream_chat` (KA of the division) or `stream_chat_vsi`;
-# MAGIC 4. `_apply_citation_markers`, `augment_sources`, `_number_sources`;
-# MAGIC 5. `translate_answer_back`.
+# MAGIC Each case goes through **the deployed app's own code**, the steps of one WebSocket chat
+# MAGIC turn (`server/routers/chat.py::_run_chat_ws`): history trim, translation bridge, date,
+# MAGIC engine, citation markers, catalog sources, translation back. App settings come from the
+# MAGIC deployed folder (`app.yaml`, then `target_config.env`); each attempt only overrides the
+# MAGIC `CHAT_VSI_*` settings of its plan line. Calls run with the notebook user's identity.
 # MAGIC
-# MAGIC The app's configuration is loaded first from the deployed code folder (`app.yaml` env, then
-# MAGIC `target_config.env`), so the KA endpoints, VSI indexes, LLM and translation settings are the
-# MAGIC ones the deployed DEV app uses. Calls run with the notebook user's identity.
+# MAGIC Scores: `Correctness`, `ExpectationsGuidelines` (MLflow judges), `golden_doc_recall`,
+# MAGIC `latency_s`. The last cell prints the leaderboard and every attempt against `ka`;
+# MAGIC `golden_eval_queries.sql` has more comparisons.
 # MAGIC
-# MAGIC Scorers, the same for both engines: `Correctness`, `ExpectationsGuidelines` (MLflow built-in
-# MAGIC judges), `golden_doc_recall` (share of the expected documents the answer references) and
-# MAGIC `latency_s`. One MLflow run per engine in `experiment`.
-# MAGIC
-# MAGIC **Before running**: deploy the branch to DEV (`deploy_qualibot.ps1 -AppEnv dev`) so
-# MAGIC `app_code_path` holds the current code. Widgets:
-# MAGIC
-# MAGIC | Widget | Default | Meaning |
-# MAGIC |---|---|---|
-# MAGIC | `engines` | `ka,vsi` | Engines to evaluate |
-# MAGIC | `division` | `ALL` | Division used for every case (`ALL`, `AS`, `IS`) |
-# MAGIC | `vsi_variant` | `baseline` | VSI engine version (`server/services/chat_vsi_variants.py`): `baseline`, `rerank` |
-# MAGIC | `vsi_llm_endpoint` | empty = app config | Override `CHAT_VSI_LLM_ENDPOINT` to compare models |
-# MAGIC | `env_overrides` | empty | Extra app settings for this attempt, `KEY=value;KEY=value` (e.g. `CHAT_VSI_RERANK_TOP_K=10`) |
-# MAGIC | `ka_eval_id` | `ka` | Name of this attempt for the KA engine, e.g. `ka` |
-# MAGIC | `vsi_eval_id` | empty = the variant name | Name of this attempt for the VSI engine, e.g. `baseline`, `rerank`, `rerank-k20` |
-# MAGIC | `notes` | empty | Free text saved with the results (what changed in this attempt) |
-# MAGIC | `experiment` | empty = `/Users/<you>/qualibot-golden-ka-vs-vsi` | MLflow experiment |
-# MAGIC | `golden_table` | `dev_landingzone.qualibot.qualibot_eval_golden` | Golden dataset |
-# MAGIC | `app_code_path` | `/Workspace/Shared/.bundle/qualibot/dev/files` | Deployed app code |
-# MAGIC | `results_table` | `dev_landingzone.qualibot.eval_golden_runs` | Delta table, one row per case × engine × attempt (appended) |
-# MAGIC
-# MAGIC Every attempt is appended to `results_table` under its eval id; compare attempts with the
-# MAGIC SQL in `golden_eval_queries.sql` (run it separately, in the SQL editor).
+# MAGIC Before running: deploy the branch to DEV (`deploy_qualibot.ps1 -AppEnv dev`).
 
 # COMMAND ----------
 
@@ -52,32 +31,69 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------
 
+# DBTITLE 1,Plan — one line per attempt (eval_id must be unique; saved attempts are skipped)
+# engine 'ka' = the division's Knowledge Assistant; engine 'vsi' = Chat VSI, `variant`
+# 'baseline' (chat_vsi.py as delivered) or 'rerank' (chat_vsi_rerank.py), with `env` settings:
+#   CHAT_VSI_RERANK_ENABLED  true | false     reranker on the Vector Search queries
+#   CHAT_VSI_RERANK_TOP_K    12               passages kept per query after reranking
+#   CHAT_VSI_RERANK_MERGE    rerank | union   union = also keep the baseline's raw results
+#   CHAT_VSI_RERANK_COLUMNS  chunk_text       columns the reranker reads
+#   CHAT_VSI_CONTEXT_BUDGET_CHARS  0          context size cap in characters (0 = off)
+#   CHAT_VSI_REF_LOOKUP      off | on         filtered search on the REFs named in the question
+#   CHAT_VSI_INSTRUCTIONS    ka | v2          v2 = compact VSI prompt (server/config/chat_vsi_v2/)
+#   CHAT_VSI_LLM_ENDPOINT    (app.yaml)       answer model
+UNION = {'CHAT_VSI_RERANK_MERGE': 'union'}
+V2 = {'CHAT_VSI_INSTRUCTIONS': 'v2'}
+CTX = {'CHAT_VSI_RERANK_COLUMNS': 'REF,semantic_headers,chunk_text'}
+
+PLAN = [
+    # Already measured on 2026-10-07 — kept here for the record, skipped because saved.
+    dict(eval_id='ka', engine='ka'),
+    dict(eval_id='baseline', engine='vsi', variant='baseline'),
+    dict(eval_id='rerank', engine='vsi', variant='rerank', notes='reranker 50->12'),
+    # Batch 2
+    dict(eval_id='baseline-run2', engine='vsi', variant='baseline',
+         notes='same as baseline: run-to-run spread'),
+    dict(eval_id='prompt-v2', engine='vsi', variant='rerank',
+         env={'CHAT_VSI_RERANK_ENABLED': 'false', **V2}, notes='baseline search + v2 prompt'),
+    dict(eval_id='rerank-union', engine='vsi', variant='rerank', env=UNION,
+         notes='reranked + raw results, KA prompt'),
+    dict(eval_id='rerank-union-ctx', engine='vsi', variant='rerank', env={**UNION, **CTX},
+         notes='union, reranker reads REF + section headers'),
+    dict(eval_id='union-v2', engine='vsi', variant='rerank', env={**UNION, **V2},
+         notes='union + v2 prompt'),
+    dict(eval_id='best-v2', engine='vsi', variant='rerank',
+         env={**UNION, **V2, 'CHAT_VSI_RERANK_TOP_K': '25', 'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000',
+              'CHAT_VSI_REF_LOOKUP': 'on'},
+         notes='union + v2 + 35k-char budget + REF lookup'),
+]
+
+# COMMAND ----------
+
 # DBTITLE 1,Parameters
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
-dbutils.widgets.text('engines', 'ka,vsi')
 dbutils.widgets.dropdown('division', 'ALL', ['ALL', 'AS', 'IS'])
-dbutils.widgets.dropdown('vsi_variant', 'baseline', ['baseline', 'rerank'])
-dbutils.widgets.text('vsi_llm_endpoint', '')
-dbutils.widgets.text('env_overrides', '')
-dbutils.widgets.text('ka_eval_id', 'ka')
-dbutils.widgets.text('vsi_eval_id', '')
-dbutils.widgets.text('notes', '')
+dbutils.widgets.text('only', '')                  # comma-separated eval_ids to run (empty = whole plan)
+dbutils.widgets.dropdown('rerun_existing', 'false', ['false', 'true'])
 dbutils.widgets.text('experiment', '')
 dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
 dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_golden_runs')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
-ENGINES = [e.strip() for e in dbutils.widgets.get('engines').split(',') if e.strip()]
 DIVISION = dbutils.widgets.get('division')
-VSI_VARIANT = dbutils.widgets.get('vsi_variant')
-VSI_LLM = dbutils.widgets.get('vsi_llm_endpoint').strip()
-ENV_OVERRIDES = dict(kv.split('=', 1) for kv in dbutils.widgets.get('env_overrides').split(';') if '=' in kv)
-EVAL_ID = {'ka': dbutils.widgets.get('ka_eval_id').strip() or 'ka',
-           'vsi': dbutils.widgets.get('vsi_eval_id').strip() or VSI_VARIANT}
-NOTES = dbutils.widgets.get('notes').strip()
+ONLY = {e.strip() for e in dbutils.widgets.get('only').split(',') if e.strip()}
+RERUN = dbutils.widgets.get('rerun_existing') == 'true'
 GOLDEN = dbutils.widgets.get('golden_table').strip()
 RESULTS = dbutils.widgets.get('results_table').strip()
-assert ENGINES and set(ENGINES) <= {'ka', 'vsi'}, ENGINES
+
+_ids = [p['eval_id'] for p in PLAN]
+assert len(_ids) == len(set(_ids)), 'duplicate eval_id in PLAN'
+_done = set()
+if spark.catalog.tableExists(RESULTS):
+    _done = {r['eval_id'] for r in spark.sql(f'SELECT DISTINCT eval_id FROM {RESULTS}').collect()}
+TODO = [p for p in PLAN if (not ONLY or p['eval_id'] in ONLY) and (RERUN or p['eval_id'] not in _done)]
+print('already saved :', sorted(_done & set(_ids)))
+print('to run        :', [p['eval_id'] for p in TODO])
 
 # COMMAND ----------
 
@@ -89,7 +105,6 @@ with open(f'{APP}/app.yaml', encoding='utf-8-sig') as f:
     for item in (yaml.safe_load(f) or {}).get('env') or []:
         if 'value' in item:
             os.environ[item['name']] = str(item['value'])
-
 _target = f'{APP}/target_config.env'
 if os.path.exists(_target):
     for line in open(_target, encoding='utf-8'):
@@ -98,25 +113,29 @@ if os.path.exists(_target):
             os.environ[m.group(1)] = (shlex.split(m.group(2)) or [''])[0]
 else:
     print(f'WARNING: {_target} missing — app.yaml defaults only (deploy the app first).')
-
-os.environ['CHAT_VSI_VARIANT'] = VSI_VARIANT
-for _k, _v in ENV_OVERRIDES.items():          # e.g. CHAT_VSI_RERANK_TOP_K=10;CHAT_VSI_RERANK_COLUMNS=semantic_headers,chunk_text
-    os.environ[_k.strip()] = _v.strip()
-if VSI_LLM:
-    os.environ['CHAT_VSI_LLM_ENDPOINT'] = VSI_LLM
 os.environ['MLFLOW_GENAI_EVAL_MAX_WORKERS'] = '3'   # KA rate limit ~3-4 questions/min/user
 sys.path.insert(0, APP)
 
-for k in ['CHAT_ENDPOINT', 'CHAT_ENDPOINT_ALL', 'CHAT_ENDPOINT_AS', 'CHAT_ENDPOINT_IS',
-          'CHAT_TRANSLATE_BRIDGE_ENABLED', 'CHAT_TRANSLATE_ENDPOINT', 'CHAT_MAX_HISTORY',
-          'CHAT_VSI_INDEX_ALL', 'CHAT_VSI_INDEX_AS', 'CHAT_VSI_INDEX_IS', 'CHAT_VSI_LLM_ENDPOINT',
-          'CHAT_VSI_NUM_RESULTS', 'CHAT_VSI_VARIANT', 'CHAT_VSI_RERANK_TOP_K']:
+# The deployed app's CHAT_VSI_* settings; every attempt starts from these.
+APP_VSI_ENV = {k: v for k, v in os.environ.items() if k.startswith('CHAT_VSI_')}
+
+
+def apply_attempt_env(plan: dict) -> None:
+    for k in [k for k in os.environ if k.startswith('CHAT_VSI_')]:
+        del os.environ[k]
+    os.environ.update(APP_VSI_ENV)
+    os.environ['CHAT_VSI_VARIANT'] = plan.get('variant', 'baseline')
+    os.environ.update({k: str(v) for k, v in (plan.get('env') or {}).items()})
+
+
+for k in ['CHAT_ENDPOINT_ALL', 'CHAT_TRANSLATE_BRIDGE_ENABLED', 'CHAT_VSI_INDEX_ALL', 'CHAT_VSI_LLM_ENDPOINT']:
     print(f'{k:32} = {os.environ.get(k, "")}')
 
 # COMMAND ----------
 
 # DBTITLE 1,App code and helpers
-import asyncio, json, threading, time
+import asyncio, glob, hashlib, json, threading, time
+from datetime import datetime, timezone
 
 import mlflow
 from databricks.sdk import WorkspaceClient
@@ -137,7 +156,8 @@ HOST = w.config.host.rstrip('/')
 ME = w.current_user.me().user_name
 EXPERIMENT = dbutils.widgets.get('experiment').strip() or f'/Users/{ME}/qualibot-golden-ka-vs-vsi'
 KA_ENDPOINT = _endpoint_for_division(DIVISION)
-assert 'ka' not in ENGINES or KA_ENDPOINT, f'no KA endpoint configured for division {DIVISION}'
+APP_CODE_HASH = hashlib.sha1(b''.join(open(f, 'rb').read() for f in sorted(
+    glob.glob(f'{APP}/server/**/*.py', recursive=True) + glob.glob(f'{APP}/server/config/**/*.md', recursive=True)))).hexdigest()[:12]
 
 
 def token() -> str:
@@ -164,12 +184,7 @@ def run_async(coro):
 _golden = spark.table(GOLDEN).select('dataset_record_id', 'inputs', 'expectations').collect()
 GOLDEN_ROWS = [{'inputs': json.loads(r['inputs']), 'expectations': json.loads(r['expectations'])} for r in _golden]
 GOLDEN_IDS = {json.loads(r['inputs'])['messages'][-1]['content']: r['dataset_record_id'] for r in _golden}
-import hashlib, glob
-APP_CODE_HASH = hashlib.sha1(b''.join(open(f, 'rb').read() for f in sorted(
-    glob.glob(f'{APP}/server/**/*.py', recursive=True) + glob.glob(f'{APP}/server/config/**/*.md', recursive=True)))).hexdigest()[:12]
-VSI_SETTINGS = variant_settings()
-print(f'{len(GOLDEN_ROWS)} golden cases | engines {ENGINES} | division {DIVISION} | KA {KA_ENDPOINT} | '
-      f'VSI {vsi_variant()} {VSI_SETTINGS} on {index_for_division(DIVISION)} | code {APP_CODE_HASH} | experiment {EXPERIMENT}')
+print(f'{len(GOLDEN_ROWS)} golden cases | division {DIVISION} | KA {KA_ENDPOINT} | code {APP_CODE_HASH} | experiment {EXPERIMENT}')
 
 # COMMAND ----------
 
@@ -228,8 +243,9 @@ async def chat_turn(engine: str, messages: list) -> dict:
         'first_token_s': round(first_token_s, 2) if first_token_s is not None else None,
         'question_lang': translate_ctx.lang_code if translate_ctx else '',
         # VSI only: the documents handed to the LLM (cited or not) and how they were searched.
-        'retrieved_refs': sorted({canon_ref(r.strip()) for r in (meta.get('tool_result') or '').split(',') if r.strip()}),
-        'search': meta.get('tool_name') or '',
+        'retrieved_refs': sorted({canon_ref(r.strip()) for r in (meta.get('tool_result') or '').split(',') if r.strip()})
+                          if engine == 'vsi' else [],
+        'search': (meta.get('tool_name') or '') if engine == 'vsi' else '',
     }
 
 
@@ -244,13 +260,6 @@ def vsi_predict(messages: list) -> dict:
 
 
 PREDICT = {'ka': ka_predict, 'vsi': vsi_predict}
-LABEL = {'ka': f'KA {KA_ENDPOINT}', 'vsi': f'VSI {vsi_variant()} {llm_endpoint()}'}
-
-# Smoke test on the first case before spending a whole run.
-_probe = GOLDEN_ROWS[0]['inputs']['messages']
-for e in ENGINES:
-    out = PREDICT[e](_probe)
-    print(f"[{e}] {out['latency_s']} s, refs={out['refs']}\n{out['response'][:300]}\n")
 
 # COMMAND ----------
 
@@ -272,38 +281,17 @@ def latency_s(outputs):
 
 SCORERS = [Correctness(), ExpectationsGuidelines(), golden_doc_recall, latency_s]
 
-# COMMAND ----------
 
-# DBTITLE 1,Runs
-mlflow.set_experiment(EXPERIMENT)
-answers, runs = {}, {}
-for engine in ENGINES:
-    answers[engine] = {}
-
-    def _keep(messages: list, _engine=engine) -> dict:
-        out = PREDICT[_engine](messages)
-        answers[_engine][messages[-1]['content']] = out
-        return out
-    name = f'{EVAL_ID[engine]} — {LABEL[engine]} — {DIVISION}'
-    with mlflow.start_run(run_name=name):
-        mlflow.log_params({'eval_id': EVAL_ID[engine], 'engine': engine, 'division': DIVISION, 'golden_table': GOLDEN,
-                           'ka_endpoint': KA_ENDPOINT, 'vsi_index': index_for_division(DIVISION),
-                           'vsi_llm_endpoint': llm_endpoint(), 'vsi_variant': vsi_variant(),
-                           'app_code_hash': APP_CODE_HASH, 'cases': len(GOLDEN_ROWS)})
-        runs[engine] = mlflow.genai.evaluate(data=GOLDEN_ROWS, predict_fn=_keep, scorers=SCORERS)
-    print(name, runs[engine].run_id)
-
-# COMMAND ----------
-
-# DBTITLE 1,Summary — metrics per engine, then case by case
-import pandas as pd
-
-metrics = pd.DataFrame({LABEL[e]: r.metrics for e, r in runs.items()})
-_means = [i for i in metrics.index if i.endswith('/mean')]
-display(metrics.loc[_means] if _means else metrics)
+def _as_float(v):
+    """Judge verdicts ('yes'/'no', True/False) and numeric scores as 1.0 / 0.0 / number."""
+    if v is None:
+        return None
+    if isinstance(v, (bool, int, float)):
+        return float(v)
+    return {'yes': 1.0, 'no': 0.0, 'true': 1.0, 'false': 0.0}.get(str(v).strip().lower())
 
 
-def assessments(run_id):
+def assessments(run_id: str) -> dict:
     out = {}
     for t in mlflow.search_traces(run_id=run_id, return_type='list'):
         try:
@@ -315,73 +303,55 @@ def assessments(run_id):
     return out
 
 
-per_engine = {e: assessments(r.run_id) for e, r in runs.items()}
-rows = []
-for case in GOLDEN_ROWS:
-    q = case['inputs']['messages'][-1]['content']
-    row = {'question': q[:100], 'turns': len(case['inputs']['messages']),
-           'golden_refs': ', '.join(sorted({canon_ref(d['doc_uri']) for d in case['expectations'].get('expected_retrieved_context') or []}))}
-    for e in runs:
-        a = per_engine[e].get(q) or {}
-        row[f'{e}_correct'] = a.get('correctness')
-        row[f'{e}_guidelines'] = a.get('expectations_guidelines')
-        row[f'{e}_recall'] = a.get('golden_doc_recall')
-        row[f'{e}_latency_s'] = (answers[e].get(q) or {}).get('latency_s')
-        row[f'{e}_refs'] = ', '.join((answers[e].get(q) or {}).get('refs') or [])
-    rows.append(row)
-display(pd.DataFrame(rows))
+_SCHEMA = """eval_id string, attempt_ts timestamp, notes string, engine string, division string,
+ka_endpoint string, vsi_llm_endpoint string, vsi_index string, vsi_variant string, vsi_settings string,
+app_code_hash string, retrieved_refs array<string>, search string, mlflow_run_id string, golden_table string,
+dataset_record_id string, question string, turns int, case_kind string, golden_refs array<string>,
+answer_refs array<string>, correctness double, guidelines double, doc_recall double, latency_s double,
+first_token_s double, question_lang string, answer string"""
 
 # COMMAND ----------
 
-# DBTITLE 1,Save the results — one row per case × engine, under the attempt's eval id
-# Self-contained: can also be pasted at the end of an older run of this notebook whose
-# results are still in memory (needs GOLDEN_ROWS, runs, answers, per_engine).
-import json
-from datetime import datetime, timezone
+# DBTITLE 1,Run the plan — each attempt is saved as soon as it ends
+mlflow.set_experiment(EXPERIMENT)
+for plan in TODO:
+    engine, eval_id = plan['engine'], plan['eval_id']
+    apply_attempt_env(plan)
+    settings = variant_settings() if engine == 'vsi' else {}
+    print(f'\n=== {eval_id} ({engine}) {json.dumps(settings)}')
 
+    # Smoke test on the first case: a wrong setting fails here, not after 21 questions.
+    probe = PREDICT[engine](GOLDEN_ROWS[0]['inputs']['messages'])
+    print(f"smoke test ok: {probe['latency_s']} s, search={probe['search'] or '-'}")
 
-def _w(name, default=''):
-    try:
-        return dbutils.widgets.get(name).strip() or default
-    except Exception:
-        return default
+    answers = {}
 
+    def _keep(messages: list, _engine=engine) -> dict:
+        out = PREDICT[_engine](messages)
+        answers[messages[-1]['content']] = out
+        return out
+    with mlflow.start_run(run_name=f'{eval_id} — {DIVISION}'):
+        mlflow.log_params({'eval_id': eval_id, 'engine': engine, 'division': DIVISION, 'app_code_hash': APP_CODE_HASH,
+                           'ka_endpoint': KA_ENDPOINT if engine == 'ka' else '',
+                           'vsi_settings': json.dumps(settings)[:500], 'cases': len(GOLDEN_ROWS)})
+        result = mlflow.genai.evaluate(data=GOLDEN_ROWS, predict_fn=_keep, scorers=SCORERS)
+    judged = assessments(result.run_id)
 
-_results = _w('results_table', 'dev_landingzone.qualibot.eval_golden_runs')
-_golden_table = _w('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
-_eval_id = {'ka': _w('ka_eval_id', 'ka'), 'vsi': _w('vsi_eval_id', _w('vsi_variant', 'baseline'))}
-_ids = {json.loads(r['inputs'])['messages'][-1]['content']: r['dataset_record_id']
-        for r in spark.table(_golden_table).select('dataset_record_id', 'inputs').collect()}
-
-
-def _as_float(v):
-    """Judge verdicts ('yes'/'no', True/False) and numeric scores as 1.0 / 0.0 / number."""
-    if v is None:
-        return None
-    if isinstance(v, (bool, int, float)):
-        return float(v)
-    return {'yes': 1.0, 'no': 0.0, 'true': 1.0, 'false': 0.0}.get(str(v).strip().lower())
-
-
-_attempt_ts = datetime.now(timezone.utc)
-records = []
-for case in GOLDEN_ROWS:
-    q = case['inputs']['messages'][-1]['content']
-    exp = case['expectations']
-    for e, r in runs.items():
-        a = per_engine[e].get(q) or {}
-        out = answers[e].get(q) or {}
+    attempt_ts, records = datetime.now(timezone.utc), []
+    for case in GOLDEN_ROWS:
+        q = case['inputs']['messages'][-1]['content']
+        exp, a, out = case['expectations'], judged.get(q) or {}, answers.get(q) or {}
         records.append({
-            'eval_id': _eval_id[e], 'attempt_ts': _attempt_ts, 'notes': _w('notes'), 'engine': e,
-            'division': _w('division', 'ALL'), 'ka_endpoint': globals().get('KA_ENDPOINT') if e == 'ka' else None,
-            'vsi_llm_endpoint': llm_endpoint() if e == 'vsi' else None,
-            'vsi_index': index_for_division(_w('division', 'ALL')) if e == 'vsi' else None,
-            'vsi_variant': _w('vsi_variant', 'baseline') if e == 'vsi' else None,
-            'vsi_settings': json.dumps(globals().get('VSI_SETTINGS') or {}) if e == 'vsi' else None,
-            'app_code_hash': globals().get('APP_CODE_HASH'),
+            'eval_id': eval_id, 'attempt_ts': attempt_ts, 'notes': plan.get('notes', ''), 'engine': engine,
+            'division': DIVISION, 'ka_endpoint': KA_ENDPOINT if engine == 'ka' else None,
+            'vsi_llm_endpoint': llm_endpoint() if engine == 'vsi' else None,
+            'vsi_index': index_for_division(DIVISION) if engine == 'vsi' else None,
+            'vsi_variant': vsi_variant() if engine == 'vsi' else None,
+            'vsi_settings': json.dumps(settings) if engine == 'vsi' else None,
+            'app_code_hash': APP_CODE_HASH,
             'retrieved_refs': out.get('retrieved_refs') or [], 'search': out.get('search') or '',
-            'mlflow_run_id': r.run_id, 'golden_table': _golden_table,
-            'dataset_record_id': _ids.get(q), 'question': q, 'turns': len(case['inputs']['messages']),
+            'mlflow_run_id': result.run_id, 'golden_table': GOLDEN,
+            'dataset_record_id': GOLDEN_IDS.get(q), 'question': q, 'turns': len(case['inputs']['messages']),
             'case_kind': 'refusal_or_not_in_docs' if 'expected_response' in exp else 'facts',
             'golden_refs': sorted({canon_ref(d['doc_uri']) for d in exp.get('expected_retrieved_context') or [] if d.get('doc_uri')}),
             'answer_refs': out.get('refs') or [],
@@ -392,13 +362,35 @@ for case in GOLDEN_ROWS:
             'question_lang': out.get('question_lang') or '',
             'answer': out.get('response'),
         })
+    spark.createDataFrame(records, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
+    ok = [r['correctness'] for r in records if r['correctness'] is not None]
+    print(f'{eval_id}: saved {len(records)} rows, correct {sum(ok)}/{len(ok)}')
 
-_schema = """eval_id string, attempt_ts timestamp, notes string, engine string, division string,
-ka_endpoint string, vsi_llm_endpoint string, vsi_index string, vsi_variant string, vsi_settings string,
-app_code_hash string, retrieved_refs array<string>, search string, mlflow_run_id string, golden_table string,
-dataset_record_id string, question string, turns int, case_kind string, golden_refs array<string>,
-answer_refs array<string>, correctness double, guidelines double, doc_recall double, latency_s double,
-first_token_s double, question_lang string, answer string"""
-spark.createDataFrame(records, schema=_schema).write.mode('append').option('mergeSchema', 'true').saveAsTable(_results)
-print(f'{len(records)} rows appended to {_results} — eval ids {sorted({r["eval_id"] for r in records})}')
-print('assessment names seen:', sorted({k for d in per_engine.values() for v in d.values() for k in v}))
+# COMMAND ----------
+
+# DBTITLE 1,Leaderboard (latest attempt of each eval_id) and every attempt vs ka
+spark.sql(f"""
+CREATE OR REPLACE TEMPORARY VIEW latest AS
+SELECT r.* FROM {RESULTS} r
+JOIN (SELECT eval_id, max(attempt_ts) AS ts FROM {RESULTS} GROUP BY eval_id) l
+  ON r.eval_id = l.eval_id AND r.attempt_ts = l.ts""")
+
+display(spark.sql("""
+SELECT eval_id, max(notes) AS notes, count(*) AS cases,
+       round(avg(correctness) * 100, 1)     AS correct_pct,
+       round(avg(guidelines) * 100, 1)      AS guidelines_pct,
+       round(avg(doc_recall) * 100, 1)      AS doc_recall_pct,
+       round(percentile(latency_s, 0.5), 1) AS latency_p50_s,
+       round(percentile(latency_s, 0.9), 1) AS latency_p90_s
+FROM latest GROUP BY eval_id ORDER BY correct_pct DESC, doc_recall_pct DESC"""))
+
+display(spark.sql("""
+SELECT b.eval_id,
+       sum(CASE WHEN b.correctness > a.correctness THEN 1 ELSE 0 END) AS better_than_ka,
+       sum(CASE WHEN b.correctness < a.correctness THEN 1 ELSE 0 END) AS worse_than_ka,
+       round(avg(b.doc_recall - a.doc_recall) * 100, 1)                AS doc_recall_gain_pts,
+       concat_ws(' | ', collect_list(CASE WHEN b.correctness < a.correctness THEN left(a.question, 60) END)) AS lost_questions,
+       concat_ws(' | ', collect_list(CASE WHEN b.correctness > a.correctness THEN left(a.question, 60) END)) AS won_questions
+FROM latest a JOIN latest b ON a.question = b.question
+WHERE a.eval_id = 'ka' AND b.eval_id <> 'ka'
+GROUP BY b.eval_id ORDER BY better_than_ka - worse_than_ka DESC"""))
