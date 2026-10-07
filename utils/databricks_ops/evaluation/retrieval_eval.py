@@ -71,7 +71,8 @@ assert not [c for c in RUN if c not in CONFIGS], f'unknown configs — pick from
 
 _done = set()
 if spark.catalog.tableExists(RESULTS):
-    _done = {r['config'] for r in spark.sql(f'SELECT DISTINCT config FROM {RESULTS}').collect()}
+    # A configuration counts as measured only if at least one of its questions ran without error.
+    _done = {r['config'] for r in spark.sql(f'SELECT DISTINCT config FROM {RESULTS} WHERE error IS NULL').collect()}
 TODO = [c for c in RUN if RERUN or c not in _done]
 print('already saved:', sorted(_done & set(RUN)), '| to run:', TODO)
 
@@ -214,8 +215,10 @@ for name in TODO:
             'latency_s': out.get('latency_s'), 'error': out.get('error'),
         })
     spark.createDataFrame(rows, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
-    errors = sum(1 for r in rows if r['error'])
-    print(f'{name:18} {len(rows)} cases in {time.monotonic() - t0:.0f} s, {errors} errors')
+    errors = [r['error'] for r in rows if r['error']]
+    print(f'{name:18} {len(rows)} cases in {time.monotonic() - t0:.0f} s, {len(errors)} errors')
+    for e in sorted(set(errors))[:3]:
+        print('    ', e)
 
 # COMMAND ----------
 
