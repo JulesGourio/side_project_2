@@ -263,6 +263,39 @@ async def retrieve_reranked(host: str, token: str, index_name: str, queries: Lis
     return _merge_by_rank(list(results)), True
 
 
+async def retrieve_for_turn(host: str, token: str, index_name: str, endpoint: str,
+                            conversation: List[Dict[str, str]]) -> Dict[str, Any]:
+    """The passages this variant hands to the LLM for the last user turn of ``conversation``
+    (already cleaned by ``chat_vsi._clean_history``). Raises ``ChatVsiError`` on a search failure.
+    Also used alone by the retrieval evaluation (no answer generated)."""
+    question = base._without_date(conversation[-1]['content'])
+    rewrite_view = conversation[:-1] + [{'role': 'user', 'content': question}]
+    fr_query = await search_query_fr(host, token, endpoint, rewrite_view)
+    queries = [question] + ([fr_query] if fr_query else [])
+
+    # REFs named in the question first, then in the earlier turns ("résume la slide 15" after an
+    # answer about MI-14242 names no REF itself — golden run 2026-10-07: 0 lookups triggered).
+    named = []
+    if ref_lookup_enabled():
+        for ref in refs_named_in(question) + refs_named_in('\n'.join(m['content'] for m in conversation[:-1])):
+            if ref not in named:
+                named.append(ref)
+        named = named[:_REF_LOOKUP_MAX]
+    if not rerank_enabled():
+        rows, reranked = await base.retrieve(host, token, index_name, queries, base.num_results()), False
+    elif merge_mode() == 'union':
+        (rows, reranked), raw = await asyncio.gather(
+            retrieve_reranked(host, token, index_name, queries, rerank_top_k()),
+            base.retrieve(host, token, index_name, queries, base.num_results()))
+        rows = _merge_by_rank([rows, raw])
+    else:
+        rows, reranked = await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
+    if named:
+        rows = _merge_by_rank([await fetch_named_documents(host, token, index_name, question, named), rows])
+    rows = fit_budget(cap_per_document(rows, max_passages_per_doc()), context_budget_chars())
+    return {'question': question, 'fr_query': fr_query, 'rows': rows, 'reranked': reranked, 'named': named}
+
+
 async def stream_chat_vsi_rerank(host: str, token: str, division: str,
                                  messages: List[Dict[str, str]]) -> AsyncGenerator[str, None]:
     """``chat_vsi.stream_chat_vsi`` with reranked retrieval — same event stream."""
@@ -282,36 +315,13 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
             yield e
         return
 
-    question = base._without_date(conversation[-1]['content'])
-    rewrite_view = conversation[:-1] + [{'role': 'user', 'content': question}]
-    fr_query = await search_query_fr(host, token, endpoint, rewrite_view)
-    queries = [question] + ([fr_query] if fr_query else [])
-
-    # REFs named in the question first, then in the earlier turns ("résume la slide 15" after an
-    # answer about MI-14242 names no REF itself — golden run 2026-10-07: 0 lookups triggered).
-    named = []
-    if ref_lookup_enabled():
-        for ref in refs_named_in(question) + refs_named_in('\n'.join(m['content'] for m in conversation[:-1])):
-            if ref not in named:
-                named.append(ref)
-        named = named[:_REF_LOOKUP_MAX]
     try:
-        if not rerank_enabled():
-            rows, reranked = await base.retrieve(host, token, index_name, queries, base.num_results()), False
-        elif merge_mode() == 'union':
-            (rows, reranked), raw = await asyncio.gather(
-                retrieve_reranked(host, token, index_name, queries, rerank_top_k()),
-                base.retrieve(host, token, index_name, queries, base.num_results()))
-            rows = _merge_by_rank([rows, raw])
-        else:
-            rows, reranked = await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
-        if named:
-            rows = _merge_by_rank([await fetch_named_documents(host, token, index_name, question, named), rows])
-        rows = fit_budget(cap_per_document(rows, max_passages_per_doc()), context_budget_chars())
+        found = await retrieve_for_turn(host, token, index_name, endpoint, conversation)
     except base.ChatVsiError as exc:
         for e in base._error_events(exc.message, exc.error_type, exc.http_status):
             yield e
         return
+    question, fr_query, rows, reranked, named = (found[k] for k in ('question', 'fr_query', 'rows', 'reranked', 'named'))
     documents = base.group_documents(rows)
     logger.info('chat_vsi_rerank: division=%s index=%s reranked=%s merge=%s cap=%d budget=%d fr_query=%r '
                 'passages=%d chars=%d documents=%d trace_id=%s',

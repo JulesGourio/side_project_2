@@ -608,6 +608,13 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   `stored_evals` (réponses déjà enregistrées, sans relance). Run all → une carte par question,
   une colonne par configuration. Rien n'est enregistré.
 
+- [ ] **G2c. Évaluer la recherche seule (sans réponse, sans juge)** : notebook
+  `utils/databricks_ops/evaluation/retrieval_eval.py` → Run all. Questions golden + synthétiques
+  (UAT) + retours négatifs (UAT) qui ont un document attendu ; mesure si ces documents sont
+  dans le contexte envoyé au LLM, pour chaque configuration de recherche (cellule CONFIGS).
+  Résultats dans `dev_landingzone.qualibot.eval_retrieval_runs`, configurations déjà mesurées
+  sautées.
+
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.
 

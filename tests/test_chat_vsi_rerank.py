@@ -248,3 +248,17 @@ def test_ref_lookup_reads_refs_from_earlier_turns(monkeypatch):
           patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm('ok'))):
         asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
     assert 'MI-14242' in fetched.await_args.args[4]
+
+
+def test_retrieve_documents_follows_the_variant(monkeypatch):
+    msgs = [{'role': 'user', 'content': '[Date: 2026-10-07]\n\nqui qualifie ?'}]
+    monkeypatch.setenv('CHAT_VSI_VARIANT', 'baseline')
+    with (patch.object(chat_vsi, 'search_query_fr', AsyncMock(return_value='qualif')),
+          patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=[ROW])) as raw):
+        out = asyncio.run(chat_vsi_variants.retrieve_documents('https://h', 't', 'ALL', msgs))
+    assert out['rows'] == [ROW] and out['question'] == 'qui qualifie ?'
+    assert raw.await_args.args[3] == ['qui qualifie ?', 'qualif']
+    monkeypatch.setenv('CHAT_VSI_VARIANT', 'rerank')
+    with patch.object(chat_vsi_rerank, 'retrieve_for_turn', AsyncMock(return_value={'rows': []})) as rr:
+        asyncio.run(chat_vsi_variants.retrieve_documents('https://h', 't', 'ALL', msgs))
+    rr.assert_awaited_once()
