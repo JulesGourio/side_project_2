@@ -40,11 +40,14 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 #   CHAT_VSI_RERANK_COLUMNS  chunk_text       columns the reranker reads
 #   CHAT_VSI_CONTEXT_BUDGET_CHARS  0          context size cap in characters (0 = off)
 #   CHAT_VSI_REF_LOOKUP      off | on         filtered search on the REFs named in the question
-#   CHAT_VSI_INSTRUCTIONS    ka | v2          v2 = compact VSI prompt (server/config/chat_vsi_v2/)
+#   CHAT_VSI_INSTRUCTIONS    ka | v2 | v3     v2 = compact VSI prompt, v3 = ka + VSI addendum
 #   CHAT_VSI_LLM_ENDPOINT    (app.yaml)       answer model
 UNION = {'CHAT_VSI_RERANK_MERGE': 'union'}
 V2 = {'CHAT_VSI_INSTRUCTIONS': 'v2'}
 CTX = {'CHAT_VSI_RERANK_COLUMNS': 'REF,semantic_headers,chunk_text'}
+V3 = {'CHAT_VSI_INSTRUCTIONS': 'v3'}
+REF = {'CHAT_VSI_REF_LOOKUP': 'on'}
+BUDGET = {'CHAT_VSI_RERANK_TOP_K': '25', 'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000'}
 
 PLAN = [
     # Already measured on 2026-10-07 — kept here for the record, skipped because saved.
@@ -66,6 +69,18 @@ PLAN = [
          env={**UNION, **V2, 'CHAT_VSI_RERANK_TOP_K': '25', 'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000',
               'CHAT_VSI_REF_LOOKUP': 'on'},
          notes='union + v2 + 35k-char budget + REF lookup'),
+    # Batch 3 — base = rerank-union-ctx (best of batch 2); v2 prompt dropped (-3 questions vs ka
+    # prompt on the same search). Budget and REF lookup were only tried together with v2.
+    dict(eval_id='union-ctx-run2', engine='vsi', variant='rerank', env={**UNION, **CTX},
+         notes='rerank-union-ctx again: is 76% stable?'),
+    dict(eval_id='union-ctx-v3', engine='vsi', variant='rerank', env={**UNION, **CTX, **V3},
+         notes='KA prompt + grounding rules + doc-type glossary'),
+    dict(eval_id='union-ctx-ref', engine='vsi', variant='rerank', env={**UNION, **CTX, **REF},
+         notes='+ REF lookup'),
+    dict(eval_id='union-ctx-budget', engine='vsi', variant='rerank', env={**UNION, **CTX, **BUDGET},
+         notes='+ top_k 25 and 35k-char budget'),
+    dict(eval_id='union-ctx-all-v3', engine='vsi', variant='rerank', env={**UNION, **CTX, **V3, **REF, **BUDGET},
+         notes='union-ctx + v3 + REF lookup + budget'),
 ]
 
 # COMMAND ----------

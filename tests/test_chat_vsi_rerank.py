@@ -180,3 +180,14 @@ def test_ref_lookup_passages_come_first_and_filter_on_ref(monkeypatch):
     assert prompt.index('Document MI-14242') < prompt.index('Document QP-1518')
     meta = next(json.loads(c[6:]) for c in out if '"metadata"' in c)
     assert meta['tool_name'].startswith('vector_search+ref_lookup(MI-14242')
+
+
+def test_instructions_v3_is_ka_plus_addendum(monkeypatch):
+    from server.services import chat_vsi_prompts
+    conv = [{'role': 'user', 'content': 'q'}]
+    docs = [('QP-1518', {'url': 'u', 'passages': ['p']})]
+    monkeypatch.setenv('CHAT_VSI_INSTRUCTIONS', 'v3')
+    system = chat_vsi_prompts.build_prompt('AS', conv, docs)[0]['content']
+    assert system.startswith(chat_vsi.load_instructions('AS'))
+    assert 'ONLY from the numbered passages' in system and 'NF, FDAQL' in system
+    assert system.endswith(chat_vsi.CITATION_RULE)
