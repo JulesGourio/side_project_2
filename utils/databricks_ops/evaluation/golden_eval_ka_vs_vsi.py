@@ -28,6 +28,7 @@
 # MAGIC | `division` | `ALL` | Division used for every case (`ALL`, `AS`, `IS`) |
 # MAGIC | `vsi_variant` | `baseline` | VSI engine version (`server/services/chat_vsi_variants.py`): `baseline`, `rerank` |
 # MAGIC | `vsi_llm_endpoint` | empty = app config | Override `CHAT_VSI_LLM_ENDPOINT` to compare models |
+# MAGIC | `env_overrides` | empty | Extra app settings for this attempt, `KEY=value;KEY=value` (e.g. `CHAT_VSI_RERANK_TOP_K=10`) |
 # MAGIC | `ka_eval_id` | `ka` | Name of this attempt for the KA engine, e.g. `ka` |
 # MAGIC | `vsi_eval_id` | empty = the variant name | Name of this attempt for the VSI engine, e.g. `baseline`, `rerank`, `rerank-k20` |
 # MAGIC | `notes` | empty | Free text saved with the results (what changed in this attempt) |
@@ -57,6 +58,7 @@ dbutils.widgets.text('engines', 'ka,vsi')
 dbutils.widgets.dropdown('division', 'ALL', ['ALL', 'AS', 'IS'])
 dbutils.widgets.dropdown('vsi_variant', 'baseline', ['baseline', 'rerank'])
 dbutils.widgets.text('vsi_llm_endpoint', '')
+dbutils.widgets.text('env_overrides', '')
 dbutils.widgets.text('ka_eval_id', 'ka')
 dbutils.widgets.text('vsi_eval_id', '')
 dbutils.widgets.text('notes', '')
@@ -69,6 +71,7 @@ ENGINES = [e.strip() for e in dbutils.widgets.get('engines').split(',') if e.str
 DIVISION = dbutils.widgets.get('division')
 VSI_VARIANT = dbutils.widgets.get('vsi_variant')
 VSI_LLM = dbutils.widgets.get('vsi_llm_endpoint').strip()
+ENV_OVERRIDES = dict(kv.split('=', 1) for kv in dbutils.widgets.get('env_overrides').split(';') if '=' in kv)
 EVAL_ID = {'ka': dbutils.widgets.get('ka_eval_id').strip() or 'ka',
            'vsi': dbutils.widgets.get('vsi_eval_id').strip() or VSI_VARIANT}
 NOTES = dbutils.widgets.get('notes').strip()
@@ -97,6 +100,8 @@ else:
     print(f'WARNING: {_target} missing — app.yaml defaults only (deploy the app first).')
 
 os.environ['CHAT_VSI_VARIANT'] = VSI_VARIANT
+for _k, _v in ENV_OVERRIDES.items():          # e.g. CHAT_VSI_RERANK_TOP_K=10;CHAT_VSI_RERANK_COLUMNS=semantic_headers,chunk_text
+    os.environ[_k.strip()] = _v.strip()
 if VSI_LLM:
     os.environ['CHAT_VSI_LLM_ENDPOINT'] = VSI_LLM
 os.environ['MLFLOW_GENAI_EVAL_MAX_WORKERS'] = '3'   # KA rate limit ~3-4 questions/min/user
