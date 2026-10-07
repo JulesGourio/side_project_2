@@ -615,10 +615,16 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   Résultats dans `dev_landingzone.qualibot.eval_retrieval_runs`. Seules les questions pas encore
   réussies pour une configuration sont lancées (les erreurs sont relancées, 3 essais chacune) ;
   les tableaux ne comptent que les questions réussies par toutes les configurations.
-  Vague 3 (configs `u-*`, 2026-10-07) : recherche par titre du catalogue, réécriture FR + EN,
-  une langue par document, 20 passages plafonnés à 3 par document, puis tout ensemble (`u-all`).
+  Vague 3 (configs `u-*`, 2026-10-07) : recherche par titre du catalogue, réécriture FR + EN
+  (dont `u-bi-luna`, réécriture par GPT-5.6 Luna), une langue par document, 20 passages
+  plafonnés à 3 par document, puis tout ensemble (`u-all`).
   Colonne `recall_top5_pct` : documents attendus parmi les 5 premiers du contexte, pour comparer
   à taille égale.
+
+- [ ] **G2d. Requêtes de diagnostic de l'index** : `docs/chat_vsi_audit_2026-10.md` § 7, Q1 à Q8,
+  dans l'éditeur SQL DEV (lecture seule). Envoyer les résultats : ils chiffrent les constats
+  de l'audit du parsing (part d'images, tables des matières, documents attendus absents de
+  l'index…).
 
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.

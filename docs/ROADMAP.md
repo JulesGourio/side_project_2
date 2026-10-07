@@ -164,6 +164,14 @@ elles-mêmes sont documentées dans `docs/{COMPARE,CHATBOT}.md`.
 - [ ] **Mode « décrire un changement à la main »** : désactivé volontairement
   (`IMPACT_MANUAL_MODE_ENABLED`), à réactiver si le besoin revient.
 
+## Plus tard — Chat VSI et parsing (audit 2026-10-07)
+
+Tout est dans `docs/chat_vsi_audit_2026-10.md` : essais mesurés (golden et recherche seule),
+modèles testés et non testés, pistes de recherche côté app (R1–R12), audit du pipeline de
+parsing (P1–P16 : titres de section faux après fusion, sections mélangées, pas de
+chevauchement, images, métadonnées manquantes…), enrichissements de l'index (E1–E5),
+requêtes de diagnostic (Q1–Q8) et ordre proposé. Rien n'est décidé : à trier avec l'utilisateur.
+
 ## Plus tard — comparaison de documents (limites connues, audit 2026-10)
 
 Détail dans `docs/compare_audit_2026-10.md`.

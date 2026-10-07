@@ -59,7 +59,8 @@ env:
   # The rerank variant's options (all off by default, see the module docstring):
   # CHAT_VSI_RERANK_MERGE=union, CHAT_VSI_CONTEXT_BUDGET_CHARS, CHAT_VSI_REF_LOOKUP=on,
   # CHAT_VSI_RERANK_ENABLED=false, CHAT_VSI_INSTRUCTIONS=v2 (server/config/chat_vsi_v2/),
-  # CHAT_VSI_TITLE_LOOKUP=on, CHAT_VSI_REWRITE=bilingual, CHAT_VSI_ONE_LANGUAGE=on.
+  # CHAT_VSI_TITLE_LOOKUP=on, CHAT_VSI_REWRITE=bilingual, CHAT_VSI_ONE_LANGUAGE=on,
+  # CHAT_VSI_REWRITE_ENDPOINT (rewrite model, default = CHAT_VSI_LLM_ENDPOINT).
   - name: CHAT_VSI_VARIANT
     value: "baseline"
   # Capability cache TTL in seconds (how long can_chat/can_compare are cached per user).

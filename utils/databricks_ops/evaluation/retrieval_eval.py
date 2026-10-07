@@ -57,6 +57,11 @@ CONFIGS = {
     'u-title':            dict(variant='rerank', env={**UNION, **CTX, **TITLE}),
     'u-bi':               dict(variant='rerank', env={**UNION, **CTX, **BI}),
     'u-all':              dict(variant='rerank', env={**UNION, **CTX, **REF, **TITLE, **BI, **ONE_LANG}),
+    # Same as u-bi, rewrite by GPT-5.6 Luna instead of the answer model (faster first token if it
+    # holds up). Reasoning model: it needs a large ceiling or it returns an empty rewrite.
+    'u-bi-luna':          dict(variant='rerank', env={**UNION, **CTX, **BI,
+                                                       'CHAT_VSI_REWRITE_ENDPOINT': 'databricks-gpt-5-6-luna',
+                                                       'CHAT_VSI_REWRITE_MAX_TOKENS': '2000'}),
 }
 
 # COMMAND ----------

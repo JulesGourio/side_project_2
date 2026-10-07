@@ -302,3 +302,15 @@ def test_bilingual_title_and_retry(monkeypatch):
     assert raw.await_args.args[3] == ['processus Stocker : périmètre ?', 'stocker périmètre', 'store scope']
     assert out['titled'][0] == 'IQ22223' and 'IQ22_223_FR' in fetched.await_args.args[4]
     assert [r['chunk_id'] for r in out['rows']] == ['c1', 't1']
+
+
+def test_rewrite_endpoint_defaults_to_the_answer_model(monkeypatch):
+    assert chat_vsi_rerank.rewrite_endpoint('answer-llm') == 'answer-llm'
+    monkeypatch.setenv('CHAT_VSI_REWRITE_ENDPOINT', 'small-llm')
+    rewrite = AsyncMock(return_value='q')
+    with (patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=[ROW])),
+          patch.object(chat_vsi_rerank, 'search_query_fr', rewrite)):
+        monkeypatch.setenv('CHAT_VSI_RERANK_ENABLED', 'false')
+        asyncio.run(chat_vsi_rerank.retrieve_for_turn('https://h', 't', 'idx', 'answer-llm',
+                                                      [{'role': 'user', 'content': 'question'}]))
+    assert rewrite.await_args.args[2] == 'small-llm'

@@ -31,6 +31,8 @@ Two optional settings, off by default (the variant then behaves as first measure
 - ``CHAT_VSI_REWRITE=bilingual`` — the rewrite returns a French AND an English query (the
   corpus mixes both; a French question can target an English-only document such as
   QP-2270 or MI-14183), acronyms expanded when certain; three queries instead of two;
+- ``CHAT_VSI_REWRITE_ENDPOINT`` — model of the rewrite only (default: the answer model,
+  ``CHAT_VSI_LLM_ENDPOINT``): a small fast model shortens the time to first token;
 - ``CHAT_VSI_SEARCH_RETRIES`` (default 2) — Vector Search queries retried on failure (the
   embedding endpoint refuses bursts with "Request id already running", see vector_search.py);
 - ``CHAT_VSI_RERANK_ENABLED=false`` — raw HYBRID search as in the baseline (to test the
@@ -114,6 +116,10 @@ def one_language() -> bool:
 
 def rewrite_mode() -> str:
     return 'bilingual' if os.getenv('CHAT_VSI_REWRITE', 'fr').strip().lower() == 'bilingual' else 'fr'
+
+
+def rewrite_endpoint(answer_endpoint: str) -> str:
+    return os.getenv('CHAT_VSI_REWRITE_ENDPOINT', '').strip() or answer_endpoint
 
 
 def search_retries() -> int:
@@ -235,7 +241,8 @@ def settings() -> Dict[str, Any]:
             'max_passages_per_doc': max_passages_per_doc(), 'context_budget_chars': context_budget_chars(),
             'rerank_enabled': rerank_enabled(), 'ref_lookup': ref_lookup_enabled(),
             'title_lookup': title_lookup_enabled(), 'one_language': one_language(),
-            'rewrite': rewrite_mode(), 'search_retries': search_retries(),
+            'rewrite': rewrite_mode(), 'rewrite_llm': rewrite_endpoint(base.llm_endpoint()),
+            'search_retries': search_retries(),
             'instructions': chat_vsi_prompts.instructions_set(), 'answer_max_tokens': answer_max_tokens(),
             'rewrite_max_tokens': rewrite_max_tokens(), 'llm': base.llm_endpoint()}
 
@@ -358,7 +365,7 @@ async def retrieve_for_turn(host: str, token: str, index_name: str, endpoint: st
     Also used alone by the retrieval evaluation (no answer generated)."""
     question = base._without_date(conversation[-1]['content'])
     rewrite_view = conversation[:-1] + [{'role': 'user', 'content': question}]
-    rewrite = await search_query_fr(host, token, endpoint, rewrite_view)
+    rewrite = await search_query_fr(host, token, rewrite_endpoint(endpoint), rewrite_view)
     fr_query, en_query = split_bilingual(rewrite) if rewrite_mode() == 'bilingual' else (rewrite, '')
     queries = [question]
     for q in (fr_query, en_query):
