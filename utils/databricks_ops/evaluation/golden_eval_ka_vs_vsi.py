@@ -31,6 +31,7 @@
 # MAGIC | `experiment` | empty = `/Users/<you>/qualibot-golden-ka-vs-vsi` | MLflow experiment |
 # MAGIC | `golden_table` | `dev_landingzone.qualibot.qualibot_eval_golden` | Golden dataset |
 # MAGIC | `app_code_path` | `/Workspace/Shared/.bundle/qualibot/dev/files` | Deployed app code |
+# MAGIC | `results_table` | `dev_landingzone.qualibot.eval_golden_results` | Delta table, one row per case × engine × run (appended) |
 
 # COMMAND ----------
 
@@ -52,6 +53,7 @@ dbutils.widgets.text('vsi_llm_endpoint', '')
 dbutils.widgets.text('run_tag', '')
 dbutils.widgets.text('experiment', '')
 dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
+dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_golden_results')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 ENGINES = [e.strip() for e in dbutils.widgets.get('engines').split(',') if e.strip()]
@@ -59,6 +61,7 @@ DIVISION = dbutils.widgets.get('division')
 VSI_LLM = dbutils.widgets.get('vsi_llm_endpoint').strip()
 RUN_TAG = dbutils.widgets.get('run_tag').strip()
 GOLDEN = dbutils.widgets.get('golden_table').strip()
+RESULTS = dbutils.widgets.get('results_table').strip()
 assert ENGINES and set(ENGINES) <= {'ka', 'vsi'}, ENGINES
 
 # COMMAND ----------
@@ -139,8 +142,9 @@ def run_async(coro):
     return out['v']
 
 
-GOLDEN_ROWS = [{'inputs': json.loads(r['inputs']), 'expectations': json.loads(r['expectations'])}
-               for r in spark.table(GOLDEN).select('inputs', 'expectations').collect()]
+_golden = spark.table(GOLDEN).select('dataset_record_id', 'inputs', 'expectations').collect()
+GOLDEN_ROWS = [{'inputs': json.loads(r['inputs']), 'expectations': json.loads(r['expectations'])} for r in _golden]
+GOLDEN_IDS = {json.loads(r['inputs'])['messages'][-1]['content']: r['dataset_record_id'] for r in _golden}
 print(f'{len(GOLDEN_ROWS)} golden cases | engines {ENGINES} | division {DIVISION} | '
       f'KA {KA_ENDPOINT} | VSI index {index_for_division(DIVISION)} + {llm_endpoint()} | experiment {EXPERIMENT}')
 
@@ -297,3 +301,52 @@ for case in GOLDEN_ROWS:
         row[f'{e}_refs'] = ', '.join((answers[e].get(q) or {}).get('refs') or [])
     rows.append(row)
 display(pd.DataFrame(rows))
+
+# COMMAND ----------
+
+# DBTITLE 1,Save the results (one row per case × engine) for SQL comparisons
+from datetime import datetime, timezone
+
+
+def _as_float(v):
+    """Judge verdicts ('yes'/'no', True/False) and numeric scores as 1.0 / 0.0 / number."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return float(v)
+    if isinstance(v, (int, float)):
+        return float(v)
+    return {'yes': 1.0, 'no': 0.0, 'true': 1.0, 'false': 0.0}.get(str(v).strip().lower())
+
+
+RUN_TS = datetime.now(timezone.utc)
+records = []
+for case in GOLDEN_ROWS:
+    q = case['inputs']['messages'][-1]['content']
+    exp = case['expectations']
+    for e, r in runs.items():
+        a = per_engine[e].get(q) or {}
+        out = answers[e].get(q) or {}
+        records.append({
+            'run_ts': RUN_TS, 'run_tag': RUN_TAG, 'run_id': r.run_id, 'engine': e, 'division': DIVISION,
+            'ka_endpoint': KA_ENDPOINT if e == 'ka' else None,
+            'vsi_llm_endpoint': llm_endpoint() if e == 'vsi' else None,
+            'vsi_index': index_for_division(DIVISION) if e == 'vsi' else None,
+            'dataset_record_id': GOLDEN_IDS.get(q), 'question': q, 'turns': len(case['inputs']['messages']),
+            'case_kind': 'expected_response' if 'expected_response' in exp else 'expected_facts',
+            'golden_refs': sorted({canon_ref(d['doc_uri']) for d in exp.get('expected_retrieved_context') or [] if d.get('doc_uri')}),
+            'answer_refs': out.get('refs') or [],
+            'correctness': _as_float(a.get('correctness')),
+            'guidelines': _as_float(a.get('expectations_guidelines')),
+            'doc_recall': _as_float(a.get('golden_doc_recall')),
+            'latency_s': out.get('latency_s'), 'first_token_s': out.get('first_token_s'),
+            'question_lang': out.get('question_lang') or '',
+            'answer': out.get('response'),
+        })
+
+_schema = """run_ts timestamp, run_tag string, run_id string, engine string, division string,
+ka_endpoint string, vsi_llm_endpoint string, vsi_index string, dataset_record_id string, question string,
+turns int, case_kind string, golden_refs array<string>, answer_refs array<string>, correctness double,
+guidelines double, doc_recall double, latency_s double, first_token_s double, question_lang string, answer string"""
+spark.createDataFrame(records, schema=_schema).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
+print(f'{len(records)} rows appended to {RESULTS} (run_ts {RUN_TS.isoformat()})')

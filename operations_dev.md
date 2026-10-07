@@ -604,6 +604,11 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.
 
+- [ ] **G3b. Comparer en SQL** : chaque run ajoute ses lignes (une par cas × moteur) à
+  `dev_landingzone.qualibot.eval_golden_results` ; les requêtes prêtes à l'emploi sont dans
+  `utils/databricks_ops/evaluation/golden_eval_queries.sql` (résumé par run, KA vs VSI cas par
+  cas, documents manqués, cas instables, par langue, comparaison de modèles VSI).
+
 - [ ] **G4. Comparer un autre modèle pour VSI** : `engines=vsi`, `vsi_llm_endpoint=<endpoint>`,
   `run_tag=<nom>` (ex. `databricks-gpt-5-6-luna`). Pour `databricks-claude-sonnet-5-5`, la
   température forcée doit d'abord être retirée dans `streaming.py` (voir le rapport Chat VSI).
