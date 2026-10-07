@@ -20,8 +20,7 @@ _PRICING_USD: Dict[str, Dict[str, float]] = {
     # Sonnet 4.6: 42.857 / 214.286 DBU per 1M tokens (workspace console, 2026-10-07) x 0.078 EUR/DBU,
     # in USD via _EUR_PER_USD — the former 3 / 15 USD list price understated the cost by ~20%.
     'databricks-claude-sonnet-4-6': {'input': 3.634, 'output': 18.168},
-    # Sonnet 5.5: assumed 28.571 / 142.857 DBU (list price 2/3 of Sonnet 4.6) — TO CONFIRM in the
-    # workspace console (Serving Endpoints > databricks-claude-sonnet-5-5) and fix here.
+    # Sonnet 5.5: 28.571 / 142.857 DBU per 1M tokens (workspace console, confirmed 2026-10-07).
     'databricks-claude-sonnet-5-5': {'input': 2.422, 'output': 12.112},
     'databricks-claude-opus-4-6':   {'input': 15.0, 'output': 75.0},
     'databricks-claude-haiku-4-5':  {'input': 0.8,  'output': 4.0},
