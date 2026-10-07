@@ -27,11 +27,16 @@
 # MAGIC | `engines` | `ka,vsi` | Engines to evaluate |
 # MAGIC | `division` | `ALL` | Division used for every case (`ALL`, `AS`, `IS`) |
 # MAGIC | `vsi_llm_endpoint` | empty = app config | Override `CHAT_VSI_LLM_ENDPOINT` to compare models |
-# MAGIC | `run_tag` | empty | Suffix of the MLflow run names |
+# MAGIC | `ka_eval_id` | `ka` | Name of this attempt for the KA engine, e.g. `ka` |
+# MAGIC | `vsi_eval_id` | `baseline` | Name of this attempt for the VSI engine, e.g. `baseline`, `baseline+reranker`, `sonnet-5-5` |
+# MAGIC | `notes` | empty | Free text saved with the results (what changed in this attempt) |
 # MAGIC | `experiment` | empty = `/Users/<you>/qualibot-golden-ka-vs-vsi` | MLflow experiment |
 # MAGIC | `golden_table` | `dev_landingzone.qualibot.qualibot_eval_golden` | Golden dataset |
 # MAGIC | `app_code_path` | `/Workspace/Shared/.bundle/qualibot/dev/files` | Deployed app code |
-# MAGIC | `results_table` | `dev_landingzone.qualibot.eval_golden_results` | Delta table, one row per case × engine × run (appended) |
+# MAGIC | `results_table` | `dev_landingzone.qualibot.eval_golden_runs` | Delta table, one row per case × engine × attempt (appended) |
+# MAGIC
+# MAGIC Every attempt is appended to `results_table` under its eval id; compare attempts with the
+# MAGIC SQL in `golden_eval_queries.sql` (run it separately, in the SQL editor).
 
 # COMMAND ----------
 
@@ -50,16 +55,20 @@ dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/fi
 dbutils.widgets.text('engines', 'ka,vsi')
 dbutils.widgets.dropdown('division', 'ALL', ['ALL', 'AS', 'IS'])
 dbutils.widgets.text('vsi_llm_endpoint', '')
-dbutils.widgets.text('run_tag', '')
+dbutils.widgets.text('ka_eval_id', 'ka')
+dbutils.widgets.text('vsi_eval_id', 'baseline')
+dbutils.widgets.text('notes', '')
 dbutils.widgets.text('experiment', '')
 dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
-dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_golden_results')
+dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_golden_runs')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 ENGINES = [e.strip() for e in dbutils.widgets.get('engines').split(',') if e.strip()]
 DIVISION = dbutils.widgets.get('division')
 VSI_LLM = dbutils.widgets.get('vsi_llm_endpoint').strip()
-RUN_TAG = dbutils.widgets.get('run_tag').strip()
+EVAL_ID = {'ka': dbutils.widgets.get('ka_eval_id').strip() or 'ka',
+           'vsi': dbutils.widgets.get('vsi_eval_id').strip() or 'baseline'}
+NOTES = dbutils.widgets.get('notes').strip()
 GOLDEN = dbutils.widgets.get('golden_table').strip()
 RESULTS = dbutils.widgets.get('results_table').strip()
 assert ENGINES and set(ENGINES) <= {'ka', 'vsi'}, ENGINES
@@ -256,9 +265,9 @@ for engine in ENGINES:
         out = PREDICT[_engine](messages)
         answers[_engine][messages[-1]['content']] = out
         return out
-    name = f'{LABEL[engine]} — {DIVISION}' + (f' — {RUN_TAG}' if RUN_TAG else '')
+    name = f'{EVAL_ID[engine]} — {LABEL[engine]} — {DIVISION}'
     with mlflow.start_run(run_name=name):
-        mlflow.log_params({'engine': engine, 'division': DIVISION, 'golden_table': GOLDEN,
+        mlflow.log_params({'eval_id': EVAL_ID[engine], 'engine': engine, 'division': DIVISION, 'golden_table': GOLDEN,
                            'ka_endpoint': KA_ENDPOINT, 'vsi_index': index_for_division(DIVISION),
                            'vsi_llm_endpoint': llm_endpoint(), 'cases': len(GOLDEN_ROWS)})
         runs[engine] = mlflow.genai.evaluate(data=GOLDEN_ROWS, predict_fn=_keep, scorers=SCORERS)
@@ -304,22 +313,37 @@ display(pd.DataFrame(rows))
 
 # COMMAND ----------
 
-# DBTITLE 1,Save the results (one row per case × engine) for SQL comparisons
+# DBTITLE 1,Save the results — one row per case × engine, under the attempt's eval id
+# Self-contained: can also be pasted at the end of an older run of this notebook whose
+# results are still in memory (needs GOLDEN_ROWS, runs, answers, per_engine).
+import json
 from datetime import datetime, timezone
+
+
+def _w(name, default=''):
+    try:
+        return dbutils.widgets.get(name).strip() or default
+    except Exception:
+        return default
+
+
+_results = _w('results_table', 'dev_landingzone.qualibot.eval_golden_runs')
+_golden_table = _w('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
+_eval_id = {'ka': _w('ka_eval_id', 'ka'), 'vsi': _w('vsi_eval_id', 'baseline')}
+_ids = {json.loads(r['inputs'])['messages'][-1]['content']: r['dataset_record_id']
+        for r in spark.table(_golden_table).select('dataset_record_id', 'inputs').collect()}
 
 
 def _as_float(v):
     """Judge verdicts ('yes'/'no', True/False) and numeric scores as 1.0 / 0.0 / number."""
     if v is None:
         return None
-    if isinstance(v, bool):
-        return float(v)
-    if isinstance(v, (int, float)):
+    if isinstance(v, (bool, int, float)):
         return float(v)
     return {'yes': 1.0, 'no': 0.0, 'true': 1.0, 'false': 0.0}.get(str(v).strip().lower())
 
 
-RUN_TS = datetime.now(timezone.utc)
+_attempt_ts = datetime.now(timezone.utc)
 records = []
 for case in GOLDEN_ROWS:
     q = case['inputs']['messages'][-1]['content']
@@ -328,25 +352,28 @@ for case in GOLDEN_ROWS:
         a = per_engine[e].get(q) or {}
         out = answers[e].get(q) or {}
         records.append({
-            'run_ts': RUN_TS, 'run_tag': RUN_TAG, 'run_id': r.run_id, 'engine': e, 'division': DIVISION,
-            'ka_endpoint': KA_ENDPOINT if e == 'ka' else None,
+            'eval_id': _eval_id[e], 'attempt_ts': _attempt_ts, 'notes': _w('notes'), 'engine': e,
+            'division': _w('division', 'ALL'), 'ka_endpoint': globals().get('KA_ENDPOINT') if e == 'ka' else None,
             'vsi_llm_endpoint': llm_endpoint() if e == 'vsi' else None,
-            'vsi_index': index_for_division(DIVISION) if e == 'vsi' else None,
-            'dataset_record_id': GOLDEN_IDS.get(q), 'question': q, 'turns': len(case['inputs']['messages']),
-            'case_kind': 'expected_response' if 'expected_response' in exp else 'expected_facts',
+            'vsi_index': index_for_division(_w('division', 'ALL')) if e == 'vsi' else None,
+            'mlflow_run_id': r.run_id, 'golden_table': _golden_table,
+            'dataset_record_id': _ids.get(q), 'question': q, 'turns': len(case['inputs']['messages']),
+            'case_kind': 'refusal_or_not_in_docs' if 'expected_response' in exp else 'facts',
             'golden_refs': sorted({canon_ref(d['doc_uri']) for d in exp.get('expected_retrieved_context') or [] if d.get('doc_uri')}),
             'answer_refs': out.get('refs') or [],
             'correctness': _as_float(a.get('correctness')),
             'guidelines': _as_float(a.get('expectations_guidelines')),
             'doc_recall': _as_float(a.get('golden_doc_recall')),
-            'latency_s': out.get('latency_s'), 'first_token_s': out.get('first_token_s'),
+            'latency_s': _as_float(out.get('latency_s')), 'first_token_s': _as_float(out.get('first_token_s')),
             'question_lang': out.get('question_lang') or '',
             'answer': out.get('response'),
         })
 
-_schema = """run_ts timestamp, run_tag string, run_id string, engine string, division string,
-ka_endpoint string, vsi_llm_endpoint string, vsi_index string, dataset_record_id string, question string,
-turns int, case_kind string, golden_refs array<string>, answer_refs array<string>, correctness double,
-guidelines double, doc_recall double, latency_s double, first_token_s double, question_lang string, answer string"""
-spark.createDataFrame(records, schema=_schema).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
-print(f'{len(records)} rows appended to {RESULTS} (run_ts {RUN_TS.isoformat()})')
+_schema = """eval_id string, attempt_ts timestamp, notes string, engine string, division string,
+ka_endpoint string, vsi_llm_endpoint string, vsi_index string, mlflow_run_id string, golden_table string,
+dataset_record_id string, question string, turns int, case_kind string, golden_refs array<string>,
+answer_refs array<string>, correctness double, guidelines double, doc_recall double, latency_s double,
+first_token_s double, question_lang string, answer string"""
+spark.createDataFrame(records, schema=_schema).write.mode('append').option('mergeSchema', 'true').saveAsTable(_results)
+print(f'{len(records)} rows appended to {_results} — eval ids {sorted({r["eval_id"] for r in records})}')
+print('assessment names seen:', sorted({k for d in per_engine.values() for v in d.values() for k in v}))
