@@ -534,14 +534,15 @@ targets:
                   - databricks-sdk>=0.118.0
 
         # Manual trigger only. Grants the DEV qualibot app's service principal
-        # USE CATALOG/USE SCHEMA, READ+WRITE VOLUME on doc_compare and test (what
-        # a bundle volume binding would have granted — see the app above) and
-        # SELECT on the 3 _v1 indexes (impact search). Runs as the DEV SP,
-        # which holds GRANT rights on dev_landingzone. Re-run after recreating
-        # an index or the app.
+        # what it uses: USE CATALOG/USE SCHEMA, READ+WRITE VOLUME on `volumes`,
+        # SELECT on `indexes` (impact search, Chat VSI), CAN_QUERY on
+        # `serving_endpoints` (LLMs). To change what is granted, edit the three
+        # lists in base_parameters below, then bundle deploy + bundle run.
+        # Runs as the DEV SP, which holds GRANT rights on dev_landingzone.
+        # Re-run after recreating an index or the app.
         grant_app_access_dev:
           name: "qualibot-grant-app-access-${bundle.target}"
-          description: "Grant the DEV qualibot app SP access to its UC volumes. Manual trigger only."
+          description: "Grant the DEV qualibot app SP its volumes, indexes and LLM endpoints. Manual trigger only."
           max_concurrent_runs: 1
           tags:
             project: Qualibot
@@ -570,11 +571,14 @@ targets:
                   schema_name: ${var.app_write_schema}
                   volumes: "doc_compare,test"
                   indexes: "chunks_index${var.parsing_table_suffix},chunks_as_index${var.parsing_table_suffix},chunks_is_index${var.parsing_table_suffix}"
+                  serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna"
               environment_key: default
           environments:
             - environment_key: default
               spec:
                 environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
 
         # ── Same jobs as qualibot-uat, adapted to DEV ───────────────────────
         # Export only: the UAT twin also imports chat_* into Delta tables of

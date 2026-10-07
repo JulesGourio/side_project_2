@@ -547,21 +547,30 @@ reformulation et la réponse. Le message d'erreur dit lequel répond 403 :
 « Document search failed (Vector Search returned 403) » → index ; « Chat failed … endpoint
 returned 403 » → endpoint LLM.
 
-- [ ] **V1. Index** : rejouer le job de droits (mêmes 3 index que l'impact search), ou à la main :
+- [ ] **V0. Erreur `dev: no such target. Available targets: default`** (+ `unknown field: nclude` /
+  `ariables`) : le `databricks.yml` local n'est pas celui de la branche (début de fichier abîmé).
+  Le remplacer par celui de `feature/chat-vsi-merged-on-impact-search`, puis vérifier :
 
   ```powershell
+  databricks bundle validate -t dev --profile DEV
+  ```
+
+- [ ] **V1. Rejouer les droits par le job** — il accorde maintenant, en un seul run : USE
+  CATALOG/SCHEMA, volumes, SELECT sur les 3 index, et CAN_QUERY sur
+  `databricks-claude-sonnet-4-6` et `databricks-gpt-5-6-luna`. Pour changer ce qui est
+  accordé : les 3 listes `volumes` / `indexes` / `serving_endpoints` du job
+  `grant_app_access_dev` dans `databricks.yml` (`base_parameters`), rien d'autre.
+
+  ```powershell
+  databricks bundle deploy -t dev --profile DEV
   databricks bundle run grant_app_access_dev -t dev --profile DEV
   ```
 
-  ```sql
-  GRANT USE CATALOG ON CATALOG dev_landingzone TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_index_v1 TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_as_index_v1 TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_is_index_v1 TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  ```
+  Sortie attendue : une ligne `OK:` par droit, puis `All 9 grants applied.`
 
-- [ ] **V2. Endpoint LLM** : vérifier puis accorder CAN_QUERY au SP de l'app :
+- [ ] **V2. Si une ligne `FAILED: CAN_QUERY on serving endpoint …`** : le SP des jobs n'a pas
+  CAN_MANAGE sur cet endpoint LLM (souvent réservé à un admin du workspace). Vérifier, puis
+  faire accorder le droit par un admin :
 
   ```powershell
   $id = (databricks serving-endpoints get databricks-claude-sonnet-4-6 --profile DEV -o json | ConvertFrom-Json).id
