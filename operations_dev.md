@@ -612,8 +612,9 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   `utils/databricks_ops/evaluation/retrieval_eval.py` → Run all. Questions golden + synthétiques
   (UAT) + retours négatifs (UAT) qui ont un document attendu ; mesure si ces documents sont
   dans le contexte envoyé au LLM, pour chaque configuration de recherche (cellule CONFIGS).
-  Résultats dans `dev_landingzone.qualibot.eval_retrieval_runs`, configurations déjà mesurées
-  sautées.
+  Résultats dans `dev_landingzone.qualibot.eval_retrieval_runs`. Seules les questions pas encore
+  réussies pour une configuration sont lancées (les erreurs sont relancées, 3 essais chacune) ;
+  les tableaux ne comptent que les questions réussies par toutes les configurations.
 
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.

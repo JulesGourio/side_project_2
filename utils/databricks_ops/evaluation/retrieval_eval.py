@@ -69,12 +69,12 @@ MAX_PARALLEL = max(1, int(dbutils.widgets.get('max_parallel') or 8))
 RESULTS = dbutils.widgets.get('results_table').strip()
 assert not [c for c in RUN if c not in CONFIGS], f'unknown configs — pick from {list(CONFIGS)}'
 
-_done = set()
-if spark.catalog.tableExists(RESULTS):
-    # A configuration counts as measured only if at least one of its questions ran without error.
-    _done = {r['config'] for r in spark.sql(f'SELECT DISTINCT config FROM {RESULTS} WHERE error IS NULL').collect()}
-TODO = [c for c in RUN if RERUN or c not in _done]
-print('already saved:', sorted(_done & set(RUN)), '| to run:', TODO)
+# A question counts as measured for a configuration once it ran without error: errors are retried
+# on the next run, the rest is never repeated (unless rerun_existing = true).
+_ok = set()
+if spark.catalog.tableExists(RESULTS) and not RERUN:
+    _ok = {(r['config'], r['source'], r['case_id'])
+           for r in spark.sql(f'SELECT DISTINCT config, source, case_id FROM {RESULTS} WHERE error IS NULL').collect()}
 
 # COMMAND ----------
 
@@ -154,10 +154,15 @@ async def search(messages: list, division: str) -> dict:
 
 
 def run_case(case: dict) -> dict:
-    try:
-        return asyncio.run(search(case['messages'], case['division']))
-    except Exception as exc:
-        return {'error': f'{type(exc).__name__}: {str(exc)[:300]}'}
+    # Up to 3 tries: under parallel load the endpoints answer 429 / time out now and then.
+    for wait in (5, 20, None):
+        try:
+            return asyncio.run(search(case['messages'], case['division']))
+        except Exception as exc:
+            out = {'error': f'{type(exc).__name__}: {str(exc)[:300]}'}
+            if wait is None:
+                return out
+            time.sleep(wait)
 
 # COMMAND ----------
 
@@ -191,23 +196,27 @@ _by_source = {}
 for c in CASES:
     _by_source[c['source']] = _by_source.get(c['source'], 0) + 1
 print(len(CASES), 'cases with an expected document:', _by_source)
+TODO = {name: [c for c in CASES if (name, c['source'], c['case_id']) not in _ok] for name in RUN}
+print('to run:', {name: len(cases) for name, cases in TODO.items() if cases} or 'nothing, all saved')
 
 # COMMAND ----------
 
-# DBTITLE 1,Run — one configuration after the other, its questions in parallel, saved as it ends
+# DBTITLE 1,Run — one configuration after the other, its missing questions in parallel, saved as it ends
 _SCHEMA = """config string, settings string, run_ts timestamp, source string, case_id string, division string,
 question string, query_type string, expected array<string>, partial array<string>, retrieved array<string>,
 recall double, hit double, first_rank int, partial_recall double, n_docs int, n_passages int, chars int,
 fr_query string, reranked boolean, named array<string>, latency_s double, error string"""
 
-for name in TODO:
+for name, cases in TODO.items():
+    if not cases:
+        continue
     apply_config_env(CONFIGS[name])
     settings = json.dumps(variant_settings())
     t0 = time.monotonic()
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
-        outs = list(pool.map(run_case, CASES))
+        outs = list(pool.map(run_case, cases))
     run_ts, rows = datetime.now(timezone.utc), []
-    for case, out in zip(CASES, outs):
+    for case, out in zip(cases, outs):
         got = out.get('docs') or []
         hits = [d for d in got if d in case['expected']]
         rows.append({
@@ -231,11 +240,26 @@ for name in TODO:
 
 # COMMAND ----------
 
-# DBTITLE 1,Results — per configuration and source (latest run of each configuration)
+# DBTITLE 1,Results — per configuration and source, on the questions every configuration answered
+# One row per (configuration, question): its latest error-free run, else its latest error.
+# `common` keeps only the questions with no error in ANY configuration shown, so every
+# configuration is scored on the same questions (an error would otherwise just drop a question).
+_shown = ', '.join(f"'{c}'" for c in RUN)
 spark.sql(f"""
 CREATE OR REPLACE TEMPORARY VIEW latest_retrieval AS
-SELECT r.* FROM {RESULTS} r
-JOIN (SELECT config, max(run_ts) AS ts FROM {RESULTS} GROUP BY config) l ON r.config = l.config AND r.run_ts = l.ts""")
+SELECT * EXCEPT (rn) FROM (
+  SELECT *, row_number() OVER (PARTITION BY config, source, case_id
+                               ORDER BY error IS NULL DESC, run_ts DESC) AS rn
+  FROM {RESULTS} WHERE config IN ({_shown})) WHERE rn = 1""")
+spark.sql(f"""
+CREATE OR REPLACE TEMPORARY VIEW common AS
+SELECT * FROM latest_retrieval WHERE (source, case_id) IN (
+  SELECT source, case_id FROM latest_retrieval GROUP BY source, case_id
+  HAVING count_if(error IS NULL) = {len(RUN)})""")
+
+display(spark.sql("""
+SELECT config, count(*) AS questions, count_if(error IS NOT NULL) AS still_in_error, first(error, true) AS an_error
+FROM latest_retrieval GROUP BY config HAVING still_in_error > 0"""))
 
 display(spark.sql("""
 SELECT config, source, count(*) AS cases,
@@ -245,14 +269,13 @@ SELECT config, source, count(*) AS cases,
        round(percentile(first_rank, 0.5))  AS median_rank_first_hit,
        round(avg(n_docs), 1)               AS avg_docs,
        round(avg(chars) / 4)               AS avg_context_tokens,
-       round(percentile(latency_s, 0.5), 1) AS search_p50_s,
-       sum(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS errors
-FROM latest_retrieval GROUP BY ALL ORDER BY source, recall_pct DESC"""))
+       round(percentile(latency_s, 0.5), 1) AS search_p50_s
+FROM common GROUP BY ALL ORDER BY source, recall_pct DESC"""))
 
 display(spark.sql("""
 SELECT config, count(*) AS cases, round(avg(recall) * 100, 1) AS recall_pct, round(avg(hit) * 100, 1) AS at_least_one_pct,
        round(avg(chars) / 4) AS avg_context_tokens
-FROM latest_retrieval GROUP BY config ORDER BY recall_pct DESC"""))
+FROM common GROUP BY config ORDER BY recall_pct DESC"""))
 
 # Cases one configuration finds and another doesn't (edit the two names)
 A, B = 'baseline', 'union-ctx'
@@ -260,6 +283,6 @@ display(spark.sql(f"""
 SELECT a.source, left(a.question, 90) AS question, a.expected,
        array_intersect(a.expected, a.retrieved) AS found_by_{A.replace('-', '_')},
        array_intersect(b.expected, b.retrieved) AS found_by_{B.replace('-', '_')}
-FROM latest_retrieval a JOIN latest_retrieval b ON a.source = b.source AND a.case_id = b.case_id
+FROM common a JOIN common b ON a.source = b.source AND a.case_id = b.case_id
 WHERE a.config = '{A}' AND b.config = '{B}' AND a.recall <> b.recall
 ORDER BY b.recall - a.recall DESC"""))
