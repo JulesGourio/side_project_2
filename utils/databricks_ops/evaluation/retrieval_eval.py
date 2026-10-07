@@ -112,6 +112,15 @@ from datetime import datetime, timezone
 
 from databricks.sdk import WorkspaceClient
 
+# Re-run after a -SyncOnly: drop the app modules Python kept from the previous run.
+for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
+    del sys.modules[_m]
+
+from server.services import chat_vsi_rerank
+assert hasattr(chat_vsi_rerank, 'retrieve_for_turn'), (
+    f'Stale app code in {APP}: chat_vsi_rerank.py has no retrieve_for_turn. '
+    'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
+
 from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _trim_history, _with_today_date  # app code
 from server.services.chat_vsi import group_documents
 from server.services.chat_vsi_variants import retrieve_documents, variant_settings
