@@ -1,0 +1,435 @@
+{
+  "generated_at": "2026-06-05T12:34:41Z",
+  "source": "system.access.audit — net membership of capability groups",
+  "groups_tracked": [
+    "Role-Project-LEAP-End-users-Qualibot-ChatBot",
+    "Role-Project-LEAP-End-users-Qualibot-DocCompare",
+    "Role-Project-LEAP-CoreDev"
+  ],
+  "users": {
+    "76975139536223": {
+      "email": "alexandre.baudet.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "75420677657756": {
+      "email": "amina.boet@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "73401798024381": {
+      "email": "brice.appenzeller.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "78829783172067": {
+      "email": "camille.herrero@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "73789797445778": {
+      "email": "cedric.benazech@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "76874837602911": {
+      "email": "cedric.lambert@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "70478959078807": {
+      "email": "christophe.cecot@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "72674280208765": {
+      "email": "clotilde.mariepuig@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "76154867291166": {
+      "email": "cyril.geneste@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "78061459057035": {
+      "email": "cyril.patrac@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "75168148445371": {
+      "email": "david.carayon@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "75456563580391": {
+      "email": "david.ceyrat@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "70602393803055": {
+      "email": "didier.frezza@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "78717534854251": {
+      "email": "elisabeth.pagnoux@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "73446437878730": {
+      "email": "emilie.roujas@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-ChatBot",
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "76507672751222": {
+      "email": "emna.drira@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "73475135199294": {
+      "email": "etienne.retailleau@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "70573093469560": {
+      "email": "fabian.louvel@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "75496264555404": {
+      "email": "fabien.antoine@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "72513641109321": {
+      "email": "fiona.oliveirabenedito.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "71668909046019": {
+      "email": "florent.coste@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "77924814243229": {
+      "email": "florent.vignaux@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "73579276731929": {
+      "email": "florian.camps@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "76048452721735": {
+      "email": "franck.galinier@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-ChatBot",
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "73767496992522": {
+      "email": "gilles.ferrand@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "77220522493474": {
+      "email": "gregory.dubosc@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "75642010964593": {
+      "email": "guillaume.temporelli@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "2913087590327558": {
+      "email": "hamza.belbachir.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "75157938994160": {
+      "email": "jerome.sisquet@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "74438129870793": {
+      "email": "jonas.meyran.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "78655966095635": {
+      "email": "jules.gourio.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "72939566116852": {
+      "email": "jules.gourio.external@latecoereaero.onmicrosoft.com",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "74772130361014": {
+      "email": "laure.yutzet@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-ChatBot",
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "76768846869634": {
+      "email": "laurene.guillonnet.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "71457550864928": {
+      "email": "lionel.ekuehettah.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "72110572870946": {
+      "email": "logan.janot.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "76965908159999": {
+      "email": "loic.dodin@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "77411308420721": {
+      "email": "luc.aebi@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "74309981686077": {
+      "email": "marc.riviere@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "78513228722333": {
+      "email": "martin.vexoguillet@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "76443053431569": {
+      "email": "maxime.bony@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "70953282153286": {
+      "email": "mekki.zekri@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "76026543304270": {
+      "email": "melanie.tornero@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "77905847578694": {
+      "email": "natalie.silva@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "78038681122825": {
+      "email": "nicolas.boulous@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "78714934221951": {
+      "email": "nicolas.vivien@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "76509967807269": {
+      "email": "nouhaila.akhyar@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "74909202775220": {
+      "email": "patrice.boye@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "70408003689797": {
+      "email": "paul.issanchou@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "77260373439497": {
+      "email": "paul.klein.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "71909128296520": {
+      "email": "paula.pitarchbargues@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "72998204741346": {
+      "email": "paula.pitarchbargues_masque@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "72492627323180": {
+      "email": "philippe.hardy@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "75958424482662": {
+      "email": "puntispatrice.leaptestuser.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-ChatBot",
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "71053981304929": {
+      "email": "rabah.mokhtari@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "71119756867834": {
+      "email": "romane.lasserre.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "70401732897659": {
+      "email": "romane.lasserre.external_masque@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "77575197890182": {
+      "email": "rudy.gustaveditduflo@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "70426040771169": {
+      "email": "serge.malgouyres@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "73685138476248": {
+      "email": "stephane.lecante@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "79114382518141": {
+      "email": "theo.rybarczyk.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "72533481743873": {
+      "email": "thierry.curmi@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "78424272004183": {
+      "email": "thomas.prasitharath@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "4056877327901603": {
+      "email": "toufik.kerdjou@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "2049103524870175": {
+      "email": "ugo.bongiorno.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "77918109463133": {
+      "email": "xavier.bories@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "76152012692886": {
+      "email": "xavier.subira@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "71172701575508": {
+      "email": "yann.depledt.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    },
+    "74878581848695": {
+      "email": "yoann.julou@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+      ]
+    },
+    "73851811235536": {
+      "email": "yohann.gouttefroy.external@latecoere.aero",
+      "groups": [
+        "Role-Project-LEAP-CoreDev"
+      ]
+    }
+  }
+}

@@ -1,0 +1,96 @@
+# QualiBOT — Processor version mapping
+# Each file type exposes processing versions selectable by the user in the UI.
+# The "id" is the internal method name passed to the backend processor.
+# Extensions are used by the frontend to filter the relevant versions for the loaded document.
+# Set hidden: true to keep a version in the backend without exposing it in the UI selector.
+
+file_types:
+  pdf:
+    extensions: [.pdf]
+    versions:
+      - id: standard
+        label: "Change Summary"
+        description: "Narrative diff grouped by section — one bullet per change. Output can be exported as PDF."
+        default: true
+      - id: structured
+        label: "Change Table"
+        description: "Structured change table with type and criticality (High / Medium / Low). Exportable to Excel."
+      - id: comparative
+        label: "Comparative"
+        description: "Section-level diff using an external system prompt."
+        hidden: true
+
+  docx:
+    extensions: [.docx, .doc]
+    versions:
+      - id: standard
+        label: "Change Summary"
+        description: "Narrative diff grouped by section — one bullet per change. Output can be exported as PDF."
+        default: true
+      - id: structured
+        label: "Change Table"
+        description: "Structured change table with type and criticality (High / Medium / Low). Exportable to Excel."
+      - id: comparative
+        label: "Comparative"
+        description: "Section-level diff using an external system prompt."
+        hidden: true
+
+  pptx:
+    extensions: [.pptx, .ppt]
+    versions:
+      - id: standard
+        label: "Change Summary"
+        description: "Narrative diff grouped by section — one bullet per change. Output can be exported as PDF."
+        default: true
+      - id: structured
+        label: "Change Table"
+        description: "Structured change table with type and criticality (High / Medium / Low). Exportable to Excel."
+      - id: comparative
+        label: "Comparative"
+        description: "Section-level diff using an external system prompt."
+        hidden: true
+
+  excel:
+    extensions: [.xlsx, .xls]
+    versions:
+      - id: standard
+        label: "Change Summary"
+        description: "Narrative diff grouped by section — one bullet per change. Output can be exported as PDF."
+        default: true
+      - id: structured
+        label: "Change Table"
+        description: "Structured change table with type and criticality (High / Medium / Low). Exportable to Excel."
+      - id: comparative
+        label: "Comparative"
+        description: "Section-level diff using an external system prompt."
+        hidden: true
+
+  xml:
+    extensions: [.xml]
+    versions:
+      - id: standard
+        label: "Change Summary"
+        description: "Narrative diff grouped by section — one bullet per change. Output can be exported as PDF."
+        default: true
+      - id: structured
+        label: "Change Table"
+        description: "Structured change table with type and criticality (High / Medium / Low). Exportable to Excel."
+      - id: comparative
+        label: "Comparative"
+        description: "Section-level diff using an external system prompt."
+        hidden: true
+
+  image:
+    extensions: [.jpg, .jpeg, .png, .gif, .webp, .bmp, .tiff, .tif]
+    versions:
+      - id: standard
+        label: "Change Summary"
+        description: "Narrative diff grouped by section — one bullet per change. Output can be exported as PDF."
+        default: true
+      - id: structured
+        label: "Change Table"
+        description: "Structured change table with type and criticality (High / Medium / Low). Exportable to Excel."
+      - id: comparative
+        label: "Comparative"
+        description: "Section-level diff using an external system prompt."
+        hidden: true

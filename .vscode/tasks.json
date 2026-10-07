@@ -1,0 +1,52 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Pull + Deploy",
+      "detail": "git pull then sync + deploy to Databricks (the everyday redeploy command)",
+      "type": "shell",
+      "command": "git pull && pwsh -File utils/deploy/deploy_qualibot.ps1",
+      "windows": {
+        "command": "git pull && powershell -ExecutionPolicy Bypass -File utils\\deploy\\deploy_qualibot.ps1",
+        "options": {
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/C"]
+          }
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Deploy only (no pull)",
+      "detail": "Sync + deploy current local files without pulling from git",
+      "type": "shell",
+      "command": "pwsh -File utils/deploy/deploy_qualibot.ps1",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File utils\\deploy\\deploy_qualibot.ps1",
+        "options": {
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/C"]
+          }
+        }
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+command: [
+  "bash", "start.sh"
+]
+env:
+  - name: COMPARE_ENABLED
+    value: "true"
+  - name: CHAT_ENABLED
+    value: "true"
+  # Default Knowledge Assistant endpoint (dev). Overridden per target at startup
+  # by target_config.env (written by deploy_qualibot.ps1) — UAT/prod each have
+  # their own KA endpoint name.
+  - name: CHAT_ENDPOINT
+    value: "ka-1a2a9a4f-endpoint" # "ka-71794b8e-endpoint"
+  # Per-division Knowledge Assistant endpoints. The division selector routes each
+  # turn to a single-source KA (IS-only / AS-only / combined), which is what
+  # guarantees source scoping. Left empty here (dev has a single KA): when unset,
+  # _endpoint_for_division falls back to CHAT_ENDPOINT, preserving current
+  # behaviour. UAT/prod set these per-target via target_config.env.
+  - name: CHAT_ENDPOINT_ALL
+    value: ""
+  - name: CHAT_ENDPOINT_AS
+    value: ""
+  - name: CHAT_ENDPOINT_IS
+    value: ""
+  # Translation bridge (experimental, off by default): translates a non-French/
+  # English question to French before it reaches the KA, then translates the
+  # answer back. Retrieval embeds the raw question text and the corpus is
+  # almost entirely French, so third-language questions (Czech, German,
+  # Spanish...) otherwise only match the sparse same-language document slice.
+  # Enable per-target via target_config.env while this is being evaluated.
+  - name: CHAT_TRANSLATE_BRIDGE_ENABLED
+    value: "false"
+  - name: CHAT_TRANSLATE_ENDPOINT
+    value: "databricks-gpt-5-6-luna"
+  # Max number of past messages replayed to the chat endpoint each turn
+  # (bounds the prompt size as a conversation grows). The latest question is
+  # always kept. Set to 0 to disable trimming.
+  - name: CHAT_MAX_HISTORY
+    value: "10"
+  # Chat VSI tab (server/services/chat_vsi.py): the same chat answered from the
+  # Vector Search indexes the KAs read, without the Knowledge Assistant. One index
+  # per division, like the KAs; values are the dev workspace indexes measured on
+  # the golden dataset (docs/dev-conception.md). Override per target.
+  - name: CHAT_VSI_ENABLED
+    value: "true"
+  - name: CHAT_VSI_INDEX_ALL
+    value: "dev_landingzone.qualibot.chunks_index_v1"
+  - name: CHAT_VSI_INDEX_AS
+    value: "dev_landingzone.qualibot.chunks_as_index_v1"
+  - name: CHAT_VSI_INDEX_IS
+    value: "dev_landingzone.qualibot.chunks_is_index_v1"
+  - name: CHAT_VSI_LLM_ENDPOINT
+    value: "databricks-claude-sonnet-4-6"
+  - name: CHAT_VSI_NUM_RESULTS
+    value: "10"
+  # Capability cache TTL in seconds (how long can_chat/can_compare are cached per user).
+  # Update via sync_user_capabilities.py — changes take effect after the next cache miss.
+  - name: CAPS_TTL_S
+    value: "600"
+  # SQL warehouse for the live is_account_group_member() capability check
+  # (server/services/user.py). Empty = feature off, falls back to the
+  # Lakebase-table/job path. Set per-target in utils/deploy/target_env.json.
+  - name: CAPS_WAREHOUSE_ID
+    value: ""
+  # Main analysis model. Haiku 4.5 was evaluated and rejected (quality too low
+  # for this pipeline) — stay on Sonnet.
+  - name: COMPARE_ANALYSIS_ENDPOINT
+    value: "databricks-claude-sonnet-4-6"
+  - name: COMPARE_ANALYSIS_SYSTEM_PROMPT
+    value: "You are a technical document comparison specialist.\n\nYour task: identify changes to CONTENT — numbers, requirements, specifications, normative references, procedures, scope. Ignore everything editorial.\n\nREPORT (these always matter):\n- A number, measurement, tolerance, limit, or threshold that changed\n- A normative reference (standard, spec, regulation) added, removed, or changed in revision\n- A technical requirement or procedure step added, removed, or substantively changed\n- A scope change: new applicability, new conditions, new equipment types, new roles\n- Changed safety or quality requirements, changed approval authorities\n\nDISCARD (never report these):\n- Pure formatting: extra spaces, hyphens, line breaks, capitalisation, punctuation\n- Reference code formatting when the underlying document is identical (\"NAS 410\" vs \"NAS410\" is NOT a change if the same revision is cited)\n- Modal verb substitutions throughout the document (shall/must/will/should/may — if the same requirement is present with different modal verbs, it is not a substantive change)\n- Rewording, restructuring, or synonym substitution that preserves the same technical meaning\n- Terminology rename applied uniformly across the document (e.g. NDI to NDT, inspection to examination, personnel to employees — if the same population is referred to)\n- Document cover page, metadata, revision tables, boilerplate, page numbers, TOC pagination\n\nOUTPUT: Markdown, ## per section, one bullet per real change, bold changed values. If nothing substantive changed: **No significant changes detected.**"
+  # Impact search — Vector Search retrieval against the full QualiBOT chunk
+  # index, then a single plain LLM call judges which retrieved candidates are
+  # genuinely impacted. Cheaper and more controllable than routing through a
+  # full RAG agent (the earlier "agent" and "index-only, no LLM" variants were
+  # dropped 2026-07-20: agent routing was slower and less reliable in testing,
+  # and index-only scores alone aren't a verdict — see docs/COMPARE.md).
+  # NUM_RESULTS/MAX_QUERY_CHARS are safety knobs against cost/latency on large
+  # change summaries, not hard API limits — the Vector Search API itself
+  # rejects query_text past ~29,000 chars and caps num_results at 200 for
+  # HYBRID search (verified empirically 2026-07-10).
+  - name: COMPARE_IMPACT_INDEX
+    value: "uat_landingzone.qualibot.chunks_index_v1"
+  # Switched from databricks-claude-sonnet-4-6 (2026-07-22): side-by-side eval
+  # against real UAT index + 2 deliberate "trap" candidates (topically close,
+  # not actually impacted) showed gpt-5-4-mini matching Sonnet's verdicts with
+  # no false positives, at ~11x lower cost (confirmed via streaming.py's
+  # _PRICING_USD, not an estimate). gemini-3-1-flash-lite was also tried and
+  # rejected — it produced reproducible false positives on both trap cases.
+  - name: COMPARE_IMPACT_ENDPOINT
+    value: "databricks-gpt-5-6-luna"
+  - name: COMPARE_IMPACT_NUM_RESULTS
+    value: "30"
+  - name: COMPARE_IMPACT_MAX_CANDIDATES
+    value: "12"
+  # Multi-query retrieval: the changes summary is split into focused queries
+  # (one per change/section, up to MAX_QUERIES) instead of embedding the whole
+  # blob at once. PER_QUERY_RESULTS applies when >1 query is derived; NUM_RESULTS
+  # above applies to single-query searches.
+  - name: COMPARE_IMPACT_MAX_QUERIES
+    value: "8"
+  - name: COMPARE_IMPACT_PER_QUERY_RESULTS
+    value: "15"
+  - name: COMPARE_IMPACT_MAX_QUERY_CHARS
+    value: "20000"
+  # Raised from 2000 (2026-07-22): the judge prompt now asks for a 2-4 sentence
+  # "reason" per candidate instead of one sentence — up to _MAX_CANDIDATES (8)
+  # of those need to fit without truncating the JSON array mid-object.
+  - name: COMPARE_IMPACT_MAX_TOKENS
+    value: "3500"
+  # Single-document summary ("Summarize" buttons, Compare tab) — independent
+  # of the diff, a cheap model gives the gist of either uploaded file. Cached
+  # like impact search, keyed on the
+  # file's own hash (server/services/summarize.py). Images route to a
+  # separate vision-capable endpoint (same model already used for image
+  # description in the parsing pipeline, PARSING_LLM_ENDPOINT).
+  - name: COMPARE_SUMMARY_ENDPOINT
+    value: "databricks-gpt-5-6-luna"
+  - name: COMPARE_SUMMARY_IMAGE_ENDPOINT
+    value: "databricks-gpt-5-6-luna"
+  # 300000 chars (~65-75k tokens) leaves headroom under gpt-5-4-mini's context
+  # window for the system prompt + output — raised from 40000 (2026-07-20):
+  # that cap was truncating most of any real multi-page document before it
+  # ever reached the model, well before an actual cost or context concern.
+  - name: COMPARE_SUMMARY_MAX_CHARS
+    value: "300000"
+  - name: COMPARE_SUMMARY_MAX_TOKENS
+    value: "800"
+  - name: COMPARE_MAX_CONCURRENT
+    value: "10"
+  - name: MAX_COMPARE_PDF_MB
+    value: "20"
+  - name: COMPARE_ANALYSIS_TIMEOUT_S
+    value: "300"
+  - name: COMPARE_ANALYSIS_CONNECT_TIMEOUT_S
+    value: "30"
+  - name: COMPARE_ANALYSIS_RETRIES
+    value: "1"
+  - name: COMPARE_MAX_TOKENS
+    value: "16000"
+  - name: COMPARE_THINKING_BUDGET
+    value: "4000"
+  - name: COMPARE_TEMPERATURE
+    value: "0.0"
+  # Map-reduce for very large documents: when the diff body exceeds the
+  # threshold it is split at section boundaries into chunks of at most
+  # CHUNK_SIZE chars, one LLM call each, results merged server-side into a
+  # single stream. Restores recall on 100k+ char diffs where a single call
+  # skips changes and can hit the output-token ceiling.
+  - name: COMPARE_CHUNK_THRESHOLD_CHARS
+    value: "60000"
+  - name: COMPARE_CHUNK_SIZE_CHARS
+    value: "45000"
+  # Default processor version per file type (standard | structured | comparative)
+  - name: COMPARE_METHOD_PDF
+    value: "standard"
+  - name: COMPARE_METHOD_IMAGE
+    value: "standard"
+  - name: COMPARE_METHOD_DOCX
+    value: "standard"
+  - name: COMPARE_METHOD_PPTX
+    value: "standard"
+  - name: COMPARE_METHOD_EXCEL
+    value: "standard"
+  # Application version — increment to invalidate cached analyses
+  - name: APP_VERSION
+    value: "1.4.1"
+  # Lakebase — comparison history (PostgreSQL)
+  - name: LAKEBASE_PROJECT_ID
+    value: "qualibot"
+  - name: LAKEBASE_DATABASE
+    value: "doccompare"
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "13eff4a6095513cb"
+  # COMPARE_VOLUME_PATH — per-environment volume path for saving/restoring comparison files.
+  # Empty here (local dev / Git Folder dev). Set via Databricks App UI per environment:
+  #   dev : /Volumes/dev_lab/lab_jules/doc_compare
+  #   uat : /Volumes/uat_landingzone/qualibot/doc_compare
+  #   prod: /Volumes/prod_landingzone/qualibot/doc_compare
+  # Absence disables volume save/restore (gracefully handled by the server).
+  - name: COMPARE_VOLUME_PATH
+    value: ""
+  # Exact-layout PDF preview engine (server/services/soffice.py). UC Volume
+  # path of a portable LibreOffice Linux x64 tar.gz built by
+  # utils/soffice_packaging/package_libreoffice.py — downloaded + extracted
+  # once per app process at first PDF preview. Absence simply disables the
+  # "Exact (PDF)" preview mode (client falls back to docx-preview).
+  #   uat : /Volumes/uat_landingzone/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz
+  - name: SOFFICE_ARCHIVE_VOLUME_PATH
+    value: ""
+  # Local-dev escape hatch: absolute path to an existing soffice binary
+  # (e.g. a Windows LibreOffice install) — takes precedence over the archive.
+  - name: SOFFICE_PATH
+    value: ""
