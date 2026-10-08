@@ -166,7 +166,7 @@ def _run(messages=MESSAGES, division='ALL', llm=None, fetch=None, rewrite=None):
 
     with (patch('server.services.chat_vsi._fetch_chunks', fetch),
           patch('server.services.chat_vsi._complete', rewrite),
-          patch('server.services.chat_vsi.stream_analysis', side_effect=_llm_spy)):
+          patch('server.services.chat_vsi.stream_answer', side_effect=_llm_spy)):
         raw = asyncio.run(_collect())
     events = []
     for chunk in raw:

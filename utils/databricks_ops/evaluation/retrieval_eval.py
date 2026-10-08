@@ -81,6 +81,7 @@ dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_retrieval_r
 # Test indexes built by rechunk_experiment.py (e.g. "v2a,v2b"): each adds idx-<v> and idx-<v>-clean,
 # plus the reference idx-v1, all with union-ctx and every question on the ALL index of the variant.
 dbutils.widgets.text('index_variants', '')
+dbutils.widgets.text('rewrite_model', 'databricks-claude-sonnet-4-6')   # every run so far; not the app's answer model
 dbutils.widgets.text('index_schema', 'dev_landingzone.qualibot')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
@@ -127,13 +128,20 @@ if os.path.exists(_target):
         if m:
             os.environ[m.group(1)] = (shlex.split(m.group(2)) or [''])[0]
 sys.path.insert(0, APP)
-APP_VSI_ENV = {k: v for k, v in os.environ.items() if k.startswith('CHAT_VSI_')}
+# Only the app's infrastructure (indexes, answer model): its search / prompt options and its
+# fallback models (CHAT_VSI_VARIANT, CHAT_VSI_RERANK_*, CHAT_VSI_LLM_FALLBACK_ENDPOINTS…) would
+# leak into every configuration measured here, and a fallback would mix two models in one run.
+APP_VSI_ENV = {k: v for k, v in os.environ.items()
+               if re.match(r'CHAT_VSI_(INDEX_\w+|ENABLED|NUM_RESULTS|LLM_ENDPOINT)$', k)}
 
 
 def apply_config_env(cfg: dict) -> None:
     for k in [k for k in os.environ if k.startswith('CHAT_VSI_')]:
         del os.environ[k]
     os.environ.update(APP_VSI_ENV)
+    # No answer here: the "LLM" only rewrites (baseline variant included), pinned to one model.
+    os.environ['CHAT_VSI_LLM_ENDPOINT'] = dbutils.widgets.get('rewrite_model').strip()
+    os.environ['CHAT_VSI_REWRITE_ENDPOINT'] = dbutils.widgets.get('rewrite_model').strip()
     os.environ['CHAT_VSI_VARIANT'] = cfg.get('variant', 'baseline')
     os.environ.update({k: str(v) for k, v in (cfg.get('env') or {}).items()})
 

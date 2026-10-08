@@ -27,6 +27,7 @@ environments where this is being evaluated.
 import json
 import logging
 import os
+import re
 from functools import lru_cache
 from typing import Any, Dict, Optional
 
@@ -39,6 +40,10 @@ logger = logging.getLogger(__name__)
 
 ENABLED = os.getenv('CHAT_TRANSLATE_BRIDGE_ENABLED', 'false').lower() == 'true'
 TRANSLATE_ENDPOINT = os.getenv('CHAT_TRANSLATE_ENDPOINT', 'databricks-gpt-5-6-luna')
+# Tried in order when TRANSLATE_ENDPOINT fails (429 included) — 2026-10-08: the chatbot runs
+# on GPT-6 Luna + GPT-5.6 Luna, each the other's backup. Empty value = no fallback.
+TRANSLATE_FALLBACK_ENDPOINTS = [e.strip() for e in os.getenv('CHAT_TRANSLATE_FALLBACK_ENDPOINTS',
+                                                             'databricks-gpt-6-luna').split(',') if e.strip()]
 _TIMEOUT_S = 20.0
 
 # fastText's own lid.176 language-ID model — chosen over langdetect (noisy on
@@ -54,6 +59,34 @@ _FASTTEXT_CONFIDENCE_THRESHOLD = 0.65
 # Skip the LLM round trip entirely for the two languages the corpus and the
 # KA's own language-matching instructions already handle natively.
 _NO_TRANSLATION_NEEDED = {'fr', 'en'}
+
+# An answer is only declared "in the wrong language" above this confidence: a false alarm
+# sends a correct answer through a translation it didn't need.
+_MISMATCH_CONFIDENCE_THRESHOLD = 0.8
+
+# English names of the languages met in Latécoère's sites (FR, CZ, BG, MX, BR) and a few
+# neighbours — named in the answer-language reminder (chat_vsi_prompts.py).
+LANGUAGE_NAMES = {'fr': 'French', 'en': 'English', 'es': 'Spanish', 'cs': 'Czech', 'bg': 'Bulgarian',
+                  'pt': 'Portuguese', 'de': 'German', 'it': 'Italian', 'pl': 'Polish', 'ro': 'Romanian',
+                  'sk': 'Slovak', 'nl': 'Dutch', 'ru': 'Russian', 'uk': 'Ukrainian'}
+
+# What says nothing about the language and misleads fastText: document codes (QP-1518,
+# MI_14242_GB, NF-10065), anything with a digit, URLs, e-mails, citation markers, code.
+_CODE_BLOCK_RE = re.compile(r'```.*?```', re.S)
+_NOISE_RE = re.compile(r'https?://\S+|\S+@\S+|⟦\d+⟧|\[\d+\]|`[^`]*`|\b\S*\d\S*\b|\b[A-Z]{2,}(?:[-_/][A-Z0-9]+)+\b')
+# In an answer: quoted passages (the instructions quote documents in their own language),
+# blockquotes and table rows (document titles, values) are not the answer's language.
+_QUOTED_RE = re.compile(r'«[^»]*»|“[^”]*”|"[^"\n]{12,}"')
+_LETTERS_RE = re.compile(r'[^\W\d_]{2,}')
+
+
+def clean_for_language(text: str, answer: bool = False) -> str:
+    """``text`` without what misleads language detection (see _NOISE_RE / _QUOTED_RE)."""
+    text = _CODE_BLOCK_RE.sub(' ', text or '')
+    if answer:
+        text = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith(('>', '|')))
+        text = _QUOTED_RE.sub(' ', text)
+    return ' '.join(_NOISE_RE.sub(' ', text).split())
 
 
 @lru_cache(maxsize=1)
@@ -84,7 +117,10 @@ def _fast_lang_guess(text: str) -> Optional[str]:
     raises under NumPy>=2.0 (confirmed 2026-07-08), while the underlying
     binding call it wraps works fine.
     """
-    single_line = ' '.join(text.split()) + '\n'
+    cleaned = clean_for_language(text)
+    if len(_LETTERS_RE.findall(cleaned)) < 2:      # a bare REF code, "OK", an acronym
+        return None
+    single_line = cleaned + '\n'
     try:
         model = _fasttext_model()
         predictions = model.f.predict(single_line, 1, 0.0, 'strict')
@@ -110,8 +146,36 @@ def _answer_language_mismatch(answer: str, expected_lang: str) -> bool:
     KA has been observed answering in the wrong one of the two anyway (chat
     session 5bd9382a, 2026-07-08: an all-English conversation got one French
     answer mid-thread with nothing in the history to explain the switch)."""
-    detected = _fast_lang_guess(answer)
-    return detected is not None and detected != expected_lang
+    detected = _fast_lang_guess_with_prob(clean_for_language(answer, answer=True))
+    return detected is not None and detected[1] >= _MISMATCH_CONFIDENCE_THRESHOLD and detected[0] != expected_lang
+
+
+def _fast_lang_guess_with_prob(text: str) -> Optional[tuple]:
+    """(code, probability) of fastText's top label on already-cleaned text, or None."""
+    if len(_LETTERS_RE.findall(text)) < 5:
+        return None
+    try:
+        predictions = _fasttext_model().f.predict(' '.join(text.split()) + '\n', 1, 0.0, 'strict')
+    except Exception as exc:
+        logger.warning('translation_bridge: fasttext lang guess failed: %s', exc)
+        return None
+    if not predictions:
+        return None
+    prob, label = predictions[0]
+    return label.replace('__label__', ''), prob
+
+
+def answer_language(ctx: Optional['TranslationContext'], question: str) -> Optional[str]:
+    """English name of the language the answer must be written in, or None if unsure.
+
+    With the bridge: English when the question was translated (the answer is translated
+    back after), else the detected French/English. Without it: the local guess."""
+    if ctx is not None:
+        if ctx.needs_translation:
+            return 'English'
+        return LANGUAGE_NAMES.get(ctx.lang_code)
+    code = _fast_lang_guess(question)
+    return LANGUAGE_NAMES.get(code) if code else None
 
 
 _http_client: Optional[httpx.AsyncClient] = None
@@ -136,11 +200,27 @@ async def shutdown_http_client() -> None:
 
 
 def _is_retryable(exc: BaseException) -> bool:
-    # 5xx / network hiccups are worth a retry; 4xx (bad auth, bad payload)
-    # will just fail again — retrying those only adds latency to a chat turn.
+    # 429 / 5xx / network hiccups are worth a retry; other 4xx (bad auth, bad
+    # payload) will just fail again — retrying those only adds latency.
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code >= 500
+        return exc.response.status_code >= 500 or exc.response.status_code == 429
     return isinstance(exc, httpx.TransportError)
+
+
+async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: int) -> str:
+    """TRANSLATE_ENDPOINT, then each of TRANSLATE_FALLBACK_ENDPOINTS; raises the last error."""
+    last: Optional[Exception] = None
+    for endpoint in dict.fromkeys([TRANSLATE_ENDPOINT] + TRANSLATE_FALLBACK_ENDPOINTS):
+        try:
+            text = await _call_endpoint(endpoint, system, user, host, token, max_tokens)
+        except Exception as exc:  # noqa: BLE001 — next endpoint
+            logger.warning('translation_bridge: %s failed (%s)', endpoint, exc)
+            last = exc
+            continue
+        if text and text.strip():
+            return text
+        last = ValueError(f'{endpoint} returned an empty text')
+    raise last or ValueError('no translation endpoint')
 
 
 @retry(
@@ -149,8 +229,8 @@ def _is_retryable(exc: BaseException) -> bool:
     retry=retry_if_exception(_is_retryable),
     reraise=True,
 )
-async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: int) -> str:
-    url = f'{host}/serving-endpoints/{TRANSLATE_ENDPOINT}/invocations'
+async def _call_endpoint(endpoint: str, system: str, user: str, host: str, token: str, max_tokens: int) -> str:
+    url = f'{host}/serving-endpoints/{endpoint}/invocations'
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
     payload: Dict[str, Any] = {
         'messages': [
@@ -159,7 +239,7 @@ async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: i
         ],
         'max_tokens': max_tokens,
     }
-    if supports_temperature(TRANSLATE_ENDPOINT):
+    if supports_temperature(endpoint):
         payload['temperature'] = 0.0
     client = _get_http_client()
     resp = await client.post(url, headers=headers, json=payload)
@@ -229,8 +309,16 @@ async def translate_answer_back(answer: str, ctx: TranslationContext, host: str,
         f'"QP-2096"), dates, and any ⟦n⟧ citation markers EXACTLY unchanged. '
         f'Output ONLY the translated text, no preamble.'
     )
+    # Reasoning models count their thinking in max_tokens: room for the text (~3 chars per
+    # token) plus a margin, so a long answer is not cut at the end of its translation.
+    max_tokens = min(16000, max(4000, len(answer) // 2 + 3000))
     try:
-        return await _call_llm(system, answer, host, token, max_tokens=4000)
+        translated = await _call_llm(system, answer, host, token, max_tokens=max_tokens)
     except Exception as exc:
         logger.warning('translation_bridge: answer translation failed, returning original text: %s', exc)
         return answer
+    if len(translated.strip()) < len(answer.strip()) * 0.3:
+        logger.warning('translation_bridge: translation much shorter than the answer (%d vs %d chars) — '
+                       'returning original text', len(translated), len(answer))
+        return answer
+    return translated

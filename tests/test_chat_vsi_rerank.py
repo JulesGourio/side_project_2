@@ -66,7 +66,7 @@ def test_stream_contract_same_as_baseline():
     messages = [{'role': 'user', 'content': '[Date: 2026-10-07]\n\nQui qualifie le personnel CND ?'}]
     with (patch.object(chat_vsi_rerank, 'retrieve_reranked', AsyncMock(return_value=([ROW], True))),
           patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='qualification personnel CND')),
-          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm('QP-1518 [', '1] fait foi.'))):
+          patch.object(chat_vsi_rerank.chat_vsi_llm, 'stream_answer', side_effect=_llm('QP-1518 [', '1] fait foi.'))):
         raw = asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
     events = [json.loads(c[6:]) for c in raw if c.startswith('data: ') and '[DONE]' not in c]
     text = ''.join(e['delta'] for e in events if e['type'] == 'response.output_text.delta')
@@ -114,7 +114,7 @@ def test_union_merges_reranked_and_raw_search(monkeypatch):
     with (patch.object(chat_vsi_rerank, 'retrieve_reranked', AsyncMock(return_value=(reranked, True))),
           patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=raw)),
           patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='q fr')),
-          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm_spy)):
+          patch.object(chat_vsi_rerank.chat_vsi_llm, 'stream_answer', side_effect=_llm_spy)):
         asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
     prompt = captured['prompt'][-1]['content']
     assert 'Document NF-10065' in prompt and 'Document MR-1465' in prompt
@@ -172,7 +172,7 @@ def test_ref_lookup_passages_come_first_and_filter_on_ref(monkeypatch):
     messages = [{'role': 'user', 'content': 'résume la slide 15 du MI-14242'}]
     with (patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=[ROW])) as raw,
           patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='q fr')),
-          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm_spy)):
+          patch.object(chat_vsi_rerank.chat_vsi_llm, 'stream_answer', side_effect=_llm_spy)):
         out = asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
     raw.assert_awaited_once()
     assert len(sent) == 1 and 'MI-14242' in json.loads(sent[0]['filters_json'])['REF']
@@ -200,7 +200,7 @@ def test_metadata_carries_generation_usage():
         yield 'data: [DONE]\n\n'
     with (patch.object(chat_vsi_rerank, 'retrieve_reranked', AsyncMock(return_value=([ROW], True))),
           patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='q')),
-          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_gen)):
+          patch.object(chat_vsi_rerank.chat_vsi_llm, 'stream_answer', side_effect=_gen)):
         out = asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', [{'role': 'user', 'content': 'q'}])))
     meta = next(json.loads(c[6:]) for c in out if '"metadata"' in c)
     assert meta['usage'] == {'input_tokens': 12000, 'output_tokens': 800, 'thinking_tokens': 0, 'cost_eur': 0.05}
@@ -245,7 +245,7 @@ def test_ref_lookup_reads_refs_from_earlier_turns(monkeypatch):
     with (patch.object(chat_vsi, 'retrieve', AsyncMock(return_value=[ROW])),
           patch.object(chat_vsi_rerank, 'fetch_named_documents', fetched),
           patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='q')),
-          patch.object(chat_vsi_rerank, 'stream_analysis', side_effect=_llm('ok'))):
+          patch.object(chat_vsi_rerank.chat_vsi_llm, 'stream_answer', side_effect=_llm('ok'))):
         asyncio.run(_collect(chat_vsi_rerank.stream_chat_vsi_rerank('https://h', 't', 'ALL', messages)))
     assert 'MI-14242' in fetched.await_args.args[4]
 

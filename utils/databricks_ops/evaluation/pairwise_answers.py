@@ -134,7 +134,11 @@ if os.path.exists(_target):
         if m:
             os.environ[m.group(1)] = (shlex.split(m.group(2)) or [''])[0]
 sys.path.insert(0, APP)
-APP_VSI_ENV = {k: v for k, v in os.environ.items() if k.startswith('CHAT_VSI_')}
+# Only the app's infrastructure (indexes, answer model): its search / prompt options and its
+# fallback models (CHAT_VSI_VARIANT, CHAT_VSI_RERANK_*, CHAT_VSI_LLM_FALLBACK_ENDPOINTS…) would
+# leak into every configuration measured here, and a fallback would mix two models in one run.
+APP_VSI_ENV = {k: v for k, v in os.environ.items()
+               if re.match(r'CHAT_VSI_(INDEX_\w+|ENABLED|NUM_RESULTS|LLM_ENDPOINT)$', k)}
 
 
 def apply_search_env(name):

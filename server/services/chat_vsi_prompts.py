@@ -18,12 +18,14 @@
 question, at the very end of the prompt: the language rule sits at the top of the instructions,
 20-25k tokens of (mostly English) passages earlier, and GPT-6 Luna lost it (answered in Bulgarian
 or English to questions in other languages, pairwise eval ``luna6-versions``, 2026-10-08).
+When chat.py knows the question's language (translation bridge or local detection), the line
+names it ("…in French…"); otherwise it says "the language of the question above".
 """
 
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import chat_vsi as base
 
@@ -32,6 +34,8 @@ _V2_DIR = Path(__file__).resolve().parent.parent / 'config' / 'chat_vsi_v2'
 
 LANGUAGE_REMINDER = ('Reminder: write your whole answer in the language of the question above '
                      '(the question, not the documents).')
+NAMED_LANGUAGE_REMINDER = ('Reminder: write your whole answer in {language}, the language of the question above '
+                           '(not the language of the documents).')
 
 
 def language_reminder() -> bool:
@@ -67,18 +71,20 @@ def system_text(division: str, which: str) -> str:
     return base.load_instructions(division) + '\n' + base.CITATION_RULE
 
 
-def with_language_reminder(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """``messages`` with LANGUAGE_REMINDER after the last user turn (a copy)."""
+def with_language_reminder(messages: List[Dict[str, str]], language: Optional[str] = None) -> List[Dict[str, str]]:
+    """``messages`` with the language reminder after the last user turn (a copy)."""
+    line = NAMED_LANGUAGE_REMINDER.format(language=language) if language else LANGUAGE_REMINDER
     out = [dict(m) for m in messages]
-    out[-1]['content'] = f'{out[-1]["content"]}\n\n{LANGUAGE_REMINDER}'
+    out[-1]['content'] = f'{out[-1]["content"]}\n\n{line}'
     return out
 
 
 def build_prompt(division: str, conversation: List[Dict[str, str]],
-                 documents: List[Tuple[str, Dict[str, Any]]]) -> List[Dict[str, str]]:
+                 documents: List[Tuple[str, Dict[str, Any]]],
+                 answer_language: Optional[str] = None) -> List[Dict[str, str]]:
     """Same message layout as ``chat_vsi.build_prompt``; the system text follows the instruction set."""
     messages = base.build_prompt(division, conversation, documents)
     which = instructions_set()
     if which != 'ka':
         messages[0] = {'role': 'system', 'content': system_text(division, which)}
-    return with_language_reminder(messages) if language_reminder() else messages
+    return with_language_reminder(messages, answer_language) if language_reminder() else messages

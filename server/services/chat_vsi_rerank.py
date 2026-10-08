@@ -37,8 +37,11 @@ Two optional settings, off by default (the variant then behaves as first measure
   passages the parsing pipeline marks ``toc`` / ``front_matter`` / ``boilerplate`` (tables of
   contents, approval blocks, text repeated in many documents) never take a slot. Needs an
   index built by the 2026-10 chunker; on an older index it changes nothing;
-- ``CHAT_VSI_SEARCH_RETRIES`` (default 2) — Vector Search queries retried on failure (the
-  embedding endpoint refuses bursts with "Request id already running", see vector_search.py);
+- ``CHAT_VSI_SEARCH_RETRIES`` (default 2) — each Vector Search query is retried on 429 / 5xx /
+  timeout / network error (exponential backoff with jitter; the embedding endpoint refuses
+  bursts with "Request id already running", see vector_search.py), then the whole search once
+  more. A query that still fails is dropped when the others answered: one of the three
+  rewrites, or one side of ``union``, failing no longer fails the turn;
 - ``CHAT_VSI_RERANK_ENABLED=false`` — raw HYBRID search as in the baseline (to test the
   other settings, e.g. the v2 prompt, without the reranker);
 - ``CHAT_VSI_INSTRUCTIONS=v2|v3`` — the VSI-specific prompts (``chat_vsi_prompts.py``);
@@ -47,8 +50,10 @@ Two optional settings, off by default (the variant then behaves as first measure
   by default (Claude Sonnet 5.5) spend part of the ceiling on reasoning: 2000 truncated
   answers and 120 can leave the rewrite empty (2026-10-07) — raise both for them.
 
-Everything else — rewrite, grouping by document, prompt, instructions, generation, citation
-parsing, event stream — is the baseline's own code, imported from ``chat_vsi``. If the
+Everything else — rewrite, grouping by document, prompt, instructions, citation parsing,
+event stream — is the baseline's own code, imported from ``chat_vsi``. The rewrite and the
+answer go through ``chat_vsi_llm`` (retries, fallback models, continuation of a cut answer,
+concurrency limit — see that module). If the
 index rejects the reranker (preview not enabled, 400), the turn falls back to the baseline
 retrieval and says so in the logs and in ``metadata.tool_name``.
 
@@ -59,16 +64,17 @@ import asyncio
 import json
 import logging
 import os
+import random
 import uuid
-from typing import Any, AsyncGenerator, Dict, List, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
 
 from . import chat_vsi as base
 from . import chat_vsi_prompts
+from . import chat_vsi_llm
 from .chat_vsi_titles import documents_titled
 from .doc_catalog import _catalog, canon_ref
-from .streaming import stream_analysis
 from .vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
@@ -139,6 +145,53 @@ def search_retries() -> int:
     return int(os.getenv('CHAT_VSI_SEARCH_RETRIES', '2') or 0)
 
 
+def rewrite_timeout_s() -> float:
+    return float(os.getenv('CHAT_VSI_REWRITE_TIMEOUT_S', '45') or 45)
+
+
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+async def _post_query(host: str, token: str, index_name: str, payload: Dict[str, Any]) -> httpx.Response:
+    """One Vector Search query, retried on 429 / 5xx / timeout / network error (backoff 0.5 s,
+    1 s, 2 s… plus jitter, at most CHAT_VSI_SEARCH_RETRIES times). Returns the last response;
+    raises the last network error."""
+    attempts = search_retries()
+    for attempt in range(attempts + 1):
+        try:
+            async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
+                resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index_name}/query', json=payload,
+                                         headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            if attempt == attempts:
+                raise
+            logger.warning('chat_vsi_rerank: Vector Search %s: %s, retry %d/%d', index_name, type(exc).__name__,
+                           attempt + 1, attempts)
+        else:
+            if resp.status_code not in _RETRYABLE_STATUS or attempt == attempts:
+                return resp
+            logger.warning('chat_vsi_rerank: Vector Search %s returned %d, retry %d/%d', index_name,
+                           resp.status_code, attempt + 1, attempts)
+        await asyncio.sleep(min(4.0, 0.5 * 2 ** attempt) + random.random() * 0.5)
+    raise RuntimeError('unreachable')
+
+
+async def _gather_tolerant(coros: List[Any], what: str) -> List[Any]:
+    """Results of the coroutines that succeeded; raises the first error only if all failed."""
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    for r in results:
+        if isinstance(r, asyncio.CancelledError):
+            raise r
+    ok = [r for r in results if not isinstance(r, BaseException)]
+    failed = [r for r in results if isinstance(r, BaseException)]
+    if not ok:
+        raise failed[0]
+    if failed:
+        logger.warning('chat_vsi_rerank: %d/%d %s failed, kept the others: %s', len(failed), len(results), what,
+                       failed[0])
+    return ok
+
+
 _REF_LOOKUP_MAX = 6          # REFs (variants included) filtered on
 _REF_LOOKUP_K = 8            # passages fetched from the named documents
 _TITLE_LOOKUP_DOCS = 3       # best title matches searched
@@ -164,9 +217,7 @@ async def fetch_named_documents(host: str, token: str, index_name: str, query: s
     payload = {'query_text': query[:base._MAX_QUERY_CHARS], 'columns': _COLUMNS, 'num_results': k,
                'query_type': 'HYBRID', 'filters_json': json.dumps({'REF': refs, **content_filter()})}
     try:
-        async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
-            resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index_name}/query', json=payload,
-                                     headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+        resp = await _post_query(host, token, index_name, payload)
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:  # noqa: BLE001 — the turn goes on without the lookup
@@ -223,27 +274,22 @@ def split_bilingual(text: str) -> Tuple[str, str]:
 
 async def search_query_fr(host: str, token: str, endpoint: str, conversation: List[Dict[str, str]]) -> Any:
     """``chat_vsi.search_query_fr`` with a configurable ceiling and reasoning-model content.
-    With ``CHAT_VSI_REWRITE=bilingual`` the reply holds two lines (``split_bilingual``)."""
+    With ``CHAT_VSI_REWRITE=bilingual`` the reply holds two lines (``split_bilingual``).
+    ``endpoint`` first, then the rewrite fallbacks (``chat_vsi_llm.rewrite_chain``); an empty
+    reply also moves to the next one. None when every endpoint failed (question only)."""
     transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)
     bilingual = rewrite_mode() == 'bilingual'
-    payload: Dict[str, Any] = {'messages': [{'role': 'system',
-                                             'content': BILINGUAL_REWRITE_PROMPT if bilingual else base.REWRITE_PROMPT},
-                                            {'role': 'user', 'content': transcript}],
-                               'max_tokens': max(rewrite_max_tokens(), 250) if bilingual else rewrite_max_tokens()}
-    if base.supports_temperature(endpoint):
-        payload['temperature'] = 0.0
+    messages = [{'role': 'system', 'content': BILINGUAL_REWRITE_PROMPT if bilingual else base.REWRITE_PROMPT},
+                {'role': 'user', 'content': transcript}]
     try:
-        async with httpx.AsyncClient(timeout=base._LLM_TIMEOUT_S) as client:
-            resp = await client.post(f'{host}/serving-endpoints/{endpoint}/invocations', json=payload,
-                                     headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
-            resp.raise_for_status()
-            query = _message_text(resp.json()['choices'][0]['message'].get('content')).strip()
+        query, used = await chat_vsi_llm.complete(
+            host, token, chat_vsi_llm.rewrite_chain(endpoint, base.llm_endpoint()), messages,
+            max(rewrite_max_tokens(), 250) if bilingual else rewrite_max_tokens(), rewrite_timeout_s())
     except Exception as exc:  # noqa: BLE001 — the turn goes on with the question only
         logger.warning('chat_vsi_rerank: search query rewrite failed (%s) — searching with the question only', exc)
         return None
-    if not query:
-        logger.warning('chat_vsi_rerank: empty search query rewrite on %s (max_tokens=%d) — question only',
-                       endpoint, rewrite_max_tokens())
+    if used != endpoint:
+        logger.warning('chat_vsi_rerank: search query rewritten by fallback %s (%s failed)', used, endpoint)
     return query or None
 
 
@@ -258,7 +304,9 @@ def settings() -> Dict[str, Any]:
             'rewrite': rewrite_mode(), 'rewrite_llm': rewrite_endpoint(base.llm_endpoint()),
             'search_retries': search_retries(),
             'instructions': chat_vsi_prompts.instructions_set(), 'answer_max_tokens': answer_max_tokens(),
-            'rewrite_max_tokens': rewrite_max_tokens(), 'llm': base.llm_endpoint()}
+            'rewrite_max_tokens': rewrite_max_tokens(), 'llm': base.llm_endpoint(),
+            'llm_fallbacks': chat_vsi_llm.answer_chain(base.llm_endpoint())[1:],
+            'language_reminder': chat_vsi_prompts.language_reminder()}
 
 
 def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -342,9 +390,7 @@ async def _fetch_reranked(host: str, token: str, index_name: str, query_text: st
     }
     if content_filter():
         payload['filters_json'] = json.dumps(content_filter())
-    async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
-        resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index_name}/query', json=payload,
-                                 headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+    resp = await _post_query(host, token, index_name, payload)
     if resp.status_code == 400 and 'rerank' in resp.text.lower():
         raise RerankUnavailable(resp.text[:300])
     resp.raise_for_status()
@@ -358,9 +404,7 @@ async def _fetch_raw(host: str, token: str, index_name: str, query_text: str, k:
     """The baseline's raw HYBRID query, with the CHAT_VSI_SKIP_NOISE filter."""
     payload = {'query_text': query_text[:base._MAX_QUERY_CHARS], 'columns': _COLUMNS, 'num_results': k,
                'query_type': 'HYBRID', 'filters_json': json.dumps(content_filter())}
-    async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
-        resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index_name}/query', json=payload,
-                                 headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+    resp = await _post_query(host, token, index_name, payload)
     resp.raise_for_status()
     data = resp.json()
     columns = [c['name'] for c in data.get('manifest', {}).get('columns', [])]
@@ -373,7 +417,7 @@ async def retrieve_raw(host: str, token: str, index_name: str, queries: List[str
     if not content_filter():
         return await base.retrieve(host, token, index_name, queries, k)
     try:
-        results = await asyncio.gather(*(_fetch_raw(host, token, index_name, q, k) for q in queries))
+        results = await _gather_tolerant([_fetch_raw(host, token, index_name, q, k) for q in queries], 'queries')
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
         logger.error('chat_vsi_rerank: Vector Search %s returned %d: %s', index_name, status, exc.response.text[:500])
@@ -387,7 +431,8 @@ async def retrieve_raw(host: str, token: str, index_name: str, queries: List[str
 async def retrieve_reranked(host: str, token: str, index_name: str, queries: List[str], k: int) -> Tuple[List[Dict[str, Any]], bool]:
     """Reranked search per query, merged by best rank. Returns (rows, reranked)."""
     try:
-        results = await asyncio.gather(*(_fetch_reranked(host, token, index_name, q, k) for q in queries))
+        results = await _gather_tolerant([_fetch_reranked(host, token, index_name, q, k) for q in queries],
+                                         'reranked queries')
     except RerankUnavailable as exc:
         logger.warning('chat_vsi_rerank: reranker refused by %s (%s) — baseline retrieval', index_name, exc)
         return await retrieve_raw(host, token, index_name, queries, base.num_results()), False
@@ -432,13 +477,26 @@ async def retrieve_for_turn(host: str, token: str, index_name: str, endpoint: st
         if not rerank_enabled():
             return await retrieve_raw(host, token, index_name, queries, base.num_results()), False
         if merge_mode() == 'union':
-            (rows, reranked), raw = await asyncio.gather(
+            got, raw = await asyncio.gather(
                 retrieve_reranked(host, token, index_name, queries, rerank_top_k()),
-                retrieve_raw(host, token, index_name, queries, base.num_results()))
+                retrieve_raw(host, token, index_name, queries, base.num_results()), return_exceptions=True)
+            for r in (got, raw):
+                if isinstance(r, asyncio.CancelledError):
+                    raise r
+            if isinstance(got, BaseException) and isinstance(raw, BaseException):
+                raise got
+            if isinstance(got, BaseException):       # one side is enough to answer
+                logger.warning('chat_vsi_rerank: reranked search failed (%s) — raw search only', got)
+                return raw, False
+            if isinstance(raw, BaseException):
+                logger.warning('chat_vsi_rerank: raw search failed (%s) — reranked search only', raw)
+                return got
+            rows, reranked = got
             return _merge_by_rank([rows, raw]), reranked
         return await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
 
-    rows, reranked = await _retrying(search, search_retries())
+    # Each query is already retried (_post_query): the whole search runs once more at most.
+    rows, reranked = await _retrying(search, min(1, search_retries()))
     if named:
         rows = _merge_by_rank([await fetch_named_documents(host, token, index_name, question, named), rows])
     if titled:
@@ -452,9 +510,11 @@ async def retrieve_for_turn(host: str, token: str, index_name: str, endpoint: st
             'named': named, 'titled': [canon for canon, _, _ in titled]}
 
 
-async def stream_chat_vsi_rerank(host: str, token: str, division: str,
-                                 messages: List[Dict[str, str]]) -> AsyncGenerator[str, None]:
-    """``chat_vsi.stream_chat_vsi`` with reranked retrieval — same event stream."""
+async def stream_chat_vsi_rerank(host: str, token: str, division: str, messages: List[Dict[str, str]],
+                                 answer_language: Optional[str] = None) -> AsyncGenerator[str, None]:
+    """``chat_vsi.stream_chat_vsi`` with reranked retrieval — same event stream.
+    ``answer_language`` (e.g. "French", from chat.py's language detection) is named in the
+    language reminder when CHAT_VSI_LANGUAGE_REMINDER is on."""
     yield ': keepalive\n\n'
     trace_id = f'vsi-rerank-{uuid.uuid4().hex}'
     div = base.normalize_division(division)
@@ -487,9 +547,10 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
 
     parser = base.CitationStreamParser(documents)
     usage: Dict[str, Any] = {}
-    async for chunk in stream_analysis(host, token, endpoint, chat_vsi_prompts.build_prompt(div, conversation, documents),
-                                       max_tokens=answer_max_tokens(), thinking_budget=0, temperature=0.0,
-                                       operation=base._OPERATION):
+    llm: Dict[str, Any] = {}
+    prompt = chat_vsi_prompts.build_prompt(div, conversation, documents, answer_language=answer_language)
+    async for chunk in chat_vsi_llm.stream_answer(host, token, chat_vsi_llm.answer_chain(endpoint), prompt,
+                                                  answer_max_tokens(), base._OPERATION):
         if not chunk.startswith('data: '):
             yield chunk
             continue
@@ -515,6 +576,8 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
             logger.warning('chat_vsi_rerank: %s', event.get('detail') or event)
         elif kind == 'usage':
             usage = {k: event.get(k) for k in ('input_tokens', 'output_tokens', 'thinking_tokens', 'cost_eur')}
+        elif kind == 'llm':
+            llm = event
 
     tail = parser.flush()
     if tail:
@@ -530,5 +593,6 @@ async def stream_chat_vsi_rerank(host: str, token: str, division: str,
                        'tool_result': ', '.join(ref for ref, _ in documents),
                        'reasoning_steps': [],
                        # Answer generation only (the short French rewrite call is not counted).
-                       'usage': usage, 'llm': endpoint})
+                       'usage': usage, 'llm': llm.get('endpoint') or endpoint,
+                       'llm_fallback': bool(llm.get('fallback')), 'llm_attempts': llm.get('attempts') or []})
     yield 'data: [DONE]\n\n'

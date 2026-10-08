@@ -22,6 +22,7 @@ from ..services.lakebase import get_pool, store_error, upsert_user
 from ..services.streaming import stream_chat
 from ..services.translation_bridge import (
     ENABLED as TRANSLATE_BRIDGE_ENABLED,
+    answer_language as answer_language_for,
     translate_answer_back,
     translate_question_to_en,
 )
@@ -646,7 +647,12 @@ async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
                     break
             logger.info('chat translate-bridge [ws]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
 
-    answer_stream = (stream_chat_vsi(host, token, division, _with_today_date(messages_for_ka)) if is_vsi
+    # The language the answer must be in, named in the VSI prompt's language reminder
+    # (CHAT_VSI_LANGUAGE_REMINDER): English when the bridge translated the question (it
+    # translates the answer back), else the detected French/English, else a local guess.
+    answer_language = answer_language_for(translate_ctx, user_content) if is_vsi and user_content else None
+    answer_stream = (stream_chat_vsi(host, token, division, _with_today_date(messages_for_ka),
+                                     answer_language=answer_language) if is_vsi
                      else stream_chat(host, token, endpoint, _with_today_date(messages_for_ka)))
 
     async def _persist(status: str, content: str) -> Optional[int]:

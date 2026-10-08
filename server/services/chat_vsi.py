@@ -29,7 +29,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
 
-from .streaming import stream_analysis, supports_temperature
+from .chat_vsi_llm import answer_chain, stream_answer
+from .streaming import supports_temperature
 from .vector_search import _fetch_chunks
 
 logger = logging.getLogger(__name__)
@@ -280,11 +281,15 @@ def _error_events(message: str, error_type: str, http_status: int = 0) -> List[s
 # ---------------------------------------------------------------------------
 
 async def stream_chat_vsi(host: str, token: str, division: str,
-                          messages: List[Dict[str, str]]) -> AsyncGenerator[str, None]:
+                          messages: List[Dict[str, str]],
+                          answer_language: Optional[str] = None) -> AsyncGenerator[str, None]:
     """Answer the last user turn of ``messages`` — same event stream as ``stream_chat``.
 
     ``messages`` is what chat.py sends the KA: trimmed history, the last user turn
     prefixed with ``[Date: …]`` (and translated to English by the bridge if needed).
+    ``answer_language`` is accepted for the variants' common signature and not used here:
+    the baseline prompt is kept as delivered. The answer goes through ``chat_vsi_llm``
+    (retries, CHAT_VSI_LLM_FALLBACK_ENDPOINTS), which changes no prompt.
     """
     yield ': keepalive\n\n'                      # first byte out, before the slow steps
     trace_id = f'vsi-{uuid.uuid4().hex}'
@@ -318,9 +323,9 @@ async def stream_chat_vsi(host: str, token: str, division: str,
                 div, index_name, fr_query, len(rows), len(documents), trace_id)
 
     parser = CitationStreamParser(documents)
-    async for chunk in stream_analysis(host, token, endpoint, build_prompt(div, conversation, documents),
-                                       max_tokens=_ANSWER_MAX_TOKENS, thinking_budget=0, temperature=0.0,
-                                       operation=_OPERATION):
+    answered_by = endpoint
+    async for chunk in stream_answer(host, token, answer_chain(endpoint), build_prompt(div, conversation, documents),
+                                     _ANSWER_MAX_TOKENS, _OPERATION):
         if not chunk.startswith('data: '):
             yield chunk                          # keepalive comments
             continue
@@ -344,6 +349,8 @@ async def stream_chat_vsi(host: str, token: str, division: str,
             return
         elif kind == 'warning':
             logger.warning('chat_vsi: %s', event.get('detail') or event)
+        elif kind == 'llm':
+            answered_by = event.get('endpoint') or endpoint
         # 'usage' and other events are not part of the chat contract.
 
     tail = parser.flush()
@@ -354,5 +361,5 @@ async def stream_chat_vsi(host: str, token: str, division: str,
     yield _event({'type': 'metadata', 'trace_id': trace_id, 'tool_name': 'vector_search',
                   'tool_query': fr_query or question,
                   'tool_result': ', '.join(ref for ref, _ in documents),
-                  'reasoning_steps': []})
+                  'reasoning_steps': [], 'llm': answered_by})
     yield 'data: [DONE]\n\n'

@@ -150,7 +150,11 @@ os.environ['MLFLOW_GENAI_EVAL_MAX_WORKERS'] = '3'   # KA rate limit ~3-4 questio
 sys.path.insert(0, APP)
 
 # The deployed app's CHAT_VSI_* settings; every attempt starts from these.
-APP_VSI_ENV = {k: v for k, v in os.environ.items() if k.startswith('CHAT_VSI_')}
+# Only the app's infrastructure (indexes, answer model): its search / prompt options and its
+# fallback models (CHAT_VSI_VARIANT, CHAT_VSI_RERANK_*, CHAT_VSI_LLM_FALLBACK_ENDPOINTS…) would
+# leak into every configuration measured here, and a fallback would mix two models in one run.
+APP_VSI_ENV = {k: v for k, v in os.environ.items()
+               if re.match(r'CHAT_VSI_(INDEX_\w+|ENABLED|NUM_RESULTS|LLM_ENDPOINT)$', k)}
 
 
 def apply_attempt_env(plan: dict) -> None:

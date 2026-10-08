@@ -11,7 +11,7 @@ widget ``vsi_variant``). ``chat.py`` calls ``stream_chat_vsi`` from here.
 """
 
 import os
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from . import chat_vsi, chat_vsi_rerank
 
@@ -53,7 +53,8 @@ async def retrieve_documents(host: str, token: str, division: str,
     return {'question': question, 'fr_query': fr_query, 'rows': rows, 'reranked': False, 'named': []}
 
 
-def stream_chat_vsi(host: str, token: str, division: str,
-                    messages: List[Dict[str, str]]) -> AsyncGenerator[str, None]:
-    """The selected variant's stream — same event contract as ``streaming.stream_chat``."""
-    return VARIANTS[vsi_variant()](host, token, division, messages)
+def stream_chat_vsi(host: str, token: str, division: str, messages: List[Dict[str, str]],
+                    answer_language: Optional[str] = None) -> AsyncGenerator[str, None]:
+    """The selected variant's stream — same event contract as ``streaming.stream_chat``.
+    ``answer_language``: the language the answer must be written in, when known."""
+    return VARIANTS[vsi_variant()](host, token, division, messages, answer_language=answer_language)

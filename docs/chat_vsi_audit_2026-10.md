@@ -905,6 +905,11 @@ Databricks** : le test se fait en DEV (`operations_dev.md`, bloc R), l'UAT seule
 Pas fait : P11 (documents d'avant 2018, décision métier), P13 (numéros de page, re-parsing
 GPU), P16 (prix Haiku, colonnes de recherche).
 
+Robustesse du chat (même jour, `docs/chat_vsi_robustesse_2026-10.md`) : GPT-6 Luna avec GPT-5.6
+Luna en secours, relances, reprise d'une réponse coupée, file d'attente, recherche partielle
+acceptée, détection de langue nettoyée (`chat_vsi_llm.py`). Mise en service : `operations_dev.md`,
+bloc L.
+
 Effets à connaître :
 - les nouvelles colonnes arrivent dans les tables existantes par `mergeSchema` / `autoMerge` ;
   les lignes anciennes restent à `NULL` jusqu'au run `full` ;

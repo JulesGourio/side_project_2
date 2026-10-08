@@ -663,6 +663,36 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   Recherches et réponses Sonnet / Luna `u-all` reprises du cache : ≈ 2 €, ≈ 15 min. Envoyer les trois
   tableaux ; regarder dans le détail les questions hors sujet et les réponses en mauvaise langue.
 
+- [ ] **L. Passer le Chat VSI DEV sur GPT-6 Luna + GPT-5.6 Luna en secours** (code prêt le 2026-10-08,
+  `server/services/chat_vsi_llm.py`, récap `docs/chat_vsi_robustesse_2026-10.md`). À faire **après P2**,
+  qui décide `CHAT_VSI_INSTRUCTIONS` et `CHAT_VSI_LANGUAGE_REMINDER`. Ajouter au bloc `"dev"` de
+  `utils/deploy/target_env.json` (ou me demander de le faire), puis
+  `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (redéploiement complet : l'app relit sa config) :
+  ```json
+  "CHAT_VSI_VARIANT": "rerank",
+  "CHAT_VSI_RERANK_MERGE": "union",
+  "CHAT_VSI_RERANK_COLUMNS": "REF,semantic_headers,chunk_text",
+  "CHAT_VSI_REF_LOOKUP": "on",
+  "CHAT_VSI_TITLE_LOOKUP": "on",
+  "CHAT_VSI_REWRITE": "bilingual",
+  "CHAT_VSI_ONE_LANGUAGE": "on",
+  "CHAT_VSI_LLM_ENDPOINT": "databricks-gpt-6-luna",
+  "CHAT_VSI_LLM_FALLBACK_ENDPOINTS": "databricks-gpt-5-6-luna",
+  "CHAT_VSI_ANSWER_MAX_TOKENS": "8000",
+  "CHAT_VSI_REWRITE_ENDPOINT": "databricks-claude-sonnet-4-6",
+  "CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS": "databricks-gpt-5-6-luna,databricks-gpt-6-luna",
+  "CHAT_VSI_REWRITE_MAX_TOKENS": "1000",
+  "CHAT_VSI_INSTRUCTIONS": "v3",
+  "CHAT_VSI_LANGUAGE_REMINDER": "on"
+  ```
+  Les deux dernières lignes seulement si P2 les confirme. Vérifier ensuite dans Serving que
+  `databricks-gpt-6-luna` et `databricks-gpt-5-6-luna` existent dans le workspace DEV (un endpoint absent
+  n'arrête pas le chat : 404 → l'autre modèle, mais tout passerait par le secours). Test : une question
+  dans l'onglet Chat VSI, puis dans les logs de l'app `chat_vsi_llm` (aucune ligne = aucun incident) et
+  `chat turn done`. Les notebooks d'éval n'héritent plus que des index et du modèle de réponse de l'app,
+  jamais de ses options de recherche ni du modèle de secours. UAT : même bloc dans `"uat"`, seulement
+  avec ton accord (déploiement de la vraie app).
+
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.
 
