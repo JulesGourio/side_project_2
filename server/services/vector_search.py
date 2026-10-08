@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
+from . import vs_gate
 from .doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
 from .streaming import _cost_eur, supports_temperature
 
@@ -192,13 +193,11 @@ def _find_quote(text: str, quote: str) -> Optional[List[int]]:
 # ---------------------------------------------------------------------------
 
 async def _fetch_chunks(host: str, token: str, index_name: str, query_text: str, num_results: int) -> List[Dict[str, Any]]:
-    url = f'{host}/api/2.0/vector-search/indexes/{index_name}/query'
     payload = {'query_text': query_text, 'columns': _COLUMNS, 'num_results': num_results, 'query_type': 'HYBRID'}
-    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-    async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
+    # Through the app-wide gate shared with the chat (vs_gate: bounded concurrency, 429 retries).
+    resp = await vs_gate.post(host, token, index_name, payload, _QUERY_TIMEOUT_S)
+    resp.raise_for_status()
+    data = resp.json()
     columns = [c['name'] for c in data.get('manifest', {}).get('columns', [])]
     chunks = [dict(zip(columns, row)) for row in data.get('result', {}).get('data_array', [])]
     return [c for c in chunks if _ARCHIVE_NOTICE_MARKER not in (c.get('chunk_text') or '')]
