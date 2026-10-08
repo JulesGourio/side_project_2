@@ -46,6 +46,8 @@ _PRICING_USD: Dict[str, Dict[str, float]] = {
     'databricks-gpt-5-6-luna':      {'input': 0.242, 'output': 1.453},
     # GPT-6 Luna, 2026-10-08 (console): in=1.428571 DBU, out=7.142857 DBU.
     'databricks-gpt-6-luna':        {'input': 0.121, 'output': 0.606},
+    # Gemini 3.8 Flash, 2026-10-08 (console): in=10.714285 DBU, out=53.571425 DBU.
+    'databricks-gemini-3-8-flash':  {'input': 0.908, 'output': 4.542},
 }
 _DEFAULT_PRICING = {'input': 3.0, 'output': 15.0}
 _EUR_PER_USD = float(os.getenv('EUR_PER_USD', '0.92'))

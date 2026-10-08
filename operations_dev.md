@@ -644,6 +644,13 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
      ≈ 15 €), puis `variant=v2e`, `doc_cards=true`, `chunk_context=true` (≈ 65 € au total).
      `enrich_max_docs=50` pour un essai à quelques euros d'abord.
 
+- [ ] **P. Comparer deux modèles de réponse côte à côte** (2026-10-08) : notebook
+  `utils/databricks_ops/evaluation/pairwise_answers.py`, serverless, Run all. Par défaut Sonnet 5.5
+  (A) contre GPT-6 Luna (B), mêmes passages (recherche `u-all`, réécriture Sonnet 4.6), juge
+  Gemini 3.8 Flash dans les deux ordres, golden + 60 vraies questions DEV. Vérifier d'abord le nom
+  exact des endpoints dans Serving (widgets `model_a`, `model_b`, `judge`). Résultats dans
+  `dev_landingzone.qualibot.eval_pairwise_runs` ; une autre paire = un autre `pair_id`.
+
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.
 
