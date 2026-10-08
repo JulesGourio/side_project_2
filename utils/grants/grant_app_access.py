@@ -59,13 +59,24 @@ if pipeline_sp:
                    for t in _list("pipeline_tables")]
 
 failed = []
+import logging
+
+logger = logging.getLogger("grant_app_access")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
 for stmt in statements:
     try:
         spark.sql(stmt)
-        print(f"  OK: {stmt}")
+        logger.info(f"  OK: {stmt}")
     except Exception as exc:
         failed.append((stmt, str(exc).splitlines()[0][:300]))
-        print(f"  FAILED: {stmt}\n    -> {str(exc).splitlines()[0][:300]}")
+        logger.warning(f"  FAILED: {stmt}\n    -> {str(exc).splitlines()[0][:300]}")
 
 # COMMAND ----------
 
@@ -81,13 +92,13 @@ for name in _list("serving_endpoints"):
             ServingEndpointAccessControlRequest(service_principal_name=sp,
                                                 permission_level=ServingEndpointPermissionLevel.CAN_QUERY),
         ])
-        print(f"  OK: {what}")
+        logger.info(f"  OK: {what}")
     except Exception as exc:
         # Typical cause: the job SP is not CAN_MANAGE on this endpoint (foundation
         # model endpoints are usually managed by a workspace admin) — ask one to run
         # the same grant, see operations_dev.md block V.
         failed.append((what, str(exc).splitlines()[0][:300]))
-        print(f"  FAILED: {what}\n    -> {str(exc).splitlines()[0][:300]}")
+        logger.warning(f"  FAILED: {what}\n    -> {str(exc).splitlines()[0][:300]}")
 
 # COMMAND ----------
 
@@ -95,4 +106,4 @@ total = len(statements) + len(_list("serving_endpoints"))
 if failed:
     details = "\n".join(f"- {what}\n    -> {err}" for what, err in failed)
     raise RuntimeError(f"{len(failed)}/{total} grant(s) failed:\n{details}")
-print(f"All {total} grants applied.")
+logger.info(f"All {total} grants applied.")

@@ -57,6 +57,11 @@ MIGRATIONS: list[tuple[str, str]] = [
 ]
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 def apply_migrations(conn, migrations=MIGRATIONS):
     """Run each migration in its own transaction so one failure (e.g. an
     ownership error on a table this identity doesn't own) can't roll back
@@ -66,7 +71,7 @@ def apply_migrations(conn, migrations=MIGRATIONS):
     """
     applied, failed = [], []
     for name, sql in migrations:
-        print(f"  [{name}] {sql[:72]}...")
+        logger.info(f"  [{name}] {sql[:72]}...")
         try:
             with conn.cursor() as cur:
                 cur.execute(sql)

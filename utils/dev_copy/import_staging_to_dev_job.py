@@ -46,9 +46,19 @@ SOFFICE_TARGET_DIR = dbutils.widgets.get("SOFFICE_TARGET_DIR").rstrip("/")
 CHUNK_TABLES = {"chunks"}
 RETENTION = "interval 60 days"
 
+import logging
+
+logger = logging.getLogger("import_staging_to_dev_job")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
 manifest = json.loads(dbutils.fs.head(f"dbfs:{SOURCE_DIR}/manifest.json", 1024 * 1024))
 FORMAT = manifest["format"]
-print(f"Snapshot of {manifest['source_catalog_schema']}.*{manifest['table_suffix']} "
+logger.info(f"Snapshot of {manifest['source_catalog_schema']}.*{manifest['table_suffix']} "
       f"exported {manifest['exported_at']} ({FORMAT}) -> {TARGET_CATALOG_SCHEMA}.*{TABLE_SUFFIX}")
 
 # COMMAND ----------
@@ -59,10 +69,11 @@ print(f"Snapshot of {manifest['source_catalog_schema']}.*{manifest['table_suffix
 # COMMAND ----------
 
 skipped, loaded = [], []
+
 for table, info in manifest["tables"].items():
     target = f"{TARGET_CATALOG_SCHEMA}.{table}{TABLE_SUFFIX}"
     if spark.catalog.tableExists(target) and not OVERWRITE:
-        print(f"  {target}: already exists — left as is (OVERWRITE=false)")
+        logger.info(f"  {target}: already exists — left as is (OVERWRITE=false)")
         skipped.append(target)
         continue
 
@@ -81,7 +92,7 @@ for table, info in manifest["tables"].items():
     rows = spark.table(target).count()
     if rows != info["rows"]:
         raise RuntimeError(f"{target}: {rows} rows loaded, {info['rows']} exported")
-    print(f"  {target}: {rows} rows")
+    logger.info(f"  {target}: {rows} rows")
     loaded.append(target)
 
 # COMMAND ----------
@@ -95,8 +106,8 @@ archive = manifest.get("soffice_archive")
 if archive:
     target = f"{SOFFICE_TARGET_DIR}/{os.path.basename(archive)}"
     dbutils.fs.cp(f"dbfs:{archive}", f"dbfs:{target}")
-    print(f"LibreOffice archive -> {target}")
+    logger.info(f"LibreOffice archive -> {target}")
 
-print(f"\n{len(loaded)} table(s) loaded, {len(skipped)} left as is.")
+logger.info(f"{len(loaded)} table(s) loaded, {len(skipped)} left as is.")
 if skipped and OVERWRITE is False:
-    print("Re-run with OVERWRITE=true to replace them (then delete + recreate any index on a replaced chunk table).")
+    logger.info("Re-run with OVERWRITE=true to replace them (then delete + recreate any index on a replaced chunk table).")

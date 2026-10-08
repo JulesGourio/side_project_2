@@ -38,20 +38,31 @@ source_files = iter_export_files(SOURCE_EXPORT_DIR)
 if not source_files:
     raise RuntimeError(f"No JSON file found in {SOURCE_EXPORT_DIR}")
 
-print(f"Import volume {SOURCE_EXPORT_DIR} -> {TARGET_CATALOG}.{TARGET_SCHEMA}")
-print(f"{len(source_files)} file(s) detected")
+import logging
+
+logger = logging.getLogger("import_lakebase_uat_volume_to_dev_job")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info(f"Import volume {SOURCE_EXPORT_DIR} -> {TARGET_CATALOG}.{TARGET_SCHEMA}")
+logger.info(f"{len(source_files)} file(s) detected")
 
 loaded_tables = 0
 for entry in source_files:
     table = PurePosixPath(entry.path).stem
     if table in TABLES_TO_SKIP:
-        print(f"  {table}... skipped (TABLES_TO_SKIP)")
+        logger.info(f"  {table}... skipped (TABLES_TO_SKIP)")
         continue
 
     df = spark.read.json(entry.path)
     row_count = df.count()
     if row_count == 0:
-        print(f"  {table}... skipped (0 rows)")
+        logger.info(f"  {table}... skipped (0 rows)")
         continue
 
     target_table = f"`{TARGET_CATALOG}`.`{TARGET_SCHEMA}`.`{table}`"
@@ -62,9 +73,9 @@ for entry in source_files:
     spark.sql(f"DROP TABLE IF EXISTS {target_table}")
     df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(target_table)
     loaded_tables += 1
-    print(f"  {table}: {row_count} row(s) -> {TARGET_CATALOG}.{TARGET_SCHEMA}.{table}")
+    logger.info(f"  {table}: {row_count} row(s) -> {TARGET_CATALOG}.{TARGET_SCHEMA}.{table}")
 
-print(f"Done. {loaded_tables} table(s) loaded into {TARGET_CATALOG}.{TARGET_SCHEMA}")
+logger.info(f"Done. {loaded_tables} table(s) loaded into {TARGET_CATALOG}.{TARGET_SCHEMA}")
 
 
 # COMMAND ----------

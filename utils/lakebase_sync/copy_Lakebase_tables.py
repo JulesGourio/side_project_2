@@ -188,6 +188,12 @@ def create_or_replace_table(w: WorkspaceClient, table: str, volume_path: str) ->
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("copy_Lakebase_tables")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument(
@@ -203,73 +209,67 @@ def main():
 
     if args.direct:
         # ── Étape 1 (legacy) : export Lakebase en direct ───────────────────────
-        print(f"=== [1/2] Export depuis Lakebase {COPY_SOURCE_ENV} (connexion directe) ===")
+        logger.info(f"=== [1/2] Export depuis Lakebase {COPY_SOURCE_ENV} (connexion directe) ===")
         conn = lakebase_connect(COPY_SOURCE_ENV)
         try:
             with conn.cursor() as cur:
                 tables = list_tables(cur, [])
 
             if not tables:
-                print("Aucune table trouvée dans Lakebase.")
+                logger.info("Aucune table trouvée dans Lakebase.")
                 return
 
-            print(f"{len(tables)} table(s) trouvée(s) : {[f'{s}.{t}' for s, t in tables]}\n")
+            logger.info(f"{len(tables)} table(s) trouvée(s) : {[f'{s}.{t}' for s, t in tables]}\n")
 
             for schema, table in tables:
                 if table in COPY_TABLES_TO_SKIP:
-                    print(f"  Export {schema}.{table}... ignorée (COPY_TABLES_TO_SKIP)")
+                    logger.info(f"  Export {schema}.{table}... ignorée (COPY_TABLES_TO_SKIP)")
                     continue
-                print(f"  Export {schema}.{table}...", end=" ", flush=True)
                 local_file, n_rows = export_table_to_json(conn, schema, table)
                 exported.append((schema, table, local_file, n_rows))
-                print(f"{n_rows} lignes")
+                logger.info(f"  Export {schema}.{table}: {n_rows} lignes")
         finally:
             conn.close()
     else:
         # ── Étape 1 : récupération du JSON déjà exporté sur le volume UAT ──────
-        print(f"=== [1/2] Récupération de l'export Lakebase {COPY_SOURCE_ENV} depuis {LAKEBASE_EXPORT_VOLUME_DBFS} ===")
+        logger.info(f"=== [1/2] Récupération de l'export Lakebase {COPY_SOURCE_ENV} depuis {LAKEBASE_EXPORT_VOLUME_DBFS} ===")
         files = list_uat_export_files()
         if not files:
-            print(
-                f"Aucun fichier trouvé sur {LAKEBASE_EXPORT_VOLUME_DBFS}.\n"
-                "Lancer d'abord le job Databricks export_lakebase_uat_to_volume.py sur le workspace UAT."
-            )
+            logger.info(f"Aucun fichier trouvé sur {LAKEBASE_EXPORT_VOLUME_DBFS}.\n"
+                "Lancer d'abord le job Databricks export_lakebase_uat_to_volume.py sur le workspace UAT.")
             return
 
-        print(f"{len(files)} fichier(s) trouvé(s) : {files}\n")
+        logger.info(f"{len(files)} fichier(s) trouvé(s) : {files}\n")
         for fname in files:
             table = fname[:-len(".json")]
             if table in COPY_TABLES_TO_SKIP:
-                print(f"  {table}... ignorée (COPY_TABLES_TO_SKIP)")
+                logger.info(f"  {table}... ignorée (COPY_TABLES_TO_SKIP)")
                 continue
-            print(f"  {table}...", end=" ", flush=True)
             local_file, n_rows = download_from_uat_volume(fname)
             exported.append(("public", table, local_file, n_rows))
-            print(f"{n_rows} lignes")
+            logger.info(f"  {table}: {n_rows} lignes")
 
     # ── JSONL supplémentaire (Intraqual) ──────────────────────────────────────
     if os.path.exists(INTRAQUAL_JSONL):
-        print(f"  JSONL {INTRAQUAL_TABLE} depuis {INTRAQUAL_JSONL}...", end=" ", flush=True)
         n_rows = sum(1 for _ in open(INTRAQUAL_JSONL, encoding="utf-8"))
         exported.append(("(jsonl)", INTRAQUAL_TABLE, INTRAQUAL_JSONL, n_rows))
-        print(f"{n_rows} lignes")
+        logger.info(f"  JSONL {INTRAQUAL_TABLE} depuis {INTRAQUAL_JSONL}: {n_rows} lignes")
     else:
-        print(f"  JSONL introuvable ({INTRAQUAL_JSONL}) — étape ignorée.")
+        logger.info(f"  JSONL introuvable ({INTRAQUAL_JSONL}) — étape ignorée.")
 
     # ── Étape 2 : push vers Databricks DEV ────────────────────────────────────
-    print(f"\n=== [2/2] Push vers {COPY_TARGET_CATALOG}.{COPY_TARGET_SCHEMA} (profil {COPY_TARGET_PROFILE}) ===")
+    logger.info(f"=== [2/2] Push vers {COPY_TARGET_CATALOG}.{COPY_TARGET_SCHEMA} (profil {COPY_TARGET_PROFILE}) ===")
     w = WorkspaceClient(profile=COPY_TARGET_PROFILE)
 
     for schema, table, local_file, n_rows in exported:
         if n_rows == 0:
-            print(f"  {table}... ignorée (0 lignes)")
+            logger.info(f"  {table}... ignorée (0 lignes)")
             continue
-        print(f"  {table}...", end=" ", flush=True)
         volume_path = upload_to_staging(local_file, table)
         create_or_replace_table(w, table, volume_path)
-        print(f"OK ({n_rows} lignes)  ->  {COPY_TARGET_CATALOG}.{COPY_TARGET_SCHEMA}.{table}")
+        logger.info(f"OK ({n_rows} lignes)  ->  {COPY_TARGET_CATALOG}.{COPY_TARGET_SCHEMA}.{table}")
 
-    print(f"\nTerminé. {len(exported)} table(s) copiée(s) dans {COPY_TARGET_CATALOG}.{COPY_TARGET_SCHEMA}.")
+    logger.info(f"Terminé. {len(exported)} table(s) copiée(s) dans {COPY_TARGET_CATALOG}.{COPY_TARGET_SCHEMA}.")
 
 
 if __name__ == "__main__":

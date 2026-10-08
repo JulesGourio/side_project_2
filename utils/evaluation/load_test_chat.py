@@ -93,7 +93,18 @@ for r in (msgs.filter((F.col('role') == 'user') & F.length('content').between(15
           .select('content', division_col.alias('division')).limit(400).collect()):
     QUESTIONS.append({'division': (r['division'] or 'ALL').upper(), 'content': _DIVISION_PREFIX.sub('', r['content'])})
 random.Random(7).shuffle(QUESTIONS)
-print(len(QUESTIONS), 'questions;', sum(LEVELS) * ROUNDS, 'to send over the steps', LEVELS)
+import logging
+
+logger = logging.getLogger("load_test_chat")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info("%s", " ".join(str(x) for x in (len(QUESTIONS), 'questions;', sum(LEVELS) * ROUNDS, 'to send over the steps', LEVELS,)))
 
 # COMMAND ----------
 
@@ -186,7 +197,7 @@ async def ask(mode, q, session_id):
 MODE = dbutils.widgets.get('mode')
 if MODE in ('auto', 'app'):
     probe = run_async(ask('app', QUESTIONS[0], f'loadtest-{RUN_ID}-probe'))
-    print('app probe:', probe)
+    logger.info("%s", " ".join(str(x) for x in ('app probe:', probe,)))
     if probe['status'] != 'ok':
         if MODE == 'app':
             raise RuntimeError(f'The app refused this notebook ({probe.get("error")}). Run with mode=engine, '
@@ -196,7 +207,7 @@ if MODE in ('auto', 'app'):
         MODE = 'app'
 if MODE == 'engine':
     load_engine()
-print(f'MODE = {MODE}', f'({WS_URL})' if MODE == 'app' else '(engine called in this notebook)')
+logger.info("%s", " ".join(str(x) for x in (f'MODE = {MODE}', f'({WS_URL})' if MODE == 'app' else '(engine called in this notebook)',)))
 
 # COMMAND ----------
 
@@ -230,10 +241,10 @@ for level in LEVELS:
     failed = sum(1 for r in rows if r['status'] != 'ok')
     ttft = sorted(r['ttft_s'] for r in rows if r['ttft_s'] is not None)
     p50 = ttft[len(ttft) // 2] if ttft else None
-    print(f'level {level:3}: {len(rows)} questions in {wall:.0f} s ({len(rows) / wall * 60:.0f}/min), '
+    logger.info(f'level {level:3}: {len(rows)} questions in {wall:.0f} s ({len(rows) / wall * 60:.0f}/min), '
           f'{failed} failed, first word p50 {p50 and round(p50, 1)} s')
     if failed * 100 / len(rows) > STOP_PCT:
-        print(f'Stopped: more than {STOP_PCT:.0f} % failed at level {level}.')
+        logger.info(f'Stopped: more than {STOP_PCT:.0f} % failed at level {level}.')
         break
 
 # COMMAND ----------
@@ -252,4 +263,4 @@ FROM {RESULTS} WHERE run_id = '{RUN_ID}' GROUP BY level ORDER BY level"""))
 display(spark.sql(f"""
 SELECT level, status, left(error, 200) AS error, count(*) AS n
 FROM {RESULTS} WHERE run_id = '{RUN_ID}' AND status <> 'ok' GROUP BY ALL ORDER BY level, n DESC"""))
-print('run_id =', RUN_ID)
+logger.info("%s", " ".join(str(x) for x in ('run_id =', RUN_ID,)))

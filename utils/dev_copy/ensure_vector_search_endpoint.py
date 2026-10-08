@@ -25,18 +25,29 @@ WAIT_MINUTES = int(dbutils.widgets.get("wait_minutes") or "0")
 
 w = WorkspaceClient()
 
+import logging
+
+logger = logging.getLogger("ensure_vector_search_endpoint")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
 try:
     ep = w.vector_search_endpoints.get_endpoint(endpoint_name=NAME)
-    print(f"Endpoint {NAME} already exists.")
+    logger.info(f"Endpoint {NAME} already exists.")
 except NotFound:
-    print(f"Endpoint {NAME} not found — creating (STANDARD)...")
+    logger.info(f"Endpoint {NAME} not found — creating (STANDARD)...")
     w.vector_search_endpoints.create_endpoint(name=NAME, endpoint_type=EndpointType.STANDARD)
     ep = w.vector_search_endpoints.get_endpoint(endpoint_name=NAME)
 
 deadline = time.time() + WAIT_MINUTES * 60
 while True:
     state = str(ep.endpoint_status.state.value if ep.endpoint_status and ep.endpoint_status.state else "UNKNOWN")
-    print(f"{NAME}: {state}")
+    logger.info(f"{NAME}: {state}")
     if state == "ONLINE":
         break
     if state in ("OFFLINE", "RED_STATE", "DELETED"):

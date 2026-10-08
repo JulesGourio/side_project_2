@@ -59,22 +59,28 @@ def sdk_lakebase_connect(env: str) -> psycopg2.extensions.connection:
     )
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("migrate_lakebase")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--env", choices=list(LAKEBASE_PROJECTS), default="DEV",
                     help="Target Lakebase environment. Default: DEV")
     args = ap.parse_args()
 
-    print(f"Connecting to Lakebase {args.env} via generate_database_credential...")
+    logger.info(f"Connecting to Lakebase {args.env} via generate_database_credential...")
     conn = sdk_lakebase_connect(args.env)
 
     try:
         applied, failed = apply_migrations(conn, MIGRATIONS)
-        print(f"\nDone — {len(applied)}/{len(MIGRATIONS)} migration(s) applied.")
+        logger.info(f"Done — {len(applied)}/{len(MIGRATIONS)} migration(s) applied.")
         if failed:
-            print(f"Failed ({len(failed)}):")
+            logger.warning(f"Failed ({len(failed)}):")
             for name, err in failed:
-                print(f"  [{name}] {err.strip()}")
+                logger.info(f"  [{name}] {err.strip()}")
     finally:
         conn.close()
 

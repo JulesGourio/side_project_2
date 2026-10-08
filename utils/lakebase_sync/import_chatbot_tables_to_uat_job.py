@@ -43,8 +43,19 @@ source_files = iter_export_files(SOURCE_EXPORT_DIR)
 if not source_files:
     raise RuntimeError(f"No JSON file found in {SOURCE_EXPORT_DIR}")
 
-print(f"Import volume {SOURCE_EXPORT_DIR} -> {TARGET_CATALOG}.{TARGET_SCHEMA}")
-print(f"Chatbot tables to load: {sorted(CHATBOT_TABLES)}")
+import logging
+
+logger = logging.getLogger("import_chatbot_tables_to_uat_job")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info(f"Import volume {SOURCE_EXPORT_DIR} -> {TARGET_CATALOG}.{TARGET_SCHEMA}")
+logger.info(f"Chatbot tables to load: {sorted(CHATBOT_TABLES)}")
 
 loaded_tables = 0
 for entry in source_files:
@@ -55,7 +66,7 @@ for entry in source_files:
     df = spark.read.json(entry.path)
     row_count = df.count()
     if row_count == 0:
-        print(f"  {table}... skipped (0 rows)")
+        logger.info(f"  {table}... skipped (0 rows)")
         continue
 
     target_table = f"`{TARGET_CATALOG}`.`{TARGET_SCHEMA}`.`{table}`"
@@ -68,8 +79,6 @@ for entry in source_files:
         "overwriteSchema", "true"
     ).saveAsTable(target_table)
     loaded_tables += 1
-    print(
-        f"  {table}: {row_count} row(s) -> {TARGET_CATALOG}.{TARGET_SCHEMA}.{table}"
-    )
+    logger.info(f"  {table}: {row_count} row(s) -> {TARGET_CATALOG}.{TARGET_SCHEMA}.{table}")
 
-print(f"Done. {loaded_tables} table(s) loaded into {TARGET_CATALOG}.{TARGET_SCHEMA}")
+logger.info(f"Done. {loaded_tables} table(s) loaded into {TARGET_CATALOG}.{TARGET_SCHEMA}")

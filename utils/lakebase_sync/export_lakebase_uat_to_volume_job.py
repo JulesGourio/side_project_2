@@ -82,6 +82,17 @@ conn = psycopg2.connect(
     sslmode="require",
 )
 
+import logging
+
+logger = logging.getLogger("export_lakebase_uat_to_volume_job")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
 try:
     with conn.cursor() as cur:
         cur.execute(
@@ -95,14 +106,12 @@ try:
         )
         tables = cur.fetchall()
 
-    print(
-        f"Export Lakebase {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASE} -> {OUTPUT_DIR}"
-    )
-    print(f"{len(tables)} table(s) found")
+    logger.info(f"Export Lakebase {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASE} -> {OUTPUT_DIR}")
+    logger.info(f"{len(tables)} table(s) found")
 
     for schema, table in tables:
         if table in TABLES_TO_SKIP:
-            print(f"  {schema}.{table}... skipped (TABLES_TO_SKIP)")
+            logger.info(f"  {schema}.{table}... skipped (TABLES_TO_SKIP)")
             continue
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -116,11 +125,11 @@ try:
                     json.dumps(row, ensure_ascii=False, default=json_serializer) + "\n"
                 )
 
-        print(f"  {schema}.{table}: {len(rows)} row(s) -> {out_file}")
+        logger.info(f"  {schema}.{table}: {len(rows)} row(s) -> {out_file}")
 finally:
     conn.close()
 
-print(f"Done. Export available in {OUTPUT_DIR}")
+logger.info(f"Done. Export available in {OUTPUT_DIR}")
 
 
 # COMMAND ----------

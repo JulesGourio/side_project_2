@@ -64,6 +64,12 @@ def connect(profile: str, database: str):
     )
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("export_lakebase_to_json")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--profile", required=True, help="Databricks CLI profile for the SOURCE workspace.")
@@ -86,10 +92,10 @@ def main() -> None:
             )
             tables = [row[0] for row in cur.fetchall()]
 
-        print(f"{len(tables)} table(s) found (skipping {sorted(MIGRATE_TO_PROD_TABLES_TO_SKIP)}):")
+        logger.info(f"{len(tables)} table(s) found (skipping {sorted(MIGRATE_TO_PROD_TABLES_TO_SKIP)}):")
         for table in tables:
             if table in MIGRATE_TO_PROD_TABLES_TO_SKIP:
-                print(f"  {table}... skipped")
+                logger.info(f"  {table}... skipped")
                 continue
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(f'SELECT * FROM "{table}"')
@@ -98,7 +104,7 @@ def main() -> None:
             with open(out_file, "w", encoding="utf-8") as f:
                 for row in rows:
                     f.write(json.dumps(row, ensure_ascii=False, default=json_serializer) + "\n")
-            print(f"  {table}: {len(rows)} row(s) -> {out_file}")
+            logger.info(f"  {table}: {len(rows)} row(s) -> {out_file}")
     finally:
         conn.close()
 

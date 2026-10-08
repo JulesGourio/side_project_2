@@ -67,3 +67,16 @@ Supprimés : pages `HomePage` / `AboutPage` (jamais routées) et tout ce qu'elle
 `databricks.yml`, `resources/parsing_pipeline.job.yml`, `app.yaml`, `server/` et `config.py` : seuls des commentaires ont changé (structure YAML et AST Python vérifiés identiques avant / après).
 
 - [ ] `databricks bundle validate -t dev --profile DEV` (puis `-t qualibot-uat-test`).
+
+## 6. Deuxième passe (2026-10-08)
+
+- **Jobs Knowledge Assistant supprimés** : `resources/traces_migration.yml`, `resources/quality_scoring.yml` (job `D_3`), le job `sync_mlflow_scorer_assessments_uat` de `databricks.yml` et leurs notebooks (`utils/ka_legacy/`, `sync_mlflow_scorer_assessments.py`). Au prochain `bundle deploy -t qualibot-uat`, Databricks les **détruira** côté UAT. Le job de notation courant (`score_production_qa_uat`, notebook `utils/evaluation/score_production_qa.py`) reste.
+  - [ ] Avant ce déploiement UAT (qui demande votre accord), vérifier que le dashboard « ChatBot - Quality » ne lit plus les tables `ka_*` / `chat_quality_*` alimentées par ces jobs.
+- **`PARSING_INTRAQUAL_SOURCE` / variable `intraqual_source_catalog_schema`** retirées du bundle et du job de parsing.
+- **`print` remplacé par `logger`** dans tous les scripts et notebooks de `utils/` (sorties CLI incluses : même texte, préfixé par le niveau pour les notebooks). Les barres de progression `print(..., end=" ")` de `copy_Lakebase_tables.py` deviennent une ligne par table.
+  - [ ] Lancer une fois chaque job Lakebase / grants / dev_copy et vérifier qu'il n'y a pas de `NameError: logger`.
+- **Sections LEAP** ajoutées (`Technical debt`, `Inputs`, `Data Preparation`, `Data Transformations`, `Quality Checks`, `#N/A` si vide) dans les notebooks 1, 2, 4, 5, 6 et generic 2, 3.
+- **`generic_pipeline/1_Parse_Chunk_Generic.py`** réécrit : widgets (mêmes valeurs par défaut), fonctions dans `chunk_steps.py`, contrôle d'unicité de `chunk_id` avant l'écriture, attente de l'index dédupliquée.
+  - [ ] Si vous vous en servez : le lancer sur `/Volumes/uat_landingzone/qualibot/test/test_documents` et vérifier la table `chunks_test_generic` et l'index.
+- **Client** : `CompareView.tsx` (2 700 lignes) découpé en `compareShared.ts`, `PdfDropZone`, `JsonDiffTable`, `StructuredResultCard`, `ResultCard`, `DocSummaryCard`, `CardFeedback` (vote partagé par les deux cartes de résultat). Typecheck et build Vite passent.
+  - [ ] Après `bun run build`, passer une comparaison complète (Change Summary, Change Table, vote et commentaire, résumé d'un document, recherche d'impact).

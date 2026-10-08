@@ -47,7 +47,18 @@ import sys
 sys.path.insert(0, os.path.dirname(os.getcwd()))
 from ops_config import CAPS_CHAT_GROUPS, CAPS_COMPARE_GROUPS, CAPS_ALL_GROUPS
 
-print(f"dry_run={DRY_RUN}  database={LAKEBASE_DATABASE}  groups tracked={len(CAPS_ALL_GROUPS)}")
+import logging
+
+logger = logging.getLogger("sync_user_capabilities_job")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info(f"dry_run={DRY_RUN}  database={LAKEBASE_DATABASE}  groups tracked={len(CAPS_ALL_GROUPS)}")
 
 # COMMAND ----------
 
@@ -88,7 +99,7 @@ for row in audit_df.collect():
 
 adds = sum(1 for v in audit.values() if v["is_member"])
 removes = len(audit) - adds
-print(f"{len(audit)} (user, group) pair(s) — {adds} active, {removes} removed")
+logger.info(f"{len(audit)} (user, group) pair(s) — {adds} active, {removes} removed")
 
 # COMMAND ----------
 
@@ -122,7 +133,7 @@ conn = psycopg2.connect(
     host=host, port=5432, database=LAKEBASE_DATABASE,
     user=username, password=cred.token, sslmode="require",
 )
-print(f"Connected to {host}/{LAKEBASE_DATABASE} as {username}")
+logger.info(f"Connected to {host}/{LAKEBASE_DATABASE} as {username}")
 
 # COMMAND ----------
 
@@ -234,11 +245,11 @@ finally:
     conn.close()
 
 if DRY_RUN:
-    print(f"[dry-run] {len(preview_rows)} user(s) computed — nothing written. Sample:")
+    logger.info(f"[dry-run] {len(preview_rows)} user(s) computed — nothing written. Sample:")
     for row in preview_rows[:20]:
-        print(" ", row)
+        logger.info("%s", " ".join(str(x) for x in (" ", row,)))
 else:
-    print(f"{updated} user(s) updated in {LAKEBASE_DATABASE} (groups / can_chat / can_compare).")
+    logger.info(f"{updated} user(s) updated in {LAKEBASE_DATABASE} (groups / can_chat / can_compare).")
 
 
 # COMMAND ----------
