@@ -16,7 +16,7 @@
 # MAGIC 2. Lit leurs données depuis `_pipeline_checkpoint` (images array)
 # MAGIC 3. Reconstruit les lignes `image_metadata` avec status=PENDING
 # MAGIC 4. MERGE dans `image_metadata` (idempotent, sans toucher aux entrées existantes)
-# MAGIC 5. Le prochain run de `4_Describe_Images_LLM_v2` traitera automatiquement les PENDING
+# MAGIC 5. Le prochain run de `4_Describe_Images_LLM` traitera automatiquement les PENDING
 # MAGIC
 # MAGIC **Exécution** : une seule fois, ~30s sur serverless. Idempotent (safe à re-lancer).
 
@@ -150,7 +150,7 @@ DeltaTable.forName(spark, TARGET_IMAGE_METADATA_TABLE).alias("tgt").merge(
 ).whenNotMatchedInsertAll().execute()
 
 print(f"✅ MERGE complete — {row_count} rows inserted into {TARGET_IMAGE_METADATA_TABLE}")
-print(f"   {pending} images PENDING → will be described by the next run of 4_Describe_Images_LLM_v2")
+print(f"   {pending} images PENDING → will be described by the next run of 4_Describe_Images_LLM")
 
 # COMMAND ----------
 

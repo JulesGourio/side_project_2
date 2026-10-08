@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Deploy orchestration metadata only (bundle target / app name / CLI profile).
-# App-facing env var overrides (COMPARE_VOLUME_PATH, CHAT_ENDPOINT*, model
+# App-facing env var overrides (COMPARE_VOLUME_PATH, CHAT_VSI_INDEX, model
 # endpoints, etc.) live in utils/deploy/target_env.json — the single source
 # of truth shared with bitbucket-pipelines.yml, rendered by
 # render_target_config_env.py below. Don't hardcode them here too.

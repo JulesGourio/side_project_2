@@ -197,12 +197,12 @@ def test_export_excel_route(client):
 
 def test_impact_cache_key_depends_on_changes_and_index():
     from server.routers.compare import _impact_cache_version
-    cfg = {'impact_index': 'cat.sch.chunks_index_v1', 'impact_endpoint': 'judge',
+    cfg = {'impact_index': 'cat.sch.chunks_index', 'impact_endpoint': 'judge',
            'impact_max_queries': 30, 'impact_per_query_results': 40, 'impact_max_candidates': 15}
     base = _impact_cache_version('[{"section": "4.3"}]', cfg)
     assert base == _impact_cache_version('[{"section": "4.3"}]\n', cfg)
     assert base != _impact_cache_version('## 4.3 Torque\n- changed', cfg)
-    assert base != _impact_cache_version('[{"section": "4.3"}]', {**cfg, 'impact_index': 'cat.sch.chunks_full_index_v1'})
+    assert base != _impact_cache_version('[{"section": "4.3"}]', {**cfg, 'impact_index': 'cat.sch.chunks_full_index'})
 
 
 @pytest.mark.parametrize('text', [

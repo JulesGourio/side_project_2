@@ -116,7 +116,7 @@ if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
 
     if not spark.catalog.tableExists(FULL_TABLE):
         df_src.write.format("delta").saveAsTable(FULL_TABLE)
-        # 60-day history, like the _v1 chunk tables: a TRIGGERED sync can never resume once the CDF
+        # 60-day history, like the chunk tables: a TRIGGERED sync can never resume once the CDF
         # it needs has aged out (VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION, see databricks.yml).
         spark.sql(f"""
             ALTER TABLE {FULL_TABLE} SET TBLPROPERTIES (
@@ -163,16 +163,14 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-# Only these 4 index/source pairs are ever provisioned by this pipeline --
+# Only these 2 index/source pairs are ever provisioned by this pipeline --
 # an index name in `indexes` that isn't one of them is synced (existing
 # behavior) but never auto-created, since we wouldn't know its source table.
-# Mirrors config.py's TARGET_CHUNK_TABLE*/TARGET_CHUNK_TABLE_AS/_IS naming
-# ({catalog_schema}.{name}{table_suffix}), rebuilt here from widgets instead
-# of importing config.py -- see the widget comments above.
+# Mirrors config.py's TARGET_CHUNK_TABLE naming ({catalog_schema}.{name}{table_suffix}),
+# rebuilt here from widgets instead of importing config.py -- see the widget
+# comments above.
 KNOWN_SOURCE_TABLE = {
     f"{CATALOG_SCHEMA}.chunks_index{TABLE_SUFFIX}": f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}",
-    f"{CATALOG_SCHEMA}.chunks_as_index{TABLE_SUFFIX}": f"{CATALOG_SCHEMA}.src_chunks_as{TABLE_SUFFIX}",
-    f"{CATALOG_SCHEMA}.chunks_is_index{TABLE_SUFFIX}": f"{CATALOG_SCHEMA}.src_chunks_is{TABLE_SUFFIX}",
     FULL_INDEX: FULL_TABLE,
 } if CATALOG_SCHEMA else {}
 

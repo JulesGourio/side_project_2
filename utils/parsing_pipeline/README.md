@@ -48,7 +48,7 @@ after benchmarking VRAM headroom per Docling model.
 Tried setting `PYTHONPATH` as a cluster-level env var, as a more robust
 alternative to `addPyFile()` for the rare "worker joins late, misses
 utils.py" `ModuleNotFoundError` (hit live once, run `480896252037130`,
-2026-07-02 — see `3_Parse_Pipeline_v2.py`'s `addPyFile()` call site).
+2026-07-02 — see `3_Parse_Pipeline.py`'s `addPyFile()` call site).
 This broke
 something more fundamental instead: confirmed live, it made Spark's own
 pyspark-worker-daemon bootstrap fail fast and consistently inside the
@@ -88,7 +88,7 @@ declaration order.
 
 Fix: pin an opencv-python-headless release from BEFORE the 4.13.x line via a
 `%pip install -q --force-reinstall --no-deps opencv-python-headless==4.12.0.88`
-cell inside `3_Parse_Pipeline_v2.py` (not a job-cluster library — the
+cell inside `3_Parse_Pipeline.py` (not a job-cluster library — the
 `--force-reinstall` must run AFTER docling-core's own install, which already
 installed the broken version at cluster-library-install time). A `%pip`
 cell (not a job-cluster library) is required so the pin applies afterwards;
@@ -157,7 +157,7 @@ Fix: explicit `data_security_mode: SINGLE_USER` on `meta_cpu_cluster` in
 
 ### 2026-07-03 — CPU driver kernel dies partway through an image-description run
 
-The CPU single-node cluster (`m5d.xlarge`) running `4_Describe_Images_LLM_v2.py`
+The CPU single-node cluster (`m5d.xlarge`) running `4_Describe_Images_LLM.py`
 crashes with "Fatal error: Python kernel is unresponsive" after a
 surprisingly stable number of images within the same session — confirmed
 twice in real conditions (2026-07-03): 8013 then 8066 images before crash,
@@ -255,7 +255,7 @@ for 11/20 test IDDOCs still held the stale `"AUTRE"` value because
 
 `image_status_col()` (parse-time only) can only ever return
 `EXTRACTION_FAILED` / `SKIPPED_DECORATIVE` / `PENDING` — `DONE` / `SKIPPED`
-are assigned later by `4_Describe_Images_LLM_v2.py` and live only in the
+are assigned later by `4_Describe_Images_LLM.py` and live only in the
 current `image_metadata` table. Any rebuild-from-checkpoint of
 `image_metadata` that doesn't explicitly carry those statuses forward resets
 already-described images back to `PENDING`, discarding real (paid-for) LLM
@@ -270,9 +270,9 @@ output. Hit live three times:
   this bug despite two prior "fixes".
 
 Fix: a real Delta `MERGE` (keyed on `IDDOC, image_id`, the same key
-`4_Describe_Images_LLM_v2.py`'s own MERGE uses to write `DONE`/`SKIPPED`
+`4_Describe_Images_LLM.py`'s own MERGE uses to write `DONE`/`SKIPPED`
 back) replaced the delete-then-append + Python preserve-join pattern in
-`3_Parse_Pipeline_v2.py`'s final-write cell. `WHEN MATCHED`, parse-time
+`3_Parse_Pipeline.py`'s final-write cell. `WHEN MATCHED`, parse-time
 fields always take the fresh value, but `status`/`description`/tokens/
 `described_at` only take the fresh (`PENDING`) value when the existing row
 isn't already `DONE`/`SKIPPED`. This removes the dependency on a fragile
@@ -290,7 +290,7 @@ final tie-break. Confirmed live: IDDOC 19247 had 4 same-mtime `.docx` files;
 different runs picked a different "rank 1" winner each time. Since
 `chunk_id` is derived from `IDDOC + chunk_index` only (not `source_path`),
 each winning file's chunks collided under the same `chunk_id` with divergent
-content — and separately, `3_Parse_Pipeline_v2.py`'s checkpoint dedup
+content — and separately, `3_Parse_Pipeline.py`'s checkpoint dedup
 (`_read_checkpoint_deduped`) partitioned by `source_path` produced 4
 surviving checkpoint rows for this one IDDOC, each with different
 `chunk_sha256`.
@@ -327,7 +327,7 @@ at the top of both notebooks/functions, before the joins run.
 `image_metadata` has a small number of duplicate `(IDDOC, image_id)` pairs
 (pre-existing, ~114 as of 2026-07-03). If a description batch happens to
 include both copies of a pair, the `MERGE` in
-`4_Describe_Images_LLM_v2.py` raises `DELTA_MULTIPLE_SOURCE_ROW_MATCHING` —
+`4_Describe_Images_LLM.py` raises `DELTA_MULTIPLE_SOURCE_ROW_MATCHING` —
 confirmed live, run `1089418553818115` (2026-07-04). Fix: dedup the source
 batch on `(IDDOC, image_id)` before writing — both copies were described
 identically in the same run, so either is fine to keep.
@@ -339,7 +339,7 @@ identically in the same run, so either is fine to keep.
 `src_chunks_as` / `src_chunks_is` only ever received text chunks (written by
 `3_parse`) and silently drifted out of sync with `chunks` (the "all
 divisions" table) every time images got described, since
-`4_Describe_Images_LLM_v2.py` only mirrored image chunks into `chunks`.
+`4_Describe_Images_LLM.py` only mirrored image chunks into `chunks`.
 Confirmed live: ~20k image chunks missing from `src_chunks_as`/`src_chunks_is`
 after a full description run. Fix: mirror the same delete-then-append into
 `src_chunks_as`/`src_chunks_is` (filtered by `division`) right after writing
@@ -377,7 +377,7 @@ config-map lookup, and always populated correctly.
 
 ### 2026-07-03, 2026-07-08, 2026-07-27 — Three fixes to the "already parsed, skip it" logic
 
-`3_Parse_Pipeline_v2.py`'s resume/exclusion logic (which files to skip
+`3_Parse_Pipeline.py`'s resume/exclusion logic (which files to skip
 because they're already handled) went through three separate bug fixes:
 
 - **2026-07-03**: matching excluded files by `source_path` alone regardless
@@ -418,7 +418,7 @@ because they're already handled) went through three separate bug fixes:
 
 ### Pre-existing image folders must be cleaned AFTER the resume-exclusion join
 
-`3_Parse_Pipeline_v2.py` removes pre-existing image folders for the IDDOCs
+`3_Parse_Pipeline.py` removes pre-existing image folders for the IDDOCs
 it's about to re-parse, to ensure a clean slate. This must run AFTER the
 resume-exclusion join, not on the pre-resume file list: an IDDOC already
 present in the checkpoint (e.g. from a prior attempt that crashed mid-batch)
@@ -436,7 +436,7 @@ avoids this.
 `selection.FORMAT_PRIORITIES` (the dict that assigns each file extension a
 priority for `rank_candidates`/`select_best_files`) never listed `rtf`,
 `odt`, or `ods` — despite `utils.py` having real parsers for them
-(`_parse_rtf`, `_parse_odf`) and `3_Parse_Pipeline_v2.py`'s `NON_DOCLING_EXTS`
+(`_parse_rtf`, `_parse_odf`) and `3_Parse_Pipeline.py`'s `NON_DOCLING_EXTS`
 size gate treating them as a legitimate category alongside `doc`/`xls`/`ppt`.
 Any extension missing from `FORMAT_PRIORITIES` falls back to
 `ext_priority=99` (the "unsupported format" marker), and
@@ -493,7 +493,7 @@ IDDOC ever ingested, even though a normal incremental run only has a handful
 of new or retryable IDDOCs — suspected to be the "very long startup" at the
 start of the pipeline.
 
-`3_Parse_Pipeline_v2.py` instead: (1) works out which IDDOCs still need a
+`3_Parse_Pipeline.py` instead: (1) works out which IDDOCs still need a
 physical file from Delta reads only (`parse_manifest` + `processed_files`, no
 volume I/O at all), (2) lists the volume ROOT once, non-recursively, to map
 folder name -> IDDOC, (3) scans (recursively, via `selection.scan_volume_paths()`)
@@ -525,7 +525,7 @@ parser's, so they still get a vision-LLM description in task `4_describe_images`
 
 ### 2026-07-30 — A null IDDOC broke the chunk-deletion SQL
 
-`4_Describe_Images_LLM_v2.py` builds a `DELETE ... WHERE IDDOC IN (...)`
+`4_Describe_Images_LLM.py` builds a `DELETE ... WHERE IDDOC IN (...)`
 statement from a Python list of affected IDDOCs. A null IDDOC in that list,
 `str()`-joined into the `IN` list, resolves as an unquoted bare identifier in
 the generated SQL rather than a value — breaking the statement. Fix: filter
@@ -561,7 +561,7 @@ business metadata only) silently wrote nothing, since `num_files` was 0.
 ### chunk_content_type must be set on every chunk row, not just image chunks
 
 `chunk_token_count`/`chunk_content_type`/`chunk_sha256` are kept on every
-chunk row (not computed then dropped) so `4_Describe_Images_LLM_v2.py` can
+chunk row (not computed then dropped) so `4_Describe_Images_LLM.py` can
 tell text and image chunks apart on the same table and compute the next free
 `chunk_index`. These used to be set only on image chunks: `04`'s filter
 `chunk_content_type != 'image'` then silently excluded every text chunk too,
@@ -571,7 +571,7 @@ since `NULL != 'image'` evaluates to `NULL` in SQL, not `TRUE`.
 
 ### Manual command to prune old `_pipeline_checkpoint` snapshots
 
-`3_Parse_Pipeline_v2.py` creates a named shallow-clone snapshot
+`3_Parse_Pipeline.py` creates a named shallow-clone snapshot
 (`_pipeline_checkpoint_YYYYMMDD_HHMM`) before every FULL run. These are cheap
 (metadata pointers, no data copy) so pruning is a deliberate, occasional
 action, not something the notebook does automatically. To prune, keeping only
@@ -617,7 +617,7 @@ Fix, two parts:
 - Both `processed_files` writes in `2_Cleanup_Volume.py` (the
   `SKIPPED_*`/`FILTERED_BY_DATE` blocks) switched from MERGE-keyed-on-status to
   `DELETE FROM ... WHERE IDDOC IN (...)` followed by a plain append — the same
-  idiom `3_Parse_Pipeline_v2.py`'s own incremental `write_outputs()` already
+  idiom `3_Parse_Pipeline.py`'s own incremental `write_outputs()` already
   used correctly. Whatever the IDDOC's previous status was, exactly one fresh
   row survives.
 - A new step diffs `processed_files`' existing IDDOCs against this run's
@@ -632,7 +632,7 @@ the mirror direction. Removing IDDOC 15920 from `MANUAL_REF_EXCLUSIONS` did
 NOT get it re-parsed, because its old `SKIPPED_REF_MANUAL` row was never
 cleaned up — that status (like `SKIPPED_REF_OUT_OF_SCOPE`/
 `SKIPPED_IDDOC_NOT_FOUND`/`SKIPPED_SOURCE_REMOVED`) is in
-`3_Parse_Pipeline_v2.py`'s `_TERMINAL_STATUSES`, so `resolve_parse_scope()`
+`3_Parse_Pipeline.py`'s `_TERMINAL_STATUSES`, so `resolve_parse_scope()`
 treated the IDDOC as already permanently handled even after it became
 eligible again. Added a second reconciliation step: any IDDOC classified
 `KEEP` this run that still carries one of those 4 statuses in
@@ -665,7 +665,7 @@ This means:
   `pending_llm_ocr:pdf` — the document lands on `EMPTY_TEXT`, not `ERROR`
   (there's no body text, but the content is being handled via image-OCR
   chunks instead).
-- Step 4 (`4_Describe_Images_LLM_v2.py`) describes each `scanned_page` image
+- Step 4 (`4_Describe_Images_LLM.py`) describes each `scanned_page` image
   through the SAME async/rate-limited Luna engine as any other image, but
   `build_llm_prompt()` routes `label="scanned_page"` to `PDF_PAGE_OCR_PROMPT`
   instead of `IMAGE_DESCRIPTION_PROMPT` — full verbatim transcription, never
@@ -681,7 +681,7 @@ This means:
 
 ### 2026-08-20 — Every incremental run rewrote all ~38,700 image chunks, not just the new ones
 
-`4_Describe_Images_LLM_v2.py`'s "build image chunks" step read `image_metadata`
+`4_Describe_Images_LLM.py`'s "build image chunks" step read `image_metadata`
 filtered to `status == 'DONE'` with no scoping to what this run actually
 processed — that's every image ever described, across the pipeline's whole
 history. The write step then did `DELETE FROM chunks WHERE chunk_content_type
@@ -750,3 +750,11 @@ adds a character ceiling, marks tables of contents / front matter / repeated tex
 `chunk_content_type`, and builds image passages with their section and caption. Measured first on
 DEV test indexes (`utils/databricks_ops/evaluation/rechunk_experiment.py`), applied to UAT by one
 `full` run (`OPERATIONS.md` D5).
+
+## uat-table-versions
+
+### 2026-07-31 → 2026-10-08 — Why UAT tables carried _v1/_v2/_v3 suffixes, and why they no longer do
+
+- **_v2 → _v3 (2026-07-31)**: `chunks_v2`/`src_chunks_as_v2`/`src_chunks_is_v2` and their 3 indexes had every column typed as string (schema-less JSON import in the former DEV→UAT copy script, live since 2026-07-07). Retyping in place would recreate the physical table and break the index's CDF sync (`DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE`, confirmed 2026-07-07), so `_v3` tables + indexes were built in parallel with correct types (full re-embed).
+- **_v3 → _v1 (2026-08-18)**: the `_v3` indexes' TRIGGERED sync went silently stale from 2026-07-31 (tasks `5_sync_index`/`6_update_kb_metadata` were new and unvalidated) until the CDF history it needed aged out of the tables' default 7-day `delta.deletedFileRetentionDuration` — `VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION`, which a TRIGGERED incremental sync never recovers from. Fixed by deep-cloning into `_v1` tables with `delta.deletedFileRetentionDuration`/`delta.logRetentionDuration` = `interval 60 days` and fresh `_v1` indexes. `_pipeline_checkpoint_v1`/`image_metadata_v1`/`processed_files_v1` were seeded from `_v3` so the daily job resumed incrementally instead of reparsing on GPU.
+- **No suffix (2026-10-08)**: one `chunks` table and one `chunks_index` (chat with a `division` filter, impact search); `src_chunks_as`/`src_chunks_is` and their indexes are gone with the Knowledge Assistant. `parsing_table_suffix` is empty on DEV/UAT/prod; it stays only as the `_test` isolation switch of a validation run. Renames: `operations_dev.md` (DEV) and `OPERATIONS.md` D5 (UAT). Keep the 60-day retention on every table an index reads.

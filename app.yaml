@@ -6,28 +6,11 @@ env:
     value: "true"
   - name: CHAT_ENABLED
     value: "true"
-  # Default Knowledge Assistant endpoint (dev). Overridden per target at startup
-  # by target_config.env (written by deploy_qualibot.ps1) — UAT/prod each have
-  # their own KA endpoint name.
-  - name: CHAT_ENDPOINT
-    value: "ka-1a2a9a4f-endpoint" # "ka-71794b8e-endpoint"
-  # Per-division Knowledge Assistant endpoints. The division selector routes each
-  # turn to a single-source KA (IS-only / AS-only / combined), which is what
-  # guarantees source scoping. Left empty here (dev has a single KA): when unset,
-  # _endpoint_for_division falls back to CHAT_ENDPOINT, preserving current
-  # behaviour. UAT/prod set these per-target via target_config.env.
-  - name: CHAT_ENDPOINT_ALL
-    value: ""
-  - name: CHAT_ENDPOINT_AS
-    value: ""
-  - name: CHAT_ENDPOINT_IS
-    value: ""
-  # Translation bridge (experimental, off by default): translates a non-French/
-  # English question to French before it reaches the KA, then translates the
-  # answer back. Retrieval embeds the raw question text and the corpus is
-  # almost entirely French, so third-language questions (Czech, German,
-  # Spanish...) otherwise only match the sparse same-language document slice.
-  # Enable per-target via target_config.env while this is being evaluated.
+  # Translation bridge (on per target in target_env.json): translates a question
+  # that is neither French nor English to English before the document search,
+  # then translates the answer back (server/services/translation_bridge.py).
+  # Third-language questions otherwise only match the sparse same-language slice
+  # of a mostly French corpus.
   - name: CHAT_TRANSLATE_BRIDGE_ENABLED
     value: "false"
   - name: CHAT_TRANSLATE_ENDPOINT
@@ -40,42 +23,32 @@ env:
   # always kept. Set to 0 to disable trimming.
   - name: CHAT_MAX_HISTORY
     value: "10"
-  # Chat VSI tab (server/services/chat_vsi.py): the same chat answered from the
-  # Vector Search indexes the KAs read, without the Knowledge Assistant. One index
-  # per division, like the KAs; values are the dev workspace indexes measured on
-  # the golden dataset (docs/dev-conception.md). Override per target.
-  - name: CHAT_VSI_ENABLED
-    value: "true"
-  - name: CHAT_VSI_INDEX_ALL
-    value: "dev_landingzone.qualibot.chunks_index_v1"
-  - name: CHAT_VSI_INDEX_AS
-    value: "dev_landingzone.qualibot.chunks_as_index_v1"
-  - name: CHAT_VSI_INDEX_IS
-    value: "dev_landingzone.qualibot.chunks_is_index_v1"
-  # No Claude model anywhere in the chatbot (decision 2026-10-08): GPT-6 Luna answers,
-  # GPT-5.6 Luna is the fallback (below). The rewrite uses the same chain by default.
+  # Chat (server/services/chat_vsi.py, tests and choices: docs/chat_vsi_tests.md):
+  # bilingual rewrite, 3 hybrid Vector Search queries (reranked + raw), documents
+  # named by REF or title, answer by GPT-6 Luna. One index for every division: the
+  # AS / IS choice is a Vector Search filter on the `division` column.
+  # Per-target index: utils/deploy/target_env.json.
+  - name: CHAT_VSI_INDEX
+    value: "dev_landingzone.qualibot.chunks_index"
+  # No Claude model anywhere in the chatbot (decision 2026-10-08): GPT-6 Luna answers
+  # and rewrites the question, GPT-5.6 Luna is the fallback of both.
   - name: CHAT_VSI_LLM_ENDPOINT
     value: "databricks-gpt-6-luna"
-  # Answer models tried, in order, when CHAT_VSI_LLM_ENDPOINT fails (429, 5xx, timeout, 404,
-  # empty answer…), comma-separated — server/services/chat_vsi_llm.py, which also retries,
+  # Models tried, in order, when the answer model fails (429, 5xx, timeout, 404, empty
+  # answer…), comma-separated — server/services/chat_vsi_llm.py, which also retries,
   # continues a cut answer and caps concurrent answers (CHAT_VSI_MAX_CONCURRENT_ANSWERS, 32).
-  # Empty = retries on the primary only. Plan 2026-10-08 (operations_dev.md, block L):
-  # CHAT_VSI_LLM_ENDPOINT=databricks-gpt-6-luna + this = databricks-gpt-5-6-luna.
   - name: CHAT_VSI_LLM_FALLBACK_ENDPOINTS
     value: "databricks-gpt-5-6-luna"
-  - name: CHAT_VSI_NUM_RESULTS
-    value: "10"
-  # Which VSI engine version answers (server/services/chat_vsi_variants.py):
-  # baseline = chat_vsi.py as delivered; rerank = + Vector Search reranker
-  # (chat_vsi_rerank.py, CHAT_VSI_RERANK_TOP_K passages kept per query, default 12).
-  # The rerank variant's options (all off by default, see the module docstring):
-  # CHAT_VSI_RERANK_MERGE=union, CHAT_VSI_CONTEXT_BUDGET_CHARS, CHAT_VSI_REF_LOOKUP=on,
-  # CHAT_VSI_RERANK_ENABLED=false, CHAT_VSI_INSTRUCTIONS=v2 (server/config/chat_vsi_v2/),
-  # CHAT_VSI_TITLE_LOOKUP=on, CHAT_VSI_REWRITE=bilingual, CHAT_VSI_ONE_LANGUAGE=on,
-  # CHAT_VSI_LANGUAGE_REMINDER=on (answer-language line after the question, chat_vsi_prompts.py),
-  # CHAT_VSI_REWRITE_ENDPOINT (rewrite model, default = CHAT_VSI_LLM_ENDPOINT).
-  - name: CHAT_VSI_VARIANT
-    value: "baseline"
+  # Rewrite model (empty = the answer model) and its fallbacks (empty = the answer chain).
+  - name: CHAT_VSI_REWRITE_ENDPOINT
+    value: "databricks-gpt-6-luna"
+  - name: CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS
+    value: "databricks-gpt-5-6-luna"
+  # Output caps; a reasoning model counts its thinking in them.
+  - name: CHAT_VSI_ANSWER_MAX_TOKENS
+    value: "8000"
+  - name: CHAT_VSI_REWRITE_MAX_TOKENS
+    value: "2000"
   # Capability cache TTL in seconds (how long can_chat/can_compare are cached per user).
   # Update via sync_user_capabilities.py — changes take effect after the next cache miss.
   - name: CAPS_TTL_S
@@ -100,10 +73,10 @@ env:
   # passages and returns every conflicting passage with a verbatim quote
   # (redesigned 2026-10-02, see client/src/components/compare/README.md).
   # Per-target index: utils/deploy/target_env.json overrides this default.
-  # Target index once built by the parsing pipeline: chunks_full_index[_v1]
+  # Target index once built by the parsing pipeline: chunks_full_index
   # (every document, pre-2018 archive included).
   - name: COMPARE_IMPACT_INDEX
-    value: "uat_landingzone.qualibot.chunks_index_v1"
+    value: "dev_landingzone.qualibot.chunks_index"
   # Switched from databricks-claude-sonnet-4-6 (2026-07-22): side-by-side eval
   # against real UAT index + 2 deliberate "trap" candidates (topically close,
   # not actually impacted) showed gpt-5-4-mini matching Sonnet's verdicts with

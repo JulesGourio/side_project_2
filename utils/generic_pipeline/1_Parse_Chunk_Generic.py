@@ -350,7 +350,7 @@ if errors:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Step 3 — Sample 10% REFs from chunks\_v1 + union with parsed chunks
+# MAGIC # Step 3 — Sample 10% REFs from chunks + union with parsed chunks
 
 # COMMAND ----------
 
@@ -359,7 +359,7 @@ if not all_chunks:
     logger.warning("No chunks to write — nothing to do.")
     dbutils.notebook.exit("no_chunks")
 
-# Schema matching chunks_v1 exactly
+# Schema matching chunks exactly
 chunk_schema = T.StructType([
     T.StructField("IDDOC", T.LongType(), True),
     T.StructField("REF", T.StringType(), False),
@@ -379,13 +379,13 @@ df_generic_chunks = spark.createDataFrame(all_chunks, schema=chunk_schema)
 generic_count = df_generic_chunks.count()
 logger.info(f"Generic parsed chunks: {generic_count}")
 
-# Sample 10% of distinct REFs from the full Intraqual chunks_v1
-df_chunks_v1 = spark.table("uat_landingzone.qualibot.chunks_v1")
-df_sampled_refs = df_chunks_v1.select("REF").distinct().sample(fraction=0.1, seed=42)
+# Sample 10% of distinct REFs from the full Intraqual chunks
+df_chunks_ref = spark.table("uat_landingzone.qualibot.chunks")
+df_sampled_refs = df_chunks_ref.select("REF").distinct().sample(fraction=0.1, seed=42)
 sampled_ref_count = df_sampled_refs.count()
-logger.info(f"Sampled {sampled_ref_count} REFs from chunks_v1 (~10% of 4901)")
+logger.info(f"Sampled {sampled_ref_count} REFs from chunks (~10% of 4901)")
 
-df_sampled_intraqual = df_chunks_v1.join(df_sampled_refs, "REF", "inner")
+df_sampled_intraqual = df_chunks_ref.join(df_sampled_refs, "REF", "inner")
 intraqual_count = df_sampled_intraqual.count()
 logger.info(f"Intraqual chunks from sampled REFs: {intraqual_count}")
 

@@ -212,7 +212,7 @@ targets:
                 - task_key: "2_manifest"
               job_cluster_key: parse_gpu_cluster
               notebook_task:
-                notebook_path: ../utils/parsing_pipeline/3_Parse_Pipeline_v2.py
+                notebook_path: ../utils/parsing_pipeline/3_Parse_Pipeline.py
                 source: WORKSPACE
                 base_parameters:
                   JOB_RUN_ID: "{{job.run_id}}"
@@ -232,7 +232,7 @@ targets:
                 - pypi: {package: "openai"}
                 - pypi: {package: "tenacity"}
                 # See README.md#opencv-python-headless-crash — do not add opencv-python-headless
-                # as a library here; the fix is the %pip cell in 3_Parse_Pipeline_v2.py.
+                # as a library here; the fix is the %pip cell in 3_Parse_Pipeline.py.
 
             - task_key: "4_describe_images"
               description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
@@ -240,7 +240,7 @@ targets:
                 - task_key: "3_parse"
               job_cluster_key: describe_cpu_cluster
               notebook_task:
-                notebook_path: ../utils/parsing_pipeline/4_Describe_Images_LLM_v2.py
+                notebook_path: ../utils/parsing_pipeline/4_Describe_Images_LLM.py
                 source: WORKSPACE
               libraries:
                 - pypi: {package: "openai"}

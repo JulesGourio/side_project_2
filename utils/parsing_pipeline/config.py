@@ -84,16 +84,13 @@ ANTIWORD_SHARE_RELATIVE = "../../data/vendor/antiword/antiword_local/usr/share/a
 # =============================================================================
 # Target Delta tables
 # =============================================================================
-TABLE_SUFFIX = _env("PARSING_TABLE_SUFFIX", "")
-
 TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.processed_files{TABLE_SUFFIX}"
 
-TARGET_CHUNK_TABLE     = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"          # ground truth: all divisions
-TARGET_CHUNK_TABLE_AS  = f"{CATALOG_SCHEMA}.src_chunks_as{TABLE_SUFFIX}"   # = chunks filtered to division AS
-TARGET_CHUNK_TABLE_IS  = f"{CATALOG_SCHEMA}.src_chunks_is{TABLE_SUFFIX}"
-# Chunks of documents published before DOC_DATE_CUTOFF: kept out of the RAG tables above,
+# All divisions; the chat filters on the `division` column at query time.
+TARGET_CHUNK_TABLE     = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"
+# Chunks of documents published before DOC_DATE_CUTOFF: kept out of `chunks` (chat),
 # merged with `chunks` into `chunks_full` by 5_Sync_Vector_Indexes for the impact-search index.
-TARGET_CHUNK_TABLE_ARCHIVE = f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}"   # = chunks filtered to division IS
+TARGET_CHUNK_TABLE_ARCHIVE = f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}"
 
 TARGET_IMAGE_METADATA_TABLE  = f"{CATALOG_SCHEMA}.image_metadata{TABLE_SUFFIX}"
 TARGET_AUDIT_TABLE           = f"{CATALOG_SCHEMA}.audit_files_unified{TABLE_SUFFIX}"

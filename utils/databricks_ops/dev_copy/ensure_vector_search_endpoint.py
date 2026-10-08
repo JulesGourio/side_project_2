@@ -6,7 +6,7 @@
 # MAGIC Second task of the DEV job `qualibot-copy-uat-to-dev`. Creates the
 # MAGIC Vector Search endpoint (STANDARD) if it doesn't exist yet and waits until
 # MAGIC it is ONLINE, so the next task (`5_Sync_Vector_Indexes.py`, reused as is
-# MAGIC from the parsing pipeline) can create the 3 `_v1` indexes on it.
+# MAGIC from the parsing pipeline) can create the `chunks_index` on it.
 # MAGIC Idempotent: an existing endpoint is left untouched.
 
 # COMMAND ----------

@@ -31,13 +31,14 @@ import os
 from datetime import datetime, timezone
 
 dbutils.widgets.text("SOURCE_CATALOG_SCHEMA", "uat_landingzone.qualibot")
-dbutils.widgets.text("TABLE_SUFFIX", "_v1")
-# Chunk tables (sources of the 3 Vector Search indexes) + parsing pipeline
+# UAT table names carry no suffix once OPERATIONS.md D5 renamed them; "_v1" before.
+dbutils.widgets.text("TABLE_SUFFIX", "")
+# Chunk table (source of the Vector Search index) + parsing pipeline
 # state (so the first DEV run is incremental). Archive tables (pre-2018 test
 # phase) deliberately left out.
 dbutils.widgets.text(
     "TABLES",
-    "chunks,src_chunks_as,src_chunks_is,"
+    "chunks,"
     "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference",
 )
 dbutils.widgets.text("OUTPUT_DIR", "/Volumes/uat_landingzone/qualibot/staging/dev_copy")
@@ -88,10 +89,10 @@ for table in TABLES:
     manifest["tables"][table] = {"source": source, "path": path, "rows": rows}
     print(f"  {source}: {rows} rows -> {path}")
 
-# The 3 chunk tables are what the indexes are built from — never export without them.
-for required in ("chunks", "src_chunks_as", "src_chunks_is"):
+# The chunk table is what the index is built from — never export without it.
+for required in ("chunks",):
     if required in TABLES and required not in manifest["tables"]:
-        raise RuntimeError(f"{SOURCE_CATALOG_SCHEMA}.{required}{TABLE_SUFFIX} is missing — nothing to build the DEV indexes from")
+        raise RuntimeError(f"{SOURCE_CATALOG_SCHEMA}.{required}{TABLE_SUFFIX} is missing — nothing to build the DEV index from")
 
 # COMMAND ----------
 

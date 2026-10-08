@@ -33,7 +33,7 @@
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PARSING_CATALOG_SCHEMA}._pipeline_checkpoint{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` / `src_chunks_as` / `src_chunks_is`
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` (all divisions)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.parsing_run_health{PARSING_TABLE_SUFFIX}` (one row per run, for the monitoring dashboard)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.document_change_log{PARSING_TABLE_SUFFIX}` (one row per NEW/REVISED document, for the monitoring dashboard)
@@ -689,7 +689,7 @@ def retry_failed_iddocs(df_matched_full, df_content, df_business_meta):
     return read_checkpoint_deduped()
 
 
-def validate_ref_mapping(df_chunks_all, df_chunks_as, df_chunks_is, df_processed_files):
+def validate_ref_mapping(df_chunks_all, df_processed_files):
     """Post-build validation: cross-check chunk REF against the current
     parse_manifest to catch IDDOC→REF mapping errors before they reach the
     vector index.  Logs warnings for every mismatch found and returns a
@@ -713,7 +713,7 @@ def validate_ref_mapping(df_chunks_all, df_chunks_as, df_chunks_is, df_processed
     )
 
     # ── Check 1: REF mismatch ────────────────────────────────────────
-    for label, df in [("all", df_chunks_all), ("AS", df_chunks_as), ("IS", df_chunks_is)]:
+    for label, df in [("all", df_chunks_all)]:
         if df is None:
             continue
         df_joined = (
@@ -733,7 +733,7 @@ def validate_ref_mapping(df_chunks_all, df_chunks_as, df_chunks_is, df_processed
                 )
 
     # ── Check 2: orphan chunks (IDDOC not in manifest) ───────────────
-    for label, df in [("AS", df_chunks_as), ("IS", df_chunks_is)]:
+    for label, df in [("all", df_chunks_all)]:
         if df is None:
             continue
         orphans = (
@@ -751,7 +751,7 @@ def validate_ref_mapping(df_chunks_all, df_chunks_as, df_chunks_is, df_processed
                 )
 
     # ── Check 3: chunk_text prefix ≠ REF column ──────────────────────
-    for label, df in [("AS", df_chunks_as), ("IS", df_chunks_is)]:
+    for label, df in [("all", df_chunks_all)]:
         if df is None:
             continue
         df_prefix = (
@@ -777,7 +777,7 @@ def validate_ref_mapping(df_chunks_all, df_chunks_as, df_chunks_is, df_processed
                 )
 
     # ── Check 4: trailing whitespace ─────────────────────────────────
-    for label, df in [("AS", df_chunks_as), ("IS", df_chunks_is)]:
+    for label, df in [("all", df_chunks_all)]:
         if df is None:
             continue
         ws_rows = (
@@ -1105,11 +1105,9 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, revised_i
     is_recent = F.col("doc_date").isNull() | (F.col("doc_date") >= cutoff)
     df_chunks_archive = df_chunks.filter(~is_recent)
     df_chunks_all = df_chunks.filter(is_recent)
-    df_chunks_as = df_chunks_all.filter(F.col("division") == "AS")
-    df_chunks_is = df_chunks_all.filter(F.col("division") == "IS")
 
     logger.info("DataFrames ready (lazy). Will materialise during write.")
-    return df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_chunks_archive
+    return df_processed_files, df_chunks_all, df_chunks_archive
 
 
 def _merge_image_metadata(df_image_metadata):
@@ -1233,7 +1231,7 @@ def _log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_r
     logger.info(f"[CHANGE LOG] Logged {n} document change(s) (NEW/REVISED) to {TARGET_CHANGE_LOG_TABLE}")
 
 
-def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_chunks_archive,
+def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
                   df_image_metadata, revised_iddocs=frozenset()):
     """Write processed_files/chunks/image_metadata — overwrite on a FULL
     run, append (+ MERGE for image_metadata) on an incremental run."""
@@ -1249,14 +1247,6 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is,
             .option("overwriteSchema", "true").saveAsTable(TARGET_CHUNK_TABLE)
         logger.info(f"Wrote {TARGET_CHUNK_TABLE} (ALL)")
 
-        df_chunks_as.write.format("delta").mode("overwrite") \
-            .option("overwriteSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_AS)
-        logger.info(f"Wrote {TARGET_CHUNK_TABLE_AS} (AS)")
-
-        df_chunks_is.write.format("delta").mode("overwrite") \
-            .option("overwriteSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_IS)
-        logger.info(f"Wrote {TARGET_CHUNK_TABLE_IS} (IS)")
-
         df_chunks_archive.write.format("delta").mode("overwrite") \
             .option("overwriteSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_ARCHIVE)
         logger.info(f"Wrote {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
@@ -1271,8 +1261,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is,
         new_iddocs = [r.IDDOC for r in df_processed_files.select("IDDOC").distinct().collect()]
         if new_iddocs:
             iddoc_list = ",".join(str(i) for i in new_iddocs)
-            for tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS, TARGET_CHUNK_TABLE_IS,
-                        TARGET_CHUNK_TABLE_ARCHIVE, TARGET_PROCESSED_FILES_TABLE]:
+            for tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE, TARGET_PROCESSED_FILES_TABLE]:
                 if spark.catalog.tableExists(tbl):
                     spark.sql(f"DELETE FROM {tbl} WHERE IDDOC IN ({iddoc_list})")
             logger.info(f"Cleaned old rows for {len(new_iddocs)} re-processed IDDOCs (chunks + processed_files)")
@@ -1284,14 +1273,6 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is,
         df_chunks_all.write.format("delta").mode("append") \
             .option("mergeSchema", "true").saveAsTable(TARGET_CHUNK_TABLE)
         logger.info(f"Appended to {TARGET_CHUNK_TABLE} (ALL)")
-
-        df_chunks_as.write.format("delta").mode("append") \
-            .option("mergeSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_AS)
-        logger.info(f"Appended to {TARGET_CHUNK_TABLE_AS} (AS)")
-
-        df_chunks_is.write.format("delta").mode("append") \
-            .option("mergeSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_IS)
-        logger.info(f"Appended to {TARGET_CHUNK_TABLE_IS} (IS)")
 
         df_chunks_archive.write.format("delta").mode("append") \
             .option("mergeSchema", "true").saveAsTable(TARGET_CHUNK_TABLE_ARCHIVE)
@@ -1308,16 +1289,15 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is,
         logger.info("[INCREMENTAL] New rows appended (stale failures cleaned).")
 
     # CDF required for Vector Search index sync.
-    for cdf_tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS, TARGET_CHUNK_TABLE_IS]:
-        try:
-            spark.sql(f"ALTER TABLE {cdf_tbl} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
-            logger.info(f"CDF enabled on {cdf_tbl}")
-        except Exception as e:
-            logger.warning(f"CDF not set on {cdf_tbl}: {e}")
+    try:
+        spark.sql(f"ALTER TABLE {TARGET_CHUNK_TABLE} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
+        logger.info(f"CDF enabled on {TARGET_CHUNK_TABLE}")
+    except Exception as e:
+        logger.warning(f"CDF not set on {TARGET_CHUNK_TABLE}: {e}")
 
     _write_run_health_summary(df_processed_files, JOB_RUN_ID, RUN_MODE)
 
-    logger.info("[NEXT] Run 4_Describe_Images_LLM_v2 to describe PENDING images.")
+    logger.info("[NEXT] Run 4_Describe_Images_LLM to describe PENDING images.")
 
 
 def build_archive_notices(df_business_meta):
@@ -1382,7 +1362,7 @@ def build_archive_notices(df_business_meta):
 
 def write_archive_notices(df_notices):
     """Rewrite TARGET_ARCHIVE_NOTICE_TABLE, then reconcile the notices held by the
-    RAG chunk tables: MERGEd in when ARCHIVE_NOTICES_IN_RAG is on, removed otherwise.
+    chat's `chunks` table: MERGEd in when ARCHIVE_NOTICES_IN_RAG is on, removed otherwise.
     MERGE (not delete + append) so Change Data Feed only carries real changes."""
     df_notices.write.format("delta").mode("overwrite") \
         .option("overwriteSchema", "true").saveAsTable(TARGET_ARCHIVE_NOTICE_TABLE)
@@ -1391,7 +1371,7 @@ def write_archive_notices(df_notices):
                 f"(in RAG tables: {ARCHIVE_NOTICES_IN_RAG})")
 
     is_notice = f"chunk_content_type = '{ARCHIVE_NOTICE_CONTENT_TYPE}'"
-    for tbl, division in [(TARGET_CHUNK_TABLE, None), (TARGET_CHUNK_TABLE_AS, "AS"), (TARGET_CHUNK_TABLE_IS, "IS")]:
+    for tbl in [TARGET_CHUNK_TABLE]:
         if not spark.catalog.tableExists(tbl):
             continue
         if not ARCHIVE_NOTICES_IN_RAG:
@@ -1399,7 +1379,7 @@ def write_archive_notices(df_notices):
                 spark.sql(f"DELETE FROM {tbl} WHERE {is_notice}")
                 logger.info(f"[NOTICES] Removed archive notices from {tbl}")
             continue
-        df_src = df_notices if division is None else df_notices.filter(F.col("division") == division)
+        df_src = df_notices
         # Align on the target's own columns/types (it may hold columns notices don't have).
         df_src = df_src.select(*[
             (F.col(f.name) if f.name in df_notices.columns else F.lit(None)).cast(f.dataType).alias(f.name)
@@ -1574,7 +1554,7 @@ else:
 if not HAS_TARGET_IDDOCS:
     logger.info("Skipped (no target IDDOCs).")
 else:
-    df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_chunks_archive = \
+    df_processed_files, df_chunks_all, df_chunks_archive = \
         build_processed_files_and_chunks(target_iddocs, df_image_metadata, revised_iddocs)
 
 # COMMAND ----------
@@ -1583,7 +1563,7 @@ else:
 if not HAS_TARGET_IDDOCS:
     logger.info("Validation skipped (no target IDDOCs).")
 else:
-    ref_issues = validate_ref_mapping(df_chunks_all, df_chunks_as, df_chunks_is, df_processed_files)
+    ref_issues = validate_ref_mapping(df_chunks_all, df_processed_files)
 
 # COMMAND ----------
 
@@ -1597,7 +1577,7 @@ else:
 if not HAS_TARGET_IDDOCS:
     logger.info("No target IDDOCs — nothing to write.")
 else:
-    write_outputs(df_processed_files, df_chunks_all, df_chunks_as, df_chunks_is, df_chunks_archive,
+    write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
                   df_image_metadata, revised_iddocs)
 
 # COMMAND ----------

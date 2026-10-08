@@ -86,7 +86,7 @@ except Exception as exc:  # offline: same fallback as the pipeline
 
 
 def normalize(text):
-    # utils.normalize_text + the CLEAN_* placeholders removal of 3_Parse_Pipeline_v2._build_chunks
+    # utils.normalize_text + the CLEAN_* placeholders removal of 3_Parse_Pipeline._build_chunks
     text = re.sub(r'\s*<!-- (image|formula-not-decoded) -->\s*', ' ', text or '')
     text = text.replace('\r\n', '\n').replace('\r', '\n').replace('\x00', '')
     text = re.sub(r'[ \t]+', ' ', text)
@@ -155,7 +155,7 @@ for d in doc_batches():
         })
 print(len(rows), 'text passages from', len(doc_info), 'documents')
 
-# Same body in BOILERPLATE_MIN_DOCS+ documents -> "boilerplate" (3_Parse_Pipeline_v2._dedupe_and_limit_chunks)
+# Same body in BOILERPLATE_MIN_DOCS+ documents -> "boilerplate" (3_Parse_Pipeline._dedupe_and_limit_chunks)
 docs_per_body = {}
 for r in rows:
     docs_per_body.setdefault(r['body_sha256'], set()).add(r['IDDOC'])

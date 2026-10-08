@@ -6,7 +6,7 @@
 # MAGIC Describes `PENDING` images from `image_metadata` using a vision LLM, then
 # MAGIC injects the descriptions as enriched chunks into the `chunks` table.
 # MAGIC
-# MAGIC Structurally identical to `parsing_pipeline/4_Describe_Images_LLM_v2`,
+# MAGIC Structurally identical to `parsing_pipeline/4_Describe_Images_LLM`,
 # MAGIC stripped of division AS/IS split and Intraqual-specific metadata prefixes.
 # MAGIC
 # MAGIC **Pre-requisite:** task `1_parse` must run first to populate `image_metadata`.

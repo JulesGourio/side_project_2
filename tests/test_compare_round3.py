@@ -45,7 +45,7 @@ def client(app, monkeypatch):
     from server.services.user import require_compare
     for key, value in {
         'COMPARE_ENABLED': 'true', 'COMPARE_ANALYSIS_ENDPOINT': 'analysis', 'COMPARE_IMPACT_ENDPOINT': 'judge',
-        'COMPARE_IMPACT_INDEX': 'cat.sch.chunks_index_v1', 'COMPARE_SUMMARY_ENDPOINT': 'summary',
+        'COMPARE_IMPACT_INDEX': 'cat.sch.chunks_index', 'COMPARE_SUMMARY_ENDPOINT': 'summary',
         'DATABRICKS_HOST': 'https://example.test', 'DATABRICKS_TOKEN': 'token',
     }.items():
         monkeypatch.setenv(key, value)

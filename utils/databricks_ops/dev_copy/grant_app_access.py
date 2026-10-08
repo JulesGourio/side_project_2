@@ -25,8 +25,8 @@ dbutils.widgets.text("app_service_principal", "8e411164-a7e8-46ff-8013-8c56af2c3
 dbutils.widgets.text("catalog", "dev_landingzone")
 dbutils.widgets.text("schema_name", "qualibot")
 dbutils.widgets.text("volumes", "doc_compare,test")
-dbutils.widgets.text("indexes", "chunks_index_v1,chunks_as_index_v1,chunks_is_index_v1")
-dbutils.widgets.text("serving_endpoints", "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna")
+dbutils.widgets.text("indexes", "chunks_index")
+dbutils.widgets.text("serving_endpoints", "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna")
 
 
 def _list(name):

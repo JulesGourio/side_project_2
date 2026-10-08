@@ -93,7 +93,7 @@ variables:
   parsing_archive_notices_in_rag:
     description: >-
       "true" copies the metadata-only notice chunk of each pre-2018 document into
-      chunks/src_chunks_as/src_chunks_is (chatbot indexes). "false" keeps them in
+      chunks (chat index). "false" keeps them in
       chunks_archive_notices only.
     default: "false"
   parsing_build_chunks_full:
@@ -162,7 +162,7 @@ resources:
   apps:
     doc-compare:
       name: ${var.app_name}
-      description: "QualiBOT — document comparison and knowledge assistant"
+      description: "QualiBOT — document comparison and chat"
       source_code_path: .
       # On-behalf-of-user OAuth (X-Forwarded-Access-Token header) — lets the app
       # run is_account_group_member() as the actual visitor instead of the app's
@@ -185,8 +185,8 @@ targets:
   # DEV target — full copy of qualibot-uat in the DEV workspace (2026-10-05,
   # steps in operations_dev.md): own `qualibot` app, own Lakebase project,
   # chunk tables + parsing state copied from UAT (copy_uat_to_dev below — no
-  # full parsing run), own Vector Search endpoint/indexes and Knowledge
-  # Assistants. Writes to dev_landingzone.qualibot (_v1 tables, like UAT).
+  # full parsing run), own Vector Search endpoint and index. Writes to
+  # dev_landingzone.qualibot (unsuffixed names since 2026-10-08).
   #
   # Every schedule declared for the copy is PAUSED. The two pre-existing jobs
   # at the top (lakebase_import_uat_to_dev, score_production_qa) are kept
@@ -419,10 +419,10 @@ targets:
         # Runs 15 min after each lakebase_import_uat_to_dev above, so the
         # freshly-landed chat_messages rows are in place before this reads
         # them. LLM-judge quality scoring of already-answered chat turns —
-        # no call to the KA endpoints (see the notebook's own header).
+        # no call to the chat itself (see the notebook's own header).
         score_production_qa:
           name: "qualibot-score-production-qa"
-          description: "LLM-judge quality scoring of real ChatBot turns already answered (no KA call)"
+          description: "LLM-judge quality scoring of real ChatBot turns already answered"
           max_concurrent_runs: 1
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
@@ -453,10 +453,10 @@ targets:
         # ── UAT copy ─────────────────────────────────────────────────────────
         # Manual trigger only. Loads the snapshot that export_uat_to_staging.py
         # wrote to the UAT staging volume (one-off jobs submit on UAT), then
-        # creates the Vector Search endpoint and the 3 _v1 indexes and syncs
-        # them — the corpus is queryable without any run of parsing_pipeline.
+        # creates the Vector Search endpoint and the chunks index and syncs
+        # it — the corpus is queryable without any run of parsing_pipeline.
         # parsing_pipeline itself (resources/parsing_pipeline.job.yml) resumes
-        # incrementally from the copied _pipeline_checkpoint_v1/processed_files_v1.
+        # incrementally from the copied _pipeline_checkpoint/processed_files.
         copy_uat_to_dev:
           name: "qualibot-copy-uat-to-dev"
           description: "Load the UAT corpus snapshot (chunks + parsing state) into dev_landingzone.qualibot and build the Vector Search indexes. Manual trigger only."
@@ -484,7 +484,7 @@ targets:
               default: "false"
           tasks:
             - task_key: "1_import_tables"
-              description: "Staging volume snapshot -> dev_landingzone.qualibot.*_v1 (+ LibreOffice archive)"
+              description: "Staging volume snapshot -> dev_landingzone.qualibot.* (+ LibreOffice archive)"
               notebook_task:
                 notebook_path: ./utils/databricks_ops/dev_copy/import_staging_to_dev_job.py
                 source: WORKSPACE
@@ -508,10 +508,10 @@ targets:
                   vector_search_endpoint: "qualibot"
                   wait_minutes: "30"
               environment_key: default
-            # Reuses the parsing pipeline's own index task: creates any of the 3
-            # indexes that doesn't exist yet, then syncs them all.
+            # Reuses the parsing pipeline's own index task: creates the index if
+            # it doesn't exist yet, then syncs it.
             - task_key: "3_sync_indexes"
-              description: "Create + sync the 3 _v1 Vector Search indexes"
+              description: "Create + sync the chunks Vector Search index"
               depends_on:
                 - task_key: "2_vector_search_endpoint"
               notebook_task:
@@ -535,7 +535,7 @@ targets:
 
         # Manual trigger only. Grants the DEV qualibot app's service principal
         # what it uses: USE CATALOG/USE SCHEMA, READ+WRITE VOLUME on `volumes`,
-        # SELECT on `indexes` (impact search, Chat VSI), CAN_QUERY on
+        # SELECT on `indexes` (impact search, chat), CAN_QUERY on
         # `serving_endpoints` (LLMs). To change what is granted, edit the three
         # lists in base_parameters below, then bundle deploy + bundle run.
         # Runs as the DEV SP, which holds GRANT rights on dev_landingzone.
@@ -570,7 +570,7 @@ targets:
                   catalog: ${var.app_write_catalog}
                   schema_name: ${var.app_write_schema}
                   volumes: "doc_compare,test"
-                  indexes: "chunks_index${var.parsing_table_suffix},chunks_as_index${var.parsing_table_suffix},chunks_is_index${var.parsing_table_suffix}"
+                  indexes: "chunks_index"
                   serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna"
               environment_key: default
           environments:
@@ -664,66 +664,6 @@ targets:
                 dependencies:
                   - psycopg2-binary
                   - databricks-sdk>=0.118.0
-
-        # Same KA names as UAT (qualibot_ALL_v2/AS_v2/IS_v2 — separate
-        # workspace, no collision), attached to the DEV _v1 indexes; grants
-        # CAN_QUERY to the DEV qualibot app's service principal. Manual
-        # trigger only, after copy_uat_to_dev has built the indexes.
-        provision_knowledge_assistant_dev:
-          name: "qualibot-provision-knowledge-assistant-${bundle.target}"
-          description: "Idempotent create-or-update of the Qualibot Knowledge Assistants. Manual trigger only."
-          max_concurrent_runs: 1
-          tags:
-            project: Qualibot
-          run_as:
-            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
-          permissions:
-            - group_name: "Role-Project-LEAP-CoreAdmin"
-              level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-CoreDev"
-              level: CAN_MANAGE
-            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
-              level: CAN_MANAGE
-            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
-              level: CAN_MANAGE
-          parameters:
-            - name: ka_profiles
-              default: "ALL,AS,IS"
-            - name: catalog
-              default: ${var.app_write_catalog}
-            - name: schema_name
-              default: ${var.app_write_schema}
-            - name: index_suffix
-              default: ${var.parsing_table_suffix}
-            - name: display_name_suffix
-              default: "_v2"
-            - name: app_name
-              default: ${var.app_name}
-            # Not in CoreAdmin/CoreDev: without this the KAs (created by the SP)
-            # aren't even visible to their DEV owner.
-            - name: extra_manager_users
-              default: "jules.gourio.external@latecoere.aero,mehdi.lamrani@databricks.com"
-          tasks:
-            - task_key: provision_knowledge_assistant
-              notebook_task:
-                notebook_path: ./utils/databricks_ops/knowledge_assistant/provision_knowledge_assistant_job.py
-                source: WORKSPACE
-                base_parameters:
-                  KA_PROFILES: "{{job.parameters.ka_profiles}}"
-                  CATALOG: "{{job.parameters.catalog}}"
-                  SCHEMA: "{{job.parameters.schema_name}}"
-                  INDEX_SUFFIX: "{{job.parameters.index_suffix}}"
-                  DISPLAY_NAME_SUFFIX: "{{job.parameters.display_name_suffix}}"
-                  APP_NAME: "{{job.parameters.app_name}}"
-                  EXTRA_MANAGER_USERS: "{{job.parameters.extra_manager_users}}"
-                  GRANT_ON_ENDPOINTS: "true"
-              environment_key: default
-          environments:
-            - environment_key: default
-              spec:
-                environment_version: "2"
-                dependencies:
-                  - databricks-sdk>=0.102.0
 
         # ── App off-hours (DEV) — all PAUSED, unpause when wanted ────────────
         apps_stop_nightly_dev:
@@ -852,9 +792,10 @@ targets:
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
       parsing_offline_models_path: "/Volumes/dev_landingzone/qualibot/docling_models/docling_models"
-      # _v1 like qualibot-uat: the tables come from UAT's _v1 (copy_uat_to_dev).
-      parsing_table_suffix: "_v1"
-      parsing_vector_search_indexes: "dev_landingzone.qualibot.chunks_index_v1,dev_landingzone.qualibot.chunks_as_index_v1,dev_landingzone.qualibot.chunks_is_index_v1"
+      # Real tables, no suffix (2026-10-08). One index for the chat (division
+      # filter) and impact search.
+      parsing_table_suffix: ""
+      parsing_vector_search_indexes: "dev_landingzone.qualibot.chunks_index"
       # PAUSED on purpose — unpause only on explicit decision.
       parsing_schedule_pause: "PAUSED"
       parsing_lakebase_database: "doccompare"
@@ -1360,39 +1301,16 @@ targets:
       # docling_models/ subfolder unlike DEV's, and DEV's volume isn't reachable
       # from UAT anyway (confirmed live: PermissionError, 2026-07-30).
       parsing_offline_models_path: "/Volumes/uat_landingzone/qualibot/docling_models"
-      # Promoted to _v3 2026-07-31: chunks_v2/src_chunks_as_v2/src_chunks_is_v2/
-      # the 3 live _v2 indexes have every column typed as string (a pre-existing
-      # bug in copy_dev_tables_to_uat_v2.py's schema-less JSON import, live in
-      # prod since 2026-07-07 — IDDOC/chunk_index/doc_date etc. should be
-      # bigint/int/date). Fixing types in place would require recreating the
-      # physical table, which breaks the live index's CDF sync tracking
-      # (DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE, confirmed 2026-07-07).
-      # So chunks_v3/src_chunks_as_v3/src_chunks_is_v3 + 3 new _v3 indexes were
-      # built in parallel with correct types (full re-embed accepted), leaving
-      # _v2 + its indexes untouched and still serving the app.
-      #
-      # Promoted to _v4 -> named _v1 2026-08-18: the _v3 indexes' TRIGGERED
-      # Vector Search sync went silently stale from 2026-07-31 (5_sync_index/
-      # 6_update_kb_metadata were new, unvalidated tasks — see
-      # utils/parsing_pipeline/README.md) until the CDF history the incremental
-      # sync needed to resume from aged out of chunks_v3/src_chunks_as_v3/
-      # src_chunks_is_v3's default 7-day delta.deletedFileRetentionDuration —
-      # [DLT ERROR CODE: VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION], which a
-      # TRIGGERED incremental sync can never recover from once tripped. Fixed by
-      # deep-cloning into chunks_v1/src_chunks_as_v1/src_chunks_is_v1 with
-      # delta.deletedFileRetentionDuration/delta.logRetentionDuration explicitly
-      # set to 'interval 60 days' (comfortably longer than any realistic gap
-      # between successful daily runs, including a multi-day incident) + fresh
-      # _v1 indexes (full re-embed). This finally also cuts the chat KAs
-      # (qualibot_ALL_v2/AS_v2/IS_v2 — see target_config.env's CHAT_ENDPOINT_*)
-      # over from the never-migrated _v2 indexes to _v1.
-      # _pipeline_checkpoint_v1/image_metadata_v1/processed_files_v1 were
-      # seeded (deep clone from the _v3 equivalents) so the daily job resumes
-      # incrementally instead of reparsing the whole corpus on GPU.
-      parsing_table_suffix: "_v1"
-      parsing_vector_search_indexes: "uat_landingzone.qualibot.chunks_index_v1,uat_landingzone.qualibot.chunks_as_index_v1,uat_landingzone.qualibot.chunks_is_index_v1"
-      # Test phase (2026-10-05): chunks_full_v1 is built, its index is not. Append
-      # uat_landingzone.qualibot.chunks_full_index_v1 above to create + sync it.
+      # Real tables, no suffix (2026-10-08): the former _v1 tables are renamed in
+      # place by OPERATIONS.md D5 step 1 — run it BEFORE the next bundle deploy of
+      # this target, or the daily run starts on empty tables and reparses the whole
+      # corpus on GPU. History of the _v1/_v2/_v3 names (string-typed columns, CDF
+      # retention incident): utils/parsing_pipeline/README.md.
+      # One index for the chat (division filter) and impact search.
+      parsing_table_suffix: ""
+      parsing_vector_search_indexes: "uat_landingzone.qualibot.chunks_index"
+      # Test phase (2026-10-05): chunks_full is built, its index is not. Append
+      # uat_landingzone.qualibot.chunks_full_index above to create + sync it.
       parsing_build_chunks_full: "true"
       parsing_schedule_pause: "UNPAUSED"
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
@@ -1400,8 +1318,8 @@ targets:
       parsing_lakebase_database: "doccompare"
       parsing_job_activity_tag: "uat-job"
 
-  # Disposable test target (2026-07-08): evaluates the v2 KA endpoints + the
-  # chat translation bridge (server/services/translation_bridge.py) without
+  # Disposable test target (2026-07-08): evaluates the chat and the
+  # translation bridge (server/services/translation_bridge.py) without
   # touching the real qualibot-uat app or its Lakebase data. Separate
   # terraform state (own bundle target) — deploying/destroying this target
   # never affects qualibot-uat.
@@ -1411,7 +1329,7 @@ targets:
   # lacks MANAGE on uat_landingzone to grant a new service principal access
   # to them (confirmed 2026-07-08 — terraform apply failed on both the
   # catalog grant and the already-exists schema/postgres_project). This app
-  # only needs the chat feature (KA endpoints), not document comparison, so
+  # only needs the chat feature, not document comparison, so
   # it runs with no UC volume binding (COMPARE_VOLUME_PATH unset — compare
   # gracefully disables) and Lakebase history disabled unless/until an admin
   # grants this app's service principal access. Chat still works either way
@@ -1524,64 +1442,6 @@ targets:
                 dependencies:
                   - psycopg2-binary
                   - databricks-sdk>=0.118.0
-
-        # Provisions/updates the qualibot_ALL_v2/AS_v2/IS_v2 Knowledge Assistants
-        # via the SDK (utils/databricks_ops/knowledge_assistant/): idempotent
-        # create-or-update on display_name, attaches the Vector Search index
-        # source, merges CAN_MANAGE/CAN_QUERY permissions. Manual trigger only —
-        # a KA is provisioned once per environment (or re-run after a deliberate
-        # prompt/index change), never as part of the daily parsing chain, since
-        # the daily chain only refreshes the already-attached index (the KA
-        # picks that up on its own, no re-provisioning needed).
-        #
-        # Points at uat_landingzone.qualibot (shared with the real qualibot-uat
-        # app) even though this is the -test target: qualibot-uat-test already
-        # reads that same catalog/schema (see app_write_catalog above), and its
-        # app service principal already holds CAN_QUERY on these exact KAs
-        # (confirmed live 2026-08-24) — so this is a safe validation run before
-        # promoting an equivalent job to qualibot-uat with APP_NAME=qualibot.
-        provision_knowledge_assistant_uat_test:
-          name: "qualibot-provision-knowledge-assistant-${bundle.target}"
-          description: "Idempotent create-or-update of the Qualibot Knowledge Assistants. Manual trigger only."
-          max_concurrent_runs: 1
-          tags:
-            project: Qualibot
-          run_as:
-            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
-          permissions:
-            - group_name: "Role-Project-LEAP-CoreAdmin"
-              level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-CoreDev"
-              level: CAN_MANAGE
-          parameters:
-            - name: ka_profiles
-              default: "ALL,AS,IS"
-            - name: catalog
-              default: "uat_landingzone"
-            - name: schema_name
-              default: "qualibot"
-            - name: index_suffix
-              default: "_v1"
-            - name: app_name
-              default: "qualibot-uat-test"
-          tasks:
-            - task_key: provision_knowledge_assistant
-              notebook_task:
-                notebook_path: ./utils/databricks_ops/knowledge_assistant/provision_knowledge_assistant_job.py
-                source: WORKSPACE
-                base_parameters:
-                  KA_PROFILES: "{{job.parameters.ka_profiles}}"
-                  CATALOG: "{{job.parameters.catalog}}"
-                  SCHEMA: "{{job.parameters.schema_name}}"
-                  INDEX_SUFFIX: "{{job.parameters.index_suffix}}"
-                  APP_NAME: "{{job.parameters.app_name}}"
-              environment_key: default
-          environments:
-            - environment_key: default
-              spec:
-                environment_version: "2"
-                dependencies:
-                  - databricks-sdk>=0.102.0
 
         sync_user_capabilities_uat_test:
           name: "qualibot-sync-user-capabilities-uat-test"
@@ -1728,59 +1588,6 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
-      jobs:
-        # Same idempotent create-or-update as qualibot-uat-test's
-        # provision_knowledge_assistant_uat_test (see that job's comment for
-        # the full rationale) -- points at prod_landingzone.qualibot with no
-        # index suffix (prod's clean naming, see resources/parsing_pipeline.job.yml)
-        # and run_as job-runner-sa-prod, which already owns this schema.
-        provision_knowledge_assistant_prod:
-          name: "qualibot-provision-knowledge-assistant-${bundle.target}"
-          description: "Idempotent create-or-update of the Qualibot Knowledge Assistants. Manual trigger only."
-          max_concurrent_runs: 1
-          tags:
-            project: Qualibot
-          run_as:
-            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02
-          permissions:
-            - group_name: "Role-Project-LEAP-CoreAdmin"
-              level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-CoreDev"
-              level: CAN_MANAGE
-          parameters:
-            - name: ka_profiles
-              default: "ALL,AS,IS"
-            - name: catalog
-              default: "prod_landingzone"
-            - name: schema_name
-              default: "qualibot"
-            - name: index_suffix
-              default: ""
-            # Unlike qualibot-uat-test (which keeps "_v2" to match the live
-            # qualibot-uat KAs by name), prod gets clean, unsuffixed KA names.
-            - name: display_name_suffix
-              default: ""
-            - name: app_name
-              default: "qualibot"
-          tasks:
-            - task_key: provision_knowledge_assistant
-              notebook_task:
-                notebook_path: ./utils/databricks_ops/knowledge_assistant/provision_knowledge_assistant_job.py
-                source: WORKSPACE
-                base_parameters:
-                  KA_PROFILES: "{{job.parameters.ka_profiles}}"
-                  CATALOG: "{{job.parameters.catalog}}"
-                  SCHEMA: "{{job.parameters.schema_name}}"
-                  INDEX_SUFFIX: "{{job.parameters.index_suffix}}"
-                  DISPLAY_NAME_SUFFIX: "{{job.parameters.display_name_suffix}}"
-                  APP_NAME: "{{job.parameters.app_name}}"
-              environment_key: default
-          environments:
-            - environment_key: default
-              spec:
-                environment_version: "2"
-                dependencies:
-                  - databricks-sdk>=0.102.0
       schemas:
         qualibot_schema:
           catalog_name: ${var.app_write_catalog}
@@ -1841,7 +1648,6 @@ targets:
       # Same Lakebase database the deployed qualibot-prod app itself reads/writes
       # (LAKEBASE_DATABASE in app.yaml) — matches the qualibot-uat pattern.
       parsing_lakebase_database: "doccompare"
-      # No suffix (unlike qualibot-uat's _v1) -- prod is the one environment,
-      # no version history to carry. 5_sync_index creates these the first time
-      # it runs if they don't exist yet (see that notebook + its job task).
-      parsing_vector_search_indexes: "prod_landingzone.qualibot.chunks_index,prod_landingzone.qualibot.chunks_as_index,prod_landingzone.qualibot.chunks_is_index"
+      # 5_sync_index creates the index the first time it runs if it doesn't
+      # exist yet (see that notebook + its job task).
+      parsing_vector_search_indexes: "prod_landingzone.qualibot.chunks_index"

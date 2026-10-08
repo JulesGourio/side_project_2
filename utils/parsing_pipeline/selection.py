@@ -523,7 +523,7 @@ def scan_volume_paths(spark, paths: List[str]):
     ingested) on every run when only a handful of IDDOCs actually need
     (re)parsing — the caller is expected to resolve target IDDOCs to their
     physical folder paths via ONE cheap non-recursive `dbutils.fs.ls` at the
-    volume root (see 3_Parse_Pipeline_v2.py), then pass those paths here.
+    volume root (see 3_Parse_Pipeline.py), then pass those paths here.
 
     Returns empty (but correctly-typed) DataFrames if `paths` is empty,
     since Spark's binaryFile source errors out on a zero-path load.
@@ -656,7 +656,7 @@ def get_retry_candidates(df_matched_full, df_content, failed_iddocs: List[int], 
         return None
     # .ppt used to be excluded here because Docling always failed on it;
     # image_utils._fallback_parse_ppt_legacy now handles it (see
-    # 3_Parse_Pipeline_v2.py), so it's a legitimate rank-2 candidate.
+    # 3_Parse_Pipeline.py), so it's a legitimate rank-2 candidate.
     df_alt = (
         df_matched_full
         .filter(F.col("IDDOC").isin(failed_iddocs))

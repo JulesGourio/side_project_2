@@ -466,7 +466,7 @@ séparé.
 
 ### 5.1 Ce que fait le pipeline aujourd'hui
 
-- **Parsing** (`3_Parse_Pipeline_v2.py`, GPU) : Docling convertit chaque document en markdown.
+- **Parsing** (`3_Parse_Pipeline.py`, GPU) : Docling convertit chaque document en markdown.
   Les tableurs passent par openpyxl et deviennent des lignes « colonne : valeur ». Les `.doc`,
   `.rtf` et `.odt` ont leurs convertisseurs. Le texte parsé de chaque document est gardé dans
   `_pipeline_checkpoint` (colonne `document_text`).
@@ -476,7 +476,7 @@ séparé.
     maximum, comptés avec le tokenizer `cl100k` d'OpenAI) ;
   - chaque passage est préfixé par `[Source: REF | Title | Division | Category | Date]` ;
   - au plus 100 passages par tableur.
-- **Images** (`4_Describe_Images_LLM_v2.py`) : chaque image retenue est décrite par GPT-5.6
+- **Images** (`4_Describe_Images_LLM.py`) : chaque image retenue est décrite par GPT-5.6
   Luna et devient un passage à part. Les pages scannées sont retranscrites de la même façon.
 - **Index** : `chunks` → `chunks_index` (Delta Sync, embedding Qwen3 0.6B géré par
   Databricks, recherche hybride). En DEV : `chunks_v1`, 75 086 passages.
@@ -569,7 +569,7 @@ séparé.
 - **Problèmes :**
   1. **La légende n'est pas dans le texte indexé.** La légende de la figure (« Figure 3 –
      Logigramme de traitement des NC ») est rangée dans `semantic_headers`, pas dans
-     `chunk_text` (`4_Describe_Images_LLM_v2.py:393`). Or c'est souvent la meilleure
+     `chunk_text` (`4_Describe_Images_LLM.py:393`). Or c'est souvent la meilleure
      description de l'image pour la recherche.
   2. **Le prompt interdit de reprendre le texte autour de l'image.** La description ne dit
      donc pas de quoi parle la section. Le passage d'image est rangé après tout le texte
@@ -622,7 +622,7 @@ séparé.
 - **Problème.** Le pipeline connaît, pour chaque document : `type_document` (« 05 - Procédure -
   QP »…), `indice` (la révision), `niveau_plus_2` (le sous-processus), `titre` et `auteur`. Mais
   la table de passages ne garde que `REF`, `division`, `url` et `doc_date`
-  (`3_Parse_Pipeline_v2.py:946`).
+  (`3_Parse_Pipeline.py:946`).
 - **Deux défauts en plus :**
   - `langue` est écrite en dur à `fr-FR` pour **tous** les documents (`selection.py:426`) :
     elle ne sert à rien aujourd'hui ;
@@ -655,7 +655,7 @@ séparé.
     est perdu ;
   - au-delà de 100 passages, le reste du tableur n'est pas indexé ;
   - `chunks_truncated` vaut `true` pour **tous** les tableurs, tronqués ou non
-    (`3_Parse_Pipeline_v2.py:1060`).
+    (`3_Parse_Pipeline.py:1060`).
 - **Proposition.**
   - Choisir comme en-tête la première ligne qui remplit la plupart des colonnes.
   - Mesurer combien de tableurs touchent le plafond (Q6) avant de le relever.

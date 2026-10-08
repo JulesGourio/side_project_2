@@ -157,10 +157,10 @@ and that Compare's impact search also queries — is built offline by
 `utils/parsing_pipeline/` (numbered notebooks `00`–`06`, run on Databricks,
 not part of the live app):
 
-- `3_Parse_Pipeline_v2.py` parses PDF/Office documents into markdown text +
+- `3_Parse_Pipeline.py` parses PDF/Office documents into markdown text +
   extracted images, then chunks and writes the `chunks`/`processed_files`/
   `image_metadata` Delta tables that the Vector Search index syncs from.
-- **Chunking** happens inside `3_Parse_Pipeline_v2.py` itself
+- **Chunking** happens inside `3_Parse_Pipeline.py` itself
   (`utils.build_chunks_udf`) via a token-bounded markdown-structure
   splitter — not a full Docling document chunker. `Test_Chunking.py` is a
   standalone benchmark notebook comparing that approach against Docling's
@@ -168,7 +168,7 @@ not part of the live app):
   alternative is wired into production: `HybridChunker` needs a live Docling
   document object, which isn't available at the point production chunking
   runs (only the parsed markdown text survives to that stage).
-- `4_Describe_Images_LLM_v2.py` sends each extracted image to the vision
+- `4_Describe_Images_LLM.py` sends each extracted image to the vision
   LLM (`databricks-gpt-5-mini`, `PARSING_LLM_ENDPOINT` in
   `utils/parsing_pipeline/config.py`) to describe tables/figures/diagrams;
   the description is folded into the surrounding chunk text.

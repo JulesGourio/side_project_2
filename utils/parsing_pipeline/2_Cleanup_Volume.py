@@ -48,7 +48,7 @@
 # MAGIC **Outputs**
 # MAGIC * `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}`
 # MAGIC * `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}`
-# MAGIC * `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` / `src_chunks_as` / `src_chunks_is` / `chunks_archive` / `image_metadata` for stale-IDDOC pruning only
+# MAGIC * `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` / `chunks_archive` / `image_metadata` for stale-IDDOC pruning only
 
 # COMMAND ----------
 
@@ -76,8 +76,8 @@ from config import (
     VOLUME_ROOT_PATH,
     GD_DOC_LATEST, GD_DOC_FALLBACK, GD_DOC_CAT_LATEST, GD_CAT_LATEST,
     DOC_SCOPE_FILTER, MANUAL_REF_EXCLUSIONS,
-    TARGET_PROCESSED_FILES_TABLE, TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS,
-    TARGET_CHUNK_TABLE_IS, TARGET_CHUNK_TABLE_ARCHIVE, TARGET_IMAGE_METADATA_TABLE,
+    TARGET_PROCESSED_FILES_TABLE, TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE,
+    TARGET_IMAGE_METADATA_TABLE,
 )
 
 # Self-joins against a materialized view are blocked by default; several joins below rely on one.
@@ -286,8 +286,7 @@ print(f"  {GD_DOC_CAT_LATEST} x {GD_CAT_LATEST}")
 
 if stale_iddocs:
     _stale_list = ",".join(str(i) for i in stale_iddocs)
-    for _tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS, TARGET_CHUNK_TABLE_IS, TARGET_CHUNK_TABLE_ARCHIVE,
-                 TARGET_IMAGE_METADATA_TABLE]:
+    for _tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE, TARGET_IMAGE_METADATA_TABLE]:
         try:
             spark.sql(f"DELETE FROM {_tbl} WHERE IDDOC IN ({_stale_list})")
         except Exception:
@@ -311,7 +310,7 @@ else:
 
 from pyspark.sql import Window as _W
 
-_chunk_tables = [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_AS, TARGET_CHUNK_TABLE_IS, TARGET_CHUNK_TABLE_ARCHIVE]
+_chunk_tables = [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE]
 
 try:
     if spark.catalog.tableExists(TARGET_CHUNK_TABLE):
@@ -554,7 +553,7 @@ if vanished_iddocs:
 if not all_skipped:
     print("Nothing to log into processed_files.")
 elif not spark.catalog.tableExists(TARGET_PROCESSED_FILES_TABLE):
-    print(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet — run 3_Parse_Pipeline_v2 (FULL) first. No write performed.")
+    print(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet — run 3_Parse_Pipeline (FULL) first. No write performed.")
 else:
     df_new = spark.createDataFrame(all_skipped)
     reclassified = {r["IDDOC"] for r in all_skipped if r.get("IDDOC") is not None}
@@ -612,7 +611,7 @@ df_keep_base = spark.createDataFrame(
     schema=_keep_schema,
 )
 
-# `indice` is the revision key used later by `3_Parse_Pipeline_v2`.
+# `indice` is the revision key used later by `3_Parse_Pipeline`.
 def _date_col(table):
     cols = {c.lower() for c in spark.read.table(table).columns}
     src = "dtdiff" if "dtdiff" in cols else "DATEDIFF" if "datediff" in cols else None

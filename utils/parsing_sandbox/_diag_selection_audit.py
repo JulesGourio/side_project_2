@@ -30,7 +30,7 @@ logger.info(f"Catalog/schema: {CATALOG_SCHEMA} | table suffix: {TABLE_SUFFIX}")
 
 # Folder-name-level check: does the top-level dbutils.fs.ls name always resolve an IDDOC
 # via selection.extract_iddoc_from_name()? This is exactly what the incremental scan path
-# in 3_Parse_Pipeline_v2.py relies on to decide which folders even get looked at.
+# in 3_Parse_Pipeline.py relies on to decide which folders even get looked at.
 _t0 = _time.time()
 _root_dbfs = VOLUME_ROOT_PATH.replace("/Volumes/", "dbfs:/Volumes/")
 _root_items = dbutils.fs.ls(_root_dbfs)
@@ -40,7 +40,7 @@ _unmatched_folder_names = [
 ]
 logger.info(f"[FOLDER NAMES] {len(_root_items)} top-level items under the volume root")
 logger.info(f"[FOLDER NAMES] {len(_unmatched_folder_names)} do NOT match ^[Dd]m?_(\\d+) at all "
-            f"(invisible to the incremental targeted scan in 3_Parse_Pipeline_v2.py)")
+            f"(invisible to the incremental targeted scan in 3_Parse_Pipeline.py)")
 if _unmatched_folder_names:
     logger.info(f"[FOLDER NAMES] sample of unmatched names: {_unmatched_folder_names[:30]}")
 

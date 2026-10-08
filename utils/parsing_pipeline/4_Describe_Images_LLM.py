@@ -40,7 +40,6 @@
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (description/status columns)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.src_chunks_as{PARSING_TABLE_SUFFIX}` / `src_chunks_is{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (EMPTY_TEXT -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all of a document's images are described)
 
 # COMMAND ----------
@@ -508,17 +507,9 @@ if described_count > 0:
     print(f"Merged {_archive_chunk_count} image chunks into {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
     df_image_chunks = _df_image_chunks_cached.filter(_is_recent)
     _chunk_count = df_image_chunks.count()
-    _as_chunk_count = df_image_chunks.filter(F.col("division") == "AS").count()
-    _is_chunk_count = df_image_chunks.filter(F.col("division") == "IS").count()
 
     _merge_image_chunks(df_image_chunks, TARGET_CHUNK_TABLE)
     print(f"Merged {_chunk_count} image chunks into {TARGET_CHUNK_TABLE}")
-
-    # Mirrors into src_chunks_as/src_chunks_is with the same MERGE pattern, so per-division reads stay in sync.
-    for _div, _tbl, _cnt in [("AS", TARGET_CHUNK_TABLE_AS, _as_chunk_count), ("IS", TARGET_CHUNK_TABLE_IS, _is_chunk_count)]:
-        df_div_chunks = df_image_chunks.filter(F.col("division") == _div)
-        _merge_image_chunks(df_div_chunks, _tbl)
-        print(f"Merged {_cnt} image chunks into {_tbl}")
 
     _df_image_chunks_cached.unpersist()
 
