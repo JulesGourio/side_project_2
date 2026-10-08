@@ -140,7 +140,7 @@ from pyspark.sql import functions as F
 
 for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
     del sys.modules[_m]
-from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _trim_history, _with_today_date  # app code
+from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _strip_division, _trim_history, _with_today_date  # app code
 from server.services import chat_vsi, chat_vsi_llm
 from server.services import translation_bridge as _tb
 from server.services.streaming import _cost_eur
@@ -355,8 +355,9 @@ if n_chat > 0:
         history.setdefault(h['session_id'], []).append(h)
     for r in picked:
         earlier = [h for h in history.get(r['session_id'], []) if h['created_at'] < r['created_at']][-4:]
-        messages = [{'role': h['role'], 'content': h['content']} for h in earlier] + \
-                   [{'role': 'user', 'content': r['content']}]
+        # Turns of the former Knowledge Assistant carry its "[Division: …]" routing prefix.
+        messages = [{'role': h['role'], 'content': _strip_division(h['content'])} for h in earlier] + \
+                   [{'role': 'user', 'content': _strip_division(r['content'])}]
         while messages and messages[0]['role'] != 'user':
             messages.pop(0)
         CASES.append({'source': 'chat', 'case_id': str(r['id']), 'division': (r['division'] or 'ALL').upper(),

@@ -133,7 +133,7 @@ assert hasattr(chat_vsi, 'retrieve_for_turn'), (
     f'Stale app code in {APP}: chat_vsi.py has no retrieve_for_turn. '
     'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
 
-from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _trim_history, _with_today_date  # app code
+from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _strip_division, _trim_history, _with_today_date  # app code
 from server.services.doc_catalog import canon_ref
 from server.services.translation_bridge import translate_question_to_en
 
@@ -210,7 +210,10 @@ if 'feedback' in SOURCES:
         expected = _refs(re.split(r'[,;\s]+', r['extracted_expected_ref']))
         if expected and r['question']:
             CASES.append({'source': 'feedback', 'case_id': str(r['message_id']), 'division': (r['division'] or 'ALL').upper(),
-                          'messages': [{'role': 'user', 'content': r['question']}], 'expected': expected, 'partial': []})
+                          # Questions of the former Knowledge Assistant carry its "[Division: AS] (system
+                          # routing note…)" prefix: the app no longer sends it, the eval mustn't either.
+                          'messages': [{'role': 'user', 'content': _strip_division(r['question'])}],
+                          'expected': expected, 'partial': []})
 _by_source = {}
 for c in CASES:
     _by_source[c['source']] = _by_source.get(c['source'], 0) + 1

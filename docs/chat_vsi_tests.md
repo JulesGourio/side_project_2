@@ -93,7 +93,7 @@ Le code de chacune de ces options est dans `archive/chat_vsi_lab/`.
 | E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € | `archive/evaluation/rechunk_experiment.py`, widget `doc_cards` (désactivé) |
 | E2 — contexte par passage | Une ou deux phrases en tête de chaque passage pour le situer (méthode « Contextual Retrieval »). ≈ 50 € | Même notebook, widget `chunk_context` (désactivé) |
 | `v2c` — sans préfixe `[Source: …]` | Mesure l'effet du préfixe sur la recherche | Même notebook |
-| **Nombre de passages** (à faire en premier, demandé le 2026-10-08) | Jusqu'à 3 × (12 reclassés + 10 bruts) = 66 passages, sans plafond. Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_VSI_RERANK_TOP_K`, `CHAT_VSI_RAW_TOP_K`, `CHAT_VSI_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
+| **Nombre de passages** (recherche mesurée le 2026-10-08, journal § 5.7 ; reste la comparaison des réponses) | Jusqu'à 3 × (12 reclassés + 10 bruts) = 66 passages, sans plafond. Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_VSI_RERANK_TOP_K`, `CHAT_VSI_RAW_TOP_K`, `CHAT_VSI_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
 | Pistes côté recherche R1 à R12 | Passages voisins, ordre du document, filtre par type, seuil « je ne sais pas »… | Journal § 4, rien de codé |
 | Documents d'avant 2018 | Leur fiche dans le chatbot (P11) | Décision métier ; pipeline prêt (`parsing_archive_notices_in_rag`) |
 | Numéros de page et de slide | P13, re-parsing GPU | Rien de codé |
@@ -1069,3 +1069,23 @@ Effets à connaître :
 - [Databricks : affiner le reranker sur ses données](https://docs.databricks.com/aws/en/ai-search/reranker-finetuning)
 - [Anthropic : Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval)
 - `docs/ka-migration.md` : fonctionnement interne du KA (Instructed Retriever, IR-1).
+
+## 5.7 Nombre de passages (2026-10-08, index `chunks_index`, découpage retenu)
+
+`retrieval_eval`, 65 questions, chaque configuration = le chat avec un seul réglage changé.
+
+| Config | Trouvés | Dans les 5 premiers | Au moins un | Contexte (tokens) | Golden | Synthétiques | Retours (16) |
+|---|---|---|---|---|---|---|---|
+| `raw5` (12 reclassés + 5 bruts) | 80.0 % | 65.4 % | 83.1 % | 9 277 | 94.4 % | 90.7 % | 43.8 % |
+| `chat` (12 + 10, actuel) | 79.4 % | 67.8 % | 81.5 % | 11 307 | **96.1 %** | **94.6 %** | 31.3 % |
+| `cap40` (plafond 40) | 78.5 % | 68.3 % | 81.5 % | 10 717 | 87.8 % | 93.6 % | 37.5 % |
+| `cap25` (plafond 25) | 78.1 % | 65.5 % | 81.5 % | 7 808 | 86.1 % | 90.7 % | 43.8 % |
+| `rerank-only` (12 reclassés, 0 brut) | 76.6 % | 65.5 % | 80.0 % | 7 653 | 86.6 % | 90.7 % | 37.5 % |
+| `rerank8-only` (8 reclassés, 0 brut) | 70.9 % | 68.7 % | 75.4 % | 5 558 | 75.2 % | 84.8 % | 37.5 % |
+
+- **Les passages bruts restent utiles avec le nouveau découpage** : sans eux, −10 points sur le golden (la définition d'APO dans le glossaire INAPO0006, QP1151, Q0627GO disparaissent).
+- **Plafonner coûte sur le golden** (−8 à −10 points) : les questions qui attendent beaucoup de documents (10 pour « documents qui parlent de qualification CND ») perdent les derniers.
+- **`raw5` fait jeu égal avec l'actuel** (80.0 % contre 79.4 %) avec 18 % de contexte en moins, mais perd 2 et 4 points sur golden et synthétiques. Les écarts sur les retours (16 questions : 1 question = 6 points) sont du bruit.
+- Défaut de l'éval corrigé le même jour : les questions des retours utilisateurs portaient encore le préfixe « [Division: AS] (system routing note…) » du Knowledge Assistant ; `retrieval_eval` et `pairwise_answers` le retirent désormais (`_strip_division`), comme l'app.
+- **Décision** : rien ne change tant que les réponses n'ont pas été comparées (`pairwise_answers`, `chat` contre `raw5`).
+
