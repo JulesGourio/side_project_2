@@ -484,13 +484,14 @@ Résultat V2 : ≈ 26 requêtes HYBRID/s au plus, refus au-delà de ≈ 16 en co
 (`docs/chat_vsi_tests.md` § 5.8). Code : file commune `server/services/vs_gate.py` (8 requêtes en
 cours au plus, relances sur 429).
 
-- [ ] **V3.1.** Recopier `server/services/vs_gate.py` (nouveau), `server/services/chat_vsi.py`,
+- [x] **V3.1.** Recopier `server/services/vs_gate.py` (nouveau), `server/services/chat_vsi.py`,
   `server/services/vector_search.py`, `tests/test_vs_gate.py`, `tests/test_chat_vsi_llm.py`,
   `docs/chat_vsi_tests.md`, `operations_dev.md` ; puis `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev`
   (sans `-SyncOnly` : l'app doit redémarrer).
-- [ ] **V3.2.** Notebook `load_test_chat`, widget `levels` = `10,20,30,40` (80 questions/min ≈ 25
+- [x] **V3.2.** Notebook `load_test_chat`, widget `levels` = `10,20,30,40` (80 questions/min ≈ 25
   questions en cours), Run all. M'envoyer les deux tableaux.
-- [ ] **V3.2b.** Moins de requêtes par question (recherche brute seulement sur la question telle que
+  _(fait 2026-10-08 : 100 % de réussite de 10 à 40 questions en cours, 77 questions/min à 40)_
+- [x] **V3.2b.** Moins de requêtes par question (recherche brute seulement sur la question telle que
   posée : 4 requêtes au lieu de 6) : notebook `retrieval_eval`, widget `indexes` =
   `chat,rawq1|rawq=1,rawq1-raw5|rawq=1|raw=5`, Run all. M'envoyer les deux derniers tableaux.
   _(fait 2026-10-08 : recherche brute sur la question seule = −8 points sur le golden)_

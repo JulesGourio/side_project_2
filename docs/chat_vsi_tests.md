@@ -1139,3 +1139,19 @@ plafonné vers 50 questions/min ; premier mot à 10,7 s en médiane même à 5 q
   la marge nécessaire une fois les rafales étalées par la file `vs_gate.py` ; reste à le vérifier par le
   test de charge du chat (`operations_dev.md` V3.2).
 
+**Chat de bout en bout avec la file `vs_gate.py`** (`load_test_chat.py`, 6 requêtes par question) :
+
+| Questions en cours | Réussite | Premier mot p50 / p95 | Réponse complète p50 / p95 | Débit |
+|---|---|---|---|---|
+| 10 | 100 % | 10,0 s / 16,0 s | 13,0 s / 19,6 s | 30,6 /min |
+| 20 | 100 % | 11,0 s / 19,5 s | 12,6 s / 23,9 s | 53,3 /min |
+| 30 | 100 % | 12,9 s / 22,3 s | 15,1 s / 26,4 s | 72,8 /min |
+| 40 | 100 % | 15,8 s / 27,3 s | 19,4 s / 32,2 s | 77,3 /min |
+
+- Plus aucun 429 (contre 9 à 24 % d'erreurs avant la file) ; l'objectif de ≈ 80 questions/min est atteint
+  à 40 questions en cours.
+- À 40, le premier mot recule de ≈ 6 s : c'est l'attente dans la file (8 requêtes en cours,
+  ≈ 25 requêtes/s servies, 6 par question → ≈ 4 questions/s au plus côté recherche), pas des erreurs.
+  Leviers si un jour il faut plus : moins de requêtes par question (V3.2c), *Target QPS* sur l'endpoint,
+  lancer les recherches REF / titre en parallèle de la recherche principale.
+
