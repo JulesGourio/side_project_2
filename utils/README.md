@@ -13,7 +13,6 @@ Everything that runs outside the app, one folder per concern:
 | `dev_copy/` | Copy of the UAT corpus into DEV |
 | `grants/` | Unity Catalog grants for the app service principals |
 | `evaluation/` | Chat evaluation and production-traffic quality scoring, results in `docs/chat_vsi_tests.md` |
-| `ka_legacy/` | Jobs written for the Knowledge Assistants (trace migration, scoring); no longer used by the chatbot |
 | `soffice_packaging/` | Portable LibreOffice build for the exact-layout PDF preview |
 
 The former Knowledge Assistant provisioning is in `archive/knowledge_assistant/`;
