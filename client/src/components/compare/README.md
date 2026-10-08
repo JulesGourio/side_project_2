@@ -128,7 +128,7 @@ on the whole result (`ref` NULL). Rows link to `impact_requests` through the
 loading that history entry shows it again.
 
 **Manual mode** ("describe a change by hand", no files): deliberately disabled
-(`IMPACT_MANUAL_MODE_ENABLED = false` in `CompareView.tsx`, decision 2026-10-05). It
+(`IMPACT_MANUAL_MODE_ENABLED = false` in `compareShared.ts`). It
 still works behind the flag.
 
 **Export Excel** (`POST /compare/impact/export-excel`, `_build_impact_excel_bytes`):
@@ -409,6 +409,18 @@ priority is criticality first, change-type second (`_CRIT_COLORS` wins over
 `CompareView.tsx` calls the save-to-volume endpoints sequentially, after the SSE
 stream finishes, only for a fresh (non-cached) result, and treats every failure as
 best-effort (`toast.warning`, never blocks the UI).
+
+### Frontend files
+
+| File | Content |
+|---|---|
+| `CompareView.tsx` | The page: state, analysis and impact streams, history, auto-save |
+| `compareShared.ts` | Types, constants, localStorage keys and file helpers shared by the components |
+| `PdfDropZone.tsx` | Upload card with the document preview |
+| `ResultCard.tsx`, `StructuredResultCard.tsx`, `JsonDiffTable.tsx` | Change Summary (Markdown) and Change Table (JSON rows) |
+| `CardFeedback.tsx` | Thumbs + comment shared by both result cards |
+| `DocSummaryCard.tsx` | Single-document summary |
+| `ImpactResults.tsx`, `ComparisonHistory.tsx` | Impact search results, history list |
 
 ### Frontend (`CompareView.tsx`) — state model
 
