@@ -59,6 +59,8 @@ CONFIGS = {
     'u-all':              dict(variant='rerank', env={**UNION, **CTX, **REF, **TITLE, **BI, **ONE_LANG}),
     # Same as u-bi, rewrite by GPT-5.6 Luna instead of the answer model (faster first token if it
     # holds up). Reasoning model: it needs a large ceiling or it returns an empty rewrite.
+    # u-all without the one-language rule (u-1lang alone lost 1.5 points on 2026-10-08).
+    'u-bi-title-ref':     dict(variant='rerank', env={**UNION, **CTX, **REF, **TITLE, **BI}),
     'u-bi-luna':          dict(variant='rerank', env={**UNION, **CTX, **BI,
                                                        'CHAT_VSI_REWRITE_ENDPOINT': 'databricks-gpt-5-6-luna',
                                                        'CHAT_VSI_REWRITE_MAX_TOKENS': '2000'}),
@@ -158,6 +160,13 @@ from server.services.chat_vsi import group_documents
 from server.services.chat_vsi_variants import retrieve_documents, variant_settings
 from server.services.doc_catalog import canon_ref
 from server.services.translation_bridge import translate_question_to_en
+
+# Each question runs in its own event loop (asyncio.run in a thread): the bridge's shared
+# httpx client is bound to the first loop and fails in the others ("Event loop is closed",
+# empty error) — the question was then searched untranslated. One client per call here.
+import httpx as _httpx
+from server.services import translation_bridge as _tb
+_tb._get_http_client = lambda: _httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
 
 w = WorkspaceClient()
 HOST = w.config.host.rstrip('/')

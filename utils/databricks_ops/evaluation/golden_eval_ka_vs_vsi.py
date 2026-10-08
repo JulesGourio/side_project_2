@@ -184,6 +184,13 @@ from server.services.doc_catalog import augment_sources, canon_ref
 from server.services.streaming import stream_chat
 from server.services.translation_bridge import translate_answer_back, translate_question_to_en
 
+# Each question runs in its own event loop (asyncio.run in a thread): the bridge's shared
+# httpx client is bound to the first loop and fails in the others ("Event loop is closed",
+# empty error) — the question was then searched untranslated. One client per call here.
+import httpx as _httpx
+from server.services import translation_bridge as _tb
+_tb._get_http_client = lambda: _httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
+
 w = WorkspaceClient()
 HOST = w.config.host.rstrip('/')
 ME = w.current_user.me().user_name
