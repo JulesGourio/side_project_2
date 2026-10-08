@@ -29,7 +29,7 @@ What happens for each question (configuration chosen 2026-10-08, measures in
 ``CHAT_VSI_REWRITE_ENDPOINT`` / ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS``,
 ``CHAT_VSI_ANSWER_MAX_TOKENS``, ``CHAT_VSI_REWRITE_MAX_TOKENS``, ``VS_MAX_CONCURRENT_QUERIES`` /
 ``VS_QUERY_RETRIES`` (``vs_gate.py``),
-``CHAT_VSI_RERANK_TOP_K`` / ``CHAT_VSI_RAW_TOP_K`` / ``CHAT_VSI_RAW_QUERIES`` / ``CHAT_VSI_MAX_SEARCH_PASSAGES`` (search sizes,
+``CHAT_VSI_RERANK_TOP_K`` / ``CHAT_VSI_RAW_TOP_K`` / ``CHAT_VSI_RAW_ON`` / ``CHAT_VSI_MAX_SEARCH_PASSAGES`` (search sizes,
 defaults = the measured configuration; other values are for ``retrieval_eval`` comparisons),
 plus the resilience settings documented in ``chat_vsi_llm.py``. The earlier engine versions
 (baseline, measured options) are kept in ``archive/``.
@@ -149,10 +149,14 @@ def raw_top_k() -> int:
     return max(0, _int_env('CHAT_VSI_RAW_TOP_K', _RAW_TOP_K))
 
 
-def raw_queries() -> int:
-    """How many of the queries (question, French, English — in that order) also get a raw
-    search; 3 = all (default). Fewer raw searches = fewer Vector Search queries per question."""
-    return max(0, _int_env('CHAT_VSI_RAW_QUERIES', 3))
+_RAW_ON_ALL = ('question', 'fr', 'en')
+
+
+def raw_on() -> List[str]:
+    """Which queries also get a raw search: ``question`` (as asked), ``fr``, ``en`` (the
+    rewrites); all three by default. Fewer = fewer Vector Search queries per question."""
+    names = [n.strip().lower() for n in os.getenv('CHAT_VSI_RAW_ON', ','.join(_RAW_ON_ALL)).replace('+', ',').split(',')]
+    return [n for n in _RAW_ON_ALL if n in names]
 
 
 def max_search_passages() -> int:
@@ -175,7 +179,7 @@ def settings() -> Dict[str, Any]:
     return {'index': index_name(), 'llm': llm_endpoint(),
             'llm_fallbacks': chat_vsi_llm.answer_chain(llm_endpoint())[1:],
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),
-            'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(), 'raw_queries': raw_queries(),
+            'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(), 'raw_on': raw_on(),
             'max_search_passages': max_search_passages()}
 
 
@@ -377,8 +381,10 @@ def _search_error(index: str, exc: BaseException) -> ChatVsiError:
     return ChatVsiError(f'Document search failed: {exc}', type(exc).__name__)
 
 
-async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Reranked top k + raw top k for every query, merged by best rank. A query (or the
+async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any],
+                 raw_queries: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Reranked top k for every query + raw top k for ``raw_queries`` (default: every query),
+    merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
     if everything failed. Without raw passages (``raw_top_k() == 0``), a refused reranker falls
     back to the raw search with the reranked size."""
@@ -398,7 +404,8 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
 
     calls = [reranked(q) for q in queries]
     if raw_k:
-        calls += [_query(host, token, index, q, raw_k, filters, rerank=False) for q in queries[:raw_queries()]]
+        calls += [_query(host, token, index, q, raw_k, filters, rerank=False)
+                  for q in (queries if raw_queries is None else raw_queries)]
     results = await asyncio.gather(*calls, return_exceptions=True)
     for r in results:
         if isinstance(r, asyncio.CancelledError):
@@ -469,7 +476,13 @@ async def retrieve_for_turn(host: str, token: str, division: str,
     named = named[:_REF_LOOKUP_MAX]
     titled = documents_titled(queries, _TITLE_LOOKUP_DOCS)
 
-    rows = await search(host, token, index, queries, filters)
+    by_name = {'question': question, 'fr': fr_query, 'en': en_query}
+    raw_texts: List[str] = []
+    for name in raw_on():
+        text = by_name[name]
+        if text and text.casefold() not in {x.casefold() for x in raw_texts}:
+            raw_texts.append(text)
+    rows = await search(host, token, index, queries, filters, raw_texts)
     if max_search_passages():
         rows = rows[:max_search_passages()]
     if named:

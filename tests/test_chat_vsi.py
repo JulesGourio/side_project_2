@@ -272,10 +272,10 @@ def test_reranked_only_sends_no_raw_query(monkeypatch):
 
 
 def test_raw_search_only_on_the_first_queries(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_RAW_QUERIES', '1')
+    monkeypatch.setenv('CHAT_VSI_RAW_ON', 'fr')
     _, m = _run(monkeypatch)
     raw = [p['query_text'] for p in m['sent'] if 'reranker' not in p]
-    assert raw == [QUESTION] and len([p for p in m['sent'] if 'reranker' in p]) == 3
+    assert raw == ['qualification CND'] and len([p for p in m['sent'] if 'reranker' in p]) == 3
 
 
 def test_reranked_only_with_reranker_refused_falls_back_to_raw(monkeypatch):

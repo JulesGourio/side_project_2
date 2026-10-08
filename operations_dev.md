@@ -493,6 +493,10 @@ cours au plus, relances sur 429).
 - [ ] **V3.2b.** Moins de requêtes par question (recherche brute seulement sur la question telle que
   posée : 4 requêtes au lieu de 6) : notebook `retrieval_eval`, widget `indexes` =
   `chat,rawq1|rawq=1,rawq1-raw5|rawq=1|raw=5`, Run all. M'envoyer les deux derniers tableaux.
+  _(fait 2026-10-08 : recherche brute sur la question seule = −8 points sur le golden)_
+- [ ] **V3.2c.** Recherche brute sur une réécriture seulement (4 requêtes) ou sur les deux (5) :
+  notebook `retrieval_eval`, widget `indexes` = `chat,rawfr|rawon=fr,rawen|rawon=en,rawfren|rawon=fr+en`,
+  Run all (≈ 1 €). M'envoyer les deux derniers tableaux.
 - [ ] **V3.3.** M'envoyer aussi la sortie de la cellule « The endpoint and the index » du notebook
   `load_test_vector_search` (type d'endpoint, `scaling_info`) et son troisième tableau (texte des refus).
 
