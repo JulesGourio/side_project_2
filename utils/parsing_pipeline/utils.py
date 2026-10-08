@@ -909,7 +909,7 @@ def chunk_document(text: str, docling_doc=None) -> List[Dict[str, Any]]:
 
     ``docling_doc`` is accepted for the sandbox notebook's signature only: the pipeline keeps
     the markdown, not the Docling document, so passages always come from the markdown (the
-    former Docling HybridChunker path never ran in the pipeline — audit 2026-10, P1).
+    former Docling HybridChunker path never ran in the pipeline).
     """
     text = normalize_text(text)
     if not text:

@@ -538,7 +538,7 @@ def _impact_cache_version(changes_text: str, cfg: Dict[str, Any]) -> str:
     gives a different change list from the Change Table than from the Change
     Summary, and a different result once COMPARE_IMPACT_INDEX points at another
     index. Keyed on the hashes only, the first search was replayed for all of
-    them (2026-10-04).
+    them.
     """
     parts = [changes_text.strip(), cfg['impact_index'], cfg['impact_endpoint'],
              str(cfg['impact_max_queries']), str(cfg['impact_per_query_results']),

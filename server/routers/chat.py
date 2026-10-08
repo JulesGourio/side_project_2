@@ -150,7 +150,7 @@ def _with_today_date(messages: List[dict]) -> List[dict]:
     role message): the engine puts its own system message first.
 
     Kept language-neutral (plain ISO date, no French/English sentence) —a
-    full "Nous sommes le lundi ..." sentence here was found (2026-07-07) to
+    full "Nous sommes le lundi ..." sentence here was found to
     bias the model toward answering in French even when the user asked in
     English, since it's the first text the model reads in the turn.
 

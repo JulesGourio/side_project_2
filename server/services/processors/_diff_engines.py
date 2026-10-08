@@ -1202,14 +1202,12 @@ def _drop_present_verbatim(
     residual segmentation surplus those two cannot cancel.
 
     Gated on a surplus test so the net cannot swallow a genuine addition of text
-    that already existed elsewhere: WDT017W8850201 gained 6 'TO PATCH'
-    annotations on sheets 80-82 and every one was suppressed because another
-    'TO PATCH' sat nearby. The test counts occurrences as SUBSTRINGS of the whole
+    that already existed elsewhere: six new 'TO PATCH' annotations on a wiring
+    diagram were all suppressed because another one sat nearby. The test counts occurrences as SUBSTRINGS of the whole
     document, not as standalone blocks — the artifacts this net exists for are
     precisely cases where the text survived merged into a neighbouring block, so
-    a block-level count reads them as a surplus and protects them (MOP_AX
-    'ANNEXE 4': 2 standalone blocks in AW vs 1 in AX, but 16 substring hits in
-    each because of the 14 page headers).
+    a block-level count reads them as a surplus and protects them (a heading with 2 standalone blocks in one revision and 1 in the
+    other, but the same number of substring hits in both because of the page headers).
     """
     kept: List[Dict[str, Any]] = []
     dropped = 0
@@ -1274,8 +1272,7 @@ def _drop_merged_cells(
     surviving on one side only, a cell that stood alone in one revision is
     merged into its neighbour in the other. There is no standalone counterpart
     to match, so the block becomes a REMOVED/ADDED for text that did not change
-    at all — MOP_AX's revision-log cell "Ajout de l'Annexe 4" (a line of the
-    change-history table, merged into the surrounding sentence in AX).
+    at all, e.g. a line of a change-history table merged into the surrounding sentence.
 
     Deliberately narrow: same relative position, and the container must be much
     longer than the fragment. Without the length ratio this also swallows a
@@ -1429,10 +1426,9 @@ def _dedup_repeated_headers(items: List[Dict[str, Any]], window: int = 25) -> Li
 
     Table column headers repeated at page-break continuations, running footers,
     and wiring labels re-emitted a few blocks apart are all layout, not content.
-    Removing this pass entirely (tried 2026-08-17) surfaced 151 extra entries on
-    WDT017W8850653 and every sampled one was verified noise: '7168-MLB22' still
-    occurs 3 times in the new revision, '13/07/2023' and 'PILOT STATION' are
-    identical on both sides. So the pass stays.
+    Without this pass, hundreds of extra entries reach the report on wiring-diagram
+    revisions, and the sampled ones were all noise (a label still present several
+    times in the new revision, a date or title identical on both sides).
 
     It is NOT symmetric under repagination — the same repeat can fall inside the
     window in one revision and outside it in the other, leaving a surplus copy
@@ -1471,7 +1467,7 @@ def _cancel_resegmented(
     One block on a side equal to 2-3 consecutive leftover blocks on the other
     is the same text with a paragraph break added or removed: no wording
     changed. Left alone it reached the LLM as an ADDED half plus a MODIFIED
-    whose other half is struck through — two phantom changes (2026-10-04).
+    whose other half is struck through — two phantom changes.
 
     Returns (remaining_olds, remaining_news, n_blocks_cancelled).
     """
@@ -1554,8 +1550,7 @@ def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: Optional[s
     entry keeps the first occurrence's section/position and says explicitly how
     many pages repeat it — no information is lost for the LLM, but a 48-page
     title-block stamp stops drowning the real changes (and the token budget).
-    Two extra grouping rules, measured on utils/compare_eval (2026-07-17):
-    pagination fragments are masked so 'Issue A6 Page N' repeats group across
+    Two extra grouping rules: pagination fragments are masked so 'Issue A6 Page N' repeats group across
     pages, and dot-leader TOC rows group per kind into one summary entry.
     """
     if not page_label:
@@ -2024,8 +2019,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         addressable runs instead of silently collapsing every occurrence onto
         the first one's slot — that collapse is what let content from an
         unrelated, much-later table get pulled up next to an earlier one with
-        the same label (regression found on a document full of recurring
-        numbered flowchart steps, 2026-07-29). Looking runs up by each result's
+        the same label (seen on documents full of recurring
+        numbered flowchart steps). Looking runs up by each result's
         own sort_idx (below), rather than by the shared label string, is what
         keeps repeated labels distinguishable.
         """
@@ -2082,7 +2077,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         every ADDED in a section sort AFTER every MODIFIED/REMOVED in it, so in a
         30-page section the LLM read ~40 MODIFIED/REMOVED and only then ~40 ADDED:
         a REMOVED and the ADDED that replaces it ended up 60 lines apart and could
-        no longer be read as one change (MOP_AX, 2026-08-17). Page number first,
+        no longer be read as one change. Page number first,
         then the fractional block position, interleaves both sides by locality.
         """
         if r.get('from_new'):

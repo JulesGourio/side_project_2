@@ -31,13 +31,10 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-# System libraries the TDF LibreOffice build links against that slim
-# container images (Databricks Apps) don't ship. Their .so files are merged
-# into program/ (covered by the executables' $ORIGIN rpath, plus
-# LD_LIBRARY_PATH set by server/services/soffice.py). Pulled from the Ubuntu
-# jammy (22.04) archive — the Databricks Apps base image generation; these
-# X/rendering libs have tiny, ancient glibc requirements, so a slightly
-# different container release is fine.
+# System libraries the LibreOffice build links against that slim container images (Databricks Apps) do not ship. Their
+# .so files are merged into program/
+# (executables' $ORIGIN rpath, plus LD_LIBRARY_PATH set by server/services/soffice.py), pulled from the Ubuntu 22.04
+# archive.
 _SYSLIB_PACKAGES = [
     'libx11-6', 'libxcb1', 'libxau6', 'libxdmcp6', 'libxext6', 'libxinerama1',
     'libxrender1', 'libxrandr2', 'libxcursor1', 'libxfixes3', 'libxi6',

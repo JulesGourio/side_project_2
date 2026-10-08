@@ -1,7 +1,6 @@
 """Chat VSI — the chat engine: answers from the Vector Search index, no Knowledge Assistant.
 
-What happens for each question (configuration chosen 2026-10-08, measures in
-``docs/chat_vsi_tests.md``):
+What happens for each question (measures behind the configuration: ``docs/chat_vsi_tests.md``):
 
 1. **Rewrite** — GPT-6 Luna turns the last question, with the conversation as context, into
    one standalone search query in French and one in English (acronyms expanded when certain).

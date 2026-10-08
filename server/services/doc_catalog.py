@@ -21,7 +21,7 @@ index (``in_chat``). The parsing pipeline rewrites it after each successful dail
 
 Until that table has rows (an app started before the pipeline's first run, local dev, tests),
 the bundled ``server/data/doc_catalog.json`` is used instead: a one-off snapshot of a portal
-scrape (2026-07), with links in the old ``liredocumentdepuisrecherche?id=`` scheme, that is
+scrape, with links in the old ``liredocumentdepuisrecherche?id=`` scheme, that is
 never refreshed — new documents are missing from it and withdrawn ones are still in it. Every
 function degrades to a no-op when neither source is available.
 """

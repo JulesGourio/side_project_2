@@ -31,7 +31,7 @@ _TEXT_MARKER = '--- TEXT CHANGES ---'
 _VISUAL_MARKER = '--- VISUAL CHANGES ---'
 # Parts run concurrently (bounded) — sequential execution pushed the total SSE
 # response past the Databricks Apps gateway's hard duration limit on large
-# documents (observed: connection killed mid-part-4 on a 4-part NAS410 run).
+# documents (the connection was killed mid-run on a 4-part analysis).
 # Wall-clock becomes ~the slowest part instead of the sum of all parts.
 _CHUNK_PARALLELISM = int(os.getenv('COMPARE_CHUNK_PARALLELISM', '3'))
 

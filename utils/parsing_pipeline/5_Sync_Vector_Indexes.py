@@ -192,12 +192,10 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-# Only these 2 index/source pairs are ever provisioned by this pipeline --
-# an index name in `indexes` that isn't one of them is synced (existing
-# behavior) but never auto-created, since we wouldn't know its source table.
-# Mirrors config.py's TARGET_CHUNK_TABLE naming ({catalog_schema}.{name}{table_suffix}),
-# rebuilt here from widgets instead of importing config.py -- see the widget
-# comments above.
+# Only these index/source pairs are auto-created; any other index in `indexes` is synced but never created (its source
+# table is unknown).
+# Same naming as config.py's TARGET_CHUNK_TABLE ({catalog_schema}.{name}{table_suffix}), rebuilt from widgets because
+# this task does not import config.py.
 KNOWN_SOURCE_TABLE = {
     f"{CATALOG_SCHEMA}.chunks_index{TABLE_SUFFIX}": f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}",
     FULL_INDEX: FULL_TABLE,

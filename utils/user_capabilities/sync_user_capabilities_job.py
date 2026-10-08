@@ -38,12 +38,9 @@ LAKEBASE_DATABASE = dbutils.widgets.get("LAKEBASE_DATABASE")
 import os
 import sys
 
-# Path(__file__) isn't reliably the deployed notebook path in a Databricks job
-# task, so this can't mirror the CLI's `Path(__file__).resolve().parent.parent`
-# sys.path trick. Databricks already puts this notebook's own directory on
-# sys.path (same reason sibling `from config import *` needs no setup at all in
-# utils/parsing_pipeline/), so os.getcwd() is that directory and one level up
-# is utils/ where config.py lives.
+# Path(__file__) is not the deployed notebook path in a job task. Databricks puts the notebook's own directory on
+# sys.path, so os.getcwd() is that
+# directory and one level up is utils/, where ops_config.py lives.
 sys.path.insert(0, os.path.dirname(os.getcwd()))
 from ops_config import CAPS_CHAT_GROUPS, CAPS_COMPARE_GROUPS, CAPS_ALL_GROUPS
 

@@ -1,6 +1,6 @@
 """One gate for every Vector Search query of the app (chat and impact search).
 
-Measured 2026-10-08 on the DEV endpoint (``load_test_vector_search.py``, operations_dev.md V2):
+Measured on the DEV endpoint (``load_test_vector_search.py``, operations_dev.md V2):
 HYBRID queries are served at most ~25 per second; past ~8 queries in flight the latency rises,
 and past ~16 the endpoint answers 429. The reranker does not lower that ceiling (it only makes
 each query slower: 0.5 s instead of 0.2 s). One chat question sends 6 to 8 queries at once, so

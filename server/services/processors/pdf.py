@@ -197,8 +197,8 @@ def _merge_page_split_paragraphs(pages: List[List[Dict[str, Any]]]) -> None:
     Where the break falls depends on everything above it: one paragraph added
     on page 1 moves every later break, and each paragraph that used to straddle
     a break (or now does) reached the diff as two half-blocks on one side and a
-    whole block on the other. Measured on a generated 6-page procedure: one
-    inserted paragraph produced 6 phantom MODIFIED entries (2026-10-04).
+    whole block on the other. On a 6-page procedure, one
+    inserted paragraph produced 6 phantom MODIFIED entries.
 
     Running headers/footers sit between the two halves in reading order, so
     they are identified first (same text on most pages, in the top or bottom

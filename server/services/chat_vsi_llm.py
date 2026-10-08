@@ -1,15 +1,13 @@
 """Chat VSI — LLM calls that keep answering: retries, fallback models, continuation, load limits.
 
-Used by both Chat VSI variants for the answer (``stream_answer``) and by the ``rerank``
-variant for the search-query rewrite (``complete``). Settings, read at call time:
+Used for the answer (``stream_answer``) and for the search-query rewrite (``complete``). Settings, read at call time:
 
 - ``CHAT_VSI_LLM_FALLBACK_ENDPOINTS`` — comma-separated endpoints tried, in order, after
-  ``CHAT_VSI_LLM_ENDPOINT`` (default: none, the primary is only retried). Production plan
-  2026-10-08: GPT-6 Luna, then GPT-5.6 Luna;
+  ``CHAT_VSI_LLM_ENDPOINT`` (default: none, the primary is only retried). In production: GPT-6 Luna, then GPT-5.6 Luna;
 - ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS`` — same for the rewrite (default: the answer chain);
 - ``CHAT_VSI_FIRST_TOKEN_TIMEOUT_S`` (90) — no answer text after this long: the endpoint is
   given up for the next one (a reasoning model thinks before its first word: GPT-6 Luna
-  p50 7 s, pairwise eval 2026-10-08);
+  p50 is about 7 s);
 - ``CHAT_VSI_STALL_TIMEOUT_S`` (60) — the stream stops sending text this long: given up;
 - ``CHAT_VSI_LLM_DEADLINE_S`` (240) — no new attempt starts after this long;
 - ``CHAT_VSI_LLM_ROUNDS`` (3) — passes over the endpoint chain, waiting 2 s then 8 s between
@@ -21,8 +19,8 @@ variant for the search-query rewrite (``complete``). Settings, read at call time
   app instance; the others wait their turn (keepalives sent) instead of all hitting the
   per-minute token quota (1M input tokens/min per endpoint ≈ 40 questions of 25k tokens);
 - ``CHAT_VSI_REASONING_MIN_TOKENS`` (6000) — output ceiling floor on reasoning models (their
-  thinking counts inside it): a 2000-token answer budget written for Sonnet would truncate
-  GPT-6 Luna when the chain falls back to it. The rewrite uses a floor of 1000.
+  thinking counts inside it): a small answer budget would truncate GPT-6 Luna when the
+  chain falls back to it. The rewrite uses a floor of 1000.
 
 What is retried where:
 
