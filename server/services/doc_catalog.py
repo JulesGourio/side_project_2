@@ -43,11 +43,9 @@ _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
 # The catalog loaded from Lakebase (None until the first successful load).
 _live: Optional['_Catalog'] = None
 
-# Our own intraqual_ref_url() scheme (parsing/utils.py, introduced 2026-07-07)
-# embeds the REF directly in the URL: .../identification.aspx?ref=<REF>. The
-# catalog's url_to_ref map is keyed on the OLD liredocumentdepuisrecherche?id=
-# scheme and never matches these — extracting REF straight from the URL is
-# scheme-accurate and needs no catalog/rebuild at all.
+# Our own intraqual_ref_url() scheme (parsing/utils.py) embeds the REF in the URL: .../identification.aspx?ref=<REF>.
+# The catalog's url_to_ref map is keyed on the old liredocumentdepuisrecherche?id= scheme and never matches these
+# URLs, so the REF is read straight from the URL.
 _REF_IN_URL_RE = re.compile(r'[?&]ref=([^&]+)', re.IGNORECASE)
 
 
@@ -65,11 +63,10 @@ def _norm(ref: str) -> str:
     return ' '.join(ref.split()).upper()
 
 
-# Mirrors archive/doc_catalog/build_doc_catalog.py:_base_ref — needed here too because a
-# citation in the chat text may use a spelling that never existed literally
-# in the catalog (e.g. the model writes "PRLAT529" but the only real entries
-# are "PRLAT-529" / "PRLAT-529_GB"). Canonicalizing both sides the same way
-# lets a bare/re-punctuated mention still resolve to its document's group.
+# Mirrors archive/doc_catalog/build_doc_catalog.py:_base_ref: a citation in the chat text may use a spelling that
+# never existed in the catalog
+# ("PRLAT529" for "PRLAT-529" / "PRLAT-529_GB"); canonicalizing both sides the same way resolves it to the document's
+# group.
 _LANG_SUFFIX_RE = re.compile(r'[-_. ]+(FR|EN|GB|MX|BG|CZ|BR|ES)$', re.IGNORECASE)
 _NON_ALNUM_RE = re.compile(r'[^A-Z0-9]')
 
@@ -297,11 +294,9 @@ def augment_sources(content: str, sources: List[dict]) -> List[dict]:
     try:
         sources = list(sources or [])
 
-        # 1. Relabel existing chips to their REF when we recognise the URL —
-        # prefer parsing our own ref=<REF> scheme (always accurate, and does
-        # not need the catalog at all) over the catalog's url_to_ref (keyed
-        # on the older id=... scheme, so it never matches these URLs and
-        # would otherwise leave `title` unset/raw-URL).
+        # 1. Relabel existing chips to their REF when the URL is recognised: parse our own ref=<REF> scheme (always
+        # accurate, no catalog needed)
+        # rather than the catalog's url_to_ref (older id=... scheme).
         for s in sources:
             url = s.get('url')
             if not url:

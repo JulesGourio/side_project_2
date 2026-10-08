@@ -39,10 +39,9 @@ _QUERY_CONCURRENCY = 3
 _QUERY_RETRIES = 2
 _JUDGE_CONCURRENCY = 6
 _JUDGE_RETRIES = 1
-# A reasoning judge (gpt-5-*) spends max_tokens on hidden reasoning first; on
-# a candidate with many passages it can run out before writing anything
-# (finish_reason "length", empty content — 2 documents out of a dozen in DEV,
-# 2026-10-05). The retry then gets this many times the budget, capped.
+# A reasoning judge (gpt-5-*) spends max_tokens on hidden reasoning first and can run out before writing anything on a
+# candidate with many passages
+# (finish_reason "length", empty content). The retry gets this many times the budget, capped.
 _JUDGE_TRUNCATION_BUDGET_FACTOR = 3
 _JUDGE_MAX_TOKENS_CAP = 8000
 
