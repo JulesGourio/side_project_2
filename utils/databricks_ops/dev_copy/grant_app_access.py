@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # DEV copy — grant the app's service principal what it reads and writes
+# MAGIC # DEV copy — grant the app's and the pipeline's service principals what they use
 # MAGIC
 # MAGIC Job `qualibot-grant-app-access-dev` (`databricks.yml`, target `dev`), run as
 # MAGIC the DEV job SP, which holds grant rights on `dev_landingzone`. Idempotent:
@@ -16,8 +16,9 @@
 # MAGIC | `volumes` | READ + WRITE VOLUME | Compare files, LibreOffice archive |
 # MAGIC | `indexes` | SELECT | Impact search, Chat VSI |
 # MAGIC | `serving_endpoints` | CAN_QUERY | Chat VSI, Compare, impact judge, translation |
+# MAGIC | `pipeline_tables` | SELECT + MODIFY, to `pipeline_service_principal` | Parsing pipeline jobs (run as the DEV SP) on tables created by a person: copy of the UAT corpus, `chunks` (`operations_dev.md` S3/S4) — e.g. task `6_update_kb_metadata` reads `parse_manifest` and `chunks` |
 # MAGIC
-# MAGIC USE CATALOG / USE SCHEMA on `catalog`.`schema_name` are always granted.
+# MAGIC USE CATALOG / USE SCHEMA on `catalog`.`schema_name` are always granted to both.
 
 # COMMAND ----------
 
@@ -27,6 +28,8 @@ dbutils.widgets.text("schema_name", "qualibot")
 dbutils.widgets.text("volumes", "doc_compare,test")
 dbutils.widgets.text("indexes", "chunks_index")
 dbutils.widgets.text("serving_endpoints", "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna")
+dbutils.widgets.text("pipeline_service_principal", "fde6ff28-739f-4a41-b61e-604a298c8478")
+dbutils.widgets.text("pipeline_tables", "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference,chunks")
 
 
 def _list(name):
@@ -36,17 +39,25 @@ def _list(name):
 sp = dbutils.widgets.get("app_service_principal").strip()
 catalog = dbutils.widgets.get("catalog").strip()
 schema = dbutils.widgets.get("schema_name").strip()
+pipeline_sp = dbutils.widgets.get("pipeline_service_principal").strip()
 assert sp, "app_service_principal is required"
 
 # COMMAND ----------
 
-# DBTITLE 1,Unity Catalog grants (catalog, schema, volumes, indexes)
+# DBTITLE 1,Unity Catalog grants (catalog, schema, volumes, indexes, pipeline tables)
 statements = [
     f"GRANT USE CATALOG ON CATALOG `{catalog}` TO `{sp}`",
     f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO `{sp}`",
 ]
 statements += [f"GRANT READ VOLUME, WRITE VOLUME ON VOLUME `{catalog}`.`{schema}`.`{v}` TO `{sp}`" for v in _list("volumes")]
 statements += [f"GRANT SELECT ON TABLE `{catalog}`.`{schema}`.`{i}` TO `{sp}`" for i in _list("indexes")]
+if pipeline_sp:
+    statements += [
+        f"GRANT USE CATALOG ON CATALOG `{catalog}` TO `{pipeline_sp}`",
+        f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO `{pipeline_sp}`",
+    ]
+    statements += [f"GRANT SELECT, MODIFY ON TABLE `{catalog}`.`{schema}`.`{t}` TO `{pipeline_sp}`"
+                   for t in _list("pipeline_tables")]
 
 failed = []
 for stmt in statements:

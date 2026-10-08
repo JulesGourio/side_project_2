@@ -537,13 +537,14 @@ targets:
         # Manual trigger only. Grants the DEV qualibot app's service principal
         # what it uses: USE CATALOG/USE SCHEMA, READ+WRITE VOLUME on `volumes`,
         # SELECT on `indexes` (impact search, chat), CAN_QUERY on
-        # `serving_endpoints` (LLMs). To change what is granted, edit the three
-        # lists in base_parameters below, then bundle deploy + bundle run.
-        # Runs as the DEV SP, which holds GRANT rights on dev_landingzone.
-        # Re-run after recreating an index or the app.
+        # `serving_endpoints` (LLMs); and the DEV SP itself SELECT + MODIFY on
+        # `pipeline_tables` (tables a person created, read by the parsing jobs).
+        # To change what is granted, edit the lists in base_parameters below,
+        # then bundle deploy + bundle run. Runs as the DEV SP, which holds GRANT
+        # rights on dev_landingzone. Re-run after recreating an index, a table or the app.
         grant_app_access_dev:
           name: "qualibot-grant-app-access-${bundle.target}"
-          description: "Grant the DEV qualibot app SP its volumes, indexes and LLM endpoints. Manual trigger only."
+          description: "Grant the DEV qualibot app SP its volumes, indexes and LLM endpoints, and the DEV job SP the pipeline tables. Manual trigger only."
           max_concurrent_runs: 1
           tags:
             project: Qualibot
@@ -573,6 +574,9 @@ targets:
                   volumes: "doc_compare,test"
                   indexes: "chunks_index"
                   serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna"
+                  # The DEV SP itself (this job's run_as), on the tables a person created.
+                  pipeline_service_principal: fde6ff28-739f-4a41-b61e-604a298c8478
+                  pipeline_tables: "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference,chunks"
               environment_key: default
           environments:
             - environment_key: default

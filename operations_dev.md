@@ -348,13 +348,8 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
 - [ ] **S8. Droits du SP de l'app, catalogue des documents, puis l'app** (une fois `chunks_index`
   `ONLINE`). Le catalogue (REF, titre, lien de chaque document) vient désormais de la table
   Lakebase `doc_catalog`, écrite par la dernière tâche du pipeline depuis `parse_manifest` et
-  `chunks`. Cette tâche tourne sous le SP DEV : d'abord lui donner la lecture des deux tables
-  (éditeur SQL DEV), puis la lancer seule (rien n'est parsé) :
-
-  ```sql
-  GRANT SELECT ON TABLE dev_landingzone.qualibot.parse_manifest TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
-  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks         TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
-  ```
+  `chunks`. Cette tâche tourne sous le SP DEV : le job de droits lui donne la lecture de ces
+  tables (créées par vous en S3/S4), puis on la lance seule (rien n'est parsé) :
 
   ```powershell
   databricks bundle run grant_app_access_dev -t dev --profile DEV
@@ -368,7 +363,8 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   **m'envoyer l'erreur** : l'app marche quand même, avec l'ancien instantané `doc_catalog.json`
   (log `using the bundled snapshot`).
 
-  Sortie attendue du job de droits : une ligne `OK:` par droit, dont une pour `chunks_index`.
+  Sortie attendue du job de droits : une ligne `OK:` par droit, dont une pour `chunks_index` et
+  une `SELECT, MODIFY` par table du pipeline pour le SP DEV.
 
 - [ ] **S9. Tester** :
   - un seul onglet **Chat** (plus de « Chat KA » / « Chat VSI ») ;
