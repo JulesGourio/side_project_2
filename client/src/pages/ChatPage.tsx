@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { ChatView, type ChatEngine } from '@/components/chat/ChatView';
+import { ChatView } from '@/components/chat/ChatView';
 import { AccessDenied } from '@/components/shared/AccessDenied';
 import { getAppConfig, getUserMe } from '@/lib/config';
 
-export function ChatPage({ engine = 'ka' }: { engine?: ChatEngine }) {
+export function ChatPage() {
   const [state, setState] = useState<{ chatEnabled: boolean; canChat: boolean } | null>(null);
 
   useEffect(() => {
@@ -40,5 +40,5 @@ export function ChatPage({ engine = 'ka' }: { engine?: ChatEngine }) {
     );
   }
 
-  return <ChatView engine={engine} />;
+  return <ChatView />;
 }

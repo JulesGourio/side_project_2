@@ -38,7 +38,7 @@
           "title": "Impact Assessment",
           "icon": "Layers",
           "value": "Automated",
-          "description": "Send the diff to your knowledge assistant to identify which documents need updating and why"
+          "description": "Search the document index to identify which documents need updating and why"
         },
         {
           "title": "Volume Storage",

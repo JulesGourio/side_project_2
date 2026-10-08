@@ -113,7 +113,7 @@ export function AboutView() {
                   </div>
                   <h2 className="text-3xl md:text-4xl font-bold text-[var(--color-text-heading)] leading-tight">How it works</h2>
                   <ul className="space-y-3 mt-6">
-                    {['Upload two versions of any PDF document', 'Claude AI analyses every change in real time', 'Your knowledge assistant identifies impacted documents', 'Results and PDFs are saved to a Unity Catalog Volume'].map((item, i) => (
+                    {['Upload two versions of any PDF document', 'Claude AI analyses every change in real time', 'Impact search finds the documents affected', 'Results and PDFs are saved to a Unity Catalog Volume'].map((item, i) => (
                       <li key={i} className="flex items-start gap-3 text-[var(--color-text-primary)]">
                         <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--color-accent-primary)] mt-2" />
                         <span>{item}</span>
@@ -140,7 +140,7 @@ export function AboutView() {
                   </div>
                   <h2 className="text-3xl md:text-4xl font-bold text-[var(--color-text-heading)] leading-tight">Know exactly what needs updating</h2>
                   <p className="text-lg text-[var(--color-text-primary)] leading-relaxed">
-                    After detecting changes, the app queries your knowledge assistant to find every document in your knowledge base that references the revised content — with an explanation of the gap and what needs to change.
+                    After detecting changes, the app searches the document index to find every document that references the revised content — with an explanation of the gap and what needs to change.
                   </p>
                 </div>
                 <div className="md:col-start-1 md:row-start-1 relative aspect-[4/3] rounded-2xl overflow-hidden shadow-2xl hover:shadow-3xl transition-all duration-500 hover:scale-105">
@@ -148,7 +148,7 @@ export function AboutView() {
                 </div>
               </div>
 
-              {/* Section 3: Knowledge Assistant */}
+              {/* Section 3: Built on Databricks */}
               <div
                 id="innovation"
                 data-section

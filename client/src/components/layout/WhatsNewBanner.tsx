@@ -48,7 +48,7 @@ const README_CONTENT: Record<TabId, { title: string; news: { date: string; featu
 };
 
 // Small button meant to sit inline in a tool's own toolbar (e.g. next to
-// "Knowledge Assistant" on the Chat page). It only toggles visibility —
+// the title on the Chat page). It only toggles visibility —
 // the caller owns the open/closed state and renders <WhatsNewModal> itself.
 export function WhatsNewButton({ tabId, open, onClick }: { tabId: TabId; open: boolean; onClick: () => void }) {
   const content = README_CONTENT[tabId];

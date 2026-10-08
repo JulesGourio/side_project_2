@@ -72,7 +72,7 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
 }
 
 /**
- * Strip footnotes and source references that Knowledge Assistants inject.
+ * Strip footnotes and source references a model may inject.
  * Handles both HTML footnotes and GFM markdown footnotes.
  */
 function stripFootnotes(text: string): string {
@@ -90,7 +90,7 @@ function stripFootnotes(text: string): string {
   );
   // Remove inline HTML footnote refs: <sup>[1]</sup>, <sup>1</sup>, <sup><a ...>1</a></sup>
   cleaned = cleaned.replace(/<sup[^>]*>[\s\S]*?<\/sup>/gi, "");
-  // Remove other stray HTML tags (KA sometimes emits bare tags that react-markdown can't parse)
+  // Remove other stray HTML tags (models sometimes emit bare tags that react-markdown can't parse)
   cleaned = cleaned.replace(/<\/?(?:section|sup|a\s+href="#fn)[^>]*>/gi, "");
 
   // Remove GFM footnote definitions: [^1]: some text (at start of line)
@@ -111,8 +111,8 @@ export type CitationMap = Record<number, { url?: string; title?: string }>;
  * Turn every mention of a cited document's reference into a clickable
  * superscript [n] link, inline in the answer.
  *
- * The Knowledge Assistant returns the answer text + a flat list of consulted
- * documents, but NOT the character position of each citation. So instead of
+ * Older answers (former Knowledge Assistant) carry a flat list of consulted
+ * documents but NOT the character position of each citation. So instead of
  * guessing positions, we anchor each citation on the document's own reference
  * code wherever it appears in the text (the "📋 Référence : …" header and any
  * inline mentions). Each occurrence of the ref `T` for source `n` becomes

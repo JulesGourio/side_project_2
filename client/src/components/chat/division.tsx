@@ -1,12 +1,9 @@
 // Division scope — shared type, helpers and selector for the chat.
 //
 // The user picks a division (ALL / AS / IS). The choice is sent to the backend,
-// which routes the turn to a single-source Knowledge Assistant endpoint
-// (IS-only / AS-only / combined). Routing by endpoint — instead of prepending a
-// "[Division: …]" directive to the question — is what guarantees the scope:
-// a single-source KA can only ever return that division's (+ shared) documents,
-// and never does cross-source parallel sub-queries (which mis-ranked AS over IS
-// and triggered the Vector Search request-id self-collision).
+// which filters the document search on it (Vector Search filter on the
+// `division` column) and picks the division's instructions — the scope is
+// guaranteed by the filter, not by a directive in the question.
 
 export type Division = 'ALL' | 'AS' | 'IS';
 

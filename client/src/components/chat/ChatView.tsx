@@ -12,14 +12,9 @@ import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanne
 // WebSocket streaming helper
 // ---------------------------------------------------------------------------
 
-// Who answers the chat: the division's Knowledge Assistant (Chat KA tab) or the
-// Vector Search engine (Chat VSI tab). Same WebSocket protocol, different route.
-export type ChatEngine = 'ka' | 'vsi';
-
-const ENGINES: Record<ChatEngine, { wsPath: string; title: string; header: string }> = {
-  ka: { wsPath: '/api/chat/ws', title: 'Knowledge Assistant', header: 'Knowledge Assistant on Intraqual Documentation' },
-  vsi: { wsPath: '/api/chat-vsi/ws', title: 'Chat VSI', header: 'Chat VSI on Intraqual Documentation' },
-};
+const WS_PATH = '/api/chat/ws';
+const CHAT_TITLE = 'Qualibot';
+const CHAT_HEADER = 'Qualibot on Intraqual Documentation';
 
 interface StreamCallbacks {
   onDelta: (text: string) => void;
@@ -31,13 +26,12 @@ function streamChat(
   messages: { role: string; content: string }[],
   sessionId: string,
   division: Division,
-  wsPath: string,
   callbacks: StreamCallbacks,
   signal: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve) => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}${wsPath}`);
+    const ws = new WebSocket(`${proto}//${location.host}${WS_PATH}`);
 
     // A turn always ends with exactly one outcome: done, error, or user abort.
     // A socket that closes without one must not leave the message on "Thinking".
@@ -169,8 +163,7 @@ function WelcomeState({ title, onPrompt }: { title: string; onPrompt: (p: string
 // Main ChatView
 // ---------------------------------------------------------------------------
 
-export function ChatView({ engine = 'ka' }: { engine?: ChatEngine }) {
-  const engineConfig = ENGINES[engine];
+export function ChatView() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [sessionsAvailable, setSessionsAvailable] = useState(false);
@@ -329,7 +322,6 @@ export function ChatView({ engine = 'ka' }: { engine?: ChatEngine }) {
         history,
         currentSessionId,
         division,
-        engineConfig.wsPath,
         {
           onDelta: delta => {
             accumulatedContent += delta;
@@ -377,7 +369,7 @@ export function ChatView({ engine = 'ka' }: { engine?: ChatEngine }) {
       );
       setStreaming(false);
     }
-  }, [input, streaming, messages, currentSessionId, loadSessions, division, engineConfig.wsPath]);
+  }, [input, streaming, messages, currentSessionId, loadSessions, division]);
 
   const showSidebar = sidebarOpen && sessionsAvailable;
 
@@ -420,7 +412,7 @@ export function ChatView({ engine = 'ka' }: { engine?: ChatEngine }) {
             className="text-sm font-semibold"
             style={{ color: 'var(--color-text-heading)', fontFamily: 'var(--font-heading)' }}
           >
-            {engineConfig.header}
+            {CHAT_HEADER}
           </span>
           {docsAsOf && (
             <>
@@ -461,7 +453,7 @@ export function ChatView({ engine = 'ka' }: { engine?: ChatEngine }) {
 
         <div className="flex-1 overflow-y-auto py-4">
           {messages.length === 0 ? (
-            <WelcomeState title={engineConfig.title} onPrompt={p => handleSend(p)} />
+            <WelcomeState title={CHAT_TITLE} onPrompt={p => handleSend(p)} />
           ) : (
             <>
               {messages.map(msg => (
