@@ -104,15 +104,23 @@ in_index = spark.table(f'{CS}.chunks{SFX}').filter("chunk_content_type <> 'image
 meta = (spark.table(f'{CS}.processed_files{SFX}')
         .select('IDDOC', 'ref', 'titre', 'type_document', F.col('indice').cast('string').alias('indice'),
                 'division', 'niveau_plus_1', 'niveau_plus_2', 'doc_date').dropDuplicates(['IDDOC']))
-docs = ckpt.join(in_index, 'IDDOC').join(meta, 'IDDOC', 'left')
-print(docs.count(), 'documents')
+docs = ckpt.join(in_index, 'IDDOC').join(meta, 'IDDOC', 'left').cache()
+DOC_IDS = sorted(r['IDDOC'] for r in docs.select('IDDOC').collect())
+print(len(DOC_IDS), 'documents')
+
+
+def doc_batches(size=300):
+    """Documents fetched in batches with collect(): a serverless (Spark Connect) result read row
+    by row is dropped after a few minutes of client-side work (INVALID_HANDLE.OPERATION_ABANDONED)."""
+    for i in range(0, len(DOC_IDS), size):
+        yield from docs.filter(F.col('IDDOC').isin(DOC_IDS[i:i + size])).collect()
 
 # COMMAND ----------
 
 # DBTITLE 1,Text passages (driver, one document at a time)
 SPREADSHEETS = ('xlsx', 'xls', 'xlsm')
 rows, doc_info = [], {}
-for d in docs.toLocalIterator():
+for d in doc_batches():
     text = normalize(d['document_text'])
     if not text:
         continue
@@ -169,7 +177,7 @@ images = (spark.table(f'{CS}.image_metadata{SFX}')
                   "AND NOT upper(trim(description)) LIKE 'SKIP%'")
           .select('IDDOC', 'image_id', 'page_no', 'label', 'captions', 'context_text', 'description'))
 n_img = 0
-for im in images.toLocalIterator():
+for im in images.collect():
     info = doc_info.get(im['IDDOC'])
     if not info or not info['chunks']:
         continue

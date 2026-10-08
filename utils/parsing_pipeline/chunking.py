@@ -93,14 +93,15 @@ def _split_text(text: str, max_tokens: int, max_chars: int, count: Callable[[str
         parts = text.split(sep)
         if len(parts) < 2:
             continue
-        out, cur = [], ""
+        out, cur, cur_tok = [], "", 0
         for p in parts:
-            cand = p if not cur else cur + sep + p
-            if cur and (count(cand) > max_tokens or len(cand) > max_chars):
+            p_tok = count(p)
+            if cur and (cur_tok + p_tok > max_tokens or len(cur) + len(sep) + len(p) > max_chars):
                 out.append(cur)
-                cur = p
+                cur, cur_tok = p, p_tok
             else:
-                cur = cand
+                cur = p if not cur else cur + sep + p
+                cur_tok += p_tok
         if cur:
             out.append(cur)
         if len(out) > 1:
@@ -112,13 +113,16 @@ def _split_text(text: str, max_tokens: int, max_chars: int, count: Callable[[str
 def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]) -> List[str]:
     lines = text.split("\n")
     head, rows = lines[:2], lines[2:]
-    out, cur = [], list(head)
+    head_tok, head_chars = count("\n".join(head)), len("\n".join(head))
+    out, cur, cur_tok, cur_chars = [], list(head), head_tok, head_chars
     for row in rows:
-        cand = "\n".join(cur + [row])
-        if len(cur) > 2 and (count(cand) > max_tokens or len(cand) > max_chars):
+        r_tok = count(row)
+        if len(cur) > 2 and (cur_tok + r_tok > max_tokens or cur_chars + 1 + len(row) > max_chars):
             out.append("\n".join(cur))
-            cur = list(head)
+            cur, cur_tok, cur_chars = list(head), head_tok, head_chars
         cur.append(row)
+        cur_tok += r_tok
+        cur_chars += 1 + len(row)
     if len(cur) > 2:
         out.append("\n".join(cur))
     # A single row over the limits is cut as text.
@@ -249,22 +253,27 @@ def chunk_markdown(text: str, *, min_tokens: int = 250, target_tokens: int = 500
     overlap_chars = int(target_tokens * overlap_ratio * chars_per_token)
     out: List[Dict[str, Any]] = []
     for g in merged:
+        # Sizes summed per block (counted once each), not re-counted on the joined text: a
+        # spreadsheet sheet can be thousands of blocks in one section.
+        for blk in g:
+            blk.setdefault("_tok", count(blk["text"]))
         packs: List[List[Dict[str, Any]]] = []
         cur: List[Dict[str, Any]] = []
+        cur_tok = cur_chars = 0
         for b in g:
-            if cur:
-                cand_text = "\n\n".join(x["text"] for x in cur + [b])
-                cur_tokens = count("\n\n".join(x["text"] for x in cur))
-                if cur_tokens >= target_tokens or count(cand_text) > max_tokens or len(cand_text) > max_chars:
-                    packs.append(cur)
-                    cur = []
+            if cur and (cur_tok >= target_tokens or cur_tok + b["_tok"] > max_tokens
+                        or cur_chars + 2 + len(b["text"]) > max_chars):
+                packs.append(cur)
+                cur, cur_tok, cur_chars = [], 0, 0
             cur.append(b)
+            cur_tok += b["_tok"]
+            cur_chars += len(b["text"]) + (2 if len(cur) > 1 else 0)
         if cur:
-            if packs and count("\n\n".join(x["text"] for x in cur)) < min_tokens:
-                cand = packs[-1] + cur
-                cand_text = "\n\n".join(x["text"] for x in cand)
-                if count(cand_text) <= max_tokens and len(cand_text) <= max_chars:
-                    packs[-1] = cand
+            if packs and cur_tok < min_tokens:
+                last_tok = sum(x["_tok"] for x in packs[-1])
+                last_chars = sum(len(x["text"]) + 2 for x in packs[-1])
+                if last_tok + cur_tok <= max_tokens and last_chars + cur_chars <= max_chars:
+                    packs[-1] = packs[-1] + cur
                     cur = []
             if cur:
                 packs.append(cur)
