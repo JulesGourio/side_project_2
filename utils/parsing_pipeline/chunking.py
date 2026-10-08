@@ -2,7 +2,7 @@
 
 Pure Python, no Spark/Docling import: unit-tested in tests/test_parsing_chunking.py and used
 by utils.chunk_document (pipeline) and the DEV re-chunking notebook
-(utils/databricks_ops/evaluation/rechunk_experiment.py).
+(archive/evaluation/rechunk_experiment.py).
 
 Rules (audit docs/chat_vsi_audit_2026-10.md, § 5.2, P2–P9):
 - the markdown is cut on headings of level 1–3 into sections; a passage never spans two

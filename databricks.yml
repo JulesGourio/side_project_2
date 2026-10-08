@@ -128,6 +128,7 @@ sync:
     - "client/public/**"         # source assets duplicated in client/out after build
     - "client/node_modules/**"
     - "docs/**"                  # documentation only (architecture.html alone is 3.5 MB) — never read at runtime
+    - "archive/**"               # superseded code kept for reference (archive/README.md) — never deployed
     - ".git/**"
     - ".databricks/**"           # local CLI cache — contains 64MB+ terraform binaries
     - "__pycache__/**"
@@ -1113,7 +1114,7 @@ targets:
 
         # Materializes MLflow's own continuous-monitoring scorer assessments
         # (registered 2026-09-08 on the KA's 3 native experiments — see
-        # mlflow_genai_eval_qualibot_uat.py's ENABLE_CONTINUOUS_MONITORING) into
+        # archive/evaluation/mlflow_genai_eval_qualibot_uat.py's ENABLE_CONTINUOUS_MONITORING) into
         # a queryable Delta table, since those experiments use classic
         # MLFLOW_EXPERIMENT trace storage, not UC-native tables Lakeview could
         # read directly. Feeds the "MLflow Native Scorers" section at the top

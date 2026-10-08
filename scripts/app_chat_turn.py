@@ -5,7 +5,7 @@ Prints whether a `[n]` marker leaked into the stream, the ⟦n⟧ markers and nu
 message, or the error shown to the user.
 
     .venv/bin/python scripts/app_chat_turn.py <base_url> <ws_path> <division> "<question>"
-    # deployed:  https://qualibot-custom-2865348338307293.aws.databricksapps.com /api/chat-vsi/ws AS "..."
+    # deployed:  https://qualibot-custom-2865348338307293.aws.databricksapps.com /api/chat/ws AS "..."
     # local:     http://localhost:3000 /api/chat/ws ALL "..."
 """
 import asyncio, json, re, subprocess, sys, time

@@ -748,7 +748,7 @@ applied inside the character splitter, and was never passed to the workers anywa
 keeps markdown only. `chunking.py` replaces all of it (pure Python, `tests/test_parsing_chunking.py`),
 adds a character ceiling, marks tables of contents / front matter / repeated text in
 `chunk_content_type`, and builds image passages with their section and caption. Measured first on
-DEV test indexes (`utils/databricks_ops/evaluation/rechunk_experiment.py`), applied to UAT by one
+DEV test indexes (`archive/evaluation/rechunk_experiment.py`), applied to UAT by one
 `full` run (`OPERATIONS.md` D5).
 
 ## uat-table-versions

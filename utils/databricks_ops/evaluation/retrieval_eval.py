@@ -1,24 +1,26 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Qualibot — retrieval evaluation of the Chat VSI configurations (no answer, no judge)
+# MAGIC # Qualibot — retrieval evaluation of the chat (no answer, no judge)
 # MAGIC
 # MAGIC Measures only the search: for each question, are the expected documents among the passages
-# MAGIC the configuration would hand to the LLM? Deterministic apart from the French rewrite, ~100x
-# MAGIC cheaper than a golden run (no answer generated, no judge), so it runs on every question we
-# MAGIC have with an expected document:
+# MAGIC the chat hands to the LLM? Deterministic apart from the rewrite, ~100x cheaper than an answer
+# MAGIC comparison (no answer generated, no judge), so it runs on every question we have with an
+# MAGIC expected document:
 # MAGIC
 # MAGIC | Source | Table | Expected documents |
 # MAGIC |---|---|---|
 # MAGIC | `golden` | `dev_landingzone.qualibot.qualibot_eval_golden` | `expected_retrieved_context` |
-# MAGIC | `synthetic` | `uat_landingzone.qualibot.synthetic_retrieval_questions_v2` | `positive_refs` (FULL), `partial_refs` reported apart |
-# MAGIC | `feedback` | `uat_landingzone.qualibot.feedback_failure_cases` | `extracted_expected_ref` (user-named document) |
+# MAGIC | `synthetic` | `dev_landingzone.qualibot.synthetic_retrieval_questions` | `positive_refs` (FULL), `partial_refs` reported apart |
+# MAGIC | `feedback` | `dev_landingzone.qualibot.feedback_failure_cases` | `extracted_expected_ref` (user-named document) |
 # MAGIC
-# MAGIC Caveat: synthetic positives were judged among the UAT **KA**'s own top-K, so they lean
-# MAGIC toward what the KA retrieves; compare configurations with each other, per source.
+# MAGIC Caveat: synthetic positives were judged among the former Knowledge Assistant's own top-K, so
+# MAGIC they lean toward what it retrieved; compare runs with each other, per source.
 # MAGIC
-# MAGIC Same steps as the app (`chat_vsi_variants.retrieve_documents`): history, translation bridge,
-# MAGIC date, French rewrite, the variant's search. Each configuration's questions run in parallel;
-# MAGIC configurations already saved in `results_table` are skipped. Run all.
+# MAGIC Same steps as the app: history, translation bridge, date, then `chat_vsi.retrieve_for_turn`
+# MAGIC (rewrite, 3 queries, REF and title lookups). What is compared is the **index** — the chat's
+# MAGIC own, and any other given in `indexes` (e.g. an index built with another chunking). Questions
+# MAGIC already saved in `results_table` for a label are skipped. Results of every test so far:
+# MAGIC `docs/chat_vsi_tests.md`. Run all.
 
 # COMMAND ----------
 
@@ -32,97 +34,24 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------
 
-# DBTITLE 1,Configurations (search only: the answer model doesn't matter here, the rewrite model does)
-UNION = {'CHAT_VSI_RERANK_MERGE': 'union'}
-CTX = {'CHAT_VSI_RERANK_COLUMNS': 'REF,semantic_headers,chunk_text'}
-REF = {'CHAT_VSI_REF_LOOKUP': 'on'}                  # REF named in the conversation -> filtered search
-TITLE = {'CHAT_VSI_TITLE_LOOKUP': 'on'}              # catalog title matching the question -> filtered search
-BI = {'CHAT_VSI_REWRITE': 'bilingual'}               # French + English rewrite (3 queries instead of 2)
-ONE_LANG = {'CHAT_VSI_ONE_LANGUAGE': 'on'}           # one language variant per document
-CONFIGS = {
-    'baseline':           dict(variant='baseline'),
-    'rerank':             dict(variant='rerank'),
-    'union':              dict(variant='rerank', env=UNION),
-    'union-ctx':          dict(variant='rerank', env={**UNION, **CTX}),
-    'union-ctx-k20':      dict(variant='rerank', env={**UNION, **CTX, 'CHAT_VSI_RERANK_TOP_K': '20'}),
-    'union-ctx-ref':      dict(variant='rerank', env={**UNION, **CTX, 'CHAT_VSI_REF_LOOKUP': 'on'}),
-    'union-ctx-b35k':     dict(variant='rerank', env={**UNION, **CTX, 'CHAT_VSI_RERANK_TOP_K': '25',
-                                                       'CHAT_VSI_CONTEXT_BUDGET_CHARS': '35000'}),
-    'union-ctx-b25k':     dict(variant='rerank', env={**UNION, **CTX, 'CHAT_VSI_RERANK_TOP_K': '25',
-                                                       'CHAT_VSI_CONTEXT_BUDGET_CHARS': '25000'}),
-    # Wave 3 (2026-10-07) — each one = union-ctx + one change, then all of them together.
-    'u-1lang':            dict(variant='rerank', env={**UNION, **CTX, **ONE_LANG}),
-    'u-1lang-k20-cap3':   dict(variant='rerank', env={**UNION, **CTX, **ONE_LANG, 'CHAT_VSI_RERANK_TOP_K': '20',
-                                                       'CHAT_VSI_MAX_PASSAGES_PER_DOC': '3'}),
-    'u-title':            dict(variant='rerank', env={**UNION, **CTX, **TITLE}),
-    'u-bi':               dict(variant='rerank', env={**UNION, **CTX, **BI}),
-    'u-all':              dict(variant='rerank', env={**UNION, **CTX, **REF, **TITLE, **BI, **ONE_LANG}),
-    # Same as u-bi, rewrite by GPT-5.6 Luna instead of the answer model (faster first token if it
-    # holds up). Reasoning model: it needs a large ceiling or it returns an empty rewrite.
-    # u-all without the one-language rule (u-1lang alone lost 1.5 points on 2026-10-08).
-    'u-bi-title-ref':     dict(variant='rerank', env={**UNION, **CTX, **REF, **TITLE, **BI}),
-    'u-bi-luna':          dict(variant='rerank', env={**UNION, **CTX, **BI,
-                                                       'CHAT_VSI_REWRITE_ENDPOINT': 'databricks-gpt-5-6-luna',
-                                                       'CHAT_VSI_REWRITE_MAX_TOKENS': '2000'}),
-    # u-all with the rewrite by GPT-6 Luna (2026-10-08): the rewrite is the only Sonnet call left
-    # per question, and it costs more than the GPT-6 Luna answer itself.
-    'u-all-luna6':        dict(variant='rerank', env={**UNION, **CTX, **REF, **TITLE, **BI, **ONE_LANG,
-                                                       'CHAT_VSI_REWRITE_ENDPOINT': 'databricks-gpt-6-luna',
-                                                       'CHAT_VSI_REWRITE_MAX_TOKENS': '2000'}),
-}
-
-# COMMAND ----------
-
 # DBTITLE 1,Parameters
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
-dbutils.widgets.text('configs', ','.join(CONFIGS))                 # which configurations to measure
+# What to measure: "label=catalog.schema.index", comma-separated. "chat" alone = the app's own
+# index (CHAT_VSI_INDEX). Example after a rechunk: "chat,rechunk=dev_landingzone.qualibot.chunks_test_index".
+dbutils.widgets.text('indexes', 'chat')
 dbutils.widgets.text('sources', 'golden,synthetic,feedback')
 dbutils.widgets.dropdown('rerun_existing', 'false', ['false', 'true'])
-dbutils.widgets.text('max_parallel', '4')   # questions at once (each sends 2-7 Vector Search queries)
+dbutils.widgets.text('max_parallel', '4')   # questions at once (each sends 3-5 Vector Search queries)
 dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
-dbutils.widgets.text('synthetic_table', 'uat_landingzone.qualibot.synthetic_retrieval_questions_v2')
-dbutils.widgets.text('feedback_table', 'uat_landingzone.qualibot.feedback_failure_cases')
+dbutils.widgets.text('synthetic_table', 'dev_landingzone.qualibot.synthetic_retrieval_questions')
+dbutils.widgets.text('feedback_table', 'dev_landingzone.qualibot.feedback_failure_cases')
 dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_retrieval_runs')
-# Test indexes built by rechunk_experiment.py (e.g. "v2a,v2b"): each adds idx-<v> and idx-<v>-clean
-# (union-ctx) and idx-<v>-all (u-all, the chat's configuration since 2026-10-08), plus the reference
-# idx-v1 / idx-v1-all, every question on the ALL index of the variant.
-dbutils.widgets.text('index_variants', '')
-# The chat's rewrite model since 2026-10-08 (no Claude in the chatbot). Runs before 2026-10-08 used
-# databricks-claude-sonnet-4-6: compare old rows with u-all-luna6, not across rewrite models.
-dbutils.widgets.text('rewrite_model', 'databricks-gpt-6-luna')
-dbutils.widgets.text('index_schema', 'dev_landingzone.qualibot')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
-RUN = [c.strip() for c in dbutils.widgets.get('configs').split(',') if c.strip()]
-_IDX_SCHEMA = dbutils.widgets.get('index_schema').strip()
-_VARIANTS = [v.strip() for v in dbutils.widgets.get('index_variants').split(',') if v.strip()]
-if _VARIANTS:
-    def _on_index(name, extra=None):
-        index = f'{_IDX_SCHEMA}.chunks_index_{name}'
-        return dict(variant='rerank', env={**UNION, **CTX, 'CHAT_VSI_INDEX_ALL': index,
-                                           'CHAT_VSI_INDEX_AS': index, 'CHAT_VSI_INDEX_IS': index, **(extra or {})})
-    _ALL = {**REF, **TITLE, **BI, **ONE_LANG}
-    CONFIGS['idx-v1'] = _on_index('v1')
-    CONFIGS['idx-v1-all'] = _on_index('v1', _ALL)
-    for _v in _VARIANTS:
-        CONFIGS[f'idx-{_v}'] = _on_index(_v)
-        CONFIGS[f'idx-{_v}-clean'] = _on_index(_v, {'CHAT_VSI_SKIP_NOISE': 'on'})
-        CONFIGS[f'idx-{_v}-all'] = _on_index(_v, _ALL)
-        # Shorter passages leave room: 20 reranked passages per query instead of 12.
-        CONFIGS[f'idx-{_v}-all-k20'] = _on_index(_v, {**_ALL, 'CHAT_VSI_RERANK_TOP_K': '20'})
-    RUN += [c for c in CONFIGS if c.startswith('idx-') and c not in RUN]
 SOURCES = {s.strip() for s in dbutils.widgets.get('sources').split(',') if s.strip()}
 RERUN = dbutils.widgets.get('rerun_existing') == 'true'
 MAX_PARALLEL = max(1, int(dbutils.widgets.get('max_parallel') or 4))
 RESULTS = dbutils.widgets.get('results_table').strip()
-assert not [c for c in RUN if c not in CONFIGS], f'unknown configs — pick from {list(CONFIGS)}'
-
-# A question counts as measured for a configuration once it ran without error: errors are retried
-# on the next run, the rest is never repeated (unless rerun_existing = true).
-_ok = set()
-if spark.catalog.tableExists(RESULTS) and not RERUN:
-    _ok = {(r['config'], r['source'], r['case_id'])
-           for r in spark.sql(f'SELECT DISTINCT config, source, case_id FROM {RESULTS} WHERE error IS NULL').collect()}
 
 # COMMAND ----------
 
@@ -141,24 +70,22 @@ if os.path.exists(_target):
         if m:
             os.environ[m.group(1)] = (shlex.split(m.group(2)) or [''])[0]
 sys.path.insert(0, APP)
-# Only the app's infrastructure (indexes, answer model): its search / prompt options and its
-# fallback models (CHAT_VSI_VARIANT, CHAT_VSI_RERANK_*, CHAT_VSI_LLM_FALLBACK_ENDPOINTS…) would
-# leak into every configuration measured here, and a fallback would mix two models in one run.
-APP_VSI_ENV = {k: v for k, v in os.environ.items()
-               if re.match(r'CHAT_VSI_(INDEX_\w+|ENABLED|NUM_RESULTS|LLM_ENDPOINT)$', k)}
+# One rewrite model per run: no silent fallback to another model (chat_vsi_llm).
+os.environ['CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS'] = os.environ.get('CHAT_VSI_REWRITE_ENDPOINT') or os.environ['CHAT_VSI_LLM_ENDPOINT']
 
+INDEXES = {}
+for item in [x.strip() for x in dbutils.widgets.get('indexes').split(',') if x.strip()]:
+    label, _, index = item.partition('=')
+    INDEXES[label.strip()] = index.strip() or os.environ['CHAT_VSI_INDEX']
+RUN = list(INDEXES)
+print('indexes:', INDEXES)
 
-def apply_config_env(cfg: dict) -> None:
-    for k in [k for k in os.environ if k.startswith('CHAT_VSI_')]:
-        del os.environ[k]
-    os.environ.update(APP_VSI_ENV)
-    # No answer here: the "LLM" only rewrites (baseline variant included), pinned to one model.
-    os.environ['CHAT_VSI_LLM_ENDPOINT'] = dbutils.widgets.get('rewrite_model').strip()
-    os.environ['CHAT_VSI_REWRITE_ENDPOINT'] = dbutils.widgets.get('rewrite_model').strip()
-    os.environ['CHAT_VSI_VARIANT'] = cfg.get('variant', 'baseline')
-    os.environ.update({k: str(v) for k, v in (cfg.get('env') or {}).items()})
-    # One rewrite model per configuration: no silent fallback to another model (chat_vsi_llm).
-    os.environ['CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS'] = os.environ['CHAT_VSI_REWRITE_ENDPOINT']
+# A question counts as measured for a label once it ran without error: errors are retried on the
+# next run, the rest is never repeated (unless rerun_existing = true).
+_ok = set()
+if spark.catalog.tableExists(RESULTS) and not RERUN:
+    _ok = {(r['config'], r['source'], r['case_id'])
+           for r in spark.sql(f'SELECT DISTINCT config, source, case_id FROM {RESULTS} WHERE error IS NULL').collect()}
 
 # COMMAND ----------
 
@@ -173,14 +100,12 @@ from databricks.sdk import WorkspaceClient
 for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
     del sys.modules[_m]
 
-from server.services import chat_vsi_rerank
-assert hasattr(chat_vsi_rerank, 'retrieve_for_turn'), (
-    f'Stale app code in {APP}: chat_vsi_rerank.py has no retrieve_for_turn. '
+from server.services import chat_vsi
+assert hasattr(chat_vsi, 'retrieve_for_turn'), (
+    f'Stale app code in {APP}: chat_vsi.py has no retrieve_for_turn. '
     'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
 
 from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _trim_history, _with_today_date  # app code
-from server.services.chat_vsi import group_documents
-from server.services.chat_vsi_variants import retrieve_documents, variant_settings
 from server.services.doc_catalog import canon_ref
 from server.services.translation_bridge import translate_question_to_en
 
@@ -209,11 +134,12 @@ async def search(messages: list, division: str) -> dict:
         if ctx.needs_translation:
             messages = [dict(m) for m in messages]
             messages[-1]['content'] = en_question
-    found = await retrieve_documents(HOST, tok, division, _with_today_date(messages))
-    docs = group_documents(found['rows'])
+    conversation = chat_vsi._clean_history(_with_today_date(messages))
+    found = await chat_vsi.retrieve_for_turn(HOST, tok, chat_vsi.normalize_division(division), conversation)
+    docs = chat_vsi.group_documents(found['rows'])
     return {'docs': [canon_ref(ref) for ref, _ in docs], 'passages': len(found['rows']),
             'chars': sum(len(r.get('chunk_text') or '') for r in found['rows']),
-            'fr_query': found.get('fr_query') or '', 'reranked': bool(found.get('reranked')),
+            'fr_query': found.get('fr_query') or '', 'reranked': True,
             'named': found.get('named') or [], 'titled': found.get('titled') or [],
             'en_query': found.get('en_query') or '', 'latency_s': round(time.monotonic() - started, 2)}
 
@@ -266,7 +192,7 @@ print('to run:', {name: len(cases) for name, cases in TODO.items() if cases} or 
 
 # COMMAND ----------
 
-# DBTITLE 1,Run — one configuration after the other, its missing questions in parallel, saved as it ends
+# DBTITLE 1,Run — one index after the other, its missing questions in parallel, saved as it ends
 _SCHEMA = """config string, settings string, run_ts timestamp, source string, case_id string, division string,
 question string, query_type string, expected array<string>, partial array<string>, retrieved array<string>,
 recall double, hit double, first_rank int, partial_recall double, n_docs int, n_passages int, chars int,
@@ -276,8 +202,8 @@ en_query string, titled array<string>"""
 for name, cases in TODO.items():
     if not cases:
         continue
-    apply_config_env(CONFIGS[name])
-    settings = json.dumps(variant_settings())
+    os.environ['CHAT_VSI_INDEX'] = INDEXES[name]
+    settings = json.dumps(chat_vsi.settings())
     t0 = time.monotonic()
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         outs = list(pool.map(run_case, cases))
@@ -307,7 +233,7 @@ for name, cases in TODO.items():
 
 # COMMAND ----------
 
-# DBTITLE 1,Results — per configuration and source, on the questions every configuration answered
+# DBTITLE 1,Results — per index and source, on the questions every index answered
 # One row per (configuration, question): its latest error-free run, else its latest error.
 # `common` keeps only the questions with no error in ANY configuration shown, so every
 # configuration is scored on the same questions (an error would otherwise just drop a question).
@@ -350,12 +276,13 @@ SELECT config, count(*) AS cases, round(avg(recall) * 100, 1) AS recall_pct,
        round(avg(chars) / 4) AS avg_context_tokens, round(percentile(latency_s, 0.5), 1) AS search_p50_s
 FROM common GROUP BY config ORDER BY recall_pct DESC"""))
 
-# Cases one configuration finds and another doesn't (edit the two names)
-A, B = 'union-ctx', 'u-all'
-display(spark.sql(f"""
-SELECT a.source, left(a.question, 90) AS question, a.expected,
-       array_intersect(a.expected, a.retrieved) AS found_by_{A.replace('-', '_')},
-       array_intersect(b.expected, b.retrieved) AS found_by_{B.replace('-', '_')}
-FROM common a JOIN common b ON a.source = b.source AND a.case_id = b.case_id
-WHERE a.config = '{A}' AND b.config = '{B}' AND a.recall <> b.recall
-ORDER BY b.recall - a.recall DESC"""))
+# Cases one index finds and the other doesn't (the first two labels of `indexes`)
+A, B = (RUN + RUN)[:2]
+if A != B:
+    display(spark.sql(f"""
+    SELECT a.source, left(a.question, 90) AS question, a.expected,
+           array_intersect(a.expected, a.retrieved) AS found_by_{A.replace('-', '_')},
+           array_intersect(b.expected, b.retrieved) AS found_by_{B.replace('-', '_')}
+    FROM common a JOIN common b ON a.source = b.source AND a.case_id = b.case_id
+    WHERE a.config = '{A}' AND b.config = '{B}' AND a.recall <> b.recall
+    ORDER BY b.recall - a.recall DESC"""))

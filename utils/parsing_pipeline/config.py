@@ -207,7 +207,7 @@ IMAGE_FORMAT        = "PNG"     # PNG = lossless, no compression artifacts on te
 USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
 # Passage sizes (chunking.py). Overridable per run to test other sizes (DEV notebook
-# utils/databricks_ops/evaluation/rechunk_experiment.py) without editing this file.
+# archive/evaluation/rechunk_experiment.py) without editing this file.
 # 150 / 300 / 450 tokens, 1,600 characters = DEV variant v2b, chosen 2026-10-08: 80.9 % of the
 # expected documents found vs 75.8 % for the former 250 / 500 / 1000 / 4000, with half the context
 # (retrieval_eval, u-all, 65 questions; docs/chat_vsi_audit_2026-10.md § 5.6).

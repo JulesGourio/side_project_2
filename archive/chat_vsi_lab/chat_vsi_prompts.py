@@ -5,12 +5,12 @@
 - ``ka`` (default) — the baseline prompt, unchanged: the live KA instructions
   (``server/config/chat_vsi/instructions_<div>.md``) + the baseline citation rule
   (``chat_vsi.build_prompt``);
-- ``v2`` — instructions written for VSI (``server/config/chat_vsi_v2/``): the division scope
+- ``v2`` — instructions written for VSI (``config/rewritten_instructions/``): the division scope
   + one compact common block. Compared with the KA text it drops what VSI can't do (metadata
   search, tool calls, archive records — filtered out before the LLM), drops the final
   sources table (the UI shows the chips), and adds the grounding rule (no general
   knowledge, no reconstructed sections) and the off-topic refusal;
-- ``v3`` — the KA instructions unchanged (as ``ka``) + ``chat_vsi_v2/addendum_v3.md``: the
+- ``v3`` — the KA instructions unchanged (as ``ka``) + ``config/answer_rules_first_draft.md``: the
   grounding rules, off-topic refusal and document-type glossary of v2, nothing removed
   (v2 lost 3 golden questions vs ``ka`` on the same search, 2026-10-07).
 
@@ -29,7 +29,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import chat_vsi as base
 
-_V2_DIR = Path(__file__).resolve().parent.parent / 'config' / 'chat_vsi_v2'
+_V2_DIR = Path(__file__).resolve().parent / 'config' / 'rewritten_instructions'
+_RULES_DRAFT = Path(__file__).resolve().parent / 'config' / 'answer_rules_first_draft.md'
 
 
 LANGUAGE_REMINDER = ('Reminder: write your whole answer in the language of the question above '
@@ -57,7 +58,7 @@ def load_v2_instructions(division: str) -> str:
 
 @lru_cache(maxsize=None)
 def load_v3_instructions(division: str) -> str:
-    addendum = (_V2_DIR / 'addendum_v3.md').read_text(encoding='utf-8').strip()
+    addendum = _RULES_DRAFT.read_text(encoding='utf-8').strip()
     return f'{base.load_instructions(division)}\n\n{addendum}'
 
 
