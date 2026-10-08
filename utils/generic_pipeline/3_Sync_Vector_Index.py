@@ -12,6 +12,12 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC # Technical debt
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Configuration
 
 # COMMAND ----------
@@ -50,6 +56,30 @@ if not INDEXES:
 logger.info(f"{len(INDEXES)} index(es) to sync:")
 for n in INDEXES:
     logger.info(f"  - {n}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Inputs
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Data Preparation
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Data Transformations
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Quality Checks
+# MAGIC #N/A
 
 # COMMAND ----------
 

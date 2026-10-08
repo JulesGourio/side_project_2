@@ -52,9 +52,6 @@ variables:
   parsing_table_suffix:
     description: "Suffix appended to every WRITE target table (checkpoint, chunks, image_metadata, processed_files, audit, retry/rag temp tables). Empty = real tables. Override via --var (e.g. '_test') for a one-off validation run that never touches production tables."
     default: ""
-  intraqual_source_catalog_schema:
-    description: "catalog.schema of the Intraqual landing-zone stack tables (gd_*_stack)"
-    default: "prod_landingzone.intraqual"
   intraqual_bronze_catalog_schema:
     description: >-
       catalog.schema of the Intraqual bronze materialized views (gd_*_latest) —
@@ -734,7 +731,6 @@ targets:
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Same prod sources as UAT.
-      intraqual_source_catalog_schema: "prod_landingzone.intraqual"
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
@@ -998,43 +994,6 @@ targets:
             timezone_id: "Europe/Paris"
             pause_status: UNPAUSED
 
-        # Materializes MLflow's continuous-monitoring scorer assessments into a Delta table for the ChatBot - Quality dashboard.
-        sync_mlflow_scorer_assessments_uat:
-          name: "qualibot-sync-mlflow-scorer-assessments-uat"
-          description: "Materialize MLflow's native scorer assessments (continuous monitoring) into a Delta table for the dashboard"
-          max_concurrent_runs: 1
-          tags:
-            project: Qualibot
-          permissions:
-            - group_name: "Role-Project-LEAP-CoreAdmin"
-              level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-CoreDev"
-              level: CAN_MANAGE
-          run_as:
-            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
-          parameters:
-            - name: catalog_schema
-              default: "uat_landingzone.qualibot"
-          tasks:
-            - task_key: sync_mlflow_scorer_assessments
-              notebook_task:
-                notebook_path: ./utils/evaluation/sync_mlflow_scorer_assessments.py
-                source: WORKSPACE
-                base_parameters:
-                  catalog_schema: "{{job.parameters.catalog_schema}}"
-              environment_key: default
-          environments:
-            - environment_key: default
-              spec:
-                environment_version: "2"
-                dependencies:
-                  - mlflow[databricks]
-          # 15 min after score_production_qa_uat.
-          schedule:
-            quartz_cron_expression: "0 35 2,14 * * ?"
-            timezone_id: "Europe/Paris"
-            pause_status: UNPAUSED
-
         # sync_user_capabilities_uat is not in the bundle: its run_as lacks USE SCHEMA on system.access, and a non-admin deployer can only set run_as to itself.
         # A CoreDev member deploys it directly: utils/deploy/deploy_sync_user_capabilities_uat_personal.py.
 
@@ -1150,7 +1109,6 @@ targets:
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_bronze through the shared metastore.
-      intraqual_source_catalog_schema: "prod_landingzone.intraqual"
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
@@ -1303,7 +1261,6 @@ targets:
       parsing_table_suffix: "_test"
       parsing_vector_search_indexes: ""
       parsing_schedule_pause: "PAUSED"
-      intraqual_source_catalog_schema: "prod_landingzone.intraqual"
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
 
@@ -1430,7 +1387,6 @@ targets:
       parsing_node_type: "r6idn.4xlarge"
       parsing_num_workers: "8"
       parsing_run_mode: "incremental"
-      intraqual_source_catalog_schema: "prod_landingzone.intraqual"
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       parsing_job_activity_tag: "prod-job"

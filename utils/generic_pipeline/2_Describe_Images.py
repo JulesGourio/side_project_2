@@ -14,6 +14,12 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC # Technical debt
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Configuration
 
 # COMMAND ----------
@@ -283,6 +289,12 @@ else:
             "chunk_token_count", "chunk_content_type", "semantic_headers", "chunk_sha256",
         )
     )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Quality Checks
+# MAGIC #N/A
 
 # COMMAND ----------
 

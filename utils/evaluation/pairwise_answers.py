@@ -304,6 +304,17 @@ def cache_save(kind, results):
             .write.mode('append').saveAsTable(CACHE)
 
 
+import logging
+
+logger = logging.getLogger("pairwise_answers")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
 def in_batches(fn, keys, on_batch, size=20):
     """in_threads by batches; on_batch(dict) saves each batch as soon as it ends."""
     out = {}
@@ -312,7 +323,7 @@ def in_batches(fn, keys, on_batch, size=20):
         done_batch = dict(zip(batch, in_threads(fn, batch)))
         on_batch(done_batch)
         out.update(done_batch)
-        print(f'  {min(i + size, len(keys))}/{len(keys)} saved')
+        logger.info(f'  {min(i + size, len(keys))}/{len(keys)} saved')
     return out
 
 
@@ -367,7 +378,7 @@ if spark.catalog.tableExists(RESULTS):
             .filter((F.col('eval_id') == EVAL_ID) & F.col('error').isNull())
             .select('source', 'case_id', 'contender').collect()}
 TODO = [(c, v) for c in CASES for v in CONTENDERS if (c['source'], c['case_id'], v['label']) not in done]
-print(len(CASES), 'questions,', len(TODO), 'comparisons to run | reference', REFERENCE['label'], '| judge', JUDGE)
+logger.info("%s", " ".join(str(x) for x in (len(CASES), 'questions,', len(TODO), 'comparisons to run | reference', REFERENCE['label'], '| judge', JUDGE,)))
 
 # COMMAND ----------
 
@@ -376,7 +387,7 @@ cases_todo = {(c['source'], c['case_id']): c for c, _ in TODO}
 SEARCH = {(k[0],) + k[2:]: v for k, v in cache_load('search').items() if k[1] == REWRITE}
 for index in sorted({REFERENCE['index']} | {v['index'] for _, v in TODO}):
     keys = [k for k in cases_todo if (index,) + k not in SEARCH]
-    print(f'{index}: {len(cases_todo) - len(keys)} searches already saved, {len(keys)} to run')
+    logger.info(f'{index}: {len(cases_todo) - len(keys)} searches already saved, {len(keys)} to run')
     if not keys:
         continue
     got = in_batches(lambda k, index=index: search(cases_todo[k]['messages'], cases_todo[k]['division'], index), keys,
@@ -400,7 +411,7 @@ async def _answer(job):
 # Cache key: (model, index, source, case_id, answer_max_tokens).
 ANSWERS = {k[:4]: v for k, v in cache_load('answer').items() if k[4] == MAX_TOKENS}
 _missing = [j for j in jobs if j not in ANSWERS]
-print(len(jobs) - len(_missing), 'answers already saved,', len(_missing), 'to generate')
+logger.info("%s", " ".join(str(x) for x in (len(jobs) - len(_missing), 'answers already saved,', len(_missing), 'to generate',)))
 ANSWERS.update(in_batches(_answer, _missing,
                           lambda b: cache_save('answer', {j + (MAX_TOKENS,): v for j, v in b.items()})))
 
@@ -418,16 +429,16 @@ if TRANSLATE_BACK:
 
     SHOWN = {k[:4]: v for k, v in cache_load('shown').items() if k[4] == MAX_TOKENS}
     _todo = [j for j in jobs if j not in SHOWN and 'error' not in ANSWERS.get(j, {'error': ''})]
-    print(len(_todo), 'answers to pass through the translation back')
+    logger.info("%s", " ".join(str(x) for x in (len(_todo), 'answers to pass through the translation back',)))
     SHOWN.update(in_batches(_shown, _todo,
                             lambda b: cache_save('shown', {j + (MAX_TOKENS,): v for j, v in b.items()})))
     for j in jobs:
         if j in SHOWN and 'error' not in SHOWN[j]:
             ANSWERS[j] = SHOWN[j]
-    print(sum(1 for j in jobs if ANSWERS.get(j, {}).get('translated')), 'answers translated back')
+    logger.info("%s", " ".join(str(x) for x in (sum(1 for j in jobs if ANSWERS.get(j, {}).get('translated')), 'answers translated back',)))
 else:
-    print('answers judged as generated (translate_back off or translation bridge off in the app config)')
-print(sum(1 for a in ANSWERS.values() if 'error' not in a), '/', len(ANSWERS), 'answers')
+    logger.info('answers judged as generated (translate_back off or translation bridge off in the app config)')
+logger.info("%s", " ".join(str(x) for x in (sum(1 for a in ANSWERS.values() if 'error' not in a), '/', len(ANSWERS), 'answers',)))
 
 # COMMAND ----------
 
@@ -501,12 +512,12 @@ def save_judgments(batch):
     if rows:
         spark.createDataFrame(rows, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
     for e in sorted({r['error'] for r in rows if r['error']})[:3]:
-        print('   ', e)
+        logger.info("%s", " ".join(str(x) for x in ('   ', e,)))
 
 
 t0 = time.monotonic()
 outs = in_batches(lambda i: _judge(TODO[i]), list(range(len(TODO))), save_judgments)
-print(f'{len(outs)} judgments in {time.monotonic() - t0:.0f} s, {sum(1 for o in outs.values() if "error" in o)} errors')
+logger.info(f'{len(outs)} judgments in {time.monotonic() - t0:.0f} s, {sum(1 for o in outs.values() if "error" in o)} errors')
 
 # COMMAND ----------
 

@@ -59,6 +59,12 @@ ORDER BY email, group_name
 OUT_PATH = Path(__file__).resolve().parents[3] / "server" / "config" / "capabilities_snapshot.json"
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("build_capabilities_snapshot")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--profile", default="DEV", help="Databricks CLI profile (user must be in CoreDev)")
@@ -89,7 +95,7 @@ def main() -> None:
     }
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUT_PATH.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"Wrote {len(users)} users to {OUT_PATH}")
+    logger.info(f"Wrote {len(users)} users to {OUT_PATH}")
 
 
 if __name__ == "__main__":

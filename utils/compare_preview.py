@@ -122,13 +122,19 @@ def score_against_reference(diff_text: str, ref: dict) -> dict:
     }
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("compare_preview")
+
+
 def run_score(ref_path: Path, method: str, dump_diff: Path | None) -> None:
     ref = json.loads(ref_path.read_text(encoding='utf-8'))
     base = ref_path.parent.parent  # refs/ -> compare_eval/
     old = (base / ref['old']).resolve()
     new = (base / ref['new']).resolve()
     if not old.exists() or not new.exists():
-        print(f'{ref_path.name}: document pair not found locally — run '
+        logger.info(f'{ref_path.name}: document pair not found locally — run '
               f'python -m utils.compare_eval.fetch_pairs first ({old.name}, {new.name})')
         return
     t0 = time.perf_counter()
@@ -137,17 +143,17 @@ def run_score(ref_path: Path, method: str, dump_diff: Path | None) -> None:
     thr = os.getenv('COMPARE_PAIR_RATIO_THRESHOLD', '0.55')
     rec = f"{s['recall']:.0%}" if s['recall'] is not None else 'n/a'
     prec = f"{s['precision']:.0%}" if s['precision'] is not None else 'n/a'
-    print(f"{ref.get('name', ref_path.stem)} [threshold={thr}] — "
+    logger.info(f"{ref.get('name', ref_path.stem)} [threshold={thr}] — "
           f"recall {s['matched']}/{s['expected']} ({rec}) | "
           f"precision {prec} of {s['entries']} entries | {time.perf_counter() - t0:.1f}s")
     for r in s['per_expected']:
         mark = 'OK  ' if r['matched'] else 'MISS'
-        print(f"  {mark} {r['id']}: {r['note']}")
+        logger.info(f"  {mark} {r['id']}: {r['note']}")
     for n in s['noise_hits']:
-        print(f"  NOISE {n['id']} (x{n['count']}): {n['note']} -> {n['entry']!r}")
+        logger.info(f"  NOISE {n['id']} (x{n['count']}): {n['note']} -> {n['entry']!r}")
     if dump_diff:
         dump_diff.write_text(diff_text, encoding='utf-8')
-        print(f'  diff written to {dump_diff}')
+        logger.info(f'  diff written to {dump_diff}')
 
 
 def main() -> None:
@@ -186,18 +192,18 @@ def main() -> None:
         if isinstance(user_content, list) else 0
     parts = split_messages_for_chunking(result.messages, args.chunk_threshold, args.chunk_size)
 
-    print(f'file_type={result.metadata.file_type} method={result.metadata.method} | build: {build_s:.1f}s')
-    print(f'text block : {_diff_stats(text_block)}')
-    print(f'images     : {n_images} block(s) sent to the LLM | {len(result.image_pairs)} UI pair(s): '
+    logger.info(f'file_type={result.metadata.file_type} method={result.metadata.method} | build: {build_s:.1f}s')
+    logger.info(f'text block : {_diff_stats(text_block)}')
+    logger.info(f'images     : {n_images} block(s) sent to the LLM | {len(result.image_pairs)} UI pair(s): '
           + ', '.join(f"{p['status']}(p{p.get('old_page') or '?'}→p{p.get('new_page') or '?'})"
                       for p in result.image_pairs[:12]))
-    print(f'LLM calls  : {len(parts) if parts else 1} (chunk threshold {args.chunk_threshold:,})')
+    logger.info(f'LLM calls  : {len(parts) if parts else 1} (chunk threshold {args.chunk_threshold:,})')
     for w in result.warnings:
-        print(f'WARNING    : {w}')
+        logger.warning(f'WARNING    : {w}')
 
     if args.dump_diff:
         args.dump_diff.write_text(text_block, encoding='utf-8')
-        print(f'text block written to {args.dump_diff}')
+        logger.info(f'text block written to {args.dump_diff}')
 
 
 if __name__ == '__main__':

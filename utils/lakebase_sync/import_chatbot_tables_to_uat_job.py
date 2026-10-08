@@ -43,8 +43,19 @@ source_files = iter_export_files(SOURCE_EXPORT_DIR)
 if not source_files:
     raise RuntimeError(f"No JSON file found in {SOURCE_EXPORT_DIR}")
 
-print(f"Import volume {SOURCE_EXPORT_DIR} -> {TARGET_CATALOG}.{TARGET_SCHEMA}")
-print(f"Chatbot tables to load: {sorted(CHATBOT_TABLES)}")
+import logging
+
+logger = logging.getLogger("import_chatbot_tables_to_uat_job")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info(f"Import volume {SOURCE_EXPORT_DIR} -> {TARGET_CATALOG}.{TARGET_SCHEMA}")
+logger.info(f"Chatbot tables to load: {sorted(CHATBOT_TABLES)}")
 
 loaded_tables = 0
 for entry in source_files:
@@ -55,23 +66,19 @@ for entry in source_files:
     df = spark.read.json(entry.path)
     row_count = df.count()
     if row_count == 0:
-        print(f"  {table}... skipped (0 rows)")
+        logger.info(f"  {table}... skipped (0 rows)")
         continue
 
     target_table = f"`{TARGET_CATALOG}`.`{TARGET_SCHEMA}`.`{table}`"
-    # DROP + recreate rather than rely on overwriteSchema: a previously-all-NULL
-    # column (e.g. llm_request_id before any row had a value) gets inferred by
-    # spark.read.json as an incompatible type versus a later run where real
-    # values appear, and overwriteSchema alone hits DELTA_FAILED_TO_MERGE_FIELDS
-    # on that column even in "overwrite" mode.  Each run replaces the table
-    # wholesale anyway, so a clean drop sidesteps the merge entirely.
+    # Drop and recreate rather than rely on overwriteSchema: a column that was all NULL on a first run is inferred
+    # with a different type once real values appear,
+    # and overwriteSchema alone then fails with DELTA_FAILED_TO_MERGE_FIELDS. Each run replaces the table wholesale
+    # anyway.
     spark.sql(f"DROP TABLE IF EXISTS {target_table}")
     df.write.format("delta").mode("overwrite").option(
         "overwriteSchema", "true"
     ).saveAsTable(target_table)
     loaded_tables += 1
-    print(
-        f"  {table}: {row_count} row(s) -> {TARGET_CATALOG}.{TARGET_SCHEMA}.{table}"
-    )
+    logger.info(f"  {table}: {row_count} row(s) -> {TARGET_CATALOG}.{TARGET_SCHEMA}.{table}")
 
-print(f"Done. {loaded_tables} table(s) loaded into {TARGET_CATALOG}.{TARGET_SCHEMA}")
+logger.info(f"Done. {loaded_tables} table(s) loaded into {TARGET_CATALOG}.{TARGET_SCHEMA}")

@@ -105,7 +105,18 @@ def apply_config(cfg):
 
 CONFIGS = parse_configs(dbutils.widgets.get('indexes'))
 RUN = list(CONFIGS)
-print('configs:', {k: v['signature'] for k, v in CONFIGS.items()})
+import logging
+
+logger = logging.getLogger("retrieval_eval")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info("%s", " ".join(str(x) for x in ('configs:', {k: v['signature'] for k, v in CONFIGS.items()},)))
 
 # A question counts as measured for a label once it ran without error: errors are retried on the
 # next run, the rest is never repeated (unless rerun_existing = true).
@@ -214,9 +225,9 @@ if 'feedback' in SOURCES:
 _by_source = {}
 for c in CASES:
     _by_source[c['source']] = _by_source.get(c['source'], 0) + 1
-print(len(CASES), 'cases with an expected document:', _by_source)
+logger.info("%s", " ".join(str(x) for x in (len(CASES), 'cases with an expected document:', _by_source,)))
 TODO = {name: [c for c in CASES if (name, c['source'], c['case_id']) not in _ok] for name in RUN}
-print('to run:', {name: len(cases) for name, cases in TODO.items() if cases} or 'nothing, all saved')
+logger.info("%s", " ".join(str(x) for x in ('to run:', {name: len(cases) for name, cases in TODO.items() if cases} or 'nothing, all saved',)))
 
 # COMMAND ----------
 
@@ -254,9 +265,9 @@ for name, cases in TODO.items():
         })
     spark.createDataFrame(rows, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
     errors = [r['error'] for r in rows if r['error']]
-    print(f'{name:18} {len(rows)} cases in {time.monotonic() - t0:.0f} s, {len(errors)} errors')
+    logger.info(f'{name:18} {len(rows)} cases in {time.monotonic() - t0:.0f} s, {len(errors)} errors')
     for e in sorted(set(errors))[:3]:
-        print('    ', e)
+        logger.info("%s", " ".join(str(x) for x in ('    ', e,)))
 
 # COMMAND ----------
 

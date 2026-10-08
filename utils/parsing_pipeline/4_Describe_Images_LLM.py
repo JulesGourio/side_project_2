@@ -45,9 +45,9 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Technical Debt
+# MAGIC # Technical debt
 # MAGIC
-# MAGIC None.
+# MAGIC #N/A
 
 # COMMAND ----------
 
@@ -330,9 +330,9 @@ df_described = (
 
 # Image chunks of pre-cutoff documents live in chunks_archive, not chunks.
 _chunk_tables_with_images = [t for t in (TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE) if spark.catalog.tableExists(t)]
-# rebuild_image_chunks=true: rewrite EVERY described image's passage (new format: section,
-# caption, long transcriptions split — audit 2026-10, P7) from the stored descriptions, no LLM
-# call. Not needed after a FULL run of 3_parse, which already empties the chunk tables.
+# rebuild_image_chunks=true: rewrite EVERY described image's passage (section, caption, long transcriptions split)
+# from the stored descriptions, no LLM call.
+# Not needed after a FULL run of 3_parse, which already empties the chunk tables.
 dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])
 REBUILD_IMAGE_CHUNKS = dbutils.widgets.get("rebuild_image_chunks") == "true"
 for _tbl in ([] if REBUILD_IMAGE_CHUNKS else _chunk_tables_with_images):
@@ -370,9 +370,9 @@ else:
                                for c in ("type_document", "indice", "langue")]) \
         .withColumn("indice", F.col("indice").cast("string")).dropDuplicates(["IDDOC"])
 
-    # Where each image sits (the text passage holding the words just before it, found with the
-    # context Docling stored), its section and caption written into the passage, and long
-    # transcriptions (scanned pages) cut like text — audit 2026-10, P7. No LLM call.
+    # Where each image sits (the passage holding the words just before it, found with the context Docling stored), its
+    # section and caption written into the passage,
+    # and long transcriptions (scanned pages) cut like text. No LLM call.
     import pandas as _pd
 
     _PLACED_SCHEMA = ("IDDOC long, image_id int, part_no int, anchor_chunk_index int, "
@@ -464,6 +464,12 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC # Quality Checks
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Outputs
 
 # COMMAND ----------
@@ -478,8 +484,8 @@ else:
 
 if described_count > 0:
 
-    # Columns added on 2026-10 (titre, type_document, indice, langue, body_sha256,
-    # anchor_chunk_index) must be able to reach chunk tables written before them.
+    # Columns added since (titre, type_document, indice, langue, body_sha256, anchor_chunk_index) must reach chunk
+    # tables written before them.
     spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
     def _merge_image_chunks(df_chunks, table_name):

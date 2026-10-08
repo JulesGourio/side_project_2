@@ -37,7 +37,17 @@ assert schema_name, "schema_name widget is required"
 assert volume_name, "volume_name widget is required"
 assert volume_permission in ("READ VOLUME", "WRITE VOLUME"), "volume_permission must be READ VOLUME or WRITE VOLUME"
 
-print(f"Granting USE CATALOG + USE SCHEMA + {volume_permission} on "
+import logging
+
+logger = logging.getLogger("grant_volume_access_job")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+logger.info(f"Granting USE CATALOG + USE SCHEMA + {volume_permission} on "
       f"{catalog}.{schema_name}.{volume_name} to `{service_principal}`")
 
 # COMMAND ----------
@@ -49,13 +59,14 @@ statements = [
 ]
 
 failed = []
+
 for stmt in statements:
     try:
         spark.sql(stmt)
-        print(f"  OK: {stmt}")
+        logger.info(f"  OK: {stmt}")
     except Exception as exc:
         failed.append((stmt, str(exc).splitlines()[0][:300]))
-        print(f"  FAILED: {stmt}\n    -> {str(exc).splitlines()[0][:300]}")
+        logger.warning(f"  FAILED: {stmt}\n    -> {str(exc).splitlines()[0][:300]}")
 
 if failed:
     raise RuntimeError(
@@ -64,4 +75,4 @@ if failed:
         f"metastore/catalog admin needs to run this instead."
     )
 
-print("All grants applied successfully.")
+logger.info("All grants applied successfully.")

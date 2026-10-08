@@ -30,10 +30,9 @@ _CAPS_WAREHOUSE_ID = os.getenv('CAPS_WAREHOUSE_ID', '').strip()
 _CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 
-# Temporary escape hatch (2026-10-05): CAPS_BYPASS=true grants chat + compare
-# to every visitor, skipping the group check entirely. Set only for the DEV
-# target in utils/deploy/target_env.json (tests/test_deploy_config.py guards
-# that it never reaches uat/uat-test/prod).
+# CAPS_BYPASS=true grants chat + compare to every visitor, skipping the group check. DEV only, set in
+# utils/deploy/target_env.json
+# (tests/test_deploy_config.py guards that it never reaches uat/uat-test/prod).
 _CAPS_BYPASS = os.getenv('CAPS_BYPASS', 'false').strip().lower() == 'true'
 
 

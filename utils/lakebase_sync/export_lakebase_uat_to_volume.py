@@ -82,7 +82,18 @@ conn = psycopg2.connect(
     password=cred.token,
     sslmode="require",
 )
-print(f"Connected to Lakebase UAT ({lakebase_host}) as {username}.")
+import logging
+
+logger = logging.getLogger("export_lakebase_uat_to_volume")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info(f"Connected to Lakebase UAT ({lakebase_host}) as {username}.")
 
 # COMMAND ----------
 with conn.cursor() as cur:
@@ -97,12 +108,12 @@ with conn.cursor() as cur:
     )
     tables = cur.fetchall()
 
-print(f"{len(tables)} table(s) found: {[f'{s}.{t}' for s, t in tables]}")
+logger.info(f"{len(tables)} table(s) found: {[f'{s}.{t}' for s, t in tables]}")
 
 # COMMAND ----------
 for schema, table in tables:
     if table in TABLES_TO_SKIP:
-        print(f"  {table}... skipped (TABLES_TO_SKIP)")
+        logger.info(f"  {table}... skipped (TABLES_TO_SKIP)")
         continue
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -114,7 +125,7 @@ for schema, table in tables:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False, default=json_serializer) + "\n")
 
-    print(f"  {table}: {len(rows)} row(s) -> {out_file}")
+    logger.info(f"  {table}: {len(rows)} row(s) -> {out_file}")
 
 conn.close()
-print(f"\nDone. Export at {OUTPUT_DIR}")
+logger.info(f"Done. Export at {OUTPUT_DIR}")

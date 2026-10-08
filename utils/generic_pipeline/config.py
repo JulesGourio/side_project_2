@@ -5,10 +5,6 @@ Intraqual-specific variable (gd_doc, gd_cat, scope gate, division
 hierarchy, etc.).
 
 Priority for every parameter: env var > explicit override in notebook > this default.
-
-Usage:
-    from config import *
-    print(IMAGE_SCALE)
 """
 
 import os as _os

@@ -198,7 +198,18 @@ HOST = _cfg.host.rstrip("/")
 HEADERS = {"Authorization": _auth["Authorization"], "Content-Type": "application/json"}
 
 mlflow.set_experiment(EVAL_EXPERIMENT_PATH)
-print(f"Host: {HOST} | MLflow {mlflow.__version__} | Experiment: {EVAL_EXPERIMENT_PATH}")
+import logging
+
+logger = logging.getLogger("score_production_qa")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info(f"Host: {HOST} | MLflow {mlflow.__version__} | Experiment: {EVAL_EXPERIMENT_PATH}")
 
 # COMMAND ----------
 
@@ -209,11 +220,11 @@ from pyspark.sql import functions as F
 # via spark.catalog.tableExists() instead of try/except around the read.
 df_scored_ids = None
 if RESCORE:
-    print(f"rescore=true — re-judging already-scored turns, writing to {OUTPUT_TABLE}.")
+    logger.info(f"rescore=true — re-judging already-scored turns, writing to {OUTPUT_TABLE}.")
 elif spark.catalog.tableExists(SCORES_TABLE):
     df_scored_ids = spark.read.table(SCORES_TABLE).select("message_id")
 else:
-    print(f"{SCORES_TABLE} does not exist yet — scoring the full backlog on this first run.")
+    logger.info(f"{SCORES_TABLE} does not exist yet — scoring the full backlog on this first run.")
 
 # Backfilled real trace_id for turns pre-dating the 2026-09-03 streaming.py fix
 # (built by utils/evaluation/backfill_trace_ids.py, one-off — the
@@ -231,7 +242,7 @@ if spark.catalog.tableExists(BACKFILL_TABLE):
     BACKFILL_TRACE_IDS = {
         str(r.message_id): (r.trace_id, r.match_method) for r in _bf.itertuples()
     }
-    print(f"Loaded {len(BACKFILL_TRACE_IDS)} backfilled trace_id(s) from {BACKFILL_TABLE}.")
+    logger.info(f"Loaded {len(BACKFILL_TRACE_IDS)} backfilled trace_id(s) from {BACKFILL_TABLE}.")
 
 FEEDBACKS_TABLE = f"{CATALOG_SCHEMA}.chat_feedbacks"
 if SOURCE_TYPE == "volume_json":
@@ -286,7 +297,7 @@ if TEST_LIMIT is not None:
     df_pairs = df_pairs.orderBy(F.col("created_at").desc()).limit(TEST_LIMIT)
 
 pdf_pairs = df_pairs.toPandas()
-print(f"{len(pdf_pairs)} assistant turn(s) to score (selection={SELECTION})."
+logger.info(f"{len(pdf_pairs)} assistant turn(s) to score (selection={SELECTION})."
       + (f" (test_limit={TEST_LIMIT})" if TEST_LIMIT else ""))
 
 # COMMAND ----------
@@ -587,7 +598,7 @@ _PROMPTS = {
 }
 
 DIMENSIONS = ["relevance", "groundedness", "safety", "language_match", "completeness"]
-print(f"{len(DIMENSIONS)} LLM dimensions ready, judge = {LLM_MODEL} (direct call, real token tracking). "
+logger.info(f"{len(DIMENSIONS)} LLM dimensions ready, judge = {LLM_MODEL} (direct call, real token tracking). "
       f"Retrieval-grounded groundedness/completeness: {ENABLE_RETRIEVAL}")
 
 # COMMAND ----------
@@ -677,7 +688,7 @@ def _format_context(hits: list, k: int = None, trunc: int = None) -> str:
 
 
 if pdf_pairs.empty:
-    print("Nothing new to score.")
+    logger.info("Nothing new to score.")
     df_final = pd.DataFrame()
 else:
     records = []
@@ -803,19 +814,19 @@ else:
 
     df_final = pd.DataFrame(records)
     pass_rates = {d: df_final[f"{d}__value"].mean() for d in DIMENSIONS}
-    print(f"Scored {len(df_final)} turn(s). Pass rates: {pass_rates}")
-    print(f"Tokens: {df_final['total_input_tokens'].sum()} in / {df_final['total_output_tokens'].sum()} out")
+    logger.info(f"Scored {len(df_final)} turn(s). Pass rates: {pass_rates}")
+    logger.info(f"Tokens: {df_final['total_input_tokens'].sum()} in / {df_final['total_output_tokens'].sum()} out")
     if ENABLE_RETRIEVAL:
-        print(f"Retrieval source counts: {df_final['retrieval_source'].value_counts().to_dict()}")
-        print(f"Answer comparison categories: {df_final['answer_comparison__category'].value_counts().to_dict()}")
-        print(f"Answer comparison likely_better: {df_final['answer_comparison__likely_better'].value_counts().to_dict()}")
+        logger.info(f"Retrieval source counts: {df_final['retrieval_source'].value_counts().to_dict()}")
+        logger.info(f"Answer comparison categories: {df_final['answer_comparison__category'].value_counts().to_dict()}")
+        logger.info(f"Answer comparison likely_better: {df_final['answer_comparison__likely_better'].value_counts().to_dict()}")
 
 # COMMAND ----------
 
 from datetime import datetime, timezone
 
 if df_final.empty:
-    print("Nothing to persist.")
+    logger.info("Nothing to persist.")
 else:
     _run_ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     df_final["scored_at"] = _run_ts
@@ -826,7 +837,7 @@ else:
     sdf_final = sdf_final.withColumn("cited_refs", F.col("cited_refs").cast("array<string>")) \
         .withColumn("retrieved_refs", F.col("retrieved_refs").cast("array<string>"))
     sdf_final.write.mode("append").option("mergeSchema", "true").saveAsTable(OUTPUT_TABLE)
-    print(f"Appended {len(df_final)} row(s) to {OUTPUT_TABLE}.")
+    logger.info(f"Appended {len(df_final)} row(s) to {OUTPUT_TABLE}.")
 
     _total_in = int(df_final["total_input_tokens"].sum())
     _total_out = int(df_final["total_output_tokens"].sum())
@@ -840,4 +851,4 @@ else:
         "judge_model": LLM_MODEL,
     }
     spark.createDataFrame([_run_row]).write.mode("append").option("mergeSchema", "true").saveAsTable(SCORING_RUNS_TABLE)
-    print(f"Logged run to {SCORING_RUNS_TABLE}: {_run_row}")
+    logger.info(f"Logged run to {SCORING_RUNS_TABLE}: {_run_row}")

@@ -61,6 +61,12 @@ def ordered_files(in_dir: Path) -> list[Path]:
     return ordered + [available[k] for k in sorted(available)]
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("import_lakebase_from_json")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--profile", required=True, help="Databricks CLI profile for the TARGET workspace.")
@@ -107,13 +113,13 @@ def main() -> None:
                 seq = cur.fetchone()[0]
                 if seq:
                     cur.execute(f'SELECT setval(%s, COALESCE((SELECT MAX(id) FROM "{table}"), 1))', (seq,))
-            print(f"  {table}: {len(rows)} row(s) imported")
+            logger.info(f"  {table}: {len(rows)} row(s) imported")
 
         conn.commit()
-        print("Done, committed.")
+        logger.info("Done, committed.")
     except Exception:
         conn.rollback()
-        print("Failed — rolled back, target untouched.", file=sys.stderr)
+        logger.error("Failed — rolled back, target untouched.")
         raise
     finally:
         conn.close()

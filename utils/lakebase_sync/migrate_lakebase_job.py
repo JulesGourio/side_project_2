@@ -2,10 +2,8 @@
 import psycopg2
 from databricks.sdk import WorkspaceClient
 
-# Serverless job tasks have no cluster spec, so spark_env_vars isn't
-# available — job parameters come through as notebook widgets instead.
-# dbutils.widgets.text() also supplies the default when run interactively
-# (no job context), same role os.getenv()'s default used to play.
+# Serverless job tasks have no spark_env_vars: parameters come through notebook widgets, whose default also serves
+# interactive runs.
 dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")
 dbutils.widgets.text("LAKEBASE_ENDPOINT", "primary")
@@ -56,7 +54,18 @@ credential = w.postgres.generate_database_credential(endpoint=endpoint_path)
 if not credential.token:
     raise RuntimeError("generate_database_credential returned an empty token.")
 
-print(f"Connecting to Lakebase {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASE}...")
+import logging
+
+logger = logging.getLogger("migrate_lakebase_job")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info(f"Connecting to Lakebase {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASE}...")
 conn = psycopg2.connect(
     host=lakebase_host,
     port=5432,
@@ -68,11 +77,11 @@ conn = psycopg2.connect(
 
 try:
     applied, failed = apply_migrations(conn, MIGRATIONS)
-    print(f"\nDone — {len(applied)}/{len(MIGRATIONS)} migration(s) applied to {LAKEBASE_DATABASE}.")
+    logger.info(f"Done — {len(applied)}/{len(MIGRATIONS)} migration(s) applied to {LAKEBASE_DATABASE}.")
     if failed:
-        print(f"Failed ({len(failed)}):")
+        logger.warning(f"Failed ({len(failed)}):")
         for name, err in failed:
-            print(f"  [{name}] {err.strip()}")
+            logger.info(f"  [{name}] {err.strip()}")
 finally:
     conn.close()
 

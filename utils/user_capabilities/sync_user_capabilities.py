@@ -70,6 +70,12 @@ ORDER BY 1
 """
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("sync_user_capabilities")
+
+
 def list_leap_groups(profile: str) -> None:
     """Prints all LEAP groups found in the audit log."""
     w = WorkspaceClient(profile=profile)
@@ -82,12 +88,12 @@ def list_leap_groups(profile: str) -> None:
     rows = (resp.result.data_array if resp.result else None) or []
     tracked = CAPS_ALL_GROUPS
 
-    print(f"\n{'Group':<65} {'Users':>6} {'Add':>5} {'Rmv':>5}  {'Status'}")
-    print("-" * 95)
+    logger.info(f"{'Group':<65} {'Users':>6} {'Add':>5} {'Rmv':>5}  {'Status'}")
+    logger.info("-" * 95)
     for group_name, nb_users, adds, removes in rows:
         status = "tracked" if group_name in tracked else "not tracked"
-        print(f"{group_name:<65} {nb_users:>6} {adds:>5} {removes:>5}  {status}")
-    print(f"\n{len(rows)} LEAP group(s) found. "
+        logger.info(f"{group_name:<65} {nb_users:>6} {adds:>5} {removes:>5}  {status}")
+    logger.info(f"{len(rows)} LEAP group(s) found. "
           f"{sum(1 for r in rows if r[0] not in tracked)} not tracked.")
 
 
@@ -279,25 +285,25 @@ def main() -> None:
         list_leap_groups(args.audit_profile)
         return
 
-    print(f"[1/2] Reading the audit log (profile={args.audit_profile})...")
+    logger.info(f"[1/2] Reading the audit log (profile={args.audit_profile})...")
     audit = fetch_audit_events(args.audit_profile)
     adds    = sum(1 for v in audit.values() if v['is_member'])
     removes = sum(1 for v in audit.values() if not v['is_member'])
-    print(f"      {len(audit)} (user, group) pair(s) — {adds} active, {removes} removed\n")
+    logger.info(f"      {len(audit)} (user, group) pair(s) — {adds} active, {removes} removed\n")
 
     if args.dry_run:
         out = os.path.join(os.path.dirname(__file__), "users_preview.csv")
         n = preview_to_csv(audit, out)
-        print(f"[dry-run] {n} user(s) computed -> {os.path.abspath(out)}")
-        print("Nothing written to the database. Re-run without --dry-run to push.")
+        logger.info(f"[dry-run] {n} user(s) computed -> {os.path.abspath(out)}")
+        logger.info("Nothing written to the database. Re-run without --dry-run to push.")
         return
 
     for env in args.env:
-        print(f"[2/2] Syncing to Lakebase {env}...")
+        logger.info(f"[2/2] Syncing to Lakebase {env}...")
         n = sync_to_lakebase(audit, env)
-        print(f"      {n} user(s) updated (groups / can_chat / can_compare).")
+        logger.info(f"      {n} user(s) updated (groups / can_chat / can_compare).")
 
-    print("\nDone.")
+    logger.info("Done.")
 
 
 if __name__ == "__main__":

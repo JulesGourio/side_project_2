@@ -861,7 +861,7 @@ def _build_chunks(df_full_pipeline, df_exclusions):
             F.sha2(F.col("_chunk_text_full"), 256).alias("chunk_sha256"),
             F.col("url"),
             F.col("doc_date"),
-            # Document metadata, filterable by the search (audit 2026-10, P10).
+            # Document metadata, filterable by the search.
             F.col("titre"), F.col("type_document"), F.col("indice").cast("string").alias("indice"),
             F.col("langue"),
             body_key.alias("body_sha256"),
@@ -883,9 +883,9 @@ def _dedupe_and_limit_chunks(df_chunks):
         logger.info(f"[DEDUP] Removed {before_count - after_count} duplicate chunks intra-IDDOC "
                     f"({before_count} -> {after_count})")
 
-    # Same body in BOILERPLATE_MIN_DOCS+ documents (legal mentions, standard approval blocks):
-    # marked, not deleted — the search can leave them out (audit 2026-10, P9). Counted with the
-    # rows already in the table on an incremental run, so a new document's copy is caught too.
+    # Same body in BOILERPLATE_MIN_DOCS+ documents (legal mentions, standard approval blocks): marked, not deleted, so
+    # the search can leave them out.
+    # Counted with the rows already in the table on an incremental run, so a new document's copy is caught too.
     df_keys = df_chunks.select("IDDOC", "body_sha256")
     if RUN_MODE == "incremental" and spark.catalog.tableExists(TARGET_CHUNK_TABLE) \
             and "body_sha256" in spark.table(TARGET_CHUNK_TABLE).columns:

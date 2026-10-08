@@ -356,12 +356,8 @@ prévenir, je change la valeur, vous redéployez.
       ```
 
     - **avant** de supprimer les index : me prévenir, je passe sur `chunks_index` (+ filtre de
-      division) les deux notebooks de notation qui interrogent encore les index `_v1`
-      (`utils/evaluation/score_production_qa.py`, job DEV ;
-      `utils/ka_legacy/score_production_qa.py`, job UAT) ;
-    - les jobs UAT qui lisent les traces du KA (`resources/traces_migration.yml`,
-      `sync_mlflow_scorer_assessments_uat`) : à revoir ensemble, ils ne sont pas modifiés par cette
-      branche.
+      division) les notebooks de notation qui interrogent encore les index `_v1`
+      (`utils/evaluation/score_production_qa.py`, jobs DEV et UAT).
 
 ## Fait
 

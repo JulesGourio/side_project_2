@@ -69,7 +69,6 @@ targets:
                   ResourceClass: SingleNode
                 spark_env_vars:
                   PARSING_CATALOG_SCHEMA:   ${var.app_write_catalog}.${var.app_write_schema}
-                  PARSING_INTRAQUAL_SOURCE: ${var.intraqual_source_catalog_schema}
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
@@ -102,7 +101,6 @@ targets:
                   spark.databricks.delta.autoCompact.enabled: "true"
                 spark_env_vars:
                   PARSING_CATALOG_SCHEMA:   ${var.app_write_catalog}.${var.app_write_schema}
-                  PARSING_INTRAQUAL_SOURCE: ${var.intraqual_source_catalog_schema}
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
@@ -140,7 +138,6 @@ targets:
                   ResourceClass: SingleNode
                 spark_env_vars:
                   PARSING_CATALOG_SCHEMA:   ${var.app_write_catalog}.${var.app_write_schema}
-                  PARSING_INTRAQUAL_SOURCE: ${var.intraqual_source_catalog_schema}
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}

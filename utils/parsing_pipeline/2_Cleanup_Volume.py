@@ -53,6 +53,12 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC # Technical debt
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Configuration
 
 # COMMAND ----------
@@ -240,7 +246,7 @@ logger.info(f"{len(root_items)} items at the volume root level")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Preparation
+# MAGIC # Data Preparation
 
 # COMMAND ----------
 
@@ -273,7 +279,7 @@ logger.info(f"  {GD_DOC_CAT_LATEST} x {GD_CAT_LATEST}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Transformations
+# MAGIC # Data Transformations
 
 # COMMAND ----------
 
@@ -716,6 +722,12 @@ if rows_skip:
     logger.info(f"{len(rows_skip)} items with a non-conforming name (ignored):")
     for r in rows_skip:
         logger.info(f"   {r['name']}  ({r['path']})")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Quality Checks
+# MAGIC #N/A
 
 # COMMAND ----------
 

@@ -754,8 +754,8 @@ async def upsert_user(
     if not user_id:
         return
     if email:
-        # If this user_id previously had no email (SCIM was failing), fill it now
-        # before the email-keyed upsert to avoid a user_id unique-constraint conflict.
+        # If this user_id previously had no email, fill it now: the email-keyed upsert below would otherwise conflict
+        # on user_id.
         await conn.execute(
             'UPDATE users SET email = $2, updated_at = NOW()'
             ' WHERE user_id = $1 AND email IS NULL',

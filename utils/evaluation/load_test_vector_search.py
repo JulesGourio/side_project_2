@@ -78,9 +78,20 @@ def run_async(coro):
 # DBTITLE 1,The endpoint and the index (type, size) — capacity depends on them
 ep = httpx.get(f'{HOST}/api/2.0/vector-search/endpoints/{ENDPOINT}', headers=headers(), timeout=30).json()
 ix = httpx.get(f'{HOST}/api/2.0/vector-search/indexes/{INDEX}', headers=headers(), timeout=30).json()
-print('endpoint:', json.dumps({k: ep.get(k) for k in ('name', 'endpoint_type', 'endpoint_status', 'num_indexes',
-                                                      'scaling_info', 'effective_budget_policy_id')}, indent=1))
-print('index:', json.dumps({k: ix.get(k) for k in ('name', 'index_type', 'status')}, indent=1))
+import logging
+
+logger = logging.getLogger("load_test_vector_search")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+
+logger.info("%s", " ".join(str(x) for x in ('endpoint:', json.dumps({k: ep.get(k) for k in ('name', 'endpoint_type', 'endpoint_status', 'num_indexes',
+                                                      'scaling_info', 'effective_budget_policy_id')}, indent=1),)))
+logger.info("%s", " ".join(str(x) for x in ('index:', json.dumps({k: ix.get(k) for k in ('name', 'index_type', 'status')}, indent=1),)))
 
 # COMMAND ----------
 
@@ -93,7 +104,7 @@ TEXTS += [_PREFIX.sub('', r['content']) for r in
           msgs.filter((F.col('role') == 'user') & F.length('content').between(15, 1500))
               .select('content').distinct().limit(400).collect()]
 random.Random(7).shuffle(TEXTS)
-print(len(TEXTS), 'query texts')
+logger.info("%s", " ".join(str(x) for x in (len(TEXTS), 'query texts',)))
 
 COLUMNS = ['chunk_id', 'IDDOC', 'REF', 'division', 'url', 'semantic_headers', 'chunk_text']
 
@@ -151,10 +162,10 @@ for scenario in SCENARIOS:
         ok = [r for r in rows if r['http_status'] == 200]
         refused = sum(1 for r in rows if r['http_status'] == 429)
         lat = sorted(r['latency_s'] for r in ok)
-        print(f'{scenario:16} level {level:3}: {len(ok) / STEP_S:5.1f} answered/s, {refused:4} refused (429), '
+        logger.info(f'{scenario:16} level {level:3}: {len(ok) / STEP_S:5.1f} answered/s, {refused:4} refused (429), '
               f'{len(rows) - len(ok) - refused:3} other errors, p50 {lat[len(lat) // 2] if lat else 0:.2f} s')
         if rows and refused * 100 / len(rows) > STOP_PCT:
-            print(f'{scenario}: stopped, more than {STOP_PCT:.0f} % refused')
+            logger.info(f'{scenario}: stopped, more than {STOP_PCT:.0f} % refused')
             break
         time.sleep(10)   # let the endpoint's rate limit window clear before the next step
     spark.createDataFrame(all_rows, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
@@ -189,4 +200,4 @@ display(spark.sql(f"""
 SELECT scenario, http_status, left(error, 300) AS error, count(*) AS n
 FROM {RESULTS} WHERE run_id = '{RUN_ID}' AND (http_status <> 200 OR http_status IS NULL)
 GROUP BY ALL ORDER BY n DESC LIMIT 20"""))
-print('run_id =', RUN_ID)
+logger.info("%s", " ".join(str(x) for x in ('run_id =', RUN_ID,)))
