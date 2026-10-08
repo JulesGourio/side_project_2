@@ -64,6 +64,11 @@ CONFIGS = {
     'u-bi-luna':          dict(variant='rerank', env={**UNION, **CTX, **BI,
                                                        'CHAT_VSI_REWRITE_ENDPOINT': 'databricks-gpt-5-6-luna',
                                                        'CHAT_VSI_REWRITE_MAX_TOKENS': '2000'}),
+    # u-all with the rewrite by GPT-6 Luna (2026-10-08): the rewrite is the only Sonnet call left
+    # per question, and it costs more than the GPT-6 Luna answer itself.
+    'u-all-luna6':        dict(variant='rerank', env={**UNION, **CTX, **REF, **TITLE, **BI, **ONE_LANG,
+                                                       'CHAT_VSI_REWRITE_ENDPOINT': 'databricks-gpt-6-luna',
+                                                       'CHAT_VSI_REWRITE_MAX_TOKENS': '2000'}),
 }
 
 # COMMAND ----------
@@ -78,8 +83,9 @@ dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_gol
 dbutils.widgets.text('synthetic_table', 'uat_landingzone.qualibot.synthetic_retrieval_questions_v2')
 dbutils.widgets.text('feedback_table', 'uat_landingzone.qualibot.feedback_failure_cases')
 dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_retrieval_runs')
-# Test indexes built by rechunk_experiment.py (e.g. "v2a,v2b"): each adds idx-<v> and idx-<v>-clean,
-# plus the reference idx-v1, all with union-ctx and every question on the ALL index of the variant.
+# Test indexes built by rechunk_experiment.py (e.g. "v2a,v2b"): each adds idx-<v> and idx-<v>-clean
+# (union-ctx) and idx-<v>-all (u-all, the chat's configuration since 2026-10-08), plus the reference
+# idx-v1 / idx-v1-all, every question on the ALL index of the variant.
 dbutils.widgets.text('index_variants', '')
 dbutils.widgets.text('rewrite_model', 'databricks-claude-sonnet-4-6')   # every run so far; not the app's answer model
 dbutils.widgets.text('index_schema', 'dev_landingzone.qualibot')
@@ -93,10 +99,13 @@ if _VARIANTS:
         index = f'{_IDX_SCHEMA}.chunks_index_{name}'
         return dict(variant='rerank', env={**UNION, **CTX, 'CHAT_VSI_INDEX_ALL': index,
                                            'CHAT_VSI_INDEX_AS': index, 'CHAT_VSI_INDEX_IS': index, **(extra or {})})
+    _ALL = {**REF, **TITLE, **BI, **ONE_LANG}
     CONFIGS['idx-v1'] = _on_index('v1')
+    CONFIGS['idx-v1-all'] = _on_index('v1', _ALL)
     for _v in _VARIANTS:
         CONFIGS[f'idx-{_v}'] = _on_index(_v)
         CONFIGS[f'idx-{_v}-clean'] = _on_index(_v, {'CHAT_VSI_SKIP_NOISE': 'on'})
+        CONFIGS[f'idx-{_v}-all'] = _on_index(_v, _ALL)
     RUN += [c for c in CONFIGS if c.startswith('idx-') and c not in RUN]
 SOURCES = {s.strip() for s in dbutils.widgets.get('sources').split(',') if s.strip()}
 RERUN = dbutils.widgets.get('rerun_existing') == 'true'
@@ -144,6 +153,8 @@ def apply_config_env(cfg: dict) -> None:
     os.environ['CHAT_VSI_REWRITE_ENDPOINT'] = dbutils.widgets.get('rewrite_model').strip()
     os.environ['CHAT_VSI_VARIANT'] = cfg.get('variant', 'baseline')
     os.environ.update({k: str(v) for k, v in (cfg.get('env') or {}).items()})
+    # One rewrite model per configuration: no silent fallback to another model (chat_vsi_llm).
+    os.environ['CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS'] = os.environ['CHAT_VSI_REWRITE_ENDPOINT']
 
 # COMMAND ----------
 

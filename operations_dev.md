@@ -637,9 +637,13 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
      - `variant=v2c`, `embed_prefix=false` : comme v2a sans le préfixe `[Source: …]`.
      Chaque run crée `chunks_<variant>` et lance l'index `chunks_index_<variant>` (30 à 60 min
      d'embedding avant `ONLINE`).
-  3. Quand les trois index sont `ONLINE` : `retrieval_eval`, widget `index_variants=v2a,v2b,v2c`,
-     Run all. Configs ajoutées : `idx-v1` (référence), `idx-v2a`, `idx-v2a-clean` (sommaires,
-     cartouches et textes répétés écartés)… Envoyer les tableaux.
+  3. Quand les index sont `ONLINE` : `retrieval_eval`, widgets `index_variants=v2a,v2b` (`,v2c` si
+     construit) et `configs=u-all-luna6` (pas vide : sinon toutes les anciennes configs restent dans la
+     liste ; celles déjà mesurées sont sautées, mais autant ne lancer que les nouvelles). Run all.
+     Configs lancées : `idx-v1` et `idx-v1-all` (index actuel), puis pour chaque variante `idx-v2a`
+     (union-ctx), `idx-v2a-clean` (sommaires, cartouches et textes répétés écartés), `idx-v2a-all`
+     (`u-all`, la config du chat), et `u-all-luna6` (`u-all` avec la réécriture par GPT-6 Luna au lieu de
+     Sonnet 4.6). Envoyer les tableaux.
   4. Plus tard, si ça vaut la dépense : `variant=v2d`, `doc_cards=true` (fiche par document,
      ≈ 15 €), puis `variant=v2e`, `doc_cards=true`, `chunk_context=true` (≈ 65 € au total).
      `enrich_max_docs=50` pour un essai à quelques euros d'abord.
