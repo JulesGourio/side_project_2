@@ -490,7 +490,7 @@ cours au plus, relances sur 429).
   (sans `-SyncOnly` : l'app doit redémarrer).
 - [x] **V3.2.** Notebook `load_test_chat`, widget `levels` = `10,20,30,40` (80 questions/min ≈ 25
   questions en cours), Run all. M'envoyer les deux tableaux.
-  _(fait 2026-10-08 : 100 % de réussite de 10 à 40 questions en cours, 77 questions/min à 40)_
+  _(fait 2026-10-08 : 100 % de réussite de 10 à 40 questions en cours, 77 questions/min à 40, mais refus et relances dans les logs de l'app)_
 - [x] **V3.2b.** Moins de requêtes par question (recherche brute seulement sur la question telle que
   posée : 4 requêtes au lieu de 6) : notebook `retrieval_eval`, widget `indexes` =
   `chat,rawq1|rawq=1,rawq1-raw5|rawq=1|raw=5`, Run all. M'envoyer les deux derniers tableaux.
