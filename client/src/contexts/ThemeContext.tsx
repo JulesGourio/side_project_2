@@ -150,30 +150,18 @@ export function CustomThemeProvider({ children }: ThemeProviderProps) {
     }
   }, []);
 
-  // ============================================================
-  // APPLY COLORS TO CSS
-  // Simplified: 18 core variables + Tailwind compatibility
-  // ============================================================
   const applyColorsToCSS = (c: ThemeColors) => {
     const root = document.documentElement;
     const isLight = isLightColor(c.bgPrimary);
 
-    // ----------------------------------------------------------
-    // CORE VARIABLES (18 total)
-    // These are the canonical variables to use in components
-    // ----------------------------------------------------------
-
-    // Text (3)
     root.style.setProperty("--color-text-heading", c.textHeading);
     root.style.setProperty("--color-text-primary", c.textPrimary);
     root.style.setProperty("--color-text-muted", c.textMuted);
 
-    // Accent (2) - primary + auto-derived secondary
     root.style.setProperty("--color-accent-primary", c.accentPrimary);
     const accentSecondary = adjustBrightness(c.accentPrimary, isLight ? 15 : -20);
     root.style.setProperty("--color-accent-secondary", accentSecondary);
 
-    // Background (4) - primary, secondary + auto-derived tertiary, elevated
     root.style.setProperty("--color-bg-primary", c.bgPrimary);
     root.style.setProperty("--color-bg-secondary", c.bgSecondary);
     const bgTertiary = adjustBrightness(c.bgSecondary, isLight ? -3 : 8);
@@ -181,24 +169,16 @@ export function CustomThemeProvider({ children }: ThemeProviderProps) {
     const bgElevated = isLight ? "#FFFFFF" : adjustBrightness(c.bgSecondary, 15);
     root.style.setProperty("--color-bg-elevated", bgElevated);
 
-    // Border (1)
     root.style.setProperty("--color-border", c.border);
 
-    // Status (4)
     root.style.setProperty("--color-success", c.success);
     root.style.setProperty("--color-error", c.error);
     root.style.setProperty("--color-info", c.info);
     root.style.setProperty("--color-warning", c.warning);
 
-    // Animated background
     const animRgb = hexToRgb(c.animatedBgColor);
     const animColor = animRgb ? `rgba(${animRgb.r}, ${animRgb.g}, ${animRgb.b}, 0.7)` : c.animatedBgColor;
     root.style.setProperty("--color-animated-bg", animColor);
-
-    // ----------------------------------------------------------
-    // TAILWIND/SHADCN COMPATIBILITY
-    // Map core variables to Tailwind semantic names
-    // ----------------------------------------------------------
 
     // Primary = accent (for buttons, links)
     root.style.setProperty("--color-primary", c.accentPrimary);
@@ -209,7 +189,6 @@ export function CustomThemeProvider({ children }: ThemeProviderProps) {
     root.style.setProperty("--color-secondary-foreground", c.textPrimary);
     root.style.setProperty("--color-secondary-border", c.border);
 
-    // Foreground/Background (Tailwind defaults)
     root.style.setProperty("--color-foreground", c.textPrimary);
     root.style.setProperty("--color-background", c.bgPrimary);
 
@@ -227,10 +206,6 @@ export function CustomThemeProvider({ children }: ThemeProviderProps) {
     // Destructive = error
     root.style.setProperty("--color-destructive", c.error);
 
-    // ----------------------------------------------------------
-    // GLASS EFFECT VARIABLES
-    // Semi-transparent backgrounds for modal/popup overlays
-    // ----------------------------------------------------------
     const bgRgb = hexToRgb(c.bgPrimary);
     const borderRgb = hexToRgb(c.border);
     if (bgRgb) {
@@ -245,14 +220,9 @@ export function CustomThemeProvider({ children }: ThemeProviderProps) {
     root.style.setProperty("--color-glass-backdrop", isLight ? "rgba(0, 0, 0, 0.4)" : "rgba(0, 0, 0, 0.6)");
   };
 
-  // ============================================================
-  // APPLY TYPOGRAPHY TO CSS
-  // Simplified: 3 font variables
-  // ============================================================
   const applyTypographyToCSS = (t: Typography) => {
     const root = document.documentElement;
 
-    // 3 canonical font variables
     root.style.setProperty("--font-heading", t.primaryFont);
     root.style.setProperty("--font-body", t.secondaryFont);
     root.style.setProperty("--font-mono", '"JetBrains Mono", "Fira Code", monospace');

@@ -30,7 +30,6 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Parameters
 dbutils.widgets.text('index', 'dev_landingzone.qualibot.chunks_index')
 dbutils.widgets.text('endpoint', 'qualibot')
 dbutils.widgets.text('scenarios', 'hybrid10,rerank12,rerank12_text,ann10,hybrid10_filter,chat_mix')
@@ -75,7 +74,6 @@ def run_async(coro):
 
 # COMMAND ----------
 
-# DBTITLE 1,The endpoint and the index (type, size) — capacity depends on them
 ep = httpx.get(f'{HOST}/api/2.0/vector-search/endpoints/{ENDPOINT}', headers=headers(), timeout=30).json()
 ix = httpx.get(f'{HOST}/api/2.0/vector-search/indexes/{INDEX}', headers=headers(), timeout=30).json()
 import logging
@@ -95,7 +93,6 @@ logger.info("%s", " ".join(str(x) for x in ('index:', json.dumps({k: ix.get(k) f
 
 # COMMAND ----------
 
-# DBTITLE 1,Query texts — real questions (golden + DEV chat), as the user typed them
 _PREFIX = re.compile(r'^\[Division: (?:AS|IS)\][\s\S]*?\n\n')
 TEXTS = [json.loads(r['inputs'])['messages'][-1]['content']
          for r in spark.table(dbutils.widgets.get('golden_table')).select('inputs').collect()]
@@ -122,7 +119,6 @@ def payload(kind, text):
 
 # COMMAND ----------
 
-# DBTITLE 1,Run — each scenario step after step, no retries, saved as each scenario ends
 _SCHEMA = """run_id string, scenario string, kind string, level int, started_at timestamp, latency_s double,
 http_status int, error string"""
 
@@ -172,7 +168,6 @@ for scenario in SCENARIOS:
 
 # COMMAND ----------
 
-# DBTITLE 1,Results — per scenario and step
 STEP = STEP_S
 display(spark.sql(f"""
 SELECT scenario, level, count(*) AS queries,
