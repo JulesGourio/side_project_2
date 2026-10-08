@@ -64,9 +64,8 @@ if not logger.handlers:
 
 dbutils.widgets.text("indexes", "", "Vector Search indexes (comma-separated)")
 dbutils.widgets.text("wait_minutes", "45", "Max wait for sync completion (minutes, 0 = don't wait)")
-# Only used to auto-create a missing index (below) -- this task is serverless
-# and doesn't get the PARSING_* env vars the rest of the pipeline reads
-# config.py through, so these come in as their own widgets instead.
+# Only used to auto-create a missing index: this task is serverless, so it has no PARSING_* env vars and takes its own
+# widgets.
 dbutils.widgets.text("vector_search_endpoint", "qualibot", "Vector Search endpoint (for index creation)")
 dbutils.widgets.text("embedding_model", "databricks-qwen3-embedding-0-6b", "Embedding model endpoint (for index creation)")
 dbutils.widgets.text("catalog_schema", "", "catalog.schema of the chunk tables (for index creation)")
@@ -157,7 +156,7 @@ if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
         """)
         logger.info(f"Created {FULL_TABLE} from {_sources}")
     else:
-        # New chunk columns (titre, type_document, langue… audit 2026-10) reach chunks_full too.
+        # New chunk columns (titre, type_document, langue...) reach chunks_full too.
         spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
         _target_cols = set(spark.table(FULL_TABLE).columns)
         _changed = " OR ".join(f"NOT (t.`{c}` <=> s.`{c}`)" for c in df_src.columns

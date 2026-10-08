@@ -55,12 +55,10 @@ for entry in source_files:
         continue
 
     target_table = f"`{TARGET_CATALOG}`.`{TARGET_SCHEMA}`.`{table}`"
-    # DROP + recreate rather than rely on overwriteSchema: a previously-all-NULL
-    # column (e.g. llm_request_id before any row had a value) gets inferred by
-    # spark.read.json as an incompatible type versus a later run where real
-    # values appear, and overwriteSchema alone hits DELTA_FAILED_TO_MERGE_FIELDS
-    # on that column even in "overwrite" mode. Each run replaces the table
-    # wholesale anyway, so a clean drop sidesteps the merge entirely.
+    # Drop and recreate rather than rely on overwriteSchema: a column that was all NULL on a first run is inferred
+    # with a different type once real values appear,
+    # and overwriteSchema alone then fails with DELTA_FAILED_TO_MERGE_FIELDS. Each run replaces the table wholesale
+    # anyway.
     spark.sql(f"DROP TABLE IF EXISTS {target_table}")
     df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(target_table)
     loaded_tables += 1

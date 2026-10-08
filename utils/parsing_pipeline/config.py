@@ -195,11 +195,9 @@ IMAGE_FORMAT        = "PNG"     # PNG = lossless, no compression artifacts on te
 # tiktoken (cl100k) is more accurate than CHARS_PER_TOKEN for technical French; falls back to it if unavailable offline.
 USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
-# Passage sizes (chunking.py). Overridable per run to test other sizes (DEV notebook
-# archive/evaluation/rechunk_experiment.py) without editing this file.
-# 150 / 300 / 450 tokens, 1,600 characters = DEV variant v2b, chosen 2026-10-08: 80.9 % of the
-# expected documents found vs 75.8 % for the former 250 / 500 / 1000 / 4000, with half the context
-# (retrieval_eval, u-all, 65 questions; docs/chat_vsi_tests.md § 5.6).
+# Passage sizes (chunking.py), overridable per run. 150 / 300 / 450 tokens and 1,600 characters found 80.9 % of the
+# expected documents against 75.8 % for
+# 250 / 500 / 1000 / 4000, with half the context (retrieval_eval, 65 questions; docs/chat_vsi_tests.md § 5.6).
 MIN_CHUNK_TOKENS    = int(_env("PARSING_MIN_CHUNK_TOKENS", "150"))
 TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "300"))
 MAX_CHUNK_TOKENS    = int(_env("PARSING_MAX_CHUNK_TOKENS", "450"))
@@ -243,7 +241,8 @@ IMG_SKIP_MIN_SIDE  = 85    # shorter side (px) < threshold -> band/table too sho
 # Post-filter: minimum useful length of a description to be injected as a chunk.
 MIN_INDEXABLE_DESC_CHARS = 40
 
-# True = provenance prefix embedded in chunk_text; False = body only (ref/division/title stay as filterable columns) — measured to hurt retrieval precision.
+# True = provenance prefix embedded in chunk_text; False = body only (ref/division/title stay filterable columns),
+# which hurt retrieval precision.
 EMBED_SOURCE_PREFIX = _env("PARSING_EMBED_SOURCE_PREFIX", "true").strip().lower() in ("1", "true", "yes")
 
 # =============================================================================

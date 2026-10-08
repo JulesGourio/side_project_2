@@ -654,9 +654,7 @@ def get_retry_candidates(df_matched_full, df_content, failed_iddocs: List[int], 
     content, joined from the scanned DataFrame."""
     if not failed_iddocs:
         return None
-    # .ppt used to be excluded here because Docling always failed on it;
-    # image_utils._fallback_parse_ppt_legacy now handles it (see
-    # 3_Parse_Pipeline.py), so it's a legitimate rank-2 candidate.
+    # .ppt is a legitimate rank-2 candidate: image_utils._fallback_parse_ppt_legacy handles it.
     df_alt = (
         df_matched_full
         .filter(F.col("IDDOC").isin(failed_iddocs))

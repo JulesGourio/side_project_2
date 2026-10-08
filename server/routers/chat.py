@@ -453,10 +453,8 @@ async def chat_ws(websocket: WebSocket):
                         'sources': collected_sources,
                     })
                 elif not error_occurred:
-                    # The engine finished without any text and without an error
-                    # (seen 2026-10-05 with the former Knowledge Assistant: HTTP 200,
-                    # 0 deltas). Without an outcome the browser
-                    # stays on "Thinking" — tell it the turn failed.
+                    # The engine finished without any text and without an error: tell the browser the turn failed, or
+                    # it stays on "Thinking".
                     error_text = 'No answer was produced. Please try again.'
                     logger.warning('chat turn empty [ws]: division=%s endpoint=%s',
                                    division, endpoint)

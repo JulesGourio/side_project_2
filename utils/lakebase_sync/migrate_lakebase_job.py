@@ -2,10 +2,8 @@
 import psycopg2
 from databricks.sdk import WorkspaceClient
 
-# Serverless job tasks have no cluster spec, so spark_env_vars isn't
-# available — job parameters come through as notebook widgets instead.
-# dbutils.widgets.text() also supplies the default when run interactively
-# (no job context), same role os.getenv()'s default used to play.
+# Serverless job tasks have no spark_env_vars: parameters come through notebook widgets, whose default also serves
+# interactive runs.
 dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")
 dbutils.widgets.text("LAKEBASE_ENDPOINT", "primary")

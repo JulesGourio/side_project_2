@@ -8,11 +8,8 @@ import psycopg2
 import psycopg2.extras
 from databricks.sdk import WorkspaceClient
 
-# Serverless job tasks have no cluster spec, so spark_env_vars isn't available —
-# job parameters come through as notebook widgets instead (same reasoning as
-# migrate_lakebase_job.py). Classic new_cluster compute can't reach the Lakebase
-# private endpoint in this workspace (confirmed via TCP timeout on port 5432),
-# so this task must run on serverless.
+# Serverless job tasks have no spark_env_vars: parameters come through notebook widgets. Classic compute cannot reach
+# the Lakebase private endpoint (TCP timeout on 5432).
 dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")
 dbutils.widgets.text("LAKEBASE_ENDPOINT", "primary")
