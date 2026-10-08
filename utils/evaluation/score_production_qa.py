@@ -7,7 +7,7 @@
 # MAGIC Knowledge Assistant call. Judge: direct calls to `databricks-gpt-5-6-luna`
 # MAGIC (`call_llm()`, same pattern as `analyze_feedback_failures.py`) instead of
 # MAGIC MLflow's managed-judge scorer classes — see
-# MAGIC `utils/databricks_ops/README.md#chatbot-quality-scoring-luna-and-retrieval`
+# MAGIC `utils/README.md#chatbot-quality-scoring-luna-and-retrieval`
 # MAGIC for the full design writeup (why not MLflow's scorers, the RAG-triad metric
 # MAGIC choice, `citation_relevance`'s removal, the retrieval-query iterations, and
 # MAGIC the UAT deploy gotchas hit while validating this).
@@ -221,7 +221,7 @@ else:
     print(f"{SCORES_TABLE} does not exist yet — scoring the full backlog on this first run.")
 
 # Backfilled real trace_id for turns pre-dating the 2026-09-03 streaming.py fix
-# (built by utils/databricks_ops/evaluation/backfill_trace_ids.py, one-off — the
+# (built by utils/evaluation/backfill_trace_ids.py, one-off — the
 # KA logs traces regardless of whether our app captured the id, so these were
 # recovered from the native per-division MLflow experiments after the fact).
 # match_method "nearest_ambiguous" means multiple candidate traces sat in the

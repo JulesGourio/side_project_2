@@ -7,8 +7,8 @@ Run once after every new column or table is added.
 
 USAGE
 -----
-    python utils/databricks_ops/lakebase_sync/migrate_lakebase.py --env DEV
-    python utils/databricks_ops/lakebase_sync/migrate_lakebase.py --env UAT
+    python utils/lakebase_sync/migrate_lakebase.py --env DEV
+    python utils/lakebase_sync/migrate_lakebase.py --env UAT
 """
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from pathlib import Path
 import psycopg2
 from databricks.sdk import WorkspaceClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/databricks_ops/ — shared config.py
-from config import LAKEBASE_PROJECTS, LAKEBASE
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
+from ops_config import LAKEBASE_PROJECTS, LAKEBASE
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # this directory — shared migrations.py
 from migrations import MIGRATIONS, apply_migrations

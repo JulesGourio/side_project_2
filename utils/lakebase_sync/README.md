@@ -16,7 +16,7 @@ uv pip install --python .venv/Scripts/python.exe --system-certs psycopg2-binary
 
 ```powershell
 cd C:\Users\L0041770\Desktop\GenAI\Qualibot\latec-compare
-.venv\Scripts\python.exe utils\databricks_ops\lakebase_sync\copy_Lakebase_tables.py
+.venv\Scripts\python.exe utils\lakebase_sync\copy_Lakebase_tables.py
 ```
 
 Prérequis : avoir lancé avant le job Databricks UAT `lakebase_sync/export_lakebase_uat_to_volume.py`

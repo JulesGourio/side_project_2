@@ -3,10 +3,10 @@
 USAGE :
     1. (Par défaut) Lancez d'abord le job Databricks UAT 'lakebase_sync/export_lakebase_uat_to_volume.py'.
        Puis lancez ce script :
-       python utils/databricks_ops/lakebase_sync/copy_Lakebase_tables.py
+       python utils/lakebase_sync/copy_Lakebase_tables.py
 
     2. (Mode direct - si port 5432 ouvert) :
-       python utils/databricks_ops/lakebase_sync/copy_Lakebase_tables.py --direct
+       python utils/lakebase_sync/copy_Lakebase_tables.py --direct
 """
 
 import argparse
@@ -23,8 +23,8 @@ import datetime
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState, Disposition, Format
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/databricks_ops/ — shared config.py
-from config import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
+from ops_config import (
     lakebase_connect,
     COPY_SOURCE_ENV,
     COPY_TARGET_PROFILE,

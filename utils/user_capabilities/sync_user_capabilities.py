@@ -7,10 +7,10 @@ long as this runs at least once a year.
 
 USAGE
 -----
-    python utils/databricks_ops/user_capabilities/sync_user_capabilities.py           # -> DEV (default)
-    python utils/databricks_ops/user_capabilities/sync_user_capabilities.py --env UAT
-    python utils/databricks_ops/user_capabilities/sync_user_capabilities.py --env DEV UAT
-    python utils/databricks_ops/user_capabilities/sync_user_capabilities.py --dry-run   # CSV preview, no write
+    python utils/user_capabilities/sync_user_capabilities.py           # -> DEV (default)
+    python utils/user_capabilities/sync_user_capabilities.py --env UAT
+    python utils/user_capabilities/sync_user_capabilities.py --env DEV UAT
+    python utils/user_capabilities/sync_user_capabilities.py --dry-run   # CSV preview, no write
 """
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/databricks_ops/ — shared config.py
-from config import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
+from ops_config import (
     lakebase_connect,
     WAREHOUSE_ID,
     PROFILE_DEV,

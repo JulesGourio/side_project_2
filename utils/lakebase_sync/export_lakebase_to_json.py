@@ -21,8 +21,8 @@ import psycopg2
 import psycopg2.extras
 from databricks.sdk import WorkspaceClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/databricks_ops/ — shared config.py
-from config import MIGRATE_TO_PROD_TABLES_TO_SKIP
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
+from ops_config import MIGRATE_TO_PROD_TABLES_TO_SKIP
 
 PROJECT_ID = "qualibot"
 BRANCH = "production"

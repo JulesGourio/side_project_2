@@ -1,4 +1,4 @@
-"""Central configuration for utils/databricks_ops/.
+"""Central configuration for utils/.
 
 All scripts import from this file instead of redefining connections,
 profiles, and credentials every time.

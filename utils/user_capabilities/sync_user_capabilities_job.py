@@ -43,9 +43,9 @@ import sys
 # sys.path trick. Databricks already puts this notebook's own directory on
 # sys.path (same reason sibling `from config import *` needs no setup at all in
 # utils/parsing_pipeline/), so os.getcwd() is that directory and one level up
-# is utils/databricks_ops/ where config.py lives.
+# is utils/ where config.py lives.
 sys.path.insert(0, os.path.dirname(os.getcwd()))
-from config import CAPS_CHAT_GROUPS, CAPS_COMPARE_GROUPS, CAPS_ALL_GROUPS
+from ops_config import CAPS_CHAT_GROUPS, CAPS_COMPARE_GROUPS, CAPS_ALL_GROUPS
 
 print(f"dry_run={DRY_RUN}  database={LAKEBASE_DATABASE}  groups tracked={len(CAPS_ALL_GROUPS)}")
 

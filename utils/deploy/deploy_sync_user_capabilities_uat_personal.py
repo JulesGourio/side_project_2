@@ -24,7 +24,7 @@ from databricks.sdk.service import jobs
 from databricks.sdk.service.compute import Environment
 
 JOB_NAME = "qualibot-sync-user-capabilities-uat"
-NOTEBOOK_PATH = "/Workspace/Shared/.bundle/qualibot/qualibot-uat/files/utils/databricks_ops/user_capabilities/sync_user_capabilities_job.py"
+NOTEBOOK_PATH = "/Workspace/Shared/.bundle/qualibot/qualibot-uat/files/utils/user_capabilities/sync_user_capabilities_job.py"
 
 
 def build_job_kwargs() -> dict:

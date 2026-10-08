@@ -1,4 +1,4 @@
-# utils/databricks_ops/
+# utils/
 
 Operational jobs and scripts that support the Qualibot app: Databricks App
 start/stop scheduling (`app_mgmt/`), Lakebase export/import/migration

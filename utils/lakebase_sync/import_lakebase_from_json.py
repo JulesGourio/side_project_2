@@ -22,8 +22,8 @@ from pathlib import Path
 import psycopg2.extras
 from databricks.sdk import WorkspaceClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/databricks_ops/ — shared config.py
-from config import MIGRATE_TO_PROD_TABLE_ORDER
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
+from ops_config import MIGRATE_TO_PROD_TABLE_ORDER
 
 PROJECT_ID = "qualibot"
 BRANCH = "production"

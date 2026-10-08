@@ -16,7 +16,7 @@ USAGE
 -----
 Re-run whenever group membership changes, then redeploy the app:
 
-    python utils/databricks_ops/user_capabilities/build_capabilities_snapshot.py --profile DEV
+    python utils/user_capabilities/build_capabilities_snapshot.py --profile DEV
 
 Requires the databricks-sdk and a CLI profile whose user is in CoreDev.
 """
@@ -30,8 +30,8 @@ from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/databricks_ops/ — shared config.py
-from config import WAREHOUSE_ID as DEFAULT_WAREHOUSE_ID, CAPS_ALL_GROUPS
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
+from ops_config import WAREHOUSE_ID as DEFAULT_WAREHOUSE_ID, CAPS_ALL_GROUPS
 
 GROUPS = sorted(CAPS_ALL_GROUPS)
 
