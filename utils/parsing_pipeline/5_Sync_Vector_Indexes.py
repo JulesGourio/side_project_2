@@ -9,10 +9,7 @@
 # MAGIC **Highlighted complexities:**
 # MAGIC Indexes are `pipeline_type = TRIGGERED`: without this step, new chunks sit
 # MAGIC in the Delta table and are never queryable — the rest of the chain would
-# MAGIC have run for nothing. Replaces the local script
-# MAGIC `utils/vector_search_sync/resync_uat_index.py`, which
-# MAGIC exported DEV to UAT by hand and still targeted the v1 tables/indexes —
-# MAGIC this job runs in the workspace that owns the indexes, so no export needed.
+# MAGIC have run for nothing.
 # MAGIC
 # MAGIC Self-provisioning: an index in `indexes` that doesn't exist yet is created
 # MAGIC (not just synced) — this task runs `run_as` the environment's owning SP, so
