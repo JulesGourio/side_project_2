@@ -1,4 +1,4 @@
-"""FastAPI app — QualiBOT (document compare + knowledge assistant chat)."""
+"""FastAPI app — QualiBOT (document compare + chat)."""
 
 import asyncio
 import logging

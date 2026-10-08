@@ -1,7 +1,6 @@
-"""Tests for chat endpoints — stream, session logs, and feedback.
+"""Tests for chat endpoints — session logs and feedback (the chat turn itself: test_chat_route.py).
 
 Coverage:
-  - POST /api/chat/stream  : disabled / missing endpoint / streaming OK / error forwarding
   - GET  /api/chat/sessions        : no DB / with rows
   - GET  /api/chat/sessions/{id}   : not found / messages + sources
   - DELETE /api/chat/sessions/{id} : success
@@ -35,126 +34,12 @@ def client():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _parse_sse(text: str) -> list[dict]:
-    """Parse SSE lines into a list of JSON event dicts."""
-    events = []
-    for line in text.splitlines():
-        if line.startswith('data: ') and line != 'data: [DONE]':
-            try:
-                events.append(json.loads(line[6:]))
-            except json.JSONDecodeError:
-                pass
-    return events
-
-
 def _make_pool(conn):
     """Build a minimal asyncpg pool mock from a connection mock."""
     pool = MagicMock()
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
     return pool
-
-
-# ---------------------------------------------------------------------------
-# Stream tests
-# ---------------------------------------------------------------------------
-
-def test_stream_disabled_returns_503(client):
-    with patch('server.routers.chat.CHAT_ENABLED', False):
-        r = client.post('/api/chat/stream', json={'messages': [{'role': 'user', 'content': 'Hi'}]})
-    assert r.status_code == 503
-    assert 'disabled' in r.json()['error'].lower()
-
-
-def test_stream_no_endpoint_returns_503(client):
-    with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat.CHAT_ENDPOINT', ''),
-    ):
-        r = client.post('/api/chat/stream', json={'messages': [{'role': 'user', 'content': 'Hi'}]})
-    assert r.status_code == 503
-    assert 'endpoint' in r.json()['error'].lower()
-
-
-async def _stream_ok(*args, **kwargs):
-    yield 'data: {"type": "response.output_text.delta", "delta": "Bonjour"}\n\n'
-    yield 'data: {"type": "response.output_text.delta", "delta": " Qualibot"}\n\n'
-    yield 'data: {"type": "sources", "sources": []}\n\n'
-    yield 'data: [DONE]\n\n'
-
-
-def test_stream_yields_deltas_and_done(client):
-    with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat.CHAT_ENDPOINT', 'Qualibot_Assistant'),
-        patch('server.routers.chat.stream_chat', side_effect=_stream_ok),
-        patch('server.routers.chat.get_pool', return_value=None),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
-            return_value={'user_id': 'u1', 'workspace_id': None})),
-        patch('server.routers.chat._get_chat_credentials',
-              return_value=('https://test.azuredatabricks.net', 'tok')),
-    ):
-        r = client.post('/api/chat/stream', json={
-            'messages': [{'role': 'user', 'content': 'Bonjour'}],
-            'session_id': 'sess-test',
-        })
-    assert r.status_code == 200
-    assert r.headers['content-type'].startswith('text/event-stream')
-    events = _parse_sse(r.text)
-    deltas = [e for e in events if e.get('type') == 'response.output_text.delta']
-    assert len(deltas) == 2
-    assert deltas[0]['delta'] == 'Bonjour'
-    done_events = [e for e in events if e.get('type') == 'done']
-    assert len(done_events) == 1
-    assert 'data: [DONE]' in r.text
-
-
-def test_stream_done_payload_contains_session_id(client):
-    async def _stream(*args, **kwargs):
-        yield 'data: {"type": "response.output_text.delta", "delta": "OK"}\n\n'
-        yield 'data: [DONE]\n\n'
-
-    with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat.CHAT_ENDPOINT', 'Qualibot_Assistant'),
-        patch('server.routers.chat.stream_chat', side_effect=_stream),
-        patch('server.routers.chat.get_pool', return_value=None),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
-            return_value={'user_id': 'u1', 'workspace_id': None})),
-        patch('server.routers.chat._get_chat_credentials',
-              return_value=('https://test.azuredatabricks.net', 'tok')),
-    ):
-        r = client.post('/api/chat/stream', json={
-            'messages': [{'role': 'user', 'content': 'Test'}],
-            'session_id': 'my-session-id',
-        })
-    events = _parse_sse(r.text)
-    done = next(e for e in events if e.get('type') == 'done')
-    assert done['session_id'] == 'my-session-id'
-
-
-def test_stream_error_event_forwarded(client):
-    async def _stream_err(*args, **kwargs):
-        yield 'data: {"type": "error", "error": "Agent failure", "error_type": "AgentError"}\n\n'
-        yield 'data: [DONE]\n\n'
-
-    with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat.CHAT_ENDPOINT', 'Qualibot_Assistant'),
-        patch('server.routers.chat.stream_chat', side_effect=_stream_err),
-        patch('server.routers.chat.get_pool', return_value=None),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
-            return_value={'user_id': 'u1', 'workspace_id': None})),
-        patch('server.routers.chat._get_chat_credentials',
-              return_value=('https://test.azuredatabricks.net', 'tok')),
-        patch('server.routers.chat.store_error', new=AsyncMock()),
-    ):
-        r = client.post('/api/chat/stream', json={'messages': [{'role': 'user', 'content': 'Hi'}]})
-    assert r.status_code == 200
-    events = _parse_sse(r.text)
-    errors = [e for e in events if e.get('type') == 'error']
-    assert len(errors) == 1
-    assert errors[0]['error'] == 'Agent failure'
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +360,7 @@ def test_save_turn_strips_division_and_registers_user():
             '[Division: IS] The user works in the IS division. Restrict.\n\nHow do I wire it?',
             'Here is how.',
             email='jules@latecoere.aero',
-            endpoint_name='ka-endpoint',
+            endpoint_name='vsi-is',
         ))
 
     assert msg_id == 99

@@ -1,13 +1,13 @@
-"""Tests for the engine switch in server/routers/chat.py — plan step 3.
+"""Tests for the chat WebSocket route (server/routers/chat.py), engine mocked.
 
-Coverage (engines mocked):
-  - /api/chat/ws calls stream_chat, never stream_chat_vsi
-  - /api/chat-vsi/ws calls stream_chat_vsi with the requested division
-  - VSI route: the 'done' payload carries ⟦n⟧ markers and numbered sources (same post-processing as the KA)
-  - VSI route: same access control (can_chat) as the KA route
-  - CHAT_VSI_ENABLED=false -> error event, socket closed
-  - a VSI engine error is relayed to the browser and the turn is saved with status=error
-  - VSI turns are saved with endpoint_name = vsi-<division>
+Coverage:
+  - /api/chat/ws calls stream_chat_vsi with the requested division and today's date
+  - the 'done' payload carries ⟦n⟧ markers and numbered sources
+  - access control (can_chat)
+  - CHAT_ENABLED=false -> error event, socket closed
+  - an engine error is relayed to the browser and the turn is saved with status=error
+  - turns are saved with endpoint_name = vsi-<division>
+  - a stream ending without text gives an error, not silence
 """
 
 import json
@@ -45,18 +45,14 @@ OK_EVENTS = (
 )
 
 
-def _talk(client, path, division='ALL', caps=None, pool=None, ka=None, vsi=None, vsi_enabled=True):
+def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=True):
     """One WebSocket turn with everything external mocked; returns (messages, mocks)."""
-    ka = ka or MagicMock(side_effect=_engine_stream(*OK_EVENTS))
-    vsi = vsi or MagicMock(side_effect=_engine_stream(*OK_EVENTS))
+    engine = engine or MagicMock(side_effect=_engine_stream(*OK_EVENTS))
     save_turn = AsyncMock(return_value=42)
     with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat.CHAT_VSI_ENABLED', vsi_enabled),
-        patch('server.routers.chat.CHAT_ENDPOINT', 'ka-test-endpoint'),
+        patch('server.routers.chat.CHAT_ENABLED', enabled),
         patch('server.routers.chat.TRANSLATE_BRIDGE_ENABLED', False),
-        patch('server.routers.chat.stream_chat', ka),
-        patch('server.routers.chat.stream_chat_vsi', vsi),
+        patch('server.routers.chat.stream_chat_vsi', engine),
         patch('server.routers.chat.get_capabilities', new=AsyncMock(return_value=caps or {'can_chat': True})),
         patch('server.routers.chat.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None, 'email': 'u1@example.com'})),
@@ -66,7 +62,7 @@ def _talk(client, path, division='ALL', caps=None, pool=None, ka=None, vsi=None,
         patch('server.routers.chat.augment_sources', side_effect=lambda content, sources: sources),
     ):
         received = []
-        with client.websocket_connect(path) as ws:
+        with client.websocket_connect('/api/chat/ws') as ws:
             ws.send_json({'messages': [{'role': 'user', 'content': 'Qui fait la qualification CND ?'}],
                           'session_id': 's1', 'division': division})
             try:
@@ -77,29 +73,20 @@ def _talk(client, path, division='ALL', caps=None, pool=None, ka=None, vsi=None,
                         break
             except WebSocketDisconnect:
                 pass
-    return received, {'ka': ka, 'vsi': vsi, 'save_turn': save_turn}
+    return received, {'engine': engine, 'save_turn': save_turn}
 
 
-def test_ka_route_uses_the_ka_only(client):
-    received, mocks = _talk(client, '/api/chat/ws')
+def test_route_calls_the_engine_with_the_division(client):
+    received, mocks = _talk(client, division='as')
     assert received[-1]['type'] == 'done'
-    mocks['ka'].assert_called_once()
-    mocks['vsi'].assert_not_called()
-    assert mocks['ka'].call_args.args[2] == 'ka-test-endpoint'
-
-
-def test_vsi_route_uses_the_vsi_engine_with_the_division(client):
-    received, mocks = _talk(client, '/api/chat-vsi/ws', division='as')
-    assert received[-1]['type'] == 'done'
-    mocks['ka'].assert_not_called()
-    mocks['vsi'].assert_called_once()
-    host, token, division, messages = mocks['vsi'].call_args.args
+    mocks['engine'].assert_called_once()
+    host, token, division, messages = mocks['engine'].call_args.args
     assert (host, token, division) == ('https://host', 'tok', 'AS')
-    assert messages[-1]['content'].startswith('[Date: ')      # same _with_today_date as the KA path
+    assert messages[-1]['content'].startswith('[Date: ')
 
 
-def test_vsi_route_done_has_markers_and_numbered_sources(client):
-    received, _ = _talk(client, '/api/chat-vsi/ws')
+def test_done_has_markers_and_numbered_sources(client):
+    received, _ = _talk(client)
     deltas = [m['delta'] for m in received if m['type'] == 'delta']
     done = received[-1]
     assert deltas == ['QP-1518 est la référence.']
@@ -107,30 +94,24 @@ def test_vsi_route_done_has_markers_and_numbered_sources(client):
     assert done['sources'] == [{'title': 'QP-1518', 'url': 'https://intraqual/QP-1518', 'n': 1}]
 
 
-def test_vsi_route_applies_chat_access_control(client):
-    received, mocks = _talk(client, '/api/chat-vsi/ws', caps={'can_chat': False})
+def test_route_applies_chat_access_control(client):
+    received, mocks = _talk(client, caps={'can_chat': False})
     assert received == [{'type': 'error', 'error': 'Chat access not granted'}]
-    mocks['vsi'].assert_not_called()
+    mocks['engine'].assert_not_called()
 
 
-def test_vsi_disabled_gives_error_and_closes(client):
-    received, mocks = _talk(client, '/api/chat-vsi/ws', vsi_enabled=False)
-    assert received == [{'type': 'error', 'error': 'Chat VSI is disabled'}]
-    mocks['vsi'].assert_not_called()
+def test_disabled_gives_error_and_closes(client):
+    received, mocks = _talk(client, enabled=False)
+    assert received == [{'type': 'error', 'error': 'Chat is disabled'}]
+    mocks['engine'].assert_not_called()
 
 
-def test_vsi_disabled_does_not_affect_the_ka_route(client):
-    received, mocks = _talk(client, '/api/chat/ws', vsi_enabled=False)
-    assert received[-1]['type'] == 'done'
-    mocks['ka'].assert_called_once()
-
-
-def test_vsi_engine_error_is_relayed_and_saved_as_error(client):
-    vsi = MagicMock(side_effect=_engine_stream(
+def test_engine_error_is_relayed_and_saved_as_error(client):
+    engine = MagicMock(side_effect=_engine_stream(
         json.dumps({'type': 'error', 'error': 'Document search failed (Vector Search returned 403).',
                     'error_type': 'VectorSearchError', 'http_status': 403}),
         'data: [DONE]\n\n'))
-    received, mocks = _talk(client, '/api/chat-vsi/ws', pool=MagicMock(), vsi=vsi)
+    received, mocks = _talk(client, pool=MagicMock(), engine=engine)
     assert received[-1] == {'type': 'error', 'error': 'Document search failed (Vector Search returned 403).'}
     mocks['save_turn'].assert_awaited_once()
     assert mocks['save_turn'].await_args.kwargs['status'] == 'error'
@@ -138,8 +119,8 @@ def test_vsi_engine_error_is_relayed_and_saved_as_error(client):
 
 
 @pytest.mark.parametrize('division,label', [('ALL', 'vsi-all'), ('AS', 'vsi-as'), ('IS', 'vsi-is'), ('XX', 'vsi-all')])
-def test_vsi_turn_saved_with_vsi_endpoint_name(client, division, label):
-    _, mocks = _talk(client, '/api/chat-vsi/ws', division=division, pool=MagicMock())
+def test_turn_saved_with_division_endpoint_name(client, division, label):
+    _, mocks = _talk(client, division=division, pool=MagicMock())
     mocks['save_turn'].assert_awaited_once()
     kwargs = mocks['save_turn'].await_args.kwargs
     assert kwargs['endpoint_name'] == label
@@ -147,9 +128,8 @@ def test_vsi_turn_saved_with_vsi_endpoint_name(client, division, label):
     assert mocks['save_turn'].await_args.args[7] == [{'title': 'QP-1518', 'url': 'https://intraqual/QP-1518', 'n': 1}]
 
 
-@pytest.mark.parametrize('path', ['/api/chat/ws', '/api/chat-vsi/ws'])
-def test_stream_ending_without_text_gives_an_error_not_silence(client, path):
+def test_stream_ending_without_text_gives_an_error_not_silence(client):
     empty = MagicMock(side_effect=_engine_stream('data: [DONE]\n\n'))
-    received, mocks = _talk(client, path, pool=MagicMock(), ka=empty, vsi=empty)
+    received, mocks = _talk(client, pool=MagicMock(), engine=empty)
     assert received == [{'type': 'error', 'error': 'No answer was produced. Please try again.'}]
     assert mocks['save_turn'].await_args.kwargs['status'] == 'error'

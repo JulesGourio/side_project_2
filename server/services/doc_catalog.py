@@ -5,9 +5,8 @@ for them.
 
 Why this exists
 ---------------
-The "Sources" chips under a chat answer are built solely from what the
-Knowledge Assistant endpoint annotates (``url_citation`` events + RETRIEVER
-trace spans). But the model is prompted to *name* many documents in prose
+The "Sources" chips under a chat answer are built from the documents the
+engine cites (``sources`` event). But the model is prompted to *name* many documents in prose
 (metadata-derived lists, contextual mentions), and those are never annotated —
 so they appear in the text but not as clickable chips. This module closes that
 gap by matching catalog ``REF`` strings against the answer text.

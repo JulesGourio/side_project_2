@@ -1,14 +1,14 @@
-"""Tests for the Chat VSI engine (server/services/chat_vsi.py) — plan step 2.
+"""Tests for the chat engine (server/services/chat_vsi.py).
 
 Coverage:
   - CitationStreamParser: marker split across chunks, grouped markers, unknown number,
-    '[' that is not a marker, no citation, incomplete marker at end of stream
-  - equivalence: streaming parse == whole-text parse on the 21 real golden answers
-    (tests/fixtures/chat_vsi_raw_answers.json), real chunking and random re-chunkings
-  - stream_chat_vsi contract: deltas without markers, sources + citations, one metadata
-    event before [DONE], error events (Vector Search, LLM before / during the stream)
-  - settings: division -> index, env overrides, unconfigured index
-  - inputs: ⟦n⟧ stripped from history, [Date: …] kept out of the search, rewrite fallback
+    '[' that is not a marker, no citation, incomplete marker at end of stream; equivalence
+    with the whole-text parse on the 21 real golden answers (tests/fixtures/chat_vsi_raw_answers.json)
+  - search: three queries x (reranked 12 + raw 10) merged by rank, division filter, partial
+    failures tolerated, reranker refused -> raw only, REF lookup first, title lookup appended,
+    one language per document
+  - stream_chat_vsi contract: deltas without markers, sources + citations, one metadata event
+    before [DONE], error events; prompt: instructions + answering rules + language reminder
 """
 
 import asyncio
@@ -124,17 +124,34 @@ def test_streaming_parse_equals_whole_text_parse(answer):
         assert _feed_all(chunks, documents) == expected
 
 
+
+
 # ---------------------------------------------------------------------------
-# stream_chat_vsi — the event contract
+# The engine — Vector Search faked at the HTTP level
 # ---------------------------------------------------------------------------
 
 QUESTION = 'Quelles procédures parlent de qualification CND ?'
 MESSAGES = [{'role': 'user', 'content': f'[Date: 2026-10-06]\n\n{QUESTION}'}]
-CHUNKS = [
-    {'chunk_id': 'c1', 'REF': 'QP-1518', 'url': 'https://intraqual/QP-1518', 'chunk_text': '[Source: QP-1518] passage 1'},
-    {'chunk_id': 'c2', 'REF': 'MR-1465', 'url': 'https://intraqual/MR-1465', 'chunk_text': '[Source: MR-1465] passage'},
-    {'chunk_id': 'c3', 'REF': 'QP-1518', 'url': 'https://intraqual/QP-1518', 'chunk_text': '[Source: QP-1518] passage 2'},
-]
+COLS = ['chunk_id', 'IDDOC', 'REF', 'division', 'url', 'semantic_headers', 'chunk_text']
+
+
+def _row(cid, ref, text='passage', division='AS'):
+    return {'chunk_id': cid, 'IDDOC': 1, 'REF': ref, 'division': division, 'url': f'https://intraqual/{ref}',
+            'semantic_headers': '', 'chunk_text': text}
+
+
+def _vs(answer, sent):
+    """Fake httpx post: answer(payload) -> list of rows or an int status."""
+    async def _post(self, url, json=None, headers=None):
+        sent.append(json)
+        out = answer(json)
+        if isinstance(out, int):
+            return httpx.Response(out, text='error' if out != 400 else 'reranker not enabled',
+                                  request=httpx.Request('POST', url))
+        body = {'manifest': {'columns': [{'name': c} for c in COLS]},
+                'result': {'data_array': [[r[c] for c in COLS] for r in out]}}
+        return httpx.Response(200, json=body, request=httpx.Request('POST', url))
+    return _post
 
 
 def _llm_stream(*deltas, error=None):
@@ -150,185 +167,186 @@ def _llm_stream(*deltas, error=None):
     return _gen
 
 
-def _run(messages=MESSAGES, division='ALL', llm=None, fetch=None, rewrite=None):
-    """Run stream_chat_vsi with mocked services; returns (events, mocks)."""
-    fetch = fetch or AsyncMock(return_value=CHUNKS)
-    rewrite = rewrite or AsyncMock(return_value='qualification du personnel CND')
-    llm = llm or _llm_stream('QP-1518 est la procédure [', '1', '] de référence.')
+DEFAULT_ROWS = [_row('c1', 'QP-1518', 'passage 1'), _row('c2', 'MR-1465'), _row('c3', 'QP-1518', 'passage 2')]
+
+
+def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='FR: qualification CND\nEN: NDT qualification',
+         llm=None, named=(), titled=(), language=None):
+    sent = []
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer or (lambda p: DEFAULT_ROWS), sent))
+    monkeypatch.setattr(chat_vsi.asyncio, 'sleep', AsyncMock())
+    monkeypatch.setenv('CHAT_VSI_INDEX', 'cat.sch.chunks_index')
+    rewrite_mock = AsyncMock(side_effect=rewrite) if isinstance(rewrite, BaseException) else \
+        AsyncMock(return_value=(rewrite, 'databricks-gpt-6-luna'))
     captured = {}
 
     def _llm_spy(*args, **kwargs):
         captured['prompt'] = args[3]
-        return llm(*args, **kwargs)
+        captured['chain'] = args[2]
+        return (llm or _llm_stream('QP-1518 est la procédure [', '1', '] de référence.'))(*args, **kwargs)
 
     async def _collect():
-        return [c async for c in chat_vsi.stream_chat_vsi('https://host', 'tok', division, messages)]
+        return [c async for c in chat_vsi.stream_chat_vsi('https://host', 'tok', division, messages, language)]
 
-    with (patch('server.services.chat_vsi._fetch_chunks', fetch),
-          patch('server.services.chat_vsi._complete', rewrite),
-          patch('server.services.chat_vsi.stream_answer', side_effect=_llm_spy)):
+    with (patch.object(chat_vsi.chat_vsi_llm, 'complete', rewrite_mock),
+          patch.object(chat_vsi.chat_vsi_llm, 'stream_answer', side_effect=_llm_spy),
+          patch.object(chat_vsi, 'refs_named_in', lambda text: list(named) if QUESTION in text else []),
+          patch.object(chat_vsi, 'documents_titled', lambda texts, limit: list(titled))):
         raw = asyncio.run(_collect())
     events = []
     for chunk in raw:
         if chunk.startswith('data: '):
             data = chunk[6:].strip()
             events.append('[DONE]' if data == '[DONE]' else json.loads(data))
-    return events, {'fetch': fetch, 'rewrite': rewrite, 'prompt': captured.get('prompt')}
+    return events, {'sent': sent, 'rewrite': rewrite_mock, 'prompt': captured.get('prompt'), 'chain': captured.get('chain')}
 
 
 def _types(events):
     return [e if e == '[DONE]' else e['type'] for e in events]
 
 
-def test_happy_path_contract():
-    events, _ = _run()
+def test_happy_path_contract(monkeypatch):
+    events, _ = _run(monkeypatch)
     deltas = [e['delta'] for e in events if e != '[DONE]' and e['type'] == 'response.output_text.delta']
     assert ''.join(deltas) == 'QP-1518 est la procédure  de référence.'
     assert not any(_VISIBLE_MARKER.search(d) or d.endswith('[') for d in deltas)
     sources = next(e for e in events if e != '[DONE]' and e['type'] == 'sources')
     assert sources['sources'] == [{'title': 'QP-1518', 'url': 'https://intraqual/QP-1518', 'doc_uri': 'https://intraqual/QP-1518'}]
-    assert sources['citations'] == [{'n': 1, 'pos': len('QP-1518 est la procédure ')}]
     assert _types(events)[-3:] == ['sources', 'metadata', '[DONE]']
+    meta = next(e for e in events if e != '[DONE]' and e['type'] == 'metadata')
+    assert meta['trace_id'].startswith('vsi-') and meta['tool_query'] == 'qualification CND'
+    assert meta['tool_result'] == 'QP-1518, MR-1465'
 
 
-def test_one_metadata_event_before_done_with_trace_id():
-    events, _ = _run()
-    metadata = [e for e in events if e != '[DONE]' and e['type'] == 'metadata']
-    assert len(metadata) == 1
-    assert metadata[0]['trace_id'].startswith('vsi-') and len(metadata[0]['trace_id']) > 4
-    assert _types(events).index('metadata') == len(events) - 2
-    assert metadata[0]['tool_query'] == 'qualification du personnel CND'
-    assert metadata[0]['tool_result'] == 'QP-1518, MR-1465'
+def test_three_queries_reranked_and_raw(monkeypatch):
+    _, m = _run(monkeypatch)
+    texts = [p['query_text'] for p in m['sent']]
+    assert sorted(set(texts)) == sorted([QUESTION, 'qualification CND', 'NDT qualification'])
+    reranked = [p for p in m['sent'] if 'reranker' in p]
+    raw = [p for p in m['sent'] if 'reranker' not in p]
+    assert len(reranked) == 3 and all(p['num_results'] == 12 for p in reranked)
+    assert reranked[0]['reranker']['parameters']['columns_to_rerank'] == ['REF', 'semantic_headers', 'chunk_text']
+    assert len(raw) == 3 and all(p['num_results'] == 10 and p['query_type'] == 'HYBRID' for p in raw)
+    assert all('filters_json' not in p for p in m['sent'])                       # ALL: no division filter
 
 
-def test_vector_search_http_error_gives_error_then_done():
-    request = httpx.Request('POST', 'https://host/api/2.0/vector-search/indexes/i/query')
-    fetch = AsyncMock(side_effect=httpx.HTTPStatusError('boom', request=request,
-                                                        response=httpx.Response(403, request=request, text='denied')))
-    events, _ = _run(fetch=fetch)
+def test_division_is_a_filter_on_the_single_index(monkeypatch):
+    _, m = _run(monkeypatch, division='is')
+    assert all(json.loads(p['filters_json']) == {'division': ['IS']} for p in m['sent'])
+    assert chat_vsi.division_filter('XX') == {} and chat_vsi.division_filter(None) == {}
+
+
+def test_union_merges_by_best_rank(monkeypatch):
+    def answer(p):
+        if 'reranker' in p:
+            return [_row('r1', 'A-1'), _row('both', 'B-1')]
+        return [_row('both', 'B-1'), _row('raw2', 'C-1')]
+    found = {}
+
+    async def _go():
+        found.update(await chat_vsi.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer, []))
+    with (patch.object(chat_vsi.chat_vsi_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
+          patch.object(chat_vsi, 'refs_named_in', lambda t: []), patch.object(chat_vsi, 'documents_titled', lambda t, l: [])):
+        asyncio.run(_go())
+    assert [r['chunk_id'] for r in found['rows']] == ['r1', 'both', 'raw2']
+
+
+def test_failing_queries_are_dropped_when_others_answer(monkeypatch):
+    events, _ = _run(monkeypatch, answer=lambda p: 503 if 'reranker' in p else DEFAULT_ROWS)
+    assert 'error' not in _types(events) and _types(events)[-1] == '[DONE]'
+
+
+def test_reranker_refused_gives_raw_search(monkeypatch):
+    events, m = _run(monkeypatch, answer=lambda p: 400 if 'reranker' in p else DEFAULT_ROWS)
+    assert 'error' not in _types(events)
+    assert len([p for p in m['sent'] if 'reranker' in p]) >= 1
+
+
+def test_vector_search_down_is_an_error_event(monkeypatch):
+    events, _ = _run(monkeypatch, answer=lambda p: 403)
     assert _types(events) == ['error', '[DONE]']
     assert events[0]['error_type'] == 'VectorSearchError' and events[0]['http_status'] == 403
 
 
-def test_vector_search_timeout_gives_error_then_done():
-    events, _ = _run(fetch=AsyncMock(side_effect=httpx.ReadTimeout('slow')))
-    assert _types(events) == ['error', '[DONE]']
-    assert events[0]['error_type'] == 'TimeoutError'
+def test_named_documents_first_titles_last_one_language(monkeypatch):
+    def answer(p):
+        f = json.loads(p.get('filters_json') or '{}')
+        if f.get('REF') == ['MI-14242']:
+            return [_row('n1', 'MI-14242', 'slide 15')]
+        if f.get('REF') == ['IQ22-223']:
+            return [_row('t1', 'IQ22-223', 'stocker')]
+        return [_row('c1', 'Q0102QP_GB'), _row('c2', 'Q0102QP_BG'), _row('c3', 'QP-1518')]
+    events, m = _run(monkeypatch, answer=answer, named=['MI-14242'], titled=[('IQ22-223', ['IQ22-223'], 2.0)])
+    user_turn = m['prompt'][-1]['content']
+    order = [ref for ref in ('MI-14242', 'Q0102QP_GB', 'QP-1518', 'IQ22-223') if f'Document {ref}' in user_turn]
+    assert order == ['MI-14242', 'Q0102QP_GB', 'QP-1518', 'IQ22-223']
+    assert 'Document Q0102QP_BG' not in user_turn                                   # one language per document
+    meta = next(e for e in events if e != '[DONE]' and e['type'] == 'metadata')
+    assert 'ref_lookup(MI-14242)' in meta['tool_name'] and 'title_lookup(IQ22-223)' in meta['tool_name']
 
 
-def test_llm_error_before_stream_gives_error_then_done():
-    events, _ = _run(llm=_llm_stream(error='Chat failed. Details: endpoint returned 400'))
-    assert _types(events) == ['error', '[DONE]']
-    assert 'Chat failed' in events[0]['error']
+def test_prompt_rules_and_language(monkeypatch):
+    _, m = _run(monkeypatch, language='Spanish')
+    system = m['prompt'][0]['content']
+    assert system.startswith(chat_vsi.load_instructions('ALL')[:200])
+    assert '# Answering rules' in system and '# How to cite (mandatory)' in system and 'quote it exactly' in system
+    assert m['prompt'][-1]['content'].endswith('write your whole answer in Spanish, the language of the question above '
+                                               '(not the language of the documents).')
+    assert '[1] Document QP-1518\npassage 1\n\npassage 2' in m['prompt'][-1]['content']
+    assert m['chain'][0] == 'databricks-gpt-6-luna'
 
 
-def test_llm_error_mid_stream_emits_no_partial_marker():
-    events, _ = _run(llm=_llm_stream('Début de réponse [', '1', error='Qualibot is tired'))
+def test_generic_language_reminder_without_language(monkeypatch):
+    _, m = _run(monkeypatch)
+    assert m['prompt'][-1]['content'].endswith(chat_vsi.LANGUAGE_REMINDER)
+
+
+def test_history_markers_stripped_and_date_kept_out_of_search(monkeypatch):
+    messages = [{'role': 'user', 'content': 'Première question'},
+                {'role': 'assistant', 'content': 'Réponse citant QP-1518⟦1⟧.'},
+                {'role': 'user', 'content': f'[Date: 2026-10-06]\n\n{QUESTION}'}]
+    _, m = _run(monkeypatch, messages=messages)
+    transcript = m['rewrite'].await_args.args[3][1]['content']
+    assert '⟦' not in transcript and '[Date:' not in transcript
+    assert all('[Date:' not in p['query_text'] for p in m['sent'])
+    assert f'[Date: 2026-10-06]\n\n{QUESTION}' in m['prompt'][-1]['content']
+
+
+def test_rewrite_failure_searches_with_the_question_only(monkeypatch):
+    events, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
+    assert {p['query_text'] for p in m['sent']} == {QUESTION}
+    assert 'error' not in _types(events)
+
+
+def test_llm_error_mid_stream_emits_no_partial_marker(monkeypatch):
+    events, _ = _run(monkeypatch, llm=_llm_stream('Début de réponse [', '1', error='down'))
     assert _types(events) == ['response.output_text.delta', 'error', '[DONE]']
     assert events[0]['delta'] == 'Début de réponse '
-    assert '[' not in events[0]['delta']
 
 
-def test_last_message_must_be_user():
-    events, _ = _run(messages=[{'role': 'assistant', 'content': 'Bonjour'}])
-    assert _types(events) == ['error', '[DONE]']
-    assert events[0]['error_type'] == 'InputError'
+def test_last_message_must_be_user(monkeypatch):
+    events, _ = _run(monkeypatch, messages=[{'role': 'assistant', 'content': 'Bonjour'}])
+    assert _types(events) == ['error', '[DONE]'] and events[0]['error_type'] == 'InputError'
 
 
-# ---------------------------------------------------------------------------
-# Settings
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize('division,expected', [
-    ('ALL', 'dev_landingzone.qualibot.chunks_index_v1'),
-    ('AS', 'dev_landingzone.qualibot.chunks_as_index_v1'),
-    ('is', 'dev_landingzone.qualibot.chunks_is_index_v1'),
-    ('XX', 'dev_landingzone.qualibot.chunks_index_v1'),
-    (None, 'dev_landingzone.qualibot.chunks_index_v1'),
-])
-def test_division_to_index_defaults(division, expected, monkeypatch):
-    for d in ('ALL', 'AS', 'IS'):
-        monkeypatch.delenv(f'CHAT_VSI_INDEX_{d}', raising=False)
-    assert chat_vsi.index_for_division(division) == expected
+def test_split_bilingual():
+    assert chat_vsi.split_bilingual('FR: requête\nEN: query') == ('requête', 'query')
+    assert chat_vsi.split_bilingual('juste une requête') == ('juste une requête', '')
 
 
-def test_index_env_override(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_INDEX_AS', 'prod_landingzone.qualibot.chunks_as_index')
-    assert chat_vsi.index_for_division('AS') == 'prod_landingzone.qualibot.chunks_as_index'
-
-
-def test_division_routes_to_its_index(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_INDEX_IS', 'cat.sch.is_index')
-    _, mocks = _run(division='IS')
-    assert {call.args[2] for call in mocks['fetch'].await_args_list} == {'cat.sch.is_index'}
-
-
-def test_unconfigured_index_gives_explicit_error(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_INDEX_ALL', '')
-    events, mocks = _run()
-    assert _types(events) == ['error', '[DONE]']
-    assert events[0]['error_type'] == 'ConfigError' and 'CHAT_VSI_INDEX_ALL' in events[0]['error']
-    mocks['fetch'].assert_not_awaited()
-
-
-def test_instructions_loaded_per_division():
+def test_instructions_per_division():
     for division in ('ALL', 'AS', 'IS'):
         text = chat_vsi.load_instructions(division)
-        assert len(text) > 6000 and '▎ Note' not in text
+        assert len(text) > 6000 and '# Answering rules' in text and 'NF, FDAQL' in text
     assert 'Reference ordering (AS)' in chat_vsi.load_instructions('AS')
     assert 'Reference ordering (AS)' not in chat_vsi.load_instructions('IS')
 
 
-# ---------------------------------------------------------------------------
-# Inputs
-# ---------------------------------------------------------------------------
-
-def test_stored_markers_are_stripped_from_history():
-    messages = [
-        {'role': 'user', 'content': 'Première question'},
-        {'role': 'assistant', 'content': 'Réponse citant QP-1518⟦1⟧ et MR-1465⟦2⟧.'},
-        {'role': 'user', 'content': f'[Date: 2026-10-06]\n\n{QUESTION}'},
-    ]
-    _, mocks = _run(messages=messages)
-    assert all('⟦' not in m['content'] for m in mocks['prompt'])
-    transcript = mocks['rewrite'].await_args.args[3][1]['content']
-    assert '⟦' not in transcript and 'Réponse citant QP-1518 et MR-1465.' in transcript
-
-
-def test_date_prefix_kept_out_of_search_but_given_to_the_answer():
-    _, mocks = _run()
-    assert [call.args[3] for call in mocks['fetch'].await_args_list] == [QUESTION, 'qualification du personnel CND']
-    assert '[Date:' not in mocks['rewrite'].await_args.args[3][1]['content']
-    assert mocks['prompt'][-1]['content'].endswith(f'[Date: 2026-10-06]\n\n{QUESTION}')
-    assert mocks['prompt'][0]['role'] == 'system' and '# How to cite (mandatory)' in mocks['prompt'][0]['content']
-
-
-def test_documents_numbered_in_prompt():
-    _, mocks = _run()
-    user_turn = mocks['prompt'][-1]['content']
-    assert '[1] Document QP-1518\n[Source: QP-1518] passage 1\n\n[Source: QP-1518] passage 2' in user_turn
-    assert '[2] Document MR-1465' in user_turn
-
-
-def test_rewrite_failure_falls_back_to_question_only():
-    events, mocks = _run(rewrite=AsyncMock(side_effect=httpx.ConnectError('down')))
-    assert [call.args[3] for call in mocks['fetch'].await_args_list] == [QUESTION]
-    assert _types(events)[-1] == '[DONE]' and 'error' not in _types(events)
-
-
-def test_retrieve_uses_the_real_vector_search_helper(monkeypatch):
-    """Contract with vector_search._fetch_chunks itself (only HTTP is faked): the mocks
-    above would not notice a change of its signature or return shape."""
-    sent = []
-
-    async def _post(self, url, json=None, headers=None):
-        sent.append(json)
-        body = {'manifest': {'columns': [{'name': 'chunk_id'}, {'name': 'REF'}, {'name': 'url'}, {'name': 'chunk_text'}]},
-                'result': {'data_array': [['c1', 'QP-1518', 'https://intraqual/QP-1518', 'texte']]}}
-        return httpx.Response(200, json=body, request=httpx.Request('POST', url))
-
-    monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
-    rows = asyncio.run(chat_vsi.retrieve('https://host', 'tok', 'cat.sch.idx', ['q' * 30000, 'requête'], 5))
-    assert [r['chunk_id'] for r in rows] == ['c1']
-    assert [len(p['query_text']) for p in sent] == [chat_vsi._MAX_QUERY_CHARS, len('requête')]
-    assert all(p['num_results'] == 5 and p['query_type'] == 'HYBRID' for p in sent)
+def test_settings_defaults(monkeypatch):
+    for name in ('CHAT_VSI_INDEX', 'CHAT_VSI_LLM_ENDPOINT', 'CHAT_VSI_REWRITE_ENDPOINT', 'CHAT_VSI_ANSWER_MAX_TOKENS'):
+        monkeypatch.delenv(name, raising=False)
+    s = chat_vsi.settings()
+    assert s['index'] == 'dev_landingzone.qualibot.chunks_index' and s['llm'] == 'databricks-gpt-6-luna'
+    assert s['rewrite_llm'] == 'databricks-gpt-6-luna' and s['answer_max_tokens'] == 8000
+    assert s['rerank_top_k'] == 12 and s['raw_top_k'] == 10

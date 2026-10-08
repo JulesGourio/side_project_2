@@ -1,18 +1,16 @@
 """Cross-lingual bridge for chat: translate non-French/English questions to
-English before hitting the Knowledge Assistant, then translate the answer back.
+English before the document search, then translate the answer back.
 
 Why this exists
 ----------------
-The KA's retrieval embeds the raw question text. A question asked in a third
+The search embeds the question text. A question asked in a third
 language (Czech, German, Spanish, ...) embeds far from the (mostly French,
 partly English) corpus and only matches the sparse same-language document
 slice, missing most of the relevant content (confirmed empirically
 2026-07-08 — a Czech question about warehouse rules retrieved a different,
-narrower set of documents than the same question in French/English). Adding
-a "search in French" instruction to the KA system prompt had no measurable
-effect, suggesting retrieval embeds the raw conversation text outside the
-model's control — so the fix has to happen before the question reaches the
-KA at all.
+narrower set of documents than the same question in French/English). (Measured with the former
+Knowledge Assistant, where a "search in French" instruction had no effect —
+so the fix happens before the question reaches the search.)
 
 English, not French, is used as the pivot language: a side-by-side test on
 several questions (2026-07-08) showed English retrieval consistently pulling
@@ -57,7 +55,7 @@ _FASTTEXT_MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'li
 _FASTTEXT_CONFIDENCE_THRESHOLD = 0.65
 
 # Skip the LLM round trip entirely for the two languages the corpus and the
-# KA's own language-matching instructions already handle natively.
+# answer prompt's language rule already handle natively.
 _NO_TRANSLATION_NEEDED = {'fr', 'en'}
 
 # An answer is only declared "in the wrong language" above this confidence: a false alarm
@@ -65,7 +63,7 @@ _NO_TRANSLATION_NEEDED = {'fr', 'en'}
 _MISMATCH_CONFIDENCE_THRESHOLD = 0.8
 
 # English names of the languages met in Latécoère's sites (FR, CZ, BG, MX, BR) and a few
-# neighbours — named in the answer-language reminder (chat_vsi_prompts.py).
+# neighbours — named in the answer-language reminder (chat_vsi.py).
 LANGUAGE_NAMES = {'fr': 'French', 'en': 'English', 'es': 'Spanish', 'cs': 'Czech', 'bg': 'Bulgarian',
                   'pt': 'Portuguese', 'de': 'German', 'it': 'Italian', 'pl': 'Polish', 'ro': 'Romanian',
                   'sk': 'Slovak', 'nl': 'Dutch', 'ru': 'Russian', 'uk': 'Ukrainian'}
@@ -142,8 +140,8 @@ def _fast_lang_guess(text: str) -> Optional[str]:
 def _answer_language_mismatch(answer: str, expected_lang: str) -> bool:
     """True if the answer confidently looks like a different language than
     the question asked for. Guards the fr/en case, which normally skips the
-    LLM bridge entirely and trusts the KA's own language-matching — but the
-    KA has been observed answering in the wrong one of the two anyway (chat
+    LLM bridge entirely and trusts the answer prompt's language rule — but the
+    model has been observed answering in the wrong one of the two anyway (chat
     session 5bd9382a, 2026-07-08: an all-English conversation got one French
     answer mid-thread with nothing in the history to explain the switch)."""
     detected = _fast_lang_guess_with_prob(clean_for_language(answer, answer=True))
@@ -291,7 +289,7 @@ async def translate_question_to_en(question: str, host: str, token: str) -> tupl
 
 
 async def translate_answer_back(answer: str, ctx: TranslationContext, host: str, token: str) -> str:
-    """Translate the KA's answer back to the question's language. No-op when
+    """Translate the answer back to the question's language. No-op when
     the question didn't need bridging AND the answer isn't a confident
     language mismatch — see _answer_language_mismatch for why the fr/en case
     still needs a check rather than being trusted outright."""

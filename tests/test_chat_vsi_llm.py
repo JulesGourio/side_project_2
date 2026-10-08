@@ -1,5 +1,5 @@
 """Chat VSI resilience: fallback models, retries, continuation, load limit (chat_vsi_llm.py),
-tolerant Vector Search (chat_vsi_rerank.py) and language detection helpers (translation_bridge.py)."""
+Vector Search retries (chat_vsi.py) and language detection helpers (translation_bridge.py)."""
 
 import asyncio
 import json
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from server.services import chat_vsi, chat_vsi_llm, chat_vsi_prompts, chat_vsi_rerank, translation_bridge
+from server.services import chat_vsi, chat_vsi_llm, translation_bridge
 
 PRIMARY, BACKUP = 'databricks-gpt-6-luna', 'databricks-gpt-5-6-luna'
 MESSAGES = [{'role': 'system', 'content': 's'}, {'role': 'user', 'content': 'q'}]
@@ -194,53 +194,26 @@ def test_rewrite_falls_back_when_the_first_model_returns_nothing(monkeypatch):
 
     async def _post(self, url, json=None, headers=None):
         sent.append(url)
-        content = '' if 'sonnet' in url else 'qualification CND'
+        content = '' if PRIMARY in url else 'FR: qualification CND\nEN: NDT qualification'
         return httpx.Response(200, json={'choices': [{'message': {'content': content}}]}, request=httpx.Request('POST', url))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
-    monkeypatch.setenv('CHAT_VSI_LLM_ENDPOINT', PRIMARY)
-    q = asyncio.run(chat_vsi_rerank.search_query_fr('https://h', 't', 'databricks-claude-sonnet-4-6',
-                                                    [{'role': 'user', 'content': 'NDT?'}]))
-    assert q == 'qualification CND' and PRIMARY in sent[-1]
+    monkeypatch.setenv('CHAT_VSI_REWRITE_ENDPOINT', PRIMARY)
+    monkeypatch.setenv('CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS', BACKUP)
+    q = asyncio.run(chat_vsi.rewrite_queries('https://h', 't', [{'role': 'user', 'content': 'NDT?'}]))
+    assert q == ('qualification CND', 'NDT qualification') and BACKUP in sent[-1]
 
 
 # --- Vector Search -----------------------------------------------------------
-
-ROW = {'chunk_id': 'c1', 'REF': 'QP-1518', 'url': 'u', 'chunk_text': 'texte'}
-VS_BODY = {'manifest': {'columns': [{'name': k} for k in ROW]}, 'result': {'data_array': [list(ROW.values())]}}
-
 
 def test_vector_search_query_retried_on_503(monkeypatch):
     statuses = [503, 200]
 
     async def _post(self, url, json=None, headers=None):
-        status = statuses.pop(0)
-        return httpx.Response(status, json=VS_BODY if status == 200 else {}, request=httpx.Request('POST', url))
+        return httpx.Response(statuses.pop(0), json={}, request=httpx.Request('POST', url))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
-    monkeypatch.setattr(chat_vsi_rerank.random, 'random', lambda: 0.0)
-    monkeypatch.setattr(chat_vsi_rerank.asyncio, 'sleep', AsyncMock())
-    rows, reranked = asyncio.run(chat_vsi_rerank.retrieve_reranked('https://h', 't', 'idx', ['q'], 12))
-    assert reranked and rows[0]['chunk_id'] == 'c1' and not statuses
-
-
-def test_one_failing_query_does_not_fail_the_search(monkeypatch):
-    async def _post(self, url, json=None, headers=None):
-        if json['query_text'] == 'bad':
-            return httpx.Response(403, text='no', request=httpx.Request('POST', url))
-        return httpx.Response(200, json=VS_BODY, request=httpx.Request('POST', url))
-    monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
-    rows, _ = asyncio.run(chat_vsi_rerank.retrieve_reranked('https://h', 't', 'idx', ['good', 'bad'], 12))
-    assert [r['chunk_id'] for r in rows] == ['c1']
-
-
-def test_union_survives_one_side_failing(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_RERANK_MERGE', 'union')
-    conv = [{'role': 'user', 'content': 'q'}]
-    with (patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value=None)),
-          patch.object(chat_vsi_rerank, 'retrieve_reranked',
-                       AsyncMock(side_effect=chat_vsi.ChatVsiError('down', 'VectorSearchError', 503))),
-          patch.object(chat_vsi_rerank, 'retrieve_raw', AsyncMock(return_value=[ROW]))):
-        found = asyncio.run(chat_vsi_rerank.retrieve_for_turn('h', 't', 'idx', PRIMARY, conv))
-    assert found['rows'] == [ROW] and not found['reranked']
+    monkeypatch.setattr(chat_vsi.asyncio, 'sleep', AsyncMock())
+    resp = asyncio.run(chat_vsi._post_query('https://h', 't', 'idx', {'query_text': 'q'}))
+    assert resp.status_code == 200 and not statuses
 
 
 # --- Language ------------------------------------------------------------------
@@ -264,14 +237,6 @@ def test_answer_language():
     assert translation_bridge.answer_language(ctx('unknown', 'x', False), 'q') is None
     with patch.object(translation_bridge, '_fast_lang_guess', return_value='es'):
         assert translation_bridge.answer_language(None, '¿Qué procedimiento?') == 'Spanish'
-
-
-def test_named_language_reminder(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_LANGUAGE_REMINDER', 'on')
-    prompt = chat_vsi_prompts.build_prompt('ALL', [{'role': 'user', 'content': 'q'}],
-                                           [('QP-1518', {'url': 'u', 'passages': ['p']})], answer_language='Spanish')
-    assert prompt[-1]['content'].endswith('write your whole answer in Spanish, the language of the question above '
-                                          '(not the language of the documents).')
 
 
 def test_translation_falls_back_to_the_other_model(monkeypatch):

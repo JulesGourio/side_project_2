@@ -1,4 +1,4 @@
-"""Chat router — conversational interface backed by Databricks knowledge assistant."""
+"""Chat router — conversational interface answered by the Vector Search engine (services/chat_vsi.py)."""
 
 import asyncio
 import json
@@ -12,14 +12,12 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..services.chat_vsi import normalize_division
-from ..services.chat_vsi_variants import stream_chat_vsi, vsi_variant
+from ..services.chat_vsi import normalize_division, stream_chat_vsi
 from ..services.doc_catalog import augment_sources
 from ..services.lakebase import get_pool, store_error, upsert_user
-from ..services.streaming import stream_chat
 from ..services.translation_bridge import (
     ENABLED as TRANSLATE_BRIDGE_ENABLED,
     answer_language as answer_language_for,
@@ -32,37 +30,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 CHAT_ENABLED = os.getenv('CHAT_ENABLED', 'true').lower() == 'true'
-# Chat VSI tab: same chat, answered from the Vector Search indexes instead of the
-# Knowledge Assistant (services/chat_vsi.py). Needs CHAT_ENABLED too.
-CHAT_VSI_ENABLED = os.getenv('CHAT_VSI_ENABLED', 'true').lower() == 'true'
-ENGINE_KA = 'ka'
-ENGINE_VSI = 'vsi'
-# Base / fallback endpoint. Per-division endpoints below let the division
-# selector route to a single-source Knowledge Assistant (IS-only / AS-only /
-# combined), which is the robust fix for source scoping — a single-source KA
-# never does cross-source parallel sub-queries, so it can't return the wrong
-# division or hit the request-id self-collision. When the per-division vars are
-# unset (e.g. dev with one KA), everything falls back to CHAT_ENDPOINT, so the
-# previous single-endpoint behaviour is preserved.
-CHAT_ENDPOINT = os.getenv('CHAT_ENDPOINT', '')
-CHAT_ENDPOINT_ALL = os.getenv('CHAT_ENDPOINT_ALL', '')
-CHAT_ENDPOINT_AS = os.getenv('CHAT_ENDPOINT_AS', '')
-CHAT_ENDPOINT_IS = os.getenv('CHAT_ENDPOINT_IS', '')
-
-
-def _endpoint_for_division(division: str) -> str:
-    """Map the requested division scope to its Knowledge Assistant endpoint.
-
-    Fallbacks resolve at call time (not import time) so tests can patch the
-    module constants and per-environment overrides stay easy to reason about.
-    """
-    d = (division or 'ALL').upper()
-    if d == 'IS':
-        return CHAT_ENDPOINT_IS or CHAT_ENDPOINT_ALL or CHAT_ENDPOINT
-    if d == 'AS':
-        return CHAT_ENDPOINT_AS or CHAT_ENDPOINT_ALL or CHAT_ENDPOINT
-    return CHAT_ENDPOINT_ALL or CHAT_ENDPOINT
-
 # Cap how many past messages are replayed to the endpoint each turn, so the
 # prompt stays bounded as a conversation grows (this is a RAG assistant — each
 # answer is grounded in retrieval, so long conversational memory matters less).
@@ -178,12 +145,11 @@ def _trim_history(messages: List[dict]) -> List[dict]:
 
 def _with_today_date(messages: List[dict]) -> List[dict]:
     """Return a COPY of messages with today's date prepended to the last user
-    turn. The Knowledge Assistant endpoint has no way to know the current
+    turn. The answer model has no way to know the current
     date on its own (it can't call a clock), so date-relative questions
     ("les documents publiés cette année", "diffusés depuis 2024"...) fail
     silently otherwise. Injected into the user turn itself (not a 'system'
-    role message) since the endpoint's accepted message roles for
-    agent-framework serving are not guaranteed to include 'system'.
+    role message): the engine puts its own system message first.
 
     Kept language-neutral (plain ISO date, no French/English sentence) —a
     full "Nous sommes le lundi ..." sentence here was found (2026-07-07) to
@@ -230,17 +196,6 @@ def _get_chat_credentials(request: Request) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
-
-
-class ChatMessageIn(BaseModel):
-    role: str
-    content: str
-
-
-class ChatRequest(BaseModel):
-    messages: List[ChatMessageIn]
-    session_id: Optional[str] = None
-    division: Optional[str] = 'ALL'
 
 
 class ChatFeedbackRequest(BaseModel):
@@ -372,210 +327,16 @@ async def _save_turn(
 # ---------------------------------------------------------------------------
 
 
-@router.post('/chat/stream', dependencies=[Depends(require_chat)])
-async def chat_stream(body: ChatRequest, request: Request):
-    if not CHAT_ENABLED:
-        return JSONResponse({'error': 'Chat is disabled'}, status_code=503)
-    division = (body.division or 'ALL').upper()
-    endpoint = _endpoint_for_division(division)
-    if not endpoint:
-        return JSONResponse({'error': 'CHAT_ENDPOINT not configured'}, status_code=503)
-
-    host, token = _get_chat_credentials(request)
-    if not host or not token:
-        return JSONResponse({'error': 'Missing Databricks credentials'}, status_code=503)
-
-    try:
-        identity = await get_user_identity(request)
-    except Exception:
-        identity = {'user_id': '', 'workspace_id': None, 'email': None}
-    user_id = identity['user_id']
-    workspace_id = identity.get('workspace_id')
-    workspace_url = get_workspace_url()
-
-    session_id = body.session_id or str(uuid.uuid4())
-    messages = _trim_history([{'role': m.role, 'content': m.content} for m in body.messages])
-
-    user_content = next(
-        (m['content'] for m in reversed(messages) if m['role'] == 'user'), ''
-    )
-    logger.info('chat turn [stream]: division=%s endpoint=%s session=%s user=%s msgs=%d q=%r',
-                division, endpoint, session_id, identity.get('email') or user_id,
-                len(messages), user_content[:160])
-
-    async def generate():
-        accumulated: list[str] = []
-        collected_sources: list = []
-        collected_citations: list = []
-        collected_meta: dict = {}
-        error_occurred = False
-        error_text = ''
-        fwd_count = 0
-        translate_ctx = None
-        messages_for_ka = messages
-        # First byte out immediately: the translation bridge below can take a
-        # few seconds and the client would otherwise see a dead connection.
-        yield ': keepalive\n\n'
-        if TRANSLATE_BRIDGE_ENABLED and user_content:
-            en_question, translate_ctx = await translate_question_to_en(user_content, host, token)
-            if translate_ctx.needs_translation:
-                messages_for_ka = [dict(m) for m in messages]
-                for i in range(len(messages_for_ka) - 1, -1, -1):
-                    if messages_for_ka[i]['role'] == 'user':
-                        messages_for_ka[i]['content'] = en_question
-                        break
-                logger.info('chat translate-bridge [stream]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
-
-        async def _persist(status: str, content: str) -> Optional[int]:
-            """Persist the turn (ok or error). The question is saved even on
-            failure, so it stays traceable. Best-effort."""
-            pool = get_pool()
-            if not (pool and user_content):
-                return None
-            return await _save_turn(
-                pool, session_id, user_id, workspace_id, workspace_url,
-                user_content, content,
-                collected_sources,
-                collected_meta.get('trace_id', ''),
-                collected_meta.get('tool_name', ''),
-                collected_meta.get('tool_query', ''),
-                collected_meta.get('tool_result', ''),
-                collected_meta.get('reasoning_steps', []),
-                email=identity.get('email'),
-                endpoint_name=endpoint,
-                status=status,
-                error_msg=error_text,
-                division=division,
-                question_lang=translate_ctx.lang_code if translate_ctx else '',
-            )
-
-        try:
-            async for chunk in stream_chat(host, token, endpoint, _with_today_date(messages_for_ka)):
-                if chunk.startswith('data: [DONE]'):
-                    logger.info('chat turn done [stream]: division=%s endpoint=%s deltas=%d sources=%d citations=%d', division, endpoint, fwd_count, len(collected_sources), len(collected_citations))
-                    if error_occurred:
-                        await _persist('error', ''.join(accumulated))
-                    elif user_content and accumulated:
-                        # Bake the inline citation markers into the final answer
-                        # so the client renders superscript [n] links and the
-                        # stored content shows them again on reload.
-                        final_content = _apply_citation_markers(''.join(accumulated), collected_citations)
-                        # Re-surface documents the answer names in prose but the
-                        # endpoint never annotated, so they become clickable chips.
-                        collected_sources = augment_sources(''.join(accumulated), collected_sources)
-                        # Number only the inline-cited sources; prose-only chips
-                        # (catalog-resurfaced) stay numberless.
-                        _number_sources(collected_sources, collected_citations)
-                        if translate_ctx:
-                            final_content = await translate_answer_back(final_content, translate_ctx, host, token)
-                        msg_id = await _persist('ok', final_content)
-                        done_payload = {
-                            'type': 'done',
-                            'session_id': session_id,
-                            'message_id': msg_id,
-                            'content': final_content,
-                            'sources': collected_sources,
-                        }
-                        yield f'data: {json.dumps(done_payload)}\n\n'
-                    yield 'data: [DONE]\n\n'
-                    return
-
-                if not chunk.startswith('data: '):
-                    yield chunk  # keepalive comments
-                    continue
-
-                raw = chunk[6:].strip()
-                try:
-                    parsed = json.loads(raw)
-                    t = parsed.get('type', '')
-                    if t == 'response.output_text.delta':
-                        delta = parsed.get('delta', '')
-                        accumulated.append(delta)
-                        fwd_count += 1
-                        if fwd_count == 1:
-                            logger.info('chat generate: forwarding first delta to client')
-                        if translate_ctx and translate_ctx.needs_translation:
-                            # Never forward raw English to the client — the
-                            # client shows "Thinking" until the full answer
-                            # is translated in one pass and sent in the
-                            # 'done' payload below.
-                            pass
-                        else:
-                            yield chunk
-                    elif t == 'sources':
-                        srcs = parsed.get('sources')
-                        cits = parsed.get('citations')
-                        collected_sources = srcs if isinstance(srcs, list) else []
-                        collected_citations = cits if isinstance(cits, list) else []
-                        logger.info('chat generate: collected %d sources, %d citations', len(collected_sources), len(collected_citations))
-                        # absorbed — sources sent in done payload, citations baked
-                        # into the final content; neither forwarded raw to client
-                    elif t == 'metadata':
-                        collected_meta = parsed
-                        # absorbed — saved to DB, not forwarded to client
-                    elif t == 'error':
-                        error_occurred = True
-                        error_text = parsed.get('error', '')
-                        asyncio.create_task(store_error(
-                            endpoint='/api/chat/stream',
-                            error_type=parsed.get('error_type', 'ChatLLMError'),
-                            error_msg=error_text,
-                            user_id=user_id,
-                            workspace_id=workspace_id or '',
-                        ))
-                        yield chunk
-                    else:
-                        yield chunk
-                except Exception:
-                    logger.warning('chat generate: unparseable SSE chunk forwarded as-is: %r', raw[:200])
-                    yield chunk
-
-        except Exception as exc:
-            logger.error('Chat stream error: %s', exc, exc_info=True)
-            error_occurred = True
-            error_text = str(exc)
-            asyncio.create_task(store_error(
-                endpoint='/api/chat/stream',
-                error_type=type(exc).__name__,
-                error_msg=error_text,
-                user_id=user_id,
-                workspace_id=workspace_id or '',
-                stack_trace=traceback.format_exc(),
-            ))
-            await _persist('error', ''.join(accumulated))
-            yield f'data: {json.dumps({"type": "error", "error": str(exc)})}\n\n'
-            yield 'data: [DONE]\n\n'
-
-    return StreamingResponse(
-        generate(),
-        media_type='text/event-stream',
-        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
-    )
-
-
 @router.websocket('/chat/ws')
 async def chat_ws(websocket: WebSocket):
-    """WebSocket streaming endpoint — avoids Databricks Apps proxy buffering. Answered by the KA."""
-    await _run_chat_ws(websocket, ENGINE_KA)
-
-
-@router.websocket('/chat-vsi/ws')
-async def chat_vsi_ws(websocket: WebSocket):
-    """Same contract as /chat/ws, answered by the Vector Search engine (services/chat_vsi.py)."""
-    await _run_chat_ws(websocket, ENGINE_VSI)
-
-
-async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
-    """One chat turn over a WebSocket. ``engine`` picks who answers: the division's
-    Knowledge Assistant (``stream_chat``) or the VSI engine (``stream_chat_vsi``). Both
-    yield the same event stream, so everything after — citation markers, catalog
-    sources, translation back, persistence — is shared."""
+    """One chat turn over a WebSocket (avoids Databricks Apps proxy buffering), answered by
+    the Vector Search engine (``stream_chat_vsi``); then citation markers, catalog sources,
+    translation back and persistence."""
     await websocket.accept()
-    is_vsi = engine == ENGINE_VSI
-    route = '/api/chat-vsi/ws' if is_vsi else '/api/chat/ws'
+    route = '/api/chat/ws'
 
-    if not CHAT_ENABLED or (is_vsi and not CHAT_VSI_ENABLED):
-        await websocket.send_json({'type': 'error', 'error': 'Chat VSI is disabled' if is_vsi and CHAT_ENABLED else 'Chat is disabled'})
+    if not CHAT_ENABLED:
+        await websocket.send_json({'type': 'error', 'error': 'Chat is disabled'})
         await websocket.close()
         return
 
@@ -604,17 +365,8 @@ async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in data.get('messages', [])])
     session_id = data.get('session_id') or str(uuid.uuid4())
     division = (data.get('division') or 'ALL').upper()
-    if is_vsi:
-        # Recorded as endpoint_name, so VSI turns stay distinguishable from KA turns.
-        # The variant is part of the name when it isn't the baseline (vsi-rerank-all).
-        variant = vsi_variant()
-        endpoint = f"vsi-{'' if variant == 'baseline' else variant + '-'}{normalize_division(division).lower()}"
-    else:
-        endpoint = _endpoint_for_division(division)
-        if not endpoint:
-            await websocket.send_json({'type': 'error', 'error': 'CHAT_ENDPOINT not configured'})
-            await websocket.close()
-            return
+    # Recorded as endpoint_name (the older turns of the Knowledge Assistant carry ka-… names).
+    endpoint = f'vsi-{normalize_division(division).lower()}'
 
     try:
         identity = await get_user_identity(websocket)  # type: ignore[arg-type]
@@ -625,8 +377,8 @@ async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
     workspace_url = get_workspace_url()
 
     user_content = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), '')
-    logger.info('chat turn [ws]: engine=%s division=%s endpoint=%s session=%s user=%s msgs=%d q=%r',
-                engine, division, endpoint, session_id, identity.get('email') or user_id,
+    logger.info('chat turn [ws]: division=%s endpoint=%s session=%s user=%s msgs=%d q=%r',
+                division, endpoint, session_id, identity.get('email') or user_id,
                 len(messages), user_content[:160])
 
     accumulated: list[str] = []
@@ -636,24 +388,23 @@ async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
     error_occurred = False
     error_text = ''
     translate_ctx = None
-    messages_for_ka = messages
+    messages_for_engine = messages
     if TRANSLATE_BRIDGE_ENABLED and user_content:
         en_question, translate_ctx = await translate_question_to_en(user_content, host, token)
         if translate_ctx.needs_translation:
-            messages_for_ka = [dict(m) for m in messages]
-            for i in range(len(messages_for_ka) - 1, -1, -1):
-                if messages_for_ka[i]['role'] == 'user':
-                    messages_for_ka[i]['content'] = en_question
+            messages_for_engine = [dict(m) for m in messages]
+            for i in range(len(messages_for_engine) - 1, -1, -1):
+                if messages_for_engine[i]['role'] == 'user':
+                    messages_for_engine[i]['content'] = en_question
                     break
             logger.info('chat translate-bridge [ws]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
 
-    # The language the answer must be in, named in the VSI prompt's language reminder
-    # (CHAT_VSI_LANGUAGE_REMINDER): English when the bridge translated the question (it
-    # translates the answer back), else the detected French/English, else a local guess.
-    answer_language = answer_language_for(translate_ctx, user_content) if is_vsi and user_content else None
-    answer_stream = (stream_chat_vsi(host, token, division, _with_today_date(messages_for_ka),
-                                     answer_language=answer_language) if is_vsi
-                     else stream_chat(host, token, endpoint, _with_today_date(messages_for_ka)))
+    # The language the answer must be in, named in the prompt's language reminder: English
+    # when the bridge translated the question (it translates the answer back), else the
+    # detected French/English, else a local guess.
+    answer_language = answer_language_for(translate_ctx, user_content) if user_content else None
+    answer_stream = stream_chat_vsi(host, token, division, _with_today_date(messages_for_engine),
+                                    answer_language=answer_language)
 
     async def _persist(status: str, content: str) -> Optional[int]:
         """Persist the turn (ok or error). The question is saved even on
@@ -692,8 +443,8 @@ async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
                     if translate_ctx:
                         final_content = await translate_answer_back(final_content, translate_ctx, host, token)
                     msg_id = await _persist('ok', final_content)
-                    logger.info('chat turn done [ws]: engine=%s division=%s endpoint=%s sources=%d citations=%d',
-                                engine, division, endpoint, len(collected_sources), len(collected_citations))
+                    logger.info('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
+                                division, endpoint, len(collected_sources), len(collected_citations))
                     await websocket.send_json({
                         'type': 'done',
                         'session_id': session_id,
@@ -703,12 +454,12 @@ async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
                     })
                 elif not error_occurred:
                     # The engine finished without any text and without an error
-                    # (seen 2026-10-05 with a KA whose Vector Search endpoint was
-                    # gone: HTTP 200, 0 deltas). Without an outcome the browser
+                    # (seen 2026-10-05 with the former Knowledge Assistant: HTTP 200,
+                    # 0 deltas). Without an outcome the browser
                     # stays on "Thinking" — tell it the turn failed.
                     error_text = 'No answer was produced. Please try again.'
-                    logger.warning('chat turn empty [ws]: engine=%s division=%s endpoint=%s',
-                                   engine, division, endpoint)
+                    logger.warning('chat turn empty [ws]: division=%s endpoint=%s',
+                                   division, endpoint)
                     asyncio.create_task(store_error(
                         endpoint=route,
                         error_type='EmptyAnswer',
@@ -721,12 +472,9 @@ async def _run_chat_ws(websocket: WebSocket, engine: str) -> None:
                 break
 
             if not chunk.startswith('data: '):
-                # SSE comment lines (": keepalive\n\n" from stream_chat) were
-                # silently dropped here — the upstream HTTP connection stayed
-                # alive but the downstream WebSocket went quiet during a slow
-                # KA call, until a proxy/idle timeout (~30s) killed it before
-                # any 'done'/'error' ever arrived. Forward a no-op ping so the
-                # client socket sees traffic at the same cadence.
+                # Keepalive comment lines (": keepalive") from the engine: forward a
+                # no-op ping so a proxy idle timeout (~30 s) never closes the socket
+                # while the model is still thinking.
                 if chunk.startswith(': '):
                     try:
                         await websocket.send_json({'type': 'ping'})

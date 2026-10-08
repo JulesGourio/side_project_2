@@ -1,4 +1,4 @@
-"""Document titles as a search channel for Chat VSI (``CHAT_VSI_TITLE_LOOKUP=on``).
+"""Document titles as a search channel for Chat VSI (step 3 of ``chat_vsi.py``).
 
 Many questions ask for a document rather than a fact: "trouve-moi le template du CMP",
 "dans le processus Stocker…", "procedures for work centers". The passage search can miss
