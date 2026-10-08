@@ -447,6 +447,23 @@ test n'a pas tranché.
   `databricks-gpt-6-luna@chat`, `contenders` = `databricks-gpt-6-luna@<label retenu en T1>`,
   `eval_id` = `passages-<label>`. **M'envoyer les trois tableaux.**
 
+### U. Test de charge du chat (après S, 2026-10-08)
+
+Combien de questions simultanées l'app DEV tient avant de casser, et pourquoi elle casse
+(quota du modèle, Vector Search, instance de l'app). Notebook
+`utils/databricks_ops/evaluation/load_test_chat.py` : paliers de 5, 10, 20, 40, 80 questions en
+cours en même temps, 4 questions par « utilisateur » et par palier, questions réelles (golden +
+vraies questions DEV). ≈ 620 questions, ≈ 2 €, 30 à 60 min. S'arrête au premier palier où plus
+de la moitié des questions échouent.
+
+- [ ] **U1. Lancer** : app DEV démarrée, notebook en serverless, Run all (défauts). La cellule
+  « Mode » dit si le test passe par l'app (`MODE = app`) ou, si l'app refuse le jeton du
+  notebook, par le moteur appelé dans le notebook (`MODE = engine` : mêmes modèles et mêmes
+  limites, sans l'instance de l'app).
+- [ ] **U2. M'envoyer** les deux tableaux de la dernière cellule et la ligne `MODE = …`, plus,
+  dans les logs de l'app pendant le test, les lignes `chat_vsi_llm:` (bascule vers le modèle de
+  secours, relances).
+
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
 Lecture seule sur les tables UAT ; écrit uniquement dans
