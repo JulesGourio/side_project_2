@@ -121,3 +121,51 @@ def test_tiny_section_joins_the_next_one_with_its_own_marker():
     text = '# Doc\n\n## 1. Objet\n\nCourt.\n\n## 2. Suite\n\n' + para('contenu', 200)
     first = chunking.chunk_markdown(text, min_tokens=100, target_tokens=200, max_tokens=400)[0]
     assert '[1. Objet]' in first['chunk_text'] and first['metadata'] == {'Header 1': 'Doc'}
+
+
+# Real first pages seen in chunks_v2a (2026-10-08).
+COVER = """Type de document : 13 - Notice de Formulaire et formulaire - NF
+Répartition des tâches
+CONFIDENTIALITE
+Niveau 1 Niveau 2 Niveau 3 - Information sensible Niveau 4 - Information Classifiée
+Voir DGL-1056 pour règles de confidentialité
+CIRCUIT DE VALIDATION
+VALIDATION CIRCUIT
+REDACTION / WRITTEN BY
+BESSAC Audrey _ BESSAC Audrey
+VALIDATION / VALIDATED BY
+DUPONT Jean (2026-02-11)
+RESUME / SUMMARY
+Cette notice de formulaire explique comment remplir la fiche de répartition des tâches d'un service.
+DOMAINE D'APPLICATION / SCOPE
+Cette notice et son formulaire sont applicables pour tout Latécoère."""
+
+
+def kinds(text, **kw):
+    return [(c['chunk_content_type'], c['chunk_text']) for c in chunking.chunk_markdown(text, **kw)]
+
+
+def test_cover_block_is_cut_from_the_summary_that_follows():
+    out = kinds(COVER + '\n\n' + para('contenu', 200))
+    front = [t for k, t in out if k == 'front_matter']
+    content = [t for k, t in out if k != 'front_matter']
+    assert front and 'BESSAC' in front[0] and 'RESUME' not in front[0]
+    assert any('explique comment remplir' in t for t in content)
+
+
+def test_toc_with_page_numbers_and_toc_in_a_table():
+    toc = '# Plan\n\n## Table of contents\n\n' + '\n\n'.join(
+        f'{i}. Partie numéro {i} {i + 2}' for i in range(1, 12)) + '\n\n## 1. Purpose\n\n' + para('texte', 200)
+    out = kinds(toc)
+    assert out[0][0] == 'toc' and all(k != 'toc' for k, _ in out[1:])
+    table = ('| 1. | INTRODUCTION' + '.' * 40 + '4 | x |\n|---|---|---|\n'
+             + '\n'.join(f'| {i}. | PARTIE {i}' + '.' * 40 + f'{i + 4} | x |' for i in range(2, 9)))
+    assert kinds('# T\n\n' + table)[0][0] == 'toc'
+
+
+def test_revision_history_and_approval_table_are_front_matter_but_not_a_process_section():
+    hist = ('***VALIDATION***\n\n| **Written by** | **Checked by** | **Approved by** |\n|---|---|---|\n| A | B | C |\n\n'
+            '***LATECOERE CHANGE HISTORY***\n\n| **Revision** | **Modifications** | **Date** |\n|---|---|---|\n| A | Logo | 2024 |')
+    assert {k for k, _ in kinds(hist + '\n\n## 1. Scope\n\n' + para('texte', 200))[:1]} == {'front_matter'}
+    body = '## 4. Approbation des dérogations\n\n' + 'La dérogation est approuvée par le Level 3 et validée par la qualité. ' * 5
+    assert all(k != 'front_matter' for k, _ in kinds('# Doc\n\n' + para('intro', 2500) + '\n\n' + body))
