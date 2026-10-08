@@ -8,7 +8,7 @@ Scan date: 2026-10-06. Inventory of every place the Qualibot project uses or dep
 - **Dev bundle** — `/Workspace/Shared/.bundle/qualibot/dev/files` on `dbc-c623749d-731b` (229 files, of which 81 are absent locally). Exported read-only on 2026-10-06.
 - **Identical in both** (hash-compared 2026-10-06): the KA-related app code — `server/services/streaming.py`, `server/routers/chat.py`, `server/services/translation_bridge.py`, `server/services/doc_catalog.py`.
 - **Frontend:** source exists only locally. The bundle's built JS (`client/out/assets/index-CDrpgZJ6.js`) uses the same WebSocket contract.
-- Paths under `utils/databricks_ops/knowledge_assistant/`, `utils/traces_migration/`, `utils/quality_monitoring/`, `utils/evaluation/`, `utils/stress_test/`, `utils/deploy/` and `utils/databricks_ops/evaluation/multilingual_audit/` exist **only in the dev bundle**.
+- Paths under `utils/knowledge_assistant/`, `utils/ka_legacy/`, `utils/ka_legacy/`, `utils/evaluation/`, `utils/stress_test/`, `utils/deploy/` and `utils/evaluation/multilingual_audit/` exist **only in the dev bundle**.
 
 Tags:
 - **[code]** — read in the code
@@ -58,7 +58,7 @@ Tags:
 
 ## 5. KA provisioning [code]
 
-28. **`utils/databricks_ops/knowledge_assistant/ka_profiles.py`** (bundle) — display name, description, instructions and source description for ALL / AS / IS. **The 3 live dev KAs match it exactly** — instructions, description, source description [verified 2026-10-06].
+28. **`utils/knowledge_assistant/ka_profiles.py`** (bundle) — display name, description, instructions and source description for ALL / AS / IS. **The 3 live dev KAs match it exactly** — instructions, description, source description [verified 2026-10-06].
 29. **`provision_knowledge_assistant_job.py`** (bundle):
     - create by `display_name`, or update description / instructions;
     - attach the index source (`text_col=chunk_text`, `doc_uri_col=url`);
@@ -68,15 +68,15 @@ Tags:
 
 ## 6. Observability and quality on KA traces [code]
 
-31. **Job D_2 — `utils/traces_migration/Migrate_KA_Traces_To_UC.py`** (`resources/traces_migration.yml`, qualibot-uat):
+31. **Job D_2 — `utils/ka_legacy/migrate_traces_to_uc.py`** (`resources/traces_migration.yml`, qualibot-uat):
     - copies KA MLflow traces into UC tables;
     - source experiments: ALL `4171178917767011` (ka-7679a56e), IS `2748374992560665` (ka-1560aded), AS `2748374992560664` (ka-3a7e9255), test `3375946803618197` (ka-99026e27);
     - `to_migrate: "trace_test"` in the YAML.
-32. **Job D_3 — `utils/quality_monitoring/Score_Production_QA.py`** (`resources/quality_scoring.yml`):
+32. **Job D_3 — `utils/ka_legacy/score_production_qa.py`** (`resources/quality_scoring.yml`):
     - scores stored turns with MLflow judges, without calling the KA ("The assistants are not called");
     - reads the RETRIEVER step of the KA's own trace (`assistant_retrieval`);
     - optional `feedback_to_agent_traces` also attaches verdicts to the KA trace.
-33. **`utils/databricks_ops/evaluation/score_production_qa.py`** (bundle, earlier version) — direct Luna judge calls; `fetch_real_trace_hits()` reads the KA trace via `mlflow.get_trace`.
+33. **`utils/evaluation/score_production_qa.py`** (bundle, earlier version) — direct Luna judge calls; `fetch_real_trace_hits()` reads the KA trace via `mlflow.get_trace`.
 34. **`mlflow_genai_eval_qualibot_uat.py`** (bundle) — registers continuous-monitoring scorers on the KA's 3 native experiments with `sample_rate=1.0`, and `ENABLE_CONTINUOUS_MONITORING = True`. Per its own comment, this is an ongoing cost.
 35. **`sync_mlflow_scorer_assessments.py`** (bundle) — copies those assessments into `ka_mlflow_scorer_assessments`; feeds job `sync_mlflow_scorer_assessments_uat`.
 36. **`backfill_trace_ids.py`** — recovers real `trace_id`s from the KA experiments, without calling the KA.
@@ -93,7 +93,7 @@ Tags:
 
 ## 8. Investigation probes [code]
 
-All in `utils/databricks_ops/evaluation/multilingual_audit/` (bundle).
+All in `utils/evaluation/multilingual_audit/` (bundle).
 
 44. **`probe_ka_request_collision.py`** — `ka-7679a56e`.
 45. **`probe_ka_routing_consistency.py`** — `ka-087d89b6` (test KA with 3 sources).
@@ -142,8 +142,8 @@ Test / legacy endpoints in scripts and config: `ka-087d89b6`, `ka-0c98558f`, `ka
 
 - `client/src/components/chat/README.md`, `client/src/components/chat/chat_system_prompt.md` (§11.6).
 - `README.md`.
-- `utils/databricks_ops/README.md`, `utils/databricks_ops/evaluation/chat_citation_feedback_loop.md`.
-- `utils/databricks_ops/evaluation/multilingual_audit/README.md` (bundle).
+- `utils/README.md`, `utils/evaluation/chat_citation_feedback_loop.md`.
+- `utils/evaluation/multilingual_audit/README.md` (bundle).
 - `docs/architecture.html` (bundle version describes one KA per scope).
 
 ## 14. Checked — not KA

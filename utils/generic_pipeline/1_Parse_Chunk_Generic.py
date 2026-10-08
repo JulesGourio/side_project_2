@@ -3,7 +3,6 @@
 # [tool.databricks.environment]
 # environment_version = "5"
 # ///
-# DBTITLE 1,Generic Parse & Chunk Pipeline
 # MAGIC %md
 # MAGIC # Generic Parse & Chunk — Step-by-Step Test
 # MAGIC
@@ -11,13 +10,11 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Install dependencies
 # MAGIC %pip install -q "numpy<2" docling docling-core langchain-text-splitters tiktoken
 # MAGIC %pip install -q --force-reinstall --no-deps opencv-python-headless==4.12.0.88
 
 # COMMAND ----------
 
-# DBTITLE 1,Configuration — EDIT THESE
 
 SOURCE_VOLUME_PATH = "/Volumes/uat_landingzone/qualibot/test/test_documents"
 
@@ -51,25 +48,16 @@ def _detect_gpu():
         return False
 
 USE_GPU = _detect_gpu()
-print(f"USE_GPU = {USE_GPU}")
-print(f"SOURCE_VOLUME_PATH = {SOURCE_VOLUME_PATH}")
-print(f"TARGET_CHUNKS_TABLE = {TARGET_CHUNKS_TABLE}")
 
 # COMMAND ----------
 
-# DBTITLE 1,Imports & Docling bootstrap
 import os
-import sys
 import hashlib
-import uuid
-import re
 import logging
 from pathlib import Path
-from datetime import datetime
 
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from delta.tables import DeltaTable
 
 # Logging
 logger = logging.getLogger("generic_pipeline")
@@ -84,6 +72,8 @@ if not logger.handlers:
 for _noisy in ("py4j", "py4j.clientserver", "pyspark", "docling", "transformers"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
+logger.info(f"USE_GPU = {USE_GPU} | SOURCE_VOLUME_PATH = {SOURCE_VOLUME_PATH} | TARGET_CHUNKS_TABLE = {TARGET_CHUNKS_TABLE}")
+
 # Offline env
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -93,7 +83,6 @@ os.environ["CUDA_MODULE_LOADING"] = "LAZY"
 
 # COMMAND ----------
 
-# DBTITLE 1,Docling converter & chunker setup
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
@@ -149,7 +138,6 @@ logger.info("Docling imports OK")
 
 # COMMAND ----------
 
-# DBTITLE 1,List files from source volume
 # Supported extensions (same as parsing_pipeline)
 SUPPORTED_EXTENSIONS = {
     "pdf", "docx", "docm", "pptx", "xlsx", "xlsm", "xlsb",
@@ -193,10 +181,7 @@ display(df_files.select("file_name", "extension", "file_size_bytes", "doc_title"
 
 # COMMAND ----------
 
-# DBTITLE 1,Parse and chunk all files
-import io
 import tempfile
-import traceback
 
 # Docling format map
 _FORMAT_MAP = {
@@ -283,7 +268,6 @@ logger.info("Parse & chunk function defined.")
 
 # COMMAND ----------
 
-# DBTITLE 1,Run parsing on all files (driver-side loop)
 converter = build_converter()
 chunker = build_chunker()
 logger.info("Converter & chunker built.")
@@ -354,7 +338,6 @@ if errors:
 
 # COMMAND ----------
 
-# DBTITLE 1,Write chunks to Delta table
 if not all_chunks:
     logger.warning("No chunks to write — nothing to do.")
     dbutils.notebook.exit("no_chunks")

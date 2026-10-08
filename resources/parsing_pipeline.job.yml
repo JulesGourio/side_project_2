@@ -1,62 +1,37 @@
-# Parsing Pipeline Job — Qualibot RAG
+# Parsing pipeline job — Qualibot RAG
 #
-# Daily chain, on separate clusters (perf/cost):
-#   0. 1_categories : freshness guard + category_reference -> small CPU
-#   1. 2_manifest    : scope + parse_manifest                -> small CPU (same cluster)
-#   2. 3_parse       : Docling parsing + chunking             -> GPU cluster (g4dn) — ~2.65x/PDF
-#   3. 02_images      : Vision LLM image description           -> small CPU (I/O-bound,
-#                       rate-limiter-bound; a GPU would be wasted here)
-#   4. 5_sync_index  : Vector Search index sync                -> serverless
-#   5. 6_update_kb_metadata : Lakebase doc_catalog rewrite +   -> serverless
-#                       knowledge_base_metadata bump, once the whole
-#                       chain — including the index sync above — succeeded
+# Daily chain, each phase on the cluster that suits it:
+#   1_categories, 2_manifest : freshness guard, category_reference, scope and parse_manifest -> small CPU (shared by both)
+#   3_parse                  : Docling parsing and chunking                                  -> GPU (g4dn)
+#   4_describe_images        : vision LLM image description                                  -> small CPU (bound by the rate limiter)
+#   5_sync_index             : Vector Search index sync                                      -> serverless
+#   6_update_kb_metadata     : Lakebase doc_catalog and knowledge_base_metadata              -> serverless, once the index sync succeeded
 #
-# 00b/00 run on their own cluster (meta_cpu_cluster), not 02's: a cluster
-# shared between a start task and an end task would stay up through the whole
-# GPU parse for nothing.
+# The metadata tasks have their own cluster so it does not stay up through the whole GPU parse.
+# Without 5_sync_index, new chunks are never queryable (Delta Sync indexes are TRIGGERED).
 #
-# Without 03, new chunks stay in the Delta tables and are never queryable
-# (Delta Sync indexes are pipeline_type=TRIGGERED) — the whole chain would run
-# with no visible effect on chat.
+# Variables (databricks.yml, per target): parsing_gpu_node_type, parsing_describe_node_type, parsing_num_workers,
+# parsing_vector_search_indexes, parsing_schedule_cron, parsing_schedule_pause, parsing_lakebase_database.
+# PARSING_* env vars (spark_env_vars below) carry catalog, volumes and run mode.
 #
-# Variables (databricks.yml, per target):
-#   parsing_gpu_node_type / parsing_describe_node_type / parsing_num_workers
-#   parsing_vector_search_indexes / parsing_schedule_cron / parsing_schedule_pause
-#   parsing_lakebase_database
-#   PARSING_* : catalog/volumes/run_mode (spark_env_vars below)
+# Every schedule stays PAUSED until explicitly promoted.
 #
-# All targets keep the schedule PAUSED unless explicitly promoted (dev: PAUSED,
-# copy of UAT since 2026-10-05, corpus loaded by copy_uat_to_dev in databricks.yml).
-#
-# Defined per-target below (not under a bundle-wide `resources:` block) so
-# qualibot-uat-test never gets its own copy — that app is chat-only, it
-# doesn't do document comparison and has no use for a parsing pipeline.
-# `dev` carries the shared body under a YAML anchor; `qualibot-uat` and
-# `qualibot-prod` merge it in via `<<: *parsing_pipeline_body` so the three
-# targets that DO need this job stay byte-identical without hand-copying
-# ~200 lines three times.
+# Declared per target, not bundle-wide, so qualibot-uat-test (chat only) never gets it. dev holds the body under a YAML anchor;
+# qualibot-uat and qualibot-prod merge it with `<<: *parsing_pipeline_body`.
 
 targets:
   dev:
     resources:
       jobs:
         parsing_pipeline: &parsing_pipeline_body
-          # D_1 prefix: org-wide job-naming convention for the shared UAT/PROD
-          # workspaces (D_<n>=daily, matching e.g. D_0_intraqual_documents_sync)
-          # — see the databricks-job-conventions skill.
+          # D_1 prefix: org job-naming convention for the shared UAT/PROD workspaces (see the databricks-job-conventions skill).
           name: "D_1_qualibot-parsing-pipeline-${bundle.target}"
           description: "Docling parsing (GPU) + LLM image description pipeline for Qualibot RAG"
 
-          # Default is 1: a partial run selecting only "3_parse" queues behind a
-          # partial run of "4_describe_images" instead of running concurrently,
-          # even though they use separate clusters and (in incremental mode)
-          # disjoint IDDOC scopes. Raised to allow deliberately running both
-          # (or 02's own repair/retry cycles) at once — confirmed 2026-07-03.
+          # The default of 1 queues a partial run of 3_parse behind one of 4_describe_images although their clusters and incremental scopes are disjoint.
           max_concurrent_runs: 3
 
-          # DEV service principal (2026-10-05, DEV copy of UAT). Lives in the
-          # shared anchor because dev owns it, but qualibot-uat/qualibot-prod
-          # each set their own run_as below, which overrides this one.
+          # DEV service principal. qualibot-uat and qualibot-prod override run_as below.
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
 
@@ -73,17 +48,11 @@ targets:
               level: CAN_MANAGE
 
           job_clusters:
-            # No policy_id on any of the 3 clusters: the org's 6 "Job Compute *"
-            # policies all force aws_attributes.availability=SPOT_WITH_FALLBACK
-            # (hidden), which would reintroduce the spot-driver-reclaim risk
-            # already fixed on parse_gpu_cluster (see first_on_demand below) on
-            # these single-node ON_DEMAND clusters. None of them allow a GPU-ML
-            # spark_version either. Exception accepted — see the
-            # databricks-job-conventions skill for details.
+            # No policy_id on the 3 clusters: the org's "Job Compute *" policies force SPOT_WITH_FALLBACK (spot-driver-reclaim risk
+            # on these single-node ON_DEMAND clusters) and none allows a GPU-ML spark_version. See the databricks-job-conventions skill.
             #
-            # ── Small CPU cluster for the metadata tasks (00b, 00) ────────────────
-            # Pure Delta/SQL work + one dbutils.fs.ls on the volume: no GPU or
-            # workers needed. Finishes before the GPU cluster starts.
+            # ── Small CPU cluster for the metadata tasks (1_categories, 2_manifest) ──
+            # Delta/SQL work and one dbutils.fs.ls on the volume: no GPU or workers.
             - job_cluster_key: meta_cpu_cluster
               new_cluster:
                 spark_version: "17.3.x-scala2.13"
@@ -111,7 +80,7 @@ targets:
                   PARSING_ARCHIVE_MAX_DOCS: ${var.parsing_archive_max_docs}
                   PARSING_USE_GPU:          "false"
 
-            # ── GPU cluster for Docling parsing (task 01) ─────────────────────────
+            # ── GPU cluster for Docling parsing (3_parse) ─────────────────────────
             - job_cluster_key: parse_gpu_cluster
               new_cluster:
                 spark_version: "17.3.x-gpu-ml-scala2.13"
@@ -154,7 +123,7 @@ targets:
                   HF_HUB_DISABLE_TELEMETRY: "1"
                   # See README.md#pythonpath-worker-daemon-revert — do not set a static PYTHONPATH here.
 
-            # ── Small CPU cluster for LLM description (task 02, I/O-bound) ────────
+            # ── Small CPU cluster for LLM description (4_describe_images, I/O-bound) ──
             - job_cluster_key: describe_cpu_cluster
               new_cluster:
                 spark_version: "17.3.x-scala2.13"
@@ -198,9 +167,7 @@ targets:
                 notebook_path: ../utils/parsing_pipeline/2_Cleanup_Volume.py
                 source: WORKSPACE
                 base_parameters:
-                  # DRY_RUN=oui is mandatory on a scheduled run: scope depends on
-                  # courant/etat, which change on every revision. Deleting files for
-                  # a momentarily out-of-scope document would need a full volume resync.
+                  # DRY_RUN=oui is mandatory on a scheduled run: scope depends on courant/etat, which change on every revision.
                   DRY_RUN: "oui"
                   JOB_RUN_ID: "{{job.run_id}}"
               libraries:
@@ -231,8 +198,7 @@ targets:
                 - pypi: {package: "pyxlsb"}
                 - pypi: {package: "openai"}
                 - pypi: {package: "tenacity"}
-                # See README.md#opencv-python-headless-crash — do not add opencv-python-headless
-                # as a library here; the fix is the %pip cell in 3_Parse_Pipeline.py.
+                # See README.md#opencv-python-headless-crash — the fix is the %pip cell in 3_Parse_Pipeline.py, not a cluster library.
 
             - task_key: "4_describe_images"
               description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
@@ -263,9 +229,7 @@ targets:
                   catalog_schema: ${var.app_write_catalog}.${var.app_write_schema}
                   table_suffix: ${var.parsing_table_suffix}
                   build_chunks_full: ${var.parsing_build_chunks_full}
-              # Serverless: SDK calls, plus a MERGE into chunks_full when
-              # build_chunks_full is on or chunks_full_index is listed. run_as (the target's owning SP)
-              # already has whatever grant creating a new index/table needs.
+              # Serverless: SDK calls, plus a MERGE into chunks_full when build_chunks_full is on or chunks_full_index is listed.
               environment_key: default
 
             - task_key: "6_update_kb_metadata"
@@ -282,10 +246,7 @@ targets:
                   LAKEBASE_DATABASE: ${var.parsing_lakebase_database}
                   CATALOG_SCHEMA: ${var.app_write_catalog}.${var.app_write_schema}
                   TABLE_SUFFIX: ${var.parsing_table_suffix}
-              # Serverless: classic job compute can't reach the Lakebase private
-              # endpoint (same blocker as migrate_lakebase_uat_test/sync_user_capabilities_uat
-              # in databricks.yml) — separate environment from "default" above,
-              # psycopg2 isn't needed by 5_sync_index.
+              # Serverless: classic job compute cannot reach the Lakebase private endpoint. Separate environment from "default" (psycopg2 is only needed here).
               environment_key: lakebase_env
 
           environments:
@@ -301,10 +262,7 @@ targets:
                   - psycopg2-binary
                   - databricks-sdk>=0.118.0
 
-          # Daily run. Scheduled at night on purpose: upstream Intraqual ingestion
-          # is file-arrival-triggered and lands during the day (observed ~11h/13h),
-          # so a nightly run has several hours of margin on that day's drop — and
-          # 00b fails explicitly if sources are older than
+          # Daily at night: upstream Intraqual ingestion lands during the day, and 1_categories fails explicitly if sources are older than
           # `parsing_max_source_staleness_hours`.
           schedule:
             quartz_cron_expression: ${var.parsing_schedule_cron}
@@ -316,9 +274,6 @@ targets:
       jobs:
         parsing_pipeline:
           <<: *parsing_pipeline_body
-          # run_as job-runner-sa-uat: confirmed working end to end by the
-          # daily schedule itself — all 7 tasks succeed, including
-          # 6_update_kb_metadata's Lakebase write to doccompare.
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
 
@@ -327,9 +282,6 @@ targets:
       jobs:
         parsing_pipeline:
           <<: *parsing_pipeline_body
-          # run_as job-runner-sa-prod (b82d3b5a-b633-4738-8dde-68bb2142cb02) —
-          # confirmed working end to end: recent scheduled runs complete all 6
-          # tasks as SUCCESS, including 1_categories' read from
-          # prod_bronze.intraqual/prod_landingzone.intraqual.
+          # run_as job-runner-sa-prod (b82d3b5a-b633-4738-8dde-68bb2142cb02)
           run_as:
             service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02

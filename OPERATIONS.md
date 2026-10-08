@@ -20,6 +20,8 @@ La mise en place de l'environnement **DEV** a son propre fichier : `operations_d
 > UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui
 > n'existe pas encore. Les blocs A à C ci-dessous restent sur `audit/doc-compare`.
 
+> **Nettoyage du code (2026-10-08)** : `utils/databricks_ops/` n'existe plus, le notebook `3_parse` est découpé, le client allégé. Tout ce qu'il faut rejouer est dans [`RETEST_CLEANUP.md`](RETEST_CLEANUP.md) (DEV d'abord).
+
 ## Vue d'ensemble
 
 | Bloc | Quoi | Cible | Touche le chatbot ? |
@@ -355,8 +357,8 @@ prévenir, je change la valeur, vous redéployez.
 
     - **avant** de supprimer les index : me prévenir, je passe sur `chunks_index` (+ filtre de
       division) les deux notebooks de notation qui interrogent encore les index `_v1`
-      (`utils/databricks_ops/evaluation/score_production_qa.py`, job DEV ;
-      `utils/quality_monitoring/Score_Production_QA.py`, job UAT) ;
+      (`utils/evaluation/score_production_qa.py`, job DEV ;
+      `utils/ka_legacy/score_production_qa.py`, job UAT) ;
     - les jobs UAT qui lisent les traces du KA (`resources/traces_migration.yml`,
       `sync_mlflow_scorer_assessments_uat`) : à revoir ensemble, ils ne sont pas modifiés par cette
       branche.

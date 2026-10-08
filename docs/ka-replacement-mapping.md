@@ -72,4 +72,4 @@ Glue column: **none** = nothing to write.
 5. Emit `stream_chat()`'s events, including errors.
 6. Switch between Chat KA and Chat VSI (route / engine) and the front `engine` prop.
 
-Existing prototype to start from: `utils/databricks_ops/evaluation/eval_rag_vs_agent.py`, a local RAG (Vector Search, 8 passages, LLM) compared against the KA. It still points to `uat_landingzone.qualibot.chunks_index_v2`, an index that was dropped.
+Existing prototype to start from: `utils/evaluation/eval_rag_vs_agent.py`, a local RAG (Vector Search, 8 passages, LLM) compared against the KA. It still points to `uat_landingzone.qualibot.chunks_index_v2`, an index that was dropped.

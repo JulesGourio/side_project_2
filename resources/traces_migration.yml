@@ -10,7 +10,7 @@
 # redirected from here). The migration is idempotent and skips already-copied
 # traces, so a nightly run acts as an incremental sync.
 #
-# Notebook: utils/traces_migration/Migrate_KA_Traces_To_UC.py
+# Notebook: utils/ka_legacy/migrate_traces_to_uc.py
 #   base_parameters:
 #     to_migrate          comma-separated table prefixes, or "*" for the 3 KAs
 #                         (trace_test = throw-away KA used to validate the job)
@@ -77,7 +77,7 @@ targets:
               job_cluster_key: traces_cpu_cluster
               timeout_seconds: 14400
               notebook_task:
-                notebook_path: ../utils/traces_migration/Migrate_KA_Traces_To_UC.py
+                notebook_path: ../utils/ka_legacy/migrate_traces_to_uc.py
                 source: WORKSPACE
                 base_parameters:
                   # First runs: trace_test, then trace_ka_all_v2, then

@@ -16,8 +16,17 @@
 
 # COMMAND ----------
 
+import logging
 import os
 import time
+
+logger = logging.getLogger("generic_pipeline.sync_index")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
 
 dbutils.widgets.text("indexes", "", "Vector Search indexes (comma-separated)")
 dbutils.widgets.text("wait_minutes", "45", "Max wait for sync completion (minutes, 0 = don't wait)")
@@ -35,12 +44,12 @@ CATALOG_SCHEMA = dbutils.widgets.get("catalog_schema")
 TABLE_SUFFIX = dbutils.widgets.get("table_suffix")
 
 if not INDEXES:
-    print("No index to sync (`indexes` param empty) — nothing to do.")
+    logger.info("No index to sync (`indexes` param empty) — nothing to do.")
     dbutils.notebook.exit("no_index")
 
-print(f"{len(INDEXES)} index(es) to sync:")
+logger.info(f"{len(INDEXES)} index(es) to sync:")
 for n in INDEXES:
-    print(f"  - {n}")
+    logger.info(f"  - {n}")
 
 # COMMAND ----------
 
@@ -69,7 +78,7 @@ w = WorkspaceClient()
 
 
 def _create_index(name, source_table):
-    print(f"{name}: not found — creating (endpoint={VECTOR_SEARCH_ENDPOINT}, source={source_table})...")
+    logger.info(f"{name}: not found — creating (endpoint={VECTOR_SEARCH_ENDPOINT}, source={source_table})...")
     w.vector_search_indexes.create_index(
         name=name,
         endpoint_name=VECTOR_SEARCH_ENDPOINT,
@@ -86,7 +95,7 @@ def _create_index(name, source_table):
             ],
         ),
     )
-    print(f"{name}: creation triggered.")
+    logger.info(f"{name}: creation triggered.")
 
 
 before = {}
@@ -97,14 +106,14 @@ for name in INDEXES:
         state = (getattr(st, "detailed_state", None) or "").upper() if st else ""
         rows = getattr(st, "indexed_row_count", "?") if st else "?"
         before[name] = rows
-        print(f"{name}: ready={st.ready} state={state} rows={rows}")
+        logger.info(f"{name}: ready={st.ready} state={state} rows={rows}")
     except NotFound:
         source = KNOWN_SOURCE_TABLE.get(name)
         if source:
             _create_index(name, source)
             before[name] = 0
         else:
-            print(f"{name}: not found AND not in KNOWN_SOURCE_TABLE — cannot auto-create, skipping.")
+            logger.warning(f"{name}: not found AND not in KNOWN_SOURCE_TABLE — cannot auto-create, skipping.")
             INDEXES.remove(name)
 
 # COMMAND ----------
@@ -118,9 +127,9 @@ failed = []
 for name in INDEXES:
     try:
         w.vector_search_indexes.sync_index(index_name=name)
-        print(f"sync triggered: {name}")
+        logger.info(f"sync triggered: {name}")
     except Exception as exc:
-        print(f"sync rejected: {name} — {exc}")
+        logger.warning(f"sync rejected: {name} — {exc}")
         failed.append((name, str(exc)))
 
 if failed:
@@ -134,7 +143,7 @@ if failed:
 # COMMAND ----------
 
 if WAIT_MINUTES <= 0:
-    print("Wait disabled — syncs triggered, state not verified.")
+    logger.info("Wait disabled — syncs triggered, state not verified.")
 else:
     deadline = time.time() + WAIT_MINUTES * 60
     pending = set(INDEXES)
@@ -149,11 +158,11 @@ else:
                 raise RuntimeError(f"{name}: sync failed (state={state}) — {msg}")
             if st and st.ready and "PROVISIONING" not in state and "SYNC" not in state:
                 rows = getattr(st, "indexed_row_count", "?")
-                print(f"{name}: done — indexed_rows {before.get(name, '?')} -> {rows}")
+                logger.info(f"{name}: done — indexed_rows {before.get(name, '?')} -> {rows}")
                 pending.discard(name)
                 continue
-            print(f"  ... {name}: state={state}")
+            logger.info(f"  ... {name}: state={state}")
     if pending:
-        print(f"WARNING: Timeout after {WAIT_MINUTES} min. Still pending: {pending}")
+        logger.warning(f"Timeout after {WAIT_MINUTES} min. Still pending: {pending}")
     else:
-        print("All syncs completed.")
+        logger.info("All syncs completed.")

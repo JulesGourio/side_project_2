@@ -6,10 +6,6 @@ configuration or via spark.conf) so that dev / uat / prod targets diverge
 without touching this file.
 
 Priority for every parameter: env var > explicit override in notebook > this default.
-
-Usage:
-    from config import *
-    print(IMAGE_SCALE)
 """
 
 import os as _os
@@ -33,8 +29,6 @@ CATALOG_SCHEMA        = _require_env("PARSING_CATALOG_SCHEMA")
 
 # Appended to every table the pipeline writes — PARSING_TABLE_SUFFIX=_test isolates a whole validation run.
 TABLE_SUFFIX = _env("PARSING_TABLE_SUFFIX", "")
-
-INTRAQUAL_SOURCE_CATALOG_SCHEMA = _require_env("PARSING_INTRAQUAL_SOURCE")
 
 INTRAQUAL_BRONZE_CATALOG_SCHEMA = _require_env("PARSING_INTRAQUAL_BRONZE")
 _B = INTRAQUAL_BRONZE_CATALOG_SCHEMA
@@ -93,7 +87,6 @@ TARGET_CHUNK_TABLE     = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"
 TARGET_CHUNK_TABLE_ARCHIVE = f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}"
 
 TARGET_IMAGE_METADATA_TABLE  = f"{CATALOG_SCHEMA}.image_metadata{TABLE_SUFFIX}"
-TARGET_AUDIT_TABLE           = f"{CATALOG_SCHEMA}.audit_files_unified{TABLE_SUFFIX}"
 TARGET_HEALTH_TABLE          = f"{CATALOG_SCHEMA}.parsing_run_health{TABLE_SUFFIX}"  # one row per pipeline run, for the monitoring dashboard
 TARGET_CHANGE_LOG_TABLE      = f"{CATALOG_SCHEMA}.document_change_log{TABLE_SUFFIX}"  # one row per NEW/REVISED document, for the monitoring dashboard
 
@@ -179,12 +172,8 @@ def _detect_gpu():
 _use_gpu_env = _os.environ.get("PARSING_USE_GPU")
 USE_GPU = (_use_gpu_env.strip().lower() in ("1", "true", "yes")) if _use_gpu_env else _detect_gpu()
 DO_OCR                  = False
-# Docling's own do_ocr=True re-parse (EasyOCR, GPU) -- distinct from LLM_OCR_*
-# below (the LLM-vision transcription fallback, which IS used). Disabled:
-# checked corpus-wide, this GPU OCR path's "docling+ocr:pdf" strategy has
-# never once won out over the plain parse (0 of ~18k docs) -- pure GPU cost for
-# zero benefit. The scanned_page render + LLM-vision fallback (image_utils.py)
-# covers this case instead, off-GPU.
+# Docling's own EasyOCR re-parse is off: it never beat the plain parse (0 of ~18k docs).
+# Scanned pages go through the LLM-OCR fallback below instead.
 GPU_OCR_FALLBACK        = False
 TABLE_STRUCTURE_MODE    = "accurate"   # "accurate" | "fast"
 GENERATE_PICTURE_IMAGES = True
@@ -229,7 +218,7 @@ LLM_MODEL_ENDPOINT  = _env("PARSING_LLM_ENDPOINT", "databricks-gpt-5-6-luna")
 LLM_MAX_TOKENS      = 5000    # GPT-5 reasoning tokens need headroom beyond the visible output
 LLM_TEMPERATURE     = 1.0   # gpt-5 family: temperature=1 only
 LLM_MAX_RETRIES     = 5
-LLM_MAX_CONCURRENT  = 10   # reduced from 20 to avoid OOM on m5d.xlarge single-node (Bug3 fix)
+LLM_MAX_CONCURRENT  = 10   # 20 ran out of memory on the single-node m5d.xlarge
 # Kept below the batch size that destabilizes the kernel.
 LLM_BATCH_SIZE      = int(_env("PARSING_LLM_BATCH_SIZE", "6000"))
 
@@ -293,15 +282,12 @@ Do NOT copy or paraphrase the CONTEXT text: if everything you could write is alr
 # =============================================================================
 # LLM-OCR fallback for scanned PDFs
 # =============================================================================
-# Triggers when Docling still yields near-empty text: pages are rendered to images and queued through the same PENDING-image pipeline, using the prompt below (full transcription, never SKIP — even a stamp-only page is worth indexing).
-# 20 was too low: real digital PDFs where Docling barely parses anything (a
-# stub of 14-46 chars, 0 images) clear that floor and never reach this
-# fallback, staying invisible SUCCESS rows with effectively no indexed content.
+# Triggers when Docling still yields near-empty text: pages are rendered to images and queued through the same
+# PENDING-image pipeline with the prompt below (full transcription, never SKIP).
+# Below 150 characters, digital PDFs that Docling barely parses stayed SUCCESS with no indexed content.
 LLM_OCR_TEXT_THRESHOLD = int(_env("PARSING_LLM_OCR_TEXT_THRESHOLD", "150"))
 LLM_OCR_MAX_PAGES      = int(_env("PARSING_LLM_OCR_MAX_PAGES", "100"))
-# Full-page transcription runs longer than a short image description and was
-# hitting the shared LLM_MAX_TOKENS cap (2048) on dense pages, truncating
-# mid-transcription -- give it its own, more generous budget.
+# Full-page transcription needs more than the shared LLM_MAX_TOKENS.
 LLM_OCR_MAX_TOKENS     = int(_env("PARSING_LLM_OCR_MAX_TOKENS", "8192"))
 
 # Expected placeholders: {division}, {category}, {context}

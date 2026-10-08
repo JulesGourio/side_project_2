@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 
 ENABLED = os.getenv('CHAT_TRANSLATE_BRIDGE_ENABLED', 'false').lower() == 'true'
 TRANSLATE_ENDPOINT = os.getenv('CHAT_TRANSLATE_ENDPOINT', 'databricks-gpt-5-6-luna')
-# Tried in order when TRANSLATE_ENDPOINT fails (429 included) — 2026-10-08: the chatbot runs
-# on GPT-6 Luna + GPT-5.6 Luna, each the other's backup. Empty value = no fallback.
+# Tried in order when TRANSLATE_ENDPOINT fails (429 included): the chatbot runs on GPT-6 Luna + GPT-5.6 Luna, each the
+# other's backup. Empty value = no fallback.
 TRANSLATE_FALLBACK_ENDPOINTS = [e.strip() for e in os.getenv('CHAT_TRANSLATE_FALLBACK_ENDPOINTS',
                                                              'databricks-gpt-6-luna').split(',') if e.strip()]
 _TIMEOUT_S = 20.0

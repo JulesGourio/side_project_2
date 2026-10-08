@@ -7,11 +7,8 @@ AS/IS split, gd_doc/gd_cat tables).
 Metadata is derived from the file name only (title = stem, cleaned up).
 """
 
-import re as _re
-from typing import Optional, List
 
 from pyspark.sql import functions as F
-from pyspark.sql import types as T
 from pyspark.sql.window import Window
 
 # ---------------------------------------------------------------------------

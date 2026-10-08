@@ -72,6 +72,7 @@ sys.path.insert(0, REPO_DIR)
 
 from pyspark.sql import functions as F
 import selection
+from utils import logger
 from config import (
     VOLUME_ROOT_PATH,
     GD_DOC_LATEST, GD_DOC_FALLBACK, GD_DOC_CAT_LATEST, GD_CAT_LATEST,
@@ -97,15 +98,15 @@ dbutils.widgets.text("JOB_RUN_ID", "", "Parent job run_id (correlates with 3_par
 DRY_RUN = dbutils.widgets.get("DRY_RUN").lower() != "non"
 JOB_RUN_ID = dbutils.widgets.get("JOB_RUN_ID") or None
 
-print(f"Mode        : {'DRY RUN (simulation — nothing will be deleted)' if DRY_RUN else 'ACTUAL DELETION'}")
-print(f"Volume      : {VOLUME_ROOT_PATH}")
-print(f"Doc table   : {GD_DOC_LATEST}")
-print(f"Scope       : {DOC_SCOPE_FILTER}")
+logger.info(f"Mode        : {'DRY RUN (simulation — nothing will be deleted)' if DRY_RUN else 'ACTUAL DELETION'}")
+logger.info(f"Volume      : {VOLUME_ROOT_PATH}")
+logger.info(f"Doc table   : {GD_DOC_LATEST}")
+logger.info(f"Scope       : {DOC_SCOPE_FILTER}")
 
 # Categories excluded from parsing by IDCAT.
 EXCLUDED_IDCATS = {3798}  # ONE_QMS-5S
 if EXCLUDED_IDCATS:
-    print(f"Cat excl    : {EXCLUDED_IDCATS}")
+    logger.info(f"Cat excl    : {EXCLUDED_IDCATS}")
 
 # COMMAND ----------
 
@@ -143,7 +144,7 @@ if EXCLUDED_IDCATS:
 
 df_scope_docs = selection.load_scope_docs(spark)
 scope_iddocs = {r.IDDOC for r in df_scope_docs.select("IDDOC").collect()}
-print(f"{len(scope_iddocs)} IDDOCs in the Qualibot perimeter")
+logger.info(f"{len(scope_iddocs)} IDDOCs in the Qualibot perimeter")
 
 # COMMAND ----------
 
@@ -164,7 +165,7 @@ try:
     ]
 except Exception as exc:
     stale_iddocs = []
-    print(f"No existing {TARGET_PROCESSED_FILES_TABLE} to prune against ({exc}).")
+    logger.info(f"No existing {TARGET_PROCESSED_FILES_TABLE} to prune against ({exc}).")
 
 # COMMAND ----------
 
@@ -234,7 +235,7 @@ try:
 except Exception as exc:
     raise RuntimeError(f"Unable to list {VOLUME_DBFS}: {exc}")
 
-print(f"{len(root_items)} items at the volume root level")
+logger.info(f"{len(root_items)} items at the volume root level")
 
 # COMMAND ----------
 
@@ -252,10 +253,10 @@ all_rows       = {**primary_rows, **fallback_rows}
 iddoc_to_ref   = {iddoc: v[0] for iddoc, v in all_rows.items()}
 iddoc_to_titre = {iddoc: v[1] for iddoc, v in all_rows.items()}
 
-print(f"Primary   ({GD_DOC_LATEST}) : {len(primary_rows):>6} IDDOCs")
+logger.info(f"Primary   ({GD_DOC_LATEST}) : {len(primary_rows):>6} IDDOCs")
 if fallback_rows:
-    print(f"Fallback  ({GD_DOC_FALLBACK}) : {len(fallback_rows):>6} additional IDDOCs")
-print(f"Total     IDDOC->REF available  : {len(iddoc_to_ref):>6}")
+    logger.info(f"Fallback  ({GD_DOC_FALLBACK}) : {len(fallback_rows):>6} additional IDDOCs")
+logger.info(f"Total     IDDOC->REF available  : {len(iddoc_to_ref):>6}")
 
 df_iddoc_cat = (
     df_doc_cat
@@ -266,8 +267,8 @@ df_iddoc_cat = (
 iddoc_to_cat   = {r.IDDOC: r.NOMCAT for r in df_iddoc_cat.collect()}
 iddoc_to_idcat = {r.IDDOC: r.IDCAT  for r in df_doc_cat.collect()}
 
-print(f"{len(iddoc_to_cat)} IDDOCs with a principal category")
-print(f"  {GD_DOC_CAT_LATEST} x {GD_CAT_LATEST}")
+logger.info(f"{len(iddoc_to_cat)} IDDOCs with a principal category")
+logger.info(f"  {GD_DOC_CAT_LATEST} x {GD_CAT_LATEST}")
 
 # COMMAND ----------
 
@@ -295,13 +296,12 @@ if stale_iddocs:
         f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} "
         f"WHERE parse_status IN ('SUCCESS', 'ERROR', 'EMPTY_TEXT') AND IDDOC IN ({_stale_list})"
     )
-    print(f"Pruned {len(stale_iddocs)} out-of-scope IDDOCs from chunks/image_metadata/processed_files.")
+    logger.info(f"Pruned {len(stale_iddocs)} out-of-scope IDDOCs from chunks/image_metadata/processed_files.")
 else:
-    print("Nothing to prune — no indexed IDDOC has left scope since the last run.")
+    logger.info("Nothing to prune — no indexed IDDOC has left scope since the last run.")
 
 # COMMAND ----------
 
-# DBTITLE 1,Revision-duplicate pruning (Bug fix: stale chunks from old revision IDDOCs)
 # Remove stale revision chunks for REFs that still have multiple in-scope IDDOCs.
 # Keep the latest `indice` per REF, then use the highest IDDOC as the tiebreaker.
 #
@@ -360,17 +360,17 @@ try:
                     )
                 except Exception:
                     pass
-                print(f"Pruned {len(stale_revision_iddocs)} stale-revision IDDOC(s) "
+                logger.info(f"Pruned {len(stale_revision_iddocs)} stale-revision IDDOC(s) "
                       f"across {_dup_count} REF(s) from chunks + image_metadata "
                       f"(processed_files rows kept to prevent re-parse loop).")
             else:
-                print("No revision duplicates found in chunks.")
+                logger.info("No revision duplicates found in chunks.")
         else:
-            print("No REF with multiple IDDOCs in chunks — nothing to prune.")
+            logger.info("No REF with multiple IDDOCs in chunks — nothing to prune.")
     else:
-        print(f"{TARGET_CHUNK_TABLE} does not exist yet — revision pruning skipped.")
+        logger.warning(f"{TARGET_CHUNK_TABLE} does not exist yet — revision pruning skipped.")
 except Exception as exc:
-    print(f"Revision-duplicate check skipped: {exc}")
+    logger.warning(f"Revision-duplicate check skipped: {exc}")
 
 # COMMAND ----------
 
@@ -434,12 +434,12 @@ for item in root_items:
     else:
         rows_keep.append({"name": name, "IDDOC": iddoc, "ref": ref, "titre": titre, "categorie": cat})
 
-print(f"KEEP   : {len(rows_keep):>5}")
-print(f"DELETE : {len(rows_delete):>5}  (out of scope — deleted only if DRY_RUN=non)")
-print(f"ORPHAN : {len(rows_orphan):>5}  (unknown IDDOC — kept, excluded from parsing)")
-print(f"SKIP   : {len(rows_skip):>5}  (non-conforming names — untouched)")
-print(f"MANUAL : {len(rows_manual_excl):>5}  (REF in MANUAL_REF_EXCLUSIONS)")
-print(f"CATEXCL: {len(rows_cat_excl):>5}  (IDCAT in EXCLUDED_IDCATS)")
+logger.info(f"KEEP   : {len(rows_keep):>5}")
+logger.info(f"DELETE : {len(rows_delete):>5}  (out of scope — deleted only if DRY_RUN=non)")
+logger.info(f"ORPHAN : {len(rows_orphan):>5}  (unknown IDDOC — kept, excluded from parsing)")
+logger.info(f"SKIP   : {len(rows_skip):>5}  (non-conforming names — untouched)")
+logger.info(f"MANUAL : {len(rows_manual_excl):>5}  (REF in MANUAL_REF_EXCLUSIONS)")
+logger.info(f"CATEXCL: {len(rows_cat_excl):>5}  (IDCAT in EXCLUDED_IDCATS)")
 
 # COMMAND ----------
 
@@ -469,15 +469,15 @@ try:
         stale_skip_iddocs = set()
 except Exception as exc:
     stale_skip_iddocs = set()
-    print(f"Un-skip check failed: {exc}")
+    logger.warning(f"Un-skip check failed: {exc}")
 
 if stale_skip_iddocs:
     _unskip_list = ",".join(str(i) for i in stale_skip_iddocs)
     spark.sql(f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} WHERE IDDOC IN ({_unskip_list})")
-    print(f"Un-skipped {len(stale_skip_iddocs)} IDDOC(s) that re-entered scope "
+    logger.info(f"Un-skipped {len(stale_skip_iddocs)} IDDOC(s) that re-entered scope "
           f"(stale permanent-skip row removed, will be picked up by 3_parse).")
 else:
-    print("Nothing to un-skip.")
+    logger.info("Nothing to un-skip.")
 
 # COMMAND ----------
 
@@ -551,9 +551,9 @@ if vanished_iddocs:
     } for iddoc in vanished_iddocs]
 
 if not all_skipped:
-    print("Nothing to log into processed_files.")
+    logger.info("Nothing to log into processed_files.")
 elif not spark.catalog.tableExists(TARGET_PROCESSED_FILES_TABLE):
-    print(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet — run 3_Parse_Pipeline (FULL) first. No write performed.")
+    logger.warning(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet — run 3_Parse_Pipeline (FULL) first. No write performed.")
 else:
     df_new = spark.createDataFrame(all_skipped)
     reclassified = {r["IDDOC"] for r in all_skipped if r.get("IDDOC") is not None}
@@ -569,15 +569,15 @@ else:
         n_man  = sum(1 for r in all_skipped if r["parse_status"] == "SKIPPED_REF_MANUAL")
         n_van  = sum(1 for r in all_skipped if r["parse_status"] == "SKIPPED_SOURCE_REMOVED")
         n_cat  = sum(1 for r in all_skipped if r["parse_status"] == "SKIPPED_CATEGORY_EXCLUDED")
-        print(f"{TARGET_PROCESSED_FILES_TABLE} updated ({LOG_RUN_ID}):")
-        print(f"   SKIPPED_REF_OUT_OF_SCOPE  : {n_skip}")
-        print(f"   SKIPPED_IDDOC_NOT_FOUND   : {n_orph}")
-        print(f"   SKIPPED_REF_MANUAL        : {n_man}")
-        print(f"   SKIPPED_SOURCE_REMOVED    : {n_van}")
-        print(f"   SKIPPED_CATEGORY_EXCLUDED : {n_cat}")
+        logger.info(f"{TARGET_PROCESSED_FILES_TABLE} updated ({LOG_RUN_ID}):")
+        logger.info(f"   SKIPPED_REF_OUT_OF_SCOPE  : {n_skip}")
+        logger.info(f"   SKIPPED_IDDOC_NOT_FOUND   : {n_orph}")
+        logger.info(f"   SKIPPED_REF_MANUAL        : {n_man}")
+        logger.info(f"   SKIPPED_SOURCE_REMOVED    : {n_van}")
+        logger.info(f"   SKIPPED_CATEGORY_EXCLUDED : {n_cat}")
     except Exception as exc:
-        print(f"Error writing processed_files: {exc}")
-        print(f"   Run ID  : {LOG_RUN_ID}")
+        logger.error(f"Error writing processed_files: {exc}")
+        logger.info(f"   Run ID  : {LOG_RUN_ID}")
 
 # COMMAND ----------
 
@@ -702,20 +702,20 @@ df_manifest = (
 if rows_delete:
     display(spark.createDataFrame(rows_delete).orderBy("reason", "ref"))
 else:
-    print("Nothing to delete — the volume is already clean.")
+    logger.info("Nothing to delete — the volume is already clean.")
 
 if rows_orphan:
     from pyspark.sql.types import StructType, StructField, LongType, StringType
     _s = StructType([StructField("IDDOC", LongType()), StructField("name", StringType())])
-    print(f"{len(rows_orphan)} ORPHAN — kept on the volume but excluded from parsing (IDDOC absent from gd_doc + fallback):")
+    logger.info(f"{len(rows_orphan)} ORPHAN — kept on the volume but excluded from parsing (IDDOC absent from gd_doc + fallback):")
     display(spark.createDataFrame([(r["IDDOC"], r["name"]) for r in rows_orphan], schema=_s).orderBy("IDDOC"))
 
 # COMMAND ----------
 
 if rows_skip:
-    print(f"{len(rows_skip)} items with a non-conforming name (ignored):")
+    logger.info(f"{len(rows_skip)} items with a non-conforming name (ignored):")
     for r in rows_skip:
-        print(f"   {r['name']}  ({r['path']})")
+        logger.info(f"   {r['name']}  ({r['path']})")
 
 # COMMAND ----------
 
@@ -739,9 +739,9 @@ _df_written = spark.table(PARSE_MANIFEST_TABLE)
 _n_manifest = _df_written.count()
 _n_archive = _df_written.filter(_is_archive).count()
 _n_archive_parsed = _df_written.filter(_is_archive & F.col("parse_content")).count()
-print(f"\nparse_manifest written: {_n_manifest} IDDOCs in scope")
-print(f"   Table : {PARSE_MANIFEST_TABLE}")
-print(f"   pre-{_cfg.DOC_DATE_CUTOFF} : {_n_archive} | allowed to be parsed : {_n_archive_parsed} "
+logger.info(f"parse_manifest written: {_n_manifest} IDDOCs in scope")
+logger.info(f"   Table : {PARSE_MANIFEST_TABLE}")
+logger.info(f"   pre-{_cfg.DOC_DATE_CUTOFF} : {_n_archive} | allowed to be parsed : {_n_archive_parsed} "
       f"(PARSING_ARCHIVE_MAX_DOCS={_cfg.ARCHIVE_MAX_DOCS})")
 
 # COMMAND ----------
@@ -752,13 +752,13 @@ print(f"   pre-{_cfg.DOC_DATE_CUTOFF} : {_n_archive} | allowed to be parsed : {_
 # COMMAND ----------
 
 if DRY_RUN:
-    print(f"[DRY RUN] {len(rows_delete)} items would be deleted.")
-    print("  -> Set the DRY_RUN widget to 'non' to actually delete.")
+    logger.info(f"[DRY RUN] {len(rows_delete)} items would be deleted.")
+    logger.info("  -> Set the DRY_RUN widget to 'non' to actually delete.")
 else:
     if not rows_delete:
-        print("Nothing to delete.")
+        logger.info("Nothing to delete.")
     else:
-        print(f"Deleting {len(rows_delete)} items...\n")
+        logger.info(f"Deleting {len(rows_delete)} items...\n")
         deleted = 0
         errors  = 0
 
@@ -767,9 +767,9 @@ else:
                 dbutils.fs.rm(row["path"], recurse=True)
                 deleted += 1
                 if deleted % 50 == 0 or deleted == len(rows_delete):
-                    print(f"  {deleted}/{len(rows_delete)} deleted")
+                    logger.info(f"  {deleted}/{len(rows_delete)} deleted")
             except Exception as exc:
-                print(f"  Error on {row['path']}: {exc}")
+                logger.warning(f"  Error on {row['path']}: {exc}")
                 errors += 1
 
-        print(f"\nDone: {deleted} deleted, {errors} errors")
+        logger.info(f"Done: {deleted} deleted, {errors} errors")

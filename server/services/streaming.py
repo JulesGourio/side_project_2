@@ -16,62 +16,38 @@ DEFAULT_CONNECT_TIMEOUT_S = float(os.getenv('COMPARE_ANALYSIS_CONNECT_TIMEOUT_S'
 
 _PRICING_USD: Dict[str, Dict[str, float]] = {
     'databricks-claude-haiku-4-5': {'input': 1.0, 'output': 5.0},
-    # Sonnet 4.6: 42.857 / 214.286 DBU per 1M tokens (workspace console, 2026-10-07) x 0.078 EUR/DBU,
-    # in USD via _EUR_PER_USD — the former 3 / 15 USD list price understated the cost by ~20%.
+    # USD per 1M tokens = workspace console DBU rate x 0.078 EUR/DBU, via _EUR_PER_USD. DBU in/out: Sonnet 4.6 42.857/214.286,
+    # Sonnet 5.5 28.571/142.857.
     'databricks-claude-sonnet-4-6': {'input': 3.634, 'output': 18.168},
-    # Sonnet 5.5: 28.571 / 142.857 DBU per 1M tokens (workspace console, confirmed 2026-10-07).
     'databricks-claude-sonnet-5-5': {'input': 2.422, 'output': 12.112},
     'databricks-claude-opus-4-6':   {'input': 15.0, 'output': 75.0},
-    # Confirmed 2026-07-29 from the workspace's Serving Endpoints console
-    # (DBUs per 1M tokens) x the contracted rate (0.078 EUR/DBU), converted
-    # to USD via _EUR_PER_USD below:
-    #   gpt-5-4-mini:          in=21.428 DBU, out=128.572 DBU
-    #   gpt-5-mini:            in=6.427  DBU, out=28.571  DBU
-    #   gemini-3-1-flash-lite: in=6.428  DBU, out=38.572  DBU
-    # Used by the Compare tab's impact judge / document summary / image
-    # summary; without these entries unlisted endpoints fall back to Sonnet's
-    # rate, wildly overstating cost for a mini-tier model.
+    # Judge / summary models, DBU in/out: gpt-5-4-mini 21.428/128.572, gpt-5-mini 6.427/28.571, gemini-3-1-flash-lite 6.428/38.572.
+    # An unlisted endpoint falls back to _DEFAULT_PRICING.
     'databricks-gpt-5-4-mini':      {'input': 1.817, 'output': 10.901},
     'databricks-gpt-5-mini':        {'input': 0.545, 'output': 2.422},
     'databricks-gemini-3-1-flash-lite': {'input': 0.545, 'output': 3.270},
-    # Re-checked 2026-08-19 (workspace console): Luna's rate DROPPED ~5x since
-    # the 2026-07-29 reading (was in=14.286/out=128.571 DBU, i.e. the same
-    # output cost as gpt-5-4-mini) to in=2.857/out=25.714 DBU — now cheaper
-    # than BOTH gpt-5-4-mini and gpt-5-mini on both axes. The stale rate was
-    # overstating every uat-test Luna call's cost_eur by ~5x; update this
-    # entry again if the console rate moves.
-    # 2026-10-08 (console): Luna output down again, 25.714 -> 17.143 DBU; input unchanged at 2.857.
+    # GPT-5.6 Luna: 2.857 / 17.143 DBU.
     'databricks-gpt-5-6-luna':      {'input': 0.242, 'output': 1.453},
-    # GPT-6 Luna, 2026-10-08 (console): in=1.428571 DBU, out=7.142857 DBU.
+    # GPT-6 Luna: 1.428571 / 7.142857 DBU.
     'databricks-gpt-6-luna':        {'input': 0.121, 'output': 0.606},
-    # Gemini 3.8 Flash, 2026-10-08 (console): in=10.714285 DBU, out=53.571425 DBU.
+    # Gemini 3.8 Flash: 10.714285 / 53.571425 DBU.
     'databricks-gemini-3-8-flash':  {'input': 0.908, 'output': 4.542},
 }
 _DEFAULT_PRICING = {'input': 3.0, 'output': 15.0}
 _EUR_PER_USD = float(os.getenv('EUR_PER_USD', '0.92'))
 _MAX_RETRIES_429 = int(os.getenv('COMPARE_ANALYSIS_RETRIES', '1'))
 _RETRY_DELAY_429_S = 60.0
-# 502/503/504 are transient gateway/serving-endpoint hiccups (cold start,
-# brief overload) — worth a couple of short retries, unlike 429 which needs
-# a long backoff.
+# 502/503/504/503/504 are transient gateway / serving-endpoint hiccups (cold start, brief overload): a couple of short
+# retries, unlike 429 which needs a long backoff.
 _RETRYABLE_5XX = {500, 502, 503, 504}
 _MAX_RETRIES_5XX = int(os.getenv('COMPARE_ANALYSIS_RETRIES_5XX', '2'))
 _RETRY_DELAY_5XX_S = 2.0
 
 
-# GPT-5.6 family (Luna/Terra/Sol, endpoint names containing "gpt-5-6") rejects
-# any non-default temperature — only the implicit default (1) is accepted;
-# sending 0 (COMPARE_TEMPERATURE's default) 400s. Confirmed empirically
-# 2026-07-29 against databricks-gpt-5-6-luna and -terra.
-# Bare "gpt-5-mini" (distinct from "gpt-5-4-mini", which DOES accept
-# temperature=0) has the exact same restriction — confirmed 2026-08-20: every
-# /compare/summarize call on an image was 400ing in production, since
-# COMPARE_SUMMARY_IMAGE_ENDPOINT defaults to databricks-gpt-5-mini and this
-# regex didn't cover it. The `\b` keeps this from also matching
-# "gpt-5-4-mini" (no bare "gpt-5-mini" substring in that name).
-# Claude 5 generation (Sonnet 5 / 5.5, Opus 5 / 5.5, Fable) rejects non-default sampling
-# parameters too (Anthropic API: temperature != default -> 400), so the same rule applies.
-# Reasoning models that refuse a non-default temperature (GPT-6 assumed like GPT-5.6: not verified).
+# These families reject any non-default temperature (a 0 sends a 400): GPT-5.6 (Luna/Terra/Sol, names containing
+# "gpt-5-6"), bare "gpt-5-mini"
+# (the `\b` keeps it from matching "gpt-5-4-mini", which accepts 0), the Claude 5 generation (Sonnet 5 / 5.5, Opus 5 /
+# 5.5, Fable), and GPT-6 (assumed like GPT-5.6).
 _NO_TEMPERATURE_RE = re.compile(r'gpt-5-6|gpt-6|gpt-5-mini\b|claude-(?:sonnet|opus)-5|claude-fable', re.I)
 
 
@@ -101,8 +77,7 @@ def _friendly_error(operation: str, reason: str) -> str:
     return f'{operation} failed. Details: {reason}'
 
 
-# Shown once 502/503/504 retries are exhausted — friendlier than surfacing the
-# raw gateway status code to the end user.
+# Shown once 502/503/504 retries are exhausted, instead of the raw gateway status.
 _TIRED_MESSAGE = "Qualibot is tired right now and couldn't get an answer — please try again in a moment."
 
 
@@ -161,14 +136,9 @@ async def stream_analysis(
     # COMPARE_ANALYSIS_ENDPOINT freely swappable for A/B tests.
     if thinking_budget > 0 and 'claude' in endpoint_name.lower():
         payload['thinking'] = {'type': 'enabled', 'budget_tokens': thinking_budget}
-    # Temperature is sent alongside 'thinking', not instead of it. This was an
-    # 'elif' until 2026-08-18, on the assumption that extended thinking forces
-    # temperature=1 — it does not on this endpoint (verified: thinking +
-    # temperature=0.0 returns 200 on databricks-claude-sonnet-4-6). Since
-    # COMPARE_THINKING_BUDGET defaults to 4000, that branch meant the analysis
-    # path silently never sent COMPARE_TEMPERATURE at all, leaving every report
-    # at the endpoint's default sampling. Note temperature and top_p are
-    # mutually exclusive here (400 if both are set), so only temperature is sent.
+    # Temperature is sent alongside 'thinking', not instead of it: extended thinking does not force temperature=1 on
+    # this endpoint.
+    # Temperature and top_p are mutually exclusive here (400 if both are set), so only temperature is sent.
     if supports_temperature(endpoint_name):
         payload['temperature'] = temperature
 

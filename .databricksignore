@@ -15,5 +15,4 @@ files_to_compare/
 debug_images/
 debug_results/
 sql_data/
-utils/databricks_ops/
 debug_*.py

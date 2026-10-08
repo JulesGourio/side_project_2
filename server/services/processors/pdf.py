@@ -74,40 +74,33 @@ def _is_page_artifact(text: str) -> bool:
     return bool(_PAGE_ARTIFACT_RE.match(text))
 
 
-# A table row extracted as ONE line keeps its identity across a repagination, so
-# two revisions of the same row pair as a single MODIFIED entry. Without it, a
-# table reaches the diff as isolated cells whose grouping PyMuPDF changes between
-# revisions, producing cell soup: on MOP_AX the 5 new rows of the deputy table
-# arrived as fragments ('/', 'Responsable assurance qualite') and the LLM merged
-# or dropped three of them (2026-08-17).
+# A table row extracted as ONE line keeps its identity across a repagination, so two revisions of the same row pair as
+# a single MODIFIED entry;
+# as isolated cells, whose grouping PyMuPDF changes between revisions, a table turns into cell soup that the LLM
+# merges or drops.
 #
-# find_tables() is only worth it on text/tabular documents. On a wiring diagram it
-# reads the drawing grid as a table (123 of them on WDT017W8850653) and costs 0.5s
-# per page (47s for WDT017W8850201 alone, against 13s for the whole current diff).
-# Blocks-per-page separates the two cleanly and for free, since the blocks are
-# extracted anyway: measured 13-24 on text/tabular documents (MOP_AX 20, AIPI 24,
-# NE07-011 14, INAQ604 13) against 114-180 on schematics (WDT653 114, WDT201 147,
-# WDT403 180). The threshold sits with a ~3x margin on both sides.
+# find_tables() is only worth it on text/tabular documents: on a wiring diagram it reads the drawing grid as tables
+# and costs ~0.5s per page.
+# Blocks per page separates the two cleanly and for free (the blocks are extracted anyway): 13-24 on text/tabular
+# documents against 114-180 on schematics.
+# The threshold sits with a ~3x margin on both sides.
 _TABLE_MAX_BLOCKS_PER_PAGE = int(os.getenv('COMPARE_TABLE_MAX_BLOCKS_PER_PAGE', '60'))
 _TABLE_MIN_ROWS = 2
 _TABLE_MIN_COLS = 2
-# The running header cartouche is itself a bordered grid, so find_tables() returns
-# it on every page. Emitting it as a table row re-created the pagination noise this
-# work removed: 'LATelec | MANUEL D'ORGANISME | M.O.P. CHAPITRE: IA PAGE : ~~1/37~~
-# **1/38**', once per page. Skip small grids confined to the header/footer band —
-# measured on MOP_AX, the cartouche spans 4.4%-15.8% of page height while the real
-# tables start at 17.2%. The row-count condition keeps a genuine table that happens
-# to start high on the page.
+# The running header cartouche is itself a bordered grid that find_tables() returns on every page; emitting it as a
+# table row would re-create the
+# pagination noise. Small grids confined to the header/footer band are skipped (the cartouche spans 4.4%-15.8% of the
+# page height, real tables start
+# lower); the row-count condition keeps a genuine table that starts high on the page.
 _TABLE_HEADER_BAND = 0.18
 _TABLE_FOOTER_BAND = 0.88
 _TABLE_BAND_MAX_ROWS = 3
 
 
-# Data rows are labelled with their column header ("Activity: Release the part |
-# Quality manager: X"), as the DOCX extractor does. A changed row reaches the LLM
-# alone — the unchanged header row is not in the diff — so without labels it
-# could not say WHICH column a value belongs to. Set to false to get positional
-# rows only ("Release the part |  |  | X").
+# Data rows are labelled with their column header ("Activity: Release the part | Quality manager: X"), as the DOCX
+# extractor does: a changed row
+# reaches the LLM alone, without the unchanged header row, so it could not say WHICH column a value belongs to. false
+# = positional rows only.
 _TABLE_LABELS = os.getenv('COMPARE_PDF_TABLE_LABELS', 'true').lower() == 'true'
 
 
@@ -144,12 +137,10 @@ def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[A
             continue
         bbox = table.bbox
         height = max(1.0, bbox[3] - bbox[1])
-        # Empty cells keep their place ("M8 | 22 Nm |  | Wrench B"): dropping them
-        # made a value that moved to another column — an X in a responsibility
-        # matrix, a limit going from "min" to "max" — read exactly the same on
-        # both revisions, so the change did not exist for the diff. Columns that
-        # are empty on every row (merged-cell artefacts of find_tables) carry no
-        # position and are removed.
+        # Empty cells keep their place ("M8 | 22 Nm |  | Wrench B"): dropping them makes a value that moved to another
+        # column read the same on both revisions.
+        # Columns that are empty on every row (merged-cell artefacts of find_tables) carry no position and are
+        # removed.
         norm = [[' '.join((c or '').split()) for c in row] for row in rows]
         n_cols = max((len(r) for r in norm), default=0)
         norm = [r + [''] * (n_cols - len(r)) for r in norm]

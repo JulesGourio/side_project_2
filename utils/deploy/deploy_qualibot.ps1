@@ -109,8 +109,6 @@ try {
             --exclude 'utils/deploy/scrap_ids_intraqual.py' `
             --exclude 'utils/deploy/unzip_intraqual.py' `
             --exclude 'utils/deploy/upload_intraqual.py' `
-            --exclude 'utils/deploy/_test_direct_head.py' `
-            --exclude 'utils/deploy/_test_docview_head.py' `
             --exclude 'user_feedbacks/**' `
             --exclude 'test_prompt/**' `
             --exclude '**/*.xlsx' `

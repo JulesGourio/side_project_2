@@ -5,7 +5,7 @@ actuel), le sens des noms d'essai, les résultats qui ont décidé, ce qui a ét
 tester. La partie 2 est le journal complet, tel qu'il a été tenu pendant les essais.
 
 Code : `server/services/chat_vsi.py` (+ `chat_vsi_llm.py`, `chat_vsi_titles.py`,
-`translation_bridge.py`). Notebooks de mesure gardés : `utils/databricks_ops/evaluation/retrieval_eval.py`
+`translation_bridge.py`). Notebooks de mesure gardés : `utils/evaluation/retrieval_eval.py`
 (recherche seule) et `pairwise_answers.py` (réponses côte à côte). Tout le reste est dans `archive/`
 (`archive/README.md`). Robustesse (secours, relances) : `docs/chat_vsi_robustesse_2026-10.md`.
 

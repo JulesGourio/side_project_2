@@ -7,7 +7,7 @@
 # uat_proj.qualibot.chat_quality_scores, chat_quality_assessments and chat_quality_scoring_runs, and
 # drops the views over them (the dashboard reads the tables).
 #
-# Notebook: utils/quality_monitoring/Score_Production_QA.py
+# Notebook: utils/ka_legacy/score_production_qa.py
 #   base_parameters: source_schema / output_schema / experiment_path / judge_endpoint; max_run_minutes
 #   (no batch of turns starts after it, the turns left are scored by the next run); test_limit, dry_run,
 #   rescore_changed_config, reset_outputs, feedback_to_agent_traces for ad-hoc runs; fail_on_alert: "true"
@@ -66,7 +66,7 @@ targets:
                 - pypi:
                     package: "mlflow[databricks]>=3.11"
               notebook_task:
-                notebook_path: ../utils/quality_monitoring/Score_Production_QA.py
+                notebook_path: ../utils/ka_legacy/score_production_qa.py
                 source: WORKSPACE
                 base_parameters:
                   source_schema: "uat_landingzone.qualibot"
