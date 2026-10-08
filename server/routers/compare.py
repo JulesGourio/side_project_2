@@ -68,8 +68,7 @@ APP_VERSION = os.getenv('APP_VERSION', '2')
 
 _analyze_semaphore = asyncio.Semaphore(int(os.getenv('COMPARE_MAX_CONCURRENT', '5')))
 
-# Default system prompt — for MODIFIED/REMOVED/ADDED inline markup format.
-# Used when COMPARE_ANALYSIS_SYSTEM_PROMPT is not set.
+# Default system prompt (MODIFIED/REMOVED/ADDED inline markup), used when COMPARE_ANALYSIS_SYSTEM_PROMPT is not set.
 _DEFAULT_ANALYSIS_PROMPT = """\
 You are Qualibot, an expert document comparison analyst specialising in technical, regulatory, and quality-management documentation.
 
@@ -335,7 +334,6 @@ async def analyze_documents(
             media_type='text/event-stream',
         )
 
-    # Background upload to UC Volume
     volume_path = cfg['volume_path'].rstrip('/')
     if volume_path and not volume_path.startswith('TODO'):
         session_id = datetime.now().strftime('%Y%m%d_%H%M%S%f')
@@ -352,16 +350,13 @@ async def analyze_documents(
 
         asyncio.create_task(_upload(old_bytes, new_bytes))
 
-    # ── Return StreamingResponse immediately so the SSE connection is established
-    # before any slow work (semaphore wait, CPU-bound processing, LLM call).
-    # Keepalive SSE comments (':keepalive') keep the connection alive through
-    # Databricks Apps' HTTP gateway during long waits.
+    # Return the StreamingResponse immediately so the SSE connection exists before any slow work; keepalive comments
+    # (':keepalive') carry it through the gateway during long waits.
     _req_id = (old_file_hash or '')[:8] or 'nohash'
 
     async def _stream():
         logger.info(f'[{_req_id}] SSE stream start: {old_name!r} vs {new_name!r}')
 
-        # Establish SSE connection immediately — gateway sees first byte, won't time out
         yield ': keepalive\n\n'
 
         # ── Wait for a processing slot ────────────────────────────────────────

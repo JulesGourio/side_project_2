@@ -74,7 +74,7 @@ def _apply_citation_markers(text: str, citations: List[dict]) -> str:
     
     n_chars = len(text)
     
-    # 1. Identifier les plages d'index (start, end) des liens dans le texte
+    # Link spans of the text: a citation position falling inside one is moved to its end.
     protected_spans = [(m.start(), m.end()) for m in _PROTECTED_SPAN_RE.finditer(text)]
     
     seen: set = set()
@@ -89,9 +89,7 @@ def _apply_citation_markers(text: str, citations: List[dict]) -> str:
             
         pos = max(0, min(pos, n_chars))
         
-        # 2. Si la position tombe au milieu d'un lien, on la décale à la fin du lien
         for start, end in protected_spans:
-            # Si pos est strictement à l'intérieur du lien
             if start < pos < end:
                 pos = end
                 break  # On sort de la boucle, la position est corrigée
@@ -211,10 +209,8 @@ class ChatFeedbackRequest(BaseModel):
 
 
 async def _upsert_session(conn, session_id: str, user_id: str, workspace_id: Optional[str], workspace_url: str, name: str) -> None:
-    # share_token is generated for every session up front (not lazily in
-    # share_session()) purely so developers can browse any conversation
-    # straight from the database — it stays unused/undiscoverable until the
-    # owner actually clicks "Share", so this changes nothing for users.
+    # share_token is generated up front so developers can browse any conversation in the database; it stays unused
+    # until the owner clicks "Share".
     await conn.execute(
         '''
         INSERT INTO chat_sessions (id, user_id, workspace_id, workspace_url, name, share_token)
@@ -251,20 +247,17 @@ async def _save_turn(
     A turn is saved even when it failed (``status='error'``) so the user's
     question — and the reason it broke — is always traceable in the database.
     """
-    # Derive the thread title from the user's question. _strip_division is kept
-    # for legacy turns whose content still carries the old [Division: …] prefix;
-    # new turns route by endpoint and send a clean question, so it is a no-op.
+    # Thread title from the user's question; _strip_division only matters for legacy turns carrying a [Division: …]
+    # prefix.
     clean_content = _strip_division(user_content)
     name = clean_content[:60] + ('…' if len(clean_content) > 60 else '')
-    # Division now comes from the client selector (passed explicitly); fall back
-    # to detecting a legacy prefix if not provided.
+    # Division comes from the client selector; fall back to a legacy prefix.
     division = (division or 'ALL').upper()
     if division == 'ALL':
         division = _detect_division(user_content)
     reasoning_str = '\n---\n'.join(reasoning_steps) if reasoning_steps else None
-    # Persist the consulted documents as a single compact JSON blob on the
-    # assistant message (rank + title + url) instead of one chat_sources row
-    # per document. De-duplicate by title, preserving order.
+    # Consulted documents are stored as one compact JSON blob on the assistant message (rank, title, url), de-
+    # duplicated by title in order.
     sources_payload: list[dict] = []
     seen_titles: set = set()
     for rank, src in enumerate(sources or []):
@@ -283,8 +276,7 @@ async def _save_turn(
 
     try:
         async with pool.acquire() as conn:
-            # Register the identity in the shared `users` table so chat-only
-            # users are no longer orphaned (no matching row in `users`).
+            # Register the identity in `users` so chat-only users are not orphaned.
             await upsert_user(
                 conn,
                 user_id=user_id,
@@ -365,7 +357,7 @@ async def chat_ws(websocket: WebSocket):
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in data.get('messages', [])])
     session_id = data.get('session_id') or str(uuid.uuid4())
     division = (data.get('division') or 'ALL').upper()
-    # Recorded as endpoint_name (the older turns of the Knowledge Assistant carry ka-… names).
+    # Recorded as endpoint_name (older turns carry ka-… names).
     endpoint = f'vsi-{normalize_division(division).lower()}'
 
     try:
@@ -644,10 +636,7 @@ async def get_session(session_id: str, request: Request):
 
     try:
         async with pool.acquire() as conn:
-            # Scoped to the caller's own sessions — without this, any
-            # authenticated user who knew (or guessed) a session_id could read
-            # someone else's conversation. Shared conversations are served
-            # separately, through the share_token, below.
+            # Scoped to the caller's own sessions; shared conversations are served through the share_token below.
             session = await conn.fetchrow(
                 'SELECT id, name, created_at FROM chat_sessions WHERE id = $1 AND user_id = $2',
                 session_id, user_id,
@@ -710,17 +699,14 @@ async def delete_session(session_id: str, request: Request):
 
     try:
         async with pool.acquire() as conn:
-            # Scoped to the caller's own sessions — same ownership gap as
-            # get_session above; a shared session_id must never let anyone else
-            # delete it.
+            # Scoped to the caller's own sessions: a shared session_id must never let anyone else delete it.
             owned = await conn.fetchval(
                 'SELECT 1 FROM chat_sessions WHERE id = $1 AND user_id = $2',
                 session_id, user_id,
             )
             if not owned:
                 return JSONResponse({'error': 'Session not found'}, status_code=404)
-            # Soft-delete: flag the session and its messages instead of removing
-            # them, so a trace is always kept in the database for audit.
+            # Soft-delete: flag the session and its messages so a trace is kept for audit.
             await conn.execute(
                 'UPDATE chat_messages SET deleted = TRUE, deleted_at = NOW()'
                 ' WHERE session_id = $1 AND deleted = FALSE',
