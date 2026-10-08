@@ -34,9 +34,7 @@ def _upload(remote_path: str, data: bytes) -> None:
     WorkspaceClient().files.upload(remote_path, io.BytesIO(data), overwrite=True)
 
 
-# ---------------------------------------------------------------------------
-# /compare/export-excel — convert structured JSON analysis to Excel download
-# ---------------------------------------------------------------------------
+# --- /compare/export-excel — convert structured JSON analysis to Excel download ---
 
 @router.post('/compare/export-excel')
 async def export_excel(
@@ -90,9 +88,7 @@ async def export_impact_excel(result_json: str = Form(...), filename: str = Form
     )
 
 
-# ---------------------------------------------------------------------------
-# /compare/export-pdf — render the LLM's Markdown output as a downloadable PDF
-# ---------------------------------------------------------------------------
+# --- /compare/export-pdf — render the LLM's Markdown output as a downloadable PDF ---
 
 @router.post('/compare/export-pdf')
 async def export_pdf(
@@ -118,9 +114,7 @@ async def export_pdf(
     )
 
 
-# ---------------------------------------------------------------------------
-# /compare/save-result
-# ---------------------------------------------------------------------------
+# --- /compare/save-result ---
 
 @router.post('/compare/save-result')
 async def save_result_to_session(
@@ -151,9 +145,7 @@ async def save_result_to_session(
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
-# ---------------------------------------------------------------------------
-# /compare/save-excel  /compare/save-pdf — auto-save formatted exports to volume
-# ---------------------------------------------------------------------------
+# --- /compare/save-excel  /compare/save-pdf — auto-save formatted exports to volume ---
 
 @router.post('/compare/save-excel')
 async def save_excel_to_session(

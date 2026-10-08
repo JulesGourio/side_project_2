@@ -35,9 +35,7 @@ def _feed_all(chunks, documents=DOCS):
     return text, parser.sources, parser.citations
 
 
-# ---------------------------------------------------------------------------
-# CitationStreamParser
-# ---------------------------------------------------------------------------
+# --- CitationStreamParser ---
 
 def test_marker_split_across_chunks():
     text, sources, citations = _feed_all(['Texte [', '1', '] suite.'])
@@ -95,9 +93,7 @@ def test_incomplete_marker_at_end_of_stream_is_plain_text():
     assert citations == []
 
 
-# ---------------------------------------------------------------------------
-# Equivalence with the whole-text parse, on the real golden answers
-# ---------------------------------------------------------------------------
+# --- Equivalence with the whole-text parse, on the real golden answers ---
 
 def _fixture():
     with open(FIXTURE, encoding='utf-8') as f:
@@ -126,9 +122,7 @@ def test_streaming_parse_equals_whole_text_parse(answer):
 
 
 
-# ---------------------------------------------------------------------------
-# The engine — Vector Search faked at the HTTP level
-# ---------------------------------------------------------------------------
+# --- The engine — Vector Search faked at the HTTP level ---
 
 QUESTION = 'Quelles procédures parlent de qualification CND ?'
 MESSAGES = [{'role': 'user', 'content': f'[Date: 2026-10-06]\n\n{QUESTION}'}]

@@ -17,9 +17,7 @@ from server.services.processors._diff_engines import paragraph_semantic_diff
 from server.services.processors.pdf import _is_page_artifact
 
 
-# ---------------------------------------------------------------------------
-# PDF pagination artifacts
-# ---------------------------------------------------------------------------
+# --- PDF pagination artifacts ---
 
 def test_page_artifacts_detected():
     for t in ('12', ' 12 ', '- 12 -', '12/70', 'Page 12', 'Page 12 of 70',
@@ -33,9 +31,7 @@ def test_real_content_not_flagged_as_artifact():
         assert not _is_page_artifact(t), t
 
 
-# ---------------------------------------------------------------------------
-# paragraph_semantic_diff — behaviour guard for the O(n²) pre-filter
-# ---------------------------------------------------------------------------
+# --- paragraph_semantic_diff — behaviour guard for the O(n²) pre-filter ---
 
 OLD_DOC = """\
 1. GENERAL REQUIREMENTS [Page 1]
@@ -318,9 +314,7 @@ def test_diff_does_not_collapse_entry_mixing_systemic_and_unique_change():
     assert 'same substitution repeated in 4 more entries' in diff  # unaffected by the 6th entry
 
 
-# ---------------------------------------------------------------------------
-# Chunked analysis — splitting
-# ---------------------------------------------------------------------------
+# --- Chunked analysis — splitting ---
 
 def _make_messages(body: str, n_images: int = 0):
     text = (
@@ -422,9 +416,7 @@ def test_chunked_stream_parallel_parts_merge_in_order(monkeypatch):
     assert usage['total_tokens'] == 45 and usage['input_tokens'] == 30
 
 
-# ---------------------------------------------------------------------------
-# extract_json_objects
-# ---------------------------------------------------------------------------
+# --- extract_json_objects ---
 
 def test_extract_objects_from_clean_array():
     objs = extract_json_objects('[{"a": 1}, {"b": 2}]')

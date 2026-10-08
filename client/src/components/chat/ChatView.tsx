@@ -8,9 +8,7 @@ import { ChatSidebar, type ChatSession } from './ChatSidebar';
 import { type Division, stripDivision } from './division';
 import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanner';
 
-// ---------------------------------------------------------------------------
-// WebSocket streaming helper
-// ---------------------------------------------------------------------------
+// --- WebSocket streaming helper ---
 
 const WS_PATH = '/api/chat/ws';
 const CHAT_TITLE = 'Qualibot';
@@ -76,9 +74,7 @@ function streamChat(
   });
 }
 
-// ---------------------------------------------------------------------------
-// generateId helper
-// ---------------------------------------------------------------------------
+// --- generateId helper ---
 
 function genId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -89,9 +85,7 @@ function genSessionId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Welcome state
-// ---------------------------------------------------------------------------
+// --- Welcome state ---
 
 const SUGGESTED_PROMPTS = [
   'What documents reference the NDT/NDI qualification requirements?',
@@ -159,9 +153,7 @@ function WelcomeState({ title, onPrompt }: { title: string; onPrompt: (p: string
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main ChatView
-// ---------------------------------------------------------------------------
+// --- Main ChatView ---
 
 export function ChatView() {
   const [sidebarOpen, setSidebarOpen] = useState(true);

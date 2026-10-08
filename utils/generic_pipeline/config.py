@@ -21,9 +21,7 @@ def _require_env(key):
     return val
 
 
-# =============================================================================
-# Catalog / Schema / Paths
-# =============================================================================
+# --- Catalog / Schema / Paths ---
 CATALOG_SCHEMA = _require_env("GENERIC_CATALOG_SCHEMA")
 
 # Appended to every table the pipeline writes.
@@ -38,50 +36,36 @@ OFFLINE_MODELS_DIR = _require_env("GENERIC_OFFLINE_MODELS")
 ANTIWORD_BIN_RELATIVE   = "../parsing_pipeline/../../data/vendor/antiword/antiword_local/usr/bin/antiword"
 ANTIWORD_SHARE_RELATIVE = "../parsing_pipeline/../../data/vendor/antiword/antiword_local/usr/share/antiword"
 
-# =============================================================================
-# Target Delta tables
-# =============================================================================
+# --- Target Delta tables ---
 TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.processed_files{TABLE_SUFFIX}"
 TARGET_CHUNK_TABLE           = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"
 TARGET_IMAGE_METADATA_TABLE  = f"{CATALOG_SCHEMA}.image_metadata{TABLE_SUFFIX}"
 
-# =============================================================================
-# Run mode
-# =============================================================================
+# --- Run mode ---
 RUN_MODE = _env("GENERIC_RUN_MODE", "incremental")  # "incremental" | "full"
 
 # Overridable via GENERIC_PARSE_FILTER="file1.pdf,file2.docx" for a targeted run.
 PARSE_FILTER = [x.strip() for x in _env("GENERIC_PARSE_FILTER", "").split(",") if x.strip()] or None
 
-# =============================================================================
-# Feature flags
-# =============================================================================
+# --- Feature flags ---
 ENABLE_AUDIT       = True
 ENABLE_RETRY       = True
 ENABLE_TIMING_TEST = False
 
-# =============================================================================
-# Resilience
-# =============================================================================
+# --- Resilience ---
 CHECKPOINT_BATCH_SIZE   = 100
 PARSE_TIMEOUT_SECONDS   = 200
 MAX_CHUNKS_SPREADSHEET  = 100
 
-# =============================================================================
-# Chunk cleaning flags
-# =============================================================================
+# --- Chunk cleaning flags ---
 CLEAN_IMAGE_PLACEHOLDERS = True
 CLEAN_FORMULA_ARTIFACTS  = True
 DEDUPLICATE_CHUNKS       = True
 
-# =============================================================================
-# Empty + small file auto-exclusion
-# =============================================================================
+# --- Empty + small file auto-exclusion ---
 EMPTY_SMALL_FILE_SIZE_BYTES = int(_env("GENERIC_EMPTY_SMALL_FILE_SIZE_BYTES", "51200"))
 
-# =============================================================================
-# Docling engine settings
-# =============================================================================
+# --- Docling engine settings ---
 def _detect_gpu():
     import shutil as _sh, subprocess as _sp
     if _sh.which("nvidia-smi") is None:
@@ -100,17 +84,13 @@ IMAGE_SCALE             = 3.0
 MIN_AREA_RATIO          = 0.05
 MAX_REPEAT              = 2
 
-# =============================================================================
-# Image save settings
-# =============================================================================
+# --- Image save settings ---
 IMAGE_MAX_DIMENSION = 4096
 IMAGE_JPEG_QUALITY  = 95
 IMAGE_RESAMPLING    = "LANCZOS"
 IMAGE_FORMAT        = "PNG"
 
-# =============================================================================
-# Tokenizer / Chunking
-# =============================================================================
+# --- Tokenizer / Chunking ---
 USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
 MIN_CHUNK_TOKENS    = 250
@@ -118,9 +98,7 @@ TARGET_CHUNK_TOKENS = 500
 MAX_CHUNK_TOKENS    = 1000
 CHUNK_OVERLAP_RATIO = 0.12
 
-# =============================================================================
-# LLM settings (vision model for image description)
-# =============================================================================
+# --- LLM settings (vision model for image description) ---
 LLM_MODEL_ENDPOINT  = _env("GENERIC_LLM_ENDPOINT", "databricks-gpt-5-6-luna")
 LLM_MAX_TOKENS      = 5000
 LLM_TEMPERATURE     = 1.0
@@ -136,24 +114,18 @@ LLM_QPH_BUDGET      = int(_env("GENERIC_LLM_QPH_BUDGET",  "324000"))
 LLM_AVG_INPUT_TOKENS  = int(_env("GENERIC_LLM_AVG_IN",  "1050"))
 LLM_AVG_OUTPUT_TOKENS = int(_env("GENERIC_LLM_AVG_OUT", "300"))
 
-# =============================================================================
-# Image filtering (deterministic — applied WITHOUT any LLM call)
-# =============================================================================
+# --- Image filtering (deterministic — applied WITHOUT any LLM call) ---
 IMG_SKIP_MAX_DIM   = 140
 IMG_SKIP_MIN_SIDE  = 85
 MIN_INDEXABLE_DESC_CHARS = 40
 EMBED_SOURCE_PREFIX = True
 
-# =============================================================================
-# LLM-OCR fallback for scanned PDFs
-# =============================================================================
+# --- LLM-OCR fallback for scanned PDFs ---
 LLM_OCR_TEXT_THRESHOLD = int(_env("GENERIC_LLM_OCR_TEXT_THRESHOLD", "150"))
 LLM_OCR_MAX_PAGES      = int(_env("GENERIC_LLM_OCR_MAX_PAGES", "100"))
 LLM_OCR_MAX_TOKENS     = int(_env("GENERIC_LLM_OCR_MAX_TOKENS", "8192"))
 
-# =============================================================================
-# LLM Prompt templates (vision model)
-# =============================================================================
+# --- LLM Prompt templates (vision model) ---
 # Same prompts as parsing_pipeline — generic enough for any document.
 IMAGE_DESCRIPTION_PROMPT = """You are a vision extraction engine for a RAG index. You are given an IMAGE plus some surrounding document text (CONTEXT). The context is ALREADY indexed separately, so do not repeat it.
 

@@ -32,9 +32,7 @@ export interface Message {
   feedback?: Feedback | null;
 }
 
-// ---------------------------------------------------------------------------
-// Download utilities
-// ---------------------------------------------------------------------------
+// --- Download utilities ---
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -71,9 +69,7 @@ function buildSessionMarkdown(messages: Message[]): string {
 }
 
 
-// ---------------------------------------------------------------------------
-// Download menu
-// ---------------------------------------------------------------------------
+// --- Download menu ---
 
 interface DownloadMenuProps {
   message: Message;
@@ -164,9 +160,7 @@ function DownloadMenu({ message, allMessages }: DownloadMenuProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sources
-// ---------------------------------------------------------------------------
+// --- Sources ---
 
 // Mirrors doc_catalog.py's _canon(): same document, different intraqual
 // site/language suffix (GO-1316_FR / GO-1316_GB / PRLAT-529 / PRLAT-529_GB /
@@ -340,9 +334,7 @@ function ChatSources({ sources }: { sources: Source[] }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Feedback
-// ---------------------------------------------------------------------------
+// --- Feedback ---
 
 interface FeedbackProps {
   messageId?: number;
@@ -477,9 +469,7 @@ function ChatFeedbackReadOnly({ feedback }: { feedback: Feedback }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Streaming cursor
-// ---------------------------------------------------------------------------
+// --- Streaming cursor ---
 
 function StreamingCursor() {
   return (
@@ -493,9 +483,7 @@ function StreamingCursor() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Message bubble
-// ---------------------------------------------------------------------------
+// --- Message bubble ---
 
 interface ChatMessageProps {
   message: Message;

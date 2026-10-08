@@ -24,9 +24,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+# --- Constants ---
 
 _DHASH_SIZE = 8
 _DHASH_THRESHOLD = 4           # Hamming distance <= 4 => visually identical
@@ -46,9 +44,7 @@ _IMG_JPEG_QUALITY = 65
 _MAX_IMAGE_BLOCKS = 95          # Claude API hard limit is 100 images/documents per request
 _MAX_DIFF_CHARS = int(os.getenv('COMPARE_MAX_DIFF_CHARS', '600000'))  # ~150K tokens
 
-# ---------------------------------------------------------------------------
-# Regexes
-# ---------------------------------------------------------------------------
+# --- Regexes ---
 
 NUMBER_RE = re.compile(r'\b\d+(?:[.,]\d+)*(?:\s*%|\s*mm|\s*in(?:ch)?|\s*kg|\s*psi)?\b')
 PART_NUM_RE = re.compile(r'\d{4,}')  # long digit runs in alphanumeric part numbers (no word-boundary)
@@ -71,9 +67,7 @@ _TRAILING_PAGE_FRACTION_RE = re.compile(r'\s+\d+\s*/\s*\d+$')
 # Matches trailing structural tags: [Page 3], [Para 7], [Page 3, Para 12], [Heading 2], [Slide 4], [Item 12]
 _TAG_RE = re.compile(r'\s*\[(?:Page|Para|Heading|Slide|Item)[^\]]*\].*$', re.I)
 
-# ---------------------------------------------------------------------------
-# Text primitives
-# ---------------------------------------------------------------------------
+# --- Text primitives ---
 
 def strip_tag(text: str) -> str:
     """Remove trailing structural tags ([Page N], [Para N], [Page N, Para M], [Heading N])."""
@@ -205,9 +199,7 @@ def inline_word_diff(old_text: str, new_text: str) -> str:
     return ' '.join(out).strip()
 
 
-# ---------------------------------------------------------------------------
-# Perceptual image hashing (dhash)
-# ---------------------------------------------------------------------------
+# --- Perceptual image hashing (dhash) ---
 
 def dhash(img_bytes: bytes, size: int = _DHASH_SIZE) -> str:
     """64-bit difference hash. Resistant to slight compression/resize artifacts.
@@ -420,9 +412,7 @@ def _compute_image_diff_pairs(
     return modified_pairs, orientation_pairs, remaining_removed, added
 
 
-# ---------------------------------------------------------------------------
-# Image diff blocks (dual — OLD / NEW side-by-side with page-proximity pairing)
-# ---------------------------------------------------------------------------
+# --- Image diff blocks (dual — OLD / NEW side-by-side with page-proximity pairing) ---
 
 def image_diff_blocks_dual(
     old_imgs: Dict[str, Dict[str, Any]],
@@ -581,9 +571,7 @@ def image_diff_pairs(
     return pairs
 
 
-# ---------------------------------------------------------------------------
-# Legacy paragraph diff (lower threshold, kept for reference)
-# ---------------------------------------------------------------------------
+# --- Legacy paragraph diff (lower threshold, kept for reference) ---
 
 def legacy_paragraph_diff(old_text: str, new_text: str) -> Tuple[str, int]:
     """Paragraph-level semantic alignment — legacy engine.
@@ -697,9 +685,7 @@ def legacy_paragraph_diff(old_text: str, new_text: str) -> Tuple[str, int]:
     return '\n'.join(out), filtered
 
 
-# ---------------------------------------------------------------------------
-# System prompts
-# ---------------------------------------------------------------------------
+# --- System prompts ---
 
 SYSTEM_PROMPT_STANDARD = """\
 You are an expert document comparison analyst specialising in technical, regulatory, and quality-management documentation.
@@ -1011,9 +997,7 @@ IMPORTANT: output ONLY the JSON array. No explanation. No markdown. No code fenc
 """
 
 
-# ---------------------------------------------------------------------------
-# Modal-aware helpers for paragraph_semantic_diff
-# ---------------------------------------------------------------------------
+# --- Modal-aware helpers for paragraph_semantic_diff ---
 
 def canonicalize_keep_modals(text: str) -> str:
     """Normalize text for comparison: keep modal verbs as distinct words.
@@ -1427,9 +1411,7 @@ def _tag_relocated(results: List[Dict[str, Any]], new_text: str) -> int:
     return tagged
 
 
-# ---------------------------------------------------------------------------
-# Primary text diff engine — paragraph semantic diff
-# ---------------------------------------------------------------------------
+# --- Primary text diff engine — paragraph semantic diff ---
 
 _CONT_RE = re.compile(
     r'^((?:\d+(?:\.\d+)*\.?\s+)?[A-Z][A-Z\s\d]*?)\s*\((Continued|Suite|Cont\.)\)(?:\s+(.*))?',
@@ -2136,9 +2118,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     return '\n'.join(out), filtered
 
 
-# ---------------------------------------------------------------------------
-# Alternative text diff engine — section canonical diff
-# ---------------------------------------------------------------------------
+# --- Alternative text diff engine — section canonical diff ---
 
 def section_canonical_diff(old_text: str, new_text: str) -> Tuple[str, int]:
     """Alternative diff engine using classic unified diff grouped by section heading.

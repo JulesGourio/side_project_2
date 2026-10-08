@@ -191,9 +191,7 @@ def _get_chat_credentials(request: Request) -> tuple[str, str]:
     return host, token
 
 
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
+# --- Pydantic models ---
 
 
 class ChatFeedbackRequest(BaseModel):
@@ -203,9 +201,7 @@ class ChatFeedbackRequest(BaseModel):
     session_id: Optional[str] = None
 
 
-# ---------------------------------------------------------------------------
-# DB helpers
-# ---------------------------------------------------------------------------
+# --- DB helpers ---
 
 
 async def _upsert_session(conn, session_id: str, user_id: str, workspace_id: Optional[str], workspace_url: str, name: str) -> None:
@@ -314,9 +310,7 @@ async def _save_turn(
         return None
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+# --- Endpoints ---
 
 
 @router.websocket('/chat/ws')

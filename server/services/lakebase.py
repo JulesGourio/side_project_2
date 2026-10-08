@@ -39,9 +39,7 @@ _MIN_REFRESH_INTERVAL_S = 60  # never refresh tighter than this
 _CONNECT_TIMEOUT_S = float(os.getenv('LAKEBASE_CONNECT_TIMEOUT_S', '5'))
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+# --- Internal helpers ---
 
 
 def _cfg() -> dict:
@@ -680,9 +678,7 @@ async def _token_refresh_loop(
             logger.error(f'Lakebase token refresh failed (retrying in {delay}s): {e}')
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+# --- Public API ---
 
 
 async def init_lakebase() -> None:

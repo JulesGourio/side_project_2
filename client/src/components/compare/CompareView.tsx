@@ -181,9 +181,7 @@ export function CompareView() {
 
   const handleInvalidFile = (msg: string) => { toast.error(msg); setError(msg); };
 
-  // -------------------------------------------------------------------------
-  // Auto-save helpers
-  // -------------------------------------------------------------------------
+  // --- Auto-save helpers ---
 
   const autoSavePdfs = async (old: DocFile, nw: DocFile): Promise<string> => {
     try {
@@ -244,9 +242,7 @@ export function CompareView() {
       .catch(() => { /* best-effort — not critical */ });
   };
 
-  // -------------------------------------------------------------------------
-  // History helpers
-  // -------------------------------------------------------------------------
+  // --- History helpers ---
 
   const saveToHistory = async (
     oldName: string,
@@ -411,9 +407,7 @@ export function CompareView() {
     toast.success(`Loaded: ${entry.old_filename} → ${entry.new_filename}`);
   };
 
-  // -------------------------------------------------------------------------
-  // Analyze
-  // -------------------------------------------------------------------------
+  // --- Analyze ---
 
   const handleAnalyzeStructured = async (forceRefresh = false) => {
     if (!oldPdf || !newPdf) return;
@@ -919,9 +913,7 @@ export function CompareView() {
   const accentAmber  = '#d97706';
   const accentGreen  = '#16a34a';
 
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
+  // --- Render ---
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-10 space-y-8">

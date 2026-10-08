@@ -105,9 +105,7 @@ class ChatVsiError(Exception):
         self.http_status = http_status
 
 
-# ---------------------------------------------------------------------------
-# Settings
-# ---------------------------------------------------------------------------
+# --- Settings ---
 
 def normalize_division(division: Optional[str]) -> str:
     d = (division or 'ALL').upper()
@@ -192,9 +190,7 @@ def load_instructions(division: str) -> str:
     return f'{instructions}\n\n{rules}'
 
 
-# ---------------------------------------------------------------------------
-# Citation markers
-# ---------------------------------------------------------------------------
+# --- Citation markers ---
 
 class CitationStreamParser:
     """Strips ``[n]`` markers from streamed text and records where each citation goes.
@@ -263,9 +259,7 @@ def parse_citations(raw: str, documents: List[Tuple[str, Dict[str, Any]]]) -> Tu
     return clean, sources, citations
 
 
-# ---------------------------------------------------------------------------
-# Conversation helpers
-# ---------------------------------------------------------------------------
+# --- Conversation helpers ---
 
 def _clean_history(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
     """Copy of the conversation without the ``⟦n⟧`` markers stored in earlier answers."""
@@ -321,9 +315,7 @@ def refs_named_in(text: str) -> List[str]:
     return refs[:_REF_LOOKUP_MAX]
 
 
-# ---------------------------------------------------------------------------
-# Vector Search
-# ---------------------------------------------------------------------------
+# --- Vector Search ---
 
 async def _post_query(host: str, token: str, index: str, payload: Dict[str, Any]) -> httpx.Response:
     """One Vector Search query through the app-wide gate (``vs_gate``: at most
@@ -496,9 +488,7 @@ async def retrieve_for_turn(host: str, token: str, division: str,
             'titled': [canon for canon, _, _ in titled], 'index': index}
 
 
-# ---------------------------------------------------------------------------
-# Prompt and answer
-# ---------------------------------------------------------------------------
+# --- Prompt and answer ---
 
 def with_language_reminder(messages: List[Dict[str, str]], language: Optional[str] = None) -> List[Dict[str, str]]:
     """``messages`` with the language reminder after the last user turn (a copy)."""

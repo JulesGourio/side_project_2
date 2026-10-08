@@ -36,9 +36,7 @@ from ._diff_engines import (
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Fitz import helper
-# ---------------------------------------------------------------------------
+# --- Fitz import helper ---
 
 def _import_fitz():
     try:
@@ -56,9 +54,7 @@ def _import_fitz():
         ) from e
 
 
-# ---------------------------------------------------------------------------
-# Text extraction
-# ---------------------------------------------------------------------------
+# --- Text extraction ---
 
 # Standalone pagination artifacts: "12", "- 12 -", "12/70", "Page 12 of 70",
 # "Page 12 sur 70", "Page 12". They shift on every repagination and would
@@ -306,9 +302,7 @@ def _extract_text_with_pages(pdf_bytes: bytes) -> str:
     return '\n'.join(text_blocks)
 
 
-# ---------------------------------------------------------------------------
-# Image extraction (perceptual dhash)
-# ---------------------------------------------------------------------------
+# --- Image extraction (perceptual dhash) ---
 
 def _extract_and_hash_images(pdf_bytes: bytes) -> Dict[str, Dict[str, Any]]:
     """Extract embedded images, deduplicate by perceptual dhash, record pages.
@@ -349,9 +343,7 @@ def _extract_and_hash_images(pdf_bytes: bytes) -> Dict[str, Dict[str, Any]]:
     return images
 
 
-# ---------------------------------------------------------------------------
-# Processor
-# ---------------------------------------------------------------------------
+# --- Processor ---
 
 class PDFProcessor(BaseProcessor):
 
@@ -372,9 +364,7 @@ class PDFProcessor(BaseProcessor):
             return self._comparative_diff(old_bytes, old_name, new_bytes, new_name, system_prompt)
         return self._paragraph_diff(old_bytes, old_name, new_bytes, new_name, SYSTEM_PROMPT_STANDARD, 'standard')
 
-    # ------------------------------------------------------------------
-    # Standard / Structured — paragraph semantic diff
-    # ------------------------------------------------------------------
+    # --- Standard / Structured — paragraph semantic diff ---
 
     def _paragraph_diff(
         self,
@@ -423,9 +413,7 @@ class PDFProcessor(BaseProcessor):
             warnings=warnings,
         )
 
-    # ------------------------------------------------------------------
-    # Comparative — section canonical diff
-    # ------------------------------------------------------------------
+    # --- Comparative — section canonical diff ---
 
     def _comparative_diff(
         self,

@@ -22,9 +22,7 @@ def _require_env(key):
     return val
 
 
-# =============================================================================
-# Catalog / Schema / Paths
-# =============================================================================
+# --- Catalog / Schema / Paths ---
 CATALOG_SCHEMA        = _require_env("PARSING_CATALOG_SCHEMA")
 
 # Appended to every table the pipeline writes — PARSING_TABLE_SUFFIX=_test isolates a whole validation run.
@@ -44,18 +42,14 @@ INGESTION_FRESHNESS_TABLE = _env("PARSING_INGESTION_FRESHNESS_TABLE",
                                  f"{_B}.intraqual_ingestion_freshness_all")
 MAX_SOURCE_STALENESS_HOURS = int(_env("PARSING_MAX_SOURCE_STALENESS_HOURS", "36"))
 
-# =============================================================================
-# Qualibot perimeter (scope gate)
-# =============================================================================
+# --- Qualibot perimeter (scope gate) ---
 # Do not add difftotale=1 back (excludes legitimate docs); v_qualibot_latest's MV returns only the latest delta, not full scope.
 DOC_SCOPE_FILTER = _env(
     "PARSING_DOC_SCOPE_FILTER",
     "courant = 1 AND etat = 7 AND nonvisible = 0",
 )
 
-# =============================================================================
-# Legacy fallbacks (disabled by default)
-# =============================================================================
+# --- Legacy fallbacks (disabled by default) ---
 # Empty = disabled. Kept as variables to re-enable via --var if a gap shows up.
 GD_DOC_FALLBACK          = _env("PARSING_GD_DOC_FALLBACK",          "")
 DIVISION_ARCHIVE_TABLE   = _env("PARSING_DIVISION_ARCHIVE_TABLE",   "")
@@ -75,9 +69,7 @@ OFFLINE_MODELS_DIR    = _require_env("PARSING_OFFLINE_MODELS")
 ANTIWORD_BIN_RELATIVE   = "../../data/vendor/antiword/antiword_local/usr/bin/antiword"
 ANTIWORD_SHARE_RELATIVE = "../../data/vendor/antiword/antiword_local/usr/share/antiword"
 
-# =============================================================================
-# Target Delta tables
-# =============================================================================
+# --- Target Delta tables ---
 TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.processed_files{TABLE_SUFFIX}"
 
 # All divisions; the chat filters on the `division` column at query time.
@@ -90,9 +82,7 @@ TARGET_IMAGE_METADATA_TABLE  = f"{CATALOG_SCHEMA}.image_metadata{TABLE_SUFFIX}"
 TARGET_HEALTH_TABLE          = f"{CATALOG_SCHEMA}.parsing_run_health{TABLE_SUFFIX}"  # one row per pipeline run, for the monitoring dashboard
 TARGET_CHANGE_LOG_TABLE      = f"{CATALOG_SCHEMA}.document_change_log{TABLE_SUFFIX}"  # one row per NEW/REVISED document, for the monitoring dashboard
 
-# =============================================================================
-# Date cutoff
-# =============================================================================
+# --- Date cutoff ---
 # Docs before this date are parsed like the others but their chunks go to
 # TARGET_CHUNK_TABLE_ARCHIVE instead of the RAG chunk tables (processed_files:
 # filtered_by_date=True, include_in_rag=False). No DATEDIFF = unknown date = recent.
@@ -119,15 +109,11 @@ ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
 # =============================================================================
 MANUAL_REF_EXCLUSIONS = set()
 
-# =============================================================================
-# Empty + small file auto-exclusion
-# =============================================================================
+# --- Empty + small file auto-exclusion ---
 # Zero-text + small file = blank stub (verified by hand) -> auto-skip permanently; zero-text ABOVE this size stays ERROR for review.
 EMPTY_SMALL_FILE_SIZE_BYTES = int(_env("PARSING_EMPTY_SMALL_FILE_SIZE_BYTES", "51200"))  # 50 KiB
 
-# =============================================================================
-# Run mode
-# =============================================================================
+# --- Run mode ---
 RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full"
 
 # =============================================================================
@@ -136,30 +122,22 @@ RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full"
 # =============================================================================
 PARSE_FILTER = [int(x) for x in _env("PARSING_PARSE_FILTER", "").split(",") if x.strip().isdigit()] or None
 
-# =============================================================================
-# Feature flags
-# =============================================================================
+# --- Feature flags ---
 ENABLE_AUDIT       = True
 ENABLE_RETRY       = True
 ENABLE_TIMING_TEST = False  # gates per-step timing instrumentation in the parse UDF (utils.py/image_utils.py)
 
-# =============================================================================
-# Resilience -- batch checkpointing & per-file timeout
-# =============================================================================
+# --- Resilience -- batch checkpointing & per-file timeout ---
 CHECKPOINT_BATCH_SIZE   = 100   # Write to Delta every N files (crash-safe)
 PARSE_TIMEOUT_SECONDS   = 200   # Max seconds per file -- beyond this, mark as TIMEOUT
 MAX_CHUNKS_SPREADSHEET  = 100   # Limit chunks for xlsx/xls/xlsm (None = no limit)
 
-# =============================================================================
-# Chunk cleaning flags
-# =============================================================================
+# --- Chunk cleaning flags ---
 CLEAN_IMAGE_PLACEHOLDERS = True
 CLEAN_FORMULA_ARTIFACTS  = True
 DEDUPLICATE_CHUNKS       = True
 
-# =============================================================================
-# Docling engine settings
-# =============================================================================
+# --- Docling engine settings ---
 # USE_GPU: explicit override via PARSING_USE_GPU, else auto-detected (nvidia-smi).
 def _detect_gpu():
     import shutil as _sh, subprocess as _sp
@@ -181,17 +159,13 @@ IMAGE_SCALE             = 3.0          # ~216 DPI -- captures fine text in diagr
 MIN_AREA_RATIO          = 0.05
 MAX_REPEAT              = 2
 
-# =============================================================================
-# Image save settings
-# =============================================================================
+# --- Image save settings ---
 IMAGE_MAX_DIMENSION = 4096      # preserves full detail for large schematics
 IMAGE_JPEG_QUALITY  = 95        # near-lossless (only used if IMAGE_FORMAT=JPEG)
 IMAGE_RESAMPLING    = "LANCZOS" # sharpest downscale algorithm
 IMAGE_FORMAT        = "PNG"     # PNG = lossless, no compression artifacts on text/diagrams
 
-# =============================================================================
-# Tokenizer / Chunking
-# =============================================================================
+# --- Tokenizer / Chunking ---
 # tiktoken (cl100k) is more accurate than CHARS_PER_TOKEN for technical French; falls back to it if unavailable offline.
 USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
@@ -209,9 +183,7 @@ CHUNK_OVERLAP_RATIO = float(_env("PARSING_CHUNK_OVERLAP_RATIO", "0.12"))
 # A passage body found in at least this many documents is marked "boilerplate".
 BOILERPLATE_MIN_DOCS = int(_env("PARSING_BOILERPLATE_MIN_DOCS", "20"))
 
-# =============================================================================
-# LLM settings (vision model for image description)
-# =============================================================================
+# --- LLM settings (vision model for image description) ---
 LLM_MODEL_ENDPOINT  = _env("PARSING_LLM_ENDPOINT", "databricks-gpt-5-6-luna")
 LLM_MAX_TOKENS      = 5000    # GPT-5 reasoning tokens need headroom beyond the visible output
 LLM_TEMPERATURE     = 1.0   # gpt-5 family: temperature=1 only
@@ -231,9 +203,7 @@ LLM_QPH_BUDGET      = int(_env("PARSING_LLM_QPH_BUDGET",  "324000"))   # real li
 LLM_AVG_INPUT_TOKENS  = int(_env("PARSING_LLM_AVG_IN",  "1050"))
 LLM_AVG_OUTPUT_TOKENS = int(_env("PARSING_LLM_AVG_OUT", "300"))
 
-# =============================================================================
-# Image filtering (deterministic — applied WITHOUT any LLM call)
-# =============================================================================
+# --- Image filtering (deterministic — applied WITHOUT any LLM call) ---
 # Deliberately conservative — no filtering on a large width/height ratio.
 IMG_SKIP_MAX_DIM   = 140   # longer side (px) < threshold -> illegible thumbnail -> skip
 IMG_SKIP_MIN_SIDE  = 85    # shorter side (px) < threshold -> band/table too short -> skip
@@ -245,9 +215,7 @@ MIN_INDEXABLE_DESC_CHARS = 40
 # which hurt retrieval precision.
 EMBED_SOURCE_PREFIX = _env("PARSING_EMBED_SOURCE_PREFIX", "true").strip().lower() in ("1", "true", "yes")
 
-# =============================================================================
-# LLM Prompt template (vision model)
-# =============================================================================
+# --- LLM Prompt template (vision model) ---
 # Expected placeholders: {division}, {category}, {context}
 IMAGE_DESCRIPTION_PROMPT = """You are a vision extraction engine for an industrial RAG index. You are given an IMAGE plus some surrounding document text (CONTEXT). The context is ALREADY indexed separately, so do not repeat it.
 
@@ -278,9 +246,7 @@ Extraction rules by category:
 
 Do NOT copy or paraphrase the CONTEXT text: if everything you could write is already in the context, answer SKIP instead. No notes about the document, no mention of division or category."""
 
-# =============================================================================
-# LLM-OCR fallback for scanned PDFs
-# =============================================================================
+# --- LLM-OCR fallback for scanned PDFs ---
 # Triggers when Docling still yields near-empty text: pages are rendered to images and queued through the same
 # PENDING-image pipeline with the prompt below (full transcription, never SKIP).
 # Below 150 characters, digital PDFs that Docling barely parses stayed SUCCESS with no indexed content.

@@ -127,9 +127,7 @@ def effective_max_tokens(endpoint: str, max_tokens: int, floor: Optional[int] = 
     return max(max_tokens, int(_env_float('CHAT_VSI_REASONING_MIN_TOKENS', 6000)) if floor is None else floor)
 
 
-# ---------------------------------------------------------------------------
-# Endpoint health, shared by every turn of this app instance
-# ---------------------------------------------------------------------------
+# --- Endpoint health, shared by every turn of this app instance ---
 
 _cooling_until: Dict[str, float] = {}
 
@@ -171,9 +169,7 @@ def _semaphore() -> Optional[asyncio.Semaphore]:
     return current[1]
 
 
-# ---------------------------------------------------------------------------
-# One streamed call
-# ---------------------------------------------------------------------------
+# --- One streamed call ---
 
 class LlmFailure(Exception):
     """One attempt failed. ``kind``: rate_limit, server, timeout, network, refused, auth,
@@ -293,9 +289,7 @@ async def stream_once(host: str, token: str, endpoint: str, messages: List[Dict[
         raise LlmFailure('network', f'{type(exc).__name__}: {exc}'[:300]) from exc
 
 
-# ---------------------------------------------------------------------------
-# The answer: chain, rounds, continuation
-# ---------------------------------------------------------------------------
+# --- The answer: chain, rounds, continuation ---
 
 def _event(payload: Dict[str, Any]) -> str:
     return f'data: {json.dumps(payload)}\n\n'
@@ -444,9 +438,7 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
     yield 'data: [DONE]\n\n'
 
 
-# ---------------------------------------------------------------------------
-# Short non-streamed calls (search-query rewrite)
-# ---------------------------------------------------------------------------
+# --- Short non-streamed calls (search-query rewrite) ---
 
 def _message_text(content: Any) -> str:
     if isinstance(content, str):

@@ -53,9 +53,7 @@ for _noisy in ("py4j", "py4j.clientserver", "py4j.java_gateway", "pyspark", "doc
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
-# ===========================================================================
-# Configuration
-# ===========================================================================
+# --- Configuration ---
 # _DEFAULTS is the worker fallback; the notebook injects the real config via configure().
 # ---------------------------------------------------------------------------
 _DEFAULT_VOLUME_BASE_PATH = os.environ.get("PARSING_VOLUME_BASE_PATH")
@@ -177,9 +175,7 @@ def _cfg(key: str, fallback=None):
     raise RuntimeError(f"Configuration key '{key}' not set and no default exists.")
 
 
-# ===========================================================================
-# Non-configurable internal constants
-# ===========================================================================
+# --- Non-configurable internal constants ---
 TEXTLIKE_EXTENSIONS = {"csv", "json", "tsv"}
 CONVERTED_EXTS = {".doc", ".rtf", ".odt", ".ods", ".xls"}
 
@@ -191,9 +187,7 @@ _FORMAT_MAP_NAMES: Dict[str, str] = {
 
 _TIKTOKEN_ENCODER = None
 
-# ---------------------------------------------------------------------------
-# Spark schemas
-# ---------------------------------------------------------------------------
+# --- Spark schemas ---
 CHUNK_SCHEMA = T.ArrayType(T.StructType([
     T.StructField("chunk_index", T.IntegerType(), True),
     T.StructField("chunk_text", T.StringType(), True),
@@ -204,9 +198,7 @@ CHUNK_SCHEMA = T.ArrayType(T.StructType([
 ]))
 
 
-# ===========================================================================
-# Docling bootstrap (lazy, cached per worker)
-# ===========================================================================
+# --- Docling bootstrap (lazy, cached per worker) ---
 def _patch_worker_env():
     """Set offline / thread-limit env vars on Spark workers."""
     os.environ.setdefault("USER", "spark_worker")
@@ -330,9 +322,7 @@ def _get_converter(input_format, do_ocr: Optional[bool] = None, timings: Optiona
     return converter
 
 
-# ===========================================================================
-# Text helpers
-# ===========================================================================
+# --- Text helpers ---
 def safe_decode(raw_bytes: bytes, encodings: Optional[List[str]] = None) -> str:
     if not raw_bytes:
         return ""
@@ -379,9 +369,7 @@ def _write_tmp_file(content: bytes, suffix: str) -> Path:
     return Path(tmp.name)
 
 
-# ===========================================================================
-# Legacy-format pre-conversion
-# ===========================================================================
+# --- Legacy-format pre-conversion ---
 def _convert_doc_antiword(doc_path: Path) -> Tuple[Optional[Path], Optional[str]]:
     """Convert legacy .doc to Markdown via the Antiword binary (if configured).
 
@@ -491,9 +479,7 @@ def _convert_xls(content: bytes) -> Tuple[Optional[str], Optional[str]]:
             pass
 
 
-# ===========================================================================
-# Core parsing
-# ===========================================================================
+# --- Core parsing ---
 def parse_with_docling(content: bytes, extension: str, timings: Optional[dict] = None) -> Dict[str, Any]:
     """Route raw bytes to the right parser by extension. Returns a dict with
     text / parser_error / parser_strategy / parse_time_seconds / _docling_doc.
@@ -561,9 +547,7 @@ def _export_markdown(doc) -> str:
         return doc.export_to_markdown()
 
 
-# ---------------------------------------------------------------------------
-# Pre-clean OOXML zips (.docx/.docm/.pptx/.pptm) before the size gate.
-# ---------------------------------------------------------------------------
+# --- Pre-clean OOXML zips (.docx/.docm/.pptx/.pptm) before the size gate. ---
 _OOXML_EMBEDDING_MARKER = "/embeddings/"
 _MEDIA_JUNK_EXTS = {
     ".mp4", ".avi", ".mov", ".wmv", ".mpg", ".mpeg", ".m4v", ".flv", ".mkv", ".asf",
@@ -895,9 +879,7 @@ def intraqual_ref_url(ref_col):
     )
 
 
-# ===========================================================================
-# Chunking
-# ===========================================================================
+# --- Chunking ---
 def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_col,
                           doc_date_col=None, include_prefix=True, type_col=None):
     """chunk_text with an optional "[Source: ...]" provenance prefix (include_prefix).
@@ -944,9 +926,7 @@ def chunk_document(text: str, docling_doc=None) -> List[Dict[str, Any]]:
     )
 
 
-# ===========================================================================
-# PySpark pandas UDFs
-# ===========================================================================
+# --- PySpark pandas UDFs ---
 @pandas_udf(CHUNK_SCHEMA)
 def build_chunks_udf(text_series: pd.Series) -> pd.Series:
     """Chunk already-parsed markdown text (chunking.chunk_markdown)."""

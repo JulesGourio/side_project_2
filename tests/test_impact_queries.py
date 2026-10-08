@@ -36,9 +36,7 @@ MARKDOWN = """\
 """
 
 
-# ---------------------------------------------------------------------------
-# changes_to_queries
-# ---------------------------------------------------------------------------
+# --- changes_to_queries ---
 
 def test_structured_changes_keep_table_order_and_ids():
     out = changes_to_queries(STRUCTURED)
@@ -128,9 +126,7 @@ def test_empty_input():
     assert changes_to_queries('')['queries'] == []
 
 
-# ---------------------------------------------------------------------------
-# _aggregate_docs
-# ---------------------------------------------------------------------------
+# --- _aggregate_docs ---
 
 def _chunk(iddoc, ref, score, change_ids=('C1',), text='chunk text', chunk_id='1-000001'):
     return {'IDDOC': iddoc, 'REF': ref, 'division': 'AS', 'url': '', 'semantic_headers': '',
@@ -192,9 +188,7 @@ def test_prefix_stripped_and_metadata_read():
     assert meta == {'title': 'Porte A320', 'doc_date': '2016-03-01'}
 
 
-# ---------------------------------------------------------------------------
-# _judged_doc
-# ---------------------------------------------------------------------------
+# --- _judged_doc ---
 
 def _candidate():
     return _aggregate_docs([

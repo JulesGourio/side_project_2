@@ -28,9 +28,7 @@ variables:
     description: "Project schema inside app_proj_catalog"
     default: ${var.app_write_schema}
 
-  # ---------------------------------------------------------------------------
-  # Parsing pipeline
-  # ---------------------------------------------------------------------------
+  # --- Parsing pipeline ---
   parsing_node_type:
     description: "(legacy) Node type for the parsing job cluster"
     default: "r6idn.2xlarge"

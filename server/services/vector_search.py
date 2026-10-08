@@ -188,9 +188,7 @@ def _find_quote(text: str, quote: str) -> Optional[List[int]]:
     return [m.start(), m.end()] if m else None
 
 
-# ---------------------------------------------------------------------------
-# Retrieval
-# ---------------------------------------------------------------------------
+# --- Retrieval ---
 
 async def _fetch_chunks(host: str, token: str, index_name: str, query_text: str, num_results: int) -> List[Dict[str, Any]]:
     payload = {'query_text': query_text, 'columns': _COLUMNS, 'num_results': num_results, 'query_type': 'HYBRID'}
@@ -306,9 +304,7 @@ def _change_num(change_id: str) -> int:
         return 0
 
 
-# ---------------------------------------------------------------------------
-# Judgment
-# ---------------------------------------------------------------------------
+# --- Judgment ---
 
 def _changes_block(changes: List[Dict[str, Any]], max_chars: int, priority_ids: Tuple[str, ...] = ()) -> str:
     """The change list shown to the judge, in table order, within max_chars.

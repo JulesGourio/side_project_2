@@ -99,9 +99,7 @@ OUTPUT: Markdown, ## per section, one bullet per change. Bold critical values. I
 MAX_FILE_BYTES = int(os.getenv('MAX_COMPARE_FILE_MB') or os.getenv('MAX_COMPARE_PDF_MB') or '20') * 1024 * 1024
 
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
+# --- Config ---
 
 def _get_config() -> Dict[str, Any]:
     if os.getenv('COMPARE_ENABLED', 'true').lower() != 'true':
@@ -138,9 +136,7 @@ def _get_config() -> Dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
+# --- Auth ---
 
 def _get_credentials(request: Request):
     host = os.environ.get('DATABRICKS_HOST', '').rstrip('/')
@@ -164,9 +160,7 @@ def _get_credentials(request: Request):
     return host, token
 
 
-# ---------------------------------------------------------------------------
-# File helpers
-# ---------------------------------------------------------------------------
+# --- File helpers ---
 
 def _sanitize_filename(filename: str, fallback: str = 'document') -> str:
     base = os.path.basename((filename or '').strip())
@@ -254,9 +248,7 @@ async def _cached_stream(cached: dict):
     yield 'data: [DONE]\n\n'
 
 
-# ---------------------------------------------------------------------------
-# /compare/analyze
-# ---------------------------------------------------------------------------
+# --- /compare/analyze ---
 
 @router.post('/compare/analyze', dependencies=[Depends(require_compare)])
 async def analyze_documents(
@@ -521,9 +513,7 @@ async def analyze_documents(
     )
 
 
-# ---------------------------------------------------------------------------
-# /compare/impact
-# ---------------------------------------------------------------------------
+# --- /compare/impact ---
 
 class ImpactRequest(BaseModel):
     changes_text: str
@@ -685,9 +675,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
     return StreamingResponse(_events(), media_type='application/x-ndjson')
 
 
-# ---------------------------------------------------------------------------
-# /compare/summarize — single-document summary, independent of the diff
-# ---------------------------------------------------------------------------
+# --- /compare/summarize — single-document summary, independent of the diff ---
 
 @router.post('/compare/summarize', dependencies=[Depends(require_compare)])
 async def summarize_document(
@@ -775,9 +763,7 @@ async def summarize_document(
     return result
 
 
-# ---------------------------------------------------------------------------
-# /compare/save
-# ---------------------------------------------------------------------------
+# --- /compare/save ---
 
 @router.post('/compare/save', dependencies=[Depends(require_compare)])
 async def save_to_volume(
@@ -842,9 +828,7 @@ async def save_to_volume(
         return JSONResponse({'error': str(e), 'saved_files': saved_files}, status_code=500)
 
 
-# ---------------------------------------------------------------------------
-# /compare/load — restore files from a saved volume session
-# ---------------------------------------------------------------------------
+# --- /compare/load — restore files from a saved volume session ---
 
 @router.get('/compare/load', dependencies=[Depends(require_compare)])
 async def load_session_files(session_path: str, old_filename: str = '', new_filename: str = ''):

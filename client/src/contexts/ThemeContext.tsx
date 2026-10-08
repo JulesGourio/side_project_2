@@ -39,9 +39,7 @@ interface ThemeContextType {
   setEditMode: (mode: boolean) => void;
 }
 
-// ============================================================
-// COLOR UTILITIES
-// ============================================================
+// --- COLOR UTILITIES ---
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -78,9 +76,7 @@ function isLightColor(hex: string): boolean {
   return luminance > 0.5;
 }
 
-// ============================================================
-// DEFAULT THEME
-// ============================================================
+// --- DEFAULT THEME ---
 
 const DEFAULT_THEME = getDefaultTheme();
 const defaultColors: ThemeColors = DEFAULT_THEME.colors;
@@ -262,9 +258,7 @@ export function CustomThemeProvider({ children }: ThemeProviderProps) {
     root.style.setProperty("--font-mono", '"JetBrains Mono", "Fira Code", monospace');
   };
 
-  // ============================================================
-  // CONTEXT METHODS
-  // ============================================================
+  // --- CONTEXT METHODS ---
 
   const updateColors = (newColors: Partial<ThemeColors>) => {
     const updated = { ...colors, ...newColors };
