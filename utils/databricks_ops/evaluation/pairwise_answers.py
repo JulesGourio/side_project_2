@@ -26,9 +26,11 @@
 # MAGIC invention — the KA's invention count is therefore a lower bound.
 # MAGIC
 # MAGIC Three phases: searches one configuration after the other (the settings are environment
-# MAGIC variables), then all answers, then all judgments, in parallel. Results in
-# MAGIC `eval_pairwise_runs`, one line per (question, contender); what is already judged for the
-# MAGIC same `eval_id` is never re-run. Run all.
+# MAGIC variables), then all answers, then all judgments, in parallel, by batches of 20. **Every
+# MAGIC batch is saved as soon as it ends**: searches and answers in `eval_pairwise_runs_cache`
+# MAGIC (reused by any later run, whatever its `eval_id`), judgments in `eval_pairwise_runs`, one line
+# MAGIC per (question, contender). A run that crashes loses at most the batch in progress: Run all
+# MAGIC again and it resumes. Nothing already judged for the same `eval_id` is re-run.
 
 # COMMAND ----------
 
@@ -131,6 +133,7 @@ from datetime import datetime, timezone
 
 import httpx
 from databricks.sdk import WorkspaceClient
+from pyspark.sql import functions as F
 
 for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
     del sys.modules[_m]
@@ -139,6 +142,13 @@ from server.services import chat_vsi as base, chat_vsi_prompts, chat_vsi_rerank
 from server.services import translation_bridge as _tb
 from server.services.doc_catalog import canon_ref
 from server.services.streaming import _cost_eur, stream_analysis
+
+# Stale deployed code would send temperature=0 to GPT reasoning models (400 "Only the default (1)").
+from server.services.streaming import supports_temperature
+for _m in {REFERENCE['model']} | {c['model'] for c in CONTENDERS} - {'ka'}:
+    assert not (re.search(r'gpt-5-6|gpt-6', _m) and supports_temperature(_m)), (
+        f'Stale app code in {APP}: streaming.py still sends a temperature to {_m}. '
+        'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
 
 # One translation client per event loop (each question runs in its own loop).
 _tb._get_http_client = lambda: httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
@@ -280,6 +290,39 @@ async def judge_once(conversation, docs1, docs2, a1, a2):
     return verdict
 
 
+CACHE = RESULTS + '_cache'
+
+
+def cache_load(kind):
+    """{key tuple: payload} of what an earlier run already saved (searches, answers)."""
+    if not spark.catalog.tableExists(CACHE):
+        return {}
+    out = {}
+    for r in spark.table(CACHE).filter(F.col('kind') == kind).orderBy('saved_at').select('key', 'payload').collect():
+        out[tuple(json.loads(r['key']))] = json.loads(r['payload'])
+    return out
+
+
+def cache_save(kind, results):
+    rows = [(EVAL_ID, kind, json.dumps(list(k), ensure_ascii=False), json.dumps(v, ensure_ascii=False),
+             datetime.now(timezone.utc)) for k, v in results.items() if 'error' not in v]
+    if rows:
+        spark.createDataFrame(rows, 'eval_id string, kind string, key string, payload string, saved_at timestamp') \
+            .write.mode('append').saveAsTable(CACHE)
+
+
+def in_batches(fn, keys, on_batch, size=20):
+    """in_threads by batches; on_batch(dict) saves each batch as soon as it ends."""
+    out = {}
+    for i in range(0, len(keys), size):
+        batch = keys[i:i + size]
+        done_batch = dict(zip(batch, in_threads(fn, batch)))
+        on_batch(done_batch)
+        out.update(done_batch)
+        print(f'  {min(i + size, len(keys))}/{len(keys)} saved')
+    return out
+
+
 def in_threads(fn, items):
     def safe(item):
         for attempt in range(2):
@@ -367,14 +410,17 @@ print(len(CASES), 'questions,', len(TODO), 'comparisons to run | reference', REF
 
 # DBTITLE 1,Phase 1 — searches, one configuration at a time
 cases_todo = {(c['source'], c['case_id']): c for c, _ in TODO}
-SEARCH = {}                                              # (search name, source, case_id) -> result
+# Cache key: (search name, rewrite model, source, case_id) — the same search is reused by later runs.
+SEARCH = {(k[0],) + k[2:]: v for k, v in cache_load('search').items() if k[1] == REWRITE}
 for name in sorted({REFERENCE['search']} | {v['search'] for _, v in TODO if v['model'] != 'ka'}):
+    keys = [k for k in cases_todo if (name,) + k not in SEARCH]
+    print(f'{name:16} {len(cases_todo) - len(keys)} searches already saved, {len(keys)} to run')
+    if not keys:
+        continue
     apply_search_env(name)
-    keys = list(cases_todo)
-    outs = in_threads(lambda k: search(cases_todo[k]['messages'], cases_todo[k]['division']), keys)
-    for k, out in zip(keys, outs):
-        SEARCH[(name,) + k] = out
-    print(f"{name:16} {sum(1 for o in outs if 'error' not in o)}/{len(outs)} searches")
+    got = in_batches(lambda k: search(cases_todo[k]['messages'], cases_todo[k]['division']), keys,
+                     lambda b, name=name: cache_save('search', {(name, REWRITE) + k: v for k, v in b.items()}))
+    SEARCH.update({(name,) + k: v for k, v in got.items()})
 
 # COMMAND ----------
 
@@ -390,7 +436,12 @@ async def _answer(job):
         raise RuntimeError('search failed: ' + s['error'])
     return await generate(model, s['prompt'])
 
-ANSWERS = dict(zip(jobs, in_threads(_answer, jobs)))
+# Cache key: (model, search, source, case_id, answer_max_tokens).
+ANSWERS = {k[:4]: v for k, v in cache_load('answer').items() if k[4] == MAX_TOKENS}
+_missing = [j for j in jobs if j not in ANSWERS]
+print(len(jobs) - len(_missing), 'answers already saved,', len(_missing), 'to generate')
+ANSWERS.update(in_batches(_answer, _missing,
+                          lambda b: cache_save('answer', {j + (MAX_TOKENS,): v for j, v in b.items()})))
 for c, v in TODO:                                        # stored KA answers, nothing to generate
     if v['model'] == 'ka':
         ANSWERS[('ka', None, c['source'], c['case_id'])] = {
@@ -441,13 +492,6 @@ async def _judge(item):
         'judge_cost_eur': round(v1['_cost'] + v2['_cost'], 6),
     }
 
-t0 = time.monotonic()
-outs = in_threads(_judge, TODO)
-print(f'{len(outs)} judgments in {time.monotonic() - t0:.0f} s, {sum(1 for o in outs if "error" in o)} errors')
-
-# COMMAND ----------
-
-# DBTITLE 1,Save
 _SCHEMA = """eval_id string, run_ts timestamp, judge string, reference string, contender string,
 contender_model string, contender_search string, source string, case_id string, question string,
 winner string, pick_ref_first string, pick_contender_first string,
@@ -459,24 +503,33 @@ ref_latency_s double, ref_first_token_s double, ref_input_tokens long, ref_outpu
 con_latency_s double, con_first_token_s double, con_input_tokens long, con_output_tokens long, con_cost_eur double,
 judge_cost_eur double, error string"""
 _FIELDS = [f.strip().split(' ')[0] for f in _SCHEMA.replace('\n', ' ').split(',')]
-run_ts, rows = datetime.now(timezone.utc), []
-for (case, v), out in zip(TODO, outs):
-    row = {k: None for k in _FIELDS}
-    row.update({k: val for k, val in out.items() if k in row})
-    row.update({'eval_id': EVAL_ID, 'run_ts': run_ts, 'judge': JUDGE, 'reference': REFERENCE['label'],
-                'contender': v['label'], 'contender_model': v['model'], 'contender_search': v['search'],
-                'source': case['source'], 'case_id': case['case_id'],
-                'question': case['messages'][-1]['content'], 'error': out.get('error')})
-    for k in ('ref_input_tokens', 'ref_output_tokens', 'con_input_tokens', 'con_output_tokens'):
-        row[k] = int(row[k]) if row[k] is not None else None
-    for k in _FIELDS:
-        if isinstance(row[k], int) and not k.endswith('_tokens'):
-            row[k] = float(row[k])
-    rows.append(row)
-if rows:
-    spark.createDataFrame(rows, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
-for e in sorted({r['error'] for r in rows if r['error']})[:5]:
-    print('   ', e)
+
+
+def save_judgments(batch):
+    run_ts, rows = datetime.now(timezone.utc), []
+    for i, out in batch.items():
+        case, v = TODO[i]
+        row = {k: None for k in _FIELDS}
+        row.update({k: val for k, val in out.items() if k in row})
+        row.update({'eval_id': EVAL_ID, 'run_ts': run_ts, 'judge': JUDGE, 'reference': REFERENCE['label'],
+                    'contender': v['label'], 'contender_model': v['model'], 'contender_search': v['search'],
+                    'source': case['source'], 'case_id': case['case_id'],
+                    'question': case['messages'][-1]['content'], 'error': out.get('error')})
+        for k in ('ref_input_tokens', 'ref_output_tokens', 'con_input_tokens', 'con_output_tokens'):
+            row[k] = int(row[k]) if row[k] is not None else None
+        for k in _FIELDS:
+            if isinstance(row[k], int) and not k.endswith('_tokens'):
+                row[k] = float(row[k])
+        rows.append(row)
+    if rows:
+        spark.createDataFrame(rows, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
+    for e in sorted({r['error'] for r in rows if r['error']})[:3]:
+        print('   ', e)
+
+
+t0 = time.monotonic()
+outs = in_batches(lambda i: _judge(TODO[i]), list(range(len(TODO))), save_judgments)
+print(f'{len(outs)} judgments in {time.monotonic() - t0:.0f} s, {sum(1 for o in outs.values() if "error" in o)} errors')
 
 # COMMAND ----------
 
