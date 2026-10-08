@@ -42,7 +42,10 @@ _PRICING_USD: Dict[str, Dict[str, float]] = {
     # than BOTH gpt-5-4-mini and gpt-5-mini on both axes. The stale rate was
     # overstating every uat-test Luna call's cost_eur by ~5x; update this
     # entry again if the console rate moves.
-    'databricks-gpt-5-6-luna':      {'input': 0.242, 'output': 2.180},
+    # 2026-10-08 (console): Luna output down again, 25.714 -> 17.143 DBU; input unchanged at 2.857.
+    'databricks-gpt-5-6-luna':      {'input': 0.242, 'output': 1.453},
+    # GPT-6 Luna, 2026-10-08 (console): in=1.428571 DBU, out=7.142857 DBU.
+    'databricks-gpt-6-luna':        {'input': 0.121, 'output': 0.606},
 }
 _DEFAULT_PRICING = {'input': 3.0, 'output': 15.0}
 _EUR_PER_USD = float(os.getenv('EUR_PER_USD', '0.92'))
@@ -70,7 +73,8 @@ _endpoint_format_cache: Dict[str, str] = {}
 # "gpt-5-4-mini" (no bare "gpt-5-mini" substring in that name).
 # Claude 5 generation (Sonnet 5 / 5.5, Opus 5 / 5.5, Fable) rejects non-default sampling
 # parameters too (Anthropic API: temperature != default -> 400), so the same rule applies.
-_NO_TEMPERATURE_RE = re.compile(r'gpt-5-6|gpt-5-mini\b|claude-(?:sonnet|opus)-5|claude-fable', re.I)
+# Reasoning models that refuse a non-default temperature (GPT-6 assumed like GPT-5.6: not verified).
+_NO_TEMPERATURE_RE = re.compile(r'gpt-5-6|gpt-6|gpt-5-mini\b|claude-(?:sonnet|opus)-5|claude-fable', re.I)
 
 
 def supports_temperature(endpoint_name: str) -> bool:
