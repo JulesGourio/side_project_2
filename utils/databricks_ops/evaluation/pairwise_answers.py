@@ -1,38 +1,52 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Qualibot — two answer models side by side, same passages, judged by a third model
+# MAGIC # Qualibot — answer versions side by side, judged by another model
 # MAGIC
-# MAGIC For each question the search runs **once** (the `u-all` configuration of `retrieval_eval`,
-# MAGIC rewrite by a fixed model), then **model A** and **model B** write their answer from exactly
-# MAGIC the same passages and the same prompt (the app's own `chat_vsi_prompts.build_prompt`). Only
-# MAGIC the writing differs, so the comparison is not blurred by the search.
+# MAGIC A **version** = an answer model + a search configuration (the names of `retrieval_eval`).
+# MAGIC One **reference** version is compared, question by question, with each **contender**:
 # MAGIC
-# MAGIC A **judge** from another family (default Gemini 3.8 Flash) reads the passages and both
-# MAGIC answers, **twice, in both orders** (a judge tends to favour one position): a model wins a
-# MAGIC question only when both readings agree, otherwise it is a tie. It also lists every claim of
-# MAGIC each answer that the passages do not support (invention check).
+# MAGIC | Default | Version | Why |
+# MAGIC |---|---|---|
+# MAGIC | reference | Sonnet 5.5 + `u-all` | best search, best answer model measured so far |
+# MAGIC | contender | GPT-6 Luna + `u-all` | same passages: the model alone |
+# MAGIC | contender | GPT-6 Luna + `u-bi` | bilingual rewrite only (78 %, ~21k tokens) |
+# MAGIC | contender | GPT-6 Luna + `u-title` | catalogue titles only (76.5 %, ~16k tokens) |
+# MAGIC | contender | GPT-6 Luna + `union-ctx` | current reference search (73.5 %, ~15k tokens) |
+# MAGIC | contender | `ka` | the Knowledge Assistant's **stored** answers: golden from `eval_golden_runs` (eval_id `ka`), real questions from `chat_messages` (the KA answer that followed). Nothing re-run. |
 # MAGIC
-# MAGIC Questions: the golden set and a random sample of real DEV user questions
-# MAGIC (`chat_messages`, with the earlier turns of their conversation). Results in
-# MAGIC `eval_pairwise_runs`, one line per question; a question already judged for the same
-# MAGIC `pair_id` is never re-run. Run all.
+# MAGIC Comparing the Luna versions with each other through the same reference shows whether the
+# MAGIC extra context of `u-all` gives better answers, or only a better retrieval score.
+# MAGIC
+# MAGIC The **judge** (default GPT-5.6 Luna, never one of the compared models) reads each pair
+# MAGIC **twice, in both orders**: a version wins a question only when both readings agree, else
+# MAGIC tie. It scores faithfulness / correctness / completeness / citations (0–3) and lists every
+# MAGIC claim the documents don't support. When the two versions searched differently, the judge
+# MAGIC sees each answer with its own documents. The KA's documents are not stored: its claims are
+# MAGIC checked against the reference's documents, and a claim they don't cover is not counted as an
+# MAGIC invention — the KA's invention count is therefore a lower bound.
+# MAGIC
+# MAGIC Three phases: searches one configuration after the other (the settings are environment
+# MAGIC variables), then all answers, then all judgments, in parallel. Results in
+# MAGIC `eval_pairwise_runs`, one line per (question, contender); what is already judged for the
+# MAGIC same `eval_id` is never re-run. Run all.
 
 # COMMAND ----------
 
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
-dbutils.widgets.text('pair_id', 's55-vs-luna6')                  # name of this comparison
-dbutils.widgets.text('model_a', 'databricks-claude-sonnet-5-5')
-dbutils.widgets.text('model_b', 'databricks-gpt-6-luna')
-dbutils.widgets.text('judge', 'databricks-gemini-3-8-flash')
-dbutils.widgets.text('rewrite_model', 'databricks-claude-sonnet-4-6')  # same rewrite, so same passages
-dbutils.widgets.text('answer_max_tokens', '8000')                 # reasoning counts inside it
-dbutils.widgets.text('sources', 'golden,chat')
-dbutils.widgets.text('n_chat_questions', '60')
+dbutils.widgets.text('eval_id', 'luna6-versions')
+dbutils.widgets.text('reference', 'databricks-claude-sonnet-5-5@u-all')
+dbutils.widgets.text('contenders', 'databricks-gpt-6-luna@u-all,databricks-gpt-6-luna@u-bi,'
+                                   'databricks-gpt-6-luna@u-title,databricks-gpt-6-luna@union-ctx,ka')
+dbutils.widgets.text('judge', 'databricks-gpt-5-6-luna')
+dbutils.widgets.text('rewrite_model', 'databricks-claude-sonnet-4-6')   # every search rewrites with it
+dbutils.widgets.text('answer_max_tokens', '8000')                       # reasoning counts inside it
+dbutils.widgets.text('n_questions', '40')                               # golden first, then real DEV questions
 dbutils.widgets.text('seed', '7')
-dbutils.widgets.text('max_parallel', '3')
+dbutils.widgets.text('max_parallel', '4')
 dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
 dbutils.widgets.text('chat_table', 'dev_landingzone.qualibot.chat_messages')
 dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_pairwise_runs')
+dbutils.widgets.text('golden_runs_table', 'dev_landingzone.qualibot.eval_golden_runs')   # stored KA answers (golden)
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------
@@ -42,22 +56,50 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------
 
-# DBTITLE 1,Parameters, app configuration (app.yaml, then target_config.env), search = u-all
+# DBTITLE 1,Parameters and app configuration (app.yaml, then target_config.env)
 import os, re, shlex, sys
 import yaml
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
-PAIR = dbutils.widgets.get('pair_id').strip()
-MODEL_A, MODEL_B = dbutils.widgets.get('model_a').strip(), dbutils.widgets.get('model_b').strip()
-JUDGE = dbutils.widgets.get('judge').strip()
+EVAL_ID = dbutils.widgets.get('eval_id').strip()
 REWRITE = dbutils.widgets.get('rewrite_model').strip()
+JUDGE = dbutils.widgets.get('judge').strip()
 MAX_TOKENS = int(dbutils.widgets.get('answer_max_tokens'))
-SOURCES = {s.strip() for s in dbutils.widgets.get('sources').split(',') if s.strip()}
-N_CHAT = int(dbutils.widgets.get('n_chat_questions'))
+N_QUESTIONS = int(dbutils.widgets.get('n_questions'))
 SEED = int(dbutils.widgets.get('seed'))
 MAX_PARALLEL = max(1, int(dbutils.widgets.get('max_parallel')))
 RESULTS = dbutils.widgets.get('results_table').strip()
-assert JUDGE not in (MODEL_A, MODEL_B), 'the judge must not be one of the two models'
+
+
+def version(spec):
+    if spec.strip().lower() == 'ka':                     # stored Knowledge Assistant answers
+        return {'label': 'ka', 'model': 'ka', 'search': None}
+    model, _, search = spec.strip().partition('@')
+    return {'label': spec.strip(), 'model': model.strip(), 'search': search.strip() or 'u-all'}
+
+
+REFERENCE = version(dbutils.widgets.get('reference'))
+CONTENDERS = [version(s) for s in dbutils.widgets.get('contenders').split(',') if s.strip()]
+assert JUDGE not in {REFERENCE['model']} | {c['model'] for c in CONTENDERS}, 'the judge must not be a compared model'
+
+# Search configurations (same names and settings as retrieval_eval.py).
+UNION = {'CHAT_VSI_RERANK_MERGE': 'union'}
+CTX = {'CHAT_VSI_RERANK_COLUMNS': 'REF,semantic_headers,chunk_text'}
+REF = {'CHAT_VSI_REF_LOOKUP': 'on'}
+TITLE = {'CHAT_VSI_TITLE_LOOKUP': 'on'}
+BI = {'CHAT_VSI_REWRITE': 'bilingual'}
+ONE_LANG = {'CHAT_VSI_ONE_LANGUAGE': 'on'}
+SEARCHES = {
+    'union-ctx':      {**UNION, **CTX},
+    'u-title':        {**UNION, **CTX, **TITLE},
+    'u-bi':           {**UNION, **CTX, **BI},
+    'u-bi-title-ref': {**UNION, **CTX, **REF, **TITLE, **BI},
+    'u-all':          {**UNION, **CTX, **REF, **TITLE, **BI, **ONE_LANG},
+}
+assert REFERENCE['model'] != 'ka', 'the reference must be a version the notebook can run'
+WITH_KA = any(v['model'] == 'ka' for v in CONTENDERS)
+for v in [REFERENCE] + [c for c in CONTENDERS if c['model'] != 'ka']:
+    assert v['search'] in SEARCHES, f"unknown search {v['search']} — pick from {list(SEARCHES)}"
 
 with open(f'{APP}/app.yaml', encoding='utf-8-sig') as f:
     for item in (yaml.safe_load(f) or {}).get('env') or []:
@@ -69,18 +111,20 @@ if os.path.exists(_target):
         m = re.match(r"\s*export\s+([A-Z0-9_]+)=(.*)$", line)
         if m:
             os.environ[m.group(1)] = (shlex.split(m.group(2)) or [''])[0]
-# u-all (retrieval_eval, 2026-10-08): union + ctx + REF + titles + bilingual rewrite + one language.
-os.environ.update({
-    'CHAT_VSI_VARIANT': 'rerank', 'CHAT_VSI_RERANK_MERGE': 'union',
-    'CHAT_VSI_RERANK_COLUMNS': 'REF,semantic_headers,chunk_text', 'CHAT_VSI_REF_LOOKUP': 'on',
-    'CHAT_VSI_TITLE_LOOKUP': 'on', 'CHAT_VSI_REWRITE': 'bilingual', 'CHAT_VSI_ONE_LANGUAGE': 'on',
-    'CHAT_VSI_REWRITE_ENDPOINT': REWRITE, 'CHAT_VSI_REWRITE_MAX_TOKENS': '1000',
-})
 sys.path.insert(0, APP)
+APP_VSI_ENV = {k: v for k, v in os.environ.items() if k.startswith('CHAT_VSI_')}
+
+
+def apply_search_env(name):
+    for k in [k for k in os.environ if k.startswith('CHAT_VSI_')]:
+        del os.environ[k]
+    os.environ.update(APP_VSI_ENV)
+    os.environ.update({'CHAT_VSI_VARIANT': 'rerank', 'CHAT_VSI_REWRITE_ENDPOINT': REWRITE,
+                       'CHAT_VSI_REWRITE_MAX_TOKENS': '1000', **SEARCHES[name]})
 
 # COMMAND ----------
 
-# DBTITLE 1,App code: search once, then each model answers from the same prompt
+# DBTITLE 1,App code: search, answer, judge
 import asyncio, json, time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -108,7 +152,7 @@ def token() -> str:
 
 
 async def search(messages, division):
-    """The app's steps up to the prompt: history, translation, date, u-all search."""
+    """The app's steps up to the prompt: history, translation, date, the configured search."""
     tok = token()
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in messages])
     user_content = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), '')
@@ -153,17 +197,15 @@ async def generate(model, prompt):
             'input_tokens': usage.get('input_tokens'), 'output_tokens': usage.get('output_tokens'),
             'cost_eur': usage.get('cost_eur')}
 
-# COMMAND ----------
 
-# DBTITLE 1,Judge: both orders, invention check
 JUDGE_PROMPT = """You evaluate two answers of an assistant for Latécoère quality documentation.
-The assistant must answer ONLY from the numbered documents below, cite them with [n], and answer
-in the language of the user's question. You see the conversation, the documents the assistant
-received, and two answers (ANSWER 1, ANSWER 2) written from exactly the same documents.
+The assistant must answer ONLY from the numbered documents it received, cite them with [n], and
+answer in the language of the user's question. You see the conversation, the documents, and two
+answers (ANSWER 1, ANSWER 2). {documents_note}
 
 Judge, in this order of importance:
 1. faithful: every factual claim is supported by the documents (no invented value, step, role,
-   reference, slide content or general knowledge presented as documented);
+   reference, slide content, or general knowledge presented as documented);
 2. correct and useful: it really answers the question, with the key facts the documents give;
 3. complete but concise;
 4. citations: the [n] markers point to documents that support the sentence;
@@ -174,7 +216,7 @@ Return ONLY this JSON:
 {{"better": "1" | "2" | "tie",
   "scores": {{"1": {{"faithful": 0-3, "correct": 0-3, "complete": 0-3, "citations": 0-3}},
              "2": {{"faithful": 0-3, "correct": 0-3, "complete": 0-3, "citations": 0-3}}}},
-  "unsupported_1": ["claim of answer 1 not supported by the documents", ...],
+  "unsupported_1": ["claim of answer 1 not supported by its documents", ...],
   "unsupported_2": [...],
   "reason": "two sentences"}}
 
@@ -182,9 +224,7 @@ Return ONLY this JSON:
 {conversation}
 </conversation>
 
-<documents>
 {documents}
-</documents>
 
 <answer_1>
 {answer_1}
@@ -195,17 +235,31 @@ Return ONLY this JSON:
 </answer_2>"""
 
 
-def _documents_text(documents, max_chars=120_000):
+def documents_text(documents, max_chars=100_000):
     out = '\n\n'.join(f'[{i}] Document {ref}\n' + '\n\n'.join(d['passages'])
                       for i, (ref, d) in enumerate(documents, 1))
     return out[:max_chars]
 
 
-async def judge_once(conversation, docs_text, a1, a2):
-    prompt = JUDGE_PROMPT.format(conversation=conversation, documents=docs_text, answer_1=a1, answer_2=a2)
-    payload = {'messages': [{'role': 'user', 'content': prompt}], 'max_tokens': 4000}
-    async with httpx.AsyncClient(timeout=180) as client:
-        for attempt in range(3):
+async def judge_once(conversation, docs1, docs2, a1, a2):
+    if docs1 is None or docs2 is None:
+        known = docs2 if docs1 is None else docs1
+        other = 1 if docs1 is None else 2
+        note = (f'The documents of answer {other} (another system) are not available: check its claims against '
+                'the documents shown when they cover them, and do not list a claim as unsupported only because '
+                'these documents do not mention it.')
+        docs = f'<documents>\n{known}\n</documents>'
+    elif docs1 == docs2:
+        note, docs = 'Both answers received the same documents.', f'<documents>\n{docs1}\n</documents>'
+    else:
+        note = 'Each answer received its own documents: check each answer against its own set.'
+        docs = (f'<documents_of_answer_1>\n{docs1}\n</documents_of_answer_1>\n\n'
+                f'<documents_of_answer_2>\n{docs2}\n</documents_of_answer_2>')
+    prompt = JUDGE_PROMPT.format(documents_note=note, conversation=conversation, documents=docs,
+                                 answer_1=a1, answer_2=a2)
+    payload = {'messages': [{'role': 'user', 'content': prompt}], 'max_tokens': 6000}
+    async with httpx.AsyncClient(timeout=240) as client:
+        for attempt in range(4):
             resp = await client.post(f'{HOST}/serving-endpoints/{JUDGE}/invocations', json=payload,
                                      headers={'Authorization': f'Bearer {token()}'})
             if resp.status_code == 429 or resp.status_code >= 500:
@@ -226,70 +280,64 @@ async def judge_once(conversation, docs_text, a1, a2):
     return verdict
 
 
-async def compare(case):
-    s = await search(case['messages'], case['division'])
-    a, b = await asyncio.gather(generate(MODEL_A, s['prompt']), generate(MODEL_B, s['prompt']))
-    conversation = '\n'.join(f"{m['role']}: {m['content']}" for m in case['messages'])
-    docs_text = _documents_text(s['documents'])
-    v1, v2 = await asyncio.gather(judge_once(conversation, docs_text, a['answer'], b['answer']),   # A first
-                                  judge_once(conversation, docs_text, b['answer'], a['answer']))  # B first
-    pick1 = {'1': 'A', '2': 'B'}.get(str(v1.get('better')), 'tie')
-    pick2 = {'1': 'B', '2': 'A'}.get(str(v2.get('better')), 'tie')
-    final = pick1 if pick1 == pick2 else 'tie'
-
-    def scores(v, slot):
-        return (v.get('scores') or {}).get(slot) or {}
-
-    sa = [scores(v1, '1'), scores(v2, '2')]
-    sb = [scores(v1, '2'), scores(v2, '1')]
-    avg = lambda ss, k: round(sum(float(x.get(k, 0) or 0) for x in ss) / 2, 2)
-    return {
-        'documents': [canon_ref(ref) for ref, _ in s['documents']],
-        'answer_a': a['answer'], 'answer_b': b['answer'],
-        'pick_a_first': pick1, 'pick_b_first': pick2, 'winner': final,
-        **{f'a_{k}': avg(sa, k) for k in ('faithful', 'correct', 'complete', 'citations')},
-        **{f'b_{k}': avg(sb, k) for k in ('faithful', 'correct', 'complete', 'citations')},
-        'a_unsupported': json.dumps((v1.get('unsupported_1') or []) + (v2.get('unsupported_2') or []), ensure_ascii=False),
-        'b_unsupported': json.dumps((v1.get('unsupported_2') or []) + (v2.get('unsupported_1') or []), ensure_ascii=False),
-        'n_unsupported_a': (len(v1.get('unsupported_1') or []) + len(v2.get('unsupported_2') or [])) / 2,
-        'n_unsupported_b': (len(v1.get('unsupported_2') or []) + len(v2.get('unsupported_1') or [])) / 2,
-        'reason_a_first': v1.get('reason'), 'reason_b_first': v2.get('reason'),
-        **{f'a_{k}': a[k] for k in ('latency_s', 'first_token_s', 'input_tokens', 'output_tokens', 'cost_eur')},
-        **{f'b_{k}': b[k] for k in ('latency_s', 'first_token_s', 'input_tokens', 'output_tokens', 'cost_eur')},
-        'judge_cost_eur': round(v1['_cost'] + v2['_cost'], 6),
-    }
-
-
-def run_case(case):
-    for attempt in range(2):
-        try:
-            return asyncio.run(compare(case))
-        except Exception as exc:
-            err = f'{type(exc).__name__}: {str(exc)[:300]}'
-            time.sleep(10)
-    return {'error': err}
+def in_threads(fn, items):
+    def safe(item):
+        for attempt in range(2):
+            try:
+                return asyncio.run(fn(item))
+            except Exception as exc:
+                err = {'error': f'{type(exc).__name__}: {str(exc)[:300]}'}
+                time.sleep(10)
+        return err
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
+        return list(pool.map(safe, items))
 
 # COMMAND ----------
 
-# DBTITLE 1,Questions: golden + a random sample of real DEV questions (with their earlier turns)
-from pyspark.sql import functions as F, Window
+# DBTITLE 1,Questions: the golden set first, then real DEV questions (with their earlier turns)
+from pyspark.sql import functions as F
+
+_STORED = re.compile(r'⟦\d+⟧')
+KA_GOLDEN = {}
+_gr = dbutils.widgets.get('golden_runs_table').strip()
+if WITH_KA and spark.catalog.tableExists(_gr):
+    for r in spark.sql(f"""SELECT dataset_record_id, answer FROM (
+            SELECT dataset_record_id, answer, row_number() OVER (PARTITION BY dataset_record_id ORDER BY attempt_ts DESC) AS rn
+            FROM {_gr} WHERE eval_id = 'ka' AND answer IS NOT NULL AND length(answer) > 0) WHERE rn = 1""").collect():
+        KA_GOLDEN[r['dataset_record_id']] = _STORED.sub('', r['answer'])
 
 CASES = []
-if 'golden' in SOURCES:
-    for r in spark.table(dbutils.widgets.get('golden_table')).select('dataset_record_id', 'inputs').collect():
-        CASES.append({'source': 'golden', 'case_id': r['dataset_record_id'], 'division': 'ALL',
-                      'messages': json.loads(r['inputs'])['messages']})
-if 'chat' in SOURCES and N_CHAT > 0:
+for r in spark.table(dbutils.widgets.get('golden_table')).select('dataset_record_id', 'inputs').collect():
+    CASES.append({'source': 'golden', 'case_id': r['dataset_record_id'], 'division': 'ALL',
+                  'messages': json.loads(r['inputs'])['messages'], 'ka_answer': KA_GOLDEN.get(r['dataset_record_id'])})
+CASES = CASES[:N_QUESTIONS]
+n_chat = N_QUESTIONS - len(CASES)
+if n_chat > 0:
     msgs = spark.table(dbutils.widgets.get('chat_table'))
     if 'deleted' in msgs.columns:
         msgs = msgs.filter(~F.coalesce(F.col('deleted'), F.lit(False)))
-    users = (msgs.filter((F.col('role') == 'user') & F.length('content').between(15, 1500))
-             .withColumn('_k', F.lower(F.trim('content')))
-             .dropDuplicates(['_k'])
-             .orderBy(F.rand(SEED)).limit(N_CHAT)
-             .select('id', 'session_id', 'created_at', 'content',
-                     (F.col('division') if 'division' in msgs.columns else F.lit('ALL')).alias('division')))
-    picked = users.collect()
+    users = msgs.filter((F.col('role') == 'user') & F.length('content').between(15, 1500))
+    # The answer that followed each question; with the KA compared, only questions the KA answered.
+    from pyspark.sql import Window
+    nxt = Window.partitionBy('session_id').orderBy('created_at')
+    answered = (msgs.withColumn('_next_role', F.lead('role').over(nxt))
+                .withColumn('_next_content', F.lead('content').over(nxt))
+                .withColumn('_next_endpoint', F.lead(F.col('endpoint_name') if 'endpoint_name' in msgs.columns
+                                                     else F.lit(None).cast('string')).over(nxt))
+                .withColumn('_next_status', F.lead(F.col('status') if 'status' in msgs.columns
+                                                   else F.lit('ok')).over(nxt))
+                .filter("role = 'user' AND _next_role = 'assistant'")
+                .select('id', '_next_content', '_next_endpoint', '_next_status'))
+    users = users.join(answered, 'id', 'left')
+    if WITH_KA:
+        users = users.filter(F.col('_next_content').isNotNull()
+                             & (F.col('_next_endpoint').isNull() | F.col('_next_endpoint').startswith('ka-'))
+                             & F.coalesce(F.col('_next_status'), F.lit('ok')).isin('ok'))
+    picked = (users.withColumn('_k', F.lower(F.trim('content'))).dropDuplicates(['_k'])
+              .orderBy(F.rand(SEED)).limit(n_chat)
+              .select('id', 'session_id', 'created_at', 'content', '_next_content',
+                      (F.col('division') if 'division' in msgs.columns else F.lit('ALL')).alias('division'))
+              .collect())
     sessions = [r['session_id'] for r in picked if r['session_id']]
     history = {}
     for h in (msgs.filter(F.col('session_id').isin(sessions))
@@ -302,79 +350,164 @@ if 'chat' in SOURCES and N_CHAT > 0:
         while messages and messages[0]['role'] != 'user':
             messages.pop(0)
         CASES.append({'source': 'chat', 'case_id': str(r['id']), 'division': (r['division'] or 'ALL').upper(),
-                      'messages': messages})
+                      'messages': messages, 'ka_answer': _STORED.sub('', r['_next_content'] or '') or None})
 
 done = set()
 if spark.catalog.tableExists(RESULTS):
-    done = {(r['source'], r['case_id']) for r in spark.table(RESULTS)
-            .filter((F.col('pair_id') == PAIR) & F.col('error').isNull()).select('source', 'case_id').collect()}
-TODO = [c for c in CASES if (c['source'], c['case_id']) not in done]
-print(len(CASES), 'questions,', len(TODO), 'to run for', PAIR, f'({MODEL_A} vs {MODEL_B}, judge {JUDGE})')
+    done = {(r['source'], r['case_id'], r['contender']) for r in spark.table(RESULTS)
+            .filter((F.col('eval_id') == EVAL_ID) & F.col('error').isNull())
+            .select('source', 'case_id', 'contender').collect()}
+TODO = [(c, v) for c in CASES for v in CONTENDERS if (c['source'], c['case_id'], v['label']) not in done
+        and not (v['model'] == 'ka' and not c.get('ka_answer'))]
+if WITH_KA:
+    print(sum(1 for c in CASES if c.get('ka_answer')), 'questions with a stored KA answer')
+print(len(CASES), 'questions,', len(TODO), 'comparisons to run | reference', REFERENCE['label'], '| judge', JUDGE)
 
 # COMMAND ----------
 
-# DBTITLE 1,Run (questions in parallel), saved at the end
-_SCHEMA = """pair_id string, run_ts timestamp, model_a string, model_b string, judge string, source string,
-case_id string, question string, documents array<string>, answer_a string, answer_b string,
-pick_a_first string, pick_b_first string, winner string,
-a_faithful double, a_correct double, a_complete double, a_citations double,
-b_faithful double, b_correct double, b_complete double, b_citations double,
-a_unsupported string, b_unsupported string, n_unsupported_a double, n_unsupported_b double,
-reason_a_first string, reason_b_first string,
-a_latency_s double, a_first_token_s double, a_input_tokens long, a_output_tokens long, a_cost_eur double,
-b_latency_s double, b_first_token_s double, b_input_tokens long, b_output_tokens long, b_cost_eur double,
-judge_cost_eur double, error string"""
-_FIELDS = [f.strip().split(' ')[0] for f in _SCHEMA.replace('\n', ' ').split(',')]
+# DBTITLE 1,Phase 1 — searches, one configuration at a time
+cases_todo = {(c['source'], c['case_id']): c for c, _ in TODO}
+SEARCH = {}                                              # (search name, source, case_id) -> result
+for name in sorted({REFERENCE['search']} | {v['search'] for _, v in TODO if v['model'] != 'ka'}):
+    apply_search_env(name)
+    keys = list(cases_todo)
+    outs = in_threads(lambda k: search(cases_todo[k]['messages'], cases_todo[k]['division']), keys)
+    for k, out in zip(keys, outs):
+        SEARCH[(name,) + k] = out
+    print(f"{name:16} {sum(1 for o in outs if 'error' not in o)}/{len(outs)} searches")
+
+# COMMAND ----------
+
+# DBTITLE 1,Phase 2 — answers (the reference once per question, each contender)
+jobs = sorted({(REFERENCE['model'], REFERENCE['search']) + k for k in cases_todo}
+              | {(v['model'], v['search'], c['source'], c['case_id']) for c, v in TODO if v['model'] != 'ka'})
+
+
+async def _answer(job):
+    model, name, source, case_id = job
+    s = SEARCH[(name, source, case_id)]
+    if 'error' in s:
+        raise RuntimeError('search failed: ' + s['error'])
+    return await generate(model, s['prompt'])
+
+ANSWERS = dict(zip(jobs, in_threads(_answer, jobs)))
+for c, v in TODO:                                        # stored KA answers, nothing to generate
+    if v['model'] == 'ka':
+        ANSWERS[('ka', None, c['source'], c['case_id'])] = {
+            'answer': c['ka_answer'], 'latency_s': None, 'first_token_s': None,
+            'input_tokens': None, 'output_tokens': None, 'cost_eur': None}
+print(sum(1 for a in ANSWERS.values() if 'error' not in a), '/', len(ANSWERS), 'answers')
+
+# COMMAND ----------
+
+# DBTITLE 1,Phase 3 — judgments, both orders
+def _docs(name, source, case_id):
+    if name is None:                                     # KA: documents not stored
+        return None
+    s = SEARCH[(name, source, case_id)]
+    return documents_text(s['documents']) if 'error' not in s else ''
+
+
+async def _judge(item):
+    case, v = item
+    k = (case['source'], case['case_id'])
+    ref = ANSWERS[(REFERENCE['model'], REFERENCE['search']) + k]
+    con = ANSWERS[(v['model'], v['search']) + k]
+    for a in (ref, con):
+        if 'error' in a:
+            raise RuntimeError('answer failed: ' + a['error'])
+    conversation = '\n'.join(f"{m['role']}: {m['content']}" for m in case['messages'])
+    d_ref, d_con = _docs(REFERENCE['search'], *k), _docs(v['search'], *k)
+    v1, v2 = await asyncio.gather(judge_once(conversation, d_ref, d_con, ref['answer'], con['answer']),  # ref first
+                                  judge_once(conversation, d_con, d_ref, con['answer'], ref['answer']))  # contender first
+    pick1 = {'1': 'ref', '2': 'contender'}.get(str(v1.get('better')), 'tie')
+    pick2 = {'1': 'contender', '2': 'ref'}.get(str(v2.get('better')), 'tie')
+    sc = lambda v, slot: (v.get('scores') or {}).get(slot) or {}
+    avg = lambda pair, key: round(sum(float(x.get(key, 0) or 0) for x in pair) / 2, 2)
+    s_ref, s_con = [sc(v1, '1'), sc(v2, '2')], [sc(v1, '2'), sc(v2, '1')]
+    uns_ref = (v1.get('unsupported_1') or []) + (v2.get('unsupported_2') or [])
+    uns_con = (v1.get('unsupported_2') or []) + (v2.get('unsupported_1') or [])
+    return {
+        'winner': pick1 if pick1 == pick2 else 'tie', 'pick_ref_first': pick1, 'pick_contender_first': pick2,
+        **{f'ref_{m}': avg(s_ref, m) for m in ('faithful', 'correct', 'complete', 'citations')},
+        **{f'con_{m}': avg(s_con, m) for m in ('faithful', 'correct', 'complete', 'citations')},
+        'ref_inventions': len(uns_ref) / 2, 'con_inventions': len(uns_con) / 2,
+        'ref_unsupported': json.dumps(uns_ref, ensure_ascii=False),
+        'con_unsupported': json.dumps(uns_con, ensure_ascii=False),
+        'reason': v1.get('reason'),
+        'ref_answer': ref['answer'], 'con_answer': con['answer'],
+        **{f'ref_{m}': ref[m] for m in ('latency_s', 'first_token_s', 'input_tokens', 'output_tokens', 'cost_eur')},
+        **{f'con_{m}': con[m] for m in ('latency_s', 'first_token_s', 'input_tokens', 'output_tokens', 'cost_eur')},
+        'judge_cost_eur': round(v1['_cost'] + v2['_cost'], 6),
+    }
 
 t0 = time.monotonic()
-with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
-    outs = list(pool.map(run_case, TODO))
-run_ts = datetime.now(timezone.utc)
-rows = []
-for case, out in zip(TODO, outs):
+outs = in_threads(_judge, TODO)
+print(f'{len(outs)} judgments in {time.monotonic() - t0:.0f} s, {sum(1 for o in outs if "error" in o)} errors')
+
+# COMMAND ----------
+
+# DBTITLE 1,Save
+_SCHEMA = """eval_id string, run_ts timestamp, judge string, reference string, contender string,
+contender_model string, contender_search string, source string, case_id string, question string,
+winner string, pick_ref_first string, pick_contender_first string,
+ref_faithful double, ref_correct double, ref_complete double, ref_citations double,
+con_faithful double, con_correct double, con_complete double, con_citations double,
+ref_inventions double, con_inventions double, ref_unsupported string, con_unsupported string, reason string,
+ref_answer string, con_answer string,
+ref_latency_s double, ref_first_token_s double, ref_input_tokens long, ref_output_tokens long, ref_cost_eur double,
+con_latency_s double, con_first_token_s double, con_input_tokens long, con_output_tokens long, con_cost_eur double,
+judge_cost_eur double, error string"""
+_FIELDS = [f.strip().split(' ')[0] for f in _SCHEMA.replace('\n', ' ').split(',')]
+run_ts, rows = datetime.now(timezone.utc), []
+for (case, v), out in zip(TODO, outs):
     row = {k: None for k in _FIELDS}
-    row.update({k: v for k, v in out.items() if k in row})
-    row.update({'pair_id': PAIR, 'run_ts': run_ts, 'model_a': MODEL_A, 'model_b': MODEL_B, 'judge': JUDGE,
+    row.update({k: val for k, val in out.items() if k in row})
+    row.update({'eval_id': EVAL_ID, 'run_ts': run_ts, 'judge': JUDGE, 'reference': REFERENCE['label'],
+                'contender': v['label'], 'contender_model': v['model'], 'contender_search': v['search'],
                 'source': case['source'], 'case_id': case['case_id'],
                 'question': case['messages'][-1]['content'], 'error': out.get('error')})
-    for k in ('a_input_tokens', 'a_output_tokens', 'b_input_tokens', 'b_output_tokens'):
+    for k in ('ref_input_tokens', 'ref_output_tokens', 'con_input_tokens', 'con_output_tokens'):
         row[k] = int(row[k]) if row[k] is not None else None
+    for k in _FIELDS:
+        if isinstance(row[k], int) and not k.endswith('_tokens'):
+            row[k] = float(row[k])
     rows.append(row)
 if rows:
     spark.createDataFrame(rows, schema=_SCHEMA).write.mode('append').option('mergeSchema', 'true').saveAsTable(RESULTS)
-errors = [r['error'] for r in rows if r['error']]
-print(f'{len(rows)} questions in {time.monotonic() - t0:.0f} s, {len(errors)} errors')
-for e in sorted(set(errors))[:5]:
+for e in sorted({r['error'] for r in rows if r['error']})[:5]:
     print('   ', e)
 
 # COMMAND ----------
 
-# DBTITLE 1,Results
+# DBTITLE 1,Results — each contender against the reference
 spark.sql(f"""CREATE OR REPLACE TEMPORARY VIEW pair AS
-SELECT * EXCEPT (rn) FROM (SELECT *, row_number() OVER (PARTITION BY pair_id, source, case_id
+SELECT * EXCEPT (rn) FROM (SELECT *, row_number() OVER (PARTITION BY eval_id, source, case_id, contender
                                                       ORDER BY error IS NULL DESC, run_ts DESC) AS rn
-                         FROM {RESULTS} WHERE pair_id = '{PAIR}') WHERE rn = 1 AND error IS NULL""")
+                         FROM {RESULTS} WHERE eval_id = '{EVAL_ID}') WHERE rn = 1 AND error IS NULL""")
 
-# Who wins (a win counts only when both orders agree), quality scores (0-3), inventions, speed, cost
+# Quality: a win counts only when both orders agree; scores 0-3; inventions = unsupported claims per answer
 display(spark.sql("""
-SELECT source, count(*) AS questions,
-       count_if(winner = 'A') AS a_wins, count_if(winner = 'B') AS b_wins, count_if(winner = 'tie') AS ties,
-       round(avg(CASE WHEN pick_a_first = pick_b_first THEN 1 ELSE 0 END) * 100) AS judge_consistent_pct,
-       round(avg(a_faithful), 2) AS a_faithful, round(avg(b_faithful), 2) AS b_faithful,
-       round(avg(a_correct), 2) AS a_correct, round(avg(b_correct), 2) AS b_correct,
-       round(avg(n_unsupported_a), 2) AS a_inventions, round(avg(n_unsupported_b), 2) AS b_inventions
-FROM pair GROUP BY ROLLUP(source) ORDER BY source"""))
+SELECT contender, count(*) AS questions,
+       count_if(winner = 'contender') AS contender_wins, count_if(winner = 'ref') AS reference_wins,
+       count_if(winner = 'tie') AS ties,
+       round(avg(con_faithful), 2) AS con_faithful, round(avg(ref_faithful), 2) AS ref_faithful,
+       round(avg(con_correct), 2) AS con_correct, round(avg(ref_correct), 2) AS ref_correct,
+       round(avg(con_inventions), 2) AS con_inventions, round(avg(ref_inventions), 2) AS ref_inventions,
+       round(avg(CASE WHEN pick_ref_first = pick_contender_first THEN 1 ELSE 0 END) * 100) AS judge_consistent_pct
+FROM pair GROUP BY contender ORDER BY contender_wins - reference_wins DESC"""))
 
+# Speed and cost (input tokens = the size of the context each search gives)
 display(spark.sql("""
-SELECT max(model_a) AS model_a, max(model_b) AS model_b,
-       percentile(a_first_token_s, 0.5) AS a_first_token_p50, percentile(b_first_token_s, 0.5) AS b_first_token_p50,
-       percentile(a_latency_s, 0.5) AS a_latency_p50, percentile(b_latency_s, 0.5) AS b_latency_p50,
-       round(avg(a_cost_eur), 4) AS a_eur_per_q, round(avg(b_cost_eur), 4) AS b_eur_per_q,
-       round(avg(judge_cost_eur), 4) AS judge_eur_per_q
-FROM pair"""))
+SELECT contender, percentile(con_first_token_s, 0.5) AS first_token_p50, percentile(con_latency_s, 0.5) AS latency_p50,
+       round(avg(con_input_tokens)) AS input_tokens, round(avg(con_output_tokens)) AS output_tokens,
+       round(avg(con_cost_eur), 4) AS eur_per_question,
+       percentile(ref_first_token_s, 0.5) AS ref_first_token_p50, round(avg(ref_cost_eur), 4) AS ref_eur_per_question,
+       round(avg(judge_cost_eur), 4) AS judge_eur
+FROM pair GROUP BY contender ORDER BY contender"""))
 
-# Questions to read by eye: one model clearly better, or the judge changed its mind with the order
+# To read by eye: clear wins first, then the cases where the judge changed its mind with the order
 display(spark.sql("""
-SELECT source, winner, pick_a_first, pick_b_first, left(question, 120) AS question,
-       n_unsupported_a, n_unsupported_b, reason_a_first, answer_a, answer_b, a_unsupported, b_unsupported
-FROM pair ORDER BY winner = 'tie', pick_a_first = pick_b_first, source"""))
+SELECT contender, source, winner, pick_ref_first, pick_contender_first, left(question, 120) AS question,
+       con_inventions, ref_inventions, reason, con_answer, ref_answer, con_unsupported, ref_unsupported
+FROM pair ORDER BY winner = 'tie', pick_ref_first = pick_contender_first, contender"""))
