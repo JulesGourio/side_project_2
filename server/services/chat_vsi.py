@@ -29,7 +29,7 @@ What happens for each question (configuration chosen 2026-10-08, measures in
 ``CHAT_VSI_REWRITE_ENDPOINT`` / ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS``,
 ``CHAT_VSI_ANSWER_MAX_TOKENS``, ``CHAT_VSI_REWRITE_MAX_TOKENS``, ``VS_MAX_CONCURRENT_QUERIES`` /
 ``VS_QUERY_RETRIES`` (``vs_gate.py``),
-``CHAT_VSI_RERANK_TOP_K`` / ``CHAT_VSI_RAW_TOP_K`` / ``CHAT_VSI_MAX_SEARCH_PASSAGES`` (search sizes,
+``CHAT_VSI_RERANK_TOP_K`` / ``CHAT_VSI_RAW_TOP_K`` / ``CHAT_VSI_RAW_QUERIES`` / ``CHAT_VSI_MAX_SEARCH_PASSAGES`` (search sizes,
 defaults = the measured configuration; other values are for ``retrieval_eval`` comparisons),
 plus the resilience settings documented in ``chat_vsi_llm.py``. The earlier engine versions
 (baseline, measured options) are kept in ``archive/``.
@@ -149,6 +149,12 @@ def raw_top_k() -> int:
     return max(0, _int_env('CHAT_VSI_RAW_TOP_K', _RAW_TOP_K))
 
 
+def raw_queries() -> int:
+    """How many of the queries (question, French, English — in that order) also get a raw
+    search; 3 = all (default). Fewer raw searches = fewer Vector Search queries per question."""
+    return max(0, _int_env('CHAT_VSI_RAW_QUERIES', 3))
+
+
 def max_search_passages() -> int:
     """Cap on the merged search passages (REF and title lookups come on top); 0 = no cap."""
     return max(0, _int_env('CHAT_VSI_MAX_SEARCH_PASSAGES', 0))
@@ -169,7 +175,7 @@ def settings() -> Dict[str, Any]:
     return {'index': index_name(), 'llm': llm_endpoint(),
             'llm_fallbacks': chat_vsi_llm.answer_chain(llm_endpoint())[1:],
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),
-            'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(),
+            'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(), 'raw_queries': raw_queries(),
             'max_search_passages': max_search_passages()}
 
 
@@ -392,7 +398,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
 
     calls = [reranked(q) for q in queries]
     if raw_k:
-        calls += [_query(host, token, index, q, raw_k, filters, rerank=False) for q in queries]
+        calls += [_query(host, token, index, q, raw_k, filters, rerank=False) for q in queries[:raw_queries()]]
     results = await asyncio.gather(*calls, return_exceptions=True)
     for r in results:
         if isinstance(r, asyncio.CancelledError):

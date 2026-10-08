@@ -488,7 +488,11 @@ cours au plus, relances sur 429).
   `server/services/vector_search.py`, `tests/test_vs_gate.py`, `tests/test_chat_vsi_llm.py`,
   `docs/chat_vsi_tests.md`, `operations_dev.md` ; puis `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev`
   (sans `-SyncOnly` : l'app doit redémarrer).
-- [ ] **V3.2.** Notebook `load_test_chat`, Run all (défauts). M'envoyer les deux tableaux.
+- [ ] **V3.2.** Notebook `load_test_chat`, widget `levels` = `10,20,30,40` (80 questions/min ≈ 25
+  questions en cours), Run all. M'envoyer les deux tableaux.
+- [ ] **V3.2b.** Moins de requêtes par question (recherche brute seulement sur la question telle que
+  posée : 4 requêtes au lieu de 6) : notebook `retrieval_eval`, widget `indexes` =
+  `chat,rawq1|rawq=1,rawq1-raw5|rawq=1|raw=5`, Run all. M'envoyer les deux derniers tableaux.
 - [ ] **V3.3.** M'envoyer aussi la sortie de la cellule « The endpoint and the index » du notebook
   `load_test_vector_search` (type d'endpoint, `scaling_info`) et son troisième tableau (texte des refus).
 

@@ -81,7 +81,8 @@ REWRITE = os.environ.get('CHAT_VSI_REWRITE_ENDPOINT') or os.environ['CHAT_VSI_LL
 # One rewrite model for every search: no silent fallback to another model (chat_vsi_llm).
 os.environ['CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS'] = REWRITE
 
-_SIZE_KEYS = {'rerank': 'CHAT_VSI_RERANK_TOP_K', 'raw': 'CHAT_VSI_RAW_TOP_K', 'cap': 'CHAT_VSI_MAX_SEARCH_PASSAGES'}
+_SIZE_KEYS = {'rerank': 'CHAT_VSI_RERANK_TOP_K', 'raw': 'CHAT_VSI_RAW_TOP_K', 'rawq': 'CHAT_VSI_RAW_QUERIES',
+              'cap': 'CHAT_VSI_MAX_SEARCH_PASSAGES'}
 
 
 def parse_configs(text):
@@ -95,7 +96,7 @@ def parse_configs(text):
         env = {}
         for o in opts:
             k, _, v = o.partition('=')
-            assert k in _SIZE_KEYS and v.isdigit(), f'{item}: options are rerank=N, raw=N, cap=N'
+            assert k in _SIZE_KEYS and v.isdigit(), f'{item}: options are rerank=N, raw=N, rawq=N, cap=N'
             env[_SIZE_KEYS[k]] = v
         out[label.strip()] = {'index': index, 'env': env, 'signature': '|'.join([index] + sorted(opts))}
     return out
