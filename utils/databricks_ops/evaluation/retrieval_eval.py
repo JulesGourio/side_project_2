@@ -108,6 +108,8 @@ if _VARIANTS:
         CONFIGS[f'idx-{_v}'] = _on_index(_v)
         CONFIGS[f'idx-{_v}-clean'] = _on_index(_v, {'CHAT_VSI_SKIP_NOISE': 'on'})
         CONFIGS[f'idx-{_v}-all'] = _on_index(_v, _ALL)
+        # Shorter passages leave room: 20 reranked passages per query instead of 12.
+        CONFIGS[f'idx-{_v}-all-k20'] = _on_index(_v, {**_ALL, 'CHAT_VSI_RERANK_TOP_K': '20'})
     RUN += [c for c in CONFIGS if c.startswith('idx-') and c not in RUN]
 SOURCES = {s.strip() for s in dbutils.widgets.get('sources').split(',') if s.strip()}
 RERUN = dbutils.widgets.get('rerun_existing') == 'true'

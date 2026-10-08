@@ -48,10 +48,10 @@
 # COMMAND ----------
 
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
-dbutils.widgets.text('eval_id', 'luna6-prompt')
-dbutils.widgets.text('reference', 'databricks-claude-sonnet-5-5@union-ctx')
-dbutils.widgets.text('contenders', 'databricks-gpt-6-luna@u-all,databricks-gpt-6-luna@u-all+v3,'
-                                   'databricks-gpt-6-luna@u-all+v3+lang')
+dbutils.widgets.text('eval_id', 'luna6-v2b')
+dbutils.widgets.text('reference', 'databricks-gpt-6-luna@u-all-v1+v3+lang')   # 2026-10-08: same model, current passages
+dbutils.widgets.text('contenders', 'databricks-gpt-6-luna@u-all-v2b+v3+lang')     # same model, v2b passages
+dbutils.widgets.text('index_schema', 'dev_landingzone.qualibot')                  # test indexes (u-all-v1, u-all-v2b…)
 dbutils.widgets.text('judge', 'databricks-gpt-5-6-luna')
 dbutils.widgets.text('rewrite_model', 'databricks-gpt-6-luna')   # every search rewrites with it (the chat's, 2026-10-08; earlier runs: Sonnet 4.6)
 dbutils.widgets.text('answer_max_tokens', '8000')                       # reasoning counts inside it
@@ -118,6 +118,13 @@ SEARCHES = {
     'u-bi-title-ref': {**UNION, **CTX, **REF, **TITLE, **BI},
     'u-all':          {**UNION, **CTX, **REF, **TITLE, **BI, **ONE_LANG},
 }
+# u-all on one test index of rechunk_experiment.py, every question on it (as retrieval_eval's idx-*):
+# u-all-v1 = current passages, u-all-v2b = 150/300/450-token passages (chosen 2026-10-08).
+_IDX = dbutils.widgets.get('index_schema').strip()
+for _v in ('v1', 'v2a', 'v2b'):
+    _index = {f'CHAT_VSI_INDEX_{d}': f'{_IDX}.chunks_index_{_v}' for d in ('ALL', 'AS', 'IS')}
+    SEARCHES[f'u-all-{_v}'] = {**SEARCHES['u-all'], **_index}
+    SEARCHES[f'u-all-{_v}-k20'] = {**SEARCHES['u-all'], **_index, 'CHAT_VSI_RERANK_TOP_K': '20'}
 assert REFERENCE['model'] != 'ka', 'the reference must be a version the notebook can run'
 WITH_KA = any(v['model'] == 'ka' for v in CONTENDERS)
 for v in [REFERENCE] + [c for c in CONTENDERS if c['model'] != 'ka']:

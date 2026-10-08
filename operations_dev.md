@@ -626,7 +626,8 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   de l'audit du parsing (part d'images, tables des matières, documents attendus absents de
   l'index…).
 
-- [ ] **R. Tester le nouveau découpage sur des index de test** (code du 2026-10-08, audit
+- [ ] **R. Tester le nouveau découpage sur des index de test** (étapes 1 à 3 faites le 2026-10-08 :
+  **v2b retenu**, 80.9 % contre 75.8 % avec deux fois moins de contexte ; audit § 5.6) (code du 2026-10-08, audit
   `docs/chat_vsi_audit_2026-10.md` § 5 ; ne touche ni `chunks_v1` ni `chunks_index_v1`).
   1. `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`.
   2. Notebook `utils/databricks_ops/evaluation/rechunk_experiment.py`, serverless, Run all, trois
@@ -645,6 +646,15 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
      (`u-all`, la config du chat). Tout est réécrit par GPT-6 Luna (widget `rewrite_model`, comme le
      chat) ; `u-all-luna6` se compare à l'ancienne ligne `u-all` (réécriture Sonnet 4.6) et dit ce que le
      passage à GPT-6 Luna coûte en recherche. Envoyer les tableaux.
+  3b. Deux vérifications sur v2b avant le re-découpage UAT (copier le nouveau zip, `-SyncOnly`) :
+     - `retrieval_eval`, widgets `index_variants=v2b`, `configs` = `idx-v2b-all-k20` (une seule ligne
+       nouvelle : 20 passages reclassés au lieu de 12 ; ≈ 10 min). Si elle dépasse nettement 80.9 %
+       sans repasser au-dessus de ≈ 20k tokens, on met `CHAT_VSI_RERANK_TOP_K=20` dans le chat.
+     - `pairwise_answers`, Run all avec les **nouveaux défauts** (supprimer les widgets si le notebook
+       garde les anciens) : `eval_id=luna6-v2b`, référence `databricks-gpt-6-luna@u-all-v1+v3+lang`,
+       concurrent `databricks-gpt-6-luna@u-all-v2b+v3+lang`, juge GPT-5.6 Luna. Même modèle, seul
+       l'index change : dit si les réponses sont au moins aussi bonnes avec des passages courts.
+       ≈ 2 €, ≈ 20 min. Envoyer les trois tableaux.
   4. Plus tard, si ça vaut la dépense : `variant=v2d`, `doc_cards=true` (fiche par document,
      ≈ 15 €), puis `variant=v2e`, `doc_cards=true`, `chunk_context=true` (≈ 65 € au total).
      `enrich_max_docs=50` pour un essai à quelques euros d'abord.

@@ -254,8 +254,12 @@ prévenir, je change la valeur, vous redéployez.
 
 - [ ] **D5. Re-découper le corpus UAT avec le nouveau découpage** (code du 2026-10-08,
   `utils/parsing_pipeline/chunking.py`, audit `docs/chat_vsi_audit_2026-10.md` § 5).
-  **Pas avant** que le test DEV (`operations_dev.md`, bloc R) ait montré un gain, et avec ton
-  accord : le KA de l'UAT lit le même index.
+  Le test DEV a montré un gain (v2b : 150 / 300 / 450 tokens, 1 600 caractères, désormais les
+  valeurs par défaut de `utils/parsing_pipeline/config.py` ; audit § 5.6). **Encore à faire avant** :
+  la vérification des réponses (`operations_dev.md`, bloc R, étape 3b), puis ton accord : le KA de
+  l'UAT lit le même index. Attention : si le planning quotidien du pipeline UAT tourne, les **nouveaux**
+  documents sont déjà découpés en v2b dès le prochain `bundle deploy` (mélange des deux tailles jusqu'à D5) ;
+  s'il est en pause, rien ne change avant D5. Le nombre de passages va environ doubler (embedding plus long, index plus gros).
   - Je passe `parsing_run_mode` à `full` pour `qualibot-uat` ; `bundle deploy` + un run.
     Les fichiers déjà parsés sont sautés (même chemin, même empreinte) : pas de re-parsing GPU.
     `3_parse` réécrit `chunks_v1` / `src_chunks_*_v1` / `processed_files_v1`, `4_describe`

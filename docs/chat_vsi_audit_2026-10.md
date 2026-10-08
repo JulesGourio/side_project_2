@@ -773,6 +773,42 @@ Le DEV a déjà tout ce qu'il faut, copié de l'UAT par `copy_uat_to_dev` :
 
 ---
 
+### 5.6 Résultat du test DEV (2026-10-08) : v2b retenu
+
+`retrieval_eval`, 65 questions, toutes sur l'index ALL de chaque variante. `-all` = recherche `u-all`
+(celle du chat) ; sans suffixe = `union-ctx` ; `-clean` = `union-ctx` sans sommaires, cartouches ni
+textes répétés (`CHAT_VSI_SKIP_NOISE`).
+
+| Config | Documents attendus trouvés | Dans les 5 premiers | Au moins un | Contexte (tokens) |
+|---|---|---|---|---|
+| **`idx-v2b-all`** | **80.9 %** | **68.1 %** | 83.1 % | **11 038** |
+| `u-all-luna6` (index actuel, réécriture GPT-6 Luna) | 80.0 % | 65.8 % | 81.5 % | 20 889 |
+| `idx-v2a-all` | 79.5 % | 62.9 % | 81.5 % | 20 435 |
+| `idx-v1-all` (index actuel) | 75.8 % | 61.2 % | 76.9 % | 21 105 |
+| `idx-v2b` | 69.8 % | 61.9 % | 73.8 % | 7 861 |
+| `idx-v2a-clean` | 69.1 % | 60.3 % | 72.3 % | 13 814 |
+| `idx-v1` | 68.5 % | 57.6 % | 70.8 % | 15 000 |
+| `idx-v2a` | 67.9 % | 62.4 % | 70.8 % | 14 185 |
+| `idx-v2b-clean` | 58.2 % | 47.7 % | 64.6 % | 8 003 |
+
+- **v2b (150 / 300 / 450 tokens, 1 600 caractères) est retenu** : +5 points sur l'index actuel, +7 points
+  dans les 5 premiers, avec **deux fois moins de contexte** (11k tokens au lieu de 21k : réponse moins
+  chère et plus rapide). Gain net sur le golden (96.1 % contre 91.7 %) et sur les retours utilisateurs
+  (43.8 % contre 25 %, soit 3 questions sur 16) ; égalité sur les questions synthétiques, qui ont été
+  tirées des passages actuels et favorisent donc l'ancien découpage. Les échantillons sont petits :
+  la vérification sur les réponses (`pairwise_answers`, `luna6-v2b`) reste à faire.
+- **v2a** (même taille, découpage corrigé) gagne 4 points à contexte égal : les corrections de découpage
+  comptent, la taille aussi.
+- **Écarter le « bruit » fait perdre** (−11 points sur v2b) : des passages marqués sommaire, cartouche ou
+  texte répété contiennent des réponses. `CHAT_VSI_SKIP_NOISE` reste désactivé ; le marquage reste dans
+  les tables comme simple information.
+- **Réécriture par GPT-6 Luna** : `u-all-luna6` = 80.0 %, comme l'ancien `u-all` réécrit par Sonnet 4.6
+  (80 %, même index, même routage) : aucune perte, la réécriture reste sur GPT-6 Luna.
+- Fait dans le code : tailles v2b par défaut dans `utils/parsing_pipeline/config.py`. Le corpus UAT est
+  re-découpé seulement avec l'accord de l'utilisateur (`OPERATIONS.md`, D5).
+- Reste à mesurer : `idx-v2b-all-k20` (20 passages reclassés au lieu de 12, possible maintenant que le
+  contexte est deux fois plus petit) et la qualité des réponses sur v2b.
+
 ## 6. L'évaluation elle-même
 
 - **Agrandir le golden à 60–80 questions.** `utils/evaluation/Build_Golden_Dataset.py` le fait

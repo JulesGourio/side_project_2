@@ -211,12 +211,15 @@ USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
 # Passage sizes (chunking.py). Overridable per run to test other sizes (DEV notebook
 # utils/databricks_ops/evaluation/rechunk_experiment.py) without editing this file.
-MIN_CHUNK_TOKENS    = int(_env("PARSING_MIN_CHUNK_TOKENS", "250"))
-TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "500"))
-MAX_CHUNK_TOKENS    = int(_env("PARSING_MAX_CHUNK_TOKENS", "1000"))
+# 150 / 300 / 450 tokens, 1,600 characters = DEV variant v2b, chosen 2026-10-08: 80.9 % of the
+# expected documents found vs 75.8 % for the former 250 / 500 / 1000 / 4000, with half the context
+# (retrieval_eval, u-all, 65 questions; docs/chat_vsi_audit_2026-10.md § 5.6).
+MIN_CHUNK_TOKENS    = int(_env("PARSING_MIN_CHUNK_TOKENS", "150"))
+TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "300"))
+MAX_CHUNK_TOKENS    = int(_env("PARSING_MAX_CHUNK_TOKENS", "450"))
 # Character ceiling on top of tokens: dot leaders / form underscores count few tokens for many
 # characters, and the Vector Search reranker reads only the first 2,000 characters.
-MAX_CHUNK_CHARS     = int(_env("PARSING_MAX_CHUNK_CHARS", "4000"))
+MAX_CHUNK_CHARS     = int(_env("PARSING_MAX_CHUNK_CHARS", "1600"))
 # Overlap between consecutive passages of one section (fraction of TARGET).
 CHUNK_OVERLAP_RATIO = float(_env("PARSING_CHUNK_OVERLAP_RATIO", "0.12"))
 # A passage body found in at least this many documents is marked "boilerplate".
