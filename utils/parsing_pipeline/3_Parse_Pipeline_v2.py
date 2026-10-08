@@ -91,7 +91,7 @@ from pyspark.sql import Window
 from delta.tables import DeltaTable
 
 # addPyFile ships these to executors (incl. late-joining ones); sys.path.insert() above only covers the driver.
-for _mod in ("utils.py", "image_utils.py", "selection.py", "config.py"):
+for _mod in ("chunking.py", "utils.py", "image_utils.py", "selection.py", "config.py"):
     spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
 
 import utils
@@ -165,7 +165,8 @@ configure(
     IMAGE_SCALE=IMAGE_SCALE, MIN_AREA_RATIO=MIN_AREA_RATIO, MAX_REPEAT=MAX_REPEAT,
     USE_TIKTOKEN=USE_TIKTOKEN, CHARS_PER_TOKEN=CHARS_PER_TOKEN,
     MIN_CHUNK_TOKENS=MIN_CHUNK_TOKENS, TARGET_CHUNK_TOKENS=TARGET_CHUNK_TOKENS,
-    MAX_CHUNK_TOKENS=MAX_CHUNK_TOKENS,
+    MAX_CHUNK_TOKENS=MAX_CHUNK_TOKENS, MAX_CHUNK_CHARS=MAX_CHUNK_CHARS,
+    CHUNK_OVERLAP_RATIO=CHUNK_OVERLAP_RATIO,  # was never passed: the workers ran with 0 overlap
     LLM_MODEL_ENDPOINT=LLM_MODEL_ENDPOINT, LLM_MAX_TOKENS=LLM_MAX_TOKENS,
     LLM_TEMPERATURE=LLM_TEMPERATURE, LLM_MAX_RETRIES=LLM_MAX_RETRIES,
     LLM_MAX_CONCURRENT=LLM_MAX_CONCURRENT,
@@ -932,6 +933,9 @@ def _build_chunks(df_full_pipeline, df_exclusions):
         logger.info("[CLEAN] Removed '<!-- formula-not-decoded -->' artefacts from document_text")
 
     df_for_chunking = df_for_chunking.withColumn("url", utils.intraqual_ref_url(F.col("ref")))
+    # Normalised body (section line, case, spaces folded): finds the same passage in many documents.
+    body_key = F.sha2(F.trim(F.regexp_replace(F.lower(F.regexp_replace(F.col("c.chunk_text"), r"^\[[^\]]*\]\s*", "")),
+                                              r"\s+", " ")), 256)
 
     # chunk_content_type is kept on every row, not just image chunks; other per-document stats live only in processed_files.
     return (
@@ -941,7 +945,7 @@ def _build_chunks(df_full_pipeline, df_exclusions):
         .withColumn("_chunk_text_full", utils.source_prefixed_text(
             F.col("c.chunk_text"), F.col("ref"), F.col("titre"),
             F.col("division"), F.col("niveau_plus_1"), doc_date_col=F.col("doc_date"),
-            include_prefix=EMBED_SOURCE_PREFIX,
+            include_prefix=EMBED_SOURCE_PREFIX, type_col=F.col("type_document"),
         ))
         .select(
             "IDDOC",
@@ -958,6 +962,10 @@ def _build_chunks(df_full_pipeline, df_exclusions):
             F.sha2(F.col("_chunk_text_full"), 256).alias("chunk_sha256"),
             F.col("url"),
             F.col("doc_date"),
+            # Document metadata, filterable by the search (audit 2026-10, P10).
+            F.col("titre"), F.col("type_document"), F.col("indice").cast("string").alias("indice"),
+            F.col("langue"),
+            body_key.alias("body_sha256"),
         )
     )
 
@@ -975,6 +983,24 @@ def _dedupe_and_limit_chunks(df_chunks):
         after_count = df_chunks.count()
         logger.info(f"[DEDUP] Removed {before_count - after_count} duplicate chunks intra-IDDOC "
                     f"({before_count} -> {after_count})")
+
+    # Same body in BOILERPLATE_MIN_DOCS+ documents (legal mentions, standard approval blocks):
+    # marked, not deleted — the search can leave them out (audit 2026-10, P9). Counted with the
+    # rows already in the table on an incremental run, so a new document's copy is caught too.
+    df_keys = df_chunks.select("IDDOC", "body_sha256")
+    if RUN_MODE == "incremental" and spark.catalog.tableExists(TARGET_CHUNK_TABLE) \
+            and "body_sha256" in spark.table(TARGET_CHUNK_TABLE).columns:
+        df_keys = df_keys.unionByName(
+            spark.table(TARGET_CHUNK_TABLE).filter(F.col("body_sha256").isNotNull()).select("IDDOC", "body_sha256"))
+    df_common = (df_keys.groupBy("body_sha256").agg(F.countDistinct("IDDOC").alias("_docs"))
+                 .filter(F.col("_docs") >= BOILERPLATE_MIN_DOCS).select("body_sha256", F.lit(True).alias("_common")))
+    df_chunks = (
+        df_chunks.join(F.broadcast(df_common), on="body_sha256", how="left")
+        .withColumn("chunk_content_type", F.when(
+            F.col("_common") & F.col("chunk_content_type").isin("text", "table", "mixed"), F.lit("boilerplate"))
+            .otherwise(F.col("chunk_content_type")))
+        .drop("_common")
+    )
 
     if MAX_CHUNKS_SPREADSHEET is not None:
         w_limit = Window.partitionBy("IDDOC").orderBy("chunk_index")
@@ -1002,6 +1028,9 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, revised_i
     if RUN_MODE == "incremental":
         df_full_pipeline = df_full_pipeline.filter(F.col("IDDOC").isin(list(target_iddocs)))
     df_full_pipeline = with_fresh_business_metadata(df_full_pipeline)
+    # Real language (REF suffix, else the text): gd_doc has none, selection.py writes fr-FR for all.
+    df_full_pipeline = df_full_pipeline.withColumn(
+        "langue", utils.language_udf(F.col("document_text"), F.col("ref")))
 
     # change_type distinguishes "first time this IDDOC reaches a terminal
     # status" (NEW) from "same IDDOC, indice/doc_date changed since its last
@@ -1056,17 +1085,21 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, revised_i
 
     df_processed_files, df_exclusions, cutoff = _apply_date_and_rag_filters(df_processed_files)
 
-    df_processed_files = df_processed_files.withColumn(
-        "chunks_truncated",
-        F.when(
-            (F.col("parse_status") == "SUCCESS")
-            & F.lower(F.col("source_file_extension")).isin(*_SPREADSHEET_EXTS)
-            & F.lit(MAX_CHUNKS_SPREADSHEET is not None),
-            F.lit(True)
-        ).otherwise(F.lit(False))
+    df_chunks = _build_chunks(df_full_pipeline, df_exclusions)
+
+    # True only for a spreadsheet that really has more passages than the cap (was: every spreadsheet).
+    df_over_cap = (
+        df_chunks.filter(F.lower(F.col("source_file_extension")).isin(*_SPREADSHEET_EXTS))
+        .groupBy("IDDOC").count()
+        .filter(F.lit(MAX_CHUNKS_SPREADSHEET is not None) & (F.col("count") > F.lit(MAX_CHUNKS_SPREADSHEET or 0)))
+        .select("IDDOC", F.lit(True).alias("_over_cap"))
+    )
+    df_processed_files = (
+        df_processed_files.join(df_over_cap, on="IDDOC", how="left")
+        .withColumn("chunks_truncated", F.coalesce(F.col("_over_cap"), F.lit(False)))
+        .drop("_over_cap")
     )
 
-    df_chunks = _build_chunks(df_full_pipeline, df_exclusions)
     df_chunks = _dedupe_and_limit_chunks(df_chunks)
 
     is_recent = F.col("doc_date").isNull() | (F.col("doc_date") >= cutoff)

@@ -76,9 +76,25 @@ dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_gol
 dbutils.widgets.text('synthetic_table', 'uat_landingzone.qualibot.synthetic_retrieval_questions_v2')
 dbutils.widgets.text('feedback_table', 'uat_landingzone.qualibot.feedback_failure_cases')
 dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_retrieval_runs')
+# Test indexes built by rechunk_experiment.py (e.g. "v2a,v2b"): each adds idx-<v> and idx-<v>-clean,
+# plus the reference idx-v1, all with union-ctx and every question on the ALL index of the variant.
+dbutils.widgets.text('index_variants', '')
+dbutils.widgets.text('index_schema', 'dev_landingzone.qualibot')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 RUN = [c.strip() for c in dbutils.widgets.get('configs').split(',') if c.strip()]
+_IDX_SCHEMA = dbutils.widgets.get('index_schema').strip()
+_VARIANTS = [v.strip() for v in dbutils.widgets.get('index_variants').split(',') if v.strip()]
+if _VARIANTS:
+    def _on_index(name, extra=None):
+        index = f'{_IDX_SCHEMA}.chunks_index_{name}'
+        return dict(variant='rerank', env={**UNION, **CTX, 'CHAT_VSI_INDEX_ALL': index,
+                                           'CHAT_VSI_INDEX_AS': index, 'CHAT_VSI_INDEX_IS': index, **(extra or {})})
+    CONFIGS['idx-v1'] = _on_index('v1')
+    for _v in _VARIANTS:
+        CONFIGS[f'idx-{_v}'] = _on_index(_v)
+        CONFIGS[f'idx-{_v}-clean'] = _on_index(_v, {'CHAT_VSI_SKIP_NOISE': 'on'})
+    RUN += [c for c in CONFIGS if c.startswith('idx-') and c not in RUN]
 SOURCES = {s.strip() for s in dbutils.widgets.get('sources').split(',') if s.strip()}
 RERUN = dbutils.widgets.get('rerun_existing') == 'true'
 MAX_PARALLEL = max(1, int(dbutils.widgets.get('max_parallel') or 4))

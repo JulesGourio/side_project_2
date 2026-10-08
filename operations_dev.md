@@ -626,6 +626,24 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   de l'audit du parsing (part d'images, tables des matières, documents attendus absents de
   l'index…).
 
+- [ ] **R. Tester le nouveau découpage sur des index de test** (code du 2026-10-08, audit
+  `docs/chat_vsi_audit_2026-10.md` § 5 ; ne touche ni `chunks_v1` ni `chunks_index_v1`).
+  1. `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`.
+  2. Notebook `utils/databricks_ops/evaluation/rechunk_experiment.py`, serverless, Run all, trois
+     fois avec ces widgets (le reste par défaut) :
+     - `variant=v2a` : découpage corrigé, tailles actuelles (250 / 500 / 1 000 tokens, 4 000 caractères) ;
+     - `variant=v2b`, `min_tokens=150`, `target_tokens=300`, `max_tokens=450`, `max_chars=1600` :
+       passages courts (tiennent dans la fenêtre du reranker) ;
+     - `variant=v2c`, `embed_prefix=false` : comme v2a sans le préfixe `[Source: …]`.
+     Chaque run crée `chunks_<variant>` et lance l'index `chunks_index_<variant>` (30 à 60 min
+     d'embedding avant `ONLINE`).
+  3. Quand les trois index sont `ONLINE` : `retrieval_eval`, widget `index_variants=v2a,v2b,v2c`,
+     Run all. Configs ajoutées : `idx-v1` (référence), `idx-v2a`, `idx-v2a-clean` (sommaires,
+     cartouches et textes répétés écartés)… Envoyer les tableaux.
+  4. Plus tard, si ça vaut la dépense : `variant=v2d`, `doc_cards=true` (fiche par document,
+     ≈ 15 €), puis `variant=v2e`, `doc_cards=true`, `chunk_context=true` (≈ 65 € au total).
+     `enrich_max_docs=50` pour un essai à quelques euros d'abord.
+
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.
 

@@ -734,3 +734,19 @@ gets picked up by the very next run, from any source, without needing a
 manual backfill. Costs one extra full scan of DONE images + existing image
 chunk_ids per run (cheap at tens-of-thousands-of-rows volumes) in exchange
 for never silently losing a description's searchability again.
+
+## chunking-2026-10
+
+### 2026-10-08 — Passage splitting rewritten (`chunking.py`)
+
+The audit `docs/chat_vsi_audit_2026-10.md` (§ 5) found, on a local run of the former splitter:
+merged passages carried an impossible heading lineage (`_merge_meta` mixed the headers of two
+sections), two sections could share one passage, the `[Title > Section]` line was repeated in
+front of every paragraph, and there was no overlap between passages — `CHUNK_OVERLAP_RATIO` only
+applied inside the character splitter, and was never passed to the workers anyway
+(`configure()` lacked it, so it was 0). The Docling `HybridChunker` path never ran: the pipeline
+keeps markdown only. `chunking.py` replaces all of it (pure Python, `tests/test_parsing_chunking.py`),
+adds a character ceiling, marks tables of contents / front matter / repeated text in
+`chunk_content_type`, and builds image passages with their section and caption. Measured first on
+DEV test indexes (`utils/databricks_ops/evaluation/rechunk_experiment.py`), applied to UAT by one
+`full` run (`OPERATIONS.md` D5).

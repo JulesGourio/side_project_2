@@ -33,6 +33,10 @@ Two optional settings, off by default (the variant then behaves as first measure
   QP-2270 or MI-14183), acronyms expanded when certain; three queries instead of two;
 - ``CHAT_VSI_REWRITE_ENDPOINT`` — model of the rewrite only (default: the answer model,
   ``CHAT_VSI_LLM_ENDPOINT``): a small fast model shortens the time to first token;
+- ``CHAT_VSI_SKIP_NOISE=on`` — every query is filtered on ``chunk_content_type`` so that the
+  passages the parsing pipeline marks ``toc`` / ``front_matter`` / ``boilerplate`` (tables of
+  contents, approval blocks, text repeated in many documents) never take a slot. Needs an
+  index built by the 2026-10 chunker; on an older index it changes nothing;
 - ``CHAT_VSI_SEARCH_RETRIES`` (default 2) — Vector Search queries retried on failure (the
   embedding endpoint refuses bursts with "Request id already running", see vector_search.py);
 - ``CHAT_VSI_RERANK_ENABLED=false`` — raw HYBRID search as in the baseline (to test the
@@ -122,6 +126,15 @@ def rewrite_endpoint(answer_endpoint: str) -> str:
     return os.getenv('CHAT_VSI_REWRITE_ENDPOINT', '').strip() or answer_endpoint
 
 
+# Passage types the search keeps with CHAT_VSI_SKIP_NOISE=on (utils/parsing_pipeline/chunking.py).
+_CONTENT_TYPES = ['text', 'table', 'mixed', 'image', 'doc_card']
+
+
+def content_filter() -> Dict[str, Any]:
+    """Vector Search filter of the CHAT_VSI_SKIP_NOISE setting ({} when off)."""
+    return {'chunk_content_type': _CONTENT_TYPES} if _on('CHAT_VSI_SKIP_NOISE', 'off') else {}
+
+
 def search_retries() -> int:
     return int(os.getenv('CHAT_VSI_SEARCH_RETRIES', '2') or 0)
 
@@ -149,7 +162,7 @@ async def fetch_named_documents(host: str, token: str, index_name: str, query: s
                                 refs: List[str], k: int = _REF_LOOKUP_K) -> List[Dict[str, Any]]:
     """HYBRID search restricted to the given REFs. Failures are logged, never raised."""
     payload = {'query_text': query[:base._MAX_QUERY_CHARS], 'columns': _COLUMNS, 'num_results': k,
-               'query_type': 'HYBRID', 'filters_json': json.dumps({'REF': refs})}
+               'query_type': 'HYBRID', 'filters_json': json.dumps({'REF': refs, **content_filter()})}
     try:
         async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
             resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index_name}/query', json=payload,
@@ -241,6 +254,7 @@ def settings() -> Dict[str, Any]:
             'max_passages_per_doc': max_passages_per_doc(), 'context_budget_chars': context_budget_chars(),
             'rerank_enabled': rerank_enabled(), 'ref_lookup': ref_lookup_enabled(),
             'title_lookup': title_lookup_enabled(), 'one_language': one_language(),
+            'skip_noise': bool(content_filter()),
             'rewrite': rewrite_mode(), 'rewrite_llm': rewrite_endpoint(base.llm_endpoint()),
             'search_retries': search_retries(),
             'instructions': chat_vsi_prompts.instructions_set(), 'answer_max_tokens': answer_max_tokens(),
@@ -326,6 +340,8 @@ async def _fetch_reranked(host: str, token: str, index_name: str, query_text: st
         'query_type': 'HYBRID',
         'reranker': {'model': _RERANKER_MODEL, 'parameters': {'columns_to_rerank': rerank_columns()}},
     }
+    if content_filter():
+        payload['filters_json'] = json.dumps(content_filter())
     async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
         resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index_name}/query', json=payload,
                                  headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
@@ -338,13 +354,43 @@ async def _fetch_reranked(host: str, token: str, index_name: str, query_text: st
     return [c for c in chunks if _ARCHIVE_NOTICE_MARKER not in (c.get('chunk_text') or '')]
 
 
+async def _fetch_raw(host: str, token: str, index_name: str, query_text: str, k: int) -> List[Dict[str, Any]]:
+    """The baseline's raw HYBRID query, with the CHAT_VSI_SKIP_NOISE filter."""
+    payload = {'query_text': query_text[:base._MAX_QUERY_CHARS], 'columns': _COLUMNS, 'num_results': k,
+               'query_type': 'HYBRID', 'filters_json': json.dumps(content_filter())}
+    async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
+        resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index_name}/query', json=payload,
+                                 headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+    resp.raise_for_status()
+    data = resp.json()
+    columns = [c['name'] for c in data.get('manifest', {}).get('columns', [])]
+    chunks = [dict(zip(columns, row)) for row in data.get('result', {}).get('data_array', [])]
+    return [c for c in chunks if _ARCHIVE_NOTICE_MARKER not in (c.get('chunk_text') or '')]
+
+
+async def retrieve_raw(host: str, token: str, index_name: str, queries: List[str], k: int) -> List[Dict[str, Any]]:
+    """``chat_vsi.retrieve`` (left unchanged), or the same search filtered when CHAT_VSI_SKIP_NOISE is on."""
+    if not content_filter():
+        return await base.retrieve(host, token, index_name, queries, k)
+    try:
+        results = await asyncio.gather(*(_fetch_raw(host, token, index_name, q, k) for q in queries))
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        logger.error('chat_vsi_rerank: Vector Search %s returned %d: %s', index_name, status, exc.response.text[:500])
+        raise base.ChatVsiError(f'Document search failed (Vector Search returned {status}).', 'VectorSearchError', status) from exc
+    except httpx.HTTPError as exc:
+        logger.error('chat_vsi_rerank: Vector Search %s failed: %s', index_name, exc)
+        raise base.ChatVsiError(f'Document search failed: {exc}', type(exc).__name__) from exc
+    return _merge_by_rank(list(results))
+
+
 async def retrieve_reranked(host: str, token: str, index_name: str, queries: List[str], k: int) -> Tuple[List[Dict[str, Any]], bool]:
     """Reranked search per query, merged by best rank. Returns (rows, reranked)."""
     try:
         results = await asyncio.gather(*(_fetch_reranked(host, token, index_name, q, k) for q in queries))
     except RerankUnavailable as exc:
         logger.warning('chat_vsi_rerank: reranker refused by %s (%s) — baseline retrieval', index_name, exc)
-        return await base.retrieve(host, token, index_name, queries, base.num_results()), False
+        return await retrieve_raw(host, token, index_name, queries, base.num_results()), False
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
         logger.error('chat_vsi_rerank: Vector Search %s returned %d: %s', index_name, status, exc.response.text[:500])
@@ -384,11 +430,11 @@ async def retrieve_for_turn(host: str, token: str, index_name: str, endpoint: st
 
     async def search():
         if not rerank_enabled():
-            return await base.retrieve(host, token, index_name, queries, base.num_results()), False
+            return await retrieve_raw(host, token, index_name, queries, base.num_results()), False
         if merge_mode() == 'union':
             (rows, reranked), raw = await asyncio.gather(
                 retrieve_reranked(host, token, index_name, queries, rerank_top_k()),
-                base.retrieve(host, token, index_name, queries, base.num_results()))
+                retrieve_raw(host, token, index_name, queries, base.num_results()))
             return _merge_by_rank([rows, raw]), reranked
         return await retrieve_reranked(host, token, index_name, queries, rerank_top_k())
 

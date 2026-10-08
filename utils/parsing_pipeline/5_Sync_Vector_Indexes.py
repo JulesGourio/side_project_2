@@ -127,7 +127,11 @@ if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
         """)
         print(f"Created {FULL_TABLE} from {_sources}")
     else:
-        _changed = " OR ".join(f"NOT (t.`{c}` <=> s.`{c}`)" for c in df_src.columns if c != "chunk_id")
+        # New chunk columns (titre, type_document, langue… audit 2026-10) reach chunks_full too.
+        spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+        _target_cols = set(spark.table(FULL_TABLE).columns)
+        _changed = " OR ".join(f"NOT (t.`{c}` <=> s.`{c}`)" for c in df_src.columns
+                               if c != "chunk_id" and c in _target_cols) or "true"
         (
             DeltaTable.forName(spark, FULL_TABLE).alias("t")
             .merge(df_src.alias("s"), "t.chunk_id = s.chunk_id")

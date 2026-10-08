@@ -314,3 +314,22 @@ def test_rewrite_endpoint_defaults_to_the_answer_model(monkeypatch):
         asyncio.run(chat_vsi_rerank.retrieve_for_turn('https://h', 't', 'idx', 'answer-llm',
                                                       [{'role': 'user', 'content': 'question'}]))
     assert rewrite.await_args.args[2] == 'small-llm'
+
+
+def test_skip_noise_filters_every_query_on_content_type(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_SKIP_NOISE', 'on')
+    monkeypatch.setenv('CHAT_VSI_RERANK_MERGE', 'union')
+    sent = []
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _fake_post(sent=sent))
+    with patch.object(chat_vsi_rerank, 'search_query_fr', AsyncMock(return_value='q fr')):
+        out = asyncio.run(chat_vsi_rerank.retrieve_for_turn('https://h', 't', 'idx', 'llm',
+                                                            [{'role': 'user', 'content': 'question'}]))
+    assert out['rows'] and len(sent) == 4          # 2 queries x (reranked + raw)
+    for payload in sent:
+        types = json.loads(payload['filters_json'])['chunk_content_type']
+        assert 'toc' not in types and 'text' in types
+
+
+def test_skip_noise_off_keeps_the_baseline_search(monkeypatch):
+    monkeypatch.delenv('CHAT_VSI_SKIP_NOISE', raising=False)
+    assert chat_vsi_rerank.content_filter() == {}

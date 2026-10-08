@@ -209,11 +209,18 @@ IMAGE_FORMAT        = "PNG"     # PNG = lossless, no compression artifacts on te
 # tiktoken (cl100k) is more accurate than CHARS_PER_TOKEN for technical French; falls back to it if unavailable offline.
 USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
-MIN_CHUNK_TOKENS    = 250
-TARGET_CHUNK_TOKENS = 500
-MAX_CHUNK_TOKENS    = 1000
-# Overlap between chunks (fraction of TARGET) — improves recall when info splits across two chunks; only affects the next (re)chunking + re-index.
-CHUNK_OVERLAP_RATIO = 0.12
+# Passage sizes (chunking.py). Overridable per run to test other sizes (DEV notebook
+# utils/databricks_ops/evaluation/rechunk_experiment.py) without editing this file.
+MIN_CHUNK_TOKENS    = int(_env("PARSING_MIN_CHUNK_TOKENS", "250"))
+TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "500"))
+MAX_CHUNK_TOKENS    = int(_env("PARSING_MAX_CHUNK_TOKENS", "1000"))
+# Character ceiling on top of tokens: dot leaders / form underscores count few tokens for many
+# characters, and the Vector Search reranker reads only the first 2,000 characters.
+MAX_CHUNK_CHARS     = int(_env("PARSING_MAX_CHUNK_CHARS", "4000"))
+# Overlap between consecutive passages of one section (fraction of TARGET).
+CHUNK_OVERLAP_RATIO = float(_env("PARSING_CHUNK_OVERLAP_RATIO", "0.12"))
+# A passage body found in at least this many documents is marked "boilerplate".
+BOILERPLATE_MIN_DOCS = int(_env("PARSING_BOILERPLATE_MIN_DOCS", "20"))
 
 # =============================================================================
 # LLM settings (vision model for image description)
@@ -248,7 +255,7 @@ IMG_SKIP_MIN_SIDE  = 85    # shorter side (px) < threshold -> band/table too sho
 MIN_INDEXABLE_DESC_CHARS = 40
 
 # True = provenance prefix embedded in chunk_text; False = body only (ref/division/title stay as filterable columns) — measured to hurt retrieval precision.
-EMBED_SOURCE_PREFIX = True
+EMBED_SOURCE_PREFIX = _env("PARSING_EMBED_SOURCE_PREFIX", "true").strip().lower() in ("1", "true", "yes")
 
 # =============================================================================
 # LLM Prompt template (vision model)
@@ -267,7 +274,7 @@ If the image is decorative or has no extractable information — logo, letterhea
 SKIP: then a reason in 6 words max
 
 Otherwise answer in the document's language (French if the context is French), with no other text, using this exact structure:
-- first line: "# " then the CATEGORY in square brackets, then one sentence describing what the image shows;
+- first line: "# " then the CATEGORY in square brackets, then one sentence saying what the image shows AND what it is about — name the process, part, form or subject, using the nearby text if needed (e.g. "Logigramme du traitement d'une non-conformité en réception"). This sentence is the only place where words of the context may be reused;
 - second line: **Content:**
 - then the extraction following the rules below.
 Do not output any literal angle brackets or placeholder text.

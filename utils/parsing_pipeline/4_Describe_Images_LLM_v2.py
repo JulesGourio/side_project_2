@@ -83,7 +83,7 @@ from pyspark.sql import functions as F
 from pyspark.sql import Row
 
 # addPyFile propagates these to every executor, not just the driver — required for worker imports.
-for _mod in ("utils.py", "image_utils.py", "selection.py", "config.py"):
+for _mod in ("chunking.py", "utils.py", "image_utils.py", "selection.py", "config.py"):
     spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
 
 from utils import configure, token_count_udf, intraqual_ref_url
@@ -331,7 +331,12 @@ df_described = (
 
 # Image chunks of pre-cutoff documents live in chunks_archive, not chunks.
 _chunk_tables_with_images = [t for t in (TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE) if spark.catalog.tableExists(t)]
-for _tbl in _chunk_tables_with_images:
+# rebuild_image_chunks=true: rewrite EVERY described image's passage (new format: section,
+# caption, long transcriptions split — audit 2026-10, P7) from the stored descriptions, no LLM
+# call. Not needed after a FULL run of 3_parse, which already empties the chunk tables.
+dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])
+REBUILD_IMAGE_CHUNKS = dbutils.widgets.get("rebuild_image_chunks") == "true"
+for _tbl in ([] if REBUILD_IMAGE_CHUNKS else _chunk_tables_with_images):
     df_existing_image_chunk_ids = (
         spark.table(_tbl)
         .filter(F.col("chunk_content_type") == "image")
@@ -351,23 +356,66 @@ if described_count == 0:
         print(f"  {_total_error} ERROR images → not injected (will retry description next run)")
 else:
     print(f"{described_count} new image chunks to inject into chunk tables.")
-    df_text_chunks = spark.table(TARGET_CHUNK_TABLE).select("IDDOC", "chunk_index", "chunk_content_type")
+    df_text_all = spark.table(TARGET_CHUNK_TABLE).select("IDDOC", "chunk_index", "chunk_content_type",
+                                                         "chunk_text", "semantic_headers")
     if spark.catalog.tableExists(TARGET_CHUNK_TABLE_ARCHIVE):
-        df_text_chunks = df_text_chunks.unionByName(
-            spark.table(TARGET_CHUNK_TABLE_ARCHIVE).select("IDDOC", "chunk_index", "chunk_content_type")
-        )
-    df_max_idx = (
-        df_text_chunks
-        .filter(F.col("chunk_content_type") != "image")
-        .groupBy("IDDOC").agg(F.max("chunk_index").alias("max_text_index"))
-    )
+        df_text_all = df_text_all.unionByName(spark.table(TARGET_CHUNK_TABLE_ARCHIVE).select(
+            "IDDOC", "chunk_index", "chunk_content_type", "chunk_text", "semantic_headers"))
+    df_text_chunks = df_text_all.filter(F.col("chunk_content_type") != "image")
+    df_max_idx = df_text_chunks.groupBy("IDDOC").agg(F.max("chunk_index").alias("max_text_index"))
 
-    # doc_date isn't on image_metadata — joined from processed_files for the prefix below.
-    df_doc_dates = spark.table(TARGET_PROCESSED_FILES_TABLE).select("IDDOC", "doc_date").dropDuplicates(["IDDOC"])
+    # Document metadata isn't on image_metadata — joined from processed_files for the prefix below.
+    _pf = spark.table(TARGET_PROCESSED_FILES_TABLE)
+    df_doc_meta = _pf.select("IDDOC", "doc_date",
+                             *[F.col(c) if c in _pf.columns else F.lit(None).cast("string").alias(c)
+                               for c in ("type_document", "indice", "langue")]) \
+        .withColumn("indice", F.col("indice").cast("string")).dropDuplicates(["IDDOC"])
 
+    # Where each image sits (the text passage holding the words just before it, found with the
+    # context Docling stored), its section and caption written into the passage, and long
+    # transcriptions (scanned pages) cut like text — audit 2026-10, P7. No LLM call.
+    import json as _json
+    import pandas as _pd
+
+    _PLACED_SCHEMA = ("IDDOC long, image_id int, part_no int, anchor_chunk_index int, "
+                      "section string, body string")
+
+    def _place_images(images: "_pd.DataFrame", texts: "_pd.DataFrame") -> "_pd.DataFrame":
+        import json, chunking
+        chunks = []
+        for t in texts.itertuples():
+            try:
+                hdr = json.loads(t.semantic_headers or "{}")
+            except ValueError:
+                hdr = {}
+            chunks.append((int(t.chunk_index), t.chunk_text or "",
+                           {k: v for k, v in hdr.items() if k.startswith("Header")}))
+        rows = []
+        for im in images.itertuples():
+            anchor = chunking.image_anchor(im.context_text or "", chunks)
+            headers = anchor[1] if anchor else {}
+            caps = list(im.captions) if im.captions is not None else []
+            parts = chunking.split_long_description(im.description or "", max_chars=MAX_CHUNK_CHARS,
+                                                    max_tokens=MAX_CHUNK_TOKENS)
+            for n, part in enumerate(parts, 1):
+                rows.append({"IDDOC": int(im.IDDOC), "image_id": int(im.image_id), "part_no": n,
+                             "anchor_chunk_index": anchor[0] if anchor else None,
+                             "section": " > ".join(headers[k] for k in sorted(headers)) or None,
+                             "body": chunking.image_passage_body(part, caps, headers)})
+        return _pd.DataFrame(rows, columns=["IDDOC", "image_id", "part_no", "anchor_chunk_index", "section", "body"])
+
+    _imgs = df_described.select("IDDOC", "image_id", "description", "captions", "context_text")
+    _texts = df_text_chunks.join(_imgs.select("IDDOC").distinct(), on="IDDOC", how="inner") \
+        .select("IDDOC", "chunk_index", "chunk_text", "semantic_headers")
+    df_placed = _imgs.groupBy("IDDOC").cogroup(_texts.groupBy("IDDOC")).applyInPandas(_place_images, _PLACED_SCHEMA)
+
+    _img_id = F.concat_ws("-", F.col("IDDOC").cast("string"), F.lit("IMG"),
+                          F.lpad(F.col("image_id").cast("string"), 3, "0"))
     df_image_chunks = (
-        df_described.join(df_max_idx, on="IDDOC", how="left")
-        .join(F.broadcast(df_doc_dates), on="IDDOC", how="left")
+        df_described.drop("description", "chunk_id")
+        .join(df_placed, on=["IDDOC", "image_id"], how="inner")
+        .join(df_max_idx, on="IDDOC", how="left")
+        .join(F.broadcast(df_doc_meta), on="IDDOC", how="left")
         .withColumn("url", intraqual_ref_url(F.col("ref")))
         .withColumns({
             "max_text_index": F.coalesce(F.col("max_text_index"), F.lit(-1)),
@@ -376,19 +424,22 @@ else:
             "chunk_text": (F.concat(
                 F.lit("[Source: "), F.coalesce(F.col("ref"), F.lit("")),
                 F.lit(" | Title: "), F.coalesce(F.col("titre"), F.lit("")),
+                F.lit(" | Type: "), F.coalesce(F.col("type_document"), F.lit("")),
                 F.lit(" | Division: "), F.coalesce(F.col("division"), F.lit("")),
                 F.lit(" | Category: "), F.coalesce(F.col("niveau_plus_1"), F.lit("")),
                 F.when(F.col("niveau_plus_2").isNotNull(),
                        F.concat(F.lit(" > "), F.col("niveau_plus_2"))).otherwise(F.lit("")),
                 F.lit(" | Date de diffusion: "), F.coalesce(F.date_format(F.col("doc_date"), "yyyy-MM-dd"), F.lit("inconnue")),
                 F.lit(" | Image: page "), F.coalesce(F.col("page_no").cast("string"), F.lit("?")),
-                F.lit(", "), F.col("label"), F.lit("]\n\n"), F.col("description"),
-            ) if EMBED_SOURCE_PREFIX else F.col("description")),
+                F.lit(", "), F.col("label"), F.lit("]\n\n"), F.col("body"),
+            ) if EMBED_SOURCE_PREFIX else F.col("body")),
         })
         .withColumns({
             "chunk_token_count": token_count_udf(F.col("chunk_text")),
-            "chunk_id": F.concat_ws("-", F.col("IDDOC").cast("string"), F.lit("IMG"),
-                                    F.lpad(F.col("image_id").cast("string"), 3, "0")),
+            # Part 1 keeps the historical id (the anti-join above relies on it); the next parts
+            # of a long transcription get -2, -3…
+            "chunk_id": F.when(F.col("part_no") == 1, _img_id)
+                         .otherwise(F.concat_ws("-", _img_id, F.col("part_no").cast("string"))),
             "chunk_content_type": F.lit("image"),
             "semantic_headers": F.to_json(F.struct(
                 F.col("label").alias("image_label"),
@@ -396,15 +447,19 @@ else:
                 F.col("volume_path").alias("volume_path"),
                 F.col("area_ratio").cast("string").alias("area_ratio"),
                 F.col("captions").cast("string").alias("captions"),
+                F.col("section").alias("section"),
             )),
             "chunk_sha256": F.sha2(F.col("chunk_text"), 256),
+            "body_sha256": F.sha2(F.col("body"), 256),
+            "indice": F.col("indice").cast("string"),
         })
         .withColumn("REF", F.coalesce(F.col("ref"), F.col("source_file_name")))
         .select(
             "IDDOC", "REF", "division",
             "chunk_id", "chunk_index", "chunk_text",
             "chunk_token_count", "chunk_content_type", "semantic_headers", "chunk_sha256",
-            "url", "doc_date",
+            "url", "doc_date", "titre", "type_document", "indice", "langue", "body_sha256",
+            "anchor_chunk_index",
         )
     )
 
@@ -425,6 +480,10 @@ else:
 
 if described_count > 0:
     from delta.tables import DeltaTable
+
+    # Columns added on 2026-10 (titre, type_document, indice, langue, body_sha256,
+    # anchor_chunk_index) must be able to reach chunk tables written before them.
+    spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
     def _merge_image_chunks(df_chunks, table_name):
         if not spark.catalog.tableExists(table_name):

@@ -252,6 +252,19 @@ prévenir, je change la valeur, vous redéployez.
 
   Retour arrière : repasser à `false`, `bundle deploy` + un run retirent les fiches.
 
+- [ ] **D5. Re-découper le corpus UAT avec le nouveau découpage** (code du 2026-10-08,
+  `utils/parsing_pipeline/chunking.py`, audit `docs/chat_vsi_audit_2026-10.md` § 5).
+  **Pas avant** que le test DEV (`operations_dev.md`, bloc R) ait montré un gain, et avec ton
+  accord : le KA de l'UAT lit le même index.
+  - Je passe `parsing_run_mode` à `full` pour `qualibot-uat` ; `bundle deploy` + un run.
+    Les fichiers déjà parsés sont sautés (même chemin, même empreinte) : pas de re-parsing GPU.
+    `3_parse` réécrit `chunks_v1` / `src_chunks_*_v1` / `processed_files_v1`, `4_describe`
+    reconstruit tous les passages d'image depuis les descriptions déjà faites (aucun appel LLM),
+    puis les index se ré-embeddent entièrement (environ 1 h).
+  - Je repasse `parsing_run_mode` à `incremental` ; `bundle deploy`.
+  - Retour arrière : `RESTORE TABLE … VERSION AS OF <version d'avant>` sur les tables de passages
+    (`DESCRIBE HISTORY` donne la version), puis un sync des index.
+
 ## Fait
 
 _(rien de confirmé pour l'instant)_

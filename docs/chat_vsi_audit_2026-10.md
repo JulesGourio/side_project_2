@@ -35,7 +35,83 @@ alimente l'index (`utils/parsing_pipeline/`).
   (types de passages, tables des matières, doublons, documents absents de l'index) se mesurent
   avec les requêtes du § 7.
 
+- **Décidé et codé le 2026-10-08** (§ 9) : nouveau découpage, métadonnées, tableurs, passages
+  d'image, filtre des passages sans contenu côté VSI, notebook de test DEV avec les
+  enrichissements par LLM désactivés par défaut. Rien n'a encore tourné sur Databricks.
+
 Gravité des constats : 🔴 résultat faux ou perte nette · 🟠 gêne réelle · 🟡 mineur.
+
+---
+
+## 0. Lexique et fonctionnement
+
+### 0.1 Les mots et acronymes
+
+| Terme | Ce que c'est |
+|---|---|
+| **KA** | Knowledge Assistant : l'agent « clé en main » de Databricks (Agent Bricks) qui sert aujourd'hui le chatbot. Il cherche dans notre index et rédige la réponse, mais on ne voit ni ne règle ce qu'il fait à l'intérieur. Databricks l'arrête : il faut le remplacer |
+| **VSI** | Le remplaçant écrit par Mehdi (`chat_vsi.py`) : l'app interroge elle-même l'index Vector Search (*Vector Search Index*), puis demande la réponse à un LLM. Tout est réglable |
+| **RAG** | *Retrieval-Augmented Generation* : chercher des passages de documents, puis les donner au LLM pour qu'il réponde à partir d'eux |
+| **LLM** | Le modèle de langage qui rédige (Sonnet 4.6, Sonnet 5.5, GPT-5.6 Luna…) |
+| **Passage** (*chunk*) | Un morceau d'un document (250 à 1 000 tokens) : c'est l'unité indexée et renvoyée par la recherche |
+| **Token** | Unité de texte des modèles, environ 4 caractères en français. Les coûts et les limites se comptent en tokens |
+| **REF** | La référence Intraqual d'un document (QP-1518, MI-14183…). Une même REF existe souvent en plusieurs langues (QP-1518, QP-1518_GB, Q0102QP_BG…) |
+| **IDDOC** | L'identifiant Intraqual d'une révision de document. Chaque révision a un nouvel IDDOC |
+| **Embedding** | Le vecteur qui représente le sens d'un texte. Calculé par `databricks-qwen3-embedding-0-6b` pour chaque passage et pour chaque question |
+| **Recherche hybride** (*HYBRID*) | Vector Search combine deux recherches : par sens (embedding) et par mots-clés (comme un moteur classique, type BM25). Elle renvoie les N meilleurs passages |
+| **Reranker** | Un second modèle (`databricks_reranker`, un *cross-encoder*) qui relit la question et chaque passage candidat ensemble et les reclasse. Plus précis que l'embedding, mais il ne voit que les 50 premiers candidats et que les 2 000 premiers caractères de chaque passage |
+| **Réécriture** (*rewrite*) | Avant de chercher, un LLM reformule la question en une requête autonome en français (« et pour IS ? » → « exigences de qualification CND pour la division IS »). Elle passe avant la recherche, donc retarde le premier mot |
+| **Golden** | Le jeu de 21 questions de référence avec réponses et documents attendus (`qualibot_eval_golden`) |
+| **Juge** | Un LLM qui note une réponse (juste / fausse) par rapport à l'attendu. Ici les juges MLflow `Correctness` et `ExpectationsGuidelines` |
+| **Recall** (rappel, « docs trouvés ») | Part des documents attendus qui sont dans les passages envoyés au LLM. 100 % = tous les documents attendus sont dans le contexte |
+| **`at_least_one_pct`** | Part des questions où au moins un document attendu est trouvé |
+| **`recall_top5_pct`** | Rappel limité aux 5 premiers documents du contexte : compare des configurations qui n'envoient pas le même nombre de documents |
+| **Contexte** | Tout ce qu'on envoie au LLM : instructions + passages + question. Sa taille fait le coût |
+| **Premier mot** (*TTFT*) | Temps avant que la réponse commence à s'afficher |
+| **AS / IS** | Les deux divisions Latécoère (Aérostructures, Interconnection Systems). Il y a un index par division et un index `ALL` |
+| **DBU** | L'unité de facturation Databricks (0,078 € dans le contrat) |
+| **Checkpoint** | `_pipeline_checkpoint` : la table où le pipeline garde le texte parsé de chaque document. Re-découper part de là, sans re-parser |
+| **TOC** | *Table of contents* : table des matières |
+| **OCR** | Lecture du texte d'une image ou d'un scan (ici faite par GPT-5.6 Luna) |
+
+### 0.2 Ce qui se passe à chaque question
+
+**Baseline (le code de Mehdi, `chat_vsi.py`)**
+1. Si la question n'est ni en français ni en anglais, elle est traduite en anglais.
+2. Le LLM de réponse réécrit la question en une requête française.
+3. **Deux recherches hybrides** : la question telle quelle, et la requête française. **10
+   passages chacune** (`CHAT_VSI_NUM_RESULTS`).
+4. Les deux listes sont fusionnées par meilleur rang, sans doublon : 10 à 20 passages.
+5. Les passages sont regroupés par document (REF) et numérotés `[1]`, `[2]`…
+6. Le LLM reçoit les instructions du KA, la règle de citation, les documents et la question,
+   et rédige la réponse.
+
+**Variante `rerank` (`chat_vsi_rerank.py`)** : mêmes étapes, seule l'étape 3 change selon les
+réglages ci-dessous. Tous sont désactivés par défaut, et la baseline n'a jamais été modifiée.
+
+### 0.3 Ce que fait vraiment chaque réglage
+
+Les noms d'essais sont faits de ces morceaux : `union-ctx-s55-ref` = union + ctx + Sonnet 5.5 +
+recherche par REF.
+
+| Morceau du nom | Réglage | Ce qui se passe réellement |
+|---|---|---|
+| `rerank` | variante `rerank` | Pour chacune des 2 requêtes, Vector Search prend ses 50 meilleurs candidats hybrides, les fait **reclasser par le reranker**, et n'en rend que **12** (`CHAT_VSI_RERANK_TOP_K`). Ces 12 **remplacent** les 10 de la baseline. Le reranker lit le texte du passage seul |
+| `union` | `CHAT_VSI_RERANK_MERGE=union` | On fait **les deux** : la recherche reclassée (12 par requête) **et** la recherche brute de la baseline (10 par requête), et on fusionne. Le reranker peut **ajouter** des passages que la recherche brute classait mal, sans **retirer** ceux qu'elle trouvait. Environ 30 passages au lieu de 15 |
+| `ctx` | `CHAT_VSI_RERANK_COLUMNS=REF,semantic_headers,chunk_text` | Le reranker lit en plus la REF et les titres de section du passage, avant le texte. Sans effet mesurable : le texte commence déjà par `[Source: REF \| Title \| …]` |
+| `k20` | `CHAT_VSI_RERANK_TOP_K=20` | 20 passages reclassés par requête au lieu de 12 |
+| `b35k`, `b25k`, `budget` | `CHAT_VSI_RERANK_TOP_K=25` + `CHAT_VSI_CONTEXT_BUDGET_CHARS=35000` ou `25000` | On prend 25 passages reclassés, puis on les garde **dans l'ordre du classement jusqu'à 35 000 (ou 25 000) caractères** de contexte, quel que soit leur nombre. But : un contexte de taille fixe, donc un coût fixe |
+| `cap3` | `CHAT_VSI_MAX_PASSAGES_PER_DOC=3` | Au plus 3 passages par document, pour laisser la place à d'autres documents |
+| `ref` | `CHAT_VSI_REF_LOOKUP=on` | Si la question (ou un tour précédent) cite une REF connue du catalogue (« résume le MI-14242 »), on fait **une recherche de plus, limitée à ce document** et à ses versions linguistiques (6 REF au plus, 8 passages). Ses passages passent **en premier** |
+| `v2` | `CHAT_VSI_INSTRUCTIONS=v2` | Nos instructions VSI réécrites (`server/config/chat_vsi_v2/`) **à la place** de celles du KA |
+| `v3` | `CHAT_VSI_INSTRUCTIONS=v3` | Instructions du KA **plus** un ajout : règles d'ancrage, glossaire des types de documents |
+| `s55` | `CHAT_VSI_LLM_ENDPOINT=databricks-claude-sonnet-5-5` | Sonnet 5.5 rédige **et** réécrit (plafonds relevés : il réfléchit avant de répondre) |
+| `run2` | — | La même configuration relancée, pour mesurer le bruit |
+| `title` | `CHAT_VSI_TITLE_LOOKUP=on` | On compare les mots de la question aux **titres des 7 600 documents du catalogue**. Les 3 documents dont le titre correspond le mieux ont droit à une recherche limitée à eux (6 passages), **ajoutée à la fin** du contexte |
+| `bi` | `CHAT_VSI_REWRITE=bilingual` | La réécriture produit une requête française **et** une requête anglaise, acronymes développés. **3 recherches** au lieu de 2 (question, FR, EN) |
+| `luna` | `CHAT_VSI_REWRITE_ENDPOINT=databricks-gpt-5-6-luna` | La réécriture est faite par GPT-5.6 Luna, petit modèle rapide, et plus par le modèle de réponse |
+| `1lang` | `CHAT_VSI_ONE_LANGUAGE=on` | Pour un document présent en plusieurs langues (Q0102QP_GB, Q0102QP_BG), on ne garde que les passages de la version **la mieux classée** |
+| (toujours) | `CHAT_VSI_SEARCH_RETRIES=2` | Une recherche refusée (rafale, délai) est relancée 2 fois avant d'échouer |
 
 ---
 
@@ -168,6 +244,35 @@ Deux mesures ont aussi été ajoutées :
   - le modèle de réponse, par la comparaison côte à côte (§ 3.3).
 - **Pas encore fait** : mettre la configuration retenue par défaut dans l'app DEV.
   `app.yaml` est toujours sur `CHAT_VSI_VARIANT=baseline`.
+
+### 2.5 Tout ce qui reste à tester, au même endroit
+
+**Prêt, il suffit de lancer** (`retrieval_eval`, vague 3, § 2.3)
+- `u-title`, `u-bi`, `u-bi-luna`, `u-1lang`, `u-1lang-k20-cap3`, `u-all`.
+- Remesure sans erreurs de `union-ctx-ref`, `union`, `union-ctx-k20`, `union-ctx-b25k` : le
+  même run relance leurs questions en erreur.
+
+**Après la vague 3, sur la meilleure recherche**
+- Un run golden de la meilleure configuration, avec Sonnet 4.6 : vérifie que le gain de
+  recherche se retrouve dans les réponses.
+- La comparaison côte à côte des modèles de réponse (§ 3.3) : Sonnet 4.6, Sonnet 5.5, Sonnet
+  5.5 avec moins de réflexion, Haiku 4.5, GPT-5.6 Luna. Notebook à écrire.
+
+**Côté app, à coder (§ 4)** : passages voisins (R1), ordre du document (R2), métadonnées une
+seule fois (R3), requête mots-clés (R6), filtre par type (R7), suivi de conversation (R8), seuil
+« je ne sais pas » (R9), langue de la question (R10), reranker par LLM (R11), nombre de passages
+adaptatif (R12), consigne de requête Qwen (R5, après un essai d'API). R4 (reranker sur le texte
+seul) est déjà mesuré : c'est `union` contre `union-ctx`, sans différence.
+
+**Côté parsing, sur un index de test DEV (§ 5)**
+- Découpage corrigé à taille égale (v2a), découpage plus court (v2b), contre l'actuel (v1).
+- Passages d'image avec légende et section, retranscriptions longues découpées (P7).
+- Métadonnées type, indice, langue dans l'index (P10), tables des matières et textes répétés
+  marqués (P9), préfixe `[Source: …]` avec ou sans (P15).
+- Enrichissements : fiche par document (E1), contexte par passage (E2).
+
+**Décisions métier, pas des tests** : fiches des documents d'avant 2018 dans le chatbot (P11),
+numéros de page et de slide avec re-parsing GPU (P13).
 
 ---
 
@@ -743,6 +848,39 @@ GROUP BY ALL ORDER BY images DESC;
 | 7 | Fiche par document (E1), puis contexte par passage (E2), sur un index de test | Moyen | ≈ 15 € puis ≈ 50 € |
 | 8 | Porter ce qui gagne dans le pipeline, run `full` en UAT avec ton accord (§ 5.5) | Moyen | Re-embedding de l'index |
 | Plus tard | Numéros de page et de slide (P13, re-parsing GPU), reranker par LLM ou ré-entraîné, autre modèle d'embedding | Gros | À chiffrer |
+
+## 9. Décidé et codé le 2026-10-08
+
+Décisions prises avec l'utilisateur, toutes acceptées. Code poussé, **rien n'a tourné sur
+Databricks** : le test se fait en DEV (`operations_dev.md`, bloc R), l'UAT seulement ensuite
+(`OPERATIONS.md`, D5).
+
+| Constat | Ce qui est codé | Où |
+|---|---|---|
+| P1 | Le chemin `HybridChunker` (jamais utilisé) est retiré du pipeline | `utils.py` |
+| P2 | `semantic_headers` = le chemin de titres **commun** à tout le passage : toujours une vraie lignée | `chunking.py` |
+| P3 | Jamais deux sections de niveau 1 ou 2 dans un passage. Une section minuscule (moins d'un tiers du minimum, ex. « 1. Objet » de deux lignes) rejoint la suivante, avec sa ligne `[1. Objet]` | `chunking.py` |
+| P4 | Chevauchement réel (12 % de la cible) entre passages d'une même section. Le réglage n'était même pas transmis aux workers Spark : il valait 0 partout | `chunking.py`, `3_Parse` (`configure`) |
+| P5 | La ligne de section une seule fois en tête du passage ; une sous-section qui commence au milieu a sa ligne `[3.1 Level 3]` une fois | `chunking.py` |
+| P6 | Taille inchangée (250 / 500 / 1 000 tokens) ; une variante courte se mesure en DEV (`v2b`) | `config.py` (réglable par variable d'environnement) |
+| P7 | Passage d'image : `Section : …` et `Légende : …` dans le texte indexé, rattaché au passage où l'image se trouve (`anchor_chunk_index`), longues retranscriptions découpées (`…-IMG-003-2`). Widget `rebuild_image_chunks` pour tout reconstruire sans LLM. Nouveau prompt pour les **futures** images : la première phrase nomme le sujet | `chunking.py`, `4_Describe`, `config.py` |
+| P8 | Plafond de 4 000 caractères en plus des tokens (`PARSING_MAX_CHUNK_CHARS`) | `chunking.py`, `config.py` |
+| P9 | `chunk_content_type` = `toc` (sommaires), `front_matter` (cartouches, historiques, dans les 3 premiers passages ou sous un titre de ce nom), `boilerplate` (même texte dans 20 documents ou plus). Côté app, `CHAT_VSI_SKIP_NOISE=on` les écarte (désactivé par défaut) | `chunking.py`, `3_Parse`, `chat_vsi_rerank.py` |
+| P10 | Colonnes `titre`, `type_document`, `indice`, `langue` (vraie langue : suffixe de la REF, sinon le texte), `body_sha256` ; `Type :` dans le préfixe `[Source: …]` | `3_Parse`, `utils.py`, `4_Describe` |
+| P12 | Ligne d'en-tête des tableurs = la première qui remplit au moins 60 % des colonnes (les lignes de titre au-dessus restent en texte) ; `chunks_truncated` vrai seulement au-delà de 100 passages | `chunking.py`, `utils.py`, `3_Parse` |
+| P15 | Variante DEV sans préfixe (`v2c`) | `rechunk_experiment.py` |
+| E1, E2 | Fiche par document et contexte par passage, **désactivés par défaut** (widgets `doc_cards`, `chunk_context`, `enrich_max_docs`) | `rechunk_experiment.py` |
+
+Pas fait : P11 (documents d'avant 2018, décision métier), P13 (numéros de page, re-parsing
+GPU), P16 (prix Haiku, colonnes de recherche).
+
+Effets à connaître :
+- les nouvelles colonnes arrivent dans les tables existantes par `mergeSchema` / `autoMerge` ;
+  les lignes anciennes restent à `NULL` jusqu'au run `full` ;
+- `generate_synthetic_retrieval_questions.py` ne tire que des passages `text`, `table`,
+  `mixed` : il ignore désormais les sommaires et cartouches, c'est voulu ;
+- `chunk_index` ne change pas de sens (rang du passage dans le document) : le golden builder
+  continue de trouver les voisins par `chunk_index`.
 
 ## Sources
 
