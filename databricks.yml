@@ -1302,8 +1302,8 @@ targets:
       # docling_models/ subfolder unlike DEV's, and DEV's volume isn't reachable
       # from UAT anyway (confirmed live: PermissionError, 2026-07-30).
       parsing_offline_models_path: "/Volumes/uat_landingzone/qualibot/docling_models"
-      # Real tables, no suffix (2026-10-08): the former _v1 tables are renamed in
-      # place by OPERATIONS.md D5 step 1 — run it BEFORE the next bundle deploy of
+      # Real tables, no suffix (2026-10-08): OPERATIONS.md D5.3 copies the former
+      # _v1 state tables to these names — do it BEFORE the next bundle deploy of
       # this target, or the daily run starts on empty tables and reparses the whole
       # corpus on GPU. History of the _v1/_v2/_v3 names (string-typed columns, CDF
       # retention incident): utils/parsing_pipeline/README.md.

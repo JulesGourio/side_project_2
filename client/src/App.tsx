@@ -46,7 +46,6 @@ function Layout() {
         <Routes>
           <Route path="/compare"   element={<ComparePage />} />
           <Route path="/chat"      element={<ChatPage />} />
-          <Route path="/chat-vsi"  element={<Navigate to="/chat" replace />} />
           <Route path="/chat/shared/:token" element={<SharedChatPage />} />
           <Route path="/no-access" element={<NoAccessPage />} />
           <Route path="*"          element={<DefaultRedirect />} />

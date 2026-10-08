@@ -1,47 +1,112 @@
-# Chat VSI — essais, modèles, recherche et parsing (audit 2026-10-07)
+# Chatbot Qualibot — configuration retenue et journal des tests (2026-10-06 → 2026-10-08)
 
-Branche : `feature/chat-vsi-merged-on-impact-search` (= `claude/hopeful-bardeen-57zeur`).
-Périmètre : la recherche et la rédaction du Chat VSI (`server/services/chat_vsi*.py`), les
-notebooks d'évaluation (`utils/databricks_ops/evaluation/`) et le pipeline de parsing qui
-alimente l'index (`utils/parsing_pipeline/`).
+Un seul document pour tout ce qui a été mesuré sur le chatbot : la configuration gardée (= le code
+actuel), le sens des noms d'essai, les résultats qui ont décidé, ce qui a été écarté, ce qui reste à
+tester. La partie 2 est le journal complet, tel qu'il a été tenu pendant les essais.
 
-## En bref
+Code : `server/services/chat_vsi.py` (+ `chat_vsi_llm.py`, `chat_vsi_titles.py`,
+`translation_bridge.py`). Notebooks de mesure gardés : `utils/databricks_ops/evaluation/retrieval_eval.py`
+(recherche seule) et `pairwise_answers.py` (réponses côte à côte). Tout le reste est dans `archive/`
+(`archive/README.md`). Robustesse (secours, relances) : `docs/chat_vsi_robustesse_2026-10.md`.
 
-- **Mesuré en DEV le 2026-10-07** : 15 essais sur le jeu golden (21 questions, réponse
-  générée puis notée par un juge) et 8 configurations de recherche sur 65 questions (golden,
-  synthétiques, retours négatifs), sans génération de réponse.
-- **Ce qui marche** : le reranker de Vector Search **ajouté** aux résultats bruts (mode
-  `union`). C'est le seul gain qui ressort des deux évaluations : sur le golden, les documents
-  attendus trouvés passent de 58 % à environ 80 %, et les réponses correctes de 67 % à 71–81 %.
-  Le VSI fait mieux que le KA (62 %).
-- **Ce qui ne marche pas** : le reranker qui **remplace** les résultats bruts (48 % de
-  réponses correctes), nos prompts réécrits (v2, v3), un budget de contexte serré, 20 passages
-  reclassés au lieu de 12.
-- **Pas encore tranché** : la recherche par REF (scores faussés par des erreurs, corrigé, à
-  remesurer) et Sonnet 5.5 contre Sonnet 4.6 (81 % sur un seul run, même coût, premier mot à
-  8 s au lieu de 3 s).
-- **Prêt, pas encore mesuré** : la vague 3 de `retrieval_eval` (6 configurations) avec la
-  recherche par titre, la réécriture français + anglais, une seule langue par document et un
-  modèle de réécriture séparé.
-- **Audit du parsing** : le découpage en passages a des défauts confirmés sur un exemple :
-  titres de section faux après fusion, sections mélangées, aucun chevauchement, titres répétés.
-  L'index manque aussi de métadonnées utiles (type de document, langue). La moitié de l'index
-  serait faite de descriptions d'images (chiffre à confirmer).
-- **Changer la taille des passages n'est pas le premier levier.** Il faut d'abord corriger la
-  structure du découpage et enrichir l'index. Tout se teste en DEV, à partir du texte déjà
-  parsé, sans GPU et sans toucher à l'UAT (§ 5.5).
-- **Non vérifié** : rien n'a tourné sur Databricks depuis cette machine. Les constats sur le
-  parsing viennent de la lecture du code et d'un test local du découpeur. Les volumes réels
-  (types de passages, tables des matières, doublons, documents absents de l'index) se mesurent
-  avec les requêtes du § 7.
+# Partie 1 — Ce qu'on garde
 
-- **Décidé et codé le 2026-10-08** (§ 9) : nouveau découpage, métadonnées, tableurs, passages
-  d'image, filtre des passages sans contenu côté VSI, notebook de test DEV avec les
-  enrichissements par LLM désactivés par défaut. Rien n'a encore tourné sur Databricks.
+## A. Configuration retenue
 
-Gravité des constats : 🔴 résultat faux ou perte nette · 🟠 gêne réelle · 🟡 mineur.
+| Étape | Ce qui se passe | Mesuré dans |
+|---|---|---|
+| Langue | fastText détecte la langue. Une question ni française ni anglaise est traduite en anglais (GPT-5.6 Luna, secours GPT-6 Luna) ; la réponse est retraduite | Juillet (`translation_bridge.py`) |
+| Réécriture | GPT-6 Luna (secours GPT-5.6 Luna) écrit une requête en français **et** une en anglais, acronymes développés | `u-bi`, `u-all-luna6` (journal § 2.3, § 5.6) |
+| Recherche | 3 requêtes (question, français, anglais), chacune HYBRID : 12 passages reclassés par le reranker de Vector Search (colonnes `REF`, `semantic_headers`, `chunk_text`) **plus** 10 passages bruts, fusionnés par rang | `union-ctx` (journal § 2.1, § 2.2) |
+| Documents cités par REF | Jusqu'à 6 REF nommées dans la conversation : 8 passages de ces documents, placés en tête | `union-ctx-ref` |
+| Documents cités par titre | Titres du catalogue proches de la question : 3 documents, 6 passages, ajoutés à la fin | `u-title` |
+| Une langue par document | Q0102QP_GB et Q0102QP_BG ne prennent qu'une place | `u-1lang` |
+| Division (AS / IS) | **Un seul index** `chunks_index` ; le choix AS / IS est un filtre Vector Search sur la colonne `division`, appliqué dans la requête elle-même (pas après) : déterministe, sans coût mesurable | Déjà utilisé pour les REF (filtre `REF`) |
+| Prompt | Instructions de la division (`instructions_<div>.md`), puis les règles de réponse (`answer_rules.md` : seulement les documents, refus hors sujet, glossaire des préfixes de REF, règle de citation avec exception pour une URL écrite dans un passage), puis les documents numérotés, la question, et une ligne qui **nomme** la langue de réponse | `luna6-prompt` (`u-all+v3+lang`) |
+| Réponse | GPT-6 Luna, secours GPT-5.6 Luna, 8 000 tokens maximum (réflexion comprise) | `luna6-versions`, `luna6-prompt` |
+| Index | Découpage 150 / 300 / 450 tokens, 1 600 caractères maximum, 12 % de chevauchement, préfixe `[Source: …]`, sommaires et cartouches **marqués** (`chunk_content_type`) mais **gardés** | `idx-v2b-all` (journal § 5.6) |
+
+**Aucun modèle Claude dans le chatbot** (décision du 2026-10-08) : réécriture, réponse, traduction et
+secours sont des modèles Luna.
+
+Le filtre de division : la question « on peut filtrer de manière déterministe au moment de la requête
+sans perdre de temps ? » — oui. `filters_json={"division": ["AS"]}` restreint la recherche dans
+l'index avant le classement : un passage IS ne peut pas sortir pour une question AS, et la requête
+coûte le même temps. Les trois index par division (`chunks_as_index`, `chunks_is_index`) et leurs
+tables `src_chunks_as` / `src_chunks_is` n'existaient que pour le Knowledge Assistant, qui ne savait
+pas filtrer : ils disparaissent.
+
+## B. Les noms du journal
+
+Le journal garde les noms utilisés pendant les essais. Ils ne figurent plus dans le code.
+
+| Nom dans le journal | Ce que c'était | Aujourd'hui |
+|---|---|---|
+| KA, `ka`, Chat KA | Knowledge Assistant (Agent Bricks), le premier chatbot | Retiré le 2026-10-08 (`archive/knowledge_assistant/`) |
+| VSI, Chat VSI | Le chatbot sans KA : Vector Search + un LLM | Le chatbot, onglet « Chat » |
+| `baseline` | Première version du Chat VSI : une requête, 10 passages, Sonnet 4.6 | `archive/chat_vsi_base/` |
+| `rerank`, `union`, `union-ctx`, `u-*`, `u-all` | Réglages de la recherche dans `chat_vsi_rerank.py` | `u-all` = la recherche actuelle, sans réglage |
+| Instructions `ka` | Les instructions du KA, recopiées | `server/config/chat_vsi/instructions_<div>.md` |
+| Instructions `v2` | Instructions réécrites pour le VSI | Écartées (`archive/chat_vsi_lab/config/rewritten_instructions/`) |
+| Instructions `v3`, « addendum » | Instructions KA + règles d'ancrage, refus hors sujet, glossaire | `answer_rules.md` (premier jet : `archive/chat_vsi_lab/config/answer_rules_first_draft.md`) |
+| `lang`, `CHAT_VSI_LANGUAGE_REMINDER` | Ligne de langue après la question | Toujours active |
+| `CHAT_VSI_SKIP_NOISE`, `-clean` | Écarter sommaires et cartouches de la recherche | Écarté (−11 points) |
+| Index `v1` (`chunks_index_v1`) | Découpage 250 / 500 / 1 000 tokens, l'index UAT copié en DEV | Remplacé |
+| Index `v2a` | Découpage corrigé, même taille que `v1` | Écarté |
+| Index `v2b` (`chunks_v2b`) | Découpage corrigé, 150 / 300 / 450 tokens | **Le découpage actuel** : table `chunks`, index `chunks_index` |
+| Index `v2c` | `v2b` sans préfixe `[Source: …]` | Préparé, non mesuré |
+| `idx-<v>`, `idx-<v>-all` | Une recherche (`union-ctx` ou `u-all`) sur l'index de test `<v>` | — |
+| `luna6-versions`, `luna6-prompt`, `luna6-v2b` | Runs de `pairwise_answers` (`eval_id`) | — |
+
+## C. Les résultats qui ont décidé
+
+| Question | Résultat | Décision |
+|---|---|---|
+| Le reranker aide-t-il ? | Seul : 48 % de réponses correctes (contre 67 %). **Ajouté** aux résultats bruts : 71 à 81 % | Union reclassés + bruts |
+| Nos prompts réécrits ? | `v2` : jamais mieux que le prompt KA | Prompt KA + règles de réponse |
+| Recherche complète (`u-all`) | 80 % des documents attendus contre 72 % (`union-ctx`) | `u-all` |
+| GPT-6 Luna contre Sonnet 5.5 | `u-all+v3+lang` : 19 gagnés / 16 perdus / 5 égalités, inventions 0,63 contre 1,59, 0,0036 € contre 0,089 € par question | GPT-6 Luna |
+| Réécriture par GPT-6 Luna plutôt que Sonnet 4.6 | 80,0 % contre 80 % | GPT-6 Luna, plus de Claude |
+| Découpage `v2b` contre `v1` | Recherche 83,6 % contre 78,5 % (second run), contexte 11k tokens contre 21k ; réponses 10 / 10 / 20, exactitude 2,81 contre 2,61, inventions 0,40 contre 0,53, 0,0022 € contre 0,0036 €, premier mot 5,9 s contre 8,1 s | `v2b` |
+| 20 passages reclassés au lieu de 12 | 80,5 % contre 83,6 % | 12 |
+| Écarter sommaires et cartouches | −11 points | Marqués, gardés |
+| KA (réponses stockées) contre VSI | 1 gagné / 36 perdus / 3 égalités | KA retiré |
+
+## D. Testé et écarté
+
+- Le reranker seul (`rerank`), sans les résultats bruts.
+- Les instructions réécrites `v2`, seules ou avec union.
+- Le budget de contexte (25 000 ou 35 000 caractères) : moins de documents trouvés.
+- 20 ou 25 passages reclassés par requête.
+- 3 passages au plus par document (`u-1lang-k20-cap3`).
+- Écarter les passages marqués sommaire / cartouche / texte répété (`CHAT_VSI_SKIP_NOISE`).
+- Le découpage `v2a` (même taille corrigée) : battu par `v2b`.
+- Sonnet 4.6, Sonnet 5.5 pour répondre ; Sonnet 4.6 et GPT-5.6 Luna pour réécrire.
+- Le Knowledge Assistant.
+
+Le code de chacune de ces options est dans `archive/chat_vsi_lab/`.
+
+## E. À tester plus tard
+
+| Piste | Ce que c'est | Où en est le code |
+|---|---|---|
+| E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € | `archive/evaluation/rechunk_experiment.py`, widget `doc_cards` (désactivé) |
+| E2 — contexte par passage | Une ou deux phrases en tête de chaque passage pour le situer (méthode « Contextual Retrieval »). ≈ 50 € | Même notebook, widget `chunk_context` (désactivé) |
+| `v2c` — sans préfixe `[Source: …]` | Mesure l'effet du préfixe sur la recherche | Même notebook |
+| Pistes côté recherche R1 à R12 | Passages voisins, ordre du document, filtre par type, seuil « je ne sais pas »… | Journal § 4, rien de codé |
+| Documents d'avant 2018 | Leur fiche dans le chatbot (P11) | Décision métier ; pipeline prêt (`parsing_archive_notices_in_rag`) |
+| Numéros de page et de slide | P13, re-parsing GPU | Rien de codé |
+
+Pour mesurer une piste : construire un index de test en DEV, puis `retrieval_eval` avec
+`indexes = chat,essai=dev_landingzone.qualibot.<index de test>` et, si la recherche gagne,
+`pairwise_answers` avec le même index en concurrent.
 
 ---
+
+# Partie 2 — Journal des tests
+
+Tenu pendant les essais, inchangé depuis : les noms sont ceux du § B. Les fichiers cités
+(`chat_vsi_rerank.py`, `golden_eval_ka_vs_vsi.py`, `rechunk_experiment.py`…) sont dans `archive/`.
 
 ## 0. Lexique et fonctionnement
 

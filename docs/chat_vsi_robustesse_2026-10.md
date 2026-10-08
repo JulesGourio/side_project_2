@@ -5,9 +5,9 @@ réponse. Plan retenu : **GPT-6 Luna** pour répondre et pour réécrire la requ
 secours. **Aucun modèle Claude dans le chatbot** (décision du 2026-10-08) : réponse, réécriture,
 traduction et secours sont tous des modèles Luna.
 
-Le code est poussé. Rien n'a changé dans l'app déployée : le basculement de modèle reste
-inactif tant que `CHAT_VSI_LLM_FALLBACK_ENDPOINTS` est vide (valeur par défaut). La mise en
-service est le bloc L de `operations_dev.md`.
+Depuis le 2026-10-08, `app.yaml` met GPT-5.6 Luna en secours de la réponse et de la réécriture
+pour toutes les cibles. Mise en service DEV : `operations_dev.md`, bloc S ; UAT : `OPERATIONS.md`, D5.
+Les mesures qui ont mené à ces choix : `docs/chat_vsi_tests.md`.
 
 ## 1. Ce qui se passe maintenant à chaque question
 
@@ -16,15 +16,14 @@ service est le bloc L de `operations_dev.md`.
 | Langue de la question | fastText sur le texte brut ; un code document (`QP-1518`) pouvait être pris pour du polonais | Codes, numéros, liens, marqueurs `[n]` retirés avant la détection ; un code seul n'est plus « deviné » |
 | Traduction (pont) | 1 modèle (GPT-5.6 Luna), relance sur 5xx seulement | Relance aussi sur 429, puis GPT-6 Luna en secours |
 | Réécriture de la requête | 1 modèle ; s'il échoue ou renvoie du vide, recherche avec la question seule | Modèle de réécriture, puis la chaîne de secours (vide = modèle suivant) ; 45 s par appel, 90 s au total |
-| Recherche Vector Search | Une requête en échec faisait échouer toute la recherche, relancée 2 fois en bloc | Chaque requête relancée sur 429/5xx/timeout (0,5 s, 1 s, 2 s + aléa). Si une requête sur trois échoue encore, on garde les deux autres. En mode `union`, si le côté reclassé tombe, le côté brut suffit (et inversement) |
+| Recherche Vector Search | Une requête en échec faisait échouer toute la recherche, relancée 2 fois en bloc | Chaque requête relancée sur 429/5xx/timeout (0,5 s, 1 s, 2 s + aléa). Si une requête sur trois échoue encore, on garde les deux autres. Si le côté reclassé tombe, le côté brut suffit (et inversement) |
 | Réponse | 1 modèle. Sur 429 : attente de 60 s puis erreur. Coupure en cours de route : erreur | Chaîne de modèles, relances, reprise de la réponse coupée, file d'attente (détail § 2) |
-| Rappel de langue | Ligne générique « dans la langue de la question » (option) | Ligne qui **nomme** la langue (« in French », « in Spanish ») quand elle est connue (option `CHAT_VSI_LANGUAGE_REMINDER`) |
+| Rappel de langue | Ligne générique « dans la langue de la question » | Ligne qui **nomme** la langue (« in French », « in Spanish ») quand elle est connue, toujours active |
 | Retraduction de la réponse | Plafond fixe de 4 000 tokens ; un texte vide ou tronqué remplaçait la réponse | Plafond adapté à la longueur. Une traduction beaucoup plus courte que l'original est rejetée et la réponse d'origine gardée. Détection « mauvaise langue » plus stricte (confiance 0,8, sans citations ni tableaux) |
 
 ## 2. La réponse : `server/services/chat_vsi_llm.py`
 
-Utilisé par les deux variantes du Chat VSI (`baseline` et `rerank`). Le prompt n'est pas
-modifié.
+Appelé par `chat_vsi.py` pour la réponse et la réécriture. Le prompt n'est pas modifié.
 
 **Ordre des modèles** : `CHAT_VSI_LLM_ENDPOINT`, puis ceux de `CHAT_VSI_LLM_FALLBACK_ENDPOINTS`.
 
@@ -62,15 +61,15 @@ Sonnet ne tronque donc plus Luna.
   attente.
 
 **Traçabilité** : chaque réponse émet un événement `llm` : le modèle qui a répondu, s'il s'agit
-du secours, et chaque tentative (modèle, résultat, durée). La variante `rerank` le met dans les
-métadonnées du tour (`llm`, `llm_fallback`, `llm_attempts`). Chaque incident est écrit dans les
+du secours, et chaque tentative (modèle, résultat, durée), repris dans les métadonnées du tour
+(`llm`, `llm_fallback`, `llm_attempts`). Chaque incident est écrit dans les
 logs de l'app, préfixe `chat_vsi_llm:`. Un tour sans incident n'y laisse rien.
 
 ## 3. Réglages (tous lus à chaque question)
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `CHAT_VSI_LLM_FALLBACK_ENDPOINTS` | vide | Modèles de secours de la réponse, dans l'ordre |
+| `CHAT_VSI_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-5-6-luna` (`app.yaml`) | Modèles de secours de la réponse, dans l'ordre |
 | `CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS` | la chaîne de réponse | Secours de la réécriture |
 | `CHAT_VSI_FIRST_TOKEN_TIMEOUT_S` | 90 | Délai maximal avant le premier mot |
 | `CHAT_VSI_STALL_TIMEOUT_S` | 60 | Durée maximale de silence en cours de réponse |
@@ -83,45 +82,30 @@ logs de l'app, préfixe `chat_vsi_llm:`. Un tour sans incident n'y laisse rien.
 | `CHAT_VSI_SEARCH_RETRIES` | 2 | Relances par requête Vector Search (la recherche entière : 1 de plus) |
 | `CHAT_TRANSLATE_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` | Secours de la traduction (`app.yaml`) |
 
-## 4. Fichiers modifiés
+## 4. Fichiers
 
-- `server/services/chat_vsi_llm.py` (nouveau) : chaîne de modèles, relances, reprise,
-  file d'attente, appels courts avec secours.
-- `server/services/chat_vsi.py` : la variante `baseline` répond via `chat_vsi_llm` (prompt
-  inchangé) ; modèle effectif dans les métadonnées.
-- `server/services/chat_vsi_rerank.py` :
-  - réécriture et réponse via `chat_vsi_llm` ;
-  - relance par requête Vector Search (`_post_query`) ;
-  - recherches partielles acceptées (`_gather_tolerant`, `union` sur un seul côté) ;
-  - langue de réponse transmise au prompt ;
-  - `settings()` liste les secours et le rappel.
-- `server/services/chat_vsi_prompts.py` : rappel qui nomme la langue (`answer_language`).
-- `server/services/chat_vsi_variants.py`, `server/routers/chat.py` : le routeur calcule la
-  langue de la réponse (`translation_bridge.answer_language`) et la passe au Chat VSI. Le KA
-  n'est pas touché.
-- `server/services/translation_bridge.py` :
-  - nettoyage avant détection, détection « mauvaise langue » plus stricte ;
-  - relance sur 429, modèle de secours ;
-  - plafond adapté, rejet des traductions tronquées ;
-  - noms des langues.
-- `app.yaml` : `CHAT_VSI_LLM_FALLBACK_ENDPOINTS` (vide) et `CHAT_TRANSLATE_FALLBACK_ENDPOINTS`.
-- Notebooks d'éval (`golden_eval_ka_vs_vsi`, `replay_compare`, `retrieval_eval`,
-  `pairwise_answers`) :
-  - ils ne reprennent plus de la config de l'app que les index et le modèle de réponse ;
-  - une fois l'app passée sur Luna, une config mesurée n'hérite donc ni des options de
-    recherche de l'app ni d'un modèle de secours ;
-  - `retrieval_eval` a un widget `rewrite_model` (GPT-6 Luna depuis le 2026-10-08, comme le chat ; les
-    runs plus anciens réécrivaient avec Sonnet 4.6).
-- Tests : `tests/test_chat_vsi_llm.py` (21 tests : secours sur 429, 404 non retenté, réponse
-  vide, erreur au milieu du flux, reprise, premier mot trop lent, file d'attente, recherche
-  partielle, langue, traduction). 306 tests au total, tous verts.
+- `server/services/chat_vsi_llm.py` : chaîne de modèles, relances, reprise, file d'attente, appels
+  courts avec secours.
+- `server/services/chat_vsi.py` : réécriture et réponse via `chat_vsi_llm` ; relance par requête
+  Vector Search (`_post_query`) ; recherches partielles acceptées ; langue de réponse transmise au
+  prompt ; modèle effectif dans les métadonnées.
+- `server/routers/chat.py` : calcule la langue de la réponse (`translation_bridge.answer_language`)
+  et la passe au moteur.
+- `server/services/translation_bridge.py` : nettoyage avant détection, détection « mauvaise
+  langue » plus stricte, relance sur 429, modèle de secours, plafond adapté, rejet des traductions
+  tronquées, noms des langues.
+- `app.yaml` : modèles et secours de la réponse, de la réécriture et de la traduction.
+- Notebooks `retrieval_eval` et `pairwise_answers` : un seul modèle de réécriture par run, pas de
+  secours silencieux (deux modèles mélangés fausseraient une mesure).
+- Tests : `tests/test_chat_vsi_llm.py` (secours sur 429, 404 non retenté, réponse vide, erreur au
+  milieu du flux, reprise, premier mot trop lent, file d'attente, recherche partielle, langue,
+  traduction).
 
 ## 5. Ce qui n'est pas couvert
 
 - **Panne de Vector Search elle-même** (index hors ligne plus de quelques secondes) : la question
   échoue avec un message clair. Répondre sans documents irait contre la règle « seulement les
   documents ».
-- **Le KA** (onglet Chat KA) : inchangé, il est appelé à disparaître.
 - **Plusieurs instances de l'app** : la mise de côté d'un modèle saturé et la file d'attente
   valent par instance, pas pour toute l'app.
 - **Non vérifié sur Databricks** : le format exact des erreurs en cours de flux de GPT-6 Luna.

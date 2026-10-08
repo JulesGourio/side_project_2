@@ -4,7 +4,7 @@ Pure Python, no Spark/Docling import: unit-tested in tests/test_parsing_chunking
 by utils.chunk_document (pipeline) and the DEV re-chunking notebook
 (archive/evaluation/rechunk_experiment.py).
 
-Rules (audit docs/chat_vsi_audit_2026-10.md, § 5.2, P2–P9):
+Rules (audit docs/chat_vsi_tests.md, § 5.2, P2–P9):
 - the markdown is cut on headings of level 1–3 into sections; a passage never spans two
   sections of level 1 or 2 (P3) — except sections too small to stand alone (under a third of
   the minimum size), which join the next one;

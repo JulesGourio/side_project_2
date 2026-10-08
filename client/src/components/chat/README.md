@@ -1,64 +1,58 @@
-# Chatbot (Knowledge Assistant)
+# Chatbot
 
-A RAG-style conversational assistant over the company's document knowledge
-base, with division scoping (ALL / AS / IS), inline citations, and an
-optional non-French/English translation bridge.
-
-The system prompt itself lives on the Databricks serving endpoint, not in
-this repo — see [`chat_system_prompt.md`](chat_system_prompt.md) for the
-current prompt text and the division-selector integration.
+A RAG chat over the company's document base: Vector Search finds the passages, GPT-6 Luna
+answers from them only, with inline citations, division scoping (ALL / AS / IS) and a
+translation bridge for questions that are neither French nor English. Every choice below
+was measured: `docs/chat_vsi_tests.md` (configuration kept, results, what was dropped).
+The former Knowledge Assistant (Agent Bricks) was removed on 2026-10-08 (`archive/`).
 
 ## How it works
 
-### End-to-end flow (`POST /api/chat/stream`, `/api/chat/ws`)
+### End-to-end flow (`WS /api/chat/ws`)
 
-Both the SSE and WebSocket endpoints (`server/routers/chat.py`) run the same
-core flow: **route by division → trim history → inject today's date → call
-the Knowledge Assistant → assemble citations → optional translation bridge →
-persist the turn.**
+`chat_ws` (`server/routers/chat.py`): **trim history → translation bridge → inject today's
+date → `stream_chat_vsi` → citation markers → translate back → persist the turn.**
 
-1. **Division routing** (`_endpoint_for_division`) — the user picks
-   ALL/AS/IS from the sidebar; each maps to its own Knowledge Assistant
-   endpoint (`CHAT_ENDPOINT_ALL` / `_AS` / `_IS`, falling back to
-   `CHAT_ENDPOINT` when unset). Routing by endpoint — rather than injecting
-   a "[Division: …]" directive into the question — is what guarantees
-   scoping: a single-source KA can only ever return that division's
-   documents and never fans out into cross-source parallel sub-queries.
-2. **History trimming** (`_trim_history`, `CHAT_MAX_HISTORY`, default 10) —
-   bounds prompt growth as a conversation lengthens; the latest question is
-   always kept.
-3. **Date injection** (`_with_today_date`) — prepends `[Date: YYYY-MM-DD]`
-   to the last user message only, so date-relative questions ("documents
-   published this year") resolve correctly.
-4. **Streaming call** (`server/services/streaming.py::stream_chat`) — opens
-   an httpx SSE connection, auto-detecting agent vs. chat-completion format
-   per endpoint (cached after the first successful probe). Emits:
-   - `response.output_text.delta` — answer tokens
-   - `response.output_text.annotation.added` — inline `url_citation`
-     annotations, accumulated with their character offset in the answer
-   - `response.output_item.done` / `response.completed` — the MLflow trace
-     (retrieval spans, tool name/query/result, reasoning steps)
-5. **Citation assembly** — citations are numbered in the order their
-   annotations arrive; markers use `⟦n⟧` (U+27E6/U+27E7, essentially never
-   present in source documents) inserted at each citation's character
-   offset, right-to-left so earlier offsets stay valid. Baked into the
-   stored `content` so reloaded conversations show the same inline
-   citations without re-computing anything.
-6. **Translation bridge** (optional, see below).
-7. **Persistence** — one `chat_sessions` row + two `chat_messages` rows
-   (user + assistant) per turn, including failed turns (status `'error'`),
-   so a question and its failure reason are always traceable.
+1. **History trimming** (`_trim_history`, `CHAT_MAX_HISTORY`, default 10) — bounds prompt
+   growth; the latest question is always kept.
+2. **Translation bridge** (see below) — a question in a third language is searched and
+   answered in English, then translated back.
+3. **Date injection** (`_with_today_date`) — prepends `[Date: YYYY-MM-DD]` to the last user
+   message only, so date-relative questions resolve correctly.
+4. **The engine** (`server/services/chat_vsi.py::stream_chat_vsi`):
+   - bilingual rewrite of the question (French + English, acronyms expanded) by GPT-6 Luna;
+   - 3 HYBRID Vector Search queries on `CHAT_VSI_INDEX`, each = 12 reranked passages + 10 raw
+     ones, merged by rank; the division is a `filters_json` filter on the `division` column;
+   - documents named by REF in the conversation first, documents whose catalogue title matches
+     the question last (`chat_vsi_titles.py`), one language variant per document;
+   - prompt = division instructions (`server/config/chat_vsi/instructions_<div>.md`) + answer
+     rules (`answer_rules.md`) + numbered documents + question + a line naming the answer
+     language;
+   - answer streamed by `chat_vsi_llm.stream_answer`: GPT-6 Luna, GPT-5.6 Luna as fallback,
+     retries, continuation of a cut answer, at most 32 answers at once per instance
+     (`docs/chat_vsi_robustesse_2026-10.md`);
+   - the model writes `[n]` markers; `CitationStreamParser` removes them from the stream and
+     emits their positions in a `sources` event.
+5. **Citation assembly** — markers use `⟦n⟧` (U+27E6/U+27E7, essentially never present in
+   source documents) inserted at each citation's character offset, right-to-left so earlier
+   offsets stay valid. Baked into the stored `content` so reloaded conversations show the
+   same inline citations without re-computing anything.
+6. **Persistence** — one `chat_sessions` row + two `chat_messages` rows (user + assistant)
+   per turn, including failed turns (status `'error'`), so a question and its failure reason
+   are always traceable. `endpoint_name` = `vsi-all` / `vsi-as` / `vsi-is` (older turns of the
+   Knowledge Assistant carry `ka-…` names).
 
 ### Translation bridge (`server/services/translation_bridge.py`)
 
-Gated by `CHAT_TRANSLATE_BRIDGE_ENABLED` (default `false`). When enabled:
+Gated by `CHAT_TRANSLATE_BRIDGE_ENABLED` (`false` in `app.yaml`, `true` on every target in
+`utils/deploy/target_env.json`). When enabled:
 
 - A cheap local **fastText** language-ID pass screens the question; if
   confidence > 65% and the language isn't French/English, an LLM call
   (`CHAT_TRANSLATE_ENDPOINT`) confirms the language and produces an English
   translation in one request.
-- The English translation (not the original) is what reaches the Knowledge
-  Assistant — the corpus is almost entirely French/English, so retrieval on
+- The English translation (not the original) is what reaches the search
+  and the model — the corpus is almost entirely French/English, so retrieval on
   a third language's raw text only matches the sparse same-language slice.
 - The final answer is translated back to the user's language in one pass
   before streaming starts (the client shows "Thinking" until that
@@ -67,8 +61,8 @@ Gated by `CHAT_TRANSLATE_BRIDGE_ENABLED` (default `false`). When enabled:
   unchanged.
 - As a safeguard, even when the bridge doesn't trigger (question already
   FR/EN), the answer's language is checked and re-translated if it doesn't
-  match the question's — guards against the Knowledge Assistant answering
-  in the wrong language mid-conversation.
+  match the question's — guards against the model answering in the wrong
+  language mid-conversation.
 - `chat_messages.question_lang` stores the detected ISO 639-1 code (empty
   string when the bridge is disabled or detection wasn't attempted).
 
@@ -138,21 +132,13 @@ soon" placeholder if `CHAT_ENABLED` is false.
 
 ## Known issues / quirks
 
-- **Vector Search request-ID collision**: the older single-KA design (no
-  division scoping) triggered parallel sub-queries that reused the same
-  Databricks request ID, surfacing as `"Request id …-0 already running"` in
-  the KA's reasoning trace. Division routing (endpoint-per-division) avoids
-  this for scoped questions; if it recurs, it'll show up as a `"Vector
-  search failed"` / `"already running"` string inside
-  `reasoning_summary_text.delta`, logged as a warning in
-  `stream_chat`.
 - **Fail-open capabilities**: if Lakebase is down or a user hasn't been
   synced, chat access is granted rather than denied — intentional, to avoid
   outages during DB issues.
 
 ## Knowledge base pipeline (chunking, embeddings, image descriptions)
 
-The document knowledge base this chat's Knowledge Assistant retrieves from —
+The document knowledge base this chat retrieves from —
 and that Compare's impact search also queries — is built offline by
 `utils/parsing_pipeline/` (numbered notebooks `00`–`06`, run on Databricks,
 not part of the live app):
@@ -162,32 +148,30 @@ not part of the live app):
   `image_metadata` Delta tables that the Vector Search index syncs from.
 - **Chunking** happens inside `3_Parse_Pipeline.py` itself
   (`utils.build_chunks_udf`) via a token-bounded markdown-structure
-  splitter — not a full Docling document chunker. `Test_Chunking.py` is a
-  standalone benchmark notebook comparing that approach against Docling's
-  `HybridChunker` and a semantic (Qwen-embedding) split, but neither
-  alternative is wired into production: `HybridChunker` needs a live Docling
-  document object, which isn't available at the point production chunking
-  runs (only the parsed markdown text survives to that stage).
+  splitter (`utils/parsing_pipeline/chunking.py`: 150 / 300 / 450 tokens,
+  1,600 characters at most, 12 % overlap, tables of contents and front matter
+  marked in `chunk_content_type`).
 - `4_Describe_Images_LLM.py` sends each extracted image to the vision
   LLM (`databricks-gpt-5-mini`, `PARSING_LLM_ENDPOINT` in
   `utils/parsing_pipeline/config.py`) to describe tables/figures/diagrams;
   the description is folded into the surrounding chunk text.
-  `Rebuild_Image_Metadata.py` can regenerate image descriptions without a
-  full re-parse (**never pre-delete `image_metadata` by hand** — doing so
-  before running this notebook has wiped existing descriptions before,
-  2026-07-03 and 2026-07-06; let the notebook's own logic handle it).
-- **Embeddings**: Databricks-managed Vector Search embeddings (Delta Sync
-  index) — powers retrieval for both this chat and Compare's impact search.
-  Index-level config, not in this repo.
+  **Never pre-delete `image_metadata` by hand** — doing so has wiped existing
+  descriptions before (2026-07-03 and 2026-07-06).
+- **Embeddings**: Databricks-managed Vector Search embeddings
+  (`databricks-qwen3-embedding-0-6b`, Delta Sync index `chunks_index` on the
+  `chunks` table, created by `5_Sync_Vector_Indexes.py`) — powers retrieval for
+  both this chat and Compare's impact search.
 
 ## Configuration (`app.yaml`)
 
 | Var | Default | Purpose |
 |---|---|---|
 | `CHAT_ENABLED` | `true` | Feature flag |
-| `CHAT_ENDPOINT` | — | Fallback Knowledge Assistant endpoint |
-| `CHAT_ENDPOINT_ALL` / `_AS` / `_IS` | empty | Per-division endpoints; empty falls back to `CHAT_ENDPOINT` |
-| `CHAT_TRANSLATE_BRIDGE_ENABLED` | `false` | Enable the non-FR/EN translation bridge |
+| `CHAT_VSI_INDEX` | `dev_landingzone.qualibot.chunks_index` | The Vector Search index (per target in `target_env.json`) |
+| `CHAT_VSI_LLM_ENDPOINT` / `CHAT_VSI_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Answer model and its fallbacks |
+| `CHAT_VSI_REWRITE_ENDPOINT` / `CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Rewrite model and its fallbacks |
+| `CHAT_VSI_ANSWER_MAX_TOKENS` / `CHAT_VSI_REWRITE_MAX_TOKENS` | `8000` / `2000` | Output caps (reasoning included) |
+| `CHAT_TRANSLATE_BRIDGE_ENABLED` | `false` (`true` on every target) | Enable the non-FR/EN translation bridge |
 | `CHAT_TRANSLATE_ENDPOINT` | `databricks-gpt-5-6-luna` | LLM endpoint for language detection + translation |
 | `CHAT_MAX_HISTORY` | `10` | Messages replayed per turn; `0` disables trimming |
 | `CAPS_TTL_S` | `600` | Shared with Compare/Translate — capability cache TTL (seconds) |
@@ -202,8 +186,7 @@ and internals, file:line accurate as of 2026-08-17.
 
 | Route | Function | Auth | Notes |
 |---|---|---|---|
-| `POST /api/chat/stream` | `chat_stream` (346) | `Depends(require_chat)` | SSE. Exists and is unit-tested, but the current frontend (`ChatView.tsx`) talks to the WS endpoint exclusively — this is the fallback/non-browser transport, not dead code, but not what a browser session actually uses today. |
-| `WS /api/chat/ws` | `chat_ws` (527) | Manual capability check (WebSockets can't return an HTTP 403) | The actual transport `ChatView.tsx` uses — chosen specifically to dodge Databricks Apps' own reverse-proxy response buffering, which the SSE route's `X-Accel-Buffering: no` header can't defeat on this platform. |
+| `WS /api/chat/ws` | `chat_ws` (527) | Manual capability check (WebSockets can't return an HTTP 403) | The only chat transport — a WebSocket dodges Databricks Apps' reverse-proxy response buffering, which an SSE `X-Accel-Buffering: no` header can't defeat on this platform. |
 | `POST /api/chat/feedback` | `chat_feedback` (714) | none (any authenticated user) | Inserts into `chat_feedbacks`; 400 on invalid `vote`, 503 with no DB pool. |
 | `GET /api/chat/sessions` | `list_sessions` (756) | — | Returns `{sessions, available}`; `available:false` (not an error) when Lakebase is down. |
 | `GET /api/chat/sessions/{id}` | `get_session` (801) | Scoped to `user_id` | 404 if missing **or not owned by the caller**; per-message `sources` deserialized from the `sources_json` blob column via the inner `_sources_for` helper. |
@@ -212,68 +195,46 @@ and internals, file:line accurate as of 2026-08-17.
 | `GET /api/chat/shared/{token}` | `get_shared_session` (946) | none (any authenticated user with the token) | Same shape as `get_session`, but looked up by `share_token` instead of `id`/ownership — the deliberate public-within-the-app read path. |
 | `POST /api/chat/shared/{token}/duplicate` | `duplicate_shared_session` (1005) | none (any authenticated user) | Copies the shared session's messages into a brand-new session owned by the caller; returns `{session_id}`. |
 
-Pydantic request models: `ChatMessageIn{role, content}`, `ChatRequest{messages, session_id?, division='ALL'}`,
+WS message: `{messages, session_id?, division='ALL'}`. Pydantic request model:
 `ChatFeedbackRequest{vote, comment?, message_id?, session_id?}`.
 
 ### Turn pipeline internals
 
-`_endpoint_for_division` (44) maps `ALL`/`AS`/`IS` to `CHAT_ENDPOINT_ALL`/`_AS`/`_IS`,
-falling back to `CHAT_ENDPOINT`. `_trim_history` (142) keeps the last `CHAT_MAX_HISTORY`
+`normalize_division` (`chat_vsi.py`) maps anything but `AS`/`IS` to `ALL`. `_trim_history` (142) keeps the last `CHAT_MAX_HISTORY`
 messages, always preserving the latest question. `_with_today_date` (153) returns a
 **copy** of the message list with `[Date: YYYY-MM-DD]` prepended to the last user
-message only — the KA never sees a stale date from history replay.
+message only — the model never sees a stale date from history replay.
 
 `_apply_citation_markers` (88) inserts `⟦n⟧` at each citation's character offset
 **right-to-left**, so inserting one marker never invalidates the offsets of markers
 still queued behind it. `_number_sources` (122) numbers only the sources actually
 cited inline; prose-resurfaced sources (see `augment_sources` below) stay numberless.
 
-`_save_turn` (243) is the single persistence choke-point for both the SSE and WS
-routes: it registers chat-only users into the shared `users` table via `upsert_user`
+`_save_turn` is the single persistence choke-point: it registers chat-only users into the shared `users` table via `upsert_user`
 (so a user who only ever uses Chat still exists for capability sync), de-duplicates
-sources by title, and — critically — **persists the user's question even when the KA
-call fails entirely**, with `status='error'` and the failure reason in `error_msg`.
+sources by title, and — critically — **persists the user's question even when the
+engine fails entirely**, with `status='error'` and the failure reason in `error_msg`.
 Nothing about a turn is ever silently dropped; a failed turn is still fully traceable.
 This is a deliberate, tested invariant (`test_save_turn_records_error_status`).
 
-### `stream_chat` (`server/services/streaming.py`) — the KA call itself
+### `stream_chat_vsi` (`server/services/chat_vsi.py`) — the engine
 
-**Format auto-detection**: the KA endpoint accepts either an `'agent'`-shaped payload
-(`{input, stream:True, databricks_options:{return_trace:True}}`) or a `'chat'`-shaped
-one (`{messages, stream:True}`); `stream_chat` tries both once per endpoint and caches
-the winner in a process-local `_endpoint_format_cache` dict — every later call to that
-endpoint skips straight to the format that worked. This cache has no TTL/eviction; it
-lives for the process lifetime.
+Events yielded (SSE-shaped strings, relayed by the router over the WebSocket):
+`: keepalive` (first byte, then while waiting), `response.output_text.delta` (answer text, `[n]`
+markers removed), `sources` (cited documents + marker positions), `metadata` (`trace_id`,
+`tool_name`, `usage`, `llm`, `llm_fallback`, `llm_attempts`), `error` (typed: `VectorSearchError`,
+`RewriteError`, `InputError`, …), `[DONE]`.
 
-**Keepalive/429 handling**: a producer task reads the HTTP response into an
-`asyncio.Queue`; the consumer loop yields `: keepalive\n\n` on a 15s read timeout
-without breaking the connection — this is what keeps a multi-minute KA turn alive
-through any proxy that would otherwise time out an idle stream. A `429` response is
-handled the same way during the backoff wait (`COMPARE_ANALYSIS_RETRIES`, shared with
-Compare), so the client-visible connection never drops during a rate-limit retry.
+**Search failures**: each Vector Search query is retried on 429 / 5xx / timeout (0.5 s, 1 s, 2 s +
+jitter, `CHAT_VSI_SEARCH_RETRIES`); one failed query out of three is tolerated, and if the reranker
+is refused the raw side still answers. A search that fails entirely ends the turn with a clear
+error — answering without documents would break the "documents only" rule.
 
-**Citation offset heuristic**: the KA's `response.output_text.annotation.added` event
-carries no `start_index`/`end_index` — the annotation simply arrives in the stream
-right after the cited span. `stream_chat` uses the running length of the
-already-emitted answer text as the citation's position. This is inherently fragile to
-any future change in how the KA batches/orders its output relative to annotations.
-
-**MLflow trace harvesting**: on `response.output_item.done` for a `function_call`
-item, captures `tool_name`/`tool_query`. On `response.completed`, walks
-`databricks_output.trace.data.spans`, pulling `RETRIEVER`-type spans into `sources`
-(with chunk content + score) and the first `TOOL`-type span's output into
-`tool_result`. `reasoning_summary_text.delta` chunks accumulate into
-`reasoning_steps`; any reasoning delta containing `"Vector search failed"` or
-`"already running"` is logged as a warning — this is the exact log line to grep for
-when chasing the Vector Search request-ID collision described above.
-
-**Every LLM/network failure mode degrades to a safe default rather than blocking the
-turn**: a timeout yields a typed `error` SSE chunk (not an exception); if neither
-payload format is accepted, the generator yields a `FormatError` chunk instead of
-raising. The translation bridge (`translation_bridge.py`) follows the same philosophy
-end to end — fastText load failure, LLM call failure, non-JSON LLM response, and
-answer-translation failure all fall back to **passing the original text through
-unchanged** rather than erroring the turn.
+**Rewrite failures** fall back to the next model of the chain, then to the question alone.
+**Answer failures** go through `chat_vsi_llm` (fallback model, cooldowns, continuation).
+The translation bridge follows the same philosophy — fastText load failure, LLM call failure,
+non-JSON LLM response and answer-translation failure all fall back to **passing the original
+text through unchanged** rather than erroring the turn.
 
 ### Lakebase schema (`server/services/lakebase.py`)
 
@@ -350,7 +311,7 @@ survives message or session deletion, orphaned but preserved for audit.
   content (not its own accumulated delta text), since only the server's copy carries
   the baked-in `⟦n⟧` citation markers. Division is a per-turn WebSocket field, not a
   session-scoped switch — changing division mid-conversation keeps the same message
-  history and only changes which KA endpoint the *next* turn routes to.
+  history and only changes the division filter of the *next* turn.
 - **`ChatMessage.tsx`** — source-chip grouping strips a trailing language/locale
   suffix (`-FR`/`-EN`/`-GB`/…) from each source title to find its "canonical document
   key", so the FR/EN/CZ variants of the same document collapse into one chip with a
@@ -384,15 +345,17 @@ the socket with a JSON error frame if `can_chat` is false.
 
 | Log line (substring) | Where | Meaning |
 |---|---|---|
-| `stream_chat KA retrieval error on %s: %s` | `streaming.py` | The Vector Search request-ID collision — see "Known issues" above |
-| `stream_chat: %s format, endpoint=%s` | `streaming.py` | Confirms which payload format won auto-detection for that endpoint |
+| `chat_vsi: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d` | `chat_vsi.py` | One line per turn: what was searched and how much was found |
+| `chat_vsi_llm:` | `chat_vsi_llm.py` | Any answer-model incident (fallback, retry, continuation) |
 | `Capabilities: ... granting all (fail-open)` (3 variants) | `user.py` | Distinguishes *why* fail-open triggered: Lakebase down / user not synced / DB query failed |
 | `translation_bridge: ... using original text: %s` (4 variants) | `translation_bridge.py` | Any bridge failure mode falling back to untranslated passthrough |
 | `Chat DB save failed: %s` | `chat.py` (`_save_turn`) | Persistence failure, swallowed — the turn itself still completed |
 
-### Tests (`tests/test_chat.py`)
+### Tests
 
-Covers: SSE happy path + error forwarding, session CRUD (including confirming
+`tests/test_chat_route.py` (the WebSocket turn, engine mocked), `tests/test_chat_vsi.py` (the engine:
+citation parser on 21 real answers, search, filters, prompt, errors), `tests/test_chat_vsi_llm.py`
+(fallbacks, retries, continuation, queue). `tests/test_chat.py` covers session CRUD (including confirming
 soft-delete, not hard delete, and that both routes 404 rather than leak/delete
 a session the caller doesn't own), feedback validation, the division/history helper
 functions, `_save_turn`'s user-registration and error-status behavior, `_trim_history`'s

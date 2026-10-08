@@ -739,7 +739,7 @@ for never silently losing a description's searchability again.
 
 ### 2026-10-08 — Passage splitting rewritten (`chunking.py`)
 
-The audit `docs/chat_vsi_audit_2026-10.md` (§ 5) found, on a local run of the former splitter:
+The audit `docs/chat_vsi_tests.md` (§ 5) found, on a local run of the former splitter:
 merged passages carried an impossible heading lineage (`_merge_meta` mixed the headers of two
 sections), two sections could share one passage, the `[Title > Section]` line was repeated in
 front of every paragraph, and there was no overlap between passages — `CHUNK_OVERLAP_RATIO` only

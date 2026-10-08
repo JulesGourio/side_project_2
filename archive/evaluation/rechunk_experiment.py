@@ -3,7 +3,7 @@
 # MAGIC # Qualibot — re-chunk the corpus into a TEST index (DEV only)
 # MAGIC
 # MAGIC Rebuilds the passages of every document of `chunks_v1` with the 2026-10 chunker
-# MAGIC (`utils/parsing_pipeline/chunking.py`, audit `docs/chat_vsi_audit_2026-10.md` § 5), from
+# MAGIC (`utils/parsing_pipeline/chunking.py`, audit `docs/chat_vsi_tests.md` § 5), from
 # MAGIC the text already parsed in `_pipeline_checkpoint_v1` — no GPU, no re-parse, no new image
 # MAGIC description. Writes `chunks_<variant>` and its Vector Search index
 # MAGIC `chunks_index_<variant>`, then `retrieval_eval` measures it (widget `index_variants`).

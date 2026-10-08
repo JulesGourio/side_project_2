@@ -11,8 +11,14 @@ branche tant qu'elle n'est pas fusionnée.
 
 Mis à jour le 2026-10-05. Rien de ce qui suit n'a encore été confirmé comme fait.
 
-La mise en place de l'environnement **DEV** (copie de l'UAT, branche
-`claude/adoring-cray-trexmn`) a son propre fichier : `operations_dev.md`.
+La mise en place de l'environnement **DEV** a son propre fichier : `operations_dev.md`.
+
+> **Branche `feature/chat-vsi-merged-on-impact-search` (2026-10-08) : ne la déployer sur
+> `qualibot-uat` / `qualibot-uat-test` qu'au bloc D5, dans son ordre.** Son code attend des tables
+> et un index **sans suffixe** (`chunks`, `chunks_index`, `_pipeline_checkpoint`…) et n'a plus de
+> Knowledge Assistant. Un `bundle deploy` de cette branche avant D5 ferait repartir le pipeline
+> UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui
+> n'existe pas encore. Les blocs A à C ci-dessous restent sur `audit/doc-compare`.
 
 ## Vue d'ensemble
 
@@ -214,8 +220,8 @@ prévenir, je change la valeur, vous redéployez.
 - [ ] **D1. Parser le reste des vieux documents** : monter le plafond
   (`parsing_archive_max_docs` à `500`, puis `-1`), même procédure que B4.
 
-- [ ] **D2. Créer l'index complet pour l'impact search** : je rajoute
-  `uat_landingzone.qualibot.chunks_full_index_v1` à
+- [ ] **D2. Créer l'index complet pour l'impact search** (après D5) : je rajoute
+  `uat_landingzone.qualibot.chunks_full_index` à
   `parsing_vector_search_indexes` ; `bundle deploy` + un run le créent. Une fois
   l'index `ONLINE`, je bascule `COMPARE_IMPACT_INDEX` (uat + uat-test) dans
   `utils/deploy/target_env.json`, puis :
@@ -228,47 +234,128 @@ prévenir, je change la valeur, vous redéployez.
   En cas d'erreur 403 sur l'index :
 
   ```sql
-  GRANT SELECT ON TABLE uat_landingzone.qualibot.chunks_full_index_v1 TO `<application id du SP de l'app qualibot>`;
+  GRANT SELECT ON TABLE uat_landingzone.qualibot.chunks_full_index TO `<application id du SP de l'app qualibot>`;
   ```
 
-- [ ] **D3. Appliquer la règle « documents archivés » au chatbot** (modifie les
-  instructions des Knowledge Assistants en service, partagés par `qualibot` et
-  `qualibot-uat-test`). La règle est déjà écrite dans
-  `utils/databricks_ops/knowledge_assistant/ka_profiles.py` ; sans fiche dans
-  l'index elle n'a aucun effet visible. À faire avant D4.
+- [ ] **D3. Règle « documents archivés » dans le chatbot** (avant D4) : la règle écrite pour le
+  KA (`archive/knowledge_assistant/provisioning/ka_profiles.py`) doit passer dans
+  `server/config/chat_vsi/answer_rules.md`. Me prévenir : je l'ajoute, vous redéployez l'app.
 
-  ```powershell
-  databricks bundle deploy --target qualibot-uat-test --profile UAT
-  databricks bundle run provision_knowledge_assistant_uat_test --target qualibot-uat-test --profile UAT
-  ```
-
-- [ ] **D4. Mettre les fiches dans les index du chatbot** : je passe
-  `parsing_archive_notices_in_rag` à `true` pour `qualibot-uat` ; `bundle deploy`
-  + un run les ajoutent à `chunks_v1` / `src_chunks_as_v1` / `src_chunks_is_v1`
-  et les index se synchronisent. Tester ensuite dans le chatbot :
-  - demander un vieux document par sa référence : il le signale, dit que le
-    contenu n'est pas disponible, renvoie à Intraqual (lien sous la réponse) ;
+- [ ] **D4. Mettre les fiches dans l'index du chatbot** (après D3 et D5) : je passe
+  `parsing_archive_notices_in_rag` à `true` pour `qualibot-uat` ; `bundle deploy` + un run les
+  ajoutent à `chunks` et l'index se synchronise. Tester ensuite dans le chatbot :
+  - demander un vieux document par sa référence : il le signale, dit que le contenu n'est pas
+    disponible, renvoie à Intraqual (lien sous la réponse) ;
   - poser une question sans rapport : aucune fiche citée.
 
   Retour arrière : repasser à `false`, `bundle deploy` + un run retirent les fiches.
 
-- [ ] **D5. Re-découper le corpus UAT avec le nouveau découpage** (code du 2026-10-08,
-  `utils/parsing_pipeline/chunking.py`, audit `docs/chat_vsi_audit_2026-10.md` § 5).
-  Le test DEV a montré un gain (v2b : 150 / 300 / 450 tokens, 1 600 caractères, désormais les
-  valeurs par défaut de `utils/parsing_pipeline/config.py` ; audit § 5.6). Vérification des réponses
-  faite le 2026-10-08 (`luna6-v2b` : au moins aussi bonnes, −39 % de coût). **Reste : ton accord** — le KA
-  de l'UAT lit le même index. Après D5 : recopier le corpus vers DEV (`operations_dev.md`, bloc C,
-  `copy_uat_to_dev`) pour que le chat DEV lise les nouveaux passages. Attention : si le planning quotidien du pipeline UAT tourne, les **nouveaux**
-  documents sont déjà découpés en v2b dès le prochain `bundle deploy` (mélange des deux tailles jusqu'à D5) ;
-  s'il est en pause, rien ne change avant D5. Le nombre de passages va environ doubler (embedding plus long, index plus gros).
-  - Je passe `parsing_run_mode` à `full` pour `qualibot-uat` ; `bundle deploy` + un run.
-    Les fichiers déjà parsés sont sautés (même chemin, même empreinte) : pas de re-parsing GPU.
-    `3_parse` réécrit `chunks_v1` / `src_chunks_*_v1` / `processed_files_v1`, `4_describe`
-    reconstruit tous les passages d'image depuis les descriptions déjà faites (aucun appel LLM),
-    puis les index se ré-embeddent entièrement (environ 1 h).
-  - Je repasse `parsing_run_mode` à `incremental` ; `bundle deploy`.
-  - Retour arrière : `RESTORE TABLE … VERSION AS OF <version d'avant>` sur les tables de passages
-    (`DESCRIBE HISTORY` donne la version), puis un sync des index.
+- [ ] **D5. Passer l'UAT sur le chatbot retenu** : un seul chatbot (plus de KA), un seul index
+  `chunks_index` avec filtre de division, le découpage retenu (150 / 300 / 450 tokens), plus aucun
+  nom versionné. Tout est mesuré en DEV (`docs/chat_vsi_tests.md`, partie 1) et doit d'abord être
+  passé en DEV (`operations_dev.md`, bloc S). **Avec ton accord seulement** : c'est la vraie app.
+  Les tables et index `_v1` restent en place jusqu'à D5.9 : l'app actuelle continue de tourner
+  pendant D5.1 à D5.5, et le retour arrière reste possible.
+
+  - [ ] **D5.1. Mettre en pause le planning du pipeline UAT** (UI UAT → Jobs → le job de parsing
+    `qualibot` → *Pause*), pour qu'aucun run ne parte pendant les copies.
+
+  - [ ] **D5.2. Inventaire** (éditeur SQL UAT) :
+
+    ```sql
+    SHOW TABLES IN uat_landingzone.qualibot;
+    ```
+
+  - [ ] **D5.3. Tables d'état du pipeline sans suffixe** : copies (pas de renommage : l'app et le
+    job actuels gardent leurs tables jusqu'à D5.9), avec 60 jours d'historique :
+
+    ```sql
+    CREATE TABLE uat_landingzone.qualibot._pipeline_checkpoint DEEP CLONE uat_landingzone.qualibot._pipeline_checkpoint_v1;
+    CREATE TABLE uat_landingzone.qualibot.processed_files      DEEP CLONE uat_landingzone.qualibot.processed_files_v1;
+    CREATE TABLE uat_landingzone.qualibot.image_metadata       DEEP CLONE uat_landingzone.qualibot.image_metadata_v1;
+    CREATE TABLE uat_landingzone.qualibot.parse_manifest       DEEP CLONE uat_landingzone.qualibot.parse_manifest_v1;
+    CREATE TABLE uat_landingzone.qualibot.category_reference   DEEP CLONE uat_landingzone.qualibot.category_reference_v1;
+    CREATE TABLE uat_landingzone.qualibot.parsing_run_health   DEEP CLONE uat_landingzone.qualibot.parsing_run_health_v1;
+    CREATE TABLE uat_landingzone.qualibot.document_change_log  DEEP CLONE uat_landingzone.qualibot.document_change_log_v1;
+    CREATE TABLE uat_landingzone.qualibot.audit_files_unified  DEEP CLONE uat_landingzone.qualibot.audit_files_unified_v1;
+    ```
+
+    (Une table absente de D5.2 : sauter sa ligne.) Puis, pour chacune :
+
+    ```sql
+    ALTER TABLE uat_landingzone.qualibot._pipeline_checkpoint SET TBLPROPERTIES (
+      'delta.deletedFileRetentionDuration' = 'interval 60 days', 'delta.logRetentionDuration' = 'interval 60 days');
+    ```
+
+  - [ ] **D5.4. Re-découper le corpus dans `chunks`** (aucun re-parsing GPU : les fichiers déjà
+    parsés sont relus depuis `_pipeline_checkpoint` ; les passages d'image sont reconstruits depuis
+    les descriptions existantes, sans appel LLM). Copier le zip de cette branche, puis :
+
+    ```powershell
+    databricks bundle deploy -t qualibot-uat --profile UAT --var="parsing_run_mode=full"
+    databricks bundle run parsing_pipeline -t qualibot-uat --profile UAT
+    ```
+
+    Le run écrit `chunks`, `chunks_archive`, `processed_files`, puis sa dernière tâche crée l'index
+    `uat_landingzone.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si
+    la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`.
+
+  - [ ] **D5.5. Revenir au mode quotidien** (le planning repart, sur les nouvelles tables) :
+
+    ```powershell
+    databricks bundle deploy -t qualibot-uat --profile UAT
+    ```
+
+  - [ ] **D5.6. Droits du SP de l'app UAT** (`qualibot`, et celui de `qualibot-uat-test`) :
+    - `SELECT` sur l'index :
+
+      ```sql
+      GRANT SELECT ON TABLE uat_landingzone.qualibot.chunks_index TO `<application id du SP de l'app qualibot>`;
+      ```
+
+    - **Can Query** sur `databricks-gpt-6-luna` et `databricks-gpt-5-6-luna` (UI UAT → Serving →
+      l'endpoint → Permissions).
+
+  - [ ] **D5.7. Déployer l'app** (onglet unique « Chat », index `chunks_index` pour le chat et
+    l'impact search) :
+
+    ```powershell
+    .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
+    .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
+    ```
+
+  - [ ] **D5.8. Tester** comme `operations_dev.md` S9 (ALL / AS / IS, langue, hors sujet, lien,
+    impact search). Retour arrière : redéployer l'ancien zip, puis `bundle deploy` de l'ancien zip
+    (tables et index `_v1` intacts).
+
+  - [ ] **D5.9. Supprimer l'ancien** (quelques jours plus tard, une fois l'app validée) :
+    - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de
+      test `trace_test` aussi s'il existe encore ;
+    - les index :
+
+      ```powershell
+      databricks vector-search-indexes delete-index uat_landingzone.qualibot.chunks_index_v1    --profile UAT
+      databricks vector-search-indexes delete-index uat_landingzone.qualibot.chunks_as_index_v1 --profile UAT
+      databricks vector-search-indexes delete-index uat_landingzone.qualibot.chunks_is_index_v1 --profile UAT
+      ```
+
+    - les tables `…_v1` de D5.2 (`DROP TABLE`, `UNDROP TABLE` possible 7 jours), dont `chunks_v1`,
+      `src_chunks_as_v1`, `src_chunks_is_v1`, `chunks_archive_v1`, `chunks_archive_notices_v1`,
+      `chunks_full_v1` et celles copiées en D5.3 ;
+    - renommer la table de questions d'évaluation :
+
+      ```sql
+      ALTER TABLE uat_landingzone.qualibot.synthetic_retrieval_questions_v2
+        RENAME TO uat_landingzone.qualibot.synthetic_retrieval_questions;
+      ```
+
+    - **avant** de supprimer les index : me prévenir, je passe sur `chunks_index` (+ filtre de
+      division) les deux notebooks de notation qui interrogent encore les index `_v1`
+      (`utils/databricks_ops/evaluation/score_production_qa.py`, job DEV ;
+      `utils/quality_monitoring/Score_Production_QA.py`, job UAT) ;
+    - les jobs UAT qui lisent les traces du KA (`resources/traces_migration.yml`,
+      `sync_mlflow_scorer_assessments_uat`) : à revoir ensemble, ils ne sont pas modifiés par cette
+      branche.
 
 ## Fait
 

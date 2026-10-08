@@ -210,7 +210,7 @@ CHARS_PER_TOKEN     = 3.5
 # archive/evaluation/rechunk_experiment.py) without editing this file.
 # 150 / 300 / 450 tokens, 1,600 characters = DEV variant v2b, chosen 2026-10-08: 80.9 % of the
 # expected documents found vs 75.8 % for the former 250 / 500 / 1000 / 4000, with half the context
-# (retrieval_eval, u-all, 65 questions; docs/chat_vsi_audit_2026-10.md § 5.6).
+# (retrieval_eval, u-all, 65 questions; docs/chat_vsi_tests.md § 5.6).
 MIN_CHUNK_TOKENS    = int(_env("PARSING_MIN_CHUNK_TOKENS", "150"))
 TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "300"))
 MAX_CHUNK_TOKENS    = int(_env("PARSING_MAX_CHUNK_TOKENS", "450"))

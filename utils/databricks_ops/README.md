@@ -4,10 +4,13 @@ Operational jobs and scripts that support the Qualibot app: Databricks App
 start/stop scheduling (`app_mgmt/`), Lakebase export/import/migration
 (`lakebase_sync/`), user-capability sync from group membership
 (`user_capabilities/`), manual Vector Search index resync
-(`vector_search_sync/`), Knowledge Assistant provisioning
-(`knowledge_assistant/`), and ChatBot production-traffic quality scoring
-(`evaluation/score_production_qa.py`). Separate from the document parsing
-pipeline in `utils/parsing_pipeline/`.
+(`vector_search_sync/`), the DEV copy of the UAT corpus (`dev_copy/`), the
+chat evaluation notebooks (`evaluation/retrieval_eval.py`,
+`evaluation/pairwise_answers.py`, results in `docs/chat_vsi_tests.md`) and ChatBot
+production-traffic quality scoring (`evaluation/score_production_qa.py`).
+Separate from the document parsing pipeline in `utils/parsing_pipeline/`. The
+former Knowledge Assistant provisioning is in `archive/knowledge_assistant/`;
+the sections below that mention the KA describe the chatbot as it was then.
 
 Longer incident/rationale write-ups that don't belong inline in the code live
 here, one section per topic.

@@ -5,10 +5,12 @@ Même règle que `OPERATIONS.md` : Claude n'a pas accès à Databricks, chaque
 une fois faite. Ce fichier ne couvre **que** la mise en place de l'environnement
 DEV ; `OPERATIONS.md` reste la référence pour UAT / uat-test / PROD.
 
-Branche : **`claude/adoring-cray-trexmn`** (= `audit/doc-compare` + copie DEV).
+Branche : **`feature/chat-vsi-merged-on-impact-search`** (= `claude/hopeful-bardeen-57zeur`).
 Pas de PR ; le zip à déployer est celui de cette branche.
 
-Mis à jour le 2026-10-05. Rien de ce qui suit n'a encore été confirmé comme fait.
+Mis à jour le 2026-10-08 : **commencer par le bloc S** (DEV propre : un seul chatbot, un seul index,
+plus aucun nom versionné, plus de Knowledge Assistant). Les blocs G, K, L, P, A et C3 décrivent l'état
+d'avant (KA, tables `_v1`) : remplacés par S, gardés pour l'historique.
 
 ## Décisions prises (2026-10-05)
 
@@ -18,14 +20,14 @@ Mis à jour le 2026-10-05. Rien de ce qui suit n'a encore été confirmé comme 
 | Cible bundle | `dev` (réécrite en miroir de `qualibot-uat`) |
 | App | `qualibot` (même nom qu'en UAT, workspace différent) |
 | Catalog / schema | `dev_landingzone.qualibot` (écriture), `dev_proj.qualibot` (projet) |
-| Suffixe tables / index | `_v1`, comme l'UAT |
+| Suffixe tables / index | aucun depuis le 2026-10-08 (bloc S) ; `_v1` avant |
 | Identité des jobs (`run_as`) | SP DEV `fde6ff28-739f-4a41-b61e-604a298c8478` |
 | Lakebase | projet `qualibot` neuf, base `doccompare` vide (l'app crée ses tables) |
 | Corpus | copie UAT → DEV via le volume `uat_landingzone.qualibot.staging` (format Delta) : chunks + état du pipeline. **Aucun run complet du pipeline de parsing** |
 | Phase archive avant 2018 | ignorée en DEV (plafond 0, fiches hors RAG, pas de `chunks_full`) |
 | Export côté UAT | run ponctuel `databricks jobs submit` — la cible `qualibot-uat` n'est pas modifiée |
-| Vector Search | endpoint `qualibot` créé en DEV, 3 index `_v1`, embeddings `databricks-qwen3-embedding-0-6b` |
-| Knowledge Assistants | `qualibot_ALL_v2` / `qualibot_AS_v2` / `qualibot_IS_v2` (mêmes noms qu'en UAT) |
+| Vector Search | endpoint `qualibot`, un seul index `chunks_index` (filtre de division), embeddings `databricks-qwen3-embedding-0-6b` |
+| Knowledge Assistants | retirés le 2026-10-08 (bloc S7) |
 | Contrôle par groupe (can_chat / can_compare) | **désactivé temporairement en DEV seulement** (`CAPS_BYPASS=true`) |
 | Accès à l'app (ACL) | mêmes groupes qu'en UAT + `jules.gourio.external@latecoere.aero` + `mehdi.lamrani@databricks.com` + SP DEV (app existante rattachée ; `users` CAN_MANAGE retiré) |
 | Jobs répliqués | pipeline de parsing, export Lakebase, stop/start de l'app, provisioning KA, migrations Lakebase — **tous planifiés en PAUSED** |
@@ -207,7 +209,7 @@ groupe désactivé (`CAPS_BYPASS=true`, DEV seulement).
 
 ## À faire
 
-PowerShell, depuis la racine du projet (branche `claude/adoring-cray-trexmn`)
+PowerShell, depuis la racine du projet (branche `feature/chat-vsi-merged-on-impact-search`)
 sur la machine de déploiement. Toujours commencer la session par :
 
 ```powershell
@@ -216,6 +218,175 @@ Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
 # (sinon « n'est pas signé numériquement »)
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
+
+### S. DEV propre : un chatbot, un index, aucun nom versionné (2026-10-08)
+
+Ce que le code attend désormais en DEV : la table `chunks` (découpage retenu, aujourd'hui dans
+`chunks_v2b`) et son index `chunks_index` ; les tables d'état du pipeline sans suffixe ; plus de
+`src_chunks_as` / `src_chunks_is`, plus d'index par division, plus de KA. Rien ne se perd :
+`chunks` est une copie de `chunks_v2b`, l'ancien est supprimé seulement à la fin (S8), après test.
+Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quelques minutes.
+
+- [ ] **S0. Inventaire** (éditeur SQL DEV) — à garder sous les yeux pour S2 à S11 :
+
+  ```sql
+  SHOW TABLES IN dev_landingzone.qualibot;
+  ```
+
+  ```powershell
+  databricks vector-search-indexes list-indexes qualibot --profile DEV
+  ```
+
+- [ ] **S1. Code et jobs** : copier le zip, puis
+
+  ```powershell
+  databricks bundle deploy -t dev --profile DEV
+  ```
+
+  Ce déploiement supprime le job `qualibot-provision-knowledge-assistant-dev` (pas les KA eux-mêmes,
+  voir S7) et passe les jobs DEV sur les noms sans suffixe. Les plannings restent en pause.
+
+- [ ] **S2. Restes de l'ancien Qualibot DEV** (bloc R4, s'il n'a pas été fait). Seulement si S0
+  liste ces tables **sans** suffixe (ce sont celles de juillet, jamais relues depuis) :
+
+  ```sql
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot._pipeline_checkpoint;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.processed_files;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.intraqual_docs;
+  ```
+
+  Index orphelins de juillet (bloc R3 ; si « endpoint not found », les laisser) :
+
+  ```powershell
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_all --profile DEV
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_as  --profile DEV
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is  --profile DEV
+  ```
+
+- [ ] **S3. Tables d'état du pipeline : retirer le suffixe** (renommage instantané, aucune copie) :
+
+  ```sql
+  ALTER TABLE dev_landingzone.qualibot._pipeline_checkpoint_v1 RENAME TO dev_landingzone.qualibot._pipeline_checkpoint;
+  ALTER TABLE dev_landingzone.qualibot.processed_files_v1      RENAME TO dev_landingzone.qualibot.processed_files;
+  ALTER TABLE dev_landingzone.qualibot.image_metadata_v1       RENAME TO dev_landingzone.qualibot.image_metadata;
+  ALTER TABLE dev_landingzone.qualibot.parse_manifest_v1       RENAME TO dev_landingzone.qualibot.parse_manifest;
+  ALTER TABLE dev_landingzone.qualibot.category_reference_v1   RENAME TO dev_landingzone.qualibot.category_reference;
+  ```
+
+  Toute autre table `…_v1` de S0 qui n'est **pas** une table de passages (`chunks_v1`,
+  `src_chunks_as_v1`, `src_chunks_is_v1`) : même commande (ex. `parsing_run_health_v1`,
+  `document_change_log_v1`, `audit_files_unified_v1`).
+
+- [ ] **S4. La table `chunks` = le découpage retenu** (copie de `chunks_v2b`, avec les propriétés
+  qu'exige un index : Change Data Feed et 60 jours d'historique) :
+
+  ```sql
+  CREATE TABLE dev_landingzone.qualibot.chunks
+  TBLPROPERTIES (
+    'delta.enableChangeDataFeed' = 'true',
+    'delta.deletedFileRetentionDuration' = 'interval 60 days',
+    'delta.logRetentionDuration' = 'interval 60 days')
+  AS SELECT * FROM dev_landingzone.qualibot.chunks_v2b;
+
+  SELECT (SELECT count(*) FROM dev_landingzone.qualibot.chunks)     AS chunks,
+         (SELECT count(*) FROM dev_landingzone.qualibot.chunks_v2b) AS chunks_v2b;   -- identiques
+  ```
+
+- [ ] **S5. L'index `chunks_index`**, créé sous votre identité (propriétaire de l'endpoint `qualibot`
+  et de la table `chunks`) ; même spécification que les index UAT. La création lance la première
+  synchronisation (embedding de tout `chunks`).
+
+  ```powershell
+  $json = '{"name": "dev_landingzone.qualibot.chunks_index", "endpoint_name": "qualibot", "primary_key": "chunk_id", "index_type": "DELTA_SYNC", "delta_sync_index_spec": {"source_table": "dev_landingzone.qualibot.chunks", "pipeline_type": "TRIGGERED", "embedding_source_columns": [{"name": "chunk_text", "embedding_model_endpoint_name": "databricks-qwen3-embedding-0-6b"}]}}'
+  [IO.File]::WriteAllText("$PWD\chunks_index.json", $json)
+  databricks vector-search-indexes create-index --json "@chunks_index.json" --profile DEV
+  Remove-Item chunks_index.json
+  ```
+
+  Attendre `ONLINE` dans l'UI Vector Search (endpoint `qualibot`), avec autant de lignes indexées que
+  `chunks` (30 à 60 min).
+
+- [ ] **S6. Questions d'évaluation en DEV** (copies des deux tables UAT que lit `retrieval_eval`) :
+
+  ```sql
+  CREATE TABLE dev_landingzone.qualibot.synthetic_retrieval_questions
+  AS SELECT * FROM uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
+  CREATE TABLE dev_landingzone.qualibot.feedback_failure_cases
+  AS SELECT * FROM uat_landingzone.qualibot.feedback_failure_cases;
+  ```
+
+- [ ] **S7. Supprimer les 3 Knowledge Assistants DEV** (`qualibot_ALL_v2`, `qualibot_AS_v2`,
+  `qualibot_IS_v2`, endpoints `ka-4d15cb32-endpoint`, `ka-2ef8a9ac-endpoint`, `ka-710526e7-endpoint`).
+  UI DEV : **Agents** → chaque KA → menu ⋮ → **Delete**. Si l'UI refuse (ils ont été créés par le
+  SP DEV), même chose dans une cellule Python d'un notebook DEV serverless :
+
+  ```python
+  from databricks.sdk import WorkspaceClient
+  w = WorkspaceClient()
+  for ka in w.knowledge_assistants.list_knowledge_assistants():
+      print(ka.name, ka.display_name, ka.endpoint_name)
+      if ka.display_name in ('qualibot_ALL_v2', 'qualibot_AS_v2', 'qualibot_IS_v2'):
+          w.knowledge_assistants.delete_knowledge_assistant(name=ka.name)
+          print('  deleted')
+  ```
+
+  Si `PERMISSION_DENIED` : la lancer en job sous le SP DEV
+  (`fde6ff28-739f-4a41-b61e-604a298c8478`), ou me renvoyer l'erreur. Si la méthode
+  `delete_knowledge_assistant` n'existe pas dans la version du SDK du notebook :
+  `%pip install -U databricks-sdk` puis `dbutils.library.restartPython()`.
+
+- [ ] **S8. Droits du SP de l'app, puis l'app** (une fois `chunks_index` `ONLINE`) :
+
+  ```powershell
+  databricks bundle run grant_app_access_dev -t dev --profile DEV
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+
+  Sortie attendue du job : une ligne `OK:` par droit, dont une pour `chunks_index`.
+
+- [ ] **S9. Tester** :
+  - un seul onglet **Chat** (plus de « Chat KA » / « Chat VSI ») ;
+  - une question en ALL, une en AS, une en IS : les documents cités sont bien de la division
+    (filtre) ;
+  - une question en espagnol ou tchèque, une hors sujet (→ refus), « donne-moi le lien de l'OPEX
+    Sharepoint » (→ l'URL de INAQ-742) ;
+  - Compare : « Judge Impacted Docs » sur deux révisions connues (index `chunks_index`).
+
+- [ ] **S10. Mesure de contrôle** (≈ 1 €, ≈ 10 min) : notebook
+  `utils/databricks_ops/evaluation/retrieval_eval.py`, Run all avec les défauts (`indexes = chat`).
+  Attendu : environ 83 % des documents attendus trouvés (le score de `idx-v2b-all`). Envoyer le
+  dernier tableau.
+
+- [ ] **S11. Supprimer l'ancien** (après S9 et S10 réussis). D'abord les index, puis leurs tables :
+
+  ```powershell
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v1    --profile DEV
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_as_index_v1 --profile DEV
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is_index_v1 --profile DEV
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2a   --profile DEV
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2b   --profile DEV
+  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2c   --profile DEV
+  ```
+
+  (Ignorer « does not exist » pour un index qui n'a pas été construit, ex. `v2c`.)
+
+  ```sql
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v1;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_as_v1;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_is_v1;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2a;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2b;
+  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2c;
+  ```
+
+  `UNDROP TABLE` reste possible 7 jours. Ensuite `SHOW TABLES IN dev_landingzone.qualibot` ne doit
+  plus montrer aucun nom en `_v1` / `_v2…` (les tables `eval_*` gardent les anciens noms d'essai
+  **dans leurs lignes** : c'est l'historique des mesures, `docs/chat_vsi_tests.md` § B).
+
+Trop long ou bloqué en DEV ? Le seul pas lent est S5 (embedding). Si un pas bloque (droits sur les
+KA, index orphelins), le laisser et me renvoyer l'erreur : le reste ne dépend pas de lui, et l'UAT
+se fera proprement de toute façon (`OPERATIONS.md`, D5).
 
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
@@ -621,14 +792,14 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   Colonne `recall_top5_pct` : documents attendus parmi les 5 premiers du contexte, pour comparer
   à taille égale.
 
-- [ ] **G2d. Requêtes de diagnostic de l'index** : `docs/chat_vsi_audit_2026-10.md` § 7, Q1 à Q8,
+- [ ] **G2d. Requêtes de diagnostic de l'index** : `docs/chat_vsi_tests.md` § 7, Q1 à Q8,
   dans l'éditeur SQL DEV (lecture seule). Envoyer les résultats : ils chiffrent les constats
   de l'audit du parsing (part d'images, tables des matières, documents attendus absents de
   l'index…).
 
 - [ ] **R. Tester le nouveau découpage sur des index de test** (étapes 1 à 3 faites le 2026-10-08 :
   **v2b retenu**, 80.9 % contre 75.8 % avec deux fois moins de contexte ; audit § 5.6) (code du 2026-10-08, audit
-  `docs/chat_vsi_audit_2026-10.md` § 5 ; ne touche ni `chunks_v1` ni `chunks_index_v1`).
+  `docs/chat_vsi_tests.md` § 5 ; ne touche ni `chunks_v1` ni `chunks_index_v1`).
   1. `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`.
   2. Notebook `utils/databricks_ops/evaluation/rechunk_experiment.py`, serverless, Run all, trois
      fois avec ces widgets (le reste par défaut) :
@@ -667,11 +838,11 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   répondu). Juge GPT-5.6 Luna, dans les deux ordres. Vérifier d'abord le nom exact des endpoints dans
   Serving (widgets `reference`, `contenders`, `judge`). Résultats dans
   `dev_landingzone.qualibot.eval_pairwise_runs` ; une autre série = un autre `eval_id`.
-  Fait le 2026-10-08 (`luna6-versions`), résultats dans `docs/chat_vsi_audit_2026-10.md` § 2.6.
+  Fait le 2026-10-08 (`luna6-versions`), résultats dans `docs/chat_vsi_tests.md` § 2.6.
 
 - [x] **P2. Rerun prompt de GPT-6 Luna** _(fait 2026-10-08, `luna6-prompt`)_ : `u-all+v3+lang` retenu
   (19 gagnés / 16 perdus contre Sonnet 5.5, 0.63 invention contre 1.59, juge constant 88 %). Détail :
-  `docs/chat_vsi_audit_2026-10.md` § 2.6.
+  `docs/chat_vsi_tests.md` § 2.6.
 
 - [ ] **L. Passer le Chat VSI DEV sur GPT-6 Luna + GPT-5.6 Luna en secours, sans aucun modèle Claude**
   (décision 2026-10-08 ; récap `docs/chat_vsi_robustesse_2026-10.md`). Tout est déjà dans le code :
