@@ -227,7 +227,7 @@ Ce que le code attend désormais en DEV : la table `chunks` (découpage retenu, 
 `chunks` est une copie de `chunks_v2b`, l'ancien est supprimé seulement à la fin (S8), après test.
 Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quelques minutes.
 
-- [ ] **S0. Inventaire** (éditeur SQL DEV) — à garder sous les yeux pour S2 à S11 :
+- [x] **S0. Inventaire** _(2026-10-08 : tables `_v1` de la copie UAT + `chunks_v2a/v2b` et leurs index ; pas de `v2c`, pas d'autre table d'état `_v1` que les 5 de S3)_ (éditeur SQL DEV) — à garder sous les yeux pour S2 à S11 :
 
   ```sql
   SHOW TABLES IN dev_landingzone.qualibot;
@@ -255,7 +255,7 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   Ce déploiement supprime le job `qualibot-provision-knowledge-assistant-dev` (pas les KA eux-mêmes,
   voir S7) et passe les jobs DEV sur les noms sans suffixe. Les plannings restent en pause.
 
-- [ ] **S2. Restes de l'ancien Qualibot DEV** (bloc R4, s'il n'a pas été fait). Seulement si S0
+- [x] **S2. Restes de l'ancien Qualibot DEV** _(2026-10-08 : inventaire S0 → aucune table sans suffixe ni index `chunks_all/as/is` : rien à faire)_ (bloc R4, s'il n'a pas été fait). Seulement si S0
   liste ces tables **sans** suffixe (ce sont celles de juillet, jamais relues depuis) :
 
   ```sql
