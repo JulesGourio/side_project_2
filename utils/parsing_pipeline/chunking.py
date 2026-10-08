@@ -127,7 +127,7 @@ def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[st
         out.append("\n".join(cur))
     # A single row over the limits is cut as text.
     return [piece for o in out for piece in
-            (_split_text(o, max_tokens, max_chars, count) if count(o) > max_tokens * 2 or len(o) > max_chars * 2 else [o])]
+            (_split_text(o, max_tokens, max_chars, count) if count(o) > max_tokens or len(o) > max_chars else [o])]
 
 
 # ---------------------------------------------------------------------------
