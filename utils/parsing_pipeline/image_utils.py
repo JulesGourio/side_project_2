@@ -56,8 +56,6 @@ from utils import (
     _cfg,
     ensure_config,
     _patch_worker_env,
-    _write_tmp_file,
-    normalize_text,
     count_tokens,
     parse_with_docling,
     _parse_xlsx_openpyxl,

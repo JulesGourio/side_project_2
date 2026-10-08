@@ -52,17 +52,12 @@ USE_GPU = _detect_gpu()
 # COMMAND ----------
 
 import os
-import sys
 import hashlib
-import uuid
-import re
 import logging
 from pathlib import Path
-from datetime import datetime
 
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from delta.tables import DeltaTable
 
 # Logging
 logger = logging.getLogger("generic_pipeline")
@@ -186,9 +181,7 @@ display(df_files.select("file_name", "extension", "file_size_bytes", "doc_title"
 
 # COMMAND ----------
 
-import io
 import tempfile
-import traceback
 
 # Docling format map
 _FORMAT_MAP = {

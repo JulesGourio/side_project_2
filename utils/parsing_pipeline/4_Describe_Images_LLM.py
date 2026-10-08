@@ -80,6 +80,7 @@ sys.path.insert(0, REPO_DIR)
 
 from pyspark.sql import functions as F
 from pyspark.sql import Row
+from delta.tables import DeltaTable
 
 # addPyFile propagates these to every executor, not just the driver — required for worker imports.
 for _mod in ("chunking.py", "utils.py", "image_utils.py", "selection.py", "config.py"):
@@ -372,7 +373,6 @@ else:
     # Where each image sits (the text passage holding the words just before it, found with the
     # context Docling stored), its section and caption written into the passage, and long
     # transcriptions (scanned pages) cut like text — audit 2026-10, P7. No LLM call.
-    import json as _json
     import pandas as _pd
 
     _PLACED_SCHEMA = ("IDDOC long, image_id int, part_no int, anchor_chunk_index int, "
@@ -477,7 +477,6 @@ else:
 # COMMAND ----------
 
 if described_count > 0:
-    from delta.tables import DeltaTable
 
     # Columns added on 2026-10 (titre, type_document, indice, langue, body_sha256,
     # anchor_chunk_index) must be able to reach chunk tables written before them.
@@ -527,8 +526,6 @@ if described_count > 0:
 # MAGIC Nothing else moves an EMPTY_TEXT document to a terminal status once its images are described -- do it here, same run.
 
 # COMMAND ----------
-
-from delta.tables import DeltaTable
 
 df_empty_text_iddocs = (
     spark.table(TARGET_PROCESSED_FILES_TABLE)
