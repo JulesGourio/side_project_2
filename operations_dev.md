@@ -646,7 +646,8 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
      (`u-all`, la config du chat). Tout est réécrit par GPT-6 Luna (widget `rewrite_model`, comme le
      chat) ; `u-all-luna6` se compare à l'ancienne ligne `u-all` (réécriture Sonnet 4.6) et dit ce que le
      passage à GPT-6 Luna coûte en recherche. Envoyer les tableaux.
-  3b. Deux vérifications sur v2b avant le re-découpage UAT (copier le nouveau zip, `-SyncOnly`) :
+  3b. _(fait 2026-10-08 : k20 moins bon que 12, réponses v2b au moins aussi bonnes et −39 % de coût ;
+     audit § 5.6)_ Deux vérifications sur v2b avant le re-découpage UAT (copier le nouveau zip, `-SyncOnly`) :
      - `retrieval_eval`, widgets `index_variants=v2b`, `configs` = `idx-v2b-all-k20` (une seule ligne
        nouvelle : 20 passages reclassés au lieu de 12 ; ≈ 10 min). Si elle dépasse nettement 80.9 %
        sans repasser au-dessus de ≈ 20k tokens, on met `CHAT_VSI_RERANK_TOP_K=20` dans le chat.

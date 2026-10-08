@@ -806,8 +806,20 @@ textes répétés (`CHAT_VSI_SKIP_NOISE`).
   (80 %, même index, même routage) : aucune perte, la réécriture reste sur GPT-6 Luna.
 - Fait dans le code : tailles v2b par défaut dans `utils/parsing_pipeline/config.py`. Le corpus UAT est
   re-découpé seulement avec l'accord de l'utilisateur (`OPERATIONS.md`, D5).
-- Reste à mesurer : `idx-v2b-all-k20` (20 passages reclassés au lieu de 12, possible maintenant que le
-  contexte est deux fois plus petit) et la qualité des réponses sur v2b.
+- **Vérifications du même jour (réécriture GPT-6 Luna partout)** :
+  - second run : `idx-v2b-all` 83.6 % contre 78.5 % pour `idx-v1-all` (+5 points, comme au premier run),
+    11k tokens contre 21k ;
+  - `idx-v2b-all-k20` (20 passages reclassés) : 80.5 %, **moins bien** que 12 passages (83.6 %) avec plus
+    de contexte → on garde `CHAT_VSI_RERANK_TOP_K` par défaut (12) ;
+  - réponses (`pairwise_answers`, `luna6-v2b`, GPT-6 Luna des deux côtés, seul l'index change) :
+    10 gagnés / 10 perdus / 20 égalités, exactitude 2.81 contre 2.61, fidélité 2.81 contre 2.73,
+    inventions 0.40 contre 0.53 ; **0.0022 € par question contre 0.0036 €** (−39 %), premier token
+    5.9 s contre 8.1 s. Juge constant 53 % seulement : les réponses sont proches, l'écart en duels n'est
+    pas significatif ; les notes vont toutes dans le sens de v2b.
+  - Exemples : v2b trouve NF-10065 (template CMP) et ŘLCZ-05/15 (příkaz ředitele sur le tabac) que v1
+    ratait ; v1 trouve la définition d'APO dans le glossaire que v2b rate.
+- **Conclusion : v2b validé** (recherche +5 points, réponses au moins aussi bonnes, −39 % de coût,
+  −2 s au premier token). Prochaine étape : re-découpage UAT (`OPERATIONS.md`, D5), avec accord.
 
 ## 6. L'évaluation elle-même
 

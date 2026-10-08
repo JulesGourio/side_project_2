@@ -255,9 +255,10 @@ prévenir, je change la valeur, vous redéployez.
 - [ ] **D5. Re-découper le corpus UAT avec le nouveau découpage** (code du 2026-10-08,
   `utils/parsing_pipeline/chunking.py`, audit `docs/chat_vsi_audit_2026-10.md` § 5).
   Le test DEV a montré un gain (v2b : 150 / 300 / 450 tokens, 1 600 caractères, désormais les
-  valeurs par défaut de `utils/parsing_pipeline/config.py` ; audit § 5.6). **Encore à faire avant** :
-  la vérification des réponses (`operations_dev.md`, bloc R, étape 3b), puis ton accord : le KA de
-  l'UAT lit le même index. Attention : si le planning quotidien du pipeline UAT tourne, les **nouveaux**
+  valeurs par défaut de `utils/parsing_pipeline/config.py` ; audit § 5.6). Vérification des réponses
+  faite le 2026-10-08 (`luna6-v2b` : au moins aussi bonnes, −39 % de coût). **Reste : ton accord** — le KA
+  de l'UAT lit le même index. Après D5 : recopier le corpus vers DEV (`operations_dev.md`, bloc C,
+  `copy_uat_to_dev`) pour que le chat DEV lise les nouveaux passages. Attention : si le planning quotidien du pipeline UAT tourne, les **nouveaux**
   documents sont déjà découpés en v2b dès le prochain `bundle deploy` (mélange des deux tailles jusqu'à D5) ;
   s'il est en pause, rien ne change avant D5. Le nombre de passages va environ doubler (embedding plus long, index plus gros).
   - Je passe `parsing_run_mode` à `full` pour `qualibot-uat` ; `bundle deploy` + un run.
