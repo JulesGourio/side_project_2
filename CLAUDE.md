@@ -8,6 +8,14 @@ Chatbot (since 2026-10-08, branch `feature/chat-vsi-merged-on-impact-search` = `
 
 Impact search v2 + archive index (code done 2026-10-02, deployment steps in `OPERATIONS.md`): one Vector Search query per change, one judge call per candidate document, NDJSON streaming, UI in `client/src/components/compare/ImpactResults.tsx` (doc in `client/src/components/compare/README.md` §3). Second index `chunks_full_index` is meant to hold ALL in-scope documents, pre-2018 included (~1,500 extra docs; still `courant=1` only), on the shared `qualibot` endpoint (used by both `qualibot-uat-test` and `uat`) — not created yet (test phase, see the parsing section). `COMPARE_IMPACT_INDEX` in `utils/deploy/target_env.json` points at `chunks_index` until the user confirms `chunks_full_index` is ONLINE — then switch uat + uat-test. The chatbot stays on the post-2018 index. Since 2026-10-05 (branch `audit/doc-compare`, not merged into `main` until the user validates it on `qualibot-uat-test`): `#` column in the Change Table linked to the impact change ids, per-document and global feedback in Lakebase `impact_feedbacks`, result saved in `messages.impact_text`, overflow changes grouped by section. Deferred ideas are listed in `docs/ROADMAP.md` ("Plus tard — impact search").
 
+## Code conventions (since 2026-10-08)
+
+- **Comments**: only the non-obvious *why*, in one or two lines. No incident story, no date, no document or ticket name (the story goes in a README, the rule stays in the code), no paraphrase of the code, no commented-out code.
+- **Logging**: `logger` in notebooks and modules, never `print`; CLI scripts under `utils/` follow the same rule.
+- **Notebooks** (`utils/parsing_pipeline/`, `utils/generic_pipeline/`) follow the LEAP layout of `JulesGourio/datab` (`CLAUDE.md` there, sections 3-4 and 16): header cell, `Technical debt`, `Configuration`, `Inputs`, `Data Preparation` (`Prep N`), `Data Transformations` (`Tr. N`), `Quality Checks`, `Outputs`; a markdown cell with the *why* before each block; no `DBTITLE`. No Silver / Gold / `leap_utils` / GX here. Logic lives in modules next to the notebook (`parse_steps.py` for `3_parse`), the notebook only orchestrates.
+- **Layout of `utils/`**: one folder per concern, map in `utils/README.md`.
+- After a refactor that touches paths or notebooks, append what to re-run to `RETEST_CLEANUP.md`.
+
 ## Databricks (this project)
 Bundle name: `qualibot`. Targets: `dev`, `uat`, `qualibot-uat-test`, `prod`.
 

@@ -1,15 +1,22 @@
 # utils/
 
-Operational jobs and scripts that support the Qualibot app: Databricks App
-start/stop scheduling (`app_mgmt/`), Lakebase export/import/migration
-(`lakebase_sync/`), user-capability sync from group membership
-(`user_capabilities/`), manual Vector Search index resync
-(`vector_search_sync/`), the DEV copy of the UAT corpus (`dev_copy/`), the
-chat evaluation notebooks (`evaluation/retrieval_eval.py`,
-`evaluation/pairwise_answers.py`, results in `docs/chat_vsi_tests.md`) and ChatBot
-production-traffic quality scoring (`evaluation/score_production_qa.py`).
-Separate from the document parsing pipeline in `utils/parsing_pipeline/`. The
-former Knowledge Assistant provisioning is in `archive/knowledge_assistant/`;
+Everything that runs outside the app, one folder per concern:
+
+| Folder | What |
+|---|---|
+| `parsing_pipeline/` | Daily parsing chain (`1_` to `6_`), see its README. `3_Parse_Pipeline.py` only orchestrates; the phases are functions in `parse_steps.py` |
+| `generic_pipeline/` | Parsing of an arbitrary volume of documents into a chunk table (not wired to a job) |
+| `deploy/` | Deploy scripts, per-target config (`target_env.json`), Intraqual download and scrape helpers |
+| `app_mgmt/` | Start / stop schedule of the Databricks Apps |
+| `lakebase_sync/` | Lakebase export, import, migrations (`ops_config.py` holds their shared connection settings) |
+| `user_capabilities/` | `can_chat` / `can_compare` sync from group membership |
+| `dev_copy/` | Copy of the UAT corpus into DEV |
+| `grants/` | Unity Catalog grants for the app service principals |
+| `evaluation/` | Chat evaluation and production-traffic quality scoring, results in `docs/chat_vsi_tests.md` |
+| `ka_legacy/` | Jobs written for the Knowledge Assistants (trace migration, scoring); no longer used by the chatbot |
+| `soffice_packaging/` | Portable LibreOffice build for the exact-layout PDF preview |
+
+The former Knowledge Assistant provisioning is in `archive/knowledge_assistant/`;
 the sections below that mention the KA describe the chatbot as it was then.
 
 Longer incident/rationale write-ups that don't belong inline in the code live

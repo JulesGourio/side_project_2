@@ -80,9 +80,7 @@ const LS_FEEDBACK_SUBMITTED = 'compare_feedback_submitted_v2'; // JSON string[]
 const LS_PROCESSING_METHOD = 'compare_processing_method';
 const LS_IMPACT_MODE = 'compare_impact_mode';
 const LS_IMPACT_MANUAL_TEXT = 'compare_impact_manual_text';
-// Deliberately disabled for now (decision 2026-10-05, after business feedback: too niche/confusing).
-// The "describe a change by hand, no files" mode still works end to end behind this flag — the
-// server handles free text as a single change — so re-enabling it is this one line. Do not delete.
+// The "describe a change by hand, no files" mode is hidden (too niche); it still works end to end behind this flag.
 const IMPACT_MANUAL_MODE_ENABLED = false;
 
 function isFeedbackSubmitted(key: string): boolean {
@@ -126,8 +124,7 @@ function lsSet(key: string, value: string) {
   }
 }
 
-// While a report streams in, persist it at most this often (it used to be
-// rewritten in full on every delta).
+// While a report streams in, persist it at most this often.
 const LS_STREAM_PERSIST_MS = 1000;
 
 const STREAM_INTERRUPTED = 'Connection lost before the report was complete. Please retry.';

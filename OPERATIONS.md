@@ -20,6 +20,8 @@ La mise en place de l'environnement **DEV** a son propre fichier : `operations_d
 > UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui
 > n'existe pas encore. Les blocs A à C ci-dessous restent sur `audit/doc-compare`.
 
+> **Nettoyage du code (2026-10-08)** : `utils/databricks_ops/` n'existe plus, le notebook `3_parse` est découpé, le client allégé. Tout ce qu'il faut rejouer est dans [`RETEST_CLEANUP.md`](RETEST_CLEANUP.md) (DEV d'abord).
+
 ## Vue d'ensemble
 
 | Bloc | Quoi | Cible | Touche le chatbot ? |
