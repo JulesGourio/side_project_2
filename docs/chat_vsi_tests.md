@@ -1139,22 +1139,22 @@ plafonné vers 50 questions/min ; premier mot à 10,7 s en médiane même à 5 q
   la marge nécessaire une fois les rafales étalées par la file `vs_gate.py` ; reste à le vérifier par le
   test de charge du chat (`operations_dev.md` V3.2).
 
-**Chat de bout en bout avec la file `vs_gate.py`** (`load_test_chat.py`, 6 requêtes par question) :
+**Chat de bout en bout avec la file `vs_gate.py`** (`load_test_chat.py` en mode `engine` : le moteur
+tourne dans le notebook ; 6 requêtes par question) :
 
-| Questions en cours | Réussite | Premier mot p50 / p95 | Réponse complète p50 / p95 | Débit |
+| Questions en cours | Réussite | Premier mot p50 / p95 | Réponse complète p50 / p95 | Débit (notebook) |
 |---|---|---|---|---|
-| 10 | 100 % | 10,0 s / 16,0 s | 13,0 s / 19,6 s | 30,6 /min |
-| 20 | 100 % | 11,0 s / 19,5 s | 12,6 s / 23,9 s | 53,3 /min |
-| 30 | 100 % | 12,9 s / 22,3 s | 15,1 s / 26,4 s | 72,8 /min |
-| 40 | 100 % | 15,8 s / 27,3 s | 19,4 s / 32,2 s | 77,3 /min |
+| 10 | 100 % | 10,0 s / 16,0 s | 13,0 s / 19,6 s | 39 /min |
+| 20 | 100 % | 11,0 s / 19,5 s | 12,6 s / 23,9 s | 66 /min |
+| 30 | 100 % | 12,9 s / 22,3 s | 15,1 s / 26,4 s | 86 /min |
+| 40 | 100 % | 15,8 s / 27,3 s | 19,4 s / 32,2 s | 91 /min |
 
-- Aucune question en échec (contre 9 à 24 % avant la file), l'objectif de ≈ 80 questions/min est atteint
-  à 40 questions en cours, **mais des refus et des relances restent visibles dans les logs de l'app** :
-  les relances les absorbent, au prix de pauses de 0,5 à 8 s. La marge est donc plus mince que ce
-  tableau le laisse croire ; à compter dans les logs (lignes `vs_gate:` = Vector Search,
-  `chat_vsi_llm:` = modèle) avant de conclure.
-- À 40, le premier mot recule de ≈ 6 s : c'est l'attente dans la file (8 requêtes en cours,
-  ≈ 25 requêtes/s servies, 6 par question → ≈ 4 questions/s au plus côté recherche), pas des erreurs.
-  Leviers si un jour il faut plus : moins de requêtes par question (V3.2c), *Target QPS* sur l'endpoint,
-  lancer les recherches REF / titre en parallèle de la recherche principale.
+- **Vector Search tient** : aucune ligne `vs_gate:` (ni refus ni relance) à aucun palier.
+- **La limite suivante est le modèle** : à 40 en cours, GPT-6 Luna répond `429 rate_limit` ; ≈ 45
+  réécritures et ≈ 75 réponses sur 160 passent par GPT-5.6 Luna. Aucun échec grâce au secours, mais une
+  question sur deux environ est traitée en partie par le modèle de secours. Rien à 10, 20, 30.
+- Ordre de grandeur : 80 questions/min × ≈ 11 000 tokens de contexte ≈ 900 000 tokens/min en entrée.
+- Suite : connaître le quota de l'endpoint `databricks-gpt-6-luna` (limite de l'organisation ou de
+  Databricks) avant de le relever ou de réserver du débit. Ne pas passer la réécriture sur GPT-5.6 Luna
+  pour économiser le quota : elle retrouve moins bien les documents (80,0 % contre 75,8 %).
 

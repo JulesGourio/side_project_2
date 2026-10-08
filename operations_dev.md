@@ -490,7 +490,7 @@ cours au plus, relances sur 429).
   (sans `-SyncOnly` : l'app doit redémarrer).
 - [x] **V3.2.** Notebook `load_test_chat`, widget `levels` = `10,20,30,40` (80 questions/min ≈ 25
   questions en cours), Run all. M'envoyer les deux tableaux.
-  _(fait 2026-10-08 : 100 % de réussite de 10 à 40 questions en cours, 77 questions/min à 40, mais refus et relances dans les logs de l'app)_
+  _(fait 2026-10-08 : 100 % de réussite de 10 à 40 questions en cours, 77 questions/min à 40, aucun refus Vector Search ; à 40, GPT-6 Luna en 429 → secours GPT-5.6 Luna pour ≈ la moitié des questions)_
 - [x] **V3.2b.** Moins de requêtes par question (recherche brute seulement sur la question telle que
   posée : 4 requêtes au lieu de 6) : notebook `retrieval_eval`, widget `indexes` =
   `chat,rawq1|rawq=1,rawq1-raw5|rawq=1|raw=5`, Run all. M'envoyer les deux derniers tableaux.
@@ -498,6 +498,8 @@ cours au plus, relances sur 429).
 - [ ] **V3.2c.** Recherche brute sur une réécriture seulement (4 requêtes) ou sur les deux (5) :
   notebook `retrieval_eval`, widget `indexes` = `chat,rawfr|rawon=fr,rawen|rawon=en,rawfren|rawon=fr+en`,
   Run all (≈ 1 €). M'envoyer les deux derniers tableaux.
+- [ ] **V3.2d.** Quota du modèle : workspace DEV → Serving → `databricks-gpt-6-luna` → section
+  AI Gateway / Rate limits (si présente). M'envoyer la limite affichée (ou « aucune »).
 - [ ] **V3.3.** M'envoyer aussi la sortie de la cellule « The endpoint and the index » du notebook
   `load_test_vector_search` (type d'endpoint, `scaling_info`) et son troisième tableau (texte des refus).
 
