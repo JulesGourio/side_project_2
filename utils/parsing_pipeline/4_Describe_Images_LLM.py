@@ -45,9 +45,9 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Technical Debt
+# MAGIC # Technical debt
 # MAGIC
-# MAGIC None.
+# MAGIC #N/A
 
 # COMMAND ----------
 
@@ -460,6 +460,12 @@ else:
             "anchor_chunk_index",
         )
     )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Quality Checks
+# MAGIC #N/A
 
 # COMMAND ----------
 

@@ -39,9 +39,9 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Technical Debt
+# MAGIC # Technical debt
 # MAGIC
-# MAGIC None.
+# MAGIC #N/A
 
 # COMMAND ----------
 
@@ -116,6 +116,24 @@ _in_chat = sum(1 for r in catalog_rows if r[4])
 logger.info(f"{len(catalog_rows)} documents in scope, {_in_chat} with passages in the chat index")
 if not catalog_rows:
     raise RuntimeError(f"{_manifest} gave no document — the catalog would be emptied")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Data Preparation
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Data Transformations
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Quality Checks
+# MAGIC #N/A
 
 # COMMAND ----------
 

@@ -33,9 +33,9 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Technical Debt
+# MAGIC # Technical debt
 # MAGIC
-# MAGIC None.
+# MAGIC #N/A
 
 # COMMAND ----------
 
@@ -113,6 +113,12 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC # Data Preparation
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Data Transformations
 
 # COMMAND ----------
@@ -160,6 +166,12 @@ logger.info(f"{n_total} IDDOCs with a resolved division")
     .orderBy(F.desc("n_iddocs"))
     .show(truncate=False)
 )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Quality Checks
+# MAGIC #N/A
 
 # COMMAND ----------
 
