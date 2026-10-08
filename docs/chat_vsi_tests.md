@@ -93,6 +93,7 @@ Le code de chacune de ces options est dans `archive/chat_vsi_lab/`.
 | E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € | `archive/evaluation/rechunk_experiment.py`, widget `doc_cards` (désactivé) |
 | E2 — contexte par passage | Une ou deux phrases en tête de chaque passage pour le situer (méthode « Contextual Retrieval »). ≈ 50 € | Même notebook, widget `chunk_context` (désactivé) |
 | `v2c` — sans préfixe `[Source: …]` | Mesure l'effet du préfixe sur la recherche | Même notebook |
+| **Nombre de passages** (à faire en premier, demandé le 2026-10-08) | Jusqu'à 3 × (12 reclassés + 10 bruts) = 66 passages, sans plafond. Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_VSI_RERANK_TOP_K`, `CHAT_VSI_RAW_TOP_K`, `CHAT_VSI_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
 | Pistes côté recherche R1 à R12 | Passages voisins, ordre du document, filtre par type, seuil « je ne sais pas »… | Journal § 4, rien de codé |
 | Documents d'avant 2018 | Leur fiche dans le chatbot (P11) | Décision métier ; pipeline prêt (`parsing_archive_notices_in_rag`) |
 | Numéros de page et de slide | P13, re-parsing GPU | Rien de codé |

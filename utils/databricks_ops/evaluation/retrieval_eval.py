@@ -17,8 +17,9 @@
 # MAGIC they lean toward what it retrieved; compare runs with each other, per source.
 # MAGIC
 # MAGIC Same steps as the app: history, translation bridge, date, then `chat_vsi.retrieve_for_turn`
-# MAGIC (rewrite, 3 queries, REF and title lookups). What is compared is the **index** — the chat's
-# MAGIC own, and any other given in `indexes` (e.g. an index built with another chunking). Questions
+# MAGIC (rewrite, 3 queries, REF and title lookups). What is compared: the **index** (the chat's own,
+# MAGIC or one built with another chunking) and the **search sizes** (reranked / raw passages per
+# MAGIC query, cap on the merged list) — widget `indexes`. Questions
 # MAGIC already saved in `results_table` for a label are skipped. Results of every test so far:
 # MAGIC `docs/chat_vsi_tests.md`. Run all.
 
@@ -36,8 +37,10 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # DBTITLE 1,Parameters
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
-# What to measure: "label=catalog.schema.index", comma-separated. "chat" alone = the app's own
-# index (CHAT_VSI_INDEX). Example after a rechunk: "chat,rechunk=dev_landingzone.qualibot.chunks_test_index".
+# What to measure, comma-separated: "label[=catalog.schema.index][|rerank=N][|raw=N][|cap=N]".
+# "chat" alone = the app as deployed. Index after a rechunk: "chat,rechunk=dev_landingzone.qualibot.chunks_test_index".
+# Search sizes (reranked / raw passages per query, cap on the merged list):
+# "chat,rerank-only|raw=0,raw5|raw=5,cap40|cap=40".
 dbutils.widgets.text('indexes', 'chat')
 dbutils.widgets.text('sources', 'golden,synthetic,feedback')
 dbutils.widgets.dropdown('rerun_existing', 'false', ['false', 'true'])
@@ -73,12 +76,37 @@ sys.path.insert(0, APP)
 # One rewrite model per run: no silent fallback to another model (chat_vsi_llm).
 os.environ['CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS'] = os.environ.get('CHAT_VSI_REWRITE_ENDPOINT') or os.environ['CHAT_VSI_LLM_ENDPOINT']
 
-INDEXES = {}
-for item in [x.strip() for x in dbutils.widgets.get('indexes').split(',') if x.strip()]:
-    label, _, index = item.partition('=')
-    INDEXES[label.strip()] = index.strip() or os.environ['CHAT_VSI_INDEX']
-RUN = list(INDEXES)
-print('indexes:', INDEXES)
+_SIZE_KEYS = {'rerank': 'CHAT_VSI_RERANK_TOP_K', 'raw': 'CHAT_VSI_RAW_TOP_K', 'cap': 'CHAT_VSI_MAX_SEARCH_PASSAGES'}
+
+
+def parse_configs(text):
+    """'label[=index][|rerank=N][|raw=N][|cap=N]', comma-separated -> {label: config}.
+    No index = the app's (CHAT_VSI_INDEX); no option = the app's search sizes."""
+    out = {}
+    for item in [x.strip() for x in text.split(',') if x.strip()]:
+        head, *opts = [p.strip() for p in item.split('|') if p.strip()]
+        label, _, index = head.partition('=')
+        index = index.strip() or os.environ['CHAT_VSI_INDEX']
+        env = {}
+        for o in opts:
+            k, _, v = o.partition('=')
+            assert k in _SIZE_KEYS and v.isdigit(), f'{item}: options are rerank=N, raw=N, cap=N'
+            env[_SIZE_KEYS[k]] = v
+        out[label.strip()] = {'index': index, 'env': env, 'signature': '|'.join([index] + sorted(opts))}
+    return out
+
+
+def apply_config(cfg):
+    """Point the engine at the config's index and search sizes (read at call time)."""
+    os.environ['CHAT_VSI_INDEX'] = cfg['index']
+    for key in _SIZE_KEYS.values():
+        os.environ.pop(key, None)
+    os.environ.update(cfg['env'])
+
+
+CONFIGS = parse_configs(dbutils.widgets.get('indexes'))
+RUN = list(CONFIGS)
+print('configs:', {k: v['signature'] for k, v in CONFIGS.items()})
 
 # A question counts as measured for a label once it ran without error: errors are retried on the
 # next run, the rest is never repeated (unless rerun_existing = true).
@@ -202,7 +230,7 @@ en_query string, titled array<string>"""
 for name, cases in TODO.items():
     if not cases:
         continue
-    os.environ['CHAT_VSI_INDEX'] = INDEXES[name]
+    apply_config(CONFIGS[name])
     settings = json.dumps(chat_vsi.settings())
     t0 = time.monotonic()
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:

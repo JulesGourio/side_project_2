@@ -6,9 +6,10 @@ What happens for each question (configuration chosen 2026-10-08, measures in
 1. **Rewrite** — GPT-6 Luna turns the last question, with the conversation as context, into
    one standalone search query in French and one in English (acronyms expanded when certain).
 2. **Search** — three queries (the question as asked + the two rewrites), each run twice in
-   HYBRID mode on the single passage index: the top ``_RERANK_TOP_K`` passages reranked by the
-   Databricks reranker (reading REF, section headings and text) and the raw top ``_RAW_TOP_K``.
-   Everything is merged by best rank (``union``). The chat's division (AS / IS) is a filter on
+   HYBRID mode on the single passage index: the top ``rerank_top_k()`` passages (12) reranked by
+   the Databricks reranker (reading REF, section headings and text) and the raw top
+   ``raw_top_k()`` (10). Everything is merged by best rank (``union``), then cut to
+   ``max_search_passages()`` (0 = no cap, the default). The chat's division (AS / IS) is a filter on
    the ``division`` column (ALL: no filter).
 3. **Named documents** — REFs named in the question or the earlier turns (MI-14242…) get their
    own filtered search, ranked first; documents whose catalog title matches the question
@@ -27,6 +28,8 @@ What happens for each question (configuration chosen 2026-10-08, measures in
 ``CHAT_VSI_INDEX``, ``CHAT_VSI_LLM_ENDPOINT`` / ``CHAT_VSI_LLM_FALLBACK_ENDPOINTS``,
 ``CHAT_VSI_REWRITE_ENDPOINT`` / ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS``,
 ``CHAT_VSI_ANSWER_MAX_TOKENS``, ``CHAT_VSI_REWRITE_MAX_TOKENS``, ``CHAT_VSI_SEARCH_RETRIES``,
+``CHAT_VSI_RERANK_TOP_K`` / ``CHAT_VSI_RAW_TOP_K`` / ``CHAT_VSI_MAX_SEARCH_PASSAGES`` (search sizes,
+defaults = the measured configuration; other values are for ``retrieval_eval`` comparisons),
 plus the resilience settings documented in ``chat_vsi_llm.py``. The earlier engine versions
 (baseline, measured options) are kept in ``archive/``.
 """
@@ -58,7 +61,7 @@ _DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'      # no Claude model in the ch
 _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside it
 _DEFAULT_REWRITE_MAX_TOKENS = 2000
 _RERANK_TOP_K = 12               # reranked passages kept per query (20 measured worse, 2026-10-08)
-_RAW_TOP_K = 10                  # raw HYBRID passages per query
+_RAW_TOP_K = 10                  # raw HYBRID passages per query (0 = reranked passages only)
 _RERANK_COLUMNS = ['REF', 'semantic_headers', 'chunk_text']
 _RERANKER_MODEL = 'databricks_reranker'
 _REF_LOOKUP_MAX = 6              # REFs (language variants included) filtered on
@@ -139,6 +142,19 @@ def rewrite_max_tokens() -> int:
     return _int_env('CHAT_VSI_REWRITE_MAX_TOKENS', _DEFAULT_REWRITE_MAX_TOKENS)
 
 
+def rerank_top_k() -> int:
+    return max(1, _int_env('CHAT_VSI_RERANK_TOP_K', _RERANK_TOP_K))
+
+
+def raw_top_k() -> int:
+    return max(0, _int_env('CHAT_VSI_RAW_TOP_K', _RAW_TOP_K))
+
+
+def max_search_passages() -> int:
+    """Cap on the merged search passages (REF and title lookups come on top); 0 = no cap."""
+    return max(0, _int_env('CHAT_VSI_MAX_SEARCH_PASSAGES', 0))
+
+
 def search_retries() -> int:
     return _int_env('CHAT_VSI_SEARCH_RETRIES', 2)
 
@@ -158,7 +174,8 @@ def settings() -> Dict[str, Any]:
     return {'index': index_name(), 'llm': llm_endpoint(),
             'llm_fallbacks': chat_vsi_llm.answer_chain(llm_endpoint())[1:],
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),
-            'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': _RERANK_TOP_K, 'raw_top_k': _RAW_TOP_K}
+            'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(),
+            'max_search_passages': max_search_passages()}
 
 
 @lru_cache(maxsize=None)
@@ -376,24 +393,27 @@ def _search_error(index: str, exc: BaseException) -> ChatVsiError:
 
 
 async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Reranked top 12 + raw top 10 for every query, merged by best rank. A query (or the
+    """Reranked top k + raw top k for every query, merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
-    if everything failed."""
+    if everything failed. Without raw passages (``raw_top_k() == 0``), a refused reranker falls
+    back to the raw search with the reranked size."""
+    rerank_k, raw_k = rerank_top_k(), raw_top_k()
     rerank_ok = True
 
     async def reranked(q: str) -> List[Dict[str, Any]]:
         nonlocal rerank_ok
         if not rerank_ok:
-            return []
+            return [] if raw_k else await _query(host, token, index, q, rerank_k, filters, rerank=False)
         try:
-            return await _query(host, token, index, q, _RERANK_TOP_K, filters, rerank=True)
+            return await _query(host, token, index, q, rerank_k, filters, rerank=True)
         except RerankUnavailable as exc:
             rerank_ok = False
             logger.warning('chat_vsi: reranker refused by %s (%s) — raw search only', index, exc)
-            return []
+            return [] if raw_k else await _query(host, token, index, q, rerank_k, filters, rerank=False)
 
-    calls = [reranked(q) for q in queries] + [_query(host, token, index, q, _RAW_TOP_K, filters, rerank=False)
-                                              for q in queries]
+    calls = [reranked(q) for q in queries]
+    if raw_k:
+        calls += [_query(host, token, index, q, raw_k, filters, rerank=False) for q in queries]
     results = await asyncio.gather(*calls, return_exceptions=True)
     for r in results:
         if isinstance(r, asyncio.CancelledError):
@@ -465,6 +485,8 @@ async def retrieve_for_turn(host: str, token: str, division: str,
     titled = documents_titled(queries, _TITLE_LOOKUP_DOCS)
 
     rows = await search(host, token, index, queries, filters)
+    if max_search_passages():
+        rows = rows[:max_search_passages()]
     if named:
         rows = _merge_by_rank([await fetch_documents(host, token, index, question, named, _REF_LOOKUP_K, filters), rows])
     if titled:

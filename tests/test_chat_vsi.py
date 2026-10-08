@@ -263,6 +263,35 @@ def test_reranker_refused_gives_raw_search(monkeypatch):
     assert len([p for p in m['sent'] if 'reranker' in p]) >= 1
 
 
+def test_reranked_only_sends_no_raw_query(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_RAW_TOP_K', '0')
+    monkeypatch.setenv('CHAT_VSI_RERANK_TOP_K', '8')
+    events, m = _run(monkeypatch)
+    assert 'error' not in _types(events)
+    assert len(m['sent']) == 3 and all('reranker' in p and p['num_results'] == 8 for p in m['sent'])
+
+
+def test_reranked_only_with_reranker_refused_falls_back_to_raw(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_RAW_TOP_K', '0')
+    events, m = _run(monkeypatch, answer=lambda p: 400 if 'reranker' in p else DEFAULT_ROWS)
+    assert 'error' not in _types(events)
+    assert [p['num_results'] for p in m['sent'] if 'reranker' not in p] and \
+        all(p['num_results'] == 12 for p in m['sent'] if 'reranker' not in p)
+
+
+def test_cap_keeps_the_best_ranked_search_passages(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_MAX_SEARCH_PASSAGES', '2')
+    found = {}
+
+    async def _go():
+        found.update(await chat_vsi.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(lambda p: [_row('a', 'A-1'), _row('b', 'B-1'), _row('c', 'C-1')], []))
+    with (patch.object(chat_vsi.chat_vsi_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
+          patch.object(chat_vsi, 'refs_named_in', lambda t: []), patch.object(chat_vsi, 'documents_titled', lambda t, l: [])):
+        asyncio.run(_go())
+    assert [r['chunk_id'] for r in found['rows']] == ['a', 'b']
+
+
 def test_vector_search_down_is_an_error_event(monkeypatch):
     events, _ = _run(monkeypatch, answer=lambda p: 403)
     assert _types(events) == ['error', '[DONE]']
@@ -349,4 +378,4 @@ def test_settings_defaults(monkeypatch):
     s = chat_vsi.settings()
     assert s['index'] == 'dev_landingzone.qualibot.chunks_index' and s['llm'] == 'databricks-gpt-6-luna'
     assert s['rewrite_llm'] == 'databricks-gpt-6-luna' and s['answer_max_tokens'] == 8000
-    assert s['rerank_top_k'] == 12 and s['raw_top_k'] == 10
+    assert s['rerank_top_k'] == 12 and s['raw_top_k'] == 10 and s['max_search_passages'] == 0

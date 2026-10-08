@@ -33,7 +33,8 @@ dbutils.widgets.text('eval_id', 'chat-check')
 dbutils.widgets.text('reference', 'databricks-gpt-6-luna@chat')              # the chat as deployed
 # e.g. "databricks-gpt-6-luna@rechunk" with indexes "chat,rechunk=dev_landingzone.qualibot.chunks_test_index"
 dbutils.widgets.text('contenders', '')
-# "label=catalog.schema.index", comma-separated; "chat" = the app's own index (CHAT_VSI_INDEX).
+# Same syntax as retrieval_eval: "label[=catalog.schema.index][|rerank=N][|raw=N][|cap=N]",
+# comma-separated; "chat" = the app as deployed.
 dbutils.widgets.text('indexes', 'chat')
 dbutils.widgets.text('judge', 'databricks-gpt-5-6-luna')
 dbutils.widgets.text('answer_max_tokens', '8000')                       # reasoning counts inside it
@@ -81,18 +82,45 @@ REWRITE = os.environ.get('CHAT_VSI_REWRITE_ENDPOINT') or os.environ['CHAT_VSI_LL
 # One rewrite model for every search: no silent fallback to another model (chat_vsi_llm).
 os.environ['CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS'] = REWRITE
 
-INDEXES = {}
-for item in [x.strip() for x in dbutils.widgets.get('indexes').split(',') if x.strip()]:
-    label, _, index = item.partition('=')
-    INDEXES[label.strip()] = index.strip() or os.environ['CHAT_VSI_INDEX']
+_SIZE_KEYS = {'rerank': 'CHAT_VSI_RERANK_TOP_K', 'raw': 'CHAT_VSI_RAW_TOP_K', 'cap': 'CHAT_VSI_MAX_SEARCH_PASSAGES'}
+
+
+def parse_configs(text):
+    """'label[=index][|rerank=N][|raw=N][|cap=N]', comma-separated -> {label: config}.
+    No index = the app's (CHAT_VSI_INDEX); no option = the app's search sizes."""
+    out = {}
+    for item in [x.strip() for x in text.split(',') if x.strip()]:
+        head, *opts = [p.strip() for p in item.split('|') if p.strip()]
+        label, _, index = head.partition('=')
+        index = index.strip() or os.environ['CHAT_VSI_INDEX']
+        env = {}
+        for o in opts:
+            k, _, v = o.partition('=')
+            assert k in _SIZE_KEYS and v.isdigit(), f'{item}: options are rerank=N, raw=N, cap=N'
+            env[_SIZE_KEYS[k]] = v
+        out[label.strip()] = {'index': index, 'env': env, 'signature': '|'.join([index] + sorted(opts))}
+    return out
+
+
+def apply_config(cfg):
+    """Point the engine at the config's index and search sizes (read at call time)."""
+    os.environ['CHAT_VSI_INDEX'] = cfg['index']
+    for key in _SIZE_KEYS.values():
+        os.environ.pop(key, None)
+    os.environ.update(cfg['env'])
+
+
+CONFIGS = parse_configs(dbutils.widgets.get('indexes'))
+BY_SIGNATURE = {c['signature']: c for c in CONFIGS.values()}
 
 
 def version(spec):
-    """'model@label' — label: one of `indexes` (default chat)."""
+    """'model@label' — label: one of `indexes` (default chat). 'index' = the search signature
+    (index + sizes), the cache key of its searches."""
     model, _, label = spec.strip().partition('@')
     label = label.strip() or 'chat'
-    assert label in INDEXES, f'{spec}: unknown index label — pick from {list(INDEXES)}'
-    return {'label': spec.strip(), 'model': model.strip(), 'index': INDEXES[label]}
+    assert label in CONFIGS, f'{spec}: unknown label — pick from {list(CONFIGS)}'
+    return {'label': spec.strip(), 'model': model.strip(), 'index': CONFIGS[label]['signature']}
 
 
 REFERENCE = version(dbutils.widgets.get('reference'))
@@ -145,7 +173,7 @@ async def search(messages, division, index):
             messages[-1]['content'] = en_question
     div = chat_vsi.normalize_division(division)
     conversation = chat_vsi._clean_history(_with_today_date(messages))
-    os.environ['CHAT_VSI_INDEX'] = index           # read at call time, same for every thread of this phase
+    apply_config(BY_SIGNATURE[index])              # read at call time, same for every thread of this phase
     found = await chat_vsi.retrieve_for_turn(HOST, tok, div, conversation)
     documents = chat_vsi.group_documents(found['rows'])
     language = _tb.answer_language(ctx, user_content) if user_content else None

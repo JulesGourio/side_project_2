@@ -409,6 +409,29 @@ Trop long ou bloqué en DEV ? Le seul pas lent est S5 (embedding). Si un pas blo
 KA, index orphelins), le laisser et me renvoyer l'erreur : le reste ne dépend pas de lui, et l'UAT
 se fera proprement de toute façon (`OPERATIONS.md`, D5).
 
+### T. Combien de passages garder ? (après S, 2026-10-08)
+
+Aujourd'hui : 3 requêtes × (12 passages reclassés + 10 bruts), fusionnés sans plafond (≈ 35
+passages et 11 k tokens en moyenne, 66 au plus avant les REF et titres). Les passages bruts
+viennent d'un test fait avec les anciens passages de 4 000 caractères, que le reranker lisait à
+moitié : à remesurer sur le découpage actuel. Les défauts du code ne changent pas tant que ce
+test n'a pas tranché.
+
+- [ ] **T1. Recherche seule** (≈ 4 €, ≈ 30 min) : notebook
+  `utils/databricks_ops/evaluation/retrieval_eval.py`, widget `indexes` =
+
+  ```text
+  chat,rerank-only|raw=0,raw5|raw=5,cap40|cap=40,cap25|cap=25,rerank8-only|rerank=8|raw=0
+  ```
+
+  puis Run all. **M'envoyer les deux derniers tableaux** (par source et global : documents
+  trouvés, dans les 5 premiers, tokens de contexte).
+
+- [ ] **T2. Réponses** (≈ 2 €, ≈ 20 min, après T1, sur la meilleure configuration plus courte) :
+  notebook `pairwise_answers.py`, widgets `indexes` = la même liste que T1, `reference` =
+  `databricks-gpt-6-luna@chat`, `contenders` = `databricks-gpt-6-luna@<label retenu en T1>`,
+  `eval_id` = `passages-<label>`. **M'envoyer les trois tableaux.**
+
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
 Lecture seule sur les tables UAT ; écrit uniquement dans
