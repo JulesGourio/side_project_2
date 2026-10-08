@@ -464,6 +464,20 @@ de la moitié des questions échouent.
   dans les logs de l'app pendant le test, les lignes `chat_vsi_llm:` (bascule vers le modèle de
   secours, relances).
 
+### V2. Test de charge de Vector Search seul (2026-10-08)
+
+Le test de charge du chat (bloc U, run du 2026-10-08) : 100 % de réussite jusqu'à 10 questions
+simultanées, puis `Vector Search returned 429` dès 20 (9 % d'échecs), 40 (16 %) et 80 (24 %) ; débit
+plafonné vers 50 questions/min. Toutes les erreurs viennent de Vector Search, aucune des modèles.
+Notebook `utils/evaluation/load_test_vector_search.py` : seulement des requêtes
+Vector Search (aucun appel LLM), sans relance, par paliers de 1 à 64 requêtes simultanées,
+20 s par palier, pour chaque type de requête (brute, avec reranker, reranker sur le texte seul,
+ANN, avec filtre, mélange du chat). ≈ 20 min.
+
+- [ ] **V2.1. Lancer** : notebook en serverless, Run all (défauts).
+- [ ] **V2.2. M'envoyer** la sortie de la cellule « endpoint and index » et les trois tableaux de la
+  dernière cellule.
+
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
 Lecture seule sur les tables UAT ; écrit uniquement dans
