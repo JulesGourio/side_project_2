@@ -50,6 +50,16 @@
 
 # COMMAND ----------
 
+import logging
+
+logger = logging.getLogger("parsing_pipeline.kb_metadata")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
 dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")
 dbutils.widgets.text("LAKEBASE_ENDPOINT", "primary")
@@ -65,12 +75,12 @@ CATALOG_SCHEMA = dbutils.widgets.get("CATALOG_SCHEMA").strip()
 TABLE_SUFFIX = dbutils.widgets.get("TABLE_SUFFIX").strip()
 
 if not LAKEBASE_DATABASES:
-    print("No LAKEBASE_DATABASE param — nothing to do.")
+    logger.info("No LAKEBASE_DATABASE param — nothing to do.")
     dbutils.notebook.exit("no_lakebase_database")
 if not CATALOG_SCHEMA:
     raise ValueError("CATALOG_SCHEMA is required (the parsing tables: parse_manifest, chunks)")
 
-print(f"Target: {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASES}, source {CATALOG_SCHEMA}.*{TABLE_SUFFIX}")
+logger.info(f"Target: {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASES}, source {CATALOG_SCHEMA}.*{TABLE_SUFFIX}")
 
 # COMMAND ----------
 
@@ -103,7 +113,7 @@ catalog_rows = [
     """).collect()
 ]
 _in_chat = sum(1 for r in catalog_rows if r[4])
-print(f"{len(catalog_rows)} documents in scope, {_in_chat} with passages in the chat index")
+logger.info(f"{len(catalog_rows)} documents in scope, {_in_chat} with passages in the chat index")
 if not catalog_rows:
     raise RuntimeError(f"{_manifest} gave no document — the catalog would be emptied")
 
@@ -152,7 +162,7 @@ def connect(database):
         password=credential.token,
         sslmode="require",
     )
-    print(f"Connected to {lakebase_host}/{database} as {username}")
+    logger.info(f"Connected to {lakebase_host}/{database} as {username}")
     return conn
 
 # COMMAND ----------
@@ -205,6 +215,6 @@ for database in LAKEBASE_DATABASES:
                     documents_as_of = EXCLUDED.documents_as_of,
                     updated_at      = EXCLUDED.updated_at
             """)
-        print(f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, documents_as_of=today")
+        logger.info(f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, documents_as_of=today")
     finally:
         conn.close()

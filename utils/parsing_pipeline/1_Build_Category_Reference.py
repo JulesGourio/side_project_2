@@ -58,6 +58,7 @@ sys.path.insert(0, REPO_DIR)
 
 from pyspark.sql import functions as F
 import selection
+from utils import logger
 from config import (
     CATALOG_SCHEMA, DIVISION_ARCHIVE_TABLE, DIVISION_REFERENCE_TABLE,
     GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST, GD_TYPDOC_LATEST,
@@ -71,8 +72,8 @@ from config import (
 
 # COMMAND ----------
 
-print(f"Output      : {DIVISION_REFERENCE_TABLE}")
-print(f"Archive     : {DIVISION_ARCHIVE_TABLE or '(disabled)'}")
+logger.info(f"Output      : {DIVISION_REFERENCE_TABLE}")
+logger.info(f"Archive     : {DIVISION_ARCHIVE_TABLE or '(disabled)'}")
 
 _REQUIRED_SOURCES = [
     GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST,
@@ -124,11 +125,11 @@ else:
 # COMMAND ----------
 
 if df_fresh is None:
-    print("Freshness guard disabled (MAX_SOURCE_STALENESS_HOURS <= 0).")
+    logger.info("Freshness guard disabled (MAX_SOURCE_STALENESS_HOURS <= 0).")
 else:
     _rows = df_fresh.collect()
     for r in _rows:
-        print(f"  {r.age_hours:>6} h  {r.table_name}")
+        logger.info(f"  {r.age_hours:>6} h  {r.table_name}")
 
     _seen = {r.table_name.lower() for r in _rows}
     _absent = [t for t in _REQUIRED_SOURCES if t.lower() not in _seen]
@@ -140,7 +141,7 @@ else:
             f"  Stale: {_stale or 'none'}\n"
             f"  Missing from {INGESTION_FRESHNESS_TABLE}: {_absent or 'none'}"
         )
-    print(f"\nAll sources fresh (< {MAX_SOURCE_STALENESS_HOURS}h).")
+    logger.info(f"All sources fresh (< {MAX_SOURCE_STALENESS_HOURS}h).")
 
 # COMMAND ----------
 
@@ -152,7 +153,7 @@ else:
 df_reference = selection.build_division_reference(spark).cache()
 
 n_total = df_reference.count()
-print(f"\n{n_total} IDDOCs with a resolved division")
+logger.info(f"{n_total} IDDOCs with a resolved division")
 (
     df_reference.groupBy("division_source").count()
     .withColumnRenamed("count", "n_iddocs")
@@ -173,4 +174,4 @@ print(f"\n{n_total} IDDOCs with a resolved division")
     .option("overwriteSchema", "true")
     .saveAsTable(DIVISION_REFERENCE_TABLE)
 )
-print(f"Saved: {DIVISION_REFERENCE_TABLE} ({n_total} rows)")
+logger.info(f"Saved: {DIVISION_REFERENCE_TABLE} ({n_total} rows)")

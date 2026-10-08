@@ -1,5 +1,4 @@
 # Databricks notebook source
-# DBTITLE 1,Header
 # MAGIC %md
 # MAGIC # Qualibot ChatBot — Production Q&A Quality Scoring
 # MAGIC
@@ -119,13 +118,11 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Setup
 # MAGIC %pip install --upgrade mlflow[databricks] httpx --quiet
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
 
-# DBTITLE 1,Parameters
 dbutils.widgets.text("test_limit", "")  # e.g. "20" for an ad-hoc small-batch test run; empty = no cap
 dbutils.widgets.text("catalog_schema", "dev_landingzone.qualibot")
 # "table" (dev): dev_landingzone.qualibot.chat_messages, a Delta table refreshed
@@ -192,7 +189,6 @@ TEST_LIMIT = int(TEST_LIMIT) if TEST_LIMIT else None
 
 # COMMAND ----------
 
-# DBTITLE 1,Auth — cluster's attached identity
 import mlflow
 from databricks.sdk.core import Config
 
@@ -206,7 +202,6 @@ print(f"Host: {HOST} | MLflow {mlflow.__version__} | Experiment: {EVAL_EXPERIMEN
 
 # COMMAND ----------
 
-# DBTITLE 1,Inputs — new assistant turns not yet scored, with full thread context
 from pyspark.sql import functions as F
 
 # spark.read.table() on Spark Connect (serverless) is lazy — it never raises on
@@ -296,7 +291,6 @@ print(f"{len(pdf_pairs)} assistant turn(s) to score (selection={SELECTION})."
 
 # COMMAND ----------
 
-# DBTITLE 1,Judge — direct Luna calls (same pattern as analyze_feedback_failures.py::call_llm)
 import json
 import re
 
@@ -598,7 +592,6 @@ print(f"{len(DIMENSIONS)} LLM dimensions ready, judge = {LLM_MODEL} (direct call
 
 # COMMAND ----------
 
-# DBTITLE 1,Score — direct Luna calls per message per dimension (no KA call, no MLflow scorer black box)
 import pandas as pd
 
 
@@ -819,7 +812,6 @@ else:
 
 # COMMAND ----------
 
-# DBTITLE 1,Outputs — append to chat_quality_scores + real token/cost ledger
 from datetime import datetime, timezone
 
 if df_final.empty:

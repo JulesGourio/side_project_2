@@ -53,8 +53,17 @@
 
 # COMMAND ----------
 
+import logging
 import os
 import time
+
+logger = logging.getLogger("parsing_pipeline.sync_index")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
 
 dbutils.widgets.text("indexes", "", "Vector Search indexes (comma-separated)")
 dbutils.widgets.text("wait_minutes", "45", "Max wait for sync completion (minutes, 0 = don't wait)")
@@ -76,9 +85,9 @@ CATALOG_SCHEMA = dbutils.widgets.get("catalog_schema")
 TABLE_SUFFIX = dbutils.widgets.get("table_suffix")
 BUILD_CHUNKS_FULL = dbutils.widgets.get("build_chunks_full").strip().lower() in ("1", "true", "yes")
 
-print(f"{len(INDEXES)} index(es) to sync:")
+logger.info(f"{len(INDEXES)} index(es) to sync:")
 for n in INDEXES:
-    print(f"  - {n}")
+    logger.info(f"  - {n}")
 
 # COMMAND ----------
 
@@ -125,7 +134,7 @@ if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
                 delta.logRetentionDuration = 'interval 60 days'
             )
         """)
-        print(f"Created {FULL_TABLE} from {_sources}")
+        logger.info(f"Created {FULL_TABLE} from {_sources}")
     else:
         # New chunk columns (titre, type_document, langue… audit 2026-10) reach chunks_full too.
         spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
@@ -140,11 +149,11 @@ if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
             .whenNotMatchedBySourceDelete()
             .execute()
         )
-        print(f"Merged {_sources} into {FULL_TABLE}")
-    print(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
+        logger.info(f"Merged {_sources} into {FULL_TABLE}")
+    logger.info(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
 
 if not INDEXES:
-    print("No index to sync (`indexes` param empty) — nothing more to do.")
+    logger.info("No index to sync (`indexes` param empty) — nothing more to do.")
     dbutils.notebook.exit("no_index")
 
 # COMMAND ----------
@@ -178,7 +187,7 @@ w = WorkspaceClient()
 
 
 def _create_index(name, source_table):
-    print(f"{name}: not found -- creating (endpoint={VECTOR_SEARCH_ENDPOINT}, source={source_table})...")
+    logger.info(f"{name}: not found -- creating (endpoint={VECTOR_SEARCH_ENDPOINT}, source={source_table})...")
     w.vector_search_indexes.create_index(
         name=name,
         endpoint_name=VECTOR_SEARCH_ENDPOINT,
@@ -201,7 +210,7 @@ def _create_index(name, source_table):
         if "PROVISIONING" not in state:
             return
         time.sleep(15)
-    print(f"{name}: still PROVISIONING after 5 min -- proceeding anyway, the sync trigger below may need a retry tomorrow.")
+    logger.warning(f"{name}: still PROVISIONING after 5 min -- proceeding anyway, the sync trigger below may need a retry tomorrow.")
 
 
 before = {}
@@ -219,7 +228,7 @@ for name in INDEXES:
     src = idx.delta_sync_index_spec.source_table if idx.delta_sync_index_spec else "?"
     rows = idx.status.indexed_row_count if idx.status else None
     before[name] = rows
-    print(f"{name}\n    source={src}  indexed_rows={rows}  ready={idx.status.ready if idx.status else '?'}")
+    logger.info(f"{name}\n    source={src}  indexed_rows={rows}  ready={idx.status.ready if idx.status else '?'}")
 
 # COMMAND ----------
 
@@ -235,9 +244,9 @@ failed = []
 for name in INDEXES:
     try:
         w.vector_search_indexes.sync_index(index_name=name)
-        print(f"sync triggered: {name}")
+        logger.info(f"sync triggered: {name}")
     except Exception as exc:
-        print(f"sync rejected: {name} — {exc}")
+        logger.warning(f"sync rejected: {name} — {exc}")
         failed.append((name, str(exc)))
 
 if failed:
@@ -254,7 +263,7 @@ if failed:
 # COMMAND ----------
 
 if WAIT_MINUTES <= 0:
-    print("Wait disabled — syncs triggered, state not verified.")
+    logger.info("Wait disabled — syncs triggered, state not verified.")
 else:
     deadline = time.time() + WAIT_MINUTES * 60
     pending = set(INDEXES)
@@ -269,9 +278,9 @@ else:
                 msg = getattr(st, "message", None) or "no further detail from the SDK"
                 raise RuntimeError(f"{name}: sync failed (state={state}) — {msg}")
             if st and st.ready and "PROVISIONING" not in state and "SYNC" not in state:
-                print(f"{name}: done — indexed_rows {before[name]} -> {st.indexed_row_count}")
+                logger.info(f"{name}: done — indexed_rows {before[name]} -> {st.indexed_row_count}")
                 pending.discard(name)
     if pending:
         # Not an error — sync keeps running server-side; the job's useful work is done.
-        print(f"Still running after {WAIT_MINUTES} min: {sorted(pending)}")
-    print("\nDone.")
+        logger.warning(f"Still running after {WAIT_MINUTES} min: {sorted(pending)}")
+    logger.info("Done.")

@@ -1,5 +1,4 @@
 # Databricks notebook source
-# DBTITLE 1,Export Lakebase UAT to UC volume
 import datetime
 import json
 import os

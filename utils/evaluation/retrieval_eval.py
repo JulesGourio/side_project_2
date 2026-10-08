@@ -35,7 +35,6 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------
 
-# DBTITLE 1,Parameters
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 # What to measure, comma-separated: "label[=catalog.schema.index][|rerank=N][|raw=N][|cap=N]".
 # "chat" alone = the app as deployed. Index after a rechunk: "chat,rechunk=dev_landingzone.qualibot.chunks_test_index".
@@ -58,7 +57,6 @@ RESULTS = dbutils.widgets.get('results_table').strip()
 
 # COMMAND ----------
 
-# DBTITLE 1,App configuration (app.yaml env, then target_config.env) — before importing the app
 import os, re, shlex, sys
 import yaml
 
@@ -117,7 +115,6 @@ if spark.catalog.tableExists(RESULTS) and not RERUN:
 
 # COMMAND ----------
 
-# DBTITLE 1,App code — the search step of one chat turn
 import asyncio, json, time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -185,7 +182,6 @@ def run_case(case: dict) -> dict:
 
 # COMMAND ----------
 
-# DBTITLE 1,Cases — every question with an expected document
 def _refs(values):
     return sorted({canon_ref(v) for v in values or [] if v})
 
@@ -223,7 +219,6 @@ print('to run:', {name: len(cases) for name, cases in TODO.items() if cases} or 
 
 # COMMAND ----------
 
-# DBTITLE 1,Run — one index after the other, its missing questions in parallel, saved as it ends
 _SCHEMA = """config string, settings string, run_ts timestamp, source string, case_id string, division string,
 question string, query_type string, expected array<string>, partial array<string>, retrieved array<string>,
 recall double, hit double, first_rank int, partial_recall double, n_docs int, n_passages int, chars int,
@@ -264,7 +259,6 @@ for name, cases in TODO.items():
 
 # COMMAND ----------
 
-# DBTITLE 1,Results — per index and source, on the questions every index answered
 # One row per (configuration, question): its latest error-free run, else its latest error.
 # `common` keeps only the questions with no error in ANY configuration shown, so every
 # configuration is scored on the same questions (an error would otherwise just drop a question).

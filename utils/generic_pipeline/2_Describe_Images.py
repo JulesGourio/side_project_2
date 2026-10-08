@@ -44,7 +44,7 @@ for _mod in ("config.py", "selection.py"):
 for _mod in ("utils.py", "image_utils.py"):
     spark.sparkContext.addPyFile(os.path.join(PARSING_PIPELINE_DIR, _mod))
 
-from utils import configure, token_count_udf
+from utils import configure, token_count_udf, logger
 from image_utils import describe_all_images, safe_requests_per_minute
 
 from config import *
@@ -73,7 +73,7 @@ WS_HOST = spark.conf.get("spark.databricks.workspaceUrl")
 
 _TEMP_TABLE = f"{CATALOG_SCHEMA}._image_updates_temp{TABLE_SUFFIX}"
 
-print(f"RUN_MODE={RUN_MODE} | Model={LLM_MODEL_ENDPOINT} | concurrency={LLM_MAX_CONCURRENT} | batch={LLM_BATCH_SIZE or 'ALL'}")
+logger.info(f"RUN_MODE={RUN_MODE} | Model={LLM_MODEL_ENDPOINT} | concurrency={LLM_MAX_CONCURRENT} | batch={LLM_BATCH_SIZE or 'ALL'}")
 
 # COMMAND ----------
 
@@ -91,7 +91,7 @@ if RUN_MODE == "full":
             input_tokens = NULL, output_tokens = NULL, described_at = NULL
         WHERE volume_path IS NOT NULL
     """)
-    print(f"[FULL] Reset all images to PENDING in {SOURCE_IMAGE_TABLE}")
+    logger.info(f"[FULL] Reset all images to PENDING in {SOURCE_IMAGE_TABLE}")
 
 df_pending = (
     spark.table(SOURCE_IMAGE_TABLE)
@@ -102,9 +102,9 @@ pending_count = df_pending.count()
 _status_counts = {r["status"]: r["cnt"] for r in df_pending.groupBy("status").agg(F.count("*").alias("cnt")).collect()}
 _pending_only = _status_counts.get("PENDING", 0)
 _error_retry = _status_counts.get("ERROR", 0)
-print(f"Images to process: {pending_count} total ({_pending_only} new PENDING + {_error_retry} ERROR retries)")
+logger.info(f"Images to process: {pending_count} total ({_pending_only} new PENDING + {_error_retry} ERROR retries)")
 if pending_count == 0:
-    print("Nothing to do — no PENDING or ERROR images.")
+    logger.info("Nothing to do — no PENDING or ERROR images.")
 
 # COMMAND ----------
 
@@ -116,7 +116,7 @@ if pending_count == 0:
 df_to_process = df_pending.limit(LLM_BATCH_SIZE) if (LLM_BATCH_SIZE and pending_count > LLM_BATCH_SIZE) else df_pending
 rows_to_process = [r.asDict() for r in df_to_process.collect()]
 
-print(f"Batch: {len(rows_to_process)} images"
+logger.info(f"Batch: {len(rows_to_process)} images"
       + (f" | batched from {pending_count}" if LLM_BATCH_SIZE and pending_count > LLM_BATCH_SIZE else ""))
 
 # COMMAND ----------
@@ -166,16 +166,16 @@ def _merge_chunk_results(results):
 total_done = total_err = total_tin = total_tout = 0
 
 if not rows_to_process:
-    print("Nothing to describe.")
+    logger.info("Nothing to describe.")
 else:
     _rpm = safe_requests_per_minute(
         LLM_ITPM_BUDGET, LLM_OTPM_BUDGET, LLM_QPH_BUDGET,
         LLM_AVG_INPUT_TOKENS, LLM_AVG_OUTPUT_TOKENS,
     )
-    print(f"Rate limiter : {_rpm:.0f} req/min")
+    logger.info(f"Rate limiter : {_rpm:.0f} req/min")
 
     n_chunks = math.ceil(len(rows_to_process) / LLM_CHECKPOINT_CHUNK_SIZE)
-    print(f"{len(rows_to_process)} images -> {n_chunks} chunk(s) of up to {LLM_CHECKPOINT_CHUNK_SIZE}")
+    logger.info(f"{len(rows_to_process)} images -> {n_chunks} chunk(s) of up to {LLM_CHECKPOINT_CHUNK_SIZE}")
 
     for chunk_idx in range(n_chunks):
         chunk = rows_to_process[chunk_idx * LLM_CHECKPOINT_CHUNK_SIZE:(chunk_idx + 1) * LLM_CHECKPOINT_CHUNK_SIZE]
@@ -193,7 +193,7 @@ else:
                 requests_per_minute=_rpm,
             ))
         except Exception as e:
-            print(f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} failed: {str(e)[:300]}")
+            logger.error(f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} failed: {str(e)[:300]}")
             raise
 
         done = sum(1 for r in described_images if r["status"] == "DONE")
@@ -206,11 +206,11 @@ else:
         import gc; gc.collect()
 
         total_done += done; total_err += err; total_tin += tin; total_tout += tout
-        print(f"[chunk {chunk_idx + 1}/{n_chunks}] {len(chunk)} images in {time.time() - t0:.1f}s | "
+        logger.info(f"[chunk {chunk_idx + 1}/{n_chunks}] {len(chunk)} images in {time.time() - t0:.1f}s | "
               f"ok={done} err={err} | tokens {tin:,} in / {tout:,} out")
 
     spark.sql(f"DROP TABLE IF EXISTS {_TEMP_TABLE}")
-    print(f"\nDescription summary: {total_done} ok / {total_err} err over {len(rows_to_process)} images")
+    logger.info(f"Description summary: {total_done} ok / {total_err} err over {len(rows_to_process)} images")
 
 # COMMAND ----------
 
@@ -243,9 +243,9 @@ if spark.catalog.tableExists(TARGET_CHUNK_TABLE):
 
 described_count = df_described.count()
 if described_count == 0:
-    print("No new image chunks to inject.")
+    logger.info("No new image chunks to inject.")
 else:
-    print(f"{described_count} new image chunks to inject.")
+    logger.info(f"{described_count} new image chunks to inject.")
     df_max_idx = (
         spark.table(TARGET_CHUNK_TABLE)
         .filter(F.col("chunk_content_type") != "image")
@@ -307,7 +307,7 @@ if described_count > 0:
             .whenNotMatchedInsertAll()
             .execute()
         )
-    print(f"Merged {described_count} image chunks into {TARGET_CHUNK_TABLE}")
+    logger.info(f"Merged {described_count} image chunks into {TARGET_CHUNK_TABLE}")
 
     spark.sql(f"ALTER TABLE {TARGET_CHUNK_TABLE} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
 

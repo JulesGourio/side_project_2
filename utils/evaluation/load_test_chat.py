@@ -37,7 +37,6 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------
 
-# DBTITLE 1,Parameters
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 dbutils.widgets.dropdown('mode', 'auto', ['auto', 'app', 'engine'])
 dbutils.widgets.text('app_name', 'qualibot')
@@ -80,7 +79,6 @@ def run_async(coro):
 
 # COMMAND ----------
 
-# DBTITLE 1,Questions — the golden set, then real DEV questions (division and language as asked)
 _DIVISION_PREFIX = re.compile(r'^\[Division: (?:AS|IS)\][\s\S]*?\n\n')
 QUESTIONS = []
 for r in spark.table(dbutils.widgets.get('golden_table')).select('inputs').collect():
@@ -99,7 +97,6 @@ print(len(QUESTIONS), 'questions;', sum(LEVELS) * ROUNDS, 'to send over the step
 
 # COMMAND ----------
 
-# DBTITLE 1,One question through the app (WebSocket, as the browser) or through the engine
 import websockets
 
 APP_URL = (w.apps.get(dbutils.widgets.get('app_name').strip()).url or '').rstrip('/')
@@ -186,7 +183,6 @@ async def ask(mode, q, session_id):
 
 # COMMAND ----------
 
-# DBTITLE 1,Mode — can this notebook open the app's WebSocket?
 MODE = dbutils.widgets.get('mode')
 if MODE in ('auto', 'app'):
     probe = run_async(ask('app', QUESTIONS[0], f'loadtest-{RUN_ID}-probe'))
@@ -204,7 +200,6 @@ print(f'MODE = {MODE}', f'({WS_URL})' if MODE == 'app' else '(engine called in t
 
 # COMMAND ----------
 
-# DBTITLE 1,Run — one step after the other, saved as each step ends
 _SCHEMA = """run_id string, mode string, level int, worker int, seq int, division string, question string,
 started_at timestamp, ttft_s double, total_s double, status string, error string, answer_chars int, n_sources int"""
 _next = iter(range(10**9))
@@ -243,7 +238,6 @@ for level in LEVELS:
 
 # COMMAND ----------
 
-# DBTITLE 1,Results — per step
 display(spark.sql(f"""
 SELECT level, count(*) AS questions,
        round(avg(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) * 100, 1) AS ok_pct,

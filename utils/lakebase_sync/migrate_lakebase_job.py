@@ -1,5 +1,4 @@
 # Databricks notebook source
-# DBTITLE 1,Migrate Lakebase schema (job — runs on Databricks compute, no local 5432 needed)
 import psycopg2
 from databricks.sdk import WorkspaceClient
 

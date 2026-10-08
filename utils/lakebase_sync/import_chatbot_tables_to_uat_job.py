@@ -1,5 +1,4 @@
 # Databricks notebook source
-# DBTITLE 1,Import chatbot JSON exports into UAT Delta tables
 # Loads only the chatbot-related JSON exports (chat_feedbacks, chat_messages,
 # chat_sessions) from the UAT staging volume into uat_landingzone.qualibot
 # Delta tables.  Runs as a second task in the lakebase_export_uat_to_volume

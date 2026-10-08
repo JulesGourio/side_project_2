@@ -1,5 +1,4 @@
 # Databricks notebook source
-# DBTITLE 1,Header
 # MAGIC %md
 # MAGIC # Qualibot — Production Answer Quality Monitoring
 # MAGIC
@@ -56,7 +55,6 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Setup — installs only missing packages, without altering the runtime's own packages
 import importlib.metadata as md, subprocess, sys
 
 NEEDED = {"mlflow": (3, 11)}  # typed make_judge feedback; databricks:/ judge models without LiteLLM
@@ -90,7 +88,6 @@ print({p: _installed(p) for p in NEEDED})
 
 # COMMAND ----------
 
-# DBTITLE 1,Parameters
 dbutils.widgets.text("test_limit", "")                                            # e.g. "20"; empty = no cap
 dbutils.widgets.dropdown("dry_run", "false", ["true", "false"])                   # true = estimate only, nothing written
 dbutils.widgets.dropdown("rescore_changed_config", "false", ["true", "false"])    # true = re-score turns judged with another configuration
@@ -166,7 +163,6 @@ print(f"dry_run={DRY_RUN} · rescore_changed_config={RESCORE_CHANGED} · reset_o
 
 # COMMAND ----------
 
-# DBTITLE 1,Connections — workspace, MLflow experiment
 import os
 import time
 
@@ -187,7 +183,6 @@ print(f"MLflow {mlflow.__version__} · experiment {EXPERIMENT_PATH} (id {EXPERIM
 
 # COMMAND ----------
 
-# DBTITLE 1,Shared scorers and helpers — identical in Evaluate_Knowledge_Assistant.py and Score_Production_QA.py
 # This cell is identical in both notebooks (checked by tests/test_shared.py): the same judges score the golden dataset
 # and the production turns, so that their results can be compared in the dashboard.
 import hashlib
@@ -752,7 +747,6 @@ def replace_rows(table: str, schema, rows: list, keys: list):
 
 # COMMAND ----------
 
-# DBTITLE 1,Document references — keys insensitive to language suffix, separators and zero padding
 _EXT = re.compile(r"\.(pdf|docx?|xlsx?|pptx?|txt)$", re.I)
 _LANG = re.compile(r"[-_. ](%s)$" % "|".join(LANG_SUFFIXES), re.I)
 _CODE = re.compile(r"^(?=.*\d)(?=(?:.*[A-Z]){2})[A-Z][A-Z0-9_.\-]{2,28}( (%s))?$" % "|".join(LANG_SUFFIXES))
@@ -845,7 +839,6 @@ def classify_refs(cited, excerpt_text: str) -> dict:
 
 # COMMAND ----------
 
-# DBTITLE 1,Production scorers — question type, answer type, sampled safety, user reaction, citation count
 INTENTS = ["definition_acronym", "document_lookup", "procedure_howto", "rule_requirement", "requirement_compliance",
            "comparison_multi_doc", "link_or_navigation", "person_or_org", "chitchat_or_meta", "out_of_scope"]
 ANSWER_TYPES = ["answered_full", "answered_partial", "not_found", "out_of_scope_refusal", "clarification_request",
@@ -931,7 +924,6 @@ def build_scorers(model):
 
 # COMMAND ----------
 
-# DBTITLE 1,Turn verdict — actionable rules on top of the scorers, and the stage at fault (retrieval or generation)
 # Stage at fault of each failure reason: retrieval = the assistant's search did not bring what the index holds;
 # generation = the model misused what it retrieved (claims not in its passages, information it had but left out).
 REASON_STAGE = {"retrieval_miss": "retrieval",
@@ -992,7 +984,6 @@ def turn_verdict(v: dict) -> tuple:
 
 # COMMAND ----------
 
-# DBTITLE 1,Judge check and registration — the run stops if the judge model does not answer
 import inspect
 
 JUDGE_MODEL = f"databricks:/{JUDGE_ENDPOINT}" if JUDGE_ENDPOINT else None
@@ -1021,7 +1012,6 @@ if not DRY_RUN:
 
 # COMMAND ----------
 
-# DBTITLE 1,Inputs — assistant turns to score, with thread, next user message and votes
 from pyspark.sql import functions as F
 
 src_cols = set(spark.table(SOURCE_TABLE).columns)
@@ -1098,7 +1088,6 @@ print(f"{len(pdf_pairs)} assistant turn(s) to score (cap {cap}).")
 
 # COMMAND ----------
 
-# DBTITLE 1,Replayed turns — evaluation records and the traced replay (answer, what the assistant retrieved, index search)
 
 def to_messages(prior) -> list:
     """COLLECT_LIST(STRUCT(...)) comes back as dicts or Rows depending on the Spark Connect path."""
@@ -1221,7 +1210,6 @@ def replay_turn(messages, message_id):
 
 # COMMAND ----------
 
-# DBTITLE 1,Assistant traces — the passages the assistant retrieved, read from its own trace (sample check)
 # The judges compare each answer with the passages the assistant retrieved. They are read from the assistant's MLflow
 # trace (trace_id of chat_messages); when a trace shows no retrieval step, its span structure is printed below and the
 # judges fall back on excerpts of the cited documents.
@@ -1245,7 +1233,6 @@ if not _sampled_trace_ids:
 
 # COMMAND ----------
 
-# DBTITLE 1,Records — one row per turn and one per turn × scorer; verdict and user vote attached to the trace
 from mlflow.entities import AssessmentSource, AssessmentSourceType
 
 RULE_SOURCE = AssessmentSource(source_type=AssessmentSourceType.CODE, source_id="turn_verdict_rules")
@@ -1393,7 +1380,6 @@ def score_batch(batch: list) -> tuple:
 
 # COMMAND ----------
 
-# DBTITLE 1,Unity Catalog tables — documented schemas, rows replaced by key, run ledger
 import pandas as pd
 from pyspark.sql.types import StructField, StructType
 
@@ -1576,7 +1562,6 @@ def write_run(df: pd.DataFrame, n_left: int) -> dict:
 
 # COMMAND ----------
 
-# DBTITLE 1,Run — batches of turns scored with mlflow.genai.evaluate, paced on the judge model's rate limits
 # Each batch holds about one minute of this job's share of the judge model's token limits, estimated from the prompt
 # sizes and corrected by the tokens the judge model reports. Its scores are written before the next batch starts, so
 # an interrupted run keeps what it scored. No batch starts after max_run_minutes: the turns left go to the next run.
@@ -1670,7 +1655,6 @@ if len(df_final):
 
 # COMMAND ----------
 
-# DBTITLE 1,Alerts — today's bad rate vs 7-day baseline, per assistant
 alerts = []
 if spark.catalog.tableExists(SCORES_TABLE):
     daily = spark.sql(f"""
@@ -1695,7 +1679,6 @@ print("\n".join("🚨 " + a for a in alerts) if alerts else "No alert.")
 
 # COMMAND ----------
 
-# DBTITLE 1,MLflow run — verdict metrics, failure reasons, worst turns; optional verdict on the assistant traces
 if run_row:
     with mlflow.start_run(run_id=MLFLOW_RUN_ID):
         mlflow.set_tags({"alerts": " | ".join(alerts)[:4000] or "none"})
@@ -1731,7 +1714,6 @@ if FAIL_ON_ALERT and alerts:
 
 # COMMAND ----------
 
-# DBTITLE 1,Output schema — the dashboard reads the tables: views over the quality outputs are dropped
 QUALITY_VIEW_PREFIXES = ("v_chat_quality_", "v_ka_eval_", "v_quality_shared_scorers")
 if not DRY_RUN:
     _catalog, _schema = OUTPUT_SCHEMA.split(".", 1)
@@ -1743,7 +1725,6 @@ if not DRY_RUN:
 
 # COMMAND ----------
 
-# DBTITLE 1,Run summary — what was written, and where to look
 if DRY_RUN:
     print("Dry run: no judge call, no table write, no MLflow run. Set dry_run=false to score.")
 elif df_final.empty:

@@ -1,5 +1,4 @@
 # Databricks notebook source
-# DBTITLE 1,Import Lakebase export into DEV
 # Only consumer today: the "Qualibot Usage Tracking" Lakeview dashboard (DEV
 # workspace), which reads dev_landingzone.qualibot.{messages,feedbacks,users,
 # chat_messages,chat_sessions,chat_feedbacks} written by this job.

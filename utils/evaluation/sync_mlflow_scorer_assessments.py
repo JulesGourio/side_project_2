@@ -1,5 +1,4 @@
 # Databricks notebook source
-# DBTITLE 1,Header
 # MAGIC %md
 # MAGIC # Sync MLflow native scorer assessments into a queryable Delta table
 # MAGIC
@@ -26,13 +25,11 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Setup
 # MAGIC %pip install --upgrade mlflow[databricks] --quiet
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
 
-# DBTITLE 1,Parameters
 dbutils.widgets.text("catalog_schema", "uat_landingzone.qualibot")
 CATALOG_SCHEMA = dbutils.widgets.get("catalog_schema").strip()
 OUTPUT_TABLE = f"{CATALOG_SCHEMA}.ka_mlflow_scorer_assessments"
@@ -55,7 +52,6 @@ print(f"MLflow {mlflow.__version__}")
 
 # COMMAND ----------
 
-# DBTITLE 1,Parse one trace's assessments column into flat rows
 def _parse_assessments(raw) -> list:
     """The assessments column comes back as a real list of dicts on some paths
     and as a Python-repr'd string on others (seen both from the same API in
@@ -104,7 +100,6 @@ def rows_from_trace(trace_id: str, request_time_ms: int, assessments_raw) -> lis
 
 # COMMAND ----------
 
-# DBTITLE 1,Incremental read per division experiment
 import pandas as pd
 
 table_exists = spark.catalog.tableExists(OUTPUT_TABLE)
@@ -141,7 +136,6 @@ print(f"\n{len(df_final)} assessment row(s) total across {df_final['scorer_name'
 
 # COMMAND ----------
 
-# DBTITLE 1,Persist
 if df_final.empty:
     print("Nothing new to sync.")
 else:

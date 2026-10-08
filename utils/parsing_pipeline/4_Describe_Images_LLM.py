@@ -85,7 +85,7 @@ from pyspark.sql import Row
 for _mod in ("chunking.py", "utils.py", "image_utils.py", "selection.py", "config.py"):
     spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
 
-from utils import configure, token_count_udf, intraqual_ref_url
+from utils import configure, token_count_udf, intraqual_ref_url, logger
 from image_utils import describe_all_images, safe_requests_per_minute
 
 from config import *
@@ -115,7 +115,7 @@ WS_HOST = spark.conf.get("spark.databricks.workspaceUrl")
 
 _TEMP_TABLE = f"{CATALOG_SCHEMA}._image_updates_temp"
 
-print(f"RUN_MODE={RUN_MODE} | Model={LLM_MODEL_ENDPOINT} | concurrency={LLM_MAX_CONCURRENT} | batch={LLM_BATCH_SIZE or 'ALL'}")
+logger.info(f"RUN_MODE={RUN_MODE} | Model={LLM_MODEL_ENDPOINT} | concurrency={LLM_MAX_CONCURRENT} | batch={LLM_BATCH_SIZE or 'ALL'}")
 
 # COMMAND ----------
 
@@ -139,7 +139,7 @@ if RUN_MODE == "full":
             input_tokens = NULL, output_tokens = NULL, described_at = NULL
         WHERE volume_path IS NOT NULL
     """)
-    print(f"[FULL] Reset all images to PENDING in {SOURCE_IMAGE_TABLE}")
+    logger.info(f"[FULL] Reset all images to PENDING in {SOURCE_IMAGE_TABLE}")
 
 df_pending = (
     spark.table(SOURCE_IMAGE_TABLE)
@@ -153,11 +153,11 @@ pending_count = df_pending.count()
 _status_counts = {r["status"]: r["cnt"] for r in df_pending.groupBy("status").agg(F.count("*").alias("cnt")).collect()}
 _pending_only = _status_counts.get("PENDING", 0)
 _error_retry = _status_counts.get("ERROR", 0)
-print(f"Images to process: {pending_count} total ({_pending_only} new PENDING + {_error_retry} ERROR retries)")
+logger.info(f"Images to process: {pending_count} total ({_pending_only} new PENDING + {_error_retry} ERROR retries)")
 if pending_count == 0:
-    print("✅ Nothing to do — no PENDING or ERROR images.")
+    logger.info("Nothing to do — no PENDING or ERROR images.")
 elif _error_retry > 0 and _pending_only == 0:
-    print(f"  ℹ️  No new images — only retrying {_error_retry} previously failed images.")
+    logger.info(f"  No new images — only retrying {_error_retry} previously failed images.")
 
 # COMMAND ----------
 
@@ -169,7 +169,7 @@ elif _error_retry > 0 and _pending_only == 0:
 df_to_process = df_pending.limit(LLM_BATCH_SIZE) if (LLM_BATCH_SIZE and pending_count > LLM_BATCH_SIZE) else df_pending
 rows_to_process = [r.asDict() for r in df_to_process.collect()]
 
-print(f"Batch: {len(rows_to_process)} images ({_pending_only} new + {_error_retry} retries)"
+logger.info(f"Batch: {len(rows_to_process)} images ({_pending_only} new + {_error_retry} retries)"
       + (f" | batched from {pending_count}" if LLM_BATCH_SIZE and pending_count > LLM_BATCH_SIZE else ""))
 
 # COMMAND ----------
@@ -227,17 +227,17 @@ def _merge_chunk_results(results):
 total_done = total_err = total_tin = total_tout = 0
 
 if not rows_to_process:
-    print("✅ Nothing to describe — no PENDING or ERROR images found in image_metadata.")
+    logger.info("Nothing to describe — no PENDING or ERROR images found in image_metadata.")
 else:
     # Safe throughput bounded by the endpoint's quota (bottleneck = OUTPUT/OTPM).
     _rpm = safe_requests_per_minute(
         LLM_ITPM_BUDGET, LLM_OTPM_BUDGET, LLM_QPH_BUDGET,
         LLM_AVG_INPUT_TOKENS, LLM_AVG_OUTPUT_TOKENS,
     )
-    print(f"Rate limiter : {_rpm:.0f} req/min  (ITPM<={LLM_ITPM_BUDGET:,}, OTPM<={LLM_OTPM_BUDGET:,}, QPH<={LLM_QPH_BUDGET:,})")
+    logger.info(f"Rate limiter : {_rpm:.0f} req/min  (ITPM<={LLM_ITPM_BUDGET:,}, OTPM<={LLM_OTPM_BUDGET:,}, QPH<={LLM_QPH_BUDGET:,})")
 
     n_chunks = math.ceil(len(rows_to_process) / LLM_CHECKPOINT_CHUNK_SIZE)
-    print(f"{len(rows_to_process)} images -> {n_chunks} chunk(s) of up to {LLM_CHECKPOINT_CHUNK_SIZE}, "
+    logger.info(f"{len(rows_to_process)} images -> {n_chunks} chunk(s) of up to {LLM_CHECKPOINT_CHUNK_SIZE}, "
           f"persisted after each chunk")
 
     for chunk_idx in range(n_chunks):
@@ -256,8 +256,8 @@ else:
                 requests_per_minute=_rpm,
             ))
         except Exception as e:
-            print(f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} describe_all_images failed: {str(e)[:300]}")
-            print(f"        {total_done} ok / {total_err} err from prior chunks are already persisted.")
+            logger.error(f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} describe_all_images failed: {str(e)[:300]}")
+            logger.info(f"        {total_done} ok / {total_err} err from prior chunks are already persisted.")
             raise
 
         done = sum(1 for r in described_images if r["status"] == "DONE")
@@ -272,7 +272,7 @@ else:
         import gc; gc.collect()
 
         total_done += done; total_err += err; total_tin += tin; total_tout += tout
-        print(f"[chunk {chunk_idx + 1}/{n_chunks}] {len(chunk)} images in {time.time() - t0:.1f}s | "
+        logger.info(f"[chunk {chunk_idx + 1}/{n_chunks}] {len(chunk)} images in {time.time() - t0:.1f}s | "
               f"ok={done} err={err} | tokens {tin:,} in / {tout:,} out | "
               f"cumulative: ok={total_done} err={total_err}")
 
@@ -280,19 +280,18 @@ else:
 
     remaining_pending = spark.table(SOURCE_IMAGE_TABLE).filter(F.col("status") == "PENDING").count()
     remaining_error = spark.table(SOURCE_IMAGE_TABLE).filter(F.col("status") == "ERROR").count()
-    print(f"\n{'='*60}")
-    print(f"Description summary: {total_done} ok / {total_err} err over {len(rows_to_process)} images")
-    print(f"  Tokens: {total_tin:,} in / {total_tout:,} out")
-    print(f"  Remaining: {remaining_pending} PENDING, {remaining_error} ERROR (will retry next run)")
+    logger.info(f"Description summary: {total_done} ok / {total_err} err over {len(rows_to_process)} images")
+    logger.info(f"  Tokens: {total_tin:,} in / {total_tout:,} out")
+    logger.info(f"  Remaining: {remaining_pending} PENDING, {remaining_error} ERROR (will retry next run)")
     if remaining_error > 0:
         _err_docs = spark.table(SOURCE_IMAGE_TABLE).filter(F.col("status") == "ERROR").select("IDDOC").distinct().count()
-        print(f"  ⚠️  {remaining_error} images in ERROR across {_err_docs} documents")
+        logger.warning(f"  {remaining_error} images in ERROR across {_err_docs} documents")
     if remaining_pending:
-        print("  → Re-run for the rest.")
+        logger.info("  -> Re-run for the rest.")
     elif remaining_error == 0:
-        print("  → All images described successfully.")
+        logger.info("  -> All images described successfully.")
     else:
-        print("  → No PENDING left, but ERROR images remain — they will be retried next run.")
+        logger.info("  -> No PENDING left, but ERROR images remain — they will be retried next run.")
 
 # COMMAND ----------
 
@@ -349,12 +348,12 @@ if described_count == 0:
         (F.col("status") == "DONE") & F.col("description").isNotNull()
     ).count()
     _total_error = spark.table(SOURCE_IMAGE_TABLE).filter(F.col("status") == "ERROR").count()
-    print(f"No new image chunks to inject.")
-    print(f"  {_total_done} DONE images → all already have chunks in {TARGET_CHUNK_TABLE}")
+    logger.info(f"No new image chunks to inject.")
+    logger.info(f"  {_total_done} DONE images -> all already have chunks in {TARGET_CHUNK_TABLE}")
     if _total_error > 0:
-        print(f"  {_total_error} ERROR images → not injected (will retry description next run)")
+        logger.info(f"  {_total_error} ERROR images -> not injected (will retry description next run)")
 else:
-    print(f"{described_count} new image chunks to inject into chunk tables.")
+    logger.info(f"{described_count} new image chunks to inject into chunk tables.")
     df_text_all = spark.table(TARGET_CHUNK_TABLE).select("IDDOC", "chunk_index", "chunk_content_type",
                                                          "chunk_text", "semantic_headers")
     if spark.catalog.tableExists(TARGET_CHUNK_TABLE_ARCHIVE):
@@ -504,12 +503,12 @@ if described_count > 0:
     df_archive_image_chunks = _df_image_chunks_cached.filter(~_is_recent)
     _archive_chunk_count = df_archive_image_chunks.count()
     _merge_image_chunks(df_archive_image_chunks, TARGET_CHUNK_TABLE_ARCHIVE)
-    print(f"Merged {_archive_chunk_count} image chunks into {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
+    logger.info(f"Merged {_archive_chunk_count} image chunks into {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
     df_image_chunks = _df_image_chunks_cached.filter(_is_recent)
     _chunk_count = df_image_chunks.count()
 
     _merge_image_chunks(df_image_chunks, TARGET_CHUNK_TABLE)
-    print(f"Merged {_chunk_count} image chunks into {TARGET_CHUNK_TABLE}")
+    logger.info(f"Merged {_chunk_count} image chunks into {TARGET_CHUNK_TABLE}")
 
     _df_image_chunks_cached.unpersist()
 
@@ -518,7 +517,7 @@ if described_count > 0:
         ALTER TABLE {TARGET_CHUNK_TABLE}
         SET TBLPROPERTIES (delta.enableChangeDataFeed = true)
     """)
-    print(f"CDF enabled on {TARGET_CHUNK_TABLE}")
+    logger.info(f"CDF enabled on {TARGET_CHUNK_TABLE}")
 
 # COMMAND ----------
 
@@ -539,7 +538,7 @@ df_empty_text_iddocs = (
 empty_text_count = df_empty_text_iddocs.count()
 
 if empty_text_count == 0:
-    print("No EMPTY_TEXT document pending promotion.")
+    logger.info("No EMPTY_TEXT document pending promotion.")
 else:
     df_their_images = spark.table(SOURCE_IMAGE_TABLE).join(F.broadcast(df_empty_text_iddocs), on="IDDOC", how="inner")
 
@@ -552,7 +551,7 @@ else:
     ready_count = df_ready_iddocs.count()
 
     if ready_count == 0:
-        print(f"{empty_text_count} EMPTY_TEXT document(s), none fully described yet.")
+        logger.info(f"{empty_text_count} EMPTY_TEXT document(s), none fully described yet.")
     else:
         df_assembled = (
             df_their_images.join(F.broadcast(df_ready_iddocs), on="IDDOC", how="inner")
@@ -586,7 +585,7 @@ else:
                 })
                 .execute()
             )
-            print(f"Promoted {promoted_count} EMPTY_TEXT document(s) to SUCCESS (all images now described).")
+            logger.info(f"Promoted {promoted_count} EMPTY_TEXT document(s) to SUCCESS (all images now described).")
 
         # Ready but every image was SKIP -- terminal anyway so it stops being re-scanned daily.
         df_ready_empty = df_ready_iddocs.join(df_assembled.select("IDDOC"), on="IDDOC", how="left_anti")
@@ -603,7 +602,7 @@ else:
                 })
                 .execute()
             )
-            print(f"{empty_promoted_count} EMPTY_TEXT document(s) had every image judged non-informative -> SKIPPED_EMPTY_IMAGES.")
+            logger.info(f"{empty_promoted_count} EMPTY_TEXT document(s) had every image judged non-informative -> SKIPPED_EMPTY_IMAGES.")
 
 # COMMAND ----------
 

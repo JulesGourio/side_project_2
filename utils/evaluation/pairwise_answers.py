@@ -54,7 +54,6 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------
 
-# DBTITLE 1,Parameters and app configuration (app.yaml, then target_config.env)
 import os, re, shlex, sys
 import yaml
 
@@ -129,7 +128,6 @@ assert JUDGE not in {REFERENCE['model']} | {c['model'] for c in CONTENDERS}, 'th
 
 # COMMAND ----------
 
-# DBTITLE 1,App code: search, answer, judge
 import asyncio, json, time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -331,7 +329,6 @@ def in_threads(fn, items):
 
 # COMMAND ----------
 
-# DBTITLE 1,Questions: the golden set first, then real DEV questions (with their earlier turns)
 CASES = []
 for r in spark.table(dbutils.widgets.get('golden_table')).select('dataset_record_id', 'inputs').collect():
     CASES.append({'source': 'golden', 'case_id': r['dataset_record_id'], 'division': 'ALL',
@@ -373,7 +370,6 @@ print(len(CASES), 'questions,', len(TODO), 'comparisons to run | reference', REF
 
 # COMMAND ----------
 
-# DBTITLE 1,Phase 1 — searches, one index at a time
 cases_todo = {(c['source'], c['case_id']): c for c, _ in TODO}
 # Cache key: (index, rewrite model, source, case_id) — the same search is reused by later runs.
 SEARCH = {(k[0],) + k[2:]: v for k, v in cache_load('search').items() if k[1] == REWRITE}
@@ -388,7 +384,6 @@ for index in sorted({REFERENCE['index']} | {v['index'] for _, v in TODO}):
 
 # COMMAND ----------
 
-# DBTITLE 1,Phase 2 — answers (the reference once per question, each contender)
 # A job = (model, index, source, case_id).
 jobs = sorted({(REFERENCE['model'], REFERENCE['index']) + k for k in cases_todo}
               | {(v['model'], v['index'], c['source'], c['case_id']) for c, v in TODO})
@@ -435,7 +430,6 @@ print(sum(1 for a in ANSWERS.values() if 'error' not in a), '/', len(ANSWERS), '
 
 # COMMAND ----------
 
-# DBTITLE 1,Phase 3 — judgments, both orders
 def _docs(index, source, case_id):
     s = SEARCH[(index, source, case_id)]
     return documents_text(s['documents']) if 'error' not in s else ''
@@ -515,7 +509,6 @@ print(f'{len(outs)} judgments in {time.monotonic() - t0:.0f} s, {sum(1 for o in 
 
 # COMMAND ----------
 
-# DBTITLE 1,Results — each contender against the reference
 spark.sql(f"""CREATE OR REPLACE TEMPORARY VIEW pair AS
 SELECT * EXCEPT (rn) FROM (SELECT *, row_number() OVER (PARTITION BY eval_id, source, case_id, contender
                                                       ORDER BY error IS NULL DESC, run_ts DESC) AS rn

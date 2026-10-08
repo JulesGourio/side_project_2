@@ -44,7 +44,6 @@ assert sp, "app_service_principal is required"
 
 # COMMAND ----------
 
-# DBTITLE 1,Unity Catalog grants (catalog, schema, volumes, indexes, pipeline tables)
 statements = [
     f"GRANT USE CATALOG ON CATALOG `{catalog}` TO `{sp}`",
     f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO `{sp}`",
@@ -70,7 +69,6 @@ for stmt in statements:
 
 # COMMAND ----------
 
-# DBTITLE 1,Serving endpoints (CAN_QUERY, merged into the existing ACL)
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import ServingEndpointAccessControlRequest, ServingEndpointPermissionLevel
 
