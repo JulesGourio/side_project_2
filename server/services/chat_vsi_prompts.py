@@ -13,6 +13,11 @@
 - ``v3`` — the KA instructions unchanged (as ``ka``) + ``chat_vsi_v2/addendum_v3.md``: the
   grounding rules, off-topic refusal and document-type glossary of v2, nothing removed
   (v2 lost 3 golden questions vs ``ka`` on the same search, 2026-10-07).
+
+``CHAT_VSI_LANGUAGE_REMINDER=on`` (default off, any instruction set) adds one line after the
+question, at the very end of the prompt: the language rule sits at the top of the instructions,
+20-25k tokens of (mostly English) passages earlier, and GPT-6 Luna lost it (answered in Bulgarian
+or English to questions in other languages, pairwise eval ``luna6-versions``, 2026-10-08).
 """
 
 import os
@@ -23,6 +28,14 @@ from typing import Any, Dict, List, Tuple
 from . import chat_vsi as base
 
 _V2_DIR = Path(__file__).resolve().parent.parent / 'config' / 'chat_vsi_v2'
+
+
+LANGUAGE_REMINDER = ('Reminder: write your whole answer in the language of the question above '
+                     '(the question, not the documents).')
+
+
+def language_reminder() -> bool:
+    return os.getenv('CHAT_VSI_LANGUAGE_REMINDER', 'off').strip().lower() in ('on', 'true', '1')
 
 
 def instructions_set() -> str:
@@ -44,14 +57,28 @@ def load_v3_instructions(division: str) -> str:
     return f'{base.load_instructions(division)}\n\n{addendum}'
 
 
+def system_text(division: str, which: str) -> str:
+    """The system message of instruction set ``which`` (``ka``, ``v2`` or ``v3``)."""
+    if which == 'v2':
+        return load_v2_instructions(division)
+    if which == 'v3':
+        # Same layout as the baseline: instructions, then the citation rule.
+        return load_v3_instructions(division) + '\n' + base.CITATION_RULE
+    return base.load_instructions(division) + '\n' + base.CITATION_RULE
+
+
+def with_language_reminder(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """``messages`` with LANGUAGE_REMINDER after the last user turn (a copy)."""
+    out = [dict(m) for m in messages]
+    out[-1]['content'] = f'{out[-1]["content"]}\n\n{LANGUAGE_REMINDER}'
+    return out
+
+
 def build_prompt(division: str, conversation: List[Dict[str, str]],
                  documents: List[Tuple[str, Dict[str, Any]]]) -> List[Dict[str, str]]:
-    """Same message layout as ``chat_vsi.build_prompt``; only the system text differs with ``v2``."""
+    """Same message layout as ``chat_vsi.build_prompt``; the system text follows the instruction set."""
     messages = base.build_prompt(division, conversation, documents)
     which = instructions_set()
-    if which == 'v2':
-        messages[0] = {'role': 'system', 'content': load_v2_instructions(division)}
-    elif which == 'v3':
-        # Same layout as the baseline: instructions, then the citation rule.
-        messages[0] = {'role': 'system', 'content': load_v3_instructions(division) + '\n' + base.CITATION_RULE}
-    return messages
+    if which != 'ka':
+        messages[0] = {'role': 'system', 'content': system_text(division, which)}
+    return with_language_reminder(messages) if language_reminder() else messages

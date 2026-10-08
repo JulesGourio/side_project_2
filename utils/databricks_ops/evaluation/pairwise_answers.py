@@ -17,6 +17,19 @@
 # MAGIC Comparing the Luna versions with each other through the same reference shows whether the
 # MAGIC extra context of `u-all` gives better answers, or only a better retrieval score.
 # MAGIC
+# MAGIC **Prompt options** after the search name, joined with `+` (they change only the prompt, so the
+# MAGIC saved search is reused): `v2` / `v3` = `CHAT_VSI_INSTRUCTIONS` (v3 = KA text + grounding rules +
+# MAGIC off-topic refusal), `lang` = `CHAT_VSI_LANGUAGE_REMINDER` (one line after the question: answer in
+# MAGIC its language). E.g. `databricks-gpt-6-luna@u-all+v3+lang`. Defaults below = the 2026-10-08 rerun:
+# MAGIC `u-all` alone (control), `+v3`, `+v3+lang`, after `luna6-versions` showed GPT-6 Luna answering
+# MAGIC recipes and shopping lists, and in the wrong language.
+# MAGIC
+# MAGIC **Answers as the user sees them** (`translate_back`, on by default when the app's translation
+# MAGIC bridge is on): a Spanish/Czech/… question reaches the model in English and the app translates the
+# MAGIC answer back, and an English/French question answered in another language is translated too
+# MAGIC (`translation_bridge.translate_answer_back`). `luna6-versions` skipped that step: its "English
+# MAGIC answer to a Spanish question" cases are the eval's, not the app's.
+# MAGIC
 # MAGIC The **judge** (default GPT-5.6 Luna, never one of the compared models) reads each pair
 # MAGIC **twice, in both orders**: a version wins a question only when both readings agree, else
 # MAGIC tie. It scores faithfulness / correctness / completeness / citations (0–3) and lists every
@@ -35,13 +48,14 @@
 # COMMAND ----------
 
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
-dbutils.widgets.text('eval_id', 'luna6-versions')
+dbutils.widgets.text('eval_id', 'luna6-prompt')
 dbutils.widgets.text('reference', 'databricks-claude-sonnet-5-5@union-ctx')
-dbutils.widgets.text('contenders', 'databricks-gpt-6-luna@union-ctx,databricks-gpt-6-luna@u-title,'
-                                   'databricks-gpt-6-luna@u-bi,databricks-gpt-6-luna@u-all,ka')
+dbutils.widgets.text('contenders', 'databricks-gpt-6-luna@u-all,databricks-gpt-6-luna@u-all+v3,'
+                                   'databricks-gpt-6-luna@u-all+v3+lang')
 dbutils.widgets.text('judge', 'databricks-gpt-5-6-luna')
 dbutils.widgets.text('rewrite_model', 'databricks-claude-sonnet-4-6')   # every search rewrites with it
 dbutils.widgets.text('answer_max_tokens', '8000')                       # reasoning counts inside it
+dbutils.widgets.dropdown('translate_back', 'true', ['true', 'false'])   # as the app: answers back to the question's language
 dbutils.widgets.text('n_questions', '40')                               # golden first, then real DEV questions
 dbutils.widgets.text('seed', '7')
 dbutils.widgets.text('max_parallel', '4')
@@ -71,13 +85,19 @@ N_QUESTIONS = int(dbutils.widgets.get('n_questions'))
 SEED = int(dbutils.widgets.get('seed'))
 MAX_PARALLEL = max(1, int(dbutils.widgets.get('max_parallel')))
 RESULTS = dbutils.widgets.get('results_table').strip()
+PROMPT_OPTIONS = ('v2', 'v3', 'lang')
 
 
 def version(spec):
+    """'model@search+option+option' — search: the retrieval settings, options: the prompt only."""
     if spec.strip().lower() == 'ka':                     # stored Knowledge Assistant answers
-        return {'label': 'ka', 'model': 'ka', 'search': None}
+        return {'label': 'ka', 'model': 'ka', 'search': None, 'options': (), 'answer_as': None}
     model, _, search = spec.strip().partition('@')
-    return {'label': spec.strip(), 'model': model.strip(), 'search': search.strip() or 'u-all'}
+    search, *options = [p.strip() for p in (search.strip() or 'u-all').split('+')]
+    assert all(o in PROMPT_OPTIONS for o in options), f'unknown prompt option in {spec} — pick from {PROMPT_OPTIONS}'
+    assert not {'v2', 'v3'} <= set(options), f'{spec}: v2 or v3, not both'
+    return {'label': spec.strip(), 'model': model.strip(), 'search': search, 'options': tuple(options),
+            'answer_as': '+'.join([search, *options])}
 
 
 REFERENCE = version(dbutils.widgets.get('reference'))
@@ -149,6 +169,9 @@ for _m in {REFERENCE['model']} | {c['model'] for c in CONTENDERS} - {'ka'}:
     assert not (re.search(r'gpt-5-6|gpt-6', _m) and supports_temperature(_m)), (
         f'Stale app code in {APP}: streaming.py still sends a temperature to {_m}. '
         'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
+assert hasattr(chat_vsi_prompts, 'with_language_reminder'), (
+    f'Stale app code in {APP}: chat_vsi_prompts.py has no prompt options yet. '
+    'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
 
 # One translation client per event loop (each question runs in its own loop).
 _tb._get_http_client = lambda: httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
@@ -425,16 +448,27 @@ for name in sorted({REFERENCE['search']} | {v['search'] for _, v in TODO if v['m
 # COMMAND ----------
 
 # DBTITLE 1,Phase 2 — answers (the reference once per question, each contender)
-jobs = sorted({(REFERENCE['model'], REFERENCE['search']) + k for k in cases_todo}
-              | {(v['model'], v['search'], c['source'], c['case_id']) for c, v in TODO if v['model'] != 'ka'})
+# A job = (model, search+options, source, case_id); options only change the saved search's prompt.
+jobs = sorted({(REFERENCE['model'], REFERENCE['answer_as']) + k for k in cases_todo}
+              | {(v['model'], v['answer_as'], c['source'], c['case_id']) for c, v in TODO if v['model'] != 'ka'})
 
 
-async def _answer(job):
-    model, name, source, case_id = job
+def prompt_for(answer_as, source, case_id):
+    name, *options = answer_as.split('+')
     s = SEARCH[(name, source, case_id)]
     if 'error' in s:
         raise RuntimeError('search failed: ' + s['error'])
-    return await generate(model, s['prompt'])
+    messages = [dict(m) for m in s['prompt']]
+    which = next((o for o in options if o in ('v2', 'v3')), None)
+    if which:
+        div = base.normalize_division(cases_todo[(source, case_id)]['division'])
+        messages[0] = {'role': 'system', 'content': chat_vsi_prompts.system_text(div, which)}
+    return chat_vsi_prompts.with_language_reminder(messages) if 'lang' in options else messages
+
+
+async def _answer(job):
+    model, answer_as, source, case_id = job
+    return await generate(model, prompt_for(answer_as, source, case_id))
 
 # Cache key: (model, search, source, case_id, answer_max_tokens).
 ANSWERS = {k[:4]: v for k, v in cache_load('answer').items() if k[4] == MAX_TOKENS}
@@ -442,6 +476,30 @@ _missing = [j for j in jobs if j not in ANSWERS]
 print(len(jobs) - len(_missing), 'answers already saved,', len(_missing), 'to generate')
 ANSWERS.update(in_batches(_answer, _missing,
                           lambda b: cache_save('answer', {j + (MAX_TOKENS,): v for j, v in b.items()})))
+
+# As the app shows them: translated back to the question's language (cache kind 'shown').
+TRANSLATE_BACK = dbutils.widgets.get('translate_back') == 'true' and TRANSLATE_BRIDGE_ENABLED
+if TRANSLATE_BACK:
+    async def _shown(job):
+        a = ANSWERS[job]
+        if 'error' in a:
+            raise RuntimeError(a['error'])
+        question = cases_todo[job[2:]]['messages'][-1]['content']
+        _, ctx = await _tb.translate_question_to_en(question, HOST, token())
+        text = await _tb.translate_answer_back(a['answer'], ctx, HOST, token())
+        return {**a, 'answer': text, 'translated': text != a['answer']}
+
+    SHOWN = {k[:4]: v for k, v in cache_load('shown').items() if k[4] == MAX_TOKENS}
+    _todo = [j for j in jobs if j not in SHOWN and 'error' not in ANSWERS.get(j, {'error': ''})]
+    print(len(_todo), 'answers to pass through the translation back')
+    SHOWN.update(in_batches(_shown, _todo,
+                            lambda b: cache_save('shown', {j + (MAX_TOKENS,): v for j, v in b.items()})))
+    for j in jobs:
+        if j in SHOWN and 'error' not in SHOWN[j]:
+            ANSWERS[j] = SHOWN[j]
+    print(sum(1 for j in jobs if ANSWERS.get(j, {}).get('translated')), 'answers translated back')
+else:
+    print('answers judged as generated (translate_back off or translation bridge off in the app config)')
 for c, v in TODO:                                        # stored KA answers, nothing to generate
     if v['model'] == 'ka':
         ANSWERS[('ka', None, c['source'], c['case_id'])] = {
@@ -462,8 +520,8 @@ def _docs(name, source, case_id):
 async def _judge(item):
     case, v = item
     k = (case['source'], case['case_id'])
-    ref = ANSWERS[(REFERENCE['model'], REFERENCE['search']) + k]
-    con = ANSWERS[(v['model'], v['search']) + k]
+    ref = ANSWERS[(REFERENCE['model'], REFERENCE['answer_as']) + k]
+    con = ANSWERS[(v['model'], v['answer_as']) + k]
     for a in (ref, con):
         if 'error' in a:
             raise RuntimeError('answer failed: ' + a['error'])
@@ -512,7 +570,7 @@ def save_judgments(batch):
         row = {k: None for k in _FIELDS}
         row.update({k: val for k, val in out.items() if k in row})
         row.update({'eval_id': EVAL_ID, 'run_ts': run_ts, 'judge': JUDGE, 'reference': REFERENCE['label'],
-                    'contender': v['label'], 'contender_model': v['model'], 'contender_search': v['search'],
+                    'contender': v['label'], 'contender_model': v['model'], 'contender_search': v['answer_as'],
                     'source': case['source'], 'case_id': case['case_id'],
                     'question': case['messages'][-1]['content'], 'error': out.get('error')})
         for k in ('ref_input_tokens', 'ref_output_tokens', 'con_input_tokens', 'con_output_tokens'):

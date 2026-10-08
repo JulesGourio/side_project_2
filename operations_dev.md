@@ -651,6 +651,17 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   répondu). Juge GPT-5.6 Luna, dans les deux ordres. Vérifier d'abord le nom exact des endpoints dans
   Serving (widgets `reference`, `contenders`, `judge`). Résultats dans
   `dev_landingzone.qualibot.eval_pairwise_runs` ; une autre série = un autre `eval_id`.
+  Fait le 2026-10-08 (`luna6-versions`), résultats dans `docs/chat_vsi_audit_2026-10.md` § 2.6.
+
+- [ ] **P2. Rerun prompt de GPT-6 Luna** (2026-10-08) : copier le nouveau zip,
+  `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`, puis `pairwise_answers`, Run all avec
+  les **nouveaux défauts** des widgets (si le notebook garde les anciennes valeurs : supprimer les
+  widgets ou les remettre à la main) :
+  - `eval_id` = `luna6-prompt` ;
+  - `contenders` = `databricks-gpt-6-luna@u-all,databricks-gpt-6-luna@u-all+v3,databricks-gpt-6-luna@u-all+v3+lang` ;
+  - `translate_back` = `true` (réponses retraduites comme dans l'app).
+  Recherches et réponses Sonnet / Luna `u-all` reprises du cache : ≈ 2 €, ≈ 15 min. Envoyer les trois
+  tableaux ; regarder dans le détail les questions hors sujet et les réponses en mauvaise langue.
 
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.

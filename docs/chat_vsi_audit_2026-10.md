@@ -274,6 +274,37 @@ seul) est déjà mesuré : c'est `union` contre `union-ctx`, sans différence.
 **Décisions métier, pas des tests** : fiches des documents d'avant 2018 dans le chatbot (P11),
 numéros de page et de slide avec re-parsing GPU (P13).
 
+### 2.6 Réponses côte à côte : GPT-6 Luna contre Sonnet 5.5 (2026-10-08)
+
+`pairwise_answers`, eval_id `luna6-versions` : 40 questions (21 golden + 19 vraies questions DEV
+auxquelles le KA a répondu). Référence Sonnet 5.5 + `union-ctx`. Juge GPT-5.6 Luna, dans les deux
+ordres : une version gagne une question seulement quand les deux lectures sont d'accord.
+
+| Concurrent | Gagnés / perdus / égalités | Fidélité (con / réf) | Exactitude (con / réf) | Inventions (con / réf) | Juge constant |
+|---|---|---|---|---|---|
+| Luna @ `u-all` | 16 / 15 / 9 | 2.60 / 2.49 | 2.51 / 2.64 | 0.76 / 1.40 | 78 % |
+| Luna @ `union-ctx` | 15 / 16 / 9 | 2.43 / 2.41 | 2.50 / 2.84 | 0.99 / 1.41 | 78 % |
+| Luna @ `u-title` | 13 / 16 / 11 | 2.60 / 2.48 | 2.55 / 2.70 | 0.83 / 1.36 | 73 % |
+| Luna @ `u-bi` | 13 / 19 / 8 | 2.43 / 2.51 | 2.40 / 2.70 | 1.05 / 1.35 | 80 % |
+| KA (réponses stockées) | 1 / 36 / 3 | 1.70 / 2.64 | 1.69 / 2.80 | 2.33 / 0.98 | 93 % |
+
+- Luna @ `u-all` fait jeu égal avec Sonnet 5.5 et invente deux fois moins, pour 0.0034 € par
+  question contre 0.093 € (≈ 4 %). Premier token : 6.8 s contre 6.1 s.
+- Le contexte large aide vraiment Luna : `u-all` est sa meilleure version.
+- Le KA est loin derrière.
+- Défauts vus dans le détail :
+  - Luna répond à des demandes hors sujet (recette, liste de courses) que Sonnet refuse : l'éval
+    tournait avec les instructions `ka`, qui n'ont pas de règle de refus (elle est dans `v3`).
+  - Réponses dans une autre langue que la question. En partie un défaut de l'éval : elle ne
+    retraduisait pas les réponses alors que l'app le fait (`translate_answer_back`, pont de
+    traduction activé sur les cibles). Le reste (anglais → bulgare) est un vrai écart du modèle :
+    la règle de langue est en tête des instructions, 20 à 25k tokens avant la question.
+
+Rerun préparé (`luna6-prompt`, défauts du notebook) : Luna @ `u-all` seul (témoin), `+v3`,
+`+v3+lang` (`CHAT_VSI_LANGUAGE_REMINDER` : une ligne après la question), réponses retraduites comme
+dans l'app (widget `translate_back`). Recherches et réponses déjà en cache : seules les réponses
+`v3` et les jugements sont à payer (≈ 2 €).
+
 ---
 
 ## 3. Modèles

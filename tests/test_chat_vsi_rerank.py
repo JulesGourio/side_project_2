@@ -333,3 +333,16 @@ def test_skip_noise_filters_every_query_on_content_type(monkeypatch):
 def test_skip_noise_off_keeps_the_baseline_search(monkeypatch):
     monkeypatch.delenv('CHAT_VSI_SKIP_NOISE', raising=False)
     assert chat_vsi_rerank.content_filter() == {}
+
+
+def test_language_reminder_closes_the_prompt_only_when_on(monkeypatch):
+    from server.services import chat_vsi_prompts
+    conv = [{'role': 'user', 'content': 'q'}]
+    docs = [('QP-1518', {'url': 'u', 'passages': ['p']})]
+    monkeypatch.delenv('CHAT_VSI_LANGUAGE_REMINDER', raising=False)
+    plain = chat_vsi_prompts.build_prompt('ALL', conv, docs)
+    assert chat_vsi_prompts.LANGUAGE_REMINDER not in plain[-1]['content']
+    monkeypatch.setenv('CHAT_VSI_LANGUAGE_REMINDER', 'on')
+    on = chat_vsi_prompts.build_prompt('ALL', conv, docs)
+    assert on[-1]['content'] == plain[-1]['content'] + '\n\n' + chat_vsi_prompts.LANGUAGE_REMINDER
+    assert on[0] == plain[0] and conv[0]['content'] == 'q'
