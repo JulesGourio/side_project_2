@@ -237,7 +237,7 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   databricks vector-search-indexes list-indexes qualibot --profile DEV
   ```
 
-- [ ] **S1. Code et jobs** : extraire le zip dans un **dossier vide** (beaucoup de fichiers ont été
+- [x] **S1. Code et jobs** _(2026-10-08)_ : extraire le zip dans un **dossier vide** (beaucoup de fichiers ont été
   déplacés vers `archive/` ou renommés : extrait par-dessus l'ancien dossier, les anciens fichiers
   resteraient et seraient redéployés avec le reste). Vérifier ensuite que le fichier de config de
   l'app est le bon — la première ligne doit être `"""Config endpoint — exposes app configuration to the frontend."""` :
@@ -273,7 +273,7 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is  --profile DEV
   ```
 
-- [ ] **S3. Tables d'état du pipeline : retirer le suffixe** (renommage instantané, aucune copie) :
+- [x] **S3. Tables d'état du pipeline** _(2026-10-08)_ : retirer le suffixe** (renommage instantané, aucune copie) :
 
   ```sql
   ALTER TABLE dev_landingzone.qualibot._pipeline_checkpoint_v1 RENAME TO dev_landingzone.qualibot._pipeline_checkpoint;
@@ -287,7 +287,7 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   `src_chunks_as_v1`, `src_chunks_is_v1`) : même commande (ex. `parsing_run_health_v1`,
   `document_change_log_v1`, `audit_files_unified_v1`).
 
-- [ ] **S4. La table `chunks` = le découpage retenu** (copie de `chunks_v2b`, avec les propriétés
+- [x] **S4. La table `chunks`** _(2026-10-08)_ = le découpage retenu** (copie de `chunks_v2b`, avec les propriétés
   qu'exige un index : Change Data Feed et 60 jours d'historique) :
 
   ```sql
@@ -302,7 +302,7 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
          (SELECT count(*) FROM dev_landingzone.qualibot.chunks_v2b) AS chunks_v2b;   -- identiques
   ```
 
-- [ ] **S5. L'index `chunks_index`**, créé sous votre identité (propriétaire de l'endpoint `qualibot`
+- [ ] **S5. L'index `chunks_index`** _(créé 2026-10-08, embedding en cours : ~10 % indexé à la dernière vérification)_, créé sous votre identité (propriétaire de l'endpoint `qualibot`
   et de la table `chunks`) ; même spécification que les index UAT. La création lance la première
   synchronisation (embedding de tout `chunks`).
 
@@ -345,7 +345,7 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   `delete_knowledge_assistant` n'existe pas dans la version du SDK du notebook :
   `%pip install -U databricks-sdk` puis `dbutils.library.restartPython()`.
 
-- [ ] **S8. Droits du SP de l'app, catalogue des documents, puis l'app** (une fois `chunks_index`
+- [ ] **S8. Droits du SP de l'app, catalogue des documents, puis l'app** _(2026-10-08 : droits + tâche 6 faits, `doc_catalog 0 -> 4937 documents` ; reste le déploiement de l'app une fois l'index ONLINE)_ (une fois `chunks_index`
   `ONLINE`). Le catalogue (REF, titre, lien de chaque document) vient désormais de la table
   Lakebase `doc_catalog`, écrite par la dernière tâche du pipeline depuis `parse_manifest` et
   `chunks`. Cette tâche tourne sous le SP DEV : le job de droits lui donne la lecture de ces
@@ -401,7 +401,22 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2c;
   ```
 
-  `UNDROP TABLE` reste possible 7 jours. Ensuite `SHOW TABLES IN dev_landingzone.qualibot` ne doit
+  `UNDROP TABLE` reste possible 7 jours.
+
+  À **garder** dans `dev_landingzone.qualibot` (inventaire du 2026-10-08) :
+  - écrites chaque jour par `lakebase_import_uat_to_dev` (copie de la base de l'app UAT) :
+    `chat_feedbacks`, `chat_messages`, `chat_sessions`, `errors`, `feedbacks`, `impact_cache`,
+    `impact_document_results`, `impact_requests`, `knowledge_base_metadata`, `llm_requests`,
+    `messages`, `summary_cache`, `users` ;
+  - écrites par `score_production_qa` : `chat_quality_scores`, `chat_quality_scoring_runs` ;
+  - application Translator (autre projet) : `dnt_rules`, `glossary_terms` ;
+  - évaluation : `qualibot_eval_golden` (jeu golden), `eval_retrieval_runs`, `eval_pairwise_runs`,
+    `eval_pairwise_runs_cache` (écrites par les deux notebooks gardés) ;
+  - pipeline : `chunks`, `chunks_index`, `_pipeline_checkpoint`, `processed_files`,
+    `image_metadata`, `parse_manifest`, `category_reference`.
+
+  Facultatif : `eval_golden_runs` n'est plus écrite (notebook KA contre VSI archivé) ; ses
+  résultats sont dans `docs/chat_vsi_tests.md` : `DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_golden_runs;` Ensuite `SHOW TABLES IN dev_landingzone.qualibot` ne doit
   plus montrer aucun nom en `_v1` / `_v2…` (les tables `eval_*` gardent les anciens noms d'essai
   **dans leurs lignes** : c'est l'historique des mesures, `docs/chat_vsi_tests.md` § B).
 
