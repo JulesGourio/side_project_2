@@ -296,9 +296,13 @@ prévenir, je change la valeur, vous redéployez.
     databricks bundle run parsing_pipeline -t qualibot-uat --profile UAT
     ```
 
-    Le run écrit `chunks`, `chunks_archive`, `processed_files`, puis sa dernière tâche crée l'index
+    Le run écrit `chunks`, `chunks_archive`, `processed_files`, puis crée l'index
     `uat_landingzone.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si
-    la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`.
+    la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`. Sa
+    dernière tâche remplit aussi le catalogue des documents de l'app (table Lakebase `doc_catalog`
+    de `doccompare` : REF, titre, lien). `qualibot-uat-test` (base `doccompare_test`) garde
+    l'ancien instantané `doc_catalog.json` tant qu'on n'ajoute pas cette base à
+    `parsing_lakebase_database` — à décider ensemble.
 
   - [ ] **D5.5. Revenir au mode quotidien** (le planning repart, sur les nouvelles tables) :
 

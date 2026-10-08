@@ -24,7 +24,9 @@ date → `stream_chat_vsi` → citation markers → translate back → persist t
    - 3 HYBRID Vector Search queries on `CHAT_VSI_INDEX`, each = 12 reranked passages + 10 raw
      ones, merged by rank; the division is a `filters_json` filter on the `division` column;
    - documents named by REF in the conversation first, documents whose catalogue title matches
-     the question last (`chat_vsi_titles.py`), one language variant per document;
+     the question last (`chat_vsi_titles.py`), one language variant per document. The catalogue
+     (REF, title, link) is the Lakebase table `doc_catalog`, rewritten by the parsing pipeline
+     after each daily run and reloaded by the app every 30 min (`doc_catalog.py`);
    - prompt = division instructions (`server/config/chat_vsi/instructions_<div>.md`) + answer
      rules (`answer_rules.md`) + numbered documents + question + a line naming the answer
      language;

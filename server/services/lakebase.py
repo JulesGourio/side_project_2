@@ -570,6 +570,22 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             ON CONFLICT (id) DO NOTHING
         ''')
 
+        # ── doc_catalog ───────────────────────────────────────────────────────
+        # Every document of the parsing scope (REF, title, link, in the chat index or
+        # not). Rewritten by the parsing pipeline after each daily run (task
+        # 6_update_kb_metadata); read by server/services/doc_catalog.py.
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS doc_catalog (
+                ref        TEXT PRIMARY KEY,
+                base_ref   TEXT,               -- NULL: computed by the app (doc_catalog._canon)
+                title      TEXT,
+                url        TEXT,
+                division   TEXT,
+                in_chat    BOOLEAN NOT NULL DEFAULT TRUE,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        ''')
+
         # ── chat_feedbacks ────────────────────────────────────────────────────
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS chat_feedbacks (

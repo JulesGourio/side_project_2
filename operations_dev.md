@@ -345,14 +345,30 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   `delete_knowledge_assistant` n'existe pas dans la version du SDK du notebook :
   `%pip install -U databricks-sdk` puis `dbutils.library.restartPython()`.
 
-- [ ] **S8. Droits du SP de l'app, puis l'app** (une fois `chunks_index` `ONLINE`) :
+- [ ] **S8. Droits du SP de l'app, catalogue des documents, puis l'app** (une fois `chunks_index`
+  `ONLINE`). Le catalogue (REF, titre, lien de chaque document) vient désormais de la table
+  Lakebase `doc_catalog`, écrite par la dernière tâche du pipeline depuis `parse_manifest` et
+  `chunks`. Cette tâche tourne sous le SP DEV : d'abord lui donner la lecture des deux tables
+  (éditeur SQL DEV), puis la lancer seule (rien n'est parsé) :
+
+  ```sql
+  GRANT SELECT ON TABLE dev_landingzone.qualibot.parse_manifest TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks         TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+  ```
 
   ```powershell
   databricks bundle run grant_app_access_dev -t dev --profile DEV
+  databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
   .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
   ```
 
-  Sortie attendue du job : une ligne `OK:` par droit, dont une pour `chunks_index`.
+  Sortie attendue de la tâche 6 : `doccompare: doc_catalog 0 -> N documents` (N ≈ le nombre de
+  documents en périmètre). Dans les logs de l'app après démarrage :
+  `doc_catalog: loaded N documents from Lakebase`. Si la tâche 6 échoue (droits Lakebase du SP),
+  **m'envoyer l'erreur** : l'app marche quand même, avec l'ancien instantané `doc_catalog.json`
+  (log `using the bundled snapshot`).
+
+  Sortie attendue du job de droits : une ligne `OK:` par droit, dont une pour `chunks_index`.
 
 - [ ] **S9. Tester** :
   - un seul onglet **Chat** (plus de « Chat KA » / « Chat VSI ») ;

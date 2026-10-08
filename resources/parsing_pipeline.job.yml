@@ -7,8 +7,8 @@
 #   3. 02_images      : Vision LLM image description           -> small CPU (I/O-bound,
 #                       rate-limiter-bound; a GPU would be wasted here)
 #   4. 5_sync_index  : Vector Search index sync                -> serverless
-#   5. 6_update_kb_metadata : Lakebase knowledge_base_metadata  -> serverless
-#                       (documents_as_of/updated_at) bump, once the whole
+#   5. 6_update_kb_metadata : Lakebase doc_catalog rewrite +   -> serverless
+#                       knowledge_base_metadata bump, once the whole
 #                       chain — including the index sync above — succeeded
 #
 # 00b/00 run on their own cluster (meta_cpu_cluster), not 02's: a cluster
@@ -269,7 +269,7 @@ targets:
               environment_key: default
 
             - task_key: "6_update_kb_metadata"
-              description: "Bump knowledge_base_metadata.documents_as_of/updated_at (Lakebase) now the chain succeeded end to end"
+              description: "Rewrite the document catalog and bump knowledge_base_metadata (Lakebase) now the chain succeeded end to end"
               depends_on:
                 - task_key: "5_sync_index"
               notebook_task:
@@ -280,6 +280,8 @@ targets:
                   LAKEBASE_BRANCH: "production"
                   LAKEBASE_ENDPOINT: "primary"
                   LAKEBASE_DATABASE: ${var.parsing_lakebase_database}
+                  CATALOG_SCHEMA: ${var.app_write_catalog}.${var.app_write_schema}
+                  TABLE_SUFFIX: ${var.parsing_table_suffix}
               # Serverless: classic job compute can't reach the Lakebase private
               # endpoint (same blocker as migrate_lakebase_uat_test/sync_user_capabilities_uat
               # in databricks.yml) — separate environment from "default" above,

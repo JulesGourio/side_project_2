@@ -11,23 +11,37 @@ engine cites (``sources`` event). But the model is prompted to *name* many docum
 so they appear in the text but not as clickable chips. This module closes that
 gap by matching catalog ``REF`` strings against the answer text.
 
-The catalog is the slim ``server/data/doc_catalog.json`` produced by
-``utils/deploy/build_doc_catalog.py`` from ``intraqual_docs.jsonl``. The whole module
-degrades gracefully: if the file is missing (e.g. local dev without the export),
-every function is a no-op and sources are left unchanged.
+Where the catalog comes from
+----------------------------
+The Lakebase table ``doc_catalog``: every document in the parsing scope (``parse_manifest``,
+the same scope as the index) with its title, its link and whether it has passages in the chat
+index (``in_chat``). The parsing pipeline rewrites it after each successful daily run (task
+``6_update_kb_metadata``); the app reloads it at startup and every
+``DOC_CATALOG_REFRESH_S`` seconds (``catalog_refresher``).
+
+Until that table has rows (an app started before the pipeline's first run, local dev, tests),
+the bundled ``server/data/doc_catalog.json`` is used instead: a one-off snapshot of a portal
+scrape (2026-07), with links in the old ``liredocumentdepuisrecherche?id=`` scheme, that is
+never refreshed — new documents are missing from it and withdrawn ones are still in it. Every
+function degrades to a no-op when neither source is available.
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
 from functools import lru_cache
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CATALOG = os.path.join(os.path.dirname(__file__), '..', 'data', 'doc_catalog.json')
 _CATALOG_PATH = os.getenv('DOC_CATALOG_PATH', _DEFAULT_CATALOG)
+_REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
+
+# The catalog loaded from Lakebase (None until the first successful load).
+_live: Optional['_Catalog'] = None
 
 # Our own intraqual_ref_url() scheme (parsing/utils.py, introduced 2026-07-07)
 # embeds the REF directly in the URL: .../identification.aspx?ref=<REF>. The
@@ -51,7 +65,7 @@ def _norm(ref: str) -> str:
     return ' '.join(ref.split()).upper()
 
 
-# Mirrors utils/deploy/build_doc_catalog.py:_base_ref — needed here too because a
+# Mirrors archive/doc_catalog/build_doc_catalog.py:_base_ref — needed here too because a
 # citation in the chat text may use a spelling that never existed literally
 # in the catalog (e.g. the model writes "PRLAT529" but the only real entries
 # are "PRLAT-529" / "PRLAT-529_GB"). Canonicalizing both sides the same way
@@ -117,7 +131,7 @@ class _Catalog:
         self.url_to_ref: Dict[str, str] = {}
         # base_ref (canonical, punctuation- and suffix-stripped) -> [entries]
         # sharing it, i.e. the same document in other site/languages (see
-        # utils/deploy/build_doc_catalog.py:_base_ref)
+        # archive/doc_catalog/build_doc_catalog.py:_base_ref)
         self.by_canon: Dict[str, List[dict]] = {}
         for e in entries:
             ref = e.get('ref') or ''
@@ -192,7 +206,8 @@ class _Catalog:
 
 
 @lru_cache(maxsize=1)
-def _catalog() -> Optional[_Catalog]:
+def _file_catalog() -> Optional[_Catalog]:
+    """The bundled snapshot — only until the Lakebase catalog has been loaded."""
     path = os.path.normpath(_CATALOG_PATH)
     if not os.path.exists(path):
         logger.info('doc_catalog: no catalog at %s — reference resolution disabled', path)
@@ -204,8 +219,47 @@ def _catalog() -> Optional[_Catalog]:
         logger.warning('doc_catalog: failed to load %s: %s', path, exc)
         return None
     cat = _Catalog(entries if isinstance(entries, list) else [])
-    logger.info('doc_catalog: loaded %d refs from %s', len(cat.by_ref), path)
+    logger.warning('doc_catalog: using the bundled snapshot %s (%d refs, never refreshed) — '
+                   'the Lakebase table doc_catalog is not loaded yet', path, len(cat.by_ref))
     return cat
+
+
+def _catalog() -> Optional[_Catalog]:
+    """The current catalog: Lakebase once loaded, else the bundled snapshot."""
+    return _live if _live is not None else _file_catalog()
+
+
+def set_catalog(entries: List[Dict[str, Any]]) -> None:
+    """Replace the live catalog (entries: ref, url, title, base_ref, in_chat)."""
+    global _live
+    _live = _Catalog(entries)
+
+
+async def refresh_from_lakebase(pool) -> int:
+    """Load the Lakebase table doc_catalog into the live catalog. Returns the number of
+    documents loaded; 0 (live catalog left as is) when the table is empty or unreadable."""
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch('SELECT ref, url, title, base_ref, in_chat FROM doc_catalog')
+    except Exception as exc:  # noqa: BLE001 — keep the catalog we have
+        logger.warning('doc_catalog: Lakebase read failed, keeping the current catalog: %s', exc)
+        return 0
+    if not rows:
+        logger.warning('doc_catalog: Lakebase table doc_catalog is empty — run the parsing '
+                       'pipeline task 6_update_kb_metadata to fill it')
+        return 0
+    set_catalog([dict(r) for r in rows])
+    logger.info('doc_catalog: loaded %d documents from Lakebase', len(rows))
+    return len(rows)
+
+
+async def catalog_refresher(get_pool) -> None:
+    """Background task: reload the catalog from Lakebase now, then every DOC_CATALOG_REFRESH_S."""
+    while True:
+        pool = get_pool()
+        if pool is not None:
+            await refresh_from_lakebase(pool)
+        await asyncio.sleep(_REFRESH_S)
 
 
 def other_language_refs(ref: str) -> List[dict]:

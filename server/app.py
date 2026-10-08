@@ -18,6 +18,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from . import tracing  # noqa: F401 — sets up MLflow tracking URI
 from .routers import chat, compare, config, exports, feedback, health, history, preview
+from .services.doc_catalog import catalog_refresher
 from .services.lakebase import get_pool, init_lakebase, shutdown_lakebase, store_error
 from .services.translation_bridge import shutdown_http_client as shutdown_translation_bridge
 
@@ -50,7 +51,10 @@ if not _volume_path:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
   await init_lakebase()
+  # Document catalog (REF links, titles) from Lakebase, reloaded every 30 min.
+  catalog_task = asyncio.create_task(catalog_refresher(get_pool))
   yield
+  catalog_task.cancel()
   await shutdown_lakebase()
   await shutdown_translation_bridge()
 

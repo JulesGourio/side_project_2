@@ -3,10 +3,10 @@
 Many questions ask for a document rather than a fact: "trouve-moi le template du CMP",
 "dans le processus Stocker…", "procedures for work centers". The passage search can miss
 them because the document's passages talk about the content, not about its title. The
-app's document catalog (``server/data/doc_catalog.json``, ~7,600 REFs) holds every title, in
+app's document catalog (``doc_catalog.py``: the Lakebase table ``doc_catalog``, rewritten by
+the parsing pipeline after each daily run) holds the title of every document of the index, in
 every language variant: matching the question's words against them finds such documents
-directly (IQ22-223 "Stocker", IN_MRPC009 "Work center management", Q0102QP "First Article
-Inspection (FAI)").
+directly. Only documents with passages in the chat index (``in_chat``) are candidates.
 
 Scoring is lexical and cheap (no model call): accent-folded words, stop words dropped,
 6-character prefixes as a crude stemmer, each word weighted by its rarity across titles
@@ -19,7 +19,6 @@ import math
 import re
 import unicodedata
 from collections import Counter
-from functools import lru_cache
 from typing import Dict, List, Set, Tuple
 
 from .doc_catalog import _catalog
@@ -42,15 +41,25 @@ def words(text: str) -> List[str]:
     return [w[:6] for w in re.findall(r'[a-z0-9]+', folded) if len(w) >= 3 and w not in _STOP]
 
 
-@lru_cache(maxsize=1)
 def _title_index() -> Tuple[Dict[str, List[Set[str]]], Dict[str, List[str]], Dict[str, float]]:
-    """(document -> word sets of its titles, document -> its REFs, word -> IDF), built once."""
+    """(document -> word sets of its titles, document -> its REFs, word -> IDF), built once per
+    catalog (a refresh from Lakebase brings a new catalog object, hence a new index)."""
     cat = _catalog()
     if not cat:
         return {}, {}, {}
+    cached = getattr(cat, 'title_index', None)
+    if cached is None:
+        cached = cat.title_index = _build_title_index(cat)
+    return cached
+
+
+def _build_title_index(cat) -> Tuple[Dict[str, List[Set[str]]], Dict[str, List[str]], Dict[str, float]]:
     titles: Dict[str, List[Set[str]]] = {}
     refs: Dict[str, List[str]] = {}
-    for canon, entries in cat.by_canon.items():
+    for canon, all_entries in cat.by_canon.items():
+        entries = [e for e in all_entries if e.get('in_chat', True)]
+        if not entries:
+            continue
         refs[canon] = [e['ref'] for e in entries if e.get('ref')]
         sets = {frozenset(words(e.get('title') or '')) for e in entries}
         titles[canon] = [set(s) for s in sets if s]
