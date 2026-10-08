@@ -646,7 +646,7 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
 
 - [ ] **P. Comparer des versions de réponse côte à côte** (2026-10-08) : notebook
   `utils/databricks_ops/evaluation/pairwise_answers.py`, serverless, Run all. Référence Sonnet 5.5 +
-  recherche `u-all`, contre GPT-6 Luna avec `u-all`, `u-bi`, `u-title`, `union-ctx`, et les réponses
+  recherche `union-ctx`, contre GPT-6 Luna avec `union-ctx`, `u-title`, `u-bi`, `u-all`, et les réponses
   **déjà stockées** du KA. 40 questions (les 21 du golden + 19 vraies questions DEV auxquelles le KA a
   répondu). Juge GPT-5.6 Luna, dans les deux ordres. Vérifier d'abord le nom exact des endpoints dans
   Serving (widgets `reference`, `contenders`, `judge`). Résultats dans

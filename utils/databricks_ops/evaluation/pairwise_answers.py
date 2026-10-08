@@ -7,11 +7,11 @@
 # MAGIC
 # MAGIC | Default | Version | Why |
 # MAGIC |---|---|---|
-# MAGIC | reference | Sonnet 5.5 + `u-all` | best search, best answer model measured so far |
-# MAGIC | contender | GPT-6 Luna + `u-all` | same passages: the model alone |
-# MAGIC | contender | GPT-6 Luna + `u-bi` | bilingual rewrite only (78 %, ~21k tokens) |
-# MAGIC | contender | GPT-6 Luna + `u-title` | catalogue titles only (76.5 %, ~16k tokens) |
-# MAGIC | contender | GPT-6 Luna + `union-ctx` | current reference search (73.5 %, ~15k tokens) |
+# MAGIC | reference | Sonnet 5.5 + `union-ctx` | best answer model measured so far, on the simple search (~15k tokens) |
+# MAGIC | contender | GPT-6 Luna + `union-ctx` | same passages as the reference: the model alone |
+# MAGIC | contender | GPT-6 Luna + `u-title` | + catalogue titles (76.5 % of expected documents, ~16k tokens) |
+# MAGIC | contender | GPT-6 Luna + `u-bi` | + bilingual rewrite (78 %, ~21k tokens) |
+# MAGIC | contender | GPT-6 Luna + `u-all` | everything (80 %, ~21k tokens) |
 # MAGIC | contender | `ka` | the Knowledge Assistant's **stored** answers: golden from `eval_golden_runs` (eval_id `ka`), real questions from `chat_messages` (the KA answer that followed). Nothing re-run. |
 # MAGIC
 # MAGIC Comparing the Luna versions with each other through the same reference shows whether the
@@ -34,9 +34,9 @@
 
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 dbutils.widgets.text('eval_id', 'luna6-versions')
-dbutils.widgets.text('reference', 'databricks-claude-sonnet-5-5@u-all')
-dbutils.widgets.text('contenders', 'databricks-gpt-6-luna@u-all,databricks-gpt-6-luna@u-bi,'
-                                   'databricks-gpt-6-luna@u-title,databricks-gpt-6-luna@union-ctx,ka')
+dbutils.widgets.text('reference', 'databricks-claude-sonnet-5-5@union-ctx')
+dbutils.widgets.text('contenders', 'databricks-gpt-6-luna@union-ctx,databricks-gpt-6-luna@u-title,'
+                                   'databricks-gpt-6-luna@u-bi,databricks-gpt-6-luna@u-all,ka')
 dbutils.widgets.text('judge', 'databricks-gpt-5-6-luna')
 dbutils.widgets.text('rewrite_model', 'databricks-claude-sonnet-4-6')   # every search rewrites with it
 dbutils.widgets.text('answer_max_tokens', '8000')                       # reasoning counts inside it
