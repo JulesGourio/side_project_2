@@ -61,13 +61,24 @@ def load_v3_instructions(division: str) -> str:
     return f'{base.load_instructions(division)}\n\n{addendum}'
 
 
+# v3's citation rule: the baseline's, but a URL written inside a passage may be quoted when the
+# user asks for a link. The bare "Do not write URLs" made GPT-6 Luna refuse the OPEX SharePoint
+# link that INAQ-742 gives verbatim ("je ne peux pas reproduire l'URL ici", luna6-prompt 2026-10-08).
+V3_CITATION_RULE = base.CITATION_RULE.replace(
+    'Do not write URLs.',
+    "Do not write the documents' own URLs (the interface links every cited document). Exception: when the "
+    'user asks for a link and a passage itself contains that URL, quote it exactly as written in the '
+    'passage, with its citation; never invent, complete or rebuild a URL.')
+assert V3_CITATION_RULE != base.CITATION_RULE
+
+
 def system_text(division: str, which: str) -> str:
     """The system message of instruction set ``which`` (``ka``, ``v2`` or ``v3``)."""
     if which == 'v2':
         return load_v2_instructions(division)
     if which == 'v3':
-        # Same layout as the baseline: instructions, then the citation rule.
-        return load_v3_instructions(division) + '\n' + base.CITATION_RULE
+        # Same layout as the baseline: instructions, then the citation rule (v3's own, see above).
+        return load_v3_instructions(division) + '\n' + V3_CITATION_RULE
     return base.load_instructions(division) + '\n' + base.CITATION_RULE
 
 

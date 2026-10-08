@@ -305,6 +305,30 @@ Rerun préparé (`luna6-prompt`, défauts du notebook) : Luna @ `u-all` seul (t�
 dans l'app (widget `translate_back`). Recherches et réponses déjà en cache : seules les réponses
 `v3` et les jugements sont à payer (≈ 2 €).
 
+**Résultat `luna6-prompt`** (même référence, même juge, réponses retraduites comme dans l'app) :
+
+| Concurrent | Gagnés / perdus / égalités | Fidélité (con / réf) | Exactitude (con / réf) | Inventions (con / réf) | Juge constant |
+|---|---|---|---|---|---|
+| Luna @ `u-all+v3+lang` | **19 / 16 / 5** | **2.71** / 2.39 | 2.61 / 2.63 | **0.63** / 1.59 | 88 % |
+| Luna @ `u-all` (témoin) | 15 / 13 / 12 | 2.44 / 2.39 | 2.45 / 2.73 | 0.99 / 1.48 | 70 % |
+| Luna @ `u-all+v3` | 14 / 17 / 9 | 2.61 / 2.41 | 2.56 / 2.71 | 0.74 / 1.55 | 78 % |
+
+0.0036 € par question (Sonnet : 0.089 €), premier token 6.9 s (Sonnet : 6.0 s), ≈ 27k tokens d'entrée.
+
+- **Retenu : GPT-6 Luna + `u-all` + `v3` + rappel de langue.** Seule version qui bat Sonnet 5.5, avec
+  2,5 fois moins d'inventions et la même exactitude.
+- `v3` seul réduit les inventions mais perd des duels ; c'est le rappel de langue qui fait la différence.
+- Les demandes hors sujet sont maintenant refusées (`v3`). Le juge préfère encore souvent le refus de
+  Sonnet, plus explicatif : c'est de la forme, pas une invention.
+- Défaut corrigé dans le code le même jour : Luna refusait de donner l'URL du SharePoint OPEX écrite
+  dans INAQ-742 (« je ne peux pas reproduire l'URL ici »), à cause de la consigne « Do not write
+  URLs ». `v3` autorise désormais à citer une URL écrite dans un passage quand on demande un lien
+  (`V3_CITATION_RULE`, `chat_vsi_prompts.py`).
+- Restent des défauts de recherche, pas de modèle : confusion AIPS 02-01-003 / 01-02-003 (deux REF
+  voisines dans le même plan), document cité absent des résultats (Q0062MI). Réponses de Luna plus
+  courtes et parfois moins complètes que Sonnet (NDT, qualification peinture).
+- Configuration mise dans `target_env.json` (DEV) : `operations_dev.md`, bloc L.
+
 ---
 
 ## 3. Modèles

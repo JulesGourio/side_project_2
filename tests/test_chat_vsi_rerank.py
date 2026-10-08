@@ -190,7 +190,8 @@ def test_instructions_v3_is_ka_plus_addendum(monkeypatch):
     system = chat_vsi_prompts.build_prompt('AS', conv, docs)[0]['content']
     assert system.startswith(chat_vsi.load_instructions('AS'))
     assert 'ONLY from the numbered passages' in system and 'NF, FDAQL' in system
-    assert system.endswith(chat_vsi.CITATION_RULE)
+    assert system.endswith(chat_vsi_prompts.V3_CITATION_RULE)
+    assert 'quote it exactly as written' in system and 'Do not write URLs.' not in system
 
 
 def test_metadata_carries_generation_usage():

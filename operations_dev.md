@@ -653,45 +653,24 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   `dev_landingzone.qualibot.eval_pairwise_runs` ; une autre série = un autre `eval_id`.
   Fait le 2026-10-08 (`luna6-versions`), résultats dans `docs/chat_vsi_audit_2026-10.md` § 2.6.
 
-- [ ] **P2. Rerun prompt de GPT-6 Luna** (2026-10-08) : copier le nouveau zip,
-  `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`, puis `pairwise_answers`, Run all avec
-  les **nouveaux défauts** des widgets (si le notebook garde les anciennes valeurs : supprimer les
-  widgets ou les remettre à la main) :
-  - `eval_id` = `luna6-prompt` ;
-  - `contenders` = `databricks-gpt-6-luna@u-all,databricks-gpt-6-luna@u-all+v3,databricks-gpt-6-luna@u-all+v3+lang` ;
-  - `translate_back` = `true` (réponses retraduites comme dans l'app).
-  Recherches et réponses Sonnet / Luna `u-all` reprises du cache : ≈ 2 €, ≈ 15 min. Envoyer les trois
-  tableaux ; regarder dans le détail les questions hors sujet et les réponses en mauvaise langue.
+- [x] **P2. Rerun prompt de GPT-6 Luna** _(fait 2026-10-08, `luna6-prompt`)_ : `u-all+v3+lang` retenu
+  (19 gagnés / 16 perdus contre Sonnet 5.5, 0.63 invention contre 1.59, juge constant 88 %). Détail :
+  `docs/chat_vsi_audit_2026-10.md` § 2.6.
 
-- [ ] **L. Passer le Chat VSI DEV sur GPT-6 Luna + GPT-5.6 Luna en secours** (code prêt le 2026-10-08,
-  `server/services/chat_vsi_llm.py`, récap `docs/chat_vsi_robustesse_2026-10.md`). À faire **après P2**,
-  qui décide `CHAT_VSI_INSTRUCTIONS` et `CHAT_VSI_LANGUAGE_REMINDER`. Ajouter au bloc `"dev"` de
-  `utils/deploy/target_env.json` (ou me demander de le faire), puis
-  `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (redéploiement complet : l'app relit sa config) :
-  ```json
-  "CHAT_VSI_VARIANT": "rerank",
-  "CHAT_VSI_RERANK_MERGE": "union",
-  "CHAT_VSI_RERANK_COLUMNS": "REF,semantic_headers,chunk_text",
-  "CHAT_VSI_REF_LOOKUP": "on",
-  "CHAT_VSI_TITLE_LOOKUP": "on",
-  "CHAT_VSI_REWRITE": "bilingual",
-  "CHAT_VSI_ONE_LANGUAGE": "on",
-  "CHAT_VSI_LLM_ENDPOINT": "databricks-gpt-6-luna",
-  "CHAT_VSI_LLM_FALLBACK_ENDPOINTS": "databricks-gpt-5-6-luna",
-  "CHAT_VSI_ANSWER_MAX_TOKENS": "8000",
-  "CHAT_VSI_REWRITE_ENDPOINT": "databricks-claude-sonnet-4-6",
-  "CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS": "databricks-gpt-5-6-luna,databricks-gpt-6-luna",
-  "CHAT_VSI_REWRITE_MAX_TOKENS": "1000",
-  "CHAT_VSI_INSTRUCTIONS": "v3",
-  "CHAT_VSI_LANGUAGE_REMINDER": "on"
-  ```
-  Les deux dernières lignes seulement si P2 les confirme. Vérifier ensuite dans Serving que
-  `databricks-gpt-6-luna` et `databricks-gpt-5-6-luna` existent dans le workspace DEV (un endpoint absent
-  n'arrête pas le chat : 404 → l'autre modèle, mais tout passerait par le secours). Test : une question
-  dans l'onglet Chat VSI, puis dans les logs de l'app `chat_vsi_llm` (aucune ligne = aucun incident) et
-  `chat turn done`. Les notebooks d'éval n'héritent plus que des index et du modèle de réponse de l'app,
-  jamais de ses options de recherche ni du modèle de secours. UAT : même bloc dans `"uat"`, seulement
-  avec ton accord (déploiement de la vraie app).
+- [ ] **L. Passer le Chat VSI DEV sur GPT-6 Luna + GPT-5.6 Luna en secours** (code et config prêts le
+  2026-10-08 ; récap `docs/chat_vsi_robustesse_2026-10.md`). Les valeurs sont **déjà dans le bloc `"dev"`**
+  de `utils/deploy/target_env.json` (variante `rerank` + `u-all`, GPT-6 Luna, secours GPT-5.6 Luna, réécriture
+  Sonnet 4.6, `CHAT_VSI_INSTRUCTIONS=v3`, `CHAT_VSI_LANGUAGE_REMINDER=on`). À faire :
+  1. Serving DEV : vérifier que `databricks-gpt-6-luna` et `databricks-gpt-5-6-luna` existent (un endpoint
+     absent n'arrête pas le chat : 404 → l'autre modèle, mais tout passerait par le secours).
+  2. Copier le zip, puis `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (**sans** `-SyncOnly` : l'app
+     doit redémarrer pour relire `target_config.env`).
+  3. Test dans l'onglet Chat VSI : une question en français, une en espagnol ou tchèque, une hors sujet
+     (« recette de riz au thon » → refus), « donne-moi le lien de l'OPEX Sharepoint » (→ l'URL de INAQ-742).
+  4. Logs de l'app : `chat_vsi_llm` (aucune ligne = aucun incident), `chat turn done`.
+  Les notebooks d'éval n'héritent que des index et du modèle de réponse de l'app (le golden répond donc
+  désormais par défaut avec GPT-6 Luna) ; `retrieval_eval` garde Sonnet 4.6 pour la réécriture.
+  UAT : même bloc dans `"uat"`, seulement avec ton accord (déploiement de la vraie app).
 
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.
