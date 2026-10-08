@@ -1120,3 +1120,22 @@ plafonné vers 50 questions/min ; premier mot à 10,7 s en médiane même à 5 q
   de requêtes/s » ; l'app utilise l'OAuth de son service principal : le plafond de l'app peut être
   plus haut que celui mesuré depuis le notebook.
 
+**Second run (paliers 10 / 20 / 30) et messages de refus** : même plafond (HYBRID ≈ 25/s, refus dès
+20 requêtes en cours ; ANN ≈ 63/s). Deux limites différentes :
+- HYBRID : `Request is rejected due to heavy load` → capacité de calcul de l'endpoint (ce que règle *Target QPS*) ;
+- ANN : `Too many requests` → limite de débit des requêtes, atteinte seulement à ≈ 60/s.
+
+**Moins de requêtes par question** (`retrieval_eval`, 65 questions) :
+
+| Config | Requêtes / question | Trouvés | Golden | Synthétiques | Retours (16) | Contexte | Recherche p50 |
+|---|---|---|---|---|---|---|---|
+| `chat` (3 reclassées + 3 brutes) | 6 | 79.4 % | **96.1 %** | **94.6 %** | 31.3 % | 11 307 | 4.9 s |
+| `rawq1` (3 reclassées + 1 brute, sur la question) | 4 | 80.0 % | 87.8 % | 93.6 % | 43.8 % | 8 946 | 3.3 s |
+| `rawq1-raw5` (idem, 5 passages bruts) | 4 | 78.3 % | 80.4 % | 93.6 % | 43.8 % | 8 170 | 3.3 s |
+
+- Les recherches brutes sur les réécritures FR / EN comptent : sans elles, le golden perd 8 points
+  (définition d'APO INAPO0006, IQ19613 / IQ20189 pour le BPL R80).
+- **Décision** : on garde 6 requêtes. Pour 80 questions/min (≈ 9 requêtes/s), l'endpoint a ≈ 2,5 fois
+  la marge nécessaire une fois les rafales étalées par la file `vs_gate.py` ; reste à le vérifier par le
+  test de charge du chat (`operations_dev.md` V3.2).
+
