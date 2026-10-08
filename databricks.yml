@@ -571,7 +571,7 @@ targets:
                   schema_name: ${var.app_write_schema}
                   volumes: "doc_compare,test"
                   indexes: "chunks_index${var.parsing_table_suffix},chunks_as_index${var.parsing_table_suffix},chunks_is_index${var.parsing_table_suffix}"
-                  serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna"
+                  serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna"
               environment_key: default
           environments:
             - environment_key: default

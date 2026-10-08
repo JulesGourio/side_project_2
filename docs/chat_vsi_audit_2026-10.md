@@ -327,7 +327,9 @@ dans l'app (widget `translate_back`). Recherches et réponses déjà en cache : 
 - Restent des défauts de recherche, pas de modèle : confusion AIPS 02-01-003 / 01-02-003 (deux REF
   voisines dans le même plan), document cité absent des résultats (Q0062MI). Réponses de Luna plus
   courtes et parfois moins complètes que Sonnet (NDT, qualification peinture).
-- Configuration mise dans `target_env.json` (DEV) : `operations_dev.md`, bloc L.
+- Configuration mise dans `target_env.json` (DEV) : `operations_dev.md`, bloc L. **Aucun modèle Claude
+  dans le chatbot** (décision du 2026-10-08) : la réécriture passe aussi sur GPT-6 Luna (elle coûtait
+  plus que la réponse avec Sonnet 4.6) ; `u-all-luna6` dans `retrieval_eval` mesure ce que ça change.
 
 ---
 

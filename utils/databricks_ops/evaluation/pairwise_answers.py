@@ -53,7 +53,7 @@ dbutils.widgets.text('reference', 'databricks-claude-sonnet-5-5@union-ctx')
 dbutils.widgets.text('contenders', 'databricks-gpt-6-luna@u-all,databricks-gpt-6-luna@u-all+v3,'
                                    'databricks-gpt-6-luna@u-all+v3+lang')
 dbutils.widgets.text('judge', 'databricks-gpt-5-6-luna')
-dbutils.widgets.text('rewrite_model', 'databricks-claude-sonnet-4-6')   # every search rewrites with it
+dbutils.widgets.text('rewrite_model', 'databricks-gpt-6-luna')   # every search rewrites with it (the chat's, 2026-10-08; earlier runs: Sonnet 4.6)
 dbutils.widgets.text('answer_max_tokens', '8000')                       # reasoning counts inside it
 dbutils.widgets.dropdown('translate_back', 'true', ['true', 'false'])   # as the app: answers back to the question's language
 dbutils.widgets.text('n_questions', '40')                               # golden first, then real DEV questions
@@ -146,7 +146,8 @@ def apply_search_env(name):
         del os.environ[k]
     os.environ.update(APP_VSI_ENV)
     os.environ.update({'CHAT_VSI_VARIANT': 'rerank', 'CHAT_VSI_REWRITE_ENDPOINT': REWRITE,
-                       'CHAT_VSI_REWRITE_MAX_TOKENS': '1000', **SEARCHES[name]})
+                       'CHAT_VSI_REWRITE_MAX_TOKENS': '2000', 'CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS': REWRITE,
+                       **SEARCHES[name]})
 
 # COMMAND ----------
 

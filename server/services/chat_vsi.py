@@ -7,7 +7,8 @@ Port of the "VSI v0" pipeline measured against the KA on the golden dataset
 2. the division's index is searched in HYBRID mode with the question as-is and with
    that French query; both result lists are merged by best rank;
 3. passages are grouped and numbered by document — the unit the UI numbers;
-4. ``databricks-claude-sonnet-4-6`` answers with the division's instructions (copied from
+4. the answer model (``CHAT_VSI_LLM_ENDPOINT``, default GPT-6 Luna since 2026-10-08; Sonnet 4.6 in
+   the v0 benchmark) answers with the division's instructions (copied from
    the live KAs, ``server/config/chat_vsi/``) and cites documents with ``[n]`` markers;
 5. the markers are parsed out of the stream (``CitationStreamParser``).
 
@@ -29,7 +30,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
 
-from .chat_vsi_llm import answer_chain, stream_answer
+from .chat_vsi_llm import _message_text as message_text, answer_chain, effective_max_tokens, stream_answer
 from .streaming import supports_temperature
 from .vector_search import _fetch_chunks
 
@@ -45,13 +46,15 @@ _DEFAULT_INDEXES = {
     'AS': 'dev_landingzone.qualibot.chunks_as_index_v1',
     'IS': 'dev_landingzone.qualibot.chunks_is_index_v1',
 }
-_DEFAULT_LLM_ENDPOINT = 'databricks-claude-sonnet-4-6'
+# No Claude model in the chatbot (decision 2026-10-08): GPT-6 Luna, GPT-5.6 Luna as fallback.
+_DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'
 _DEFAULT_NUM_RESULTS = 10        # passages per query — what the KA passed to generation
 _ANSWER_MAX_TOKENS = 2000
 _QUERY_MAX_TOKENS = 120
 _MAX_QUERY_CHARS = 20000         # Vector Search rejects query_text past ~29k chars
 _LLM_TIMEOUT_S = 60.0
-_OPERATION = 'Chat'              # label used in user-facing error messages
+_OPERATION = 'Chat'
+_REASONING_REWRITE_FLOOR = 1000              # label used in user-facing error messages
 
 REWRITE_PROMPT = """Using the conversation for context, rewrite the user's LAST question as one standalone search query in French, for a search
 engine over a mostly French document base (Latécoère quality documents). Keep document codes,
@@ -201,14 +204,17 @@ def _without_date(text: str) -> str:
 
 async def _complete(host: str, token: str, endpoint: str, messages: List[Dict[str, str]], max_tokens: int) -> str:
     """Non-streamed chat completion on a Model Serving endpoint."""
-    payload: Dict[str, Any] = {'messages': messages, 'max_tokens': max_tokens}
+    # A reasoning model (GPT-6 Luna) thinks inside max_tokens: the 120-token rewrite ceiling would
+    # leave it empty, so it gets the reasoning floor; its content may be a list of blocks.
+    payload: Dict[str, Any] = {'messages': messages,
+                               'max_tokens': effective_max_tokens(endpoint, max_tokens, _REASONING_REWRITE_FLOOR)}
     if supports_temperature(endpoint):
         payload['temperature'] = 0.0
     async with httpx.AsyncClient(timeout=_LLM_TIMEOUT_S) as client:
         resp = await client.post(f'{host}/serving-endpoints/{endpoint}/invocations', json=payload,
                                  headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
         resp.raise_for_status()
-        return resp.json()['choices'][0]['message']['content']
+        return message_text(resp.json()['choices'][0]['message']['content'])
 
 
 async def search_query_fr(host: str, token: str, endpoint: str, conversation: List[Dict[str, str]]) -> Optional[str]:

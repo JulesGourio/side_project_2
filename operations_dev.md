@@ -642,8 +642,9 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
      liste ; celles déjà mesurées sont sautées, mais autant ne lancer que les nouvelles). Run all.
      Configs lancées : `idx-v1` et `idx-v1-all` (index actuel), puis pour chaque variante `idx-v2a`
      (union-ctx), `idx-v2a-clean` (sommaires, cartouches et textes répétés écartés), `idx-v2a-all`
-     (`u-all`, la config du chat), et `u-all-luna6` (`u-all` avec la réécriture par GPT-6 Luna au lieu de
-     Sonnet 4.6). Envoyer les tableaux.
+     (`u-all`, la config du chat). Tout est réécrit par GPT-6 Luna (widget `rewrite_model`, comme le
+     chat) ; `u-all-luna6` se compare à l'ancienne ligne `u-all` (réécriture Sonnet 4.6) et dit ce que le
+     passage à GPT-6 Luna coûte en recherche. Envoyer les tableaux.
   4. Plus tard, si ça vaut la dépense : `variant=v2d`, `doc_cards=true` (fiche par document,
      ≈ 15 €), puis `variant=v2e`, `doc_cards=true`, `chunk_context=true` (≈ 65 € au total).
      `enrich_max_docs=50` pour un essai à quelques euros d'abord.
@@ -661,20 +662,29 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   (19 gagnés / 16 perdus contre Sonnet 5.5, 0.63 invention contre 1.59, juge constant 88 %). Détail :
   `docs/chat_vsi_audit_2026-10.md` § 2.6.
 
-- [ ] **L. Passer le Chat VSI DEV sur GPT-6 Luna + GPT-5.6 Luna en secours** (code et config prêts le
-  2026-10-08 ; récap `docs/chat_vsi_robustesse_2026-10.md`). Les valeurs sont **déjà dans le bloc `"dev"`**
-  de `utils/deploy/target_env.json` (variante `rerank` + `u-all`, GPT-6 Luna, secours GPT-5.6 Luna, réécriture
-  Sonnet 4.6, `CHAT_VSI_INSTRUCTIONS=v3`, `CHAT_VSI_LANGUAGE_REMINDER=on`). À faire :
-  1. Serving DEV : vérifier que `databricks-gpt-6-luna` et `databricks-gpt-5-6-luna` existent (un endpoint
-     absent n'arrête pas le chat : 404 → l'autre modèle, mais tout passerait par le secours).
-  2. Copier le zip, puis `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (**sans** `-SyncOnly` : l'app
-     doit redémarrer pour relire `target_config.env`).
-  3. Test dans l'onglet Chat VSI : une question en français, une en espagnol ou tchèque, une hors sujet
-     (« recette de riz au thon » → refus), « donne-moi le lien de l'OPEX Sharepoint » (→ l'URL de INAQ-742).
-  4. Logs de l'app : `chat_vsi_llm` (aucune ligne = aucun incident), `chat turn done`.
-  Les notebooks d'éval n'héritent que des index et du modèle de réponse de l'app (le golden répond donc
-  désormais par défaut avec GPT-6 Luna) ; `retrieval_eval` garde Sonnet 4.6 pour la réécriture.
-  UAT : même bloc dans `"uat"`, seulement avec ton accord (déploiement de la vraie app).
+- [ ] **L. Passer le Chat VSI DEV sur GPT-6 Luna + GPT-5.6 Luna en secours, sans aucun modèle Claude**
+  (décision 2026-10-08 ; récap `docs/chat_vsi_robustesse_2026-10.md`). Tout est déjà dans le code :
+  `app.yaml` (réponse GPT-6 Luna, secours GPT-5.6 Luna, pour toutes les cibles) et le bloc `"dev"` de
+  `utils/deploy/target_env.json` (variante `rerank` + `u-all`, réécriture GPT-6 Luna avec secours GPT-5.6
+  Luna, `CHAT_VSI_INSTRUCTIONS=v3`, `CHAT_VSI_LANGUAGE_REMINDER=on`). Le pont de traduction était déjà sur
+  GPT-5.6 Luna (secours GPT-6 Luna). À faire, dans l'ordre :
+  1. Serving DEV : vérifier que `databricks-gpt-6-luna` et `databricks-gpt-5-6-luna` existent.
+  2. Copier le zip, puis donner au SP de l'app le droit d'interroger GPT-6 Luna (ajouté au job) :
+     ```powershell
+     databricks bundle deploy -t dev --profile DEV
+     databricks bundle run grant_app_access_dev -t dev --profile DEV
+     ```
+     Sortie attendue : une ligne `OK:` par droit, dont `CAN_QUERY on serving endpoint databricks-gpt-6-luna`.
+     Si `FAILED` sur cet endpoint : bloc V2 avec `databricks-gpt-6-luna`.
+  3. `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (**sans** `-SyncOnly` : l'app doit redémarrer).
+  4. Test dans l'onglet Chat VSI : une question en français, une en espagnol ou tchèque, une hors sujet
+     (« recette de riz au thon » → refus), « donne-moi le lien de l'OPEX Sharepoint » (→ l'URL de INAQ-742),
+     une question de suivi courte (« et pour IS ? ») pour voir la réécriture.
+  5. Logs de l'app : `chat_vsi_llm` (aucune ligne = aucun incident ; une ligne « answered by fallback »
+     = GPT-6 Luna indisponible), `chat turn done`.
+  Notebooks d'éval : ils reprennent les index et le modèle de réponse de l'app ; `retrieval_eval` et
+  `pairwise_answers` réécrivent désormais avec GPT-6 Luna (widget `rewrite_model`). UAT : bloc `"uat"` de
+  `target_env.json` + droits du SP UAT, seulement avec ton accord (déploiement de la vraie app).
 
 - [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
   les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.

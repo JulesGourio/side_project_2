@@ -308,3 +308,18 @@ def test_slot_is_freed_when_the_caller_stops_at_done(monkeypatch):
                 break
         return chat_vsi_llm._semaphore().locked()
     assert asyncio.run(_go()) is False
+
+
+def test_no_claude_model_in_the_chatbot_config():
+    """Decision 2026-10-08: the chatbot (answer, fallback, rewrite, translation) runs on Luna models only."""
+    import json as _json
+    import os as _os
+    import yaml
+    root = _os.path.join(_os.path.dirname(__file__), '..')
+    assert 'claude' not in chat_vsi._DEFAULT_LLM_ENDPOINT
+    env = {e['name']: str(e.get('value', '')) for e in yaml.safe_load(open(_os.path.join(root, 'app.yaml')))['env']}
+    targets = _json.load(open(_os.path.join(root, 'utils', 'deploy', 'target_env.json')))
+    for values in [env] + [v for k, v in targets.items() if isinstance(v, dict)]:
+        for name, value in values.items():
+            if name.startswith(('CHAT_VSI_LLM', 'CHAT_VSI_REWRITE_ENDPOINT', 'CHAT_VSI_REWRITE_FALLBACK', 'CHAT_TRANSLATE')):
+                assert 'claude' not in str(value).lower(), f'{name}={value}'

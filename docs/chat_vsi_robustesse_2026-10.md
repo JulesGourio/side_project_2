@@ -1,7 +1,9 @@
 # Chat VSI — robustesse : modèle de secours, relances, langue (2026-10-08)
 
 Objectif : le chatbot répond toujours, même quand un modèle est saturé, absent ou coupe sa
-réponse. Plan retenu : **GPT-6 Luna** pour répondre, **GPT-5.6 Luna** en secours.
+réponse. Plan retenu : **GPT-6 Luna** pour répondre et pour réécrire la requête, **GPT-5.6 Luna** en
+secours. **Aucun modèle Claude dans le chatbot** (décision du 2026-10-08) : réponse, réécriture,
+traduction et secours sont tous des modèles Luna.
 
 Le code est poussé. Rien n'a changé dans l'app déployée : le basculement de modèle reste
 inactif tant que `CHAT_VSI_LLM_FALLBACK_ENDPOINTS` est vide (valeur par défaut). La mise en
@@ -108,7 +110,8 @@ logs de l'app, préfixe `chat_vsi_llm:`. Un tour sans incident n'y laisse rien.
   - ils ne reprennent plus de la config de l'app que les index et le modèle de réponse ;
   - une fois l'app passée sur Luna, une config mesurée n'hérite donc ni des options de
     recherche de l'app ni d'un modèle de secours ;
-  - `retrieval_eval` a un widget `rewrite_model` (Sonnet 4.6, comme tous les runs passés).
+  - `retrieval_eval` a un widget `rewrite_model` (GPT-6 Luna depuis le 2026-10-08, comme le chat ; les
+    runs plus anciens réécrivaient avec Sonnet 4.6).
 - Tests : `tests/test_chat_vsi_llm.py` (21 tests : secours sur 429, 404 non retenté, réponse
   vide, erreur au milieu du flux, reprise, premier mot trop lent, file d'attente, recherche
   partielle, langue, traduction). 306 tests au total, tous verts.

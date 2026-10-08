@@ -87,7 +87,9 @@ dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_retrieval_r
 # (union-ctx) and idx-<v>-all (u-all, the chat's configuration since 2026-10-08), plus the reference
 # idx-v1 / idx-v1-all, every question on the ALL index of the variant.
 dbutils.widgets.text('index_variants', '')
-dbutils.widgets.text('rewrite_model', 'databricks-claude-sonnet-4-6')   # every run so far; not the app's answer model
+# The chat's rewrite model since 2026-10-08 (no Claude in the chatbot). Runs before 2026-10-08 used
+# databricks-claude-sonnet-4-6: compare old rows with u-all-luna6, not across rewrite models.
+dbutils.widgets.text('rewrite_model', 'databricks-gpt-6-luna')
 dbutils.widgets.text('index_schema', 'dev_landingzone.qualibot')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')

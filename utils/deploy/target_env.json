@@ -21,9 +21,9 @@
     "CHAT_VSI_LLM_ENDPOINT": "databricks-gpt-6-luna",
     "CHAT_VSI_LLM_FALLBACK_ENDPOINTS": "databricks-gpt-5-6-luna",
     "CHAT_VSI_ANSWER_MAX_TOKENS": "8000",
-    "CHAT_VSI_REWRITE_ENDPOINT": "databricks-claude-sonnet-4-6",
-    "CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS": "databricks-gpt-5-6-luna,databricks-gpt-6-luna",
-    "CHAT_VSI_REWRITE_MAX_TOKENS": "1000",
+    "CHAT_VSI_REWRITE_ENDPOINT": "databricks-gpt-6-luna",
+    "CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS": "databricks-gpt-5-6-luna",
+    "CHAT_VSI_REWRITE_MAX_TOKENS": "2000",
     "CHAT_VSI_INSTRUCTIONS": "v3",
     "CHAT_VSI_LANGUAGE_REMINDER": "on"
   },

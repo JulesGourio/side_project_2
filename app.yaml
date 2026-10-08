@@ -52,15 +52,17 @@ env:
     value: "dev_landingzone.qualibot.chunks_as_index_v1"
   - name: CHAT_VSI_INDEX_IS
     value: "dev_landingzone.qualibot.chunks_is_index_v1"
+  # No Claude model anywhere in the chatbot (decision 2026-10-08): GPT-6 Luna answers,
+  # GPT-5.6 Luna is the fallback (below). The rewrite uses the same chain by default.
   - name: CHAT_VSI_LLM_ENDPOINT
-    value: "databricks-claude-sonnet-4-6"
+    value: "databricks-gpt-6-luna"
   # Answer models tried, in order, when CHAT_VSI_LLM_ENDPOINT fails (429, 5xx, timeout, 404,
   # empty answer…), comma-separated — server/services/chat_vsi_llm.py, which also retries,
   # continues a cut answer and caps concurrent answers (CHAT_VSI_MAX_CONCURRENT_ANSWERS, 32).
   # Empty = retries on the primary only. Plan 2026-10-08 (operations_dev.md, block L):
   # CHAT_VSI_LLM_ENDPOINT=databricks-gpt-6-luna + this = databricks-gpt-5-6-luna.
   - name: CHAT_VSI_LLM_FALLBACK_ENDPOINTS
-    value: ""
+    value: "databricks-gpt-5-6-luna"
   - name: CHAT_VSI_NUM_RESULTS
     value: "10"
   # Which VSI engine version answers (server/services/chat_vsi_variants.py):
