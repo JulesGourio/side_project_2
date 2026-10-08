@@ -237,7 +237,16 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   databricks vector-search-indexes list-indexes qualibot --profile DEV
   ```
 
-- [ ] **S1. Code et jobs** : copier le zip, puis
+- [ ] **S1. Code et jobs** : extraire le zip dans un **dossier vide** (beaucoup de fichiers ont été
+  déplacés vers `archive/` ou renommés : extrait par-dessus l'ancien dossier, les anciens fichiers
+  resteraient et seraient redéployés avec le reste). Vérifier ensuite que le fichier de config de
+  l'app est le bon — la première ligne doit être `"""Config endpoint — exposes app configuration to the frontend."""` :
+
+  ```powershell
+  Get-Content server\routers\config.py -TotalCount 1
+  ```
+
+  Puis, depuis ce dossier :
 
   ```powershell
   databricks bundle deploy -t dev --profile DEV
