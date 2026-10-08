@@ -478,6 +478,20 @@ ANN, avec filtre, mélange du chat). ≈ 20 min.
 - [ ] **V2.2. M'envoyer** la sortie de la cellule « endpoint and index » et les trois tableaux de la
   dernière cellule.
 
+### V3. Refaire le test de charge du chat avec la file Vector Search (2026-10-08)
+
+Résultat V2 : ≈ 26 requêtes HYBRID/s au plus, refus au-delà de ≈ 16 en cours, reranker non en cause
+(`docs/chat_vsi_tests.md` § 5.8). Code : file commune `server/services/vs_gate.py` (8 requêtes en
+cours au plus, relances sur 429).
+
+- [ ] **V3.1.** Recopier `server/services/vs_gate.py` (nouveau), `server/services/chat_vsi.py`,
+  `server/services/vector_search.py`, `tests/test_vs_gate.py`, `tests/test_chat_vsi_llm.py`,
+  `docs/chat_vsi_tests.md`, `operations_dev.md` ; puis `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev`
+  (sans `-SyncOnly` : l'app doit redémarrer).
+- [ ] **V3.2.** Notebook `load_test_chat`, Run all (défauts). M'envoyer les deux tableaux.
+- [ ] **V3.3.** M'envoyer aussi la sortie de la cellule « The endpoint and the index » du notebook
+  `load_test_vector_search` (type d'endpoint, `scaling_info`) et son troisième tableau (texte des refus).
+
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
 Lecture seule sur les tables UAT ; écrit uniquement dans

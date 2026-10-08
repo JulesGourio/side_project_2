@@ -27,7 +27,8 @@ What happens for each question (configuration chosen 2026-10-08, measures in
 ``citations``, ``metadata``, ``error``, ``[DONE]``). Settings (environment, read at call time):
 ``CHAT_VSI_INDEX``, ``CHAT_VSI_LLM_ENDPOINT`` / ``CHAT_VSI_LLM_FALLBACK_ENDPOINTS``,
 ``CHAT_VSI_REWRITE_ENDPOINT`` / ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS``,
-``CHAT_VSI_ANSWER_MAX_TOKENS``, ``CHAT_VSI_REWRITE_MAX_TOKENS``, ``CHAT_VSI_SEARCH_RETRIES``,
+``CHAT_VSI_ANSWER_MAX_TOKENS``, ``CHAT_VSI_REWRITE_MAX_TOKENS``, ``VS_MAX_CONCURRENT_QUERIES`` /
+``VS_QUERY_RETRIES`` (``vs_gate.py``),
 ``CHAT_VSI_RERANK_TOP_K`` / ``CHAT_VSI_RAW_TOP_K`` / ``CHAT_VSI_MAX_SEARCH_PASSAGES`` (search sizes,
 defaults = the measured configuration; other values are for ``retrieval_eval`` comparisons),
 plus the resilience settings documented in ``chat_vsi_llm.py``. The earlier engine versions
@@ -38,7 +39,6 @@ import asyncio
 import json
 import logging
 import os
-import random
 import re
 import uuid
 from functools import lru_cache
@@ -47,7 +47,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
 
-from . import chat_vsi_llm
+from . import chat_vsi_llm, vs_gate
 from .chat_vsi_titles import documents_titled
 from .doc_catalog import _catalog, canon_ref
 from .vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
@@ -70,7 +70,6 @@ _TITLE_LOOKUP_DOCS = 3           # best title matches searched
 _TITLE_LOOKUP_K = 6              # passages fetched from them
 _MAX_QUERY_CHARS = 20000         # Vector Search rejects query_text past ~29k chars
 _OPERATION = 'Chat'              # label used in user-facing error messages
-_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 REWRITE_PROMPT = """Using the conversation for context, rewrite the user's LAST question as one standalone search
 query, for a search engine over Latécoère quality documents written in French or in English.
@@ -153,10 +152,6 @@ def raw_top_k() -> int:
 def max_search_passages() -> int:
     """Cap on the merged search passages (REF and title lookups come on top); 0 = no cap."""
     return max(0, _int_env('CHAT_VSI_MAX_SEARCH_PASSAGES', 0))
-
-
-def search_retries() -> int:
-    return _int_env('CHAT_VSI_SEARCH_RETRIES', 2)
 
 
 def rewrite_timeout_s() -> float:
@@ -321,25 +316,9 @@ def refs_named_in(text: str) -> List[str]:
 # ---------------------------------------------------------------------------
 
 async def _post_query(host: str, token: str, index: str, payload: Dict[str, Any]) -> httpx.Response:
-    """One Vector Search query, retried on 429 / 5xx / timeout / network error (backoff 0.5 s,
-    1 s, 2 s… plus jitter, at most CHAT_VSI_SEARCH_RETRIES times)."""
-    attempts = search_retries()
-    for attempt in range(attempts + 1):
-        try:
-            async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
-                resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index}/query', json=payload,
-                                         headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
-            if attempt == attempts:
-                raise
-            logger.warning('chat_vsi: Vector Search %s: %s, retry %d/%d', index, type(exc).__name__, attempt + 1, attempts)
-        else:
-            if resp.status_code not in _RETRYABLE_STATUS or attempt == attempts:
-                return resp
-            logger.warning('chat_vsi: Vector Search %s returned %d, retry %d/%d', index, resp.status_code,
-                           attempt + 1, attempts)
-        await asyncio.sleep(min(4.0, 0.5 * 2 ** attempt) + random.random() * 0.5)
-    raise RuntimeError('unreachable')
+    """One Vector Search query through the app-wide gate (``vs_gate``: at most
+    ``VS_MAX_CONCURRENT_QUERIES`` in flight, retried on 429 / 5xx / timeout)."""
+    return await vs_gate.post(host, token, index, payload, _QUERY_TIMEOUT_S)
 
 
 def _rows(resp: httpx.Response) -> List[Dict[str, Any]]:

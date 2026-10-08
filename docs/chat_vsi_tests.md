@@ -1089,3 +1089,34 @@ Effets à connaître :
 - Défaut de l'éval corrigé le même jour : les questions des retours utilisateurs portaient encore le préfixe « [Division: AS] (system routing note…) » du Knowledge Assistant ; `retrieval_eval` et `pairwise_answers` le retirent désormais (`_strip_division`), comme l'app.
 - **Décision** : rien ne change tant que les réponses n'ont pas été comparées (`pairwise_answers`, `chat` contre `raw5`).
 
+## 5.8 Tenue en charge (2026-10-08, DEV)
+
+**Chat de bout en bout** (`load_test_chat.py`, via l'app) : 100 % de réussite à 5 et 10 questions
+simultanées ; à 20, 40, 80 : 91 %, 84 %, 76 %, toutes les erreurs `Vector Search returned 429` ; débit
+plafonné vers 50 questions/min ; premier mot à 10,7 s en médiane même à 5 questions.
+
+**Vector Search seul** (`load_test_vector_search.py`, sans LLM ni relance, jeton du notebook) :
+
+| Requête | Servies/s sans refus | Plafond servies/s | Latence p50 (palier 8) |
+|---|---|---|---|
+| HYBRID 10 (brute) | 25.8 (8 simultanées) | ≈ 26 | 0.30 s |
+| HYBRID 12 + reranker | 16.2 (8) | ≈ 26 | 0.48 s |
+| reranker sur le texte seul | 16.3 (8) | ≈ 26 | 0.48 s |
+| ANN 10 (vecteurs seuls) | 49.3 (8) | ≈ 80 | 0.15 s |
+| HYBRID + filtre de division | 22.6 (8) | ≈ 22 | 0.32 s |
+| mélange du chat | 22.2 (8) | ≈ 25 | 0.40 s |
+
+- **Le reranker n'abaisse pas le plafond** (≈ 26 requêtes/s avec ou sans) : il rend chaque requête plus
+  lente (0,5 s contre 0,2 s). C'est la recherche HYBRID (mots-clés + vecteurs) qui plafonne ; ANN seul
+  monte trois fois plus haut. Le filtre ne coûte presque rien.
+- **La cause des 429 du chat** : une question envoie 6 à 8 requêtes d'un coup, et l'endpoint refuse
+  au-delà de ≈ 16 requêtes en cours. Deux ou trois questions qui cherchent au même instant suffisent.
+- **Corrigé dans le code le même jour** : `server/services/vs_gate.py`, une file commune au chat et à
+  l'impact search, au plus 8 requêtes Vector Search en cours par instance de l'app
+  (`VS_MAX_CONCURRENT_QUERIES`), les autres attendent au lieu d'être refusées ; un refus qui arrive
+  quand même est relancé jusqu'à 5 fois en ≈ 15 s, en respectant `Retry-After` (`VS_QUERY_RETRIES`).
+- **Au-delà** : l'endpoint « standard » a un réglage *Target QPS* (capacité réservée, payante, sans
+  autoscaling). Selon Databricks, un jeton personnel passe par une route limitée à « quelques dizaines
+  de requêtes/s » ; l'app utilise l'OAuth de son service principal : le plafond de l'app peut être
+  plus haut que celui mesuré depuis le notebook.
+
