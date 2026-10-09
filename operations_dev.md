@@ -495,11 +495,17 @@ cours au plus, relances sur 429).
   posée : 4 requêtes au lieu de 6) : notebook `retrieval_eval`, widget `indexes` =
   `chat,rawq1|rawq=1,rawq1-raw5|rawq=1|raw=5`, Run all. M'envoyer les deux derniers tableaux.
   _(fait 2026-10-08 : recherche brute sur la question seule = −8 points sur le golden)_
-- [ ] **V3.2c.** Recherche brute sur une réécriture seulement (4 requêtes) ou sur les deux (5) :
+- [x] **V3.2c.** Recherche brute sur une réécriture seulement (4 requêtes) ou sur les deux (5) :
   notebook `retrieval_eval`, widget `indexes` = `chat,rawfr|rawon=fr,rawen|rawon=en,rawfren|rawon=fr+en`,
   Run all (≈ 1 €). M'envoyer les deux derniers tableaux.
-- [ ] **V3.2d.** Quota du modèle : workspace DEV → Serving → `databricks-gpt-6-luna` → section
+  _(fait 2026-10-09 : `rawfr` 81,9 % au total, golden 93,8 % contre 96,1 %, −20 % de contexte)_
+- [x] **V3.2d.** Quota du modèle : workspace DEV → Serving → `databricks-gpt-6-luna` → section
   AI Gateway / Rate limits (si présente). M'envoyer la limite affichée (ou « aucune »).
+  _(fait 2026-10-09 : 1 M tokens d'entrée/min, 100 k de sortie/min, mêmes limites pour les deux modèles)_
+- [ ] **V3.2e.** Comparer les réponses `chat` / `rawfr` : notebook `pairwise_answers`, widgets
+  `indexes` = `chat,rawfr|rawon=fr`, `reference` = `databricks-gpt-6-luna@chat`,
+  `contenders` = `databricks-gpt-6-luna@rawfr`, `eval_id` = `passages-rawfr`, Run all.
+  M'envoyer le tableau final (verdicts, tokens d'entrée et de sortie, latence).
 - [ ] **V3.3.** M'envoyer aussi la sortie de la cellule « The endpoint and the index » du notebook
   `load_test_vector_search` (type d'endpoint, `scaling_info`) et son troisième tableau (texte des refus).
 

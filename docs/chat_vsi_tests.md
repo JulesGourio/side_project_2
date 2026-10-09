@@ -1158,3 +1158,27 @@ tourne dans le notebook ; 6 requêtes par question) :
   Databricks) avant de le relever ou de réserver du débit. Ne pas passer la réécriture sur GPT-5.6 Luna
   pour économiser le quota : elle retrouve moins bien les documents (80,0 % contre 75,8 %).
 
+**Quota des modèles** (workspace DEV, partagé par tout le workspace, identique pour GPT-6 Luna et
+GPT-5.6 Luna) : 1 000 000 tokens d'entrée/min, **100 000 tokens de sortie/min**, 1 000 requêtes/s.
+À ≈ 90 questions/min, ≈ 11 000 tokens d'entrée par réponse donnent ≈ 1 000 000/min, et ≈ 1 100 tokens
+de sortie (réflexion comprise) suffisent à atteindre les 100 000 : les deux limites sont atteintes en
+même temps, d'où les 429 au palier 40 seulement. Moins de contexte par question = plus de questions
+par minute avant la limite.
+
+**Recherche brute sur une réécriture seulement** (`retrieval_eval`, 65 questions) :
+
+| Config | Requêtes / question | Trouvés | Golden | Synthétiques | Retours (16) | Contexte | Recherche p50 |
+|---|---|---|---|---|---|---|---|
+| `chat` (brute sur question, fr, en) | 6 | 79.4 % | **96.1 %** | 94.6 % | 31.3 % | 11 307 | 4.9 s |
+| `rawfr` (brute sur la réécriture FR) | 4 | **81.9 %** | 93.8 % | 94.6 % | **43.8 %** | 8 983 | 4.9 s |
+| `rawfren` (brute sur fr + en) | 5 | 81.0 % | 85.4 % | 96.6 % | 43.8 % | 9 900 | 4.7 s |
+| `rawen` (brute sur la réécriture EN) | 4 | 76.8 % | 87.1 % | 90.7 % | 37.5 % | 9 216 | 4.8 s |
+
+- `rawfr` : +2,5 points au total, +12,5 sur les retours utilisateurs, −2,3 sur le golden (NF10856 pour
+  les CND, IQ19613 pour le BPL R80), −20 % de contexte, −33 % de requêtes Vector Search.
+- `rawfren` sous `rawfr` sur le golden alors qu'il fait une requête de plus : sur 15 questions, des
+  écarts de 2 à 3 points sont à la limite du bruit.
+- Le temps de recherche ne baisse pas : la réécriture domine, les requêtes partent en parallèle.
+- **Décision en attente** de la comparaison des réponses (`pairwise_answers`, `chat` contre `rawfr`),
+  qui donne aussi les tokens d'entrée et de sortie par réponse, donc la capacité réelle sous le quota.
+
