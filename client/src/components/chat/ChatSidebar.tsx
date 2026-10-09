@@ -20,13 +20,15 @@ interface ChatSidebarProps {
   onDivisionChange: (d: Division) => void;
 }
 
-function formatRelativeDate(isoString: string): string {
+// Calendar days in the viewer's time zone, not 24-hour periods: a question asked yesterday evening is
+// "Yesterday" this morning even though fewer than 24 hours have passed.
+export function formatRelativeDate(isoString: string, now: Date = new Date()): string {
   const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / 86400000);
+  if (Number.isNaN(date.getTime())) return '';
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(date)) / 86400000);
 
-  if (diffDays === 0) return 'Today';
+  if (diffDays <= 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
   if (diffDays < 7) return `${diffDays} days ago`;
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });

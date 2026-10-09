@@ -19,6 +19,8 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from server.services.chat_vsi_llm import TIRED_MESSAGE
+
 
 @pytest.fixture(scope='module')
 def client():
@@ -64,6 +66,7 @@ def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=Tru
         patch('server.routers.chat._save_turn', save_turn),
         patch('server.routers.chat.store_chat_turn', store_turn),
         patch('server.routers.chat.augment_sources', side_effect=lambda content, sources: sources),
+        patch('server.routers.chat.with_document_info', side_effect=lambda sources: sources),
     ):
         received = []
         with client.websocket_connect('/api/chat/ws') as ws:
@@ -116,7 +119,8 @@ def test_engine_error_is_relayed_and_saved_as_error(client):
                     'error_type': 'VectorSearchError', 'http_status': 403}),
         'data: [DONE]\n\n'))
     received, mocks = _talk(client, pool=MagicMock(), engine=engine)
-    assert received[-1] == {'type': 'error', 'error': 'Document search failed (Vector Search returned 403).'}
+    # The user never sees the technical cause, only the tired message (the cause is in the turn log).
+    assert received[-1] == {'type': 'error', 'error': TIRED_MESSAGE}
     mocks['save_turn'].assert_awaited_once()
     assert mocks['save_turn'].await_args.kwargs['status'] == 'error'
     assert mocks['save_turn'].await_args.kwargs['endpoint_name'] == 'vsi-all'
@@ -135,7 +139,7 @@ def test_turn_saved_with_division_endpoint_name(client, division, label):
 def test_stream_ending_without_text_gives_an_error_not_silence(client):
     empty = MagicMock(side_effect=_engine_stream('data: [DONE]\n\n'))
     received, mocks = _talk(client, pool=MagicMock(), engine=empty)
-    assert received == [{'type': 'error', 'error': 'No answer was produced. Please try again.'}]
+    assert received == [{'type': 'error', 'error': TIRED_MESSAGE}]
     assert mocks['save_turn'].await_args.kwargs['status'] == 'error'
 
 
@@ -176,3 +180,25 @@ def test_browser_leaving_mid_answer_is_an_aborted_turn(client):
     assert log.status == 'aborted' and log.codes == ['client_disconnected']
     assert mocks['save_turn'].await_args.kwargs['status'] == 'aborted'
     assert mocks['save_turn'].await_args.args[6] == 'début'
+
+
+def test_missing_credentials_show_the_tired_message_and_log_the_cause(client):
+    store = MagicMock()
+    with (
+        patch('server.routers.chat.CHAT_ENABLED', True),
+        patch('server.routers.chat._get_chat_credentials', return_value=('', '')),
+        patch('server.routers.chat.store_error', store),
+    ):
+        with client.websocket_connect('/api/chat/ws') as ws:
+            assert ws.receive_json() == {'type': 'error', 'error': TIRED_MESSAGE}
+    assert store.call_args.kwargs['error_type'] == 'MissingCredentials'
+    assert store.call_args.kwargs['user_message'] == TIRED_MESSAGE
+
+
+def test_failed_turn_records_the_message_the_user_saw(client):
+    engine = MagicMock(side_effect=_engine_stream(
+        json.dumps({'type': 'error', 'error': 'every answer model failed', 'error_type': 'LLMUnavailable'}),
+        'data: [DONE]\n\n'))
+    _, mocks = _talk(client, pool=MagicMock(), engine=engine)
+    log = _logged_turn(mocks).args[0]
+    assert log.data['user_message'] == TIRED_MESSAGE and log.error['message'] == 'every answer model failed'

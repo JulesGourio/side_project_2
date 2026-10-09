@@ -338,3 +338,7 @@ Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `
 - `utils/evaluation/score_production_qa.py` et `resources/evaluation.yml` sont dans `archive/evaluation/` :
   les entrées `score_production_qa` plus haut dans ce fichier ne sont plus à relancer.
 - À lancer à la place : `utils/evaluation/score_chat_traces.py` (`operations_dev.md`, bloc W).
+
+## 12. Message « tired », révisions des documents, dates des fils, origine des erreurs (2026-10-09)
+
+À tester dans `operations_dev.md`, bloc **X** (X1 à X6) ; en UAT, `OPERATIONS.md` D5.8c (tâche 6 relancée après l'app) et D5.8d (alertes 01 à 06).

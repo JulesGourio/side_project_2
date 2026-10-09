@@ -12,7 +12,7 @@ import asyncio
 import hashlib
 import io
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from docx import Document
@@ -114,7 +114,7 @@ def test_impact_reports_a_search_failure_as_an_error_event(client):
     with (
         patch('server.routers.compare.run_impact_search', new=_boom),
         patch('server.routers.compare.get_cached_impact_result', new=AsyncMock(return_value=None)),
-        patch('server.routers.compare.store_error', new=AsyncMock()),
+        patch('server.routers.compare.store_error', new=MagicMock()),
     ):
         res = client.post('/api/compare/impact', json={'changes_text': CHANGES})
     events = _events(res)

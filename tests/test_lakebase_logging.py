@@ -190,7 +190,7 @@ def _search(documents, queries_failed=0):
 
 
 def _impact(client, search):
-    audit, errors = AsyncMock(return_value=7), AsyncMock()
+    audit, errors = AsyncMock(return_value=7), MagicMock()
     with (
         patch('server.routers.compare.run_impact_search', new=search),
         patch('server.routers.compare.store_impact_request', new=audit),
@@ -253,3 +253,70 @@ def test_analyze_records_outcome_and_durations(client):
     assert args == (11,) and kw['status'] == 'ok' and kw['chunked_parts'] == 0
     assert all(isinstance(kw[k], int) for k in ('queue_wait_ms', 'build_ms', 'first_token_ms', 'generation_ms',
                                                  'total_ms'))
+
+
+# ---------------------------------------------------------------------------
+# Where errors come from (errors.origin / fingerprint) and what the user sees
+# ---------------------------------------------------------------------------
+
+def _raise_here():
+    raise ValueError('boom')
+
+
+def test_origin_of_an_exception_is_the_deepest_frame_of_this_repository():
+    from server.services import error_origin
+    try:
+        _raise_here()
+    except ValueError as exc:
+        origin = error_origin.from_exception(exc)
+    assert origin.startswith('tests/test_lakebase_logging.py:') and origin.endswith(' in _raise_here')
+    trace = 'Traceback:\n  File "/usr/lib/python3/site-packages/httpx/x.py", line 3, in send\n' \
+            f'  File "{_ROOT}/server/services/chat_vsi.py", line 42, in search\n'
+    assert error_origin.from_stack_trace(trace) == 'server/services/chat_vsi.py:42 in search'
+    assert error_origin.fingerprint('/x', 'search', 'E', 'a.py:1 in f') == \
+        error_origin.fingerprint('/x', 'search', 'E', 'a.py:99 in f')        # a moved line keeps the group
+
+
+def test_turn_log_issues_carry_their_origin_and_stack_trace():
+    log = TurnLog()
+    log.issue('rewrite_failed', 'rewrite', 'down')
+    assert log.issues[0]['origin'].startswith('tests/test_lakebase_logging.py:') and \
+        log.issues[0]['origin'].endswith('in test_turn_log_issues_carry_their_origin_and_stack_trace')
+    try:
+        _raise_here()
+    except ValueError as exc:
+        log.fail('search', 'ValueError', 'boom', exc=exc)
+    failure = log.issues[-1]
+    assert failure['origin'].endswith(' in _raise_here') and 'ValueError: boom' in failure['context']['stack_trace']
+
+
+def test_store_error_reads_the_origin_at_the_call_site():
+    rows = []
+
+    async def _go():
+        with patch.object(lakebase, '_write_error', new=AsyncMock(side_effect=lambda row: rows.append(row))):
+            task = lakebase.store_error(endpoint='/api/x', error_type='E', error_msg='m', stage='llm')
+            await task
+    asyncio.run(_go())
+    sql_cols = re.search(r'\((.*?)\)\s*VALUES', lakebase._ERROR_INSERT, re.S).group(1).split(',')
+    row = dict(zip([c.strip() for c in sql_cols], rows[0]))
+    assert row['origin'].endswith(' in _go')                                     # the caller, not lakebase.py
+    assert len(row['fingerprint']) == 12 and row['severity'] == 'error' and row['stage'] == 'llm'
+    assert lakebase.store_error(endpoint='/api/x') is None                     # no event loop: nothing scheduled
+
+
+def test_failed_turn_error_row_says_what_the_user_saw():
+    from server.services.chat_vsi_llm import TIRED_MESSAGE
+    conn = AsyncMock()
+    conn.fetchval.return_value = 3
+    log = TurnLog()
+    log.fail('llm', 'LLMUnavailable', 'every answer model failed')
+    log.issue('rewrite_failed', 'rewrite', 'down')
+    log.data['user_message'] = TIRED_MESSAGE
+    log.finish('error')
+    with patch.object(lakebase, 'get_pool', return_value=_fake_pool(conn)):
+        asyncio.run(lakebase.store_chat_turn(log))
+    (_, error_rows), = [c.args for c in conn.executemany.await_args_list]
+    by_severity = {r[10]: r for r in error_rows}
+    assert by_severity['error'][-1] == TIRED_MESSAGE and by_severity['warning'][-1] is None
+    assert all(r[18] for r in error_rows)                                      # origin always set

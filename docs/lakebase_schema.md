@@ -73,6 +73,13 @@ parce que leur titre correspond), `passages_retrieved` / `passages_sent` / `docu
 `prompt_chars`, `instructions_sha` (empreinte des instructions système utilisées : change quand
 `instructions_*.md` ou `answer_rules.md` change).
 
+Le catalogue des documents (`doc_catalog`) porte aussi `revision` (l'indice Intraqual de la
+révision en cours) et `doc_date` (sa date de publication), écrits par la tâche
+`6_update_kb_metadata` : le chat les donne au modèle avec chaque document
+(« current revision B, published 2024-10-11 ») et les montre sur les pastilles de sources ;
+ils sont enregistrés avec les sources de chaque réponse (`chat_messages.sources_json` :
+`doc_title`, `revision`, `doc_date`).
+
 **Réponse** — tokens et coût de la réponse (`input_tokens`, `output_tokens`, `thinking_tokens`,
 `cost_eur`) et de la reformulation (`rewrite_*`), `truncated`, `continuations`, `answer_chars`,
 `citations_count`, `cited_refs`, `sources_count` (pastilles affichées), `answer_translated`.
@@ -119,6 +126,21 @@ gardé (pas de purge).
 `upstream` (index Vector Search ou endpoint de modèle appelé), `trace_id`, `session_id`,
 `context` (JSONB : attendu vs obtenu — chaîne de modèles prévue et essais, requêtes envoyées /
 échouées, code du warning…), `app_version`. La pile d'appels reste dans `stack_trace`.
+
+Pour savoir **d'où vient** une erreur :
+
+- `origin` : l'endroit exact du code, `chemin:ligne in fonction`. Pour une exception, c'est la
+  dernière ligne de la pile qui est dans ce dépôt (là où l'erreur a été levée ou reçue, pas une
+  ligne de librairie) ; sinon, le code qui a signalé le problème.
+- `fingerprint` : 12 caractères qui regroupent la même erreur d'une requête à l'autre (même
+  route, même étape, même type, même `origin`, numéro de ligne ignoré). Une valeur jamais vue
+  avant = un nouveau problème (alerte `utils/alerts/05_new_error_kinds.sql`).
+- `user_message` : ce que l'utilisateur a vu. Dans le chat, c'est toujours le même texte
+  (« Qualibot is a bit tired right now. Please wait a moment and try again. »), envoyé seulement
+  quand toutes les relances ont échoué ; `NULL` = rien n'a été montré (la requête a continué).
+
+Aucun message technique n'est envoyé au navigateur du chat : la cause n'est que dans `errors`,
+`chat_turns.error_*` et `chat_messages.error_msg`.
 
 Côté chat, les lignes `errors` sont écrites avec le tour (une par warning ou erreur). Côté
 Compare : `/compare/analyze` renseigne `stage` (`build` = extraction des fichiers, `llm`,
@@ -175,9 +197,17 @@ SELECT ref, COUNT(*) AS sent, SUM(CASE WHEN cited THEN 1 ELSE 0 END) AS cited
 FROM chat_retrieved_chunks WHERE kept GROUP BY ref HAVING SUM(CASE WHEN cited THEN 1 ELSE 0 END) = 0
 ORDER BY sent DESC LIMIT 30;
 
--- Erreurs et warnings, toutes fonctions confondues
-SELECT endpoint, severity, stage, error_type, COUNT(*) FROM errors
-WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY 1, 2, 3, 4 ORDER BY 5 DESC;
+-- Erreurs et warnings, toutes fonctions confondues, regroupés par sorte d'erreur
+SELECT fingerprint, endpoint, severity, stage, error_type, origin, COUNT(*) AS n,
+       MIN(created_at) AS first_seen, MAX(created_at) AS last_seen, MAX(LEFT(error_msg, 150)) AS example
+FROM errors WHERE created_at > NOW() - INTERVAL '7 days'
+GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY n DESC;
+
+-- Une erreur de chat avec tout son contexte (question, étapes, ce que l'utilisateur a vu)
+SELECT e.created_at, e.stage, e.error_type, e.origin, e.error_msg, e.user_message, e.context,
+       t.question, t.status, t.warnings, t.total_ms
+FROM errors e LEFT JOIN chat_turns t ON t.trace_id = e.trace_id
+WHERE e.endpoint = '/api/chat/ws' ORDER BY e.id DESC LIMIT 20;
 
 -- Votes négatifs avec ce qui s'est passé pendant le tour
 SELECT f.created_at, f.comment, t.status, t.warnings, t.answer_endpoint, t.total_ms, t.fr_query
@@ -187,16 +217,12 @@ WHERE f.vote = 'down' ORDER BY f.created_at DESC;
 
 ## Notation de la qualité
 
-`utils/evaluation/score_chat_traces.py` (prototype, lancé à la main) lit les tours répondus dans
-Lakebase (`chat_turns`, `chat_messages`, `chat_feedbacks`, `chat_retrieved_chunks` `kept`, dans
-l'ordre du prompt), les rejoue en traces MLflow sans rappeler aucun modèle (le span retriever rend
-exactement les passages envoyés au modèle), puis les note avec les scorers MLflow (pertinence,
-ancrage dans les passages, langue, limites avouées ; juge GPT-5.6 Luna). Une ligne par tour et par
-scorer dans `dev_landingzone.qualibot.chat_trace_scores`, jointe à Lakebase par `vsi_trace_id`.
-L'ancien `score_production_qa.py` et ses jobs DEV / UAT sont archivés (`archive/evaluation/`). La
-tâche d'import du job d'export UAT (`import_chatbot_tables_to_uat_job.py`) charge toujours
-`chat_turns`, `chat_retrieved_chunks` et `errors` dans `uat_landingzone.qualibot`, pour les
-tableaux de bord.
+L'ancien notebook `score_production_qa.py` (traces MLflow du KA) est archivé. Le prototype
+`utils/evaluation/score_chat_traces.py` (`operations_dev.md`, bloc W) rejoue les tours enregistrés :
+il lit `chat_turns` et les passages envoyés au modèle dans `chat_retrieved_chunks`. La tâche
+d'import du job d'export UAT (`import_chatbot_tables_to_uat_job.py`) charge `chat_turns`,
+`chat_retrieved_chunks` et `errors` dans `uat_landingzone.qualibot` (tableaux de bord, alertes
+`utils/alerts/05` et `06`).
 
 ## Vérifié
 

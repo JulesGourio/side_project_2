@@ -61,8 +61,11 @@ _REWRITE_REASONING_MIN_TOKENS = 1000
 CONTINUE_PROMPT = ('Your previous answer was cut off by a technical problem. Continue it exactly where it '
                    'stops: no preamble, do not repeat what is already written, same language, same citation '
                    'markers.')
-BUSY_MESSAGE = ('Qualibot could not get an answer right now (the language models are overloaded or unavailable). '
-                'Please try again in a minute.')
+# The only failure texts a user ever sees (chat.py sends TIRED_MESSAGE for every failed turn); the
+# technical cause goes to the turn log, never to the browser.
+TIRED_MESSAGE = 'Qualibot is a bit tired right now. Please wait a moment and try again.'
+TIRED_CUT_NOTE = '\n\n_(Qualibot got tired before the end of this answer. Please wait a moment and ask again.)_'
+NO_MODEL_ANSWERED = 'every answer model failed'
 
 
 def _env_float(name: str, default: float) -> float:
@@ -431,13 +434,13 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
     if not answered_by and not written:
         logger.error('chat_vsi_llm: no endpoint answered (%s) after %.0f s: %s', ', '.join(chain),
                      time.monotonic() - started, attempts)
-        yield _event({'type': 'error', 'error': BUSY_MESSAGE, 'error_type': 'LLMUnavailable',
+        yield _event({'type': 'error', 'error': NO_MODEL_ANSWERED, 'error_type': 'LLMUnavailable',
                       'http_status': last.status if last else 0})
     elif not answered_by:
         # Part of the answer is out but no endpoint could finish it: say so at the end.
         logger.error('chat_vsi_llm: answer cut after %d chars, no endpoint could continue: %s', len(written), attempts)
         yield _event({'type': 'response.output_text.delta',
-                      'delta': '\n\n_(The answer was interrupted by a technical problem — please ask again.)_'})
+                      'delta': TIRED_CUT_NOTE})
     yield 'data: [DONE]\n\n'
 
 

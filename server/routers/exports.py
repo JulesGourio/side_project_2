@@ -183,7 +183,7 @@ async def save_excel_to_session(
         excel_bytes = await asyncio.to_thread(_build_excel_bytes, rows, file_type, image_pairs)
     except Exception as e:
         logger.error('save-excel: Excel generation failed: %s', e, exc_info=True)
-        asyncio.create_task(store_error(endpoint='/api/compare/save-excel', error_type=type(e).__name__, error_msg=str(e)))
+        store_error(endpoint='/api/compare/save-excel', error_type=type(e).__name__, error_msg=str(e), exc=e)
         return JSONResponse({'error': f'Excel generation failed: {e}'}, status_code=500)
 
     safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('._') or 'analysis'
@@ -196,7 +196,7 @@ async def save_excel_to_session(
         return {'success': True, 'path': remote_path}
     except Exception as e:
         logger.error('save-excel: volume upload failed: %s', e, exc_info=True)
-        asyncio.create_task(store_error(endpoint='/api/compare/save-excel', error_type=type(e).__name__, error_msg=str(e)))
+        store_error(endpoint='/api/compare/save-excel', error_type=type(e).__name__, error_msg=str(e), exc=e)
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
@@ -229,7 +229,7 @@ async def save_pdf_to_session(
             return JSONResponse({'error': 'Must provide either markdown_text or pdf_file'}, status_code=400)
     except Exception as e:
         logger.error('save-pdf: processing failed: %s', e, exc_info=True)
-        asyncio.create_task(store_error(endpoint='/api/compare/save-pdf', error_type=type(e).__name__, error_msg=str(e)))
+        store_error(endpoint='/api/compare/save-pdf', error_type=type(e).__name__, error_msg=str(e), exc=e)
         return JSONResponse({'error': f'Could not process PDF: {e}'}, status_code=500)
 
     safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('._') or 'analysis'
@@ -242,5 +242,5 @@ async def save_pdf_to_session(
         return {'success': True, 'path': remote_path}
     except Exception as e:
         logger.error('save-pdf: volume upload failed: %s', e, exc_info=True)
-        asyncio.create_task(store_error(endpoint='/api/compare/save-pdf', error_type=type(e).__name__, error_msg=str(e)))
+        store_error(endpoint='/api/compare/save-pdf', error_type=type(e).__name__, error_msg=str(e), exc=e)
         return JSONResponse({'error': str(e)}, status_code=500)

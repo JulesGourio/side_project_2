@@ -17,10 +17,13 @@ import json
 import logging
 import os
 import time
+import traceback
 from typing import Any, Dict, List, Optional
 
 import asyncpg
 from databricks.sdk import WorkspaceClient
+
+from . import error_origin
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,7 @@ CHAT_TURN_COLUMNS: List[tuple] = [
     ('cited_refs',            'TEXT[]'),
     ('sources_count',         'INTEGER'),            # chips shown (cited + named in prose)
     ('answer_translated',     'BOOLEAN'),            # translated back by the bridge
+    ('user_message',          'TEXT'),               # failure message shown (NULL: none)
 ]
 # Step durations (TurnLog.timings_ms), stored as <step>_ms INTEGER columns. first_token is
 # counted from the start of the turn (what the user waits); the others are the step itself.
@@ -443,10 +447,18 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             # queries failed / sent…) and the stack trace when there is one.
             ('context',        'JSONB'),
             ('app_version',    'TEXT'),
+            # Where in the code: the deepest frame of the stack trace in this repository, else
+            # the code that reported it (path:line in function).
+            ('origin',         'TEXT'),
+            # Same route + step + type + origin (line ignored): groups the same error across requests.
+            ('fingerprint',    'TEXT'),
+            # What the user was shown (NULL: nothing, the request went on).
+            ('user_message',   'TEXT'),
         ]:
             await conn.execute(f"ALTER TABLE errors ADD COLUMN IF NOT EXISTS {col} {typedef}")
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_created_at ON errors (created_at)')
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_trace_id ON errors (trace_id)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_fingerprint ON errors (fingerprint)')
 
         # ── impact_requests (audit: every /compare/impact call, success or failure) ──
         await conn.execute('''
@@ -779,6 +791,10 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         ''')
+        # Current revision (Intraqual indice) and its publication date, given to the chat's answer
+        # model with each document. Added here: the pipeline's identity does not own this table.
+        for col, typedef in [('revision', 'TEXT'), ('doc_date', 'DATE')]:
+            await conn.execute(f'ALTER TABLE doc_catalog ADD COLUMN IF NOT EXISTS {col} {typedef}')
 
         # ── chat_feedbacks ────────────────────────────────────────────────────
         await conn.execute('''
@@ -1004,8 +1020,10 @@ _ERROR_INSERT = '''
     INSERT INTO errors
         (endpoint, error_type, error_msg, user_id, workspace_id,
          old_filename, new_filename, file_type, stack_trace, llm_request_id,
-         severity, stage, http_status, upstream, trace_id, session_id, context, app_version)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18)
+         severity, stage, http_status, upstream, trace_id, session_id, context, app_version,
+         origin, fingerprint, user_message)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18,
+            $19, $20, $21)
 '''
 
 
@@ -1028,8 +1046,12 @@ def _error_row(
     trace_id: str = '',
     session_id: str = '',
     context: Optional[Dict[str, Any]] = None,
+    origin: str = '',
+    user_message: str = '',
 ) -> tuple:
-    """Parameters of _ERROR_INSERT, in order."""
+    """Parameters of _ERROR_INSERT, in order. ``origin``: where in the code (``path:line in
+    function``), taken from the stack trace when absent."""
+    origin = origin or error_origin.from_stack_trace(stack_trace)
     return (
         endpoint or None,
         error_type or None,
@@ -1049,23 +1071,35 @@ def _error_row(
         session_id or None,
         json.dumps(context, ensure_ascii=False, default=str) if context else None,
         _app_version(),
+        origin or None,
+        error_origin.fingerprint(endpoint, stage, error_type, origin),
+        user_message or None,
     )
 
 
-async def store_error(**kwargs: Any) -> None:
-    """Persist an application error to the errors table (best-effort, never raises).
-    Arguments: those of ``_error_row`` (all optional, keyword only).
+def store_error(*, exc: Optional[BaseException] = None, **kwargs: Any) -> Optional[asyncio.Task]:
+    """Persist an application error to the errors table, in the background (never raises).
+    Arguments: those of ``_error_row`` (all optional, keyword only); ``exc`` adds its stack trace.
+    Called synchronously so the origin can be read from the caller's frame when there is no
+    stack trace."""
+    if exc is not None and not kwargs.get('stack_trace'):
+        kwargs['stack_trace'] = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    kwargs.setdefault('origin', error_origin.from_exception(exc) or error_origin.from_stack_trace(
+        kwargs.get('stack_trace', '')) or error_origin.caller(1))
+    try:
+        return asyncio.get_running_loop().create_task(_write_error(_error_row(**kwargs)))
+    except RuntimeError:                   # no event loop (scripts, tests)
+        return None
 
-    Acquire is bounded: this runs as fire-and-forget from error paths — if the
-    pool is exhausted or the DB is down, hanging forever would just pile up
-    orphaned tasks on top of the original failure.
-    """
+
+async def _write_error(row: tuple) -> None:
+    # Bounded acquire: an exhausted pool must not pile up tasks on top of the original failure.
     pool = get_pool()
     if not pool:
         return
     try:
         async with pool.acquire(timeout=5.0) as conn:
-            await conn.execute(_ERROR_INSERT, *_error_row(**kwargs))
+            await conn.execute(_ERROR_INSERT, *row)
     except Exception as e:
         logger.debug('store_error failed (non-blocking): %s', e)
 
@@ -1107,7 +1141,8 @@ async def store_chat_turn(
                    user_id=data.get('user_id') or '', workspace_id=data.get('workspace_id') or '',
                    severity=i['severity'], stage=i['stage'], http_status=i['http_status'],
                    upstream=i['upstream'] or '', trace_id=log.trace_id, session_id=data.get('session_id') or '',
-                   stack_trace=(i.get('context') or {}).get('stack_trace', ''),
+                   stack_trace=(i.get('context') or {}).get('stack_trace', ''), origin=i.get('origin') or '',
+                   user_message=(data.get('user_message') or '') if i['severity'] == 'error' else '',
                    context={'code': i['code'], 'at_ms': i['at_ms'],
                             **{k: v for k, v in (i.get('context') or {}).items() if k != 'stack_trace'}})
         for i in log.issues if i['severity'] in ('error', 'warning')

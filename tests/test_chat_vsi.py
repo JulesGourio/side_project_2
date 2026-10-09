@@ -487,3 +487,24 @@ def test_turn_log_keeps_passages_past_the_cap(monkeypatch):
     _, m = _run(monkeypatch, answer=lambda p: [_row('a', 'A-1'), _row('b', 'B-1'), _row('c', 'C-1')])
     assert [(p['chunk_id'], p['kept'], p['drop_reason']) for p in m['log'].passages] == \
         [('a', True, None), ('b', True, None), ('c', False, 'over_cap')]
+
+
+# ---------------------------------------------------------------------------
+# Revision and date of each document (doc_catalog), no model-written source list
+# ---------------------------------------------------------------------------
+
+def test_prompt_gives_the_catalog_revision_of_each_document(monkeypatch):
+    info = {'QP-1518': {'title': 'NDT qualification', 'revision': 'D', 'doc_date': '2024-10-11'}}
+    monkeypatch.setattr(chat_vsi, 'document_info', lambda ref: info.get(ref, {}))
+    _, m = _run(monkeypatch)
+    user_turn = m['prompt'][-1]['content']
+    assert '[1] Document QP-1518 (current revision D, published 2024-10-11)\npassage 1' in user_turn
+    assert '[2] Document MR-1465\n' in user_turn                         # unknown to the catalog: nothing added
+
+
+def test_instructions_never_ask_for_an_unknown_version_or_a_source_list():
+    for division in ('ALL', 'AS', 'IS'):
+        text = chat_vsi.load_instructions(division)
+        assert 'list every document you referenced' not in text
+        assert 'never write that a version or status is unknown' in text
+        assert 'Do not end your answer with a list of the documents' in text

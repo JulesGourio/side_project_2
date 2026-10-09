@@ -103,7 +103,8 @@ user_id = $2`.
   `share_token` set once the owner shares it (see "Sharing a conversation").
 - **`chat_messages`** — one row per turn side (`role`: `user`/`assistant`),
   storing `content` (with citation markers baked in), `trace_id` (= the turn's
-  `chat_turns.trace_id`), `sources_json` (`[{rank, title, url, n}]`), `status`
+  `chat_turns.trace_id`), `sources_json` (`[{rank, title, url, n, doc_title, revision, doc_date}]`:
+  catalog title, revision and date at answer time, shown on the chips), `status`
   (`ok`/`error`/`aborted`, only `ok` is shown), `division`, `question_lang`.
   Same soft-delete pattern as sessions. `tool_name`/`tool_query`/`tool_result`/
   `reasoning_steps` belong to the former Knowledge Assistant: no longer written

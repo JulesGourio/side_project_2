@@ -551,6 +551,69 @@ démarrage, sans toucher aux données existantes.
   Attendu : une ligne par question (`ok` ou `degraded`, et `aborted` pour l'onglet fermé), une
   trentaine de passages par tour dont `sent` envoyés au modèle. **M'envoyer** les trois résultats.
 
+### X. Message « Qualibot is tired », versions des documents, dates des fils, erreurs (code du 2026-10-09)
+
+Ce qui change : en cas d'échec (après toutes les relances), l'utilisateur ne voit plus qu'un message
+« Qualibot is a bit tired right now. Please wait a moment and try again. » ; la cause est dans
+Lakebase (`errors.origin` = fichier:ligne, `fingerprint`, `user_message`). Le modèle reçoit la
+révision et la date de chaque document (`doc_catalog.revision` / `doc_date`) et n'écrit plus de
+liste de sources à la fin : les pastilles sous la réponse portent la version (`MI-14059 · B`,
+titre et date au survol) et les téléchargements ajoutent la liste des sources numérotée. Les dates
+des fils à gauche sont comptées en jours calendaires.
+
+- [ ] **X1. Déployer l'app DEV** (le client est reconstruit par le script ; l'app ajoute les
+  colonnes `doc_catalog.revision` / `doc_date` et `errors.origin` / `fingerprint` / `user_message`
+  à son démarrage) :
+
+  ```powershell
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+
+- [ ] **X2. Remplir les révisions du catalogue** (après X1 : la tâche n'a pas le droit d'ajouter
+  les colonnes elle-même), puis redémarrer l'app pour qu'elle recharge le catalogue tout de suite
+  (sinon : 30 min au plus) :
+
+  ```powershell
+  databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
+  databricks apps stop qualibot --profile DEV
+  databricks apps start qualibot --profile DEV
+  ```
+
+  Sortie attendue de la tâche : `doccompare: doc_catalog N -> N documents` **sans** la ligne
+  `has no revision/doc_date columns yet`. Puis, dans l'éditeur SQL Lakebase (base `doccompare`) :
+
+  ```sql
+  SELECT COUNT(*) AS docs, COUNT(revision) AS with_revision, COUNT(doc_date) AS with_date FROM doc_catalog;
+  SELECT ref, revision, doc_date FROM doc_catalog WHERE ref IN ('MI-14059', 'QP-1518', 'MIT-1087');
+  ```
+
+- [ ] **X3. Tester dans le chat** :
+  - reposer la question NDT/NDI (« quels documents parlent des exigences de qualification
+    CND ? ») : plus de « version/status not stated », plus de liste « Sources and metadata » à la
+    fin ; les numéros du texte vont de 1 à N dans l'ordre ; les pastilles sous la réponse montrent
+    `REF · B` et, au survol, le titre et « Version B (jj/mm/aaaa) » ;
+  - bouton **Télécharger → Response — Markdown** : le fichier finit par une liste **Sources**
+    `[1] REF — titre — Version … — lien`, dans l'ordre des numéros ;
+  - barre de gauche : un fil d'hier affiche « Yesterday », même le matin.
+
+- [ ] **X4. Erreurs** (éditeur SQL Lakebase) — chaque nouvelle ligne a son `origin` et son
+  `fingerprint` :
+
+  ```sql
+  SELECT created_at, endpoint, severity, stage, error_type, origin, fingerprint, user_message,
+         LEFT(error_msg, 120) AS msg
+  FROM errors ORDER BY id DESC LIMIT 20;
+  ```
+
+- [ ] **X5. (facultatif) Voir le message « tired »** : me demander de mettre un index inexistant
+  dans `CHAT_VSI_INDEX` pour `dev` (`utils/deploy/target_env.json`), redéployer, poser une question
+  (attendu : après les relances, le message gris « Qualibot is a bit tired… », et une ligne
+  `errors` `stage = search`, `origin = server/services/chat_vsi.py:… in _query`), puis remettre
+  la valeur et redéployer.
+
+- [ ] **X6. M'envoyer** les résultats de X2 (les deux requêtes) et de X4, et une capture de la
+  réponse NDT.
+
 ### W. Notation des tours du chat : archivage de l'ancien job, prototype (2026-10-09)
 
 **En pause (2026-10-09, décision de l'utilisateur) : ne rien lancer de ce bloc, repris bien plus tard.**

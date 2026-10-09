@@ -11,6 +11,27 @@ export interface Source {
   // inline (⟦n⟧ in the text); prose-only sources re-surfaced from the catalog
   // have no number and render as a plain REF chip.
   n?: number;
+  // From the document catalog at answer time: Intraqual title, current revision and its date (ISO).
+  doc_title?: string;
+  revision?: string;
+  doc_date?: string;
+}
+
+// "Version B (11/10/2024)", "Version B", "11/10/2024" or '' — the same wording the answer model uses.
+export function versionLabel(src: Source): string {
+  const date = src.doc_date ? new Date(src.doc_date).toLocaleDateString('en-GB') : '';
+  if (src.revision) return date ? `Version ${src.revision} (${date})` : `Version ${src.revision}`;
+  return date;
+}
+
+// One line per source for the downloads, cited ones first in their [n] order (the numbers of the text).
+function sourcesMarkdown(sources: Source[] | undefined): string {
+  if (!sources?.length) return '';
+  const cited = sources.filter(s => s.n != null).sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
+  const others = sources.filter(s => s.n == null);
+  const line = (s: Source) => [s.n != null ? `[${s.n}] ${s.title}` : s.title, s.doc_title, versionLabel(s), s.url]
+    .filter(Boolean).join(' — ');
+  return `\n\n**Sources**\n\n${[...cited, ...others].map(s => `- ${line(s)}`).join('\n')}`;
 }
 
 export interface Feedback {
@@ -62,7 +83,7 @@ function buildSessionMarkdown(messages: Message[]): string {
     if (msg.role === 'user') {
       parts.push(`## Question\n\n${msg.content}`);
     } else if (!msg.error && msg.content) {
-      parts.push(`## Response\n\n${stripCiteMarkers(msg.content)}`);
+      parts.push(`## Response\n\n${stripCiteMarkers(msg.content)}${sourcesMarkdown(msg.sources)}`);
     }
   }
   return parts.join('\n\n---\n\n');
@@ -94,11 +115,13 @@ function DownloadMenu({ message, allMessages }: DownloadMenuProps) {
   const options = [
     {
       label: 'Response — Markdown',
-      action: () => downloadAsMarkdown(stripCiteMarkers(message.content), `qualibot-response-${slug}.md`),
+      action: () => downloadAsMarkdown(stripCiteMarkers(message.content) + sourcesMarkdown(message.sources),
+        `qualibot-response-${slug}.md`),
     },
     {
       label: 'Response — PDF',
-      action: () => downloadAsPdf('Response', stripCiteMarkers(message.content), `qualibot-response-${slug}.pdf`),
+      action: () => downloadAsPdf('Response', stripCiteMarkers(message.content) + sourcesMarkdown(message.sources),
+        `qualibot-response-${slug}.pdf`),
     },
     {
       label: 'Full session — Markdown',
@@ -211,12 +234,21 @@ function chipNumberBadge(n: number) {
 }
 
 // A single, un-grouped source: exactly the plain pill this always used to be.
+// Hover text of a chip: REF — title, version, link.
+function chipTooltip(src: Source, label: string): string {
+  return [src.doc_title ? `${label} — ${src.doc_title}` : label, versionLabel(src), src.url !== label ? src.url : '']
+    .filter(Boolean).join('\n');
+}
+
 function SourceChip({ src, fallbackLabel }: { src: Source; fallbackLabel: string }) {
   const label = src.title || src.url || fallbackLabel;
   const pad = src.n != null ? 'pl-1 pr-2.5' : 'px-2.5';
   const text = (
     <span className="truncate font-medium" style={{ color: 'var(--color-text-primary)' }}>
       {label}
+      {src.revision && (
+        <span className="font-normal ml-1" style={{ color: 'var(--color-text-muted)' }}>· {src.revision}</span>
+      )}
     </span>
   );
 
@@ -225,7 +257,7 @@ function SourceChip({ src, fallbackLabel }: { src: Source; fallbackLabel: string
       href={src.url}
       target="_blank"
       rel="noopener noreferrer"
-      title={src.url && label !== src.url ? `${label}\n${src.url}` : label}
+      title={chipTooltip(src, label)}
       className={`${chipBase} ${pad} cursor-pointer`}
       style={chipStyle}
       onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--color-accent-primary)')}
@@ -235,7 +267,7 @@ function SourceChip({ src, fallbackLabel }: { src: Source; fallbackLabel: string
       {text}
     </a>
   ) : (
-    <span title={label} className={`${chipBase} ${pad}`} style={chipStyle}>
+    <span title={chipTooltip(src, label)} className={`${chipBase} ${pad}`} style={chipStyle}>
       {src.n != null && chipNumberBadge(src.n)}
       {text}
     </span>
@@ -252,7 +284,7 @@ function SourceChipGroup({ variants }: { variants: Source[] }) {
   const bare = variants.find(v => !langCode(v.title || ''));
   const label = (variants[0]?.title || variants[0]?.url || 'Source').replace(LANG_SUFFIX_RE, '');
   const flagVariants = sortVariants(variants).filter(v => v !== bare);
-  const tooltip = variants.map(v => v.title).filter(Boolean).join('  ·  ');
+  const tooltip = variants.map(v => chipTooltip(v, v.title)).filter(Boolean).join('\n\n');
 
   return (
     <span className={`${chipBase} px-2.5`} style={chipStyle} title={tooltip}>
@@ -547,7 +579,7 @@ export function ChatMessage({ message, showFeedback, allMessages }: ChatMessageP
             }}
           >
             {message.error ? (
-              <p className="text-sm" style={{ color: 'var(--color-error)' }}>
+              <p className="text-sm italic" style={{ color: 'var(--color-text-muted)' }}>
                 {message.content}
               </p>
             ) : message.streaming && !message.content ? (

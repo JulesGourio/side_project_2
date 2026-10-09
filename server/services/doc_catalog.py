@@ -118,6 +118,32 @@ def title_for_ref(ref: str) -> str:
     return (entry.get('title') or '') if entry else ''
 
 
+def document_info(ref: str) -> Dict[str, Any]:
+    """{title, revision, doc_date (ISO)} of a REF from the catalog — the fields it has (the bundled
+    snapshot has no revision); {} when unknown."""
+    cat = _catalog()
+    entry = cat.by_ref.get(_norm(ref)) if cat else None
+    if not entry:
+        return {}
+    date = entry.get('doc_date')
+    info = {'title': entry.get('title'), 'revision': entry.get('revision'),
+            'doc_date': date.isoformat() if hasattr(date, 'isoformat') else date}
+    return {k: v for k, v in info.items() if v}
+
+
+def with_document_info(sources: List[dict]) -> List[dict]:
+    """``sources`` with the catalog title, revision and date of each REF (``doc_title``,
+    ``revision``, ``doc_date``), for the source chips and the exports."""
+    for s in sources or []:
+        info = document_info(s.get('title') or '')
+        if info.get('title'):
+            s['doc_title'] = info['title']
+        for key in ('revision', 'doc_date'):
+            if info.get(key):
+                s[key] = info[key]
+    return sources
+
+
 class _Catalog:
     """Holds the REF indexes and the compiled match pattern (built once)."""
 
@@ -227,7 +253,7 @@ def _catalog() -> Optional[_Catalog]:
 
 
 def set_catalog(entries: List[Dict[str, Any]]) -> None:
-    """Replace the live catalog (entries: ref, url, title, base_ref, in_chat)."""
+    """Replace the live catalog (entries: ref, url, title, base_ref, in_chat, revision, doc_date)."""
     global _live
     _live = _Catalog(entries)
 
@@ -237,7 +263,7 @@ async def refresh_from_lakebase(pool) -> int:
     documents loaded; 0 (live catalog left as is) when the table is empty or unreadable."""
     try:
         async with pool.acquire() as conn:
-            rows = await conn.fetch('SELECT ref, url, title, base_ref, in_chat FROM doc_catalog')
+            rows = await conn.fetch('SELECT ref, url, title, base_ref, in_chat, revision, doc_date FROM doc_catalog')
     except Exception as exc:  # noqa: BLE001 — keep the catalog we have
         logger.warning('doc_catalog: Lakebase read failed, keeping the current catalog: %s', exc)
         return 0

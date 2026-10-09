@@ -82,3 +82,18 @@ def test_pipeline_link_matches_the_chunks_url():
     in_utils = re.search(r'_INTRAQUAL_REF_URL_BASE = "([^"]+)"', utils_src).group(1)
     in_task = re.search(r'INTRAQUAL_REF_URL_BASE = "([^"]+)"', task_src).group(1)
     assert in_task == in_utils
+
+
+def test_document_info_and_sources_carry_the_revision():
+    from datetime import date
+    from server.services import doc_catalog
+    doc_catalog.set_catalog([{'ref': 'QP-1518', 'url': 'u', 'title': 'NDT', 'revision': 'D',
+                              'doc_date': date(2024, 10, 11)}])
+    try:
+        assert doc_catalog.document_info('QP-1518') == {'title': 'NDT', 'revision': 'D', 'doc_date': '2024-10-11'}
+        assert doc_catalog.document_info('XX-1') == {}
+        sources = doc_catalog.with_document_info([{'title': 'QP-1518', 'url': 'u', 'n': 1}, {'title': 'XX-1'}])
+        assert sources == [{'title': 'QP-1518', 'url': 'u', 'n': 1, 'doc_title': 'NDT', 'revision': 'D',
+                            'doc_date': '2024-10-11'}, {'title': 'XX-1'}]
+    finally:
+        doc_catalog._live = None

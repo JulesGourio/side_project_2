@@ -7,7 +7,8 @@ fill it as the turn runs. ``lakebase.store_chat_turn`` then writes it to three t
   durations of every step (``timings_ms``, columns ``<step>_ms``), the outcome and the issue codes;
 - ``chat_retrieved_chunks``: one row per passage retrieved (``passages``), handed to the LLM
   (``kept``) or set aside (``drop_reason``);
-- ``errors``: one row per issue of severity ``error`` or ``warning`` (``issues``), with its detail.
+- ``errors``: one row per issue of severity ``error`` or ``warning`` (``issues``), with its detail,
+  its origin in the code (``path:line in function``) and the stack trace when there is one.
 
 Outcome (``status``): ``ok`` — answered, nothing went wrong; ``degraded`` — answered, but a step
 did not run as configured (rewrite failed, part of the searches failed, fallback model…: the
@@ -15,9 +16,12 @@ did not run as configured (rewrite failed, part of the searches failed, fallback
 """
 
 import time
+import traceback
 import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
+
+from . import error_origin
 
 # Issues that are not failures of the app: kept in chat_turns.warnings, not written to errors.
 INFO = 'info'
@@ -62,21 +66,31 @@ class TurnLog:
     # ── what went wrong ─────────────────────────────────────────────────────
     def issue(self, code: str, stage: str, message: str = '', *, severity: str = WARNING,
               error_type: str = '', http_status: int = 0, upstream: str = '',
-              context: Optional[Dict[str, Any]] = None) -> None:
-        """Something did not run as configured. ``code`` is a short stable label (warnings column)."""
-        self.issues.append({'code': code, 'stage': stage, 'severity': severity, 'message': (message or '')[:2000],
-                            'error_type': error_type or code, 'http_status': http_status or None,
-                            'upstream': upstream or None, 'context': context or None,
-                            'at_ms': self.elapsed_ms()})
+              context: Optional[Dict[str, Any]] = None, exc: Optional[BaseException] = None) -> None:
+        """Something did not run as configured. ``code`` is a short stable label (warnings column);
+        ``exc``, when there is one, gives the origin (where it was raised) and the stack trace."""
+        self._add(code, stage, message, severity, error_type, http_status, upstream, context, exc,
+                  error_origin.from_exception(exc) or error_origin.caller(1))
 
     def fail(self, stage: str, error_type: str, message: str, *, http_status: int = 0, upstream: str = '',
-             stack_trace: str = '', context: Optional[Dict[str, Any]] = None) -> None:
+             stack_trace: str = '', context: Optional[Dict[str, Any]] = None,
+             exc: Optional[BaseException] = None) -> None:
         """The turn produced no answer. The first failure is the one reported."""
         if not self.error:
             self.error = {'stage': stage, 'type': error_type, 'message': (message or '')[:2000]}
-        self.issue('failed', stage, message, severity=ERROR, error_type=error_type, http_status=http_status,
-                   upstream=upstream, context={**(context or {}), **({'stack_trace': stack_trace[:4000]}
-                                                                      if stack_trace else {})})
+        origin = (error_origin.from_exception(exc) or error_origin.from_stack_trace(stack_trace)
+                  or error_origin.caller(1))
+        self._add('failed', stage, message, ERROR, error_type, http_status, upstream,
+                  {**(context or {}), **({'stack_trace': stack_trace[:4000]} if stack_trace else {})}, exc, origin)
+
+    def _add(self, code, stage, message, severity, error_type, http_status, upstream, context, exc, origin):
+        if exc is not None and not (context or {}).get('stack_trace'):
+            trace = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            context = {**(context or {}), 'stack_trace': trace[-4000:]}
+        self.issues.append({'code': code, 'stage': stage, 'severity': severity, 'message': (message or '')[:2000],
+                            'error_type': error_type or code, 'http_status': http_status or None,
+                            'upstream': upstream or None, 'context': context or None,
+                            'origin': origin, 'at_ms': self.elapsed_ms()})
 
     @property
     def codes(self) -> List[str]:

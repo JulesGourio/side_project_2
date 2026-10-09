@@ -396,7 +396,7 @@ async def analyze_documents(
             except Exception as e:
                 logger.error(f'[{_req_id}] Processor failed: {e}', exc_info=True)
                 run['status'] = 'error'
-                asyncio.create_task(store_error(
+                store_error(
                     endpoint='/api/compare/analyze',
                     error_type=type(e).__name__,
                     error_msg=f'File processing failed: {e}',
@@ -406,7 +406,7 @@ async def analyze_documents(
                     llm_request_id=llm_request_id,
                     stage='build',
                     context={'processor_version': _pv, 'build_ms': run['build_ms']},
-                ))
+                )
                 yield f'data: {json.dumps({"type": "error", "error": f"File processing failed: {e}"})}\n\n'
                 yield 'data: [DONE]\n\n'
                 return
@@ -486,7 +486,7 @@ async def analyze_documents(
                             ))
                         elif etype == 'error':
                             run['status'] = 'error'
-                            asyncio.create_task(store_error(
+                            store_error(
                                 endpoint='/api/compare/analyze',
                                 error_type=event.get('error_type', 'LLMError'),
                                 error_msg=event.get('error', ''),
@@ -499,7 +499,7 @@ async def analyze_documents(
                                 upstream=endpoint,
                                 context={'chunked_parts': run['chunked_parts'],
                                          'elapsed_ms': _ms(t_llm)},
-                            ))
+                            )
                             asyncio.create_task(update_llm_request_usage(
                                 llm_request_id,
                                 http_status=event.get('http_status', 0),
@@ -519,7 +519,7 @@ async def analyze_documents(
         except Exception as e:
             logger.error(f'[{_req_id}] Unhandled error in SSE stream: {e}', exc_info=True)
             run['status'] = 'error'
-            asyncio.create_task(store_error(
+            store_error(
                 endpoint='/api/compare/analyze',
                 error_type=type(e).__name__,
                 error_msg=str(e),
@@ -528,7 +528,7 @@ async def analyze_documents(
                 stack_trace=traceback.format_exc(),
                 llm_request_id=llm_request_id,
                 stage='stream',
-            ))
+            )
             try:
                 yield f'data: {json.dumps({"type": "error", "error": f"Internal error: {e}"})}\n\n'
                 yield 'data: [DONE]\n\n'
@@ -651,10 +651,10 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
 
     def _warn(error_type: str, stage: str, message: str, upstream: str, **context):
         """A degraded search (it went on): errors row with severity 'warning'."""
-        asyncio.create_task(store_error(
+        store_error(
             endpoint='/api/compare/impact', error_type=error_type, error_msg=message, severity='warning',
             stage=stage, upstream=upstream, user_id=identity['user_id'],
-            workspace_id=identity.get('workspace_id') or '', context=context or None))
+            workspace_id=identity.get('workspace_id') or '', context=context or None)
 
     async def _events():
         start = time.monotonic()
@@ -717,10 +717,10 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
         except Exception as e:
             logger.error(f'Impact search failed: {e}', exc_info=True)
             stage = 'judge' if plan else 'search'
-            asyncio.create_task(store_error(
+            store_error(
                 endpoint='/api/compare/impact', error_type=type(e).__name__, error_msg=str(e), stage=stage,
                 upstream=llm_endpoint if plan else index_name, user_id=identity['user_id'],
-                workspace_id=identity.get('workspace_id') or '', stack_trace=traceback.format_exc()))
+                workspace_id=identity.get('workspace_id') or '', stack_trace=traceback.format_exc())
             asyncio.create_task(_audit(duration_s=time.monotonic() - start, http_status=502, status='error',
                                        error_type=type(e).__name__, error_msg=str(e), **_counts()))
             yield _ndjson({'type': 'error', 'error': f'Impact search failed: {e}'})
@@ -821,13 +821,14 @@ async def summarize_document(
             )
     except Exception as e:
         logger.error(f'Summarization failed: {e}', exc_info=True)
-        asyncio.create_task(store_error(
+        store_error(
             endpoint='/api/compare/summarize',
             error_type=type(e).__name__,
             error_msg=str(e),
             user_id=identity['user_id'], workspace_id=identity.get('workspace_id') or '',
             file_type=get_extension(file.filename or ''),
-        ))
+            stage='llm', upstream=endpoint, exc=e,
+        )
         return JSONResponse({'error': f'Summarization failed: {e}'}, status_code=502)
 
     result['duration_s'] = round(time.monotonic() - start, 2)

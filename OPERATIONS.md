@@ -9,7 +9,7 @@ Tout le code est sur la branche **`audit/doc-compare`** (= `main` + audit de la
 comparaison + phase de test archive). Le zip à déployer est celui de cette
 branche tant qu'elle n'est pas fusionnée.
 
-Mis à jour le 2026-10-09 (journal Lakebase du chat : D5.8, D5.8b). Rien de ce qui suit n'a encore
+Mis à jour le 2026-10-09 (journal Lakebase du chat : D5.8, D5.8b ; révisions et alertes : D5.8c, D5.8d). Rien de ce qui suit n'a encore
 été confirmé comme fait.
 
 La mise en place de l'environnement **DEV** a son propre fichier : `operations_dev.md`.
@@ -355,6 +355,36 @@ prévenir, je change la valeur, vous redéployez.
     Le job de notation `D_1_Qualibot_Score_Production_Qa_Uat` est archivé (2026-10-09) : il n'est
     plus dans le bundle, le prochain `bundle deploy -t qualibot-uat` (avec ton accord) le supprime.
     Son remplaçant est le prototype `utils/evaluation/score_chat_traces.py`, pas encore en job.
+
+  - [ ] **D5.8c. Révisions des documents dans le catalogue** (après D5.7 : c'est l'app qui ajoute
+    les colonnes `doc_catalog.revision` / `doc_date`, la tâche de D5.4 a donc écrit le catalogue
+    sans elles) :
+
+    ```powershell
+    databricks bundle run parsing_pipeline -t qualibot-uat --profile UAT --only 6_update_kb_metadata
+    ```
+
+    Puis redémarrer l'app UAT (Apps → `qualibot` → Stop / Start), ou attendre 30 min. Vérifier
+    comme `operations_dev.md` X2 et X3.
+
+  - [ ] **D5.8d. Alertes SQL** (workspace UAT, après D5.8b : les tables Delta `chat_turns` et
+    `errors` doivent exister). Fichiers `utils/alerts/01` à `06`, mode d'emploi dans
+    `utils/alerts/README.md`. Pour chacun : SQL Editor → coller la requête en remplaçant
+    `dev_landingzone` par `uat_landingzone` → **Save** sous `Qualibot - <but>` (warehouse
+    serverless) → **Create alert** :
+
+    | Fichier | Nom | Condition | Planning (Europe/Paris) |
+    |---|---|---|---|
+    | `01_parsed_without_chunks.sql` | Qualibot - documents sans passages | `docs_without_chunks` > 0 | tous les jours, après le job de parsing |
+    | `02_parse_errors.sql` | Qualibot - erreurs de parsing | `docs_in_error` > 0 | tous les jours, après le job de parsing |
+    | `03_chat_failure_rate.sql` | Qualibot - échecs du chat | `alert_triggered` = 1 | toutes les heures |
+    | `04_job_failures.sql` | Qualibot - jobs en échec | `failed_runs` > 0 | tous les jours |
+    | `05_new_error_kinds.sql` | Qualibot - nouvelles erreurs | `new_error_kinds` > 0 | tous les jours, 03:00 (après l'export de 02:00) |
+    | `06_chat_degraded_turns.sql` | Qualibot - tours dégradés | `alert_triggered` = 1 | tous les jours, 03:00 |
+
+    Notification : ton e-mail ; *Notify again* au plus une fois par jour. 04 demande `USE SCHEMA`
+    + `SELECT` sur `system.lakeflow` (admin du metastore). Les copies Delta lues par 03, 05 et 06
+    sont rafraîchies par le job d'export à 02:00 et 14:00 : ces alertes ont jusqu'à 12 h de retard.
 
   - [ ] **D5.9. Supprimer l'ancien** (quelques jours plus tard, une fois l'app validée) :
     - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de

@@ -5,10 +5,11 @@
 # MAGIC **Description:**
 # MAGIC Last link of the daily chain. Two writes to Lakebase:
 # MAGIC 1. `doc_catalog` rewritten from `parse_manifest` (every document in scope: REF, title,
-# MAGIC    division, link) and `chunks` (`in_chat` = the document has passages in the chat
-# MAGIC    index). The app reads it every 30 min (`server/services/doc_catalog.py`): links of
-# MAGIC    the REFs cited in an answer, titles for the title lookup of the chat, titles in
-# MAGIC    impact search.
+# MAGIC    division, link, current revision and its date) and `chunks` (`in_chat` = the document
+# MAGIC    has passages in the chat index). The app reads it every 30 min
+# MAGIC    (`server/services/doc_catalog.py`): links of the REFs cited in an answer, titles for the
+# MAGIC    title lookup of the chat, revision and date given to the answer model with each document,
+# MAGIC    titles in impact search.
 # MAGIC 2. `knowledge_base_metadata.documents_as_of` (today's date) and `updated_at` (now) —
 # MAGIC    the "documents as of" date shown in the chat UI toolbar (`GET /config/knowledge-base-date`).
 # MAGIC
@@ -116,15 +117,17 @@ for table in (MANIFEST_TABLE, CHUNKS_TABLE):
 # MAGIC %md
 # MAGIC # Data Transformations
 # MAGIC ## Tr. 1 - Document catalog
-# MAGIC One row per REF in scope: title, division, `in_chat`, and the Intraqual link built from the REF exactly like the chunks' `url` column. `base_ref` stays NULL: the app derives it from the REF.
+# MAGIC One row per REF in scope: title, division, `in_chat`, the Intraqual link built from the REF exactly like the chunks' `url` column, and the revision (`indice`) and publication date of its current IDDOC (the highest one: each revision gets a new IDDOC) — the chat gives them to the answer model with each document. `base_ref` stays NULL: the app derives it from the REF.
 
 # COMMAND ----------
 
 catalog_rows = [
-    (r["ref"], r["title"], INTRAQUAL_REF_URL_BASE + r["ref"].replace(" ", "%20"), r["division"], bool(r["in_chat"]))
+    (r["ref"], r["title"], INTRAQUAL_REF_URL_BASE + r["ref"].replace(" ", "%20"), r["division"], bool(r["in_chat"]),
+     (r["revision"] or "").strip() or None, r["doc_date"])
     for r in spark.sql(f"""
         SELECT trim(m.ref) AS ref, first(m.titre, true) AS title, first(m.division, true) AS division,
-               max(c.REF IS NOT NULL) AS in_chat
+               max(c.REF IS NOT NULL) AS in_chat,
+               max_by(m.indice, m.IDDOC) AS revision, max_by(m.doc_date, m.IDDOC) AS doc_date
         FROM {MANIFEST_TABLE} m
         LEFT JOIN (SELECT DISTINCT REF FROM {CHUNKS_TABLE}) c ON c.REF = m.ref
         WHERE m.ref IS NOT NULL AND trim(m.ref) <> ''
@@ -195,7 +198,7 @@ def connect(database):
 
 # MAGIC %md
 # MAGIC ## Rewrite doc_catalog, then bump documents_as_of and updated_at
-# MAGIC Both tables are created by the app's startup migration (`server/services/lakebase.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet.
+# MAGIC Both tables are created by the app's startup migration (`server/services/lakebase.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by the app too (this notebook's identity does not own the table): until the app has started once with them, the catalog is written without them.
 # MAGIC
 # MAGIC The catalog is replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `knowledge_base_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
 
@@ -216,6 +219,9 @@ for database in LAKEBASE_DATABASES:
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
+            cur.execute("SELECT count(*) FROM information_schema.columns "
+                        "WHERE table_name = 'doc_catalog' AND column_name IN ('revision', 'doc_date')")
+            with_revision = cur.fetchone()[0] == 2
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS knowledge_base_metadata (
                     id              INTEGER PRIMARY KEY DEFAULT 1,
@@ -230,8 +236,14 @@ for database in LAKEBASE_DATABASES:
                 raise RuntimeError(f"{database}.doc_catalog: {len(catalog_rows)} documents now vs {before} "
                                    f"before — refusing to shrink it by more than half (check {MANIFEST_TABLE})")
             cur.execute("DELETE FROM doc_catalog")
-            execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat) VALUES %s",
-                           catalog_rows, page_size=1000)
+            if with_revision:
+                execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat, revision, doc_date) "
+                                    "VALUES %s", catalog_rows, page_size=1000)
+            else:
+                logger.warning(f"{database}.doc_catalog has no revision/doc_date columns yet (added by the app at "
+                               "startup): catalog written without them")
+                execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat) VALUES %s",
+                               [r[:5] for r in catalog_rows], page_size=1000)
             cur.execute("""
                 INSERT INTO knowledge_base_metadata (id, documents_as_of, updated_at)
                 VALUES (1, CURRENT_DATE, NOW())

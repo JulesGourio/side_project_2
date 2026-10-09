@@ -51,7 +51,7 @@ import httpx
 
 from . import chat_vsi_llm, vs_gate
 from .chat_vsi_titles import documents_titled
-from .doc_catalog import _catalog, canon_ref
+from .doc_catalog import _catalog, canon_ref, document_info
 from .turn_log import TurnLog
 from .vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 
@@ -311,7 +311,7 @@ async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, st
         log.data['rewrite_ok'] = False
         log.issue('rewrite_failed', 'rewrite', f'search ran with the question only: {exc}',
                   error_type=type(exc).__name__, http_status=getattr(exc, 'status', 0), upstream=','.join(chain),
-                  context={'attempts': info.get('attempts')})
+                  context={'attempts': info.get('attempts')}, exc=exc)
         return '', ''
     usage = info.get('usage') or {}
     log.data.update({'rewrite_ok': True, 'rewrite_endpoint': used,
@@ -437,7 +437,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
             return _tag(await _query(host, token, index, q, rerank_k, filters, rerank=True), i, 'rerank')
         except RerankUnavailable as exc:
             if rerank_ok:
-                log.issue('rerank_refused', 'search', f'raw search only: {exc}', upstream=index)
+                log.issue('rerank_refused', 'search', f'raw search only: {exc}', upstream=index, exc=exc)
             rerank_ok = False
             logger.warning('chat_vsi: reranker refused by %s (%s) — raw search only', index, exc)
             return [] if raw_k else _tag(await _query(host, token, index, q, rerank_k, filters, rerank=False), i, 'raw')
@@ -457,14 +457,15 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
     failed = [r for r in results if isinstance(r, BaseException)]
     log.data.update({'vs_calls_expected': len(results), 'vs_calls_ok': len(ok), 'rerank_ok': rerank_ok})
     if not ok:
-        raise _search_error(index, failed[0])
+        raise _search_error(index, failed[0]) from failed[0]
     if failed:
         logger.warning('chat_vsi: %d/%d Vector Search queries failed, kept the others: %s', len(failed),
                        len(results), failed[0])
         log.issue('vs_partial', 'search', f'{len(failed)}/{len(results)} Vector Search queries failed: {failed[0]}',
                   error_type=type(failed[0]).__name__, http_status=_status_of(failed[0]), upstream=index,
                   context={'failed': len(failed), 'sent': len(results),
-                           'errors': sorted({f'{type(f).__name__}: {str(f)[:200]}' for f in failed})})
+                           'errors': sorted({f'{type(f).__name__}: {str(f)[:200]}' for f in failed})},
+                  exc=failed[0])
     n = len(queries)
     return _merge_by_rank([_merge_by_rank(ok_part) for ok_part in (
         [r for r in results[:n] if not isinstance(r, BaseException)],
@@ -482,7 +483,7 @@ async def fetch_documents(host: str, token: str, index: str, query: str, refs: L
         logger.warning('chat_vsi: document lookup %s on %s failed: %s', refs, index, exc)
         if log is not None:
             log.issue(f'{via}_failed', via, f'{refs}: {exc}', error_type=type(exc).__name__,
-                      http_status=_status_of(exc), upstream=index, context={'refs': refs})
+                      http_status=_status_of(exc), upstream=index, context={'refs': refs}, exc=exc)
         return []
 
 
@@ -604,11 +605,20 @@ def with_language_reminder(messages: List[Dict[str, str]], language: Optional[st
     return out
 
 
+def revision_note(ref: str) -> str:
+    """' (current revision B, published 2024-10-11)' from the catalog, '' when it has neither: the
+    passages themselves never carry the revision, and every document of the index is the current one."""
+    info = document_info(ref)
+    parts = ([f"current revision {info['revision']}"] if info.get('revision') else []) + \
+            ([f"published {info['doc_date']}"] if info.get('doc_date') else [])
+    return f" ({', '.join(parts)})" if parts else ''
+
+
 def build_prompt(division: str, conversation: List[Dict[str, str]], documents: List[Tuple[str, Dict[str, Any]]],
                  answer_language: Optional[str] = None) -> List[Dict[str, str]]:
     """System instructions, then the conversation; the last turn carries the numbered documents
     before the question and the language reminder after it."""
-    context = '\n\n'.join(f'[{i}] Document {ref}\n' + '\n\n'.join(d['passages'])
+    context = '\n\n'.join(f'[{i}] Document {ref}{revision_note(ref)}\n' + '\n\n'.join(d['passages'])
                           for i, (ref, d) in enumerate(documents, 1))
     turns = [dict(m) for m in conversation]
     turns[-1]['content'] = f'Documents:\n\n{context}\n\n---\n\n{turns[-1]["content"]}'
@@ -693,7 +703,7 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
     except ChatVsiError as exc:
         log.fail('search', exc.error_type, exc.message, http_status=exc.http_status, upstream=index_name(),
                  context={'vs_calls_expected': log.data.get('vs_calls_expected'),
-                          'vs_calls_ok': log.data.get('vs_calls_ok')})
+                          'vs_calls_ok': log.data.get('vs_calls_ok')}, exc=exc.__cause__ or exc)
         for e in _error_events(exc.message, exc.error_type, exc.http_status):
             yield e
         return

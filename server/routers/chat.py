@@ -15,8 +15,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..services.chat_vsi import normalize_division, stream_chat_vsi
-from ..services.doc_catalog import augment_sources
-from ..services.lakebase import get_pool, store_chat_turn, upsert_user
+from ..services.chat_vsi_llm import TIRED_MESSAGE
+from ..services.doc_catalog import augment_sources, with_document_info
+from ..services.lakebase import get_pool, store_chat_turn, store_error, upsert_user
 from ..services.translation_bridge import (
     ENABLED as TRANSLATE_BRIDGE_ENABLED,
     answer_language as answer_language_for,
@@ -204,16 +205,32 @@ class ChatFeedbackRequest(BaseModel):
 # --- DB helpers ---
 
 
-async def _upsert_session(conn, session_id: str, user_id: str, workspace_id: Optional[str], workspace_url: str, name: str) -> None:
+_SOURCE_FIELDS = ('title', 'url', 'n', 'doc_title', 'revision', 'doc_date')
+
+
+def _stored_sources(raw: Optional[str]) -> list:
+    """The source chips of a saved assistant message (chat_messages.sources_json)."""
+    if not raw:
+        return []
+    try:
+        return [{'title': s.get('title'), 'url': s.get('url'), 'n': s.get('n'),
+                 **{k: s[k] for k in _SOURCE_FIELDS[3:] if s.get(k)}} for s in json.loads(raw)]
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return []
+
+
+async def _upsert_session(conn, session_id: str, user_id: str, workspace_id: Optional[str], workspace_url: str, name: str,
+                          touch: bool = True) -> None:
     # share_token is generated up front so developers can browse any conversation in the database; it stays unused
-    # until the owner clicks "Share".
+    # until the owner clicks "Share". touch=False (failed or aborted turn, hidden from the thread) keeps the
+    # thread's date: the sidebar sorts and dates threads by updated_at.
     await conn.execute(
         '''
         INSERT INTO chat_sessions (id, user_id, workspace_id, workspace_url, name, share_token)
         VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
+        ON CONFLICT (id) DO UPDATE SET updated_at = CASE WHEN $7 THEN NOW() ELSE chat_sessions.updated_at END
         ''',
-        session_id, user_id, workspace_id, workspace_url, name, secrets.token_urlsafe(20),
+        session_id, user_id, workspace_id, workspace_url, name, secrets.token_urlsafe(20), touch,
     )
 
 
@@ -267,6 +284,8 @@ async def _save_turn(
             'url': src.get('url') or None,
             # 1-based inline-citation number; absent for prose-only sources.
             'n': src.get('n'),
+            # Catalog title, revision and date at answer time (the revision may change later).
+            **{k: src[k] for k in ('doc_title', 'revision', 'doc_date') if src.get(k)},
         })
     sources_json = json.dumps(sources_payload, ensure_ascii=False) if sources_payload else None
 
@@ -280,7 +299,8 @@ async def _save_turn(
                 email=email,
                 workspace_url=workspace_url or None,
             )
-            await _upsert_session(conn, session_id, user_id, workspace_id, workspace_url, name)
+            await _upsert_session(conn, session_id, user_id, workspace_id, workspace_url, name,
+                                  touch=(status or 'ok') == 'ok')
             user_msg_id = await conn.fetchval(
                 '''
                 INSERT INTO chat_messages
@@ -331,7 +351,10 @@ async def chat_ws(websocket: WebSocket):
 
     host, token = _get_chat_credentials(websocket)  # type: ignore[arg-type]
     if not host or not token:
-        await websocket.send_json({'type': 'error', 'error': 'Missing Databricks credentials'})
+        logger.error('chat [ws]: no Databricks host/token for the app')
+        store_error(endpoint=route, error_type='MissingCredentials', stage='ws',
+                    error_msg='no Databricks host or token for the chat engine', user_message=TIRED_MESSAGE)
+        await websocket.send_json({'type': 'error', 'error': TIRED_MESSAGE})
         await websocket.close()
         return
 
@@ -382,6 +405,11 @@ async def chat_ws(websocket: WebSocket):
     saved: Tuple[Optional[int], Optional[int]] = (None, None)
     answer_stream = None
     outcome = 'error'                            # 'ok' once the answer is saved; 'aborted' if the browser left
+
+    async def _send_tired() -> None:
+        """The only failure message a user sees, once every retry is spent; the cause is in the turn log."""
+        log.data['user_message'] = TIRED_MESSAGE
+        await websocket.send_json({'type': 'error', 'error': TIRED_MESSAGE})
 
     async def _persist(status: str, content: str) -> Optional[int]:
         """Persist the turn's messages (ok, error or aborted) and return the
@@ -441,6 +469,7 @@ async def chat_ws(websocket: WebSocket):
                     # Number only the inline-cited sources; prose-only chips
                     # (catalog-resurfaced) stay numberless.
                     _number_sources(collected_sources, collected_citations)
+                    with_document_info(collected_sources)
                     if translate_ctx:
                         with log.timed('translate_back'):
                             final_content = await translate_answer_back(final_content, translate_ctx, host, token)
@@ -462,12 +491,12 @@ async def chat_ws(websocket: WebSocket):
                 else:
                     # The engine finished without any text and without an error: tell the browser the turn failed, or
                     # it stays on "Thinking".
-                    error_text = 'No answer was produced. Please try again.'
+                    error_text = f'{endpoint}: stream ended with no text'
                     logger.warning('chat turn empty [ws]: division=%s endpoint=%s',
                                    division, endpoint)
-                    log.fail('llm', 'EmptyAnswer', f'{endpoint}: stream ended with no text')
+                    log.fail('llm', 'EmptyAnswer', error_text)
                     await _persist('error', '')
-                    await websocket.send_json({'type': 'error', 'error': error_text})
+                    await _send_tired()
                 break
 
             if not chunk.startswith('data: '):
@@ -509,7 +538,7 @@ async def chat_ws(websocket: WebSocket):
                     log.fail('engine', parsed.get('error_type', 'ChatLLMError'), error_text,
                              http_status=parsed.get('http_status') or 0)
                 await _persist('error', ''.join(accumulated))
-                await websocket.send_json({'type': 'error', 'error': parsed.get('error', 'Unknown error')})
+                await _send_tired()
                 break
 
     except WebSocketDisconnect:
@@ -526,11 +555,11 @@ async def chat_ws(websocket: WebSocket):
             # The answer is saved; only sending it failed (browser gone).
             log.issue('send_failed', 'ws', f'{type(exc).__name__}: {exc}', severity=INFO)
         else:
-            error_text = str(exc)
-            log.fail('ws', type(exc).__name__, error_text, stack_trace=traceback.format_exc())
+            error_text = f'{type(exc).__name__}: {exc}'
+            log.fail('ws', type(exc).__name__, str(exc), stack_trace=traceback.format_exc(), exc=exc)
             await _persist('error', ''.join(accumulated))
             try:
-                await websocket.send_json({'type': 'error', 'error': str(exc)})
+                await _send_tired()
             except Exception:
                 pass
     finally:
@@ -669,16 +698,7 @@ async def get_session(session_id: str, request: Request):
             )
 
         def _sources_for(m) -> list:
-            raw = m['sources_json']
-            if not raw:
-                return []
-            try:
-                return [
-                    {'title': s.get('title'), 'url': s.get('url'), 'n': s.get('n')}
-                    for s in json.loads(raw)
-                ]
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                return []
+            return _stored_sources(m['sources_json'])
 
         return {
             'id': session['id'],
@@ -809,16 +829,7 @@ async def get_shared_session(share_token: str, request: Request):
             )
 
         def _sources_for(m) -> list:
-            raw = m['sources_json']
-            if not raw:
-                return []
-            try:
-                return [
-                    {'title': s.get('title'), 'url': s.get('url'), 'n': s.get('n')}
-                    for s in json.loads(raw)
-                ]
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                return []
+            return _stored_sources(m['sources_json'])
 
         def _feedback_for(m) -> Optional[dict]:
             if not m['feedback_vote']:

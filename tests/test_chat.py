@@ -358,9 +358,10 @@ def test_save_turn_strips_division_and_registers_user():
     assert mock_upsert.await_args.kwargs['email'] == 'jules@latecoere.aero'
 
     # Session upsert (first conn.execute) receives the stripped, truncated name
-    # Arg order: …, name, share_token (token is generated fresh on every call).
+    # Arg order: …, name, share_token (generated fresh on every call), touch.
     first_execute_args = conn.execute.await_args_list[0].args
-    session_name = first_execute_args[-2]
+    session_name = first_execute_args[-3]
+    assert first_execute_args[-1] is True          # an answered turn moves the thread to today
     assert session_name == 'How do I wire it?'
     assert 'Division' not in session_name
 
@@ -391,6 +392,7 @@ def test_save_turn_records_error_status():
         ))
 
     user_insert, assistant_insert = (c.args for c in conn.fetchval.await_args_list)
+    assert conn.execute.await_args_list[0].args[-1] is False   # a hidden failed turn keeps the thread's date
     # The assistant INSERT ends with …, status, error_msg, division, question_lang
     assert assistant_insert[-4] == 'error'          # status
     assert assistant_insert[-3] == 'Agent failure'  # error_msg
@@ -496,3 +498,13 @@ def test_chat_route_returns_403_without_capability(client):
                new=AsyncMock(return_value={'can_chat': False, 'can_compare': True, 'groups': []})):
         r = client.get('/api/chat/sessions')
     assert r.status_code == 403
+
+
+def test_saved_sources_keep_the_revision_shown():
+    import json as _json
+    from server.routers.chat import _stored_sources
+    raw = _json.dumps([{'rank': 0, 'title': 'QP-1518', 'url': 'u', 'n': 1, 'revision': 'D', 'doc_date': '2024-10-11'},
+                       {'rank': 1, 'title': 'MR-1', 'url': None, 'n': None}])
+    assert _stored_sources(raw) == [{'title': 'QP-1518', 'url': 'u', 'n': 1, 'revision': 'D', 'doc_date': '2024-10-11'},
+                                    {'title': 'MR-1', 'url': None, 'n': None}]
+    assert _stored_sources(None) == [] and _stored_sources('not json') == []
