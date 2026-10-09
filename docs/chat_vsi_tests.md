@@ -1184,3 +1184,29 @@ par minute avant la limite.
   (`pairwise_answers`, `chat` = ancien réglage `rawall|rawon=question+fr+en` contre `rawfr`) reste à
   faire pour confirmer et pour mesurer les tokens par réponse.
 
+**Comparaison des réponses `rawall` (ancien) / `rawfr`** (`pairwise_answers`, 40 questions, juge GPT-5.6 Luna,
+`eval_id` `passages-rawfr`) :
+
+| | `rawfr` | `rawall` |
+|---|---|---|
+| Victoires (verdict stable dans les deux ordres) | 9 | 14 |
+| Égalités ou verdicts instables | 17 | 17 |
+| Fidélité / exactitude (sur 3) | 2,86 / 2,80 | 2,75 / 2,79 |
+| Inventions par réponse | **0,35** | 0,44 |
+| Premier mot p50 | **7,1 s** | 8,1 s |
+| Tokens d'entrée / de sortie par réponse | 13 247 / 1 027 | ≈ 15 500 (estimé) / — |
+| Coût par question | 0,0020 € | 0,0023 € |
+
+- Le juge préfère `rawall` 14 fois contre 9, presque toujours pour « plus complet » (un ou deux documents
+  de plus cités : CND, critères QRQC / 8D, work centers) ; fidélité et exactitude égales, moins
+  d'inventions avec `rawfr`. 9 contre 14 sur 23 verdicts n'est pas un écart significatif (test du signe,
+  p ≈ 0,4), et le juge ne donne le même verdict dans les deux ordres que 65 % du temps.
+- **Capacité sous le quota** (1 M tokens d'entrée/min, 100 k de sortie/min) : avec `rawfr`,
+  1 000 000 / 13 247 ≈ **75 questions/min** côté entrée, 100 000 / 1 027 ≈ 97/min côté sortie ; l'entrée
+  limite la première. Avec `rawall`, ≈ 64/min. Pour tenir 80 questions/min en continu, il faut un quota
+  plus haut (ou moins de contexte).
+- **Décision confirmée** : `rawfr` reste le défaut.
+- Vu au passage, sans lien avec `rawfr` : « resposta em frances » est répondu en portugais par les deux
+  réglages ; la langue de réponse suit la langue de la question, pas une langue demandée dans la question.
+
+
