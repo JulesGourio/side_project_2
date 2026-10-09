@@ -1,0 +1,50 @@
+targets:
+  dev:
+    resources:
+      jobs:
+
+        # Export only: the UAT twin also imports chat_* into Delta tables, which would overwrite the UAT chat data landed by lakebase_import_uat_to_dev.
+        lakebase_export_dev_to_volume:
+          name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
+          description: "Export the DEV Lakebase tables to the dev_landingzone.qualibot.staging volume"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          tasks:
+            # Serverless: classic job compute cannot reach the Lakebase private endpoint.
+            - task_key: export_lakebase_dev_to_volume
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/export_lakebase_uat_to_volume_job.py
+                source: WORKSPACE
+                base_parameters:
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare"
+                  OUTPUT_VOLUME_CATALOG: ${var.app_write_catalog}
+                  OUTPUT_VOLUME_SCHEMA: ${var.app_write_schema}
+                  OUTPUT_VOLUME_NAME: "staging"
+                  TABLES_TO_SKIP: "llm_requests"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: PAUSED

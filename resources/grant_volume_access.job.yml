@@ -1,0 +1,42 @@
+targets:
+  qualibot-uat-test:
+    resources:
+      jobs:
+        # One-off admin utility, manual trigger, outside the daily chain.
+        # run_as job-runner-sa-uat can grant on uat_landingzone but not on prod_landingzone.intraqual: run it as the deploying user there.
+        # It grants one specific SP. The `account users` USE CATALOG failure of `bundle deploy` needs a governance decision (CLAUDE.md).
+        grant_volume_access:
+          name: "Z_1_Qualibot_Grant_Volume_Access_${bundle.target}"
+          description: "Grants USE CATALOG + USE SCHEMA + READ/WRITE VOLUME on a volume to a service principal. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          parameters:
+            - name: service_principal
+              default: "3e5cd4e5-f765-4760-b974-ee7715258b39"
+            - name: catalog
+              default: "prod_landingzone"
+            - name: schema_name
+              default: "intraqual"
+            - name: volume_name
+              default: "intraqual_documents"
+            - name: volume_permission
+              default: "READ VOLUME"
+          tasks:
+            - task_key: grant
+              notebook_task:
+                notebook_path: ../utils/grants/grant_volume_access_job.py
+                source: WORKSPACE
+                base_parameters:
+                  service_principal: "{{job.parameters.service_principal}}"
+                  catalog: "{{job.parameters.catalog}}"
+                  schema_name: "{{job.parameters.schema_name}}"
+                  volume_name: "{{job.parameters.volume_name}}"
+                  volume_permission: "{{job.parameters.volume_permission}}"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"

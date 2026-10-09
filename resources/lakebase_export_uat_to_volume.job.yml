@@ -1,0 +1,54 @@
+targets:
+  qualibot-uat:
+    resources:
+      jobs:
+        lakebase_export_uat_to_volume:
+          name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
+          description: "Export Lakebase UAT tables to a Unity Catalog staging volume"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          # Without it, run_as=job-runner-sa-uat makes the SP sole owner and humans lose View/Manage Run rights at deploy.
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          tasks:
+            # Serverless: classic job compute cannot reach the Lakebase private endpoint.
+            - task_key: export_lakebase_uat_to_volume
+              description: "Extract Lakebase tables to JSONL files in the UAT staging volume"
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/export_lakebase_uat_to_volume_job.py
+                source: WORKSPACE
+                base_parameters:
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare"
+                  OUTPUT_VOLUME_CATALOG: "uat_landingzone"
+                  OUTPUT_VOLUME_SCHEMA: "qualibot"
+                  OUTPUT_VOLUME_NAME: "staging"
+                  TABLES_TO_SKIP: "llm_requests"
+              environment_key: default
+            - task_key: import_chatbot_tables_to_uat
+              description: "Load chatbot JSON exports (chat_feedbacks, chat_messages, chat_sessions) as Delta tables in uat_landingzone.qualibot"
+              depends_on:
+                - task_key: export_lakebase_uat_to_volume
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/import_chatbot_tables_to_uat_job.py
+                source: WORKSPACE
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED

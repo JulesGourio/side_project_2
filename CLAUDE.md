@@ -1,6 +1,6 @@
 ## Working setup (read first)
 
-Claude has no Databricks access from this machine: the code is pushed from here and deployed to Databricks from another machine, same as the sibling `transla` project. Never assume a deploy, job run or table change happened — every manual Databricks/UI step for the user (create table/index/volume, grants, deploy, job run, app.yaml value to switch) goes into `OPERATIONS.md`, ready to copy-paste, and is mentioned in chat. Keep `OPERATIONS.md` the single place for those steps; mark them done (dated) once the user confirms.
+Claude has no Databricks access from this machine: the code is pushed from here and deployed to Databricks from another machine, same as the sibling `transla` project. Never assume a deploy, job run or table change happened — every manual Databricks/UI step for the user (create table/index/volume, grants, deploy, job run, app.yaml value to switch) goes into `OPERATIONS.md`, ready to copy-paste, and is mentioned in chat. Keep `OPERATIONS.md` the single place for those steps; mark them done (dated) once the user confirms. Every time the user must act, write out ALL the commands in full, in order (PowerShell, exact `bundle run` lines, SQL), never "see section X" or "same as before".
 
 The code reaches the deploy machine as a zip. Git: commit and push straight to `main`, never open PRs.
 

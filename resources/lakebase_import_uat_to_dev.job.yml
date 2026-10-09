@@ -1,0 +1,46 @@
+targets:
+  dev:
+    resources:
+      jobs:
+        # No run_as: runs as the deploying user. Writes UAT chat data to dev_landingzone.qualibot (Usage Tracking dashboard).
+        lakebase_import_uat_to_dev:
+          name: "D_1_Qualibot_Lakebase_Import_Uat_To_Dev"
+          description: "Import the UAT staging volume export into DEV Delta tables"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          tasks:
+            - task_key: import_lakebase_uat_volume
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/import_lakebase_uat_volume_to_dev_job.py
+                source: WORKSPACE
+              new_cluster:
+                spark_version: "17.3.x-scala2.13"
+                data_security_mode: SINGLE_USER   # without it the cluster has no Unity Catalog (see utils/parsing_pipeline/README.md#uc-not-enabled-single-user)
+                node_type_id: "m5d.xlarge"
+                num_workers: 0
+                aws_attributes:
+                  availability: ON_DEMAND
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: "local[*]"
+                custom_tags:
+                  ResourceClass: SingleNode
+                spark_env_vars:
+                  SOURCE_EXPORT_DIR: "/Volumes/uat_landingzone/qualibot/staging/lakebase_export"
+                  TARGET_CATALOG: "dev_landingzone"
+                  TARGET_SCHEMA: "qualibot"
+                  TABLES_TO_SKIP: "llm_requests"
+          schedule:
+            quartz_cron_expression: "0 30 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED

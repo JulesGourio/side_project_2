@@ -1,0 +1,40 @@
+targets:
+  dev:
+    resources:
+      jobs:
+
+        migrate_lakebase_dev:
+          name: "Z_1_Qualibot_Migrate_Lakebase_${bundle.target}"
+          description: "Apply idempotent Lakebase schema migrations (utils/lakebase_sync/migrate_lakebase.py) to the DEV doccompare database. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          tasks:
+            - task_key: migrate_lakebase
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/migrate_lakebase_job.py
+                source: WORKSPACE
+                base_parameters:
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
