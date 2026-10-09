@@ -45,7 +45,7 @@ d'avant (KA, tables `_v1`) : remplacés par S, gardés pour l'historique.
 | E | Export du corpus UAT vers le volume staging (run ponctuel) | UAT | écrit seulement dans `uat_landingzone.qualibot.staging/dev_copy` |
 | R | Reliquat de l'ancien Qualibot DEV : app rattachée, vieux index/tables facultatifs | DEV | non |
 | I | Infra DEV : bind + `bundle deploy -t dev` (app, Lakebase, volumes, jobs) | DEV | non |
-| C | Copie : job `qualibot-copy-uat-to-dev` (tables + endpoint + 3 index) | DEV | lecture du volume staging |
+| C | Copie : job `Z_1_Qualibot_Copy_Uat_To_Dev` (tables + endpoint + 3 index) | DEV | lecture du volume staging |
 | K | Knowledge Assistants DEV + report des endpoints dans `target_env.json` | DEV | non |
 | A | Déploiement du code de l'app + tests | DEV | non |
 | B | Bitbucket : environnement « Development » + pipelines `deploy-dev` | Bitbucket | non |
@@ -98,15 +98,15 @@ Jobs (planning PAUSED sauf mention) — liste : https://dbc-c623749d-731b.cloud.
 
 | Job | Lien / déclenchement |
 |---|---|
-| `qualibot-copy-uat-to-dev` (manuel) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/685542214168730 |
-| `D_1_qualibot-parsing-pipeline-dev` (PAUSED) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/362367007936662 |
-| `qualibot-lakebase-import-uat-to-dev` (**actif**, 2h30/14h30) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/728257090536196 |
-| `qualibot-score-production-qa` (**actif**, 2h45/14h45) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/715033309841102 |
-| `qualibot-grant-app-access-dev` (manuel) | `databricks bundle run grant_app_access_dev -t dev --profile DEV` |
+| `Z_1_Qualibot_Copy_Uat_To_Dev` (manuel) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/685542214168730 |
+| `D_1_Qualibot_Parsing_Pipeline_dev` (PAUSED) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/362367007936662 |
+| `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` (**actif**, 2h30/14h30) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/728257090536196 |
+| `D_1_Qualibot_Score_Production_Qa` (**actif**, 2h45/14h45) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/715033309841102 |
+| `Z_1_Qualibot_Grant_App_Access_dev` (manuel) | `databricks bundle run grant_app_access_dev -t dev --profile DEV` |
 | `qualibot-provision-knowledge-assistant-dev` (manuel) | `databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV` |
-| `qualibot-migrate-lakebase-dev` (manuel) | `databricks bundle run migrate_lakebase_dev -t dev --profile DEV` |
-| `qualibot-lakebase-export-dev-to-volume-dev` (PAUSED) | |
-| `apps-stop-nightly-dev`, `qualibot-stop-weekend-dev`, `qualibot-start-weekend-dev` (PAUSED) | |
+| `Z_1_Qualibot_Migrate_Lakebase_dev` (manuel) | `databricks bundle run migrate_lakebase_dev -t dev --profile DEV` |
+| `D_1_Qualibot_Lakebase_Export_To_Volume_dev` (PAUSED) | |
+| `D_1_Qualibot_Apps_Stop_Nightly_Dev`, `W_1_Qualibot_Stop_Weekend_Dev`, `W_1_Qualibot_Start_Weekend_Dev` (PAUSED) | |
 
 Identités : app SP `8e411164-a7e8-46ff-8013-8c56af2c3656` ; SP des jobs
 `job-runner-sa-dev` (`fde6ff28-739f-4a41-b61e-604a298c8478`). Contrôle par
@@ -613,7 +613,7 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   (profil `DEV`). Vous devenez owner de ce qui est créé ; le SP DEV a CAN_MANAGE
   sur l'app, le projet Lakebase et chaque job propre à DEV, pour que la
   pipeline Bitbucket (qui déploie en tant que SP) puisse les mettre à jour
-  ensuite. Exception : `D_1_qualibot-parsing-pipeline-dev` (définition partagée
+  ensuite. Exception : `D_1_Qualibot_Parsing_Pipeline_dev` (définition partagée
   avec UAT/PROD) — à régler au bloc B.
 
   ```powershell
@@ -648,7 +648,7 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   have MANAGE ». Rattacher un volume à une app oblige le déployeur à avoir
   MANAGE sur le catalog. Corrigé : plus de rattachement de volumes sur l'app
   DEV (elle n'en a pas besoin, elle lit `COMPARE_VOLUME_PATH`) ; les droits de
-  son SP passent par le job `qualibot-grant-app-access-dev` (I2b).
+  son SP passent par le job `Z_1_Qualibot_Grant_App_Access_dev` (I2b).
 
 - [x] **I2b. Droits du SP de l'app sur ses volumes** _(OK 2026-10-05)_ — job manuel, sous le SP
   DEV. Il ne marche que si le SP DEV peut accorder des droits sur
@@ -674,10 +674,10 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   ni de KA) — normal.
 
 - [ ] **I3. Vérifier que tous les nouveaux plannings sont en PAUSED** (UI
-  Jobs DEV, filtre `qualibot`) : `D_1_qualibot-parsing-pipeline-dev`,
-  `qualibot-lakebase-export-dev-to-volume-dev`, `apps-stop-nightly-dev`,
-  `qualibot-stop-weekend-dev`, `qualibot-start-weekend-dev` = PAUSED.
-  `qualibot-lakebase-import-uat-to-dev` et `qualibot-score-production-qa`
+  Jobs DEV, filtre `qualibot`) : `D_1_Qualibot_Parsing_Pipeline_dev`,
+  `D_1_Qualibot_Lakebase_Export_To_Volume_dev`, `D_1_Qualibot_Apps_Stop_Nightly_Dev`,
+  `W_1_Qualibot_Stop_Weekend_Dev`, `W_1_Qualibot_Start_Weekend_Dev` = PAUSED.
+  `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` et `D_1_Qualibot_Score_Production_Qa`
   restent actifs, comme avant.
 
 - [x] **I4. Client id du SP de l'app DEV** _(`8e411164-a7e8-46ff-8013-8c56af2c3656`, app existante rattachée, figé dans `databricks.yml`)_
@@ -705,7 +705,7 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
 
 ### C. Copie du corpus + index Vector Search (job DEV)
 
-Job `qualibot-copy-uat-to-dev`, déclenchement manuel, sous l'identité de qui
+Job `Z_1_Qualibot_Copy_Uat_To_Dev`, déclenchement manuel, sous l'identité de qui
 le lance (il faut READ VOLUME sur `uat_landingzone.qualibot.staging`), serverless :
 `1_import_tables` (snapshot → `dev_landingzone.qualibot.*_v1`, rétention
 60 jours, Change Data Feed sur les 3 tables de chunks, archive LibreOffice
@@ -791,8 +791,8 @@ token de l'utilisateur sur un 403). Constat : chat en échec de permission.
 | Appel | Droit | Accordé par |
 |---|---|---|
 | Chat → 3 endpoints KA | CAN_QUERY sur chaque endpoint de serving | `provision_knowledge_assistant_dev` (`GRANT_ON_ENDPOINTS=true`) |
-| Impact search → `chunks_index_v1` (+ AS, IS) | USE CATALOG/SCHEMA + SELECT | `qualibot-grant-app-access-dev` |
-| Volumes `doc_compare`, `test` | READ + WRITE VOLUME | `qualibot-grant-app-access-dev` |
+| Impact search → `chunks_index_v1` (+ AS, IS) | USE CATALOG/SCHEMA + SELECT | `Z_1_Qualibot_Grant_App_Access_dev` |
+| Volumes `doc_compare`, `test` | READ + WRITE VOLUME | `Z_1_Qualibot_Grant_App_Access_dev` |
 | Lakebase | rôle Postgres `app-doc-compare-sp` | bundle (OK, logs du 2026-10-05) |
 | LLM `databricks-claude-sonnet-4-6`, `databricks-gpt-5-6-luna` | CAN_QUERY | en général ouverts à tous — D3 |
 
@@ -1124,7 +1124,7 @@ Deux familles d'objets :
   - le dossier du bundle `/Workspace/Shared/.bundle/qualibot/dev` est déjà
     accessible à tous.
 
-- [ ] **M6. Job de parsing `D_1_qualibot-parsing-pipeline-dev`** : sa
+- [ ] **M6. Job de parsing `D_1_Qualibot_Parsing_Pipeline_dev`** : sa
   définition est partagée avec UAT/PROD, Mehdi n'y est pas déclaré. Un droit
   ajouté à la main dans l'UI tient jusqu'au prochain `bundle deploy`. Solution
   durable et la plus simple pour tout : l'ajouter au groupe

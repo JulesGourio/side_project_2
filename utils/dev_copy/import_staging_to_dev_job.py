@@ -3,7 +3,7 @@
 # MAGIC # DEV copy (2/2) — load the UAT snapshot into `dev_landingzone.qualibot`
 # MAGIC
 # MAGIC **Description:**
-# MAGIC First task of the DEV job `qualibot-copy-uat-to-dev` (`databricks.yml`,
+# MAGIC First task of the DEV job `Z_1_Qualibot_Copy_Uat_To_Dev` (`databricks.yml`,
 # MAGIC target `dev`). Reads the snapshot written by `export_uat_to_staging.py`
 # MAGIC (UAT workspace) from the staging volume and recreates each table as
 # MAGIC `{TARGET_CATALOG_SCHEMA}.<table>{TABLE_SUFFIX}`, with the same table

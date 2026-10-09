@@ -44,7 +44,7 @@ foreach ($i in (databricks vector-search-indexes list-indexes qualibot --profile
     Select-Object name, @{n='source';e={$_.delta_sync_index_spec.source_table}}, @{n='modele';e={$_.delta_sync_index_spec.embedding_source_columns[0].embedding_model_endpoint_name}}, @{n='pret';e={$_.status.ready}}, @{n='lignes';e={$_.status.indexed_row_count}} | Format-List
 }
 "=== jobs"
-databricks jobs list --profile DEV -o json | ConvertFrom-Json | Where-Object { $_.settings.name -match 'qualibot|apps-stop' } | ForEach-Object { "$($_.job_id)  $($_.settings.name)" }
+databricks jobs list --profile DEV -o json | ConvertFrom-Json | Where-Object { $_.settings.name -match 'Qualibot|qualibot' } | ForEach-Object { "$($_.job_id)  $($_.settings.name)" }
 "=== plan du bundle (aucun changement appliqué)"
 python utils/deploy/render_target_config_env.py dev target_config.env
 databricks bundle validate -t dev --profile DEV
@@ -298,3 +298,14 @@ Changements de comportement à connaître :
 - [ ] `--only 4_describe_images` sur des tables à jour : `Nothing to describe`, `No new image chunks to inject`, `No EMPTY_TEXT document pending promotion` ou la promotion; le test `_test` de la section 0.5 exerce le placement des images.
 - [ ] `--only 5_sync_index` puis `--only 6_update_kb_metadata` : comme avant (`sync triggered`, `doc_catalog N -> N documents`).
 - [ ] `generic_pipeline/1_Parse_Chunk_Generic` (facultatif) : l'ouvrir dans DEV avec `environment = dev`; les modèles se trouvent par défaut dans `docling_models/docling_models`.
+
+## 8. Noms de jobs (2026-10-09)
+
+Les 21 jobs du bundle suivent `<D|W|Z>_<niveau>_<Domaine>_<Rôle>` (`tests/test_bundle_paths.py` le vérifie) : `D` planifié chaque jour, `W` chaque semaine, `Z` manuel; niveau `1` partout (aucun de ces jobs n'en déclenche un autre); domaine `Qualibot`. Exemples DEV : `D_1_Qualibot_Parsing_Pipeline_dev`, `D_1_Qualibot_Lakebase_Import_Uat_To_Dev`, `W_1_Qualibot_Stop_Weekend_Dev`, `Z_1_Qualibot_Grant_App_Access_dev`, `Z_1_Qualibot_Copy_Uat_To_Dev`.
+
+Les clés de ressource (`grant_app_access_dev`, `parsing_pipeline`…) ne changent pas : les commandes `bundle run` restent les mêmes. Au prochain `bundle deploy`, le job est renommé sur place (même identifiant, mêmes liens).
+
+- [ ] DEV : après `databricks bundle deploy -t dev --profile DEV`, vérifier la liste (`databricks jobs list --profile DEV -o json | ConvertFrom-Json | Where-Object { $_.settings.name -match 'Qualibot' } | ForEach-Object { $_.settings.name }`).
+- [ ] **Avant le premier déploiement UAT / PROD** (qui demande votre accord) : le job de parsing y est renommé de `D_1_qualibot-parsing-pipeline-<cible>` en `D_1_Qualibot_Parsing_Pipeline_<cible>`, comme les jobs d'arrêt/reprise et d'export. Vérifier qu'aucun tableau de bord, alerte SQL ou règle de notification ne repère un job par son ancien nom.
+- Non renommé : le job déployé hors bundle par `utils/deploy/deploy_sync_user_capabilities_uat_personal.py` (`qualibot-sync-user-capabilities-uat`) : le renommer en recréerait un deuxième. Dites-moi si vous voulez le faire.
+- Fuseau des plannings : `Europe/Paris`, conservé (décision du 2026-10-09). Alertes d'échec : à traiter à part.

@@ -335,7 +335,7 @@ targets:
         # ── Pre-existing DEV jobs, unchanged ────────────────────────────────
         # No run_as: they keep running as the deploying user. Both write UAT chat data to dev_landingzone.qualibot (Usage Tracking dashboard).
         lakebase_import_uat_to_dev:
-          name: "qualibot-lakebase-import-uat-to-dev"
+          name: "D_1_Qualibot_Lakebase_Import_Uat_To_Dev"
           description: "Import the UAT staging volume export into DEV Delta tables"
           max_concurrent_runs: 1
           permissions:
@@ -376,7 +376,7 @@ targets:
 
         # Runs 15 min after each lakebase_import_uat_to_dev, once the chat_messages rows have landed.
         score_production_qa:
-          name: "qualibot-score-production-qa"
+          name: "D_1_Qualibot_Score_Production_Qa"
           description: "LLM-judge quality scoring of real ChatBot turns already answered"
           max_concurrent_runs: 1
           permissions:
@@ -409,7 +409,7 @@ targets:
         # Manual trigger. Loads the snapshot written by export_uat_to_staging.py, then creates and syncs the Vector Search index:
         # the corpus is queryable without a parsing run, and parsing_pipeline resumes incrementally from the copied checkpoint.
         copy_uat_to_dev:
-          name: "qualibot-copy-uat-to-dev"
+          name: "Z_1_Qualibot_Copy_Uat_To_Dev"
           description: "Load the UAT corpus snapshot (chunks + parsing state) into dev_landingzone.qualibot and build the Vector Search indexes. Manual trigger only."
           max_concurrent_runs: 1
           tags:
@@ -483,7 +483,7 @@ targets:
         # and the DEV SP itself SELECT + MODIFY on `pipeline_tables`. Edit the lists in base_parameters, deploy, run;
         # re-run after recreating an index, a table or the app.
         grant_app_access_dev:
-          name: "qualibot-grant-app-access-${bundle.target}"
+          name: "Z_1_Qualibot_Grant_App_Access_${bundle.target}"
           description: "Grant the DEV qualibot app SP its volumes, indexes and LLM endpoints, and the DEV job SP the pipeline tables. Manual trigger only."
           max_concurrent_runs: 1
           tags:
@@ -528,7 +528,7 @@ targets:
         # ── Same jobs as qualibot-uat, adapted to DEV ───────────────────────
         # Export only: the UAT twin also imports chat_* into Delta tables, which would overwrite the UAT chat data landed by lakebase_import_uat_to_dev.
         lakebase_export_dev_to_volume:
-          name: "qualibot-lakebase-export-dev-to-volume-${bundle.target}"
+          name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
           description: "Export the DEV Lakebase tables to the dev_landingzone.qualibot.staging volume"
           max_concurrent_runs: 1
           tags:
@@ -573,7 +573,7 @@ targets:
             pause_status: PAUSED
 
         migrate_lakebase_dev:
-          name: "qualibot-migrate-lakebase-${bundle.target}"
+          name: "Z_1_Qualibot_Migrate_Lakebase_${bundle.target}"
           description: "Apply idempotent Lakebase schema migrations (utils/lakebase_sync/migrate_lakebase.py) to the DEV doccompare database. Manual trigger only."
           max_concurrent_runs: 1
           tags:
@@ -610,7 +610,7 @@ targets:
 
         # ── App off-hours (DEV) — all PAUSED, unpause when wanted ────────────
         apps_stop_nightly_dev:
-          name: "apps-stop-nightly-dev"
+          name: "D_1_Qualibot_Apps_Stop_Nightly_Dev"
           description: "Stop the DEV qualibot app every night at 21h."
           max_concurrent_runs: 1
           tags:
@@ -647,7 +647,7 @@ targets:
             pause_status: PAUSED
 
         qualibot_stop_weekend_dev:
-          name: "qualibot-stop-weekend-dev"
+          name: "W_1_Qualibot_Stop_Weekend_Dev"
           description: "Stop the DEV qualibot app for the weekend."
           max_concurrent_runs: 1
           tags:
@@ -684,7 +684,7 @@ targets:
             pause_status: PAUSED
 
         qualibot_start_weekend_dev:
-          name: "qualibot-start-weekend-dev"
+          name: "W_1_Qualibot_Start_Weekend_Dev"
           description: "Restart the DEV qualibot app on Monday morning."
           max_concurrent_runs: 1
           tags:
@@ -888,7 +888,7 @@ targets:
       jobs:
         # parsing_pipeline lives in resources/parsing_pipeline.job.yml.
         lakebase_export_uat_to_volume:
-          name: "qualibot-lakebase-export-uat-to-volume-${bundle.target}"
+          name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
           description: "Export Lakebase UAT tables to a Unity Catalog staging volume"
           max_concurrent_runs: 1
           tags:
@@ -940,7 +940,7 @@ targets:
 
         # LLM-judge quality scoring of real chat turns, grounded on the Vector Search index (see the notebook header).
         score_production_qa_uat:
-          name: "qualibot-score-production-qa-uat"
+          name: "D_1_Qualibot_Score_Production_Qa_Uat"
           description: "LLM-judge quality scoring (Luna, retrieval-grounded) of real ChatBot turns"
           max_concurrent_runs: 1
           tags:
@@ -1000,7 +1000,7 @@ targets:
         # Generic notebook utils/app_mgmt/stop_start_app_job.py. qualibot-uat-test is stop-only; only qualibot has a start job (weekend pair below).
         # run_as job-runner-sa-uat holds CAN_MANAGE on both apps.
         apps_stop_nightly_uat:
-          name: "apps-stop-nightly-uat"
+          name: "D_1_Qualibot_Apps_Stop_Nightly_Uat"
           description: "Stop qualibot-uat-test every night at 21h. Never restarted by a job — start it manually when needed."
           max_concurrent_runs: 1
           tags:
@@ -1033,7 +1033,7 @@ targets:
             pause_status: UNPAUSED
 
         qualibot_stop_weekend_uat:
-          name: "qualibot-stop-weekend-uat"
+          name: "W_1_Qualibot_Stop_Weekend_Uat"
           description: "Stop qualibot for the weekend (no nightly schedule for this app, unlike qualibot-uat-test/sps-rfq-analysis)."
           max_concurrent_runs: 1
           tags:
@@ -1066,7 +1066,7 @@ targets:
             pause_status: UNPAUSED
 
         qualibot_start_weekend_uat:
-          name: "qualibot-start-weekend-uat"
+          name: "W_1_Qualibot_Start_Weekend_Uat"
           description: "Restart qualibot on Monday morning."
           max_concurrent_runs: 1
           tags:
@@ -1140,7 +1140,7 @@ targets:
         # run_as job-runner-sa-uat can grant on uat_landingzone but not on prod_landingzone.intraqual: run it as the deploying user there.
         # It grants one specific SP. The `account users` USE CATALOG failure of `bundle deploy` needs a governance decision (CLAUDE.md).
         grant_volume_access:
-          name: "qualibot-grant-volume-access-${bundle.target}"
+          name: "Z_1_Qualibot_Grant_Volume_Access_${bundle.target}"
           description: "Grants USE CATALOG + USE SCHEMA + READ/WRITE VOLUME on a volume to a service principal. Manual trigger only."
           max_concurrent_runs: 1
           tags:
@@ -1176,7 +1176,7 @@ targets:
                 environment_version: "2"
 
         migrate_lakebase_uat_test:
-          name: "qualibot-migrate-lakebase-${bundle.target}"
+          name: "Z_1_Qualibot_Migrate_Lakebase_${bundle.target}"
           description: "Apply idempotent Lakebase schema migrations (utils/lakebase_sync/migrate_lakebase.py) to doccompare_test — never doccompare. Manual trigger only."
           max_concurrent_runs: 1
           tags:
@@ -1210,7 +1210,7 @@ targets:
                   - databricks-sdk>=0.118.0
 
         sync_user_capabilities_uat_test:
-          name: "qualibot-sync-user-capabilities-uat-test"
+          name: "D_1_Qualibot_Sync_User_Capabilities_Uat_Test"
           description: "Sync user group membership (system.access.audit) -> users.groups/can_chat/can_compare, on doccompare_test. Validation job — see utils/user_capabilities/sync_user_capabilities_job.py. Point LAKEBASE_DATABASE at doccompare (qualibot-uat target) only once validated end to end."
           max_concurrent_runs: 1
           tags:

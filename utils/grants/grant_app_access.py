@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # DEV copy — grant the app's and the pipeline's service principals what they use
 # MAGIC
-# MAGIC Job `qualibot-grant-app-access-dev` (`databricks.yml`, target `dev`), run as
+# MAGIC Job `Z_1_Qualibot_Grant_App_Access_dev` (`databricks.yml`, target `dev`), run as
 # MAGIC the DEV job SP, which holds grant rights on `dev_landingzone`. Idempotent:
 # MAGIC re-running it never removes anything, an existing grant is a no-op.
 # MAGIC

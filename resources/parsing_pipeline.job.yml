@@ -25,7 +25,7 @@ targets:
       jobs:
         parsing_pipeline: &parsing_pipeline_body
           # D_1 prefix: org job-naming convention for the shared UAT/PROD workspaces (see the databricks-job-conventions skill).
-          name: "D_1_qualibot-parsing-pipeline-${bundle.target}"
+          name: "D_1_Qualibot_Parsing_Pipeline_${bundle.target}"
           description: "Docling parsing (GPU) + LLM image description pipeline for Qualibot RAG"
 
           # The default of 1 queues a partial run of 3_parse behind one of 4_describe_images although their clusters and incremental scopes are disjoint.

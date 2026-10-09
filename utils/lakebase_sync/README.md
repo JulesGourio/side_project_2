@@ -26,7 +26,7 @@ Option `--direct` : connexion psycopg2 directe à Lakebase (nécessite l'accès 
 
 ## Job planifié `import_lakebase_uat_volume_to_dev_job.py` — cible et déploiement
 
-Ce job (`qualibot-lakebase-import-uat-to-dev`, target `dev` de `databricks.yml`)
+Ce job (`D_1_Qualibot_Lakebase_Import_Uat_To_Dev`, target `dev` de `databricks.yml`)
 écrit dans **`dev_landingzone.qualibot`** — même catalog/schema que
 `copy_Lakebase_tables.py` ci-dessus (un seul "dev" canonique). Les valeurs
 viennent des `spark_env_vars` du job dans `databricks.yml`
@@ -52,4 +52,4 @@ databricks jobs get <job_id> --profile DEV --output json
 ```
 
 (chercher `job_id` via `databricks jobs list --profile DEV` — nom
-`qualibot-lakebase-import-uat-to-dev`).
+`D_1_Qualibot_Lakebase_Import_Uat_To_Dev`).

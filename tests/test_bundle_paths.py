@@ -69,3 +69,18 @@ def test_every_parsing_module_imports_only_names_config_defines():
                 missing += [f"{os.path.basename(path)}: {a.name}" for a in node.names
                             if a.name != "*" and a.name not in config_names]
     assert not missing, missing
+
+
+def test_every_job_name_follows_the_launch_level_domain_convention():
+    """`<D|W|M|F|Z>_<level>_<Domain>_<Purpose>` (datab CLAUDE.md section 11); targets add a suffix."""
+    import yaml
+
+    pattern = re.compile(r"^[DWMFZ]_\d+_[A-Z][A-Za-z]*(_[A-Z][A-Za-z]*)*(_\$\{bundle\.target\})?$")
+    offenders = []
+    for yml in ["databricks.yml", *sorted(glob.glob("resources/*.yml", root_dir=ROOT))]:
+        doc = yaml.safe_load(_read(yml).lstrip("﻿"))
+        for target, body in (doc.get("targets") or {}).items():
+            for key, job in ((body.get("resources") or {}).get("jobs") or {}).items():
+                if not pattern.match(job["name"]):
+                    offenders.append(f"{yml} {target}.{key}: {job['name']}")
+    assert not offenders, offenders
