@@ -315,3 +315,8 @@ Les clés de ressource (`grant_app_access_dev`, `parsing_pipeline`…) ne change
 Les 17 jobs déclarés par cible dans `databricks.yml` sont maintenant dans `resources/` : `app_schedules`, `lakebase_sync`, `dev_copy`, `grants`, `evaluation`, `user_capabilities` (`*.job.yml`), à côté de `parsing_pipeline.job.yml`. Définitions identiques (comparées en YAML avant / après), seuls les `notebook_path` passent en `../utils/...`. `databricks.yml` ne garde que variables, apps, schémas, volumes, Lakebase.
 
 À faire : `databricks bundle validate -t dev --profile DEV` puis `bundle deploy -t dev` : le plan doit afficher 0 add / 0 delete (clés de ressources inchangées).
+
+## 10. Tags et alertes (2026-10-09)
+
+Tout job du bundle porte maintenant `project: Qualibot` (il manquait sur `score_production_qa` et `lakebase_import_uat_to_dev`) ; au prochain `bundle deploy -t dev` : 2 jobs modifiés.
+Alertes : `utils/alerts/` (4 requêtes + README avec la création pas à pas). À créer à la main dans Databricks SQL, rien ne les déploie.

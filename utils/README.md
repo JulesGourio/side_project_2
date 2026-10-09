@@ -7,6 +7,7 @@ Everything that runs outside the app, one folder per concern:
 | `parsing_pipeline/` | Daily parsing chain (`1_` to `6_`), see its README. `3_Parse_Pipeline.py` only orchestrates; the phases are functions in `parse_steps.py` |
 | `generic_pipeline/` | Parsing of an arbitrary volume of documents into a chunk table (not wired to a job) |
 | `deploy/` | Deploy scripts, per-target config (`target_env.json`), Intraqual download and scrape helpers |
+| `alerts/` | SQL of the Databricks SQL alerts (created by hand, see its README) |
 | `app_mgmt/` | Start / stop schedule of the Databricks Apps |
 | `lakebase_sync/` | Lakebase export, import, migrations (`ops_config.py` holds their shared connection settings) |
 | `user_capabilities/` | `can_chat` / `can_compare` sync from group membership |
