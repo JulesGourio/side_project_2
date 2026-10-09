@@ -1,0 +1,227 @@
+# Nightly and weekend stop/start of the Qualibot app.
+# Declared per target: each job exists only on the targets listed below.
+
+targets:
+  dev:
+    resources:
+      jobs:
+
+        # ── App off-hours (DEV) — all PAUSED, unpause when wanted ────────────
+        apps_stop_nightly_dev:
+          name: "D_1_Qualibot_Apps_Stop_Nightly_Dev"
+          description: "Stop the DEV qualibot app every night at 21h."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          tasks:
+            - task_key: stop_apps
+              notebook_task:
+                notebook_path: ../utils/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "stop"
+                  app_names: ${var.app_name}
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 21 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: PAUSED
+
+        qualibot_stop_weekend_dev:
+          name: "W_1_Qualibot_Stop_Weekend_Dev"
+          description: "Stop the DEV qualibot app for the weekend."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          tasks:
+            - task_key: stop_app
+              notebook_task:
+                notebook_path: ../utils/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "stop"
+                  app_names: ${var.app_name}
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 21 ? * FRI"
+            timezone_id: "Europe/Paris"
+            pause_status: PAUSED
+
+        qualibot_start_weekend_dev:
+          name: "W_1_Qualibot_Start_Weekend_Dev"
+          description: "Restart the DEV qualibot app on Monday morning."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          tasks:
+            - task_key: start_app
+              notebook_task:
+                notebook_path: ../utils/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "start"
+                  app_names: ${var.app_name}
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 7 ? * MON"
+            timezone_id: "Europe/Paris"
+            pause_status: PAUSED
+  qualibot-uat:
+    resources:
+      jobs:
+
+        # sync_user_capabilities_uat is not in the bundle: its run_as lacks USE SCHEMA on system.access, and a non-admin deployer can only set run_as to itself.
+        # A CoreDev member deploys it directly: utils/deploy/deploy_sync_user_capabilities_uat_personal.py.
+
+        # ── App off-hours (UAT) ─────────────────────────────────────────────
+        # Generic notebook utils/app_mgmt/stop_start_app_job.py. qualibot-uat-test is stop-only; only qualibot has a start job (weekend pair below).
+        # run_as job-runner-sa-uat holds CAN_MANAGE on both apps.
+        apps_stop_nightly_uat:
+          name: "D_1_Qualibot_Apps_Stop_Nightly_Uat"
+          description: "Stop qualibot-uat-test every night at 21h. Never restarted by a job — start it manually when needed."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          tasks:
+            - task_key: stop_apps
+              notebook_task:
+                notebook_path: ../utils/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "stop"
+                  app_names: "qualibot-uat-test"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 21 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+
+        qualibot_stop_weekend_uat:
+          name: "W_1_Qualibot_Stop_Weekend_Uat"
+          description: "Stop qualibot for the weekend (no nightly schedule for this app, unlike qualibot-uat-test/sps-rfq-analysis)."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          tasks:
+            - task_key: stop_app
+              notebook_task:
+                notebook_path: ../utils/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "stop"
+                  app_names: "qualibot"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 21 ? * FRI"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+
+        qualibot_start_weekend_uat:
+          name: "W_1_Qualibot_Start_Weekend_Uat"
+          description: "Restart qualibot on Monday morning."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          tasks:
+            - task_key: start_app
+              notebook_task:
+                notebook_path: ../utils/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "start"
+                  app_names: "qualibot"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 7 ? * MON"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED

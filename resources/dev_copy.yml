@@ -1,8 +1,12 @@
+# One-off copy of UAT data into DEV.
+# Declared per target: each job exists only on the targets listed below.
+
 targets:
   dev:
     resources:
       jobs:
 
+        # ── UAT copy ─────────────────────────────────────────────────────────
         # Manual trigger. Loads the snapshot written by export_uat_to_staging.py, then creates and syncs the Vector Search index:
         # the corpus is queryable without a parsing run, and parsing_pipeline resumes incrementally from the copied checkpoint.
         copy_uat_to_dev:

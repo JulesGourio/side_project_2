@@ -1,3 +1,6 @@
+# Sync of user capabilities.
+# Declared per target: each job exists only on the targets listed below.
+
 targets:
   qualibot-uat-test:
     resources:

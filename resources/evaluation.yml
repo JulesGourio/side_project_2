@@ -1,4 +1,43 @@
+# Scoring of production Q&A.
+# Declared per target: each job exists only on the targets listed below.
+
 targets:
+  dev:
+    resources:
+      jobs:
+
+        # Runs 15 min after each lakebase_import_uat_to_dev, once the chat_messages rows have landed.
+        score_production_qa:
+          name: "D_1_Qualibot_Score_Production_Qa"
+          description: "LLM-judge quality scoring of real ChatBot turns already answered"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          tasks:
+            - task_key: score_production_qa
+              notebook_task:
+                notebook_path: ../utils/evaluation/score_production_qa.py
+                source: WORKSPACE
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]
+          schedule:
+            quartz_cron_expression: "0 45 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
   qualibot-uat:
     resources:
       jobs:

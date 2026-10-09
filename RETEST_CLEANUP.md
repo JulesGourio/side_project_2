@@ -312,7 +312,7 @@ Les clés de ressource (`grant_app_access_dev`, `parsing_pipeline`…) ne change
 
 ## 9. Jobs déplacés de `databricks.yml` vers `resources/` (2026-10-09)
 
-Les 17 jobs déclarés par cible dans `databricks.yml` sont maintenant dans `resources/` : un fichier par job `resources/<clé>.job.yml` (convention DAB : un seul job par fichier `.job.yml`), à côté de `parsing_pipeline.job.yml`. Définitions identiques (comparées en YAML avant / après), seuls les `notebook_path` passent en `../utils/...`. `databricks.yml` ne garde que variables, apps, schémas, volumes, Lakebase.
+Les 17 jobs déclarés par cible dans `databricks.yml` sont maintenant dans `resources/` : 6 fichiers `resources/{app_schedules,lakebase_sync,dev_copy,grants,evaluation,user_capabilities}.yml` (extension `.yml` et non `.job.yml`, sinon la CLI recommande un seul job par fichier), à côté de `parsing_pipeline.job.yml`. Définitions identiques (comparées en YAML avant / après), seuls les `notebook_path` passent en `../utils/...`. `databricks.yml` ne garde que variables, apps, schémas, volumes, Lakebase.
 
 À faire : `databricks bundle validate -t dev --profile DEV` puis `bundle deploy -t dev` : le plan doit afficher 0 add / 0 delete (clés de ressources inchangées).
 
