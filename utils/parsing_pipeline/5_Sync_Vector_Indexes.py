@@ -40,13 +40,18 @@
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC
-# MAGIC #N/A
+# MAGIC - `KNOWN_SOURCE_TABLE` repeats the table naming of `config.py` (`{catalog_schema}.chunks{table_suffix}`) because this serverless task does not import `config.py`; the same goes for the `archive_notice` content type filtered out of `chunks_full`.
+# MAGIC - Only `chunks_index` and `chunks_full_index` are created automatically; any other index listed in `indexes` is synced but never created, since its source table is unknown.
+# MAGIC - The wait loop polls every 30 s with a fixed timeout (`wait_minutes`): a sync that outlasts it is reported as still running, not as an error.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Configuration
+# MAGIC ## Config logger and widgets
+# MAGIC This task is serverless: it has no `PARSING_*` environment variables and cannot import `config.py`, so everything comes from the job parameters as widgets. `indexes` falls back on `PARSING_VECTOR_SEARCH_INDEXES` for an interactive run.
+# MAGIC
+# MAGIC The endpoint, embedding model, catalog and suffix are only read when an index has to be created.
 
 # COMMAND ----------
 
@@ -89,13 +94,39 @@ for n in INDEXES:
 
 # MAGIC %md
 # MAGIC # Inputs
-# MAGIC #N/A
+# MAGIC ## Tables behind chunks_full
+# MAGIC `chunks_full` = `chunks` (post-cutoff, the chatbot) + `chunks_archive` (pre-cutoff): every document whatever its date, for impact search only. It is rebuilt only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`; the table can be checked in SQL before its index is ever created.
+
+# COMMAND ----------
+
+FULL_INDEX = f"{CATALOG_SCHEMA}.chunks_full_index{TABLE_SUFFIX}"
+FULL_TABLE = f"{CATALOG_SCHEMA}.chunks_full{TABLE_SUFFIX}"
+REFRESH_CHUNKS_FULL = bool(CATALOG_SCHEMA) and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES)
+
+chunk_sources = [
+    t for t in (f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}", f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}")
+    if REFRESH_CHUNKS_FULL and spark.catalog.tableExists(t)
+]
+if REFRESH_CHUNKS_FULL and not chunk_sources:
+    raise RuntimeError(f"chunks_full requested but neither chunks nor chunks_archive exists in {CATALOG_SCHEMA}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Data Preparation
-# MAGIC #N/A
+# MAGIC ## Prep1 - Union of the chunk tables
+# MAGIC Archive notices carry no content and are left out, and a chunk id seen in both tables (a document that crossed the cutoff between two runs) is kept once.
+
+# COMMAND ----------
+
+if REFRESH_CHUNKS_FULL:
+    df_src = spark.table(chunk_sources[0])
+    for table in chunk_sources[1:]:
+        df_src = df_src.unionByName(spark.table(table), allowMissingColumns=True)
+    # Archive notices (config.ARCHIVE_NOTICE_CONTENT_TYPE) carry no content: nothing to judge an impact on.
+    df_src = df_src.filter("NOT (chunk_content_type <=> 'archive_notice')")
+    # A document that crossed the cutoff between two runs can briefly sit in both tables.
+    df_src = df_src.dropDuplicates(["chunk_id"])
 
 # COMMAND ----------
 
@@ -113,40 +144,18 @@ for n in INDEXES:
 
 # MAGIC %md
 # MAGIC # Outputs
+# MAGIC ## Write chunks_full
+# MAGIC Synced by MERGE rather than overwritten, so the Change Data Feed carries only the day's real changes and the index re-embeds only those rows.
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Refresh `chunks_full` (impact-search source table)
-# MAGIC
-# MAGIC `chunks_full` = `chunks` (RAG, post-cutoff) + `chunks_archive` (pre-cutoff),
-# MAGIC kept in sync by MERGE rather than overwrite so Change Data Feed only carries
-# MAGIC the day's real changes and the index re-embeds just those rows.
-# MAGIC Built when `build_chunks_full` is on, index or not: the table can be checked
-# MAGIC in SQL before `chunks_full_index` is ever created.
-
-# COMMAND ----------
-
-FULL_INDEX = f"{CATALOG_SCHEMA}.chunks_full_index{TABLE_SUFFIX}"
-FULL_TABLE = f"{CATALOG_SCHEMA}.chunks_full{TABLE_SUFFIX}"
-
-if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
+if REFRESH_CHUNKS_FULL:
     from delta.tables import DeltaTable
-
-    _sources = [t for t in (f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}", f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}")
-                if spark.catalog.tableExists(t)]
-    df_src = spark.table(_sources[0])
-    for _t in _sources[1:]:
-        df_src = df_src.unionByName(spark.table(_t), allowMissingColumns=True)
-    # Archive notices (config.ARCHIVE_NOTICE_CONTENT_TYPE) carry no content: nothing to judge an impact on.
-    df_src = df_src.filter("NOT (chunk_content_type <=> 'archive_notice')")
-    # A document that crossed the cutoff between runs could briefly sit in both tables.
-    df_src = df_src.dropDuplicates(["chunk_id"])
 
     if not spark.catalog.tableExists(FULL_TABLE):
         df_src.write.format("delta").saveAsTable(FULL_TABLE)
-        # 60-day history, like the chunk tables: a TRIGGERED sync can never resume once the CDF
-        # it needs has aged out (VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION, see databricks.yml).
+        # 60-day history, like the chunk tables: a TRIGGERED sync cannot resume once the Change Data Feed it
+        # needs has aged out (VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION).
         spark.sql(f"""
             ALTER TABLE {FULL_TABLE} SET TBLPROPERTIES (
                 delta.enableChangeDataFeed = true,
@@ -154,32 +163,33 @@ if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
                 delta.logRetentionDuration = 'interval 60 days'
             )
         """)
-        logger.info(f"Created {FULL_TABLE} from {_sources}")
+        logger.info(f"Created {FULL_TABLE} from {chunk_sources}")
     else:
         # New chunk columns (titre, type_document, langue...) reach chunks_full too.
         spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
-        _target_cols = set(spark.table(FULL_TABLE).columns)
-        _changed = " OR ".join(f"NOT (t.`{c}` <=> s.`{c}`)" for c in df_src.columns
-                               if c != "chunk_id" and c in _target_cols) or "true"
+        target_cols = set(spark.table(FULL_TABLE).columns)
+        changed = " OR ".join(f"NOT (t.`{c}` <=> s.`{c}`)" for c in df_src.columns
+                              if c != "chunk_id" and c in target_cols) or "true"
         (
             DeltaTable.forName(spark, FULL_TABLE).alias("t")
             .merge(df_src.alias("s"), "t.chunk_id = s.chunk_id")
-            .whenMatchedUpdateAll(condition=_changed)
+            .whenMatchedUpdateAll(condition=changed)
             .whenNotMatchedInsertAll()
             .whenNotMatchedBySourceDelete()
             .execute()
         )
-        logger.info(f"Merged {_sources} into {FULL_TABLE}")
+        logger.info(f"Merged {chunk_sources} into {FULL_TABLE}")
     logger.info(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
 
 if not INDEXES:
-    logger.info("No index to sync (`indexes` param empty) — nothing more to do.")
+    logger.info("No index to sync (`indexes` param empty) - nothing more to do.")
     dbutils.notebook.exit("no_index")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Create any missing index, then read current status
+# MAGIC ## Create any missing index, then read its status
+# MAGIC An index in `indexes` that does not exist is created (this task runs as the environment's owning service principal, which already holds the grants for it), then every index is read to log its source table and indexed rows before the sync.
 
 # COMMAND ----------
 
@@ -238,7 +248,7 @@ for name in INDEXES:
     except NotFound:
         source_table = KNOWN_SOURCE_TABLE.get(name)
         if not source_table:
-            raise RuntimeError(f"{name}: index doesn't exist and isn't one of the 4 pipeline-managed indexes -- "
+            raise RuntimeError(f"{name}: index doesn't exist and isn't one of the pipeline-managed indexes -- "
                                 f"can't auto-create it (unknown source table).")
         _create_index(name, source_table)
         idx = w.vector_search_indexes.get_index(index_name=name)
@@ -252,9 +262,7 @@ for name in INDEXES:
 
 # MAGIC %md
 # MAGIC ## Trigger the syncs
-# MAGIC
-# MAGIC A sync failure must fail the task: otherwise the job ends in SUCCESS while
-# MAGIC the index is still on yesterday's chunks.
+# MAGIC Indexes are `TRIGGERED`: without this step new chunks stay in the Delta table and are never queryable. A rejected sync fails the task, otherwise the job would end in SUCCESS with the index still on yesterday's chunks.
 
 # COMMAND ----------
 
@@ -274,9 +282,7 @@ if failed:
 
 # MAGIC %md
 # MAGIC ## Wait for the syncs to finish
-# MAGIC
-# MAGIC Waits for each index to leave a "syncing" state so the job reflects the
-# MAGIC real outcome. `WAIT_MINUTES=0` to just trigger and return.
+# MAGIC Waits for each index to leave a syncing state so the job reflects the real outcome; a failed or offline index raises immediately instead of waiting out the timeout. `wait_minutes = 0` triggers and returns.
 
 # COMMAND ----------
 
