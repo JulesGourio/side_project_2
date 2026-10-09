@@ -579,8 +579,19 @@ des fils à gauche sont comptées en jours calendaires.
   databricks apps start qualibot --profile DEV
   ```
 
-  Sortie attendue de la tâche : `doccompare: doc_catalog N -> N documents` **sans** la ligne
-  `has no revision/doc_date columns yet`. Puis, dans l'éditeur SQL Lakebase (base `doccompare`) :
+  Sortie attendue de la tâche : `doccompare: doc_catalog N -> N documents`, précédée de
+  `revision/doc_date columns added` si c'est la tâche qui est propriétaire de la table, et **sans**
+  la ligne `has no revision/doc_date columns`. Si cette ligne apparaît quand même, la ligne
+  `cannot add revision/doc_date as … (table owner: …)` juste avant dit qui possède la table :
+  m'envoyer ces deux lignes, plus le résultat de (éditeur SQL Lakebase, base `doccompare`) :
+
+  ```sql
+  SELECT tableowner FROM pg_tables WHERE tablename = 'doc_catalog';
+  SELECT column_name FROM information_schema.columns WHERE table_name = 'doc_catalog' ORDER BY ordinal_position;
+  ```
+
+  et, dans les logs de l'app au démarrage, une éventuelle ligne `doc_catalog: revision/doc_date not
+  added by the app` ou `Lakebase schema ensure failed`. Puis, dans l'éditeur SQL Lakebase (base `doccompare`) :
 
   ```sql
   SELECT COUNT(*) AS docs, COUNT(revision) AS with_revision, COUNT(doc_date) AS with_date FROM doc_catalog;

@@ -792,9 +792,14 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             )
         ''')
         # Current revision (Intraqual indice) and its publication date, given to the chat's answer
-        # model with each document. Added here: the pipeline's identity does not own this table.
-        for col, typedef in [('revision', 'TEXT'), ('doc_date', 'DATE')]:
-            await conn.execute(f'ALTER TABLE doc_catalog ADD COLUMN IF NOT EXISTS {col} {typedef}')
+        # model with each document. Whichever of the app and parsing task 6 owns the table adds them;
+        # a failure here must not stop the rest of the schema.
+        try:
+            for col, typedef in [('revision', 'TEXT'), ('doc_date', 'DATE')]:
+                await conn.execute(f'ALTER TABLE doc_catalog ADD COLUMN IF NOT EXISTS {col} {typedef}')
+        except Exception as e:
+            logger.warning('doc_catalog: revision/doc_date not added by the app (%s) — parsing task '
+                           '6_update_kb_metadata adds them when it owns the table', e)
 
         # ── chat_feedbacks ────────────────────────────────────────────────────
         await conn.execute('''

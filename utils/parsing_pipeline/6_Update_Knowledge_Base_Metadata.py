@@ -198,7 +198,7 @@ def connect(database):
 
 # MAGIC %md
 # MAGIC ## Rewrite doc_catalog, then bump documents_as_of and updated_at
-# MAGIC Both tables are created by the app's startup migration (`server/services/lakebase.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by the app too (this notebook's identity does not own the table): until the app has started once with them, the catalog is written without them.
+# MAGIC Both tables are created by the app's startup migration (`server/services/lakebase.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by whichever of the app and this notebook owns the table; when neither has done it yet, the catalog is written without them and the warning names the owner.
 # MAGIC
 # MAGIC The catalog is replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `knowledge_base_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
 
@@ -222,6 +222,21 @@ for database in LAKEBASE_DATABASES:
             cur.execute("SELECT count(*) FROM information_schema.columns "
                         "WHERE table_name = 'doc_catalog' AND column_name IN ('revision', 'doc_date')")
             with_revision = cur.fetchone()[0] == 2
+            if not with_revision:
+                # Only the table's owner may add columns: this notebook's identity when it created the table.
+                cur.execute("SAVEPOINT add_revision")
+                try:
+                    cur.execute("ALTER TABLE doc_catalog ADD COLUMN IF NOT EXISTS revision TEXT")
+                    cur.execute("ALTER TABLE doc_catalog ADD COLUMN IF NOT EXISTS doc_date DATE")
+                    cur.execute("RELEASE SAVEPOINT add_revision")
+                    with_revision = True
+                    logger.info(f"{database}.doc_catalog: revision/doc_date columns added")
+                except psycopg2.Error as exc:
+                    cur.execute("ROLLBACK TO SAVEPOINT add_revision")
+                    cur.execute("SELECT tableowner FROM pg_tables WHERE tablename = 'doc_catalog'")
+                    owner = cur.fetchone()[0]
+                    logger.warning(f"{database}.doc_catalog: cannot add revision/doc_date as {username} "
+                                   f"(table owner: {owner}): {str(exc).strip()}")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS knowledge_base_metadata (
                     id              INTEGER PRIMARY KEY DEFAULT 1,
@@ -240,8 +255,8 @@ for database in LAKEBASE_DATABASES:
                 execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat, revision, doc_date) "
                                     "VALUES %s", catalog_rows, page_size=1000)
             else:
-                logger.warning(f"{database}.doc_catalog has no revision/doc_date columns yet (added by the app at "
-                               "startup): catalog written without them")
+                logger.warning(f"{database}.doc_catalog has no revision/doc_date columns: catalog written without "
+                               "them (start the app once, or add them as the table owner)")
                 execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat) VALUES %s",
                                [r[:5] for r in catalog_rows], page_size=1000)
             cur.execute("""
