@@ -354,6 +354,7 @@ targets:
                 source: WORKSPACE
               new_cluster:
                 spark_version: "17.3.x-scala2.13"
+                data_security_mode: SINGLE_USER   # without it the cluster has no Unity Catalog (see utils/parsing_pipeline/README.md#uc-not-enabled-single-user)
                 node_type_id: "m5d.xlarge"
                 num_workers: 0
                 aws_attributes:
