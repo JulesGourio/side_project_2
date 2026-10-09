@@ -15,7 +15,10 @@
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC #N/A
+# MAGIC - Duplicates the logic of `parsing_pipeline/4_Describe_Images_LLM.py` and `describe_steps.py` (rate limiting, checkpointed MERGE, image passages): a fix in one has to be made in the other.
+# MAGIC - Needs the `GENERIC_*` environment variables read by `config.py` and borrows `utils.py` and `image_utils.py` from `parsing_pipeline/`.
+# MAGIC - Expects an `image_metadata` table from a parse step, but `1_Parse_Chunk_Generic.py` disables picture extraction and does not write one: no notebook of this folder fills the table this one reads.
+# MAGIC - Images are keyed by `IDDOC` (a string here) while the generic chunks use `doc_id`.
 
 # COMMAND ----------
 
@@ -24,15 +27,17 @@
 
 # COMMAND ----------
 
-# MAGIC %load_ext autoreload
-# MAGIC %autoreload 2
+# MAGIC %md
+# MAGIC ## Config Imports
+# MAGIC `config.py` and `selection.py` are this folder's; `utils.py` and `image_utils.py` are shared with `parsing_pipeline/`, so both folders go on `sys.path` and are shipped to the executors with `addPyFile`.
 
 # COMMAND ----------
 
+import asyncio
+import gc
 import os
 import sys
 import time
-import asyncio
 from datetime import datetime
 
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
@@ -68,6 +73,8 @@ configure(
 
 # MAGIC %md
 # MAGIC ## Authentication and Constants
+# MAGIC
+# MAGIC The LLM is called with the workspace host and a token: the secret `qualibot/serving_token` when it exists, the notebook's own token otherwise. The temporary table carries one chunk's results into the MERGE.
 
 # COMMAND ----------
 
@@ -87,6 +94,8 @@ logger.info(f"RUN_MODE={RUN_MODE} | Model={LLM_MODEL_ENDPOINT} | concurrency={LL
 # MAGIC # Inputs
 # MAGIC
 # MAGIC ## Images needing a description
+# MAGIC
+# MAGIC `incremental` (default): `PENDING` images and the `ERROR` ones, which are retried. `full` resets every status to `PENDING` first.
 
 # COMMAND ----------
 
@@ -119,6 +128,12 @@ if pending_count == 0:
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Prep1 - Batch of the run
+# MAGIC `LLM_BATCH_SIZE` caps the images described in one run; the rest waits for the next one.
+
+# COMMAND ----------
+
 df_to_process = df_pending.limit(LLM_BATCH_SIZE) if (LLM_BATCH_SIZE and pending_count > LLM_BATCH_SIZE) else df_pending
 rows_to_process = [r.asDict() for r in df_to_process.collect()]
 
@@ -131,6 +146,8 @@ logger.info(f"Batch: {len(rows_to_process)} images"
 # MAGIC # Data Transformations
 # MAGIC
 # MAGIC ## Describe images (checkpointed)
+# MAGIC
+# MAGIC The LLM is called in chunks of `LLM_CHECKPOINT_CHUNK_SIZE` at a rate bounded by the endpoint quota; each chunk is merged into `image_metadata` as soon as it is done, so a failure keeps the progress.
 
 # COMMAND ----------
 
@@ -209,7 +226,7 @@ else:
 
         _merge_chunk_results(described_images)
         del described_images
-        import gc; gc.collect()
+        gc.collect()
 
         total_done += done; total_err += err; total_tin += tin; total_tout += tout
         logger.info(f"[chunk {chunk_idx + 1}/{n_chunks}] {len(chunk)} images in {time.time() - t0:.1f}s | "
@@ -224,6 +241,8 @@ else:
 # MAGIC ## Build image chunks from described images
 # MAGIC
 # MAGIC No division split — single chunks table.
+# MAGIC
+# MAGIC Only `DONE` images with a real description (long enough, not a `SKIP` answer) are indexed, and only those without a passage yet (anti-join on `chunk_id`), so a rerun after a crash repairs itself.
 
 # COMMAND ----------
 
@@ -302,6 +321,8 @@ else:
 # MAGIC # Outputs
 # MAGIC
 # MAGIC ## Write image chunks
+# MAGIC
+# MAGIC MERGE on `chunk_id` so passages that did not change are not rewritten; Change Data Feed is enabled because the Vector Search index needs it.
 
 # COMMAND ----------
 

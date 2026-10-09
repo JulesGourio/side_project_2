@@ -28,19 +28,28 @@
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - The sample of REFs is a fixed 10 % with seed 42.
-# MAGIC - `chunk_token_count` is estimated at 3.5 characters per token, not counted with a tokenizer.
+# MAGIC - The sample of Intraqual REFs is a fixed 10 % with seed 42, so two runs mix the same neighbours.
+# MAGIC - `chunk_token_count` is estimated at 3.5 characters per token, not counted with the tokenizer used by the parsing pipeline.
+# MAGIC - The chunks of this test table are not produced by `parsing_pipeline/3_Parse_Pipeline.py`: the chunker settings (`max_chunk_tokens`, no image extraction, no overlap setting) are this notebook's own and differ from `config.py`.
+# MAGIC - The index is `TRIGGERED` and created from the notebook: unlike `3_Sync_Vector_Index.py` it has no widget-driven list of indexes.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Configuration
 # MAGIC ## Config Standard Package Imports
+# MAGIC
+# MAGIC Docling and the pinned `opencv-python-headless` (the default build crashes on the GPU runtime) are installed in the notebook itself because this is a test run on serverless, not a job with cluster libraries.
 
 # COMMAND ----------
 
 # MAGIC %pip install -q "numpy<2" docling docling-core langchain-text-splitters tiktoken
 # MAGIC %pip install -q --force-reinstall --no-deps opencv-python-headless==4.12.0.88
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC The standard-library and Spark imports, and the notebook folder on `sys.path` so `chunk_steps` can be imported.
 
 # COMMAND ----------
 
@@ -62,19 +71,28 @@ sys.path.insert(0, "/Workspace" + os.path.dirname(_ctx.notebookPath().get()))
 
 # MAGIC %md
 # MAGIC ## Config Widgets
+# MAGIC
+# MAGIC `environment` only picks the defaults of the three paths; a path typed in its own widget wins.
 
 # COMMAND ----------
 
-dbutils.widgets.text("source_volume_path", "/Volumes/uat_landingzone/qualibot/test/test_documents")
-dbutils.widgets.text("catalog_schema", "uat_landingzone.qualibot")
-dbutils.widgets.text("offline_models_dir", "/Volumes/uat_landingzone/qualibot/docling_models")
+dbutils.widgets.text("environment", "dev", "dev | uat | prod: picks the landing-zone catalog of the defaults below")
+dbutils.widgets.text("source_volume_path", "", "Documents to parse (empty = test_documents volume of the environment)")
+dbutils.widgets.text("catalog_schema", "", "Catalog.schema of the chunks (empty = <environment>_landingzone.qualibot)")
+dbutils.widgets.text("offline_models_dir", "", "Docling models (empty = docling_models volume of the environment)")
 dbutils.widgets.text("max_chunk_tokens", "1000")
 dbutils.widgets.text("vector_search_endpoint", "qualibot")
 dbutils.widgets.text("embedding_model", "databricks-qwen3-embedding-0-6b")
 
-SOURCE_VOLUME_PATH = dbutils.widgets.get("source_volume_path")
-CATALOG_SCHEMA = dbutils.widgets.get("catalog_schema")
-OFFLINE_MODELS_DIR = dbutils.widgets.get("offline_models_dir")
+ENVIRONMENT = dbutils.widgets.get("environment").strip().lower()
+LANDINGZONE = f"{ENVIRONMENT}_landingzone"
+
+SOURCE_VOLUME_PATH = dbutils.widgets.get("source_volume_path") or f"/Volumes/{LANDINGZONE}/qualibot/test/test_documents"
+CATALOG_SCHEMA = dbutils.widgets.get("catalog_schema") or f"{LANDINGZONE}.qualibot"
+# In DEV the models sit one level deeper (docling_models/docling_models).
+OFFLINE_MODELS_DIR = dbutils.widgets.get("offline_models_dir") or (
+    f"/Volumes/{LANDINGZONE}/qualibot/docling_models" + ("/docling_models" if ENVIRONMENT == "dev" else "")
+)
 MAX_CHUNK_TOKENS = int(dbutils.widgets.get("max_chunk_tokens"))
 VECTOR_SEARCH_ENDPOINT = dbutils.widgets.get("vector_search_endpoint")
 EMBEDDING_MODEL = dbutils.widgets.get("embedding_model")
@@ -125,6 +143,7 @@ import chunk_steps
 # MAGIC ## Import source documents
 # MAGIC Every supported file of the volume, read as binary, with the title derived from the file name.
 
+
 # COMMAND ----------
 
 df_files = (
@@ -145,6 +164,12 @@ df_files = (
 
 logger.info(f"Found {df_files.count()} supported file(s) in {SOURCE_VOLUME_PATH}")
 display(df_files.select("file_name", "extension", "file_size_bytes", "doc_title").limit(20))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Data Preparation
+# MAGIC #N/A
 
 # COMMAND ----------
 

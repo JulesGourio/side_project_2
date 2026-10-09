@@ -13,12 +13,20 @@
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC #N/A
+# MAGIC - Duplicates `parsing_pipeline/5_Sync_Vector_Indexes.py` (index creation, sync trigger, wait loop) without its `chunks_full` handling; a fix in one has to be made in the other.
+# MAGIC - Only `chunks_index` can be created automatically; any other index in `indexes` is synced but never created, since its source table is unknown.
+# MAGIC - A newly created index is not waited on before its sync is triggered (the parsing version waits up to 5 minutes for it to leave PROVISIONING).
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Configuration
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config logger and widgets
+# MAGIC This task is serverless, so the logger and the job parameters (read as widgets) are set up in the notebook itself. The endpoint, embedding model, catalog and suffix are only used when an index has to be created. With no index to sync the task stops here.
 
 # COMMAND ----------
 
@@ -87,6 +95,8 @@ for n in INDEXES:
 # MAGIC # Outputs
 # MAGIC
 # MAGIC ## Create any missing index, then read current status
+# MAGIC
+# MAGIC An index that does not exist is created from its known source table; one that does is only read, to log its state and indexed rows before the sync. An index that is neither known nor existing is skipped with a warning.
 
 # COMMAND ----------
 
@@ -129,7 +139,7 @@ def _create_index(name, source_table):
 
 
 before = {}
-for name in INDEXES:
+for name in list(INDEXES):
     try:
         idx = w.vector_search_indexes.get_index(index_name=name)
         st = idx.status
@@ -143,13 +153,15 @@ for name in INDEXES:
             _create_index(name, source)
             before[name] = 0
         else:
-            logger.warning(f"{name}: not found AND not in KNOWN_SOURCE_TABLE — cannot auto-create, skipping.")
+            logger.warning(f"{name}: not found AND not in KNOWN_SOURCE_TABLE - cannot auto-create, skipping.")
             INDEXES.remove(name)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Trigger the syncs
+# MAGIC
+# MAGIC Indexes are `TRIGGERED`: without a sync, new chunks are never queryable. A rejected sync fails the task so the job does not end in SUCCESS with the index on old chunks.
 
 # COMMAND ----------
 
@@ -169,6 +181,8 @@ if failed:
 
 # MAGIC %md
 # MAGIC ## Wait for the syncs to finish
+# MAGIC
+# MAGIC Waits for each index to leave a syncing state so the job reflects the real outcome; a failed or offline index raises at once. `wait_minutes = 0` triggers and returns.
 
 # COMMAND ----------
 
