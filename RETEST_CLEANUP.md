@@ -316,7 +316,11 @@ Les 17 jobs déclarés par cible dans `databricks.yml` sont maintenant dans `res
 
 À faire : `databricks bundle validate -t dev --profile DEV` puis `bundle deploy -t dev` : le plan doit afficher 0 add / 0 delete (clés de ressources inchangées).
 
-## 10. Journal Lakebase des requêtes (2026-10-09)
+## 10. Tags et alertes (2026-10-09)
+
+Tout job du bundle porte maintenant `project: Qualibot` (il manquait sur `score_production_qa` et `lakebase_import_uat_to_dev`) ; au prochain `bundle deploy -t dev` : 2 jobs modifiés.
+Alertes : `utils/alerts/` (4 requêtes + README avec la création pas à pas). À créer à la main dans Databricks SQL, rien ne les déploie.
+## 11. Journal Lakebase des requêtes (2026-10-09)
 
 Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `errors`, `llm_requests`,
 `impact_requests`, `impact_document_results` (créées par l'app au démarrage ; référence

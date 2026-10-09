@@ -11,6 +11,8 @@ targets:
           name: "D_1_Qualibot_Lakebase_Import_Uat_To_Dev"
           description: "Import the UAT staging volume export into DEV Delta tables"
           max_concurrent_runs: 1
+          tags:
+            project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE

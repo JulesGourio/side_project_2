@@ -11,6 +11,8 @@ targets:
           name: "D_1_Qualibot_Score_Production_Qa"
           description: "LLM-judge quality scoring of real ChatBot turns already answered"
           max_concurrent_runs: 1
+          tags:
+            project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE
