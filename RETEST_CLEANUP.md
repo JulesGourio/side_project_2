@@ -44,11 +44,11 @@ foreach ($i in (databricks vector-search-indexes list-indexes qualibot --profile
     Select-Object name, @{n='source';e={$_.delta_sync_index_spec.source_table}}, @{n='modele';e={$_.delta_sync_index_spec.embedding_source_columns[0].embedding_model_endpoint_name}}, @{n='pret';e={$_.status.ready}}, @{n='lignes';e={$_.status.indexed_row_count}} | Format-List
 }
 "=== jobs"
-databricks jobs list --profile DEV
+databricks jobs list --profile DEV -o json | ConvertFrom-Json | Where-Object { $_.settings.name -match 'qualibot|apps-stop' } | ForEach-Object { "$($_.job_id)  $($_.settings.name)" }
 "=== plan du bundle (aucun changement appliqué)"
 python utils/deploy/render_target_config_env.py dev target_config.env
 databricks bundle validate -t dev --profile DEV
-databricks bundle plan -t dev --profile DEV
+databricks bundle plan -t dev --profile DEV 2>&1 | Select-String -Pattern "^(update|create|delete|recreate)|^Plan:"
 ```
 
 ```sql
