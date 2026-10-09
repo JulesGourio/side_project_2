@@ -464,6 +464,44 @@ de la moitié des questions échouent.
   dans les logs de l'app pendant le test, les lignes `chat_vsi_llm:` (bascule vers le modèle de
   secours, relances).
 
+### L. Journal Lakebase de chaque tour de chat (code du 2026-10-09)
+
+Le chat enregistre maintenant chaque étape de chaque tour : `chat_turns` (requêtes, modèles,
+durées, ce qui n'a pas tourné comme prévu), `chat_retrieved_chunks` (passages retrouvés, avec leur
+texte), et des colonnes en plus dans `errors`, `llm_requests` et `impact_requests` (référence :
+`docs/lakebase_schema.md`). Rien à créer à la main : l'app crée les tables et colonnes à son
+démarrage, sans toucher aux données existantes.
+
+- [ ] **L1. Déployer l'app DEV** avec le zip de cette branche (le même déploiement que S8 ; s'il a
+  déjà été fait avec un zip plus ancien, le refaire) :
+
+  ```powershell
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+
+  Dans les logs de l'app au démarrage : `Lakebase schema ready` (une erreur juste avant = me
+  l'envoyer).
+
+- [ ] **L2. Poser 2 ou 3 questions dans le chat**, dont une où l'on ferme l'onglet avant la fin de
+  la réponse, puis dans l'éditeur SQL Lakebase (projet « Qualibot History », base `doccompare`) :
+
+  ```sql
+  SELECT created_at, status, warnings, answer_endpoint, vs_calls_ok, vs_calls_expected,
+         passages_sent, documents_sent, first_token_ms, total_ms, fr_query
+  FROM chat_turns ORDER BY id DESC LIMIT 5;
+
+  SELECT t.trace_id, COUNT(*) AS passages, SUM(CASE WHEN c.kept THEN 1 ELSE 0 END) AS sent,
+         SUM(CASE WHEN c.cited THEN 1 ELSE 0 END) AS cited
+  FROM chat_turns t JOIN chat_retrieved_chunks c ON c.turn_id = t.id
+  GROUP BY t.id, t.trace_id ORDER BY t.id DESC LIMIT 5;
+
+  SELECT created_at, endpoint, severity, stage, error_type, LEFT(error_msg, 120)
+  FROM errors ORDER BY id DESC LIMIT 10;
+  ```
+
+  Attendu : une ligne par question (`ok` ou `degraded`, et `aborted` pour l'onglet fermé), une
+  trentaine de passages par tour dont `sent` envoyés au modèle. **M'envoyer** les trois résultats.
+
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
 Lecture seule sur les tables UAT ; écrit uniquement dans

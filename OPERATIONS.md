@@ -9,7 +9,8 @@ Tout le code est sur la branche **`audit/doc-compare`** (= `main` + audit de la
 comparaison + phase de test archive). Le zip à déployer est celui de cette
 branche tant qu'elle n'est pas fusionnée.
 
-Mis à jour le 2026-10-05. Rien de ce qui suit n'a encore été confirmé comme fait.
+Mis à jour le 2026-10-09 (journal Lakebase du chat : D5.8, D5.8b). Rien de ce qui suit n'a encore
+été confirmé comme fait.
 
 La mise en place de l'environnement **DEV** a son propre fichier : `operations_dev.md`.
 
@@ -330,7 +331,26 @@ prévenir, je change la valeur, vous redéployez.
 
   - [ ] **D5.8. Tester** comme `operations_dev.md` S9 (ALL / AS / IS, langue, hors sujet, lien,
     impact search). Retour arrière : redéployer l'ancien zip, puis `bundle deploy` de l'ancien zip
-    (tables et index `_v1` intacts).
+    (tables et index `_v1` intacts). Vérifier aussi le journal Lakebase des tours (`chat_turns`,
+    `chat_retrieved_chunks`, colonnes ajoutées à `errors` : créés par l'app à son démarrage, rien à
+    faire à la main) avec les requêtes de `operations_dev.md` L2, dans l'éditeur SQL Lakebase de
+    l'UAT (base `doccompare` ; `doccompare_test` pour `qualibot-uat-test`). Référence :
+    `docs/lakebase_schema.md`.
+
+  - [ ] **D5.8b. Charger le journal dans Delta pour la notation** : lancer une fois le job d'export
+    Lakebase (sa 2e tâche charge maintenant aussi `chat_turns`, `chat_retrieved_chunks` et `errors`
+    dans `uat_landingzone.qualibot`), puis vérifier :
+
+    ```powershell
+    databricks bundle run lakebase_export_uat_to_volume -t qualibot-uat --profile UAT
+    ```
+
+    ```sql
+    SELECT COUNT(*) FROM uat_landingzone.qualibot.chat_retrieved_chunks;
+    ```
+
+    Le job de notation (`D_3_qualibot-quality-scoring-qualibot-uat`) lit les passages des tours
+    `vsi-…` dans cette table (plus de trace MLflow avec ce chatbot).
 
   - [ ] **D5.9. Supprimer l'ancien** (quelques jours plus tard, une fois l'app validée) :
     - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de

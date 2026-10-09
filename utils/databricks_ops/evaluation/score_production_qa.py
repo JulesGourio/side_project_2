@@ -239,6 +239,9 @@ if spark.catalog.tableExists(BACKFILL_TABLE):
     print(f"Loaded {len(BACKFILL_TRACE_IDS)} backfilled trace_id(s) from {BACKFILL_TABLE}.")
 
 FEEDBACKS_TABLE = f"{CATALOG_SCHEMA}.chat_feedbacks"
+# Passages handed to the model by the Vector Search engine (trace_id vsi-…, no MLflow
+# trace), saved by the app since 2026-10-09 — exact retrieval, like a KA trace.
+LOGGED_PASSAGES_TABLE = f"{CATALOG_SCHEMA}.chat_retrieved_chunks"
 if SOURCE_TYPE == "volume_json":
     # UAT has no imported Delta copy of chat_messages — read the same raw
     # export lakebase_export_uat_to_volume already produces, directly.
@@ -246,6 +249,25 @@ if SOURCE_TYPE == "volume_json":
     SOURCE_TABLE = "_chat_messages_src"
     spark.read.json(f"{STAGING_VOLUME_PATH}/chat_feedbacks.json").createOrReplaceTempView("_chat_feedbacks_src")
     FEEDBACKS_TABLE = "_chat_feedbacks_src"
+    try:
+        spark.read.json(f"{STAGING_VOLUME_PATH}/chat_retrieved_chunks.json").createOrReplaceTempView("_chat_chunks_src")
+        LOGGED_PASSAGES_TABLE = "_chat_chunks_src"
+    except Exception as e:  # not exported yet (before the 2026-10-09 schema)
+        print(f"No chat_retrieved_chunks export ({e}) — vsi-… turns fall back to the independent query.")
+        LOGGED_PASSAGES_TABLE = None
+
+
+def fetch_logged_hits(trace_id) -> list:
+    """[{REF, chunk_text}, ...] handed to the model for a vsi-… turn, in prompt order; [] otherwise."""
+    if not (LOGGED_PASSAGES_TABLE and isinstance(trace_id, str) and trace_id.startswith("vsi-")):
+        return []
+    try:
+        rows = (spark.table(LOGGED_PASSAGES_TABLE).filter((F.col("trace_id") == trace_id) & F.col("kept"))
+                .orderBy("prompt_rank").select("ref", "chunk_text").collect())
+    except Exception as e:  # table missing on this target
+        print(f"chat_retrieved_chunks unreadable ({e}) — independent query instead.")
+        return []
+    return [{"REF": r.ref, "chunk_text": r.chunk_text} for r in rows if r.chunk_text]
 
 # Each assistant turn is judged against the FULL prior conversation (not just
 # the last user question) — a follow-up turn ("et pour la division AS ?")
@@ -715,15 +737,19 @@ else:
                 backfilled = BACKFILL_TRACE_IDS.get(str(row["message_id"]))
                 if backfilled:
                     raw_trace_id, backfill_method = backfilled
-            hits = fetch_real_trace_hits(raw_trace_id)
+            hits = fetch_logged_hits(raw_trace_id)
             if hits:
+                retrieval_source = "logged"      # chat_retrieved_chunks: exact, like a trace
+            else:
+                hits = fetch_real_trace_hits(raw_trace_id)
+            if retrieval_source is None and hits:
                 # "trace" = native capture (post 2026-09-03 fix); "trace_backfill" =
                 # recovered after the fact from the KA's native MLflow experiment —
                 # see BACKFILL_TRACE_IDS above for how, and its match_method for confidence.
                 retrieval_source = "trace_backfill" if backfill_method else "trace"
                 if backfill_method:
                     rec["retrieval_backfill_confidence"] = backfill_method
-            else:
+            elif not hits:
                 try:
                     # Only condense when there's actual prior context to resolve —
                     # a standalone first question needs no rewriting (saves a call).
@@ -744,7 +770,7 @@ else:
                 # treatment as a native trace. Only query_fallback (our own proxy
                 # re-query) gets trimmed. Missing this for trace_backfill repeated
                 # the exact truncation bug fixed 2026-09-07, just on the new path.
-                context_text = (_format_context(hits) if retrieval_source in ("trace", "trace_backfill")
+                context_text = (_format_context(hits) if retrieval_source in ("trace", "trace_backfill", "logged")
                                 else _format_context(hits, RETRIEVAL_CONTEXT_K, RETRIEVAL_CONTEXT_CHARS))
                 retrieved_refs = {h.get("REF") for h in hits}
                 if cited_refs:

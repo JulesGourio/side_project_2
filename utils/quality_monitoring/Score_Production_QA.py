@@ -9,7 +9,8 @@
 # MAGIC - **Conversation**: the messages the assistant saw (last 10), whole.
 # MAGIC - **Answer**: the stored answer, without the text fragments of citation links (`#:~:text=…`).
 # MAGIC - **Evidence** (`RETRIEVER` step): the passages the assistant retrieved from the `qualibot` index, read from its own
-# MAGIC   MLflow trace (`assistant_retrieval`). When a trace shows no retrieval step, excerpts of every document the answer
+# MAGIC   MLflow trace (`assistant_retrieval`) — for the Vector Search engine (trace_id `vsi-…`, since 2026-10-08), from the
+# MAGIC   passages the app saved for the turn in `chat_retrieved_chunks` (`kept` = handed to the model, prompt order). When a trace shows no retrieval step, excerpts of every document the answer
 # MAGIC   relies on, searched with each line that cites it (`cited_document_excerpts`). No limit, no truncation.
 # MAGIC - **Independent search** (`corpus_search`): the question searched in the whole index, to tell a retrieval miss from a
 # MAGIC   documentation gap.
@@ -117,6 +118,7 @@ MAX_RUN_MINUTES = float(dbutils.widgets.get("max_run_minutes") or 100)
 
 SOURCE_TABLE = f"{SOURCE_SCHEMA}.chat_messages"
 FEEDBACK_TABLE = f"{SOURCE_SCHEMA}.chat_feedbacks"            # optional: used if it exists
+LOGGED_PASSAGES_TABLE = f"{SOURCE_SCHEMA}.chat_retrieved_chunks"  # optional: passages of the vsi-… turns
 SCORES_TABLE = f"{OUTPUT_SCHEMA}.chat_quality_scores"
 ASSESSMENTS_TABLE = f"{OUTPUT_SCHEMA}.chat_quality_assessments"
 SCORING_RUNS_TABLE = f"{OUTPUT_SCHEMA}.chat_quality_scoring_runs"
@@ -1091,6 +1093,20 @@ if SAMPLE_RATE < 1.0:
 
 cap = TEST_LIMIT or MAX_TURNS_PER_RUN
 df_pairs = df_pairs.orderBy(F.col("created_at").desc()).limit(cap)
+# Passages handed to the answer model by the Vector Search engine (turns with a vsi-… trace_id, no MLflow trace),
+# saved by the app in chat_retrieved_chunks: the same evidence the Knowledge Assistant's RETRIEVER span gave.
+LOGGED_PASSAGES = {}
+_vsi_ids = sorted({str(t) for t in pdf_pairs["trace_id"].dropna() if str(t).startswith("vsi-")})
+if _vsi_ids and spark.catalog.tableExists(LOGGED_PASSAGES_TABLE):
+    _logged = (spark.table(LOGGED_PASSAGES_TABLE)
+               .filter(F.col("kept") & F.col("trace_id").isin(_vsi_ids))
+               .select("trace_id", "prompt_rank", "ref", "chunk_text").toPandas())
+    for _tid, _group in _logged.sort_values(["trace_id", "prompt_rank"]).groupby("trace_id"):
+        LOGGED_PASSAGES[_tid] = [
+            Document(id=f"{r.ref}#{i}", page_content=str(r.chunk_text or ""),
+                     metadata={"doc_uri": str(r.ref), "step": "chat_retrieved_chunks"})
+            for i, r in enumerate(_group.itertuples()) if r.chunk_text]
+print(f"{len(_vsi_ids)} Vector Search turn(s), {len(LOGGED_PASSAGES)} with their passages in {LOGGED_PASSAGES_TABLE}.")
 MESSAGE_ID_TYPE = df_pairs.schema["message_id"].dataType
 CREATED_AT_TYPE = df_pairs.schema["created_at"].dataType
 pdf_pairs = df_pairs.toPandas()
@@ -1192,8 +1208,14 @@ def replay_turn(messages, message_id):
               "judge_config_id": JUDGE_CONFIG_ID,
               "safety_sample": str(in_sample(message_id, SAFETY_SAMPLE_RATE, "safety")).lower()},
         metadata={"mlflow.trace.session": str(row["session_id"])})
-    kt, kt_error = assistant_trace(row.get("trace_id"))
-    steps, passages = retrieved_passages(kt) if kt is not None else (0, [])
+    logged = LOGGED_PASSAGES.get(_text(row.get("trace_id")) or "")
+    if logged is not None:
+        # Vector Search engine: the passages saved by the app, no MLflow trace to read.
+        kt, kt_error = None, None
+        steps, passages = 1, logged
+    else:
+        kt, kt_error = assistant_trace(row.get("trace_id"))
+        steps, passages = retrieved_passages(kt) if kt is not None else (0, [])
     context = {"source_refs": t["source_refs"], "cited_refs": t["cited_refs"],
                "next_user_message": t["next_user_message"], "retrieval_error": None,
                "assistant_trace_error": kt_error, "assistant_retrieval_steps": steps}
@@ -1203,7 +1225,7 @@ def replay_turn(messages, message_id):
         if steps:
             context["evidence_source"] = "assistant_retrieval"
             docs = passages
-            record_assistant_retrieval(kt.info.trace_id, passages)
+            record_assistant_retrieval(kt.info.trace_id if kt is not None else _text(row.get("trace_id")), passages)
             if REFS_BY_BASE:
                 corpus_search(search_query(t["thread"]))
         elif t["evidence_queries"]:
@@ -1225,7 +1247,9 @@ def replay_turn(messages, message_id):
 # The judges compare each answer with the passages the assistant retrieved. They are read from the assistant's MLflow
 # trace (trace_id of chat_messages); when a trace shows no retrieval step, its span structure is printed below and the
 # judges fall back on excerpts of the cited documents.
-_sampled_trace_ids = [t["row"].get("trace_id") for t in TURNS.values() if _text(t["row"].get("trace_id"))][:5]
+# vsi-… turns have no MLflow trace: their passages come from chat_retrieved_chunks (LOGGED_PASSAGES).
+_sampled_trace_ids = [t["row"].get("trace_id") for t in TURNS.values() if _text(t["row"].get("trace_id"))
+                      and not _text(t["row"].get("trace_id")).startswith("vsi-")][:5]
 for tid in _sampled_trace_ids:
     kt, error = assistant_trace(tid)
     if kt is None:

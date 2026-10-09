@@ -45,6 +45,120 @@ _MIN_REFRESH_INTERVAL_S = 60  # never refresh tighter than this
 _CONNECT_TIMEOUT_S = float(os.getenv('LAKEBASE_CONNECT_TIMEOUT_S', '5'))
 
 
+def _app_version() -> str:
+    return os.getenv('APP_VERSION', '2')
+
+
+# ── chat_turns: one row per chat turn (filled from services/turn_log.TurnLog) ──
+# The columns written from TurnLog.data, in order — used by both CREATE TABLE and the
+# INSERT, so a column added here reaches the table on the next app start.
+CHAT_TURN_COLUMNS: List[tuple] = [
+    # who / where
+    ('session_id',            'TEXT'),
+    ('user_id',               'TEXT'),
+    ('workspace_id',          'TEXT'),
+    ('app_version',           'TEXT'),
+    ('division',              'TEXT'),
+    # what the turn should have run with: chat_vsi.settings() (index, search sizes, models
+    # and their fallbacks, token limits) — compare with the columns below
+    ('index_name',            'TEXT'),
+    ('config',                'JSONB'),
+    # the question
+    ('question',              'TEXT'),
+    ('question_lang',         'TEXT'),
+    ('question_en',           'TEXT'),               # English question sent to the search when bridged
+    ('history_messages',      'INTEGER'),            # messages of the conversation sent to the engine
+    # search-query rewrite
+    ('fr_query',              'TEXT'),
+    ('en_query',              'TEXT'),
+    ('rewrite_ok',            'BOOLEAN'),
+    ('rewrite_endpoint',      'TEXT'),               # model that rewrote (NULL: every model failed)
+    ('rewrite_input_tokens',  'INTEGER'),
+    ('rewrite_output_tokens', 'INTEGER'),
+    ('rewrite_cost_eur',      'DOUBLE PRECISION'),
+    # retrieval
+    ('named_refs',            'TEXT[]'),             # REFs named in the conversation (REF lookup)
+    ('titled_refs',           'TEXT[]'),             # documents whose title matched (title lookup)
+    ('vs_calls_expected',     'INTEGER'),            # Vector Search queries of the main search
+    ('vs_calls_ok',           'INTEGER'),
+    ('rerank_ok',             'BOOLEAN'),
+    ('passages_retrieved',    'INTEGER'),            # rows of chat_retrieved_chunks
+    ('passages_sent',         'INTEGER'),            # ... of which handed to the LLM (kept)
+    ('documents_sent',        'INTEGER'),
+    ('prompt_chars',          'INTEGER'),
+    ('instructions_sha',      'TEXT'),               # sha256[:16] of the system instructions used
+    # answer
+    ('answer_endpoint',       'TEXT'),               # model that answered (NULL: none)
+    ('llm_fallback',          'BOOLEAN'),
+    ('llm_attempts',          'JSONB'),              # every call: endpoint, outcome, status, seconds
+    ('truncated',             'BOOLEAN'),            # output limit reached
+    ('continuations',         'INTEGER'),            # answer resumed after a cut
+    ('input_tokens',          'INTEGER'),
+    ('output_tokens',         'INTEGER'),
+    ('thinking_tokens',       'INTEGER'),
+    ('cost_eur',              'DOUBLE PRECISION'),   # answer only (rewrite: rewrite_cost_eur)
+    ('answer_chars',          'INTEGER'),
+    ('citations_count',       'INTEGER'),
+    ('cited_refs',            'TEXT[]'),
+    ('sources_count',         'INTEGER'),            # chips shown (cited + named in prose)
+    ('answer_translated',     'BOOLEAN'),            # translated back by the bridge
+]
+# Step durations (TurnLog.timings_ms), stored as <step>_ms INTEGER columns. first_token is
+# counted from the start of the turn (what the user waits); the others are the step itself.
+CHAT_TURN_TIMINGS = ('total', 'translate_in', 'retrieval', 'rewrite', 'search', 'ref_lookup', 'title_lookup',
+                     'queue_wait', 'first_token', 'generation', 'translate_back', 'persist')
+
+# ── chat_retrieved_chunks: one row per passage retrieved for a turn ──
+CHAT_CHUNK_COLUMNS: List[tuple] = [
+    ('trace_id',          'TEXT'),
+    ('position',          'INTEGER'),            # order of retrieval (merged by best rank)
+    ('kept',              'BOOLEAN NOT NULL DEFAULT TRUE'),  # handed to the LLM
+    ('drop_reason',       'TEXT'),               # other_language | over_cap (kept = false)
+    ('prompt_rank',       'INTEGER'),            # order in the prompt (kept only)
+    ('doc_number',        'INTEGER'),            # [n] of its document in the prompt
+    ('cited',             'BOOLEAN'),            # its document is cited by the answer
+    ('source',            'TEXT'),               # search | ref_lookup | title_lookup
+    ('hits',              'JSONB'),              # [{q, via, rank, score}]: which query found it, where
+    ('best_score',        'DOUBLE PRECISION'),
+    ('chunk_id',          'TEXT'),
+    ('iddoc',             'TEXT'),
+    ('ref',               'TEXT'),
+    ('division',          'TEXT'),
+    ('url',               'TEXT'),
+    ('semantic_headers',  'TEXT'),
+    ('chunk_text',        'TEXT'),
+]
+
+
+def _base_type(typedef: str) -> str:
+    return typedef.split()[0]
+
+
+def _db_value(value: Any, typedef: str) -> Any:
+    """Python value -> asyncpg parameter for a column of type ``typedef``."""
+    if value is None:
+        return None
+    base = _base_type(typedef)
+    if base == 'JSONB':
+        return json.dumps(value, ensure_ascii=False, default=str)
+    if base == 'TEXT[]':
+        return [str(v) for v in value]
+    if base == 'TEXT':
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    if base == 'INTEGER':
+        return int(value)
+    if base == 'DOUBLE':
+        return float(value)
+    if base == 'BOOLEAN':
+        return bool(value)
+    return value
+
+
+def _placeholders(typedefs: List[str], offset: int = 0) -> str:
+    return ', '.join(f'${i}::jsonb' if _base_type(t) == 'JSONB' else f'${i}'
+                     for i, t in enumerate(typedefs, offset + 1))
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -291,6 +405,15 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             ('http_status',     'INTEGER'),
             ('error_type',      'TEXT'),
             ('error_msg',       'TEXT'),
+            # Outcome and step durations of the /compare/analyze stream (ms):
+            # 'ok' | 'error' | 'aborted' (browser left before the end).
+            ('status',          'TEXT'),
+            ('queue_wait_ms',   'INTEGER'),     # waiting for an analysis slot
+            ('build_ms',        'INTEGER'),     # file extraction + prompt
+            ('first_token_ms',  'INTEGER'),     # LLM call start -> first text
+            ('generation_ms',   'INTEGER'),     # LLM call start -> end
+            ('total_ms',        'INTEGER'),
+            ('chunked_parts',   'INTEGER'),     # map-reduce parts (0: one call)
         ]:
             await conn.execute(
                 f"ALTER TABLE llm_requests ADD COLUMN IF NOT EXISTS {col} {typedef}"
@@ -313,9 +436,28 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
                 llm_request_id  INTEGER
             )
         ''')
-        await conn.execute(
-            "ALTER TABLE errors ADD COLUMN IF NOT EXISTS llm_request_id INTEGER"
-        )
+        for col, typedef in [
+            ('llm_request_id', 'INTEGER'),
+            # 'error' (the request failed) or 'warning' (it went on, degraded: a
+            # step that did not run as configured — e.g. the chat's search-query
+            # rewrite failed, so the search ran with the question only).
+            ('severity',       "TEXT NOT NULL DEFAULT 'error'"),
+            # Step that failed: chat translate_in / rewrite / search / ref_lookup /
+            # title_lookup / llm / translate_back / persist / ws; compare build / llm.
+            ('stage',          'TEXT'),
+            ('http_status',    'INTEGER'),
+            ('upstream',       'TEXT'),     # Vector Search index or model endpoint called
+            # Chat: same trace_id as chat_turns / chat_messages (join key).
+            ('trace_id',       'TEXT'),
+            ('session_id',     'TEXT'),
+            # What was expected vs what happened (configured endpoints, attempts,
+            # queries failed / sent…) and the stack trace when there is one.
+            ('context',        'JSONB'),
+            ('app_version',    'TEXT'),
+        ]:
+            await conn.execute(f"ALTER TABLE errors ADD COLUMN IF NOT EXISTS {col} {typedef}")
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_created_at ON errors (created_at)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_trace_id ON errors (trace_id)')
 
         # ── impact_requests (audit: every /compare/impact call, success or
         #    failure — Vector Search retrieval + LLM judgment) ─────────────────
@@ -343,6 +485,22 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
                 error_msg           TEXT
             )
         ''')
+        for col, typedef in [
+            # 'ok' | 'error' | 'aborted' (browser left before the end)
+            ('status',          'TEXT'),
+            ('app_version',     'TEXT'),
+            ('index_name',      'TEXT'),
+            ('queries_used',    'INTEGER'),     # one Vector Search query per change
+            ('queries_failed',  'INTEGER'),
+            ('candidates',      'INTEGER'),     # documents sent to the judge
+            ('not_judged',      'INTEGER'),     # found but past impact_max_candidates
+            ('judge_failed',    'INTEGER'),     # judge calls that failed after retries
+            # Step durations (ms); duration_s stays the total.
+            ('extract_ms',      'INTEGER'),     # change list -> queries
+            ('search_ms',       'INTEGER'),
+            ('judge_ms',        'INTEGER'),     # all judge calls (run in parallel)
+        ]:
+            await conn.execute(f"ALTER TABLE impact_requests ADD COLUMN IF NOT EXISTS {col} {typedef}")
 
         # ── impact_document_results (one row per document judged by the LLM
         #    within an impact_requests call — kept business-readable on purpose:
@@ -364,6 +522,15 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
                 other_documents_json    TEXT
             )
         ''')
+        for col, typedef in [
+            # Technical trace of the judge call, at the end of the row on purpose.
+            ('status',          'TEXT'),        # impacted / check / not_impacted / error
+            ('judge_ms',        'INTEGER'),
+            ('judge_attempts',  'INTEGER'),
+            ('input_tokens',    'INTEGER'),
+            ('output_tokens',   'INTEGER'),
+        ]:
+            await conn.execute(f"ALTER TABLE impact_document_results ADD COLUMN IF NOT EXISTS {col} {typedef}")
         await conn.execute('''
             CREATE INDEX IF NOT EXISTS idx_impact_document_results_request_id
                 ON impact_document_results (request_id)
@@ -522,12 +689,20 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             )
         ''')
         for col, typedef in [
+            # Assistant rows: the turn's chat_turns.trace_id (vsi-…). Knowledge
+            # Assistant turns (before 2026-10-08): the KA's MLflow trace id.
             ('trace_id',        'TEXT'),
+            # Knowledge Assistant only, no longer written since 2026-10-09 (the
+            # Vector Search engine's retrieval is in chat_turns /
+            # chat_retrieved_chunks). Kept for the history of the KA turns.
             ('tool_name',       'TEXT'),
             ('tool_query',      'TEXT'),
             ('tool_result',     'TEXT'),
             ('reasoning_steps', 'TEXT'),
             ('workspace_id',    'TEXT'),
+            # Engine label: vsi-all / vsi-as / vsi-is (KA turns: ka-… endpoint).
+            # NULL on copies of a shared conversation. The model that actually
+            # answered is chat_turns.answer_endpoint.
             ('endpoint_name',   'TEXT'),
             ('sources_json',    'TEXT'),
             # Soft-delete flag — see chat_sessions above.
@@ -552,6 +727,48 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             CREATE INDEX IF NOT EXISTS chat_messages_session_idx
             ON chat_messages(session_id)
         ''')
+
+        # ── chat_turns (one row per chat turn: every step, its duration, what
+        #    it should have run with and what went wrong — services/turn_log.py)
+        #    No FK on session_id: a turn whose messages could not be saved is
+        #    still logged. ──────────────────────────────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS chat_turns (
+                id                    SERIAL PRIMARY KEY,
+                created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                trace_id              TEXT NOT NULL UNIQUE,
+                user_message_id       INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
+                assistant_message_id  INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
+                -- ok | degraded (answered, a step did not run as configured) | error | aborted
+                status                TEXT NOT NULL,
+                error_stage           TEXT,
+                error_type            TEXT,
+                error_msg             TEXT,
+                warnings              TEXT[] NOT NULL DEFAULT '{}'
+            )
+        ''')
+        for col, typedef in CHAT_TURN_COLUMNS + [(f'{t}_ms', 'INTEGER') for t in CHAT_TURN_TIMINGS]:
+            await conn.execute(f'ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS {col} {typedef}')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_turns_created_at ON chat_turns (created_at)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_turns_session_id ON chat_turns (session_id)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_turns_assistant_message_id '
+                           'ON chat_turns (assistant_message_id)')
+
+        # ── chat_retrieved_chunks (every passage retrieved for a turn, with its
+        #    text: the chunks of a superseded revision are deleted from the index
+        #    tables, this keeps what the answer was really built on) ────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS chat_retrieved_chunks (
+                id          BIGSERIAL PRIMARY KEY,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                turn_id     INTEGER NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE
+            )
+        ''')
+        for col, typedef in CHAT_CHUNK_COLUMNS:
+            await conn.execute(f'ALTER TABLE chat_retrieved_chunks ADD COLUMN IF NOT EXISTS {col} {typedef}')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_retrieved_chunks_turn_id '
+                           'ON chat_retrieved_chunks (turn_id)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_retrieved_chunks_ref ON chat_retrieved_chunks (ref)')
 
         # ── knowledge_base_metadata ───────────────────────────────────────────
         # Single-row table (id=1) holding the "documents as of" date shown in
@@ -820,7 +1037,16 @@ async def upsert_user(
         )
 
 
-async def store_error(
+_ERROR_INSERT = '''
+    INSERT INTO errors
+        (endpoint, error_type, error_msg, user_id, workspace_id,
+         old_filename, new_filename, file_type, stack_trace, llm_request_id,
+         severity, stage, http_status, upstream, trace_id, session_id, context, app_version)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18)
+'''
+
+
+def _error_row(
     *,
     endpoint: str = '',
     error_type: str = '',
@@ -832,8 +1058,40 @@ async def store_error(
     file_type: str = '',
     stack_trace: str = '',
     llm_request_id: Optional[int] = None,
-) -> None:
+    severity: str = 'error',
+    stage: str = '',
+    http_status: Optional[int] = None,
+    upstream: str = '',
+    trace_id: str = '',
+    session_id: str = '',
+    context: Optional[Dict[str, Any]] = None,
+) -> tuple:
+    """Parameters of _ERROR_INSERT, in order."""
+    return (
+        endpoint or None,
+        error_type or None,
+        (error_msg or '')[:2000],
+        user_id or None,
+        workspace_id or None,
+        old_filename or None,
+        new_filename or None,
+        file_type or None,
+        (stack_trace or '')[:4000] or None,
+        llm_request_id,
+        severity or 'error',
+        stage or None,
+        http_status or None,
+        upstream or None,
+        trace_id or None,
+        session_id or None,
+        json.dumps(context, ensure_ascii=False, default=str) if context else None,
+        _app_version(),
+    )
+
+
+async def store_error(**kwargs: Any) -> None:
     """Persist an application error to the errors table (best-effort, never raises).
+    Arguments: those of ``_error_row`` (all optional, keyword only).
 
     Acquire is bounded: this runs as fire-and-forget from error paths — if the
     pool is exhausted or the DB is down, hanging forever would just pile up
@@ -844,26 +1102,64 @@ async def store_error(
         return
     try:
         async with pool.acquire(timeout=5.0) as conn:
-            await conn.execute(
-                '''
-                INSERT INTO errors
-                    (endpoint, error_type, error_msg, user_id, workspace_id,
-                     old_filename, new_filename, file_type, stack_trace, llm_request_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                ''',
-                endpoint or None,
-                error_type or None,
-                (error_msg or '')[:2000],
-                user_id or None,
-                workspace_id or None,
-                old_filename or None,
-                new_filename or None,
-                file_type or None,
-                (stack_trace or '')[:4000] or None,
-                llm_request_id,
-            )
+            await conn.execute(_ERROR_INSERT, *_error_row(**kwargs))
     except Exception as e:
         logger.debug('store_error failed (non-blocking): %s', e)
+
+
+async def store_chat_turn(
+    log: Any,
+    *,
+    endpoint: str = '',
+    user_message_id: Optional[int] = None,
+    assistant_message_id: Optional[int] = None,
+) -> Optional[int]:
+    """Write one chat turn (a finished ``turn_log.TurnLog``): its chat_turns row, its
+    chat_retrieved_chunks rows and one errors row per warning/error issue — in one
+    transaction. Best-effort, never raises; returns the chat_turns id."""
+    pool = get_pool()
+    if not pool:
+        return None
+    data = {**log.data, 'app_version': log.data.get('app_version') or _app_version()}
+    columns = [c for c, _ in CHAT_TURN_COLUMNS] + [f'{t}_ms' for t in CHAT_TURN_TIMINGS]
+    typedefs = [t for _, t in CHAT_TURN_COLUMNS] + ['INTEGER'] * len(CHAT_TURN_TIMINGS)
+    values = ([_db_value(data.get(c), t) for c, t in CHAT_TURN_COLUMNS]
+              + [log.timings_ms.get(t) for t in CHAT_TURN_TIMINGS])
+    fixed = ['trace_id', 'user_message_id', 'assistant_message_id', 'status', 'error_stage', 'error_type',
+             'error_msg', 'warnings']
+    fixed_values = [log.trace_id, user_message_id, assistant_message_id, log.status or 'error',
+                    log.error.get('stage'), log.error.get('type'), log.error.get('message'), log.codes]
+    turn_sql = (f'INSERT INTO chat_turns ({", ".join(fixed + columns)}) '
+                f'VALUES ({_placeholders(["TEXT"] * len(fixed) + typedefs)}) RETURNING id')
+
+    chunk_cols = [c for c, _ in CHAT_CHUNK_COLUMNS]
+    chunk_types = [t for _, t in CHAT_CHUNK_COLUMNS]
+    chunk_sql = (f'INSERT INTO chat_retrieved_chunks (turn_id, {", ".join(chunk_cols)}) '
+                 f'VALUES ($1, {_placeholders(chunk_types, offset=1)})')
+    chunk_rows = [tuple(_db_value({**p, 'trace_id': log.trace_id}.get(c), t) for c, t in CHAT_CHUNK_COLUMNS)
+                  for p in log.passages]
+
+    error_rows = [
+        _error_row(endpoint=endpoint, error_type=i['error_type'], error_msg=i['message'],
+                   user_id=data.get('user_id') or '', workspace_id=data.get('workspace_id') or '',
+                   severity=i['severity'], stage=i['stage'], http_status=i['http_status'],
+                   upstream=i['upstream'] or '', trace_id=log.trace_id, session_id=data.get('session_id') or '',
+                   stack_trace=(i.get('context') or {}).get('stack_trace', ''),
+                   context={'code': i['code'], 'at_ms': i['at_ms'],
+                            **{k: v for k, v in (i.get('context') or {}).items() if k != 'stack_trace'}})
+        for i in log.issues if i['severity'] in ('error', 'warning')
+    ]
+    try:
+        async with pool.acquire(timeout=10.0) as conn, conn.transaction():
+            turn_id = await conn.fetchval(turn_sql, *fixed_values, *values)
+            if chunk_rows:
+                await conn.executemany(chunk_sql, [(turn_id, *row) for row in chunk_rows])
+            if error_rows:
+                await conn.executemany(_ERROR_INSERT, error_rows)
+        return turn_id
+    except Exception as e:
+        logger.warning('store_chat_turn failed (non-blocking): %s', e)
+        return None
 
 
 async def store_llm_request(
@@ -944,6 +1240,38 @@ async def update_llm_request_usage(
         logger.debug('update_llm_request_usage failed: %s', e)
 
 
+async def update_llm_request_run(
+    llm_request_id: Optional[int],
+    *,
+    status: str,
+    queue_wait_ms: Optional[int] = None,
+    build_ms: Optional[int] = None,
+    first_token_ms: Optional[int] = None,
+    generation_ms: Optional[int] = None,
+    total_ms: Optional[int] = None,
+    chunked_parts: Optional[int] = None,
+) -> None:
+    """Record the outcome and step durations of an /compare/analyze stream on its
+    llm_requests row (best-effort, never raises)."""
+    pool = get_pool()
+    if not pool or not llm_request_id:
+        return
+    try:
+        async with pool.acquire(timeout=5.0) as conn:
+            await conn.execute(
+                '''
+                UPDATE llm_requests
+                SET status = $2, queue_wait_ms = $3, build_ms = $4, first_token_ms = $5,
+                    generation_ms = $6, total_ms = $7, chunked_parts = $8
+                WHERE id = $1
+                ''',
+                llm_request_id, status, queue_wait_ms, build_ms, first_token_ms,
+                generation_ms, total_ms, chunked_parts,
+            )
+    except Exception as e:
+        logger.debug('update_llm_request_run failed: %s', e)
+
+
 async def store_impact_request(
     *,
     method: str,
@@ -965,6 +1293,16 @@ async def store_impact_request(
     error_type: str = '',
     error_msg: str = '',
     documents: List[Dict[str, Any]] | None = None,
+    status: str = '',
+    index_name: str = '',
+    queries_used: Optional[int] = None,
+    queries_failed: Optional[int] = None,
+    candidates: Optional[int] = None,
+    not_judged: Optional[int] = None,
+    judge_failed: Optional[int] = None,
+    extract_ms: Optional[int] = None,
+    search_ms: Optional[int] = None,
+    judge_ms: Optional[int] = None,
 ) -> Optional[int]:
     """Log one /compare/impact call — success or failure (best-effort, never raises).
 
@@ -989,8 +1327,11 @@ async def store_impact_request(
                     (user_id, workspace_id, method, old_file_hash, new_file_hash,
                      changes_chars, truncated, chunks_returned, num_documents, duration_s,
                      endpoint_name, input_tokens, output_tokens, total_tokens, cost_eur,
-                     http_status, error_type, error_msg)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                     http_status, error_type, error_msg,
+                     status, app_version, index_name, queries_used, queries_failed, candidates,
+                     not_judged, judge_failed, extract_ms, search_ms, judge_ms)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+                        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
                 RETURNING id
                 ''',
                 user_id or None,
@@ -1011,13 +1352,25 @@ async def store_impact_request(
                 http_status or None,
                 error_type or None,
                 (error_msg or '')[:2000] or None,
+                status or ('ok' if (http_status or 200) < 400 else 'error'),
+                _app_version(),
+                index_name or None,
+                queries_used,
+                queries_failed,
+                candidates,
+                not_judged,
+                judge_failed,
+                extract_ms,
+                search_ms,
+                judge_ms,
             )
             if documents:
                 await conn.executemany(
                     '''
                     INSERT INTO impact_document_results
-                        (request_id, ref, division, url, impacted, confidence, section, reason, other_documents_json)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        (request_id, ref, division, url, impacted, confidence, section, reason, other_documents_json,
+                         status, judge_ms, judge_attempts, input_tokens, output_tokens)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                     ''',
                     [
                         (
@@ -1030,6 +1383,11 @@ async def store_impact_request(
                             '; '.join(d.get('sections') or []) or None,
                             (d.get('reason') or '')[:2000] or None,
                             json.dumps(d.get('other_languages') or []) if d.get('other_languages') else None,
+                            d.get('status') or None,
+                            d.get('judge_ms'),
+                            d.get('judge_attempts'),
+                            d.get('input_tokens'),
+                            d.get('output_tokens'),
                         )
                         for d in documents
                     ],

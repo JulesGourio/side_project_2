@@ -351,19 +351,20 @@ def test_save_turn_strips_division_and_registers_user():
     from server.routers import chat
 
     conn = AsyncMock()
-    conn.fetchrow.return_value = {'id': 99}
+    conn.fetchval.side_effect = [98, 99]          # user message id, assistant message id
     pool = _make_pool(conn)
 
     with patch('server.routers.chat.upsert_user', new=AsyncMock()) as mock_upsert:
-        msg_id = asyncio.run(chat._save_turn(
+        ids = asyncio.run(chat._save_turn(
             pool, 'sess-1', 'u1', 'ws1', 'https://test',
             '[Division: IS] The user works in the IS division. Restrict.\n\nHow do I wire it?',
             'Here is how.',
+            trace_id='vsi-abc',
             email='jules@latecoere.aero',
             endpoint_name='vsi-is',
         ))
 
-    assert msg_id == 99
+    assert ids == (98, 99)
     # User registered in the shared table during the chat flow
     mock_upsert.assert_awaited_once()
     assert mock_upsert.await_args.kwargs['email'] == 'jules@latecoere.aero'
@@ -375,12 +376,13 @@ def test_save_turn_strips_division_and_registers_user():
     assert session_name == 'How do I wire it?'
     assert 'Division' not in session_name
 
-    # The user message row records the division scope ('IS' here).
-    # Arg order: …, status, division, question_lang.
-    user_insert_args = conn.execute.await_args_list[1].args
-    assert user_insert_args[-2] == 'IS'
-    # …and so does the assistant row (…, division, question_lang)
-    assert conn.fetchrow.await_args.args[-2] == 'IS'
+    # Both rows record the division scope ('IS' here) and the turn's trace_id (join key
+    # with chat_turns). Arg order: …, division, question_lang.
+    user_insert, assistant_insert = (c.args for c in conn.fetchval.await_args_list)
+    assert user_insert[-2] == 'IS' and assistant_insert[-2] == 'IS'
+    assert 'vsi-abc' in user_insert and 'vsi-abc' in assistant_insert
+    # The Knowledge Assistant columns are no longer written.
+    assert 'tool_name' not in assistant_insert[0] and 'reasoning_steps' not in assistant_insert[0]
 
 
 def test_save_turn_records_error_status():
@@ -390,7 +392,7 @@ def test_save_turn_records_error_status():
     from server.routers import chat
 
     conn = AsyncMock()
-    conn.fetchrow.return_value = {'id': 5}
+    conn.fetchval.side_effect = [4, 5]
     pool = _make_pool(conn)
 
     with patch('server.routers.chat.upsert_user', new=AsyncMock()):
@@ -400,18 +402,32 @@ def test_save_turn_records_error_status():
             status='error', error_msg='Agent failure',
         ))
 
-    # The assistant INSERT (fetchrow) ends with …, status, error_msg, division, question_lang
-    args = conn.fetchrow.await_args.args
-    assert args[-4] == 'error'          # status
-    assert args[-3] == 'Agent failure'  # error_msg
-    assert args[-2] == 'ALL'            # division (no prefix in this question)
+    user_insert, assistant_insert = (c.args for c in conn.fetchval.await_args_list)
+    # The assistant INSERT ends with …, status, error_msg, division, question_lang
+    assert assistant_insert[-4] == 'error'          # status
+    assert assistant_insert[-3] == 'Agent failure'  # error_msg
+    assert assistant_insert[-2] == 'ALL'            # division (no prefix in this question)
 
     # The user message row is also flagged 'error' so the whole turn is hidden
     # on reload (get_session filters status='ok') while staying in the DB.
     # User INSERT ends with …, status, division, question_lang.
-    user_insert_args = conn.execute.await_args_list[-1].args
-    assert user_insert_args[-3] == 'error'
-    assert user_insert_args[-2] == 'ALL'
+    assert user_insert[-3] == 'error'
+    assert user_insert[-2] == 'ALL'
+
+
+def test_save_turn_failure_is_a_persist_issue_of_the_turn():
+    import asyncio
+
+    from server.routers import chat
+    from server.services.turn_log import TurnLog
+
+    conn = AsyncMock()
+    conn.fetchval.side_effect = RuntimeError('connection lost')
+    log = TurnLog()
+    with patch('server.routers.chat.upsert_user', new=AsyncMock()):
+        ids = asyncio.run(chat._save_turn(_make_pool(conn), 'sess', 'u1', None, 'https://t', 'q', 'a', log=log))
+    assert ids == (None, None)
+    assert log.codes == ['persist_failed'] and 'connection lost' in log.issues[0]['message']
 
 
 def test_trim_history_bounds_prompt_and_keeps_latest_question():

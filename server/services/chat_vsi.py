@@ -24,7 +24,9 @@ What happens for each question (configuration chosen 2026-10-08, measures in
    (``CitationStreamParser``).
 
 ``stream_chat_vsi`` yields the event stream ``chat.py`` expects (text deltas, ``sources`` +
-``citations``, ``metadata``, ``error``, ``[DONE]``). Settings (environment, read at call time):
+``citations``, ``metadata``, ``error``, ``[DONE]``) and fills the turn's ``TurnLog``
+(``turn_log.py``: every step, its duration, the passages retrieved, what went wrong — saved
+in Lakebase ``chat_turns`` / ``chat_retrieved_chunks`` / ``errors`` by ``chat.py``). Settings (environment, read at call time):
 ``CHAT_VSI_INDEX``, ``CHAT_VSI_LLM_ENDPOINT`` / ``CHAT_VSI_LLM_FALLBACK_ENDPOINTS``,
 ``CHAT_VSI_REWRITE_ENDPOINT`` / ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS``,
 ``CHAT_VSI_ANSWER_MAX_TOKENS``, ``CHAT_VSI_REWRITE_MAX_TOKENS``, ``CHAT_VSI_SEARCH_RETRIES``,
@@ -35,12 +37,13 @@ plus the resilience settings documented in ``chat_vsi_llm.py``. The earlier engi
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import random
 import re
-import uuid
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
@@ -50,6 +53,7 @@ import httpx
 from . import chat_vsi_llm
 from .chat_vsi_titles import documents_titled
 from .doc_catalog import _catalog, canon_ref
+from .turn_log import TurnLog
 from .vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
@@ -216,6 +220,11 @@ class CitationStreamParser:
         self._pending = text[cut:]
         return self._consume(text[:cut])
 
+    @property
+    def emitted_chars(self) -> int:
+        """Length of the clean answer text emitted so far."""
+        return self._emitted
+
     def flush(self) -> str:
         """End of stream: a held-back incomplete marker is plain text."""
         text, self._pending = self._pending, ''
@@ -286,20 +295,34 @@ def split_bilingual(text: str) -> Tuple[str, str]:
     return fr, en
 
 
-async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, str]]) -> Tuple[str, str]:
+async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, str]],
+                          log: Optional[TurnLog] = None) -> Tuple[str, str]:
     """(French query, English query) for the last question; ('', '') when every rewrite model
     failed — the search then runs with the question only."""
+    log = log if log is not None else TurnLog()
     transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)
     messages = [{'role': 'system', 'content': REWRITE_PROMPT}, {'role': 'user', 'content': transcript}]
+    chain = chat_vsi_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
+    info: Dict[str, Any] = {}
     try:
-        text, used = await chat_vsi_llm.complete(
-            host, token, chat_vsi_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint()), messages,
-            rewrite_max_tokens(), rewrite_timeout_s())
+        text, used = await chat_vsi_llm.complete(host, token, chain, messages, rewrite_max_tokens(),
+                                                 rewrite_timeout_s(), info=info)
     except Exception as exc:  # noqa: BLE001 — the turn goes on with the question only
         logger.warning('chat_vsi: search query rewrite failed (%s) — searching with the question only', exc)
+        log.data['rewrite_ok'] = False
+        log.issue('rewrite_failed', 'rewrite', f'search ran with the question only: {exc}',
+                  error_type=type(exc).__name__, http_status=getattr(exc, 'status', 0), upstream=','.join(chain),
+                  context={'attempts': info.get('attempts')})
         return '', ''
+    usage = info.get('usage') or {}
+    log.data.update({'rewrite_ok': True, 'rewrite_endpoint': used,
+                     'rewrite_input_tokens': usage.get('input_tokens'),
+                     'rewrite_output_tokens': usage.get('output_tokens'),
+                     'rewrite_cost_eur': usage.get('cost_eur')})
     if used != rewrite_endpoint():
         logger.warning('chat_vsi: search query rewritten by fallback %s', used)
+        log.issue('rewrite_fallback', 'rewrite', f'rewritten by {used} instead of {rewrite_endpoint()}',
+                  upstream=used, context={'expected': rewrite_endpoint(), 'attempts': info.get('attempts')})
     return split_bilingual(text)
 
 
@@ -368,14 +391,32 @@ async def _query(host: str, token: str, index: str, query_text: str, k: int, fil
     return _rows(resp)
 
 
+def _tag(rows: List[Dict[str, Any]], q: Optional[int], via: str) -> List[Dict[str, Any]]:
+    """Records on each row which query found it (``q``: index in the turn's queries, None for a
+    lookup), how (``via``: rerank / raw / ref_lookup / title_lookup), at which rank, with which
+    score — kept in chat_retrieved_chunks.hits."""
+    for rank, row in enumerate(rows):
+        row['_hits'] = [{'q': q, 'via': via, 'rank': rank, 'score': row.get('score')}]
+    return rows
+
+
 def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """One row per chunk, ordered by its best rank in any list; the ``_hits`` of every copy kept."""
     ranked: Dict[str, Tuple[int, Dict[str, Any]]] = {}
+    hits: Dict[str, List[Dict[str, Any]]] = {}
     for result in lists:
         for rank, row in enumerate(result):
             cid = row['chunk_id']
+            seen = hits.setdefault(cid, [])
+            seen.extend(h for h in row.get('_hits') or [] if h not in seen)
             if cid not in ranked or rank < ranked[cid][0]:
                 ranked[cid] = (rank, row)
-    return [row for _, row in sorted(ranked.values(), key=lambda x: x[0])]
+    merged = []
+    for _, row in sorted(ranked.values(), key=lambda x: x[0]):
+        if hits[row['chunk_id']]:
+            row['_hits'] = hits[row['chunk_id']]
+        merged.append(row)
+    return merged
 
 
 def _search_error(index: str, exc: BaseException) -> ChatVsiError:
@@ -392,39 +433,55 @@ def _search_error(index: str, exc: BaseException) -> ChatVsiError:
     return ChatVsiError(f'Document search failed: {exc}', type(exc).__name__)
 
 
-async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _status_of(exc: BaseException) -> int:
+    return exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else 0
+
+
+async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any],
+                 log: Optional[TurnLog] = None) -> List[Dict[str, Any]]:
     """Reranked top k + raw top k for every query, merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
     if everything failed. Without raw passages (``raw_top_k() == 0``), a refused reranker falls
     back to the raw search with the reranked size."""
+    log = log if log is not None else TurnLog()
     rerank_k, raw_k = rerank_top_k(), raw_top_k()
     rerank_ok = True
 
-    async def reranked(q: str) -> List[Dict[str, Any]]:
+    async def reranked(i: int, q: str) -> List[Dict[str, Any]]:
         nonlocal rerank_ok
         if not rerank_ok:
-            return [] if raw_k else await _query(host, token, index, q, rerank_k, filters, rerank=False)
+            return [] if raw_k else _tag(await _query(host, token, index, q, rerank_k, filters, rerank=False), i, 'raw')
         try:
-            return await _query(host, token, index, q, rerank_k, filters, rerank=True)
+            return _tag(await _query(host, token, index, q, rerank_k, filters, rerank=True), i, 'rerank')
         except RerankUnavailable as exc:
+            if rerank_ok:
+                log.issue('rerank_refused', 'search', f'raw search only: {exc}', upstream=index)
             rerank_ok = False
             logger.warning('chat_vsi: reranker refused by %s (%s) — raw search only', index, exc)
-            return [] if raw_k else await _query(host, token, index, q, rerank_k, filters, rerank=False)
+            return [] if raw_k else _tag(await _query(host, token, index, q, rerank_k, filters, rerank=False), i, 'raw')
 
-    calls = [reranked(q) for q in queries]
+    async def raw(i: int, q: str) -> List[Dict[str, Any]]:
+        return _tag(await _query(host, token, index, q, raw_k, filters, rerank=False), i, 'raw')
+
+    calls = [reranked(i, q) for i, q in enumerate(queries)]
     if raw_k:
-        calls += [_query(host, token, index, q, raw_k, filters, rerank=False) for q in queries]
+        calls += [raw(i, q) for i, q in enumerate(queries)]
     results = await asyncio.gather(*calls, return_exceptions=True)
     for r in results:
         if isinstance(r, asyncio.CancelledError):
             raise r
     ok = [r for r in results if not isinstance(r, BaseException)]
     failed = [r for r in results if isinstance(r, BaseException)]
+    log.data.update({'vs_calls_expected': len(results), 'vs_calls_ok': len(ok), 'rerank_ok': rerank_ok})
     if not ok:
         raise _search_error(index, failed[0])
     if failed:
         logger.warning('chat_vsi: %d/%d Vector Search queries failed, kept the others: %s', len(failed),
                        len(results), failed[0])
+        log.issue('vs_partial', 'search', f'{len(failed)}/{len(results)} Vector Search queries failed: {failed[0]}',
+                  error_type=type(failed[0]).__name__, http_status=_status_of(failed[0]), upstream=index,
+                  context={'failed': len(failed), 'sent': len(results),
+                           'errors': sorted({f'{type(f).__name__}: {str(f)[:200]}' for f in failed})})
     n = len(queries)
     return _merge_by_rank([_merge_by_rank(ok_part) for ok_part in (
         [r for r in results[:n] if not isinstance(r, BaseException)],
@@ -432,12 +489,17 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
 
 
 async def fetch_documents(host: str, token: str, index: str, query: str, refs: List[str], k: int,
-                          filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """HYBRID search restricted to the given REFs. Failures are logged, never raised."""
+                          filters: Dict[str, Any], via: str = 'ref_lookup',
+                          log: Optional[TurnLog] = None) -> List[Dict[str, Any]]:
+    """HYBRID search restricted to the given REFs (``via``: ref_lookup / title_lookup).
+    Failures are logged, never raised."""
     try:
-        return await _query(host, token, index, query, k, {**filters, 'REF': refs}, rerank=False)
+        return _tag(await _query(host, token, index, query, k, {**filters, 'REF': refs}, rerank=False), None, via)
     except Exception as exc:  # noqa: BLE001 — the turn goes on without the lookup
         logger.warning('chat_vsi: document lookup %s on %s failed: %s', refs, index, exc)
+        if log is not None:
+            log.issue(f'{via}_failed', via, f'{refs}: {exc}', error_type=type(exc).__name__,
+                      http_status=_status_of(exc), upstream=index, context={'refs': refs})
         return []
 
 
@@ -461,41 +523,84 @@ def group_documents(rows: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any
     return list(docs.items())
 
 
-async def retrieve_for_turn(host: str, token: str, division: str,
-                            conversation: List[Dict[str, str]]) -> Dict[str, Any]:
+def _passage(row: Dict[str, Any], position: int, drop_reason: str = '') -> Dict[str, Any]:
+    """One chat_retrieved_chunks record (doc_number, prompt_rank and cited are set once the prompt
+    and the answer exist)."""
+    hits = row.get('_hits') or []
+    scores = [h['score'] for h in hits if isinstance(h.get('score'), (int, float))]
+    vias = {h['via'] for h in hits}
+    return {'position': position, 'kept': not drop_reason, 'drop_reason': drop_reason or None,
+            'prompt_rank': None, 'doc_number': None, 'cited': None,
+            'source': 'search' if vias & {'rerank', 'raw'} else next(iter(sorted(vias)), 'search'),
+            'hits': hits, 'best_score': max(scores) if scores else None,
+            'chunk_id': row.get('chunk_id'), 'iddoc': None if row.get('IDDOC') is None else str(row['IDDOC']),
+            'ref': row.get('REF'), 'division': row.get('division'), 'url': row.get('url'),
+            'semantic_headers': row.get('semantic_headers'), 'chunk_text': row.get('chunk_text')}
+
+
+async def retrieve_for_turn(host: str, token: str, division: str, conversation: List[Dict[str, str]],
+                            log: Optional[TurnLog] = None) -> Dict[str, Any]:
     """The passages handed to the LLM for the last user turn of ``conversation`` (already
     cleaned by ``_clean_history``). Raises ``ChatVsiError`` when the search fails. Also used
-    alone by the retrieval evaluation (no answer generated)."""
-    index = index_name()
-    filters = division_filter(division)
-    question = _without_date(conversation[-1]['content'])
-    fr_query, en_query = await rewrite_queries(host, token, conversation[:-1] + [{'role': 'user', 'content': question}])
-    queries = [question]
-    for q in (fr_query, en_query):
-        if q and q.casefold() not in {x.casefold() for x in queries}:
-            queries.append(q)
+    alone by the retrieval evaluation (no answer generated). ``log`` (created when absent, returned
+    as ``found['log']``) receives the step durations, the queries, every passage retrieved — kept
+    or set aside — and what did not run as configured."""
+    log = log if log is not None else TurnLog()
+    with log.timed('retrieval'):
+        index = index_name()
+        filters = division_filter(division)
+        question = _without_date(conversation[-1]['content'])
+        with log.timed('rewrite'):
+            fr_query, en_query = await rewrite_queries(
+                host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
+        queries = [question]
+        for q in (fr_query, en_query):
+            if q and q.casefold() not in {x.casefold() for x in queries}:
+                queries.append(q)
 
-    # REFs named in the question first, then in the earlier turns ("résume la slide 15" after an
-    # answer about MI-14242 names no REF itself).
-    named: List[str] = []
-    for ref in refs_named_in(question) + refs_named_in('\n'.join(m['content'] for m in conversation[:-1])):
-        if ref not in named:
-            named.append(ref)
-    named = named[:_REF_LOOKUP_MAX]
-    titled = documents_titled(queries, _TITLE_LOOKUP_DOCS)
+        # REFs named in the question first, then in the earlier turns ("résume la slide 15" after an
+        # answer about MI-14242 names no REF itself).
+        named: List[str] = []
+        for ref in refs_named_in(question) + refs_named_in('\n'.join(m['content'] for m in conversation[:-1])):
+            if ref not in named:
+                named.append(ref)
+        named = named[:_REF_LOOKUP_MAX]
+        with log.timed('title_lookup'):
+            titled = documents_titled(queries, _TITLE_LOOKUP_DOCS)
+        log.data.update({'index_name': index, 'fr_query': fr_query, 'en_query': en_query, 'named_refs': named,
+                         'titled_refs': [canon for canon, _, _ in titled]})
 
-    rows = await search(host, token, index, queries, filters)
-    if max_search_passages():
-        rows = rows[:max_search_passages()]
-    if named:
-        rows = _merge_by_rank([await fetch_documents(host, token, index, question, named, _REF_LOOKUP_K, filters), rows])
-    if titled:
-        title_refs = [ref for _, refs, _ in titled for ref in refs]
-        rows = append_new(rows, await fetch_documents(host, token, index, fr_query or question, title_refs,
-                                                      _TITLE_LOOKUP_K, filters))
-    rows = one_language_per_document(rows)
+        with log.timed('search'):
+            rows = await search(host, token, index, queries, filters, log=log)
+        over_cap: List[Dict[str, Any]] = []
+        if max_search_passages():
+            rows, over_cap = rows[:max_search_passages()], rows[max_search_passages():]
+        if named:
+            with log.timed('ref_lookup'):
+                found = await fetch_documents(host, token, index, question, named, _REF_LOOKUP_K, filters,
+                                              via='ref_lookup', log=log)
+            rows = _merge_by_rank([found, rows])
+        if titled:
+            title_refs = [ref for _, refs, _ in titled for ref in refs]
+            with log.timed('title_lookup'):
+                found = await fetch_documents(host, token, index, fr_query or question, title_refs, _TITLE_LOOKUP_K,
+                                              filters, via='title_lookup', log=log)
+            rows = append_new(rows, found)
+        candidates = rows
+        rows = one_language_per_document(rows)
+
+        # Every passage retrieved, in retrieval order (the ones past the search cap last), kept or not.
+        kept = {r['chunk_id'] for r in rows}
+        merged = {r['chunk_id'] for r in candidates}
+        log.passages = [_passage(r, i, '' if r['chunk_id'] in kept else 'other_language')
+                        for i, r in enumerate(candidates)]
+        log.passages += [_passage(r, len(log.passages) + j, 'over_cap')
+                         for j, r in enumerate(r for r in over_cap if r['chunk_id'] not in merged)]
+        log.data.update({'passages_retrieved': len(log.passages), 'passages_sent': len(rows)})
+        if not rows:
+            log.issue('no_passages', 'search', 'the search returned no passage', upstream=index)
     return {'question': question, 'fr_query': fr_query, 'en_query': en_query, 'rows': rows, 'named': named,
-            'titled': [canon for canon, _, _ in titled], 'index': index}
+            'titled': [canon for canon, _, _ in titled], 'index': index, 'log': log}
 
 
 # ---------------------------------------------------------------------------
@@ -531,26 +636,79 @@ def _error_events(message: str, error_type: str, http_status: int = 0) -> List[s
             'data: [DONE]\n\n']
 
 
+def _record_prompt(log: TurnLog, division: str, documents: List[Tuple[str, Dict[str, Any]]],
+                   prompt: List[Dict[str, str]]) -> None:
+    """Prompt facts on the turn, and each kept passage's place in the prompt."""
+    number = {ref: n for n, (ref, _) in enumerate(documents, 1)}
+    kept = [p for p in log.passages if p['kept']]
+    for rank, p in enumerate(sorted(kept, key=lambda p: (number.get(p['ref'], 0), p['position']))):
+        p['prompt_rank'], p['doc_number'] = rank, number.get(p['ref'])
+    log.data.update({
+        'documents_sent': len(documents),
+        'prompt_chars': sum(len(m['content']) for m in prompt),
+        'instructions_sha': hashlib.sha256(load_instructions(division).encode('utf-8')).hexdigest()[:16],
+    })
+
+
+def _record_answer(log: TurnLog, chain: List[str], llm: Dict[str, Any], usage: Dict[str, Any],
+                   parser: CitationStreamParser) -> None:
+    """What the answer model did, and which documents the answer cites."""
+    cited = [s['title'] for s in parser.sources]
+    for p in log.passages:
+        p['cited'] = p['kept'] and p['ref'] in cited
+    attempts = llm.get('attempts') or []
+    log.timings_ms['queue_wait'] = llm.get('queue_wait_ms') or 0
+    log.data.update({
+        'answer_endpoint': llm.get('endpoint'), 'llm_fallback': bool(llm.get('fallback')), 'llm_attempts': attempts,
+        'truncated': bool(llm.get('truncated')), 'continuations': llm.get('continuations') or 0,
+        'input_tokens': usage.get('input_tokens'), 'output_tokens': usage.get('output_tokens'),
+        'thinking_tokens': usage.get('thinking_tokens'), 'cost_eur': usage.get('cost_eur'),
+        'answer_chars': parser.emitted_chars, 'citations_count': len(parser.citations), 'cited_refs': cited,
+    })
+    failed = [a for a in attempts if a.get('outcome') not in ('ok', 'continued')]
+    context = {'expected': chain[0] if chain else None, 'chain': chain, 'attempts': attempts}
+    if llm.get('fallback'):
+        log.issue('llm_fallback', 'llm', f"answered by {llm.get('endpoint')} instead of {chain[0]}",
+                  upstream=llm.get('endpoint') or '', context=context)
+    elif failed and llm.get('endpoint'):
+        log.issue('llm_retried', 'llm', f'{len(failed)} failed call(s) before the answer',
+                  upstream=llm.get('endpoint') or '', context=context)
+    if llm.get('interrupted'):
+        log.issue('answer_interrupted', 'llm', 'part of the answer was sent, no model could finish it',
+                  context=context)
+    elif llm.get('continuations'):
+        log.issue('answer_continued', 'llm', f"answer resumed {llm['continuations']} time(s) after a cut",
+                  context=context)
+
+
 async def stream_chat_vsi(host: str, token: str, division: str, messages: List[Dict[str, str]],
-                          answer_language: Optional[str] = None) -> AsyncGenerator[str, None]:
+                          answer_language: Optional[str] = None,
+                          log: Optional[TurnLog] = None) -> AsyncGenerator[str, None]:
     """Answer the last user turn of ``messages`` (trimmed history, last turn prefixed with
     ``[Date: …]``, translated to English by the bridge when needed). ``answer_language`` (e.g.
-    "French", from chat.py) is named in the language reminder."""
+    "French", from chat.py) is named in the language reminder. ``log`` (the turn's ``TurnLog``,
+    from chat.py) receives every step; its ``trace_id`` is the one in the ``metadata`` event."""
     yield ': keepalive\n\n'                      # first byte out, before the slow steps
-    trace_id = f'vsi-{uuid.uuid4().hex}'
+    log = log if log is not None else TurnLog()
+    trace_id = log.trace_id
     div = normalize_division(division)
+    log.data.update({'division': div, 'index_name': index_name(), 'config': settings()})
     conversation = _clean_history(messages)
     if not conversation or conversation[-1]['role'] != 'user':
+        log.fail('input', 'InputError', 'the last message must be a user question')
         for e in _error_events('Chat: the last message must be a user question.', 'InputError'):
             yield e
         return
     try:
-        found = await retrieve_for_turn(host, token, div, conversation)
+        found = await retrieve_for_turn(host, token, div, conversation, log=log)
     except ChatVsiError as exc:
+        log.fail('search', exc.error_type, exc.message, http_status=exc.http_status, upstream=index_name(),
+                 context={'vs_calls_expected': log.data.get('vs_calls_expected'),
+                          'vs_calls_ok': log.data.get('vs_calls_ok')})
         for e in _error_events(exc.message, exc.error_type, exc.http_status):
             yield e
         return
-    rows, named, titled = found['rows'], found['named'], found['titled']
+    rows = found['rows']
     documents = group_documents(rows)
     logger.info('chat_vsi: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d trace_id=%s',
                 div, found['index'], found['fr_query'], found['en_query'], len(rows), len(documents), trace_id)
@@ -558,9 +716,17 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
     parser = CitationStreamParser(documents)
     usage: Dict[str, Any] = {}
     llm: Dict[str, Any] = {}
+    chain = chat_vsi_llm.answer_chain(llm_endpoint())
     prompt = build_prompt(div, conversation, documents, answer_language)
-    async for chunk in chat_vsi_llm.stream_answer(host, token, chat_vsi_llm.answer_chain(llm_endpoint()), prompt,
-                                                  answer_max_tokens(), _OPERATION):
+    _record_prompt(log, div, documents, prompt)
+    llm_started = time.monotonic()
+
+    def _generation_done() -> None:
+        llm_ms = int((time.monotonic() - llm_started) * 1000)
+        log.timings_ms['generation'] = max(0, llm_ms - (llm.get('queue_wait_ms') or 0))
+        _record_answer(log, chain, llm, usage, parser)
+
+    async for chunk in chat_vsi_llm.stream_answer(host, token, chain, prompt, answer_max_tokens(), _OPERATION):
         if not chunk.startswith('data: '):
             yield chunk                          # keepalive comments
             continue
@@ -575,15 +741,22 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
         if kind == 'response.output_text.delta':
             clean = parser.feed(event.get('delta', ''))
             if clean:
+                log.mark('first_token')
                 yield _event({'type': 'response.output_text.delta', 'delta': clean})
         elif kind == 'error':
             logger.error('chat_vsi: generation failed: %s', event.get('error'))
+            _generation_done()
+            log.fail('llm', event.get('error_type') or 'LLMError', event.get('error') or 'Answer generation failed.',
+                     http_status=event.get('http_status') or 0, upstream=','.join(chain),
+                     context={'attempts': llm.get('attempts')})
             for e in _error_events(event.get('error') or 'Answer generation failed.',
                                    event.get('error_type') or 'LLMError', event.get('http_status') or 0):
                 yield e
             return
         elif kind == 'warning':
             logger.warning('chat_vsi: %s', event.get('detail') or event)
+            log.issue(event.get('warning') or 'llm_warning', 'llm', event.get('detail') or '',
+                      upstream=llm.get('endpoint') or '')
         elif kind == 'usage':
             usage = {k: event.get(k) for k in ('input_tokens', 'output_tokens', 'thinking_tokens', 'cost_eur')}
         elif kind == 'llm':
@@ -591,16 +764,10 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
 
     tail = parser.flush()
     if tail:
+        log.mark('first_token')
         yield _event({'type': 'response.output_text.delta', 'delta': tail})
+    _generation_done()
     if parser.sources or parser.citations:
         yield _event({'type': 'sources', 'sources': parser.sources, 'citations': parser.citations})
-    yield _event({'type': 'metadata', 'trace_id': trace_id,
-                  'tool_name': 'vector_search' + (f'+ref_lookup({",".join(named)})' if named else '')
-                               + (f'+title_lookup({",".join(titled)})' if titled else ''),
-                  'tool_query': found['fr_query'] or found['question'],
-                  'tool_result': ', '.join(ref for ref, _ in documents),
-                  'reasoning_steps': [],
-                  # Answer generation only (the short rewrite call is not counted).
-                  'usage': usage, 'llm': llm.get('endpoint') or llm_endpoint(),
-                  'llm_fallback': bool(llm.get('fallback')), 'llm_attempts': llm.get('attempts') or []})
+    yield _event({'type': 'metadata', 'trace_id': trace_id})
     yield 'data: [DONE]\n\n'

@@ -97,12 +97,18 @@ def _fasttext_model():
 class TranslationContext:
     """Carries the detected source language across the question/answer hop."""
 
-    __slots__ = ('lang_code', 'lang_name', 'needs_translation')
+    __slots__ = ('lang_code', 'lang_name', 'needs_translation', 'error', 'answer_translated', 'answer_error')
 
-    def __init__(self, lang_code: str, lang_name: str, needs_translation: bool):
+    def __init__(self, lang_code: str, lang_name: str, needs_translation: bool, error: str = ''):
         self.lang_code = lang_code
         self.lang_name = lang_name
         self.needs_translation = needs_translation
+        # Why the question step fell back to the original text ('' when it did not):
+        # saved as a warning of the chat turn (chat_turns / errors).
+        self.error = error
+        # Set by translate_answer_back: the answer was translated / why it was not.
+        self.answer_translated = False
+        self.answer_error = ''
 
 
 def _fast_lang_guess(text: str) -> Optional[str]:
@@ -270,7 +276,8 @@ async def translate_question_to_en(question: str, host: str, token: str) -> tupl
         raw = await _call_llm(_DETECT_TRANSLATE_SYSTEM, question, host, token, max_tokens=400)
     except Exception as exc:
         logger.warning('translation_bridge: detect/translate LLM call failed, using original text: %s', exc)
-        return question, TranslationContext('unknown', 'the original language', needs_translation=False)
+        return question, TranslationContext('unknown', 'the original language', needs_translation=False,
+                                            error=f'{type(exc).__name__}: {exc}')
 
     try:
         raw = raw.strip().strip('`')
@@ -279,7 +286,8 @@ async def translate_question_to_en(question: str, host: str, token: str) -> tupl
         det = json.loads(raw)
     except json.JSONDecodeError as exc:
         logger.warning('translation_bridge: LLM returned non-JSON, using original text: %s', exc)
-        return question, TranslationContext('unknown', 'the original language', needs_translation=False)
+        return question, TranslationContext('unknown', 'the original language', needs_translation=False,
+                                            error=f'non-JSON detection reply: {exc}')
 
     lang_code = (det.get('lang_code') or '').lower()
     if lang_code in _NO_TRANSLATION_NEEDED:
@@ -314,9 +322,12 @@ async def translate_answer_back(answer: str, ctx: TranslationContext, host: str,
         translated = await _call_llm(system, answer, host, token, max_tokens=max_tokens)
     except Exception as exc:
         logger.warning('translation_bridge: answer translation failed, returning original text: %s', exc)
+        ctx.answer_error = f'{type(exc).__name__}: {exc}'
         return answer
     if len(translated.strip()) < len(answer.strip()) * 0.3:
         logger.warning('translation_bridge: translation much shorter than the answer (%d vs %d chars) — '
                        'returning original text', len(translated), len(answer))
+        ctx.answer_error = f'translation much shorter than the answer ({len(translated)} vs {len(answer)} chars)'
         return answer
+    ctx.answer_translated = True
     return translated

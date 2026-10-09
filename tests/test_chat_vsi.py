@@ -23,6 +23,7 @@ import pytest
 
 from server.services import chat_vsi
 from server.services.chat_vsi import CitationStreamParser, parse_citations
+from server.services.turn_log import TurnLog
 
 FIXTURE = os.path.join(os.path.dirname(__file__), 'fixtures', 'chat_vsi_raw_answers.json')
 DOCS = [(f'REF-{i}', {'url': f'https://intraqual/ref={i}'}) for i in range(1, 6)]
@@ -154,11 +155,17 @@ def _vs(answer, sent):
     return _post
 
 
-def _llm_stream(*deltas, error=None):
+LLM_EVENT = {'type': 'llm', 'endpoint': 'databricks-gpt-6-luna', 'fallback': False,
+             'attempts': [{'endpoint': 'databricks-gpt-6-luna', 'outcome': 'ok', 's': 1.2}],
+             'queue_wait_ms': 7, 'truncated': False, 'continuations': 0, 'interrupted': False}
+
+
+def _llm_stream(*deltas, error=None, llm=None):
     async def _gen(*args, **kwargs):
         yield ': keepalive\n\n'
         for d in deltas:
             yield f'data: {json.dumps({"type": "response.output_text.delta", "delta": d})}\n\n'
+        yield f'data: {json.dumps(llm or LLM_EVENT)}\n\n'
         if error:
             yield f'data: {json.dumps({"type": "error", "error": error, "error_type": "HTTPError", "http_status": 503})}\n\n'
         else:
@@ -185,8 +192,10 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
         captured['chain'] = args[2]
         return (llm or _llm_stream('QP-1518 est la procédure [', '1', '] de référence.'))(*args, **kwargs)
 
+    log = TurnLog()
+
     async def _collect():
-        return [c async for c in chat_vsi.stream_chat_vsi('https://host', 'tok', division, messages, language)]
+        return [c async for c in chat_vsi.stream_chat_vsi('https://host', 'tok', division, messages, language, log=log)]
 
     with (patch.object(chat_vsi.chat_vsi_llm, 'complete', rewrite_mock),
           patch.object(chat_vsi.chat_vsi_llm, 'stream_answer', side_effect=_llm_spy),
@@ -198,7 +207,8 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
         if chunk.startswith('data: '):
             data = chunk[6:].strip()
             events.append('[DONE]' if data == '[DONE]' else json.loads(data))
-    return events, {'sent': sent, 'rewrite': rewrite_mock, 'prompt': captured.get('prompt'), 'chain': captured.get('chain')}
+    return events, {'sent': sent, 'rewrite': rewrite_mock, 'prompt': captured.get('prompt'), 'chain': captured.get('chain'),
+                    'log': log}
 
 
 def _types(events):
@@ -214,8 +224,7 @@ def test_happy_path_contract(monkeypatch):
     assert sources['sources'] == [{'title': 'QP-1518', 'url': 'https://intraqual/QP-1518', 'doc_uri': 'https://intraqual/QP-1518'}]
     assert _types(events)[-3:] == ['sources', 'metadata', '[DONE]']
     meta = next(e for e in events if e != '[DONE]' and e['type'] == 'metadata')
-    assert meta['trace_id'].startswith('vsi-') and meta['tool_query'] == 'qualification CND'
-    assert meta['tool_result'] == 'QP-1518, MR-1465'
+    assert meta['trace_id'].startswith('vsi-')
 
 
 def test_three_queries_reranked_and_raw(monkeypatch):
@@ -311,8 +320,13 @@ def test_named_documents_first_titles_last_one_language(monkeypatch):
     order = [ref for ref in ('MI-14242', 'Q0102QP_GB', 'QP-1518', 'IQ22-223') if f'Document {ref}' in user_turn]
     assert order == ['MI-14242', 'Q0102QP_GB', 'QP-1518', 'IQ22-223']
     assert 'Document Q0102QP_BG' not in user_turn                                   # one language per document
-    meta = next(e for e in events if e != '[DONE]' and e['type'] == 'metadata')
-    assert 'ref_lookup(MI-14242)' in meta['tool_name'] and 'title_lookup(IQ22-223)' in meta['tool_name']
+    log = m['log']
+    assert log.data['named_refs'] == ['MI-14242'] and log.data['titled_refs'] == ['IQ22-223']
+    by_chunk = {p['chunk_id']: p for p in log.passages}
+    assert by_chunk['n1']['source'] == 'ref_lookup' and by_chunk['t1']['source'] == 'title_lookup'
+    assert by_chunk['c2']['kept'] is False and by_chunk['c2']['drop_reason'] == 'other_language'
+    assert [by_chunk[c]['doc_number'] for c in ('n1', 'c1', 'c3', 't1')] == [1, 2, 3, 4]
+    assert by_chunk['c2']['doc_number'] is None
 
 
 def test_prompt_rules_and_language(monkeypatch):
@@ -379,3 +393,78 @@ def test_settings_defaults(monkeypatch):
     assert s['index'] == 'dev_landingzone.qualibot.chunks_index' and s['llm'] == 'databricks-gpt-6-luna'
     assert s['rewrite_llm'] == 'databricks-gpt-6-luna' and s['answer_max_tokens'] == 8000
     assert s['rerank_top_k'] == 12 and s['raw_top_k'] == 10 and s['max_search_passages'] == 0
+
+
+# ---------------------------------------------------------------------------
+# The turn log — what is saved to Lakebase chat_turns / chat_retrieved_chunks / errors
+# ---------------------------------------------------------------------------
+
+def test_turn_log_of_a_clean_turn(monkeypatch):
+    _, m = _run(monkeypatch)
+    log = m['log']
+    assert log.trace_id.startswith('vsi-') and not log.issues and log.finish('ok') == 'ok'
+    d = log.data
+    assert (d['fr_query'], d['en_query'], d['rewrite_ok'], d['rewrite_endpoint']) == \
+        ('qualification CND', 'NDT qualification', True, 'databricks-gpt-6-luna')
+    assert (d['vs_calls_expected'], d['vs_calls_ok'], d['rerank_ok']) == (6, 6, True)
+    assert d['config']['rerank_top_k'] == 12 and d['index_name'] == 'cat.sch.chunks_index' and d['division'] == 'ALL'
+    assert (d['passages_retrieved'], d['passages_sent'], d['documents_sent']) == (3, 3, 2)
+    assert d['answer_endpoint'] == 'databricks-gpt-6-luna' and d['llm_fallback'] is False
+    assert d['cited_refs'] == ['QP-1518'] and d['citations_count'] == 1 and d['answer_chars'] == len(
+        'QP-1518 est la procédure  de référence.')
+    assert d['prompt_chars'] > 6000 and len(d['instructions_sha']) == 16
+    assert {'retrieval', 'rewrite', 'search', 'first_token', 'generation', 'queue_wait', 'total'} <= set(log.timings_ms)
+    assert log.timings_ms['queue_wait'] == 7
+    first = log.passages[0]
+    assert (first['chunk_id'], first['ref'], first['kept'], first['cited'], first['doc_number'], first['source']) == \
+        ('c1', 'QP-1518', True, True, 1, 'search')
+    assert {(h['q'], h['via']) for h in first['hits']} == {(q, via) for q in (0, 1, 2) for via in ('rerank', 'raw')}
+    assert [p['prompt_rank'] for p in log.passages] == [0, 2, 1]          # c1, c3 (QP-1518) before c2 (MR-1465)
+    assert log.passages[1]['cited'] is False and log.passages[0]['chunk_text'] == 'passage 1'
+
+
+def test_turn_log_partial_search_is_a_degraded_turn(monkeypatch):
+    events, m = _run(monkeypatch, answer=lambda p: 503 if 'reranker' in p else DEFAULT_ROWS)
+    log = m['log']
+    assert 'error' not in _types(events)
+    assert (log.data['vs_calls_expected'], log.data['vs_calls_ok']) == (6, 3)
+    assert log.codes == ['vs_partial'] and log.issues[0]['http_status'] == 503
+    assert log.issues[0]['context']['failed'] == 3 and log.finish('ok') == 'degraded'
+
+
+def test_turn_log_reranker_refused(monkeypatch):
+    _, m = _run(monkeypatch, answer=lambda p: 400 if 'reranker' in p else DEFAULT_ROWS)
+    assert 'rerank_refused' in m['log'].codes and m['log'].data['rerank_ok'] is False
+
+
+def test_turn_log_rewrite_failure(monkeypatch):
+    _, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
+    log = m['log']
+    assert log.codes == ['rewrite_failed'] and log.data['rewrite_ok'] is False
+    assert 'all rewrite models down' in log.issues[0]['message'] and log.issues[0]['stage'] == 'rewrite'
+
+
+def test_turn_log_search_down_is_the_failure(monkeypatch):
+    _, m = _run(monkeypatch, answer=lambda p: 403)
+    log = m['log']
+    assert log.error == {'stage': 'search', 'type': 'VectorSearchError',
+                         'message': 'Document search failed (Vector Search returned 403).'}
+    assert log.finish('error') == 'error' and log.issues[-1]['http_status'] == 403
+
+
+def test_turn_log_llm_failure_and_fallback(monkeypatch):
+    failed = {**LLM_EVENT, 'endpoint': None, 'attempts': [{'endpoint': 'databricks-gpt-6-luna', 'outcome': 'rate_limit',
+                                                          'status': 429, 's': 0.3}]}
+    _, m = _run(monkeypatch, llm=_llm_stream(error='down', llm=failed))
+    assert m['log'].error['stage'] == 'llm' and m['log'].data['llm_attempts'][0]['status'] == 429
+
+    fallback = {**LLM_EVENT, 'endpoint': 'databricks-gpt-5-6-luna', 'fallback': True}
+    _, m = _run(monkeypatch, llm=_llm_stream('ok', llm=fallback))
+    assert m['log'].codes == ['llm_fallback'] and m['log'].issues[0]['context']['expected'] == 'databricks-gpt-6-luna'
+
+
+def test_turn_log_keeps_passages_past_the_cap(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_MAX_SEARCH_PASSAGES', '2')
+    _, m = _run(monkeypatch, answer=lambda p: [_row('a', 'A-1'), _row('b', 'B-1'), _row('c', 'C-1')])
+    assert [(p['chunk_id'], p['kept'], p['drop_reason']) for p in m['log'].passages] == \
+        [('a', True, None), ('b', True, None), ('c', False, 'over_cap')]

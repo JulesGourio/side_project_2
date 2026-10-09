@@ -74,6 +74,8 @@ MIGRATE_TO_PROD_TABLE_ORDER = [
     "messages",
     "chat_sessions",
     "chat_messages",       # FK -> chat_sessions
+    "chat_turns",          # FK -> chat_messages
+    "chat_retrieved_chunks",  # FK -> chat_turns
     "feedbacks",           # FK -> messages
     "chat_feedbacks",      # FK -> chat_messages, chat_sessions
     "impact_requests",
