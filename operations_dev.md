@@ -553,6 +553,8 @@ démarrage, sans toucher aux données existantes.
 
 ### W. Notation des tours du chat : archivage de l'ancien job, prototype (2026-10-09)
 
+**En pause (2026-10-09, décision de l'utilisateur) : ne rien lancer de ce bloc, repris bien plus tard.**
+
 `score_production_qa` (KA contre RAG naïf) est archivé : `utils/evaluation/score_production_qa.py` →
 `archive/evaluation/`, `resources/evaluation.yml` → `archive/evaluation/score_production_qa.job.yml`.
 Le prototype `utils/evaluation/score_chat_traces.py` rejoue les tours du Lakebase en traces MLflow et
