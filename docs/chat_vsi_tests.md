@@ -5,7 +5,7 @@ actuel), le sens des noms d'essai, les résultats qui ont décidé, ce qui a ét
 tester. La partie 2 est le journal complet, tel qu'il a été tenu pendant les essais.
 
 Code : `server/services/chat_vsi.py` (+ `chat_vsi_llm.py`, `chat_vsi_titles.py`,
-`translation_bridge.py`). Notebooks de mesure gardés : `utils/databricks_ops/evaluation/retrieval_eval.py`
+`translation_bridge.py`). Notebooks de mesure gardés : `utils/evaluation/retrieval_eval.py`
 (recherche seule) et `pairwise_answers.py` (réponses côte à côte). Tout le reste est dans `archive/`
 (`archive/README.md`). Robustesse (secours, relances) : `docs/chat_vsi_robustesse_2026-10.md`.
 
@@ -1088,4 +1088,73 @@ Effets à connaître :
 - **`raw5` fait jeu égal avec l'actuel** (80.0 % contre 79.4 %) avec 18 % de contexte en moins, mais perd 2 et 4 points sur golden et synthétiques. Les écarts sur les retours (16 questions : 1 question = 6 points) sont du bruit.
 - Défaut de l'éval corrigé le même jour : les questions des retours utilisateurs portaient encore le préfixe « [Division: AS] (system routing note…) » du Knowledge Assistant ; `retrieval_eval` et `pairwise_answers` le retirent désormais (`_strip_division`), comme l'app.
 - **Décision** : rien ne change tant que les réponses n'ont pas été comparées (`pairwise_answers`, `chat` contre `raw5`).
+
+## 5.8 Tenue en charge (2026-10-08, DEV)
+
+**Chat de bout en bout** (`load_test_chat.py`, via l'app) : 100 % de réussite à 5 et 10 questions
+simultanées ; à 20, 40, 80 : 91 %, 84 %, 76 %, toutes les erreurs `Vector Search returned 429` ; débit
+plafonné vers 50 questions/min ; premier mot à 10,7 s en médiane même à 5 questions.
+
+**Vector Search seul** (`load_test_vector_search.py`, sans LLM ni relance, jeton du notebook) :
+
+| Requête | Servies/s sans refus | Plafond servies/s | Latence p50 (palier 8) |
+|---|---|---|---|
+| HYBRID 10 (brute) | 25.8 (8 simultanées) | ≈ 26 | 0.30 s |
+| HYBRID 12 + reranker | 16.2 (8) | ≈ 26 | 0.48 s |
+| reranker sur le texte seul | 16.3 (8) | ≈ 26 | 0.48 s |
+| ANN 10 (vecteurs seuls) | 49.3 (8) | ≈ 80 | 0.15 s |
+| HYBRID + filtre de division | 22.6 (8) | ≈ 22 | 0.32 s |
+| mélange du chat | 22.2 (8) | ≈ 25 | 0.40 s |
+
+- **Le reranker n'abaisse pas le plafond** (≈ 26 requêtes/s avec ou sans) : il rend chaque requête plus
+  lente (0,5 s contre 0,2 s). C'est la recherche HYBRID (mots-clés + vecteurs) qui plafonne ; ANN seul
+  monte trois fois plus haut. Le filtre ne coûte presque rien.
+- **La cause des 429 du chat** : une question envoie 6 à 8 requêtes d'un coup, et l'endpoint refuse
+  au-delà de ≈ 16 requêtes en cours. Deux ou trois questions qui cherchent au même instant suffisent.
+- **Corrigé dans le code le même jour** : `server/services/vs_gate.py`, une file commune au chat et à
+  l'impact search, au plus 8 requêtes Vector Search en cours par instance de l'app
+  (`VS_MAX_CONCURRENT_QUERIES`), les autres attendent au lieu d'être refusées ; un refus qui arrive
+  quand même est relancé jusqu'à 5 fois en ≈ 15 s, en respectant `Retry-After` (`VS_QUERY_RETRIES`).
+- **Au-delà** : l'endpoint « standard » a un réglage *Target QPS* (capacité réservée, payante, sans
+  autoscaling). Selon Databricks, un jeton personnel passe par une route limitée à « quelques dizaines
+  de requêtes/s » ; l'app utilise l'OAuth de son service principal : le plafond de l'app peut être
+  plus haut que celui mesuré depuis le notebook.
+
+**Second run (paliers 10 / 20 / 30) et messages de refus** : même plafond (HYBRID ≈ 25/s, refus dès
+20 requêtes en cours ; ANN ≈ 63/s). Deux limites différentes :
+- HYBRID : `Request is rejected due to heavy load` → capacité de calcul de l'endpoint (ce que règle *Target QPS*) ;
+- ANN : `Too many requests` → limite de débit des requêtes, atteinte seulement à ≈ 60/s.
+
+**Moins de requêtes par question** (`retrieval_eval`, 65 questions) :
+
+| Config | Requêtes / question | Trouvés | Golden | Synthétiques | Retours (16) | Contexte | Recherche p50 |
+|---|---|---|---|---|---|---|---|
+| `chat` (3 reclassées + 3 brutes) | 6 | 79.4 % | **96.1 %** | **94.6 %** | 31.3 % | 11 307 | 4.9 s |
+| `rawq1` (3 reclassées + 1 brute, sur la question) | 4 | 80.0 % | 87.8 % | 93.6 % | 43.8 % | 8 946 | 3.3 s |
+| `rawq1-raw5` (idem, 5 passages bruts) | 4 | 78.3 % | 80.4 % | 93.6 % | 43.8 % | 8 170 | 3.3 s |
+
+- Les recherches brutes sur les réécritures FR / EN comptent : sans elles, le golden perd 8 points
+  (définition d'APO INAPO0006, IQ19613 / IQ20189 pour le BPL R80).
+- **Décision** : on garde 6 requêtes. Pour 80 questions/min (≈ 9 requêtes/s), l'endpoint a ≈ 2,5 fois
+  la marge nécessaire une fois les rafales étalées par la file `vs_gate.py` ; reste à le vérifier par le
+  test de charge du chat (`operations_dev.md` V3.2).
+
+**Chat de bout en bout avec la file `vs_gate.py`** (`load_test_chat.py` en mode `engine` : le moteur
+tourne dans le notebook ; 6 requêtes par question) :
+
+| Questions en cours | Réussite | Premier mot p50 / p95 | Réponse complète p50 / p95 | Débit (notebook) |
+|---|---|---|---|---|
+| 10 | 100 % | 10,0 s / 16,0 s | 13,0 s / 19,6 s | 39 /min |
+| 20 | 100 % | 11,0 s / 19,5 s | 12,6 s / 23,9 s | 66 /min |
+| 30 | 100 % | 12,9 s / 22,3 s | 15,1 s / 26,4 s | 86 /min |
+| 40 | 100 % | 15,8 s / 27,3 s | 19,4 s / 32,2 s | 91 /min |
+
+- **Vector Search tient** : aucune ligne `vs_gate:` (ni refus ni relance) à aucun palier.
+- **La limite suivante est le modèle** : à 40 en cours, GPT-6 Luna répond `429 rate_limit` ; ≈ 45
+  réécritures et ≈ 75 réponses sur 160 passent par GPT-5.6 Luna. Aucun échec grâce au secours, mais une
+  question sur deux environ est traitée en partie par le modèle de secours. Rien à 10, 20, 30.
+- Ordre de grandeur : 80 questions/min × ≈ 11 000 tokens de contexte ≈ 900 000 tokens/min en entrée.
+- Suite : connaître le quota de l'endpoint `databricks-gpt-6-luna` (limite de l'organisation ou de
+  Databricks) avant de le relever ou de réserver du débit. Ne pas passer la réécriture sur GPT-5.6 Luna
+  pour économiser le quota : elle retrouve moins bien les documents (80,0 % contre 75,8 %).
 

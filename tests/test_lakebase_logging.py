@@ -1,4 +1,4 @@
-"""Tests for what the app records in Lakebase about each request (2026-10-09 schema).
+"""Tests for what the app records in Lakebase about each request (docs/lakebase_schema.md).
 
 Coverage:
   - every key the chat engine and route put in TurnLog.data / timings_ms is a chat_turns column

@@ -13,7 +13,7 @@ Knowledge Assistant, where a "search in French" instruction had no effect —
 so the fix happens before the question reaches the search.)
 
 English, not French, is used as the pivot language: a side-by-side test on
-several questions (2026-07-08) showed English retrieval consistently pulling
+several questions showed English retrieval consistently pulling
 a broader, more diverse set of relevant documents (across FR/EN/ES/BG
 variants) than French, likely because the embedding model's multilingual
 alignment is itself English-anchored.
@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 
 ENABLED = os.getenv('CHAT_TRANSLATE_BRIDGE_ENABLED', 'false').lower() == 'true'
 TRANSLATE_ENDPOINT = os.getenv('CHAT_TRANSLATE_ENDPOINT', 'databricks-gpt-5-6-luna')
-# Tried in order when TRANSLATE_ENDPOINT fails (429 included) — 2026-10-08: the chatbot runs
-# on GPT-6 Luna + GPT-5.6 Luna, each the other's backup. Empty value = no fallback.
+# Tried in order when TRANSLATE_ENDPOINT fails (429 included): the chatbot runs on GPT-6 Luna + GPT-5.6 Luna, each the
+# other's backup. Empty value = no fallback.
 TRANSLATE_FALLBACK_ENDPOINTS = [e.strip() for e in os.getenv('CHAT_TRANSLATE_FALLBACK_ENDPOINTS',
                                                              'databricks-gpt-6-luna').split(',') if e.strip()]
 _TIMEOUT_S = 20.0
@@ -118,7 +118,7 @@ def _fast_lang_guess(text: str) -> Optional[str]:
 
     Calls the fastText C++ binding directly rather than the `predict()`
     Python wrapper — that wrapper's final `np.array(probs, copy=False)`
-    raises under NumPy>=2.0 (confirmed 2026-07-08), while the underlying
+    raises under NumPy>=2.0, while the underlying
     binding call it wraps works fine.
     """
     cleaned = clean_for_language(text)
@@ -147,8 +147,7 @@ def _answer_language_mismatch(answer: str, expected_lang: str) -> bool:
     """True if the answer confidently looks like a different language than
     the question asked for. Guards the fr/en case, which normally skips the
     LLM bridge entirely and trusts the answer prompt's language rule — but the
-    model has been observed answering in the wrong one of the two anyway (chat
-    session 5bd9382a, 2026-07-08: an all-English conversation got one French
+    model has been observed answering in the wrong one of the two anyway (an all-English conversation got one French
     answer mid-thread with nothing in the history to explain the switch)."""
     detected = _fast_lang_guess_with_prob(clean_for_language(answer, answer=True))
     return detected is not None and detected[1] >= _MISMATCH_CONFIDENCE_THRESHOLD and detected[0] != expected_lang

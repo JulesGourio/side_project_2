@@ -19,6 +19,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
+from . import vs_gate
 from .doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
 from .streaming import _cost_eur, supports_temperature
 
@@ -40,10 +41,9 @@ _QUERY_CONCURRENCY = 3
 _QUERY_RETRIES = 2
 _JUDGE_CONCURRENCY = 6
 _JUDGE_RETRIES = 1
-# A reasoning judge (gpt-5-*) spends max_tokens on hidden reasoning first; on
-# a candidate with many passages it can run out before writing anything
-# (finish_reason "length", empty content — 2 documents out of a dozen in DEV,
-# 2026-10-05). The retry then gets this many times the budget, capped.
+# A reasoning judge (gpt-5-*) spends max_tokens on hidden reasoning first and can run out before writing anything on a
+# candidate with many passages
+# (finish_reason "length", empty content). The retry gets this many times the budget, capped.
 _JUDGE_TRUNCATION_BUDGET_FACTOR = 3
 _JUDGE_MAX_TOKENS_CAP = 8000
 
@@ -189,18 +189,14 @@ def _find_quote(text: str, quote: str) -> Optional[List[int]]:
     return [m.start(), m.end()] if m else None
 
 
-# ---------------------------------------------------------------------------
-# Retrieval
-# ---------------------------------------------------------------------------
+# --- Retrieval ---
 
 async def _fetch_chunks(host: str, token: str, index_name: str, query_text: str, num_results: int) -> List[Dict[str, Any]]:
-    url = f'{host}/api/2.0/vector-search/indexes/{index_name}/query'
     payload = {'query_text': query_text, 'columns': _COLUMNS, 'num_results': num_results, 'query_type': 'HYBRID'}
-    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-    async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
+    # Through the app-wide gate shared with the chat (vs_gate: bounded concurrency, 429 retries).
+    resp = await vs_gate.post(host, token, index_name, payload, _QUERY_TIMEOUT_S)
+    resp.raise_for_status()
+    data = resp.json()
     columns = [c['name'] for c in data.get('manifest', {}).get('columns', [])]
     chunks = [dict(zip(columns, row)) for row in data.get('result', {}).get('data_array', [])]
     return [c for c in chunks if _ARCHIVE_NOTICE_MARKER not in (c.get('chunk_text') or '')]
@@ -309,9 +305,7 @@ def _change_num(change_id: str) -> int:
         return 0
 
 
-# ---------------------------------------------------------------------------
-# Judgment
-# ---------------------------------------------------------------------------
+# --- Judgment ---
 
 def _changes_block(changes: List[Dict[str, Any]], max_chars: int, priority_ids: Tuple[str, ...] = ()) -> str:
     """The change list shown to the judge, in table order, within max_chars.

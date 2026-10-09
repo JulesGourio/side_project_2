@@ -33,9 +33,9 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Technical Debt
-# MAGIC
-# MAGIC None.
+# MAGIC # Technical debt
+# MAGIC - The tables behind `category_reference` (`gd_doc_cat_latest`, `gd_cat_latest`, the optional division archive) are read inside `selection.build_division_reference`, not in `# Inputs`: this notebook cannot show them or check them on its own.
+# MAGIC - The guard does not cover `DIVISION_ARCHIVE_TABLE` (disabled by default): enabling it means adding it to `_REQUIRED_SOURCES`.
 
 # COMMAND ----------
 
@@ -45,7 +45,8 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Imports
+# MAGIC ## Config Imports
+# MAGIC `selection` and `config` live next to this notebook; the repository folder is added to `sys.path` because a job task does not do it for a notebook.
 
 # COMMAND ----------
 
@@ -58,8 +59,9 @@ sys.path.insert(0, REPO_DIR)
 
 from pyspark.sql import functions as F
 import selection
+from utils import logger
 from config import (
-    CATALOG_SCHEMA, DIVISION_ARCHIVE_TABLE, DIVISION_REFERENCE_TABLE,
+    DIVISION_ARCHIVE_TABLE, DIVISION_REFERENCE_TABLE,
     GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST, GD_TYPDOC_LATEST,
     GD_UTILISATEUR_LATEST, INGESTION_FRESHNESS_TABLE, MAX_SOURCE_STALENESS_HOURS,
 )
@@ -67,12 +69,13 @@ from config import (
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Constants
+# MAGIC ## Config Constants
+# MAGIC The guard checks the five Intraqual tables the whole chain reads (documents, categories, document types, users). They are named once here so the guard and the logs agree.
 
 # COMMAND ----------
 
-print(f"Output      : {DIVISION_REFERENCE_TABLE}")
-print(f"Archive     : {DIVISION_ARCHIVE_TABLE or '(disabled)'}")
+logger.info(f"Output      : {DIVISION_REFERENCE_TABLE}")
+logger.info(f"Archive     : {DIVISION_ARCHIVE_TABLE or '(disabled)'}")
 
 _REQUIRED_SOURCES = [
     GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST,
@@ -83,13 +86,12 @@ _REQUIRED_SOURCES = [
 
 # MAGIC %md
 # MAGIC # Inputs
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## Ingestion freshness table
+# MAGIC One row per Intraqual table with the time of its last refresh, written by the `intraqual_ingestion` job. It is read only to compute the age of the required tables.
 # MAGIC
-# MAGIC `gd_doc_cat_latest`/`gd_cat_latest`/the division archive are read inside `selection.build_division_reference()`, not here.
+# MAGIC The category tables themselves are read inside `selection.build_division_reference()`, see Technical debt.
+# MAGIC
+# MAGIC `MAX_SOURCE_STALENESS_HOURS` set to 0 disables the guard (catch-up run after an ingestion outage).
 
 # COMMAND ----------
 
@@ -112,23 +114,44 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Data Transformations
+# MAGIC # Data Preparation
+# MAGIC #N/A
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Freshness guard
-# MAGIC
-# MAGIC Set `MAX_SOURCE_STALENESS_HOURS` to 0 to disable (catch-up run).
+# MAGIC # Data Transformations
+# MAGIC ## Tr. 1 - Build category_reference
+# MAGIC One row per IDDOC with its `division` and `niveau_plus_1..N`, from the document-category and category tables (the archive table only fills the gaps when enabled). `division_source` says where each row was resolved, so the count per source is logged.
+
+# COMMAND ----------
+
+df_reference = selection.build_division_reference(spark).cache()
+
+n_total = df_reference.count()
+logger.info(f"{n_total} IDDOCs with a resolved division")
+(
+    df_reference.groupBy("division_source").count()
+    .withColumnRenamed("count", "n_iddocs")
+    .orderBy(F.desc("n_iddocs"))
+    .show(truncate=False)
+)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Quality Checks
+# MAGIC ## Freshness guard (RED)
+# MAGIC A stale or missing source must fail the run before anything is written: otherwise the next tasks compute the scope on old data and the index silently misses documents. The message names the stale and the missing tables, since the usual cause is a failed `intraqual_ingestion` job.
 
 # COMMAND ----------
 
 if df_fresh is None:
-    print("Freshness guard disabled (MAX_SOURCE_STALENESS_HOURS <= 0).")
+    logger.info("Freshness guard disabled (MAX_SOURCE_STALENESS_HOURS <= 0).")
 else:
     _rows = df_fresh.collect()
     for r in _rows:
-        print(f"  {r.age_hours:>6} h  {r.table_name}")
+        logger.info(f"  {r.age_hours:>6} h  {r.table_name}")
 
     _seen = {r.table_name.lower() for r in _rows}
     _absent = [t for t in _REQUIRED_SOURCES if t.lower() not in _seen]
@@ -140,30 +163,14 @@ else:
             f"  Stale: {_stale or 'none'}\n"
             f"  Missing from {INGESTION_FRESHNESS_TABLE}: {_absent or 'none'}"
         )
-    print(f"\nAll sources fresh (< {MAX_SOURCE_STALENESS_HOURS}h).")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Build category_reference
-
-# COMMAND ----------
-
-df_reference = selection.build_division_reference(spark).cache()
-
-n_total = df_reference.count()
-print(f"\n{n_total} IDDOCs with a resolved division")
-(
-    df_reference.groupBy("division_source").count()
-    .withColumnRenamed("count", "n_iddocs")
-    .orderBy(F.desc("n_iddocs"))
-    .show(truncate=False)
-)
+    logger.info(f"All sources fresh (< {MAX_SOURCE_STALENESS_HOURS}h).")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Outputs
+# MAGIC ## Write category_reference
+# MAGIC Full overwrite with `overwriteSchema`: the table is rebuilt from scratch every day, so a column added to the source must reach it without a manual migration.
 
 # COMMAND ----------
 
@@ -173,4 +180,4 @@ print(f"\n{n_total} IDDOCs with a resolved division")
     .option("overwriteSchema", "true")
     .saveAsTable(DIVISION_REFERENCE_TABLE)
 )
-print(f"Saved: {DIVISION_REFERENCE_TABLE} ({n_total} rows)")
+logger.info(f"Saved: {DIVISION_REFERENCE_TABLE} ({n_total} rows)")

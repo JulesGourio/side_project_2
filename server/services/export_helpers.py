@@ -14,9 +14,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# JSON parsing
-# ---------------------------------------------------------------------------
+# --- JSON parsing ---
 
 def _parse_json_response(text: str):
     """Robust JSON array parser — three fallback strategies."""
@@ -48,9 +46,7 @@ def _parse_json_response(text: str):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Image helpers
-# ---------------------------------------------------------------------------
+# --- Image helpers ---
 
 def _make_composite_image(old_b64: str | None, new_b64: str | None, width: int = 200, height: int = 80):
     """Return a BytesIO of a side-by-side OLD|NEW JPEG thumbnail, or None on failure."""
@@ -77,9 +73,7 @@ def _make_composite_image(old_b64: str | None, new_b64: str | None, width: int =
         return None
 
 
-# ---------------------------------------------------------------------------
-# Excel export
-# ---------------------------------------------------------------------------
+# --- Excel export ---
 
 def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> bytes:
     """Generate a colour-coded Excel workbook from a list of diff items. ft = file type."""
@@ -353,9 +347,7 @@ def _build_impact_excel_bytes(result: dict) -> bytes:
     return buf.getvalue()
 
 
-# ---------------------------------------------------------------------------
-# PDF helpers
-# ---------------------------------------------------------------------------
+# --- PDF helpers ---
 
 # fpdf2 core fonts are latin-1 only — map Unicode chars to safe latin-1 equivalents.
 _UNICODE_TO_LATIN1 = str.maketrans({

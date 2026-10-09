@@ -7,16 +7,11 @@ AS/IS split, gd_doc/gd_cat tables).
 Metadata is derived from the file name only (title = stem, cleaned up).
 """
 
-import re as _re
-from typing import Optional, List
 
 from pyspark.sql import functions as F
-from pyspark.sql import types as T
 from pyspark.sql.window import Window
 
-# ---------------------------------------------------------------------------
-# Selection constants (same as parsing_pipeline)
-# ---------------------------------------------------------------------------
+# --- Selection constants (same as parsing_pipeline) ---
 FORMAT_PRIORITIES = {
     "docx": 1, "pdf": 2, "docm": 3, "doc": 4, "html": 5,
     "pptx": 6, "ppt": 7, "txt": 8, "xml": 9,
@@ -30,9 +25,7 @@ TRASH_FILES_BLACKLIST = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Doc ID extraction — replaces IDDOC logic with a file-name-based stable ID
-# ---------------------------------------------------------------------------
+# --- Doc ID extraction — replaces IDDOC logic with a file-name-based stable ID ---
 def doc_id_column(path_col: str = "path"):
     """Return a Spark Column computing a stable doc_id from the file path.
 
@@ -45,9 +38,7 @@ def doc_id_column(path_col: str = "path"):
     )
 
 
-# ---------------------------------------------------------------------------
-# Volume scanning
-# ---------------------------------------------------------------------------
+# --- Volume scanning ---
 def scan_volume(spark, volume_path: str):
     """Read all supported files from a UC Volume as binary.
 

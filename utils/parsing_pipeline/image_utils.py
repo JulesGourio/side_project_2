@@ -56,8 +56,6 @@ from utils import (
     _cfg,
     ensure_config,
     _patch_worker_env,
-    _write_tmp_file,
-    normalize_text,
     count_tokens,
     parse_with_docling,
     _parse_xlsx_openpyxl,
@@ -65,9 +63,7 @@ from utils import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Spark schemas
-# ---------------------------------------------------------------------------
+# --- Spark schemas ---
 IMAGE_METADATA_SCHEMA = T.StructType([
     T.StructField("image_id", T.IntegerType(), True),
     T.StructField("page_no", T.IntegerType(), True),
@@ -97,15 +93,14 @@ FULL_PARSE_SCHEMA = T.StructType([
 ])
 
 
-# ===========================================================================
-# Image helpers
-# ===========================================================================
+# --- Image helpers ---
 def _image_md5(pil_img) -> str:
     """MD5 of raw pixel bytes — fast, deterministic deduplication key."""
     return hashlib.md5(pil_img.tobytes()).hexdigest()
 
 
 def _get_pil_image(pic, doc):
+    """PIL image of a Docling picture, trying the document API then the picture's own image; None if neither works."""
     for fn in (lambda: pic.get_image(doc=doc),
                lambda: pic.image.pil_image if pic.image else None):
         try:
@@ -165,6 +160,7 @@ def _save_image_to_volume(pil_img, volume_path: str, volume_base_path: str) -> t
 
 
 def _page_size(doc, page_no):
+    """(width, height) of a page, or (None, None) when unknown."""
     try:
         page = doc.pages.get(page_no)
         if page and page.size:
@@ -175,6 +171,7 @@ def _page_size(doc, page_no):
 
 
 def _resolve_caption(doc, ref) -> Optional[str]:
+    """Text of a picture caption reference such as `#/texts/12`, or None."""
     try:
         parts = ref.cref.lstrip("#/").split("/")
         if len(parts) == 2:
@@ -222,12 +219,11 @@ def _get_image_context(page_texts: list, page_no, bbox, caption_crefs: set,
         return ""
 
 
-# ===========================================================================
-# Image extraction from a Docling document
-# ===========================================================================
+# --- Image extraction from a Docling document ---
 def extract_images_from_doc(doc, doc_id: str, volume_base_path: str,
                             min_area_ratio: float, max_repeat: int,
                             timings: Optional[dict] = None) -> List[Dict[str, Any]]:
+    """Save the pictures of a Docling document to the volume and return one metadata dict per image (page, label, caption, nearby text, area ratio); images that are too small (min_area_ratio) or repeated more than max_repeat times are skipped."""
     pictures = list(doc.pictures)
     if not pictures:
         return []
@@ -338,6 +334,7 @@ def _save_candidate_images(candidates: List[dict], repeating: set, doc_id: str,
 # ===========================================================================
 def _fallback_parse_docx(content_bytes: bytes, doc_id: str, volume_base_path: str,
                          min_area_ratio: float, max_repeat: int) -> Optional[Dict[str, Any]]:
+    """DOCX that Docling cannot parse: text and images read straight from the zip and its XML."""
     import zipfile
     from PIL import Image
     from lxml import etree
@@ -452,6 +449,7 @@ def _fallback_parse_docx(content_bytes: bytes, doc_id: str, volume_base_path: st
 
 def _fallback_parse_pptx(content_bytes: bytes, doc_id: str, volume_base_path: str,
                          min_area_ratio: float, max_repeat: int) -> Optional[Dict[str, Any]]:
+    """PPTX that Docling cannot parse: text and images read straight from the zip and its XML."""
     import zipfile
     import re as _re
     import posixpath
@@ -530,14 +528,13 @@ def _fallback_parse_pptx(content_bytes: bytes, doc_id: str, volume_base_path: st
             "parse_time_seconds": round(time.time() - t0, 3), "images": images}
 
 
-# ===========================================================================
-# Legacy .ppt (binary OLE compound file, pre-2007) heuristic fallback
-# ===========================================================================
+# --- Legacy .ppt (binary OLE compound file, pre-2007) heuristic fallback ---
 # Byte-scan heuristic, not a real MS-PPT record parser — no maintained pure-Python one exists.
 _OLE_MIN_TEXT_RUN_CHARS = 4
 
 
 def _extract_ole_text_runs(buf: bytes) -> List[str]:
+    """Printable UTF-16LE text runs of a binary OLE stream (legacy .ppt text), at least _OLE_MIN_TEXT_RUN_CHARS long."""
     runs: List[str] = []
     n = len(buf)
     i = 0
@@ -565,6 +562,7 @@ def _extract_ole_text_runs(buf: bytes) -> List[str]:
 
 
 def _carve_images_from_bytes(buf: bytes) -> List[bytes]:
+    """JPEG and PNG images cut out of a binary buffer by their start and end signatures."""
     chunks: List[bytes] = []
     n = len(buf)
     i = 0
@@ -588,6 +586,7 @@ def _carve_images_from_bytes(buf: bytes) -> List[bytes]:
 
 def _fallback_parse_ppt_legacy(content_bytes: bytes, doc_id: str, volume_base_path: str,
                                min_area_ratio: float, max_repeat: int) -> Optional[Dict[str, Any]]:
+    """Legacy .ppt: text runs and carved images read from the OLE container, since Docling does not handle the format."""
     t0 = time.time()
     try:
         import olefile
@@ -684,10 +683,9 @@ def _render_pdf_pages_for_llm_ocr(content_bytes: bytes, doc_id: str, volume_base
     return images
 
 
-# ===========================================================================
-# Prompt builder
-# ===========================================================================
+# --- Prompt builder ---
 def build_llm_prompt(context_text: str, division: str = "", category: str = "", label: str = "") -> str:
+    """Vision prompt of an image (an OCR prompt for a scanned page); the nearby text is only a domain hint, with braces escaped so `str.format` cannot break on it."""
     # Context is passed as one block, not split before/after: it's just a
     # domain hint (the model must not copy it back — see the prompt itself).
     ctx = (context_text or "").replace(" [...image...] ", " ").strip()[:1200]
@@ -725,9 +723,7 @@ def image_status_col(volume_path, width, height):
     )
 
 
-# ===========================================================================
-# UDF: parse + extract images + save to Volume
-# ===========================================================================
+# --- UDF: parse + extract images + save to Volume ---
 _TIMING_KEYS = ("docling_import_seconds", "docling_load_seconds", "tmp_file_write_seconds",
                 "docling_convert_seconds", "markdown_export_seconds",
                 "ocr_fallback_seconds",
@@ -776,6 +772,7 @@ class _ParseTimeout:
 
 
 def _fallback_or_error(fb: Optional[Dict[str, Any]], ext_lower: str, timings: dict) -> dict:
+    """Turn a fallback result into the UDF result dict, or into an error result when the fallback failed."""
     if fb:
         return {"text": fb["text"], "parser_error": None, "parser_strategy": fb["parser_strategy"],
                 "parse_time_seconds": fb["parse_time_seconds"], "images": fb["images"], "timings": timings}
@@ -789,6 +786,7 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
                                  min_area_ratio_series: pd.Series, max_repeat_series: pd.Series,
                                  enable_timing_series: pd.Series,
                                  xml_only_series: pd.Series) -> pd.DataFrame:
+    """Pandas UDF run on the executors: parse each document (Docling, or a fallback by format) and extract its images, one result per row."""
     # xml_only_series must stay a required positional column — pandas UDFs reject a default/Optional[...] one.
     _patch_worker_env()
     ensure_config()
@@ -887,9 +885,7 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
     return pd.DataFrame(results)
 
 
-# ===========================================================================
-# Async token-bucket rate limiter
-# ===========================================================================
+# --- Async token-bucket rate limiter ---
 class _AsyncRateLimiter:
     """Asyncio-compatible token-bucket rate limiter.
 
@@ -940,9 +936,7 @@ def safe_requests_per_minute(itpm_budget: int, otpm_budget: int, qph_budget: int
     return max(1.0, min(rpm_in, rpm_out, rpm_qph))
 
 
-# ===========================================================================
-# Async LLM image-description engine
-# ===========================================================================
+# --- Async LLM image-description engine ---
 async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphore,
                              model: str = None, max_tokens: int = None,
                              temperature: float = None, max_retries: int = None,

@@ -1,7 +1,6 @@
 """Chat VSI — the chat engine: answers from the Vector Search index, no Knowledge Assistant.
 
-What happens for each question (configuration chosen 2026-10-08, measures in
-``docs/chat_vsi_tests.md``):
+What happens for each question (measures behind the configuration: ``docs/chat_vsi_tests.md``):
 
 1. **Rewrite** — GPT-6 Luna turns the last question, with the conversation as context, into
    one standalone search query in French and one in English (acronyms expanded when certain).
@@ -29,8 +28,9 @@ What happens for each question (configuration chosen 2026-10-08, measures in
 in Lakebase ``chat_turns`` / ``chat_retrieved_chunks`` / ``errors`` by ``chat.py``). Settings (environment, read at call time):
 ``CHAT_VSI_INDEX``, ``CHAT_VSI_LLM_ENDPOINT`` / ``CHAT_VSI_LLM_FALLBACK_ENDPOINTS``,
 ``CHAT_VSI_REWRITE_ENDPOINT`` / ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS``,
-``CHAT_VSI_ANSWER_MAX_TOKENS``, ``CHAT_VSI_REWRITE_MAX_TOKENS``, ``CHAT_VSI_SEARCH_RETRIES``,
-``CHAT_VSI_RERANK_TOP_K`` / ``CHAT_VSI_RAW_TOP_K`` / ``CHAT_VSI_MAX_SEARCH_PASSAGES`` (search sizes,
+``CHAT_VSI_ANSWER_MAX_TOKENS``, ``CHAT_VSI_REWRITE_MAX_TOKENS``, ``VS_MAX_CONCURRENT_QUERIES`` /
+``VS_QUERY_RETRIES`` (``vs_gate.py``),
+``CHAT_VSI_RERANK_TOP_K`` / ``CHAT_VSI_RAW_TOP_K`` / ``CHAT_VSI_RAW_ON`` / ``CHAT_VSI_MAX_SEARCH_PASSAGES`` (search sizes,
 defaults = the measured configuration; other values are for ``retrieval_eval`` comparisons),
 plus the resilience settings documented in ``chat_vsi_llm.py``. The earlier engine versions
 (baseline, measured options) are kept in ``archive/``.
@@ -41,7 +41,6 @@ import hashlib
 import json
 import logging
 import os
-import random
 import re
 import time
 from functools import lru_cache
@@ -50,7 +49,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
 
-from . import chat_vsi_llm
+from . import chat_vsi_llm, vs_gate
 from .chat_vsi_titles import documents_titled
 from .doc_catalog import _catalog, canon_ref
 from .turn_log import TurnLog
@@ -74,7 +73,6 @@ _TITLE_LOOKUP_DOCS = 3           # best title matches searched
 _TITLE_LOOKUP_K = 6              # passages fetched from them
 _MAX_QUERY_CHARS = 20000         # Vector Search rejects query_text past ~29k chars
 _OPERATION = 'Chat'              # label used in user-facing error messages
-_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 REWRITE_PROMPT = """Using the conversation for context, rewrite the user's LAST question as one standalone search
 query, for a search engine over Latécoère quality documents written in French or in English.
@@ -110,9 +108,7 @@ class ChatVsiError(Exception):
         self.http_status = http_status
 
 
-# ---------------------------------------------------------------------------
-# Settings
-# ---------------------------------------------------------------------------
+# --- Settings ---
 
 def normalize_division(division: Optional[str]) -> str:
     d = (division or 'ALL').upper()
@@ -154,13 +150,19 @@ def raw_top_k() -> int:
     return max(0, _int_env('CHAT_VSI_RAW_TOP_K', _RAW_TOP_K))
 
 
+_RAW_ON_ALL = ('question', 'fr', 'en')
+
+
+def raw_on() -> List[str]:
+    """Which queries also get a raw search: ``question`` (as asked), ``fr``, ``en`` (the
+    rewrites); all three by default. Fewer = fewer Vector Search queries per question."""
+    names = [n.strip().lower() for n in os.getenv('CHAT_VSI_RAW_ON', ','.join(_RAW_ON_ALL)).replace('+', ',').split(',')]
+    return [n for n in _RAW_ON_ALL if n in names]
+
+
 def max_search_passages() -> int:
     """Cap on the merged search passages (REF and title lookups come on top); 0 = no cap."""
     return max(0, _int_env('CHAT_VSI_MAX_SEARCH_PASSAGES', 0))
-
-
-def search_retries() -> int:
-    return _int_env('CHAT_VSI_SEARCH_RETRIES', 2)
 
 
 def rewrite_timeout_s() -> float:
@@ -178,7 +180,7 @@ def settings() -> Dict[str, Any]:
     return {'index': index_name(), 'llm': llm_endpoint(),
             'llm_fallbacks': chat_vsi_llm.answer_chain(llm_endpoint())[1:],
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),
-            'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(),
+            'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(), 'raw_on': raw_on(),
             'max_search_passages': max_search_passages()}
 
 
@@ -191,9 +193,7 @@ def load_instructions(division: str) -> str:
     return f'{instructions}\n\n{rules}'
 
 
-# ---------------------------------------------------------------------------
-# Citation markers
-# ---------------------------------------------------------------------------
+# --- Citation markers ---
 
 class CitationStreamParser:
     """Strips ``[n]`` markers from streamed text and records where each citation goes.
@@ -267,9 +267,7 @@ def parse_citations(raw: str, documents: List[Tuple[str, Dict[str, Any]]]) -> Tu
     return clean, sources, citations
 
 
-# ---------------------------------------------------------------------------
-# Conversation helpers
-# ---------------------------------------------------------------------------
+# --- Conversation helpers ---
 
 def _clean_history(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
     """Copy of the conversation without the ``⟦n⟧`` markers stored in earlier answers."""
@@ -339,30 +337,12 @@ def refs_named_in(text: str) -> List[str]:
     return refs[:_REF_LOOKUP_MAX]
 
 
-# ---------------------------------------------------------------------------
-# Vector Search
-# ---------------------------------------------------------------------------
+# --- Vector Search ---
 
 async def _post_query(host: str, token: str, index: str, payload: Dict[str, Any]) -> httpx.Response:
-    """One Vector Search query, retried on 429 / 5xx / timeout / network error (backoff 0.5 s,
-    1 s, 2 s… plus jitter, at most CHAT_VSI_SEARCH_RETRIES times)."""
-    attempts = search_retries()
-    for attempt in range(attempts + 1):
-        try:
-            async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT_S) as client:
-                resp = await client.post(f'{host}/api/2.0/vector-search/indexes/{index}/query', json=payload,
-                                         headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
-            if attempt == attempts:
-                raise
-            logger.warning('chat_vsi: Vector Search %s: %s, retry %d/%d', index, type(exc).__name__, attempt + 1, attempts)
-        else:
-            if resp.status_code not in _RETRYABLE_STATUS or attempt == attempts:
-                return resp
-            logger.warning('chat_vsi: Vector Search %s returned %d, retry %d/%d', index, resp.status_code,
-                           attempt + 1, attempts)
-        await asyncio.sleep(min(4.0, 0.5 * 2 ** attempt) + random.random() * 0.5)
-    raise RuntimeError('unreachable')
+    """One Vector Search query through the app-wide gate (``vs_gate``: at most
+    ``VS_MAX_CONCURRENT_QUERIES`` in flight, retried on 429 / 5xx / timeout)."""
+    return await vs_gate.post(host, token, index, payload, _QUERY_TIMEOUT_S)
 
 
 def _rows(resp: httpx.Response) -> List[Dict[str, Any]]:
@@ -438,8 +418,9 @@ def _status_of(exc: BaseException) -> int:
 
 
 async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any],
-                 log: Optional[TurnLog] = None) -> List[Dict[str, Any]]:
-    """Reranked top k + raw top k for every query, merged by best rank. A query (or the
+                 raw_queries: Optional[List[str]] = None, log: Optional[TurnLog] = None) -> List[Dict[str, Any]]:
+    """Reranked top k for every query + raw top k for ``raw_queries`` (default: every query),
+    merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
     if everything failed. Without raw passages (``raw_top_k() == 0``), a refused reranker falls
     back to the raw search with the reranked size."""
@@ -465,7 +446,8 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
 
     calls = [reranked(i, q) for i, q in enumerate(queries)]
     if raw_k:
-        calls += [raw(i, q) for i, q in enumerate(queries)]
+        position = {q.casefold(): i for i, q in enumerate(queries)}
+        calls += [raw(position.get(q.casefold()), q) for q in (queries if raw_queries is None else raw_queries)]
     results = await asyncio.gather(*calls, return_exceptions=True)
     for r in results:
         if isinstance(r, asyncio.CancelledError):
@@ -570,8 +552,14 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         log.data.update({'index_name': index, 'fr_query': fr_query, 'en_query': en_query, 'named_refs': named,
                          'titled_refs': [canon for canon, _, _ in titled]})
 
+        by_name = {'question': question, 'fr': fr_query, 'en': en_query}
+        raw_texts: List[str] = []
+        for name in raw_on():
+            text = by_name[name]
+            if text and text.casefold() not in {x.casefold() for x in raw_texts}:
+                raw_texts.append(text)
         with log.timed('search'):
-            rows = await search(host, token, index, queries, filters, log=log)
+            rows = await search(host, token, index, queries, filters, raw_texts, log=log)
         over_cap: List[Dict[str, Any]] = []
         if max_search_passages():
             rows, over_cap = rows[:max_search_passages()], rows[max_search_passages():]
@@ -603,9 +591,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             'titled': [canon for canon, _, _ in titled], 'index': index, 'log': log}
 
 
-# ---------------------------------------------------------------------------
-# Prompt and answer
-# ---------------------------------------------------------------------------
+# --- Prompt and answer ---
 
 def with_language_reminder(messages: List[Dict[str, str]], language: Optional[str] = None) -> List[Dict[str, str]]:
     """``messages`` with the language reminder after the last user turn (a copy)."""

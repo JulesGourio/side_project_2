@@ -1,0 +1,96 @@
+# Scoring of production Q&A.
+# Declared per target: each job exists only on the targets listed below.
+
+targets:
+  dev:
+    resources:
+      jobs:
+
+        # Runs 15 min after each lakebase_import_uat_to_dev, once the chat_messages rows have landed.
+        score_production_qa:
+          name: "D_1_Qualibot_Score_Production_Qa"
+          description: "LLM-judge quality scoring of real ChatBot turns already answered"
+          max_concurrent_runs: 1
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          tasks:
+            - task_key: score_production_qa
+              notebook_task:
+                notebook_path: ../utils/evaluation/score_production_qa.py
+                source: WORKSPACE
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]
+          schedule:
+            quartz_cron_expression: "0 45 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+  qualibot-uat:
+    resources:
+      jobs:
+
+        # LLM-judge quality scoring of real chat turns, grounded on the Vector Search index (see the notebook header).
+        score_production_qa_uat:
+          name: "D_1_Qualibot_Score_Production_Qa_Uat"
+          description: "LLM-judge quality scoring (Luna, retrieval-grounded) of real ChatBot turns"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          parameters:
+            # Empty = no cap on the daily incremental run; pass test_limit explicitly for a backlog run.
+            - name: test_limit
+              default: ""
+            - name: catalog_schema
+              default: "uat_landingzone.qualibot"
+            - name: source_type
+              default: "volume_json"
+            - name: enable_retrieval
+              default: "true"
+            # Overrides for ad-hoc runs only: selection=negative_feedback keeps thumbed-down turns, rescore=true re-judges scored ones into chat_quality_scores_rescore.
+            - name: selection
+              default: "recent"
+            - name: rescore
+              default: "false"
+          tasks:
+            - task_key: score_production_qa
+              notebook_task:
+                notebook_path: ../utils/evaluation/score_production_qa.py
+                source: WORKSPACE
+                base_parameters:
+                  test_limit: "{{job.parameters.test_limit}}"
+                  catalog_schema: "{{job.parameters.catalog_schema}}"
+                  source_type: "{{job.parameters.source_type}}"
+                  enable_retrieval: "{{job.parameters.enable_retrieval}}"
+                  selection: "{{job.parameters.selection}}"
+                  rescore: "{{job.parameters.rescore}}"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]
+                  - httpx
+          # 20 min after each lakebase_export_uat_to_volume run (02:00 and 14:00), so the staging JSON holds the day's turns.
+          schedule:
+            quartz_cron_expression: "0 20 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED

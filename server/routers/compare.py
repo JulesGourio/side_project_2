@@ -68,8 +68,7 @@ APP_VERSION = os.getenv('APP_VERSION', '2')
 
 _analyze_semaphore = asyncio.Semaphore(int(os.getenv('COMPARE_MAX_CONCURRENT', '5')))
 
-# Default system prompt — for MODIFIED/REMOVED/ADDED inline markup format.
-# Used when COMPARE_ANALYSIS_SYSTEM_PROMPT is not set.
+# Default system prompt (MODIFIED/REMOVED/ADDED inline markup), used when COMPARE_ANALYSIS_SYSTEM_PROMPT is not set.
 _DEFAULT_ANALYSIS_PROMPT = """\
 You are Qualibot, an expert document comparison analyst specialising in technical, regulatory, and quality-management documentation.
 
@@ -100,9 +99,7 @@ OUTPUT: Markdown, ## per section, one bullet per change. Bold critical values. I
 MAX_FILE_BYTES = int(os.getenv('MAX_COMPARE_FILE_MB') or os.getenv('MAX_COMPARE_PDF_MB') or '20') * 1024 * 1024
 
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
+# --- Config ---
 
 def _get_config() -> Dict[str, Any]:
     if os.getenv('COMPARE_ENABLED', 'true').lower() != 'true':
@@ -139,9 +136,7 @@ def _get_config() -> Dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
+# --- Auth ---
 
 def _get_credentials(request: Request):
     host = os.environ.get('DATABRICKS_HOST', '').rstrip('/')
@@ -165,9 +160,7 @@ def _get_credentials(request: Request):
     return host, token
 
 
-# ---------------------------------------------------------------------------
-# File helpers
-# ---------------------------------------------------------------------------
+# --- File helpers ---
 
 def _sanitize_filename(filename: str, fallback: str = 'document') -> str:
     base = os.path.basename((filename or '').strip())
@@ -255,9 +248,7 @@ async def _cached_stream(cached: dict):
     yield 'data: [DONE]\n\n'
 
 
-# ---------------------------------------------------------------------------
-# /compare/analyze
-# ---------------------------------------------------------------------------
+# --- /compare/analyze ---
 
 @router.post('/compare/analyze', dependencies=[Depends(require_compare)])
 async def analyze_documents(
@@ -335,7 +326,6 @@ async def analyze_documents(
             media_type='text/event-stream',
         )
 
-    # Background upload to UC Volume
     volume_path = cfg['volume_path'].rstrip('/')
     if volume_path and not volume_path.startswith('TODO'):
         session_id = datetime.now().strftime('%Y%m%d_%H%M%S%f')
@@ -352,16 +342,13 @@ async def analyze_documents(
 
         asyncio.create_task(_upload(old_bytes, new_bytes))
 
-    # ── Return StreamingResponse immediately so the SSE connection is established
-    # before any slow work (semaphore wait, CPU-bound processing, LLM call).
-    # Keepalive SSE comments (':keepalive') keep the connection alive through
-    # Databricks Apps' HTTP gateway during long waits.
+    # Return the StreamingResponse immediately so the SSE connection exists before any slow work; keepalive comments
+    # (':keepalive') carry it through the gateway during long waits.
     _req_id = (old_file_hash or '')[:8] or 'nohash'
 
     async def _stream():
         logger.info(f'[{_req_id}] SSE stream start: {old_name!r} vs {new_name!r}')
 
-        # Establish SSE connection immediately — gateway sees first byte, won't time out
         yield ': keepalive\n\n'
 
         # Outcome and step durations, saved on the llm_requests row at the end (finally).
@@ -559,9 +546,7 @@ async def analyze_documents(
     )
 
 
-# ---------------------------------------------------------------------------
-# /compare/impact
-# ---------------------------------------------------------------------------
+# --- /compare/impact ---
 
 class ImpactRequest(BaseModel):
     changes_text: str
@@ -586,7 +571,7 @@ def _impact_cache_version(changes_text: str, cfg: Dict[str, Any]) -> str:
     gives a different change list from the Change Table than from the Change
     Summary, and a different result once COMPARE_IMPACT_INDEX points at another
     index. Keyed on the hashes only, the first search was replayed for all of
-    them (2026-10-04).
+    them.
     """
     parts = [changes_text.strip(), cfg['impact_index'], cfg['impact_endpoint'],
              str(cfg['impact_max_queries']), str(cfg['impact_per_query_results']),
@@ -763,9 +748,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
     return StreamingResponse(_events(), media_type='application/x-ndjson')
 
 
-# ---------------------------------------------------------------------------
-# /compare/summarize — single-document summary, independent of the diff
-# ---------------------------------------------------------------------------
+# --- /compare/summarize — single-document summary, independent of the diff ---
 
 @router.post('/compare/summarize', dependencies=[Depends(require_compare)])
 async def summarize_document(
@@ -853,9 +836,7 @@ async def summarize_document(
     return result
 
 
-# ---------------------------------------------------------------------------
-# /compare/save
-# ---------------------------------------------------------------------------
+# --- /compare/save ---
 
 @router.post('/compare/save', dependencies=[Depends(require_compare)])
 async def save_to_volume(
@@ -920,9 +901,7 @@ async def save_to_volume(
         return JSONResponse({'error': str(e), 'saved_files': saved_files}, status_code=500)
 
 
-# ---------------------------------------------------------------------------
-# /compare/load — restore files from a saved volume session
-# ---------------------------------------------------------------------------
+# --- /compare/load — restore files from a saved volume session ---
 
 @router.get('/compare/load', dependencies=[Depends(require_compare)])
 async def load_session_files(session_path: str, old_filename: str = '', new_filename: str = ''):

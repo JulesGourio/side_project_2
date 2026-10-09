@@ -84,8 +84,8 @@ def _paragraph_text(p_elem) -> str:
     python-docx's Paragraph.text only reads runs that are DIRECT children of the
     paragraph (plus hyperlinks). Text inside a tracked insertion (w:ins), an
     inline content control (w:sdt), a simple field (w:fldSimple) or a smart tag
-    was silently missing, so an edit made with track changes on — the normal
-    way a revision is prepared — was invisible to the comparison (2026-10-04).
+    was silently missing, so an edit made with track changes on (the normal
+    way a revision is prepared) was invisible to the comparison.
     """
     out: List[str] = []
 
@@ -150,20 +150,13 @@ def _footnote_lines(doc) -> List[str]:
         logger.debug('DOCX footnote extraction skipped: %s', e)
     return lines
 
-# --- Page-number estimation tuning -------------------------------------------
-# A DOCX has no reliable page numbers without a rendering engine (pagination
-# depends on fonts, line wrapping, image scaling, margins...). We approximate by
-# combining the only trustworthy signals — page-break markers — with a
-# content-flow estimate calibrated on real Latécoère documents.
-#
-#   _PAGE_WEIGHT_CAP : flow "weight" that fills one page. weight = characters of
-#                      flowing text + _IMG_WEIGHT per embedded image. Overlay
-#                      content (text boxes, VML arrows on a diagram) has weight 0
-#                      — it does not consume vertical space, it sits on top of a
-#                      page that is already counted. Calibrated to ~0 error on
-#                      text documents (A321, FI252) and +6/70 on an image-heavy
-#                      CAD assembly document.
-#   _IMG_WEIGHT      : vertical space one embedded image is worth, in characters.
+# --- Page-number estimation ---
+# A DOCX has no reliable page numbers without a rendering engine, so pages are approximated from the page-break
+# markers plus a content-flow estimate.
+# _PAGE_WEIGHT_CAP: flow weight that fills one page (characters of flowing text + _IMG_WEIGHT per image). Overlay
+# content (text boxes, VML arrows) weighs 0:
+#                     it sits on a page that is already counted.
+#   _IMG_WEIGHT:      vertical space one embedded image is worth, in characters.
 _PAGE_WEIGHT_CAP = 2200
 _IMG_WEIGHT = 400
 
@@ -278,11 +271,9 @@ def _vml_shape_lines(body, seen_ids: set = None) -> List[str]:
         seen_ids.add(sid)
         p = _parse_vml_style(style)
         parts = [f'[Arrow "{sid}"']
-        # Position (margin-left / margin-top) is deliberately EXCLUDED: a pure
-        # drag/reflow that only moves an arrow is cosmetic and was being reported
-        # as a spurious change. Only size (width/height) and direction (flip)
-        # remain — so add/remove, resize, and reversal are still detected, while
-        # a position-only move produces an identical line (no diff).
+        # Position (margin-left / margin-top) is deliberately excluded: a pure drag that only moves an arrow is
+        # cosmetic. Size and flip stay, so add, remove,
+        # resize and reversal are still detected.
         for key in ('width', 'height', 'flip'):
             if key in p:
                 parts.append(f'{key}: {p[key]}')
@@ -572,11 +563,9 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
     _assign_pages(entries, use_lrpb)
     texts = [f"{e['text']} [Page {e['page']}, Para {e['pos']}]" for e in entries]
 
-    # Images were recorded against paragraph counters — remap them onto the
-    # estimated page numbers just assigned to the text, so DOCX images get
-    # "Page N" labels and position-aware pairing like PDF/PPTX. Positions
-    # with no text entry (image-only paragraphs) inherit the page of the
-    # nearest preceding entry.
+    # Images were recorded against paragraph counters: remap them onto the estimated page numbers so DOCX images get
+    # "Page N" labels and position-aware pairing like PDF/PPTX.
+    # A position with no text entry (image-only paragraph) inherits the page of the nearest preceding entry.
     pos_to_page = {e['pos']: e['page'] for e in entries}
     sorted_pos = sorted(pos_to_page)
 

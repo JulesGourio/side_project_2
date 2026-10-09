@@ -12,10 +12,10 @@ build/
 client/node_modules/
 client/.vite/
 
-# Scratch export artifacts (utils/databricks_ops/lakebase_sync/copy_dev_tables_to_uat_v2.py) —
+# Scratch export artifacts (utils/lakebase_sync/copy_dev_tables_to_uat_v2.py) —
 # reproducible, and too large for Databricks Apps' 10MB per-file deploy limit.
 dev_to_uat_v2_export/
-utils/databricks_ops/dev_to_uat_v2_export/
+utils/dev_to_uat_v2_export/
 
 # Scratch intraqual scraping artifacts (download_intraqual.py / manual restage) —
 # already uploaded to the target UC volume, not app source. Slowed/broke a
@@ -48,12 +48,12 @@ files_to_compare/
 debug_images/
 debug_results/
 sql_data/
-# utils/databricks_ops/ : on versionne les .py (outils Databricks), on ignore les données générées
-utils/databricks_ops/*.json
-utils/databricks_ops/*.jsonl
-utils/databricks_ops/*.csv
-utils/databricks_ops/lakebase_export/
-utils/databricks_ops/temp_processed_files/
+# utils/ : on versionne les .py (outils Databricks), on ignore les données générées
+utils/*.json
+utils/*.jsonl
+utils/*.csv
+utils/lakebase_export/
+utils/temp_processed_files/
 lakebase_export/
 
 # Intraqual — données locales, ne pas versionner
@@ -71,8 +71,6 @@ scripts/download_intraqual.py
 scripts/scrap_ids_intraqual.py
 scripts/unzip_intraqual.py
 scripts/upload_intraqual.py
-scripts/_test_direct_head.py
-scripts/_test_docview_head.py
 
 # Données / feedbacks locaux
 user_feedbacks/

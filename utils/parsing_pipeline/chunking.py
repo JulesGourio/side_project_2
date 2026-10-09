@@ -63,13 +63,13 @@ NOISE_TYPES = ("toc", "front_matter", "boilerplate")
 
 
 def default_count_tokens(text: str) -> int:
+    """Token estimate (3.5 characters per token) used when no tokenizer is given."""
     return max(1, int(len(text) / 3.5)) if text else 0
 
 
-# ---------------------------------------------------------------------------
-# Markdown -> blocks
-# ---------------------------------------------------------------------------
+# --- Markdown -> blocks ---
 def _is_table(block: str) -> bool:
+    """True for a Markdown table: two lines starting with `|` and a `---` separator on the second."""
     lines = block.split("\n")
     return len(lines) >= 2 and all(l.lstrip().startswith("|") for l in lines[:2]) and "---" in lines[1]
 
@@ -105,9 +105,7 @@ def markdown_blocks(text: str) -> List[Dict[str, Any]]:
     return blocks
 
 
-# ---------------------------------------------------------------------------
-# Oversized blocks
-# ---------------------------------------------------------------------------
+# --- Oversized blocks ---
 def _split_text(text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]) -> List[str]:
     """Split on line breaks, then sentences, then spaces, then hard cuts."""
     if count(text) <= max_tokens and len(text) <= max_chars:
@@ -134,6 +132,7 @@ def _split_text(text: str, max_tokens: int, max_chars: int, count: Callable[[str
 
 
 def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]) -> List[str]:
+    """Split a Markdown table by rows into pieces within the token and character limits, repeating the header in each."""
     lines = text.split("\n")
     head, rows = lines[:2], lines[2:]
     head_tok, head_chars = count("\n".join(head)), len("\n".join(head))
@@ -153,10 +152,9 @@ def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[st
             (_split_text(o, max_tokens, max_chars, count) if count(o) > max_tokens or len(o) > max_chars else [o])]
 
 
-# ---------------------------------------------------------------------------
-# Blocks -> passages
-# ---------------------------------------------------------------------------
+# --- Blocks -> passages ---
 def _common_path(paths: Sequence[Path]) -> Path:
+    """Longest heading path shared by all the given paths."""
     common = list(paths[0])
     for p in paths[1:]:
         n = 0
@@ -167,14 +165,17 @@ def _common_path(paths: Sequence[Path]) -> Path:
 
 
 def _section_key(path: Path) -> Path:
+    """Heading path cut at level 2: passages of one section share it."""
     return tuple(h for h in path if h[0] <= 2)
 
 
 def _path_label(path: Path) -> str:
+    """Heading path as `A > B > C`."""
     return " > ".join(t for _, t in path)
 
 
 def _render(blocks: List[Dict[str, Any]], overlap: str = "") -> Tuple[str, Path]:
+    """Passage text: the shared heading path in brackets, an optional overlap, then the blocks (their extra headings shown when they differ)."""
     common = _common_path([b["path"] for b in blocks])
     lines = [f"[{_path_label(common)}]"] if common else []
     if overlap:
@@ -246,6 +247,7 @@ def _split_cover_block(text: str) -> List[str]:
 
 
 def _toc_lines(text: str) -> int:
+    """Number of table-of-contents lines (dot leaders, or numbered with a page) in a text."""
     return len(_DOT_LEADER_RE.findall(text)) + len(_NUMBERED_PAGE_RE.findall(text))
 
 
@@ -390,9 +392,7 @@ def source_prefix(ref: str, titre: str, type_document: str, division: str, categ
             f"Division: {division or ''} | Category: {category or ''} | Date de diffusion: {date}]\n\n")
 
 
-# ---------------------------------------------------------------------------
-# Corpus-level noise: the same passage body in many documents
-# ---------------------------------------------------------------------------
+# --- Corpus-level noise: the same passage body in many documents ---
 def body_fingerprint(chunk_text: str) -> str:
     """Normalised body (section line removed, case/accents/spaces folded) used to find passages
     repeated across documents (legal mentions, standard approval blocks)."""
@@ -401,9 +401,7 @@ def body_fingerprint(chunk_text: str) -> str:
     return re.sub(r"\W+", " ", body).strip()
 
 
-# ---------------------------------------------------------------------------
-# Language of a document
-# ---------------------------------------------------------------------------
+# --- Language of a document ---
 _SUFFIX_LANG = {"FR": "fr", "EN": "en", "GB": "en", "BG": "bg", "CZ": "cs", "MX": "es", "ES": "es", "BR": "pt"}
 _STOP = {
     "fr": " le la les des du est et pour dans une sur par avec que qui ce sont aux ".split(),
@@ -430,9 +428,7 @@ def detect_language(text: str, ref: str = "") -> str:
     return best if counts[best] >= 3 else "und"
 
 
-# ---------------------------------------------------------------------------
-# Spreadsheets
-# ---------------------------------------------------------------------------
+# --- Spreadsheets ---
 def header_row_index(rows: Sequence[Sequence[str]], scan: int = 10) -> int:
     """Index of the header row among the first non-empty rows: the first one that fills at
     least 60 % of the widest row (a title line or a logo cell above the table is skipped)."""
@@ -465,13 +461,12 @@ def sheet_lines(rows: Sequence[Sequence[Any]]) -> List[str]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Image passages
-# ---------------------------------------------------------------------------
+# --- Image passages ---
 _IMAGE_MARK = "[... IMAGE INSERTED HERE ...]"
 
 
 def _norm(s: str) -> str:
+    """Lowercase ASCII text without punctuation, for fuzzy comparison."""
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
     return re.sub(r"\W+", " ", s).strip()
 

@@ -187,13 +187,14 @@ WHERE f.vote = 'down' ORDER BY f.created_at DESC;
 
 ## Notation de la qualité
 
-Les deux notebooks de notation (`utils/quality_monitoring/Score_Production_QA.py`, job UAT ;
-`utils/databricks_ops/evaluation/score_production_qa.py`) lisaient les passages retrouvés dans la
-trace MLflow du KA. Les tours `vsi-…` n'ont pas de trace : ils lisent maintenant
-`chat_retrieved_chunks` (passages `kept`, dans l'ordre du prompt) — même preuve exacte qu'avant.
-Côté UAT, la table Delta `uat_landingzone.qualibot.chat_retrieved_chunks` est chargée par la tâche
-d'import du job `lakebase_export_uat_to_volume` (`import_chatbot_tables_to_uat_job.py`, qui charge
-aussi `chat_turns` et `errors`).
+Le notebook de notation (`utils/evaluation/score_production_qa.py`, jobs DEV et UAT) lisait les
+passages retrouvés dans la trace MLflow du KA. Les tours `vsi-…` n'ont pas de trace : il lit
+maintenant `chat_retrieved_chunks` (passages `kept`, dans l'ordre du prompt ; `retrieval_source =
+logged`) — même preuve exacte qu'avant. En UAT (`source_type = volume_json`), il lit
+`chat_retrieved_chunks.json` du volume écrit par le job d'export Lakebase ; en DEV, la table Delta
+chargée par l'import. La tâche d'import du job d'export UAT
+(`import_chatbot_tables_to_uat_job.py`) charge aussi `chat_turns`, `chat_retrieved_chunks` et
+`errors` dans `uat_landingzone.qualibot`, pour les tableaux de bord.
 
 ## Vérifié
 

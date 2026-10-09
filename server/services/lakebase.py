@@ -27,21 +27,15 @@ logger = logging.getLogger(__name__)
 _pool: Optional[asyncpg.Pool] = None
 _refresh_task: Optional[asyncio.Task] = None
 
-# Used only when the real expiry is unknown (fallback workspace token, see
-# _get_host_and_token) — the purpose-built credential path below reads the
-# actual expire_time instead of assuming a fixed lifetime.
+# Used only when the real expiry is unknown (fallback workspace token, see _get_host_and_token); the database-
+# credential path reads the actual expire_time.
 _DEFAULT_REFRESH_INTERVAL_S = 55 * 60  # 55 min — token lifetime is ~1h
 _REFRESH_SAFETY_BUFFER_S = 5 * 60  # refresh this long before actual expiry
 _MIN_REFRESH_INTERVAL_S = 60  # never refresh tighter than this
 
-# Bounds the initial TCP connect for every Lakebase connection (asyncpg's own
-# default is 60s). A deployed app is inside the Databricks network and
-# connects near-instantly either way; this matters for local dev, where
-# port 5432 is blocked on some networks (corporate wifi) and reachable on
-# others (VPN, home) — rather than hardcoding "local never connects" via an
-# empty LAKEBASE_PROJECT_ID, a short timeout lets local dev simply try, and
-# fail fast (a few seconds, not asyncpg's 60s default) into the existing
-# no-history fallback when the port genuinely isn't reachable.
+# Bounds the initial TCP connect (asyncpg's default is 60s). A deployed app connects instantly; local dev may have
+# port 5432 blocked,
+# and a short timeout lets it fail fast into the existing no-history fallback.
 _CONNECT_TIMEOUT_S = float(os.getenv('LAKEBASE_CONNECT_TIMEOUT_S', '5'))
 
 
@@ -159,9 +153,7 @@ def _placeholders(typedefs: List[str], offset: int = 0) -> str:
                      for i, t in enumerate(typedefs, offset + 1))
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+# --- Internal helpers ---
 
 
 def _cfg() -> dict:
@@ -341,10 +333,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             ('user_id',           'TEXT'),
             ('workspace_id',      'TEXT'),
             ('llm_request_id',    'INTEGER'),
-            # Denormalized from llm_requests.endpoint_name (via llm_request_id)
-            # so the model used is visible on this row directly — querying
-            # `messages` alone previously required a join to know which model
-            # produced a given comparison.
+            # Denormalized from llm_requests.endpoint_name so the model is visible on this row directly.
             ('endpoint_name',     'TEXT'),
         ]:
             await conn.execute(
@@ -459,8 +448,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_created_at ON errors (created_at)')
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_trace_id ON errors (trace_id)')
 
-        # ── impact_requests (audit: every /compare/impact call, success or
-        #    failure — Vector Search retrieval + LLM judgment) ─────────────────
+        # ── impact_requests (audit: every /compare/impact call, success or failure) ──
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS impact_requests (
                 id                  SERIAL PRIMARY KEY,
@@ -502,11 +490,8 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
         ]:
             await conn.execute(f"ALTER TABLE impact_requests ADD COLUMN IF NOT EXISTS {col} {typedef}")
 
-        # ── impact_document_results (one row per document judged by the LLM
-        #    within an impact_requests call — kept business-readable on purpose:
-        #    the Intraqual document(s) + LLM verdict/description, no retrieval
-        #    internals like chunk_count/query_hits/max_score which mean nothing
-        #    to a non-technical reader auditing the trace) ─────────────────────
+        # ── impact_document_results (one row per document judged by the LLM; business-readable: documents and
+        # verdict, no retrieval internals) ──
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS impact_document_results (
                 id                      SERIAL PRIMARY KEY,
@@ -536,8 +521,8 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
                 ON impact_document_results (request_id)
         ''')
 
-        # ── impact_feedbacks (user votes on an impact search: on the whole
-        #    result (ref NULL, optional comment) or on one document's verdict) ──
+        # ── impact_feedbacks (user votes on an impact search: on the whole result (ref NULL, optional comment) or on
+        # one document's verdict) ──
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS impact_feedbacks (
                 id                  SERIAL PRIMARY KEY,
@@ -562,8 +547,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
                 ON impact_feedbacks (impact_request_id)
         ''')
 
-        # ── impact_cache (result cache for /compare/impact, keyed like
-        #    messages — old/new file hash + app_version; "Re-run" bypasses it) ──
+        # ── impact_cache (result cache for /compare/impact, keyed like messages; "Re-run" bypasses it) ──
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS impact_cache (
                 id              SERIAL PRIMARY KEY,
@@ -579,11 +563,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
                 ON impact_cache (old_file_hash, new_file_hash, app_version)
         ''')
 
-        # ── summary_cache (result cache for /compare/summarize, keyed on the
-        #    single document's own hash + app_version — a document's summary
-        #    doesn't depend on what it's being compared against, so this is
-        #    reused even if the same file shows up as "old" in one comparison
-        #    and "new" in another) ────────────────────────────────────────────
+        # ── summary_cache (cache for /compare/summarize, keyed on the single document's own hash + app_version) ──
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS summary_cache (
                 id              SERIAL PRIMARY KEY,
@@ -632,8 +612,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS groups TEXT[] NOT NULL DEFAULT '{}'"
         )
 
-        # Translate moved to its own app (qualibot-translate) on 2026-08-19 —
-        # this column is no longer read or written anywhere in this app.
+        # Translate lives in its own app (qualibot-translate): drop the unused column.
         await conn.execute(
             "ALTER TABLE users DROP COLUMN IF EXISTS can_translate"
         )
@@ -689,12 +668,10 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             )
         ''')
         for col, typedef in [
-            # Assistant rows: the turn's chat_turns.trace_id (vsi-…). Knowledge
-            # Assistant turns (before 2026-10-08): the KA's MLflow trace id.
+            # The turn's chat_turns.trace_id (vsi-…); on Knowledge Assistant turns, its MLflow trace id.
             ('trace_id',        'TEXT'),
-            # Knowledge Assistant only, no longer written since 2026-10-09 (the
-            # Vector Search engine's retrieval is in chat_turns /
-            # chat_retrieved_chunks). Kept for the history of the KA turns.
+            # Knowledge Assistant only, no longer written (the retrieval is in chat_turns /
+            # chat_retrieved_chunks); kept for the history of the KA turns.
             ('tool_name',       'TEXT'),
             ('tool_query',      'TEXT'),
             ('tool_result',     'TEXT'),
@@ -827,8 +804,6 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
                 f"ALTER TABLE chat_feedbacks ADD COLUMN IF NOT EXISTS {col} {typedef}"
             )
 
-        # ── chat_sources: removed. Consulted documents are now stored as a
-        #    single sources_json blob on the chat_messages row (see above).
 
         # ── Data migrations (idempotent — WHERE only matches old composite format) ──
 
@@ -848,10 +823,9 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
         await conn.execute("UPDATE users SET email = BTRIM(email) WHERE email ~ '\\s'")
         await conn.execute("UPDATE users SET email = NULL WHERE TRIM(COALESCE(email,'')) = ''")
 
-        # 2. Delete NULL-email users whose numeric ID already has an email-carrying entry.
-        #    This fixes the case where the same person connected from two workspaces (DEV + UAT):
-        #    one row has the resolved email, the other (SCIM failed) is NULL.
-        #    Without this step the subsequent split UPDATE would hit a UNIQUE violation on user_id.
+        # 2. Delete NULL-email users whose numeric ID already has an email-carrying entry (same person from two
+        # workspaces),
+        #    otherwise the split UPDATE below hits a UNIQUE violation on user_id.
         await conn.execute(r'''
             DELETE FROM users
             WHERE email IS NULL
@@ -908,23 +882,18 @@ async def _token_refresh_loop(
             old_pool = _pool
             _pool = new_pool
             if old_pool:
-                # Grace period: a request that already grabbed the old pool via
-                # get_pool() but hasn't entered acquire() yet would hit "pool is
-                # closing" — give those in-flight requests time to land first.
+                # Grace period for in-flight requests that already grabbed the old pool via get_pool().
                 await asyncio.sleep(30)
                 await old_pool.close()
             delay = _next_refresh_delay(expires_in_s)
             logger.info(f'Lakebase token refreshed (next refresh in {delay:.0f}s)')
         except Exception as e:
-            # The current token keeps expiring regardless — retry soon instead
-            # of leaving up to the full interval of auth failures until the next cycle.
+            # The current token keeps expiring regardless: retry soon instead of waiting for the next cycle.
             delay = 60
             logger.error(f'Lakebase token refresh failed (retrying in {delay}s): {e}')
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+# --- Public API ---
 
 
 async def init_lakebase() -> None:
@@ -943,13 +912,7 @@ async def init_lakebase() -> None:
         try:
             await _ensure_schema(_pool)
         except Exception as e:
-            # Schema migration failing (e.g. an ownership mismatch on one table)
-            # must never skip starting the refresh loop below — the pool is
-            # already live and serving requests with the token grabbed above,
-            # which expires in ~1h; without the loop, every request quietly
-            # starts failing "password authentication failed" once it does,
-            # with no further log line pointing back to this as the cause
-            # (incident 2026-07-27: exactly this happened for ~4h in UAT).
+            # A failing schema migration must never skip the refresh loop below: the live pool's token expires in ~1h.
             logger.error(f'Lakebase schema ensure failed — continuing with existing schema: {e}')
         _refresh_task = asyncio.create_task(
             _token_refresh_loop(
@@ -1002,8 +965,8 @@ async def upsert_user(
     if not user_id:
         return
     if email:
-        # If this user_id previously had no email (SCIM was failing), fill it now
-        # before the email-keyed upsert to avoid a user_id unique-constraint conflict.
+        # If this user_id previously had no email, fill it now: the email-keyed upsert below would otherwise conflict
+        # on user_id.
         await conn.execute(
             'UPDATE users SET email = $2, updated_at = NOW()'
             ' WHERE user_id = $1 AND email IS NULL',

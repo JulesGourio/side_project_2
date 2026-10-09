@@ -21,6 +21,8 @@ La mise en place de l'environnement **DEV** a son propre fichier : `operations_d
 > UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui
 > n'existe pas encore. Les blocs A à C ci-dessous restent sur `audit/doc-compare`.
 
+> **Nettoyage du code (2026-10-08)** : `utils/databricks_ops/` n'existe plus, le notebook `3_parse` est découpé, le client allégé. Tout ce qu'il faut rejouer est dans [`RETEST_CLEANUP.md`](RETEST_CLEANUP.md) (DEV d'abord).
+
 ## Vue d'ensemble
 
 | Bloc | Quoi | Cible | Touche le chatbot ? |
@@ -337,9 +339,10 @@ prévenir, je change la valeur, vous redéployez.
     l'UAT (base `doccompare` ; `doccompare_test` pour `qualibot-uat-test`). Référence :
     `docs/lakebase_schema.md`.
 
-  - [ ] **D5.8b. Charger le journal dans Delta pour la notation** : lancer une fois le job d'export
-    Lakebase (sa 2e tâche charge maintenant aussi `chat_turns`, `chat_retrieved_chunks` et `errors`
-    dans `uat_landingzone.qualibot`), puis vérifier :
+  - [ ] **D5.8b. Exporter le journal pour la notation** : lancer une fois le job d'export Lakebase
+    (`D_1_Qualibot_Lakebase_Export_To_Volume_qualibot-uat`) ; il écrit toutes les tables, dont
+    `chat_turns` et `chat_retrieved_chunks`, dans le volume de staging, et sa 2e tâche les charge
+    aussi dans `uat_landingzone.qualibot` (avec `errors`) :
 
     ```powershell
     databricks bundle run lakebase_export_uat_to_volume -t qualibot-uat --profile UAT
@@ -349,8 +352,8 @@ prévenir, je change la valeur, vous redéployez.
     SELECT COUNT(*) FROM uat_landingzone.qualibot.chat_retrieved_chunks;
     ```
 
-    Le job de notation (`D_3_qualibot-quality-scoring-qualibot-uat`) lit les passages des tours
-    `vsi-…` dans cette table (plus de trace MLflow avec ce chatbot).
+    Le job de notation (`D_1_Qualibot_Score_Production_Qa_Uat`) lit les passages des tours `vsi-…`
+    dans `chat_retrieved_chunks.json` de ce volume (plus de trace MLflow avec ce chatbot).
 
   - [ ] **D5.9. Supprimer l'ancien** (quelques jours plus tard, une fois l'app validée) :
     - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de
@@ -374,12 +377,8 @@ prévenir, je change la valeur, vous redéployez.
       ```
 
     - **avant** de supprimer les index : me prévenir, je passe sur `chunks_index` (+ filtre de
-      division) les deux notebooks de notation qui interrogent encore les index `_v1`
-      (`utils/databricks_ops/evaluation/score_production_qa.py`, job DEV ;
-      `utils/quality_monitoring/Score_Production_QA.py`, job UAT) ;
-    - les jobs UAT qui lisent les traces du KA (`resources/traces_migration.yml`,
-      `sync_mlflow_scorer_assessments_uat`) : à revoir ensemble, ils ne sont pas modifiés par cette
-      branche.
+      division) les notebooks de notation qui interrogent encore les index `_v1`
+      (`utils/evaluation/score_production_qa.py`, jobs DEV et UAT).
 
 ## Fait
 

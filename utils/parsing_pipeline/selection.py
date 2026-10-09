@@ -21,9 +21,7 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql.window import Window
 
-# ---------------------------------------------------------------------------
-# Selection constants
-# ---------------------------------------------------------------------------
+# --- Selection constants ---
 FORMAT_PRIORITIES = {
     "docx": 1, "pdf": 2, "docm": 3, "doc": 4, "html": 5,
     "pptx": 6, "ppt": 7, "txt": 8, "xml": 9,
@@ -39,9 +37,7 @@ TRASH_FILES_BLACKLIST = ["headers.html", "thumbs.db", ".ds_store", "desktop.ini"
 # get_retry_candidates) — not part of the business-facing schema downstream.
 _RANK_HELPER_COLS = ("ext_priority", "is_dm_file", "priority_rank", "files_count_for_iddoc")
 
-# ---------------------------------------------------------------------------
-# Category hierarchy constants (replaces the former CATEGORY_PREFIX_MAP)
-# ---------------------------------------------------------------------------
+# --- Category hierarchy constants (replaces the former CATEGORY_PREFIX_MAP) ---
 IDCAT_PROCESSES = 12       # "1 - PROCESSES / PROCESSUS" → belongs to AS
 IDCAT_AS = 3346            # "AS - Aerostructures"
 IDCAT_IS = 3284            # "IS - Interconnection Systems"
@@ -72,9 +68,7 @@ def _normalize_cols_upper(df):
     return df
 
 
-# ---------------------------------------------------------------------------
-# IDDOC extraction
-# ---------------------------------------------------------------------------
+# --- IDDOC extraction ---
 def iddoc_column(path_col: str = "source_path", name_col: str = "source_file_name"):
     """Return a Spark Column extracting the IDDOC as bigint.
 
@@ -102,9 +96,7 @@ def extract_iddoc_from_name(name: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-# ===========================================================================
-# Category hierarchy builder (dynamic, from gd_cat + gd_doc_cat)
-# ===========================================================================
+# --- Category hierarchy builder (dynamic, from gd_cat + gd_doc_cat) ---
 def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCHY_DEPTH):
     """Build a per-IDDOC category hierarchy by walking up gd_cat.IDPERE.
 
@@ -276,9 +268,7 @@ def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH):
     return df_live.unionByName(df_archive)
 
 
-# ===========================================================================
-# Step 0 — Qualibot perimeter (scope gate)
-# ===========================================================================
+# --- Step 0 — Qualibot perimeter (scope gate) ---
 def load_scope_docs(spark):
     """Return (IDDOC, ref, titre) for every document inside the Qualibot scope (DOC_SCOPE_FILTER, config.py)."""
     from config import GD_DOC_LATEST as _GD_DOC_LATEST, DOC_SCOPE_FILTER
@@ -296,9 +286,7 @@ def load_scope_docs(spark):
     )
 
 
-# ===========================================================================
-# Step 1 — business metadata (DB-driven)
-# ===========================================================================
+# --- Step 1 — business metadata (DB-driven) ---
 def load_business_metadata(spark):
     """Return (df_business_meta, df_doc_lookup, df_kb_lookup).
 
@@ -455,9 +443,7 @@ def load_business_metadata(spark):
     return df_business_meta, df_doc_lookup, df_kb_lookup
 
 
-# ===========================================================================
-# Step 2 — distributed file scan (metadata only)
-# ===========================================================================
+# --- Step 2 — distributed file scan (metadata only) ---
 _EMPTY_META_SCHEMA = T.StructType([
     T.StructField("source_path", T.StringType()),
     T.StructField("source_file_size_bytes", T.LongType()),
@@ -541,9 +527,7 @@ def scan_volume_paths(spark, paths: List[str]):
     return _build_meta_and_content(df_files_raw)
 
 
-# ===========================================================================
-# Step 3 — ranking & prioritisation (all candidates kept, rank attached)
-# ===========================================================================
+# --- Step 3 — ranking & prioritisation (all candidates kept, rank attached) ---
 def rank_candidates(df_meta_raw, df_business_meta=None):
     """Rank ALL files with a valid IDDOC on the volume.
 
@@ -654,9 +638,7 @@ def get_retry_candidates(df_matched_full, df_content, failed_iddocs: List[int], 
     content, joined from the scanned DataFrame."""
     if not failed_iddocs:
         return None
-    # .ppt used to be excluded here because Docling always failed on it;
-    # image_utils._fallback_parse_ppt_legacy now handles it (see
-    # 3_Parse_Pipeline.py), so it's a legitimate rank-2 candidate.
+    # .ppt is a legitimate rank-2 candidate: image_utils._fallback_parse_ppt_legacy handles it.
     df_alt = (
         df_matched_full
         .filter(F.col("IDDOC").isin(failed_iddocs))
@@ -674,9 +656,7 @@ def get_retry_candidates(df_matched_full, df_content, failed_iddocs: List[int], 
     )
 
 
-# ===========================================================================
-# Step 4 — unified diagnostic audit (optional, business logic from Explore_Chunking)
-# ===========================================================================
+# --- Step 4 — unified diagnostic audit (optional, business logic from Explore_Chunking) ---
 def build_unified_audit(spark, df_meta_raw, df_business_meta, df_matched_full,
                         df_doc_lookup, df_kb_lookup, ingestion_run_id: str,
                         target_table: Optional[str] = None):

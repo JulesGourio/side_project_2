@@ -23,9 +23,7 @@ export function stripDivision(content: string): string {
   return content.replace(DIVISION_PREFIX_RE, '');
 }
 
-// ---------------------------------------------------------------------------
-// Selector
-// ---------------------------------------------------------------------------
+// --- Selector ---
 
 interface DivisionSelectorProps {
   value: Division;

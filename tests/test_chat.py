@@ -15,9 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-# ---------------------------------------------------------------------------
-# App fixture — mock lakebase so tests don't need a real DB at startup
-# ---------------------------------------------------------------------------
+# --- App fixture — mock lakebase so tests don't need a real DB at startup ---
 
 @pytest.fixture(scope='module')
 def client():
@@ -30,9 +28,7 @@ def client():
             yield c
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# --- Helpers ---
 
 def _make_pool(conn):
     """Build a minimal asyncpg pool mock from a connection mock."""
@@ -42,9 +38,7 @@ def _make_pool(conn):
     return pool
 
 
-# ---------------------------------------------------------------------------
-# Session / log tests
-# ---------------------------------------------------------------------------
+# --- Session / log tests ---
 
 def test_list_sessions_no_db_returns_empty(client):
     with patch('server.routers.chat.get_pool', return_value=None):
@@ -157,9 +151,7 @@ def test_delete_session_not_owner_returns_404(client):
     conn.execute.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Share / shared-view / duplicate tests
-# ---------------------------------------------------------------------------
+# --- Share / shared-view / duplicate tests ---
 
 def test_share_session_generates_token_for_first_share(client):
     conn = AsyncMock()
@@ -274,9 +266,7 @@ def test_duplicate_shared_session_not_found(client):
     assert r.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# Feedback tests
-# ---------------------------------------------------------------------------
+# --- Feedback tests ---
 
 def test_feedback_rejects_invalid_vote(client):
     r = client.post('/api/chat/feedback', json={'vote': 'meh'})
@@ -321,9 +311,7 @@ def test_feedback_down_with_comment(client):
     assert r.json()['vote'] == 'down'
 
 
-# ---------------------------------------------------------------------------
-# Division directive must not leak into thread titles
-# ---------------------------------------------------------------------------
+# --- Division directive must not leak into thread titles ---
 
 def test_strip_division_removes_directive():
     from server.routers.chat import _strip_division
@@ -446,9 +434,7 @@ def test_trim_history_bounds_prompt_and_keeps_latest_question():
     assert _trim_history(msgs[:3]) == msgs[:3]
 
 
-# ---------------------------------------------------------------------------
-# Feature access control (capabilities + 403 guards)
-# ---------------------------------------------------------------------------
+# --- Feature access control (capabilities + 403 guards) ---
 
 def test_get_capabilities_reads_user_flags_from_db():
     """Capabilities come from the Lakebase users table (per-user booleans)."""
