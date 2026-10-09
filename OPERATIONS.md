@@ -352,8 +352,9 @@ prévenir, je change la valeur, vous redéployez.
     SELECT COUNT(*) FROM uat_landingzone.qualibot.chat_retrieved_chunks;
     ```
 
-    Le job de notation (`D_1_Qualibot_Score_Production_Qa_Uat`) lit les passages des tours `vsi-…`
-    dans `chat_retrieved_chunks.json` de ce volume (plus de trace MLflow avec ce chatbot).
+    Le job de notation `D_1_Qualibot_Score_Production_Qa_Uat` est archivé (2026-10-09) : il n'est
+    plus dans le bundle, le prochain `bundle deploy -t qualibot-uat` (avec ton accord) le supprime.
+    Son remplaçant est le prototype `utils/evaluation/score_chat_traces.py`, pas encore en job.
 
   - [ ] **D5.9. Supprimer l'ancien** (quelques jours plus tard, une fois l'app validée) :
     - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de

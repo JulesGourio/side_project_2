@@ -551,6 +551,41 @@ démarrage, sans toucher aux données existantes.
   Attendu : une ligne par question (`ok` ou `degraded`, et `aborted` pour l'onglet fermé), une
   trentaine de passages par tour dont `sent` envoyés au modèle. **M'envoyer** les trois résultats.
 
+### W. Notation des tours du chat : archivage de l'ancien job, prototype (2026-10-09)
+
+`score_production_qa` (KA contre RAG naïf) est archivé : `utils/evaluation/score_production_qa.py` →
+`archive/evaluation/`, `resources/evaluation.yml` → `archive/evaluation/score_production_qa.job.yml`.
+Le prototype `utils/evaluation/score_chat_traces.py` rejoue les tours du Lakebase en traces MLflow et
+les note avec les scorers MLflow (juge GPT-5.6 Luna).
+
+- [ ] **W1.** Sur ton PC, dans `latec-compare` :
+
+  ```powershell
+  Remove-Item utils\evaluation\score_production_qa.py
+  Remove-Item resources\evaluation.yml
+  ```
+
+  Puis recopier à la main : `utils/evaluation/score_chat_traces.py` (nouveau), `archive/README.md`,
+  `archive/evaluation/score_production_qa.py`, `archive/evaluation/score_production_qa.job.yml`,
+  `CLAUDE.md`, `OPERATIONS.md`, `operations_dev.md`, `docs/lakebase_schema.md`, `utils/README.md`.
+- [ ] **W2.** Supprimer le job DEV `D_1_Qualibot_Score_Production_Qa` (il n'est plus dans le bundle) et
+  envoyer le notebook :
+
+  ```powershell
+  databricks bundle deploy -t dev --profile DEV
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly
+  ```
+
+  Les tables `chat_quality_scores` / `chat_quality_scoring_runs` restent (rien ne les supprime).
+- [ ] **W3.** Premier essai sur 10 tours : notebook
+  `/Workspace/Shared/.bundle/qualibot/dev/files/utils/evaluation/score_chat_traces`, calcul
+  **serverless**, widgets `limit` = `10`, `days` = `30`, le reste par défaut, Run all.
+  M'envoyer : la sortie de la cellule « Quality Checks » (nombre de traces, scorers en échec) et le
+  tableau final. Si les scorers juges échouent tous, relancer avec `judge_model` vide (juge géré par
+  Databricks) et me le dire.
+- [ ] **W4.** Puis les tours mal notés par les utilisateurs : `selection` = `down`, `limit` = `50`,
+  `days` = `90`, Run all ; m'envoyer le tableau final.
+
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
 Lecture seule sur les tables UAT ; écrit uniquement dans

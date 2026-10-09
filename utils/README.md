@@ -24,6 +24,9 @@ here, one section per topic.
 
 ## chatbot-quality-scoring-luna-and-retrieval
 
+**Archived 2026-10-09** (`archive/evaluation/score_production_qa.py`; prototype successor
+`evaluation/score_chat_traces.py`: logged turns replayed as MLflow traces, MLflow scorers). History below.
+
 **2026-09-02/03**: `evaluation/score_production_qa.py` LLM-judges every
 ChatBot turn already answered (no new Knowledge Assistant call — the answer
 already exists). Scope: ChatBot only (`chat_messages`/`chat_quality_scores`),

@@ -332,3 +332,9 @@ Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `
   `status = 'ok'` et `search_ms` / `judge_ms` remplis ; la dernière `llm_requests` a `status` et `total_ms`.
 - [ ] `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` puis `score_production_qa` (DEV) avec `enable_retrieval=true` :
   les tours `vsi-…` ont `retrieval_source = logged`.
+
+## 2026-10-09 — notation des tours archivée, prototype `score_chat_traces`
+
+- `utils/evaluation/score_production_qa.py` et `resources/evaluation.yml` sont dans `archive/evaluation/` :
+  les entrées `score_production_qa` plus haut dans ce fichier ne sont plus à relancer.
+- À lancer à la place : `utils/evaluation/score_chat_traces.py` (`operations_dev.md`, bloc W).

@@ -187,14 +187,16 @@ WHERE f.vote = 'down' ORDER BY f.created_at DESC;
 
 ## Notation de la qualité
 
-Le notebook de notation (`utils/evaluation/score_production_qa.py`, jobs DEV et UAT) lisait les
-passages retrouvés dans la trace MLflow du KA. Les tours `vsi-…` n'ont pas de trace : il lit
-maintenant `chat_retrieved_chunks` (passages `kept`, dans l'ordre du prompt ; `retrieval_source =
-logged`) — même preuve exacte qu'avant. En UAT (`source_type = volume_json`), il lit
-`chat_retrieved_chunks.json` du volume écrit par le job d'export Lakebase ; en DEV, la table Delta
-chargée par l'import. La tâche d'import du job d'export UAT
-(`import_chatbot_tables_to_uat_job.py`) charge aussi `chat_turns`, `chat_retrieved_chunks` et
-`errors` dans `uat_landingzone.qualibot`, pour les tableaux de bord.
+`utils/evaluation/score_chat_traces.py` (prototype, lancé à la main) lit les tours répondus dans
+Lakebase (`chat_turns`, `chat_messages`, `chat_feedbacks`, `chat_retrieved_chunks` `kept`, dans
+l'ordre du prompt), les rejoue en traces MLflow sans rappeler aucun modèle (le span retriever rend
+exactement les passages envoyés au modèle), puis les note avec les scorers MLflow (pertinence,
+ancrage dans les passages, langue, limites avouées ; juge GPT-5.6 Luna). Une ligne par tour et par
+scorer dans `dev_landingzone.qualibot.chat_trace_scores`, jointe à Lakebase par `vsi_trace_id`.
+L'ancien `score_production_qa.py` et ses jobs DEV / UAT sont archivés (`archive/evaluation/`). La
+tâche d'import du job d'export UAT (`import_chatbot_tables_to_uat_job.py`) charge toujours
+`chat_turns`, `chat_retrieved_chunks` et `errors` dans `uat_landingzone.qualibot`, pour les
+tableaux de bord.
 
 ## Vérifié
 
