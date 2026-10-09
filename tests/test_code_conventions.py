@@ -44,3 +44,22 @@ def test_no_commented_out_imports_or_prints():
             if pattern.match(line) and "MAGIC" not in line:
                 offenders.append(f"{os.path.relpath(path, ROOT)}:{i}")
     assert not offenders, offenders
+
+
+def test_every_pipeline_notebook_explains_each_code_block():
+    """LEAP layout: a markdown cell with the why comes before each code cell, all sections are present."""
+    sep = "\n\n# COMMAND ----------\n\n"
+    sections = ["Technical debt", "Configuration", "Inputs", "Data Preparation", "Data Transformations",
+                "Quality Checks", "Outputs"]
+    offenders = []
+    for folder in ("parsing_pipeline", "generic_pipeline"):
+        for path in sorted(glob.glob(os.path.join(ROOT, "utils", folder, "[0-9]_*.py"))):
+            text = open(path, encoding="utf-8").read()
+            cells = text.split(sep)
+            name = os.path.relpath(path, ROOT)
+            for i, cell in enumerate(cells[1:], 1):
+                if not cell.lstrip().startswith("# MAGIC %md") and not cells[i - 1].lstrip().startswith("# MAGIC %md"):
+                    offenders.append(f"{name}: code cell {i} follows another code cell")
+            offenders += [f"{name}: missing section '{s}'" for s in sections
+                          if not re.search(rf"^# MAGIC # {re.escape(s)}\s*$", text, re.M)]
+    assert not offenders, offenders

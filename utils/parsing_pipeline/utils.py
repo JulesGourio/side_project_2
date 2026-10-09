@@ -216,6 +216,7 @@ def _patch_worker_env():
 
 
 def _import_docling():
+    """Import Docling after the worker environment is patched; it is heavy, so each process does it once, on demand."""
     _patch_worker_env()
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
@@ -254,6 +255,7 @@ _CONVERTER_CACHE: Dict = {}
 
 
 def _get_docling():
+    """Docling classes, imported once per process."""
     global _DOCLING_MODULES
     if _DOCLING_MODULES is None:
         _DOCLING_MODULES = _import_docling()
@@ -261,6 +263,7 @@ def _get_docling():
 
 
 def _get_input_format(ext: str):
+    """Docling `InputFormat` for a file extension, or None when Docling does not handle it."""
     return getattr(_get_docling()["InputFormat"], _FORMAT_MAP_NAMES.get(ext, ""), None)
 
 
@@ -324,6 +327,7 @@ def _get_converter(input_format, do_ocr: Optional[bool] = None, timings: Optiona
 
 # --- Text helpers ---
 def safe_decode(raw_bytes: bytes, encodings: Optional[List[str]] = None) -> str:
+    """Decode bytes trying utf-8, utf-8-sig, cp1252 and latin-1 in turn, then utf-8 ignoring errors."""
     if not raw_bytes:
         return ""
     for enc in (encodings or ["utf-8", "utf-8-sig", "cp1252", "latin-1"]):
@@ -335,6 +339,7 @@ def safe_decode(raw_bytes: bytes, encodings: Optional[List[str]] = None) -> str:
 
 
 def normalize_text(text: str) -> str:
+    """Unify line endings, drop NUL characters, collapse runs of spaces/tabs and of blank lines."""
     if not text:
         return ""
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
@@ -343,6 +348,7 @@ def normalize_text(text: str) -> str:
 
 
 def get_tiktoken_encoder():
+    """The tiktoken encoder, built once per process (cl100k_base unless configured)."""
     global _TIKTOKEN_ENCODER
     if _TIKTOKEN_ENCODER is None:
         import tiktoken
@@ -363,6 +369,7 @@ def count_tokens(text: str) -> int:
 
 
 def _write_tmp_file(content: bytes, suffix: str) -> Path:
+    """Write bytes to a temporary file Docling can open; the caller deletes it."""
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False, prefix="docling_parse_")
     tmp.write(content)
     tmp.close()
@@ -532,6 +539,7 @@ def _exc_detail(e: Exception, limit: int = 500) -> str:
 
 
 def _err(start, ext, msg, strategy=None) -> Dict[str, Any]:
+    """Result of a failed parse: no text, the error message and a `docling_error:<ext>` strategy."""
     return {
         "text": "", "parser_error": msg,
         "parser_strategy": strategy or f"docling_error:{ext.lstrip('.')}",
@@ -540,6 +548,7 @@ def _err(start, ext, msg, strategy=None) -> Dict[str, Any]:
 
 
 def _export_markdown(doc) -> str:
+    """Markdown of a Docling document with image placeholders (plain export when the installed version lacks the option)."""
     try:
         from docling_core.types.doc.document import ImageRefMode
         return doc.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)
@@ -613,6 +622,7 @@ def strip_ooxml_bloat(content: bytes, ext: str) -> bytes:
 
 
 def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, Any]:
+    """Parse with Docling through a temporary file; the step timings are recorded when `timings` is given."""
     t_tmp = time.perf_counter()
     tmp_path = _write_tmp_file(content, ext)
     if timings is not None:
@@ -673,6 +683,7 @@ def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, 
 
 
 def _parse_textlike(content: bytes, ext: str, start: float) -> Dict[str, Any]:
+    """Text-based formats: decoded and normalised; csv and tsv become one bullet per row."""
     decoded = safe_decode(content)
     if ext in {".csv", ".tsv"}:
         try:
@@ -727,6 +738,7 @@ def _parse_doc_antiword(content: bytes, start: float) -> Dict[str, Any]:
 
 
 def _parse_rtf(content: bytes, start: float) -> Dict[str, Any]:
+    """RTF: striprtf converts it to Markdown text, which Docling then reads as a Markdown document."""
     text, err_reason = _convert_rtf(content)
     if not text or not text.strip():
         return {"text": "", "parser_error": f"RTF conversion failed: {err_reason}",
@@ -751,6 +763,7 @@ def _parse_rtf(content: bytes, start: float) -> Dict[str, Any]:
 
 
 def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
+    """ODT and ODS through odfpy."""
     raw_text, err_reason = _convert_odt(content, ext)
     text = normalize_text(raw_text or "")
     return {"text": text, "parser_error": None if text else f"ODF conversion failed: {err_reason}",
@@ -759,6 +772,7 @@ def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
 
 
 def _parse_xls(content: bytes, start: float) -> Dict[str, Any]:
+    """Legacy XLS through xlrd."""
     raw_text, err_reason = _convert_xls(content)
     text = normalize_text(raw_text or "")
     return {"text": text, "parser_error": None if text else f"XLS conversion failed: {err_reason}",
@@ -945,6 +959,7 @@ def language_udf(text_series: pd.Series, ref_series: pd.Series) -> pd.Series:
 
 @pandas_udf(T.IntegerType())
 def token_count_udf(text_series: pd.Series) -> pd.Series:
+    """Pandas UDF: token count of each text (0 when empty), with the settings restored on the worker."""
     ensure_config()
     return text_series.apply(
         lambda x: count_tokens(str(x)) if pd.notna(x) and str(x).strip() else 0

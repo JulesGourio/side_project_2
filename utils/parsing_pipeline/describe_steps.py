@@ -153,6 +153,7 @@ def describe_images(rows, ws_host, ws_token):
 
 
 def _log_description_summary(n_rows, total_done, total_err, total_tin, total_tout):
+    """Log the totals of the run and what remains PENDING or in ERROR."""
     df_images = spark.table(IMAGE_TABLE)
     remaining_pending = df_images.filter(F.col("status") == "PENDING").count()
     remaining_error = df_images.filter(F.col("status") == "ERROR").count()
@@ -200,6 +201,7 @@ def described_images_without_chunk(rebuild):
 
 
 def log_nothing_to_inject():
+    """Explain why no image passage is written: every DONE image already has one."""
     df_images = spark.table(IMAGE_TABLE)
     n_done = df_images.filter((F.col("status") == "DONE") & F.col("description").isNotNull()).count()
     n_error = df_images.filter(F.col("status") == "ERROR").count()

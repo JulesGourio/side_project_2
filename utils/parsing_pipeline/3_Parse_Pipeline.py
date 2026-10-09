@@ -62,6 +62,11 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC The repository folder goes on `sys.path` for the driver, and `addPyFile` ships the modules to every executor, late joiners included.
+
+# COMMAND ----------
+
 import os
 import sys
 
@@ -79,6 +84,8 @@ for _mod in ("chunking.py", "utils.py", "image_utils.py", "selection.py", "confi
 
 # MAGIC %md
 # MAGIC ## Config Project Imports
+# MAGIC
+# MAGIC `config` holds every parameter (tables, volumes, chunking, Docling), `parse_steps` the phases below, `utils.configure` and the two worker helpers ship the settings to the executors.
 
 # COMMAND ----------
 
@@ -90,6 +97,8 @@ from utils import configure, broadcast_config, write_worker_config, logger
 
 # MAGIC %md
 # MAGIC ## Config Widgets
+# MAGIC
+# MAGIC The parent job run id is written on every row so `2_manifest` rows and these rows can be correlated.
 
 # COMMAND ----------
 

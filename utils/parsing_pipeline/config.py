@@ -144,6 +144,7 @@ DEDUPLICATE_CHUNKS       = True
 # --- Docling engine settings ---
 # USE_GPU: explicit override via PARSING_USE_GPU, else auto-detected (nvidia-smi).
 def _detect_gpu():
+    """True when nvidia-smi exists and runs."""
     import shutil as _sh, subprocess as _sp
     if _sh.which("nvidia-smi") is None:
         return False

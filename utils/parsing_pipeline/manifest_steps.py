@@ -42,6 +42,7 @@ _PERMANENT_SKIP_STATUSES = (
 
 
 def _id_list(iddocs):
+    """IDDOCs as a comma-separated list for a SQL IN clause."""
     return ",".join(str(i) for i in iddocs)
 
 
@@ -288,6 +289,7 @@ def archive_condition():
 
 
 def _doc_date_column(table):
+    """Document date column of an Intraqual table (`dtdiff`, or `DATEDIFF` in older tables), NULL when absent."""
     cols = {c.lower() for c in spark.read.table(table).columns}
     source = "dtdiff" if "dtdiff" in cols else "DATEDIFF" if "datediff" in cols else None
     return F.to_date(F.col(source)) if source else F.lit(None).cast("date")

@@ -63,11 +63,13 @@ NOISE_TYPES = ("toc", "front_matter", "boilerplate")
 
 
 def default_count_tokens(text: str) -> int:
+    """Token estimate (3.5 characters per token) used when no tokenizer is given."""
     return max(1, int(len(text) / 3.5)) if text else 0
 
 
 # --- Markdown -> blocks ---
 def _is_table(block: str) -> bool:
+    """True for a Markdown table: two lines starting with `|` and a `---` separator on the second."""
     lines = block.split("\n")
     return len(lines) >= 2 and all(l.lstrip().startswith("|") for l in lines[:2]) and "---" in lines[1]
 
@@ -130,6 +132,7 @@ def _split_text(text: str, max_tokens: int, max_chars: int, count: Callable[[str
 
 
 def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]) -> List[str]:
+    """Split a Markdown table by rows into pieces within the token and character limits, repeating the header in each."""
     lines = text.split("\n")
     head, rows = lines[:2], lines[2:]
     head_tok, head_chars = count("\n".join(head)), len("\n".join(head))
@@ -151,6 +154,7 @@ def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[st
 
 # --- Blocks -> passages ---
 def _common_path(paths: Sequence[Path]) -> Path:
+    """Longest heading path shared by all the given paths."""
     common = list(paths[0])
     for p in paths[1:]:
         n = 0
@@ -161,14 +165,17 @@ def _common_path(paths: Sequence[Path]) -> Path:
 
 
 def _section_key(path: Path) -> Path:
+    """Heading path cut at level 2: passages of one section share it."""
     return tuple(h for h in path if h[0] <= 2)
 
 
 def _path_label(path: Path) -> str:
+    """Heading path as `A > B > C`."""
     return " > ".join(t for _, t in path)
 
 
 def _render(blocks: List[Dict[str, Any]], overlap: str = "") -> Tuple[str, Path]:
+    """Passage text: the shared heading path in brackets, an optional overlap, then the blocks (their extra headings shown when they differ)."""
     common = _common_path([b["path"] for b in blocks])
     lines = [f"[{_path_label(common)}]"] if common else []
     if overlap:
@@ -240,6 +247,7 @@ def _split_cover_block(text: str) -> List[str]:
 
 
 def _toc_lines(text: str) -> int:
+    """Number of table-of-contents lines (dot leaders, or numbered with a page) in a text."""
     return len(_DOT_LEADER_RE.findall(text)) + len(_NUMBERED_PAGE_RE.findall(text))
 
 
@@ -458,6 +466,7 @@ _IMAGE_MARK = "[... IMAGE INSERTED HERE ...]"
 
 
 def _norm(s: str) -> str:
+    """Lowercase ASCII text without punctuation, for fuzzy comparison."""
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
     return re.sub(r"\W+", " ", s).strip()
 

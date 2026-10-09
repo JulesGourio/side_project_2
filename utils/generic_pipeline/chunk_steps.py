@@ -75,6 +75,7 @@ def build_chunker(offline_models_dir, max_chunk_tokens):
 
 
 def _chunk_row(index, text, headers=""):
+    """One text passage with its token estimate."""
     return {
         "chunk_index": index,
         "chunk_text": text,

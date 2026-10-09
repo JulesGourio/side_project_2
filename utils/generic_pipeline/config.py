@@ -67,6 +67,7 @@ EMPTY_SMALL_FILE_SIZE_BYTES = int(_env("GENERIC_EMPTY_SMALL_FILE_SIZE_BYTES", "5
 
 # --- Docling engine settings ---
 def _detect_gpu():
+    """True when nvidia-smi exists and runs."""
     import shutil as _sh, subprocess as _sp
     if _sh.which("nvidia-smi") is None:
         return False

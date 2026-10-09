@@ -138,8 +138,16 @@ Attendu (tables à jour) : `3_parse` journalise `[SCOPE] ... to scan=0` et `[GHO
 
 Test de parsing réel, **sans toucher à vos tables** (suffixe `_test`). Choisissez 2 ou 3 IDDOC :
 
+Prenez de préférence des documents qui ont des images (c'est ce qui exerce le placement des images de `4_describe_images`) :
+
 ```sql
-SELECT IDDOC, ref FROM dev_landingzone.qualibot.parse_manifest WHERE parse_content ORDER BY doc_date DESC LIMIT 3;
+SELECT m.IDDOC, m.ref, count(i.image_id) AS images
+FROM dev_landingzone.qualibot.parse_manifest m
+LEFT JOIN dev_landingzone.qualibot.image_metadata i ON i.IDDOC = m.IDDOC
+WHERE m.parse_content
+GROUP BY m.IDDOC, m.ref
+HAVING count(i.image_id) BETWEEN 1 AND 15
+ORDER BY images DESC LIMIT 3;
 ```
 
 ```powershell
@@ -270,3 +278,23 @@ Supprimés : pages `HomePage` / `AboutPage` (jamais routées) et tout ce qu'elle
   - [ ] Si vous vous en servez : le lancer sur `/Volumes/uat_landingzone/qualibot/test/test_documents` et vérifier la table `chunks_test_generic` et l'index.
 - **Client** : `CompareView.tsx` (2 700 lignes) découpé en `compareShared.ts`, `PdfDropZone`, `JsonDiffTable`, `StructuredResultCard`, `ResultCard`, `DocSummaryCard`, `CardFeedback` (vote partagé par les deux cartes de résultat). Typecheck et build Vite passent.
   - [ ] Après `bun run build`, passer une comparaison complète (Change Summary, Change Table, vote et commentaire, résumé d'un document, recherche d'impact).
+
+## 7. Notebooks du pipeline refactorés (2026-10-09)
+
+Les notebooks `2_`, `4_`, `5_`, `6_` du parsing et `1_`, `2_`, `3_` du pipeline générique ont maintenant la même forme que `3_` : un bloc markdown du « pourquoi » avant chaque cellule de code, toutes les sections LEAP, une dette technique réelle.
+La logique de `2_` et `4_` a été déplacée dans `manifest_steps.py` et `describe_steps.py` (code déplacé, comportement conservé).
+
+Changements de comportement à connaître :
+- `2_Cleanup_Volume` : les `DELETE` des tables dérivées ne sont plus silencieux si une table échoue (un avertissement est journalisé, les autres tables continuent); `EXCLUDED_IDCATS` vient de `config.py`; plus de rechargement de `config`/`selection` en cours de route.
+- `4_Describe_Images_LLM` : la table temporaire `_image_updates_temp` prend le suffixe `PARSING_TABLE_SUFFIX` (sans effet quand il est vide); `%autoreload` retiré; `DeltaTable` importé en tête.
+- `5_Sync_Vector_Indexes` : `chunks_full` est lu, préparé et écrit dans des sections séparées; une erreur claire est levée si `chunks_full` est demandé sans table `chunks`.
+- `6_Update_Knowledge_Base_Metadata` : la vérification « catalogue non vide » est maintenant dans `# Quality Checks`; une erreur claire si `parse_manifest` ou `chunks` n'existe pas.
+- `1_Build_Category_Reference` : la garde de fraîcheur passe en `# Quality Checks` et s'exécute après la construction de `category_reference`, mais toujours avant son écriture.
+- `generic_pipeline/1_Parse_Chunk_Generic` : un widget `environment` (défaut `dev`) remplace les chemins `uat_landingzone` en dur; `3_Sync_Vector_Index` : un index inconnu n'empêche plus de synchroniser l'index suivant de la liste (bug de suppression pendant l'itération).
+
+À rejouer sur DEV après un `bundle deploy -t dev` :
+- [ ] `--only 1_categories` : `All sources fresh`, `category_reference` écrite.
+- [ ] `--only 2_manifest` avec `DRY_RUN` par défaut : les compteurs `KEEP/DELETE/ORPHAN/...`, `parse_manifest written: N IDDOCs in scope`, `[DRY RUN] ... would be deleted`. Comparer N avec la valeur d'hier (`SELECT count(*) FROM dev_landingzone.qualibot.parse_manifest`).
+- [ ] `--only 4_describe_images` sur des tables à jour : `Nothing to describe`, `No new image chunks to inject`, `No EMPTY_TEXT document pending promotion` ou la promotion; le test `_test` de la section 0.5 exerce le placement des images.
+- [ ] `--only 5_sync_index` puis `--only 6_update_kb_metadata` : comme avant (`sync triggered`, `doc_catalog N -> N documents`).
+- [ ] `generic_pipeline/1_Parse_Chunk_Generic` (facultatif) : l'ouvrir dans DEV avec `environment = dev`; les modèles se trouvent par défaut dans `docling_models/docling_models`.
