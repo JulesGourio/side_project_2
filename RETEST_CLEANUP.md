@@ -4,45 +4,127 @@ Chantier : moins de commentaires, plus de code mort, notebooks de parsing décou
 Rien n'a pu être exécuté sur Databricks depuis la machine de développement : tout ce qui suit
 est à rejouer sur **DEV** (`-t dev`) après un `bundle deploy`. Cocher et dater au fur et à mesure.
 
-## 0. Procédure complète de test sur DEV (à suivre dans l'ordre)
+## 0. Procédure de test sur DEV (version corrigée)
 
-PowerShell, profil CLI `DEV`. Cochez au fur et à mesure; si un pas échoue, envoyez-moi l'erreur et arrêtez-vous là.
+PowerShell, profil CLI `DEV`. Si un pas échoue, collez-moi l'erreur et arrêtez-vous là.
 
-**0.1 Préparer** (dossier **vide**, des fichiers ont été déplacés et supprimés)
+**Deux interdits**, parce que votre DEV a un chunking et des index plus récents que ceux de l'UAT :
+- ne **jamais** lancer `copy_uat_to_dev` ni les blocs **C**, **E** et **S** d'`operations_dev.md` : ils recopient le chunking de l'UAT par-dessus le vôtre;
+- `bundle deploy` ne touche **ni aux tables ni aux index Vector Search** (ils ne sont pas dans le bundle) : il ne peut pas les écraser. Il ne gère que l'app, le projet Lakebase, les schemas, les volumes, les rôles et les jobs.
+
+### 0.1 Préparer
+
 ```powershell
-# extraire le zip de la branche feature/chat-vsi-merged-on-impact-search dans un dossier vide, puis :
-cd <ce dossier>
+# dossier vide + zip de la branche feature/chat-vsi-merged-on-impact-search, puis :
 Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 databricks current-user me --profile DEV
 ```
 
-**0.2 Cas où vous avez aussi supprimé des ressources DEV** : l'app, le projet Lakebase, les volumes ou les tables.
-Rien de ce qui suit ne les recrée seul : refaire d'abord `operations_dev.md` blocs **R** (rattacher l'app existante), **I** (infra : `bundle deploy`, binds), **E** (export du corpus UAT) puis **C** (job `copy_uat_to_dev`, qui recopie les tables et recrée l'index).
-Si vous n'avez supprimé que le code et les jobs, passez à 0.3.
+### 0.2 Où en est-on ? (lecture seule, rien n'est modifié)
 
-**0.3 Valider puis déployer les jobs et ressources**
+Copiez tout le bloc PowerShell, puis le bloc SQL, et renvoyez-moi les deux sorties.
+
 ```powershell
+"=== app"
+(databricks apps get qualibot --profile DEV -o json | ConvertFrom-Json) | Select-Object name, url, service_principal_client_id, @{n='compute';e={$_.compute_status.state}}, @{n='app';e={$_.app_status.state}} | Format-List
+"=== projets Lakebase"
+databricks postgres list-projects --profile DEV
+"=== volumes dev_landingzone.qualibot"
+databricks volumes list dev_landingzone qualibot --profile DEV
+"=== modeles Docling"
+databricks fs ls dbfs:/Volumes/dev_landingzone/qualibot/docling_models/docling_models --profile DEV
+"=== schema projet"
+databricks schemas get dev_proj.qualibot --profile DEV
+"=== endpoint Vector Search"
+databricks vector-search-endpoints list-endpoints --profile DEV
+"=== index et table source"
+foreach ($i in (databricks vector-search-indexes list-indexes qualibot --profile DEV -o json | ConvertFrom-Json)) {
+  (databricks vector-search-indexes get-index $i.name --profile DEV -o json | ConvertFrom-Json) |
+    Select-Object name, @{n='source';e={$_.delta_sync_index_spec.source_table}}, @{n='modele';e={$_.delta_sync_index_spec.embedding_source_columns[0].embedding_model_endpoint_name}}, @{n='pret';e={$_.status.ready}}, @{n='lignes';e={$_.status.indexed_row_count}} | Format-List
+}
+"=== jobs"
+databricks jobs list --profile DEV
+"=== plan du bundle (aucun changement appliqué)"
+python utils/deploy/render_target_config_env.py dev target_config.env
 databricks bundle validate -t dev --profile DEV
-databricks bundle deploy   -t dev --profile DEV
+databricks bundle plan -t dev --profile DEV
 ```
-Attendu : aucune erreur de chemin de notebook (tous les notebooks ont changé de dossier) et les anciens jobs sont inchangés.
-Si `validate` cite un fichier introuvable, notez son chemin : c'est un oubli de ma part.
 
-**0.4 Tester chaque job déplacé** (un par dossier de `utils/`) :
+```sql
+-- éditeur SQL DEV
+SHOW TABLES IN dev_landingzone.qualibot;
+
+-- la table qui nourrit chunks_index : le chunking est-il celui du code (150/300/450 jetons, 1 600 caractères) ?
+SELECT count(*) AS passages, count(DISTINCT IDDOC) AS documents,
+       round(avg(chunk_token_count)) AS jetons_moyens, max(chunk_token_count) AS jetons_max, max(length(chunk_text)) AS caracteres_max
+FROM dev_landingzone.qualibot.chunks;
+SHOW TBLPROPERTIES dev_landingzone.qualibot.chunks;   -- delta.enableChangeDataFeed doit valoir true
+
+-- l'état du pipeline : s'il manque, un run complet de 3_parse reparserait tout le corpus sur GPU
+SELECT '_pipeline_checkpoint' AS t, count(*) AS n FROM dev_landingzone.qualibot._pipeline_checkpoint
+UNION ALL SELECT 'processed_files', count(*) FROM dev_landingzone.qualibot.processed_files
+UNION ALL SELECT 'image_metadata', count(*) FROM dev_landingzone.qualibot.image_metadata
+UNION ALL SELECT 'parse_manifest', count(*) FROM dev_landingzone.qualibot.parse_manifest
+UNION ALL SELECT 'category_reference', count(*) FROM dev_landingzone.qualibot.category_reference;
+-- TABLE_OR_VIEW_NOT_FOUND : cette table n'existe plus, retirez sa ligne et notez-la.
+```
+
+**Lecture du résultat et conduite à tenir :**
+
+| Constat | Ce qu'il faut faire |
+|---|---|
+| `bundle plan` ne montre que des `update` / `create`, aucun `delete` ni `recreate` | continuer en 0.3 |
+| `bundle plan` montre un `delete` ou un `recreate` | **ne pas déployer**, me coller le plan |
+| App, projet Lakebase ou volumes absents | `bundle deploy` (0.3) les recrée; le projet Lakebase repart vide (l'app recrée ses tables au démarrage, l'historique DEV est perdu) |
+| App ou volume existe mais le déploiement dit « already exists » | rattacher la ressource avant de redéployer : `databricks bundle deployment bind doc-compare qualibot -t dev --profile DEV` (app), `databricks bundle deployment bind qualibot_images dev_landingzone.qualibot.images -t dev --profile DEV` (volume; même forme pour `qualibot_doc_compare`, `qualibot_test`, `qualibot_staging`) |
+| Le dossier des modèles Docling est vide ou absent | aucun job de parsing ne peut tourner : dites-le moi, ce volume n'est pas dans le bundle |
+| Endpoint `qualibot` absent | à recréer avant tout index : dites-le moi |
+| `chunks_index` absent, `pret = False`, ou sa `source` n'est pas `dev_landingzone.qualibot.chunks` | me le dire avec la sortie : je vous donne la commande de (re)création sur **votre** table (pas de copie depuis l'UAT) |
+| `jetons_max` ≈ 450 et `caracteres_max` ≈ 1 600 (+ préfixe `[Source: …]`) | le chunking en base est celui du code actuel |
+| `jetons_max` vers 1 000 ou plus | `chunks` a l'ancien chunking : dites-moi quelle table contient le bon, je vous donne la commande |
+| `_pipeline_checkpoint`, `processed_files` ou `image_metadata` absentes ou vides | **ne lancez pas `3_parse` sans filtre** : utilisez seulement le test filtré `_test` de 0.5 |
+
+### 0.3 Déployer les jobs et ressources
+
 ```powershell
-databricks bundle run grant_app_access_dev     -t dev --profile DEV   # utils/grants        -> une ligne OK: par droit
-databricks bundle run migrate_lakebase_dev     -t dev --profile DEV   # utils/lakebase_sync -> migrations idempotentes
-databricks bundle run lakebase_export_dev_to_volume -t dev --profile DEV   # utils/lakebase_sync (export)
-databricks bundle run lakebase_import_uat_to_dev -t dev --profile DEV # utils/lakebase_sync (import)
-databricks bundle run score_production_qa      -t dev --profile DEV   # utils/evaluation
-databricks bundle run apps_stop_nightly_dev    -t dev --profile DEV   # utils/app_mgmt (arrête l'app !)
-databricks apps start qualibot --profile DEV                          # puis la relancer
+databricks bundle deploy -t dev --profile DEV
+databricks bundle summary -t dev --profile DEV
 ```
-Dans les logs de chaque exécution, cherchez `NameError`, `ModuleNotFoundError` et `No module named 'ops_config'`.
-`copy_uat_to_dev` (utils/dev_copy) est lourd : ne le lancer que si 0.2 est nécessaire.
 
-**0.5 Pipeline de parsing, tâche par tâche** (`3_parse` tourne sur GPU : démarrage de cluster de quelques minutes)
+### 0.4 Tester chaque job, commandes exactes
+
+`bundle run` attend la fin et affiche `SUCCESS` ou l'erreur. Lancez dans cet ordre :
+
+```powershell
+# 1. droits du SP de l'app et du SP des jobs (dont chunks_index); une ligne OK: par droit
+databricks bundle run grant_app_access_dev -t dev --profile DEV
+
+# 2. migrations du schéma Lakebase (idempotentes)
+databricks bundle run migrate_lakebase_dev -t dev --profile DEV
+
+# 3. export de la base Lakebase DEV vers le volume staging
+databricks bundle run lakebase_export_dev_to_volume -t dev --profile DEV
+
+# 4. import des tables de chat de l'UAT dans dev_landingzone.qualibot (chat_*, feedbacks...); n'écrit pas dans chunks
+databricks bundle run lakebase_import_uat_to_dev -t dev --profile DEV
+
+# 5. notation qualité : 5 tours seulement (appels LLM payants)
+databricks bundle run score_production_qa -t dev --profile DEV --notebook-params test_limit=5
+
+# 6. arrêt puis démarrage de l'app (le job d'arrêt de nuit et celui de reprise du week-end)
+databricks bundle run apps_stop_nightly_dev -t dev --profile DEV
+(databricks apps get qualibot --profile DEV -o json | ConvertFrom-Json).compute_status.state     # attendu : STOPPED
+databricks bundle run qualibot_start_weekend_dev -t dev --profile DEV
+(databricks apps get qualibot --profile DEV -o json | ConvertFrom-Json).compute_status.state     # attendu : ACTIVE
+```
+
+Si un job échoue, l'erreur est dans l'UI Jobs DEV, onglet **Runs**, cellule en rouge : cherchez `NameError`, `ModuleNotFoundError`, `No module named 'ops_config'`. Si `--notebook-params` est refusé, lancez `score_production_qa` depuis l'UI avec le widget `test_limit` à 5.
+
+### 0.5 Pipeline de parsing
+
+Tâche par tâche, sur les vraies tables. Seulement si l'état du pipeline existe (voir 0.2) :
+
 ```powershell
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
@@ -51,38 +133,66 @@ databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_im
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 5_sync_index
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
 ```
-Attendu, sur des tables à jour (incrémental) :
-- `3_parse` : `[SCOPE] ... to scan=0` (ou quelques IDDOC), `[SELECT] 0 files selected`, puis `[GHOST GUARD] All SUCCESS docs have chunks - OK.` ; aucune erreur.
-- `5_sync_index` : une ligne `sync triggered: chunks_index` puis `done`.
-- `6_update_kb_metadata` : `doc_catalog N -> N documents`.
 
-Puis **un vrai parsing** sans toucher aux vraies tables (suffixe `_test`, 2 ou 3 IDDOC pris dans `dev_landingzone.qualibot.parse_manifest`) :
+Attendu (tables à jour) : `3_parse` journalise `[SCOPE] ... to scan=0` et `[GHOST GUARD] All SUCCESS docs have chunks - OK.`; `5_sync_index` affiche `sync triggered`; `6_update_kb_metadata` affiche `doc_catalog N -> N documents`.
+
+Test de parsing réel, **sans toucher à vos tables** (suffixe `_test`). Choisissez 2 ou 3 IDDOC :
+
+```sql
+SELECT IDDOC, ref FROM dev_landingzone.qualibot.parse_manifest WHERE parse_content ORDER BY doc_date DESC LIMIT 3;
+```
+
 ```powershell
-databricks bundle deploy -t dev --profile DEV --var="parsing_table_suffix=_test" --var="parsing_parse_filter=<IDDOC1>,<IDDOC2>" --var="parsing_run_mode=full"
+$ids = "<IDDOC1>,<IDDOC2>"
+databricks bundle deploy -t dev --profile DEV --var="parsing_table_suffix=_test" --var="parsing_parse_filter=$ids" --var="parsing_run_mode=full"
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 3_parse
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_images
 ```
-Vérifier dans `dev_landingzone.qualibot` : `chunks_test`, `processed_files_test`, `image_metadata_test` ont des lignes pour ces IDDOC (`parse_status = 'SUCCESS'`), et le journal de `3_parse` montre le retry et l'écriture.
-**Ensuite remettre la configuration normale** (sinon le prochain run écrit dans `_test`) :
+
+```sql
+SELECT parse_status, count(*) FROM dev_landingzone.qualibot.processed_files_test GROUP BY 1;
+SELECT IDDOC, count(*) AS passages, max(chunk_token_count) AS jetons_max FROM dev_landingzone.qualibot.chunks_test GROUP BY 1;
+```
+
+Attendu : `SUCCESS` pour vos IDDOC, des passages avec `jetons_max` ≈ 450. Puis **remettre la configuration normale et nettoyer** :
+
 ```powershell
 databricks bundle deploy -t dev --profile DEV
 ```
-Et supprimer les tables `*_test` : `SHOW TABLES IN dev_landingzone.qualibot LIKE '*_test'`, puis `DROP TABLE` sur chacune.
 
-**0.6 Déployer l'app** (reconstruit le client : c'est ce qui met `bun.lock` et `client/out/` à jour)
-```powershell
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
-git status   # client/bun.lock et client/out/ ont changé : les commiter
+```sql
+DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_test;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.processed_files_test;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.image_metadata_test;
+DROP TABLE IF EXISTS dev_landingzone.qualibot._pipeline_checkpoint_test;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.parse_manifest_test;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.category_reference_test;
 ```
 
-**0.7 Tester l'app DEV** (ouvrir l'URL de l'app)
-- Chat : une question en ALL, une en AS, une en IS; une question hors sujet (refus); une question en espagnol; la réponse cite des documents cliquables.
-- Compare : charger deux révisions d'un même document; **Change Summary** (texte) et **Change Table** (tableau) se génèrent; voter 👍 puis commenter (c'est le nouveau composant `CardFeedback`) sur les deux cartes; bouton Export Excel / Download PDF; résumé d'un seul document; **Judge Impacted Docs** (recherche d'impact) avec son vote par document; historique d'une comparaison; chat partagé (lien « Share » ouvert dans une fenêtre privée).
-- Logs de l'app (UI Apps > Logs) : aucune stack trace au démarrage; `doc_catalog: loaded N documents from Lakebase`.
+(Si `SHOW TABLES IN dev_landingzone.qualibot LIKE '*_test'` en montre d'autres, supprimez-les aussi.)
 
-**0.8 Revenir vers moi avec** : la sortie de `bundle validate`, l'erreur éventuelle de chaque pas, et un « tout est vert » si c'est le cas. Je coche alors les sections 1 à 6 ci-dessous et je mets les blocs concernés d'`operations_dev.md` à jour (daté).
+### 0.6 Déployer l'app
+
+Reconstruit le client, ce qui régénère `client/bun.lock` et `client/out/` :
+
+```powershell
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+git status      # client/bun.lock et client/out/ ont changé : les commiter
+databricks apps logs qualibot --profile DEV
+```
+
+Dans les logs : `Starting in production mode`, `Lakebase ready`, `doc_catalog: loaded N documents from Lakebase`, aucune stack trace.
+
+### 0.7 Tester l'app (URL de `databricks apps get`)
+
+- **Chat** : une question en ALL, une en AS, une en IS; une hors sujet (refus); une en espagnol; les documents cités sont cliquables.
+- **Compare** : deux révisions d'un même document; Change Summary et Change Table; 👍 puis commentaire sur chacune des deux cartes; export Excel et PDF; résumé d'un seul document; **Judge Impacted Docs** et son vote par document; History (recharger une comparaison); lien « Share » d'un chat ouvert en navigation privée.
+
+### 0.8 Me renvoyer
+
+La sortie de 0.2 (PowerShell et SQL), puis l'erreur de chaque pas qui échoue, ou « tout est vert ». Je coche alors les sections 1 à 6 et je mets `operations_dev.md` à jour (daté).
 
 ## 1. Rangement de `utils/` (2026-10-08)
 
