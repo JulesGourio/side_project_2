@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
@@ -536,6 +537,9 @@ async def run_impact_search(
 
     async def _one(cand: Dict[str, Any]) -> Dict[str, Any]:
         async with sem:
+            # Judge trace (saved in impact_document_results): time from the first call to the
+            # verdict, retries included, number of calls, tokens of the successful call.
+            started = time.monotonic()
             last_err: Exception | None = None
             budget = max_tokens
             for attempt in range(_JUDGE_RETRIES + 1):
@@ -544,7 +548,9 @@ async def run_impact_search(
                     res = await _judge(host, token, llm_endpoint, changes_text, cand, budget)
                     usage['input_tokens'] += res['input_tokens']
                     usage['output_tokens'] += res['output_tokens']
-                    return _judged_doc(cand, res['judgment'], archive_before)
+                    return {**_judged_doc(cand, res['judgment'], archive_before),
+                            'judge_ms': int((time.monotonic() - started) * 1000), 'judge_attempts': attempt + 1,
+                            'input_tokens': res['input_tokens'], 'output_tokens': res['output_tokens']}
                 except Exception as e:  # noqa: BLE001 — one bad candidate must not sink the search
                     last_err = e
                     if isinstance(e, JudgeTruncated):
@@ -553,7 +559,9 @@ async def run_impact_search(
                         await asyncio.sleep(1.0)
             logger.warning(f'impact judge failed for {cand["ref"]}: {last_err}')
             return {**_doc_base(cand, archive_before), 'judged': True, 'status': 'error', 'impacted': False,
-                    'confidence': '', 'reason': f'Judgment failed: {last_err}', 'sections': [], 'passages': []}
+                    'confidence': '', 'reason': f'Judgment failed: {last_err}', 'sections': [], 'passages': [],
+                    'error_type': type(last_err).__name__,
+                    'judge_ms': int((time.monotonic() - started) * 1000), 'judge_attempts': _JUDGE_RETRIES + 1}
 
     # Explicit tasks, cancelled if the consumer goes away: with bare coroutines
     # a closed browser tab left every remaining judge call running (and billed).

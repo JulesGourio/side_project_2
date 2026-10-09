@@ -2,15 +2,17 @@
 -- Thresholds depend on the traffic: at low volume one failure is a large percentage.
 -- Alert condition: alert_triggered = 1.
 -- Reads the Delta copy of chat_messages (`lakebase_export_*` + import jobs): the alert is only as fresh as that copy.
+-- Turns the browser left before the end (status = 'aborted') are neither failures nor answers: left out.
+-- Per-step detail of each turn (degraded steps, durations): chat_turns, see docs/lakebase_schema.md.
 WITH stats AS (
   SELECT
     COUNT(*) AS total_messages,
     COUNT_IF(status = 'error') AS http_errors,
-    COUNT_IF(status != 'error' AND sources_json IS NULL) AS zero_doc_responses,
+    COUNT_IF(status = 'ok' AND sources_json IS NULL) AS zero_doc_responses,
     ROUND(COUNT_IF(status = 'error') * 100.0 / NULLIF(COUNT(*), 0), 1) AS http_error_rate_pct,
-    ROUND(COUNT_IF(status != 'error' AND sources_json IS NULL) * 100.0 / NULLIF(COUNT(*), 0), 1) AS zero_doc_rate_pct
+    ROUND(COUNT_IF(status = 'ok' AND sources_json IS NULL) * 100.0 / NULLIF(COUNT(*), 0), 1) AS zero_doc_rate_pct
   FROM dev_landingzone.qualibot.chat_messages
-  WHERE role = 'assistant'
+  WHERE role = 'assistant' AND status != 'aborted'
     AND TRY_CAST(created_at AS TIMESTAMP) >= current_timestamp() - INTERVAL 1 HOUR
 )
 SELECT

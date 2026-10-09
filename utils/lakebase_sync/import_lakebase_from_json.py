@@ -100,11 +100,21 @@ def main() -> None:
                 )
             rows = [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines() if line.strip()]
             with conn.cursor() as cur:
+                # JSON/JSONB columns (chat_turns.config, chat_retrieved_chunks.hits, errors.context…)
+                # come back from the export as dicts/lists: psycopg2 cannot adapt a dict and would
+                # send a list as a Postgres ARRAY, so they are wrapped explicitly.
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = %s AND data_type IN ('json', 'jsonb')",
+                    (table,),
+                )
+                json_columns = {row[0] for row in cur.fetchall()}
                 cur.execute(f'DELETE FROM "{table}"')
                 if rows:
                     columns = list(rows[0].keys())
                     col_list = ", ".join(f'"{c}"' for c in columns)
-                    values = [[r.get(c) for c in columns] for r in rows]
+                    values = [[psycopg2.extras.Json(r[c]) if c in json_columns and r.get(c) is not None
+                               else r.get(c) for c in columns] for r in rows]
                     psycopg2.extras.execute_values(cur, f'INSERT INTO "{table}" ({col_list}) VALUES %s', values)
                 # Explicit-id inserts don't advance SERIAL sequences — without this,
                 # the app's next INSERT reuses an id already imported and hits a

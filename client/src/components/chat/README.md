@@ -102,10 +102,18 @@ user_id = $2`.
   (never physically removed, so conversations stay traceable for audit);
   `share_token` set once the owner shares it (see "Sharing a conversation").
 - **`chat_messages`** — one row per turn side (`role`: `user`/`assistant`),
-  storing `content` (with citation markers baked in), `trace_id`,
-  `tool_name`/`tool_query`/`tool_result`, `reasoning_steps`, `sources_json`
-  (`[{rank, title, url, n}]`), `status` (`ok`/`error`), `division`,
-  `question_lang`. Same soft-delete pattern as sessions.
+  storing `content` (with citation markers baked in), `trace_id` (= the turn's
+  `chat_turns.trace_id`), `sources_json` (`[{rank, title, url, n}]`), `status`
+  (`ok`/`error`/`aborted`, only `ok` is shown), `division`, `question_lang`.
+  Same soft-delete pattern as sessions. `tool_name`/`tool_query`/`tool_result`/
+  `reasoning_steps` belong to the former Knowledge Assistant: no longer written
+  since 2026-10-09, kept for the history of its turns.
+- **`chat_turns`** / **`chat_retrieved_chunks`** — one row per turn (every step,
+  its duration, the configuration it should have run with, the models that
+  answered, `ok`/`degraded`/`error`/`aborted` + warning codes) and one row per
+  passage retrieved for it, with its text. Filled by `services/turn_log.py`;
+  failures and degraded steps also go to `errors`. Reference:
+  `docs/lakebase_schema.md`.
 - **`chat_feedbacks`** — thumbs up/down + optional comment per message.
 - **`knowledge_base_metadata`** — single-row table holding the "documents as
   of" date shown in the UI toolbar; updated manually after each knowledge
@@ -263,11 +271,11 @@ CREATE TABLE chat_messages (
     workspace_url   TEXT,
     role            TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content         TEXT NOT NULL,
-    trace_id        TEXT,             tool_name  TEXT,   tool_query TEXT,
-    tool_result     TEXT,             reasoning_steps TEXT,
-    endpoint_name   TEXT,
+    trace_id        TEXT,             -- = chat_turns.trace_id (vsi-…)
+    tool_name  TEXT, tool_query TEXT, tool_result TEXT, reasoning_steps TEXT,  -- KA only, no longer written
+    endpoint_name   TEXT,             -- engine label vsi-all / vsi-as / vsi-is
     sources_json    TEXT,             -- JSON: [{rank, title, url, n}], replaces a since-removed chat_sources table
-    status          TEXT NOT NULL DEFAULT 'ok',  -- 'ok' | 'error'
+    status          TEXT NOT NULL DEFAULT 'ok',  -- 'ok' | 'error' | 'aborted'
     error_msg       TEXT,
     division        TEXT NOT NULL DEFAULT 'ALL',
     question_lang   TEXT,             -- ISO 639-1; empty when the bridge is disabled/undetected

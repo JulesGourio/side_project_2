@@ -320,3 +320,15 @@ Les 17 jobs déclarés par cible dans `databricks.yml` sont maintenant dans `res
 
 Tout job du bundle porte maintenant `project: Qualibot` (il manquait sur `score_production_qa` et `lakebase_import_uat_to_dev`) ; au prochain `bundle deploy -t dev` : 2 jobs modifiés.
 Alertes : `utils/alerts/` (4 requêtes + README avec la création pas à pas). À créer à la main dans Databricks SQL, rien ne les déploie.
+## 11. Journal Lakebase des requêtes (2026-10-09)
+
+Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `errors`, `llm_requests`,
+`impact_requests`, `impact_document_results` (créées par l'app au démarrage ; référence
+`docs/lakebase_schema.md`).
+
+- [ ] App DEV redéployée, puis `operations_dev.md` bloc **L** (L1, L2 : une ligne `chat_turns` par question,
+  passages dans `chat_retrieved_chunks`).
+- [ ] Une comparaison + « Judge Impacted Docs » : dans Lakebase, la dernière ligne `impact_requests` a
+  `status = 'ok'` et `search_ms` / `judge_ms` remplis ; la dernière `llm_requests` a `status` et `total_ms`.
+- [ ] `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` puis `score_production_qa` (DEV) avec `enable_retrieval=true` :
+  les tours `vsi-…` ont `retrieval_source = logged`.

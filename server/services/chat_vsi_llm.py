@@ -34,7 +34,9 @@ What is retried where:
 
 The output is the event stream of ``streaming.stream_analysis`` (text deltas, ``usage``,
 ``warning``, ``error``, ``[DONE]``, keepalive comments) plus one ``llm`` event before
-``[DONE]``: the endpoint that answered and every attempt (logged, saved in metadata).
+``[DONE]``: the endpoint that answered, every attempt, the wait for a free slot
+(``queue_wait_ms``), ``truncated``, ``continuations`` and ``interrupted`` (part of the answer
+out, no endpoint could finish it) — saved in Lakebase ``chat_turns`` by the chat engine.
 """
 
 import asyncio
@@ -303,6 +305,7 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
                         max_tokens: int, operation: str = 'Chat') -> AsyncGenerator[str, None]:
     """Stream the answer of the first endpoint of ``endpoints`` that works (see module doc)."""
     sem = _semaphore()
+    queued_at = time.monotonic()
     if sem is not None and sem.locked():
         logger.warning('chat_vsi_llm: %d answers already running — this one waits', max_concurrent_answers())
     if sem is not None:
@@ -326,8 +329,9 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
         if sem is not None and not released:
             released = True
             sem.release()
+    queue_wait_ms = int((time.monotonic() - queued_at) * 1000)
     try:
-        async for event in _stream_answer(host, token, endpoints, messages, max_tokens, operation):
+        async for event in _stream_answer(host, token, endpoints, messages, max_tokens, operation, queue_wait_ms):
             # Callers stop reading at [DONE] or at an error: free the slot before they do,
             # not when the abandoned generator is garbage-collected.
             if event.startswith(('data: [DONE]', 'data: {"type": "error"')):
@@ -338,7 +342,7 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
 
 
 async def _stream_answer(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
-                         max_tokens: int, operation: str) -> AsyncGenerator[str, None]:
+                         max_tokens: int, operation: str, queue_wait_ms: int = 0) -> AsyncGenerator[str, None]:
     started = time.monotonic()
     chain = _dedup(endpoints)
     given_up: set = set()                       # endpoints not retried this turn
@@ -422,7 +426,8 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
     if usage['input_tokens'] or usage['output_tokens']:
         yield _event({'type': 'usage', **usage, 'total_tokens': usage['input_tokens'] + usage['output_tokens']})
     yield _event({'type': 'llm', 'endpoint': answered_by, 'fallback': bool(answered_by and answered_by != chain[0]),
-                  'attempts': attempts})
+                  'attempts': attempts, 'queue_wait_ms': queue_wait_ms, 'truncated': truncated,
+                  'continuations': continuations, 'interrupted': bool(written and not answered_by)})
     if not answered_by and not written:
         logger.error('chat_vsi_llm: no endpoint answered (%s) after %.0f s: %s', ', '.join(chain),
                      time.monotonic() - started, attempts)
@@ -448,10 +453,14 @@ def _message_text(content: Any) -> str:
 
 
 async def complete(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
-                   max_tokens: int, timeout_s: float = 30.0) -> Tuple[str, str]:
+                   max_tokens: int, timeout_s: float = 30.0,
+                   info: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
     """(text, endpoint) of the first endpoint that returns non-empty text; two passes over the
     chain, ``timeout_s`` per call and 2 x ``timeout_s`` in all. Raises the last ``LlmFailure``
-    when none does."""
+    when none does. ``info``, when given, receives ``attempts`` (every call: endpoint, outcome,
+    status, seconds) and the ``usage`` of the call that answered."""
+    info = {} if info is None else info
+    attempts = info.setdefault('attempts', [])
     last: Optional[LlmFailure] = None
     given_up: set = set()
     deadline = time.monotonic() + 2 * timeout_s
@@ -462,6 +471,7 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
             left = deadline - time.monotonic()
             if left < 2:
                 raise last or LlmFailure('timeout', 'no time left')
+            t0 = time.monotonic()
             try:
                 async with _client(httpx.Timeout(min(timeout_s, left), connect=10.0)) as client:
                     resp = await client.post(
@@ -471,9 +481,14 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
                         headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
                 if resp.status_code != 200:
                     raise _failure_for_status(resp, resp.text)
-                text = _message_text(resp.json()['choices'][0]['message'].get('content')).strip()
+                body = resp.json()
+                text = _message_text(body['choices'][0]['message'].get('content')).strip()
                 if not text:
                     raise LlmFailure('empty', 'empty completion')
+                u = body.get('usage') or {}
+                inp, out = u.get('prompt_tokens') or 0, u.get('completion_tokens') or 0
+                info['usage'] = {'input_tokens': inp, 'output_tokens': out, 'cost_eur': _cost_eur(endpoint, inp, out)}
+                attempts.append({'endpoint': endpoint, 'outcome': 'ok', 's': round(time.monotonic() - t0, 1)})
                 return text, endpoint
             except httpx.TimeoutException as exc:
                 last = LlmFailure('timeout', str(exc)[:200])
@@ -483,6 +498,8 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
                 last = LlmFailure('stream_error', f'unexpected reply: {exc}'[:200])
             except LlmFailure as exc:
                 last = exc
+            attempts.append({'endpoint': endpoint, 'outcome': last.kind, 'status': last.status,
+                             's': round(time.monotonic() - t0, 1)})
             logger.warning('chat_vsi_llm: %s failed for a short call (%s %s)', endpoint, last.kind, last.status or '')
             _cool(endpoint, _cooldown_for(last.kind))
             if last.kind in _FINAL_KINDS:

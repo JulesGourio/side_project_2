@@ -1,6 +1,5 @@
 """Chat router — conversational interface answered by the Vector Search engine (services/chat_vsi.py)."""
 
-import asyncio
 import json
 import logging
 import os
@@ -9,7 +8,7 @@ import secrets
 import traceback
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -17,13 +16,14 @@ from pydantic import BaseModel
 
 from ..services.chat_vsi import normalize_division, stream_chat_vsi
 from ..services.doc_catalog import augment_sources
-from ..services.lakebase import get_pool, store_error, upsert_user
+from ..services.lakebase import get_pool, store_chat_turn, upsert_user
 from ..services.translation_bridge import (
     ENABLED as TRANSLATE_BRIDGE_ENABLED,
     answer_language as answer_language_for,
     translate_answer_back,
     translate_question_to_en,
 )
+from ..services.turn_log import INFO, TurnLog
 from ..services.user import get_capabilities, get_user_identity, get_workspace_url, require_chat
 
 logger = logging.getLogger(__name__)
@@ -227,21 +227,22 @@ async def _save_turn(
     assistant_content: str,
     sources: Optional[list] = None,
     trace_id: str = '',
-    tool_name: str = '',
-    tool_query: str = '',
-    tool_result: str = '',
-    reasoning_steps: Optional[list] = None,
     email: Optional[str] = None,
     endpoint_name: str = '',
     status: str = 'ok',
     error_msg: str = '',
     division: str = 'ALL',
     question_lang: str = '',
-) -> Optional[int]:
-    """Persist user + assistant messages and retrieval sources; return assistant message DB id.
+    log: Optional[TurnLog] = None,
+) -> Tuple[Optional[int], Optional[int]]:
+    """Persist user + assistant messages and retrieval sources; return their ids
+    (user message, assistant message), (None, None) when the save failed.
 
-    A turn is saved even when it failed (``status='error'``) so the user's
-    question — and the reason it broke — is always traceable in the database.
+    A turn is saved even when it failed (``status='error'``) or the browser left
+    (``'aborted'``) so the user's question — and the reason it broke — is always
+    traceable in the database. Only ``'ok'`` turns are shown in the history.
+    The retrieval itself (queries, passages, models, durations) is saved by
+    ``store_chat_turn`` in chat_turns, under the same ``trace_id``.
     """
     # Thread title from the user's question; _strip_division only matters for legacy turns carrying a [Division: …]
     # prefix.
@@ -251,7 +252,6 @@ async def _save_turn(
     division = (division or 'ALL').upper()
     if division == 'ALL':
         division = _detect_division(user_content)
-    reasoning_str = '\n---\n'.join(reasoning_steps) if reasoning_steps else None
     # Consulted documents are stored as one compact JSON blob on the assistant message (rank, title, url), de-
     # duplicated by title in order.
     sources_payload: list[dict] = []
@@ -281,33 +281,35 @@ async def _save_turn(
                 workspace_url=workspace_url or None,
             )
             await _upsert_session(conn, session_id, user_id, workspace_id, workspace_url, name)
-            await conn.execute(
-                '''
-                INSERT INTO chat_messages (session_id, user_id, workspace_id, workspace_url, role, content, status, division, question_lang)
-                VALUES ($1, $2, $3, $4, 'user', $5, $6, $7, $8)
-                ''',
-                session_id, user_id, workspace_id, workspace_url, user_content, status or 'ok', division, question_lang or None,
-            )
-            row = await conn.fetchrow(
+            user_msg_id = await conn.fetchval(
                 '''
                 INSERT INTO chat_messages
-                    (session_id, user_id, workspace_id, workspace_url, role, content,
-                     trace_id, tool_name, tool_query, tool_result, reasoning_steps,
-                     endpoint_name, sources_json, status, error_msg, division, question_lang)
-                VALUES ($1, $2, $3, $4, 'assistant', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                    (session_id, user_id, workspace_id, workspace_url, role, content, trace_id,
+                     status, division, question_lang)
+                VALUES ($1, $2, $3, $4, 'user', $5, $6, $7, $8, $9)
                 RETURNING id
                 ''',
-                session_id, user_id, workspace_id, workspace_url, assistant_content,
-                trace_id or None, tool_name or None, tool_query or None,
-                tool_result or None, reasoning_str, endpoint_name or None, sources_json,
-                status or 'ok', (error_msg or None) and error_msg[:2000], division, question_lang or None,
+                session_id, user_id, workspace_id, workspace_url, user_content, trace_id or None,
+                status or 'ok', division, question_lang or None,
             )
-            msg_id = row['id'] if row else None
-
-        return msg_id
+            assistant_msg_id = await conn.fetchval(
+                '''
+                INSERT INTO chat_messages
+                    (session_id, user_id, workspace_id, workspace_url, role, content, trace_id,
+                     endpoint_name, sources_json, status, error_msg, division, question_lang)
+                VALUES ($1, $2, $3, $4, 'assistant', $5, $6, $7, $8, $9, $10, $11, $12)
+                RETURNING id
+                ''',
+                session_id, user_id, workspace_id, workspace_url, assistant_content, trace_id or None,
+                endpoint_name or None, sources_json, status or 'ok',
+                (error_msg or None) and error_msg[:2000], division, question_lang or None,
+            )
+        return user_msg_id, assistant_msg_id
     except Exception as exc:
         logger.warning('Chat DB save failed: %s', exc)
-        return None
+        if log is not None:
+            log.issue('persist_failed', 'persist', f'chat_messages not saved: {exc}', error_type=type(exc).__name__)
+        return None, None
 
 
 # --- Endpoints ---
@@ -317,7 +319,8 @@ async def _save_turn(
 async def chat_ws(websocket: WebSocket):
     """One chat turn over a WebSocket (avoids Databricks Apps proxy buffering), answered by
     the Vector Search engine (``stream_chat_vsi``); then citation markers, catalog sources,
-    translation back and persistence."""
+    translation back and persistence. Every turn that reached the engine — answered, failed or
+    left by the browser — is logged in chat_turns (+ chat_retrieved_chunks, errors) once over."""
     await websocket.accept()
     route = '/api/chat/ws'
 
@@ -348,6 +351,7 @@ async def chat_ws(websocket: WebSocket):
         await websocket.close()
         return
 
+    log = TurnLog()
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in data.get('messages', [])])
     session_id = data.get('session_id') or str(uuid.uuid4())
     division = (data.get('division') or 'ALL').upper()
@@ -363,62 +367,73 @@ async def chat_ws(websocket: WebSocket):
     workspace_url = get_workspace_url()
 
     user_content = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), '')
-    logger.info('chat turn [ws]: division=%s endpoint=%s session=%s user=%s msgs=%d q=%r',
+    logger.info('chat turn [ws]: division=%s endpoint=%s session=%s user=%s msgs=%d q=%r trace_id=%s',
                 division, endpoint, session_id, identity.get('email') or user_id,
-                len(messages), user_content[:160])
+                len(messages), user_content[:160], log.trace_id)
+    log.data.update({'session_id': session_id, 'user_id': user_id, 'workspace_id': workspace_id,
+                     'division': normalize_division(division),
+                     'question': user_content, 'history_messages': len(messages)})
 
     accumulated: list[str] = []
     collected_sources: list = []
     collected_citations: list = []
-    collected_meta: dict = {}
-    error_occurred = False
     error_text = ''
     translate_ctx = None
-    messages_for_engine = messages
-    if TRANSLATE_BRIDGE_ENABLED and user_content:
-        en_question, translate_ctx = await translate_question_to_en(user_content, host, token)
-        if translate_ctx.needs_translation:
-            messages_for_engine = [dict(m) for m in messages]
-            for i in range(len(messages_for_engine) - 1, -1, -1):
-                if messages_for_engine[i]['role'] == 'user':
-                    messages_for_engine[i]['content'] = en_question
-                    break
-            logger.info('chat translate-bridge [ws]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
-
-    # The language the answer must be in, named in the prompt's language reminder: English
-    # when the bridge translated the question (it translates the answer back), else the
-    # detected French/English, else a local guess.
-    answer_language = answer_language_for(translate_ctx, user_content) if user_content else None
-    answer_stream = stream_chat_vsi(host, token, division, _with_today_date(messages_for_engine),
-                                    answer_language=answer_language)
+    saved: Tuple[Optional[int], Optional[int]] = (None, None)
+    answer_stream = None
+    outcome = 'error'                            # 'ok' once the answer is saved; 'aborted' if the browser left
 
     async def _persist(status: str, content: str) -> Optional[int]:
-        """Persist the turn (ok or error). The question is saved even on
-        failure, so it stays traceable. Best-effort."""
+        """Persist the turn's messages (ok, error or aborted) and return the
+        assistant message id. The question is saved even on failure, so it
+        stays traceable. Best-effort."""
+        nonlocal saved
         pool = get_pool()
         if not (pool and user_content):
             return None
-        return await _save_turn(
-            pool, session_id, user_id, workspace_id, workspace_url,
-            user_content, content,
-            collected_sources,
-            collected_meta.get('trace_id', ''),
-            collected_meta.get('tool_name', ''),
-            collected_meta.get('tool_query', ''),
-            collected_meta.get('tool_result', ''),
-            collected_meta.get('reasoning_steps', []),
-            email=identity.get('email'),
-            endpoint_name=endpoint,
-            status=status,
-            error_msg=error_text,
-            division=division,
-            question_lang=translate_ctx.lang_code if translate_ctx else '',
-        )
+        with log.timed('persist'):
+            saved = await _save_turn(
+                pool, session_id, user_id, workspace_id, workspace_url,
+                user_content, content,
+                collected_sources,
+                log.trace_id,
+                email=identity.get('email'),
+                endpoint_name=endpoint,
+                status=status,
+                error_msg=error_text,
+                division=division,
+                question_lang=translate_ctx.lang_code if translate_ctx else '',
+                log=log,
+            )
+        return saved[1]
 
     try:
+        messages_for_engine = messages
+        if TRANSLATE_BRIDGE_ENABLED and user_content:
+            with log.timed('translate_in'):
+                en_question, translate_ctx = await translate_question_to_en(user_content, host, token)
+            log.data['question_lang'] = translate_ctx.lang_code
+            if translate_ctx.error:
+                log.issue('translate_in_failed', 'translate_in', translate_ctx.error)
+            if translate_ctx.needs_translation:
+                log.data['question_en'] = en_question
+                messages_for_engine = [dict(m) for m in messages]
+                for i in range(len(messages_for_engine) - 1, -1, -1):
+                    if messages_for_engine[i]['role'] == 'user':
+                        messages_for_engine[i]['content'] = en_question
+                        break
+                logger.info('chat translate-bridge [ws]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
+
+        # The language the answer must be in, named in the prompt's language reminder: English
+        # when the bridge translated the question (it translates the answer back), else the
+        # detected French/English, else a local guess.
+        answer_language = answer_language_for(translate_ctx, user_content) if user_content else None
+        answer_stream = stream_chat_vsi(host, token, division, _with_today_date(messages_for_engine),
+                                        answer_language=answer_language, log=log)
+
         async for chunk in answer_stream:
             if chunk.startswith('data: [DONE]'):
-                if not error_occurred and user_content and accumulated:
+                if user_content and accumulated:
                     final_content = _apply_citation_markers(''.join(accumulated), collected_citations)
                     # Re-surface documents the answer names in prose but the
                     # endpoint never annotated, so they become clickable chips.
@@ -427,8 +442,14 @@ async def chat_ws(websocket: WebSocket):
                     # (catalog-resurfaced) stay numberless.
                     _number_sources(collected_sources, collected_citations)
                     if translate_ctx:
-                        final_content = await translate_answer_back(final_content, translate_ctx, host, token)
+                        with log.timed('translate_back'):
+                            final_content = await translate_answer_back(final_content, translate_ctx, host, token)
+                        log.data['answer_translated'] = translate_ctx.answer_translated
+                        if translate_ctx.answer_error:
+                            log.issue('translate_back_failed', 'translate_back', translate_ctx.answer_error)
+                    log.data['sources_count'] = len(collected_sources)
                     msg_id = await _persist('ok', final_content)
+                    outcome = 'ok'
                     logger.info('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
                                 division, endpoint, len(collected_sources), len(collected_citations))
                     await websocket.send_json({
@@ -438,19 +459,13 @@ async def chat_ws(websocket: WebSocket):
                         'content': final_content,
                         'sources': collected_sources,
                     })
-                elif not error_occurred:
+                else:
                     # The engine finished without any text and without an error: tell the browser the turn failed, or
                     # it stays on "Thinking".
                     error_text = 'No answer was produced. Please try again.'
                     logger.warning('chat turn empty [ws]: division=%s endpoint=%s',
                                    division, endpoint)
-                    asyncio.create_task(store_error(
-                        endpoint=route,
-                        error_type='EmptyAnswer',
-                        error_msg=f'{endpoint}: stream ended with no text',
-                        user_id=user_id,
-                        workspace_id=workspace_id or '',
-                    ))
+                    log.fail('llm', 'EmptyAnswer', f'{endpoint}: stream ended with no text')
                     await _persist('error', '')
                     await websocket.send_json({'type': 'error', 'error': error_text})
                 break
@@ -469,60 +484,66 @@ async def chat_ws(websocket: WebSocket):
             raw = chunk[6:].strip()
             try:
                 parsed = json.loads(raw)
-                t = parsed.get('type', '')
-                if t == 'response.output_text.delta':
-                    delta = parsed.get('delta', '')
-                    accumulated.append(delta)
-                    if translate_ctx and translate_ctx.needs_translation:
-                        # Never forward raw English to the client — the
-                        # client shows "Thinking" until the full answer is
-                        # translated in one pass and sent in the 'done' event.
-                        pass
-                    else:
-                        await websocket.send_json({'type': 'delta', 'delta': delta})
-                elif t == 'sources':
-                    srcs = parsed.get('sources')
-                    cits = parsed.get('citations')
-                    collected_sources = srcs if isinstance(srcs, list) else []
-                    collected_citations = cits if isinstance(cits, list) else []
-                elif t == 'metadata':
-                    collected_meta = parsed
-                elif t == 'error':
-                    error_occurred = True
-                    error_text = parsed.get('error', '')
-                    asyncio.create_task(store_error(
-                        endpoint=route,
-                        error_type=parsed.get('error_type', 'ChatLLMError'),
-                        error_msg=error_text,
-                        user_id=user_id,
-                        workspace_id=workspace_id or '',
-                    ))
-                    await _persist('error', ''.join(accumulated))
-                    await websocket.send_json({'type': 'error', 'error': parsed.get('error', 'Unknown error')})
-                    break
             except json.JSONDecodeError:
-                pass
+                continue
+            t = parsed.get('type', '')
+            if t == 'response.output_text.delta':
+                delta = parsed.get('delta', '')
+                accumulated.append(delta)
+                if translate_ctx and translate_ctx.needs_translation:
+                    # Never forward raw English to the client — the
+                    # client shows "Thinking" until the full answer is
+                    # translated in one pass and sent in the 'done' event.
+                    pass
+                else:
+                    await websocket.send_json({'type': 'delta', 'delta': delta})
+            elif t == 'sources':
+                srcs = parsed.get('sources')
+                cits = parsed.get('citations')
+                collected_sources = srcs if isinstance(srcs, list) else []
+                collected_citations = cits if isinstance(cits, list) else []
+            elif t == 'error':
+                error_text = parsed.get('error', '')
+                # The engine records its own failures; this covers any other.
+                if not log.error:
+                    log.fail('engine', parsed.get('error_type', 'ChatLLMError'), error_text,
+                             http_status=parsed.get('http_status') or 0)
+                await _persist('error', ''.join(accumulated))
+                await websocket.send_json({'type': 'error', 'error': parsed.get('error', 'Unknown error')})
+                break
 
     except WebSocketDisconnect:
         logger.info('Chat WebSocket disconnected during stream')
+        if outcome == 'ok':
+            log.issue('client_disconnected', 'ws', 'the browser left after the answer was saved', severity=INFO)
+        else:
+            outcome = 'aborted'
+            log.issue('client_disconnected', 'ws', 'the browser left before the end of the turn', severity=INFO)
+            await _persist('aborted', ''.join(accumulated))
     except Exception as exc:
         logger.error('Chat WebSocket error: %s', exc, exc_info=True)
-        error_occurred = True
-        error_text = str(exc)
-        asyncio.create_task(store_error(
-            endpoint=route,
-            error_type=type(exc).__name__,
-            error_msg=error_text,
-            user_id=user_id,
-            workspace_id=workspace_id or '',
-            stack_trace=traceback.format_exc(),
-        ))
-        await _persist('error', ''.join(accumulated))
-        try:
-            await websocket.send_json({'type': 'error', 'error': str(exc)})
-        except Exception:
-            pass
+        if outcome == 'ok':
+            # The answer is saved; only sending it failed (browser gone).
+            log.issue('send_failed', 'ws', f'{type(exc).__name__}: {exc}', severity=INFO)
+        else:
+            error_text = str(exc)
+            log.fail('ws', type(exc).__name__, error_text, stack_trace=traceback.format_exc())
+            await _persist('error', ''.join(accumulated))
+            try:
+                await websocket.send_json({'type': 'error', 'error': str(exc)})
+            except Exception:
+                pass
     finally:
+        if answer_stream is not None:
+            # Frees the engine's answer slot now, not when the generator is garbage-collected.
+            try:
+                await answer_stream.aclose()
+            except Exception:
+                pass
+        if user_content:
+            # After 'done' was sent: the user does not wait for this write.
+            log.finish(outcome)
+            await store_chat_turn(log, endpoint=route, user_message_id=saved[0], assistant_message_id=saved[1])
         try:
             await websocket.close()
         except Exception:

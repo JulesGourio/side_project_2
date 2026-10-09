@@ -1,12 +1,14 @@
 # Databricks notebook source
 # Loads only the chatbot-related JSON exports (chat_feedbacks, chat_messages,
-# chat_sessions) from the UAT staging volume into uat_landingzone.qualibot
-# Delta tables.  Runs as a second task in the lakebase_export_uat_to_volume
-# job, right after the export task that produces the JSON files.
+# chat_sessions, chat_turns, chat_retrieved_chunks, errors) from the UAT
+# staging volume into uat_landingzone.qualibot Delta tables.  Runs as a second
+# task in the lakebase_export_uat_to_volume job, right after the export task
+# that produces the JSON files.
 #
-# Consumer: the "Qualibot Usage Tracking" Lakeview dashboard (UAT workspace),
+# Consumers: the "Qualibot Usage Tracking" Lakeview dashboard (UAT workspace),
 # which reads uat_landingzone.qualibot.{chat_messages,chat_sessions,
-# chat_feedbacks}.
+# chat_feedbacks}; chat_turns / chat_retrieved_chunks / errors for per-step
+# durations, passages and failures (docs/lakebase_schema.md).
 import os
 from pathlib import PurePosixPath
 
@@ -17,9 +19,10 @@ SOURCE_EXPORT_DIR = os.getenv(
 )
 TARGET_CATALOG = os.getenv("TARGET_CATALOG", "uat_landingzone")
 TARGET_SCHEMA = os.getenv("TARGET_SCHEMA", "qualibot")
-# Only the three chatbot tables — the rest are either unused in UAT or
-# already served directly from Lakebase by the app.
-CHATBOT_TABLES = {"chat_feedbacks", "chat_messages", "chat_sessions"}
+# Only the chatbot tables (and errors, which holds the chat's failures) — the
+# rest are either unused in UAT or already served directly from Lakebase by the app.
+CHATBOT_TABLES = {"chat_feedbacks", "chat_messages", "chat_sessions", "chat_turns", "chat_retrieved_chunks",
+                  "errors"}
 
 
 def to_dbfs_path(path: str) -> str:
