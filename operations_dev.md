@@ -502,9 +502,12 @@ cours au plus, relances sur 429).
 - [x] **V3.2d.** Quota du modèle : workspace DEV → Serving → `databricks-gpt-6-luna` → section
   AI Gateway / Rate limits (si présente). M'envoyer la limite affichée (ou « aucune »).
   _(fait 2026-10-09 : 1 M tokens d'entrée/min, 100 k de sortie/min, mêmes limites pour les deux modèles)_
-- [ ] **V3.2e.** Comparer les réponses `chat` / `rawfr` : notebook `pairwise_answers`, widgets
-  `indexes` = `chat,rawfr|rawon=fr`, `reference` = `databricks-gpt-6-luna@chat`,
-  `contenders` = `databricks-gpt-6-luna@rawfr`, `eval_id` = `passages-rawfr`, Run all.
+- [ ] **V3.2e.** `rawfr` est le défaut depuis 2026-10-09. Recopier `server/services/chat_vsi.py`,
+  `tests/test_chat_vsi.py`, `docs/chat_vsi_tests.md`, `CLAUDE.md`, `operations_dev.md`, puis
+  `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (sans `-SyncOnly` : l'app doit redémarrer).
+  Puis comparer les réponses ancien réglage / `rawfr` : notebook `pairwise_answers`, widgets
+  `indexes` = `rawall|rawon=question+fr+en,chat`, `reference` = `databricks-gpt-6-luna@rawall`,
+  `contenders` = `databricks-gpt-6-luna@chat`, `eval_id` = `passages-rawfr`, Run all.
   M'envoyer le tableau final (verdicts, tokens d'entrée et de sortie, latence).
 - [ ] **V3.3.** M'envoyer aussi la sortie de la cellule « The endpoint and the index » du notebook
   `load_test_vector_search` (type d'endpoint, `scaling_info`) et son troisième tableau (texte des refus).

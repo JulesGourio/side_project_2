@@ -17,7 +17,7 @@ Code : `server/services/chat_vsi.py` (+ `chat_vsi_llm.py`, `chat_vsi_titles.py`,
 |---|---|---|
 | Langue | fastText détecte la langue. Une question ni française ni anglaise est traduite en anglais (GPT-5.6 Luna, secours GPT-6 Luna) ; la réponse est retraduite | Juillet (`translation_bridge.py`) |
 | Réécriture | GPT-6 Luna (secours GPT-5.6 Luna) écrit une requête en français **et** une en anglais, acronymes développés | `u-bi`, `u-all-luna6` (journal § 2.3, § 5.6) |
-| Recherche | 3 requêtes (question, français, anglais), chacune HYBRID : 12 passages reclassés par le reranker de Vector Search (colonnes `REF`, `semantic_headers`, `chunk_text`) **plus** 10 passages bruts, fusionnés par rang | `union-ctx` (journal § 2.1, § 2.2) |
+| Recherche | 3 requêtes (question, français, anglais), chacune HYBRID : 12 passages reclassés par le reranker de Vector Search (colonnes `REF`, `semantic_headers`, `chunk_text`), **plus** 10 passages bruts sur la réécriture française seulement (`CHAT_VSI_RAW_ON=fr`, sur la question si la réécriture échoue), fusionnés par rang : 4 requêtes Vector Search | `union-ctx` (journal § 2.1, § 2.2) ; `rawfr` (journal § 5.8, 2026-10-09) |
 | Documents cités par REF | Jusqu'à 6 REF nommées dans la conversation : 8 passages de ces documents, placés en tête | `union-ctx-ref` |
 | Documents cités par titre | Titres du catalogue proches de la question : 3 documents, 6 passages, ajoutés à la fin. Le catalogue est la table Lakebase `doc_catalog`, réécrite après chaque run du pipeline depuis `parse_manifest` (seuls les documents présents dans l'index sont proposés) ; mesuré le 2026-10-07 avec l'ancien instantané `doc_catalog.json` | `u-title` |
 | Une langue par document | Q0102QP_GB et Q0102QP_BG ne prennent qu'une place | `u-1lang` |
@@ -93,7 +93,7 @@ Le code de chacune de ces options est dans `archive/chat_vsi_lab/`.
 | E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € | `archive/evaluation/rechunk_experiment.py`, widget `doc_cards` (désactivé) |
 | E2 — contexte par passage | Une ou deux phrases en tête de chaque passage pour le situer (méthode « Contextual Retrieval »). ≈ 50 € | Même notebook, widget `chunk_context` (désactivé) |
 | `v2c` — sans préfixe `[Source: …]` | Mesure l'effet du préfixe sur la recherche | Même notebook |
-| **Nombre de passages** (recherche mesurée le 2026-10-08, journal § 5.7 ; reste la comparaison des réponses) | Jusqu'à 3 × (12 reclassés + 10 bruts) = 66 passages, sans plafond. Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_VSI_RERANK_TOP_K`, `CHAT_VSI_RAW_TOP_K`, `CHAT_VSI_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
+| **Nombre de passages** (recherche mesurée le 2026-10-08, journal § 5.7 ; reste la comparaison des réponses) | Jusqu'à 3 × 12 reclassés + 10 bruts = 46 passages, sans plafond (66 avant `rawfr`). Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_VSI_RERANK_TOP_K`, `CHAT_VSI_RAW_TOP_K`, `CHAT_VSI_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
 | Pistes côté recherche R1 à R12 | Passages voisins, ordre du document, filtre par type, seuil « je ne sais pas »… | Journal § 4, rien de codé |
 | Documents d'avant 2018 | Leur fiche dans le chatbot (P11) | Décision métier ; pipeline prêt (`parsing_archive_notices_in_rag`) |
 | Numéros de page et de slide | P13, re-parsing GPU | Rien de codé |
@@ -1179,6 +1179,8 @@ par minute avant la limite.
 - `rawfren` sous `rawfr` sur le golden alors qu'il fait une requête de plus : sur 15 questions, des
   écarts de 2 à 3 points sont à la limite du bruit.
 - Le temps de recherche ne baisse pas : la réécriture domine, les requêtes partent en parallèle.
-- **Décision en attente** de la comparaison des réponses (`pairwise_answers`, `chat` contre `rawfr`),
-  qui donne aussi les tokens d'entrée et de sortie par réponse, donc la capacité réelle sous le quota.
+- **Décision (2026-10-09)** : `rawfr` devient le réglage par défaut (`CHAT_VSI_RAW_ON=fr`) ; si la
+  réécriture échoue, la recherche brute se fait sur la question. La comparaison des réponses
+  (`pairwise_answers`, `chat` = ancien réglage `rawall|rawon=question+fr+en` contre `rawfr`) reste à
+  faire pour confirmer et pour mesurer les tokens par réponse.
 

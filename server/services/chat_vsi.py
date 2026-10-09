@@ -4,10 +4,10 @@ What happens for each question (measures behind the configuration: ``docs/chat_v
 
 1. **Rewrite** — GPT-6 Luna turns the last question, with the conversation as context, into
    one standalone search query in French and one in English (acronyms expanded when certain).
-2. **Search** — three queries (the question as asked + the two rewrites), each run twice in
-   HYBRID mode on the single passage index: the top ``rerank_top_k()`` passages (12) reranked by
-   the Databricks reranker (reading REF, section headings and text) and the raw top
-   ``raw_top_k()`` (10). Everything is merged by best rank (``union``), then cut to
+2. **Search** — three queries (the question as asked + the two rewrites) in HYBRID mode on the
+   single passage index: for each, the top ``rerank_top_k()`` passages (12) reranked by the
+   Databricks reranker (reading REF, section headings and text); for the French rewrite only
+   (``raw_on()``), also the raw top ``raw_top_k()`` (10). Everything is merged by best rank (``union``), then cut to
    ``max_search_passages()`` (0 = no cap, the default). The chat's division (AS / IS) is a filter on
    the ``division`` column (ALL: no filter).
 3. **Named documents** — REFs named in the question or the earlier turns (MI-14242…) get their
@@ -151,12 +151,13 @@ def raw_top_k() -> int:
 
 
 _RAW_ON_ALL = ('question', 'fr', 'en')
+_RAW_ON = 'fr'                   # raw search on the French rewrite only (rawfr: as good, 4 queries instead of 6)
 
 
 def raw_on() -> List[str]:
     """Which queries also get a raw search: ``question`` (as asked), ``fr``, ``en`` (the
-    rewrites); all three by default. Fewer = fewer Vector Search queries per question."""
-    names = [n.strip().lower() for n in os.getenv('CHAT_VSI_RAW_ON', ','.join(_RAW_ON_ALL)).replace('+', ',').split(',')]
+    rewrites). Fewer = fewer Vector Search queries per question."""
+    names = [n.strip().lower() for n in os.getenv('CHAT_VSI_RAW_ON', _RAW_ON).replace('+', ',').split(',')]
     return [n for n in _RAW_ON_ALL if n in names]
 
 
@@ -558,6 +559,8 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             text = by_name[name]
             if text and text.casefold() not in {x.casefold() for x in raw_texts}:
                 raw_texts.append(text)
+        if raw_on() and not raw_texts:   # rewrite failed: the question keeps its raw search
+            raw_texts = [question]
         with log.timed('search'):
             rows = await search(host, token, index, queries, filters, raw_texts, log=log)
         over_cap: List[Dict[str, Any]] = []

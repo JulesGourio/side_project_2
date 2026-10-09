@@ -4,7 +4,7 @@ Coverage:
   - CitationStreamParser: marker split across chunks, grouped markers, unknown number,
     '[' that is not a marker, no citation, incomplete marker at end of stream; equivalence
     with the whole-text parse on the 21 real golden answers (tests/fixtures/chat_vsi_raw_answers.json)
-  - search: three queries x (reranked 12 + raw 10) merged by rank, division filter, partial
+  - search: three queries reranked 12 + raw 10 on the French rewrite, merged by rank, division filter, partial
     failures tolerated, reranker refused -> raw only, REF lookup first, title lookup appended,
     one language per document
   - stream_chat_vsi contract: deltas without markers, sources + citations, one metadata event
@@ -229,7 +229,8 @@ def test_three_queries_reranked_and_raw(monkeypatch):
     raw = [p for p in m['sent'] if 'reranker' not in p]
     assert len(reranked) == 3 and all(p['num_results'] == 12 for p in reranked)
     assert reranked[0]['reranker']['parameters']['columns_to_rerank'] == ['REF', 'semantic_headers', 'chunk_text']
-    assert len(raw) == 3 and all(p['num_results'] == 10 and p['query_type'] == 'HYBRID' for p in raw)
+    assert [p['query_text'] for p in raw] == ['qualification CND']               # raw on the French rewrite only
+    assert all(p['num_results'] == 10 and p['query_type'] == 'HYBRID' for p in raw)
     assert all('filters_json' not in p for p in m['sent'])                       # ALL: no division filter
 
 
@@ -274,11 +275,28 @@ def test_reranked_only_sends_no_raw_query(monkeypatch):
     assert len(m['sent']) == 3 and all('reranker' in p and p['num_results'] == 8 for p in m['sent'])
 
 
-def test_raw_search_only_on_the_first_queries(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_RAW_ON', 'fr')
+def test_raw_search_on_every_query_when_asked(monkeypatch):
+    monkeypatch.setenv('CHAT_VSI_RAW_ON', 'question,fr,en')
     _, m = _run(monkeypatch)
     raw = [p['query_text'] for p in m['sent'] if 'reranker' not in p]
-    assert raw == ['qualification CND'] and len([p for p in m['sent'] if 'reranker' in p]) == 3
+    assert sorted(raw) == sorted([QUESTION, 'qualification CND', 'NDT qualification'])
+
+
+def test_failed_rewrite_keeps_a_raw_search_on_the_question(monkeypatch):
+    found = {}
+
+    async def _go():
+        found.update(await chat_vsi.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
+    sent = []
+
+    def answer(p):
+        sent.append(p)
+        return [_row('a', 'A-1')]
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer, []))
+    with (patch.object(chat_vsi.chat_vsi_llm, 'complete', AsyncMock(side_effect=RuntimeError('down'))),
+          patch.object(chat_vsi, 'refs_named_in', lambda t: []), patch.object(chat_vsi, 'documents_titled', lambda t, l: [])):
+        asyncio.run(_go())
+    assert [p['query_text'] for p in sent if 'reranker' not in p] == [QUESTION]
 
 
 def test_reranked_only_with_reranker_refused_falls_back_to_raw(monkeypatch):
@@ -407,7 +425,7 @@ def test_turn_log_of_a_clean_turn(monkeypatch):
     d = log.data
     assert (d['fr_query'], d['en_query'], d['rewrite_ok'], d['rewrite_endpoint']) == \
         ('qualification CND', 'NDT qualification', True, 'databricks-gpt-6-luna')
-    assert (d['vs_calls_expected'], d['vs_calls_ok'], d['rerank_ok']) == (6, 6, True)
+    assert (d['vs_calls_expected'], d['vs_calls_ok'], d['rerank_ok']) == (4, 4, True)
     assert d['config']['rerank_top_k'] == 12 and d['index_name'] == 'cat.sch.chunks_index' and d['division'] == 'ALL'
     assert (d['passages_retrieved'], d['passages_sent'], d['documents_sent']) == (3, 3, 2)
     assert d['answer_endpoint'] == 'databricks-gpt-6-luna' and d['llm_fallback'] is False
@@ -419,7 +437,7 @@ def test_turn_log_of_a_clean_turn(monkeypatch):
     first = log.passages[0]
     assert (first['chunk_id'], first['ref'], first['kept'], first['cited'], first['doc_number'], first['source']) == \
         ('c1', 'QP-1518', True, True, 1, 'search')
-    assert {(h['q'], h['via']) for h in first['hits']} == {(q, via) for q in (0, 1, 2) for via in ('rerank', 'raw')}
+    assert {(h['q'], h['via']) for h in first['hits']} == {(q, 'rerank') for q in (0, 1, 2)} | {(1, 'raw')}
     assert [p['prompt_rank'] for p in log.passages] == [0, 2, 1]          # c1, c3 (QP-1518) before c2 (MR-1465)
     assert log.passages[1]['cited'] is False and log.passages[0]['chunk_text'] == 'passage 1'
 
@@ -428,7 +446,7 @@ def test_turn_log_partial_search_is_a_degraded_turn(monkeypatch):
     events, m = _run(monkeypatch, answer=lambda p: 503 if 'reranker' in p else DEFAULT_ROWS)
     log = m['log']
     assert 'error' not in _types(events)
-    assert (log.data['vs_calls_expected'], log.data['vs_calls_ok']) == (6, 3)
+    assert (log.data['vs_calls_expected'], log.data['vs_calls_ok']) == (4, 1)
     assert log.codes == ['vs_partial'] and log.issues[0]['http_status'] == 503
     assert log.issues[0]['context']['failed'] == 3 and log.finish('ok') == 'degraded'
 
