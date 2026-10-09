@@ -4,6 +4,86 @@ Chantier : moins de commentaires, plus de code mort, notebooks de parsing décou
 Rien n'a pu être exécuté sur Databricks depuis la machine de développement : tout ce qui suit
 est à rejouer sur **DEV** (`-t dev`) après un `bundle deploy`. Cocher et dater au fur et à mesure.
 
+## 0. Procédure complète de test sur DEV (à suivre dans l'ordre)
+
+PowerShell, profil CLI `DEV`. Cochez au fur et à mesure; si un pas échoue, envoyez-moi l'erreur et arrêtez-vous là.
+
+**0.1 Préparer** (dossier **vide**, des fichiers ont été déplacés et supprimés)
+```powershell
+# extraire le zip de la branche feature/chat-vsi-merged-on-impact-search dans un dossier vide, puis :
+cd <ce dossier>
+Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+databricks current-user me --profile DEV
+```
+
+**0.2 Cas où vous avez aussi supprimé des ressources DEV** : l'app, le projet Lakebase, les volumes ou les tables.
+Rien de ce qui suit ne les recrée seul : refaire d'abord `operations_dev.md` blocs **R** (rattacher l'app existante), **I** (infra : `bundle deploy`, binds), **E** (export du corpus UAT) puis **C** (job `copy_uat_to_dev`, qui recopie les tables et recrée l'index).
+Si vous n'avez supprimé que le code et les jobs, passez à 0.3.
+
+**0.3 Valider puis déployer les jobs et ressources**
+```powershell
+databricks bundle validate -t dev --profile DEV
+databricks bundle deploy   -t dev --profile DEV
+```
+Attendu : aucune erreur de chemin de notebook (tous les notebooks ont changé de dossier) et les anciens jobs sont inchangés.
+Si `validate` cite un fichier introuvable, notez son chemin : c'est un oubli de ma part.
+
+**0.4 Tester chaque job déplacé** (un par dossier de `utils/`) :
+```powershell
+databricks bundle run grant_app_access_dev     -t dev --profile DEV   # utils/grants        -> une ligne OK: par droit
+databricks bundle run migrate_lakebase_dev     -t dev --profile DEV   # utils/lakebase_sync -> migrations idempotentes
+databricks bundle run lakebase_export_dev_to_volume -t dev --profile DEV   # utils/lakebase_sync (export)
+databricks bundle run lakebase_import_uat_to_dev -t dev --profile DEV # utils/lakebase_sync (import)
+databricks bundle run score_production_qa      -t dev --profile DEV   # utils/evaluation
+databricks bundle run apps_stop_nightly_dev    -t dev --profile DEV   # utils/app_mgmt (arrête l'app !)
+databricks apps start qualibot --profile DEV                          # puis la relancer
+```
+Dans les logs de chaque exécution, cherchez `NameError`, `ModuleNotFoundError` et `No module named 'ops_config'`.
+`copy_uat_to_dev` (utils/dev_copy) est lourd : ne le lancer que si 0.2 est nécessaire.
+
+**0.5 Pipeline de parsing, tâche par tâche** (`3_parse` tourne sur GPU : démarrage de cluster de quelques minutes)
+```powershell
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 3_parse
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_images
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 5_sync_index
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
+```
+Attendu, sur des tables à jour (incrémental) :
+- `3_parse` : `[SCOPE] ... to scan=0` (ou quelques IDDOC), `[SELECT] 0 files selected`, puis `[GHOST GUARD] All SUCCESS docs have chunks - OK.` ; aucune erreur.
+- `5_sync_index` : une ligne `sync triggered: chunks_index` puis `done`.
+- `6_update_kb_metadata` : `doc_catalog N -> N documents`.
+
+Puis **un vrai parsing** sans toucher aux vraies tables (suffixe `_test`, 2 ou 3 IDDOC pris dans `dev_landingzone.qualibot.parse_manifest`) :
+```powershell
+databricks bundle deploy -t dev --profile DEV --var="parsing_table_suffix=_test" --var="parsing_parse_filter=<IDDOC1>,<IDDOC2>" --var="parsing_run_mode=full"
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 3_parse
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_images
+```
+Vérifier dans `dev_landingzone.qualibot` : `chunks_test`, `processed_files_test`, `image_metadata_test` ont des lignes pour ces IDDOC (`parse_status = 'SUCCESS'`), et le journal de `3_parse` montre le retry et l'écriture.
+**Ensuite remettre la configuration normale** (sinon le prochain run écrit dans `_test`) :
+```powershell
+databricks bundle deploy -t dev --profile DEV
+```
+Et supprimer les tables `*_test` : `SHOW TABLES IN dev_landingzone.qualibot LIKE '*_test'`, puis `DROP TABLE` sur chacune.
+
+**0.6 Déployer l'app** (reconstruit le client : c'est ce qui met `bun.lock` et `client/out/` à jour)
+```powershell
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+git status   # client/bun.lock et client/out/ ont changé : les commiter
+```
+
+**0.7 Tester l'app DEV** (ouvrir l'URL de l'app)
+- Chat : une question en ALL, une en AS, une en IS; une question hors sujet (refus); une question en espagnol; la réponse cite des documents cliquables.
+- Compare : charger deux révisions d'un même document; **Change Summary** (texte) et **Change Table** (tableau) se génèrent; voter 👍 puis commenter (c'est le nouveau composant `CardFeedback`) sur les deux cartes; bouton Export Excel / Download PDF; résumé d'un seul document; **Judge Impacted Docs** (recherche d'impact) avec son vote par document; historique d'une comparaison; chat partagé (lien « Share » ouvert dans une fenêtre privée).
+- Logs de l'app (UI Apps > Logs) : aucune stack trace au démarrage; `doc_catalog: loaded N documents from Lakebase`.
+
+**0.8 Revenir vers moi avec** : la sortie de `bundle validate`, l'erreur éventuelle de chaque pas, et un « tout est vert » si c'est le cas. Je coche alors les sections 1 à 6 ci-dessous et je mets les blocs concernés d'`operations_dev.md` à jour (daté).
+
 ## 1. Rangement de `utils/` (2026-10-08)
 
 `utils/databricks_ops/` n'existe plus, tout est directement sous `utils/` :
