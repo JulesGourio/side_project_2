@@ -54,3 +54,18 @@ def test_parse_notebook_only_calls_parse_steps_functions_that_exist():
     code = [l for l in _read("utils/parsing_pipeline/3_Parse_Pipeline.py").splitlines() if not l.startswith("# MAGIC")]
     called = set(re.findall(r"\bparse_steps\.(\w+)", "\n".join(code)))
     assert not called - defined - {"INGESTION_RUN_ID", "JOB_RUN_ID"}
+
+
+def test_every_parsing_module_imports_only_names_config_defines():
+    config_names = _module_names("utils/parsing_pipeline/config.py")
+    missing = []
+    for path in glob.glob(os.path.join(PARSING, "*.py")):
+        if os.path.basename(path) == "config.py":
+            continue
+        text = open(path, encoding="utf-8").read()
+        tree = ast.parse("\n".join("pass" if l.startswith("%") else l for l in text.split("\n")))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "config":
+                missing += [f"{os.path.basename(path)}: {a.name}" for a in node.names
+                            if a.name != "*" and a.name not in config_names]
+    assert not missing, missing

@@ -34,8 +34,8 @@
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC
-# MAGIC #N/A
+# MAGIC - The tables behind `category_reference` (`gd_doc_cat_latest`, `gd_cat_latest`, the optional division archive) are read inside `selection.build_division_reference`, not in `# Inputs`: this notebook cannot show them or check them on its own.
+# MAGIC - The guard does not cover `DIVISION_ARCHIVE_TABLE` (disabled by default): enabling it means adding it to `_REQUIRED_SOURCES`.
 
 # COMMAND ----------
 
@@ -45,7 +45,8 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Imports
+# MAGIC ## Config Imports
+# MAGIC `selection` and `config` live next to this notebook; the repository folder is added to `sys.path` because a job task does not do it for a notebook.
 
 # COMMAND ----------
 
@@ -68,7 +69,8 @@ from config import (
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Constants
+# MAGIC ## Config Constants
+# MAGIC The guard checks the five Intraqual tables the whole chain reads (documents, categories, document types, users). They are named once here so the guard and the logs agree.
 
 # COMMAND ----------
 
@@ -84,13 +86,12 @@ _REQUIRED_SOURCES = [
 
 # MAGIC %md
 # MAGIC # Inputs
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## Ingestion freshness table
+# MAGIC One row per Intraqual table with the time of its last refresh, written by the `intraqual_ingestion` job. It is read only to compute the age of the required tables.
 # MAGIC
-# MAGIC `gd_doc_cat_latest`/`gd_cat_latest`/the division archive are read inside `selection.build_division_reference()`, not here.
+# MAGIC The category tables themselves are read inside `selection.build_division_reference()`, see Technical debt.
+# MAGIC
+# MAGIC `MAX_SOURCE_STALENESS_HOURS` set to 0 disables the guard (catch-up run after an ingestion outage).
 
 # COMMAND ----------
 
@@ -120,13 +121,28 @@ else:
 
 # MAGIC %md
 # MAGIC # Data Transformations
+# MAGIC ## Tr. 1 - Build category_reference
+# MAGIC One row per IDDOC with its `division` and `niveau_plus_1..N`, from the document-category and category tables (the archive table only fills the gaps when enabled). `division_source` says where each row was resolved, so the count per source is logged.
+
+# COMMAND ----------
+
+df_reference = selection.build_division_reference(spark).cache()
+
+n_total = df_reference.count()
+logger.info(f"{n_total} IDDOCs with a resolved division")
+(
+    df_reference.groupBy("division_source").count()
+    .withColumnRenamed("count", "n_iddocs")
+    .orderBy(F.desc("n_iddocs"))
+    .show(truncate=False)
+)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Freshness guard
-# MAGIC
-# MAGIC Set `MAX_SOURCE_STALENESS_HOURS` to 0 to disable (catch-up run).
+# MAGIC # Quality Checks
+# MAGIC ## Freshness guard (RED)
+# MAGIC A stale or missing source must fail the run before anything is written: otherwise the next tasks compute the scope on old data and the index silently misses documents. The message names the stale and the missing tables, since the usual cause is a failed `intraqual_ingestion` job.
 
 # COMMAND ----------
 
@@ -152,31 +168,9 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Build category_reference
-
-# COMMAND ----------
-
-df_reference = selection.build_division_reference(spark).cache()
-
-n_total = df_reference.count()
-logger.info(f"{n_total} IDDOCs with a resolved division")
-(
-    df_reference.groupBy("division_source").count()
-    .withColumnRenamed("count", "n_iddocs")
-    .orderBy(F.desc("n_iddocs"))
-    .show(truncate=False)
-)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC # Quality Checks
-# MAGIC #N/A
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC # Outputs
+# MAGIC ## Write category_reference
+# MAGIC Full overwrite with `overwriteSchema`: the table is rebuilt from scratch every day, so a column added to the source must reach it without a manual migration.
 
 # COMMAND ----------
 

@@ -109,6 +109,10 @@ ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
 # =============================================================================
 MANUAL_REF_EXCLUSIONS = set()
 
+# --- Category exclusion ---
+# Documents whose principal category (IDCAT) is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by 2_Cleanup_Volume.py.
+EXCLUDED_IDCATS = {3798}  # ONE_QMS-5S
+
 # --- Empty + small file auto-exclusion ---
 # Zero-text + small file = blank stub (verified by hand) -> auto-skip permanently; zero-text ABOVE this size stays ERROR for review.
 EMPTY_SMALL_FILE_SIZE_BYTES = int(_env("PARSING_EMPTY_SMALL_FILE_SIZE_BYTES", "51200"))  # 50 KiB
