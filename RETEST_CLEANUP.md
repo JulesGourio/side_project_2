@@ -309,3 +309,9 @@ Les clés de ressource (`grant_app_access_dev`, `parsing_pipeline`…) ne change
 - [ ] **Avant le premier déploiement UAT / PROD** (qui demande votre accord) : le job de parsing y est renommé de `D_1_qualibot-parsing-pipeline-<cible>` en `D_1_Qualibot_Parsing_Pipeline_<cible>`, comme les jobs d'arrêt/reprise et d'export. Vérifier qu'aucun tableau de bord, alerte SQL ou règle de notification ne repère un job par son ancien nom.
 - Non renommé : le job déployé hors bundle par `utils/deploy/deploy_sync_user_capabilities_uat_personal.py` (`qualibot-sync-user-capabilities-uat`) : le renommer en recréerait un deuxième. Dites-moi si vous voulez le faire.
 - Fuseau des plannings : `Europe/Paris`, conservé (décision du 2026-10-09). Alertes d'échec : à traiter à part.
+
+## 9. Jobs déplacés de `databricks.yml` vers `resources/` (2026-10-09)
+
+Les 17 jobs déclarés par cible dans `databricks.yml` sont maintenant dans `resources/` : `app_schedules`, `lakebase_sync`, `dev_copy`, `grants`, `evaluation`, `user_capabilities` (`*.job.yml`), à côté de `parsing_pipeline.job.yml`. Définitions identiques (comparées en YAML avant / après), seuls les `notebook_path` passent en `../utils/...`. `databricks.yml` ne garde que variables, apps, schémas, volumes, Lakebase.
+
+À faire : `databricks bundle validate -t dev --profile DEV` puis `bundle deploy -t dev` : le plan doit afficher 0 add / 0 delete (clés de ressources inchangées).

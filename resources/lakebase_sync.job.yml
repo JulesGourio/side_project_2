@@ -1,0 +1,221 @@
+# Lakebase export to a UC volume, import and schema migration.
+# Declared per target: each job exists only on the targets listed below.
+
+targets:
+  dev:
+    resources:
+      jobs:
+        # ── Pre-existing DEV jobs, unchanged ────────────────────────────────
+        # No run_as: they keep running as the deploying user. Both write UAT chat data to dev_landingzone.qualibot (Usage Tracking dashboard).
+        lakebase_import_uat_to_dev:
+          name: "D_1_Qualibot_Lakebase_Import_Uat_To_Dev"
+          description: "Import the UAT staging volume export into DEV Delta tables"
+          max_concurrent_runs: 1
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          tasks:
+            - task_key: import_lakebase_uat_volume
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/import_lakebase_uat_volume_to_dev_job.py
+                source: WORKSPACE
+              new_cluster:
+                spark_version: "17.3.x-scala2.13"
+                data_security_mode: SINGLE_USER   # without it the cluster has no Unity Catalog (see utils/parsing_pipeline/README.md#uc-not-enabled-single-user)
+                node_type_id: "m5d.xlarge"
+                num_workers: 0
+                aws_attributes:
+                  availability: ON_DEMAND
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: "local[*]"
+                custom_tags:
+                  ResourceClass: SingleNode
+                spark_env_vars:
+                  SOURCE_EXPORT_DIR: "/Volumes/uat_landingzone/qualibot/staging/lakebase_export"
+                  TARGET_CATALOG: "dev_landingzone"
+                  TARGET_SCHEMA: "qualibot"
+                  TABLES_TO_SKIP: "llm_requests"
+          schedule:
+            quartz_cron_expression: "0 30 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+
+        # ── Same jobs as qualibot-uat, adapted to DEV ───────────────────────
+        # Export only: the UAT twin also imports chat_* into Delta tables, which would overwrite the UAT chat data landed by lakebase_import_uat_to_dev.
+        lakebase_export_dev_to_volume:
+          name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
+          description: "Export the DEV Lakebase tables to the dev_landingzone.qualibot.staging volume"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          tasks:
+            # Serverless: classic job compute cannot reach the Lakebase private endpoint.
+            - task_key: export_lakebase_dev_to_volume
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/export_lakebase_uat_to_volume_job.py
+                source: WORKSPACE
+                base_parameters:
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare"
+                  OUTPUT_VOLUME_CATALOG: ${var.app_write_catalog}
+                  OUTPUT_VOLUME_SCHEMA: ${var.app_write_schema}
+                  OUTPUT_VOLUME_NAME: "staging"
+                  TABLES_TO_SKIP: "llm_requests"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: PAUSED
+
+        migrate_lakebase_dev:
+          name: "Z_1_Qualibot_Migrate_Lakebase_${bundle.target}"
+          description: "Apply idempotent Lakebase schema migrations (utils/lakebase_sync/migrate_lakebase.py) to the DEV doccompare database. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+              level: CAN_MANAGE
+            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
+              level: CAN_MANAGE
+          tasks:
+            - task_key: migrate_lakebase
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/migrate_lakebase_job.py
+                source: WORKSPACE
+                base_parameters:
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
+  qualibot-uat:
+    resources:
+      jobs:
+        lakebase_export_uat_to_volume:
+          name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
+          description: "Export Lakebase UAT tables to a Unity Catalog staging volume"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          # Without it, run_as=job-runner-sa-uat makes the SP sole owner and humans lose View/Manage Run rights at deploy.
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          tasks:
+            # Serverless: classic job compute cannot reach the Lakebase private endpoint.
+            - task_key: export_lakebase_uat_to_volume
+              description: "Extract Lakebase tables to JSONL files in the UAT staging volume"
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/export_lakebase_uat_to_volume_job.py
+                source: WORKSPACE
+                base_parameters:
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare"
+                  OUTPUT_VOLUME_CATALOG: "uat_landingzone"
+                  OUTPUT_VOLUME_SCHEMA: "qualibot"
+                  OUTPUT_VOLUME_NAME: "staging"
+                  TABLES_TO_SKIP: "llm_requests"
+              environment_key: default
+            - task_key: import_chatbot_tables_to_uat
+              description: "Load chatbot JSON exports (chat_feedbacks, chat_messages, chat_sessions) as Delta tables in uat_landingzone.qualibot"
+              depends_on:
+                - task_key: export_lakebase_uat_to_volume
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/import_chatbot_tables_to_uat_job.py
+                source: WORKSPACE
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+  qualibot-uat-test:
+    resources:
+      jobs:
+
+        migrate_lakebase_uat_test:
+          name: "Z_1_Qualibot_Migrate_Lakebase_${bundle.target}"
+          description: "Apply idempotent Lakebase schema migrations (utils/lakebase_sync/migrate_lakebase.py) to doccompare_test — never doccompare. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          # doccompare_test tables are owned by the qualibot-uat-test app SP, not job-runner-sa-uat.
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          tasks:
+            # Serverless: classic job compute cannot reach the Lakebase private endpoint.
+            - task_key: migrate_lakebase
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/migrate_lakebase_job.py
+                source: WORKSPACE
+                base_parameters:
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare_test"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
