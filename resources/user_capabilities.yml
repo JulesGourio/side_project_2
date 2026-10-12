@@ -20,6 +20,9 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
+            # Created by a deploy run as this SP, which owns them: declared so a deploy by a person keeps it (only an admin can change a job owner).
+            - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat
+              level: IS_OWNER
           tasks:
             # Serverless: classic job compute cannot reach the Lakebase private endpoint.
             - task_key: sync_user_capabilities
