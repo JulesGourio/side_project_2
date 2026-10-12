@@ -562,6 +562,24 @@ targets:
       parsing_job_activity_tag: "uat-job"
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
+    resources:
+      apps:
+        doc-compare:
+          # Declared explicitly: this block is the full desired state of the app's ACL. Without it a deploy fell back to the groups of the base
+          # definition and removed job-runner-sa-uat, whose nightly stop job then failed on permissions.
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+              level: CAN_USE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
+              level: CAN_USE
+            - user_name: "jules.gourio.external@latecoere.aero"
+              level: CAN_MANAGE
+            - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat (nightly stop job)
+              level: CAN_MANAGE
 
   qualibot-prod:
     mode: production
