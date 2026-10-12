@@ -13,8 +13,8 @@ What happens for each question (measures behind the configuration: ``docs/chat_v
 3. **Named documents** — REFs named in the question or the earlier turns (MI-14242…) get their
    own filtered search, ranked first.
 4. **One language per document** — only the best-ranked language variant of a document is kept.
-5. **Prompt** — the division's own part (``division_<div>.md``: role, scope, what only that division
-   needs) + the base shared by every division (``base.md``: language, sources, versions, documents only, off-topic refusal,
+5. **Prompt** — the division's own part (``prompts/chat/system/<div>.md``: role, scope, what only that division
+   needs) + the base shared by every division (``system/base.md``: language, sources, versions, documents only, off-topic refusal,
    document types, citations) + the numbered documents + the question + one line naming the
    language the answer must be written in.
 6. **Answer** — GPT-6 Luna, GPT-5.6 Luna as fallback (``chat_vsi_llm.py``: retries, fallback,
@@ -55,8 +55,14 @@ from .vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parent.parent / 'config' / 'chat_vsi'
+_PROMPTS_DIR = Path(__file__).resolve().parent.parent / 'prompts' / 'chat'
 _DIVISIONS = ('ALL', 'AS', 'IS')
+
+
+def _read_prompt(name: str) -> str:
+    return (_PROMPTS_DIR / name).read_text(encoding='utf-8').strip()
+
+
 _DEFAULT_INDEX = 'dev_landingzone.qualibot.chunks_index'
 _DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'      # no Claude model in the chatbot (2026-10-08)
 _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside it
@@ -70,19 +76,10 @@ _REF_LOOKUP_K = 8                # passages fetched from the named documents
 _MAX_QUERY_CHARS = 20000         # Vector Search rejects query_text past ~29k chars
 _OPERATION = 'Chat'              # label used in user-facing error messages
 
-REWRITE_PROMPT = """Using the conversation for context, rewrite the user's LAST question as one standalone search
-query, for a search engine over Latécoère quality documents written in French or in English.
-Write it twice, as exactly two lines:
-FR: <the query in French>
-EN: <the same query in English>
-Keep document codes, acronyms and technical terms as they are. When the question uses an
-acronym and you are certain of its meaning, keep it and add its expanded form in each language.
-Return only the two lines."""
+REWRITE_PROMPT = _read_prompt('rewrite.md')
 
-LANGUAGE_REMINDER = ('Reminder: write your whole answer in the language of the question above '
-                     '(the question, not the documents).')
-NAMED_LANGUAGE_REMINDER = ('Reminder: write your whole answer in {language}, the language of the question above '
-                           '(not the language of the documents).')
+LANGUAGE_REMINDER = _read_prompt('language_reminder.md')
+NAMED_LANGUAGE_REMINDER = _read_prompt('language_reminder_named.md')
 
 # Prefix chat.py's _with_today_date puts on the last user turn.
 _DATE_PREFIX_RE = re.compile(r'^\[Date: \d{4}-\d{2}-\d{2}\]\n\n')
@@ -184,8 +181,7 @@ def settings() -> Dict[str, Any]:
 def prompt_parts(division: str) -> Dict[str, str]:
     """The files the system instructions are made of: ``division_<div>`` then ``base``."""
     div = normalize_division(division).lower()
-    return {name: (_PROMPTS_DIR / f'{name}.md').read_text(encoding='utf-8').strip()
-            for name in (f'division_{div}', 'base')}
+    return {f'division_{div}': _read_prompt(f'system/{div}.md'), 'base': _read_prompt('system/base.md')}
 
 
 @lru_cache(maxsize=None)

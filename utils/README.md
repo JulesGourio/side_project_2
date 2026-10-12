@@ -301,7 +301,7 @@ relying on the API to tolerate a redundant request.
 
 ## capabilities-snapshot-account-group-visibility
 
-**Why `user_capabilities/build_capabilities_snapshot.py` exists**: feature
+**Archived 2026-10-12** (`archive/user_capabilities/`, no reader left in the app). **Why `build_capabilities_snapshot.py` existed**: feature
 access (chat / compare) is driven by membership in account-level groups
 (`Role-Project-LEAP-End-users-Qualibot-*`). At runtime the app reads a user's
 groups via workspace SCIM `/Me`, but `/Me` does NOT surface ACCOUNT-level
