@@ -54,10 +54,11 @@ server/
   services/
     chat/             engine.py (the chat), llm.py (answer model calls), prompts.py (prompt files), turn_log.py, mlflow_turns.py (one MLflow trace per turn), translation_bridge.py
     compare/          processors/ (one per file type), chunked_analysis, impact_queries, summarize, conversion, soffice, export_helpers
-    infra/            lakebase, user, vector_search, vs_gate, doc_catalog, streaming (shared LLM streaming and cost), error_origin
+    infra/            lakebase, user, vector_search, vs_gate, doc_catalog, streaming (shared LLM streaming and cost), error_origin, pdf_report (PDF exports of chat and compare)
   prompts/chat/       every chatbot prompt as a file: system/{base,all,as,is}.md, rewrite.md, language_reminder*.md
   config/             processors.yml (file type -> processor versions)
   data/               doc_catalog.json (fallback), lid.176.ftz (language id model)
+  assets/fonts/       Inter (SIL OFL) for the PDF exports
 ```
 
 ## Local development

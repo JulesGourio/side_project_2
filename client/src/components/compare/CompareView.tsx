@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, ArrowRight, Database, FileText, History, Info, Loader2, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { type ProcessorVersion, getAppConfig, getProcessorsConfig } from '@/lib/config';
+import { downloadPdf } from '@/lib/exportPdf';
 import { ComparisonHistory, type FullComparison } from './ComparisonHistory';
 import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanner';
 import { type ImpactResult, ImpactResultsCard } from './ImpactResults';
@@ -229,12 +230,14 @@ export function CompareView() {
       .catch(() => { /* best-effort — not critical */ });
   };
 
-  const autoSavePdf = (path: string, markdownText: string, title: string) => {
+  const autoSavePdf = (path: string, markdownText: string, oldName: string, newName: string) => {
     if (!path || !markdownText.trim()) return;
     const form = new FormData();
     form.append('session_path', path);
     form.append('markdown_text', markdownText);
-    form.append('title', title);
+    form.append('title', newName.replace(/\.[^.]+$/, '') || 'Change summary');
+    form.append('old_name', oldName);
+    form.append('new_name', newName);
     form.append('filename', 'analysis');
     fetch('/api/compare/save-pdf', { method: 'POST', body: form })
       .then(r => r.json())
@@ -705,8 +708,7 @@ export function CompareView() {
         }
         if (currentSession) {
           await autoSaveResult(currentSession, 'analysis.md', accumulated);
-          const docTitle = `${oldPdf.name} vs ${newPdf.name}`;
-          autoSavePdf(currentSession, accumulated, docTitle);
+          autoSavePdf(currentSession, accumulated, oldPdf.name, newPdf.name);
         }
         const mid = await saveToHistory(
           oldPdf.name, newPdf.name, accumulated, '', currentSession, hadWarning ? '' : ohash, hadWarning ? '' : nhash,
@@ -884,22 +886,17 @@ export function CompareView() {
     const text = summaries[which].text;
     if (!doc || !text) return;
     const base = doc.name.replace(/\.[^.]+$/, '') || 'document';
-    const form = new FormData();
-    form.append('markdown_text', text);
-    form.append('title', `Summary — ${doc.name}`);
-    form.append('filename', `summary_${base}`);
     try {
-      const res = await fetch('/api/compare/export-pdf', { method: 'POST', body: form });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        toast.error(`PDF export failed: ${err.error ?? res.statusText}`);
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `summary_${base}.pdf`; a.click();
-      URL.revokeObjectURL(url);
+      await downloadPdf({
+        kind: 'document_summary',
+        title: base,
+        filename: `summary_${base}`,
+        meta: [
+          { label: 'File', value: doc.name },
+          { label: 'Version', value: which === 'old' ? 'Original (A)' : 'Revised (B)' },
+        ],
+        sections: [{ markdown: text }],
+      });
     } catch (e) {
       toast.error(`PDF export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -1246,23 +1243,18 @@ export function CompareView() {
                 content={analysisStd}
                 isStreaming={isAnalyzingStd}
                 onDownload={async () => {
-                  const base = newPdf?.name.replace(/\.[^.]+$/, '') ?? 'document';
-                  const form = new FormData();
-                  form.append('markdown_text', analysisStd);
-                  form.append('title', `Analysis — ${base}`);
-                  form.append('filename', `analysis_${base}`);
+                  const base = newPdf?.name.replace(/\.[^.]+$/, '') || 'document';
                   try {
-                    const res = await fetch('/api/compare/export-pdf', { method: 'POST', body: form });
-                    if (!res.ok) {
-                      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-                      toast.error(`PDF export failed: ${err.error ?? res.statusText}`);
-                      return;
-                    }
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url; a.download = `analysis_${base}.pdf`; a.click();
-                    URL.revokeObjectURL(url);
+                    await downloadPdf({
+                      kind: 'change_summary',
+                      title: base,
+                      filename: `change_summary_${base}`,
+                      meta: [
+                        { label: 'Original (A)', value: oldPdf?.name ?? '' },
+                        { label: 'Revised (B)', value: newPdf?.name ?? '' },
+                      ],
+                      sections: [{ markdown: analysisStd }],
+                    });
                   } catch (e) {
                     toast.error(`PDF export failed: ${e instanceof Error ? e.message : String(e)}`);
                   }

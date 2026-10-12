@@ -1,6 +1,7 @@
 """Exports router — endpoints for generating and saving formatted analysis outputs.
 
-Handles Excel, PDF, and raw text exports of compare analysis results.
+Handles Excel, PDF, and raw text exports of compare analysis results, and the
+PDF exports of the chatbot (one layout for both: services/infra/pdf_report.py).
 Pure helper functions live in services/export_helpers.py (no FastAPI deps) so
 the debug notebook can import them directly without triggering the server
 import chain.
@@ -15,14 +16,21 @@ import re
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
 
 from ..services.compare.export_helpers import (
     _build_excel_bytes,
     _build_impact_excel_bytes,
-    _build_pdf_bytes_from_markdown,
     _parse_json_response,
 )
 from ..services.infra.lakebase import store_error
+from ..services.infra.pdf_report import (
+    KIND_LABELS,
+    Section,
+    Source,
+    build_markdown_pdf,
+    build_report_pdf,
+)
 from .compare import _get_config, _is_within_volume, _sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -88,29 +96,64 @@ async def export_impact_excel(result_json: str = Form(...), filename: str = Form
     )
 
 
-# --- /compare/export-pdf — render the LLM's Markdown output as a downloadable PDF ---
+# --- /export/pdf — chatbot answers / conversations and compare summaries as PDF ---
 
-@router.post('/compare/export-pdf')
-async def export_pdf(
-    markdown_text: str = Form(...),
-    filename: str = Form('analysis_report'),
-    title: str = Form('Analysis Report'),
-):
-    """Generate a cleanly formatted, paginated PDF directly from LLM Markdown."""
+class PdfSource(BaseModel):
+    title: str
+    url: str | None = None
+    n: int | None = None
+    detail: str = ''
+
+
+class PdfSection(BaseModel):
+    markdown: str = ''
+    question: str | None = None
+    sources: list[PdfSource] = Field(default_factory=list)
+
+
+class PdfMeta(BaseModel):
+    label: str
+    value: str
+
+
+class PdfExportRequest(BaseModel):
+    kind: str = 'report'                     # pdf_report.KIND_LABELS key — sets the header label
+    title: str = ''
+    filename: str = 'qualibot'
+    meta: list[PdfMeta] = Field(default_factory=list)
+    sections: list[PdfSection]
+
+
+def _pdf_filename(name: str, default: str) -> str:
+    safe = re.sub(r'[^A-Za-z0-9._-]+', '_', name).strip('._') or default
+    return safe if safe.lower().endswith('.pdf') else f'{safe}.pdf'
+
+
+@router.post('/export/pdf')
+async def export_pdf(req: PdfExportRequest):
+    """Render one or more Markdown sections (with optional question and sources) as a PDF download."""
+    if req.kind not in KIND_LABELS:
+        return JSONResponse({'error': f'Unknown kind {req.kind!r}'}, status_code=400)
+    if not any(s.markdown.strip() for s in req.sections):
+        return JSONResponse({'error': 'Nothing to export'}, status_code=400)
+    sections = [
+        Section(s.markdown, s.question, [Source(src.title, src.url, src.n, src.detail) for src in s.sources])
+        for s in req.sections
+    ]
     try:
-        pdf_bytes = await asyncio.to_thread(_build_pdf_bytes_from_markdown, markdown_text, title)
+        pdf_bytes = await asyncio.to_thread(
+            build_report_pdf, kind=req.kind, title=req.title, sections=sections,
+            meta=[(m.label, m.value) for m in req.meta],
+        )
     except Exception as e:
         logger.error('export-pdf: PDF generation failed: %s', e, exc_info=True)
+        store_error(endpoint='/api/export/pdf', error_type=type(e).__name__, error_msg=str(e), exc=e)
         return JSONResponse({'error': f'PDF generation failed: {e}'}, status_code=500)
-
-    safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('._') or 'report'
-    if not safe_name.endswith('.pdf'):
-        safe_name += '.pdf'
 
     return Response(
         content=pdf_bytes,
         media_type='application/pdf',
-        headers={'Content-Disposition': f'attachment; filename="{safe_name}"'},
+        headers={'Content-Disposition': f'attachment; filename="{_pdf_filename(req.filename, "qualibot")}"'},
     )
 
 
@@ -206,7 +249,9 @@ async def save_pdf_to_session(
     markdown_text: str = Form(None),   # optional — server generates PDF from markdown
     pdf_file: UploadFile = File(None),  # optional — client uploads a pre-rendered PDF
     filename: str = Form('analysis'),
-    title: str = Form('Analysis Report'),
+    title: str = Form('Change summary'),
+    old_name: str = Form(''),
+    new_name: str = Form(''),
 ):
     """Save a PDF to volume. Can accept EITHER an uploaded client PDF, OR generate one server-side from markdown."""
     try:
@@ -222,7 +267,8 @@ async def save_pdf_to_session(
 
     try:
         if markdown_text:
-            pdf_bytes = await asyncio.to_thread(_build_pdf_bytes_from_markdown, markdown_text, title)
+            meta = [('Original (A)', old_name), ('Revised (B)', new_name)]
+            pdf_bytes = await asyncio.to_thread(build_markdown_pdf, markdown_text, title, 'change_summary', meta)
         elif pdf_file:
             pdf_bytes = await pdf_file.read()
         else:
@@ -232,9 +278,7 @@ async def save_pdf_to_session(
         store_error(endpoint='/api/compare/save-pdf', error_type=type(e).__name__, error_msg=str(e), exc=e)
         return JSONResponse({'error': f'Could not process PDF: {e}'}, status_code=500)
 
-    safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('._') or 'analysis'
-    if not safe_name.endswith('.pdf'):
-        safe_name += '.pdf'
+    safe_name = _pdf_filename(filename, 'analysis')
 
     try:
         remote_path = f'{session_path}/{safe_name}'

@@ -19,7 +19,7 @@ summary" below), independent of any diff.
 | Button | "Generate Change Summary" | "Generate Change Table" |
 | Output | Narrative Markdown, one bullet per change, grouped by section | Live JSON array parsed into a table (section, type, criticality, before/after, rationale) |
 | Rendered by | `ResultCard` | `StructuredResultCard` / `JsonDiffTable` |
-| Export | PDF (`POST /compare/export-pdf`) | Excel (`POST /compare/export-excel`) |
+| Export | PDF (`POST /export/pdf`) | Excel (`POST /compare/export-excel`) |
 
 Both call the same `POST /compare/analyze`, differing only in the
 `processor_version` form field (`standard` vs `structured`) — the backend
@@ -43,7 +43,8 @@ then builds a colour-coded `.xlsx` via `openpyxl` — one row per change,
 background colour driven by criticality (high/medium/low) or change type,
 with before/after image thumbnails embedded when the comparison detected
 visual diffs. Change Summary exports as a paginated PDF instead
-(`_build_pdf_bytes_from_markdown`) since it's narrative text, not tabular.
+(`POST /api/export/pdf`, `server/services/infra/pdf_report.py`) since it's
+narrative text, not tabular.
 Separately, if `COMPARE_VOLUME_PATH` is configured, both exports are *also*
 silently auto-saved into the comparison's UC Volume session folder right
 after the analysis finishes (`autoSaveExcel`/`autoSavePdf`) — that's for
@@ -282,7 +283,7 @@ this is the precise *what*.
 | `GET /api/history` | `history.py::list_comparisons` | `Depends(require_compare)` | query: `limit=20`, `offset=0` | No DB pool → **200** `{comparisons:[], available:false}`, not an error — same in-band-unavailability pattern used everywhere in this app. |
 | `GET /api/history/{id}` | `history.py::get_comparison` | `Depends(require_compare)` | | 404 if missing or not owned by the caller. |
 | `POST /api/compare/export-excel` | `exports.py::export_excel` | **none** — see gap below | multipart: `json_text`, `filename`, `file_type`, `image_pairs_json` | |
-| `POST /api/compare/export-pdf` | `exports.py::export_pdf` | **none** | multipart: `markdown_text`, `filename`, `title` | |
+| `POST /api/export/pdf` | `exports.py::export_pdf` | **none** | JSON: `kind`, `title`, `filename`, `meta[]`, `sections[]` (`markdown`, `question`, `sources`) | Shared with the chatbot's PDF downloads. |
 | `POST /api/compare/save-result` / `save-excel` / `save-pdf` | `exports.py` | **none** | | Auto-save-to-volume variants triggered by the client right after analysis; same `COMPARE_VOLUME_PATH` prefix guard as `/compare/load`. |
 
 **Capability gating**: `exports.py`, `preview.py` and `feedback.py` carry no
@@ -391,13 +392,17 @@ compute fresh, no cache hit," never a user-visible error.
 then a ` ```json ` fenced block, then a bracket-extraction regex — returning `None`
 (never raising) if all three fail.
 
-The PDF export (`_build_pdf_bytes_from_markdown`) is pure-Python `fpdf2` — no
-system-level PDF library dependency. It hand-parses Markdown line by line (no
-markdown library): table rows, fenced code, headings, bullet/numbered lists, and
-bold-only callout lines each get their own layout branch, with pre-emptive page
-breaks so a table or callout is never split across a page boundary. Falls back to
-Latin-1 transliteration (a large character-substitution table for em-dashes, curly
-quotes, etc.) when no Unicode-capable font is found on the host.
+The PDF exports (`server/services/infra/pdf_report.py`, `POST /api/export/pdf`)
+are pure-Python `fpdf2` and shared with the chatbot: same layout, only the label
+above the title changes (`kind`: change summary, document summary, chatbot answer,
+chatbot conversation), plus label/value lines under it (compared files). The
+Inter font ships in `server/assets/fonts/` (SIL OFL), so accents, arrows and
+quotes render identically on the Databricks App container, which has no system
+fonts; glyphs Inter lacks (emoji) are mapped to a close glyph or dropped. Markdown
+is parsed by hand: headings kept with the text that follows, nested lists with
+hanging indents, quotes, code, and tables through `fpdf2`'s `table()` (column
+widths from content, header repeated on each page). `[n]` markers become
+superscript links to source n.
 
 The Excel export embeds before/after image thumbnails as a **composited** side-by-side
 JPEG (old + new pasted into one canvas with a 1px divider) rather than two separate

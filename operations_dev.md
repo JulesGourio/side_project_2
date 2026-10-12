@@ -247,6 +247,7 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   Remove-Item server\config\capabilities_snapshot.json, tests\test_chat_vsi.py, tests\test_chat_vsi_llm.py -ErrorAction SilentlyContinue
   Remove-Item utils\user_capabilities\build_capabilities_snapshot.py -ErrorAction SilentlyContinue
   Remove-Item resources\chat_experiment.yml -ErrorAction SilentlyContinue
+  Remove-Item client\src\lib\downloadAsPdf.ts -ErrorAction SilentlyContinue
   ```
 
   Vérifier :
@@ -394,7 +395,7 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   tu redéploies) que s'il ne perd rien sur les documents trouvés.
 - [ ] **0.13 Tests dans l'app** (S9, X3, Y6) — quatre questions : une normale en AS, une en IS, une avec un numéro de document (ex. `MI-14242`),
   une hors sujet (attendu : refus poli), une en espagnol ; 👍 sur une réponse et 👎 sur une autre ; bouton **Télécharger → Response —
-  Markdown** (le fichier finit par la liste **Sources**) ; « Judge Impacted Docs » dans Compare sur deux révisions connues ; la question
+  Markdown** (le fichier finit par la liste **Sources**), puis les PDF du chat et du compare (bloc P) ; « Judge Impacted Docs » dans Compare sur deux révisions connues ; la question
   NDT (« quels documents parlent des exigences de qualification CND ? ) : plus de « version not stated », pastilles `REF · B`. Puis (1 min
   après) l'expérience : DEV → **Experiments** → `/Shared/qualibot/chat_turns` → **Traces** : une trace par question, l'arbre
   `chat_turn → retrieval → answer`, les passages dans la sortie de `retrieval`, 4 prompts liés, `user_vote` sur les deux réponses votées.
@@ -1021,6 +1022,18 @@ déplacées** : les originaux restent en place jusqu'à ce que tu confirmes, rie
   déployer : `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`.
 - [ ] **Z4. Plus tard, sur ta décision** : supprimer les originaux de `dev_landingzone` une fois un
   run d'évaluation lancé avec succès depuis `dev_proj`.
+
+### P. Nouveaux exports PDF du chat et du compare (code du 2026-10-12)
+
+Un seul générateur côté serveur (`server/services/infra/pdf_report.py`, `POST /api/export/pdf`) pour les PDF du chat (réponse,
+conversation) et du compare (résumé des changements, résumé d'un document) ; police Inter embarquée dans `server/assets/fonts/`.
+Remplace le PDF du chat fait dans le navigateur (gabarit du compare, bandeau « COMPARISON REPORT ») et l'ancien PDF fpdf2 du compare.
+Rien à créer (ni table, ni droit, ni variable d'app) : il part avec le déploiement de l'app (0.10), `client/out` est déjà construit.
+
+- [ ] **P1. Vérifier** dans l'app DEV (avec 0.13) : chat → **Télécharger → Response — PDF** (en-tête « Chatbot answer », la question en
+  titre, renvois `[n]` cliquables, sources avec titre et version) et **Full session — PDF** (« Chatbot conversation », une case par question) ;
+  compare → **Download PDF** sur le Change Summary (fichiers A et B sous le titre) et sur le résumé d'un document. **M'envoyer** un PDF qui
+  ne va pas, s'il y en a.
 
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
