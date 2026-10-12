@@ -673,17 +673,25 @@ en arrière-plan : l'utilisateur n'attend rien et une panne MLflow ne touche pas
 `CHAT_MLFLOW_EXPERIMENT` est vide (c'est le cas partout sauf DEV). Le vote 👍/👎 n'est pas dans la trace :
 `score_chat_traces.py` (bloc W, en pause) le joint depuis Lakebase.
 
-- [ ] **Y1. Créer l'expérience** (une fois, sur ton PC, avec `pip install mlflow databricks-sdk`).
-  L'app n'en crée jamais : sans cette étape elle écrit `experiment ... does not exist` dans ses logs et
-  n'envoie rien.
+- [ ] **Y1. Créer l'expérience, propriétaire = le SP DEV des jobs** (`fde6ff28-…`, pas toi). Un job
+  `Z_2_Qualibot_Create_Chat_Experiment_dev` (`resources/chat_experiment.yml`, `run_as` ce SP) crée le dossier
+  `/Shared/qualibot` et l'expérience, donne `CAN_EDIT` au SP de l'app et `CAN_MANAGE` aux groupes
+  CoreAdmin / CoreDev (un groupe ne peut pas être propriétaire, il gère). Rejouable sans risque. L'app
+  n'en crée jamais : sans cette étape elle écrit `experiment ... does not exist` dans ses logs.
+  Recopier à la main : `resources/chat_experiment.yml` (nouveau), `utils/evaluation/create_chat_experiment.py`.
 
   ```powershell
   Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
-  python utils\evaluation\create_chat_experiment.py --profile DEV --app qualibot --experiment /Shared/qualibot/chat_turns
+  databricks bundle deploy -t dev --profile DEV
+  databricks bundle run create_chat_experiment_dev -t dev --profile DEV
   ```
 
-  Attendu : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot (service
-  principal …) can edit the experiment`. Si l'étape des droits échoue, me coller l'erreur.
+  Attendu dans la sortie du run : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot
+  (service principal …) can edit the experiment; managers: Role-Project-LEAP-CoreAdmin, …`. Une
+  expérience déjà créée à la main avec ton compte reste à toi : la supprimer d'abord (interface →
+  Experiments → ⋮ → Delete), puis relancer le job. Si le job échoue sur `apps.get` ou sur l'écriture dans
+  `/Shared`, me coller l'erreur (droit manquant du SP).
+  Sans passer par le job (propriétaire = toi) : `python utils\evaluation\create_chat_experiment.py --profile DEV --app qualibot --managers Role-Project-LEAP-CoreAdmin,Role-Project-LEAP-CoreDev`.
 - [ ] **Y2. Déployer l'app DEV** avec le zip de cette branche (la valeur `CHAT_MLFLOW_EXPERIMENT` vient
   de `utils/deploy/target_env.json`) :
 
