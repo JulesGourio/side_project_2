@@ -20,7 +20,7 @@ EXISTS` / `ADD COLUMN IF NOT EXISTS` : aucune donnée existante n'est touchée.
 | `impact_requests` | impact search | colonnes ajoutées (statut, compteurs, durées) |
 | `impact_document_results` | document jugé dans une impact search | colonnes ajoutées (appel du juge) |
 
-Clé de jointure du chat : **`trace_id`** (`vsi-<32 hex>`), présent dans `chat_turns`,
+Clé de jointure du chat : **`trace_id`** (`chat-<32 hex>`), présent dans `chat_turns`,
 `chat_retrieved_chunks`, `errors` et sur les deux lignes `chat_messages` du tour.
 `chat_turns.user_message_id` / `assistant_message_id` pointent aussi sur `chat_messages`.
 
@@ -59,7 +59,7 @@ Seuls les tours `ok`/`degraded` apparaissent dans l'historique de l'utilisateur 
 | `persist_failed` | sauvegarde | les messages n'ont pas pu être écrits dans `chat_messages` |
 | `client_disconnected` / `send_failed` | WebSocket | le navigateur est parti (information, ne rend pas le tour `degraded`) |
 
-**Ce qui était attendu** — `config` (JSONB) : `chat_vsi.settings()` au moment du tour — index,
+**Ce qui était attendu** — `config` (JSONB) : `engine.settings()` au moment du tour — index,
 nombre de passages rerankés / bruts par requête, plafond, modèle de réponse et ses secours, modèle
 de reformulation, limites de tokens. À comparer avec ce qui s'est passé :
 `vs_calls_expected`/`vs_calls_ok`, `rerank_ok`, `rewrite_ok`/`rewrite_endpoint`,
@@ -93,7 +93,7 @@ ils sont enregistrés avec les sources de chaque réponse (`chat_messages.source
 | `translate_in_ms` | détection de langue + traduction de la question |
 | `retrieval_ms` | toute la recherche (= reformulation + recherche + recherches ciblées) |
 | `rewrite_ms`, `search_ms`, `ref_lookup_ms`, `title_lookup_ms` | chacune de ces étapes |
-| `queue_wait_ms` | attente d'un créneau de génération (`CHAT_VSI_MAX_CONCURRENT_ANSWERS`) |
+| `queue_wait_ms` | attente d'un créneau de génération (`CHAT_MAX_CONCURRENT_ANSWERS`) |
 | `generation_ms` | génération de la réponse (après l'attente), relances comprises |
 | `translate_back_ms` | traduction de la réponse |
 | `persist_ms` | écriture de `chat_messages` |
@@ -106,7 +106,7 @@ dans la même transaction que `chat_turns`, après l'envoi de la réponse : l'ut
 cette écriture.
 
 - `kept` : envoyé au modèle ; sinon `drop_reason` = `other_language` (une autre langue du même
-  document a été préférée) ou `over_cap` (au-delà de `CHAT_VSI_MAX_SEARCH_PASSAGES`, 0 = pas de
+  document a été préférée) ou `over_cap` (au-delà de `CHAT_MAX_SEARCH_PASSAGES`, 0 = pas de
   plafond par défaut) ;
 - `position` (ordre de retrieval), `prompt_rank` (ordre dans le prompt), `doc_number` (le `[n]` du
   document dans le prompt), `cited` (son document est cité par la réponse) ;
@@ -165,8 +165,8 @@ pour un échec complet.
 `chat_messages.tool_name`, `tool_query`, `tool_result`, `reasoning_steps` : propres au Knowledge
 Assistant, **plus écrits depuis le 2026-10-09**, gardés pour l'historique des tours KA (à supprimer
 plus tard, après un export). `chat_messages.trace_id` est toujours écrit (= `chat_turns.trace_id`).
-`chat_messages.endpoint_name` est gardé : c'est le libellé du moteur (`vsi-all` / `vsi-as` /
-`vsi-is`) et les notebooks de notation filtrent dessus (`NULL` = copie d'une conversation
+`chat_messages.endpoint_name` est gardé : c'est le libellé du moteur (`chat-all` / `chat-as` /
+`chat-is`) et les notebooks de notation filtrent dessus (`NULL` = copie d'une conversation
 partagée) ; le modèle réel est `chat_turns.answer_endpoint`.
 
 ## Requêtes utiles
@@ -190,7 +190,7 @@ FROM chat_turns WHERE status IN ('ok', 'degraded') AND created_at > NOW() - INTE
 
 -- Un tour en détail : ses passages, dans l'ordre du prompt
 SELECT prompt_rank, doc_number, ref, cited, source, best_score, LEFT(chunk_text, 120)
-FROM chat_retrieved_chunks WHERE trace_id = 'vsi-…' AND kept ORDER BY prompt_rank;
+FROM chat_retrieved_chunks WHERE trace_id = 'chat-…' AND kept ORDER BY prompt_rank;
 
 -- Documents souvent envoyés au modèle mais jamais cités
 SELECT ref, COUNT(*) AS sent, SUM(CASE WHEN cited THEN 1 ELSE 0 END) AS cited
@@ -218,7 +218,7 @@ WHERE f.vote = 'down' ORDER BY f.created_at DESC;
 ## Trace MLflow de chaque tour
 
 Le même `TurnLog` alimente aussi une trace MLflow par tour (`server/services/chat/mlflow_turns.py`,
-expérience `CHAT_MLFLOW_EXPERIMENT`, vide = éteint). Correspondance : tag `vsi_trace_id` = `chat_turns.trace_id` ;
+expérience `CHAT_MLFLOW_EXPERIMENT`, vide = éteint). Correspondance : tag `chat_trace_id` = `chat_turns.trace_id` ;
 spans `retrieval` / `rewrite` / `search` / `ref_lookup` / `answer` / `queue_wait` / `call_n` /
 `translate_in` / `translate_back` / `persist` = les colonnes `<étape>_ms` (et `llm_attempts` pour `call_n`) ;
 sortie du span `retrieval` = les passages `kept` de `chat_retrieved_chunks`, dans l'ordre du prompt ;

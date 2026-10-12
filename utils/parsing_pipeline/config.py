@@ -176,7 +176,7 @@ USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
 # Passage sizes (chunking.py), overridable per run. 150 / 300 / 450 tokens and 1,600 characters found 80.9 % of the
 # expected documents against 75.8 % for
-# 250 / 500 / 1000 / 4000, with half the context (retrieval_eval, 65 questions; docs/chat_vsi_tests.md § 5.6).
+# 250 / 500 / 1000 / 4000, with half the context (retrieval_eval, 65 questions; docs/chat_tests.md § 5.6).
 MIN_CHUNK_TOKENS    = int(_env("PARSING_MIN_CHUNK_TOKENS", "150"))
 TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "300"))
 MAX_CHUNK_TOKENS    = int(_env("PARSING_MAX_CHUNK_TOKENS", "450"))

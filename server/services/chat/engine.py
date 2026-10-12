@@ -1,6 +1,6 @@
-"""Chat VSI — the chat engine: answers from the Vector Search index, no Knowledge Assistant.
+"""Chat — the chat engine: answers from the Vector Search index, no Knowledge Assistant.
 
-What happens for each question (measures behind the configuration: ``docs/chat_vsi_tests.md``):
+What happens for each question (measures behind the configuration: ``docs/chat_tests.md``):
 
 1. **Rewrite** — GPT-6 Luna turns the last question, with the conversation as context, into
    one standalone search query in French and one in English (acronyms expanded when certain).
@@ -17,21 +17,21 @@ What happens for each question (measures behind the configuration: ``docs/chat_v
    needs) + the base shared by every division (``system/base.md``: language, sources, versions, documents only, off-topic refusal,
    document types, citations) + the numbered documents + the question + one line naming the
    language the answer must be written in.
-6. **Answer** — GPT-6 Luna, GPT-5.6 Luna as fallback (``chat_vsi_llm.py``: retries, fallback,
+6. **Answer** — GPT-6 Luna, GPT-5.6 Luna as fallback (``chat/llm.py``: retries, fallback,
    continuation of a cut answer, concurrency limit); ``[n]`` markers are turned into citations
    (``CitationStreamParser``).
 
-``stream_chat_vsi`` yields the event stream ``chat.py`` expects (text deltas, ``sources`` +
+``stream_chat`` yields the event stream ``chat.py`` expects (text deltas, ``sources`` +
 ``citations``, ``metadata``, ``error``, ``[DONE]``) and fills the turn's ``TurnLog``
 (``turn_log.py``: every step, its duration, the passages retrieved, what went wrong — saved
 in Lakebase ``chat_turns`` / ``chat_retrieved_chunks`` / ``errors`` by ``chat.py``). Settings (environment, read at call time):
-``CHAT_VSI_INDEX``, ``CHAT_VSI_LLM_ENDPOINT`` / ``CHAT_VSI_LLM_FALLBACK_ENDPOINTS``,
-``CHAT_VSI_REWRITE_ENDPOINT`` / ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS``,
-``CHAT_VSI_ANSWER_MAX_TOKENS``, ``CHAT_VSI_REWRITE_MAX_TOKENS``, ``VS_MAX_CONCURRENT_QUERIES`` /
+``CHAT_INDEX``, ``CHAT_LLM_ENDPOINT`` / ``CHAT_LLM_FALLBACK_ENDPOINTS``,
+``CHAT_REWRITE_ENDPOINT`` / ``CHAT_REWRITE_FALLBACK_ENDPOINTS``,
+``CHAT_ANSWER_MAX_TOKENS``, ``CHAT_REWRITE_MAX_TOKENS``, ``VS_MAX_CONCURRENT_QUERIES`` /
 ``VS_QUERY_RETRIES`` (``vs_gate.py``),
-``CHAT_VSI_RERANK_TOP_K`` / ``CHAT_VSI_RAW_TOP_K`` / ``CHAT_VSI_RAW_ON`` / ``CHAT_VSI_MAX_SEARCH_PASSAGES`` (search sizes,
+``CHAT_RERANK_TOP_K`` / ``CHAT_RAW_TOP_K`` / ``CHAT_RAW_ON`` / ``CHAT_MAX_SEARCH_PASSAGES`` (search sizes,
 defaults = the measured configuration; other values are for ``retrieval_eval`` comparisons),
-plus the resilience settings documented in ``chat_vsi_llm.py``. The earlier engine versions
+plus the resilience settings documented in ``chat/llm.py``. The earlier engine versions
 (baseline, measured options) are kept in ``archive/``.
 """
 
@@ -110,15 +110,15 @@ def normalize_division(division: Optional[str]) -> str:
 
 
 def index_name() -> str:
-    return os.getenv('CHAT_VSI_INDEX', _DEFAULT_INDEX).strip()
+    return os.getenv('CHAT_INDEX', _DEFAULT_INDEX).strip()
 
 
 def llm_endpoint() -> str:
-    return os.getenv('CHAT_VSI_LLM_ENDPOINT', _DEFAULT_LLM_ENDPOINT).strip()
+    return os.getenv('CHAT_LLM_ENDPOINT', _DEFAULT_LLM_ENDPOINT).strip()
 
 
 def rewrite_endpoint() -> str:
-    return os.getenv('CHAT_VSI_REWRITE_ENDPOINT', '').strip() or llm_endpoint()
+    return os.getenv('CHAT_REWRITE_ENDPOINT', '').strip() or llm_endpoint()
 
 
 def _int_env(name: str, default: int) -> int:
@@ -129,19 +129,19 @@ def _int_env(name: str, default: int) -> int:
 
 
 def answer_max_tokens() -> int:
-    return _int_env('CHAT_VSI_ANSWER_MAX_TOKENS', _DEFAULT_ANSWER_MAX_TOKENS)
+    return _int_env('CHAT_ANSWER_MAX_TOKENS', _DEFAULT_ANSWER_MAX_TOKENS)
 
 
 def rewrite_max_tokens() -> int:
-    return _int_env('CHAT_VSI_REWRITE_MAX_TOKENS', _DEFAULT_REWRITE_MAX_TOKENS)
+    return _int_env('CHAT_REWRITE_MAX_TOKENS', _DEFAULT_REWRITE_MAX_TOKENS)
 
 
 def rerank_top_k() -> int:
-    return max(1, _int_env('CHAT_VSI_RERANK_TOP_K', _RERANK_TOP_K))
+    return max(1, _int_env('CHAT_RERANK_TOP_K', _RERANK_TOP_K))
 
 
 def raw_top_k() -> int:
-    return max(0, _int_env('CHAT_VSI_RAW_TOP_K', _RAW_TOP_K))
+    return max(0, _int_env('CHAT_RAW_TOP_K', _RAW_TOP_K))
 
 
 _RAW_ON_ALL = ('question', 'fr', 'en')
@@ -151,17 +151,17 @@ _RAW_ON = 'fr'                   # raw search on the French rewrite only (rawfr:
 def raw_on() -> List[str]:
     """Which queries also get a raw search: ``question`` (as asked), ``fr``, ``en`` (the
     rewrites). Fewer = fewer Vector Search queries per question."""
-    names = [n.strip().lower() for n in os.getenv('CHAT_VSI_RAW_ON', _RAW_ON).replace('+', ',').split(',')]
+    names = [n.strip().lower() for n in os.getenv('CHAT_RAW_ON', _RAW_ON).replace('+', ',').split(',')]
     return [n for n in _RAW_ON_ALL if n in names]
 
 
 def max_search_passages() -> int:
     """Cap on the merged search passages (REF and title lookups come on top); 0 = no cap."""
-    return max(0, _int_env('CHAT_VSI_MAX_SEARCH_PASSAGES', 0))
+    return max(0, _int_env('CHAT_MAX_SEARCH_PASSAGES', 0))
 
 
 def rewrite_timeout_s() -> float:
-    return float(_int_env('CHAT_VSI_REWRITE_TIMEOUT_S', 45))
+    return float(_int_env('CHAT_REWRITE_TIMEOUT_S', 45))
 
 
 def division_filter(division: str) -> Dict[str, Any]:
@@ -304,7 +304,7 @@ async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, st
         text, used = await chat_llm.complete(host, token, chain, messages, rewrite_max_tokens(),
                                                  rewrite_timeout_s(), info=info)
     except Exception as exc:  # noqa: BLE001 — the turn goes on with the question only
-        logger.warning('chat_vsi: search query rewrite failed (%s) — searching with the question only', exc)
+        logger.warning('chat: search query rewrite failed (%s) — searching with the question only', exc)
         log.data['rewrite_ok'] = False
         log.issue('rewrite_failed', 'rewrite', f'search ran with the question only: {exc}',
                   error_type=type(exc).__name__, http_status=getattr(exc, 'status', 0), upstream=','.join(chain),
@@ -316,7 +316,7 @@ async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, st
                      'rewrite_output_tokens': usage.get('output_tokens'),
                      'rewrite_cost_eur': usage.get('cost_eur')})
     if used != rewrite_endpoint():
-        logger.warning('chat_vsi: search query rewritten by fallback %s', used)
+        logger.warning('chat: search query rewritten by fallback %s', used)
         log.issue('rewrite_fallback', 'rewrite', f'rewritten by {used} instead of {rewrite_endpoint()}',
                   upstream=used, context={'expected': rewrite_endpoint(), 'attempts': info.get('attempts')})
     return split_bilingual(text)
@@ -402,12 +402,12 @@ def _search_error(index: str, exc: BaseException) -> ChatVsiError:
         return exc
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
-        logger.error('chat_vsi: Vector Search %s returned %d: %s', index, status, exc.response.text[:500])
+        logger.error('chat: Vector Search %s returned %d: %s', index, status, exc.response.text[:500])
         return ChatVsiError(f'Document search failed (Vector Search returned {status}).', 'VectorSearchError', status)
     if isinstance(exc, httpx.TimeoutException):
-        logger.error('chat_vsi: Vector Search %s timed out: %s', index, exc)
+        logger.error('chat: Vector Search %s timed out: %s', index, exc)
         return ChatVsiError('Document search timed out — please try again.', 'TimeoutError')
-    logger.error('chat_vsi: Vector Search %s failed: %s', index, exc)
+    logger.error('chat: Vector Search %s failed: %s', index, exc)
     return ChatVsiError(f'Document search failed: {exc}', type(exc).__name__)
 
 
@@ -436,7 +436,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
             if rerank_ok:
                 log.issue('rerank_refused', 'search', f'raw search only: {exc}', upstream=index, exc=exc)
             rerank_ok = False
-            logger.warning('chat_vsi: reranker refused by %s (%s) — raw search only', index, exc)
+            logger.warning('chat: reranker refused by %s (%s) — raw search only', index, exc)
             return [] if raw_k else _tag(await _query(host, token, index, q, rerank_k, filters, rerank=False), i, 'raw')
 
     async def raw(i: int, q: str) -> List[Dict[str, Any]]:
@@ -456,7 +456,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
     if not ok:
         raise _search_error(index, failed[0]) from failed[0]
     if failed:
-        logger.warning('chat_vsi: %d/%d Vector Search queries failed, kept the others: %s', len(failed),
+        logger.warning('chat: %d/%d Vector Search queries failed, kept the others: %s', len(failed),
                        len(results), failed[0])
         log.issue('vs_partial', 'search', f'{len(failed)}/{len(results)} Vector Search queries failed: {failed[0]}',
                   error_type=type(failed[0]).__name__, http_status=_status_of(failed[0]), upstream=index,
@@ -477,7 +477,7 @@ async def fetch_documents(host: str, token: str, index: str, query: str, refs: L
     try:
         return _tag(await _query(host, token, index, query, k, {**filters, 'REF': refs}, rerank=False), None, via)
     except Exception as exc:  # noqa: BLE001 — the turn goes on without the lookup
-        logger.warning('chat_vsi: document lookup %s on %s failed: %s', refs, index, exc)
+        logger.warning('chat: document lookup %s on %s failed: %s', refs, index, exc)
         if log is not None:
             log.issue(f'{via}_failed', via, f'{refs}: {exc}', error_type=type(exc).__name__,
                       http_status=_status_of(exc), upstream=index, context={'refs': refs}, exc=exc)
@@ -662,7 +662,7 @@ def _record_answer(log: TurnLog, chain: List[str], llm: Dict[str, Any], usage: D
                   context=context)
 
 
-async def stream_chat_vsi(host: str, token: str, division: str, messages: List[Dict[str, str]],
+async def stream_chat(host: str, token: str, division: str, messages: List[Dict[str, str]],
                           answer_language: Optional[str] = None,
                           log: Optional[TurnLog] = None) -> AsyncGenerator[str, None]:
     """Answer the last user turn of ``messages`` (trimmed history, last turn prefixed with
@@ -691,7 +691,7 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
         return
     rows = found['rows']
     documents = group_documents(rows)
-    logger.info('chat_vsi: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d trace_id=%s',
+    logger.info('chat: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d trace_id=%s',
                 div, found['index'], found['fr_query'], found['en_query'], len(rows), len(documents), trace_id)
 
     parser = CitationStreamParser(documents)
@@ -726,7 +726,7 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
                 log.mark('first_token')
                 yield _event({'type': 'response.output_text.delta', 'delta': clean})
         elif kind == 'error':
-            logger.error('chat_vsi: generation failed: %s', event.get('error'))
+            logger.error('chat: generation failed: %s', event.get('error'))
             _generation_done()
             log.fail('llm', event.get('error_type') or 'LLMError', event.get('error') or 'Answer generation failed.',
                      http_status=event.get('http_status') or 0, upstream=','.join(chain),
@@ -736,7 +736,7 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
                 yield e
             return
         elif kind == 'warning':
-            logger.warning('chat_vsi: %s', event.get('detail') or event)
+            logger.warning('chat: %s', event.get('detail') or event)
             log.issue(event.get('warning') or 'llm_warning', 'llm', event.get('detail') or '',
                       upstream=llm.get('endpoint') or '')
         elif kind == 'usage':

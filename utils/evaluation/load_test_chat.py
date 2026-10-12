@@ -6,13 +6,13 @@
 # MAGIC `/api/chat/ws`), by **steps of simultaneous questions** (widget `levels`, e.g. 5, 10, 20, 40,
 # MAGIC 80). At each step, `level` workers each ask `rounds` questions one after the other, so the
 # MAGIC app always has `level` questions in progress. Everything the app does is exercised: the
-# MAGIC instance and its queue (32 answers at once, `CHAT_VSI_MAX_CONCURRENT_ANSWERS`), the rewrite,
+# MAGIC instance and its queue (32 answers at once, `CHAT_MAX_CONCURRENT_ANSWERS`), the rewrite,
 # MAGIC Vector Search, GPT-6 Luna and its fallback GPT-5.6 Luna, the translation bridge, Lakebase.
 # MAGIC
 # MAGIC Measured per question: time to the first word, total time, outcome (answer / error shown to
 # MAGIC the user / no answer within `timeout_s`). The run stops at the first step where more than
 # MAGIC `stop_error_pct` % of the questions fail. Results: `results_table`, one row per question.
-# MAGIC Which model answered and every retry are in the app logs (`chat_vsi_llm:` lines).
+# MAGIC Which model answered and every retry are in the app logs (`chat_llm:` lines).
 # MAGIC
 # MAGIC **Mode** (`mode`): `app` = through the app (the real test); `engine` = the app's engine
 # MAGIC called in this notebook (same rewrite, search, models and limits, without the app instance:
@@ -169,7 +169,7 @@ async def ask_engine(q, session_id):
         if ctx.needs_translation:
             messages[-1]['content'] = en
     language = e['tb'].answer_language(ctx, q['content'])
-    async for chunk in e['chat_vsi'].stream_chat_vsi(HOST, tok, q['division'], e['date'](messages), language):
+    async for chunk in e['chat_vsi'].stream_chat(HOST, tok, q['division'], e['date'](messages), language):
         if not chunk.startswith('data: ') or chunk.strip() == 'data: [DONE]':
             continue
         ev = json.loads(chunk[6:])

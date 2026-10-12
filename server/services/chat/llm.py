@@ -1,24 +1,24 @@
-"""Chat VSI — LLM calls that keep answering: retries, fallback models, continuation, load limits.
+"""Chat — LLM calls that keep answering: retries, fallback models, continuation, load limits.
 
 Used for the answer (``stream_answer``) and for the search-query rewrite (``complete``). Settings, read at call time:
 
-- ``CHAT_VSI_LLM_FALLBACK_ENDPOINTS`` — comma-separated endpoints tried, in order, after
-  ``CHAT_VSI_LLM_ENDPOINT`` (default: none, the primary is only retried). In production: GPT-6 Luna, then GPT-5.6 Luna;
-- ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS`` — same for the rewrite (default: the answer chain);
-- ``CHAT_VSI_FIRST_TOKEN_TIMEOUT_S`` (90) — no answer text after this long: the endpoint is
+- ``CHAT_LLM_FALLBACK_ENDPOINTS`` — comma-separated endpoints tried, in order, after
+  ``CHAT_LLM_ENDPOINT`` (default: none, the primary is only retried). In production: GPT-6 Luna, then GPT-5.6 Luna;
+- ``CHAT_REWRITE_FALLBACK_ENDPOINTS`` — same for the rewrite (default: the answer chain);
+- ``CHAT_FIRST_TOKEN_TIMEOUT_S`` (90) — no answer text after this long: the endpoint is
   given up for the next one (a reasoning model thinks before its first word: GPT-6 Luna
   p50 is about 7 s);
-- ``CHAT_VSI_STALL_TIMEOUT_S`` (60) — the stream stops sending text this long: given up;
-- ``CHAT_VSI_LLM_DEADLINE_S`` (240) — no new attempt starts after this long;
-- ``CHAT_VSI_LLM_ROUNDS`` (3) — passes over the endpoint chain, waiting 2 s then 8 s between
+- ``CHAT_STALL_TIMEOUT_S`` (60) — the stream stops sending text this long: given up;
+- ``CHAT_LLM_DEADLINE_S`` (240) — no new attempt starts after this long;
+- ``CHAT_LLM_ROUNDS`` (3) — passes over the endpoint chain, waiting 2 s then 8 s between
   passes (or the endpoint's ``Retry-After``, when shorter than the deadline);
-- ``CHAT_VSI_COOLDOWN_S`` (30) — an endpoint that answered 429 / 5xx / timed out is put last
+- ``CHAT_COOLDOWN_S`` (30) — an endpoint that answered 429 / 5xx / timed out is put last
   for every turn during this long (404: 10 minutes), so a quota burst on GPT-6 Luna sends the
   next questions straight to the backup instead of each paying a failed call first;
-- ``CHAT_VSI_MAX_CONCURRENT_ANSWERS`` (32, 0 = no limit) — answers generated at once by this
+- ``CHAT_MAX_CONCURRENT_ANSWERS`` (32, 0 = no limit) — answers generated at once by this
   app instance; the others wait their turn (keepalives sent) instead of all hitting the
   per-minute token quota (1M input tokens/min per endpoint ≈ 40 questions of 25k tokens);
-- ``CHAT_VSI_REASONING_MIN_TOKENS`` (6000) — output ceiling floor on reasoning models (their
+- ``CHAT_REASONING_MIN_TOKENS`` (6000) — output ceiling floor on reasoning models (their
   thinking counts inside it): a small answer budget would truncate GPT-6 Luna when the
   chain falls back to it. The rewrite uses a floor of 1000.
 
@@ -88,46 +88,46 @@ def _dedup(endpoints: List[str]) -> List[str]:
 
 
 def answer_chain(primary: str) -> List[str]:
-    """The answer endpoints, in order: the primary, then CHAT_VSI_LLM_FALLBACK_ENDPOINTS."""
-    return _dedup([primary] + _endpoints_from('CHAT_VSI_LLM_FALLBACK_ENDPOINTS'))
+    """The answer endpoints, in order: the primary, then CHAT_LLM_FALLBACK_ENDPOINTS."""
+    return _dedup([primary] + _endpoints_from('CHAT_LLM_FALLBACK_ENDPOINTS'))
 
 
 def rewrite_chain(rewrite_endpoint: str, answer_endpoint: str) -> List[str]:
-    """The rewrite endpoints: the rewrite model, then CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS
+    """The rewrite endpoints: the rewrite model, then CHAT_REWRITE_FALLBACK_ENDPOINTS
     (default: the answer chain)."""
-    fallbacks = _endpoints_from('CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS') or answer_chain(answer_endpoint)
+    fallbacks = _endpoints_from('CHAT_REWRITE_FALLBACK_ENDPOINTS') or answer_chain(answer_endpoint)
     return _dedup([rewrite_endpoint] + fallbacks)
 
 
 def first_token_timeout_s() -> float:
-    return _env_float('CHAT_VSI_FIRST_TOKEN_TIMEOUT_S', 90.0)
+    return _env_float('CHAT_FIRST_TOKEN_TIMEOUT_S', 90.0)
 
 
 def stall_timeout_s() -> float:
-    return _env_float('CHAT_VSI_STALL_TIMEOUT_S', 60.0)
+    return _env_float('CHAT_STALL_TIMEOUT_S', 60.0)
 
 
 def deadline_s() -> float:
-    return _env_float('CHAT_VSI_LLM_DEADLINE_S', 240.0)
+    return _env_float('CHAT_LLM_DEADLINE_S', 240.0)
 
 
 def rounds() -> int:
-    return max(1, int(_env_float('CHAT_VSI_LLM_ROUNDS', 3)))
+    return max(1, int(_env_float('CHAT_LLM_ROUNDS', 3)))
 
 
 def cooldown_s() -> float:
-    return _env_float('CHAT_VSI_COOLDOWN_S', 30.0)
+    return _env_float('CHAT_COOLDOWN_S', 30.0)
 
 
 def max_concurrent_answers() -> int:
-    return int(_env_float('CHAT_VSI_MAX_CONCURRENT_ANSWERS', 32))
+    return int(_env_float('CHAT_MAX_CONCURRENT_ANSWERS', 32))
 
 
 def effective_max_tokens(endpoint: str, max_tokens: int, floor: Optional[int] = None) -> int:
     """``max_tokens``, raised to the reasoning floor on models that think inside it."""
     if supports_temperature(endpoint):
         return max_tokens
-    return max(max_tokens, int(_env_float('CHAT_VSI_REASONING_MIN_TOKENS', 6000)) if floor is None else floor)
+    return max(max_tokens, int(_env_float('CHAT_REASONING_MIN_TOKENS', 6000)) if floor is None else floor)
 
 
 # --- Endpoint health, shared by every turn of this app instance ---
@@ -310,7 +310,7 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
     sem = _semaphore()
     queued_at = time.monotonic()
     if sem is not None and sem.locked():
-        logger.warning('chat_vsi_llm: %d answers already running — this one waits', max_concurrent_answers())
+        logger.warning('chat_llm: %d answers already running — this one waits', max_concurrent_answers())
     if sem is not None:
         acquire = asyncio.ensure_future(sem.acquire())
         try:
@@ -364,7 +364,7 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
                 wait = max(wait, min(last.retry_after, 30.0))
             if time.monotonic() - started + wait >= deadline_s():
                 break
-            logger.warning('chat_vsi_llm: every endpoint failed (round %d) — new round in %.0f s', round_no, wait)
+            logger.warning('chat_llm: every endpoint failed (round %d) — new round in %.0f s', round_no, wait)
             end = time.monotonic() + wait
             while time.monotonic() < end:
                 yield ': keepalive\n\n'
@@ -409,7 +409,7 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
                 written += got
                 attempts.append({'endpoint': endpoint, 'outcome': exc.kind, 'status': exc.status,
                                  's': round(time.monotonic() - t0, 1), 'after_chars': len(written)})
-                logger.warning('chat_vsi_llm: %s failed (%s %s, %d chars written): %s',
+                logger.warning('chat_llm: %s failed (%s %s, %d chars written): %s',
                                endpoint, exc.kind, exc.status or '', len(written), exc.detail[:200])
                 _cool(endpoint, _cooldown_for(exc.kind))
                 if exc.kind in _FINAL_KINDS:
@@ -422,7 +422,7 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
             break
 
     if answered_by and len(chain) > 1 and answered_by != chain[0]:
-        logger.warning('chat_vsi_llm: answered by fallback %s (primary %s)', answered_by, chain[0])
+        logger.warning('chat_llm: answered by fallback %s (primary %s)', answered_by, chain[0])
     if truncated:
         yield _event({'type': 'warning', 'warning': 'output_truncated',
                       'detail': f'The model hit the output limit ({max_tokens} tokens) — the end may be missing.'})
@@ -432,13 +432,13 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
                   'attempts': attempts, 'queue_wait_ms': queue_wait_ms, 'truncated': truncated,
                   'continuations': continuations, 'interrupted': bool(written and not answered_by)})
     if not answered_by and not written:
-        logger.error('chat_vsi_llm: no endpoint answered (%s) after %.0f s: %s', ', '.join(chain),
+        logger.error('chat_llm: no endpoint answered (%s) after %.0f s: %s', ', '.join(chain),
                      time.monotonic() - started, attempts)
         yield _event({'type': 'error', 'error': NO_MODEL_ANSWERED, 'error_type': 'LLMUnavailable',
                       'http_status': last.status if last else 0})
     elif not answered_by:
         # Part of the answer is out but no endpoint could finish it: say so at the end.
-        logger.error('chat_vsi_llm: answer cut after %d chars, no endpoint could continue: %s', len(written), attempts)
+        logger.error('chat_llm: answer cut after %d chars, no endpoint could continue: %s', len(written), attempts)
         yield _event({'type': 'response.output_text.delta',
                       'delta': TIRED_CUT_NOTE})
     yield 'data: [DONE]\n\n'
@@ -503,7 +503,7 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
                 last = exc
             attempts.append({'endpoint': endpoint, 'outcome': last.kind, 'status': last.status,
                              's': round(time.monotonic() - t0, 1)})
-            logger.warning('chat_vsi_llm: %s failed for a short call (%s %s)', endpoint, last.kind, last.status or '')
+            logger.warning('chat_llm: %s failed for a short call (%s %s)', endpoint, last.kind, last.status or '')
             _cool(endpoint, _cooldown_for(last.kind))
             if last.kind in _FINAL_KINDS:
                 given_up.add(endpoint)

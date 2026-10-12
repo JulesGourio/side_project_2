@@ -347,9 +347,9 @@ def test_save_turn_strips_division_and_registers_user():
             pool, 'sess-1', 'u1', 'ws1', 'https://test',
             '[Division: IS] The user works in the IS division. Restrict.\n\nHow do I wire it?',
             'Here is how.',
-            trace_id='vsi-abc',
+            trace_id='chat-abc',
             email='jules@latecoere.aero',
-            endpoint_name='vsi-is',
+            endpoint_name='chat-is',
         ))
 
     assert ids == (98, 99)
@@ -369,7 +369,7 @@ def test_save_turn_strips_division_and_registers_user():
     # with chat_turns). Arg order: …, division, question_lang.
     user_insert, assistant_insert = (c.args for c in conn.fetchval.await_args_list)
     assert user_insert[-2] == 'IS' and assistant_insert[-2] == 'IS'
-    assert 'vsi-abc' in user_insert and 'vsi-abc' in assistant_insert
+    assert 'chat-abc' in user_insert and 'chat-abc' in assistant_insert
     # The Knowledge Assistant columns are no longer written.
     assert 'tool_name' not in assistant_insert[0] and 'reasoning_steps' not in assistant_insert[0]
 

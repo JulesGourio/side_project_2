@@ -19,7 +19,7 @@
 # MAGIC Judge: `judge_model` (default GPT-5.6 Luna, our own endpoint: we see its tokens and pay its
 # MAGIC price; empty = the Databricks managed judge). Traces and scores land in the MLflow experiment
 # MAGIC `experiment`; one row per turn and scorer in `results_table`, joined to Lakebase by
-# MAGIC `vsi_trace_id`. Replaces `score_production_qa.py` (archived), which compared the former
+# MAGIC `chat_trace_id`. Replaces `score_production_qa.py` (archived), which compared the former
 # MAGIC Knowledge Assistant with a naive RAG.
 # MAGIC
 # MAGIC Run all, on the workspace of the app whose turns you score (Lakebase is read with the
@@ -105,7 +105,7 @@ me = w.current_user.me()
 
 already_scored = set()
 if SKIP_SCORED and spark.catalog.tableExists(RESULTS):
-    already_scored = {r[0] for r in spark.table(RESULTS).select('vsi_trace_id').distinct().collect()}
+    already_scored = {r[0] for r in spark.table(RESULTS).select('chat_trace_id').distinct().collect()}
 
 vote_filter = {'recent': '', 'down': "AND v.vote = 'down'", 'voted': 'AND v.vote IS NOT NULL'}[SELECTION]
 turns_sql = f"""
@@ -117,7 +117,7 @@ turns_sql = f"""
     LEFT JOIN LATERAL (SELECT f.vote, f.comment FROM chat_feedbacks f
                        WHERE f.message_id = t.assistant_message_id
                        ORDER BY f.created_at DESC LIMIT 1) v ON TRUE
-    WHERE t.status IN ('ok', 'degraded') AND t.trace_id LIKE 'vsi-%%'
+    WHERE t.status IN ('ok', 'degraded') AND t.trace_id LIKE 'chat-%%'
       AND t.created_at > NOW() - make_interval(days => %s) {vote_filter}
     ORDER BY t.created_at DESC
     LIMIT %s
@@ -163,33 +163,33 @@ from mlflow.entities import Document, SpanType
 
 
 @mlflow.trace(span_type=SpanType.RETRIEVER, name='retrieve')
-def retrieve(query: str, vsi_trace_id: str):
+def retrieve(query: str, chat_trace_id: str):
     return [Document(page_content=c['chunk_text'] or '',
                      metadata={'doc_uri': c['url'] or c['ref'], 'ref': c['ref'], 'doc_number': c['doc_number'],
                                'cited': bool(c['cited']), 'semantic_headers': c['semantic_headers'] or ''})
-            for c in CHUNKS.get(vsi_trace_id, [])]
+            for c in CHUNKS.get(chat_trace_id, [])]
 
 
 @mlflow.trace(span_type=SpanType.LLM, name='answer')
-def answer(question: str, passages: int, model: str, vsi_trace_id: str) -> str:
-    return TURNS[vsi_trace_id]['answer']
+def answer(question: str, passages: int, model: str, chat_trace_id: str) -> str:
+    return TURNS[chat_trace_id]['answer']
 
 
 @mlflow.trace(span_type=SpanType.CHAIN, name='chat_turn')
-def chat_turn(question: str, vsi_trace_id: str) -> str:
-    t = TURNS[vsi_trace_id]
+def chat_turn(question: str, chat_trace_id: str) -> str:
+    t = TURNS[chat_trace_id]
     mlflow.update_current_trace(tags={
-        'vsi_trace_id': vsi_trace_id, 'division': t['division'] or '', 'status': t['status'],
+        'chat_trace_id': chat_trace_id, 'division': t['division'] or '', 'status': t['status'],
         'vote': t['vote'] or '', 'answer_endpoint': t['answer_endpoint'] or '',
         'cited_count': str(len(t['cited_refs'] or [])),
         'first_token_ms': '' if t['first_token_ms'] is None else str(t['first_token_ms']),
         'warnings': ','.join(t['warnings'] or []),
     })
-    docs = retrieve(t['fr_query'] or question, vsi_trace_id)
-    return answer(question, len(docs), t['answer_endpoint'] or '', vsi_trace_id)
+    docs = retrieve(t['fr_query'] or question, chat_trace_id)
+    return answer(question, len(docs), t['answer_endpoint'] or '', chat_trace_id)
 
 
-DATA = [{'inputs': {'question': t['question'], 'vsi_trace_id': tid}} for tid, t in TURNS.items()]
+DATA = [{'inputs': {'question': t['question'], 'chat_trace_id': tid}} for tid, t in TURNS.items()]
 
 # COMMAND ----------
 
@@ -288,11 +288,11 @@ rows, failures = [], {}
 scored_at = datetime.now(timezone.utc)
 for _, tr in traces.iterrows():
     tags = tr.get('tags') or {}
-    vsi = tags.get('vsi_trace_id') or (tr.get('request') or {}).get('vsi_trace_id')
+    vsi = tags.get('chat_trace_id') or (tr.get('request') or {}).get('chat_trace_id')
     for name, value, rationale, error in _assessments(tr):
         if error:
             failures[name] = failures.get(name, 0) + 1
-        rows.append({'vsi_trace_id': vsi, 'mlflow_trace_id': tr.get('trace_id'), 'run_id': RUN_ID,
+        rows.append({'chat_trace_id': vsi, 'mlflow_trace_id': tr.get('trace_id'), 'run_id': RUN_ID,
                      'scored_at': scored_at, 'scorer': name, 'value': None if value is None else str(value),
                      'rationale': None if rationale is None else str(rationale)[:2000],
                      'division': tags.get('division'), 'status': tags.get('status'), 'vote': tags.get('vote') or None,
@@ -314,7 +314,7 @@ if len(traces) < len(DATA):
 
 from pyspark.sql import functions as F
 
-schema = ('vsi_trace_id string, mlflow_trace_id string, run_id string, scored_at timestamp, scorer string, '
+schema = ('chat_trace_id string, mlflow_trace_id string, run_id string, scored_at timestamp, scorer string, '
           'value string, rationale string, division string, status string, vote string, judge string')
 if rows:
     spark.createDataFrame(rows, schema).write.mode('append').saveAsTable(RESULTS)

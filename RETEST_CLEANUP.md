@@ -331,7 +331,7 @@ Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `
 - [ ] Une comparaison + « Judge Impacted Docs » : dans Lakebase, la dernière ligne `impact_requests` a
   `status = 'ok'` et `search_ms` / `judge_ms` remplis ; la dernière `llm_requests` a `status` et `total_ms`.
 - [ ] `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` puis `score_production_qa` (DEV) avec `enable_retrieval=true` :
-  les tours `vsi-…` ont `retrieval_source = logged`.
+  les tours `chat-…` ont `retrieval_source = logged`.
 
 ## 2026-10-09 — notation des tours archivée, prototype `score_chat_traces`
 
@@ -360,4 +360,4 @@ Modules déplacés : `server/services/*.py` → `services/{chat,compare,infra}/`
   Remove-Item server\config\capabilities_snapshot.json, tests\test_chat_vsi.py, tests\test_chat_vsi_llm.py -ErrorAction SilentlyContinue
   ```
 - Après le déploiement : ouvrir l'app, poser une question dans le chat (AS), ouvrir une comparaison avec un PDF, lancer un « Impacted docs » ; dans les logs de l'app, aucune ligne `ModuleNotFoundError` ni `No such file or directory`.
-- Les préfixes de logs (`chat_vsi:`, `chat_vsi_llm:`) et les variables `CHAT_VSI_*` n'ont pas changé : les recherches de logs et la config déployée restent valables.
+- Les préfixes de logs (`chat:`, `chat_llm:`) et les variables `CHAT_*` n'ont pas changé : les recherches de logs et la config déployée restent valables.

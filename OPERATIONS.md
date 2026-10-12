@@ -255,7 +255,7 @@ prévenir, je change la valeur, vous redéployez.
 
 - [ ] **D5. Passer l'UAT sur le chatbot retenu** : un seul chatbot (plus de KA), un seul index
   `chunks_index` avec filtre de division, le découpage retenu (150 / 300 / 450 tokens), plus aucun
-  nom versionné. Tout est mesuré en DEV (`docs/chat_vsi_tests.md`, partie 1) et doit d'abord être
+  nom versionné. Tout est mesuré en DEV (`docs/chat_tests.md`, partie 1) et doit d'abord être
   passé en DEV (`operations_dev.md`, bloc S). **Avec ton accord seulement** : c'est la vraie app.
   Les tables et index `_v1` restent en place jusqu'à D5.9 : l'app actuelle continue de tourner
   pendant D5.1 à D5.5, et le retour arrière reste possible.

@@ -18,7 +18,7 @@ failure is logged and never reaches the chat.
     ├─ translate_back               answer translated back
     └─ persist                      messages saved to Lakebase
 
-The user's vote is not attached here: ``utils/evaluation/score_chat_traces.py`` joins it from Lakebase by ``vsi_trace_id``.
+The user's vote is not attached here: ``utils/evaluation/score_chat_traces.py`` joins it from Lakebase by ``chat_trace_id``.
 """
 
 import asyncio
@@ -125,7 +125,7 @@ def _write_trace(log: Any, name: str) -> None:
     issues = [{'code': i['code'], 'stage': i['stage'], 'severity': i['severity'],
                'message': (i['message'] or '')[:_MAX_ISSUE_CHARS], 'at_ms': i['at_ms']} for i in log.issues]
     tags = {
-        'vsi_trace_id': log.trace_id, 'division': str(data.get('division') or ''), 'status': log.status,
+        'chat_trace_id': log.trace_id, 'division': str(data.get('division') or ''), 'status': log.status,
         'question_lang': str(data.get('question_lang') or ''), 'answer_endpoint': str(data.get('answer_endpoint') or ''),
         'llm_fallback': str(bool(data.get('llm_fallback'))).lower(), 'warnings': ','.join(log.codes),
         'app_version': str(data.get('app_version') or ''), 'index_name': str(data.get('index_name') or ''),

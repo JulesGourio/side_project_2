@@ -18,27 +18,27 @@ env:
   # Past messages replayed to the chat endpoint each turn (the latest question is always kept); 0 = no trimming.
   - name: CHAT_MAX_HISTORY
     value: "10"
-  # Chat (server/services/chat/engine.py, tests and choices: docs/chat_vsi_tests.md): bilingual rewrite, 3 hybrid Vector Search queries,
+  # Chat (server/services/chat/engine.py, tests and choices: docs/chat_tests.md): bilingual rewrite, 3 hybrid Vector Search queries,
   # documents named by REF or title, answer by GPT-6 Luna. One index for every division (AS / IS = filter on `division`);
   # per-target index: utils/deploy/target_env.json.
-  - name: CHAT_VSI_INDEX
+  - name: CHAT_INDEX
     value: "dev_landingzone.qualibot.chunks_index"
   # No Claude model in the chatbot: GPT-6 Luna answers and rewrites, GPT-5.6 Luna is the fallback of both.
-  - name: CHAT_VSI_LLM_ENDPOINT
+  - name: CHAT_LLM_ENDPOINT
     value: "databricks-gpt-6-luna"
   # Models tried in order when the answer model fails (429, 5xx, timeout, 404, empty answer), comma-separated.
-  # chat_vsi_llm.py also retries, continues a cut answer and caps concurrent answers (CHAT_VSI_MAX_CONCURRENT_ANSWERS).
-  - name: CHAT_VSI_LLM_FALLBACK_ENDPOINTS
+  # chat/llm.py also retries, continues a cut answer and caps concurrent answers (CHAT_MAX_CONCURRENT_ANSWERS).
+  - name: CHAT_LLM_FALLBACK_ENDPOINTS
     value: "databricks-gpt-5-6-luna"
   # Rewrite model (empty = the answer model) and its fallbacks (empty = the answer chain).
-  - name: CHAT_VSI_REWRITE_ENDPOINT
+  - name: CHAT_REWRITE_ENDPOINT
     value: "databricks-gpt-6-luna"
-  - name: CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS
+  - name: CHAT_REWRITE_FALLBACK_ENDPOINTS
     value: "databricks-gpt-5-6-luna"
   # Output caps; a reasoning model counts its thinking in them.
-  - name: CHAT_VSI_ANSWER_MAX_TOKENS
+  - name: CHAT_ANSWER_MAX_TOKENS
     value: "8000"
-  - name: CHAT_VSI_REWRITE_MAX_TOKENS
+  - name: CHAT_REWRITE_MAX_TOKENS
     value: "2000"
   # MLflow experiment receiving one trace per chat turn (server/services/chat/mlflow_turns.py): steps, durations, passages, tokens, issues.
   # Empty = off. The experiment must exist (utils/evaluation/create_chat_experiment.py); per-target value in utils/deploy/target_env.json.

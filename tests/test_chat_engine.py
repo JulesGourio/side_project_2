@@ -3,11 +3,11 @@
 Coverage:
   - CitationStreamParser: marker split across chunks, grouped markers, unknown number,
     '[' that is not a marker, no citation, incomplete marker at end of stream; equivalence
-    with the whole-text parse on the 21 real golden answers (tests/fixtures/chat_vsi_raw_answers.json)
+    with the whole-text parse on the 21 real golden answers (tests/fixtures/chat_raw_answers.json)
   - search: three queries reranked 12 + raw 10 on the French rewrite, merged by rank, division filter, partial
     failures tolerated, reranker refused -> raw only, REF lookup first,
     one language per document
-  - stream_chat_vsi contract: deltas without markers, sources + citations, one metadata event
+  - stream_chat contract: deltas without markers, sources + citations, one metadata event
     before [DONE], error events; prompt: instructions + answering rules + language reminder
 """
 
@@ -25,7 +25,7 @@ from server.services.chat import engine
 from server.services.chat.engine import CitationStreamParser, parse_citations
 from server.services.chat.turn_log import TurnLog
 
-FIXTURE = os.path.join(os.path.dirname(__file__), 'fixtures', 'chat_vsi_raw_answers.json')
+FIXTURE = os.path.join(os.path.dirname(__file__), 'fixtures', 'chat_raw_answers.json')
 DOCS = [(f'REF-{i}', {'url': f'https://intraqual/ref={i}'}) for i in range(1, 6)]
 _VISIBLE_MARKER = re.compile(r'\[\d+\]')
 
@@ -176,7 +176,7 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
     sent = []
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer or (lambda p: DEFAULT_ROWS), sent))
     monkeypatch.setattr(engine.asyncio, 'sleep', AsyncMock())
-    monkeypatch.setenv('CHAT_VSI_INDEX', 'cat.sch.chunks_index')
+    monkeypatch.setenv('CHAT_INDEX', 'cat.sch.chunks_index')
     rewrite_mock = AsyncMock(side_effect=rewrite) if isinstance(rewrite, BaseException) else \
         AsyncMock(return_value=(rewrite, 'databricks-gpt-6-luna'))
     captured = {}
@@ -189,7 +189,7 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
     log = TurnLog()
 
     async def _collect():
-        return [c async for c in engine.stream_chat_vsi('https://host', 'tok', division, messages, language, log=log)]
+        return [c async for c in engine.stream_chat('https://host', 'tok', division, messages, language, log=log)]
 
     with (patch.object(engine.chat_llm, 'complete', rewrite_mock),
           patch.object(engine.chat_llm, 'stream_answer', side_effect=_llm_spy),
@@ -217,7 +217,7 @@ def test_happy_path_contract(monkeypatch):
     assert sources['sources'] == [{'title': 'QP-1518', 'url': 'https://intraqual/QP-1518', 'doc_uri': 'https://intraqual/QP-1518'}]
     assert _types(events)[-3:] == ['sources', 'metadata', '[DONE]']
     meta = next(e for e in events if e != '[DONE]' and e['type'] == 'metadata')
-    assert meta['trace_id'].startswith('vsi-')
+    assert meta['trace_id'].startswith('chat-')
 
 
 def test_three_queries_reranked_and_raw(monkeypatch):
@@ -267,15 +267,15 @@ def test_reranker_refused_gives_raw_search(monkeypatch):
 
 
 def test_reranked_only_sends_no_raw_query(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_RAW_TOP_K', '0')
-    monkeypatch.setenv('CHAT_VSI_RERANK_TOP_K', '8')
+    monkeypatch.setenv('CHAT_RAW_TOP_K', '0')
+    monkeypatch.setenv('CHAT_RERANK_TOP_K', '8')
     events, m = _run(monkeypatch)
     assert 'error' not in _types(events)
     assert len(m['sent']) == 3 and all('reranker' in p and p['num_results'] == 8 for p in m['sent'])
 
 
 def test_raw_search_on_every_query_when_asked(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_RAW_ON', 'question,fr,en')
+    monkeypatch.setenv('CHAT_RAW_ON', 'question,fr,en')
     _, m = _run(monkeypatch)
     raw = [p['query_text'] for p in m['sent'] if 'reranker' not in p]
     assert sorted(raw) == sorted([QUESTION, 'qualification CND', 'NDT qualification'])
@@ -299,7 +299,7 @@ def test_failed_rewrite_keeps_a_raw_search_on_the_question(monkeypatch):
 
 
 def test_reranked_only_with_reranker_refused_falls_back_to_raw(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_RAW_TOP_K', '0')
+    monkeypatch.setenv('CHAT_RAW_TOP_K', '0')
     events, m = _run(monkeypatch, answer=lambda p: 400 if 'reranker' in p else DEFAULT_ROWS)
     assert 'error' not in _types(events)
     assert [p['num_results'] for p in m['sent'] if 'reranker' not in p] and \
@@ -307,7 +307,7 @@ def test_reranked_only_with_reranker_refused_falls_back_to_raw(monkeypatch):
 
 
 def test_cap_keeps_the_best_ranked_search_passages(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_MAX_SEARCH_PASSAGES', '2')
+    monkeypatch.setenv('CHAT_MAX_SEARCH_PASSAGES', '2')
     found = {}
 
     async def _go():
@@ -416,7 +416,7 @@ def test_division_parts_only_hold_what_differs():
 
 
 def test_settings_defaults(monkeypatch):
-    for name in ('CHAT_VSI_INDEX', 'CHAT_VSI_LLM_ENDPOINT', 'CHAT_VSI_REWRITE_ENDPOINT', 'CHAT_VSI_ANSWER_MAX_TOKENS'):
+    for name in ('CHAT_INDEX', 'CHAT_LLM_ENDPOINT', 'CHAT_REWRITE_ENDPOINT', 'CHAT_ANSWER_MAX_TOKENS'):
         monkeypatch.delenv(name, raising=False)
     s = engine.settings()
     assert s['index'] == 'dev_landingzone.qualibot.chunks_index' and s['llm'] == 'databricks-gpt-6-luna'
@@ -431,7 +431,7 @@ def test_settings_defaults(monkeypatch):
 def test_turn_log_of_a_clean_turn(monkeypatch):
     _, m = _run(monkeypatch)
     log = m['log']
-    assert log.trace_id.startswith('vsi-') and not log.issues and log.finish('ok') == 'ok'
+    assert log.trace_id.startswith('chat-') and not log.issues and log.finish('ok') == 'ok'
     d = log.data
     assert (d['fr_query'], d['en_query'], d['rewrite_ok'], d['rewrite_endpoint']) == \
         ('qualification CND', 'NDT qualification', True, 'databricks-gpt-6-luna')
@@ -493,7 +493,7 @@ def test_turn_log_llm_failure_and_fallback(monkeypatch):
 
 
 def test_turn_log_keeps_passages_past_the_cap(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_MAX_SEARCH_PASSAGES', '2')
+    monkeypatch.setenv('CHAT_MAX_SEARCH_PASSAGES', '2')
     _, m = _run(monkeypatch, answer=lambda p: [_row('a', 'A-1'), _row('b', 'B-1'), _row('c', 'C-1')])
     assert [(p['chunk_id'], p['kept'], p['drop_reason']) for p in m['log'].passages] == \
         [('a', True, None), ('b', True, None), ('c', False, 'over_cap')]

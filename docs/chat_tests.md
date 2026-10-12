@@ -7,7 +7,7 @@ tester. La partie 2 est le journal complet, tel qu'il a été tenu pendant les e
 Code : `server/services/chat/engine.py` (+ `chat/llm.py`, `chat_vsi_titles.py`,
 `translation_bridge.py`). Notebooks de mesure gardés : `utils/evaluation/retrieval_eval.py`
 (recherche seule) et `pairwise_answers.py` (réponses côte à côte). Tout le reste est dans `archive/`
-(`archive/README.md`). Robustesse (secours, relances) : `docs/chat_vsi_robustesse_2026-10.md`.
+(`archive/README.md`). Robustesse (secours, relances) : `docs/chat_robustesse_2026-10.md`.
 
 # Partie 1 — Ce qu'on garde
 
@@ -17,7 +17,7 @@ Code : `server/services/chat/engine.py` (+ `chat/llm.py`, `chat_vsi_titles.py`,
 |---|---|---|
 | Langue | fastText détecte la langue. Une question ni française ni anglaise est traduite en anglais (GPT-5.6 Luna, secours GPT-6 Luna) ; la réponse est retraduite | Juillet (`translation_bridge.py`) |
 | Réécriture | GPT-6 Luna (secours GPT-5.6 Luna) écrit une requête en français **et** une en anglais, acronymes développés | `u-bi`, `u-all-luna6` (journal § 2.3, § 5.6) |
-| Recherche | 3 requêtes (question, français, anglais), chacune HYBRID : 12 passages reclassés par le reranker de Vector Search (colonnes `REF`, `semantic_headers`, `chunk_text`), **plus** 10 passages bruts sur la réécriture française seulement (`CHAT_VSI_RAW_ON=fr`, sur la question si la réécriture échoue), fusionnés par rang : 4 requêtes Vector Search | `union-ctx` (journal § 2.1, § 2.2) ; `rawfr` (journal § 5.8, 2026-10-09) |
+| Recherche | 3 requêtes (question, français, anglais), chacune HYBRID : 12 passages reclassés par le reranker de Vector Search (colonnes `REF`, `semantic_headers`, `chunk_text`), **plus** 10 passages bruts sur la réécriture française seulement (`CHAT_RAW_ON=fr`, sur la question si la réécriture échoue), fusionnés par rang : 4 requêtes Vector Search | `union-ctx` (journal § 2.1, § 2.2) ; `rawfr` (journal § 5.8, 2026-10-09) |
 | Documents cités par REF | Jusqu'à 6 REF nommées dans la conversation : 8 passages de ces documents, placés en tête | `union-ctx-ref` |
 | Documents cités par titre | **Retiré le 2026-10-12** (`chat_vsi_titles.py` supprimé) : le titre est déjà dans le préfixe `[Source: …]` de chaque passage, donc dans l'embedding ; aucun gain isolé mesuré (`u-title` : 13 / 16 / 11 contre 15 / 16 / 9 pour `union-ctx`, § 2.6) | `u-title` |
 | Une langue par document | Q0102QP_GB et Q0102QP_BG ne prennent qu'une place | `u-1lang` |
@@ -49,8 +49,8 @@ Le journal garde les noms utilisés pendant les essais. Ils ne figurent plus dan
 | Instructions `ka` | Les instructions du KA, recopiées | `server/config/chat_vsi/instructions_<div>.md` |
 | Instructions `v2` | Instructions réécrites pour le VSI | Écartées (`archive/chat_vsi_lab/config/rewritten_instructions/`) |
 | Instructions `v3`, « addendum » | Instructions KA + règles d'ancrage, refus hors sujet, glossaire | `answer_rules.md` (premier jet : `archive/chat_vsi_lab/config/answer_rules_first_draft.md`) |
-| `lang`, `CHAT_VSI_LANGUAGE_REMINDER` | Ligne de langue après la question | Toujours active |
-| `CHAT_VSI_SKIP_NOISE`, `-clean` | Écarter sommaires et cartouches de la recherche | Écarté (−11 points) |
+| `lang`, `CHAT_LANGUAGE_REMINDER` | Ligne de langue après la question | Toujours active |
+| `CHAT_SKIP_NOISE`, `-clean` | Écarter sommaires et cartouches de la recherche | Écarté (−11 points) |
 | Index `v1` (`chunks_index_v1`) | Découpage 250 / 500 / 1 000 tokens, l'index UAT copié en DEV | Remplacé |
 | Index `v2a` | Découpage corrigé, même taille que `v1` | Écarté |
 | Index `v2b` (`chunks_v2b`) | Découpage corrigé, 150 / 300 / 450 tokens | **Le découpage actuel** : table `chunks`, index `chunks_index` |
@@ -79,7 +79,7 @@ Le journal garde les noms utilisés pendant les essais. Ils ne figurent plus dan
 - Le budget de contexte (25 000 ou 35 000 caractères) : moins de documents trouvés.
 - 20 ou 25 passages reclassés par requête.
 - 3 passages au plus par document (`u-1lang-k20-cap3`).
-- Écarter les passages marqués sommaire / cartouche / texte répété (`CHAT_VSI_SKIP_NOISE`).
+- Écarter les passages marqués sommaire / cartouche / texte répété (`CHAT_SKIP_NOISE`).
 - Le découpage `v2a` (même taille corrigée) : battu par `v2b`.
 - Sonnet 4.6, Sonnet 5.5 pour répondre ; Sonnet 4.6 et GPT-5.6 Luna pour réécrire.
 - Le Knowledge Assistant.
@@ -93,7 +93,7 @@ Le code de chacune de ces options est dans `archive/chat_vsi_lab/`.
 | E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € | `archive/evaluation/rechunk_experiment.py`, widget `doc_cards` (désactivé) |
 | E2 — contexte par passage | Une ou deux phrases en tête de chaque passage pour le situer (méthode « Contextual Retrieval »). ≈ 50 € | Même notebook, widget `chunk_context` (désactivé) |
 | `v2c` — sans préfixe `[Source: …]` | Mesure l'effet du préfixe sur la recherche | Même notebook |
-| **Nombre de passages** (recherche mesurée le 2026-10-08, journal § 5.7 ; reste la comparaison des réponses) | Jusqu'à 3 × 12 reclassés + 10 bruts = 46 passages, sans plafond (66 avant `rawfr`). Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_VSI_RERANK_TOP_K`, `CHAT_VSI_RAW_TOP_K`, `CHAT_VSI_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
+| **Nombre de passages** (recherche mesurée le 2026-10-08, journal § 5.7 ; reste la comparaison des réponses) | Jusqu'à 3 × 12 reclassés + 10 bruts = 46 passages, sans plafond (66 avant `rawfr`). Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_RERANK_TOP_K`, `CHAT_RAW_TOP_K`, `CHAT_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
 | Pistes côté recherche R1 à R12 | Passages voisins, ordre du document, filtre par type, seuil « je ne sais pas »… | Journal § 4, rien de codé |
 | Documents d'avant 2018 | Leur fiche dans le chatbot (P11) | Décision métier ; pipeline prêt (`parsing_archive_notices_in_rag`) |
 | Numéros de page et de slide | P13, re-parsing GPU | Rien de codé |
@@ -146,7 +146,7 @@ Tenu pendant les essais, inchangé depuis : les noms sont ceux du § B. Les fich
 1. Si la question n'est ni en français ni en anglais, elle est traduite en anglais.
 2. Le LLM de réponse réécrit la question en une requête française.
 3. **Deux recherches hybrides** : la question telle quelle, et la requête française. **10
-   passages chacune** (`CHAT_VSI_NUM_RESULTS`).
+   passages chacune** (`CHAT_NUM_RESULTS`).
 4. Les deux listes sont fusionnées par meilleur rang, sans doublon : 10 à 20 passages.
 5. Les passages sont regroupés par document (REF) et numérotés `[1]`, `[2]`…
 6. Le LLM reçoit les instructions du KA, la règle de citation, les documents et la question,
@@ -162,22 +162,22 @@ recherche par REF.
 
 | Morceau du nom | Réglage | Ce qui se passe réellement |
 |---|---|---|
-| `rerank` | variante `rerank` | Pour chacune des 2 requêtes, Vector Search prend ses 50 meilleurs candidats hybrides, les fait **reclasser par le reranker**, et n'en rend que **12** (`CHAT_VSI_RERANK_TOP_K`). Ces 12 **remplacent** les 10 de la baseline. Le reranker lit le texte du passage seul |
-| `union` | `CHAT_VSI_RERANK_MERGE=union` | On fait **les deux** : la recherche reclassée (12 par requête) **et** la recherche brute de la baseline (10 par requête), et on fusionne. Le reranker peut **ajouter** des passages que la recherche brute classait mal, sans **retirer** ceux qu'elle trouvait. Environ 30 passages au lieu de 15 |
-| `ctx` | `CHAT_VSI_RERANK_COLUMNS=REF,semantic_headers,chunk_text` | Le reranker lit en plus la REF et les titres de section du passage, avant le texte. Sans effet mesurable : le texte commence déjà par `[Source: REF \| Title \| …]` |
-| `k20` | `CHAT_VSI_RERANK_TOP_K=20` | 20 passages reclassés par requête au lieu de 12 |
-| `b35k`, `b25k`, `budget` | `CHAT_VSI_RERANK_TOP_K=25` + `CHAT_VSI_CONTEXT_BUDGET_CHARS=35000` ou `25000` | On prend 25 passages reclassés, puis on les garde **dans l'ordre du classement jusqu'à 35 000 (ou 25 000) caractères** de contexte, quel que soit leur nombre. But : un contexte de taille fixe, donc un coût fixe |
-| `cap3` | `CHAT_VSI_MAX_PASSAGES_PER_DOC=3` | Au plus 3 passages par document, pour laisser la place à d'autres documents |
-| `ref` | `CHAT_VSI_REF_LOOKUP=on` | Si la question (ou un tour précédent) cite une REF connue du catalogue (« résume le MI-14242 »), on fait **une recherche de plus, limitée à ce document** et à ses versions linguistiques (6 REF au plus, 8 passages). Ses passages passent **en premier** |
-| `v2` | `CHAT_VSI_INSTRUCTIONS=v2` | Nos instructions VSI réécrites (`server/config/chat_vsi_v2/`) **à la place** de celles du KA |
-| `v3` | `CHAT_VSI_INSTRUCTIONS=v3` | Instructions du KA **plus** un ajout : règles d'ancrage, glossaire des types de documents |
-| `s55` | `CHAT_VSI_LLM_ENDPOINT=databricks-claude-sonnet-5-5` | Sonnet 5.5 rédige **et** réécrit (plafonds relevés : il réfléchit avant de répondre) |
+| `rerank` | variante `rerank` | Pour chacune des 2 requêtes, Vector Search prend ses 50 meilleurs candidats hybrides, les fait **reclasser par le reranker**, et n'en rend que **12** (`CHAT_RERANK_TOP_K`). Ces 12 **remplacent** les 10 de la baseline. Le reranker lit le texte du passage seul |
+| `union` | `CHAT_RERANK_MERGE=union` | On fait **les deux** : la recherche reclassée (12 par requête) **et** la recherche brute de la baseline (10 par requête), et on fusionne. Le reranker peut **ajouter** des passages que la recherche brute classait mal, sans **retirer** ceux qu'elle trouvait. Environ 30 passages au lieu de 15 |
+| `ctx` | `CHAT_RERANK_COLUMNS=REF,semantic_headers,chunk_text` | Le reranker lit en plus la REF et les titres de section du passage, avant le texte. Sans effet mesurable : le texte commence déjà par `[Source: REF \| Title \| …]` |
+| `k20` | `CHAT_RERANK_TOP_K=20` | 20 passages reclassés par requête au lieu de 12 |
+| `b35k`, `b25k`, `budget` | `CHAT_RERANK_TOP_K=25` + `CHAT_CONTEXT_BUDGET_CHARS=35000` ou `25000` | On prend 25 passages reclassés, puis on les garde **dans l'ordre du classement jusqu'à 35 000 (ou 25 000) caractères** de contexte, quel que soit leur nombre. But : un contexte de taille fixe, donc un coût fixe |
+| `cap3` | `CHAT_MAX_PASSAGES_PER_DOC=3` | Au plus 3 passages par document, pour laisser la place à d'autres documents |
+| `ref` | `CHAT_REF_LOOKUP=on` | Si la question (ou un tour précédent) cite une REF connue du catalogue (« résume le MI-14242 »), on fait **une recherche de plus, limitée à ce document** et à ses versions linguistiques (6 REF au plus, 8 passages). Ses passages passent **en premier** |
+| `v2` | `CHAT_INSTRUCTIONS=v2` | Nos instructions VSI réécrites (`server/config/chat_vsi_v2/`) **à la place** de celles du KA |
+| `v3` | `CHAT_INSTRUCTIONS=v3` | Instructions du KA **plus** un ajout : règles d'ancrage, glossaire des types de documents |
+| `s55` | `CHAT_LLM_ENDPOINT=databricks-claude-sonnet-5-5` | Sonnet 5.5 rédige **et** réécrit (plafonds relevés : il réfléchit avant de répondre) |
 | `run2` | — | La même configuration relancée, pour mesurer le bruit |
-| `title` | `CHAT_VSI_TITLE_LOOKUP=on` | On compare les mots de la question aux **titres des 7 600 documents du catalogue**. Les 3 documents dont le titre correspond le mieux ont droit à une recherche limitée à eux (6 passages), **ajoutée à la fin** du contexte |
-| `bi` | `CHAT_VSI_REWRITE=bilingual` | La réécriture produit une requête française **et** une requête anglaise, acronymes développés. **3 recherches** au lieu de 2 (question, FR, EN) |
-| `luna` | `CHAT_VSI_REWRITE_ENDPOINT=databricks-gpt-5-6-luna` | La réécriture est faite par GPT-5.6 Luna, petit modèle rapide, et plus par le modèle de réponse |
-| `1lang` | `CHAT_VSI_ONE_LANGUAGE=on` | Pour un document présent en plusieurs langues (Q0102QP_GB, Q0102QP_BG), on ne garde que les passages de la version **la mieux classée** |
-| (toujours) | `CHAT_VSI_SEARCH_RETRIES=2` | Une recherche refusée (rafale, délai) est relancée 2 fois avant d'échouer |
+| `title` | `CHAT_TITLE_LOOKUP=on` | On compare les mots de la question aux **titres des 7 600 documents du catalogue**. Les 3 documents dont le titre correspond le mieux ont droit à une recherche limitée à eux (6 passages), **ajoutée à la fin** du contexte |
+| `bi` | `CHAT_REWRITE=bilingual` | La réécriture produit une requête française **et** une requête anglaise, acronymes développés. **3 recherches** au lieu de 2 (question, FR, EN) |
+| `luna` | `CHAT_REWRITE_ENDPOINT=databricks-gpt-5-6-luna` | La réécriture est faite par GPT-5.6 Luna, petit modèle rapide, et plus par le modèle de réponse |
+| `1lang` | `CHAT_ONE_LANGUAGE=on` | Pour un document présent en plusieurs langues (Q0102QP_GB, Q0102QP_BG), on ne garde que les passages de la version **la mieux classée** |
+| (toujours) | `CHAT_SEARCH_RETRIES=2` | Une recherche refusée (rafale, délai) est relancée 2 fois avant d'échouer |
 
 ---
 
@@ -300,7 +300,7 @@ Deux mesures ont aussi été ajoutées :
 
 ### 2.4 Ce qu'on garde, ce qu'on écarte
 
-- **On garde** : le mode union, `CHAT_VSI_RERANK_COLUMNS=REF,semantic_headers,chunk_text`
+- **On garde** : le mode union, `CHAT_RERANK_COLUMNS=REF,semantic_headers,chunk_text`
   (neutre mais sans coût), 12 passages reclassés, le prompt KA, les 2 relances de recherche.
 - **On écarte** : le reranker seul, les prompts v2 et v3, le budget de contexte serré, 20
   passages.
@@ -309,7 +309,7 @@ Deux mesures ont aussi été ajoutées :
   - le titre, le bilingue et une langue par document, à la vague 3 ;
   - le modèle de réponse, par la comparaison côte à côte (§ 3.3).
 - **Pas encore fait** : mettre la configuration retenue par défaut dans l'app DEV.
-  `app.yaml` est toujours sur `CHAT_VSI_VARIANT=baseline`.
+  `app.yaml` est toujours sur `CHAT_VARIANT=baseline`.
 
 ### 2.5 Tout ce qui reste à tester, au même endroit
 
@@ -367,7 +367,7 @@ ordres : une version gagne une question seulement quand les deux lectures sont d
     la règle de langue est en tête des instructions, 20 à 25k tokens avant la question.
 
 Rerun préparé (`luna6-prompt`, défauts du notebook) : Luna @ `u-all` seul (témoin), `+v3`,
-`+v3+lang` (`CHAT_VSI_LANGUAGE_REMINDER` : une ligne après la question), réponses retraduites comme
+`+v3+lang` (`CHAT_LANGUAGE_REMINDER` : une ligne après la question), réponses retraduites comme
 dans l'app (widget `translate_back`). Recherches et réponses déjà en cache : seules les réponses
 `v3` et les jugements sont à payer (≈ 2 €).
 
@@ -405,8 +405,8 @@ dans l'app (widget `translate_back`). Recherches et réponses déjà en cache : 
 
 | Rôle | Modèle actuel | Où le changer |
 |---|---|---|
-| Réponse du Chat VSI | Sonnet 4.6 | `CHAT_VSI_LLM_ENDPOINT` |
-| Réécriture de la question avant recherche | Le même que la réponse | `CHAT_VSI_REWRITE_ENDPOINT` (nouveau) |
+| Réponse du Chat VSI | Sonnet 4.6 | `CHAT_LLM_ENDPOINT` |
+| Réécriture de la question avant recherche | Le même que la réponse | `CHAT_REWRITE_ENDPOINT` (nouveau) |
 | Traduction des questions ni FR ni EN | GPT-5.6 Luna | `CHAT_TRANSLATE_ENDPOINT` |
 | Reranking | `databricks_reranker` (Vector Search) | `chat_vsi_rerank.py` |
 | Embedding de l'index | `databricks-qwen3-embedding-0-6b` | création de l'index (`5_Sync_Vector_Indexes.py`) |
@@ -434,8 +434,8 @@ disponibles en DEV.
 - **Sonnet 4.6** (réponse) : la référence. Environ 74 % de réponses correctes en moyenne sur
   deux runs en union, premier mot à 3 s, 0,088 € par question.
 - **Sonnet 5.5** (réponse) : 81 % sur un seul run, même coût, premier mot à 8 s. Il réfléchit
-  par défaut : il a fallu relever les plafonds (`CHAT_VSI_ANSWER_MAX_TOKENS`,
-  `CHAT_VSI_REWRITE_MAX_TOKENS`) et retirer la température forcée. Prometteur, pas tranché.
+  par défaut : il a fallu relever les plafonds (`CHAT_ANSWER_MAX_TOKENS`,
+  `CHAT_REWRITE_MAX_TOKENS`) et retirer la température forcée. Prometteur, pas tranché.
 - **KA** : 62 % de réponses correctes, le plus rapide (8,4 s en médiane). Il interroge le même
   index (`chunks_index_v1`), avec son propre reranking interne.
 - **`databricks_reranker`** : utile seulement en union. Il ne lit que les 2 000 premiers
@@ -522,7 +522,7 @@ précédentes.
 | R11 | **Reranker par LLM** (§ 3.3) | Précision | 1 à 3 s, quelques centimes | `retrieval_eval` |
 | R12 | **Nombre de passages adaptatif** : couper sous un score de reranking | Moins de contexte inutile | Nul | `retrieval_eval`, `recall_top5_pct` |
 
-Déjà fait dans cette série : les relances de recherche (`CHAT_VSI_SEARCH_RETRIES`, sans elles
+Déjà fait dans cette série : les relances de recherche (`CHAT_SEARCH_RETRIES`, sans elles
 un utilisateur aurait eu « Document search failed » sous charge) et le modèle de réécriture
 séparé.
 
@@ -572,7 +572,7 @@ séparé.
   Cette lignée n'existe pas : la section 5 n'a pas de sous-section 3.2.
 - **Impact.**
   - `semantic_headers` sert d'indice de section au juge de l'impact search.
-  - Le reranker le lit avec `CHAT_VSI_RERANK_COLUMNS=REF,semantic_headers,chunk_text`.
+  - Le reranker le lit avec `CHAT_RERANK_COLUMNS=REF,semantic_headers,chunk_text`.
   - Sur un passage fusionné, l'indice de section est donc faux.
 - **Proposition.** Garder dans `semantic_headers` les titres du **premier** morceau du passage,
   ou la liste des sections couvertes. Pas un mélange.
@@ -825,8 +825,8 @@ Le DEV a déjà tout ce qu'il faut, copié de l'UAT par `copy_uat_to_dev` :
 2. **Un index par variante** sur l'endpoint Vector Search DEV. Le seul coût est l'embedding,
    environ 35 millions de tokens par variante, prix à vérifier dans la console.
 3. **`retrieval_eval` avec une config par index**. L'app lit l'index à chaque appel
-   (`CHAT_VSI_INDEX_ALL`), donc une config suffit :
-   `{'CHAT_VSI_INDEX_ALL': 'dev_landingzone.qualibot.chunks_index_v2a', ...}`.
+   (`CHAT_INDEX_ALL`), donc une config suffit :
+   `{'CHAT_INDEX_ALL': 'dev_landingzone.qualibot.chunks_index_v2a', ...}`.
    Il faut forcer la division `ALL` pour toutes les questions, sinon les questions AS et IS
    resteraient sur les anciens index : un widget à ajouter.
 4. **Seulement ensuite**, porter le découpage retenu dans `utils.py`.
@@ -843,7 +843,7 @@ Le DEV a déjà tout ce qu'il faut, copié de l'UAT par `copy_uat_to_dev` :
 
 `retrieval_eval`, 65 questions, toutes sur l'index ALL de chaque variante. `-all` = recherche `u-all`
 (celle du chat) ; sans suffixe = `union-ctx` ; `-clean` = `union-ctx` sans sommaires, cartouches ni
-textes répétés (`CHAT_VSI_SKIP_NOISE`).
+textes répétés (`CHAT_SKIP_NOISE`).
 
 | Config | Documents attendus trouvés | Dans les 5 premiers | Au moins un | Contexte (tokens) |
 |---|---|---|---|---|
@@ -866,7 +866,7 @@ textes répétés (`CHAT_VSI_SKIP_NOISE`).
 - **v2a** (même taille, découpage corrigé) gagne 4 points à contexte égal : les corrections de découpage
   comptent, la taille aussi.
 - **Écarter le « bruit » fait perdre** (−11 points sur v2b) : des passages marqués sommaire, cartouche ou
-  texte répété contiennent des réponses. `CHAT_VSI_SKIP_NOISE` reste désactivé ; le marquage reste dans
+  texte répété contiennent des réponses. `CHAT_SKIP_NOISE` reste désactivé ; le marquage reste dans
   les tables comme simple information.
 - **Réécriture par GPT-6 Luna** : `u-all-luna6` = 80.0 %, comme l'ancien `u-all` réécrit par Sonnet 4.6
   (80 %, même index, même routage) : aucune perte, la réécriture reste sur GPT-6 Luna.
@@ -876,7 +876,7 @@ textes répétés (`CHAT_VSI_SKIP_NOISE`).
   - second run : `idx-v2b-all` 83.6 % contre 78.5 % pour `idx-v1-all` (+5 points, comme au premier run),
     11k tokens contre 21k ;
   - `idx-v2b-all-k20` (20 passages reclassés) : 80.5 %, **moins bien** que 12 passages (83.6 %) avec plus
-    de contexte → on garde `CHAT_VSI_RERANK_TOP_K` par défaut (12) ;
+    de contexte → on garde `CHAT_RERANK_TOP_K` par défaut (12) ;
   - réponses (`pairwise_answers`, `luna6-v2b`, GPT-6 Luna des deux côtés, seul l'index change) :
     10 gagnés / 10 perdus / 20 égalités, exactitude 2.81 contre 2.61, fidélité 2.81 contre 2.73,
     inventions 0.40 contre 0.53 ; **0.0022 € par question contre 0.0036 €** (−39 %), premier token
@@ -1036,7 +1036,7 @@ Databricks** : le test se fait en DEV (`operations_dev.md`, bloc R), l'UAT seule
 | P6 | Taille inchangée (250 / 500 / 1 000 tokens) ; une variante courte se mesure en DEV (`v2b`) | `config.py` (réglable par variable d'environnement) |
 | P7 | Passage d'image : `Section : …` et `Légende : …` dans le texte indexé, rattaché au passage où l'image se trouve (`anchor_chunk_index`), longues retranscriptions découpées (`…-IMG-003-2`). Widget `rebuild_image_chunks` pour tout reconstruire sans LLM. Nouveau prompt pour les **futures** images : la première phrase nomme le sujet | `chunking.py`, `4_Describe`, `config.py` |
 | P8 | Plafond de 4 000 caractères en plus des tokens (`PARSING_MAX_CHUNK_CHARS`) | `chunking.py`, `config.py` |
-| P9 | `chunk_content_type` = `toc` (sommaires), `front_matter` (cartouches, historiques), `boilerplate` (même texte dans 20 documents ou plus). Décidé **paragraphe par paragraphe** depuis le 2026-10-08 (premier essai `v2a` : des résumés collés au cartouche étaient marqués avec lui) : le cartouche est coupé du résumé qui le suit, un passage ne mélange jamais cartouche ou sommaire et contenu, les sommaires sans points de conduite ou en tableau sont reconnus. Côté app, `CHAT_VSI_SKIP_NOISE=on` les écarte (désactivé par défaut) | `chunking.py`, `3_Parse`, `chat_vsi_rerank.py` |
+| P9 | `chunk_content_type` = `toc` (sommaires), `front_matter` (cartouches, historiques), `boilerplate` (même texte dans 20 documents ou plus). Décidé **paragraphe par paragraphe** depuis le 2026-10-08 (premier essai `v2a` : des résumés collés au cartouche étaient marqués avec lui) : le cartouche est coupé du résumé qui le suit, un passage ne mélange jamais cartouche ou sommaire et contenu, les sommaires sans points de conduite ou en tableau sont reconnus. Côté app, `CHAT_SKIP_NOISE=on` les écarte (désactivé par défaut) | `chunking.py`, `3_Parse`, `chat_vsi_rerank.py` |
 | P10 | Colonnes `titre`, `type_document`, `indice`, `langue` (vraie langue : suffixe de la REF, sinon le texte), `body_sha256` ; `Type :` dans le préfixe `[Source: …]` | `3_Parse`, `utils.py`, `4_Describe` |
 | P12 | Ligne d'en-tête des tableurs = la première qui remplit au moins 60 % des colonnes (les lignes de titre au-dessus restent en texte) ; `chunks_truncated` vrai seulement au-delà de 100 passages | `chunking.py`, `utils.py`, `3_Parse` |
 | P15 | Variante DEV sans préfixe (`v2c`) | `rechunk_experiment.py` |
@@ -1045,7 +1045,7 @@ Databricks** : le test se fait en DEV (`operations_dev.md`, bloc R), l'UAT seule
 Pas fait : P11 (documents d'avant 2018, décision métier), P13 (numéros de page, re-parsing
 GPU), P16 (prix Haiku, colonnes de recherche).
 
-Robustesse du chat (même jour, `docs/chat_vsi_robustesse_2026-10.md`) : GPT-6 Luna avec GPT-5.6
+Robustesse du chat (même jour, `docs/chat_robustesse_2026-10.md`) : GPT-6 Luna avec GPT-5.6
 Luna en secours, relances, reprise d'une réponse coupée, file d'attente, recherche partielle
 acceptée, détection de langue nettoyée (`chat/llm.py`). Mise en service : `operations_dev.md`,
 bloc L.
@@ -1179,7 +1179,7 @@ par minute avant la limite.
 - `rawfren` sous `rawfr` sur le golden alors qu'il fait une requête de plus : sur 15 questions, des
   écarts de 2 à 3 points sont à la limite du bruit.
 - Le temps de recherche ne baisse pas : la réécriture domine, les requêtes partent en parallèle.
-- **Décision (2026-10-09)** : `rawfr` devient le réglage par défaut (`CHAT_VSI_RAW_ON=fr`) ; si la
+- **Décision (2026-10-09)** : `rawfr` devient le réglage par défaut (`CHAT_RAW_ON=fr`) ; si la
   réécriture échoue, la recherche brute se fait sur la question. La comparaison des réponses
   (`pairwise_answers`, `chat` = ancien réglage `rawall|rawon=question+fr+en` contre `rawfr`) reste à
   faire pour confirmer et pour mesurer les tokens par réponse.

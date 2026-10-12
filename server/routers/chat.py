@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..services.chat import mlflow_turns
-from ..services.chat.engine import normalize_division, stream_chat_vsi
+from ..services.chat.engine import normalize_division, stream_chat
 from ..services.chat.llm import TIRED_MESSAGE
 from ..services.infra.doc_catalog import augment_sources, with_document_info
 from ..services.infra.lakebase import get_pool, store_chat_turn, store_error, upsert_user
@@ -339,7 +339,7 @@ async def _save_turn(
 @router.websocket('/chat/ws')
 async def chat_ws(websocket: WebSocket):
     """One chat turn over a WebSocket (avoids Databricks Apps proxy buffering), answered by
-    the Vector Search engine (``stream_chat_vsi``); then citation markers, catalog sources,
+    the Vector Search engine (``stream_chat``); then citation markers, catalog sources,
     translation back and persistence. Every turn that reached the engine — answered, failed or
     left by the browser — is logged in chat_turns (+ chat_retrieved_chunks, errors) once over."""
     await websocket.accept()
@@ -380,7 +380,7 @@ async def chat_ws(websocket: WebSocket):
     session_id = data.get('session_id') or str(uuid.uuid4())
     division = (data.get('division') or 'ALL').upper()
     # Recorded as endpoint_name (older turns carry ka-… names).
-    endpoint = f'vsi-{normalize_division(division).lower()}'
+    endpoint = f'chat-{normalize_division(division).lower()}'
 
     try:
         identity = await get_user_identity(websocket)  # type: ignore[arg-type]
@@ -457,7 +457,7 @@ async def chat_ws(websocket: WebSocket):
         # when the bridge translated the question (it translates the answer back), else the
         # detected French/English, else a local guess.
         answer_language = answer_language_for(translate_ctx, user_content) if user_content else None
-        answer_stream = stream_chat_vsi(host, token, division, _with_today_date(messages_for_engine),
+        answer_stream = stream_chat(host, token, division, _with_today_date(messages_for_engine),
                                         answer_language=answer_language, log=log)
 
         async for chunk in answer_stream:

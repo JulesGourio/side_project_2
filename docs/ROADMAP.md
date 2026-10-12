@@ -166,7 +166,7 @@ elles-mêmes sont documentées dans `docs/{COMPARE,CHATBOT}.md`.
 
 ## Plus tard — chatbot et parsing
 
-Configuration retenue le 2026-10-08 et tout ce qui a été mesuré : `docs/chat_vsi_tests.md`.
+Configuration retenue le 2026-10-08 et tout ce qui a été mesuré : `docs/chat_tests.md`.
 Ce qui reste à tester (fiche par document E1, contexte par passage E2, index sans préfixe,
 pistes de recherche R1–R12, documents d'avant 2018, numéros de page) : § E de ce document.
 

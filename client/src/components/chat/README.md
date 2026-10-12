@@ -3,7 +3,7 @@
 A RAG chat over the company's document base: Vector Search finds the passages, GPT-6 Luna
 answers from them only, with inline citations, division scoping (ALL / AS / IS) and a
 translation bridge for questions that are neither French nor English. Every choice below
-was measured: `docs/chat_vsi_tests.md` (configuration kept, results, what was dropped).
+was measured: `docs/chat_tests.md` (configuration kept, results, what was dropped).
 The former Knowledge Assistant (Agent Bricks) was removed on 2026-10-08 (`archive/`).
 
 ## How it works
@@ -11,7 +11,7 @@ The former Knowledge Assistant (Agent Bricks) was removed on 2026-10-08 (`archiv
 ### End-to-end flow (`WS /api/chat/ws`)
 
 `chat_ws` (`server/routers/chat.py`): **trim history → translation bridge → inject today's
-date → `stream_chat_vsi` → citation markers → translate back → persist the turn.**
+date → `stream_chat` → citation markers → translate back → persist the turn.**
 
 1. **History trimming** (`_trim_history`, `CHAT_MAX_HISTORY`, default 10) — bounds prompt
    growth; the latest question is always kept.
@@ -19,18 +19,18 @@ date → `stream_chat_vsi` → citation markers → translate back → persist t
    answered in English, then translated back.
 3. **Date injection** (`_with_today_date`) — prepends `[Date: YYYY-MM-DD]` to the last user
    message only, so date-relative questions resolve correctly.
-4. **The engine** (`server/services/chat/engine.py::stream_chat_vsi`):
+4. **The engine** (`server/services/chat/engine.py::stream_chat`):
    - bilingual rewrite of the question (French + English, acronyms expanded) by GPT-6 Luna;
-   - 3 HYBRID Vector Search queries on `CHAT_VSI_INDEX`, each = 12 reranked passages + 10 raw
+   - 3 HYBRID Vector Search queries on `CHAT_INDEX`, each = 12 reranked passages + 10 raw
      ones, merged by rank; the division is a `filters_json` filter on the `division` column;
    - documents named by REF in the conversation first, one language variant per document. The catalogue
      (REF, title, link) is the Lakebase table `doc_catalog`, rewritten by the parsing pipeline
      after each daily run and reloaded by the app every 30 min (`doc_catalog.py`);
    - prompt = the division's own part (`server/prompts/chat/system/<div>.md`: role, scope, division-only rules) + the base shared by all divisions (`system/base.md`, answer rules included) + numbered documents + question + a line naming the answer
      language;
-   - answer streamed by `chat_vsi_llm.stream_answer`: GPT-6 Luna, GPT-5.6 Luna as fallback,
+   - answer streamed by `chat/llm.stream_answer`: GPT-6 Luna, GPT-5.6 Luna as fallback,
      retries, continuation of a cut answer, at most 32 answers at once per instance
-     (`docs/chat_vsi_robustesse_2026-10.md`);
+     (`docs/chat_robustesse_2026-10.md`);
    - the model writes `[n]` markers; `CitationStreamParser` removes them from the stream and
      emits their positions in a `sources` event.
 5. **Citation assembly** — markers use `⟦n⟧` (U+27E6/U+27E7, essentially never present in
@@ -39,7 +39,7 @@ date → `stream_chat_vsi` → citation markers → translate back → persist t
    same inline citations without re-computing anything.
 6. **Persistence** — one `chat_sessions` row + two `chat_messages` rows (user + assistant)
    per turn, including failed turns (status `'error'`), so a question and its failure reason
-   are always traceable. `endpoint_name` = `vsi-all` / `vsi-as` / `vsi-is` (older turns of the
+   are always traceable. `endpoint_name` = `chat-all` / `chat-as` / `chat-is` (older turns of the
    Knowledge Assistant carry `ka-…` names).
 
 ### Translation bridge (`server/services/chat/translation_bridge.py`)
@@ -179,10 +179,10 @@ not part of the live app):
 |---|---|---|
 | `CHAT_ENABLED` | `true` | Feature flag |
 | `CHAT_MLFLOW_EXPERIMENT` | `` (off; `/Shared/qualibot/chat_turns` on DEV) | MLflow experiment receiving one trace per chat turn; must exist (`utils/evaluation/create_chat_experiment.py`) |
-| `CHAT_VSI_INDEX` | `dev_landingzone.qualibot.chunks_index` | The Vector Search index (per target in `target_env.json`) |
-| `CHAT_VSI_LLM_ENDPOINT` / `CHAT_VSI_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Answer model and its fallbacks |
-| `CHAT_VSI_REWRITE_ENDPOINT` / `CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Rewrite model and its fallbacks |
-| `CHAT_VSI_ANSWER_MAX_TOKENS` / `CHAT_VSI_REWRITE_MAX_TOKENS` | `8000` / `2000` | Output caps (reasoning included) |
+| `CHAT_INDEX` | `dev_landingzone.qualibot.chunks_index` | The Vector Search index (per target in `target_env.json`) |
+| `CHAT_LLM_ENDPOINT` / `CHAT_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Answer model and its fallbacks |
+| `CHAT_REWRITE_ENDPOINT` / `CHAT_REWRITE_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Rewrite model and its fallbacks |
+| `CHAT_ANSWER_MAX_TOKENS` / `CHAT_REWRITE_MAX_TOKENS` | `8000` / `2000` | Output caps (reasoning included) |
 | `CHAT_TRANSLATE_BRIDGE_ENABLED` | `false` (`true` on every target) | Enable the non-FR/EN translation bridge |
 | `CHAT_TRANSLATE_ENDPOINT` | `databricks-gpt-5-6-luna` | LLM endpoint for language detection + translation |
 | `CHAT_MAX_HISTORY` | `10` | Messages replayed per turn; `0` disables trimming |
@@ -229,7 +229,7 @@ engine fails entirely**, with `status='error'` and the failure reason in `error_
 Nothing about a turn is ever silently dropped; a failed turn is still fully traceable.
 This is a deliberate, tested invariant (`test_save_turn_records_error_status`).
 
-### `stream_chat_vsi` (`server/services/chat/engine.py`) — the engine
+### `stream_chat` (`server/services/chat/engine.py`) — the engine
 
 Events yielded (SSE-shaped strings, relayed by the router over the WebSocket):
 `: keepalive` (first byte, then while waiting), `response.output_text.delta` (answer text, `[n]`
@@ -238,12 +238,12 @@ markers removed), `sources` (cited documents + marker positions), `metadata` (`t
 `RewriteError`, `InputError`, …), `[DONE]`.
 
 **Search failures**: each Vector Search query is retried on 429 / 5xx / timeout (0.5 s, 1 s, 2 s +
-jitter, `CHAT_VSI_SEARCH_RETRIES`); one failed query out of three is tolerated, and if the reranker
+jitter, `CHAT_SEARCH_RETRIES`); one failed query out of three is tolerated, and if the reranker
 is refused the raw side still answers. A search that fails entirely ends the turn with a clear
 error — answering without documents would break the "documents only" rule.
 
 **Rewrite failures** fall back to the next model of the chain, then to the question alone.
-**Answer failures** go through `chat_vsi_llm` (fallback model, cooldowns, continuation).
+**Answer failures** go through `chat/llm` (fallback model, cooldowns, continuation).
 The translation bridge follows the same philosophy — fastText load failure, LLM call failure,
 non-JSON LLM response and answer-translation failure all fall back to **passing the original
 text through unchanged** rather than erroring the turn.
@@ -273,9 +273,9 @@ CREATE TABLE chat_messages (
     workspace_url   TEXT,
     role            TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content         TEXT NOT NULL,
-    trace_id        TEXT,             -- = chat_turns.trace_id (vsi-…)
+    trace_id        TEXT,             -- = chat_turns.trace_id (chat-…)
     tool_name  TEXT, tool_query TEXT, tool_result TEXT, reasoning_steps TEXT,  -- KA only, no longer written
-    endpoint_name   TEXT,             -- engine label vsi-all / vsi-as / vsi-is
+    endpoint_name   TEXT,             -- engine label chat-all / chat-as / chat-is
     sources_json    TEXT,             -- JSON: [{rank, title, url, n}], replaces a since-removed chat_sources table
     status          TEXT NOT NULL DEFAULT 'ok',  -- 'ok' | 'error' | 'aborted'
     error_msg       TEXT,
@@ -357,8 +357,8 @@ the socket with a JSON error frame if `can_chat` is false.
 
 | Log line (substring) | Where | Meaning |
 |---|---|---|
-| `chat_vsi: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d` | `chat/engine.py` | One line per turn: what was searched and how much was found |
-| `chat_vsi_llm:` | `chat/llm.py` | Any answer-model incident (fallback, retry, continuation) |
+| `chat: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d` | `chat/engine.py` | One line per turn: what was searched and how much was found |
+| `chat_llm:` | `chat/llm.py` | Any answer-model incident (fallback, retry, continuation) |
 | `Capabilities: ... granting all (fail-open)` (3 variants) | `user.py` | Distinguishes *why* fail-open triggered: Lakebase down / user not synced / DB query failed |
 | `translation_bridge: ... using original text: %s` (4 variants) | `translation_bridge.py` | Any bridge failure mode falling back to untranslated passthrough |
 | `Chat DB save failed: %s` | `chat.py` (`_save_turn`) | Persistence failure, swallowed — the turn itself still completed |

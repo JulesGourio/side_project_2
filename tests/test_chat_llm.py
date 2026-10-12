@@ -1,5 +1,5 @@
-"""Chat VSI resilience: fallback models, retries, continuation, load limit (chat_vsi_llm.py),
-Vector Search retries (chat_vsi.py) and language detection helpers (translation_bridge.py)."""
+"""Chat resilience: fallback models, retries, continuation, load limit (chat/llm.py),
+Vector Search retries (chat/engine.py) and language detection helpers (translation_bridge.py)."""
 
 import asyncio
 import json
@@ -18,8 +18,8 @@ MESSAGES = [{'role': 'system', 'content': 's'}, {'role': 'user', 'content': 'q'}
 def _fresh(monkeypatch):
     chat_llm.reset_health()
     monkeypatch.setattr(chat_llm, '_ROUND_WAITS_S', (0.0, 0.0, 0.0))
-    for name in ('CHAT_VSI_LLM_FALLBACK_ENDPOINTS', 'CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS', 'CHAT_VSI_LLM_ROUNDS',
-                 'CHAT_VSI_FIRST_TOKEN_TIMEOUT_S', 'CHAT_VSI_MAX_CONCURRENT_ANSWERS'):
+    for name in ('CHAT_LLM_FALLBACK_ENDPOINTS', 'CHAT_REWRITE_FALLBACK_ENDPOINTS', 'CHAT_LLM_ROUNDS',
+                 'CHAT_FIRST_TOKEN_TIMEOUT_S', 'CHAT_MAX_CONCURRENT_ANSWERS'):
         monkeypatch.delenv(name, raising=False)
     yield
     chat_llm.reset_health()
@@ -88,7 +88,7 @@ def test_reasoning_fallback_gets_a_larger_ceiling_and_no_temperature(monkeypatch
 
 def test_everything_down_ends_with_one_plain_error(monkeypatch):
     calls = []
-    monkeypatch.setenv('CHAT_VSI_LLM_ROUNDS', '3')
+    monkeypatch.setenv('CHAT_LLM_ROUNDS', '3')
     _transport(monkeypatch, {PRIMARY: lambda r: httpx.Response(404, text='no such endpoint'),
                              BACKUP: lambda r: httpx.Response(500, text='boom')}, calls)
     events = _events([PRIMARY, BACKUP])
@@ -129,7 +129,7 @@ def test_cut_answer_is_continued_by_the_only_endpoint(monkeypatch):
             raise chat_llm.LlmFailure('network', 'connection reset')
         yield 'text', 'fait foi. [1]'
     monkeypatch.setattr(chat_llm, 'stream_once', _once)
-    monkeypatch.setenv('CHAT_VSI_LLM_ROUNDS', '2')
+    monkeypatch.setenv('CHAT_LLM_ROUNDS', '2')
     events = _events([PRIMARY])
     assert _text(events) == 'La procédure QP-1518 fait foi. [1]' and not _of(events, 'error')
     assert seen[1][-2]['content'] == 'La procédure QP-1518 '
@@ -153,7 +153,7 @@ class _Silent(httpx.AsyncByteStream):
 
 
 def test_no_first_token_in_time_moves_on(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_FIRST_TOKEN_TIMEOUT_S', '0.2')
+    monkeypatch.setenv('CHAT_FIRST_TOKEN_TIMEOUT_S', '0.2')
     _transport(monkeypatch, {PRIMARY: lambda r: httpx.Response(200, stream=_Silent()),
                              BACKUP: lambda r: httpx.Response(200, text=_sse('vite'))})
     events = _events([PRIMARY, BACKUP])
@@ -161,7 +161,7 @@ def test_no_first_token_in_time_moves_on(monkeypatch):
 
 
 def test_concurrency_limit_queues_answers(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_MAX_CONCURRENT_ANSWERS', '1')
+    monkeypatch.setenv('CHAT_MAX_CONCURRENT_ANSWERS', '1')
     running, peak = [0], [0]
 
     async def _once(host, token, endpoint, messages, max_tokens):
@@ -182,11 +182,11 @@ def test_concurrency_limit_queues_answers(monkeypatch):
 
 
 def test_chains(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_LLM_FALLBACK_ENDPOINTS', f'{BACKUP}, {PRIMARY}')
+    monkeypatch.setenv('CHAT_LLM_FALLBACK_ENDPOINTS', f'{BACKUP}, {PRIMARY}')
     assert chat_llm.answer_chain(PRIMARY) == [PRIMARY, BACKUP]
     assert chat_llm.rewrite_chain('databricks-claude-sonnet-4-6', PRIMARY) == [
         'databricks-claude-sonnet-4-6', PRIMARY, BACKUP]
-    monkeypatch.setenv('CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS', BACKUP)
+    monkeypatch.setenv('CHAT_REWRITE_FALLBACK_ENDPOINTS', BACKUP)
     assert chat_llm.rewrite_chain('databricks-claude-sonnet-4-6', PRIMARY) == ['databricks-claude-sonnet-4-6', BACKUP]
 
 
@@ -198,8 +198,8 @@ def test_rewrite_falls_back_when_the_first_model_returns_nothing(monkeypatch):
         content = '' if PRIMARY in url else 'FR: qualification CND\nEN: NDT qualification'
         return httpx.Response(200, json={'choices': [{'message': {'content': content}}]}, request=httpx.Request('POST', url))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
-    monkeypatch.setenv('CHAT_VSI_REWRITE_ENDPOINT', PRIMARY)
-    monkeypatch.setenv('CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS', BACKUP)
+    monkeypatch.setenv('CHAT_REWRITE_ENDPOINT', PRIMARY)
+    monkeypatch.setenv('CHAT_REWRITE_FALLBACK_ENDPOINTS', BACKUP)
     q = asyncio.run(engine.rewrite_queries('https://h', 't', [{'role': 'user', 'content': 'NDT?'}]))
     assert q == ('qualification CND', 'NDT qualification') and BACKUP in sent[-1]
 
@@ -262,7 +262,7 @@ def test_truncated_translation_keeps_the_original(monkeypatch):
 
 
 def test_slot_is_freed_when_the_caller_stops_at_done(monkeypatch):
-    monkeypatch.setenv('CHAT_VSI_MAX_CONCURRENT_ANSWERS', '1')
+    monkeypatch.setenv('CHAT_MAX_CONCURRENT_ANSWERS', '1')
 
     async def _once(host, token, endpoint, messages, max_tokens):
         yield 'text', 'ok'
@@ -287,5 +287,5 @@ def test_no_claude_model_in_the_chatbot_config():
     targets = _json.load(open(_os.path.join(root, 'utils', 'deploy', 'target_env.json')))
     for values in [env] + [v for k, v in targets.items() if isinstance(v, dict)]:
         for name, value in values.items():
-            if name.startswith(('CHAT_VSI_LLM', 'CHAT_VSI_REWRITE_ENDPOINT', 'CHAT_VSI_REWRITE_FALLBACK', 'CHAT_TRANSLATE')):
+            if name.startswith(('CHAT_LLM', 'CHAT_REWRITE_ENDPOINT', 'CHAT_REWRITE_FALLBACK', 'CHAT_TRANSLATE')):
                 assert 'claude' not in str(value).lower(), f'{name}={value}'

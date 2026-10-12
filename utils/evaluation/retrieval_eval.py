@@ -16,12 +16,12 @@
 # MAGIC Caveat: synthetic positives were judged among the former Knowledge Assistant's own top-K, so
 # MAGIC they lean toward what it retrieved; compare runs with each other, per source.
 # MAGIC
-# MAGIC Same steps as the app: history, translation bridge, date, then `chat_vsi.retrieve_for_turn`
+# MAGIC Same steps as the app: history, translation bridge, date, then `engine.retrieve_for_turn`
 # MAGIC (rewrite, 3 queries, REF and title lookups). What is compared: the **index** (the chat's own,
 # MAGIC or one built with another chunking) and the **search sizes** (reranked / raw passages per
 # MAGIC query, cap on the merged list) — widget `indexes`. Questions
 # MAGIC already saved in `results_table` for a label are skipped. Results of every test so far:
-# MAGIC `docs/chat_vsi_tests.md`. Run all.
+# MAGIC `docs/chat_tests.md`. Run all.
 
 # COMMAND ----------
 
@@ -71,21 +71,21 @@ if os.path.exists(_target):
         if m:
             os.environ[m.group(1)] = (shlex.split(m.group(2)) or [''])[0]
 sys.path.insert(0, APP)
-# One rewrite model per run: no silent fallback to another model (chat_vsi_llm).
-os.environ['CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS'] = os.environ.get('CHAT_VSI_REWRITE_ENDPOINT') or os.environ['CHAT_VSI_LLM_ENDPOINT']
+# One rewrite model per run: no silent fallback to another model (chat/llm).
+os.environ['CHAT_REWRITE_FALLBACK_ENDPOINTS'] = os.environ.get('CHAT_REWRITE_ENDPOINT') or os.environ['CHAT_LLM_ENDPOINT']
 
-_SIZE_KEYS = {'rerank': 'CHAT_VSI_RERANK_TOP_K', 'raw': 'CHAT_VSI_RAW_TOP_K', 'rawon': 'CHAT_VSI_RAW_ON',
-              'cap': 'CHAT_VSI_MAX_SEARCH_PASSAGES'}
+_SIZE_KEYS = {'rerank': 'CHAT_RERANK_TOP_K', 'raw': 'CHAT_RAW_TOP_K', 'rawon': 'CHAT_RAW_ON',
+              'cap': 'CHAT_MAX_SEARCH_PASSAGES'}
 
 
 def parse_configs(text):
     """'label[=index][|rerank=N][|raw=N][|cap=N]', comma-separated -> {label: config}.
-    No index = the app's (CHAT_VSI_INDEX); no option = the app's search sizes."""
+    No index = the app's (CHAT_INDEX); no option = the app's search sizes."""
     out = {}
     for item in [x.strip() for x in text.split(',') if x.strip()]:
         head, *opts = [p.strip() for p in item.split('|') if p.strip()]
         label, _, index = head.partition('=')
-        index = index.strip() or os.environ['CHAT_VSI_INDEX']
+        index = index.strip() or os.environ['CHAT_INDEX']
         env = {}
         for o in opts:
             k, _, v = o.partition('=')
@@ -98,7 +98,7 @@ def parse_configs(text):
 
 def apply_config(cfg):
     """Point the engine at the config's index and search sizes (read at call time)."""
-    os.environ['CHAT_VSI_INDEX'] = cfg['index']
+    os.environ['CHAT_INDEX'] = cfg['index']
     for key in _SIZE_KEYS.values():
         os.environ.pop(key, None)
     os.environ.update(cfg['env'])
@@ -140,7 +140,7 @@ for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
 
 from server.services.chat import engine
 assert hasattr(engine, 'retrieve_for_turn'), (
-    f'Stale app code in {APP}: chat_vsi.py has no retrieve_for_turn. '
+    f'Stale app code in {APP}: chat/engine.py has no retrieve_for_turn. '
     'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
 
 from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _strip_division, _trim_history, _with_today_date  # app code

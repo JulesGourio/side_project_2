@@ -7,7 +7,7 @@ traduction et secours sont tous des modèles Luna.
 
 Depuis le 2026-10-08, `app.yaml` met GPT-5.6 Luna en secours de la réponse et de la réécriture
 pour toutes les cibles. Mise en service DEV : `operations_dev.md`, bloc S ; UAT : `OPERATIONS.md`, D5.
-Les mesures qui ont mené à ces choix : `docs/chat_vsi_tests.md`.
+Les mesures qui ont mené à ces choix : `docs/chat_tests.md`.
 
 ## 1. Ce qui se passe maintenant à chaque question
 
@@ -25,7 +25,7 @@ Les mesures qui ont mené à ces choix : `docs/chat_vsi_tests.md`.
 
 Appelé par `chat/engine.py` pour la réponse et la réécriture. Le prompt n'est pas modifié.
 
-**Ordre des modèles** : `CHAT_VSI_LLM_ENDPOINT`, puis ceux de `CHAT_VSI_LLM_FALLBACK_ENDPOINTS`.
+**Ordre des modèles** : `CHAT_LLM_ENDPOINT`, puis ceux de `CHAT_LLM_FALLBACK_ENDPOINTS`.
 
 **Quand on passe au modèle suivant :**
 
@@ -48,11 +48,11 @@ Appelé par `chat/engine.py` pour la réponse et la réécriture. Le prompt n'es
 
 **Plafond de sortie** : un modèle qui raisonne compte sa réflexion dans `max_tokens`. Quand la
 chaîne passe sur un tel modèle, le plafond est porté à 6 000 au minimum
-(`CHAT_VSI_REASONING_MIN_TOKENS`, 1 000 pour la réécriture). Un plafond de 2 000 prévu pour
+(`CHAT_REASONING_MIN_TOKENS`, 1 000 pour la réécriture). Un plafond de 2 000 prévu pour
 Sonnet ne tronque donc plus Luna.
 
 **Forte charge** :
-- `CHAT_VSI_MAX_CONCURRENT_ANSWERS` (32 par défaut) réponses générées en même temps par
+- `CHAT_MAX_CONCURRENT_ANSWERS` (32 par défaut) réponses générées en même temps par
   instance de l'app ;
 - les suivantes attendent leur tour, connexion maintenue par des keepalive, au lieu de toutes
   taper le quota en même temps ;
@@ -63,23 +63,23 @@ Sonnet ne tronque donc plus Luna.
 **Traçabilité** : chaque réponse émet un événement `llm` : le modèle qui a répondu, s'il s'agit
 du secours, et chaque tentative (modèle, résultat, durée), repris dans les métadonnées du tour
 (`llm`, `llm_fallback`, `llm_attempts`). Chaque incident est écrit dans les
-logs de l'app, préfixe `chat_vsi_llm:`. Un tour sans incident n'y laisse rien.
+logs de l'app, préfixe `chat_llm:`. Un tour sans incident n'y laisse rien.
 
 ## 3. Réglages (tous lus à chaque question)
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `CHAT_VSI_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-5-6-luna` (`app.yaml`) | Modèles de secours de la réponse, dans l'ordre |
-| `CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS` | la chaîne de réponse | Secours de la réécriture |
-| `CHAT_VSI_FIRST_TOKEN_TIMEOUT_S` | 90 | Délai maximal avant le premier mot |
-| `CHAT_VSI_STALL_TIMEOUT_S` | 60 | Durée maximale de silence en cours de réponse |
-| `CHAT_VSI_LLM_DEADLINE_S` | 240 | Plus aucune nouvelle tentative au-delà |
-| `CHAT_VSI_LLM_ROUNDS` | 3 | Tours de la chaîne complète |
-| `CHAT_VSI_COOLDOWN_S` | 30 | Mise de côté d'un modèle après 429/5xx/timeout |
-| `CHAT_VSI_MAX_CONCURRENT_ANSWERS` | 32 | Réponses simultanées par instance (0 = pas de limite) |
-| `CHAT_VSI_REASONING_MIN_TOKENS` | 6000 | Plancher de `max_tokens` sur un modèle qui raisonne |
-| `CHAT_VSI_REWRITE_TIMEOUT_S` | 45 | Délai d'un appel de réécriture |
-| `CHAT_VSI_SEARCH_RETRIES` | 2 | Relances par requête Vector Search (la recherche entière : 1 de plus) |
+| `CHAT_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-5-6-luna` (`app.yaml`) | Modèles de secours de la réponse, dans l'ordre |
+| `CHAT_REWRITE_FALLBACK_ENDPOINTS` | la chaîne de réponse | Secours de la réécriture |
+| `CHAT_FIRST_TOKEN_TIMEOUT_S` | 90 | Délai maximal avant le premier mot |
+| `CHAT_STALL_TIMEOUT_S` | 60 | Durée maximale de silence en cours de réponse |
+| `CHAT_LLM_DEADLINE_S` | 240 | Plus aucune nouvelle tentative au-delà |
+| `CHAT_LLM_ROUNDS` | 3 | Tours de la chaîne complète |
+| `CHAT_COOLDOWN_S` | 30 | Mise de côté d'un modèle après 429/5xx/timeout |
+| `CHAT_MAX_CONCURRENT_ANSWERS` | 32 | Réponses simultanées par instance (0 = pas de limite) |
+| `CHAT_REASONING_MIN_TOKENS` | 6000 | Plancher de `max_tokens` sur un modèle qui raisonne |
+| `CHAT_REWRITE_TIMEOUT_S` | 45 | Délai d'un appel de réécriture |
+| `CHAT_SEARCH_RETRIES` | 2 | Relances par requête Vector Search (la recherche entière : 1 de plus) |
 | `CHAT_TRANSLATE_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` | Secours de la traduction (`app.yaml`) |
 
 ## 4. Fichiers

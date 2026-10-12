@@ -1,12 +1,12 @@
 """Tests for the chat WebSocket route (server/routers/chat.py), engine mocked.
 
 Coverage:
-  - /api/chat/ws calls stream_chat_vsi with the requested division and today's date
+  - /api/chat/ws calls stream_chat with the requested division and today's date
   - the 'done' payload carries ⟦n⟧ markers and numbered sources
   - access control (can_chat)
   - CHAT_ENABLED=false -> error event, socket closed
   - an engine error is relayed to the browser and the turn is saved with status=error
-  - turns are saved with endpoint_name = vsi-<division>
+  - turns are saved with endpoint_name = chat-<division>
   - a stream ending without text gives an error, not silence
   - every turn is logged once (store_chat_turn) with its outcome, message ids and trace_id;
     a browser that leaves mid-answer gives an 'aborted' turn
@@ -44,7 +44,7 @@ OK_EVENTS = (
     json.dumps({'type': 'response.output_text.delta', 'delta': 'QP-1518 est la référence.'}),
     json.dumps({'type': 'sources', 'sources': [{'title': 'QP-1518', 'url': 'https://intraqual/QP-1518'}],
                 'citations': [{'n': 1, 'pos': 25}]}),
-    json.dumps({'type': 'metadata', 'trace_id': 'vsi-abc', 'tool_name': 'vector_search'}),
+    json.dumps({'type': 'metadata', 'trace_id': 'chat-abc', 'tool_name': 'vector_search'}),
     'data: [DONE]\n\n',
 )
 
@@ -57,7 +57,7 @@ def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=Tru
     with (
         patch('server.routers.chat.CHAT_ENABLED', enabled),
         patch('server.routers.chat.TRANSLATE_BRIDGE_ENABLED', False),
-        patch('server.routers.chat.stream_chat_vsi', engine),
+        patch('server.routers.chat.stream_chat', engine),
         patch('server.routers.chat.get_capabilities', new=AsyncMock(return_value=caps or {'can_chat': True})),
         patch('server.routers.chat.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None, 'email': 'u1@example.com'})),
@@ -123,10 +123,10 @@ def test_engine_error_is_relayed_and_saved_as_error(client):
     assert received[-1] == {'type': 'error', 'error': TIRED_MESSAGE}
     mocks['save_turn'].assert_awaited_once()
     assert mocks['save_turn'].await_args.kwargs['status'] == 'error'
-    assert mocks['save_turn'].await_args.kwargs['endpoint_name'] == 'vsi-all'
+    assert mocks['save_turn'].await_args.kwargs['endpoint_name'] == 'chat-all'
 
 
-@pytest.mark.parametrize('division,label', [('ALL', 'vsi-all'), ('AS', 'vsi-as'), ('IS', 'vsi-is'), ('XX', 'vsi-all')])
+@pytest.mark.parametrize('division,label', [('ALL', 'chat-all'), ('AS', 'chat-as'), ('IS', 'chat-is'), ('XX', 'chat-all')])
 def test_turn_saved_with_division_endpoint_name(client, division, label):
     _, mocks = _talk(client, division=division, pool=MagicMock())
     mocks['save_turn'].assert_awaited_once()

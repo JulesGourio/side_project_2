@@ -2,7 +2,7 @@
   "_comment": "Per-target env var overrides for the deployed app. Single source of truth read by both deploy_qualibot.ps1 (local/manual deploys) and bitbucket-pipelines.yml (CI deploys) -- do not hardcode these values a third time anywhere else. A key omitted for a target means: keep app.yaml's own default. The chat model, its fallbacks and token caps are the same everywhere: app.yaml.",
   "dev": {
     "COMPARE_VOLUME_PATH": "/Volumes/dev_landingzone/qualibot/doc_compare",
-    "CHAT_VSI_INDEX": "dev_landingzone.qualibot.chunks_index",
+    "CHAT_INDEX": "dev_landingzone.qualibot.chunks_index",
     "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/dev_landingzone/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
     "CHAT_TRANSLATE_BRIDGE_ENABLED": "true",
     "COMPARE_IMPACT_INDEX": "dev_landingzone.qualibot.chunks_index",
@@ -12,7 +12,7 @@
   },
   "uat": {
     "COMPARE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/doc_compare",
-    "CHAT_VSI_INDEX": "uat_landingzone.qualibot.chunks_index",
+    "CHAT_INDEX": "uat_landingzone.qualibot.chunks_index",
     "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
     "CHAT_TRANSLATE_BRIDGE_ENABLED": "true",
     "COMPARE_IMPACT_INDEX": "uat_landingzone.qualibot.chunks_index",
@@ -20,7 +20,7 @@
   },
   "uat-test": {
     "COMPARE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/test",
-    "CHAT_VSI_INDEX": "uat_landingzone.qualibot.chunks_index",
+    "CHAT_INDEX": "uat_landingzone.qualibot.chunks_index",
     "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/test/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
     "LAKEBASE_DATABASE": "doccompare_test",
     "CHAT_TRANSLATE_BRIDGE_ENABLED": "true",
@@ -30,7 +30,7 @@
   },
   "prod": {
     "COMPARE_VOLUME_PATH": "/Volumes/prod_landingzone/qualibot/doc_compare",
-    "CHAT_VSI_INDEX": "prod_landingzone.qualibot.chunks_index",
+    "CHAT_INDEX": "prod_landingzone.qualibot.chunks_index",
     "COMPARE_IMPACT_INDEX": "prod_landingzone.qualibot.chunks_index",
     "CAPS_WAREHOUSE_ID": "03054ddc44b7f902"
   }

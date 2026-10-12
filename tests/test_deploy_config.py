@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TARGET_ENV_PATH = os.path.join(HERE, '..', 'utils', 'deploy', 'target_env.json')
 APP_YAML_PATH = os.path.join(HERE, '..', 'app.yaml')
 
-_INDEX_KEYS = ('CHAT_VSI_INDEX', 'COMPARE_IMPACT_INDEX')
+_INDEX_KEYS = ('CHAT_INDEX', 'COMPARE_IMPACT_INDEX')
 _VERSIONED = re.compile(r'chunks\w*_v\d')
 
 # Targets that are real apps and MUST set their own Vector Search indexes

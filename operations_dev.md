@@ -416,9 +416,9 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
     `image_metadata`, `parse_manifest`, `category_reference`.
 
   Facultatif : `eval_golden_runs` n'est plus écrite (notebook KA contre VSI archivé) ; ses
-  résultats sont dans `docs/chat_vsi_tests.md` : `DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_golden_runs;` Ensuite `SHOW TABLES IN dev_landingzone.qualibot` ne doit
+  résultats sont dans `docs/chat_tests.md` : `DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_golden_runs;` Ensuite `SHOW TABLES IN dev_landingzone.qualibot` ne doit
   plus montrer aucun nom en `_v1` / `_v2…` (les tables `eval_*` gardent les anciens noms d'essai
-  **dans leurs lignes** : c'est l'historique des mesures, `docs/chat_vsi_tests.md` § B).
+  **dans leurs lignes** : c'est l'historique des mesures, `docs/chat_tests.md` § B).
 
 Trop long ou bloqué en DEV ? Le seul pas lent est S5 (embedding). Si un pas bloque (droits sur les
 KA, index orphelins), le laisser et me renvoyer l'erreur : le reste ne dépend pas de lui, et l'UAT
@@ -461,7 +461,7 @@ de la moitié des questions échouent.
   notebook, par le moteur appelé dans le notebook (`MODE = engine` : mêmes modèles et mêmes
   limites, sans l'instance de l'app).
 - [ ] **U2. M'envoyer** les deux tableaux de la dernière cellule et la ligne `MODE = …`, plus,
-  dans les logs de l'app pendant le test, les lignes `chat_vsi_llm:` (bascule vers le modèle de
+  dans les logs de l'app pendant le test, les lignes `chat_llm:` (bascule vers le modèle de
   secours, relances).
 
 ### V2. Test de charge de Vector Search seul (2026-10-08)
@@ -481,12 +481,12 @@ ANN, avec filtre, mélange du chat). ≈ 20 min.
 ### V3. Refaire le test de charge du chat avec la file Vector Search (2026-10-08)
 
 Résultat V2 : ≈ 26 requêtes HYBRID/s au plus, refus au-delà de ≈ 16 en cours, reranker non en cause
-(`docs/chat_vsi_tests.md` § 5.8). Code : file commune `server/services/infra/vs_gate.py` (8 requêtes en
+(`docs/chat_tests.md` § 5.8). Code : file commune `server/services/infra/vs_gate.py` (8 requêtes en
 cours au plus, relances sur 429).
 
 - [x] **V3.1.** Recopier `server/services/infra/vs_gate.py` (nouveau), `server/services/chat/engine.py`,
   `server/services/infra/vector_search.py`, `tests/test_vs_gate.py`, `tests/test_chat_llm.py`,
-  `docs/chat_vsi_tests.md`, `operations_dev.md` ; puis `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev`
+  `docs/chat_tests.md`, `operations_dev.md` ; puis `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev`
   (sans `-SyncOnly` : l'app doit redémarrer).
 - [x] **V3.2.** Notebook `load_test_chat`, widget `levels` = `10,20,30,40` (80 questions/min ≈ 25
   questions en cours), Run all. M'envoyer les deux tableaux.
@@ -503,7 +503,7 @@ cours au plus, relances sur 429).
   AI Gateway / Rate limits (si présente). M'envoyer la limite affichée (ou « aucune »).
   _(fait 2026-10-09 : 1 M tokens d'entrée/min, 100 k de sortie/min, mêmes limites pour les deux modèles)_
 - [x] **V3.2e.** `rawfr` est le défaut depuis 2026-10-09. Recopier `server/services/chat/engine.py`,
-  `tests/test_chat_engine.py`, `docs/chat_vsi_tests.md`, `CLAUDE.md`, `operations_dev.md`, puis
+  `tests/test_chat_engine.py`, `docs/chat_tests.md`, `CLAUDE.md`, `operations_dev.md`, puis
   `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (sans `-SyncOnly` : l'app doit redémarrer).
   Puis comparer les réponses ancien réglage / `rawfr` : notebook `pairwise_answers`, widgets
   `indexes` = `rawall|rawon=question+fr+en,chat`, `reference` = `databricks-gpt-6-luna@rawall`,
@@ -617,7 +617,7 @@ des fils à gauche sont comptées en jours calendaires.
   ```
 
 - [ ] **X5. (facultatif) Voir le message « tired »** : me demander de mettre un index inexistant
-  dans `CHAT_VSI_INDEX` pour `dev` (`utils/deploy/target_env.json`), redéployer, poser une question
+  dans `CHAT_INDEX` pour `dev` (`utils/deploy/target_env.json`), redéployer, poser une question
   (attendu : après les relances, le message gris « Qualibot is a bit tired… », et une ligne
   `errors` `stage = search`, `origin = server/services/chat/engine.py:… in _query`), puis remettre
   la valeur et redéployer.
@@ -668,7 +668,7 @@ Chaque tour de chat terminé est aussi envoyé comme **une trace MLflow** dans l
 `/Shared/qualibot/chat_turns` : la question, la réponse, les étapes (traduction, réécriture, recherche,
 recherche par REF, réponse, un span par appel au modèle) à leurs vraies durées, les passages envoyés au
 modèle (texte compris), les tokens et le coût, les avertissements. Même source que `chat_turns` dans
-Lakebase (le `TurnLog`), mêmes noms, jointure par `vsi_trace_id`. L'envoi se fait après la réponse,
+Lakebase (le `TurnLog`), mêmes noms, jointure par `chat_trace_id`. L'envoi se fait après la réponse,
 en arrière-plan : l'utilisateur n'attend rien et une panne MLflow ne touche pas le chat. Éteint tant que
 `CHAT_MLFLOW_EXPERIMENT` est vide (c'est le cas partout sauf DEV). Le vote 👍/👎 n'est pas dans la trace :
 `score_chat_traces.py` (bloc W, en pause) le joint depuis Lakebase.
@@ -1120,7 +1120,7 @@ returned 403 » → endpoint LLM.
 
 - [ ] **V3. Retester** une question en ALL, AS et IS dans l'onglet Chat VSI ; en cas
   d'erreur, `databricks apps logs qualibot --profile DEV` montre la ligne
-  `chat_vsi: Vector Search … returned 403` ou `… returned 403` sur l'endpoint.
+  `chat: Vector Search … returned 403` ou `… returned 403` sur l'endpoint.
 
 ### G. Évaluation golden — Chat KA vs Chat VSI (DEV, 2026-10-07)
 
@@ -1161,14 +1161,14 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   Colonne `recall_top5_pct` : documents attendus parmi les 5 premiers du contexte, pour comparer
   à taille égale.
 
-- [ ] **G2d. Requêtes de diagnostic de l'index** : `docs/chat_vsi_tests.md` § 7, Q1 à Q8,
+- [ ] **G2d. Requêtes de diagnostic de l'index** : `docs/chat_tests.md` § 7, Q1 à Q8,
   dans l'éditeur SQL DEV (lecture seule). Envoyer les résultats : ils chiffrent les constats
   de l'audit du parsing (part d'images, tables des matières, documents attendus absents de
   l'index…).
 
 - [ ] **R. Tester le nouveau découpage sur des index de test** (étapes 1 à 3 faites le 2026-10-08 :
   **v2b retenu**, 80.9 % contre 75.8 % avec deux fois moins de contexte ; audit § 5.6) (code du 2026-10-08, audit
-  `docs/chat_vsi_tests.md` § 5 ; ne touche ni `chunks_v1` ni `chunks_index_v1`).
+  `docs/chat_tests.md` § 5 ; ne touche ni `chunks_v1` ni `chunks_index_v1`).
   1. `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`.
   2. Notebook `utils/evaluation/rechunk_experiment.py`, serverless, Run all, trois
      fois avec ces widgets (le reste par défaut) :
@@ -1190,7 +1190,7 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
      audit § 5.6)_ Deux vérifications sur v2b avant le re-découpage UAT (copier le nouveau zip, `-SyncOnly`) :
      - `retrieval_eval`, widgets `index_variants=v2b`, `configs` = `idx-v2b-all-k20` (une seule ligne
        nouvelle : 20 passages reclassés au lieu de 12 ; ≈ 10 min). Si elle dépasse nettement 80.9 %
-       sans repasser au-dessus de ≈ 20k tokens, on met `CHAT_VSI_RERANK_TOP_K=20` dans le chat.
+       sans repasser au-dessus de ≈ 20k tokens, on met `CHAT_RERANK_TOP_K=20` dans le chat.
      - `pairwise_answers`, Run all avec les **nouveaux défauts** (supprimer les widgets si le notebook
        garde les anciens) : `eval_id=luna6-v2b`, référence `databricks-gpt-6-luna@u-all-v1+v3+lang`,
        concurrent `databricks-gpt-6-luna@u-all-v2b+v3+lang`, juge GPT-5.6 Luna. Même modèle, seul
@@ -1207,17 +1207,17 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   répondu). Juge GPT-5.6 Luna, dans les deux ordres. Vérifier d'abord le nom exact des endpoints dans
   Serving (widgets `reference`, `contenders`, `judge`). Résultats dans
   `dev_landingzone.qualibot.eval_pairwise_runs` ; une autre série = un autre `eval_id`.
-  Fait le 2026-10-08 (`luna6-versions`), résultats dans `docs/chat_vsi_tests.md` § 2.6.
+  Fait le 2026-10-08 (`luna6-versions`), résultats dans `docs/chat_tests.md` § 2.6.
 
 - [x] **P2. Rerun prompt de GPT-6 Luna** _(fait 2026-10-08, `luna6-prompt`)_ : `u-all+v3+lang` retenu
   (19 gagnés / 16 perdus contre Sonnet 5.5, 0.63 invention contre 1.59, juge constant 88 %). Détail :
-  `docs/chat_vsi_tests.md` § 2.6.
+  `docs/chat_tests.md` § 2.6.
 
 - [ ] **L. Passer le Chat VSI DEV sur GPT-6 Luna + GPT-5.6 Luna en secours, sans aucun modèle Claude**
-  (décision 2026-10-08 ; récap `docs/chat_vsi_robustesse_2026-10.md`). Tout est déjà dans le code :
+  (décision 2026-10-08 ; récap `docs/chat_robustesse_2026-10.md`). Tout est déjà dans le code :
   `app.yaml` (réponse GPT-6 Luna, secours GPT-5.6 Luna, pour toutes les cibles) et le bloc `"dev"` de
   `utils/deploy/target_env.json` (variante `rerank` + `u-all`, réécriture GPT-6 Luna avec secours GPT-5.6
-  Luna, `CHAT_VSI_INSTRUCTIONS=v3`, `CHAT_VSI_LANGUAGE_REMINDER=on`). Le pont de traduction était déjà sur
+  Luna, `CHAT_INSTRUCTIONS=v3`, `CHAT_LANGUAGE_REMINDER=on`). Le pont de traduction était déjà sur
   GPT-5.6 Luna (secours GPT-6 Luna). À faire, dans l'ordre :
   1. Serving DEV : vérifier que `databricks-gpt-6-luna` et `databricks-gpt-5-6-luna` existent.
   2. Copier le zip, puis donner au SP de l'app le droit d'interroger GPT-6 Luna (ajouté au job) :

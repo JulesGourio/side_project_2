@@ -56,7 +56,7 @@ CHAT_TURN_COLUMNS: List[tuple] = [
     ('workspace_id',          'TEXT'),
     ('app_version',           'TEXT'),
     ('division',              'TEXT'),
-    # what the turn should have run with: chat_vsi.settings() (index, search sizes, models
+    # what the turn should have run with: engine.settings() (index, search sizes, models
     # and their fallbacks, token limits) — compare with the columns below
     ('index_name',            'TEXT'),
     ('config',                'JSONB'),
@@ -680,7 +680,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             )
         ''')
         for col, typedef in [
-            # The turn's chat_turns.trace_id (vsi-…); on Knowledge Assistant turns, its MLflow trace id.
+            # The turn's chat_turns.trace_id (chat-…); on Knowledge Assistant turns, its MLflow trace id.
             ('trace_id',        'TEXT'),
             # Knowledge Assistant only, no longer written (the retrieval is in chat_turns /
             # chat_retrieved_chunks); kept for the history of the KA turns.
@@ -689,7 +689,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             ('tool_result',     'TEXT'),
             ('reasoning_steps', 'TEXT'),
             ('workspace_id',    'TEXT'),
-            # Engine label: vsi-all / vsi-as / vsi-is (KA turns: ka-… endpoint).
+            # Engine label: chat-all / chat-as / chat-is (KA turns: ka-… endpoint).
             # NULL on copies of a shared conversation. The model that actually
             # answered is chat_turns.answer_endpoint.
             ('endpoint_name',   'TEXT'),

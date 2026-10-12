@@ -121,7 +121,7 @@ async def stream_analysis(
     """Stream a chat-completion endpoint; emits SSE chunks + a final usage event.
 
     ``operation`` names the feature in user-facing error messages (Compare by
-    default; the Chat VSI engine passes its own label).
+    default; the chat engine passes its own label).
     """
     url = f'{host}/serving-endpoints/{endpoint_name}/invocations'
 
