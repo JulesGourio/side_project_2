@@ -1,10 +1,11 @@
 """Every finished chat turn as one MLflow trace — the live view of what the chatbot does.
 
-``chat.py`` calls ``export_turn`` once the answer is sent and the turn is saved to Lakebase. The
-trace is rebuilt from the turn's ``TurnLog`` (``turn_log.py``): the same steps, durations, passages
-and issues as in ``chat_turns``, at their real start offsets, so nothing is measured twice and the
-user never waits for it. Off unless ``CHAT_MLFLOW_EXPERIMENT`` names an existing experiment; a
-failure is logged and never reaches the chat.
+``chat.py`` calls ``export_turn`` once the answer is sent, just before the turn is saved to Lakebase
+(the MLflow trace id is stored in ``chat_turns.mlflow_trace_id``). The trace is rebuilt from the turn's
+``TurnLog`` (``turn_log.py``): the same steps, durations, passages and issues as in ``chat_turns``, at
+their real start offsets, so nothing is measured twice; the user has already got the answer. Off unless
+``CHAT_MLFLOW_EXPERIMENT`` names an existing experiment; a failure is logged and never reaches the chat.
+Traces upload in MLflow's own background queue, so the call is local and short.
 
     chat_turn                       the question → the answer shown (tags: division, status, warnings…)
     ├─ translate_in                 non-French/English question → English (translation bridge)
@@ -18,7 +19,9 @@ failure is logged and never reaches the chat.
     ├─ translate_back               answer translated back
     └─ persist                      messages saved to Lakebase
 
-The user's vote is not attached here: ``utils/evaluation/score_chat_traces.py`` joins it from Lakebase by ``chat_trace_id``.
+The tags carry what the free scorers read (``utils/evaluation/chat_scorers.py``); the prompt versions
+used by the turn are linked when ``CHAT_PROMPT_SCHEMA`` names the schema of the prompt registry; the user's
+thumbs up / down becomes a ``user_vote`` assessment on the trace (``log_vote``, called by the feedback route).
 """
 
 import asyncio
@@ -27,7 +30,10 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Any, Dict, List, Optional, Set
+
+from . import prompts
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +42,9 @@ _MAX_DOC_CHARS = 20_000          # passage text kept per document in the retriev
 _MAX_ISSUE_CHARS = 500
 _lock = threading.Lock()
 _experiment: Dict[str, Optional[str]] = {}       # experiment name -> id (None: missing, warned once)
-_pending: Set['asyncio.Task[None]'] = set()      # strong references until each export is done
+_prompt_cache: Dict[str, Any] = {}              # prompt key -> (fetched at, registered version or None)
+_PROMPT_TTL_S = 600
+_EXPORT_TIMEOUT_S = 10
 
 
 def experiment_name() -> str:
@@ -64,24 +72,29 @@ def _experiment_id(name: str) -> Optional[str]:
     return _experiment[name]
 
 
-def export_turn(log: Any) -> None:
-    """Schedules the export of the finished turn ``log`` (never blocks, never raises)."""
+async def export_turn(log: Any) -> None:
+    """Writes the finished turn ``log`` as a trace and records its id in ``log.data`` (never raises)."""
     name = experiment_name()
     if not name or not log.status:
         return
     try:
-        task = asyncio.get_running_loop().create_task(_export(log, name))
-    except RuntimeError:
-        return
-    _pending.add(task)
-    task.add_done_callback(_pending.discard)
-
-
-async def _export(log: Any, name: str) -> None:
-    try:
-        await asyncio.wait_for(asyncio.to_thread(_write_trace, log, name), timeout=60)
+        trace_id = await asyncio.wait_for(asyncio.to_thread(_write_trace, log, name), timeout=_EXPORT_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 — telemetry must not disturb the chat
         logger.warning('mlflow_turns: trace of %s not written: %s', log.trace_id, exc)
+        return
+    if trace_id:
+        log.data['mlflow_trace_id'] = trace_id
+
+
+def _language_guess(text: Optional[str]) -> str:
+    """Two-letter code of the language of ``text`` (local fastText model), '' when unsure or unavailable."""
+    if not text:
+        return ''
+    try:
+        from .translation_bridge import _fast_lang_guess
+        return _fast_lang_guess(text[:2000]) or ''
+    except Exception:  # noqa: BLE001 — a tag, not worth a failed trace
+        return ''
 
 
 def _hash(value: str) -> str:
@@ -97,14 +110,58 @@ def _document(passage: Dict[str, Any]) -> Any:
                               'semantic_headers': passage.get('semantic_headers') or ''})
 
 
-def _write_trace(log: Any, name: str) -> None:
+def _registered_prompt(schema: str, key: str) -> Optional[Any]:
+    """The registry version aliased ``deployed`` for the prompt ``key`` if its text is the file's, else None."""
+    cached = _prompt_cache.get(key)
+    if cached and time.monotonic() - cached[0] < _PROMPT_TTL_S:
+        return cached[1]
+    version = None
+    try:
+        import mlflow
+        found = mlflow.genai.load_prompt(f'prompts:/{prompts.registry_name(schema, key)}@deployed',
+                                         allow_missing=True, link_to_model=False)
+        if found is not None and (found.tags or {}).get('sha') == prompts.digest(key):
+            version = found
+        elif found is not None:
+            logger.warning('mlflow_turns: prompt %s differs from the registered "deployed" version '
+                           '(run the register_chat_prompts job)', key)
+    except Exception as exc:  # noqa: BLE001 — retried after the TTL
+        logger.warning('mlflow_turns: prompt %s lookup failed: %s', key, exc)
+    _prompt_cache[key] = (time.monotonic(), version)
+    return version
+
+
+def _linked_prompts(keys: List[str]) -> str:
+    schema = os.getenv('CHAT_PROMPT_SCHEMA', '').strip()
+    if not schema or not keys:
+        return ''
+    versions = [v for v in (_registered_prompt(schema, k) for k in keys) if v is not None]
+    return json.dumps([{'name': v.name, 'version': str(v.version)} for v in versions]) if versions else ''
+
+
+def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = '') -> None:
+    """Attaches the user's thumbs up / down to the turn's trace (blocking; run it in a thread, never raises)."""
+    if not (experiment_name() and mlflow_trace_id):
+        return
+    try:
+        import mlflow
+        from mlflow.entities import AssessmentSource, AssessmentSourceType
+        mlflow.log_feedback(
+            trace_id=mlflow_trace_id, name='user_vote', value=vote == 'up',
+            source=AssessmentSource(source_type=AssessmentSourceType.HUMAN, source_id=_hash(user_id or 'unknown')),
+            rationale=(comment or '')[:2000] or None)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('mlflow_turns: vote on %s not logged: %s', mlflow_trace_id, exc)
+
+
+def _write_trace(log: Any, name: str) -> Optional[str]:
     import mlflow
     from mlflow.entities import SpanType
     from mlflow.tracing.constant import SpanAttributeKey
 
     experiment_id = _experiment_id(name)
     if not experiment_id:
-        return
+        return None
     data, timings, starts = log.data, log.timings_ms, log.starts_ms
     t0 = log.started_at_ns
     total_ms = timings.get('total') or log.elapsed_ms()
@@ -129,8 +186,14 @@ def _write_trace(log: Any, name: str) -> None:
         'question_lang': str(data.get('question_lang') or ''), 'answer_endpoint': str(data.get('answer_endpoint') or ''),
         'llm_fallback': str(bool(data.get('llm_fallback'))).lower(), 'warnings': ','.join(log.codes),
         'app_version': str(data.get('app_version') or ''), 'index_name': str(data.get('index_name') or ''),
-        'cited_count': str(data.get('citations_count') or 0),
+        'cited_count': str(data.get('citations_count') or 0), 'passages_sent': str(data.get('passages_sent') or 0),
+        'first_token_ms': str(timings.get('first_token') or ''), 'total_ms': str(total_ms),
+        'cost_eur': str(round((data.get('cost_eur') or 0) + (data.get('rewrite_cost_eur') or 0), 6)),
+        'question_lang_guess': _language_guess(data.get('question')), 'answer_lang_guess': _language_guess(log.answer),
     }
+    linked = _linked_prompts(getattr(log, 'prompts', []))
+    if linked:
+        tags['mlflow.linkedPrompts'] = linked
     metadata = {k: v for k, v in {'mlflow.trace.session': data.get('session_id'),
                                   'mlflow.trace.user': _hash(str(data['user_id'])) if data.get('user_id') else None
                                   }.items() if v}
@@ -209,6 +272,7 @@ def _write_trace(log: Any, name: str) -> None:
                          'cited_refs': json.dumps(data.get('cited_refs') or []), 'sources_count': data.get('sources_count'),
                          'config': json.dumps(data.get('config') or {}, default=str),
                          'cost_eur_total': round((data.get('cost_eur') or 0) + (data.get('rewrite_cost_eur') or 0), 6)})
+    return root.trace_id
 
 
 def _usage(input_tokens: Optional[int], output_tokens: Optional[int]) -> Optional[Dict[str, int]]:

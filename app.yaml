@@ -44,6 +44,10 @@ env:
   # Empty = off. The experiment must exist (utils/evaluation/create_chat_experiment.py); per-target value in utils/deploy/target_env.json.
   - name: CHAT_MLFLOW_EXPERIMENT
     value: ""
+  # Schema (catalog.schema) of the MLflow prompt registry holding the chat prompt files (utils/evaluation/register_chat_prompts.py): the
+  # registered version of each prompt a turn used is linked to its trace. Empty = no link.
+  - name: CHAT_PROMPT_SCHEMA
+    value: ""
   # How long can_chat / can_compare stay cached per user; sync_user_capabilities.py changes apply after the next cache miss.
   - name: CAPS_TTL_S
     value: "600"

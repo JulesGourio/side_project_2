@@ -43,12 +43,11 @@ import os
 import re
 import time
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
 
-from . import llm as chat_llm
+from . import llm as chat_llm, prompts
 from ..infra import vs_gate
 from ..infra.doc_catalog import _catalog, canon_ref, document_info
 from .turn_log import TurnLog
@@ -56,12 +55,7 @@ from ..infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEO
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parents[2] / 'prompts' / 'chat'
 _DIVISIONS = ('ALL', 'AS', 'IS')
-
-
-def _read_prompt(name: str) -> str:
-    return (_PROMPTS_DIR / name).read_text(encoding='utf-8').strip()
 
 
 _DEFAULT_INDEX = 'dev_landingzone.qualibot.chunks_index'
@@ -77,10 +71,10 @@ _REF_LOOKUP_K = 8                # passages fetched from the named documents
 _MAX_QUERY_CHARS = 20000         # Vector Search rejects query_text past ~29k chars
 _OPERATION = 'Chat'              # label used in user-facing error messages
 
-REWRITE_PROMPT = _read_prompt('rewrite.md')
+REWRITE_PROMPT = prompts.read('rewrite')
 
-LANGUAGE_REMINDER = _read_prompt('language_reminder.md')
-NAMED_LANGUAGE_REMINDER = _read_prompt('language_reminder_named.md')
+LANGUAGE_REMINDER = prompts.read('language_reminder')
+NAMED_LANGUAGE_REMINDER = prompts.read('language_reminder_named')
 
 # Prefix chat.py's _with_today_date puts on the last user turn.
 _DATE_PREFIX_RE = re.compile(r'^\[Date: \d{4}-\d{2}-\d{2}\]\n\n')
@@ -182,7 +176,7 @@ def settings() -> Dict[str, Any]:
 def prompt_parts(division: str) -> Dict[str, str]:
     """The files the system instructions are made of: ``division_<div>`` then ``base``."""
     div = normalize_division(division).lower()
-    return {f'division_{div}': _read_prompt(f'system/{div}.md'), 'base': _read_prompt('system/base.md')}
+    return {f'division_{div}': prompts.read(f'system_{div}'), 'base': prompts.read('system_base')}
 
 
 @lru_cache(maxsize=None)
@@ -674,6 +668,7 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
     trace_id = log.trace_id
     div = normalize_division(division)
     log.data.update({'division': div, 'index_name': index_name(), 'config': settings()})
+    log.prompts = prompts.keys_for_turn(div, bool(answer_language))
     conversation = _clean_history(messages)
     if not conversation or conversation[-1]['role'] != 'user':
         log.fail('input', 'InputError', 'the last message must be a user question')

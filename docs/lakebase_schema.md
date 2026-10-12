@@ -71,7 +71,7 @@ recherche quand le bridge l'a traduite), `history_messages`, `fr_query`, `en_que
 `named_refs` / `titled_refs` (documents cherchés en plus, parce que nommés dans la conversation ou
 parce que leur titre correspond), `passages_retrieved` / `passages_sent` / `documents_sent`,
 `prompt_chars`, `instructions_sha` (empreinte des instructions système utilisées : change quand
-`division_*.md` ou `base.md` change).
+`system/*.md` change), `mlflow_trace_id` (identifiant de la trace MLflow du tour, vide si `CHAT_MLFLOW_EXPERIMENT` est vide ou si l'envoi a échoué ; sert à rattacher le vote 👍/👎 à la trace).
 
 Le catalogue des documents (`doc_catalog`) porte aussi `revision` (l'indice Intraqual de la
 révision en cours) et `doc_date` (sa date de publication), écrits par la tâche
@@ -223,17 +223,19 @@ spans `retrieval` / `rewrite` / `search` / `ref_lookup` / `answer` / `queue_wait
 `translate_in` / `translate_back` / `persist` = les colonnes `<étape>_ms` (et `llm_attempts` pour `call_n`) ;
 sortie du span `retrieval` = les passages `kept` de `chat_retrieved_chunks`, dans l'ordre du prompt ;
 tokens et coût sur `rewrite` et `answer` ; `status` et `warnings` en tags ; `issues` (sans trace de pile)
-en attribut de la racine. La session MLflow est `session_id`, l'utilisateur est haché. Rien n'est lu
-depuis Lakebase : un champ de plus dans la trace s'ajoute d'abord dans le `TurnLog`.
+en attribut de la racine. La session MLflow est `session_id`, l'utilisateur est haché. Les tags lus par les scorers gratuits
+(`passages_sent`, `cited_count`, `first_token_ms`, `cost_eur`, `question_lang_guess`, `answer_lang_guess`…) et les versions de
+prompts liées (`CHAT_PROMPT_SCHEMA`) y sont aussi. Rien n'est lu depuis Lakebase : un champ de plus dans la trace s'ajoute d'abord
+dans le `TurnLog`.
 
 ## Notation de la qualité
 
-L'ancien notebook `score_production_qa.py` (traces MLflow du KA) est archivé. Le prototype
-`utils/evaluation/score_chat_traces.py` (`operations_dev.md`, bloc W) rejoue les tours enregistrés :
-il lit `chat_turns` et les passages envoyés au modèle dans `chat_retrieved_chunks`. La tâche
-d'import du job d'export UAT (`import_chatbot_tables_to_uat_job.py`) charge `chat_turns`,
-`chat_retrieved_chunks` et `errors` dans `uat_landingzone.qualibot` (tableaux de bord, alertes
-`utils/alerts/05` et `06`).
+Les tours sont notés **depuis les traces MLflow**, pas depuis Lakebase (`utils/evaluation/score_chat_traces.py`, job
+`D_2_Qualibot_Score_Chat_Traces_<cible>`, par lots, jamais pendant un tour) : scorers gratuits sur tous les tours, juges LLM sur un
+échantillon, résultats dans `dev_proj.qualibot.chat_trace_scores` (clé `chat_trace_id` = `chat_turns.trace_id`). Le vote 👍/👎 est une
+évaluation `user_vote` sur la trace (`chat_turns.mlflow_trace_id` fait le lien). La tâche d'import du job d'export UAT
+(`import_chatbot_tables_to_uat_job.py`) charge `chat_turns`, `chat_retrieved_chunks` et `errors` dans `uat_landingzone.qualibot`
+(tableaux de bord, alertes `utils/alerts/05` et `06`).
 
 ## Vérifié
 

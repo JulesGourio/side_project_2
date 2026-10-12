@@ -1,5 +1,6 @@
 """Chat router — conversational interface answered by the Vector Search engine (services/chat/engine.py)."""
 
+import asyncio
 import json
 import logging
 import os
@@ -574,12 +575,22 @@ async def chat_ws(websocket: WebSocket):
         if user_content:
             # After 'done' was sent: the user does not wait for this write.
             log.finish(outcome)
+            await mlflow_turns.export_turn(log)
             await store_chat_turn(log, endpoint=route, user_message_id=saved[0], assistant_message_id=saved[1])
-            mlflow_turns.export_turn(log)
         try:
             await websocket.close()
         except Exception:
             pass
+
+
+async def _turn_trace_id(conn, message_id: int) -> str:
+    """MLflow trace id of the turn that produced assistant message ``message_id`` ('' when unknown)."""
+    try:
+        return await conn.fetchval('SELECT mlflow_trace_id FROM chat_turns WHERE assistant_message_id = $1 '
+                                   'ORDER BY id DESC LIMIT 1', message_id) or ''
+    except Exception as exc:  # noqa: BLE001 — the vote is saved either way
+        logger.warning('chat feedback: MLflow trace id lookup failed: %s', exc)
+        return ''
 
 
 @router.post('/chat/feedback', dependencies=[Depends(require_chat)])
@@ -618,6 +629,10 @@ async def chat_feedback(body: ChatFeedbackRequest, request: Request):
                 body.vote,
                 body.comment or None,
             )
+            mlflow_trace_id = await _turn_trace_id(conn, body.message_id)
+        if mlflow_trace_id:
+            asyncio.get_running_loop().create_task(asyncio.to_thread(
+                mlflow_turns.log_vote, mlflow_trace_id, body.vote, body.comment or '', user_id))
         return {'success': True, 'id': row['id'], 'vote': row['vote']}
     except Exception as exc:
         logger.error('Chat feedback save failed: %s', exc)

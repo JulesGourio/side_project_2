@@ -83,6 +83,7 @@ CHAT_TURN_COLUMNS: List[tuple] = [
     ('passages_sent',         'INTEGER'),            # ... of which handed to the LLM (kept)
     ('documents_sent',        'INTEGER'),
     ('prompt_chars',          'INTEGER'),
+    ('mlflow_trace_id',       'TEXT'),               # the turn's trace in the MLflow experiment (CHAT_MLFLOW_EXPERIMENT)
     ('instructions_sha',      'TEXT'),               # sha256[:16] of the system instructions used
     # answer
     ('answer_endpoint',       'TEXT'),               # model that answered (NULL: none)

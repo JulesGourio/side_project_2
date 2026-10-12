@@ -1,314 +1,227 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Qualibot — scoring of real chat turns as MLflow traces (prototype)
+# MAGIC # Qualibot — quality scoring of the live chat traces
 # MAGIC
-# MAGIC Every chat turn is already logged in Lakebase: the question, the search queries, every passage
-# MAGIC sent to the model (`chat_retrieved_chunks`, with its text), the answer, the user's vote
-# MAGIC (`docs/lakebase_schema.md`). This notebook replays those turns as MLflow traces — no model or
-# MAGIC Vector Search call, the logged data is the trace — then scores them with MLflow GenAI scorers:
+# MAGIC The app writes one MLflow trace per chat turn (`server/services/chat/mlflow_turns.py`): question, answer, steps,
+# MAGIC passages sent to the model, tags, and the user's thumbs up / down as a `user_vote` assessment. This job scores those
+# MAGIC traces **after the fact, in batches** — never inside a chat turn — and writes the verdicts back on the traces and to
+# MAGIC `results_table`.
 # MAGIC
-# MAGIC | Scorer | Question it answers | Kind |
+# MAGIC | Family | Scorers | Cost |
 # MAGIC |---|---|---|
-# MAGIC | `relevance_to_query` | Does the answer address the question? | judge |
-# MAGIC | `retrieval_groundedness` | Is every claim of the answer supported by the passages sent? | judge |
-# MAGIC | `retrieval_relevance` (widget `chunk_relevance`) | Is each passage sent relevant to the question? One judge call per passage | judge |
-# MAGIC | `safety` | Nothing harmful | judge |
-# MAGIC | `language`, `honest_limits` | Same language as the question; says so when the documents do not answer | judge (guidelines) |
-# MAGIC | `cited_documents`, `first_token_s`, `user_vote` | Documents cited, time to the first word, thumbs up / down | logged values, free |
+# MAGIC | free (code, on every turn) | `language_match`, `has_citation`, `degraded_turn`, `used_fallback_model`, `first_token_s`, `first_token_in_budget`, `turn_cost_eur` | none |
+# MAGIC | judges (LLM, on a sample) | `retrieval_groundedness`, `numeric_fidelity`, `honest_limits`, `off_topic_refusal`, `retrieval_sufficiency`, `relevance_to_query`, `retrieval_relevance` | tokens of `judge_model` |
 # MAGIC
-# MAGIC Judge: `judge_model` (default GPT-5.6 Luna, our own endpoint: we see its tokens and pay its
-# MAGIC price; empty = the Databricks managed judge). Traces and scores land in the MLflow experiment
-# MAGIC `experiment`; one row per turn and scorer in `results_table`, joined to Lakebase by
-# MAGIC `chat_trace_id`. Replaces `score_production_qa.py` (archived), which compared the former
-# MAGIC Knowledge Assistant with a naive RAG.
-# MAGIC
-# MAGIC Run all, on the workspace of the app whose turns you score (Lakebase is read with the
-# MAGIC notebook's own identity), on serverless.
+# MAGIC **Protecting the token quota** (the judge shares the model endpoint's limits with the chat): the plan is printed with an
+# MAGIC estimate of input tokens first (`dry_run` = stop there); the run refuses to start above `max_input_tokens`; judge calls are
+# MAGIC throttled by `max_workers` calls in flight and `calls_per_second` starting per second, 429s are retried with doubling waits;
+# MAGIC run it off peak hours. Turns with a thumbs down or a degraded status are read by every judge, whatever the sample.
+# MAGIC `sample_rates` (JSON, e.g. `{"retrieval_groundedness": 0.25}`) overrides `chat_scorers.SAMPLE_RATES` (1.0 everywhere until
+# MAGIC the judges are checked); the target rates are `chat_scorers.TARGET_SAMPLE_RATES`.
 # MAGIC
 # MAGIC ## Technical debt
-# MAGIC 1. Prototype: run by hand, no job yet. Judge prompts are MLflow's; their cost per turn is still to measure.
-# MAGIC 2. A `databricks:/<endpoint>` judge needs MLflow ≥ 3.4; with an older MLflow, leave `judge_model` empty.
-# MAGIC 3. The app does not write MLflow traces itself: scores exist only for the turns replayed here.
+# MAGIC 1. Judge prompts are MLflow's; their real token cost per turn is still to be read from the first dry runs.
+# MAGIC 2. `databricks:/<endpoint>` judges need MLflow >= 3.4; with an older MLflow leave `judge_model` empty (managed judge).
 
 # COMMAND ----------
 
-# MAGIC %pip install -q "mlflow[databricks]>=3.4" psycopg2-binary "databricks-sdk>=0.102"
+# MAGIC %pip install -q "mlflow[databricks]>=3.4" "databricks-sdk>=0.102"
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Configuration
-# MAGIC `selection`: `recent` (latest answered turns), `down` (thumbed-down turns only), `voted` (every turn with a vote).
-# MAGIC `skip_scored` leaves out the turns already in `results_table`, so the notebook can be re-run on the same window.
 
 # COMMAND ----------
 
 import json
 import logging
-import re
-from datetime import datetime, timezone
+import os
+import sys
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger('score_chat_traces')
 
-dbutils.widgets.text('lakebase_project_id', 'qualibot')
-dbutils.widgets.text('lakebase_branch', 'production')
-dbutils.widgets.text('lakebase_endpoint', 'primary')
-dbutils.widgets.text('lakebase_database', 'doccompare')
+dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
+dbutils.widgets.text('experiment', '/Shared/qualibot/chat_turns')
 dbutils.widgets.text('days', '7')
-dbutils.widgets.text('limit', '50')
-dbutils.widgets.dropdown('selection', 'recent', ['recent', 'down', 'voted'])
+dbutils.widgets.text('limit', '200')
 dbutils.widgets.dropdown('skip_scored', 'true', ['true', 'false'])
+dbutils.widgets.dropdown('dry_run', 'true', ['true', 'false'])
 dbutils.widgets.text('judge_model', 'databricks:/databricks-gpt-5-6-luna')
-dbutils.widgets.dropdown('chunk_relevance', 'false', ['false', 'true'])
-dbutils.widgets.text('experiment', '/Shared/qualibot/chat_trace_scores')
+dbutils.widgets.text('sample_rates', '{}')
+dbutils.widgets.dropdown('chunk_relevance', 'true', ['true', 'false'])
+dbutils.widgets.text('max_input_tokens', '2000000')
+dbutils.widgets.text('max_workers', '2')
+dbutils.widgets.text('calls_per_second', '2')
 dbutils.widgets.text('results_table', 'dev_proj.qualibot.chat_trace_scores')
 
-LAKEBASE_PROJECT_ID = dbutils.widgets.get('lakebase_project_id').strip()
-LAKEBASE_BRANCH = dbutils.widgets.get('lakebase_branch').strip()
-LAKEBASE_ENDPOINT = dbutils.widgets.get('lakebase_endpoint').strip()
-LAKEBASE_DATABASE = dbutils.widgets.get('lakebase_database').strip()
-DAYS = max(1, int(dbutils.widgets.get('days') or 7))
-LIMIT = max(1, int(dbutils.widgets.get('limit') or 50))
-SELECTION = dbutils.widgets.get('selection')
-SKIP_SCORED = dbutils.widgets.get('skip_scored') == 'true'
-JUDGE = dbutils.widgets.get('judge_model').strip()
-CHUNK_RELEVANCE = dbutils.widgets.get('chunk_relevance') == 'true'
+APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 EXPERIMENT = dbutils.widgets.get('experiment').strip()
+DAYS = max(1, int(dbutils.widgets.get('days') or 7))
+LIMIT = max(1, int(dbutils.widgets.get('limit') or 200))
+SKIP_SCORED = dbutils.widgets.get('skip_scored') == 'true'
+DRY_RUN = dbutils.widgets.get('dry_run') == 'true'
+JUDGE = dbutils.widgets.get('judge_model').strip()
+RATE_OVERRIDES = json.loads(dbutils.widgets.get('sample_rates') or '{}')
+CHUNK_RELEVANCE = dbutils.widgets.get('chunk_relevance') == 'true'
+MAX_INPUT_TOKENS = int(dbutils.widgets.get('max_input_tokens') or 2_000_000)
 RESULTS = dbutils.widgets.get('results_table').strip()
 
-logger.info('Lakebase %s/%s/%s, last %d days, %s, at most %d turns, judge %s',
-            LAKEBASE_PROJECT_ID, LAKEBASE_BRANCH, LAKEBASE_DATABASE, DAYS, SELECTION, LIMIT, JUDGE or 'managed')
+sys.path.insert(0, f'{APP}/utils/evaluation')
+import chat_scorers
+
+MAX_WORKERS = max(1, int(dbutils.widgets.get('max_workers') or 2))
+CALLS_PER_SECOND = float(dbutils.widgets.get('calls_per_second') or 2)
+RATES = {**chat_scorers.SAMPLE_RATES, **{k: float(v) for k, v in RATE_OVERRIDES.items()}}
+logger.info('experiment %s, last %d days, at most %d traces, judge %s, rates %s, %d workers, %.1f calls/s, dry_run=%s',
+            EXPERIMENT, DAYS, LIMIT, JUDGE or 'managed', RATES, MAX_WORKERS, CALLS_PER_SECOND, DRY_RUN)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Inputs
-# MAGIC The turns come straight from the app's Lakebase, not from a Delta copy, so the notebook sees the
-# MAGIC turns of the app it runs next to as soon as they are answered. Only answered turns (`ok`,
-# MAGIC `degraded`) are scored; the latest vote on the answer comes with them.
+# MAGIC Answered turns of the experiment (`ok`, `degraded`) of the last `days`, newest first. A trace already carrying the tag
+# MAGIC `quality_scored` is left out when `skip_scored` is on, so the job can run every night on the same window.
 
 # COMMAND ----------
 
-import psycopg2
-import psycopg2.extras
-from databricks.sdk import WorkspaceClient
+import mlflow
+from mlflow.entities import AssessmentSourceType
 
-w = WorkspaceClient()
-branch_path = f'projects/{LAKEBASE_PROJECT_ID}/branches/{LAKEBASE_BRANCH}'
-endpoints = list(w.postgres.list_endpoints(parent=branch_path))
-if not endpoints:
-    raise RuntimeError(f'No Lakebase endpoint found for {branch_path}')
-credential = w.postgres.generate_database_credential(endpoint=f'{branch_path}/endpoints/{LAKEBASE_ENDPOINT}')
-me = w.current_user.me()
+mlflow.set_tracking_uri('databricks')
+experiment = mlflow.get_experiment_by_name(EXPERIMENT)
+if experiment is None:
+    raise RuntimeError(f'Experiment {EXPERIMENT} does not exist: run the create_chat_experiment job first')
+since_ms = int((datetime.now(timezone.utc) - timedelta(days=DAYS)).timestamp() * 1000)
+found = mlflow.search_traces(locations=[experiment.experiment_id], filter_string=f'timestamp > {since_ms}',
+                             order_by=['timestamp DESC'], max_results=LIMIT * 3, return_type='list')
 
-already_scored = set()
-if SKIP_SCORED and spark.catalog.tableExists(RESULTS):
-    already_scored = {r[0] for r in spark.table(RESULTS).select('chat_trace_id').distinct().collect()}
 
-vote_filter = {'recent': '', 'down': "AND v.vote = 'down'", 'voted': 'AND v.vote IS NOT NULL'}[SELECTION]
-turns_sql = f"""
-    SELECT t.trace_id, t.created_at, t.status, t.warnings, t.division, t.question, t.question_lang,
-           t.fr_query, t.answer_endpoint, t.llm_fallback, t.cited_refs, t.first_token_ms, t.total_ms,
-           m.content AS answer, v.vote, v.comment AS vote_comment
-    FROM chat_turns t
-    JOIN chat_messages m ON m.id = t.assistant_message_id
-    LEFT JOIN LATERAL (SELECT f.vote, f.comment FROM chat_feedbacks f
-                       WHERE f.message_id = t.assistant_message_id
-                       ORDER BY f.created_at DESC LIMIT 1) v ON TRUE
-    WHERE t.status IN ('ok', 'degraded') AND t.trace_id LIKE 'chat-%%'
-      AND t.created_at > NOW() - make_interval(days => %s) {vote_filter}
-    ORDER BY t.created_at DESC
-    LIMIT %s
-"""
-chunks_sql = """
-    SELECT trace_id, prompt_rank, doc_number, ref, url, semantic_headers, chunk_text, cited
-    FROM chat_retrieved_chunks
-    WHERE kept AND trace_id = ANY(%s)
-    ORDER BY trace_id, prompt_rank
-"""
-conn = psycopg2.connect(host=endpoints[0].status.hosts.host, port=5432, database=LAKEBASE_DATABASE,
-                        user=me.user_name or me.display_name, password=credential.token, sslmode='require')
-try:
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(turns_sql, (DAYS, LIMIT + len(already_scored)))
-        TURNS = {r['trace_id']: dict(r) for r in cur.fetchall() if r['trace_id'] not in already_scored}
-        TURNS = dict(list(TURNS.items())[:LIMIT])
-        cur.execute(chunks_sql, (list(TURNS),))
-        CHUNKS = {}
-        for r in cur.fetchall():
-            CHUNKS.setdefault(r['trace_id'], []).append(dict(r))
-finally:
-    conn.close()
+def _vote(trace):
+    for a in trace.info.assessments or []:
+        if a.name == 'user_vote' and getattr(a, 'feedback', None) is not None:
+            return 'up' if a.feedback.value else 'down'
+    return ''
 
-logger.info('%d turns to score (%d already scored left out), %d passages',
-            len(TURNS), len(already_scored), sum(len(v) for v in CHUNKS.values()))
-if not TURNS:
-    dbutils.notebook.exit('no_turns')
+
+TRACES = {}
+for tr in found:
+    tags = tr.info.tags or {}
+    if tags.get('status') not in ('ok', 'degraded') or (SKIP_SCORED and tags.get('quality_scored')):
+        continue
+    TRACES[tr.info.trace_id] = tr
+    if len(TRACES) >= LIMIT:
+        break
+META = [{'trace_id': i, 'status': (t.info.tags or {}).get('status', ''), 'vote': _vote(t)} for i, t in TRACES.items()]
+logger.info('%d traces to score (%d seen, %d thumbs down)', len(TRACES), len(found), sum(m['vote'] == 'down' for m in META))
+if not TRACES:
+    dbutils.notebook.exit('no_traces')
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Data Preparation
+# MAGIC ### Prep 1 — which judge reads which trace, and what it will cost
+# MAGIC The passages sent are re-read by every context judge (about 4 characters a token), so the estimate below is
+# MAGIC what the run asks of the judge endpoint's input-token quota. Above `max_input_tokens` the run stops here.
+
+# COMMAND ----------
+
+if not CHUNK_RELEVANCE:
+    RATES.pop('retrieval_relevance', None)
+
+
+def _passage_chars(trace):
+    for span in trace.data.spans:
+        if span.name == 'retrieval':
+            return sum(len((d.get('page_content') if isinstance(d, dict) else getattr(d, 'page_content', '')) or '')
+                       for d in (span.outputs or []))
+    return 0
+
+
+PLAN = chat_scorers.plan(META, RATES)
+CHARS = {i: _passage_chars(t) for i, t in TRACES.items()}
+ESTIMATE = chat_scorers.estimated_input_tokens(PLAN, CHARS)
+for name, ids in PLAN.items():
+    logger.info('%-24s reads %4d traces', name, len(ids))
+logger.info('estimated input tokens: %s (limit %s)', f'{ESTIMATE:,}', f'{MAX_INPUT_TOKENS:,}')
+if DRY_RUN:
+    dbutils.notebook.exit(f'dry_run: {len(TRACES)} traces, ~{ESTIMATE} input tokens')
+if ESTIMATE > MAX_INPUT_TOKENS:
+    raise RuntimeError(f'Estimated {ESTIMATE:,} input tokens > max_input_tokens {MAX_INPUT_TOKENS:,}: '
+                       'lower `limit`, `days` or the sample rates')
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Data Transformations
-# MAGIC ### Tr. 1 — logged turn → MLflow trace
-# MAGIC The retriever span returns exactly the passages the model received, in prompt order, so
-# MAGIC `retrieval_groundedness` judges the answer against what the model actually saw. The span
-# MAGIC functions only read the logged turn: replaying costs nothing and gives the same trace every time.
+# MAGIC ### Tr. 1 — free scorers on every trace, then each judge on its own sample
+# MAGIC Every (scorer, trace) pair of the plan is one job for `score_all`: bounded parallelism, calls spaced out, back-off on 429,
+# MAGIC a refused call is recorded as an error and the batch goes on. The verdicts are written on the original traces (they show as
+# MAGIC columns in the Traces tab) and collected for `results_table`.
 
 # COMMAND ----------
 
-import mlflow
-from mlflow.entities import Document, SpanType
+from mlflow.entities import AssessmentSource
 
+JUDGES = chat_scorers.judge_scorers(JUDGE, retrieval_relevance=CHUNK_RELEVANCE)
+STARTED = datetime.now(timezone.utc)
+JOBS = [(f.name, f, t) for f in chat_scorers.FREE_SCORERS for t in TRACES.values()]
+JOBS += [(name, JUDGES[name], TRACES[i]) for name, ids in PLAN.items() if name in JUDGES for i in ids]
+logger.info('%d scorer calls (%d free, %d judge)', len(JOBS), len(chat_scorers.FREE_SCORERS) * len(TRACES),
+            len(JOBS) - len(chat_scorers.FREE_SCORERS) * len(TRACES))
+RESULTS_RAW = chat_scorers.score_all(JOBS, max_workers=MAX_WORKERS, calls_per_second=CALLS_PER_SECOND)
 
-@mlflow.trace(span_type=SpanType.RETRIEVER, name='retrieve')
-def retrieve(query: str, chat_trace_id: str):
-    return [Document(page_content=c['chunk_text'] or '',
-                     metadata={'doc_uri': c['url'] or c['ref'], 'ref': c['ref'], 'doc_number': c['doc_number'],
-                               'cited': bool(c['cited']), 'semantic_headers': c['semantic_headers'] or ''})
-            for c in CHUNKS.get(chat_trace_id, [])]
-
-
-@mlflow.trace(span_type=SpanType.LLM, name='answer')
-def answer(question: str, passages: int, model: str, chat_trace_id: str) -> str:
-    return TURNS[chat_trace_id]['answer']
-
-
-@mlflow.trace(span_type=SpanType.CHAIN, name='chat_turn')
-def chat_turn(question: str, chat_trace_id: str) -> str:
-    t = TURNS[chat_trace_id]
-    mlflow.update_current_trace(tags={
-        'chat_trace_id': chat_trace_id, 'division': t['division'] or '', 'status': t['status'],
-        'vote': t['vote'] or '', 'answer_endpoint': t['answer_endpoint'] or '',
-        'cited_count': str(len(t['cited_refs'] or [])),
-        'first_token_ms': '' if t['first_token_ms'] is None else str(t['first_token_ms']),
-        'warnings': ','.join(t['warnings'] or []),
-    })
-    docs = retrieve(t['fr_query'] or question, chat_trace_id)
-    return answer(question, len(docs), t['answer_endpoint'] or '', chat_trace_id)
-
-
-DATA = [{'inputs': {'question': t['question'], 'chat_trace_id': tid}} for tid, t in TURNS.items()]
+JUDGE_NAMES = set(JUDGES)
+for r in RESULTS_RAW:
+    if r['error'] or r['value'] is None:
+        continue
+    source = AssessmentSource(source_type=AssessmentSourceType.LLM_JUDGE if r['name'] in JUDGE_NAMES
+                              else AssessmentSourceType.CODE, source_id=(JUDGE if r['name'] in JUDGE_NAMES else 'chat_scorers'))
+    mlflow.log_feedback(trace_id=r['trace'].info.trace_id, name=r['name'], value=r['value'], rationale=r['rationale'],
+                        source=source)
+for trace_id in TRACES:
+    mlflow.set_trace_tag(trace_id, 'quality_scored', STARTED.strftime('%Y-%m-%d'))
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### Tr. 2 — scorers
-# MAGIC Judge scorers get the judge model explicitly: the managed judge does not report its tokens and
-# MAGIC cost far more per call than our Luna endpoint. The free scorers read the logged values from the
-# MAGIC trace tags, so the vote and the latency sit next to the judges' verdicts in the MLflow UI.
-
-# COMMAND ----------
-
-from mlflow.entities import Feedback
-from mlflow.genai.scorers import (Guidelines, RelevanceToQuery, RetrievalGroundedness, RetrievalRelevance,
-                                  Safety, scorer)
-
-judge = {'model': JUDGE} if JUDGE else {}
-SCORERS = [
-    RelevanceToQuery(**judge),
-    RetrievalGroundedness(**judge),
-    Safety(**judge),
-    Guidelines(name='language', **judge, guidelines=[
-        'The response is written in the language of the user question, unless the user explicitly asks '
-        'for another language.']),
-    Guidelines(name='honest_limits', **judge, guidelines=[
-        'When the retrieved documents do not contain the answer, the response says so plainly instead of '
-        'answering from general knowledge or guessing.']),
-]
-if CHUNK_RELEVANCE:
-    SCORERS.append(RetrievalRelevance(**judge))
-
-
-def _tag(trace, name):
-    return (trace.info.tags or {}).get(name, '')
-
-
-@scorer
-def cited_documents(trace) -> Feedback:
-    n = int(_tag(trace, 'cited_count') or 0)
-    return Feedback(value=n, rationale=f'{n} documents cited')
-
-
-@scorer
-def first_token_s(trace) -> Feedback:
-    ms = _tag(trace, 'first_token_ms')
-    return Feedback(value=round(int(ms) / 1000, 1) if ms else None, rationale='time to the first word (logged)')
-
-
-@scorer
-def user_vote(trace) -> Feedback:
-    vote = _tag(trace, 'vote') or 'none'
-    return Feedback(value=vote, rationale='latest thumbs up / down on the answer')
-
-
-SCORERS += [cited_documents, first_token_s, user_vote]
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Tr. 3 — evaluate
-# MAGIC One MLflow run per execution: the traces, their scores and the aggregated metrics are in the run.
-
-# COMMAND ----------
-
-mlflow.set_experiment(EXPERIMENT)
-run_name = f"chat-traces-{SELECTION}-{datetime.now(timezone.utc):%Y%m%d-%H%M}"
-with mlflow.start_run(run_name=run_name) as run:
-    mlflow.log_params({'selection': SELECTION, 'days': DAYS, 'turns': len(DATA), 'judge': JUDGE or 'managed',
-                       'lakebase_database': LAKEBASE_DATABASE})
-    results = mlflow.genai.evaluate(data=DATA, predict_fn=chat_turn, scorers=SCORERS)
-RUN_ID = run.info.run_id
-logger.info('Run %s: %s', RUN_ID, json.dumps(results.metrics, default=str, indent=1))
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## Quality Checks
-# MAGIC Every turn must come back as a trace with its judge verdicts; a scorer that failed on many turns
-# MAGIC usually means the judge model was refused (name, permission, MLflow version).
+# MAGIC Every scorer that ran must have produced a verdict on its traces; a scorer that failed on many of them usually means
+# MAGIC the judge model was refused (name, permission) or throttled beyond its retries. Verdicts of a free scorer that could not
+# MAGIC decide (language not detected, no passage sent) are empty, not errors.
 
 # COMMAND ----------
 
-traces = mlflow.search_traces(run_id=RUN_ID)
+with mlflow.start_run(run_name=f'chat-quality-{STARTED:%Y%m%d-%H%M}') as run:
+    mlflow.log_params({'judge': JUDGE or 'managed', 'traces': len(TRACES), 'estimated_input_tokens': ESTIMATE,
+                       'rates': json.dumps(RATES), 'max_workers': MAX_WORKERS, 'calls_per_second': CALLS_PER_SECOND})
+RUN_ID = run.info.run_id
 
-
-def _assessments(row):
-    for a in row.get('assessments') or []:
-        if isinstance(a, dict):
-            fb = a.get('feedback') or {}
-            yield (a.get('assessment_name') or a.get('name'), fb.get('value') if isinstance(fb, dict) else None,
-                   a.get('rationale'), (fb.get('error') if isinstance(fb, dict) else None))
-        else:
-            yield a.name, getattr(a, 'value', None), getattr(a, 'rationale', None), getattr(a, 'error', None)
-
-
-rows, failures = [], {}
-scored_at = datetime.now(timezone.utc)
-for _, tr in traces.iterrows():
-    tags = tr.get('tags') or {}
-    vsi = tags.get('chat_trace_id') or (tr.get('request') or {}).get('chat_trace_id')
-    for name, value, rationale, error in _assessments(tr):
-        if error:
-            failures[name] = failures.get(name, 0) + 1
-        rows.append({'chat_trace_id': vsi, 'mlflow_trace_id': tr.get('trace_id'), 'run_id': RUN_ID,
-                     'scored_at': scored_at, 'scorer': name, 'value': None if value is None else str(value),
-                     'rationale': None if rationale is None else str(rationale)[:2000],
-                     'division': tags.get('division'), 'status': tags.get('status'), 'vote': tags.get('vote') or None,
-                     'judge': JUDGE or 'managed'})
-
-logger.info('%d traces, %d scores, failed scorers: %s', len(traces), len(rows), failures or 'none')
-if len(traces) < len(DATA):
-    logger.warning('%d turns sent, %d traces back', len(DATA), len(traces))
+rows, failures, ran = [], {}, {}
+for r in RESULTS_RAW:
+    trace = r['trace']
+    tags = trace.info.tags or {}
+    ran[r['name']] = ran.get(r['name'], 0) + 1
+    if r['error']:
+        failures[r['name']] = failures.get(r['name'], 0) + 1
+        logger.warning('%s failed on %s: %s', r['name'], trace.info.trace_id, r['error'])
+        continue
+    rows.append({'chat_trace_id': tags.get('chat_trace_id'), 'mlflow_trace_id': trace.info.trace_id, 'run_id': RUN_ID,
+                 'scored_at': STARTED, 'scorer': r['name'], 'value': None if r['value'] is None else str(r['value']),
+                 'rationale': (r['rationale'] or '')[:2000] or None, 'division': tags.get('division'),
+                 'status': tags.get('status'), 'vote': _vote(trace) or None, 'judge': JUDGE or 'managed'})
+logger.info('verdicts per scorer: %s; failed: %s', ran, failures or 'none')
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Outputs
-# MAGIC One row per turn and scorer, appended to `results_table` (long format: a new scorer needs no new
-# MAGIC column). The summary compares each judge's verdicts with the users' votes: a judge that does not
-# MAGIC separate thumbed-down answers from the others is not measuring what users complain about.
+# MAGIC One row per turn and scorer, appended to `results_table` (long format: a new scorer needs no new column). The summary sets
+# MAGIC each judge against the users' votes: a judge that does not separate thumbed-down answers from the others is not measuring
+# MAGIC what users complain about.
 
 # COMMAND ----------
 
@@ -323,7 +236,6 @@ if rows:
 display(spark.table(RESULTS).filter(F.col('run_id') == RUN_ID)
         .groupBy('scorer', F.coalesce('vote', F.lit('none')).alias('vote'))
         .agg(F.count('*').alias('turns'),
-             F.round(F.avg(F.when(F.lower('value') == 'yes', 1).when(F.lower('value') == 'no', 0)) * 100, 1)
-             .alias('yes_pct'),
+             F.round(F.avg(F.when(F.lower('value') == 'yes', 1).when(F.lower('value') == 'no', 0)) * 100, 1).alias('yes_pct'),
              F.round(F.avg(F.col('value').cast('double')), 2).alias('avg_value'))
         .orderBy('scorer', 'vote'))
