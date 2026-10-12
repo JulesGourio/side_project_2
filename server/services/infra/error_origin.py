@@ -12,7 +12,7 @@ import sys
 import traceback
 from typing import Optional
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 _TB_LINE_RE = re.compile(r'File "([^"]+)", line (\d+), in (\S+)')
 
 

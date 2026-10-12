@@ -18,12 +18,12 @@ import pytest
 from docx import Document
 from fastapi.testclient import TestClient
 
-from server.services.processors._diff_engines import (
+from server.services.compare.processors._diff_engines import (
     extraction_warnings,
     looks_like_table_header,
     paragraph_semantic_diff,
 )
-from server.services.processors.docx import _extract_docx
+from server.services.compare.processors.docx import _extract_docx
 
 
 # --- Routes ---
@@ -40,7 +40,7 @@ def app():
 
 @pytest.fixture
 def client(app, monkeypatch):
-    from server.services.user import require_compare
+    from server.services.infra.user import require_compare
     for key, value in {
         'COMPARE_ENABLED': 'true', 'COMPARE_ANALYSIS_ENDPOINT': 'analysis', 'COMPARE_IMPACT_ENDPOINT': 'judge',
         'COMPARE_IMPACT_INDEX': 'cat.sch.chunks_index', 'COMPARE_SUMMARY_ENDPOINT': 'summary',
@@ -165,7 +165,7 @@ def test_summarize_document_without_text_is_a_normal_answer(client):
 # --- Chunked analysis ---
 
 def test_chunked_structured_stream_stays_valid_json_when_a_part_fails(monkeypatch):
-    from server.services import chunked_analysis as ca
+    from server.services.compare import chunked_analysis as ca
 
     async def fake_stream(host, token, ep, messages, *args, **kwargs):
         i = int(messages[-1]['content'][0]['text'])

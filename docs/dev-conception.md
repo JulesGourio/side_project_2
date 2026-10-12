@@ -4,7 +4,7 @@ Date : 2026-10-06. Statut : options en discussion avec le client, aucune décisi
 
 ## Contexte
 
-- Le KA est passé en Legacy le 2026-09-30. La dépréciation est visée pour fin 2026. À l'End of Support, au plus tôt en février 2027, les endpoints s'arrêtent (voir `docs/ka-migration.md`).
+- Le KA est passé en Legacy le 2026-09-30. La dépréciation est visée pour fin 2026. À l'End of Support, au plus tôt en février 2027, les endpoints s'arrêtent (voir `docs/archive/ka-migration.md`).
 - Les voies proposées par Databricks ont été écartées pour Qualibot :
   - **Genie Agents** : pas de prise en charge des index Vector Search, nouvelle API, pas de traçage MLflow.
   - **Content Search** : beta, utilisable seulement via Genie Agents, et repart de fichiers dans un Volume, donc abandon de notre pipeline.
@@ -18,10 +18,10 @@ Date : 2026-10-06. Statut : options en discussion avec le client, aucune décisi
 ## Philosophie
 
 - Qualibot possède déjà la partie lourde : parsing, chunking, descriptions d'images, index. Le KA ne fait que la couche fine (comprendre la question, chercher, rédiger avec des citations). C'est elle qu'on remplace, et elle doit rester fine.
-- On reproduit le contrat observable (`docs/ka-replacement-mapping.md`), pas la mécanique interne.
+- On reproduit le contrat observable (`docs/archive/ka-replacement-mapping.md`), pas la mécanique interne.
 - Le prompt (les instructions actuelles des KA) est le levier principal.
 - On commence par le plus simple. On ajoute une étape (reformulation, filtres, plusieurs requêtes, reranking) uniquement si la comparaison avec le KA montre un écart mesuré.
-- Le plan `docs/plan/chat-vsi-ka-replacement.md` (7 étapes, Instructed Retriever complet dès la v1) va à l'encontre de cette philosophie. Il est à réviser.
+- Le plan `docs/archive/plan/chat-vsi-ka-replacement.md` (7 étapes, Instructed Retriever complet dès la v1) va à l'encontre de cette philosophie. Il est à réviser.
 
 ## Voies discutées avec le client
 
@@ -61,7 +61,7 @@ Date : 2026-10-06. Statut : options en discussion avec le client, aucune décisi
 
 | Fait | Source |
 |---|---|
-| `stream_chat()` est le seul appel au KA. `chat.py`, Lakebase et le front n'en dépendent pas directement. | code, `docs/ka-usage-scan.md` |
+| `stream_chat()` est le seul appel au KA. `chat.py`, Lakebase et le front n'en dépendent pas directement. | code, `docs/archive/ka-usage-scan.md` |
 | Les 3 index des KA (`chunks_index_v1` / `_as_` / `_is_`) sont interrogeables en HYBRID et renvoient `REF` et `url`. `filters_json` fonctionne sur `division` et `doc_date`. | vérifié 2026-10-06 |
 | `url` est le même lien Intraqual que celui cité par le KA | vérifié 2026-10-06 |
 | `streaming.py` sait déjà streamer `databricks-claude-sonnet-4-6` | code |

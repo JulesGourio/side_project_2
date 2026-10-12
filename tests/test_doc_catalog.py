@@ -1,4 +1,4 @@
-"""Tests for the document catalog's source (server/services/doc_catalog.py).
+"""Tests for the document catalog's source (server/services/infra/doc_catalog.py).
 
 Coverage:
   - the Lakebase table replaces the bundled snapshot once loaded
@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from server.services import doc_catalog
+from server.services.infra import doc_catalog
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
 
@@ -65,7 +65,7 @@ def test_pipeline_link_matches_the_chunks_url():
 
 def test_document_info_and_sources_carry_the_revision():
     from datetime import date
-    from server.services import doc_catalog
+    from server.services.infra import doc_catalog
     doc_catalog.set_catalog([{'ref': 'QP-1518', 'url': 'u', 'title': 'NDT', 'revision': 'D',
                               'doc_date': date(2024, 10, 11)}])
     try:

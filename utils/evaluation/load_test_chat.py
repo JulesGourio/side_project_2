@@ -152,9 +152,9 @@ def load_engine():
         del sys.modules[mod]
     import httpx
     from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _trim_history, _with_today_date
-    from server.services import chat_vsi, translation_bridge
+    from server.services.chat import engine, translation_bridge
     translation_bridge._get_http_client = lambda: httpx.AsyncClient(timeout=translation_bridge._TIMEOUT_S)
-    ENGINE.update(chat_vsi=chat_vsi, tb=translation_bridge, bridge=TRANSLATE_BRIDGE_ENABLED,
+    ENGINE.update(engine=engine, tb=translation_bridge, bridge=TRANSLATE_BRIDGE_ENABLED,
                   trim=_trim_history, date=_with_today_date)
 
 

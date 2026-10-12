@@ -20,9 +20,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from server.services import lakebase
-from server.services.processors.base import ProcessMetadata, ProcessResult
-from server.services.turn_log import INFO, TurnLog
+from server.services.infra import lakebase
+from server.services.compare.processors.base import ProcessMetadata, ProcessResult
+from server.services.chat.turn_log import INFO, TurnLog
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,19 +42,19 @@ def _written_keys(path: str) -> set:
 
 def test_every_turn_log_key_is_a_chat_turns_column():
     columns = {c for c, _ in lakebase.CHAT_TURN_COLUMNS}
-    written = _written_keys('server/services/chat_vsi.py') | _written_keys('server/routers/chat.py')
+    written = _written_keys('server/services/chat/engine.py') | _written_keys('server/routers/chat.py')
     assert written and written <= columns, written - columns
 
 
 def test_every_timed_step_is_a_chat_turns_column():
     text = ''.join((_ROOT / p).read_text(encoding='utf-8')
-                   for p in ('server/services/chat_vsi.py', 'server/routers/chat.py'))
+                   for p in ('server/services/chat/engine.py', 'server/routers/chat.py'))
     steps = set(re.findall(r"log\.(?:timed|mark)\('(\w+)'\)", text)) | set(re.findall(r"timings_ms\['(\w+)'\]", text))
     assert steps and steps <= set(lakebase.CHAT_TURN_TIMINGS), steps - set(lakebase.CHAT_TURN_TIMINGS)
 
 
 def test_every_passage_key_is_a_chat_retrieved_chunks_column():
-    from server.services.chat_vsi import _passage
+    from server.services.chat.engine import _passage
     row = {'chunk_id': 'c', 'IDDOC': 3, 'REF': 'R', 'division': 'AS', 'url': 'u', 'semantic_headers': '',
            'chunk_text': 't', '_hits': [{'q': 0, 'via': 'raw', 'rank': 0, 'score': 0.5}]}
     keys = set(_passage(row, 0))
@@ -156,7 +156,7 @@ def app():
 
 @pytest.fixture
 def client(app, monkeypatch):
-    from server.services.user import require_compare
+    from server.services.infra.user import require_compare
     for key, value in {
         'COMPARE_ENABLED': 'true', 'COMPARE_ANALYSIS_ENDPOINT': 'analysis', 'COMPARE_IMPACT_ENDPOINT': 'judge',
         'COMPARE_IMPACT_INDEX': 'cat.sch.chunks_index', 'COMPARE_VOLUME_PATH': '',
@@ -264,15 +264,15 @@ def _raise_here():
 
 
 def test_origin_of_an_exception_is_the_deepest_frame_of_this_repository():
-    from server.services import error_origin
+    from server.services.infra import error_origin
     try:
         _raise_here()
     except ValueError as exc:
         origin = error_origin.from_exception(exc)
     assert origin.startswith('tests/test_lakebase_logging.py:') and origin.endswith(' in _raise_here')
     trace = 'Traceback:\n  File "/usr/lib/python3/site-packages/httpx/x.py", line 3, in send\n' \
-            f'  File "{_ROOT}/server/services/chat_vsi.py", line 42, in search\n'
-    assert error_origin.from_stack_trace(trace) == 'server/services/chat_vsi.py:42 in search'
+            f'  File "{_ROOT}/server/services/chat/engine.py", line 42, in search\n'
+    assert error_origin.from_stack_trace(trace) == 'server/services/chat/engine.py:42 in search'
     assert error_origin.fingerprint('/x', 'search', 'E', 'a.py:1 in f') == \
         error_origin.fingerprint('/x', 'search', 'E', 'a.py:99 in f')        # a moved line keeps the group
 
@@ -306,7 +306,7 @@ def test_store_error_reads_the_origin_at_the_call_site():
 
 
 def test_failed_turn_error_row_says_what_the_user_saw():
-    from server.services.chat_vsi_llm import TIRED_MESSAGE
+    from server.services.chat.llm import TIRED_MESSAGE
     conn = AsyncMock()
     conn.fetchval.return_value = 3
     log = TurnLog()

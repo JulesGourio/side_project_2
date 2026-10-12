@@ -21,7 +21,7 @@ import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import error_origin
+from ..infra import error_origin
 
 # Issues that are not failures of the app: kept in chat_turns.warnings, not written to errors.
 INFO = 'info'

@@ -4,7 +4,7 @@ Un seul document pour tout ce qui a été mesuré sur le chatbot : la configurat
 actuel), le sens des noms d'essai, les résultats qui ont décidé, ce qui a été écarté, ce qui reste à
 tester. La partie 2 est le journal complet, tel qu'il a été tenu pendant les essais.
 
-Code : `server/services/chat_vsi.py` (+ `chat_vsi_llm.py`, `chat_vsi_titles.py`,
+Code : `server/services/chat/engine.py` (+ `chat/llm.py`, `chat_vsi_titles.py`,
 `translation_bridge.py`). Notebooks de mesure gardés : `utils/evaluation/retrieval_eval.py`
 (recherche seule) et `pairwise_answers.py` (réponses côte à côte). Tout le reste est dans `archive/`
 (`archive/README.md`). Robustesse (secours, relances) : `docs/chat_vsi_robustesse_2026-10.md`.
@@ -116,7 +116,7 @@ Tenu pendant les essais, inchangé depuis : les noms sont ceux du § B. Les fich
 | Terme | Ce que c'est |
 |---|---|
 | **KA** | Knowledge Assistant : l'agent « clé en main » de Databricks (Agent Bricks) qui sert aujourd'hui le chatbot. Il cherche dans notre index et rédige la réponse, mais on ne voit ni ne règle ce qu'il fait à l'intérieur. Databricks l'arrête : il faut le remplacer |
-| **VSI** | Le remplaçant écrit par Mehdi (`chat_vsi.py`) : l'app interroge elle-même l'index Vector Search (*Vector Search Index*), puis demande la réponse à un LLM. Tout est réglable |
+| **VSI** | Le remplaçant écrit par Mehdi (`chat/engine.py`) : l'app interroge elle-même l'index Vector Search (*Vector Search Index*), puis demande la réponse à un LLM. Tout est réglable |
 | **RAG** | *Retrieval-Augmented Generation* : chercher des passages de documents, puis les donner au LLM pour qu'il réponde à partir d'eux |
 | **LLM** | Le modèle de langage qui rédige (Sonnet 4.6, Sonnet 5.5, GPT-5.6 Luna…) |
 | **Passage** (*chunk*) | Un morceau d'un document (250 à 1 000 tokens) : c'est l'unité indexée et renvoyée par la recherche |
@@ -142,7 +142,7 @@ Tenu pendant les essais, inchangé depuis : les noms sont ceux du § B. Les fich
 
 ### 0.2 Ce qui se passe à chaque question
 
-**Baseline (le code de Mehdi, `chat_vsi.py`)**
+**Baseline (le code de Mehdi, `chat/engine.py`)**
 1. Si la question n'est ni en français ni en anglais, elle est traduite en anglais.
 2. Le LLM de réponse réécrit la question en une requête française.
 3. **Deux recherches hybrides** : la question telle quelle, et la requête française. **10
@@ -414,7 +414,7 @@ dans l'app (widget `translate_back`). Recherches et réponses déjà en cache : 
 | Juge qualité (production, golden builder) | GPT-6 Luna | `judge_endpoint` des notebooks |
 
 Prix connus, en dollars par million de tokens (entrée / sortie), relevés dans la console du
-workspace et notés dans `server/services/streaming.py` :
+workspace et notés dans `server/services/infra/streaming.py` :
 
 | Modèle | Entrée | Sortie |
 |---|---|---|
@@ -692,7 +692,7 @@ séparé.
 - **Deux défauts en plus :**
   - `langue` est écrite en dur à `fr-FR` pour **tous** les documents (`selection.py:426`) :
     elle ne sert à rien aujourd'hui ;
-  - `columns_to_sync` n'est pas fixé sur l'index (`docs/ka-migration.md`), donc toutes les
+  - `columns_to_sync` n'est pas fixé sur l'index (`docs/archive/ka-migration.md`), donc toutes les
     colonnes sont synchronisées. Qu'elles soient toutes filtrables n'a pas été vérifié.
 - **Proposition.**
   - Ajouter `type_document`, `indice`, `titre`, `niveau_plus_2` et une vraie `langue` à la
@@ -1047,7 +1047,7 @@ GPU), P16 (prix Haiku, colonnes de recherche).
 
 Robustesse du chat (même jour, `docs/chat_vsi_robustesse_2026-10.md`) : GPT-6 Luna avec GPT-5.6
 Luna en secours, relances, reprise d'une réponse coupée, file d'attente, recherche partielle
-acceptée, détection de langue nettoyée (`chat_vsi_llm.py`). Mise en service : `operations_dev.md`,
+acceptée, détection de langue nettoyée (`chat/llm.py`). Mise en service : `operations_dev.md`,
 bloc L.
 
 Effets à connaître :
@@ -1068,7 +1068,7 @@ Effets à connaître :
 - [Databricks : guide de qualité de recherche](https://docs.databricks.com/aws/en/vector-search/vector-search-retrieval-quality)
 - [Databricks : affiner le reranker sur ses données](https://docs.databricks.com/aws/en/ai-search/reranker-finetuning)
 - [Anthropic : Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval)
-- `docs/ka-migration.md` : fonctionnement interne du KA (Instructed Retriever, IR-1).
+- `docs/archive/ka-migration.md` : fonctionnement interne du KA (Instructed Retriever, IR-1).
 
 ## 5.7 Nombre de passages (2026-10-08, index `chunks_index`, découpage retenu)
 
@@ -1111,7 +1111,7 @@ plafonné vers 50 questions/min ; premier mot à 10,7 s en médiane même à 5 q
   monte trois fois plus haut. Le filtre ne coûte presque rien.
 - **La cause des 429 du chat** : une question envoie 6 à 8 requêtes d'un coup, et l'endpoint refuse
   au-delà de ≈ 16 requêtes en cours. Deux ou trois questions qui cherchent au même instant suffisent.
-- **Corrigé dans le code le même jour** : `server/services/vs_gate.py`, une file commune au chat et à
+- **Corrigé dans le code le même jour** : `server/services/infra/vs_gate.py`, une file commune au chat et à
   l'impact search, au plus 8 requêtes Vector Search en cours par instance de l'app
   (`VS_MAX_CONCURRENT_QUERIES`), les autres attendent au lieu d'être refusées ; un refus qui arrive
   quand même est relancé jusqu'à 5 fois en ≈ 15 s, en respectant `Retry-After` (`VS_QUERY_RETRIES`).

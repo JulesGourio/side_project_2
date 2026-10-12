@@ -38,7 +38,7 @@ pattern as `analyze_feedback_failures.py`) instead of MLflow's built-in
 managed-judge scorer classes. The managed judge is a black box — no token
 usage exposed anywhere, even when probed via `mlflow.get_trace()` — and
 measured ~10-20x more expensive per call than calling Luna ourselves. Real
-published Luna pricing (`server/services/streaming.py::_PRICING_USD`,
+published Luna pricing (`server/services/infra/streaming.py::_PRICING_USD`,
 $0.242/1M input, $2.180/1M output) replaced an earlier blended-rate estimate
 that understated cost ~2x for our output/reasoning-heavy judge calls.
 

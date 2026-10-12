@@ -8,7 +8,7 @@ COMPARE_SUMMARY_IMAGE_ENDPOINT defaults to databricks-gpt-5-mini. Confirmed
 live against the endpoint before fixing.
 """
 
-from server.services.streaming import supports_temperature
+from server.services.infra.streaming import supports_temperature
 
 
 def test_bare_gpt_5_mini_does_not_support_temperature():

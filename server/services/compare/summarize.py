@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Union
 
 import httpx
 
-from .streaming import _cost_eur, supports_temperature
+from ..infra.streaming import _cost_eur, supports_temperature
 
 logger = logging.getLogger(__name__)
 

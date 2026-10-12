@@ -347,3 +347,17 @@ Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `
 - Après le déploiement DEV : `operations_dev.md` bloc Y (créer l'expérience, déployer, poser des questions, vérifier les traces).
 - Prompts du chat : `base.md` + `division_*.md` (plus de `instructions_*.md`) ; après déploiement, poser une question en AS, IS et ALL et vérifier qu'elles répondent comme avant (`instructions_sha` change dans `chat_turns`).
 - Évaluation : défauts des notebooks passés à `dev_proj.qualibot` ; `operations_dev.md` bloc Z (droits + copie des tables).
+
+## 2026-10-12 — réorganisation de `server/` (code seulement, aucun nom de table, variable ou log changé)
+Modules déplacés : `server/services/*.py` → `services/{chat,compare,infra}/` (`chat_vsi.py` → `chat/engine.py`, `chat_vsi_llm.py` → `chat/llm.py`), prompts → `server/prompts/chat/`, `config/processors.yml` → `server/config/`, `scripts/app_chat_turn.py` → `utils/dev/`, `docs/ka-*.md` et `docs/plan/` → `docs/archive/`, tests `test_chat_vsi*.py` → `test_chat_engine.py` / `test_chat_llm.py`, `capabilities_snapshot.json` supprimé.
+- Sur la machine de déploiement, **recopier le zip complet puis supprimer les anciens fichiers** (sinon ils restent à côté des nouveaux, sans effet mais trompeurs) :
+
+  ```powershell
+  Remove-Item server\services\chat_vsi.py, server\services\chat_vsi_llm.py, server\services\turn_log.py, server\services\mlflow_turns.py, server\services\translation_bridge.py -ErrorAction SilentlyContinue
+  Remove-Item server\services\lakebase.py, server\services\user.py, server\services\vector_search.py, server\services\vs_gate.py, server\services\error_origin.py, server\services\doc_catalog.py, server\services\streaming.py -ErrorAction SilentlyContinue
+  Remove-Item server\services\chunked_analysis.py, server\services\impact_queries.py, server\services\summarize.py, server\services\conversion.py, server\services\soffice.py, server\services\export_helpers.py -ErrorAction SilentlyContinue
+  Remove-Item -Recurse server\services\processors, server\config\chat_vsi, config, scripts -ErrorAction SilentlyContinue
+  Remove-Item server\config\capabilities_snapshot.json, tests\test_chat_vsi.py, tests\test_chat_vsi_llm.py -ErrorAction SilentlyContinue
+  ```
+- Après le déploiement : ouvrir l'app, poser une question dans le chat (AS), ouvrir une comparaison avec un PDF, lancer un « Impacted docs » ; dans les logs de l'app, aucune ligne `ModuleNotFoundError` ni `No such file or directory`.
+- Les préfixes de logs (`chat_vsi:`, `chat_vsi_llm:`) et les variables `CHAT_VSI_*` n'ont pas changé : les recherches de logs et la config déployée restent valables.

@@ -11,7 +11,7 @@ elles-mêmes sont documentées dans `docs/{COMPARE,CHATBOT}.md`.
   (tar.gz ~290 Mo, construit par `utils/soffice_packaging/package_libreoffice.py`
   depuis les .deb officiels TDF — extraction ar/tar 100 % Python, tourne sous
   Windows) est déposé dans le Volume UC et téléchargé/extrait une fois par
-  process au premier preview PDF (`server/services/soffice.py`,
+  process au premier preview PDF (`server/services/compare/soffice.py`,
   `SOFFICE_ARCHIVE_VOLUME_PATH`). `POST /api/preview/pdf`
   convertit un docx en PDF (cache disque par hash de contenu) et le
   client l'affiche dans le viewer PDF natif du navigateur

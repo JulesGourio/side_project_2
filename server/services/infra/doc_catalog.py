@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_CATALOG = os.path.join(os.path.dirname(__file__), '..', 'data', 'doc_catalog.json')
+_DEFAULT_CATALOG = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'doc_catalog.json')
 _CATALOG_PATH = os.getenv('DOC_CATALOG_PATH', _DEFAULT_CATALOG)
 _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
 

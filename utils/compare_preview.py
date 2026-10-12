@@ -40,7 +40,7 @@ def _diff_stats(diff_text: str) -> str:
 def _build_text_block(old: Path, new: Path, method: str) -> tuple[str, object]:
     # Import AFTER --threshold has had a chance to set the env var —
     # _diff_engines reads COMPARE_PAIR_RATIO_THRESHOLD at import time.
-    from server.services.processors.factory import get_processor
+    from server.services.compare.processors.factory import get_processor
     processor = get_processor(old.name, method_override=method)
     if not processor:
         raise SystemExit(f'Unsupported file type: {old.suffix}')
@@ -181,7 +181,7 @@ def main() -> None:
     if not args.old or not args.new:
         ap.error('old and new documents are required (or use --score)')
 
-    from server.services.chunked_analysis import split_messages_for_chunking
+    from server.services.compare.chunked_analysis import split_messages_for_chunking
 
     t0 = time.perf_counter()
     text_block, result = _build_text_block(args.old, args.new, args.method)

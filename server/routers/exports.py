@@ -16,13 +16,13 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-from ..services.export_helpers import (
+from ..services.compare.export_helpers import (
     _build_excel_bytes,
     _build_impact_excel_bytes,
     _build_pdf_bytes_from_markdown,
     _parse_json_response,
 )
-from ..services.lakebase import store_error
+from ..services.infra.lakebase import store_error
 from .compare import _get_config, _is_within_volume, _sanitize_filename
 
 logger = logging.getLogger(__name__)

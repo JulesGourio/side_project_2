@@ -8,7 +8,7 @@ had no instruction to match the document's language. Locks in the fix.
 
 import re
 
-from server.services.processors._diff_engines import SYSTEM_PROMPT_STANDARD
+from server.services.compare.processors._diff_engines import SYSTEM_PROMPT_STANDARD
 
 _FLAT = re.sub(r'\s+', ' ', SYSTEM_PROMPT_STANDARD).lower()
 

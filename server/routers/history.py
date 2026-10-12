@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..services.lakebase import get_pool, upsert_user
-from ..services.user import get_user_identity, get_workspace_url, require_compare
+from ..services.infra.lakebase import get_pool, upsert_user
+from ..services.infra.user import get_user_identity, get_workspace_url, require_compare
 # One definition: a row written with another default than the one the cache
 # lookup reads with would never be found again.
 from .compare import APP_VERSION
@@ -132,7 +132,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
 
             # Register (or update) the user in the shared `users` table.
             # Same helper is used by the chat flow so both surfaces populate
-            # `users` consistently — see services/lakebase.upsert_user.
+            # `users` consistently — see services/infra/lakebase.upsert_user.
             await upsert_user(
                 conn,
                 user_id=identity['user_id'],

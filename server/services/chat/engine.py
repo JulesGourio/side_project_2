@@ -48,14 +48,15 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
 
-from . import chat_vsi_llm, vs_gate
-from .doc_catalog import _catalog, canon_ref, document_info
+from . import llm as chat_llm
+from ..infra import vs_gate
+from ..infra.doc_catalog import _catalog, canon_ref, document_info
 from .turn_log import TurnLog
-from .vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
+from ..infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parent.parent / 'prompts' / 'chat'
+_PROMPTS_DIR = Path(__file__).resolve().parents[2] / 'prompts' / 'chat'
 _DIVISIONS = ('ALL', 'AS', 'IS')
 
 
@@ -172,7 +173,7 @@ def division_filter(division: str) -> Dict[str, Any]:
 def settings() -> Dict[str, Any]:
     """What the engine runs with — saved with evaluation results."""
     return {'index': index_name(), 'llm': llm_endpoint(),
-            'llm_fallbacks': chat_vsi_llm.answer_chain(llm_endpoint())[1:],
+            'llm_fallbacks': chat_llm.answer_chain(llm_endpoint())[1:],
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),
             'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(), 'raw_on': raw_on(),
             'max_search_passages': max_search_passages()}
@@ -297,10 +298,10 @@ async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, st
     log = log if log is not None else TurnLog()
     transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)
     messages = [{'role': 'system', 'content': REWRITE_PROMPT}, {'role': 'user', 'content': transcript}]
-    chain = chat_vsi_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
+    chain = chat_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
     info: Dict[str, Any] = {}
     try:
-        text, used = await chat_vsi_llm.complete(host, token, chain, messages, rewrite_max_tokens(),
+        text, used = await chat_llm.complete(host, token, chain, messages, rewrite_max_tokens(),
                                                  rewrite_timeout_s(), info=info)
     except Exception as exc:  # noqa: BLE001 — the turn goes on with the question only
         logger.warning('chat_vsi: search query rewrite failed (%s) — searching with the question only', exc)
@@ -696,7 +697,7 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
     parser = CitationStreamParser(documents)
     usage: Dict[str, Any] = {}
     llm: Dict[str, Any] = {}
-    chain = chat_vsi_llm.answer_chain(llm_endpoint())
+    chain = chat_llm.answer_chain(llm_endpoint())
     prompt = build_prompt(div, conversation, documents, answer_language)
     _record_prompt(log, div, documents, prompt)
     llm_started = time.monotonic()
@@ -707,7 +708,7 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
         log.timings_ms['generation'] = max(0, llm_ms - (llm.get('queue_wait_ms') or 0))
         _record_answer(log, chain, llm, usage, parser)
 
-    async for chunk in chat_vsi_llm.stream_answer(host, token, chain, prompt, answer_max_tokens(), _OPERATION):
+    async for chunk in chat_llm.stream_answer(host, token, chain, prompt, answer_max_tokens(), _OPERATION):
         if not chunk.startswith('data: '):
             yield chunk                          # keepalive comments
             continue

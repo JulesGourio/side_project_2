@@ -61,7 +61,7 @@ Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
   l'identique (toujours UNPAUSED).
 - `resources/parsing_pipeline.job.yml` : `run_as` = SP DEV pour la cible `dev`
   (UAT/PROD gardent le leur). Planning PAUSED.
-- `server/services/user.py` + `app.yaml` : nouveau flag `CAPS_BYPASS`
+- `server/services/infra/user.py` + `app.yaml` : nouveau flag `CAPS_BYPASS`
   (défaut `false`) qui accorde chat + compare à tout visiteur.
 - `utils/deploy/target_env.json` : bloc `dev` (volumes, index, `CAPS_BYPASS=true`,
   endpoints KA vides tant qu'ils ne sont pas créés).
@@ -481,11 +481,11 @@ ANN, avec filtre, mélange du chat). ≈ 20 min.
 ### V3. Refaire le test de charge du chat avec la file Vector Search (2026-10-08)
 
 Résultat V2 : ≈ 26 requêtes HYBRID/s au plus, refus au-delà de ≈ 16 en cours, reranker non en cause
-(`docs/chat_vsi_tests.md` § 5.8). Code : file commune `server/services/vs_gate.py` (8 requêtes en
+(`docs/chat_vsi_tests.md` § 5.8). Code : file commune `server/services/infra/vs_gate.py` (8 requêtes en
 cours au plus, relances sur 429).
 
-- [x] **V3.1.** Recopier `server/services/vs_gate.py` (nouveau), `server/services/chat_vsi.py`,
-  `server/services/vector_search.py`, `tests/test_vs_gate.py`, `tests/test_chat_vsi_llm.py`,
+- [x] **V3.1.** Recopier `server/services/infra/vs_gate.py` (nouveau), `server/services/chat/engine.py`,
+  `server/services/infra/vector_search.py`, `tests/test_vs_gate.py`, `tests/test_chat_llm.py`,
   `docs/chat_vsi_tests.md`, `operations_dev.md` ; puis `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev`
   (sans `-SyncOnly` : l'app doit redémarrer).
 - [x] **V3.2.** Notebook `load_test_chat`, widget `levels` = `10,20,30,40` (80 questions/min ≈ 25
@@ -502,8 +502,8 @@ cours au plus, relances sur 429).
 - [x] **V3.2d.** Quota du modèle : workspace DEV → Serving → `databricks-gpt-6-luna` → section
   AI Gateway / Rate limits (si présente). M'envoyer la limite affichée (ou « aucune »).
   _(fait 2026-10-09 : 1 M tokens d'entrée/min, 100 k de sortie/min, mêmes limites pour les deux modèles)_
-- [x] **V3.2e.** `rawfr` est le défaut depuis 2026-10-09. Recopier `server/services/chat_vsi.py`,
-  `tests/test_chat_vsi.py`, `docs/chat_vsi_tests.md`, `CLAUDE.md`, `operations_dev.md`, puis
+- [x] **V3.2e.** `rawfr` est le défaut depuis 2026-10-09. Recopier `server/services/chat/engine.py`,
+  `tests/test_chat_engine.py`, `docs/chat_vsi_tests.md`, `CLAUDE.md`, `operations_dev.md`, puis
   `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (sans `-SyncOnly` : l'app doit redémarrer).
   Puis comparer les réponses ancien réglage / `rawfr` : notebook `pairwise_answers`, widgets
   `indexes` = `rawall|rawon=question+fr+en,chat`, `reference` = `databricks-gpt-6-luna@rawall`,
@@ -619,7 +619,7 @@ des fils à gauche sont comptées en jours calendaires.
 - [ ] **X5. (facultatif) Voir le message « tired »** : me demander de mettre un index inexistant
   dans `CHAT_VSI_INDEX` pour `dev` (`utils/deploy/target_env.json`), redéployer, poser une question
   (attendu : après les relances, le message gris « Qualibot is a bit tired… », et une ligne
-  `errors` `stage = search`, `origin = server/services/chat_vsi.py:… in _query`), puis remettre
+  `errors` `stage = search`, `origin = server/services/chat/engine.py:… in _query`), puis remettre
   la valeur et redéployer.
 
 - [ ] **X6. M'envoyer** les résultats de X2 (les deux requêtes) et de X4, et une capture de la
@@ -1247,7 +1247,7 @@ par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `late
   `eval_a`, `eval_b`, `question_like`, Run all.
 
 - [ ] **G3c. Variante `rerank`** (2026-10-07, `server/services/chat_vsi_rerank.py`, baseline
-  `chat_vsi.py` inchangé) : une fois, ajouter les nouvelles colonnes à la table existante :
+  `chat/engine.py` inchangé) : une fois, ajouter les nouvelles colonnes à la table existante :
 
   ```sql
   ALTER TABLE dev_landingzone.qualibot.eval_golden_runs ADD COLUMNS (

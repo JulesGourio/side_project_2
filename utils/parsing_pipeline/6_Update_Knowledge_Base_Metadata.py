@@ -7,7 +7,7 @@
 # MAGIC 1. `doc_catalog` rewritten from `parse_manifest` (every document in scope: REF, title,
 # MAGIC    division, link, current revision and its date) and `chunks` (`in_chat` = the document
 # MAGIC    has passages in the chat index). The app reads it every 30 min
-# MAGIC    (`server/services/doc_catalog.py`): links of the REFs cited in an answer, titles for the
+# MAGIC    (`server/services/infra/doc_catalog.py`): links of the REFs cited in an answer, titles for the
 # MAGIC    title lookup of the chat, revision and date given to the answer model with each document,
 # MAGIC    titles in impact search.
 # MAGIC 2. `knowledge_base_metadata.documents_as_of` (today's date) and `updated_at` (now) —
@@ -198,7 +198,7 @@ def connect(database):
 
 # MAGIC %md
 # MAGIC ## Rewrite doc_catalog, then bump documents_as_of and updated_at
-# MAGIC Both tables are created by the app's startup migration (`server/services/lakebase.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by whichever of the app and this notebook owns the table; when neither has done it yet, the catalog is written without them and the warning names the owner.
+# MAGIC Both tables are created by the app's startup migration (`server/services/infra/lakebase.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by whichever of the app and this notebook owns the table; when neither has done it yet, the catalog is written without them and the warning names the owner.
 # MAGIC
 # MAGIC The catalog is replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `knowledge_base_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
 

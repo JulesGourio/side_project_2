@@ -2,7 +2,7 @@
 
 Databricks Apps has no system package manager, so the app provisions
 LibreOffice at runtime from a plain tar.gz stored in a UC Volume (see
-server/services/soffice.py). This script produces that tar.gz from the
+server/services/compare/soffice.py). This script produces that tar.gz from the
 official TDF "Linux x86-64 (deb)" bundle, without needing dpkg/ar — .deb
 files are `ar` archives (a trivial fixed-header format parsed here by hand)
 wrapping a data.tar.{xz,zst,gz} whose contents Python's tarfile can read.
@@ -33,7 +33,7 @@ from pathlib import Path
 
 # System libraries the LibreOffice build links against that slim container images (Databricks Apps) do not ship. Their
 # .so files are merged into program/
-# (executables' $ORIGIN rpath, plus LD_LIBRARY_PATH set by server/services/soffice.py), pulled from the Ubuntu 22.04
+# (executables' $ORIGIN rpath, plus LD_LIBRARY_PATH set by server/services/compare/soffice.py), pulled from the Ubuntu 22.04
 # archive.
 _SYSLIB_PACKAGES = [
     'libx11-6', 'libxcb1', 'libxau6', 'libxdmcp6', 'libxext6', 'libxinerama1',

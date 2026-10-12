@@ -1,4 +1,4 @@
-"""Tests for the MLflow trace of a chat turn (server/services/mlflow_turns.py).
+"""Tests for the MLflow trace of a chat turn (server/services/chat/mlflow_turns.py).
 
 Coverage:
   - off without CHAT_MLFLOW_EXPERIMENT, or when the experiment does not exist
@@ -14,8 +14,8 @@ import pytest
 
 pytest.importorskip('mlflow')
 
-from server.services import mlflow_turns
-from server.services.turn_log import TurnLog
+from server.services.chat import mlflow_turns
+from server.services.chat.turn_log import TurnLog
 
 
 class _Span:

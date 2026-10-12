@@ -8,7 +8,7 @@ fixed 2026-08-19). Locks in the fix.
 
 import re
 
-from server.services.vector_search import _JUDGE_SYSTEM_PROMPT
+from server.services.infra.vector_search import _JUDGE_SYSTEM_PROMPT
 
 _FLAT = re.sub(r'\s+', ' ', _JUDGE_SYSTEM_PROMPT).lower()
 

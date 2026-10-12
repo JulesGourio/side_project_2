@@ -6,7 +6,7 @@ env:
     value: "true"
   - name: CHAT_ENABLED
     value: "true"
-  # Translation bridge (server/services/translation_bridge.py, on per target in target_env.json): a question that is neither French nor English
+  # Translation bridge (server/services/chat/translation_bridge.py, on per target in target_env.json): a question that is neither French nor English
   # is translated to English before the document search, and the answer back.
   - name: CHAT_TRANSLATE_BRIDGE_ENABLED
     value: "false"
@@ -18,7 +18,7 @@ env:
   # Past messages replayed to the chat endpoint each turn (the latest question is always kept); 0 = no trimming.
   - name: CHAT_MAX_HISTORY
     value: "10"
-  # Chat (server/services/chat_vsi.py, tests and choices: docs/chat_vsi_tests.md): bilingual rewrite, 3 hybrid Vector Search queries,
+  # Chat (server/services/chat/engine.py, tests and choices: docs/chat_vsi_tests.md): bilingual rewrite, 3 hybrid Vector Search queries,
   # documents named by REF or title, answer by GPT-6 Luna. One index for every division (AS / IS = filter on `division`);
   # per-target index: utils/deploy/target_env.json.
   - name: CHAT_VSI_INDEX
@@ -40,14 +40,14 @@ env:
     value: "8000"
   - name: CHAT_VSI_REWRITE_MAX_TOKENS
     value: "2000"
-  # MLflow experiment receiving one trace per chat turn (server/services/mlflow_turns.py): steps, durations, passages, tokens, issues.
+  # MLflow experiment receiving one trace per chat turn (server/services/chat/mlflow_turns.py): steps, durations, passages, tokens, issues.
   # Empty = off. The experiment must exist (utils/evaluation/create_chat_experiment.py); per-target value in utils/deploy/target_env.json.
   - name: CHAT_MLFLOW_EXPERIMENT
     value: ""
   # How long can_chat / can_compare stay cached per user; sync_user_capabilities.py changes apply after the next cache miss.
   - name: CAPS_TTL_S
     value: "600"
-  # SQL warehouse for the live is_account_group_member() check (server/services/user.py); empty = off, falls back to the Lakebase table.
+  # SQL warehouse for the live is_account_group_member() check (server/services/infra/user.py); empty = off, falls back to the Lakebase table.
   # Set per target in utils/deploy/target_env.json.
   - name: CAPS_WAREHOUSE_ID
     value: ""
@@ -81,7 +81,7 @@ env:
   # Per judge call (one document).
   - name: COMPARE_IMPACT_MAX_TOKENS
     value: "1500"
-  # Single-document summary ("Summarize" buttons, Compare tab): a cheap model, cached on the file hash (server/services/summarize.py).
+  # Single-document summary ("Summarize" buttons, Compare tab): a cheap model, cached on the file hash (server/services/compare/summarize.py).
   # Images go to a vision endpoint (the one used for image description in the parsing pipeline, PARSING_LLM_ENDPOINT).
   - name: COMPARE_SUMMARY_ENDPOINT
     value: "databricks-gpt-5-6-luna"
@@ -141,7 +141,7 @@ env:
   #   prod: /Volumes/prod_landingzone/qualibot/doc_compare
   - name: COMPARE_VOLUME_PATH
     value: ""
-  # Exact-layout PDF preview (server/services/soffice.py): UC Volume path of a portable LibreOffice tar.gz built by
+  # Exact-layout PDF preview (server/services/compare/soffice.py): UC Volume path of a portable LibreOffice tar.gz built by
   # utils/soffice_packaging/package_libreoffice.py, extracted once per app process. Absent = no "Exact (PDF)" mode (docx-preview instead).
   #   uat : /Volumes/uat_landingzone/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz
   - name: SOFFICE_ARCHIVE_VOLUME_PATH

@@ -14,11 +14,11 @@ import io
 
 from PIL import Image as PILImage
 
-from server.services.processors._diff_engines import (
+from server.services.compare.processors._diff_engines import (
     _compute_image_diff_pairs,
     extraction_warnings,
 )
-from server.services.processors.docx import _extract_docx
+from server.services.compare.processors.docx import _extract_docx
 
 
 # --- Helpers ---
@@ -176,7 +176,7 @@ def _operator_docx(torque: str, image_pattern: str) -> bytes:
 
 
 def test_docx_processor_reports_text_and_image_changes():
-    from server.services.processors.docx import DocxProcessor
+    from server.services.compare.processors.docx import DocxProcessor
 
     old_bytes = _operator_docx('35', 'left-half')
     new_bytes = _operator_docx('40', 'checker')

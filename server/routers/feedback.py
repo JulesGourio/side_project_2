@@ -7,8 +7,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..services.lakebase import get_pool
-from ..services.user import get_user_identity, get_workspace_url
+from ..services.infra.lakebase import get_pool
+from ..services.infra.user import get_user_identity, get_workspace_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

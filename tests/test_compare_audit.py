@@ -17,16 +17,16 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from server.services.impact_queries import changes_to_queries
-from server.services.processors._diff_engines import (
+from server.services.compare.impact_queries import changes_to_queries
+from server.services.compare.processors._diff_engines import (
     DIFF_TRUNCATED_MARKER,
     is_substantive_keep_modals,
     paragraph_semantic_diff,
     truncate_diff,
 )
-from server.services.processors.factory import diff_truncation_warnings
-from server.services import vector_search
-from server.services.vector_search import _changes_block, _exclusion_keys, _judged_doc
+from server.services.compare.processors.factory import diff_truncation_warnings
+from server.services.infra import vector_search
+from server.services.infra.vector_search import _changes_block, _exclusion_keys, _judged_doc
 
 
 # --- Diff engine — word-level changes ---
@@ -83,7 +83,7 @@ def test_french_same_group_modal_swap_stays_filtered():
 # --- Truncated diff ---
 
 def test_truncated_diff_produces_a_user_warning(monkeypatch):
-    monkeypatch.setattr('server.services.processors._diff_engines._MAX_DIFF_CHARS', 50)
+    monkeypatch.setattr('server.services.compare.processors._diff_engines._MAX_DIFF_CHARS', 50)
     text = truncate_diff('ADDED: ' + 'x' * 200)
     assert DIFF_TRUNCATED_MARKER in text
     messages = [{'role': 'system', 'content': 'prompt'},
@@ -111,7 +111,7 @@ def app():
 
 @pytest.fixture
 def client(app, monkeypatch):
-    from server.services.user import require_compare
+    from server.services.infra.user import require_compare
     monkeypatch.setenv('COMPARE_ENABLED', 'true')
     monkeypatch.setenv('COMPARE_ANALYSIS_ENDPOINT', 'test-endpoint')
     monkeypatch.setenv('DATABRICKS_HOST', 'https://example.test')

@@ -1,4 +1,4 @@
-"""Tests for server/services/vs_gate.py — the app-wide gate on Vector Search queries.
+"""Tests for server/services/infra/vs_gate.py — the app-wide gate on Vector Search queries.
 
 Coverage:
   - never more than VS_MAX_CONCURRENT_QUERIES queries in flight; the others wait, none refused
@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from server.services import vs_gate
+from server.services.infra import vs_gate
 
 
 def _fake_post(statuses=None, delay=0.0, track=None, headers=None):

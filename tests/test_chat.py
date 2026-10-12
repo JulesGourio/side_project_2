@@ -409,7 +409,7 @@ def test_save_turn_failure_is_a_persist_issue_of_the_turn():
     import asyncio
 
     from server.routers import chat
-    from server.services.turn_log import TurnLog
+    from server.services.chat.turn_log import TurnLog
 
     conn = AsyncMock()
     conn.fetchval.side_effect = RuntimeError('connection lost')
@@ -443,7 +443,7 @@ def test_get_capabilities_reads_user_flags_from_db():
     import asyncio
     from types import SimpleNamespace
 
-    from server.services import user as user_mod
+    from server.services.infra import user as user_mod
 
     req = SimpleNamespace(headers={'x-forwarded-user': 'jules@latecoere.aero'})
 
@@ -473,7 +473,7 @@ def test_get_capabilities_fails_open_without_db_or_row():
     import asyncio
     from types import SimpleNamespace
 
-    from server.services import user as user_mod
+    from server.services.infra import user as user_mod
 
     req = SimpleNamespace(headers={'x-forwarded-user': 'new.user@latecoere.aero'})
 
@@ -494,7 +494,7 @@ def test_get_capabilities_fails_open_without_db_or_row():
 
 def test_chat_route_returns_403_without_capability(client):
     """The require_chat dependency blocks chat endpoints for non-chat users."""
-    with patch('server.services.user.get_capabilities',
+    with patch('server.services.infra.user.get_capabilities',
                new=AsyncMock(return_value={'can_chat': False, 'can_compare': True, 'groups': []})):
         r = client.get('/api/chat/sessions')
     assert r.status_code == 403

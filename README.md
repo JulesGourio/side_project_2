@@ -45,6 +45,21 @@ Both tabs share the same capability-gating pattern (`can_compare`/
 `utils/user_capabilities/sync_user_capabilities.py`) and the
 same app shell (`client/src/App.tsx`, `TopBar.tsx`).
 
+### Server layout
+
+```
+server/
+  app.py, tracing.py
+  routers/            one file per API area (chat, compare, history, feedback, exports, preview, config, health)
+  services/
+    chat/             engine.py (the chat), llm.py (answer model calls), turn_log.py, mlflow_turns.py, translation_bridge.py
+    compare/          processors/ (one per file type), chunked_analysis, impact_queries, summarize, conversion, soffice, export_helpers
+    infra/            lakebase, user, vector_search, vs_gate, doc_catalog, streaming (shared LLM streaming and cost), error_origin
+  prompts/chat/       every chatbot prompt as a file: system/{base,all,as,is}.md, rewrite.md, language_reminder*.md
+  config/             processors.yml (file type -> processor versions)
+  data/               doc_catalog.json (fallback), lid.176.ftz (language id model)
+```
+
 ## Local development
 
 Runs the FastAPI backend + Vite dev server on your machine, hitting real UAT
@@ -87,7 +102,7 @@ needed to iterate.
    blocked on the corporate wifi, but not necessarily on other networks (VPN,
    home). Rather than hardcoding "local never connects" via an empty
    `LAKEBASE_PROJECT_ID`, the connection now has a short timeout
-   (`LAKEBASE_CONNECT_TIMEOUT_S`, default 5s — see `server/services/lakebase.py`)
+   (`LAKEBASE_CONNECT_TIMEOUT_S`, default 5s — see `server/services/infra/lakebase.py`)
    — so it's safe to always set real values: when the port is reachable you
    get full history/job persistence locally for free; when it's blocked, it
    fails fast (a few seconds at startup, not asyncpg's 60s default) into the

@@ -19,7 +19,7 @@ date → `stream_chat_vsi` → citation markers → translate back → persist t
    answered in English, then translated back.
 3. **Date injection** (`_with_today_date`) — prepends `[Date: YYYY-MM-DD]` to the last user
    message only, so date-relative questions resolve correctly.
-4. **The engine** (`server/services/chat_vsi.py::stream_chat_vsi`):
+4. **The engine** (`server/services/chat/engine.py::stream_chat_vsi`):
    - bilingual rewrite of the question (French + English, acronyms expanded) by GPT-6 Luna;
    - 3 HYBRID Vector Search queries on `CHAT_VSI_INDEX`, each = 12 reranked passages + 10 raw
      ones, merged by rank; the division is a `filters_json` filter on the `division` column;
@@ -42,7 +42,7 @@ date → `stream_chat_vsi` → citation markers → translate back → persist t
    are always traceable. `endpoint_name` = `vsi-all` / `vsi-as` / `vsi-is` (older turns of the
    Knowledge Assistant carry `ka-…` names).
 
-### Translation bridge (`server/services/translation_bridge.py`)
+### Translation bridge (`server/services/chat/translation_bridge.py`)
 
 Gated by `CHAT_TRANSLATE_BRIDGE_ENABLED` (`false` in `app.yaml`, `true` on every target in
 `utils/deploy/target_env.json`). When enabled:
@@ -110,7 +110,7 @@ user_id = $2`.
 - **`chat_turns`** / **`chat_retrieved_chunks`** — one row per turn (every step,
   its duration, the configuration it should have run with, the models that
   answered, `ok`/`degraded`/`error`/`aborted` + warning codes) and one row per
-  passage retrieved for it, with its text. Filled by `services/turn_log.py`;
+  passage retrieved for it, with its text. Filled by `services/chat/turn_log.py`;
   failures and degraded steps also go to `errors`. Reference:
   `docs/lakebase_schema.md`.
 - **MLflow trace per turn** — the same `TurnLog`, rebuilt as a trace after the answer is sent
@@ -212,7 +212,7 @@ WS message: `{messages, session_id?, division='ALL'}`. Pydantic request model:
 
 ### Turn pipeline internals
 
-`normalize_division` (`chat_vsi.py`) maps anything but `AS`/`IS` to `ALL`. `_trim_history` (142) keeps the last `CHAT_MAX_HISTORY`
+`normalize_division` (`chat/engine.py`) maps anything but `AS`/`IS` to `ALL`. `_trim_history` (142) keeps the last `CHAT_MAX_HISTORY`
 messages, always preserving the latest question. `_with_today_date` (153) returns a
 **copy** of the message list with `[Date: YYYY-MM-DD]` prepended to the last user
 message only — the model never sees a stale date from history replay.
@@ -229,7 +229,7 @@ engine fails entirely**, with `status='error'` and the failure reason in `error_
 Nothing about a turn is ever silently dropped; a failed turn is still fully traceable.
 This is a deliberate, tested invariant (`test_save_turn_records_error_status`).
 
-### `stream_chat_vsi` (`server/services/chat_vsi.py`) — the engine
+### `stream_chat_vsi` (`server/services/chat/engine.py`) — the engine
 
 Events yielded (SSE-shaped strings, relayed by the router over the WebSocket):
 `: keepalive` (first byte, then while waiting), `response.output_text.delta` (answer text, `[n]`
@@ -248,7 +248,7 @@ The translation bridge follows the same philosophy — fastText load failure, LL
 non-JSON LLM response and answer-translation failure all fall back to **passing the original
 text through unchanged** rather than erroring the turn.
 
-### Lakebase schema (`server/services/lakebase.py`)
+### Lakebase schema (`server/services/infra/lakebase.py`)
 
 ```sql
 CREATE TABLE chat_sessions (
@@ -357,16 +357,16 @@ the socket with a JSON error frame if `can_chat` is false.
 
 | Log line (substring) | Where | Meaning |
 |---|---|---|
-| `chat_vsi: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d` | `chat_vsi.py` | One line per turn: what was searched and how much was found |
-| `chat_vsi_llm:` | `chat_vsi_llm.py` | Any answer-model incident (fallback, retry, continuation) |
+| `chat_vsi: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d` | `chat/engine.py` | One line per turn: what was searched and how much was found |
+| `chat_vsi_llm:` | `chat/llm.py` | Any answer-model incident (fallback, retry, continuation) |
 | `Capabilities: ... granting all (fail-open)` (3 variants) | `user.py` | Distinguishes *why* fail-open triggered: Lakebase down / user not synced / DB query failed |
 | `translation_bridge: ... using original text: %s` (4 variants) | `translation_bridge.py` | Any bridge failure mode falling back to untranslated passthrough |
 | `Chat DB save failed: %s` | `chat.py` (`_save_turn`) | Persistence failure, swallowed — the turn itself still completed |
 
 ### Tests
 
-`tests/test_chat_route.py` (the WebSocket turn, engine mocked), `tests/test_chat_vsi.py` (the engine:
-citation parser on 21 real answers, search, filters, prompt, errors), `tests/test_chat_vsi_llm.py`
+`tests/test_chat_route.py` (the WebSocket turn, engine mocked), `tests/test_chat_engine.py` (the engine:
+citation parser on 21 real answers, search, filters, prompt, errors), `tests/test_chat_llm.py`
 (fallbacks, retries, continuation, queue). `tests/test_chat.py` covers session CRUD (including confirming
 soft-delete, not hard delete, and that both routes 404 rather than leak/delete
 a session the caller doesn't own), feedback validation, the division/history helper

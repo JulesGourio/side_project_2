@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC A **version** = an answer model + the index it searches: `model@label`, the label being one of
 # MAGIC `indexes` (as in `retrieval_eval`; `chat` = the app's own index). Everything else is the app's
-# MAGIC chat as deployed (`server/services/chat_vsi.py`: rewrite, search, prompt, language reminder).
+# MAGIC chat as deployed (`server/services/chat/engine.py`: rewrite, search, prompt, language reminder).
 # MAGIC One **reference** version is compared, question by question, with each **contender** — e.g. the
 # MAGIC chat's model against a candidate model, or the chat's index against an index built with another
 # MAGIC chunking.
@@ -141,11 +141,11 @@ from pyspark.sql import functions as F
 for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
     del sys.modules[_m]
 from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _strip_division, _trim_history, _with_today_date  # app code
-from server.services import chat_vsi, chat_vsi_llm
-from server.services import translation_bridge as _tb
-from server.services.streaming import _cost_eur
+from server.services.chat import engine, llm as chat_llm
+from server.services.chat import translation_bridge as _tb
+from server.services.infra.streaming import _cost_eur
 
-assert hasattr(chat_vsi, 'retrieve_for_turn'), (
+assert hasattr(engine, 'retrieve_for_turn'), (
     f'Stale app code in {APP}: chat_vsi.py has no retrieve_for_turn. '
     'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
 
@@ -171,19 +171,19 @@ async def search(messages, division, index):
         if ctx.needs_translation:
             messages = [dict(m) for m in messages]
             messages[-1]['content'] = en_question
-    div = chat_vsi.normalize_division(division)
-    conversation = chat_vsi._clean_history(_with_today_date(messages))
+    div = engine.normalize_division(division)
+    conversation = engine._clean_history(_with_today_date(messages))
     apply_config(BY_SIGNATURE[index])              # read at call time, same for every thread of this phase
-    found = await chat_vsi.retrieve_for_turn(HOST, tok, div, conversation)
-    documents = chat_vsi.group_documents(found['rows'])
+    found = await engine.retrieve_for_turn(HOST, tok, div, conversation)
+    documents = engine.group_documents(found['rows'])
     language = _tb.answer_language(ctx, user_content) if user_content else None
-    return {'prompt': chat_vsi.build_prompt(div, conversation, documents, language), 'documents': documents}
+    return {'prompt': engine.build_prompt(div, conversation, documents, language), 'documents': documents}
 
 
 async def generate(model, prompt):
     """The app's answer call (chat_vsi_llm), pinned to one model; keeps the raw text with its [n] markers."""
     started, first, text, usage = time.monotonic(), None, [], {}
-    async for chunk in chat_vsi_llm.stream_answer(HOST, token(), [model], prompt, MAX_TOKENS, 'Chat'):
+    async for chunk in chat_llm.stream_answer(HOST, token(), [model], prompt, MAX_TOKENS, 'Chat'):
         if not chunk.startswith('data: '):
             continue
         data = chunk[6:].strip()

@@ -50,7 +50,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     # never dropped from the live database when the code stopped using it.
     ("drop chat_sources", "DROP TABLE IF EXISTS chat_sources CASCADE"),
     # users.can_translate is not dropped here: only the app's own service principal owns table users; the app's
-    # startup migrations (server/services/lakebase.py) drop it.
+    # startup migrations (server/services/infra/lakebase.py) drop it.
 
     # Add future migrations here:
     # ("description", "ALTER TABLE ..."),

@@ -8,8 +8,8 @@ Coverage:
 
 import json
 
-from server.services.impact_queries import changes_to_queries
-from server.services.vector_search import (
+from server.services.compare.impact_queries import changes_to_queries
+from server.services.infra.vector_search import (
     _aggregate_docs, _exclusion_keys, _find_quote, _judged_doc, _split_prefix, sort_documents,
 )
 
@@ -236,7 +236,7 @@ def test_sort_documents_by_status():
 def test_impact_excel_has_one_row_per_passage():
     import io
     import openpyxl
-    from server.services.export_helpers import _build_impact_excel_bytes
+    from server.services.compare.export_helpers import _build_impact_excel_bytes
 
     doc = _judged_doc(_candidate(), {
         'impacted': True, 'confidence': 'high', 'reason': 'r',

@@ -62,7 +62,7 @@ def test_no_knowledge_assistant_endpoint():
         assert 'CHAT_ENDPOINT' not in f.read()
 
 
-# CAPS_BYPASS (server/services/user.py) turns off the group check for every
+# CAPS_BYPASS (server/services/infra/user.py) turns off the group check for every
 # visitor. Temporary, DEV only (2026-10-05) -- must never be switched on for a
 # target that serves real users.
 _CAPS_BYPASS_ALLOWED = ('dev',)

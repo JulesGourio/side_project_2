@@ -1,12 +1,12 @@
 # Lakebase — ce que l'app enregistre de chaque requête (schéma du 2026-10-09)
 
 Avec le Knowledge Assistant, le chat était une boîte noire : on ne gardait que la question, la
-réponse et les REF cités. Le moteur Vector Search (`server/services/chat_vsi.py`) fait chaque étape
+réponse et les REF cités. Le moteur Vector Search (`server/services/chat/engine.py`) fait chaque étape
 lui-même ; elles sont maintenant toutes enregistrées : requêtes de recherche, passages retrouvés
 (avec leur texte), modèles appelés, durées, et tout ce qui ne s'est pas passé comme prévu.
 
 Le schéma est créé et mis à jour par l'app à son démarrage (`_ensure_schema` dans
-`server/services/lakebase.py`) : aucune DDL à lancer à la main. Que des `CREATE TABLE IF NOT
+`server/services/infra/lakebase.py`) : aucune DDL à lancer à la main. Que des `CREATE TABLE IF NOT
 EXISTS` / `ADD COLUMN IF NOT EXISTS` : aucune donnée existante n'est touchée.
 
 ## Les tables du journal
@@ -217,7 +217,7 @@ WHERE f.vote = 'down' ORDER BY f.created_at DESC;
 
 ## Trace MLflow de chaque tour
 
-Le même `TurnLog` alimente aussi une trace MLflow par tour (`server/services/mlflow_turns.py`,
+Le même `TurnLog` alimente aussi une trace MLflow par tour (`server/services/chat/mlflow_turns.py`,
 expérience `CHAT_MLFLOW_EXPERIMENT`, vide = éteint). Correspondance : tag `vsi_trace_id` = `chat_turns.trace_id` ;
 spans `retrieval` / `rewrite` / `search` / `ref_lookup` / `answer` / `queue_wait` / `call_n` /
 `translate_in` / `translate_back` / `persist` = les colonnes `<étape>_ms` (et `llm_attempts` pour `call_n`) ;
@@ -238,7 +238,7 @@ d'import du job d'export UAT (`import_chatbot_tables_to_uat_job.py`) charge `cha
 ## Vérifié
 
 - Tests : `tests/test_lakebase_logging.py` (chaque clé écrite par le moteur est bien une colonne,
-  forme des INSERT, audits impact / analyse), `tests/test_chat_vsi.py` (journal d'un tour : propre,
+  forme des INSERT, audits impact / analyse), `tests/test_chat_engine.py` (journal d'un tour : propre,
   recherche partielle, reranker refusé, reformulation en échec, recherche en panne, modèle de
   secours, plafond), `tests/test_chat_route.py` (tour enregistré une fois, en erreur, interrompu).
 - Sur un PostgreSQL 16 local : schéma d'avant ce changement créé, puis le nouveau appliqué deux fois

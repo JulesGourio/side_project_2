@@ -138,20 +138,20 @@ from databricks.sdk import WorkspaceClient
 for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
     del sys.modules[_m]
 
-from server.services import chat_vsi
-assert hasattr(chat_vsi, 'retrieve_for_turn'), (
+from server.services.chat import engine
+assert hasattr(engine, 'retrieve_for_turn'), (
     f'Stale app code in {APP}: chat_vsi.py has no retrieve_for_turn. '
     'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
 
 from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _strip_division, _trim_history, _with_today_date  # app code
-from server.services.doc_catalog import canon_ref
-from server.services.translation_bridge import translate_question_to_en
+from server.services.infra.doc_catalog import canon_ref
+from server.services.chat.translation_bridge import translate_question_to_en
 
 # Each question runs in its own event loop (asyncio.run in a thread): the bridge's shared
 # httpx client is bound to the first loop and fails in the others ("Event loop is closed",
 # empty error) — the question was then searched untranslated. One client per call here.
 import httpx as _httpx
-from server.services import translation_bridge as _tb
+from server.services.chat import translation_bridge as _tb
 _tb._get_http_client = lambda: _httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
 
 w = WorkspaceClient()
@@ -172,9 +172,9 @@ async def search(messages: list, division: str) -> dict:
         if ctx.needs_translation:
             messages = [dict(m) for m in messages]
             messages[-1]['content'] = en_question
-    conversation = chat_vsi._clean_history(_with_today_date(messages))
-    found = await chat_vsi.retrieve_for_turn(HOST, tok, chat_vsi.normalize_division(division), conversation)
-    docs = chat_vsi.group_documents(found['rows'])
+    conversation = engine._clean_history(_with_today_date(messages))
+    found = await engine.retrieve_for_turn(HOST, tok, engine.normalize_division(division), conversation)
+    docs = engine.group_documents(found['rows'])
     return {'docs': [canon_ref(ref) for ref, _ in docs], 'passages': len(found['rows']),
             'chars': sum(len(r.get('chunk_text') or '') for r in found['rows']),
             'fr_query': found.get('fr_query') or '', 'reranked': True,
@@ -242,7 +242,7 @@ for name, cases in TODO.items():
     if not cases:
         continue
     apply_config(CONFIGS[name])
-    settings = json.dumps(chat_vsi.settings())
+    settings = json.dumps(engine.settings())
     t0 = time.monotonic()
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         outs = list(pool.map(run_case, cases))

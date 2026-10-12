@@ -49,7 +49,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
 
-from .streaming import _cost_eur, _parse_text_delta, supports_temperature
+from ..infra.streaming import _cost_eur, _parse_text_delta, supports_temperature
 
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@ Meant to run as a CI pipeline step authenticated as whichever identity has
 access to the TARGET workspace (--profile) -- no personal login role needed.
 
 Prerequisite: the target app must have started at least once so its own
-_ensure_schema() (server/services/lakebase.py) already created the tables.
+_ensure_schema() (server/services/infra/lakebase.py) already created the tables.
 
 USAGE:
     python import_lakebase_from_json.py --profile job-runner-sa-prod --in-dir staging/lakebase

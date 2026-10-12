@@ -19,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from server.services.chat_vsi_llm import TIRED_MESSAGE
+from server.services.chat.llm import TIRED_MESSAGE
 
 
 @pytest.fixture(scope='module')

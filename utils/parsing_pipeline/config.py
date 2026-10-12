@@ -99,7 +99,7 @@ ARCHIVE_MAX_DOCS = int(_env("PARSING_ARCHIVE_MAX_DOCS", "0") or "0")
 TARGET_ARCHIVE_NOTICE_TABLE = f"{CATALOG_SCHEMA}.chunks_archive_notices{TABLE_SUFFIX}"
 ARCHIVE_NOTICES_IN_RAG = _env("PARSING_ARCHIVE_NOTICES_IN_RAG", "false").strip().lower() in ("1", "true", "yes")
 # Also hardcoded in 5_Sync_Vector_Indexes.py (serverless, no config.py) and matched
-# by ARCHIVE_NOTICE_MARKER in server/services/vector_search.py.
+# by ARCHIVE_NOTICE_MARKER in server/services/infra/vector_search.py.
 ARCHIVE_NOTICE_CONTENT_TYPE = "archive_notice"
 ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
 

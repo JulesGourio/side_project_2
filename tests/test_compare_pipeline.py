@@ -8,13 +8,13 @@ Coverage:
   - extract_json_objects       : brace scanning incl. braces inside strings
 """
 
-from server.services.chunked_analysis import (
+from server.services.compare.chunked_analysis import (
     _split_body,
     extract_json_objects,
     split_messages_for_chunking,
 )
-from server.services.processors._diff_engines import paragraph_semantic_diff
-from server.services.processors.pdf import _is_page_artifact
+from server.services.compare.processors._diff_engines import paragraph_semantic_diff
+from server.services.compare.processors.pdf import _is_page_artifact
 
 
 # --- PDF pagination artifacts ---
@@ -383,7 +383,7 @@ def test_chunked_stream_parallel_parts_merge_in_order(monkeypatch):
     import asyncio
     import json
 
-    from server.services import chunked_analysis as ca
+    from server.services.compare import chunked_analysis as ca
 
     async def fake_stream(host, token, ep, messages, *args, **kwargs):
         i = int(messages[-1]['content'][0]['text'])

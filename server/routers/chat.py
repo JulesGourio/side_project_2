@@ -1,4 +1,4 @@
-"""Chat router — conversational interface answered by the Vector Search engine (services/chat_vsi.py)."""
+"""Chat router — conversational interface answered by the Vector Search engine (services/chat/engine.py)."""
 
 import json
 import logging
@@ -14,19 +14,19 @@ from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..services import mlflow_turns
-from ..services.chat_vsi import normalize_division, stream_chat_vsi
-from ..services.chat_vsi_llm import TIRED_MESSAGE
-from ..services.doc_catalog import augment_sources, with_document_info
-from ..services.lakebase import get_pool, store_chat_turn, store_error, upsert_user
-from ..services.translation_bridge import (
+from ..services.chat import mlflow_turns
+from ..services.chat.engine import normalize_division, stream_chat_vsi
+from ..services.chat.llm import TIRED_MESSAGE
+from ..services.infra.doc_catalog import augment_sources, with_document_info
+from ..services.infra.lakebase import get_pool, store_chat_turn, store_error, upsert_user
+from ..services.chat.translation_bridge import (
     ENABLED as TRANSLATE_BRIDGE_ENABLED,
     answer_language as answer_language_for,
     translate_answer_back,
     translate_question_to_en,
 )
-from ..services.turn_log import INFO, TurnLog
-from ..services.user import get_capabilities, get_user_identity, get_workspace_url, require_chat
+from ..services.chat.turn_log import INFO, TurnLog
+from ..services.infra.user import get_capabilities, get_user_identity, get_workspace_url, require_chat
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

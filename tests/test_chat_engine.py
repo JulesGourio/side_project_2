@@ -1,4 +1,4 @@
-"""Tests for the chat engine (server/services/chat_vsi.py).
+"""Tests for the chat engine (server/services/chat/engine.py).
 
 Coverage:
   - CitationStreamParser: marker split across chunks, grouped markers, unknown number,
@@ -21,9 +21,9 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from server.services import chat_vsi
-from server.services.chat_vsi import CitationStreamParser, parse_citations
-from server.services.turn_log import TurnLog
+from server.services.chat import engine
+from server.services.chat.engine import CitationStreamParser, parse_citations
+from server.services.chat.turn_log import TurnLog
 
 FIXTURE = os.path.join(os.path.dirname(__file__), 'fixtures', 'chat_vsi_raw_answers.json')
 DOCS = [(f'REF-{i}', {'url': f'https://intraqual/ref={i}'}) for i in range(1, 6)]
@@ -175,7 +175,7 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
          llm=None, named=(), language=None):
     sent = []
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer or (lambda p: DEFAULT_ROWS), sent))
-    monkeypatch.setattr(chat_vsi.asyncio, 'sleep', AsyncMock())
+    monkeypatch.setattr(engine.asyncio, 'sleep', AsyncMock())
     monkeypatch.setenv('CHAT_VSI_INDEX', 'cat.sch.chunks_index')
     rewrite_mock = AsyncMock(side_effect=rewrite) if isinstance(rewrite, BaseException) else \
         AsyncMock(return_value=(rewrite, 'databricks-gpt-6-luna'))
@@ -189,11 +189,11 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
     log = TurnLog()
 
     async def _collect():
-        return [c async for c in chat_vsi.stream_chat_vsi('https://host', 'tok', division, messages, language, log=log)]
+        return [c async for c in engine.stream_chat_vsi('https://host', 'tok', division, messages, language, log=log)]
 
-    with (patch.object(chat_vsi.chat_vsi_llm, 'complete', rewrite_mock),
-          patch.object(chat_vsi.chat_vsi_llm, 'stream_answer', side_effect=_llm_spy),
-          patch.object(chat_vsi, 'refs_named_in', lambda text: list(named) if QUESTION in text else [])):
+    with (patch.object(engine.chat_llm, 'complete', rewrite_mock),
+          patch.object(engine.chat_llm, 'stream_answer', side_effect=_llm_spy),
+          patch.object(engine, 'refs_named_in', lambda text: list(named) if QUESTION in text else [])):
         raw = asyncio.run(_collect())
     events = []
     for chunk in raw:
@@ -236,7 +236,7 @@ def test_three_queries_reranked_and_raw(monkeypatch):
 def test_division_is_a_filter_on_the_single_index(monkeypatch):
     _, m = _run(monkeypatch, division='is')
     assert all(json.loads(p['filters_json']) == {'division': ['IS']} for p in m['sent'])
-    assert chat_vsi.division_filter('XX') == {} and chat_vsi.division_filter(None) == {}
+    assert engine.division_filter('XX') == {} and engine.division_filter(None) == {}
 
 
 def test_union_merges_by_best_rank(monkeypatch):
@@ -247,10 +247,10 @@ def test_union_merges_by_best_rank(monkeypatch):
     found = {}
 
     async def _go():
-        found.update(await chat_vsi.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
+        found.update(await engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer, []))
-    with (patch.object(chat_vsi.chat_vsi_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
-          patch.object(chat_vsi, 'refs_named_in', lambda t: [])):
+    with (patch.object(engine.chat_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
+          patch.object(engine, 'refs_named_in', lambda t: [])):
         asyncio.run(_go())
     assert [r['chunk_id'] for r in found['rows']] == ['r1', 'both', 'raw2']
 
@@ -285,15 +285,15 @@ def test_failed_rewrite_keeps_a_raw_search_on_the_question(monkeypatch):
     found = {}
 
     async def _go():
-        found.update(await chat_vsi.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
+        found.update(await engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
     sent = []
 
     def answer(p):
         sent.append(p)
         return [_row('a', 'A-1')]
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer, []))
-    with (patch.object(chat_vsi.chat_vsi_llm, 'complete', AsyncMock(side_effect=RuntimeError('down'))),
-          patch.object(chat_vsi, 'refs_named_in', lambda t: [])):
+    with (patch.object(engine.chat_llm, 'complete', AsyncMock(side_effect=RuntimeError('down'))),
+          patch.object(engine, 'refs_named_in', lambda t: [])):
         asyncio.run(_go())
     assert [p['query_text'] for p in sent if 'reranker' not in p] == [QUESTION]
 
@@ -311,10 +311,10 @@ def test_cap_keeps_the_best_ranked_search_passages(monkeypatch):
     found = {}
 
     async def _go():
-        found.update(await chat_vsi.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
+        found.update(await engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(lambda p: [_row('a', 'A-1'), _row('b', 'B-1'), _row('c', 'C-1')], []))
-    with (patch.object(chat_vsi.chat_vsi_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
-          patch.object(chat_vsi, 'refs_named_in', lambda t: [])):
+    with (patch.object(engine.chat_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
+          patch.object(engine, 'refs_named_in', lambda t: [])):
         asyncio.run(_go())
     assert [r['chunk_id'] for r in found['rows']] == ['a', 'b']
 
@@ -348,7 +348,7 @@ def test_named_documents_first_one_language(monkeypatch):
 def test_prompt_rules_and_language(monkeypatch):
     _, m = _run(monkeypatch, language='Spanish')
     system = m['prompt'][0]['content']
-    assert system.startswith(chat_vsi.load_instructions('ALL')[:200])
+    assert system.startswith(engine.load_instructions('ALL')[:200])
     assert '# Answering rules' in system and '# How to cite (mandatory)' in system and 'quote it exactly' in system
     assert m['prompt'][-1]['content'].endswith('write your whole answer in Spanish, the language of the question above '
                                                '(not the language of the documents).')
@@ -358,7 +358,7 @@ def test_prompt_rules_and_language(monkeypatch):
 
 def test_generic_language_reminder_without_language(monkeypatch):
     _, m = _run(monkeypatch)
-    assert m['prompt'][-1]['content'].endswith(chat_vsi.LANGUAGE_REMINDER)
+    assert m['prompt'][-1]['content'].endswith(engine.LANGUAGE_REMINDER)
 
 
 def test_history_markers_stripped_and_date_kept_out_of_search(monkeypatch):
@@ -390,16 +390,16 @@ def test_last_message_must_be_user(monkeypatch):
 
 
 def test_split_bilingual():
-    assert chat_vsi.split_bilingual('FR: requête\nEN: query') == ('requête', 'query')
-    assert chat_vsi.split_bilingual('juste une requête') == ('juste une requête', '')
+    assert engine.split_bilingual('FR: requête\nEN: query') == ('requête', 'query')
+    assert engine.split_bilingual('juste une requête') == ('juste une requête', '')
 
 
 def test_instructions_per_division():
     for division in ('ALL', 'AS', 'IS'):
-        text = chat_vsi.load_instructions(division)
+        text = engine.load_instructions(division)
         assert len(text) > 6000 and '# Answering rules' in text and 'NF, FDAQL' in text
-    assert 'Reference ordering (AS)' in chat_vsi.load_instructions('AS')
-    assert 'Reference ordering (AS)' not in chat_vsi.load_instructions('IS')
+    assert 'Reference ordering (AS)' in engine.load_instructions('AS')
+    assert 'Reference ordering (AS)' not in engine.load_instructions('IS')
 
 
 def test_division_parts_only_hold_what_differs():
@@ -407,7 +407,7 @@ def test_division_parts_only_hold_what_differs():
     be absent from the others' base, and the three division files share no section."""
     titles = {}
     for division in ('ALL', 'AS', 'IS'):
-        parts = chat_vsi.prompt_parts(division)
+        parts = engine.prompt_parts(division)
         assert list(parts) == [f'division_{division.lower()}', 'base']
         titles[division] = {line for line in parts[f'division_{division.lower()}'].splitlines() if line.startswith('# ')}
         assert not titles[division] & {line for line in parts['base'].splitlines() if line.startswith('# ')}
@@ -418,7 +418,7 @@ def test_division_parts_only_hold_what_differs():
 def test_settings_defaults(monkeypatch):
     for name in ('CHAT_VSI_INDEX', 'CHAT_VSI_LLM_ENDPOINT', 'CHAT_VSI_REWRITE_ENDPOINT', 'CHAT_VSI_ANSWER_MAX_TOKENS'):
         monkeypatch.delenv(name, raising=False)
-    s = chat_vsi.settings()
+    s = engine.settings()
     assert s['index'] == 'dev_landingzone.qualibot.chunks_index' and s['llm'] == 'databricks-gpt-6-luna'
     assert s['rewrite_llm'] == 'databricks-gpt-6-luna' and s['answer_max_tokens'] == 8000
     assert s['rerank_top_k'] == 12 and s['raw_top_k'] == 10 and s['max_search_passages'] == 0
@@ -505,7 +505,7 @@ def test_turn_log_keeps_passages_past_the_cap(monkeypatch):
 
 def test_prompt_gives_the_catalog_revision_of_each_document(monkeypatch):
     info = {'QP-1518': {'title': 'NDT qualification', 'revision': 'D', 'doc_date': '2024-10-11'}}
-    monkeypatch.setattr(chat_vsi, 'document_info', lambda ref: info.get(ref, {}))
+    monkeypatch.setattr(engine, 'document_info', lambda ref: info.get(ref, {}))
     _, m = _run(monkeypatch)
     user_turn = m['prompt'][-1]['content']
     assert '[1] Document QP-1518 (current revision D, published 2024-10-11)\npassage 1' in user_turn
@@ -514,7 +514,7 @@ def test_prompt_gives_the_catalog_revision_of_each_document(monkeypatch):
 
 def test_instructions_never_ask_for_an_unknown_version_or_a_source_list():
     for division in ('ALL', 'AS', 'IS'):
-        text = chat_vsi.load_instructions(division)
+        text = engine.load_instructions(division)
         assert 'list every document you referenced' not in text
         assert 'never write that a version or status is unknown' in text
         assert 'Do not end your answer with a list of the documents' in text

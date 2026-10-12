@@ -24,21 +24,21 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..services.chunked_analysis import split_messages_for_chunking, stream_analysis_chunked
-from ..services.impact_queries import changes_to_queries
-from ..services.lakebase import (
+from ..services.compare.chunked_analysis import split_messages_for_chunking, stream_analysis_chunked
+from ..services.compare.impact_queries import changes_to_queries
+from ..services.infra.lakebase import (
     get_cached_impact_result, get_cached_summary, get_pool, store_error,
     store_impact_cache, store_impact_request, store_llm_request,
     store_summary_cache, update_llm_request_run, update_llm_request_usage,
 )
-from ..services.processors.factory import (
+from ..services.compare.processors.factory import (
     EXTENSION_MAP, SUPPORTED_EXTENSIONS, diff_truncation_warnings, extract_document_text,
     file_type_of, get_extension, get_processor, prepare_image_content,
 )
-from ..services.streaming import stream_analysis
-from ..services.summarize import summarize_image, summarize_text
-from ..services.user import get_user_identity, require_compare
-from ..services.vector_search import run_impact_search, sort_documents
+from ..services.infra.streaming import stream_analysis
+from ..services.compare.summarize import summarize_image, summarize_text
+from ..services.infra.user import get_user_identity, require_compare
+from ..services.infra.vector_search import run_impact_search, sort_documents
 
 
 logger = logging.getLogger(__name__)

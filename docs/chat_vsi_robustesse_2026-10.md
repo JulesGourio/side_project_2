@@ -21,9 +21,9 @@ Les mesures qui ont mené à ces choix : `docs/chat_vsi_tests.md`.
 | Rappel de langue | Ligne générique « dans la langue de la question » | Ligne qui **nomme** la langue (« in French », « in Spanish ») quand elle est connue, toujours active |
 | Retraduction de la réponse | Plafond fixe de 4 000 tokens ; un texte vide ou tronqué remplaçait la réponse | Plafond adapté à la longueur. Une traduction beaucoup plus courte que l'original est rejetée et la réponse d'origine gardée. Détection « mauvaise langue » plus stricte (confiance 0,8, sans citations ni tableaux) |
 
-## 2. La réponse : `server/services/chat_vsi_llm.py`
+## 2. La réponse : `server/services/chat/llm.py`
 
-Appelé par `chat_vsi.py` pour la réponse et la réécriture. Le prompt n'est pas modifié.
+Appelé par `chat/engine.py` pour la réponse et la réécriture. Le prompt n'est pas modifié.
 
 **Ordre des modèles** : `CHAT_VSI_LLM_ENDPOINT`, puis ceux de `CHAT_VSI_LLM_FALLBACK_ENDPOINTS`.
 
@@ -84,20 +84,20 @@ logs de l'app, préfixe `chat_vsi_llm:`. Un tour sans incident n'y laisse rien.
 
 ## 4. Fichiers
 
-- `server/services/chat_vsi_llm.py` : chaîne de modèles, relances, reprise, file d'attente, appels
+- `server/services/chat/llm.py` : chaîne de modèles, relances, reprise, file d'attente, appels
   courts avec secours.
-- `server/services/chat_vsi.py` : réécriture et réponse via `chat_vsi_llm` ; relance par requête
+- `server/services/chat/engine.py` : réécriture et réponse via `chat_vsi_llm` ; relance par requête
   Vector Search (`_post_query`) ; recherches partielles acceptées ; langue de réponse transmise au
   prompt ; modèle effectif dans les métadonnées.
 - `server/routers/chat.py` : calcule la langue de la réponse (`translation_bridge.answer_language`)
   et la passe au moteur.
-- `server/services/translation_bridge.py` : nettoyage avant détection, détection « mauvaise
+- `server/services/chat/translation_bridge.py` : nettoyage avant détection, détection « mauvaise
   langue » plus stricte, relance sur 429, modèle de secours, plafond adapté, rejet des traductions
   tronquées, noms des langues.
 - `app.yaml` : modèles et secours de la réponse, de la réécriture et de la traduction.
 - Notebooks `retrieval_eval` et `pairwise_answers` : un seul modèle de réécriture par run, pas de
   secours silencieux (deux modèles mélangés fausseraient une mesure).
-- Tests : `tests/test_chat_vsi_llm.py` (secours sur 429, 404 non retenté, réponse vide, erreur au
+- Tests : `tests/test_chat_llm.py` (secours sur 429, 404 non retenté, réponse vide, erreur au
   milieu du flux, reprise, premier mot trop lent, file d'attente, recherche partielle, langue,
   traduction).
 

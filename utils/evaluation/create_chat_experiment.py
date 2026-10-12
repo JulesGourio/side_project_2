@@ -1,6 +1,6 @@
 """Creates the MLflow experiment that receives one trace per chat turn, and lets the app write to it.
 
-The app (``server/services/mlflow_turns.py``) never creates the experiment: run this once per
+The app (``server/services/chat/mlflow_turns.py``) never creates the experiment: run this once per
 workspace, then set ``CHAT_MLFLOW_EXPERIMENT`` for the target (``utils/deploy/target_env.json``).
 The experiment belongs to whoever runs the script: run it through the ``create_chat_experiment_<target>``
 job (``resources/chat_experiment.yml``, ``run_as`` the job service principal) so the SP owns it.

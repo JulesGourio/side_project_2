@@ -23,7 +23,7 @@ summary" below), independent of any diff.
 
 Both call the same `POST /compare/analyze`, differing only in the
 `processor_version` form field (`standard` vs `structured`) — the backend
-processor factory (`server/services/processors/`) picks a different prompt/
+processor factory (`server/services/compare/processors/`) picks a different prompt/
 output format per file type accordingly. "Run Both" fires them concurrently
 (`Promise.allSettled`); each keeps its own `isAnalyzing*` flag, so one
 finishing doesn't block or affect the other.
@@ -169,7 +169,7 @@ no need to run any diff first.
 
 How it works: for text-bearing files, the uploaded file's text is extracted
 the same way each processor already extracts it for diffing
-(`extract_document_text` in `server/services/processors/factory.py` —
+(`extract_document_text` in `server/services/compare/processors/factory.py` —
 reuses each processor module's own single-file extraction helper, just
 without pairing it against a second document), then a single cheap LLM call
 (`COMPARE_SUMMARY_ENDPOINT`, default `databricks-gpt-5-6-luna`) produces a
@@ -289,7 +289,7 @@ this is the precise *what*.
 `Depends(require_compare)` — left open on purpose (decided 2026-10-04).
 Every `session_path` is checked with `_is_within_volume` (normalised, `..` refused).
 
-### Processor factory (`server/services/processors/`)
+### Processor factory (`server/services/compare/processors/`)
 
 `get_processor(filename, method_override=None)` (`factory.py`) maps a file extension
 to a `file_type` (`pdf`/`image`/`docx`/`pptx`/`excel`/`xml`) via a flat
@@ -328,7 +328,7 @@ A dormant module, `_prompt_variants.py`, carries an explicit disclaimer that
 production code does not import it — it's only exercised by a debug notebook and a
 prompt-comparison test script. Don't assume its prompts are live.
 
-### Impact search internals (`server/services/vector_search.py`, `impact_queries.py`)
+### Impact search internals (`server/services/infra/vector_search.py`, `impact_queries.py`)
 
 Flow and rationale are in section 3 above. Implementation notes:
 

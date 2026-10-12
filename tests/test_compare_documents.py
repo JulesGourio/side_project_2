@@ -15,9 +15,9 @@ from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-from server.services.processors._diff_engines import paragraph_semantic_diff
-from server.services.processors.docx import DocxProcessor, _extract_docx
-from server.services.processors.pdf import PDFProcessor, _extract_text_with_pages
+from server.services.compare.processors._diff_engines import paragraph_semantic_diff
+from server.services.compare.processors.docx import DocxProcessor, _extract_docx
+from server.services.compare.processors.pdf import PDFProcessor, _extract_text_with_pages
 
 FILLER = ('Additional guidance paragraph number {i}: the workstation shall be kept clean and free of foreign '
           'objects, tools shall be counted before and after each operation, and any missing tool shall be '

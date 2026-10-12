@@ -46,7 +46,7 @@ def _app_version() -> str:
     return os.getenv('APP_VERSION', '2')
 
 
-# ── chat_turns: one row per chat turn (filled from services/turn_log.TurnLog) ──
+# ── chat_turns: one row per chat turn (filled from services/chat/turn_log.TurnLog) ──
 # The columns written from TurnLog.data, in order — used by both CREATE TABLE and the
 # INSERT, so a column added here reaches the table on the next app start.
 CHAT_TURN_COLUMNS: List[tuple] = [
@@ -704,7 +704,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
             # Division scope the question was asked under: 'ALL' / 'AS' / 'IS'.
             ('division',        "TEXT NOT NULL DEFAULT 'ALL'"),
             # ISO 639-1 code of the question's language, as detected by the
-            # chat translation bridge (server/services/translation_bridge.py).
+            # chat translation bridge (server/services/chat/translation_bridge.py).
             # Empty when the bridge is disabled (CHAT_TRANSLATE_BRIDGE_ENABLED).
             ('question_lang',   'TEXT'),
         ]:
@@ -718,7 +718,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
         ''')
 
         # ── chat_turns (one row per chat turn: every step, its duration, what
-        #    it should have run with and what went wrong — services/turn_log.py)
+        #    it should have run with and what went wrong — services/chat/turn_log.py)
         #    No FK on session_id: a turn whose messages could not be saved is
         #    still logged. ──────────────────────────────────────────────────────
         await conn.execute('''
@@ -779,7 +779,7 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
         # ── doc_catalog ───────────────────────────────────────────────────────
         # Every document of the parsing scope (REF, title, link, in the chat index or
         # not). Rewritten by the parsing pipeline after each daily run (task
-        # 6_update_kb_metadata); read by server/services/doc_catalog.py.
+        # 6_update_kb_metadata); read by server/services/infra/doc_catalog.py.
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS doc_catalog (
                 ref        TEXT PRIMARY KEY,

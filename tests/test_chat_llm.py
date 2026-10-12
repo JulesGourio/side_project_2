@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from server.services import chat_vsi, chat_vsi_llm, translation_bridge
+from server.services.chat import engine, llm as chat_llm, translation_bridge
 
 PRIMARY, BACKUP = 'databricks-gpt-6-luna', 'databricks-gpt-5-6-luna'
 MESSAGES = [{'role': 'system', 'content': 's'}, {'role': 'user', 'content': 'q'}]
@@ -16,13 +16,13 @@ MESSAGES = [{'role': 'system', 'content': 's'}, {'role': 'user', 'content': 'q'}
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
-    chat_vsi_llm.reset_health()
-    monkeypatch.setattr(chat_vsi_llm, '_ROUND_WAITS_S', (0.0, 0.0, 0.0))
+    chat_llm.reset_health()
+    monkeypatch.setattr(chat_llm, '_ROUND_WAITS_S', (0.0, 0.0, 0.0))
     for name in ('CHAT_VSI_LLM_FALLBACK_ENDPOINTS', 'CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS', 'CHAT_VSI_LLM_ROUNDS',
                  'CHAT_VSI_FIRST_TOKEN_TIMEOUT_S', 'CHAT_VSI_MAX_CONCURRENT_ANSWERS'):
         monkeypatch.delenv(name, raising=False)
     yield
-    chat_vsi_llm.reset_health()
+    chat_llm.reset_health()
 
 
 def _sse(*texts, usage=(100, 20)):
@@ -39,13 +39,13 @@ def _transport(monkeypatch, routes, calls=None):
         if calls is not None:
             calls.append((endpoint, json.loads(request.content)))
         return routes[endpoint](request)
-    monkeypatch.setattr(chat_vsi_llm, '_client',
+    monkeypatch.setattr(chat_llm, '_client',
                         lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout))
 
 
 def _events(endpoints, messages=MESSAGES, max_tokens=2000):
     async def _go():
-        return [c async for c in chat_vsi_llm.stream_answer('https://h', 't', endpoints, messages, max_tokens)]
+        return [c async for c in chat_llm.stream_answer('https://h', 't', endpoints, messages, max_tokens)]
     out = []
     for chunk in asyncio.run(_go()):
         if chunk.startswith('data: '):
@@ -115,7 +115,7 @@ def test_mid_stream_error_object_counts_as_a_failure(monkeypatch):
     assert _text(events) == 'Début et fin.'
     continued = calls[-1][1]['messages']
     assert continued[-2] == {'role': 'assistant', 'content': 'Début '}
-    assert continued[-1]['content'] == chat_vsi_llm.CONTINUE_PROMPT
+    assert continued[-1]['content'] == chat_llm.CONTINUE_PROMPT
     assert _of(events, 'llm')[0]['attempts'][-1]['outcome'] == 'continued'
 
 
@@ -126,9 +126,9 @@ def test_cut_answer_is_continued_by_the_only_endpoint(monkeypatch):
         seen.append(messages)
         if len(seen) == 1:
             yield 'text', 'La procédure QP-1518 '
-            raise chat_vsi_llm.LlmFailure('network', 'connection reset')
+            raise chat_llm.LlmFailure('network', 'connection reset')
         yield 'text', 'fait foi. [1]'
-    monkeypatch.setattr(chat_vsi_llm, 'stream_once', _once)
+    monkeypatch.setattr(chat_llm, 'stream_once', _once)
     monkeypatch.setenv('CHAT_VSI_LLM_ROUNDS', '2')
     events = _events([PRIMARY])
     assert _text(events) == 'La procédure QP-1518 fait foi. [1]' and not _of(events, 'error')
@@ -139,10 +139,10 @@ def test_answer_that_cannot_be_finished_says_so(monkeypatch):
     async def _once(host, token, endpoint, messages, max_tokens):
         if len(messages) == len(MESSAGES):
             yield 'text', 'Début'
-        raise chat_vsi_llm.LlmFailure('server', 'down', 503)
-    monkeypatch.setattr(chat_vsi_llm, 'stream_once', _once)
+        raise chat_llm.LlmFailure('server', 'down', 503)
+    monkeypatch.setattr(chat_llm, 'stream_once', _once)
     events = _events([PRIMARY, BACKUP])
-    assert _text(events).startswith('Début') and _text(events).endswith(chat_vsi_llm.TIRED_CUT_NOTE)
+    assert _text(events).startswith('Début') and _text(events).endswith(chat_llm.TIRED_CUT_NOTE)
     assert not _of(events, 'error')
 
 
@@ -170,10 +170,10 @@ def test_concurrency_limit_queues_answers(monkeypatch):
         await asyncio.sleep(0.05)
         running[0] -= 1
         yield 'text', 'ok'
-    monkeypatch.setattr(chat_vsi_llm, 'stream_once', _once)
+    monkeypatch.setattr(chat_llm, 'stream_once', _once)
 
     async def _one():
-        return [c async for c in chat_vsi_llm.stream_answer('h', 't', [PRIMARY], MESSAGES, 100)]
+        return [c async for c in chat_llm.stream_answer('h', 't', [PRIMARY], MESSAGES, 100)]
 
     async def _all():
         return await asyncio.gather(*(_one() for _ in range(3)))
@@ -183,11 +183,11 @@ def test_concurrency_limit_queues_answers(monkeypatch):
 
 def test_chains(monkeypatch):
     monkeypatch.setenv('CHAT_VSI_LLM_FALLBACK_ENDPOINTS', f'{BACKUP}, {PRIMARY}')
-    assert chat_vsi_llm.answer_chain(PRIMARY) == [PRIMARY, BACKUP]
-    assert chat_vsi_llm.rewrite_chain('databricks-claude-sonnet-4-6', PRIMARY) == [
+    assert chat_llm.answer_chain(PRIMARY) == [PRIMARY, BACKUP]
+    assert chat_llm.rewrite_chain('databricks-claude-sonnet-4-6', PRIMARY) == [
         'databricks-claude-sonnet-4-6', PRIMARY, BACKUP]
     monkeypatch.setenv('CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS', BACKUP)
-    assert chat_vsi_llm.rewrite_chain('databricks-claude-sonnet-4-6', PRIMARY) == ['databricks-claude-sonnet-4-6', BACKUP]
+    assert chat_llm.rewrite_chain('databricks-claude-sonnet-4-6', PRIMARY) == ['databricks-claude-sonnet-4-6', BACKUP]
 
 
 def test_rewrite_falls_back_when_the_first_model_returns_nothing(monkeypatch):
@@ -200,7 +200,7 @@ def test_rewrite_falls_back_when_the_first_model_returns_nothing(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
     monkeypatch.setenv('CHAT_VSI_REWRITE_ENDPOINT', PRIMARY)
     monkeypatch.setenv('CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS', BACKUP)
-    q = asyncio.run(chat_vsi.rewrite_queries('https://h', 't', [{'role': 'user', 'content': 'NDT?'}]))
+    q = asyncio.run(engine.rewrite_queries('https://h', 't', [{'role': 'user', 'content': 'NDT?'}]))
     assert q == ('qualification CND', 'NDT qualification') and BACKUP in sent[-1]
 
 
@@ -212,8 +212,8 @@ def test_vector_search_query_retried_on_503(monkeypatch):
     async def _post(self, url, json=None, headers=None):
         return httpx.Response(statuses.pop(0), json={}, request=httpx.Request('POST', url))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
-    monkeypatch.setattr(chat_vsi.asyncio, 'sleep', AsyncMock())
-    resp = asyncio.run(chat_vsi._post_query('https://h', 't', 'idx', {'query_text': 'q'}))
+    monkeypatch.setattr(engine.asyncio, 'sleep', AsyncMock())
+    resp = asyncio.run(engine._post_query('https://h', 't', 'idx', {'query_text': 'q'}))
     assert resp.status_code == 200 and not statuses
 
 
@@ -266,13 +266,13 @@ def test_slot_is_freed_when_the_caller_stops_at_done(monkeypatch):
 
     async def _once(host, token, endpoint, messages, max_tokens):
         yield 'text', 'ok'
-    monkeypatch.setattr(chat_vsi_llm, 'stream_once', _once)
+    monkeypatch.setattr(chat_llm, 'stream_once', _once)
 
     async def _go():
-        async for chunk in chat_vsi_llm.stream_answer('h', 't', [PRIMARY], MESSAGES, 100):
+        async for chunk in chat_llm.stream_answer('h', 't', [PRIMARY], MESSAGES, 100):
             if chunk.startswith('data: [DONE]'):
                 break
-        return chat_vsi_llm._semaphore().locked()
+        return chat_llm._semaphore().locked()
     assert asyncio.run(_go()) is False
 
 
@@ -282,7 +282,7 @@ def test_no_claude_model_in_the_chatbot_config():
     import os as _os
     import yaml
     root = _os.path.join(_os.path.dirname(__file__), '..')
-    assert 'claude' not in chat_vsi._DEFAULT_LLM_ENDPOINT
+    assert 'claude' not in engine._DEFAULT_LLM_ENDPOINT
     env = {e['name']: str(e.get('value', '')) for e in yaml.safe_load(open(_os.path.join(root, 'app.yaml')))['env']}
     targets = _json.load(open(_os.path.join(root, 'utils', 'deploy', 'target_env.json')))
     for values in [env] + [v for k, v in targets.items() if isinstance(v, dict)]:

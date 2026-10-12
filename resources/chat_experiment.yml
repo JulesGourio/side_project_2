@@ -1,4 +1,4 @@
-# Creates the MLflow experiment of the live chat traces (server/services/mlflow_turns.py), owned by the job service principal
+# Creates the MLflow experiment of the live chat traces (server/services/chat/mlflow_turns.py), owned by the job service principal
 # instead of the person who runs the script. Manual trigger; idempotent (an existing experiment is left as is, permissions re-applied).
 # Steps: operations_dev.md block Y.
 
