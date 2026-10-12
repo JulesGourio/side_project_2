@@ -59,6 +59,8 @@ def main() -> None:
         experiment_id = mlflow.create_experiment(args.experiment)
         logger.info('experiment %s created (id %s)', args.experiment, experiment_id)
 
+    mlflow.MlflowClient().set_experiment_tag(experiment_id, 'mlflow.experimentKind', 'genai_development')
+
     app = w.apps.get(args.app)
     principal = app.service_principal_client_id
     acl = [ExperimentAccessControlRequest(service_principal_name=principal,
