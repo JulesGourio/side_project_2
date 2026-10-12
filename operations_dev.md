@@ -662,6 +662,52 @@ les note avec les scorers MLflow (juge GPT-5.6 Luna).
 - [ ] **W4.** Puis les tours mal notés par les utilisateurs : `selection` = `down`, `limit` = `50`,
   `days` = `90`, Run all ; m'envoyer le tableau final.
 
+### Y. Trace MLflow de chaque tour de chat (code du 2026-10-12)
+
+Chaque tour de chat terminé est aussi envoyé comme **une trace MLflow** dans l'expérience
+`/Shared/qualibot/chat_turns` : la question, la réponse, les étapes (traduction, réécriture, recherche,
+recherche par REF, réponse, un span par appel au modèle) à leurs vraies durées, les passages envoyés au
+modèle (texte compris), les tokens et le coût, les avertissements. Même source que `chat_turns` dans
+Lakebase (le `TurnLog`), mêmes noms, jointure par `vsi_trace_id`. L'envoi se fait après la réponse,
+en arrière-plan : l'utilisateur n'attend rien et une panne MLflow ne touche pas le chat. Éteint tant que
+`CHAT_MLFLOW_EXPERIMENT` est vide (c'est le cas partout sauf DEV). Le vote 👍/👎 n'est pas dans la trace :
+`score_chat_traces.py` (bloc W, en pause) le joint depuis Lakebase.
+
+- [ ] **Y1. Créer l'expérience** (une fois, sur ton PC, avec `pip install mlflow databricks-sdk`).
+  L'app n'en crée jamais : sans cette étape elle écrit `experiment ... does not exist` dans ses logs et
+  n'envoie rien.
+
+  ```powershell
+  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+  python utils\evaluation\create_chat_experiment.py --profile DEV --app qualibot --experiment /Shared/qualibot/chat_turns
+  ```
+
+  Attendu : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot (service
+  principal …) can edit the experiment`. Si l'étape des droits échoue, me coller l'erreur.
+- [ ] **Y2. Déployer l'app DEV** avec le zip de cette branche (la valeur `CHAT_MLFLOW_EXPERIMENT` vient
+  de `utils/deploy/target_env.json`) :
+
+  ```powershell
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+- [ ] **Y3. Poser 2 ou 3 questions** (une normale, une avec un numéro de document, une hors sujet),
+  attendre une minute, puis ouvrir l'expérience : espace de travail DEV → **Experiments** →
+  `/Shared/qualibot/chat_turns` → onglet **Traces**. Attendu : une trace par question ; en l'ouvrant,
+  l'arbre `chat_turn` → `retrieval` (rewrite, search) → `answer` (call_1…) avec les durées, les passages
+  envoyés dans la sortie de `retrieval`, les tokens sur `answer`, les tags `division`, `status`,
+  `warnings`. **M'envoyer** une capture d'une trace ouverte, ou les lignes `mlflow_turns:` des logs de
+  l'app si rien n'apparaît.
+- [ ] **Y4. (Optionnel, à décider) Traces dans des tables Delta Unity Catalog** au lieu du stockage de
+  l'expérience : plus adapté à un gros volume, requêtable en SQL, mais demande MLflow ≥ 3.11.1, un
+  entrepôt SQL et un schéma, et ne peut plus être changé pour cette expérience. À ne faire qu'après Y3 :
+
+  ```powershell
+  python utils\evaluation\create_chat_experiment.py --profile DEV --app qualibot --experiment /Shared/qualibot/chat_turns_uc --uc-schema dev_landingzone.qualibot --warehouse-id 13eff4a6095513cb
+  ```
+
+  Le script affiche deux `GRANT` à exécuter dans l'éditeur SQL, puis `CHAT_MLFLOW_EXPERIMENT` passe à
+  `/Shared/qualibot/chat_turns_uc` dans `target_env.json` (me le dire, je le change).
+
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
 Lecture seule sur les tables UAT ; écrit uniquement dans

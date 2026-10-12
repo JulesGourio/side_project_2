@@ -114,6 +114,8 @@ user_id = $2`.
   passage retrieved for it, with its text. Filled by `services/turn_log.py`;
   failures and degraded steps also go to `errors`. Reference:
   `docs/lakebase_schema.md`.
+- **MLflow trace per turn** — the same `TurnLog`, rebuilt as a trace after the answer is sent
+  (`services/mlflow_turns.py`, experiment `CHAT_MLFLOW_EXPERIMENT`, empty = off).
 - **`chat_feedbacks`** — thumbs up/down + optional comment per message.
 - **`knowledge_base_metadata`** — single-row table holding the "documents as
   of" date shown in the UI toolbar; updated manually after each knowledge
@@ -177,6 +179,7 @@ not part of the live app):
 | Var | Default | Purpose |
 |---|---|---|
 | `CHAT_ENABLED` | `true` | Feature flag |
+| `CHAT_MLFLOW_EXPERIMENT` | `` (off; `/Shared/qualibot/chat_turns` on DEV) | MLflow experiment receiving one trace per chat turn; must exist (`utils/evaluation/create_chat_experiment.py`) |
 | `CHAT_VSI_INDEX` | `dev_landingzone.qualibot.chunks_index` | The Vector Search index (per target in `target_env.json`) |
 | `CHAT_VSI_LLM_ENDPOINT` / `CHAT_VSI_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Answer model and its fallbacks |
 | `CHAT_VSI_REWRITE_ENDPOINT` / `CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Rewrite model and its fallbacks |

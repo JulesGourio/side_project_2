@@ -13,7 +13,7 @@ Everything that runs outside the app, one folder per concern:
 | `user_capabilities/` | `can_chat` / `can_compare` sync from group membership |
 | `dev_copy/` | Copy of the UAT corpus into DEV |
 | `grants/` | Unity Catalog grants for the app service principals |
-| `evaluation/` | Chat evaluation and production-traffic quality scoring, results in `docs/chat_vsi_tests.md` |
+| `evaluation/` | Chat evaluation and production-traffic quality scoring, results in `docs/chat_vsi_tests.md`; `create_chat_experiment.py` creates the MLflow experiment of the live chat traces |
 | `soffice_packaging/` | Portable LibreOffice build for the exact-layout PDF preview |
 
 The former Knowledge Assistant provisioning is in `archive/knowledge_assistant/`;

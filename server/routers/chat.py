@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from ..services import mlflow_turns
 from ..services.chat_vsi import normalize_division, stream_chat_vsi
 from ..services.chat_vsi_llm import TIRED_MESSAGE
 from ..services.doc_catalog import augment_sources, with_document_info
@@ -477,6 +478,7 @@ async def chat_ws(websocket: WebSocket):
                         if translate_ctx.answer_error:
                             log.issue('translate_back_failed', 'translate_back', translate_ctx.answer_error)
                     log.data['sources_count'] = len(collected_sources)
+                    log.answer = final_content
                     msg_id = await _persist('ok', final_content)
                     outcome = 'ok'
                     logger.info('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
@@ -573,6 +575,7 @@ async def chat_ws(websocket: WebSocket):
             # After 'done' was sent: the user does not wait for this write.
             log.finish(outcome)
             await store_chat_turn(log, endpoint=route, user_message_id=saved[0], assistant_message_id=saved[1])
+            mlflow_turns.export_turn(log)
         try:
             await websocket.close()
         except Exception:

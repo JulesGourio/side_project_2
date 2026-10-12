@@ -700,6 +700,7 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
     prompt = build_prompt(div, conversation, documents, answer_language)
     _record_prompt(log, div, documents, prompt)
     llm_started = time.monotonic()
+    log.starts_ms['answer'] = log.elapsed_ms()
 
     def _generation_done() -> None:
         llm_ms = int((time.monotonic() - llm_started) * 1000)

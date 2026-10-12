@@ -342,3 +342,6 @@ Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `
 ## 12. Message « tired », révisions des documents, dates des fils, origine des erreurs (2026-10-09)
 
 À tester dans `operations_dev.md`, bloc **X** (X1 à X6) ; en UAT, `OPERATIONS.md` D5.8c (tâche 6 relancée après l'app) et D5.8d (alertes 01 à 06).
+
+## 2026-10-12 — traces MLflow du chat
+- Après le déploiement DEV : `operations_dev.md` bloc Y (créer l'expérience, déployer, poser des questions, vérifier les traces).

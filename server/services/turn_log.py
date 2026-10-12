@@ -39,8 +39,11 @@ class TurnLog:
     def __init__(self, trace_id: Optional[str] = None):
         self.trace_id = trace_id or new_trace_id()
         self.started = time.monotonic()
+        self.started_at_ns = time.time_ns()
         self.data: Dict[str, Any] = {}
         self.timings_ms: Dict[str, int] = {}
+        self.starts_ms: Dict[str, int] = {}      # when each step began, from the start of the turn (MLflow spans)
+        self.answer = ''                         # the text the user saw (MLflow trace output, not stored in Lakebase)
         self.issues: List[Dict[str, Any]] = []
         self.passages: List[Dict[str, Any]] = []
         self.status = ''                         # set by finish()
@@ -54,6 +57,7 @@ class TurnLog:
     def timed(self, step: str) -> Iterator[None]:
         """Adds the duration of the block to ``timings_ms[step]`` (also when it raises)."""
         t0 = time.monotonic()
+        self.starts_ms.setdefault(step, int((t0 - self.started) * 1000))
         try:
             yield
         finally:

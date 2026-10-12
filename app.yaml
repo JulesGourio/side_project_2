@@ -40,6 +40,10 @@ env:
     value: "8000"
   - name: CHAT_VSI_REWRITE_MAX_TOKENS
     value: "2000"
+  # MLflow experiment receiving one trace per chat turn (server/services/mlflow_turns.py): steps, durations, passages, tokens, issues.
+  # Empty = off. The experiment must exist (utils/evaluation/create_chat_experiment.py); per-target value in utils/deploy/target_env.json.
+  - name: CHAT_MLFLOW_EXPERIMENT
+    value: ""
   # How long can_chat / can_compare stay cached per user; sync_user_capabilities.py changes apply after the next cache miss.
   - name: CAPS_TTL_S
     value: "600"

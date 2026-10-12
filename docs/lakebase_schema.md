@@ -215,6 +215,17 @@ FROM chat_feedbacks f JOIN chat_turns t ON t.assistant_message_id = f.message_id
 WHERE f.vote = 'down' ORDER BY f.created_at DESC;
 ```
 
+## Trace MLflow de chaque tour
+
+Le même `TurnLog` alimente aussi une trace MLflow par tour (`server/services/mlflow_turns.py`,
+expérience `CHAT_MLFLOW_EXPERIMENT`, vide = éteint). Correspondance : tag `vsi_trace_id` = `chat_turns.trace_id` ;
+spans `retrieval` / `rewrite` / `search` / `ref_lookup` / `answer` / `queue_wait` / `call_n` /
+`translate_in` / `translate_back` / `persist` = les colonnes `<étape>_ms` (et `llm_attempts` pour `call_n`) ;
+sortie du span `retrieval` = les passages `kept` de `chat_retrieved_chunks`, dans l'ordre du prompt ;
+tokens et coût sur `rewrite` et `answer` ; `status` et `warnings` en tags ; `issues` (sans trace de pile)
+en attribut de la racine. La session MLflow est `session_id`, l'utilisateur est haché. Rien n'est lu
+depuis Lakebase : un champ de plus dans la trace s'ajoute d'abord dans le `TurnLog`.
+
 ## Notation de la qualité
 
 L'ancien notebook `score_production_qa.py` (traces MLflow du KA) est archivé. Le prototype

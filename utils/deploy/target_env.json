@@ -7,7 +7,8 @@
     "CHAT_TRANSLATE_BRIDGE_ENABLED": "true",
     "COMPARE_IMPACT_INDEX": "dev_landingzone.qualibot.chunks_index",
     "CAPS_WAREHOUSE_ID": "",
-    "CAPS_BYPASS": "true"
+    "CAPS_BYPASS": "true",
+    "CHAT_MLFLOW_EXPERIMENT": "/Shared/qualibot/chat_turns"
   },
   "uat": {
     "COMPARE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/doc_compare",
