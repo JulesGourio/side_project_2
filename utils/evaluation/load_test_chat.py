@@ -169,7 +169,7 @@ async def ask_engine(q, session_id):
         if ctx.needs_translation:
             messages[-1]['content'] = en
     language = e['tb'].answer_language(ctx, q['content'])
-    async for chunk in e['chat_vsi'].stream_chat(HOST, tok, q['division'], e['date'](messages), language):
+    async for chunk in e['engine'].stream_chat(HOST, tok, q['division'], e['date'](messages), language):
         if not chunk.startswith('data: ') or chunk.strip() == 'data: [DONE]':
             continue
         ev = json.loads(chunk[6:])
