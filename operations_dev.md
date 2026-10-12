@@ -8,7 +8,8 @@ DEV ; `OPERATIONS.md` reste la référence pour UAT / uat-test / PROD.
 Branche : **`feature/chat-vsi-merged-on-impact-search`** (= `claude/hopeful-bardeen-57zeur`).
 Pas de PR ; le zip à déployer est celui de cette branche.
 
-Mis à jour le 2026-10-08 : **commencer par le bloc S** (DEV propre : un seul chatbot, un seul index,
+Mis à jour le 2026-10-12 : **suivre le bloc 0 (ordre complet), il reprend tout ce qui suit dans l'ordre**.
+Avant : **commencer par le bloc S** (DEV propre : un seul chatbot, un seul index,
 plus aucun nom versionné, plus de Knowledge Assistant). Les blocs G, K, L, P, A et C3 décrivent l'état
 d'avant (KA, tables `_v1`) : remplacés par S, gardés pour l'historique.
 
@@ -219,6 +220,226 @@ Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
+### 0. ORDRE COMPLET DU DEV — tout ce qui reste, dans l'ordre (2026-10-12)
+
+Ce bloc remplace la lecture des blocs S à Z un par un : toutes les commandes sont ici, dans l'ordre où il faut les lancer. Les blocs
+plus bas gardent le détail et l'historique (leurs étiquettes S5, Y3… sont rappelées entre parenthèses). Cocher et dater au fur et à mesure.
+Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu as coché l'est.
+
+- [ ] **0.1 Session PowerShell** (au début de chaque session, depuis la racine du projet, branche `feature/chat-vsi-merged-on-impact-search`) :
+
+  ```powershell
+  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  databricks auth profiles
+  ```
+
+  Le profil `DEV` doit apparaître comme valide. Sinon : `databricks auth login --profile DEV`.
+- [ ] **0.2 Code** : extraire le zip de la branche dans un **dossier vide** (le code serveur a été réorganisé : `server/services/{chat,compare,infra}/`,
+  prompts dans `server/prompts/chat/`, tests renommés ; extrait par-dessus l'ancien dossier, les anciens fichiers resteraient et seraient
+  redéployés). Si tu dois quand même copier par-dessus, supprimer d'abord les anciens :
+
+  ```powershell
+  Remove-Item server\services\chat_vsi.py, server\services\chat_vsi_llm.py, server\services\turn_log.py, server\services\mlflow_turns.py, server\services\translation_bridge.py -ErrorAction SilentlyContinue
+  Remove-Item server\services\lakebase.py, server\services\user.py, server\services\vector_search.py, server\services\vs_gate.py, server\services\error_origin.py, server\services\doc_catalog.py, server\services\streaming.py -ErrorAction SilentlyContinue
+  Remove-Item server\services\chunked_analysis.py, server\services\impact_queries.py, server\services\summarize.py, server\services\conversion.py, server\services\soffice.py, server\services\export_helpers.py -ErrorAction SilentlyContinue
+  Remove-Item -Recurse server\services\processors, server\config\chat_vsi, config, scripts -ErrorAction SilentlyContinue
+  Remove-Item server\config\capabilities_snapshot.json, tests\test_chat_vsi.py, tests\test_chat_vsi_llm.py -ErrorAction SilentlyContinue
+  Remove-Item utils\user_capabilities\build_capabilities_snapshot.py -ErrorAction SilentlyContinue
+  Remove-Item resources\chat_experiment.yml -ErrorAction SilentlyContinue
+  ```
+
+  Vérifier :
+
+  ```powershell
+  Get-Content server\services\chat\engine.py -TotalCount 1
+  Test-Path server\prompts\chat\system\base.md
+  Test-Path resources\chat_mlflow.yml
+  ```
+
+  Attendu : `"""Chat — the chat engine: answers from the Vector Search index, no Knowledge Assistant."""`, puis `True`, `True`.
+- [ ] **0.3 L'index `chunks_index` est ONLINE avec toutes ses lignes** (S5 ; l'embedding prenait 30 à 60 min) :
+
+  ```powershell
+  databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_index --profile DEV
+  ```
+
+  Chercher `"ready": true` (ou l'état `ONLINE`) et `indexed_row_count` ; éditeur SQL DEV, doit donner le même nombre :
+
+  ```sql
+  SELECT count(*) AS chunks FROM dev_landingzone.qualibot.chunks;
+  ```
+
+  Si l'index n'existe pas ou reste en création : la commande de création est dans S5 plus bas ; **ne pas continuer** avant qu'il soit ONLINE
+  (le chat et le contrôle 0.12 en ont besoin).
+- [ ] **0.4 Déployer le bundle** (nouveaux jobs : création de l'expérience, enregistrement des prompts, notation ; job de droits étendu à
+  `dev_proj`) — Y1 :
+
+  ```powershell
+  databricks bundle deploy -t dev --profile DEV
+  ```
+
+  Les plannings restent en pause. Contrôle (UI DEV → Jobs & Pipelines, filtre `Qualibot`) : aucun planning actif en dehors de
+  `lakebase_import_uat_to_dev` (I3).
+- [ ] **0.5 Droits** (S8 et Y2) — le job donne au SP de l'app et au SP des jobs ce qu'ils utilisent, `dev_proj.qualibot` compris :
+
+  ```powershell
+  databricks bundle run grant_app_access_dev -t dev --profile DEV
+  ```
+
+  Attendu : une ligne `OK:` par droit, aucune `FAILED`. Une ligne `FAILED` sur `dev_proj` : exécuter à la main (éditeur SQL DEV, compte qui peut
+  donner ces droits) puis relancer le job :
+
+  ```sql
+  GRANT USE CATALOG ON CATALOG dev_proj TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+  GRANT USE SCHEMA, CREATE TABLE, CREATE FUNCTION, EXECUTE, SELECT, MODIFY ON SCHEMA dev_proj.qualibot TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+  GRANT USE CATALOG ON CATALOG dev_proj TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT USE SCHEMA, EXECUTE ON SCHEMA dev_proj.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+  GRANT USE CATALOG ON CATALOG dev_proj TO `Role-Project-LEAP-CoreDev`;
+  GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA dev_proj.qualibot TO `Role-Project-LEAP-CoreDev`;
+  ```
+
+  Une ligne `FAILED: CAN_QUERY on serving endpoint …` : c'est le bloc V2 plus bas (un administrateur du workspace doit donner le droit).
+- [ ] **0.6 Tables d'évaluation dans `dev_proj.qualibot`** (S6 et Z2). Éditeur SQL DEV, **une instruction à la fois** ; une table qui n'existe pas
+  donne `TABLE_OR_VIEW_NOT_FOUND` : passer à la suivante. Les droits sur `dev_proj` viennent de 0.5 :
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.qualibot_eval_golden DEEP CLONE dev_landingzone.qualibot.qualibot_eval_golden;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_retrieval_runs DEEP CLONE dev_landingzone.qualibot.eval_retrieval_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs DEEP CLONE dev_landingzone.qualibot.eval_pairwise_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs_cache DEEP CLONE dev_landingzone.qualibot.eval_pairwise_runs_cache;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_load_runs DEEP CLONE dev_landingzone.qualibot.eval_load_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_vs_load_runs DEEP CLONE dev_landingzone.qualibot.eval_vs_load_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions DEEP CLONE dev_landingzone.qualibot.synthetic_retrieval_questions;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases DEEP CLONE dev_landingzone.qualibot.feedback_failure_cases;
+  ```
+
+  Si `synthetic_retrieval_questions` / `feedback_failure_cases` n'existent pas encore dans `dev_landingzone` (S6 jamais fait), les créer
+  directement depuis l'UAT :
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions AS SELECT * FROM uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases AS SELECT * FROM uat_landingzone.qualibot.feedback_failure_cases;
+  ```
+
+  Contrôle : `SELECT count(*) FROM dev_proj.qualibot.qualibot_eval_golden;` donne le même nombre que dans `dev_landingzone.qualibot`.
+- [ ] **0.7 Supprimer les 3 Knowledge Assistants DEV** (S7 ; sans effet sur le reste) : UI DEV → **Agents** → `qualibot_ALL_v2`, `qualibot_AS_v2`,
+  `qualibot_IS_v2` → ⋮ → **Delete**. Si l'UI refuse, dans une cellule Python d'un notebook DEV serverless :
+
+  ```python
+  from databricks.sdk import WorkspaceClient
+  w = WorkspaceClient()
+  for ka in w.knowledge_assistants.list_knowledge_assistants():
+      print(ka.name, ka.display_name, ka.endpoint_name)
+      if ka.display_name in ('qualibot_ALL_v2', 'qualibot_AS_v2', 'qualibot_IS_v2'):
+          w.knowledge_assistants.delete_knowledge_assistant(name=ka.name)
+          print('  deleted')
+  ```
+
+  `PERMISSION_DENIED` : me renvoyer l'erreur (ou lancer la cellule en job sous le SP DEV). Méthode absente : `%pip install -U databricks-sdk` puis
+  `dbutils.library.restartPython()`.
+- [ ] **0.8 Expérience MLflow du chat** (Y3) — propriétaire = le SP DEV, type GenAI :
+
+  ```powershell
+  databricks bundle run create_chat_experiment_dev -t dev --profile DEV
+  ```
+
+  Attendu : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot (service principal …) can edit the experiment`.
+  Si une expérience du même nom existe déjà à ton nom (essai manuel), la supprimer d'abord dans l'UI (Experiments → ⋮ → Delete).
+- [ ] **0.9 Prompts dans le registre** (Y4) :
+
+  ```powershell
+  databricks bundle run register_chat_prompts_dev -t dev --profile DEV
+  ```
+
+  Attendu : 7 lignes `registered version 1, alias deployed`. **À refaire après chaque déploiement qui change un fichier de
+  `server/prompts/chat/`.**
+- [ ] **0.10 Déployer l'app** (S8, L1, X1, Y5 : un seul déploiement pour tout ; l'app crée ses nouvelles colonnes — `chat_turns.mlflow_trace_id`,
+  `doc_catalog.revision`/`doc_date`, `errors.origin`… — à son démarrage) :
+
+  ```powershell
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+
+  Logs de l'app au démarrage : `Lakebase schema ready` (une erreur juste avant : me l'envoyer).
+- [ ] **0.11 Catalogue des documents avec les révisions** (S8 et X2) — la tâche 6 seule (rien n'est parsé), puis redémarrage de l'app :
+
+  ```powershell
+  databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
+  databricks apps stop qualibot --profile DEV
+  databricks apps start qualibot --profile DEV
+  ```
+
+  Attendu : `doccompare: doc_catalog N -> N documents`, **sans** la ligne `has no revision/doc_date columns` ; dans les logs de l'app :
+  `doc_catalog: loaded N documents from Lakebase`. Éditeur SQL Lakebase (projet « Qualibot History », base `doccompare`) :
+
+  ```sql
+  SELECT COUNT(*) AS docs, COUNT(revision) AS with_revision, COUNT(doc_date) AS with_date FROM doc_catalog;
+  SELECT ref, revision, doc_date FROM doc_catalog WHERE ref IN ('MI-14059', 'QP-1518', 'MIT-1087');
+  ```
+- [ ] **0.12 Contrôle de la recherche** (S10 ; ≈ 1 €, ≈ 10 min) : notebook
+  `/Workspace/Shared/.bundle/qualibot/dev/files/utils/evaluation/retrieval_eval`, calcul **serverless**, Run all avec les défauts
+  (`indexes = chat`). Attendu : environ 83 % des documents attendus trouvés. **M'envoyer le dernier tableau.**
+- [ ] **0.13 Tests dans l'app** (S9, X3, Y6) — quatre questions : une normale en AS, une en IS, une avec un numéro de document (ex. `MI-14242`),
+  une hors sujet (attendu : refus poli), une en espagnol ; 👍 sur une réponse et 👎 sur une autre ; bouton **Télécharger → Response —
+  Markdown** (le fichier finit par la liste **Sources**) ; « Judge Impacted Docs » dans Compare sur deux révisions connues ; la question
+  NDT (« quels documents parlent des exigences de qualification CND ? ) : plus de « version not stated », pastilles `REF · B`. Puis (1 min
+  après) l'expérience : DEV → **Experiments** → `/Shared/qualibot/chat_turns` → **Traces** : une trace par question, l'arbre
+  `chat_turn → retrieval → answer`, les passages dans la sortie de `retrieval`, 4 prompts liés, `user_vote` sur les deux réponses votées.
+  Éditeur SQL Lakebase :
+
+  ```sql
+  SELECT created_at, trace_id, mlflow_trace_id, status, warnings, answer_endpoint, first_token_ms, total_ms
+  FROM chat_turns ORDER BY id DESC LIMIT 6;
+
+  SELECT t.trace_id, COUNT(*) AS passages, SUM(CASE WHEN c.kept THEN 1 ELSE 0 END) AS sent,
+         SUM(CASE WHEN c.cited THEN 1 ELSE 0 END) AS cited
+  FROM chat_turns t JOIN chat_retrieved_chunks c ON c.turn_id = t.id
+  GROUP BY t.id, t.trace_id ORDER BY t.id DESC LIMIT 6;
+
+  SELECT created_at, endpoint, severity, stage, error_type, origin, fingerprint, user_message, LEFT(error_msg, 120) AS msg
+  FROM errors ORDER BY id DESC LIMIT 20;
+  ```
+
+  **M'envoyer** : une capture d'une trace ouverte, les trois résultats SQL, une capture de la réponse NDT. Si rien n'apparaît dans MLflow : les
+  lignes `mlflow_turns:` des logs de l'app.
+- [ ] **0.14 Notation des traces, à blanc puis réelle** (Y7, Y8) — d'abord l'estimation (ne juge rien) :
+
+  ```powershell
+  databricks bundle run score_chat_traces_dev -t dev --profile DEV
+  ```
+
+  UI → Jobs → `D_2_Qualibot_Score_Chat_Traces_dev` → dernier run : par juge, le nombre de traces lues et `estimated input tokens`. **M'envoyer
+  ces lignes.** Puis, hors des heures d'usage du chat (le juge partage les quotas de tokens de l'endpoint Luna), le run réel :
+
+  ```powershell
+  databricks bundle run score_chat_traces_dev -t dev --profile DEV --params dry_run=false
+  ```
+
+  **M'envoyer** le tableau final du notebook et les lignes `failed` de « Quality Checks ».
+- [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
+  - ancien job de notation, si encore présent : UI DEV → Jobs → `D_1_Qualibot_Score_Production_Qa` → ⋮ → **Delete** ;
+  - anciens index et tables versionnés : les deux listes de commandes de **S11** plus bas (index puis `DROP TABLE`) ;
+  - copies d'évaluation restées dans `dev_landingzone` (après un run d'évaluation réussi depuis `dev_proj`, Z4) :
+
+    ```sql
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.qualibot_eval_golden;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_retrieval_runs;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_pairwise_runs;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_pairwise_runs_cache;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_load_runs;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_vs_load_runs;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.synthetic_retrieval_questions;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.feedback_failure_cases;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_golden_runs;
+    ```
+
+    (`UNDROP TABLE` reste possible 7 jours.)
+
+**Facultatif, à ta décision** (aucun n'est nécessaire pour avancer) : T (nombre de passages), U / V2 / V3 (tests de charge), G / P (comparaisons de
+réponses), R (nouveau découpage), Y9 (traces en tables Delta). **Pas maintenant** : tout ce qui touche `qualibot-uat`, `qualibot-uat-test` ou
+`prod` (`OPERATIONS.md`, blocs A à D, dont D5 qui déploie cette branche en UAT) : il faut d'abord que le DEV soit validé.
+
 ### S. DEV propre : un chatbot, un index, aucun nom versionné (2026-10-08)
 
 Ce que le code attend désormais en DEV : la table `chunks` (découpage retenu, aujourd'hui dans
@@ -316,12 +537,13 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   Attendre `ONLINE` dans l'UI Vector Search (endpoint `qualibot`), avec autant de lignes indexées que
   `chunks` (30 à 60 min).
 
-- [ ] **S6. Questions d'évaluation en DEV** (copies des deux tables UAT que lit `retrieval_eval`) :
+- [ ] **S6. Questions d'évaluation en DEV** (copies des deux tables UAT que lit `retrieval_eval`) _(depuis le 2026-10-12 : dans
+  `dev_proj.qualibot`, plus dans `dev_landingzone`, voir le bloc Z)_ :
 
   ```sql
-  CREATE TABLE dev_landingzone.qualibot.synthetic_retrieval_questions
+  CREATE TABLE dev_proj.qualibot.synthetic_retrieval_questions
   AS SELECT * FROM uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
-  CREATE TABLE dev_landingzone.qualibot.feedback_failure_cases
+  CREATE TABLE dev_proj.qualibot.feedback_failure_cases
   AS SELECT * FROM uat_landingzone.qualibot.feedback_failure_cases;
   ```
 
@@ -411,7 +633,8 @@ Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quel
   - écrites par `score_production_qa` : `chat_quality_scores`, `chat_quality_scoring_runs` ;
   - application Translator (autre projet) : `dnt_rules`, `glossary_terms` ;
   - évaluation : `qualibot_eval_golden` (jeu golden), `eval_retrieval_runs`, `eval_pairwise_runs`,
-    `eval_pairwise_runs_cache` (écrites par les deux notebooks gardés) ;
+    `eval_pairwise_runs_cache` (écrites par les deux notebooks gardés) — **depuis le 2026-10-12 elles vivent dans
+    `dev_proj.qualibot`** (bloc Z) ; les copies de `dev_landingzone` sont à supprimer en Z4 ;
   - pipeline : `chunks`, `chunks_index`, `_pipeline_checkpoint`, `processed_files`,
     `image_metadata`, `parse_manifest`, `category_reference`.
 
@@ -627,7 +850,7 @@ des fils à gauche sont comptées en jours calendaires.
 
 ### W. Notation des tours du chat : archivage de l'ancien job, prototype (2026-10-09)
 
-**En pause (2026-10-09, décision de l'utilisateur) : ne rien lancer de ce bloc, repris bien plus tard.**
+**Remplacé le 2026-10-12 par le bloc Y (notation des traces MLflow vivantes, job `D_2_Qualibot_Score_Chat_Traces_dev`). Ne rien lancer de ce bloc ; seule la suppression de l'ancien job `D_1_Qualibot_Score_Production_Qa` (W2) reste utile, si elle n'a pas été faite.**
 
 `score_production_qa` (KA contre RAG naïf) est archivé : `utils/evaluation/score_production_qa.py` →
 `archive/evaluation/`, `resources/evaluation.yml` → `archive/evaluation/score_production_qa.job.yml`.
@@ -662,59 +885,89 @@ les note avec les scorers MLflow (juge GPT-5.6 Luna).
 - [ ] **W4.** Puis les tours mal notés par les utilisateurs : `selection` = `down`, `limit` = `50`,
   `days` = `90`, Run all ; m'envoyer le tableau final.
 
-### Y. Trace MLflow de chaque tour de chat (code du 2026-10-12)
+### Y. Traces MLflow du chat, prompts enregistrés, notation (code du 2026-10-12)
 
-Chaque tour de chat terminé est aussi envoyé comme **une trace MLflow** dans l'expérience
-`/Shared/qualibot/chat_turns` : la question, la réponse, les étapes (traduction, réécriture, recherche,
-recherche par REF, réponse, un span par appel au modèle) à leurs vraies durées, les passages envoyés au
-modèle (texte compris), les tokens et le coût, les avertissements. Même source que `chat_turns` dans
-Lakebase (le `TurnLog`), mêmes noms, jointure par `chat_trace_id`. L'envoi se fait après la réponse,
-en arrière-plan : l'utilisateur n'attend rien et une panne MLflow ne touche pas le chat. Éteint tant que
-`CHAT_MLFLOW_EXPERIMENT` est vide (c'est le cas partout sauf DEV). Le vote 👍/👎 n'est pas dans la trace :
-`score_chat_traces.py` (bloc W, en pause) le joint depuis Lakebase.
+Chaque tour de chat terminé devient **une trace MLflow** dans `/Shared/qualibot/chat_turns` : question, réponse, étapes (traduction,
+réécriture, recherche, recherche par REF, réponse, un span par appel au modèle) à leurs vraies durées, passages envoyés au modèle
+(texte compris), tokens, coût, avertissements, version des prompts utilisés. L'envoi se fait après la réponse ; une panne MLflow ne
+touche pas le chat. L'identifiant de la trace est gardé dans `chat_turns.mlflow_trace_id` et le vote 👍/👎 y est attaché
+(`user_vote`). Les prompts sont des fichiers (`server/prompts/chat/`), enregistrés dans le registre de prompts de `dev_proj.qualibot`.
+La notation est un **job par lots** (jamais pendant un tour) : scorers gratuits sur tous les tours, juges LLM (GPT-5.6 Luna) sur un
+échantillon, débit limité, estimation des tokens avant de juger. Tout est créé par des jobs qui tournent sous le SP DEV
+(`fde6ff28-…`), qui devient propriétaire de l'expérience et des prompts. Toutes les commandes, dans l'ordre, sont aussi dans le bloc 0.
 
-- [ ] **Y1. Créer l'expérience, propriétaire = le SP DEV des jobs** (`fde6ff28-…`, pas toi). Un job
-  `Z_2_Qualibot_Create_Chat_Experiment_dev` (`resources/chat_experiment.yml`, `run_as` ce SP) crée le dossier
-  `/Shared/qualibot` et l'expérience, donne `CAN_EDIT` au SP de l'app et `CAN_MANAGE` aux groupes
-  CoreAdmin / CoreDev (un groupe ne peut pas être propriétaire, il gère). Rejouable sans risque. L'app
-  n'en crée jamais : sans cette étape elle écrit `experiment ... does not exist` dans ses logs.
-  Recopier à la main : `resources/chat_experiment.yml` (nouveau), `utils/evaluation/create_chat_experiment.py`.
+- [ ] **Y1. Déployer les jobs** (nouveaux : `Z_2_…_Create_Chat_Experiment`, `Z_3_…_Register_Chat_Prompts`, `D_2_…_Score_Chat_Traces`) :
 
   ```powershell
-  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
   databricks bundle deploy -t dev --profile DEV
+  ```
+- [ ] **Y2. Droits sur `dev_proj.qualibot`** (le job de droits les donne au SP DEV et au SP de l'app ; voir 0.5) :
+
+  ```powershell
+  databricks bundle run grant_app_access_dev -t dev --profile DEV
+  ```
+
+  Sortie attendue : une ligne `OK:` par droit, dont `GRANT USE SCHEMA, CREATE TABLE, CREATE FUNCTION, EXECUTE, SELECT, MODIFY ON SCHEMA
+  dev_proj.qualibot`. Si une ligne `FAILED` sur `dev_proj` (propriétaire du catalogue : `leap-core-service_accounts-dev`), exécuter ces
+  `GRANT` à la main avec un compte qui peut les donner (bloc Z1).
+- [ ] **Y3. Créer l'expérience** (propriétaire = le SP DEV ; type GenAI ; droits : le SP de l'app écrit, CoreAdmin / CoreDev gèrent) :
+
+  ```powershell
   databricks bundle run create_chat_experiment_dev -t dev --profile DEV
   ```
 
-  Attendu dans la sortie du run : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot
-  (service principal …) can edit the experiment; managers: Role-Project-LEAP-CoreAdmin, …`. Une
-  expérience déjà créée à la main avec ton compte reste à toi : la supprimer d'abord (interface →
-  Experiments → ⋮ → Delete), puis relancer le job. Si le job échoue sur `apps.get` ou sur l'écriture dans
-  `/Shared`, me coller l'erreur (droit manquant du SP).
-  Sans passer par le job (propriétaire = toi) : `python utils\evaluation\create_chat_experiment.py --profile DEV --app qualibot --managers Role-Project-LEAP-CoreAdmin,Role-Project-LEAP-CoreDev`.
-- [ ] **Y2. Déployer l'app DEV** avec le zip de cette branche (la valeur `CHAT_MLFLOW_EXPERIMENT` vient
-  de `utils/deploy/target_env.json`) :
+  Sortie : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot (service principal …) can edit the experiment`.
+  Une expérience déjà créée à la main avec ton compte t'appartient : la supprimer d'abord (Experiments → ⋮ → Delete), puis relancer.
+- [ ] **Y4. Enregistrer les prompts** (7 prompts `dev_proj.qualibot.chat_*`, alias `deployed`) :
+
+  ```powershell
+  databricks bundle run register_chat_prompts_dev -t dev --profile DEV
+  ```
+
+  Sortie : une ligne `registered version 1, alias deployed` par prompt. À **refaire après chaque déploiement qui modifie un fichier de
+  `server/prompts/chat/`** : tant que le texte enregistré diffère du fichier, l'app n'attache pas la version à la trace (ligne de log
+  `prompt … differs from the registered "deployed" version`).
+- [ ] **Y5. Déployer l'app DEV** (`CHAT_MLFLOW_EXPERIMENT` et `CHAT_PROMPT_SCHEMA` viennent de `utils/deploy/target_env.json` ; l'app
+  ajoute la colonne `chat_turns.mlflow_trace_id` à son démarrage) :
 
   ```powershell
   .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
   ```
-- [ ] **Y3. Poser 2 ou 3 questions** (une normale, une avec un numéro de document, une hors sujet),
-  attendre une minute, puis ouvrir l'expérience : espace de travail DEV → **Experiments** →
-  `/Shared/qualibot/chat_turns` → onglet **Traces**. Attendu : une trace par question ; en l'ouvrant,
-  l'arbre `chat_turn` → `retrieval` (rewrite, search) → `answer` (call_1…) avec les durées, les passages
-  envoyés dans la sortie de `retrieval`, les tokens sur `answer`, les tags `division`, `status`,
-  `warnings`. **M'envoyer** une capture d'une trace ouverte, ou les lignes `mlflow_turns:` des logs de
-  l'app si rien n'apparaît.
-- [ ] **Y4. (Optionnel, à décider) Traces dans des tables Delta Unity Catalog** au lieu du stockage de
-  l'expérience : plus adapté à un gros volume, requêtable en SQL, mais demande MLflow ≥ 3.11.1, un
-  entrepôt SQL et un schéma, et ne peut plus être changé pour cette expérience. À ne faire qu'après Y3 :
+- [ ] **Y6. Poser 4 questions** (une normale en AS, une avec un numéro de document, une hors sujet, une en espagnol), mettre 👍 sur une
+  réponse et 👎 sur une autre, attendre une minute, puis ouvrir DEV → **Experiments** → `/Shared/qualibot/chat_turns` → **Traces**.
+  Attendu : 4 traces ; en ouvrir une : `chat_turn` → `retrieval` (rewrite, search) → `answer` (call_1…), durées, passages dans la sortie de
+  `retrieval`, tokens sur `answer`, onglet **Prompts** / tag `mlflow.linkedPrompts` avec 4 prompts, évaluation `user_vote` sur les deux
+  réponses votées. Éditeur SQL Lakebase (base `doccompare`) :
 
-  ```powershell
-  python utils\evaluation\create_chat_experiment.py --profile DEV --app qualibot --experiment /Shared/qualibot/chat_turns_uc --uc-schema dev_proj.qualibot --warehouse-id 13eff4a6095513cb
+  ```sql
+  SELECT created_at, trace_id, mlflow_trace_id, status, answer_endpoint, first_token_ms, total_ms
+  FROM chat_turns ORDER BY id DESC LIMIT 5;
   ```
 
-  Le script affiche deux `GRANT` à exécuter dans l'éditeur SQL, puis `CHAT_MLFLOW_EXPERIMENT` passe à
-  `/Shared/qualibot/chat_turns_uc` dans `target_env.json` (me le dire, je le change).
+  `mlflow_trace_id` doit être rempli. **M'envoyer** une capture d'une trace ouverte et le résultat de la requête ; si rien n'apparaît, les
+  lignes `mlflow_turns:` des logs de l'app.
+- [ ] **Y7. Notation, d'abord à blanc** (estime les tokens, ne juge rien ; les juges lisent 100 % des tours tant qu'on vérifie qu'ils marchent) :
+
+  ```powershell
+  databricks bundle run score_chat_traces_dev -t dev --profile DEV
+  ```
+
+  La sortie du notebook (UI → Jobs → D_2_… → dernier run) donne, par juge, le nombre de traces lues et `estimated input tokens: …`.
+  **M'envoyer ces lignes** avant de juger.
+- [ ] **Y8. Notation réelle** (un premier essai sur peu de tours ; le job est soumis aux plafonds `max_input_tokens` = 2 000 000,
+  2 appels en parallèle, 2 appels par seconde, reprises sur 429) :
+
+  ```powershell
+  databricks bundle run score_chat_traces_dev -t dev --profile DEV --params dry_run=false
+  ```
+
+  À lancer **hors des heures d'usage du chat** (le juge partage les quotas de tokens de l'endpoint Luna). Résultat : verdicts sur les
+  traces (colonnes dans l'onglet Traces), tableau final du notebook, table `dev_proj.qualibot.chat_trace_scores`. **M'envoyer** le tableau
+  final et les lignes `failed` éventuelles de la cellule « Quality Checks ». Quand les juges sont validés, on baisse les échantillons
+  (`chat_scorers.TARGET_SAMPLE_RATES`) et on active le planning (PAUSED aujourd'hui).
+- [ ] **Y9. (Optionnel, à décider) Traces dans des tables Delta Unity Catalog** au lieu du stockage de l'expérience (plus adapté à un gros
+  volume, requêtable en SQL ; exige MLflow ≥ 3.11.1 dans l'app, un entrepôt SQL ; non modifiable ensuite pour cette expérience ; non testé
+  ici) : me le demander, je prépare le job et la valeur de `CHAT_MLFLOW_EXPERIMENT`.
 
 ### Z. Artefacts d'évaluation et de projet : de `dev_landingzone` vers `dev_proj` (2026-10-12)
 
@@ -725,7 +978,7 @@ Delta). Les notebooks de `utils/evaluation/` ont maintenant `dev_proj.qualibot.*
 (`chat_messages` et l'index restent dans `dev_landingzone`). **Les tables existantes sont copiées, pas
 déplacées** : les originaux restent en place jusqu'à ce que tu confirmes, rien n'est perdu.
 
-- [ ] **Z1. Droits** sur `dev_proj.qualibot` (éditeur SQL DEV, avec un compte qui peut les donner) :
+- [ ] **Z1. Droits** sur `dev_proj.qualibot` : donnés par le job de droits (Y2). Seulement si ce job échoue sur `dev_proj`, à la main (éditeur SQL DEV, avec un compte qui peut les donner) :
 
   ```sql
   GRANT USE CATALOG ON CATALOG dev_proj TO `fde6ff28-739f-4a41-b61e-604a298c8478`;

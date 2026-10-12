@@ -41,7 +41,9 @@ _NS_PER_MS = 1_000_000
 _MAX_DOC_CHARS = 20_000          # passage text kept per document in the retriever span output
 _MAX_ISSUE_CHARS = 500
 _lock = threading.Lock()
-_experiment: Dict[str, Optional[str]] = {}       # experiment name -> id (None: missing, warned once)
+_experiment: Dict[str, Optional[str]] = {}       # experiment name -> id, once found
+_missing_until: Dict[str, float] = {}           # experiment name -> when to look again
+_RETRY_MISSING_S = 60
 _prompt_cache: Dict[str, Any] = {}              # prompt key -> (fetched at, registered version or None)
 _PROMPT_TTL_S = 600
 _EXPORT_TIMEOUT_S = 10
@@ -52,11 +54,14 @@ def experiment_name() -> str:
 
 
 def _experiment_id(name: str) -> Optional[str]:
-    """Id of the experiment ``name``, looked up once. Never created here: the experiment is bound to
-    its Unity Catalog trace location by hand first (OPERATIONS.md), a default one would not be."""
+    """Id of the experiment ``name``, looked up once it exists. Never created here: the experiment is created by the
+    ``create_chat_experiment`` job (owned by the job service principal, GenAI type). A missing one is looked up again
+    after a minute, so creating it needs no app restart."""
     with _lock:
-        if name in _experiment:
+        if _experiment.get(name):
             return _experiment[name]
+        if time.monotonic() < _missing_until.get(name, 0.0):
+            return None
     import mlflow
     if os.getenv('DATABRICKS_WAREHOUSE_ID'):             # only read by a Unity Catalog trace location
         os.environ.setdefault('MLFLOW_TRACING_SQL_WAREHOUSE_ID', os.environ['DATABRICKS_WAREHOUSE_ID'])
@@ -66,10 +71,12 @@ def _experiment_id(name: str) -> Optional[str]:
         logger.warning('mlflow_turns: experiment lookup %s failed: %s', name, exc)
         return None
     with _lock:
-        _experiment[name] = found.experiment_id if found else None
-    if not found:
-        logger.warning('mlflow_turns: experiment %s does not exist, chat traces are off (see OPERATIONS.md)', name)
-    return _experiment[name]
+        if found:
+            _experiment[name] = found.experiment_id
+            return found.experiment_id
+        _missing_until[name] = time.monotonic() + _RETRY_MISSING_S
+    logger.warning('mlflow_turns: experiment %s does not exist, chat traces are off until it is created (operations_dev.md block Y)', name)
+    return None
 
 
 async def export_turn(log: Any) -> None:

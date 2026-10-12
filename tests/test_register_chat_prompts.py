@@ -17,13 +17,15 @@ SCRIPT = os.path.join(os.path.dirname(__file__), '..', 'utils', 'evaluation', 'r
 @pytest.fixture
 def script(tmp_path):
     import mlflow
-    old = mlflow.get_tracking_uri()
+    old, old_registry = mlflow.get_tracking_uri(), mlflow.get_registry_uri()
     mlflow.set_tracking_uri(f'sqlite:///{tmp_path}/m.db')
+    mlflow.set_registry_uri(f'sqlite:///{tmp_path}/m.db')           # server.tracing points it at Unity Catalog
     spec = importlib.util.spec_from_file_location('register_chat_prompts', SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     yield module
     mlflow.set_tracking_uri(old)
+    mlflow.set_registry_uri(old_registry)
 
 
 def test_registers_every_prompt_once(script):

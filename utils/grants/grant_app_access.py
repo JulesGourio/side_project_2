@@ -19,6 +19,10 @@
 # MAGIC | `pipeline_tables` | SELECT + MODIFY, to `pipeline_service_principal` | Parsing pipeline jobs (run as the DEV SP) on tables created by a person: copy of the UAT corpus, `chunks` (`operations_dev.md` S3/S4) — e.g. task `6_update_kb_metadata` reads `parse_manifest` and `chunks` |
 # MAGIC
 # MAGIC USE CATALOG / USE SCHEMA on `catalog`.`schema_name` are always granted to both.
+# MAGIC
+# MAGIC **Project schema** (`proj_catalog`.`proj_schema`, e.g. `dev_proj.qualibot`: evaluation tables, quality scores, MLflow prompt
+# MAGIC registry): the job SP gets what the evaluation / scoring / prompt-registration jobs need (tables and prompts: create, read,
+# MAGIC write, execute); the app SP gets USE + EXECUTE, enough to read the registered prompts it links to traces. Empty `proj_catalog` = skip.
 
 # COMMAND ----------
 
@@ -28,6 +32,8 @@ dbutils.widgets.text("schema_name", "qualibot")
 dbutils.widgets.text("volumes", "doc_compare,test")
 dbutils.widgets.text("indexes", "chunks_index")
 dbutils.widgets.text("serving_endpoints", "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna")
+dbutils.widgets.text("proj_catalog", "dev_proj")
+dbutils.widgets.text("proj_schema", "qualibot")
 dbutils.widgets.text("pipeline_service_principal", "fde6ff28-739f-4a41-b61e-604a298c8478")
 dbutils.widgets.text("pipeline_tables", "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference,chunks")
 
@@ -58,6 +64,15 @@ if pipeline_sp:
     statements += [f"GRANT SELECT, MODIFY ON TABLE `{catalog}`.`{schema}`.`{t}` TO `{pipeline_sp}`"
                    for t in _list("pipeline_tables")]
 
+proj_catalog = dbutils.widgets.get("proj_catalog").strip()
+proj_schema = dbutils.widgets.get("proj_schema").strip()
+if proj_catalog:
+    proj = f"`{proj_catalog}`.`{proj_schema}`"
+    statements += [f"GRANT USE CATALOG ON CATALOG `{proj_catalog}` TO `{sp}`",
+                   f"GRANT USE SCHEMA, EXECUTE ON SCHEMA {proj} TO `{sp}`"]
+    if pipeline_sp:
+        statements += [f"GRANT USE CATALOG ON CATALOG `{proj_catalog}` TO `{pipeline_sp}`",
+                       f"GRANT USE SCHEMA, CREATE TABLE, CREATE FUNCTION, EXECUTE, SELECT, MODIFY ON SCHEMA {proj} TO `{pipeline_sp}`"]
 failed = []
 import logging
 

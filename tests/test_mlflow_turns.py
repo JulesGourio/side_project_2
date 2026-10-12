@@ -67,9 +67,18 @@ def test_off_without_experiment_or_when_missing(monkeypatch):
     log = _turn()
     asyncio.run(mlflow_turns.export_turn(log))             # env unset: nothing happens
     assert 'mlflow_trace_id' not in log.data
-    monkeypatch.setattr(mlflow_turns, '_experiment', {'chat': None})
+    import mlflow
+    monkeypatch.setattr(mlflow_turns, '_experiment', {})
+    monkeypatch.setattr(mlflow_turns, '_missing_until', {})
+    lookups = []
+    monkeypatch.setattr(mlflow, 'get_experiment_by_name', lambda name: lookups.append(name))
     assert mlflow_turns._experiment_id('chat') is None
+    assert mlflow_turns._experiment_id('chat') is None      # looked up again only after a minute
+    assert lookups == ['chat']
     mlflow_turns._write_trace(_turn(), 'chat')              # missing experiment: silent no-op
+    monkeypatch.setattr(mlflow_turns, '_missing_until', {})
+    monkeypatch.setattr(mlflow, 'get_experiment_by_name', lambda name: type('E', (), {'experiment_id': '42'})())
+    assert mlflow_turns._experiment_id('chat') == '42'      # created since: found without a restart
 
 
 def test_export_never_raises(monkeypatch):
@@ -168,11 +177,13 @@ def registry(tmp_path, monkeypatch):
     pytest.importorskip('sqlalchemy')
     pytest.importorskip('alembic')
     import mlflow
-    old = mlflow.get_tracking_uri()
+    old, old_registry = mlflow.get_tracking_uri(), mlflow.get_registry_uri()
     mlflow.set_tracking_uri(f'sqlite:///{tmp_path}/m.db')
+    mlflow.set_registry_uri(f'sqlite:///{tmp_path}/m.db')           # server.tracing points it at Unity Catalog
     monkeypatch.setattr(mlflow_turns, '_prompt_cache', {})
     yield mlflow
     mlflow.set_tracking_uri(old)
+    mlflow.set_registry_uri(old_registry)
 
 
 def _register(mlflow, key, text=None, sha=None, alias='deployed'):

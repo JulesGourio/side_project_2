@@ -361,3 +361,7 @@ Modules déplacés : `server/services/*.py` → `services/{chat,compare,infra}/`
   ```
 - Après le déploiement : ouvrir l'app, poser une question dans le chat (AS), ouvrir une comparaison avec un PDF, lancer un « Impacted docs » ; dans les logs de l'app, aucune ligne `ModuleNotFoundError` ni `No such file or directory`.
 - Les préfixes de logs (`chat:`, `chat_llm:`) et les variables `CHAT_*` n'ont pas changé : les recherches de logs et la config déployée restent valables.
+
+## 2026-10-12 (suite) — renommages DEV, MLflow du chat, notation
+Aucun nom de table n'a changé. Changé : variables d'environnement `CHAT_VSI_*` → `CHAT_*` (app.yaml, target_env.json ; une variable posée à la main dans l'app DEV sous l'ancien nom est ignorée, la valeur par défaut s'applique), `stream_chat_vsi` → `stream_chat`, préfixe des identifiants de tours et libellé du moteur `vsi-…` → `chat-…` (les anciens tours gardent `vsi-…`), préfixes de logs `chat_vsi:` → `chat:` / `chat_llm:`, tag MLflow `vsi_trace_id` → `chat_trace_id`, `docs/chat_vsi_tests.md` → `docs/chat_tests.md`.
+Tout le détail et les commandes : `operations_dev.md`, bloc 0 (ordre complet).

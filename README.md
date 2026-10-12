@@ -52,7 +52,7 @@ server/
   app.py, tracing.py
   routers/            one file per API area (chat, compare, history, feedback, exports, preview, config, health)
   services/
-    chat/             engine.py (the chat), llm.py (answer model calls), turn_log.py, mlflow_turns.py, translation_bridge.py
+    chat/             engine.py (the chat), llm.py (answer model calls), prompts.py (prompt files), turn_log.py, mlflow_turns.py (one MLflow trace per turn), translation_bridge.py
     compare/          processors/ (one per file type), chunked_analysis, impact_queries, summarize, conversion, soffice, export_helpers
     infra/            lakebase, user, vector_search, vs_gate, doc_catalog, streaming (shared LLM streaming and cost), error_origin
   prompts/chat/       every chatbot prompt as a file: system/{base,all,as,is}.md, rewrite.md, language_reminder*.md
