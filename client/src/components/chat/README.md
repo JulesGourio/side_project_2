@@ -20,9 +20,9 @@ date → `stream_chat` → citation markers → translate back → persist the t
 3. **Date injection** (`_with_today_date`) — prepends `[Date: YYYY-MM-DD]` to the last user
    message only, so date-relative questions resolve correctly.
 4. **The engine** (`server/services/chat/engine.py::stream_chat`):
-   - search queries: the first message of a conversation, in French or English, is only translated into the other language
-     (`translate_query.md`, one short call, `CHAT_TRANSLATE_ONLY`) and searched with two queries of 18 reranked + 12 raw passages
-     (`CHAT_PAIR_*`); follow-ups and other or unsure languages keep the bilingual rewrite (French + English, acronyms expanded) by GPT-6 Luna;
+   - search queries: the bilingual rewrite (French + English, acronyms expanded) by GPT-6 Luna. Option `CHAT_TRANSLATE_ONLY=on` (off by default,
+     unmeasured: it loses the expansions): the first message of a conversation, in French or English, is only translated into the other
+     language (`translate_query.md`, one short call) and searched with two queries of 18 reranked + 12 raw passages (`CHAT_PAIR_*`);
    - 3 HYBRID Vector Search queries on `CHAT_INDEX`, each = 12 reranked passages + 10 raw
      ones, merged by rank; the division is a `filters_json` filter on the `division` column;
    - documents named by REF in the conversation first, one language variant per document. The catalogue

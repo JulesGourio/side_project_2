@@ -378,14 +378,13 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
 - [ ] **0.12 Contrôle de la recherche** (S10 ; ≈ 1 €, ≈ 10 min) : notebook
   `/Workspace/Shared/.bundle/qualibot/dev/files/utils/evaluation/retrieval_eval`, calcul **serverless**, Run all avec les défauts
   (`indexes = chat`). Attendu : environ 83 % des documents attendus trouvés. **M'envoyer le dernier tableau.**
-- [ ] **0.12b Mesurer « le premier message est seulement traduit »** (2026-10-12, activé par défaut : `CHAT_TRANSLATE_ONLY=on`). Un premier message
-  français est traduit en anglais, un premier message anglais en français (un appel court, sans réécriture ni acronymes développés), puis cherché
-  avec **deux** requêtes de 18 passages reclassés, plus 12 passages bruts sur la requête française, au lieu de la réécriture bilingue et des
-  3 requêtes de 12 + 10. Les questions de suivi et les autres langues gardent la réécriture. Même notebook que 0.12 (`retrieval_eval`,
-  serverless), une seule différence : le widget `indexes` à `chat,rewrite|translate=off` (`chat` = le comportement actif, `rewrite` = l'ancien),
-  Run all. ≈ 2 €. **M'envoyer le dernier tableau** : si `chat` est à moins de ~2 points de `rewrite` pour les documents attendus trouvés, on garde
-  (appel plus court, requêtes plus propres) ; sinon `CHAT_TRANSLATE_ONLY=off` (je change la valeur, tu redéploies) ou d'autres tailles
-  (`wide|pairrerank=24|pairraw=15`, à ajouter à la liste des configurations séparées par des virgules).
+- [ ] **0.12b Mesurer « le premier message est seulement traduit »** (option `CHAT_TRANSLATE_ONLY`, **éteinte par défaut depuis le 2026-10-12** : allumée,
+  elle perdait les développements d'acronymes et de synonymes de la réécriture, la question « qui est le CEO de Latécoère » ne retrouvait plus les
+  documents qui disent « PDG »). Premier message français → traduit en anglais, anglais → français (un appel court), puis **deux** requêtes de
+  18 passages reclassés + 12 bruts sur la requête française, au lieu de la réécriture bilingue et des 3 requêtes de 12 + 10. Même notebook que
+  0.12 (`retrieval_eval`, serverless), le widget `indexes` à `chat,translate|translate=on` (`chat` = la réécriture, comportement actif ; `translate` =
+  la traduction seule), Run all, ≈ 2 €. **M'envoyer le dernier tableau.** On ne l'allume (`CHAT_TRANSLATE_ONLY=on`, je change la valeur, tu redéploies)
+  que si `translate` est au moins aussi bon que `chat` sur les documents attendus trouvés **et** que la question du CEO redonne la bonne réponse.
 - [ ] **0.13 Tests dans l'app** (S9, X3, Y6) — quatre questions : une normale en AS, une en IS, une avec un numéro de document (ex. `MI-14242`),
   une hors sujet (attendu : refus poli), une en espagnol ; 👍 sur une réponse et 👎 sur une autre ; bouton **Télécharger → Response —
   Markdown** (le fichier finit par la liste **Sources**) ; « Judge Impacted Docs » dans Compare sur deux révisions connues ; la question

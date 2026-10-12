@@ -40,8 +40,8 @@ dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/fi
 # "chat" alone = the app as deployed. Index after a rechunk: "chat,rechunk=dev_landingzone.qualibot.chunks_test_index".
 # Search sizes (reranked / raw passages per query, cap on the merged list):
 # "chat,rerank-only|raw=0,raw5|raw=5,cap40|cap=40"; raw search on the French rewrite only: "rawfr|rawon=fr".
-# Opening message only translated, searched with two queries (translate=on, the app's default) against always rewriting:
-# "chat,rewrite|translate=off"; the sizes of the two-query search: "wide|pairrerank=24|pairraw=15".
+# Opening message only translated, searched with two queries (translate=on; the app's default is off) against the rewrite:
+# "chat,translate|translate=on"; the sizes of the two-query search: "wide|translate=on|pairrerank=24|pairraw=15".
 dbutils.widgets.text('indexes', 'chat')
 dbutils.widgets.text('sources', 'golden,synthetic,feedback')
 dbutils.widgets.dropdown('rerun_existing', 'false', ['false', 'true'])

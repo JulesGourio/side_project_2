@@ -389,9 +389,11 @@ def test_last_message_must_be_user(monkeypatch):
     assert _types(events) == ['error', '[DONE]'] and events[0]['error_type'] == 'InputError'
 
 
-def _lang(monkeypatch, code):
+def _lang(monkeypatch, code, translate_only=True):
     from server.services.chat import translation_bridge
     monkeypatch.setattr(translation_bridge, '_fast_lang_guess', lambda text: code)
+    if translate_only:
+        monkeypatch.setenv('CHAT_TRANSLATE_ONLY', 'on')
 
 
 def test_a_french_opening_question_is_only_translated_into_english(monkeypatch):
@@ -439,10 +441,11 @@ def test_a_failed_translation_searches_with_the_question_alone(monkeypatch):
     ('fr', True, None),                        # follow-up: needs the conversation
     ('en', True, None),
     ('fr', False, 'off'),                      # switched off
+    ('fr', False, ''),                         # not switched on: the default
 ])
 def test_the_bilingual_rewrite_still_runs_otherwise(monkeypatch, code, history, env):
-    _lang(monkeypatch, code)
-    if env:
+    _lang(monkeypatch, code, translate_only=env is None)             # None: the switch is on and still does not apply
+    if env is not None:
         monkeypatch.setenv('CHAT_TRANSLATE_ONLY', env)
     messages = MESSAGES
     if history:

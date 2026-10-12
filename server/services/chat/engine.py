@@ -157,9 +157,10 @@ def raw_on() -> List[str]:
 
 
 def translate_only_enabled() -> bool:
-    """The first message of a conversation, in French or English, only needs its translation into the other
-    language (one short call, no rewrite): nothing to complete, nothing to expand."""
-    return os.getenv('CHAT_TRANSLATE_ONLY', 'on').strip().lower() not in ('off', 'false', '0', 'no')
+    """Off by default (it lost the acronym and synonym expansions of the rewrite: "CEO" no longer reached the
+    documents that say "PDG"). On: the first message of a conversation, in French or English, only gets its
+    translation into the other language (one short call, no rewrite, nothing expanded)."""
+    return os.getenv('CHAT_TRANSLATE_ONLY', 'off').strip().lower() in ('on', 'true', '1', 'yes')
 
 
 def pair_rerank_top_k() -> int:
