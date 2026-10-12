@@ -43,8 +43,8 @@ def test_live_targets_set_their_indexes():
         for key in _INDEX_KEYS:
             value = config[target].get(key)
             assert value, f'{target!r} has no {key} override — it would silently fall back to app.yaml\'s default'
-            catalog = 'uat' if target == 'uat-test' else target
-            assert value.startswith(f'{catalog}_landingzone.'), f'{target}.{key} = {value!r} points at another workspace'
+            env = 'uat' if target == 'uat-test' else target
+            assert value.startswith((f'{env}_landingzone.', f'{env}_proj.')), f'{target}.{key} = {value!r} points at another workspace'
 
 
 def test_no_versioned_index_names():

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ThumbsUp, ThumbsDown, CheckCircle2, Send, User, Bot, FileText, Download } from 'lucide-react';
 import { MarkdownRenderer, type CitationMap } from '@/components/shared/MarkdownRenderer';
 import { Flag } from '@/components/shared/Flag';
-import { downloadAsPdf } from '@/lib/downloadAsPdf';
+import { toast } from 'sonner';
+import { downloadPdf, type PdfSection, type PdfSource } from '@/lib/exportPdf';
 
 export interface Source {
   title: string;
@@ -76,6 +77,66 @@ function downloadAsMarkdown(content: string, filename: string) {
 
 
 
+// PDF sources: cited ones first in their [n] order, then the others; REF linked, details after it.
+function pdfSources(sources: Source[] | undefined): PdfSource[] {
+  return [...(sources ?? [])]
+    .sort((a, b) => (a.n ?? Infinity) - (b.n ?? Infinity))
+    .map(s => ({
+      title: s.title, url: s.url, n: s.n,
+      detail: [s.doc_title, versionLabel(s)].filter(Boolean).join(' · '),
+    }));
+}
+
+function answerSection(msg: Message, question?: string): PdfSection {
+  return { markdown: stripCiteMarkers(msg.content), question, sources: pdfSources(msg.sources) };
+}
+
+// The user question an answer replies to: the closest user message before it.
+function questionFor(message: Message, messages: Message[]): string | undefined {
+  const idx = messages.findIndex(m => m.id === message.id);
+  for (let i = idx - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return messages[i].content;
+  }
+  return undefined;
+}
+
+// One section per answered question, in conversation order.
+function sessionSections(messages: Message[]): PdfSection[] {
+  const sections: PdfSection[] = [];
+  let question: string | undefined;
+  for (const msg of messages) {
+    if (msg.role === 'user') question = msg.content;
+    else if (!msg.error && msg.content) {
+      sections.push(answerSection(msg, question));
+      question = undefined;
+    }
+  }
+  return sections;
+}
+
+function downloadResponsePdf(message: Message, allMessages: Message[], slug: string) {
+  const question = questionFor(message, allMessages)?.trim();
+  // A short question is the title; a long one goes in a question box under a generic title.
+  const asTitle = !!question && question.length <= 160;
+  return downloadPdf({
+    kind: 'chat_response',
+    title: asTitle ? question : 'Chatbot answer',
+    filename: `qualibot-answer-${slug}`,
+    sections: [answerSection(message, asTitle ? undefined : question)],
+  });
+}
+
+function downloadSessionPdf(allMessages: Message[], slug: string) {
+  const sections = sessionSections(allMessages);
+  return downloadPdf({
+    kind: 'chat_session',
+    title: 'Chatbot conversation',
+    filename: `qualibot-conversation-${slug}`,
+    meta: [{ label: 'Questions', value: String(sections.length) }],
+    sections,
+  });
+}
+
 function buildSessionMarkdown(messages: Message[]): string {
   const date = new Date().toLocaleDateString('en-GB');
   const parts = [`# QualiBOT — Session ${date}\n`];
@@ -120,8 +181,7 @@ function DownloadMenu({ message, allMessages }: DownloadMenuProps) {
     },
     {
       label: 'Response — PDF',
-      action: () => downloadAsPdf('Response', stripCiteMarkers(message.content) + sourcesMarkdown(message.sources),
-        `qualibot-response-${slug}.pdf`),
+      action: () => downloadResponsePdf(message, allMessages, slug),
     },
     {
       label: 'Full session — Markdown',
@@ -129,7 +189,7 @@ function DownloadMenu({ message, allMessages }: DownloadMenuProps) {
     },
     {
       label: 'Full session — PDF',
-      action: () => downloadAsPdf('QualiBOT Session', buildSessionMarkdown(allMessages), `qualibot-session-${slug}.pdf`),
+      action: () => downloadSessionPdf(allMessages, slug),
     },
   ];
 
@@ -168,7 +228,11 @@ function DownloadMenu({ message, allMessages }: DownloadMenuProps) {
           {options.map(opt => (
             <button
               key={opt.label}
-              onClick={() => { opt.action(); setOpen(false); }}
+              onClick={() => {
+                setOpen(false);
+                Promise.resolve(opt.action()).catch((e: unknown) =>
+                  toast.error(`PDF export failed: ${e instanceof Error ? e.message : String(e)}`));
+              }}
               className="w-full text-left px-4 py-2.5 text-xs transition-colors cursor-pointer"
               style={{ color: 'var(--color-text-primary)' }}
               onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-bg-tertiary)')}

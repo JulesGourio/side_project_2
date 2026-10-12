@@ -1183,10 +1183,14 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
         _merge_image_metadata(df_image_metadata)
         logger.info("[INCREMENTAL] New rows appended (stale failures cleaned).")
 
-    # CDF required for Vector Search index sync.
+    # CDF required for Vector Search index sync; 60 days of history so a few failed daily runs never age out
+    # the CDF the index resumes from (the _v3 -> _v1 incident, utils/parsing_pipeline/README.md).
     try:
-        spark.sql(f"ALTER TABLE {TARGET_CHUNK_TABLE} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
-        logger.info(f"CDF enabled on {TARGET_CHUNK_TABLE}")
+        spark.sql(f"""ALTER TABLE {TARGET_CHUNK_TABLE} SET TBLPROPERTIES (
+            delta.enableChangeDataFeed = true,
+            delta.deletedFileRetentionDuration = 'interval 60 days',
+            delta.logRetentionDuration = 'interval 60 days')""")
+        logger.info(f"CDF and 60-day history set on {TARGET_CHUNK_TABLE}")
     except Exception as e:
         logger.warning(f"CDF not set on {TARGET_CHUNK_TABLE}: {e}")
 

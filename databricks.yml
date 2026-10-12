@@ -48,6 +48,9 @@ variables:
   parsing_parse_filter:
     description: "Comma-separated IDDOC list to restrict a run to (empty = no filter, normal mode). Override via --var for a one-off targeted test run."
     default: ""
+  parsing_images_volume:
+    description: "Volume (in app_write_catalog.app_write_schema) the parsing pipeline extracts images to"
+    default: "images"
   parsing_table_suffix:
     description: "Suffix appended to every WRITE target table (checkpoint, chunks, image_metadata, processed_files, audit, retry/rag temp tables). Empty = real tables. Override via --var (e.g. '_test') for a one-off validation run that never touches production tables."
     default: ""
@@ -529,23 +532,34 @@ targets:
   # It does not declare postgres_projects/schemas/volumes (they exist, and this identity cannot grant on them).
   # No UC volume binding, so compare is disabled; Lakebase history stays off unless an admin grants the app SP access.
   # Remove this target once the evaluation is done.
+  # Rehearsal of the UAT switch to the new chatbot: writes only uat_proj.qualibot.*_test (owned by job-runner-sa-uat),
+  # the images_test volume, the chunks_index_test index and Lakebase doccompare_test — never anything the running
+  # qualibot app, its agents or its parsing job read. setup_proj_schema (resources/uat_setup.yml) deep-clones the
+  # parsing state from uat_landingzone.qualibot.*_v1 (read only), so the first run re-chunks without a GPU reparse.
   qualibot-uat-test:
     workspace:
       host: https://dbc-3a17bfce-9e88.cloud.databricks.com
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
     variables:
       app_name: "qualibot-uat-test"
-      app_write_catalog: uat_landingzone
+      app_write_catalog: uat_proj
       app_write_schema: qualibot
       app_volume_name: doc_compare
+      app_proj_catalog: uat_proj
+      app_proj_schema: qualibot
       parsing_node_type: "r6idn.4xlarge"
-      parsing_num_workers: "4"
+      # One GPU worker: after the clone only documents new since the last UAT run are parsed, the rest is re-chunked.
+      parsing_num_workers: "1"
       parsing_run_mode: "incremental"
-      # Disposable target: `*_test` tables and no synced index, same as
-      # qualibot-uat until the chain is validated.
       parsing_table_suffix: "_test"
-      parsing_vector_search_indexes: ""
+      parsing_images_volume: "images_test"
+      parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index_test"
+      parsing_offline_models_path: "/Volumes/uat_landingzone/qualibot/docling_models"
+      parsing_lakebase_database: "doccompare_test"
+      parsing_build_chunks_full: "false"
+      parsing_archive_max_docs: "0"
       parsing_schedule_pause: "PAUSED"
+      parsing_job_activity_tag: "uat-job"
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
 

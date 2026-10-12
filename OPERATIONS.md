@@ -20,6 +20,8 @@ La mise en place de l'environnement **DEV** a son propre fichier : `operations_d
 > Knowledge Assistant. Un `bundle deploy` de cette branche avant D5 ferait repartir le pipeline
 > UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui
 > n'existe pas encore. Les blocs A à C ci-dessous restent sur `audit/doc-compare`.
+> Exception depuis le 2026-10-12 : `qualibot-uat-test` sert de répétition de la bascule (tables
+> `uat_proj.qualibot.*_test`, rien dans `uat_landingzone.qualibot`) ; étapes données dans le chat.
 
 > **Nettoyage du code (2026-10-08)** : `utils/databricks_ops/` n'existe plus, le notebook `3_parse` est découpé, le client allégé. Tout ce qu'il faut rejouer est dans [`RETEST_CLEANUP.md`](RETEST_CLEANUP.md) (DEV d'abord).
 

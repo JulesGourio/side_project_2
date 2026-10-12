@@ -16,8 +16,8 @@
 #
 # Every schedule stays PAUSED until explicitly promoted.
 #
-# Declared per target, not bundle-wide, so qualibot-uat-test (chat only) never gets it. dev holds the body under a YAML anchor;
-# qualibot-uat and qualibot-prod merge it with `<<: *parsing_pipeline_body`.
+# Declared per target, not bundle-wide. dev holds the body under a YAML anchor; qualibot-uat, qualibot-uat-test
+# (rehearsal of the UAT switch: uat_proj.qualibot.*_test, doccompare_test) and qualibot-prod merge it with `<<: *parsing_pipeline_body`.
 
 targets:
   dev:
@@ -72,7 +72,7 @@ targets:
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/images
+                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/${var.parsing_images_volume}
                   PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
                   PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
                   PARSING_MAX_SOURCE_STALENESS_HOURS: ${var.parsing_max_source_staleness_hours}
@@ -104,7 +104,7 @@ targets:
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/images
+                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/${var.parsing_images_volume}
                   PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
                   PARSING_RUN_MODE:         ${var.parsing_run_mode}
                   PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
@@ -141,7 +141,7 @@ targets:
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/images
+                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/${var.parsing_images_volume}
                   PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
                   PARSING_RUN_MODE:         ${var.parsing_run_mode}
                   PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
@@ -273,6 +273,14 @@ targets:
           <<: *parsing_pipeline_body
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+
+  qualibot-uat-test:
+    resources:
+      jobs:
+        parsing_pipeline:
+          <<: *parsing_pipeline_body
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39  # job-runner-sa-uat
 
   qualibot-prod:
     resources:

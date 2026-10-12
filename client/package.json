@@ -10,7 +10,6 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "jspdf": "^4.1.0",
     "lucide-react": "^0.539.0",
     "pdfjs-dist": "^6.1.200",
     "react": "^18.3.0",

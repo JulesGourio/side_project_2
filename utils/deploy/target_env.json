@@ -20,13 +20,14 @@
   },
   "uat-test": {
     "COMPARE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/test",
-    "CHAT_INDEX": "uat_landingzone.qualibot.chunks_index",
+    "CHAT_INDEX": "uat_proj.qualibot.chunks_index_test",
     "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/test/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
     "LAKEBASE_DATABASE": "doccompare_test",
     "CHAT_TRANSLATE_BRIDGE_ENABLED": "true",
     "COMPARE_ANALYSIS_ENDPOINT": "databricks-gpt-5-6-luna",
-    "COMPARE_IMPACT_INDEX": "uat_landingzone.qualibot.chunks_index",
-    "CAPS_WAREHOUSE_ID": "5890912c31867b77"
+    "COMPARE_IMPACT_INDEX": "uat_proj.qualibot.chunks_index_test",
+    "CAPS_WAREHOUSE_ID": "5890912c31867b77",
+    "CHAT_MLFLOW_EXPERIMENT": "/Shared/qualibot/chat_turns_test"
   },
   "prod": {
     "COMPARE_VOLUME_PATH": "/Volumes/prod_landingzone/qualibot/doc_compare",
