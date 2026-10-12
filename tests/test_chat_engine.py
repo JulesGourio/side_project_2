@@ -389,6 +389,33 @@ def test_last_message_must_be_user(monkeypatch):
     assert _types(events) == ['error', '[DONE]'] and events[0]['error_type'] == 'InputError'
 
 
+def test_rewrite_prompt_names_no_company_and_forbids_filler():
+    assert 'Latécoère' not in engine.REWRITE_PROMPT and 'quality documents' not in engine.REWRITE_PROMPT
+    assert 'no company name' in engine.REWRITE_PROMPT
+
+
+@pytest.mark.parametrize('query,said,expected', [
+    ('exigences de qualification CND dans les documents qualité Latécoère', 'exigences CND ?', 'exigences de qualification CND'),
+    ('NDT qualification requirements in Latécoère quality documents', 'NDT requirements?', 'NDT qualification requirements'),
+    ('processus Stocker Latécoère', 'processus Stocker', 'processus Stocker'),
+    ('QP-1518 documents qualité', 'QP-1518', 'QP-1518'),
+    ('procédure peinture dans les documents Latécoère', 'procédure peinture', 'procédure peinture'),
+    ('organigramme Latécoère', 'organigramme Latécoère 2024', 'organigramme Latécoère'),               # the user said it
+    ('liste des documents de qualification', 'liste des documents de qualification', 'liste des documents de qualification'),
+    ('procedure in the documents about painting', 'painting', 'procedure in the documents about painting'),
+    ('Latécoère', 'x', 'Latécoère'),                                                                  # never an empty query
+])
+def test_strip_added_noise(query, said, expected):
+    assert engine.strip_added_noise(query, said) == expected
+
+
+def test_a_rewrite_that_still_adds_the_company_is_cleaned(monkeypatch):
+    _, m = _run(monkeypatch, rewrite='FR: qualification CND dans les documents qualité Latécoère\n'
+                                    'EN: NDT qualification in Latécoère quality documents')
+    d = m['log'].data
+    assert (d['fr_query'], d['en_query']) == ('qualification CND', 'NDT qualification')
+
+
 def test_split_bilingual():
     assert engine.split_bilingual('FR: requête\nEN: query') == ('requête', 'query')
     assert engine.split_bilingual('juste une requête') == ('juste une requête', '')

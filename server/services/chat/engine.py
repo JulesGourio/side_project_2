@@ -285,6 +285,28 @@ def split_bilingual(text: str) -> Tuple[str, str]:
     return fr, en
 
 
+# Context words the rewrite model used to append to every query: noise for the search. Dropped unless the
+# conversation itself says them (so "organigramme Latécoère" keeps its company name).
+_COMPANY = r'lat[eé]co[eè]re'
+_NOISE_PHRASES = [re.compile(p, re.IGNORECASE) for p in (
+    rf"(?:dans|pour|sur)\s+(?:les\s+)?documents?\s+(?:qualit[eé]\s+)?(?:de\s+|d['’])?(?:la\s+soci[eé]t[eé]\s+)?{_COMPANY}",
+    rf"(?:in|for|from)\s+(?:the\s+)?{_COMPANY}(?:['’]s)?\s+(?:quality\s+)?documents?",
+    r"(?:dans|in)\s+(?:les\s+|the\s+)?(?:documents?\s+qualit[eé]|quality\s+documents?)\b",
+    r"\bdocuments?\s+qualit[eé]\b|\bquality\s+documents?\b",
+    rf"\b{_COMPANY}\b",
+)]
+
+
+def strip_added_noise(query: str, conversation_text: str) -> str:
+    """``query`` without company / document-type filler the conversation never used."""
+    out = query
+    for pattern in _NOISE_PHRASES:
+        if not pattern.search(conversation_text):
+            out = pattern.sub(' ', out)
+    out = re.sub(r'\s+', ' ', out).strip(' ,;:-')
+    return out or query
+
+
 async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, str]],
                           log: Optional[TurnLog] = None) -> Tuple[str, str]:
     """(French query, English query) for the last question; ('', '') when every rewrite model
@@ -313,7 +335,9 @@ async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, st
         logger.warning('chat: search query rewritten by fallback %s', used)
         log.issue('rewrite_fallback', 'rewrite', f'rewritten by {used} instead of {rewrite_endpoint()}',
                   upstream=used, context={'expected': rewrite_endpoint(), 'attempts': info.get('attempts')})
-    return split_bilingual(text)
+    fr, en = split_bilingual(text)
+    said = ' '.join(m['content'] for m in conversation)
+    return strip_added_noise(fr, said), strip_added_noise(en, said)
 
 
 def refs_named_in(text: str) -> List[str]:
