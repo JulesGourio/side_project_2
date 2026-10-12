@@ -42,6 +42,12 @@ Do NOT flag this as a contradiction when an older document simply names a differ
 person in a role that has since changed (e.g. a document signed by a former CEO, or
 mentioning a past office-holder) — that is expected historical content, not a conflict.
 In that case just make clear, when you cite it, which document is current.
+Today's date is given in square brackets at the start of the user's question ([Date: YYYY-MM-DD]). For a
+question about the present situation (who holds a role now, the current threshold, the applicable version), set
+the date of each document ("Date de diffusion" in its passages, "published" on its line of the documents list)
+against today's date: answer from the most recent one, give its date, and when the most recent document you have
+is old, say so ("according to the note of 2021-03-02; a more recent document may exist") instead of stating it as
+certain.
 
 # No fabricated links
 Never write or construct a document URL yourself in the body of your answer (e.g. a raw

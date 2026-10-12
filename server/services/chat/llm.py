@@ -123,6 +123,15 @@ def max_concurrent_answers() -> int:
     return int(_env_float('CHAT_MAX_CONCURRENT_ANSWERS', 32))
 
 
+_EFFORT_REFUSED: set = set()           # endpoints that answered 400 to reasoning_effort
+
+
+def rewrite_reasoning_effort() -> str:
+    """How much the rewrite / translation model may think before answering (a reasoning model's main cost
+    here); '' = the endpoint's default."""
+    return os.getenv('CHAT_REWRITE_REASONING_EFFORT', 'low').strip().lower()
+
+
 def effective_max_tokens(endpoint: str, max_tokens: int, floor: Optional[int] = None) -> int:
     """``max_tokens``, raised to the reasoning floor on models that think inside it."""
     if supports_temperature(endpoint):
@@ -479,13 +488,17 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
                 async with _client(httpx.Timeout(min(timeout_s, left), connect=10.0)) as client:
                     payload = _payload(endpoint, messages,
                                        effective_max_tokens(endpoint, max_tokens, _REWRITE_REASONING_MIN_TOKENS), False)
-                    effort = os.getenv('CHAT_REWRITE_REASONING_EFFORT', '').strip()
-                    if effort and not supports_temperature(endpoint):
+                    effort = rewrite_reasoning_effort()
+                    if effort and not supports_temperature(endpoint) and endpoint not in _EFFORT_REFUSED:
                         payload['reasoning_effort'] = effort
-                    resp = await client.post(
-                        f'{host}/serving-endpoints/{endpoint}/invocations',
-                        json=payload,
-                        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+                    url, headers = (f'{host}/serving-endpoints/{endpoint}/invocations',
+                                    {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+                    resp = await client.post(url, json=payload, headers=headers)
+                    if resp.status_code == 400 and 'reasoning_effort' in payload and 'reasoning' in resp.text.lower():
+                        _EFFORT_REFUSED.add(endpoint)             # this endpoint takes no such parameter: never send it again
+                        logger.warning('chat_llm: %s refused reasoning_effort, sent without', endpoint)
+                        payload.pop('reasoning_effort')
+                        resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code != 200:
                     raise _failure_for_status(resp, resp.text)
                 body = resp.json()

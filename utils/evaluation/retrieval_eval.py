@@ -42,6 +42,7 @@ dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/fi
 # "chat,rerank-only|raw=0,raw5|raw=5,cap40|cap=40"; raw search on the French rewrite only: "rawfr|rawon=fr".
 # Opening message only translated, searched with two queries (translate=on; the app's default is off) against the rewrite:
 # "chat,translate|translate=on"; the sizes of the two-query search: "wide|translate=on|pairrerank=24|pairraw=15".
+# A faster rewrite: "chat,flash|rewrite=databricks-gemini-3-1-flash-lite" (no reasoning model), "think-min|effort=minimal", "think-off|effort=off".
 dbutils.widgets.text('indexes', 'chat')
 dbutils.widgets.text('sources', 'golden,synthetic,feedback')
 dbutils.widgets.dropdown('rerun_existing', 'false', ['false', 'true'])
@@ -78,7 +79,8 @@ os.environ['CHAT_REWRITE_FALLBACK_ENDPOINTS'] = os.environ.get('CHAT_REWRITE_END
 
 _SIZE_KEYS = {'rerank': 'CHAT_RERANK_TOP_K', 'raw': 'CHAT_RAW_TOP_K', 'rawon': 'CHAT_RAW_ON',
               'cap': 'CHAT_MAX_SEARCH_PASSAGES', 'translate': 'CHAT_TRANSLATE_ONLY', 'pairrerank': 'CHAT_PAIR_RERANK_TOP_K',
-              'pairraw': 'CHAT_PAIR_RAW_TOP_K'}
+              'pairraw': 'CHAT_PAIR_RAW_TOP_K', 'rewrite': 'CHAT_REWRITE_ENDPOINT', 'effort': 'CHAT_REWRITE_REASONING_EFFORT'}
+_APP_ENV = {k: os.environ.get(k) for k in _SIZE_KEYS.values()}      # the app's own values, restored between configs
 
 
 def parse_configs(text):
@@ -93,10 +95,10 @@ def parse_configs(text):
         for o in opts:
             k, _, v = o.partition('=')
             ok = (re.fullmatch(r'(question|fr|en)(\+(question|fr|en))*', v) if k == 'rawon'
-                  else v in ('on', 'off') if k == 'translate' else v.isdigit())
-            assert k in _SIZE_KEYS and ok, (f'{item}: options are rerank=N, raw=N, cap=N, rawon=fr+en, '
-                                            'translate=on|off, pairrerank=N, pairraw=N')
-            env[_SIZE_KEYS[k]] = v
+                  else v in ('on', 'off') if k == 'translate' else bool(v) if k in ('rewrite', 'effort') else v.isdigit())
+            assert k in _SIZE_KEYS and ok, (f'{item}: options are rerank=N, raw=N, cap=N, rawon=fr+en, translate=on|off, '
+                                            'pairrerank=N, pairraw=N, rewrite=<endpoint>, effort=low|minimal|medium|high|off')
+            env[_SIZE_KEYS[k]] = '' if (k == 'effort' and v == 'off') else v
         out[label.strip()] = {'index': index, 'env': env, 'signature': '|'.join([index] + sorted(opts))}
     return out
 
@@ -104,9 +106,10 @@ def parse_configs(text):
 def apply_config(cfg):
     """Point the engine at the config's index and search sizes (read at call time)."""
     os.environ['CHAT_INDEX'] = cfg['index']
-    for key in _SIZE_KEYS.values():
-        os.environ.pop(key, None)
+    for key, value in _APP_ENV.items():
+        os.environ.pop(key, None) if value is None else os.environ.__setitem__(key, value)
     os.environ.update(cfg['env'])
+    os.environ['CHAT_REWRITE_FALLBACK_ENDPOINTS'] = os.environ.get('CHAT_REWRITE_ENDPOINT') or os.environ['CHAT_LLM_ENDPOINT']
 
 
 CONFIGS = parse_configs(dbutils.widgets.get('indexes'))

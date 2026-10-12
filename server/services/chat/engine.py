@@ -500,41 +500,57 @@ def _status_of(exc: BaseException) -> int:
     return exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else 0
 
 
+async def _recorded_query(host: str, token: str, index: str, filters: Dict[str, Any], log: TurnLog,
+                          i: Optional[int], q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
+    """One Vector Search call, recorded on the turn (query, mode, size, start, duration, outcome, hits)."""
+    entry = {'query_index': i, 'query': q[:300], 'mode': 'rerank' if rerank else 'raw', 'k': k,
+             'start_ms': log.elapsed_ms()}
+    t0 = time.monotonic()
+    log.vs_calls.append(entry)
+    try:
+        rows = await _query(host, token, index, q, k, filters, rerank=rerank)
+    except BaseException as exc:
+        entry.update(ms=int((time.monotonic() - t0) * 1000), ok=False, error=f'{type(exc).__name__}: {str(exc)[:200]}')
+        raise
+    entry.update(ms=int((time.monotonic() - t0) * 1000), ok=True, results=len(rows),
+                 hits=[{'rank': n, 'ref': r.get('REF'), 'title': passage_title(r.get('chunk_text')),
+                        'score': r.get('score'), 'chunk_id': r.get('chunk_id')} for n, r in enumerate(rows, 1)])
+    return rows
+
+
+def start_question_search(host: str, token: str, index: str, filters: Dict[str, Any], question: str,
+                          log: TurnLog) -> 'asyncio.Task[List[Dict[str, Any]]]':
+    """Starts the reranked search of the question as asked, now: the rewrite runs while it does, and ``search``
+    (``first=``) picks the result up instead of querying again."""
+    task = asyncio.ensure_future(_recorded_query(host, token, index, filters, log, 0, question, rerank_top_k(), True))
+    task.add_done_callback(lambda t: t.cancelled() or t.exception())      # an unused failure is not an unhandled one
+    return task
+
+
 async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any],
                  raw_queries: Optional[List[str]] = None, log: Optional[TurnLog] = None,
-                 rerank_k: Optional[int] = None, raw_k: Optional[int] = None) -> List[Dict[str, Any]]:
+                 rerank_k: Optional[int] = None, raw_k: Optional[int] = None,
+                 first: Optional['asyncio.Task[List[Dict[str, Any]]]'] = None) -> List[Dict[str, Any]]:
     """Reranked top k for every query + raw top k for ``raw_queries`` (default: every query),
     merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
     if everything failed. Without raw passages (``raw_top_k() == 0``), a refused reranker falls
-    back to the raw search with the reranked size."""
+    back to the raw search with the reranked size. ``first``: the reranked search of ``queries[0]``, already
+    started by ``start_question_search`` (same size)."""
     log = log if log is not None else TurnLog()
     rerank_k = rerank_top_k() if rerank_k is None else rerank_k
     raw_k = raw_top_k() if raw_k is None else raw_k
     rerank_ok = True
 
     async def call(i: Optional[int], q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
-        """One Vector Search call, recorded on the turn (query, mode, size, start, duration, outcome)."""
-        entry = {'query_index': i, 'query': q[:300], 'mode': 'rerank' if rerank else 'raw', 'k': k,
-                 'start_ms': log.elapsed_ms()}
-        t0 = time.monotonic()
-        log.vs_calls.append(entry)
-        try:
-            rows = await _query(host, token, index, q, k, filters, rerank=rerank)
-        except BaseException as exc:
-            entry.update(ms=int((time.monotonic() - t0) * 1000), ok=False, error=f'{type(exc).__name__}: {str(exc)[:200]}')
-            raise
-        entry.update(ms=int((time.monotonic() - t0) * 1000), ok=True, results=len(rows),
-                     hits=[{'rank': n, 'ref': r.get('REF'), 'title': passage_title(r.get('chunk_text')),
-                            'score': r.get('score'), 'chunk_id': r.get('chunk_id')} for n, r in enumerate(rows, 1)])
-        return rows
+        return await _recorded_query(host, token, index, filters, log, i, q, k, rerank)
 
     async def reranked(i: int, q: str) -> List[Dict[str, Any]]:
         nonlocal rerank_ok
         if not rerank_ok:
             return [] if raw_k else _tag(await call(i, q, rerank_k, False), i, 'raw')
         try:
-            return _tag(await call(i, q, rerank_k, True), i, 'rerank')
+            return _tag(await (first if first is not None and i == 0 else call(i, q, rerank_k, True)), i, 'rerank')
         except RerankUnavailable as exc:
             if rerank_ok:
                 log.issue('rerank_refused', 'search', f'raw search only: {exc}', upstream=index, exc=exc)
@@ -628,6 +644,9 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         index = index_name()
         filters = division_filter(division)
         question = _without_date(conversation[-1]['content'])
+        early = None
+        today = _DATE_PREFIX_RE.match(conversation[-1]['content'])
+        log.today = today.group(0).strip()[7:-1] if today else ''
         language = opening_language(conversation, question)
         log.data['rewrite_mode'] = 'translate' if language else 'rewrite'
         if language:
@@ -636,6 +655,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             fr_query, en_query = (question, translated) if language == 'fr' else (translated, question)
             log.prompts.insert(0, 'translate_query')
         else:
+            early = start_question_search(host, token, index, filters, question, log)
             with log.timed('rewrite'):
                 fr_query, en_query = await rewrite_queries(
                     host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
@@ -664,7 +684,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             raw_texts = [question]
         sizes = {'rerank_k': pair_rerank_top_k(), 'raw_k': pair_raw_top_k()} if language and len(queries) == 2 else {}
         with log.timed('search'):
-            rows = await search(host, token, index, queries, filters, raw_texts, log=log, **sizes)
+            rows = await search(host, token, index, queries, filters, raw_texts, log=log, first=early, **sizes)
         over_cap: List[Dict[str, Any]] = []
         if max_search_passages():
             rows, over_cap = rows[:max_search_passages()], rows[max_search_passages():]

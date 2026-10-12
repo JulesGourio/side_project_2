@@ -385,6 +385,13 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   0.12 (`retrieval_eval`, serverless), le widget `indexes` à `chat,translate|translate=on` (`chat` = la réécriture, comportement actif ; `translate` =
   la traduction seule), Run all, ≈ 2 €. **M'envoyer le dernier tableau.** On ne l'allume (`CHAT_TRANSLATE_ONLY=on`, je change la valeur, tu redéploies)
   que si `translate` est au moins aussi bon que `chat` sur les documents attendus trouvés **et** que la question du CEO redonne la bonne réponse.
+- [ ] **0.12c Accélérer la réécriture** (2026-10-12). Trois leviers déjà dans le code : (1) `CHAT_REWRITE_REASONING_EFFORT=low` (par défaut : le modèle réfléchit
+  moins avant de répondre ; un endpoint qui refuse le paramètre est rappelé sans, une seule fois, log `refused reasoning_effort`) ; (2) la recherche reclassée de
+  la question telle quelle part **pendant** la réécriture (elle ne l'attend plus : on gagne la durée de cette recherche) ; (3) un modèle qui ne réfléchit pas
+  (`databricks-gemini-3-1-flash-lite`, à mesurer). Pour comparer qualité **et** vitesse : même notebook que 0.12, widget `indexes` à
+  `chat,effort-off|effort=off,minimal|effort=minimal,flash|rewrite=databricks-gemini-3-1-flash-lite`, Run all, ≈ 6 €. **M'envoyer le dernier tableau** (documents attendus
+  trouvés **et** `latency_s`) : on garde la configuration la plus rapide qui ne perd rien ; `flash` ne devient la réécriture (`CHAT_REWRITE_ENDPOINT`, je change la valeur,
+  tu redéploies) que s'il ne perd rien sur les documents trouvés.
 - [ ] **0.13 Tests dans l'app** (S9, X3, Y6) — quatre questions : une normale en AS, une en IS, une avec un numéro de document (ex. `MI-14242`),
   une hors sujet (attendu : refus poli), une en espagnol ; 👍 sur une réponse et 👎 sur une autre ; bouton **Télécharger → Response —
   Markdown** (le fichier finit par la liste **Sources**) ; « Judge Impacted Docs » dans Compare sur deux révisions connues ; la question

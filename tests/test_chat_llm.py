@@ -291,17 +291,40 @@ def test_no_claude_model_in_the_chatbot_config():
                 assert 'claude' not in str(value).lower(), f'{name}={value}'
 
 
-def test_rewrite_reasoning_effort_is_sent_only_when_asked_and_only_to_reasoning_models(monkeypatch):
+def _post_recorder(monkeypatch, refuse=False):
     sent = []
 
     async def post(self, url, json=None, headers=None):
-        sent.append(json)
+        sent.append(dict(json))
+        if refuse and 'reasoning_effort' in json:
+            return httpx.Response(400, text='Unsupported parameter: reasoning_effort', request=httpx.Request('POST', url))
         body = {'choices': [{'message': {'content': 'FR: x\nEN: y'}}], 'usage': {'prompt_tokens': 1, 'completion_tokens': 1}}
         return httpx.Response(200, json=body, request=httpx.Request('POST', url))
     monkeypatch.setattr(httpx.AsyncClient, 'post', post)
+    monkeypatch.setattr(chat_llm, '_EFFORT_REFUSED', set())
+    return sent
+
+
+def test_rewrite_reasoning_effort_is_low_by_default_and_only_for_reasoning_models(monkeypatch):
+    sent = _post_recorder(monkeypatch)
     messages = [{'role': 'user', 'content': 'q'}]
     asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gpt-6-luna'], messages, 100))
-    assert 'reasoning_effort' not in sent[-1]
-    monkeypatch.setenv('CHAT_REWRITE_REASONING_EFFORT', 'low')
-    asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gpt-6-luna'], messages, 100))
     assert sent[-1]['reasoning_effort'] == 'low'
+    asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gemini-3-1-flash-lite'], messages, 100))
+    assert 'reasoning_effort' not in sent[-1]                                  # a model that does not think
+    monkeypatch.setenv('CHAT_REWRITE_REASONING_EFFORT', '')
+    asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gpt-6-luna'], messages, 100))
+    assert 'reasoning_effort' not in sent[-1]
+    monkeypatch.setenv('CHAT_REWRITE_REASONING_EFFORT', 'minimal')
+    asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gpt-6-luna'], messages, 100))
+    assert sent[-1]['reasoning_effort'] == 'minimal'
+
+
+def test_an_endpoint_that_refuses_reasoning_effort_is_retried_at_once_without_it_and_remembered(monkeypatch):
+    sent = _post_recorder(monkeypatch, refuse=True)
+    messages = [{'role': 'user', 'content': 'q'}]
+    text, endpoint = asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gpt-6-luna'], messages, 100))
+    assert (text, endpoint) == ('FR: x\nEN: y', 'databricks-gpt-6-luna')
+    assert ['reasoning_effort' in p for p in sent] == [True, False]
+    asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gpt-6-luna'], messages, 100))
+    assert ['reasoning_effort' in p for p in sent] == [True, False, False]     # not sent again

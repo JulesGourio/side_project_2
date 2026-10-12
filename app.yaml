@@ -44,6 +44,10 @@ env:
     value: "18"
   - name: CHAT_PAIR_RAW_TOP_K
     value: "12"
+  # How much the rewrite / translation model thinks before answering (it is the main cost of that step): low, minimal, medium, high; empty = the
+  # endpoint's default. An endpoint that refuses the parameter is called without it.
+  - name: CHAT_REWRITE_REASONING_EFFORT
+    value: "low"
   # Output caps; a reasoning model counts its thinking in them.
   - name: CHAT_ANSWER_MAX_TOKENS
     value: "8000"

@@ -177,7 +177,7 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer or (lambda p: DEFAULT_ROWS), sent))
     monkeypatch.setattr(engine.asyncio, 'sleep', AsyncMock())
     monkeypatch.setenv('CHAT_INDEX', 'cat.sch.chunks_index')
-    rewrite_mock = AsyncMock(side_effect=rewrite) if isinstance(rewrite, BaseException) else \
+    rewrite_mock = AsyncMock(side_effect=rewrite) if isinstance(rewrite, BaseException) or callable(rewrite) else \
         AsyncMock(return_value=(rewrite, 'databricks-gpt-6-luna'))
     captured = {}
 
@@ -455,6 +455,33 @@ def test_the_bilingual_rewrite_still_runs_otherwise(monkeypatch, code, history, 
     assert 'Using the conversation for context' in m['rewrite'].call_args.args[3][0]['content']
     assert m['log'].data['rewrite_mode'] == 'rewrite' and m['log'].prompts[0] == 'rewrite'
     assert sorted(p['num_results'] for p in m['sent']) == [10, 12, 12, 12]      # the measured configuration
+
+
+def test_the_question_is_searched_while_the_rewrite_runs(monkeypatch):
+    async def slow_rewrite(*args, **kwargs):
+        loop = asyncio.get_running_loop()
+        done = loop.create_future()
+        loop.call_later(0.15, done.set_result, None)                   # real delay: asyncio.sleep is mocked by _run
+        await done
+        return 'FR: qualification CND\nEN: NDT qualification', 'databricks-gpt-6-luna'
+    _, m = _run(monkeypatch, rewrite=slow_rewrite)
+    calls = m['log'].vs_calls
+    question_rerank = next(c for c in calls if c['query_index'] == 0 and c['mode'] == 'rerank')
+    others = [c for c in calls if c is not question_rerank]
+    assert question_rerank['start_ms'] < 100 <= min(c['start_ms'] for c in others)   # before the rewrite answered / after it
+    assert len(m['sent']) == 4 and m['log'].data['vs_calls_expected'] == 4            # same four calls as without the overlap
+    assert sorted(p['num_results'] for p in m['sent']) == [10, 12, 12, 12]
+    assert m['log'].today == '2026-10-06'
+
+
+def test_a_failed_early_search_is_a_failed_query_like_any_other(monkeypatch):
+    seen = []
+
+    def answer(p):
+        seen.append(p)
+        return 500 if p['query_text'] == QUESTION and 'reranker' in p else DEFAULT_ROWS
+    _, m = _run(monkeypatch, answer=answer)
+    assert m['log'].data['vs_calls_ok'] == 3 and 'vs_partial' in m['log'].codes
 
 
 def test_rewrite_prompt_names_no_company_and_forbids_filler():

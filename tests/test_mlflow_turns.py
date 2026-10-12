@@ -31,6 +31,7 @@ class _Span:
 @pytest.fixture
 def spans(monkeypatch):
     import mlflow
+    monkeypatch.setattr(mlflow_turns, 'document_info', lambda ref: {'revision': 'C'} if ref == 'A-1' else {})
     recorded = []
     monkeypatch.setattr(mlflow, 'start_span_no_context',
                         lambda name, **kw: _Span(name, kw.get('parent_span'), kw, recorded))
@@ -54,7 +55,7 @@ def _turn(status='ok'):
          'hits': [{'q': None, 'via': 'ref_lookup', 'rank': 0, 'score': None}]},
         {'kept': True, 'prompt_rank': 0, 'ref': 'A-1', 'doc_number': 1, 'cited': True, 'best_score': 0.91,
          'hits': [{'q': 0, 'via': 'rerank', 'rank': 2, 'score': 0.91}, {'q': 1, 'via': 'raw', 'rank': 0, 'score': 0.7}],
-         'chunk_text': '[Source: A-1 | Title: Process control | Type: QP | Division: AS] first'},
+         'chunk_text': '[Source: A-1 | Title: Process control | Type: QP | Division: AS | Category: X | Date de diffusion: 2021-03-02]\n\nfirst'},
         {'kept': False, 'drop_reason': 'over_cap', 'ref': 'C-3', 'chunk_text': 'dropped'}]
     log.vs_calls = [
         {'query_index': 0, 'query': 'q', 'mode': 'rerank', 'k': 12, 'start_ms': 330, 'ms': 380, 'ok': True, 'results': 12,
@@ -142,6 +143,8 @@ def test_retrieval_summarises_documents_and_keeps_the_full_text_in_a_retriever_s
     docs = passages.ended['outputs']
     assert [d.metadata['ref'] for d in docs] == ['A-1', 'B-2'] and docs[0].metadata['cited'] is True
     assert docs[0].page_content.endswith('first')
+    assert (summary['documents'][0]['date'], summary['documents'][0]['revision']) == ('2021-03-02', 'C')
+    assert summary['documents'][1]['date'] == '' and summary['documents'][1]['revision'] is None
 
 
 def test_every_vector_search_call_is_a_span_under_search(spans):
@@ -247,3 +250,11 @@ def test_the_query_step_is_named_after_what_it_did(spans):
     mlflow_turns._write_trace(log, 'chat')
     assert 'translate' in _by_name(spans) and 'rewrite' not in _by_name(spans)
     assert _by_name(spans)['retrieval'].kwargs['inputs']['search_queries'] == 'translate'
+
+
+def test_the_answer_span_shows_today_and_the_documents_read(spans):
+    log = _turn()
+    log.today = '2026-10-12'
+    mlflow_turns._write_trace(log, 'chat')
+    inputs = _by_name(spans)['answer'].kwargs['inputs']
+    assert inputs['today'] == '2026-10-12' and inputs['documents'] == ['A-1', 'B-2']

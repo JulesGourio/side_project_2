@@ -36,6 +36,7 @@ import time
 from typing import Any, Dict, List, Optional, Set
 
 from . import prompts
+from ..infra.doc_catalog import document_info
 from .turn_log import passage_title
 
 logger = logging.getLogger(__name__)
@@ -113,11 +114,22 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
 
 
+_DATE_RE = re.compile(r'Date de diffusion:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|inconnue)')
+
+
+def _passage_date(chunk_text: Optional[str]) -> str:
+    """Diffusion date from the passage's ``[Source: …]`` prefix (what the answer model reads)."""
+    found = _DATE_RE.search((chunk_text or '')[:600])
+    return found.group(1) if found else ''
+
+
 def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """The documents handed to the model, in prompt order: n, REF, title, passages, best score, cited."""
+    """The documents handed to the model, in prompt order: n, REF, title, diffusion date, revision, passages, best score, cited."""
     docs: Dict[str, Dict[str, Any]] = {}
     for p in sent:
         d = docs.setdefault(p.get('ref') or '', {'n': p.get('doc_number'), 'ref': p.get('ref'), 'title': passage_title(p.get('chunk_text')),
+                                                'date': _passage_date(p.get('chunk_text')),
+                                                'revision': document_info(p.get('ref') or '').get('revision'),
                                                 'passages': 0, 'best_score': None, 'found_by': set(),
                                                 'cited': bool(p.get('cited'))})
         d['passages'] += 1
@@ -299,7 +311,8 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
             'answer', span_type=SpanType.LLM, parent_span=root,
             inputs={'question': data.get('question'), 'documents': [d['ref'] for d in _documents_summary(
                 sorted((p for p in log.passages if p.get('kept')), key=lambda p: p.get('prompt_rank') or 0))],
-                    'instructions_sha': data.get('instructions_sha'), 'prompts': getattr(log, 'prompts', [])},
+                    'today': getattr(log, 'today', ''), 'instructions_sha': data.get('instructions_sha'),
+                    'prompts': getattr(log, 'prompts', [])},
             start_time_ns=at(start))
         if wait:
             child(answer, 'queue_wait', SpanType.CHAIN, start, wait)
