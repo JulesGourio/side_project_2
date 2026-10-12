@@ -37,9 +37,9 @@ dbutils.widgets.text('levels', '1,2,4,8,16,32,64')     # queries in progress at 
 dbutils.widgets.text('step_s', '20')                    # duration of each step
 dbutils.widgets.text('stop_429_pct', '50')
 dbutils.widgets.text('queries_per_question', '7')       # 3 reranked + 3 raw + ~1 REF / title lookup
-dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
+dbutils.widgets.text('golden_table', 'dev_proj.qualibot.qualibot_eval_golden')
 dbutils.widgets.text('chat_table', 'dev_landingzone.qualibot.chat_messages')
-dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_vs_load_runs')
+dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_vs_load_runs')
 
 import asyncio, json, random, re, time
 from concurrent.futures import ThreadPoolExecutor

@@ -42,9 +42,9 @@ dbutils.widgets.dropdown('translate_back', 'true', ['true', 'false'])   # as the
 dbutils.widgets.text('n_questions', '40')                               # golden first, then real DEV questions
 dbutils.widgets.text('seed', '7')
 dbutils.widgets.text('max_parallel', '4')
-dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
+dbutils.widgets.text('golden_table', 'dev_proj.qualibot.qualibot_eval_golden')
 dbutils.widgets.text('chat_table', 'dev_landingzone.qualibot.chat_messages')
-dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_pairwise_runs')
+dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_pairwise_runs')
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------

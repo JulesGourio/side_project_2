@@ -63,7 +63,7 @@ dbutils.widgets.dropdown('skip_scored', 'true', ['true', 'false'])
 dbutils.widgets.text('judge_model', 'databricks:/databricks-gpt-5-6-luna')
 dbutils.widgets.dropdown('chunk_relevance', 'false', ['false', 'true'])
 dbutils.widgets.text('experiment', '/Shared/qualibot/chat_trace_scores')
-dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.chat_trace_scores')
+dbutils.widgets.text('results_table', 'dev_proj.qualibot.chat_trace_scores')
 
 LAKEBASE_PROJECT_ID = dbutils.widgets.get('lakebase_project_id').strip()
 LAKEBASE_BRANCH = dbutils.widgets.get('lakebase_branch').strip()

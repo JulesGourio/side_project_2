@@ -345,3 +345,5 @@ Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `
 
 ## 2026-10-12 — traces MLflow du chat
 - Après le déploiement DEV : `operations_dev.md` bloc Y (créer l'expérience, déployer, poser des questions, vérifier les traces).
+- Prompts du chat : `base.md` + `division_*.md` (plus de `instructions_*.md`) ; après déploiement, poser une question en AS, IS et ALL et vérifier qu'elles répondent comme avant (`instructions_sha` change dans `chat_turns`).
+- Évaluation : défauts des notebooks passés à `dev_proj.qualibot` ; `operations_dev.md` bloc Z (droits + copie des tables).

@@ -710,11 +710,52 @@ en arrière-plan : l'utilisateur n'attend rien et une panne MLflow ne touche pas
   entrepôt SQL et un schéma, et ne peut plus être changé pour cette expérience. À ne faire qu'après Y3 :
 
   ```powershell
-  python utils\evaluation\create_chat_experiment.py --profile DEV --app qualibot --experiment /Shared/qualibot/chat_turns_uc --uc-schema dev_landingzone.qualibot --warehouse-id 13eff4a6095513cb
+  python utils\evaluation\create_chat_experiment.py --profile DEV --app qualibot --experiment /Shared/qualibot/chat_turns_uc --uc-schema dev_proj.qualibot --warehouse-id 13eff4a6095513cb
   ```
 
   Le script affiche deux `GRANT` à exécuter dans l'éditeur SQL, puis `CHAT_MLFLOW_EXPERIMENT` passe à
   `/Shared/qualibot/chat_turns_uc` dans `target_env.json` (me le dire, je le change).
+
+### Z. Artefacts d'évaluation et de projet : de `dev_landingzone` vers `dev_proj` (2026-10-12)
+
+Règle : `dev_landingzone.qualibot` garde ce que le pipeline et l'app écrivent (chunks, index, tables
+Lakebase importées, volumes) ; `dev_proj.qualibot` reçoit ce qui définit ou mesure le projet (jeu golden,
+résultats d'évaluation, notes de qualité, et bientôt le registre de prompts et les traces MLflow en tables
+Delta). Les notebooks de `utils/evaluation/` ont maintenant `dev_proj.qualibot.*` comme valeurs par défaut
+(`chat_messages` et l'index restent dans `dev_landingzone`). **Les tables existantes sont copiées, pas
+déplacées** : les originaux restent en place jusqu'à ce que tu confirmes, rien n'est perdu.
+
+- [ ] **Z1. Droits** sur `dev_proj.qualibot` (éditeur SQL DEV, avec un compte qui peut les donner) :
+
+  ```sql
+  GRANT USE CATALOG ON CATALOG dev_proj TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+  GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA dev_proj.qualibot TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+  GRANT USE CATALOG ON CATALOG dev_proj TO `Role-Project-LEAP-CoreDev`;
+  GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA dev_proj.qualibot TO `Role-Project-LEAP-CoreDev`;
+  ```
+
+  Si `USE CATALOG` est refusé : propriétaire du catalogue = `leap-core-service_accounts-dev` (cf. bloc M).
+- [ ] **Z2. Copier les tables d'évaluation** (une instruction à la fois ; une table qui n'existe pas
+  chez toi donne `TABLE_OR_VIEW_NOT_FOUND` : passer à la suivante) :
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.qualibot_eval_golden DEEP CLONE dev_landingzone.qualibot.qualibot_eval_golden;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions DEEP CLONE dev_landingzone.qualibot.synthetic_retrieval_questions;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases DEEP CLONE dev_landingzone.qualibot.feedback_failure_cases;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_retrieval_runs DEEP CLONE dev_landingzone.qualibot.eval_retrieval_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs DEEP CLONE dev_landingzone.qualibot.eval_pairwise_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_load_runs DEEP CLONE dev_landingzone.qualibot.eval_load_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_vs_load_runs DEEP CLONE dev_landingzone.qualibot.eval_vs_load_runs;
+  ```
+
+  (`chat_trace_scores` n'existe pas encore : le bloc W est en pause.) Vérifier :
+  `SELECT COUNT(*) FROM dev_proj.qualibot.qualibot_eval_golden;` doit donner le même nombre que dans
+  `dev_landingzone`.
+- [ ] **Z3. Recopier à la main** `utils/evaluation/load_test_chat.py`, `load_test_vector_search.py`,
+  `pairwise_answers.py`, `retrieval_eval.py`, `score_chat_traces.py`, `create_chat_experiment.py`, puis
+  déployer : `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`.
+- [ ] **Z4. Plus tard, sur ta décision** : supprimer les originaux de `dev_landingzone` une fois un
+  run d'évaluation lancé avec succès depuis `dev_proj`.
 
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 

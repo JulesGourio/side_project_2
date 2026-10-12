@@ -9,9 +9,9 @@
 # MAGIC
 # MAGIC | Source | Table | Expected documents |
 # MAGIC |---|---|---|
-# MAGIC | `golden` | `dev_landingzone.qualibot.qualibot_eval_golden` | `expected_retrieved_context` |
-# MAGIC | `synthetic` | `dev_landingzone.qualibot.synthetic_retrieval_questions` | `positive_refs` (FULL), `partial_refs` reported apart |
-# MAGIC | `feedback` | `dev_landingzone.qualibot.feedback_failure_cases` | `extracted_expected_ref` (user-named document) |
+# MAGIC | `golden` | `dev_proj.qualibot.qualibot_eval_golden` | `expected_retrieved_context` |
+# MAGIC | `synthetic` | `dev_proj.qualibot.synthetic_retrieval_questions` | `positive_refs` (FULL), `partial_refs` reported apart |
+# MAGIC | `feedback` | `dev_proj.qualibot.feedback_failure_cases` | `extracted_expected_ref` (user-named document) |
 # MAGIC
 # MAGIC Caveat: synthetic positives were judged among the former Knowledge Assistant's own top-K, so
 # MAGIC they lean toward what it retrieved; compare runs with each other, per source.
@@ -44,10 +44,10 @@ dbutils.widgets.text('indexes', 'chat')
 dbutils.widgets.text('sources', 'golden,synthetic,feedback')
 dbutils.widgets.dropdown('rerun_existing', 'false', ['false', 'true'])
 dbutils.widgets.text('max_parallel', '4')   # questions at once (each sends 3-5 Vector Search queries)
-dbutils.widgets.text('golden_table', 'dev_landingzone.qualibot.qualibot_eval_golden')
-dbutils.widgets.text('synthetic_table', 'dev_landingzone.qualibot.synthetic_retrieval_questions')
-dbutils.widgets.text('feedback_table', 'dev_landingzone.qualibot.feedback_failure_cases')
-dbutils.widgets.text('results_table', 'dev_landingzone.qualibot.eval_retrieval_runs')
+dbutils.widgets.text('golden_table', 'dev_proj.qualibot.qualibot_eval_golden')
+dbutils.widgets.text('synthetic_table', 'dev_proj.qualibot.synthetic_retrieval_questions')
+dbutils.widgets.text('feedback_table', 'dev_proj.qualibot.feedback_failure_cases')
+dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_retrieval_runs')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 SOURCES = {s.strip() for s in dbutils.widgets.get('sources').split(',') if s.strip()}

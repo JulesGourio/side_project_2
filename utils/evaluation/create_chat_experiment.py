@@ -9,7 +9,7 @@ USAGE
 -----
     python utils/evaluation/create_chat_experiment.py --profile DEV --app qualibot     # owned by you
     python utils/evaluation/create_chat_experiment.py --profile DEV --app qualibot \
-        --uc-schema dev_landingzone.qualibot --warehouse-id <id>      # traces in Delta tables
+        --uc-schema dev_proj.qualibot --warehouse-id <id>      # traces in Delta tables
 
 Without ``--uc-schema`` the traces stay in the experiment's own storage. With it they go to Unity
 Catalog tables (MLflow >= 3.11.1; permanent for the experiment); the app service principal then also
