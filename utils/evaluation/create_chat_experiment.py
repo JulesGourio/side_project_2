@@ -36,6 +36,9 @@ def main() -> None:
 
     w = WorkspaceClient(profile=args.profile)
     mlflow.set_tracking_uri(f'databricks://{args.profile}')
+    parent = args.experiment.rsplit('/', 1)[0]
+    if parent:
+        w.workspace.mkdirs(parent)                       # create_experiment does not create the folder
     existing = mlflow.get_experiment_by_name(args.experiment)
     if existing:
         experiment_id = existing.experiment_id
