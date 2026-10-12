@@ -69,6 +69,8 @@ targets:
                 parameters:
                   - "--schema"
                   - "${var.app_proj_catalog}.${var.app_proj_schema}"
+                  - "--app-root"
+                  - "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
               environment_key: default
           environments:
             - environment_key: default

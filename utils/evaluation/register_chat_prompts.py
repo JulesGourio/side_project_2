@@ -10,6 +10,8 @@ USAGE
 -----
     python utils/evaluation/register_chat_prompts.py --profile DEV --schema dev_proj.qualibot
 
+In a job the script is run with ``exec`` (no ``__file__``): the job passes ``--app-root`` (the bundle's synced files).
+
 The identity running it needs USE CATALOG, USE SCHEMA and CREATE FUNCTION on the schema.
 """
 import argparse
@@ -19,13 +21,11 @@ from pathlib import Path
 
 import mlflow
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repository root, for `server`
-from server.services.chat import prompts
-
 logger = logging.getLogger('register_chat_prompts')
 
 
 def register(schema: str) -> None:
+    from server.services.chat import prompts
     for key in prompts.FILES:
         name, text, sha = prompts.registry_name(schema, key), prompts.read(key), prompts.digest(key)
         current = mlflow.genai.load_prompt(f'prompts:/{name}@deployed', allow_missing=True, link_to_model=False)
@@ -42,8 +42,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--profile', default='', help='Databricks CLI profile; empty inside a job')
     parser.add_argument('--schema', required=True, help='catalog.schema of the prompt registry (dev_proj.qualibot)')
+    parser.add_argument('--app-root', default='', help='folder holding `server/` (default: two levels above this file)')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    sys.path.insert(0, args.app_root or str(Path(__file__).resolve().parents[2]))
     mlflow.set_tracking_uri(f'databricks://{args.profile}' if args.profile else 'databricks')
     mlflow.set_registry_uri(f'databricks-uc://{args.profile}' if args.profile else 'databricks-uc')
     register(args.schema)

@@ -1,4 +1,4 @@
-"""Minimal MLflow configuration for feedback logging."""
+"""MLflow configuration (tracking in the workspace, prompt registry in Unity Catalog) for the chat traces."""
 
 import mlflow
 
