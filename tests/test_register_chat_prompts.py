@@ -38,7 +38,12 @@ def test_registers_every_prompt_once(script):
         found = mlflow.genai.load_prompt(f'prompts:/{prompts.registry_name("chat_test", key)}@deployed')
         assert found.version == 1 and found.tags['sha'] == prompts.digest(key)
         assert found.template == prompts.read(key)
-    tags = mlflow.get_experiment_by_name('chat').tags
+    experiment = mlflow.get_experiment_by_name('chat')
+    for key in prompts.FILES:                                          # listed in the experiment's Prompts tab
+        found = mlflow.genai.get_prompt_tags(prompts.registry_name('chat_test', key))
+        listed = getattr(found, 'tags', found)['_mlflow_experiment_ids']
+        assert listed == f',{experiment.experiment_id},'
+    tags = experiment.tags
     entry = json.loads(tags['chat_prompt.rewrite'])
     assert entry == {'name': 'chat_test.chat_rewrite', 'version': '1', 'sha': prompts.digest('rewrite')}
 

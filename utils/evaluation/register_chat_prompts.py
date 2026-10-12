@@ -25,6 +25,17 @@ from pathlib import Path
 import mlflow
 
 logger = logging.getLogger('register_chat_prompts')
+EXPERIMENT_IDS_TAG = '_mlflow_experiment_ids'
+
+
+def _link_to_experiment(name: str, experiment_id: str) -> None:
+    """Lists the prompt in the experiment's Prompts tab (the tab filters on this tag; MLflow sets it from a thread
+    when registering under an active experiment, and not for an unchanged prompt, so it is set here, synchronously)."""
+    tags = mlflow.genai.get_prompt_tags(name)
+    tags = getattr(tags, 'tags', tags) or {}                           # a dict or a Prompt, depending on the MLflow version
+    ids = [i for i in (tags.get(EXPERIMENT_IDS_TAG, '') or '').strip(',').split(',') if i]
+    if experiment_id not in ids:
+        mlflow.genai.set_prompt_tag(name, EXPERIMENT_IDS_TAG, ',' + ','.join(ids + [experiment_id]) + ',')
 
 
 def register(schema: str, experiment: str) -> None:
@@ -33,6 +44,7 @@ def register(schema: str, experiment: str) -> None:
     if found is None:
         raise RuntimeError(f'Experiment {experiment} does not exist: run the create_chat_experiment job first')
     client = mlflow.MlflowClient()
+    mlflow.set_experiment(experiment_id=found.experiment_id)           # prompts register and load under it
     for key in prompts.FILES:
         name, text, sha = prompts.registry_name(schema, key), prompts.read(key), prompts.digest(key)
         current = mlflow.genai.load_prompt(f'prompts:/{name}@deployed', allow_missing=True, link_to_model=False)
@@ -45,6 +57,7 @@ def register(schema: str, experiment: str) -> None:
                 tags={'sha': sha}).version
             mlflow.genai.set_prompt_alias(name, 'deployed', version)
             logger.info('%s: registered version %s, alias deployed', name, version)
+        _link_to_experiment(name, found.experiment_id)
         client.set_experiment_tag(found.experiment_id, f'chat_prompt.{key}',
                                   json.dumps({'name': name, 'version': str(version), 'sha': sha}))
 

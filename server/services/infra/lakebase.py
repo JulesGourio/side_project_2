@@ -796,12 +796,16 @@ async def _ensure_schema(pool: asyncpg.Pool) -> None:
         # Current revision (Intraqual indice) and its publication date, given to the chat's answer
         # model with each document. Whichever of the app and parsing task 6 owns the table adds them;
         # a failure here must not stop the rest of the schema.
+        # ALTER ... IF NOT EXISTS needs table ownership even when the column is there: look first.
+        have = {r['column_name'] for r in await conn.fetch(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'doc_catalog'")}
+        missing = [(c, t) for c, t in [('revision', 'TEXT'), ('doc_date', 'DATE')] if c not in have]
         try:
-            for col, typedef in [('revision', 'TEXT'), ('doc_date', 'DATE')]:
+            for col, typedef in missing:
                 await conn.execute(f'ALTER TABLE doc_catalog ADD COLUMN IF NOT EXISTS {col} {typedef}')
         except Exception as e:
-            logger.warning('doc_catalog: revision/doc_date not added by the app (%s) — parsing task '
-                           '6_update_kb_metadata adds them when it owns the table', e)
+            logger.warning('doc_catalog: %s not added by the app (%s) — parsing task '
+                           '6_update_kb_metadata adds them when it owns the table', '/'.join(c for c, _ in missing), e)
 
         # ── chat_feedbacks ────────────────────────────────────────────────────
         await conn.execute('''

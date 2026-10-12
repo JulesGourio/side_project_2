@@ -49,6 +49,7 @@ _missing_until: Dict[str, float] = {}           # experiment name -> when to loo
 _RETRY_MISSING_S = 60
 _prompt_cache: Dict[str, Any] = {}              # experiment id -> (fetched at, chat_prompt.* tags)
 _PROMPT_TAG = 'chat_prompt.'
+_PROMPT_EMPTY_TTL_S = 30                  # nothing registered yet: look again soon
 _PROMPT_TTL_S = 600
 _EXPORT_TIMEOUT_S = 10
 
@@ -148,7 +149,7 @@ def _document(passage: Dict[str, Any]) -> Any:
 def _prompt_tags(experiment_id: str) -> Dict[str, str]:
     """The experiment's ``chat_prompt.<key>`` tags, refreshed every ``_PROMPT_TTL_S``."""
     cached = _prompt_cache.get(experiment_id)
-    if cached and time.monotonic() - cached[0] < _PROMPT_TTL_S:
+    if cached and time.monotonic() - cached[0] < (_PROMPT_TTL_S if cached[1] else _PROMPT_EMPTY_TTL_S):
         return cached[1]
     tags: Dict[str, str] = {}
     try:
