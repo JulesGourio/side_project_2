@@ -8,8 +8,7 @@
     "COMPARE_IMPACT_INDEX": "dev_landingzone.qualibot.chunks_index",
     "CAPS_WAREHOUSE_ID": "",
     "CAPS_BYPASS": "true",
-    "CHAT_MLFLOW_EXPERIMENT": "/Shared/qualibot/chat_turns",
-    "CHAT_PROMPT_SCHEMA": "dev_proj.qualibot"
+    "CHAT_MLFLOW_EXPERIMENT": "/Shared/qualibot/chat_turns"
   },
   "uat": {
     "COMPARE_VOLUME_PATH": "/Volumes/uat_landingzone/qualibot/doc_compare",

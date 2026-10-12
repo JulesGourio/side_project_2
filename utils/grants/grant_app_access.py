@@ -22,7 +22,7 @@
 # MAGIC
 # MAGIC **Project schema** (`proj_catalog`.`proj_schema`, e.g. `dev_proj.qualibot`: evaluation tables, quality scores, MLflow prompt
 # MAGIC registry): the job SP gets what the evaluation / scoring / prompt-registration jobs need (tables and prompts: create, read,
-# MAGIC write, execute); the app SP gets USE + EXECUTE, enough to read the registered prompts it links to traces. Empty `proj_catalog` = skip.
+# MAGIC write, execute). The app SP gets nothing there: it never reads the registry (prompt versions reach it as experiment tags). Empty `proj_catalog` = skip.
 
 # COMMAND ----------
 
@@ -68,8 +68,6 @@ proj_catalog = dbutils.widgets.get("proj_catalog").strip()
 proj_schema = dbutils.widgets.get("proj_schema").strip()
 if proj_catalog:
     proj = f"`{proj_catalog}`.`{proj_schema}`"
-    statements += [f"GRANT USE CATALOG ON CATALOG `{proj_catalog}` TO `{sp}`",
-                   f"GRANT USE SCHEMA, EXECUTE ON SCHEMA {proj} TO `{sp}`"]
     if pipeline_sp:
         statements += [f"GRANT USE CATALOG ON CATALOG `{proj_catalog}` TO `{pipeline_sp}`",
                        f"GRANT USE SCHEMA, CREATE TABLE, CREATE FUNCTION, EXECUTE, SELECT, MODIFY ON SCHEMA {proj} TO `{pipeline_sp}`"]

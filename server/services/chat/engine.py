@@ -420,21 +420,35 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
     rerank_k, raw_k = rerank_top_k(), raw_top_k()
     rerank_ok = True
 
+    async def call(i: Optional[int], q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
+        """One Vector Search call, recorded on the turn (query, mode, size, start, duration, outcome)."""
+        entry = {'query_index': i, 'query': q[:300], 'mode': 'rerank' if rerank else 'raw', 'k': k,
+                 'start_ms': log.elapsed_ms()}
+        t0 = time.monotonic()
+        log.vs_calls.append(entry)
+        try:
+            rows = await _query(host, token, index, q, k, filters, rerank=rerank)
+        except BaseException as exc:
+            entry.update(ms=int((time.monotonic() - t0) * 1000), ok=False, error=f'{type(exc).__name__}: {str(exc)[:200]}')
+            raise
+        entry.update(ms=int((time.monotonic() - t0) * 1000), ok=True, results=len(rows))
+        return rows
+
     async def reranked(i: int, q: str) -> List[Dict[str, Any]]:
         nonlocal rerank_ok
         if not rerank_ok:
-            return [] if raw_k else _tag(await _query(host, token, index, q, rerank_k, filters, rerank=False), i, 'raw')
+            return [] if raw_k else _tag(await call(i, q, rerank_k, False), i, 'raw')
         try:
-            return _tag(await _query(host, token, index, q, rerank_k, filters, rerank=True), i, 'rerank')
+            return _tag(await call(i, q, rerank_k, True), i, 'rerank')
         except RerankUnavailable as exc:
             if rerank_ok:
                 log.issue('rerank_refused', 'search', f'raw search only: {exc}', upstream=index, exc=exc)
             rerank_ok = False
             logger.warning('chat: reranker refused by %s (%s) — raw search only', index, exc)
-            return [] if raw_k else _tag(await _query(host, token, index, q, rerank_k, filters, rerank=False), i, 'raw')
+            return [] if raw_k else _tag(await call(i, q, rerank_k, False), i, 'raw')
 
     async def raw(i: int, q: str) -> List[Dict[str, Any]]:
-        return _tag(await _query(host, token, index, q, raw_k, filters, rerank=False), i, 'raw')
+        return _tag(await call(i, q, raw_k, False), i, 'raw')
 
     calls = [reranked(i, q) for i, q in enumerate(queries)]
     if raw_k:

@@ -9,19 +9,20 @@ Traces upload in MLflow's own background queue, so the call is local and short.
 
     chat_turn                       the question → the answer shown (tags: division, status, warnings…)
     ├─ translate_in                 non-French/English question → English (translation bridge)
-    ├─ retrieval                    RETRIEVER: output = the passages sent to the model, prompt order
+    ├─ retrieval                    output = the documents handed to the model (n, REF, title, passages, cited)
     │   ├─ rewrite                  LLM: FR + EN search queries (model, tokens, cost)
-    │   ├─ search                   3 hybrid queries; calls expected / ok, reranker ok
-    │   └─ ref_lookup               REFs named in the conversation
+    │   ├─ search                   the Vector Search calls, one span each (query, rerank / raw, results, duration)
+    │   ├─ ref_lookup               REFs named in the conversation
+    │   └─ passages_sent            RETRIEVER: the passages' full text, prompt order (what the judges read)
     ├─ answer                       LLM: tokens, cost, first-token delay, truncation, fallback
     │   ├─ queue_wait               wait for a free answer slot
     │   └─ call_1, call_2…          one span per model call (outcome, status, seconds)
     ├─ translate_back               answer translated back
     └─ persist                      messages saved to Lakebase
 
-The tags carry what the free scorers read (``utils/evaluation/chat_scorers.py``); the prompt versions
-used by the turn are linked when ``CHAT_PROMPT_SCHEMA`` names the schema of the prompt registry; the user's
-thumbs up / down becomes a ``user_vote`` assessment on the trace (``log_vote``, called by the feedback route).
+The tags carry what the free scorers read (``utils/evaluation/chat_scorers.py``); the registered
+versions of the prompts the turn used are linked from the experiment's ``chat_prompt.<key>`` tags (written by
+``register_chat_prompts``; the app never reads the registry); the user's thumbs up / down becomes a ``user_vote`` assessment on the trace (``log_vote``, called by the feedback route).
 """
 
 import asyncio
@@ -29,6 +30,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, List, Optional, Set
@@ -44,7 +46,8 @@ _lock = threading.Lock()
 _experiment: Dict[str, Optional[str]] = {}       # experiment name -> id, once found
 _missing_until: Dict[str, float] = {}           # experiment name -> when to look again
 _RETRY_MISSING_S = 60
-_prompt_cache: Dict[str, Any] = {}              # prompt key -> (fetched at, registered version or None)
+_prompt_cache: Dict[str, Any] = {}              # experiment id -> (fetched at, chat_prompt.* tags)
+_PROMPT_TAG = 'chat_prompt.'
 _PROMPT_TTL_S = 600
 _EXPORT_TIMEOUT_S = 10
 
@@ -108,6 +111,30 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
 
 
+_TITLE_RE = re.compile(r'Title:\s*(.*?)\s*\|')
+
+
+def _title(passage: Dict[str, Any]) -> str:
+    """Document title from the ``[Source: REF | Title: … |`` prefix every passage starts with."""
+    found = _TITLE_RE.search((passage.get('chunk_text') or '')[:400])
+    return found.group(1) if found else ''
+
+
+def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The documents handed to the model, in prompt order: n, REF, title, passages, best score, cited."""
+    docs: Dict[str, Dict[str, Any]] = {}
+    for p in sent:
+        d = docs.setdefault(p.get('ref') or '', {'n': p.get('doc_number'), 'ref': p.get('ref'), 'title': _title(p),
+                                                'passages': 0, 'best_score': None, 'found_by': set(),
+                                                'cited': bool(p.get('cited'))})
+        d['passages'] += 1
+        score = p.get('best_score')
+        if score is not None and (d['best_score'] is None or score > d['best_score']):
+            d['best_score'] = round(float(score), 4)
+        d['found_by'].add(p.get('source') or 'search')
+    return [{**d, 'found_by': sorted(d['found_by'])} for d in sorted(docs.values(), key=lambda d: d['n'] or 0)]
+
+
 def _document(passage: Dict[str, Any]) -> Any:
     from mlflow.entities import Document
     return Document(page_content=(passage.get('chunk_text') or '')[:_MAX_DOC_CHARS],
@@ -117,33 +144,35 @@ def _document(passage: Dict[str, Any]) -> Any:
                               'semantic_headers': passage.get('semantic_headers') or ''})
 
 
-def _registered_prompt(schema: str, key: str) -> Optional[Any]:
-    """The registry version aliased ``deployed`` for the prompt ``key`` if its text is the file's, else None."""
-    cached = _prompt_cache.get(key)
+def _prompt_tags(experiment_id: str) -> Dict[str, str]:
+    """The experiment's ``chat_prompt.<key>`` tags, refreshed every ``_PROMPT_TTL_S``."""
+    cached = _prompt_cache.get(experiment_id)
     if cached and time.monotonic() - cached[0] < _PROMPT_TTL_S:
         return cached[1]
-    version = None
+    tags: Dict[str, str] = {}
     try:
         import mlflow
-        found = mlflow.genai.load_prompt(f'prompts:/{prompts.registry_name(schema, key)}@deployed',
-                                         allow_missing=True, link_to_model=False)
-        if found is not None and (found.tags or {}).get('sha') == prompts.digest(key):
-            version = found
-        elif found is not None:
-            logger.warning('mlflow_turns: prompt %s differs from the registered "deployed" version '
-                           '(run the register_chat_prompts job)', key)
+        tags = {k: v for k, v in (mlflow.get_experiment(experiment_id).tags or {}).items() if k.startswith(_PROMPT_TAG)}
     except Exception as exc:  # noqa: BLE001 — retried after the TTL
-        logger.warning('mlflow_turns: prompt %s lookup failed: %s', key, exc)
-    _prompt_cache[key] = (time.monotonic(), version)
-    return version
+        logger.warning('mlflow_turns: experiment tags unreadable: %s', exc)
+    _prompt_cache[experiment_id] = (time.monotonic(), tags)
+    return tags
 
 
-def _linked_prompts(keys: List[str]) -> str:
-    schema = os.getenv('CHAT_PROMPT_SCHEMA', '').strip()
-    if not schema or not keys:
-        return ''
-    versions = [v for v in (_registered_prompt(schema, k) for k in keys) if v is not None]
-    return json.dumps([{'name': v.name, 'version': str(v.version)} for v in versions]) if versions else ''
+def _linked_prompts(experiment_id: str, keys: List[str]) -> str:
+    """JSON for the ``mlflow.linkedPrompts`` trace tag: the registered version of each prompt ``keys`` the turn used,
+    when its recorded hash is the file's (a prompt edited since the last registration is not linked)."""
+    tags, linked = _prompt_tags(experiment_id), []
+    for key in keys:
+        try:
+            entry = json.loads(tags.get(_PROMPT_TAG + key) or '')
+        except ValueError:
+            continue
+        if entry.get('sha') == prompts.digest(key):
+            linked.append({'name': entry['name'], 'version': str(entry['version'])})
+        else:
+            logger.warning('mlflow_turns: prompt %s differs from the registered version (run register_chat_prompts)', key)
+    return json.dumps(linked) if linked else ''
 
 
 def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = '') -> None:
@@ -198,7 +227,7 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
         'cost_eur': str(round((data.get('cost_eur') or 0) + (data.get('rewrite_cost_eur') or 0), 6)),
         'question_lang_guess': _language_guess(data.get('question')), 'answer_lang_guess': _language_guess(log.answer),
     }
-    linked = _linked_prompts(getattr(log, 'prompts', []))
+    linked = _linked_prompts(experiment_id, getattr(log, 'prompts', []))
     if linked:
         tags['mlflow.linkedPrompts'] = linked
     metadata = {k: v for k, v in {'mlflow.trace.session': data.get('session_id'),
@@ -217,39 +246,54 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
     if 'retrieval' in timings:
         start = starts.get('retrieval', 0)
         sent = sorted((p for p in log.passages if p.get('kept')), key=lambda p: p.get('prompt_rank') or 0)
-        dropped: List[Dict[str, Any]] = [{'ref': p.get('ref'), 'reason': p.get('drop_reason')}
-                                         for p in log.passages if not p.get('kept')]
+        dropped = [{'ref': p.get('ref'), 'reason': p.get('drop_reason')} for p in log.passages if not p.get('kept')]
         retrieval = mlflow.start_span_no_context(
-            'retrieval', span_type=SpanType.RETRIEVER, parent_span=root,
-            inputs={'query': data.get('fr_query') or data.get('question'), 'en_query': data.get('en_query')},
+            'retrieval', span_type=SpanType.CHAIN, parent_span=root,
+            inputs={'question': data.get('question'), 'named_refs': data.get('named_refs') or []},
             start_time_ns=at(start))
         if 'rewrite' in timings:
             child(retrieval, 'rewrite', SpanType.LLM, starts.get('rewrite', start), timings['rewrite'],
-                  inputs=data.get('question'), outputs={'fr': data.get('fr_query'), 'en': data.get('en_query')},
+                  inputs={'question': data.get('question')}, outputs={'fr': data.get('fr_query'), 'en': data.get('en_query')},
                   status='OK' if data.get('rewrite_ok') is not False else 'ERROR',
                   attributes={SpanAttributeKey.MODEL: data.get('rewrite_endpoint'),
                               SpanAttributeKey.CHAT_USAGE: _usage(data.get('rewrite_input_tokens'),
                                                                   data.get('rewrite_output_tokens')),
                               'cost_eur': data.get('rewrite_cost_eur')})
         if 'search' in timings:
-            child(retrieval, 'search', SpanType.CHAIN, starts.get('search', start), timings['search'],
-                  attributes={'vs_calls_expected': data.get('vs_calls_expected'), 'vs_calls_ok': data.get('vs_calls_ok'),
-                              'rerank_ok': data.get('rerank_ok'), 'index': data.get('index_name')})
+            search = mlflow.start_span_no_context(
+                'search', span_type=SpanType.CHAIN, parent_span=retrieval, start_time_ns=at(starts.get('search', start)),
+                inputs={'queries': {'question': data.get('question'), 'fr': data.get('fr_query'), 'en': data.get('en_query')},
+                        'index': data.get('index_name')})
+            for call in log.vs_calls:
+                label = f"q{(call.get('query_index') or 0) + 1 if call.get('query_index') is not None else '-'} {call['mode']}"
+                child(search, 'vector_search', SpanType.RETRIEVER, call['start_ms'], call.get('ms') or 0, label=label,
+                      inputs={'query': call['query'], 'mode': call['mode'], 'num_results': call['k']},
+                      outputs={'results': call.get('results'), 'error': call.get('error')},
+                      status='OK' if call.get('ok', True) else 'ERROR')
+            search.end(outputs={'calls': len(log.vs_calls), 'calls_ok': data.get('vs_calls_ok'),
+                                'rerank_ok': data.get('rerank_ok'), 'passages_retrieved': data.get('passages_retrieved')},
+                       end_time_ns=at(starts.get('search', start) + timings['search']))
         if 'ref_lookup' in timings:
             child(retrieval, 'ref_lookup', SpanType.CHAIN, starts.get('ref_lookup', start), timings['ref_lookup'],
                   inputs=data.get('named_refs'))
-        retrieval.end(outputs=[_document(p) for p in sent], end_time_ns=at(start + timings['retrieval']),
-                      attributes={'passages_retrieved': data.get('passages_retrieved'),
-                                  'passages_sent': data.get('passages_sent'),
-                                  'documents_sent': data.get('documents_sent'), 'prompt_chars': data.get('prompt_chars'),
-                                  'dropped': json.dumps(dropped[:200])})
+        child(retrieval, 'passages_sent', SpanType.RETRIEVER, start + timings['retrieval'], 0,
+              inputs={'question': data.get('question'), 'fr_query': data.get('fr_query')},
+              outputs=[_document(p) for p in sent],
+              attributes={'passages_sent': data.get('passages_sent'), 'documents_sent': data.get('documents_sent'),
+                          'prompt_chars': data.get('prompt_chars')})
+        retrieval.end(outputs={'documents': _documents_summary(sent), 'passages_retrieved': data.get('passages_retrieved'),
+                               'passages_sent': data.get('passages_sent'), 'dropped': dropped[:50]},
+                      end_time_ns=at(start + timings['retrieval']),
+                      attributes={'prompt_chars': data.get('prompt_chars')})
 
     if 'generation' in timings or data.get('answer_endpoint') or 'answer' in starts:
         start = starts.get('answer', timings.get('retrieval', 0))
         wait, generation = timings.get('queue_wait') or 0, timings.get('generation') or 0
         answer = mlflow.start_span_no_context(
             'answer', span_type=SpanType.LLM, parent_span=root,
-            inputs={'question': data.get('question'), 'documents': data.get('documents_sent')},
+            inputs={'question': data.get('question'), 'documents': [d['ref'] for d in _documents_summary(
+                sorted((p for p in log.passages if p.get('kept')), key=lambda p: p.get('prompt_rank') or 0))],
+                    'instructions_sha': data.get('instructions_sha'), 'prompts': getattr(log, 'prompts', [])},
             start_time_ns=at(start))
         if wait:
             child(answer, 'queue_wait', SpanType.CHAIN, start, wait)

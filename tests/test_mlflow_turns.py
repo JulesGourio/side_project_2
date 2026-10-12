@@ -51,8 +51,13 @@ def _turn(status='ok'):
     log.starts_ms.update({'retrieval': 10, 'rewrite': 10, 'search': 320, 'answer': 900, 'persist': 3950})
     log.passages = [
         {'kept': True, 'prompt_rank': 1, 'ref': 'B-2', 'chunk_text': 'second', 'doc_number': 2},
-        {'kept': True, 'prompt_rank': 0, 'ref': 'A-1', 'chunk_text': 'first', 'doc_number': 1, 'cited': True},
+        {'kept': True, 'prompt_rank': 0, 'ref': 'A-1', 'doc_number': 1, 'cited': True, 'best_score': 0.91,
+         'chunk_text': '[Source: A-1 | Title: Process control | Type: QP | Division: AS] first'},
         {'kept': False, 'drop_reason': 'over_cap', 'ref': 'C-3', 'chunk_text': 'dropped'}]
+    log.vs_calls = [
+        {'query_index': 0, 'query': 'q', 'mode': 'rerank', 'k': 12, 'start_ms': 330, 'ms': 380, 'ok': True, 'results': 12},
+        {'query_index': 1, 'query': 'q fr', 'mode': 'raw', 'k': 10, 'start_ms': 335, 'ms': 120, 'ok': False,
+         'error': 'HTTPStatusError: 429'}]
     log.answer = 'The answer'
     log.status = status
     return log
@@ -119,13 +124,28 @@ def test_span_tree_and_timings(spans):
         'input_tokens': 100, 'output_tokens': 50, 'total_tokens': 150}
 
 
-def test_retriever_returns_the_passages_sent_in_prompt_order(spans):
+def test_retrieval_summarises_documents_and_keeps_the_full_text_in_a_retriever_span(spans):
     mlflow_turns._write_trace(_turn(), 'chat')
-    retrieval = _by_name(spans)['retrieval']
-    docs = retrieval.ended['outputs']
-    assert [d.metadata['ref'] for d in docs] == ['A-1', 'B-2']
-    assert docs[0].page_content == 'first' and docs[0].metadata['cited'] is True
-    assert '"over_cap"' in retrieval.ended['attributes']['dropped']
+    s = _by_name(spans)
+    summary = s['retrieval'].ended['outputs']
+    assert [(d['n'], d['ref'], d['title'], d['passages'], d['cited']) for d in summary['documents']] == [
+        (1, 'A-1', 'Process control', 1, True), (2, 'B-2', '', 1, False)]
+    assert summary['documents'][0]['best_score'] == 0.91 and summary['dropped'] == [{'ref': 'C-3', 'reason': 'over_cap'}]
+    passages = s['passages_sent']
+    assert passages.parent is s['retrieval'] and passages.kwargs['span_type'] == 'RETRIEVER'
+    docs = passages.ended['outputs']
+    assert [d.metadata['ref'] for d in docs] == ['A-1', 'B-2'] and docs[0].metadata['cited'] is True
+    assert docs[0].page_content.endswith('first')
+
+
+def test_every_vector_search_call_is_a_span_under_search(spans):
+    mlflow_turns._write_trace(_turn(), 'chat')
+    calls = [x for x in spans if x.kwargs.get('span_type') == 'RETRIEVER' and x.name.startswith('q')]
+    assert [c.name for c in calls] == ['q1 rerank', 'q2 raw'] and all(c.parent is _by_name(spans)['search'] for c in calls)
+    t0 = 1_000_000_000
+    assert calls[0].kwargs['start_time_ns'] == t0 + 330_000_000 and calls[0].ended['end'] == t0 + 710_000_000
+    assert calls[0].ended['status'] == 'OK' and calls[1].ended['status'] == 'ERROR'
+    assert calls[1].ended['outputs']['error'].endswith('429') and calls[0].kwargs['inputs']['num_results'] == 12
 
 
 def test_root_tags_user_hash_and_status(spans):
@@ -145,7 +165,7 @@ def test_tags_for_the_free_scorers(spans, monkeypatch):
     tags = _by_name(spans)['chat_turn'].kwargs['tags']
     assert tags['passages_sent'] == '2' and tags['first_token_ms'] == '1200' and tags['total_ms'] == '4000'
     assert tags['cost_eur'] == '0.005' and tags['question_lang_guess'] == 'fr' and tags['answer_lang_guess'] == 'fr'
-    assert 'mlflow.linkedPrompts' not in tags                     # no CHAT_PROMPT_SCHEMA
+    assert 'mlflow.linkedPrompts' not in tags                     # no log.prompts
 
 
 def test_vote_becomes_an_assessment(monkeypatch):
@@ -171,47 +191,43 @@ def test_vote_never_raises(monkeypatch):
     mlflow_turns.log_vote('tr-1', 'up')
 
 
-@pytest.fixture
-def registry(tmp_path, monkeypatch):
-    """A real prompt registry on a throw-away SQLite store."""
-    pytest.importorskip('sqlalchemy')
-    pytest.importorskip('alembic')
-    import mlflow
-    old, old_registry = mlflow.get_tracking_uri(), mlflow.get_registry_uri()
-    mlflow.set_tracking_uri(f'sqlite:///{tmp_path}/m.db')
-    mlflow.set_registry_uri(f'sqlite:///{tmp_path}/m.db')           # server.tracing points it at Unity Catalog
-    monkeypatch.setattr(mlflow_turns, '_prompt_cache', {})
-    yield mlflow
-    mlflow.set_tracking_uri(old)
-    mlflow.set_registry_uri(old_registry)
-
-
-def _register(mlflow, key, text=None, sha=None, alias='deployed'):
-    from server.services.chat import prompts
-    name = prompts.registry_name('chat_test', key)
-    version = mlflow.genai.register_prompt(
-        name=name, template=text or prompts.read(key), tags={'sha': sha or prompts.digest(key)})
-    mlflow.genai.set_prompt_alias(name, alias, version.version)
-    return name, version.version
-
-
-def test_registered_prompts_are_linked_to_the_trace(registry, spans, monkeypatch):
+def _tag(key, name, version, sha):
     import json
-    monkeypatch.setenv('CHAT_PROMPT_SCHEMA', 'chat_test')
-    name, version = _register(registry, 'system_base')
-    _register(registry, 'rewrite')
+    return {f'chat_prompt.{key}': json.dumps({'name': name, 'version': version, 'sha': sha})}
+
+
+def _experiment_tags(monkeypatch, tags):
+    import mlflow
+    monkeypatch.setattr(mlflow_turns, '_prompt_cache', {})
+    monkeypatch.setattr(mlflow, 'get_experiment', lambda eid: type('E', (), {'tags': tags})())
+
+
+def test_registered_prompts_are_linked_to_the_trace(spans, monkeypatch):
+    import json
+    from server.services.chat import prompts
+    _experiment_tags(monkeypatch, {
+        **_tag('system_base', 'dev_proj.qualibot.chat_system_base', 3, prompts.digest('system_base')),
+        **_tag('rewrite', 'dev_proj.qualibot.chat_rewrite', 1, prompts.digest('rewrite')), 'unrelated': 'x'})
     log = _turn()
     log.prompts = ['rewrite', 'system_as', 'system_base']           # system_as was never registered
     mlflow_turns._write_trace(log, 'chat')
     linked = json.loads(_by_name(spans)['chat_turn'].kwargs['tags']['mlflow.linkedPrompts'])
-    assert {p['name'] for p in linked} == {name, 'chat_test.chat_rewrite'}
-    assert {'name': name, 'version': str(version)} in linked
+    assert linked == [{'name': 'dev_proj.qualibot.chat_rewrite', 'version': '1'},
+                      {'name': 'dev_proj.qualibot.chat_system_base', 'version': '3'}]
 
 
-def test_a_prompt_edited_since_registration_is_not_linked(registry, spans, monkeypatch):
-    monkeypatch.setenv('CHAT_PROMPT_SCHEMA', 'chat_test')
-    _register(registry, 'system_base', text='an older text', sha='0000000000000000')
+def test_a_prompt_edited_since_registration_is_not_linked(spans, monkeypatch):
+    _experiment_tags(monkeypatch, _tag('system_base', 'dev_proj.qualibot.chat_system_base', 1, '0000000000000000'))
     log = _turn()
     log.prompts = ['system_base']
     mlflow_turns._write_trace(log, 'chat')
     assert 'mlflow.linkedPrompts' not in _by_name(spans)['chat_turn'].kwargs['tags']
+
+
+def test_the_app_never_reads_the_prompt_registry(spans, monkeypatch):
+    import mlflow
+    _experiment_tags(monkeypatch, {})
+    monkeypatch.setattr(mlflow.genai, 'load_prompt', lambda *a, **k: (_ for _ in ()).throw(AssertionError('registry read')))
+    log = _turn()
+    log.prompts = ['system_base']
+    mlflow_turns._write_trace(log, 'chat')

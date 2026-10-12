@@ -225,7 +225,7 @@ sortie du span `retrieval` = les passages `kept` de `chat_retrieved_chunks`, dan
 tokens et coût sur `rewrite` et `answer` ; `status` et `warnings` en tags ; `issues` (sans trace de pile)
 en attribut de la racine. La session MLflow est `session_id`, l'utilisateur est haché. Les tags lus par les scorers gratuits
 (`passages_sent`, `cited_count`, `first_token_ms`, `cost_eur`, `question_lang_guess`, `answer_lang_guess`…) et les versions de
-prompts liées (`CHAT_PROMPT_SCHEMA`) y sont aussi. Rien n'est lu depuis Lakebase : un champ de plus dans la trace s'ajoute d'abord
+prompts liées (lues dans les tags `chat_prompt.<clé>` de l'expérience, écrits par `register_chat_prompts`) y sont aussi. Le span `retrieval` résume les documents transmis ; `passages_sent` (RETRIEVER) garde le texte complet ; chaque appel Vector Search est un span sous `search` (requête, rerank ou brut, résultats, durée). Rien n'est lu depuis Lakebase : un champ de plus dans la trace s'ajoute d'abord
 dans le `TurnLog`.
 
 ## Notation de la qualité

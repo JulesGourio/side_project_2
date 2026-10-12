@@ -43,6 +43,7 @@ class TurnLog:
         self.data: Dict[str, Any] = {}
         self.timings_ms: Dict[str, int] = {}
         self.starts_ms: Dict[str, int] = {}      # when each step began, from the start of the turn (MLflow spans)
+        self.vs_calls: List[Dict[str, Any]] = []   # every Vector Search call of the search step (MLflow spans)
         self.prompts: List[str] = []             # prompt keys this turn used (chat/prompts.py), linked to the MLflow trace
         self.answer = ''                         # the text the user saw (MLflow trace output, not stored in Lakebase)
         self.issues: List[Dict[str, Any]] = []

@@ -293,8 +293,6 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   ```sql
   GRANT USE CATALOG ON CATALOG dev_proj TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
   GRANT USE SCHEMA, CREATE TABLE, CREATE FUNCTION, EXECUTE, SELECT, MODIFY ON SCHEMA dev_proj.qualibot TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
-  GRANT USE CATALOG ON CATALOG dev_proj TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT USE SCHEMA, EXECUTE ON SCHEMA dev_proj.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
   GRANT USE CATALOG ON CATALOG dev_proj TO `Role-Project-LEAP-CoreDev`;
   GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA dev_proj.qualibot TO `Role-Project-LEAP-CoreDev`;
   ```
@@ -346,7 +344,7 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
 
   Attendu : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot (service principal …) can edit the experiment`.
   Si une expérience du même nom existe déjà à ton nom (essai manuel), la supprimer d'abord dans l'UI (Experiments → ⋮ → Delete).
-- [ ] **0.9 Prompts dans le registre** (Y4) :
+- [ ] **0.9 Prompts dans le registre** (Y4) — enregistre aussi chaque version en tag `chat_prompt.<clé>` de l'expérience (qui doit exister : 0.8) ; l'app lit ces tags, jamais le registre :
 
   ```powershell
   databricks bundle run register_chat_prompts_dev -t dev --profile DEV
@@ -901,14 +899,14 @@ La notation est un **job par lots** (jamais pendant un tour) : scorers gratuits 
   ```powershell
   databricks bundle deploy -t dev --profile DEV
   ```
-- [ ] **Y2. Droits sur `dev_proj.qualibot`** (le job de droits les donne au SP DEV et au SP de l'app ; voir 0.5) :
+- [ ] **Y2. Droits sur `dev_proj.qualibot`** (le job de droits les donne au SP DEV ; voir 0.5) :
 
   ```powershell
   databricks bundle run grant_app_access_dev -t dev --profile DEV
   ```
 
   Sortie attendue : une ligne `OK:` par droit, dont `GRANT USE SCHEMA, CREATE TABLE, CREATE FUNCTION, EXECUTE, SELECT, MODIFY ON SCHEMA
-  dev_proj.qualibot`. Si une ligne `FAILED` sur `dev_proj` (propriétaire du catalogue : `leap-core-service_accounts-dev`), exécuter ces
+  dev_proj.qualibot` (au SP des jobs ; le SP de l'app n'a aucun droit sur `dev_proj`, il ne lit pas le registre). Si une ligne `FAILED` sur `dev_proj` (propriétaire du catalogue : `leap-core-service_accounts-dev`), exécuter ces
   `GRANT` à la main avec un compte qui peut les donner (bloc Z1).
 - [ ] **Y3. Créer l'expérience** (propriétaire = le SP DEV ; type GenAI ; droits : le SP de l'app écrit, CoreAdmin / CoreDev gèrent) :
 
@@ -927,7 +925,7 @@ La notation est un **job par lots** (jamais pendant un tour) : scorers gratuits 
   Sortie : une ligne `registered version 1, alias deployed` par prompt. À **refaire après chaque déploiement qui modifie un fichier de
   `server/prompts/chat/`** : tant que le texte enregistré diffère du fichier, l'app n'attache pas la version à la trace (ligne de log
   `prompt … differs from the registered "deployed" version`).
-- [ ] **Y5. Déployer l'app DEV** (`CHAT_MLFLOW_EXPERIMENT` et `CHAT_PROMPT_SCHEMA` viennent de `utils/deploy/target_env.json` ; l'app
+- [ ] **Y5. Déployer l'app DEV** (`CHAT_MLFLOW_EXPERIMENT` vient de `utils/deploy/target_env.json` ; l'app
   ajoute la colonne `chat_turns.mlflow_trace_id` à son démarrage) :
 
   ```powershell
