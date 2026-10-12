@@ -3,8 +3,6 @@
 Coverage:
   - the Lakebase table replaces the bundled snapshot once loaded
   - an empty or unreadable table keeps the catalog already loaded
-  - the title lookup only proposes documents with passages in the chat index (in_chat)
-  - the title index is rebuilt when a refresh brings a new catalog
   - the link written by the pipeline (task 6) is the same as the chunks' url column
 """
 
@@ -15,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from server.services import chat_vsi_titles, doc_catalog
+from server.services import doc_catalog
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
 
@@ -31,10 +29,6 @@ def _pool(rows=None, exc=None):
 
 def _row(ref, title, in_chat=True):
     return {'ref': ref, 'url': f'https://intraqual/{ref}', 'title': title, 'base_ref': None, 'in_chat': in_chat}
-
-
-# Rarity (IDF) only means something in a real-sized catalog: 300 unrelated titles around the tested ones.
-_FILLER = [_row(f'FX-{i:04d}', f'Procédure atelier numéro {i} contrôle qualité') for i in range(300)]
 
 
 @pytest.fixture(autouse=True)
@@ -58,21 +52,6 @@ def test_empty_or_unreadable_table_keeps_the_current_catalog(pool):
     asyncio.run(doc_catalog.refresh_from_lakebase(_pool([_row('ZZ-9001', 'Gestion des gabarits')])))
     assert asyncio.run(doc_catalog.refresh_from_lakebase(pool)) == 0
     assert doc_catalog.title_for_ref('ZZ-9001') == 'Gestion des gabarits'
-
-
-def test_title_lookup_skips_documents_outside_the_chat_index():
-    doc_catalog.set_catalog(_FILLER + [_row('ZZ-9001', 'Gestion des gabarits de perçage'),
-                                       _row('ZZ-9002', 'Gabarits de perçage archivés', in_chat=False)])
-    found = chat_vsi_titles.documents_titled(['gabarits de perçage'], 3)
-    assert [canon for canon, _, _ in found] == ['ZZ9001']
-
-
-def test_title_index_follows_a_refresh():
-    doc_catalog.set_catalog(_FILLER + [_row('ZZ-9001', 'Gestion des gabarits de perçage')])
-    assert chat_vsi_titles.documents_titled(['gabarits de perçage'], 3)
-    doc_catalog.set_catalog(_FILLER + [_row('ZZ-9003', 'Plan de surveillance des fours')])
-    assert chat_vsi_titles.documents_titled(['gabarits de perçage'], 3) == []
-    assert [c for c, _, _ in chat_vsi_titles.documents_titled(['surveillance des fours'], 3)] == ['ZZ9003']
 
 
 def test_pipeline_link_matches_the_chunks_url():

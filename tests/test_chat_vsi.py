@@ -171,7 +171,7 @@ DEFAULT_ROWS = [_row('c1', 'QP-1518', 'passage 1'), _row('c2', 'MR-1465'), _row(
 
 
 def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='FR: qualification CND\nEN: NDT qualification',
-         llm=None, named=(), titled=(), language=None):
+         llm=None, named=(), language=None):
     sent = []
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer or (lambda p: DEFAULT_ROWS), sent))
     monkeypatch.setattr(chat_vsi.asyncio, 'sleep', AsyncMock())
@@ -190,8 +190,7 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
 
     with (patch.object(chat_vsi.chat_vsi_llm, 'complete', rewrite_mock),
           patch.object(chat_vsi.chat_vsi_llm, 'stream_answer', side_effect=_llm_spy),
-          patch.object(chat_vsi, 'refs_named_in', lambda text: list(named) if QUESTION in text else []),
-          patch.object(chat_vsi, 'documents_titled', lambda texts, limit: list(titled))):
+          patch.object(chat_vsi, 'refs_named_in', lambda text: list(named) if QUESTION in text else [])):
         raw = asyncio.run(_collect())
     events = []
     for chunk in raw:
@@ -247,7 +246,7 @@ def test_union_merges_by_best_rank(monkeypatch):
         found.update(await chat_vsi.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer, []))
     with (patch.object(chat_vsi.chat_vsi_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
-          patch.object(chat_vsi, 'refs_named_in', lambda t: []), patch.object(chat_vsi, 'documents_titled', lambda t, l: [])):
+          patch.object(chat_vsi, 'refs_named_in', lambda t: [])):
         asyncio.run(_go())
     assert [r['chunk_id'] for r in found['rows']] == ['r1', 'both', 'raw2']
 
@@ -287,7 +286,7 @@ def test_cap_keeps_the_best_ranked_search_passages(monkeypatch):
         found.update(await chat_vsi.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(lambda p: [_row('a', 'A-1'), _row('b', 'B-1'), _row('c', 'C-1')], []))
     with (patch.object(chat_vsi.chat_vsi_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
-          patch.object(chat_vsi, 'refs_named_in', lambda t: []), patch.object(chat_vsi, 'documents_titled', lambda t, l: [])):
+          patch.object(chat_vsi, 'refs_named_in', lambda t: [])):
         asyncio.run(_go())
     assert [r['chunk_id'] for r in found['rows']] == ['a', 'b']
 
@@ -298,21 +297,19 @@ def test_vector_search_down_is_an_error_event(monkeypatch):
     assert events[0]['error_type'] == 'VectorSearchError' and events[0]['http_status'] == 403
 
 
-def test_named_documents_first_titles_last_one_language(monkeypatch):
+def test_named_documents_first_one_language(monkeypatch):
     def answer(p):
         f = json.loads(p.get('filters_json') or '{}')
         if f.get('REF') == ['MI-14242']:
             return [_row('n1', 'MI-14242', 'slide 15')]
-        if f.get('REF') == ['IQ22-223']:
-            return [_row('t1', 'IQ22-223', 'stocker')]
         return [_row('c1', 'Q0102QP_GB'), _row('c2', 'Q0102QP_BG'), _row('c3', 'QP-1518')]
-    events, m = _run(monkeypatch, answer=answer, named=['MI-14242'], titled=[('IQ22-223', ['IQ22-223'], 2.0)])
+    events, m = _run(monkeypatch, answer=answer, named=['MI-14242'])
     user_turn = m['prompt'][-1]['content']
-    order = [ref for ref in ('MI-14242', 'Q0102QP_GB', 'QP-1518', 'IQ22-223') if f'Document {ref}' in user_turn]
-    assert order == ['MI-14242', 'Q0102QP_GB', 'QP-1518', 'IQ22-223']
+    order = [ref for ref in ('MI-14242', 'Q0102QP_GB', 'QP-1518') if f'Document {ref}' in user_turn]
+    assert order == ['MI-14242', 'Q0102QP_GB', 'QP-1518']
     assert 'Document Q0102QP_BG' not in user_turn                                   # one language per document
     meta = next(e for e in events if e != '[DONE]' and e['type'] == 'metadata')
-    assert 'ref_lookup(MI-14242)' in meta['tool_name'] and 'title_lookup(IQ22-223)' in meta['tool_name']
+    assert 'ref_lookup(MI-14242)' in meta['tool_name']
 
 
 def test_prompt_rules_and_language(monkeypatch):

@@ -12,8 +12,7 @@ What happens for each question (configuration chosen 2026-10-08, measures in
    ``max_search_passages()`` (0 = no cap, the default). The chat's division (AS / IS) is a filter on
    the ``division`` column (ALL: no filter).
 3. **Named documents** — REFs named in the question or the earlier turns (MI-14242…) get their
-   own filtered search, ranked first; documents whose catalog title matches the question
-   (``chat_vsi_titles.py``) get one too, added at the end.
+   own filtered search, ranked first.
 4. **One language per document** — only the best-ranked language variant of a document is kept.
 5. **Prompt** — the division's instructions (``server/config/chat_vsi/instructions_<div>.md``)
    + the common answering rules (``answer_rules.md``: documents only, off-topic refusal,
@@ -48,7 +47,6 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 import httpx
 
 from . import chat_vsi_llm
-from .chat_vsi_titles import documents_titled
 from .doc_catalog import _catalog, canon_ref
 from .vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 
@@ -66,8 +64,6 @@ _RERANK_COLUMNS = ['REF', 'semantic_headers', 'chunk_text']
 _RERANKER_MODEL = 'databricks_reranker'
 _REF_LOOKUP_MAX = 6              # REFs (language variants included) filtered on
 _REF_LOOKUP_K = 8                # passages fetched from the named documents
-_TITLE_LOOKUP_DOCS = 3           # best title matches searched
-_TITLE_LOOKUP_K = 6              # passages fetched from them
 _MAX_QUERY_CHARS = 20000         # Vector Search rejects query_text past ~29k chars
 _OPERATION = 'Chat'              # label used in user-facing error messages
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -447,12 +443,6 @@ def one_language_per_document(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return [row for row in rows if chosen.setdefault(canon_ref(row['REF']), row['REF']) == row['REF']]
 
 
-def append_new(rows: List[Dict[str, Any]], extra: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """rows, then the passages of extra not already in rows."""
-    seen = {r['chunk_id'] for r in rows}
-    return rows + [r for r in extra if r['chunk_id'] not in seen]
-
-
 def group_documents(rows: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
     """Passages grouped by document (REF), in order of first appearance."""
     docs: Dict[str, Dict[str, Any]] = {}
@@ -482,20 +472,15 @@ async def retrieve_for_turn(host: str, token: str, division: str,
         if ref not in named:
             named.append(ref)
     named = named[:_REF_LOOKUP_MAX]
-    titled = documents_titled(queries, _TITLE_LOOKUP_DOCS)
 
     rows = await search(host, token, index, queries, filters)
     if max_search_passages():
         rows = rows[:max_search_passages()]
     if named:
         rows = _merge_by_rank([await fetch_documents(host, token, index, question, named, _REF_LOOKUP_K, filters), rows])
-    if titled:
-        title_refs = [ref for _, refs, _ in titled for ref in refs]
-        rows = append_new(rows, await fetch_documents(host, token, index, fr_query or question, title_refs,
-                                                      _TITLE_LOOKUP_K, filters))
     rows = one_language_per_document(rows)
     return {'question': question, 'fr_query': fr_query, 'en_query': en_query, 'rows': rows, 'named': named,
-            'titled': [canon for canon, _, _ in titled], 'index': index}
+            'index': index}
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +535,7 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
         for e in _error_events(exc.message, exc.error_type, exc.http_status):
             yield e
         return
-    rows, named, titled = found['rows'], found['named'], found['titled']
+    rows, named = found['rows'], found['named']
     documents = group_documents(rows)
     logger.info('chat_vsi: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d trace_id=%s',
                 div, found['index'], found['fr_query'], found['en_query'], len(rows), len(documents), trace_id)
@@ -595,8 +580,7 @@ async def stream_chat_vsi(host: str, token: str, division: str, messages: List[D
     if parser.sources or parser.citations:
         yield _event({'type': 'sources', 'sources': parser.sources, 'citations': parser.citations})
     yield _event({'type': 'metadata', 'trace_id': trace_id,
-                  'tool_name': 'vector_search' + (f'+ref_lookup({",".join(named)})' if named else '')
-                               + (f'+title_lookup({",".join(titled)})' if titled else ''),
+                  'tool_name': 'vector_search' + (f'+ref_lookup({",".join(named)})' if named else ''),
                   'tool_query': found['fr_query'] or found['question'],
                   'tool_result': ', '.join(ref for ref, _ in documents),
                   'reasoning_steps': [],
