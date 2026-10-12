@@ -26,7 +26,7 @@ date → `stream_chat_vsi` → citation markers → translate back → persist t
    - documents named by REF in the conversation first, one language variant per document. The catalogue
      (REF, title, link) is the Lakebase table `doc_catalog`, rewritten by the parsing pipeline
      after each daily run and reloaded by the app every 30 min (`doc_catalog.py`);
-   - prompt = division instructions (`server/config/chat_vsi/instructions_<div>.md`) + answer
+   - prompt = the division's own part (`server/config/chat_vsi/division_<div>.md`: role, scope, division-only rules) + the base shared by all divisions (`base.md`) + answer
      rules (`answer_rules.md`) + numbered documents + question + a line naming the answer
      language;
    - answer streamed by `chat_vsi_llm.stream_answer`: GPT-6 Luna, GPT-5.6 Luna as fallback,

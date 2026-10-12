@@ -13,8 +13,8 @@ What happens for each question (measures behind the configuration: ``docs/chat_v
 3. **Named documents** — REFs named in the question or the earlier turns (MI-14242…) get their
    own filtered search, ranked first.
 4. **One language per document** — only the best-ranked language variant of a document is kept.
-5. **Prompt** — the division's instructions (``server/config/chat_vsi/instructions_<div>.md``)
-   + the common answering rules (``answer_rules.md``: documents only, off-topic refusal,
+5. **Prompt** — the division's own part (``division_<div>.md``: role, scope, what only that division
+   needs) + the base shared by every division (``base.md``) + the common answering rules (``answer_rules.md``: documents only, off-topic refusal,
    document types, citations) + the numbered documents + the question + one line naming the
    language the answer must be written in.
 6. **Answer** — GPT-6 Luna, GPT-5.6 Luna as fallback (``chat_vsi_llm.py``: retries, fallback,
@@ -181,13 +181,17 @@ def settings() -> Dict[str, Any]:
             'max_search_passages': max_search_passages()}
 
 
+def prompt_parts(division: str) -> Dict[str, str]:
+    """The files the system instructions are made of: ``division_<div>``, ``base``, ``answer_rules``."""
+    div = normalize_division(division).lower()
+    return {name: (_PROMPTS_DIR / f'{name}.md').read_text(encoding='utf-8').strip()
+            for name in (f'division_{div}', 'base', 'answer_rules')}
+
+
 @lru_cache(maxsize=None)
 def load_instructions(division: str) -> str:
-    """The division's instructions, then the common answering rules."""
-    div = normalize_division(division).lower()
-    instructions = (_PROMPTS_DIR / f'instructions_{div}.md').read_text(encoding='utf-8').strip()
-    rules = (_PROMPTS_DIR / 'answer_rules.md').read_text(encoding='utf-8').strip()
-    return f'{instructions}\n\n{rules}'
+    """System instructions: the division's part, then the base shared by all, then the answering rules."""
+    return '\n\n'.join(prompt_parts(division).values())
 
 
 # --- Citation markers ---
