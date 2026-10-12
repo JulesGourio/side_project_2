@@ -50,12 +50,16 @@ def _turn(status='ok'):
                            'first_token': 1200, 'persist': 20, 'total': 4000})
     log.starts_ms.update({'retrieval': 10, 'rewrite': 10, 'search': 320, 'answer': 900, 'persist': 3950})
     log.passages = [
-        {'kept': True, 'prompt_rank': 1, 'ref': 'B-2', 'chunk_text': 'second', 'doc_number': 2},
+        {'kept': True, 'prompt_rank': 1, 'ref': 'B-2', 'chunk_text': 'second', 'doc_number': 2,
+         'hits': [{'q': None, 'via': 'ref_lookup', 'rank': 0, 'score': None}]},
         {'kept': True, 'prompt_rank': 0, 'ref': 'A-1', 'doc_number': 1, 'cited': True, 'best_score': 0.91,
+         'hits': [{'q': 0, 'via': 'rerank', 'rank': 2, 'score': 0.91}, {'q': 1, 'via': 'raw', 'rank': 0, 'score': 0.7}],
          'chunk_text': '[Source: A-1 | Title: Process control | Type: QP | Division: AS] first'},
         {'kept': False, 'drop_reason': 'over_cap', 'ref': 'C-3', 'chunk_text': 'dropped'}]
     log.vs_calls = [
-        {'query_index': 0, 'query': 'q', 'mode': 'rerank', 'k': 12, 'start_ms': 330, 'ms': 380, 'ok': True, 'results': 12},
+        {'query_index': 0, 'query': 'q', 'mode': 'rerank', 'k': 12, 'start_ms': 330, 'ms': 380, 'ok': True, 'results': 12,
+         'hits': [{'rank': 1, 'ref': 'A-1', 'title': 'Process control', 'score': 0.91, 'chunk_id': 'c1'},
+                  {'rank': 2, 'ref': 'B-2', 'title': '', 'score': 0.5, 'chunk_id': 'c2'}]},
         {'query_index': 1, 'query': 'q fr', 'mode': 'raw', 'k': 10, 'start_ms': 335, 'ms': 120, 'ok': False,
          'error': 'HTTPStatusError: 429'}]
     log.answer = 'The answer'
@@ -130,6 +134,8 @@ def test_retrieval_summarises_documents_and_keeps_the_full_text_in_a_retriever_s
     summary = s['retrieval'].ended['outputs']
     assert [(d['n'], d['ref'], d['title'], d['passages'], d['cited']) for d in summary['documents']] == [
         (1, 'A-1', 'Process control', 1, True), (2, 'B-2', '', 1, False)]
+    assert summary['documents'][0]['hits'] == ['q1 rerank #3 (0.910)', 'q2 raw #1 (0.700)']
+    assert summary['documents'][1]['hits'] == ['ref ref_lookup #1']
     assert summary['documents'][0]['best_score'] == 0.91 and summary['dropped'] == [{'ref': 'C-3', 'reason': 'over_cap'}]
     passages = s['passages_sent']
     assert passages.parent is s['retrieval'] and passages.kwargs['span_type'] == 'RETRIEVER'
@@ -146,6 +152,8 @@ def test_every_vector_search_call_is_a_span_under_search(spans):
     assert calls[0].kwargs['start_time_ns'] == t0 + 330_000_000 and calls[0].ended['end'] == t0 + 710_000_000
     assert calls[0].ended['status'] == 'OK' and calls[1].ended['status'] == 'ERROR'
     assert calls[1].ended['outputs']['error'].endswith('429') and calls[0].kwargs['inputs']['num_results'] == 12
+    assert calls[0].ended['outputs']['documents'][0] == {'rank': 1, 'ref': 'A-1', 'title': 'Process control',
+                                                         'score': 0.91, 'chunk_id': 'c1'}
 
 
 def test_root_tags_user_hash_and_status(spans):
@@ -163,7 +171,7 @@ def test_tags_for_the_free_scorers(spans, monkeypatch):
     log.data.update({'passages_sent': 2, 'cost_eur': 0.004, 'rewrite_cost_eur': 0.001})
     mlflow_turns._write_trace(log, 'chat')
     tags = _by_name(spans)['chat_turn'].kwargs['tags']
-    assert tags['passages_sent'] == '2' and tags['first_token_ms'] == '1200' and tags['total_ms'] == '4000'
+    assert tags['rewrite_skipped'] == 'false' and tags['passages_sent'] == '2' and tags['first_token_ms'] == '1200' and tags['total_ms'] == '4000'
     assert tags['cost_eur'] == '0.005' and tags['question_lang_guess'] == 'fr' and tags['answer_lang_guess'] == 'fr'
     assert 'mlflow.linkedPrompts' not in tags                     # no log.prompts
 

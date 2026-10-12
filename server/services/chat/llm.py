@@ -477,10 +477,14 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
             t0 = time.monotonic()
             try:
                 async with _client(httpx.Timeout(min(timeout_s, left), connect=10.0)) as client:
+                    payload = _payload(endpoint, messages,
+                                       effective_max_tokens(endpoint, max_tokens, _REWRITE_REASONING_MIN_TOKENS), False)
+                    effort = os.getenv('CHAT_REWRITE_REASONING_EFFORT', '').strip()
+                    if effort and not supports_temperature(endpoint):
+                        payload['reasoning_effort'] = effort
                     resp = await client.post(
                         f'{host}/serving-endpoints/{endpoint}/invocations',
-                        json=_payload(endpoint, messages,
-                                      effective_max_tokens(endpoint, max_tokens, _REWRITE_REASONING_MIN_TOKENS), False),
+                        json=payload,
                         headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
                 if resp.status_code != 200:
                     raise _failure_for_status(resp, resp.text)

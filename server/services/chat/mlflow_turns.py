@@ -36,6 +36,7 @@ import time
 from typing import Any, Dict, List, Optional, Set
 
 from . import prompts
+from .turn_log import passage_title
 
 logger = logging.getLogger(__name__)
 
@@ -111,20 +112,11 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
 
 
-_TITLE_RE = re.compile(r'Title:\s*(.*?)\s*\|')
-
-
-def _title(passage: Dict[str, Any]) -> str:
-    """Document title from the ``[Source: REF | Title: … |`` prefix every passage starts with."""
-    found = _TITLE_RE.search((passage.get('chunk_text') or '')[:400])
-    return found.group(1) if found else ''
-
-
 def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The documents handed to the model, in prompt order: n, REF, title, passages, best score, cited."""
     docs: Dict[str, Dict[str, Any]] = {}
     for p in sent:
-        d = docs.setdefault(p.get('ref') or '', {'n': p.get('doc_number'), 'ref': p.get('ref'), 'title': _title(p),
+        d = docs.setdefault(p.get('ref') or '', {'n': p.get('doc_number'), 'ref': p.get('ref'), 'title': passage_title(p.get('chunk_text')),
                                                 'passages': 0, 'best_score': None, 'found_by': set(),
                                                 'cited': bool(p.get('cited'))})
         d['passages'] += 1
@@ -132,7 +124,16 @@ def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if score is not None and (d['best_score'] is None or score > d['best_score']):
             d['best_score'] = round(float(score), 4)
         d['found_by'].add(p.get('source') or 'search')
-    return [{**d, 'found_by': sorted(d['found_by'])} for d in sorted(docs.values(), key=lambda d: d['n'] or 0)]
+        d.setdefault('hits', []).extend(_hit_label(h) for h in p.get('hits') or [])
+    return [{**d, 'found_by': sorted(d['found_by']), 'hits': d['hits'][:8]}
+            for d in sorted(docs.values(), key=lambda d: d['n'] or 0)]
+
+
+def _hit_label(hit: Dict[str, Any]) -> str:
+    """'q1 rerank #3 (0.83)': which query found the passage, how, at which rank, with which score."""
+    q = 'ref' if hit.get('q') is None else f"q{hit['q'] + 1}"
+    score = hit.get('score')
+    return f"{q} {hit.get('via')} #{(hit.get('rank') or 0) + 1}" + (f' ({score:.3f})' if isinstance(score, (int, float)) else '')
 
 
 def _document(passage: Dict[str, Any]) -> Any:
@@ -226,6 +227,7 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
         'first_token_ms': str(timings.get('first_token') or ''), 'total_ms': str(total_ms),
         'cost_eur': str(round((data.get('cost_eur') or 0) + (data.get('rewrite_cost_eur') or 0), 6)),
         'question_lang_guess': _language_guess(data.get('question')), 'answer_lang_guess': _language_guess(log.answer),
+        'rewrite_skipped': str(bool(data.get('rewrite_skipped'))).lower(),
     }
     linked = _linked_prompts(experiment_id, getattr(log, 'prompts', []))
     if linked:
@@ -249,7 +251,8 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
         dropped = [{'ref': p.get('ref'), 'reason': p.get('drop_reason')} for p in log.passages if not p.get('kept')]
         retrieval = mlflow.start_span_no_context(
             'retrieval', span_type=SpanType.CHAIN, parent_span=root,
-            inputs={'question': data.get('question'), 'named_refs': data.get('named_refs') or []},
+            inputs={'question': data.get('question'), 'named_refs': data.get('named_refs') or [],
+                    'rewrite': 'skipped: French first message, searched as asked' if data.get('rewrite_skipped') else 'bilingual rewrite'},
             start_time_ns=at(start))
         if 'rewrite' in timings:
             child(retrieval, 'rewrite', SpanType.LLM, starts.get('rewrite', start), timings['rewrite'],
@@ -268,7 +271,8 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
                 label = f"q{(call.get('query_index') or 0) + 1 if call.get('query_index') is not None else '-'} {call['mode']}"
                 child(search, 'vector_search', SpanType.RETRIEVER, call['start_ms'], call.get('ms') or 0, label=label,
                       inputs={'query': call['query'], 'mode': call['mode'], 'num_results': call['k']},
-                      outputs={'results': call.get('results'), 'error': call.get('error')},
+                      outputs={'results': call.get('results'), 'error': call.get('error'),
+                               'documents': call.get('hits') or []},
                       status='OK' if call.get('ok', True) else 'ERROR')
             search.end(outputs={'calls': len(log.vs_calls), 'calls_ok': data.get('vs_calls_ok'),
                                 'rerank_ok': data.get('rerank_ok'), 'passages_retrieved': data.get('passages_retrieved')},

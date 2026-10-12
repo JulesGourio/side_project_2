@@ -378,6 +378,12 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
 - [ ] **0.12 Contrôle de la recherche** (S10 ; ≈ 1 €, ≈ 10 min) : notebook
   `/Workspace/Shared/.bundle/qualibot/dev/files/utils/evaluation/retrieval_eval`, calcul **serverless**, Run all avec les défauts
   (`indexes = chat`). Attendu : environ 83 % des documents attendus trouvés. **M'envoyer le dernier tableau.**
+- [ ] **0.12b Mesurer le raccourci « question française = pas de réécriture »** (2026-10-12, code activé par défaut : `CHAT_DIRECT_FR=on` → une seule
+  requête de 30 passages reclassés + 15 bruts au lieu de la réécriture et des 3 requêtes). Même notebook que 0.12 (`retrieval_eval`, serverless),
+  une seule différence : le widget `indexes` à `chat,rewrite|direct=off` (le libellé `chat` = le raccourci actif, `rewrite` = l'ancien comportement),
+  Run all. ≈ 2 €. **M'envoyer le dernier tableau** : si `chat` est à moins de ~2 points de `rewrite` pour les documents attendus trouvés, on
+  garde le raccourci (premier mot plus tôt de 2 à 5 s) ; sinon on le coupe avec `CHAT_DIRECT_FR=off` (je change la valeur, tu redéploies) ou on
+  essaie d'autres tailles (`wide|directrerank=40|directraw=20`, ajouté à la liste des configurations séparées par des virgules).
 - [ ] **0.13 Tests dans l'app** (S9, X3, Y6) — quatre questions : une normale en AS, une en IS, une avec un numéro de document (ex. `MI-14242`),
   une hors sujet (attendu : refus poli), une en espagnol ; 👍 sur une réponse et 👎 sur une autre ; bouton **Télécharger → Response —
   Markdown** (le fichier finit par la liste **Sources**) ; « Judge Impacted Docs » dans Compare sur deux révisions connues ; la question

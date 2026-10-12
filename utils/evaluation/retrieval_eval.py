@@ -40,6 +40,8 @@ dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/fi
 # "chat" alone = the app as deployed. Index after a rechunk: "chat,rechunk=dev_landingzone.qualibot.chunks_test_index".
 # Search sizes (reranked / raw passages per query, cap on the merged list):
 # "chat,rerank-only|raw=0,raw5|raw=5,cap40|cap=40"; raw search on the French rewrite only: "rawfr|rawon=fr".
+# French opener searched as asked, no rewrite (direct=on, the app's default) against always rewriting: "chat,rewrite|direct=off";
+# its sizes: "wide|directrerank=40|directraw=20".
 dbutils.widgets.text('indexes', 'chat')
 dbutils.widgets.text('sources', 'golden,synthetic,feedback')
 dbutils.widgets.dropdown('rerun_existing', 'false', ['false', 'true'])
@@ -75,7 +77,8 @@ sys.path.insert(0, APP)
 os.environ['CHAT_REWRITE_FALLBACK_ENDPOINTS'] = os.environ.get('CHAT_REWRITE_ENDPOINT') or os.environ['CHAT_LLM_ENDPOINT']
 
 _SIZE_KEYS = {'rerank': 'CHAT_RERANK_TOP_K', 'raw': 'CHAT_RAW_TOP_K', 'rawon': 'CHAT_RAW_ON',
-              'cap': 'CHAT_MAX_SEARCH_PASSAGES'}
+              'cap': 'CHAT_MAX_SEARCH_PASSAGES', 'direct': 'CHAT_DIRECT_FR', 'directrerank': 'CHAT_DIRECT_RERANK_TOP_K',
+              'directraw': 'CHAT_DIRECT_RAW_TOP_K'}
 
 
 def parse_configs(text):
@@ -89,8 +92,10 @@ def parse_configs(text):
         env = {}
         for o in opts:
             k, _, v = o.partition('=')
-            ok = re.fullmatch(r'(question|fr|en)(\+(question|fr|en))*', v) if k == 'rawon' else v.isdigit()
-            assert k in _SIZE_KEYS and ok, f'{item}: options are rerank=N, raw=N, cap=N, rawon=fr+en'
+            ok = (re.fullmatch(r'(question|fr|en)(\+(question|fr|en))*', v) if k == 'rawon'
+                  else v in ('on', 'off') if k == 'direct' else v.isdigit())
+            assert k in _SIZE_KEYS and ok, (f'{item}: options are rerank=N, raw=N, cap=N, rawon=fr+en, '
+                                            'direct=on|off, directrerank=N, directraw=N')
             env[_SIZE_KEYS[k]] = v
         out[label.strip()] = {'index': index, 'env': env, 'signature': '|'.join([index] + sorted(opts))}
     return out

@@ -50,7 +50,7 @@ import httpx
 from . import llm as chat_llm, prompts
 from ..infra import vs_gate
 from ..infra.doc_catalog import _catalog, canon_ref, document_info
-from .turn_log import TurnLog
+from .turn_log import TurnLog, passage_title
 from ..infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,8 @@ _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside 
 _DEFAULT_REWRITE_MAX_TOKENS = 2000
 _RERANK_TOP_K = 12               # reranked passages kept per query (20 measured worse, 2026-10-08)
 _RAW_TOP_K = 10                  # raw HYBRID passages per query (0 = reranked passages only)
+_DIRECT_RERANK_TOP_K = 30        # one query instead of three: as many candidates in all
+_DIRECT_RAW_TOP_K = 15
 _RERANK_COLUMNS = ['REF', 'semantic_headers', 'chunk_text']
 _RERANKER_MODEL = 'databricks_reranker'
 _REF_LOOKUP_MAX = 6              # REFs (language variants included) filtered on
@@ -149,6 +151,28 @@ def raw_on() -> List[str]:
     return [n for n in _RAW_ON_ALL if n in names]
 
 
+def direct_fr_enabled() -> bool:
+    """A French question that opens the conversation is searched as asked (no rewrite call): nothing to
+    translate or to complete, the corpus is mostly French."""
+    return os.getenv('CHAT_DIRECT_FR', 'on').strip().lower() not in ('off', 'false', '0', 'no')
+
+
+def direct_rerank_top_k() -> int:
+    return max(1, _int_env('CHAT_DIRECT_RERANK_TOP_K', _DIRECT_RERANK_TOP_K))
+
+
+def direct_raw_top_k() -> int:
+    return max(0, _int_env('CHAT_DIRECT_RAW_TOP_K', _DIRECT_RAW_TOP_K))
+
+
+def is_direct(conversation: List[Dict[str, str]], question: str) -> bool:
+    """True when the rewrite step is skipped: first message of the conversation, confidently French."""
+    if not direct_fr_enabled() or len(conversation) > 1:
+        return False
+    from .translation_bridge import _fast_lang_guess
+    return _fast_lang_guess(question) == 'fr'
+
+
 def max_search_passages() -> int:
     """Cap on the merged search passages (REF and title lookups come on top); 0 = no cap."""
     return max(0, _int_env('CHAT_MAX_SEARCH_PASSAGES', 0))
@@ -170,7 +194,8 @@ def settings() -> Dict[str, Any]:
             'llm_fallbacks': chat_llm.answer_chain(llm_endpoint())[1:],
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),
             'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(), 'raw_on': raw_on(),
-            'max_search_passages': max_search_passages()}
+            'max_search_passages': max_search_passages(), 'direct_fr': direct_fr_enabled(),
+            'direct_rerank_top_k': direct_rerank_top_k(), 'direct_raw_top_k': direct_raw_top_k()}
 
 
 def prompt_parts(division: str) -> Dict[str, str]:
@@ -434,14 +459,16 @@ def _status_of(exc: BaseException) -> int:
 
 
 async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any],
-                 raw_queries: Optional[List[str]] = None, log: Optional[TurnLog] = None) -> List[Dict[str, Any]]:
+                 raw_queries: Optional[List[str]] = None, log: Optional[TurnLog] = None,
+                 rerank_k: Optional[int] = None, raw_k: Optional[int] = None) -> List[Dict[str, Any]]:
     """Reranked top k for every query + raw top k for ``raw_queries`` (default: every query),
     merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
     if everything failed. Without raw passages (``raw_top_k() == 0``), a refused reranker falls
     back to the raw search with the reranked size."""
     log = log if log is not None else TurnLog()
-    rerank_k, raw_k = rerank_top_k(), raw_top_k()
+    rerank_k = rerank_top_k() if rerank_k is None else rerank_k
+    raw_k = raw_top_k() if raw_k is None else raw_k
     rerank_ok = True
 
     async def call(i: Optional[int], q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
@@ -455,7 +482,9 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
         except BaseException as exc:
             entry.update(ms=int((time.monotonic() - t0) * 1000), ok=False, error=f'{type(exc).__name__}: {str(exc)[:200]}')
             raise
-        entry.update(ms=int((time.monotonic() - t0) * 1000), ok=True, results=len(rows))
+        entry.update(ms=int((time.monotonic() - t0) * 1000), ok=True, results=len(rows),
+                     hits=[{'rank': n, 'ref': r.get('REF'), 'title': passage_title(r.get('chunk_text')),
+                            'score': r.get('score'), 'chunk_id': r.get('chunk_id')} for n, r in enumerate(rows, 1)])
         return rows
 
     async def reranked(i: int, q: str) -> List[Dict[str, Any]]:
@@ -557,9 +586,14 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         index = index_name()
         filters = division_filter(division)
         question = _without_date(conversation[-1]['content'])
-        with log.timed('rewrite'):
-            fr_query, en_query = await rewrite_queries(
-                host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
+        direct = is_direct(conversation, question)
+        log.data['rewrite_skipped'] = direct
+        if direct:
+            fr_query, en_query = '', ''
+        else:
+            with log.timed('rewrite'):
+                fr_query, en_query = await rewrite_queries(
+                    host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
         queries = [question]
         for q in (fr_query, en_query):
             if q and q.casefold() not in {x.casefold() for x in queries}:
@@ -580,10 +614,11 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             text = by_name[name]
             if text and text.casefold() not in {x.casefold() for x in raw_texts}:
                 raw_texts.append(text)
-        if raw_on() and not raw_texts:   # rewrite failed: the question keeps its raw search
+        if (raw_on() or direct) and not raw_texts:   # no rewrite (skipped or failed): the question keeps its raw search
             raw_texts = [question]
+        sizes = {'rerank_k': direct_rerank_top_k(), 'raw_k': direct_raw_top_k()} if direct else {}
         with log.timed('search'):
-            rows = await search(host, token, index, queries, filters, raw_texts, log=log)
+            rows = await search(host, token, index, queries, filters, raw_texts, log=log, **sizes)
         over_cap: List[Dict[str, Any]] = []
         if max_search_passages():
             rows, over_cap = rows[:max_search_passages()], rows[max_search_passages():]

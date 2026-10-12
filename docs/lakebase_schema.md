@@ -67,7 +67,7 @@ de reformulation, limites de tokens. À comparer avec ce qui s'est passé :
 secondes).
 
 **Question et recherche** — `question`, `question_lang`, `question_en` (question envoyée à la
-recherche quand le bridge l'a traduite), `history_messages`, `fr_query`, `en_query`,
+recherche quand le bridge l'a traduite), `history_messages`, `fr_query`, `en_query`, `rewrite_skipped` (message français ouvrant la conversation : cherché tel quel, sans appel de réécriture),
 `named_refs` / `titled_refs` (documents cherchés en plus, parce que nommés dans la conversation ou
 parce que leur titre correspond), `passages_retrieved` / `passages_sent` / `documents_sent`,
 `prompt_chars`, `instructions_sha` (empreinte des instructions système utilisées : change quand

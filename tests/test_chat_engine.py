@@ -389,6 +389,46 @@ def test_last_message_must_be_user(monkeypatch):
     assert _types(events) == ['error', '[DONE]'] and events[0]['error_type'] == 'InputError'
 
 
+def _french(monkeypatch, code='fr'):
+    from server.services.chat import translation_bridge
+    monkeypatch.setattr(translation_bridge, '_fast_lang_guess', lambda text: code)
+
+
+def test_a_french_first_question_skips_the_rewrite_and_searches_wider(monkeypatch):
+    _french(monkeypatch)
+    _, m = _run(monkeypatch)
+    m['rewrite'].assert_not_called()
+    modes = sorted((p['num_results'], 'reranker' in p) for p in m['sent'])
+    assert modes == [(15, False), (30, True)]                        # one reranked and one raw search, both on the question
+    assert {p['query_text'] for p in m['sent']} == {QUESTION}
+    d = m['log'].data
+    assert d['rewrite_skipped'] is True and 'rewrite_ok' not in d
+    assert 'rewrite' not in m['log'].timings_ms and (d['fr_query'], d['en_query']) == ('', '')
+    assert d['vs_calls_expected'] == 2 and d['config']['direct_rerank_top_k'] == 30 and not m['log'].issues
+    assert sorted((c['mode'], c['k'], c['results']) for c in m['log'].vs_calls) == [('raw', 15, 3), ('rerank', 30, 3)]
+    first = m['log'].vs_calls[0]['hits'][0]
+    assert first['rank'] == 1 and first['ref'] == 'QP-1518' and 'score' in first and first['chunk_id']
+
+
+@pytest.mark.parametrize('code,history,env', [
+    ('en', False, None),                       # English: the French rewrite helps the French corpus
+    (None, False, None),                       # language not sure
+    ('fr', True, None),                        # follow-up: needs the conversation
+    ('fr', False, 'off'),                      # switched off
+])
+def test_the_rewrite_still_runs_when_the_question_is_not_a_french_opener(monkeypatch, code, history, env):
+    _french(monkeypatch, code)
+    if env:
+        monkeypatch.setenv('CHAT_DIRECT_FR', env)
+    messages = MESSAGES
+    if history:
+        messages = [{'role': 'user', 'content': 'Bonjour'}, {'role': 'assistant', 'content': 'Bonjour !'}] + MESSAGES
+    _, m = _run(monkeypatch, messages=messages)
+    m['rewrite'].assert_called_once()
+    assert m['log'].data['rewrite_skipped'] is False
+    assert sorted(p['num_results'] for p in m['sent']) == [10, 12, 12, 12]      # the measured configuration
+
+
 def test_rewrite_prompt_names_no_company_and_forbids_filler():
     assert 'Latécoère' not in engine.REWRITE_PROMPT and 'quality documents' not in engine.REWRITE_PROMPT
     assert 'no company name' in engine.REWRITE_PROMPT

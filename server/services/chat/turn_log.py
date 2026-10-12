@@ -15,6 +15,7 @@ did not run as configured (rewrite failed, part of the searches failed, fallback
 ``warnings`` say which); ``error`` — no answer; ``aborted`` — the browser left before the end.
 """
 
+import re
 import time
 import traceback
 import uuid
@@ -27,6 +28,15 @@ from ..infra import error_origin
 INFO = 'info'
 WARNING = 'warning'
 ERROR = 'error'
+
+
+_TITLE_RE = re.compile(r'Title:\s*(.*?)\s*\|')
+
+
+def passage_title(chunk_text: Optional[str]) -> str:
+    """Document title from the ``[Source: REF | Title: … |`` prefix every passage starts with."""
+    found = _TITLE_RE.search((chunk_text or '')[:400])
+    return found.group(1) if found else ''
 
 
 def new_trace_id() -> str:

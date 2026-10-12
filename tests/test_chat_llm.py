@@ -289,3 +289,19 @@ def test_no_claude_model_in_the_chatbot_config():
         for name, value in values.items():
             if name.startswith(('CHAT_LLM', 'CHAT_REWRITE_ENDPOINT', 'CHAT_REWRITE_FALLBACK', 'CHAT_TRANSLATE')):
                 assert 'claude' not in str(value).lower(), f'{name}={value}'
+
+
+def test_rewrite_reasoning_effort_is_sent_only_when_asked_and_only_to_reasoning_models(monkeypatch):
+    sent = []
+
+    async def post(self, url, json=None, headers=None):
+        sent.append(json)
+        body = {'choices': [{'message': {'content': 'FR: x\nEN: y'}}], 'usage': {'prompt_tokens': 1, 'completion_tokens': 1}}
+        return httpx.Response(200, json=body, request=httpx.Request('POST', url))
+    monkeypatch.setattr(httpx.AsyncClient, 'post', post)
+    messages = [{'role': 'user', 'content': 'q'}]
+    asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gpt-6-luna'], messages, 100))
+    assert 'reasoning_effort' not in sent[-1]
+    monkeypatch.setenv('CHAT_REWRITE_REASONING_EFFORT', 'low')
+    asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gpt-6-luna'], messages, 100))
+    assert sent[-1]['reasoning_effort'] == 'low'

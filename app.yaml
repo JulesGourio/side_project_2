@@ -35,6 +35,14 @@ env:
     value: "databricks-gpt-6-luna"
   - name: CHAT_REWRITE_FALLBACK_ENDPOINTS
     value: "databricks-gpt-5-6-luna"
+  # A French question that opens the conversation is searched as asked: no rewrite call (a reasoning model costs 2 to 5 s), one query with
+  # more candidates (reranked / raw). Follow-ups and non-French questions still go through the bilingual rewrite. "off" = always rewrite.
+  - name: CHAT_DIRECT_FR
+    value: "on"
+  - name: CHAT_DIRECT_RERANK_TOP_K
+    value: "30"
+  - name: CHAT_DIRECT_RAW_TOP_K
+    value: "15"
   # Output caps; a reasoning model counts its thinking in them.
   - name: CHAT_ANSWER_MAX_TOKENS
     value: "8000"
