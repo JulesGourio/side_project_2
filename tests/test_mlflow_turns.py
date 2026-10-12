@@ -168,10 +168,10 @@ def test_root_tags_user_hash_and_status(spans):
 def test_tags_for_the_free_scorers(spans, monkeypatch):
     monkeypatch.setattr(mlflow_turns, '_language_guess', lambda text: 'fr' if text else '')
     log = _turn()
-    log.data.update({'passages_sent': 2, 'cost_eur': 0.004, 'rewrite_cost_eur': 0.001})
+    log.data.update({'passages_sent': 2, 'cost_eur': 0.004, 'rewrite_cost_eur': 0.001, 'rewrite_mode': 'translate'})
     mlflow_turns._write_trace(log, 'chat')
     tags = _by_name(spans)['chat_turn'].kwargs['tags']
-    assert tags['rewrite_skipped'] == 'false' and tags['passages_sent'] == '2' and tags['first_token_ms'] == '1200' and tags['total_ms'] == '4000'
+    assert tags['rewrite_mode'] == 'translate' and tags['passages_sent'] == '2' and tags['first_token_ms'] == '1200' and tags['total_ms'] == '4000'
     assert tags['cost_eur'] == '0.005' and tags['question_lang_guess'] == 'fr' and tags['answer_lang_guess'] == 'fr'
     assert 'mlflow.linkedPrompts' not in tags                     # no log.prompts
 
@@ -239,3 +239,11 @@ def test_the_app_never_reads_the_prompt_registry(spans, monkeypatch):
     log = _turn()
     log.prompts = ['system_base']
     mlflow_turns._write_trace(log, 'chat')
+
+
+def test_the_query_step_is_named_after_what_it_did(spans):
+    log = _turn()
+    log.data['rewrite_mode'] = 'translate'
+    mlflow_turns._write_trace(log, 'chat')
+    assert 'translate' in _by_name(spans) and 'rewrite' not in _by_name(spans)
+    assert _by_name(spans)['retrieval'].kwargs['inputs']['search_queries'] == 'translate'

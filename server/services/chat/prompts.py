@@ -19,6 +19,7 @@ FILES: Dict[str, str] = {
     'system_as': 'system/as.md',
     'system_is': 'system/is.md',
     'rewrite': 'rewrite.md',
+    'translate_query': 'translate_query.md',
     'language_reminder': 'language_reminder.md',
     'language_reminder_named': 'language_reminder_named.md',
 }
@@ -38,6 +39,7 @@ def registry_name(schema: str, key: str) -> str:
 
 
 def keys_for_turn(division: str, language_named: bool) -> List[str]:
-    """Prompts a turn sends to the models: the rewrite, the system instructions, the language reminder."""
-    return ['rewrite', f'system_{division.lower()}', 'system_base',
+    """Prompts the answer step sends to the model: the system instructions, the language reminder. The prompt of the
+    search-query step (``rewrite`` or ``translate_query``) is added by the engine once it knows which one ran."""
+    return [f'system_{division.lower()}', 'system_base',
             'language_reminder_named' if language_named else 'language_reminder']

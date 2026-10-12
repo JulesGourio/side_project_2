@@ -389,43 +389,68 @@ def test_last_message_must_be_user(monkeypatch):
     assert _types(events) == ['error', '[DONE]'] and events[0]['error_type'] == 'InputError'
 
 
-def _french(monkeypatch, code='fr'):
+def _lang(monkeypatch, code):
     from server.services.chat import translation_bridge
     monkeypatch.setattr(translation_bridge, '_fast_lang_guess', lambda text: code)
 
 
-def test_a_french_first_question_skips_the_rewrite_and_searches_wider(monkeypatch):
-    _french(monkeypatch)
-    _, m = _run(monkeypatch)
-    m['rewrite'].assert_not_called()
-    modes = sorted((p['num_results'], 'reranker' in p) for p in m['sent'])
-    assert modes == [(15, False), (30, True)]                        # one reranked and one raw search, both on the question
-    assert {p['query_text'] for p in m['sent']} == {QUESTION}
+def test_a_french_opening_question_is_only_translated_into_english(monkeypatch):
+    _lang(monkeypatch, 'fr')
+    _, m = _run(monkeypatch, rewrite='Search for NDT qualification procedures')
+    m['rewrite'].assert_called_once()
+    system = m['rewrite'].call_args.args[3][0]['content']
+    assert 'Translate the user' in system and 'into English' in system and m['rewrite'].call_args.args[3][1]['content'] == QUESTION
     d = m['log'].data
-    assert d['rewrite_skipped'] is True and 'rewrite_ok' not in d
-    assert 'rewrite' not in m['log'].timings_ms and (d['fr_query'], d['en_query']) == ('', '')
-    assert d['vs_calls_expected'] == 2 and d['config']['direct_rerank_top_k'] == 30 and not m['log'].issues
-    assert sorted((c['mode'], c['k'], c['results']) for c in m['log'].vs_calls) == [('raw', 15, 3), ('rerank', 30, 3)]
-    first = m['log'].vs_calls[0]['hits'][0]
-    assert first['rank'] == 1 and first['ref'] == 'QP-1518' and 'score' in first and first['chunk_id']
+    assert d['rewrite_mode'] == 'translate' and (d['fr_query'], d['en_query']) == (QUESTION, 'Search for NDT qualification procedures')
+    assert sorted((p['num_results'], 'reranker' in p, p['query_text']) for p in m['sent']) == [
+        (12, False, QUESTION), (18, True, QUESTION), (18, True, 'Search for NDT qualification procedures')]
+    assert d['vs_calls_expected'] == 3 and d['config']['pair_rerank_top_k'] == 18 and not m['log'].issues
+    assert m['log'].prompts[0] == 'translate_query' and 'rewrite' not in m['log'].prompts
+    assert 'rewrite' in m['log'].timings_ms
+
+
+def test_an_english_opening_question_is_translated_into_french_and_the_raw_search_uses_the_french_one(monkeypatch):
+    _lang(monkeypatch, 'en')
+    messages = [{'role': 'user', 'content': 'What are the NDT qualification requirements?'}]
+    _, m = _run(monkeypatch, messages=messages, rewrite='  « Quelles sont les exigences de qualification CND ? »  ')
+    system = m['rewrite'].call_args.args[3][0]['content']
+    assert 'into French' in system
+    d = m['log'].data
+    assert d['rewrite_mode'] == 'translate'
+    assert (d['fr_query'], d['en_query']) == ('Quelles sont les exigences de qualification CND ?', 'What are the NDT qualification requirements?')
+    raw = [p for p in m['sent'] if 'reranker' not in p]
+    assert [(p['query_text'], p['num_results']) for p in raw] == [('Quelles sont les exigences de qualification CND ?', 12)]
+    assert sorted(p['query_text'] for p in m['sent'] if 'reranker' in p) == sorted(
+        ['What are the NDT qualification requirements?', 'Quelles sont les exigences de qualification CND ?'])
+
+
+def test_a_failed_translation_searches_with_the_question_alone(monkeypatch):
+    _lang(monkeypatch, 'fr')
+    _, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
+    d = m['log'].data
+    assert d['rewrite_ok'] is False and (d['fr_query'], d['en_query']) == (QUESTION, '')
+    assert sorted((p['num_results'], 'reranker' in p) for p in m['sent']) == [(10, False), (12, True)]   # usual sizes, one query
+    assert [i['code'] for i in m['log'].issues] == ['rewrite_failed']
 
 
 @pytest.mark.parametrize('code,history,env', [
-    ('en', False, None),                       # English: the French rewrite helps the French corpus
+    ('es', False, None),                       # another language: the bilingual rewrite handles it
     (None, False, None),                       # language not sure
     ('fr', True, None),                        # follow-up: needs the conversation
+    ('en', True, None),
     ('fr', False, 'off'),                      # switched off
 ])
-def test_the_rewrite_still_runs_when_the_question_is_not_a_french_opener(monkeypatch, code, history, env):
-    _french(monkeypatch, code)
+def test_the_bilingual_rewrite_still_runs_otherwise(monkeypatch, code, history, env):
+    _lang(monkeypatch, code)
     if env:
-        monkeypatch.setenv('CHAT_DIRECT_FR', env)
+        monkeypatch.setenv('CHAT_TRANSLATE_ONLY', env)
     messages = MESSAGES
     if history:
         messages = [{'role': 'user', 'content': 'Bonjour'}, {'role': 'assistant', 'content': 'Bonjour !'}] + MESSAGES
     _, m = _run(monkeypatch, messages=messages)
     m['rewrite'].assert_called_once()
-    assert m['log'].data['rewrite_skipped'] is False
+    assert 'Using the conversation for context' in m['rewrite'].call_args.args[3][0]['content']
+    assert m['log'].data['rewrite_mode'] == 'rewrite' and m['log'].prompts[0] == 'rewrite'
     assert sorted(p['num_results'] for p in m['sent']) == [10, 12, 12, 12]      # the measured configuration
 
 

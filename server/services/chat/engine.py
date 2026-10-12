@@ -2,10 +2,14 @@
 
 What happens for each question (measures behind the configuration: ``docs/chat_tests.md``):
 
-1. **Rewrite** — GPT-6 Luna turns the last question, with the conversation as context, into
-   one standalone search query in French and one in English (acronyms expanded when certain).
-2. **Search** — three queries (the question as asked + the two rewrites) in HYBRID mode on the
-   single passage index: for each, the top ``rerank_top_k()`` passages (12) reranked by the
+1. **Search queries** — two cases (``opening_language()``). The first message of a conversation, in French or
+   English: only translated into the other language (``translate_query``, no rewrite, nothing expanded), then
+   two queries. Anything else (follow-up, other or unsure language): GPT-6 Luna turns the last question, with
+   the conversation as context, into one standalone search query in French and one in English (acronyms
+   expanded when certain).
+2. **Search** — the queries (the question as asked + the rewrites or the translation) in HYBRID mode on the
+   single passage index: for each, the top ``rerank_top_k()`` passages (12; ``pair_rerank_top_k()``, 18, with two
+   queries) reranked by the
    Databricks reranker (reading REF, section headings and text); for the French rewrite only
    (``raw_on()``), also the raw top ``raw_top_k()`` (10). Everything is merged by best rank (``union``), then cut to
    ``max_search_passages()`` (0 = no cap, the default). The chat's division (AS / IS) is a filter on
@@ -56,6 +60,7 @@ from ..infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEO
 logger = logging.getLogger(__name__)
 
 _DIVISIONS = ('ALL', 'AS', 'IS')
+_TRANSLATE_NAMES = {'fr': 'French', 'en': 'English'}
 
 
 _DEFAULT_INDEX = 'dev_landingzone.qualibot.chunks_index'
@@ -64,8 +69,8 @@ _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside 
 _DEFAULT_REWRITE_MAX_TOKENS = 2000
 _RERANK_TOP_K = 12               # reranked passages kept per query (20 measured worse, 2026-10-08)
 _RAW_TOP_K = 10                  # raw HYBRID passages per query (0 = reranked passages only)
-_DIRECT_RERANK_TOP_K = 30        # one query instead of three: as many candidates in all
-_DIRECT_RAW_TOP_K = 15
+_PAIR_RERANK_TOP_K = 18          # two queries (the question and its translation) instead of three: as many candidates in all
+_PAIR_RAW_TOP_K = 12
 _RERANK_COLUMNS = ['REF', 'semantic_headers', 'chunk_text']
 _RERANKER_MODEL = 'databricks_reranker'
 _REF_LOOKUP_MAX = 6              # REFs (language variants included) filtered on
@@ -151,31 +156,37 @@ def raw_on() -> List[str]:
     return [n for n in _RAW_ON_ALL if n in names]
 
 
-def direct_fr_enabled() -> bool:
-    """A French question that opens the conversation is searched as asked (no rewrite call): nothing to
-    translate or to complete, the corpus is mostly French."""
-    return os.getenv('CHAT_DIRECT_FR', 'on').strip().lower() not in ('off', 'false', '0', 'no')
+def translate_only_enabled() -> bool:
+    """The first message of a conversation, in French or English, only needs its translation into the other
+    language (one short call, no rewrite): nothing to complete, nothing to expand."""
+    return os.getenv('CHAT_TRANSLATE_ONLY', 'on').strip().lower() not in ('off', 'false', '0', 'no')
 
 
-def direct_rerank_top_k() -> int:
-    return max(1, _int_env('CHAT_DIRECT_RERANK_TOP_K', _DIRECT_RERANK_TOP_K))
+def pair_rerank_top_k() -> int:
+    return max(1, _int_env('CHAT_PAIR_RERANK_TOP_K', _PAIR_RERANK_TOP_K))
 
 
-def direct_raw_top_k() -> int:
-    return max(0, _int_env('CHAT_DIRECT_RAW_TOP_K', _DIRECT_RAW_TOP_K))
+def pair_raw_top_k() -> int:
+    return max(0, _int_env('CHAT_PAIR_RAW_TOP_K', _PAIR_RAW_TOP_K))
 
 
-def is_direct(conversation: List[Dict[str, str]], question: str) -> bool:
-    """True when the rewrite step is skipped: first message of the conversation, confidently French."""
-    if not direct_fr_enabled() or len(conversation) > 1:
-        return False
+def opening_language(conversation: List[Dict[str, str]], question: str) -> Optional[str]:
+    """'fr' or 'en' when ``question`` opens the conversation and is confidently in that language (the translation
+    path applies), else None: follow-ups, other or unsure languages keep the bilingual rewrite."""
+    if not translate_only_enabled() or len(conversation) > 1:
+        return None
     from .translation_bridge import _fast_lang_guess
-    return _fast_lang_guess(question) == 'fr'
+    code = _fast_lang_guess(question)
+    return code if code in _TRANSLATE_NAMES else None
 
 
 def max_search_passages() -> int:
     """Cap on the merged search passages (REF and title lookups come on top); 0 = no cap."""
     return max(0, _int_env('CHAT_MAX_SEARCH_PASSAGES', 0))
+
+
+def translate_max_tokens() -> int:
+    return max(1, _int_env('CHAT_TRANSLATE_MAX_TOKENS', 600))
 
 
 def rewrite_timeout_s() -> float:
@@ -194,8 +205,8 @@ def settings() -> Dict[str, Any]:
             'llm_fallbacks': chat_llm.answer_chain(llm_endpoint())[1:],
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),
             'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(), 'raw_on': raw_on(),
-            'max_search_passages': max_search_passages(), 'direct_fr': direct_fr_enabled(),
-            'direct_rerank_top_k': direct_rerank_top_k(), 'direct_raw_top_k': direct_raw_top_k()}
+            'max_search_passages': max_search_passages(), 'translate_only': translate_only_enabled(),
+            'pair_rerank_top_k': pair_rerank_top_k(), 'pair_raw_top_k': pair_raw_top_k()}
 
 
 def prompt_parts(division: str) -> Dict[str, str]:
@@ -330,6 +341,36 @@ def strip_added_noise(query: str, conversation_text: str) -> str:
             out = pattern.sub(' ', out)
     out = re.sub(r'\s+', ' ', out).strip(' ,;:-')
     return out or query
+
+
+async def translate_query(host: str, token: str, question: str, target: str,
+                          log: Optional[TurnLog] = None) -> str:
+    """``question`` translated into ``target`` ('fr' or 'en'); '' when every model failed — the search then runs with the
+    question only."""
+    log = log if log is not None else TurnLog()
+    system = prompts.read('translate_query').replace('{language}', _TRANSLATE_NAMES[target])
+    chain = chat_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
+    info: Dict[str, Any] = {}
+    try:
+        text, used = await chat_llm.complete(host, token, chain, [{'role': 'system', 'content': system},
+                                                                   {'role': 'user', 'content': question}],
+                                             translate_max_tokens(), rewrite_timeout_s(), info=info)
+    except Exception as exc:  # noqa: BLE001 — the turn goes on with the question only
+        logger.warning('chat: query translation failed (%s) — searching with the question only', exc)
+        log.data['rewrite_ok'] = False
+        log.issue('rewrite_failed', 'rewrite', f'search ran with the question only: {exc}',
+                  error_type=type(exc).__name__, http_status=getattr(exc, 'status', 0), upstream=','.join(chain),
+                  context={'attempts': info.get('attempts')}, exc=exc)
+        return ''
+    usage = info.get('usage') or {}
+    log.data.update({'rewrite_ok': True, 'rewrite_endpoint': used,
+                     'rewrite_input_tokens': usage.get('input_tokens'),
+                     'rewrite_output_tokens': usage.get('output_tokens'),
+                     'rewrite_cost_eur': usage.get('cost_eur')})
+    if used != rewrite_endpoint():
+        log.issue('rewrite_fallback', 'rewrite', f'translated by {used} instead of {rewrite_endpoint()}',
+                  upstream=used, context={'expected': rewrite_endpoint(), 'attempts': info.get('attempts')})
+    return ' '.join(text.split()).strip(' "«»')
 
 
 async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, str]],
@@ -586,14 +627,18 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         index = index_name()
         filters = division_filter(division)
         question = _without_date(conversation[-1]['content'])
-        direct = is_direct(conversation, question)
-        log.data['rewrite_skipped'] = direct
-        if direct:
-            fr_query, en_query = '', ''
+        language = opening_language(conversation, question)
+        log.data['rewrite_mode'] = 'translate' if language else 'rewrite'
+        if language:
+            with log.timed('rewrite'):
+                translated = await translate_query(host, token, question, 'en' if language == 'fr' else 'fr', log=log)
+            fr_query, en_query = (question, translated) if language == 'fr' else (translated, question)
+            log.prompts.insert(0, 'translate_query')
         else:
             with log.timed('rewrite'):
                 fr_query, en_query = await rewrite_queries(
                     host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
+            log.prompts.insert(0, 'rewrite')
         queries = [question]
         for q in (fr_query, en_query):
             if q and q.casefold() not in {x.casefold() for x in queries}:
@@ -614,9 +659,9 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             text = by_name[name]
             if text and text.casefold() not in {x.casefold() for x in raw_texts}:
                 raw_texts.append(text)
-        if (raw_on() or direct) and not raw_texts:   # no rewrite (skipped or failed): the question keeps its raw search
+        if raw_on() and not raw_texts:   # rewrite failed: the question keeps its raw search
             raw_texts = [question]
-        sizes = {'rerank_k': direct_rerank_top_k(), 'raw_k': direct_raw_top_k()} if direct else {}
+        sizes = {'rerank_k': pair_rerank_top_k(), 'raw_k': pair_raw_top_k()} if language and len(queries) == 2 else {}
         with log.timed('search'):
             rows = await search(host, token, index, queries, filters, raw_texts, log=log, **sizes)
         over_cap: List[Dict[str, Any]] = []

@@ -227,7 +227,7 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
         'first_token_ms': str(timings.get('first_token') or ''), 'total_ms': str(total_ms),
         'cost_eur': str(round((data.get('cost_eur') or 0) + (data.get('rewrite_cost_eur') or 0), 6)),
         'question_lang_guess': _language_guess(data.get('question')), 'answer_lang_guess': _language_guess(log.answer),
-        'rewrite_skipped': str(bool(data.get('rewrite_skipped'))).lower(),
+        'rewrite_mode': str(data.get('rewrite_mode') or ''),
     }
     linked = _linked_prompts(experiment_id, getattr(log, 'prompts', []))
     if linked:
@@ -252,10 +252,11 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
         retrieval = mlflow.start_span_no_context(
             'retrieval', span_type=SpanType.CHAIN, parent_span=root,
             inputs={'question': data.get('question'), 'named_refs': data.get('named_refs') or [],
-                    'rewrite': 'skipped: French first message, searched as asked' if data.get('rewrite_skipped') else 'bilingual rewrite'},
+                    'search_queries': data.get('rewrite_mode') or 'rewrite'},
             start_time_ns=at(start))
         if 'rewrite' in timings:
-            child(retrieval, 'rewrite', SpanType.LLM, starts.get('rewrite', start), timings['rewrite'],
+            child(retrieval, 'translate' if data.get('rewrite_mode') == 'translate' else 'rewrite', SpanType.LLM,
+                  starts.get('rewrite', start), timings['rewrite'],
                   inputs={'question': data.get('question')}, outputs={'fr': data.get('fr_query'), 'en': data.get('en_query')},
                   status='OK' if data.get('rewrite_ok') is not False else 'ERROR',
                   attributes={SpanAttributeKey.MODEL: data.get('rewrite_endpoint'),

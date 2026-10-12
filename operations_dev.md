@@ -350,7 +350,7 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   databricks bundle run register_chat_prompts_dev -t dev --profile DEV
   ```
 
-  Attendu : 7 lignes `registered version 1, alias deployed`. **À refaire après chaque déploiement qui change un fichier de
+  Attendu : 8 lignes `registered version … alias deployed` (la nouvelle : `chat_translate_query`). **À refaire après chaque déploiement qui change un fichier de
   `server/prompts/chat/`.**
 - [ ] **0.10 Déployer l'app** (S8, L1, X1, Y5 : un seul déploiement pour tout ; l'app crée ses nouvelles colonnes — `chat_turns.mlflow_trace_id`,
   `doc_catalog.revision`/`doc_date`, `errors.origin`… — à son démarrage) :
@@ -378,12 +378,14 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
 - [ ] **0.12 Contrôle de la recherche** (S10 ; ≈ 1 €, ≈ 10 min) : notebook
   `/Workspace/Shared/.bundle/qualibot/dev/files/utils/evaluation/retrieval_eval`, calcul **serverless**, Run all avec les défauts
   (`indexes = chat`). Attendu : environ 83 % des documents attendus trouvés. **M'envoyer le dernier tableau.**
-- [ ] **0.12b Mesurer le raccourci « question française = pas de réécriture »** (2026-10-12, code activé par défaut : `CHAT_DIRECT_FR=on` → une seule
-  requête de 30 passages reclassés + 15 bruts au lieu de la réécriture et des 3 requêtes). Même notebook que 0.12 (`retrieval_eval`, serverless),
-  une seule différence : le widget `indexes` à `chat,rewrite|direct=off` (le libellé `chat` = le raccourci actif, `rewrite` = l'ancien comportement),
-  Run all. ≈ 2 €. **M'envoyer le dernier tableau** : si `chat` est à moins de ~2 points de `rewrite` pour les documents attendus trouvés, on
-  garde le raccourci (premier mot plus tôt de 2 à 5 s) ; sinon on le coupe avec `CHAT_DIRECT_FR=off` (je change la valeur, tu redéploies) ou on
-  essaie d'autres tailles (`wide|directrerank=40|directraw=20`, ajouté à la liste des configurations séparées par des virgules).
+- [ ] **0.12b Mesurer « le premier message est seulement traduit »** (2026-10-12, activé par défaut : `CHAT_TRANSLATE_ONLY=on`). Un premier message
+  français est traduit en anglais, un premier message anglais en français (un appel court, sans réécriture ni acronymes développés), puis cherché
+  avec **deux** requêtes de 18 passages reclassés, plus 12 passages bruts sur la requête française, au lieu de la réécriture bilingue et des
+  3 requêtes de 12 + 10. Les questions de suivi et les autres langues gardent la réécriture. Même notebook que 0.12 (`retrieval_eval`,
+  serverless), une seule différence : le widget `indexes` à `chat,rewrite|translate=off` (`chat` = le comportement actif, `rewrite` = l'ancien),
+  Run all. ≈ 2 €. **M'envoyer le dernier tableau** : si `chat` est à moins de ~2 points de `rewrite` pour les documents attendus trouvés, on garde
+  (appel plus court, requêtes plus propres) ; sinon `CHAT_TRANSLATE_ONLY=off` (je change la valeur, tu redéploies) ou d'autres tailles
+  (`wide|pairrerank=24|pairraw=15`, à ajouter à la liste des configurations séparées par des virgules).
 - [ ] **0.13 Tests dans l'app** (S9, X3, Y6) — quatre questions : une normale en AS, une en IS, une avec un numéro de document (ex. `MI-14242`),
   une hors sujet (attendu : refus poli), une en espagnol ; 👍 sur une réponse et 👎 sur une autre ; bouton **Télécharger → Response —
   Markdown** (le fichier finit par la liste **Sources**) ; « Judge Impacted Docs » dans Compare sur deux révisions connues ; la question
@@ -922,7 +924,7 @@ La notation est un **job par lots** (jamais pendant un tour) : scorers gratuits 
 
   Sortie : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot (service principal …) can edit the experiment`.
   Une expérience déjà créée à la main avec ton compte t'appartient : la supprimer d'abord (Experiments → ⋮ → Delete), puis relancer.
-- [ ] **Y4. Enregistrer les prompts** (7 prompts `dev_proj.qualibot.chat_*`, alias `deployed`) :
+- [ ] **Y4. Enregistrer les prompts** (8 prompts `dev_proj.qualibot.chat_*`, alias `deployed`) :
 
   ```powershell
   databricks bundle run register_chat_prompts_dev -t dev --profile DEV
