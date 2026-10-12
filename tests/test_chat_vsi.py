@@ -403,12 +403,12 @@ def test_instructions_per_division():
 
 
 def test_division_parts_only_hold_what_differs():
-    """Everything shared lives in base.md / answer_rules.md: a section title in a division file must
+    """Everything shared lives in base.md: a section title in a division file must
     be absent from the others' base, and the three division files share no section."""
     titles = {}
     for division in ('ALL', 'AS', 'IS'):
         parts = chat_vsi.prompt_parts(division)
-        assert list(parts) == [f'division_{division.lower()}', 'base', 'answer_rules']
+        assert list(parts) == [f'division_{division.lower()}', 'base']
         titles[division] = {line for line in parts[f'division_{division.lower()}'].splitlines() if line.startswith('# ')}
         assert not titles[division] & {line for line in parts['base'].splitlines() if line.startswith('# ')}
     assert not titles['AS'] & titles['ALL'] and not titles['IS'] & titles['ALL']

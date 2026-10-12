@@ -242,7 +242,7 @@ prévenir, je change la valeur, vous redéployez.
 
 - [ ] **D3. Règle « documents archivés » dans le chatbot** (avant D4) : la règle écrite pour le
   KA (`archive/knowledge_assistant/provisioning/ka_profiles.py`) doit passer dans
-  `server/config/chat_vsi/answer_rules.md`. Me prévenir : je l'ajoute, vous redéployez l'app.
+  `server/config/chat_vsi/base.md`. Me prévenir : je l'ajoute, vous redéployez l'app.
 
 - [ ] **D4. Mettre les fiches dans l'index du chatbot** (après D3 et D5) : je passe
   `parsing_archive_notices_in_rag` à `true` pour `qualibot-uat` ; `bundle deploy` + un run les

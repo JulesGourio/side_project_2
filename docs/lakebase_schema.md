@@ -71,7 +71,7 @@ recherche quand le bridge l'a traduite), `history_messages`, `fr_query`, `en_que
 `named_refs` / `titled_refs` (documents cherchés en plus, parce que nommés dans la conversation ou
 parce que leur titre correspond), `passages_retrieved` / `passages_sent` / `documents_sent`,
 `prompt_chars`, `instructions_sha` (empreinte des instructions système utilisées : change quand
-`instructions_*.md` ou `answer_rules.md` change).
+`division_*.md` ou `base.md` change).
 
 Le catalogue des documents (`doc_catalog`) porte aussi `revision` (l'indice Intraqual de la
 révision en cours) et `doc_date` (sa date de publication), écrits par la tâche
