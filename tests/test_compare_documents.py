@@ -157,9 +157,7 @@ def base_docx():
     return docx_text(make_docx(BASE, TABLE))
 
 
-# ---------------------------------------------------------------------------
-# PDF
-# ---------------------------------------------------------------------------
+# --- PDF ---
 
 def test_pdf_identical_documents_give_no_entry(base_pdf):
     assert entries(base_pdf, pdf_text(make_pdf(BASE))) == []
@@ -247,9 +245,7 @@ def test_pdf_processor_end_to_end_reports_scanned_document():
     assert len(result.warnings) == 2
 
 
-# ---------------------------------------------------------------------------
-# DOCX
-# ---------------------------------------------------------------------------
+# --- DOCX ---
 
 def test_docx_identical_documents_give_no_entry(base_docx):
     assert entries(base_docx, docx_text(make_docx(BASE, TABLE))) == []
@@ -356,9 +352,7 @@ def test_docx_processor_end_to_end_builds_the_llm_message():
     assert text.count('MODIFIED [') == 1 and 'ADDED [' not in text and 'REMOVED [' not in text
 
 
-# ---------------------------------------------------------------------------
-# Both formats
-# ---------------------------------------------------------------------------
+# --- Both formats ---
 
 @pytest.mark.parametrize('make, read', [(make_pdf, pdf_text), (lambda s: make_docx(s, TABLE), docx_text)])
 def test_paragraph_split_or_merged_is_not_a_change(make, read):

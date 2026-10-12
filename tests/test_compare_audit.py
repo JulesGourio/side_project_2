@@ -29,9 +29,7 @@ from server.services import vector_search
 from server.services.vector_search import _changes_block, _exclusion_keys, _judged_doc
 
 
-# ---------------------------------------------------------------------------
-# Diff engine — word-level changes
-# ---------------------------------------------------------------------------
+# --- Diff engine — word-level changes ---
 
 _LONG_EN = (
     'The operator shall record the inspection results in the quality register before the part is '
@@ -82,9 +80,7 @@ def test_french_same_group_modal_swap_stays_filtered():
     assert not is_substantive_keep_modals(_LONG_FR, _LONG_FR.replace('peut', 'peuvent', 1))
 
 
-# ---------------------------------------------------------------------------
-# Truncated diff
-# ---------------------------------------------------------------------------
+# --- Truncated diff ---
 
 def test_truncated_diff_produces_a_user_warning(monkeypatch):
     monkeypatch.setattr('server.services.processors._diff_engines._MAX_DIFF_CHARS', 50)
@@ -101,9 +97,7 @@ def test_untruncated_diff_has_no_warning():
     assert diff_truncation_warnings(messages) == []
 
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
+# --- Routes ---
 
 @pytest.fixture(scope='module')
 def app():
@@ -191,9 +185,7 @@ def test_export_excel_route(client):
     assert res.headers['content-disposition'].endswith('cmp.xlsx"')
 
 
-# ---------------------------------------------------------------------------
-# Impact search
-# ---------------------------------------------------------------------------
+# --- Impact search ---
 
 def test_impact_cache_key_depends_on_changes_and_index():
     from server.routers.compare import _impact_cache_version

@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import time
-import traceback
 import uuid
 from logging import Formatter
 from contextlib import asynccontextmanager
@@ -92,12 +91,14 @@ async def log_requests(request: Request, call_next):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
   logger.error(f'Unhandled exception on {request.method} {request.url.path}: {exc}', exc_info=True)
-  asyncio.create_task(store_error(
+  store_error(
       endpoint=f'{request.method} {request.url.path}',
       error_type=type(exc).__name__,
       error_msg=str(exc),
-      stack_trace=traceback.format_exc(),
-  ))
+      stage='unhandled',
+      exc=exc,
+      user_message='Internal server error',
+  )
   return JSONResponse(status_code=500, content={'error': 'Internal server error'})
 
 API_PREFIX = '/api'

@@ -21,7 +21,7 @@ index (``in_chat``). The parsing pipeline rewrites it after each successful dail
 
 Until that table has rows (an app started before the pipeline's first run, local dev, tests),
 the bundled ``server/data/doc_catalog.json`` is used instead: a one-off snapshot of a portal
-scrape (2026-07), with links in the old ``liredocumentdepuisrecherche?id=`` scheme, that is
+scrape, with links in the old ``liredocumentdepuisrecherche?id=`` scheme, that is
 never refreshed — new documents are missing from it and withdrawn ones are still in it. Every
 function degrades to a no-op when neither source is available.
 """
@@ -43,11 +43,9 @@ _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
 # The catalog loaded from Lakebase (None until the first successful load).
 _live: Optional['_Catalog'] = None
 
-# Our own intraqual_ref_url() scheme (parsing/utils.py, introduced 2026-07-07)
-# embeds the REF directly in the URL: .../identification.aspx?ref=<REF>. The
-# catalog's url_to_ref map is keyed on the OLD liredocumentdepuisrecherche?id=
-# scheme and never matches these — extracting REF straight from the URL is
-# scheme-accurate and needs no catalog/rebuild at all.
+# Our own intraqual_ref_url() scheme (parsing/utils.py) embeds the REF in the URL: .../identification.aspx?ref=<REF>.
+# The catalog's url_to_ref map is keyed on the old liredocumentdepuisrecherche?id= scheme and never matches these
+# URLs, so the REF is read straight from the URL.
 _REF_IN_URL_RE = re.compile(r'[?&]ref=([^&]+)', re.IGNORECASE)
 
 
@@ -65,11 +63,10 @@ def _norm(ref: str) -> str:
     return ' '.join(ref.split()).upper()
 
 
-# Mirrors archive/doc_catalog/build_doc_catalog.py:_base_ref — needed here too because a
-# citation in the chat text may use a spelling that never existed literally
-# in the catalog (e.g. the model writes "PRLAT529" but the only real entries
-# are "PRLAT-529" / "PRLAT-529_GB"). Canonicalizing both sides the same way
-# lets a bare/re-punctuated mention still resolve to its document's group.
+# Mirrors archive/doc_catalog/build_doc_catalog.py:_base_ref: a citation in the chat text may use a spelling that
+# never existed in the catalog
+# ("PRLAT529" for "PRLAT-529" / "PRLAT-529_GB"); canonicalizing both sides the same way resolves it to the document's
+# group.
 _LANG_SUFFIX_RE = re.compile(r'[-_. ]+(FR|EN|GB|MX|BG|CZ|BR|ES)$', re.IGNORECASE)
 _NON_ALNUM_RE = re.compile(r'[^A-Z0-9]')
 
@@ -119,6 +116,32 @@ def title_for_ref(ref: str) -> str:
         return ''
     entry = cat.by_ref.get(_norm(ref))
     return (entry.get('title') or '') if entry else ''
+
+
+def document_info(ref: str) -> Dict[str, Any]:
+    """{title, revision, doc_date (ISO)} of a REF from the catalog — the fields it has (the bundled
+    snapshot has no revision); {} when unknown."""
+    cat = _catalog()
+    entry = cat.by_ref.get(_norm(ref)) if cat else None
+    if not entry:
+        return {}
+    date = entry.get('doc_date')
+    info = {'title': entry.get('title'), 'revision': entry.get('revision'),
+            'doc_date': date.isoformat() if hasattr(date, 'isoformat') else date}
+    return {k: v for k, v in info.items() if v}
+
+
+def with_document_info(sources: List[dict]) -> List[dict]:
+    """``sources`` with the catalog title, revision and date of each REF (``doc_title``,
+    ``revision``, ``doc_date``), for the source chips and the exports."""
+    for s in sources or []:
+        info = document_info(s.get('title') or '')
+        if info.get('title'):
+            s['doc_title'] = info['title']
+        for key in ('revision', 'doc_date'):
+            if info.get(key):
+                s[key] = info[key]
+    return sources
 
 
 class _Catalog:
@@ -230,7 +253,7 @@ def _catalog() -> Optional[_Catalog]:
 
 
 def set_catalog(entries: List[Dict[str, Any]]) -> None:
-    """Replace the live catalog (entries: ref, url, title, base_ref, in_chat)."""
+    """Replace the live catalog (entries: ref, url, title, base_ref, in_chat, revision, doc_date)."""
     global _live
     _live = _Catalog(entries)
 
@@ -240,7 +263,7 @@ async def refresh_from_lakebase(pool) -> int:
     documents loaded; 0 (live catalog left as is) when the table is empty or unreadable."""
     try:
         async with pool.acquire() as conn:
-            rows = await conn.fetch('SELECT ref, url, title, base_ref, in_chat FROM doc_catalog')
+            rows = await conn.fetch('SELECT ref, url, title, base_ref, in_chat, revision, doc_date FROM doc_catalog')
     except Exception as exc:  # noqa: BLE001 — keep the catalog we have
         logger.warning('doc_catalog: Lakebase read failed, keeping the current catalog: %s', exc)
         return 0
@@ -297,11 +320,9 @@ def augment_sources(content: str, sources: List[dict]) -> List[dict]:
     try:
         sources = list(sources or [])
 
-        # 1. Relabel existing chips to their REF when we recognise the URL —
-        # prefer parsing our own ref=<REF> scheme (always accurate, and does
-        # not need the catalog at all) over the catalog's url_to_ref (keyed
-        # on the older id=... scheme, so it never matches these URLs and
-        # would otherwise leave `title` unset/raw-URL).
+        # 1. Relabel existing chips to their REF when the URL is recognised: parse our own ref=<REF> scheme (always
+        # accurate, no catalog needed)
+        # rather than the catalog's url_to_ref (older id=... scheme).
         for s in sources:
             url = s.get('url')
             if not url:

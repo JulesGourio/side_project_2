@@ -1,15 +1,13 @@
 """Chat VSI — LLM calls that keep answering: retries, fallback models, continuation, load limits.
 
-Used by both Chat VSI variants for the answer (``stream_answer``) and by the ``rerank``
-variant for the search-query rewrite (``complete``). Settings, read at call time:
+Used for the answer (``stream_answer``) and for the search-query rewrite (``complete``). Settings, read at call time:
 
 - ``CHAT_VSI_LLM_FALLBACK_ENDPOINTS`` — comma-separated endpoints tried, in order, after
-  ``CHAT_VSI_LLM_ENDPOINT`` (default: none, the primary is only retried). Production plan
-  2026-10-08: GPT-6 Luna, then GPT-5.6 Luna;
+  ``CHAT_VSI_LLM_ENDPOINT`` (default: none, the primary is only retried). In production: GPT-6 Luna, then GPT-5.6 Luna;
 - ``CHAT_VSI_REWRITE_FALLBACK_ENDPOINTS`` — same for the rewrite (default: the answer chain);
 - ``CHAT_VSI_FIRST_TOKEN_TIMEOUT_S`` (90) — no answer text after this long: the endpoint is
   given up for the next one (a reasoning model thinks before its first word: GPT-6 Luna
-  p50 7 s, pairwise eval 2026-10-08);
+  p50 is about 7 s);
 - ``CHAT_VSI_STALL_TIMEOUT_S`` (60) — the stream stops sending text this long: given up;
 - ``CHAT_VSI_LLM_DEADLINE_S`` (240) — no new attempt starts after this long;
 - ``CHAT_VSI_LLM_ROUNDS`` (3) — passes over the endpoint chain, waiting 2 s then 8 s between
@@ -21,8 +19,8 @@ variant for the search-query rewrite (``complete``). Settings, read at call time
   app instance; the others wait their turn (keepalives sent) instead of all hitting the
   per-minute token quota (1M input tokens/min per endpoint ≈ 40 questions of 25k tokens);
 - ``CHAT_VSI_REASONING_MIN_TOKENS`` (6000) — output ceiling floor on reasoning models (their
-  thinking counts inside it): a 2000-token answer budget written for Sonnet would truncate
-  GPT-6 Luna when the chain falls back to it. The rewrite uses a floor of 1000.
+  thinking counts inside it): a small answer budget would truncate GPT-6 Luna when the
+  chain falls back to it. The rewrite uses a floor of 1000.
 
 What is retried where:
 
@@ -36,7 +34,9 @@ What is retried where:
 
 The output is the event stream of ``streaming.stream_analysis`` (text deltas, ``usage``,
 ``warning``, ``error``, ``[DONE]``, keepalive comments) plus one ``llm`` event before
-``[DONE]``: the endpoint that answered and every attempt (logged, saved in metadata).
+``[DONE]``: the endpoint that answered, every attempt, the wait for a free slot
+(``queue_wait_ms``), ``truncated``, ``continuations`` and ``interrupted`` (part of the answer
+out, no endpoint could finish it) — saved in Lakebase ``chat_turns`` by the chat engine.
 """
 
 import asyncio
@@ -61,8 +61,11 @@ _REWRITE_REASONING_MIN_TOKENS = 1000
 CONTINUE_PROMPT = ('Your previous answer was cut off by a technical problem. Continue it exactly where it '
                    'stops: no preamble, do not repeat what is already written, same language, same citation '
                    'markers.')
-BUSY_MESSAGE = ('Qualibot could not get an answer right now (the language models are overloaded or unavailable). '
-                'Please try again in a minute.')
+# The only failure texts a user ever sees (chat.py sends TIRED_MESSAGE for every failed turn); the
+# technical cause goes to the turn log, never to the browser.
+TIRED_MESSAGE = 'Qualibot is a bit tired right now. Please wait a moment and try again.'
+TIRED_CUT_NOTE = '\n\n_(Qualibot got tired before the end of this answer. Please wait a moment and ask again.)_'
+NO_MODEL_ANSWERED = 'every answer model failed'
 
 
 def _env_float(name: str, default: float) -> float:
@@ -127,9 +130,7 @@ def effective_max_tokens(endpoint: str, max_tokens: int, floor: Optional[int] = 
     return max(max_tokens, int(_env_float('CHAT_VSI_REASONING_MIN_TOKENS', 6000)) if floor is None else floor)
 
 
-# ---------------------------------------------------------------------------
-# Endpoint health, shared by every turn of this app instance
-# ---------------------------------------------------------------------------
+# --- Endpoint health, shared by every turn of this app instance ---
 
 _cooling_until: Dict[str, float] = {}
 
@@ -171,9 +172,7 @@ def _semaphore() -> Optional[asyncio.Semaphore]:
     return current[1]
 
 
-# ---------------------------------------------------------------------------
-# One streamed call
-# ---------------------------------------------------------------------------
+# --- One streamed call ---
 
 class LlmFailure(Exception):
     """One attempt failed. ``kind``: rate_limit, server, timeout, network, refused, auth,
@@ -293,9 +292,7 @@ async def stream_once(host: str, token: str, endpoint: str, messages: List[Dict[
         raise LlmFailure('network', f'{type(exc).__name__}: {exc}'[:300]) from exc
 
 
-# ---------------------------------------------------------------------------
-# The answer: chain, rounds, continuation
-# ---------------------------------------------------------------------------
+# --- The answer: chain, rounds, continuation ---
 
 def _event(payload: Dict[str, Any]) -> str:
     return f'data: {json.dumps(payload)}\n\n'
@@ -311,6 +308,7 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
                         max_tokens: int, operation: str = 'Chat') -> AsyncGenerator[str, None]:
     """Stream the answer of the first endpoint of ``endpoints`` that works (see module doc)."""
     sem = _semaphore()
+    queued_at = time.monotonic()
     if sem is not None and sem.locked():
         logger.warning('chat_vsi_llm: %d answers already running — this one waits', max_concurrent_answers())
     if sem is not None:
@@ -334,8 +332,9 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
         if sem is not None and not released:
             released = True
             sem.release()
+    queue_wait_ms = int((time.monotonic() - queued_at) * 1000)
     try:
-        async for event in _stream_answer(host, token, endpoints, messages, max_tokens, operation):
+        async for event in _stream_answer(host, token, endpoints, messages, max_tokens, operation, queue_wait_ms):
             # Callers stop reading at [DONE] or at an error: free the slot before they do,
             # not when the abandoned generator is garbage-collected.
             if event.startswith(('data: [DONE]', 'data: {"type": "error"')):
@@ -346,7 +345,7 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
 
 
 async def _stream_answer(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
-                         max_tokens: int, operation: str) -> AsyncGenerator[str, None]:
+                         max_tokens: int, operation: str, queue_wait_ms: int = 0) -> AsyncGenerator[str, None]:
     started = time.monotonic()
     chain = _dedup(endpoints)
     given_up: set = set()                       # endpoints not retried this turn
@@ -430,23 +429,22 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
     if usage['input_tokens'] or usage['output_tokens']:
         yield _event({'type': 'usage', **usage, 'total_tokens': usage['input_tokens'] + usage['output_tokens']})
     yield _event({'type': 'llm', 'endpoint': answered_by, 'fallback': bool(answered_by and answered_by != chain[0]),
-                  'attempts': attempts})
+                  'attempts': attempts, 'queue_wait_ms': queue_wait_ms, 'truncated': truncated,
+                  'continuations': continuations, 'interrupted': bool(written and not answered_by)})
     if not answered_by and not written:
         logger.error('chat_vsi_llm: no endpoint answered (%s) after %.0f s: %s', ', '.join(chain),
                      time.monotonic() - started, attempts)
-        yield _event({'type': 'error', 'error': BUSY_MESSAGE, 'error_type': 'LLMUnavailable',
+        yield _event({'type': 'error', 'error': NO_MODEL_ANSWERED, 'error_type': 'LLMUnavailable',
                       'http_status': last.status if last else 0})
     elif not answered_by:
         # Part of the answer is out but no endpoint could finish it: say so at the end.
         logger.error('chat_vsi_llm: answer cut after %d chars, no endpoint could continue: %s', len(written), attempts)
         yield _event({'type': 'response.output_text.delta',
-                      'delta': '\n\n_(The answer was interrupted by a technical problem — please ask again.)_'})
+                      'delta': TIRED_CUT_NOTE})
     yield 'data: [DONE]\n\n'
 
 
-# ---------------------------------------------------------------------------
-# Short non-streamed calls (search-query rewrite)
-# ---------------------------------------------------------------------------
+# --- Short non-streamed calls (search-query rewrite) ---
 
 def _message_text(content: Any) -> str:
     if isinstance(content, str):
@@ -458,10 +456,14 @@ def _message_text(content: Any) -> str:
 
 
 async def complete(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
-                   max_tokens: int, timeout_s: float = 30.0) -> Tuple[str, str]:
+                   max_tokens: int, timeout_s: float = 30.0,
+                   info: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
     """(text, endpoint) of the first endpoint that returns non-empty text; two passes over the
     chain, ``timeout_s`` per call and 2 x ``timeout_s`` in all. Raises the last ``LlmFailure``
-    when none does."""
+    when none does. ``info``, when given, receives ``attempts`` (every call: endpoint, outcome,
+    status, seconds) and the ``usage`` of the call that answered."""
+    info = {} if info is None else info
+    attempts = info.setdefault('attempts', [])
     last: Optional[LlmFailure] = None
     given_up: set = set()
     deadline = time.monotonic() + 2 * timeout_s
@@ -472,6 +474,7 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
             left = deadline - time.monotonic()
             if left < 2:
                 raise last or LlmFailure('timeout', 'no time left')
+            t0 = time.monotonic()
             try:
                 async with _client(httpx.Timeout(min(timeout_s, left), connect=10.0)) as client:
                     resp = await client.post(
@@ -481,9 +484,14 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
                         headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
                 if resp.status_code != 200:
                     raise _failure_for_status(resp, resp.text)
-                text = _message_text(resp.json()['choices'][0]['message'].get('content')).strip()
+                body = resp.json()
+                text = _message_text(body['choices'][0]['message'].get('content')).strip()
                 if not text:
                     raise LlmFailure('empty', 'empty completion')
+                u = body.get('usage') or {}
+                inp, out = u.get('prompt_tokens') or 0, u.get('completion_tokens') or 0
+                info['usage'] = {'input_tokens': inp, 'output_tokens': out, 'cost_eur': _cost_eur(endpoint, inp, out)}
+                attempts.append({'endpoint': endpoint, 'outcome': 'ok', 's': round(time.monotonic() - t0, 1)})
                 return text, endpoint
             except httpx.TimeoutException as exc:
                 last = LlmFailure('timeout', str(exc)[:200])
@@ -493,6 +501,8 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
                 last = LlmFailure('stream_error', f'unexpected reply: {exc}'[:200])
             except LlmFailure as exc:
                 last = exc
+            attempts.append({'endpoint': endpoint, 'outcome': last.kind, 'status': last.status,
+                             's': round(time.monotonic() - t0, 1)})
             logger.warning('chat_vsi_llm: %s failed for a short call (%s %s)', endpoint, last.kind, last.status or '')
             _cool(endpoint, _cooldown_for(last.kind))
             if last.kind in _FINAL_KINDS:

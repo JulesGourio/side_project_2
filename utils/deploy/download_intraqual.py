@@ -124,6 +124,12 @@ def _get(context, url):
     return resp, headers, ct
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("download_intraqual")
+
+
 def _download_one(context, ref, url, out_dir):
     """Fetch one document through the authenticated context. Returns the path or None.
 
@@ -132,17 +138,17 @@ def _download_one(context, ref, url, out_dir):
     label = ref or url
     resp, headers, ct = _get(context, url)
     if resp is None:
-        print(f"   ⚠️  {label}: requête échouée — {ct}")
+        logger.warning(f"   {label}: requête échouée — {ct}")
         return None
     if not resp.ok:
-        print(f"   ⚠️  {label}: HTTP {resp.status} {resp.status_text}")
+        logger.warning(f"   {label}: HTTP {resp.status} {resp.status_text}")
         return None
 
     # Viewer frameset → follow the docview frame to the actual binary.
     if ct == "text/html":
         m = _DOCVIEW_RE.search(resp.text())
         if not m:
-            print(f"   ⚠️  {label}: page HTML sans frame docview — viewer ou login ? "
+            logger.warning(f"   {label}: page HTML sans frame docview — viewer ou login ? "
                   f"Sauvegardé en .html pour inspection.")
             body = resp.body()
             path = os.path.join(out_dir, _safe_name(ref or "document") + ".html")
@@ -152,10 +158,10 @@ def _download_one(context, ref, url, out_dir):
         file_url = urljoin(url, m.group(1).replace("&amp;", "&"))
         resp, headers, ct = _get(context, file_url)
         if resp is None:
-            print(f"   ⚠️  {label}: docview échoué — {ct}")
+            logger.warning(f"   {label}: docview échoué — {ct}")
             return None
         if not resp.ok:
-            print(f"   ⚠️  {label}: docview HTTP {resp.status} {resp.status_text}")
+            logger.warning(f"   {label}: docview HTTP {resp.status} {resp.status_text}")
             return None
 
     body = resp.body()
@@ -170,7 +176,7 @@ def _download_one(context, ref, url, out_dir):
 
     with open(path, "wb") as f:
         f.write(body)
-    print(f"   ✅ {label} → {path}  ({len(body)} octets, {ct or 'type inconnu'})")
+    logger.info(f"   {label} → {path}  ({len(body)} octets, {ct or 'type inconnu'})")
     return path
 
 
@@ -200,10 +206,10 @@ def _ensure_session(page, headful):
             return True
         if not headful:
             break
-        print("   …connecte-toi dans la fenêtre Edge.", flush=True)
+        logger.info("   …connecte-toi dans la fenêtre Edge.")
         time.sleep(3)
     if _has_password_field(page):
-        print("   ⚠️  Connexion interactive nécessaire — relance avec HEADFUL=1 "
+        logger.warning("   Connexion interactive nécessaire — relance avec HEADFUL=1 "
               "pour te connecter dans la fenêtre Edge.")
         return False
     return True
@@ -225,15 +231,15 @@ def _diagnose_chain(context, ref, url, depth=0, seen=None):
     try:
         resp = context.request.get(url, timeout=REQUEST_TIMEOUT_MS)
     except Exception as e:
-        print(f"{indent}⚠️  {url} — {e}")
+        logger.info(f"{indent}{url} — {e}")
         return
     h = {k.lower(): v for k, v in resp.headers.items()}
     ct = (h.get("content-type", "") or "").split(";")[0].strip().lower()
     cd = h.get("content-disposition", "")
     body = resp.body()
-    print(f"{indent}→ HTTP {resp.status}  {ct or '?'}  size={len(body)}"
+    logger.info(f"{indent}→ HTTP {resp.status}  {ct or '?'}  size={len(body)}"
           + (f"  cd={cd}" if cd else ""))
-    print(f"{indent}  {url}")
+    logger.info(f"{indent}  {url}")
     if ct == "text/html" or ct == "":
         html = resp.text()
         srcs = []
@@ -242,7 +248,7 @@ def _diagnose_chain(context, ref, url, depth=0, seen=None):
             if full not in srcs:
                 srcs.append(full)
         if not srcs:
-            print(f"{indent}  (pas de sous-frame ; snippet) {html[:400]!r}")
+            logger.info(f"{indent}  (pas de sous-frame ; snippet) {html[:400]!r}")
         for s in srcs:
             _diagnose_chain(context, ref, s, depth + 1, seen)
 
@@ -250,7 +256,7 @@ def _diagnose_chain(context, ref, url, depth=0, seen=None):
 def _load_csv_rows():
     """Read intraqual_docs.csv -> list of {reference, url} rows (URL non-empty)."""
     if not os.path.exists(IN_CSV):
-        print(f"❌ CSV introuvable : {IN_CSV} (lance d'abord scrap_ids_intraqual.py).")
+        logger.warning(f"CSV introuvable : {IN_CSV} (lance d'abord scrap_ids_intraqual.py).")
         return None
     with open(IN_CSV, newline="", encoding="utf-8-sig") as f:
         return [r for r in csv.DictReader(f) if (r.get("url") or "").strip()]
@@ -275,7 +281,7 @@ def _resolve_targets(cli_target=None):
             return []
         match = [r for r in rows if (r.get("reference") or "").strip() == target]
         if not match:
-            print(f"❌ REF '{target}' absente de {IN_CSV}.")
+            logger.warning(f"REF '{target}' absente de {IN_CSV}.")
             return []
         return [((r.get("reference") or "").strip(), (r.get("url") or "").strip()) for r in match]
 
@@ -295,7 +301,7 @@ def main():
         return
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    print(f"🎯 {len(targets)} document(s) à télécharger → dossier '{OUT_DIR}'.")
+    logger.info(f"🎯 {len(targets)} document(s) à télécharger → dossier '{OUT_DIR}'.")
 
     headful = os.getenv("HEADFUL") == "1"
     with sync_playwright() as p:
@@ -322,7 +328,7 @@ def main():
         if os.getenv("DIAG"):
             ref, url = targets[0]
             url = urljoin(page.url, url)
-            print(f"\n🔬 DIAGNOSTIC chaîne de frames pour {ref} :")
+            logger.info(f"🔬 DIAGNOSTIC chaîne de frames pour {ref} :")
             _diagnose_chain(context, ref, url)
             context.close()
             return
@@ -335,7 +341,7 @@ def main():
             if i < len(targets) - 1:
                 time.sleep(POLITENESS_DELAY_S)
 
-        print(f"\n✅ Terminé : {ok}/{len(targets)} document(s) téléchargé(s) dans '{OUT_DIR}'.")
+        logger.info(f"Terminé : {ok}/{len(targets)} document(s) téléchargé(s) dans '{OUT_DIR}'.")
         context.close()
 
 

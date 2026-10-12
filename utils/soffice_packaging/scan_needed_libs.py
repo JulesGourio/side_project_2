@@ -79,6 +79,12 @@ def elf_needed(path: Path):
         return needed
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("scan_needed_libs")
+
+
 def main(tree: str) -> None:
     root = Path(tree)
     provided, needed = set(), set()
@@ -96,10 +102,10 @@ def main(tree: str) -> None:
         provided.add(p.name)
         needed.update(deps)
     missing = sorted(needed - provided - _BASELINE)
-    print(f'{n_elf} ELF files, {len(needed)} distinct NEEDED sonames')
-    print('missing (must exist in container or be bundled):')
+    logger.info(f'{n_elf} ELF files, {len(needed)} distinct NEEDED sonames')
+    logger.info('missing (must exist in container or be bundled):')
     for so in missing:
-        print(f'  {so}')
+        logger.info(f'  {so}')
 
 
 if __name__ == '__main__':

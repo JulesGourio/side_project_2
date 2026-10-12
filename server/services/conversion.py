@@ -25,9 +25,7 @@ _lo_cmd: Optional[str] = None
 _lo_checked: bool = False
 
 
-# ---------------------------------------------------------------------------
-# Tool detection
-# ---------------------------------------------------------------------------
+# --- Tool detection ---
 
 def _antiword_available() -> bool:
     global _antiword_checked
@@ -63,9 +61,7 @@ def _libreoffice_cmd() -> Optional[str]:
     return _lo_cmd
 
 
-# ---------------------------------------------------------------------------
-# .doc → text via antiword
-# ---------------------------------------------------------------------------
+# --- .doc → text via antiword ---
 
 def doc_to_text(doc_bytes: bytes, filename: str = 'document.doc') -> Optional[str]:
     """Extract plain text from a binary .doc file.
@@ -169,9 +165,7 @@ def _olefile_extract(doc_bytes: bytes, filename: str) -> Optional[str]:
     return '\n'.join(results[:400])
 
 
-# ---------------------------------------------------------------------------
-# .docx → HTML body fragment via mammoth
-# ---------------------------------------------------------------------------
+# --- .docx → HTML body fragment via mammoth ---
 
 def docx_to_html_body(content: bytes) -> str:
     """Return mammoth's HTML body for a .docx — no page wrapper. Shared by
@@ -182,9 +176,7 @@ def docx_to_html_body(content: bytes) -> str:
     return result.value or '<p class="empty">Document appears empty.</p>'
 
 
-# ---------------------------------------------------------------------------
-# PPTX → slide PNG images via LibreOffice
-# ---------------------------------------------------------------------------
+# --- PPTX → slide PNG images via LibreOffice ---
 
 def pptx_to_slide_images(pptx_bytes: bytes, filename: str = 'presentation.pptx') -> list[bytes]:
     """Render each PPTX slide to a PNG image using LibreOffice headless.

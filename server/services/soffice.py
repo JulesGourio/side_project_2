@@ -263,15 +263,6 @@ def find_soffice() -> str:
         return _discovered_path
 
 
-def soffice_status() -> dict:
-    """Non-raising status snapshot for the diagnostic endpoint."""
-    try:
-        path = find_soffice()
-        return {'available': True, 'path': path, 'version': _engine_version}
-    except SofficeUnavailable as e:
-        return {'available': False, 'error': str(e)}
-
-
 def convert_docx_to_pdf(docx_bytes: bytes, timeout_s: int = _CONVERT_TIMEOUT_S, suffix: str = '.docx') -> bytes:
     """Convert .docx (or any soffice-readable format — pass the real
     extension via ``suffix``, soffice picks its import filter from it) to

@@ -9,10 +9,7 @@
 # MAGIC **Highlighted complexities:**
 # MAGIC Indexes are `pipeline_type = TRIGGERED`: without this step, new chunks sit
 # MAGIC in the Delta table and are never queryable — the rest of the chain would
-# MAGIC have run for nothing. Replaces the local script
-# MAGIC `utils/databricks_ops/vector_search_sync/resync_uat_index.py`, which
-# MAGIC exported DEV to UAT by hand and still targeted the v1 tables/indexes —
-# MAGIC this job runs in the workspace that owns the indexes, so no export needed.
+# MAGIC have run for nothing.
 # MAGIC
 # MAGIC Self-provisioning: an index in `indexes` that doesn't exist yet is created
 # MAGIC (not just synced) — this task runs `run_as` the environment's owning SP, so
@@ -42,25 +39,38 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Technical Debt
-# MAGIC
-# MAGIC None.
+# MAGIC # Technical debt
+# MAGIC - `KNOWN_SOURCE_TABLE` repeats the table naming of `config.py` (`{catalog_schema}.chunks{table_suffix}`) because this serverless task does not import `config.py`; the same goes for the `archive_notice` content type filtered out of `chunks_full`.
+# MAGIC - Only `chunks_index` and `chunks_full_index` are created automatically; any other index listed in `indexes` is synced but never created, since its source table is unknown.
+# MAGIC - The wait loop polls every 30 s with a fixed timeout (`wait_minutes`): a sync that outlasts it is reported as still running, not as an error.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Configuration
+# MAGIC ## Config logger and widgets
+# MAGIC This task is serverless: it has no `PARSING_*` environment variables and cannot import `config.py`, so everything comes from the job parameters as widgets. `indexes` falls back on `PARSING_VECTOR_SEARCH_INDEXES` for an interactive run.
+# MAGIC
+# MAGIC The endpoint, embedding model, catalog and suffix are only read when an index has to be created.
 
 # COMMAND ----------
 
+import logging
 import os
 import time
 
+logger = logging.getLogger("parsing_pipeline.sync_index")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
 dbutils.widgets.text("indexes", "", "Vector Search indexes (comma-separated)")
 dbutils.widgets.text("wait_minutes", "45", "Max wait for sync completion (minutes, 0 = don't wait)")
-# Only used to auto-create a missing index (below) -- this task is serverless
-# and doesn't get the PARSING_* env vars the rest of the pipeline reads
-# config.py through, so these come in as their own widgets instead.
+# Only used to auto-create a missing index: this task is serverless, so it has no PARSING_* env vars and takes its own
+# widgets.
 dbutils.widgets.text("vector_search_endpoint", "qualibot", "Vector Search endpoint (for index creation)")
 dbutils.widgets.text("embedding_model", "databricks-qwen3-embedding-0-6b", "Embedding model endpoint (for index creation)")
 dbutils.widgets.text("catalog_schema", "", "catalog.schema of the chunk tables (for index creation)")
@@ -76,48 +86,76 @@ CATALOG_SCHEMA = dbutils.widgets.get("catalog_schema")
 TABLE_SUFFIX = dbutils.widgets.get("table_suffix")
 BUILD_CHUNKS_FULL = dbutils.widgets.get("build_chunks_full").strip().lower() in ("1", "true", "yes")
 
-print(f"{len(INDEXES)} index(es) to sync:")
+logger.info(f"{len(INDEXES)} index(es) to sync:")
 for n in INDEXES:
-    print(f"  - {n}")
+    logger.info(f"  - {n}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Outputs
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Refresh `chunks_full` (impact-search source table)
-# MAGIC
-# MAGIC `chunks_full` = `chunks` (RAG, post-cutoff) + `chunks_archive` (pre-cutoff),
-# MAGIC kept in sync by MERGE rather than overwrite so Change Data Feed only carries
-# MAGIC the day's real changes and the index re-embeds just those rows.
-# MAGIC Built when `build_chunks_full` is on, index or not: the table can be checked
-# MAGIC in SQL before `chunks_full_index` is ever created.
+# MAGIC # Inputs
+# MAGIC ## Tables behind chunks_full
+# MAGIC `chunks_full` = `chunks` (post-cutoff, the chatbot) + `chunks_archive` (pre-cutoff): every document whatever its date, for impact search only. It is rebuilt only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`; the table can be checked in SQL before its index is ever created.
 
 # COMMAND ----------
 
 FULL_INDEX = f"{CATALOG_SCHEMA}.chunks_full_index{TABLE_SUFFIX}"
 FULL_TABLE = f"{CATALOG_SCHEMA}.chunks_full{TABLE_SUFFIX}"
+REFRESH_CHUNKS_FULL = bool(CATALOG_SCHEMA) and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES)
 
-if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
-    from delta.tables import DeltaTable
+chunk_sources = [
+    t for t in (f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}", f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}")
+    if REFRESH_CHUNKS_FULL and spark.catalog.tableExists(t)
+]
+if REFRESH_CHUNKS_FULL and not chunk_sources:
+    raise RuntimeError(f"chunks_full requested but neither chunks nor chunks_archive exists in {CATALOG_SCHEMA}")
 
-    _sources = [t for t in (f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}", f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}")
-                if spark.catalog.tableExists(t)]
-    df_src = spark.table(_sources[0])
-    for _t in _sources[1:]:
-        df_src = df_src.unionByName(spark.table(_t), allowMissingColumns=True)
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Data Preparation
+# MAGIC ## Prep1 - Union of the chunk tables
+# MAGIC Archive notices carry no content and are left out, and a chunk id seen in both tables (a document that crossed the cutoff between two runs) is kept once.
+
+# COMMAND ----------
+
+if REFRESH_CHUNKS_FULL:
+    df_src = spark.table(chunk_sources[0])
+    for table in chunk_sources[1:]:
+        df_src = df_src.unionByName(spark.table(table), allowMissingColumns=True)
     # Archive notices (config.ARCHIVE_NOTICE_CONTENT_TYPE) carry no content: nothing to judge an impact on.
     df_src = df_src.filter("NOT (chunk_content_type <=> 'archive_notice')")
-    # A document that crossed the cutoff between runs could briefly sit in both tables.
+    # A document that crossed the cutoff between two runs can briefly sit in both tables.
     df_src = df_src.dropDuplicates(["chunk_id"])
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Data Transformations
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Quality Checks
+# MAGIC #N/A
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Outputs
+# MAGIC ## Write chunks_full
+# MAGIC Synced by MERGE rather than overwritten, so the Change Data Feed carries only the day's real changes and the index re-embeds only those rows.
+
+# COMMAND ----------
+
+if REFRESH_CHUNKS_FULL:
+    from delta.tables import DeltaTable
 
     if not spark.catalog.tableExists(FULL_TABLE):
         df_src.write.format("delta").saveAsTable(FULL_TABLE)
-        # 60-day history, like the chunk tables: a TRIGGERED sync can never resume once the CDF
-        # it needs has aged out (VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION, see databricks.yml).
+        # 60-day history, like the chunk tables: a TRIGGERED sync cannot resume once the Change Data Feed it
+        # needs has aged out (VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION).
         spark.sql(f"""
             ALTER TABLE {FULL_TABLE} SET TBLPROPERTIES (
                 delta.enableChangeDataFeed = true,
@@ -125,32 +163,33 @@ if CATALOG_SCHEMA and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES):
                 delta.logRetentionDuration = 'interval 60 days'
             )
         """)
-        print(f"Created {FULL_TABLE} from {_sources}")
+        logger.info(f"Created {FULL_TABLE} from {chunk_sources}")
     else:
-        # New chunk columns (titre, type_document, langue… audit 2026-10) reach chunks_full too.
+        # New chunk columns (titre, type_document, langue...) reach chunks_full too.
         spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
-        _target_cols = set(spark.table(FULL_TABLE).columns)
-        _changed = " OR ".join(f"NOT (t.`{c}` <=> s.`{c}`)" for c in df_src.columns
-                               if c != "chunk_id" and c in _target_cols) or "true"
+        target_cols = set(spark.table(FULL_TABLE).columns)
+        changed = " OR ".join(f"NOT (t.`{c}` <=> s.`{c}`)" for c in df_src.columns
+                              if c != "chunk_id" and c in target_cols) or "true"
         (
             DeltaTable.forName(spark, FULL_TABLE).alias("t")
             .merge(df_src.alias("s"), "t.chunk_id = s.chunk_id")
-            .whenMatchedUpdateAll(condition=_changed)
+            .whenMatchedUpdateAll(condition=changed)
             .whenNotMatchedInsertAll()
             .whenNotMatchedBySourceDelete()
             .execute()
         )
-        print(f"Merged {_sources} into {FULL_TABLE}")
-    print(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
+        logger.info(f"Merged {chunk_sources} into {FULL_TABLE}")
+    logger.info(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
 
 if not INDEXES:
-    print("No index to sync (`indexes` param empty) — nothing more to do.")
+    logger.info("No index to sync (`indexes` param empty) - nothing more to do.")
     dbutils.notebook.exit("no_index")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Create any missing index, then read current status
+# MAGIC ## Create any missing index, then read its status
+# MAGIC An index in `indexes` that does not exist is created (this task runs as the environment's owning service principal, which already holds the grants for it), then every index is read to log its source table and indexed rows before the sync.
 
 # COMMAND ----------
 
@@ -163,12 +202,10 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-# Only these 2 index/source pairs are ever provisioned by this pipeline --
-# an index name in `indexes` that isn't one of them is synced (existing
-# behavior) but never auto-created, since we wouldn't know its source table.
-# Mirrors config.py's TARGET_CHUNK_TABLE naming ({catalog_schema}.{name}{table_suffix}),
-# rebuilt here from widgets instead of importing config.py -- see the widget
-# comments above.
+# Only these index/source pairs are auto-created; any other index in `indexes` is synced but never created (its source
+# table is unknown).
+# Same naming as config.py's TARGET_CHUNK_TABLE ({catalog_schema}.{name}{table_suffix}), rebuilt from widgets because
+# this task does not import config.py.
 KNOWN_SOURCE_TABLE = {
     f"{CATALOG_SCHEMA}.chunks_index{TABLE_SUFFIX}": f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}",
     FULL_INDEX: FULL_TABLE,
@@ -178,7 +215,7 @@ w = WorkspaceClient()
 
 
 def _create_index(name, source_table):
-    print(f"{name}: not found -- creating (endpoint={VECTOR_SEARCH_ENDPOINT}, source={source_table})...")
+    logger.info(f"{name}: not found -- creating (endpoint={VECTOR_SEARCH_ENDPOINT}, source={source_table})...")
     w.vector_search_indexes.create_index(
         name=name,
         endpoint_name=VECTOR_SEARCH_ENDPOINT,
@@ -201,7 +238,7 @@ def _create_index(name, source_table):
         if "PROVISIONING" not in state:
             return
         time.sleep(15)
-    print(f"{name}: still PROVISIONING after 5 min -- proceeding anyway, the sync trigger below may need a retry tomorrow.")
+    logger.warning(f"{name}: still PROVISIONING after 5 min -- proceeding anyway, the sync trigger below may need a retry tomorrow.")
 
 
 before = {}
@@ -211,7 +248,7 @@ for name in INDEXES:
     except NotFound:
         source_table = KNOWN_SOURCE_TABLE.get(name)
         if not source_table:
-            raise RuntimeError(f"{name}: index doesn't exist and isn't one of the 4 pipeline-managed indexes -- "
+            raise RuntimeError(f"{name}: index doesn't exist and isn't one of the pipeline-managed indexes -- "
                                 f"can't auto-create it (unknown source table).")
         _create_index(name, source_table)
         idx = w.vector_search_indexes.get_index(index_name=name)
@@ -219,15 +256,13 @@ for name in INDEXES:
     src = idx.delta_sync_index_spec.source_table if idx.delta_sync_index_spec else "?"
     rows = idx.status.indexed_row_count if idx.status else None
     before[name] = rows
-    print(f"{name}\n    source={src}  indexed_rows={rows}  ready={idx.status.ready if idx.status else '?'}")
+    logger.info(f"{name}\n    source={src}  indexed_rows={rows}  ready={idx.status.ready if idx.status else '?'}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Trigger the syncs
-# MAGIC
-# MAGIC A sync failure must fail the task: otherwise the job ends in SUCCESS while
-# MAGIC the index is still on yesterday's chunks.
+# MAGIC Indexes are `TRIGGERED`: without this step new chunks stay in the Delta table and are never queryable. A rejected sync fails the task, otherwise the job would end in SUCCESS with the index still on yesterday's chunks.
 
 # COMMAND ----------
 
@@ -235,9 +270,9 @@ failed = []
 for name in INDEXES:
     try:
         w.vector_search_indexes.sync_index(index_name=name)
-        print(f"sync triggered: {name}")
+        logger.info(f"sync triggered: {name}")
     except Exception as exc:
-        print(f"sync rejected: {name} — {exc}")
+        logger.warning(f"sync rejected: {name} — {exc}")
         failed.append((name, str(exc)))
 
 if failed:
@@ -247,14 +282,12 @@ if failed:
 
 # MAGIC %md
 # MAGIC ## Wait for the syncs to finish
-# MAGIC
-# MAGIC Waits for each index to leave a "syncing" state so the job reflects the
-# MAGIC real outcome. `WAIT_MINUTES=0` to just trigger and return.
+# MAGIC Waits for each index to leave a syncing state so the job reflects the real outcome; a failed or offline index raises immediately instead of waiting out the timeout. `wait_minutes = 0` triggers and returns.
 
 # COMMAND ----------
 
 if WAIT_MINUTES <= 0:
-    print("Wait disabled — syncs triggered, state not verified.")
+    logger.info("Wait disabled — syncs triggered, state not verified.")
 else:
     deadline = time.time() + WAIT_MINUTES * 60
     pending = set(INDEXES)
@@ -269,9 +302,9 @@ else:
                 msg = getattr(st, "message", None) or "no further detail from the SDK"
                 raise RuntimeError(f"{name}: sync failed (state={state}) — {msg}")
             if st and st.ready and "PROVISIONING" not in state and "SYNC" not in state:
-                print(f"{name}: done — indexed_rows {before[name]} -> {st.indexed_row_count}")
+                logger.info(f"{name}: done — indexed_rows {before[name]} -> {st.indexed_row_count}")
                 pending.discard(name)
     if pending:
         # Not an error — sync keeps running server-side; the job's useful work is done.
-        print(f"Still running after {WAIT_MINUTES} min: {sorted(pending)}")
-    print("\nDone.")
+        logger.warning(f"Still running after {WAIT_MINUTES} min: {sorted(pending)}")
+    logger.info("Done.")

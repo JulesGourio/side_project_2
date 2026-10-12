@@ -5,7 +5,7 @@ actuel), le sens des noms d'essai, les résultats qui ont décidé, ce qui a ét
 tester. La partie 2 est le journal complet, tel qu'il a été tenu pendant les essais.
 
 Code : `server/services/chat_vsi.py` (+ `chat_vsi_llm.py`, `chat_vsi_titles.py`,
-`translation_bridge.py`). Notebooks de mesure gardés : `utils/databricks_ops/evaluation/retrieval_eval.py`
+`translation_bridge.py`). Notebooks de mesure gardés : `utils/evaluation/retrieval_eval.py`
 (recherche seule) et `pairwise_answers.py` (réponses côte à côte). Tout le reste est dans `archive/`
 (`archive/README.md`). Robustesse (secours, relances) : `docs/chat_vsi_robustesse_2026-10.md`.
 
@@ -17,7 +17,7 @@ Code : `server/services/chat_vsi.py` (+ `chat_vsi_llm.py`, `chat_vsi_titles.py`,
 |---|---|---|
 | Langue | fastText détecte la langue. Une question ni française ni anglaise est traduite en anglais (GPT-5.6 Luna, secours GPT-6 Luna) ; la réponse est retraduite | Juillet (`translation_bridge.py`) |
 | Réécriture | GPT-6 Luna (secours GPT-5.6 Luna) écrit une requête en français **et** une en anglais, acronymes développés | `u-bi`, `u-all-luna6` (journal § 2.3, § 5.6) |
-| Recherche | 3 requêtes (question, français, anglais), chacune HYBRID : 12 passages reclassés par le reranker de Vector Search (colonnes `REF`, `semantic_headers`, `chunk_text`) **plus** 10 passages bruts, fusionnés par rang | `union-ctx` (journal § 2.1, § 2.2) |
+| Recherche | 3 requêtes (question, français, anglais), chacune HYBRID : 12 passages reclassés par le reranker de Vector Search (colonnes `REF`, `semantic_headers`, `chunk_text`), **plus** 10 passages bruts sur la réécriture française seulement (`CHAT_VSI_RAW_ON=fr`, sur la question si la réécriture échoue), fusionnés par rang : 4 requêtes Vector Search | `union-ctx` (journal § 2.1, § 2.2) ; `rawfr` (journal § 5.8, 2026-10-09) |
 | Documents cités par REF | Jusqu'à 6 REF nommées dans la conversation : 8 passages de ces documents, placés en tête | `union-ctx-ref` |
 | Documents cités par titre | **Retiré le 2026-10-12** (`chat_vsi_titles.py` supprimé) : le titre est déjà dans le préfixe `[Source: …]` de chaque passage, donc dans l'embedding ; aucun gain isolé mesuré (`u-title` : 13 / 16 / 11 contre 15 / 16 / 9 pour `union-ctx`, § 2.6) | `u-title` |
 | Une langue par document | Q0102QP_GB et Q0102QP_BG ne prennent qu'une place | `u-1lang` |
@@ -93,7 +93,7 @@ Le code de chacune de ces options est dans `archive/chat_vsi_lab/`.
 | E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € | `archive/evaluation/rechunk_experiment.py`, widget `doc_cards` (désactivé) |
 | E2 — contexte par passage | Une ou deux phrases en tête de chaque passage pour le situer (méthode « Contextual Retrieval »). ≈ 50 € | Même notebook, widget `chunk_context` (désactivé) |
 | `v2c` — sans préfixe `[Source: …]` | Mesure l'effet du préfixe sur la recherche | Même notebook |
-| **Nombre de passages** (recherche mesurée le 2026-10-08, journal § 5.7 ; reste la comparaison des réponses) | Jusqu'à 3 × (12 reclassés + 10 bruts) = 66 passages, sans plafond. Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_VSI_RERANK_TOP_K`, `CHAT_VSI_RAW_TOP_K`, `CHAT_VSI_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
+| **Nombre de passages** (recherche mesurée le 2026-10-08, journal § 5.7 ; reste la comparaison des réponses) | Jusqu'à 3 × 12 reclassés + 10 bruts = 46 passages, sans plafond (66 avant `rawfr`). Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_VSI_RERANK_TOP_K`, `CHAT_VSI_RAW_TOP_K`, `CHAT_VSI_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
 | Pistes côté recherche R1 à R12 | Passages voisins, ordre du document, filtre par type, seuil « je ne sais pas »… | Journal § 4, rien de codé |
 | Documents d'avant 2018 | Leur fiche dans le chatbot (P11) | Décision métier ; pipeline prêt (`parsing_archive_notices_in_rag`) |
 | Numéros de page et de slide | P13, re-parsing GPU | Rien de codé |
@@ -1088,4 +1088,125 @@ Effets à connaître :
 - **`raw5` fait jeu égal avec l'actuel** (80.0 % contre 79.4 %) avec 18 % de contexte en moins, mais perd 2 et 4 points sur golden et synthétiques. Les écarts sur les retours (16 questions : 1 question = 6 points) sont du bruit.
 - Défaut de l'éval corrigé le même jour : les questions des retours utilisateurs portaient encore le préfixe « [Division: AS] (system routing note…) » du Knowledge Assistant ; `retrieval_eval` et `pairwise_answers` le retirent désormais (`_strip_division`), comme l'app.
 - **Décision** : rien ne change tant que les réponses n'ont pas été comparées (`pairwise_answers`, `chat` contre `raw5`).
+
+## 5.8 Tenue en charge (2026-10-08, DEV)
+
+**Chat de bout en bout** (`load_test_chat.py`, via l'app) : 100 % de réussite à 5 et 10 questions
+simultanées ; à 20, 40, 80 : 91 %, 84 %, 76 %, toutes les erreurs `Vector Search returned 429` ; débit
+plafonné vers 50 questions/min ; premier mot à 10,7 s en médiane même à 5 questions.
+
+**Vector Search seul** (`load_test_vector_search.py`, sans LLM ni relance, jeton du notebook) :
+
+| Requête | Servies/s sans refus | Plafond servies/s | Latence p50 (palier 8) |
+|---|---|---|---|
+| HYBRID 10 (brute) | 25.8 (8 simultanées) | ≈ 26 | 0.30 s |
+| HYBRID 12 + reranker | 16.2 (8) | ≈ 26 | 0.48 s |
+| reranker sur le texte seul | 16.3 (8) | ≈ 26 | 0.48 s |
+| ANN 10 (vecteurs seuls) | 49.3 (8) | ≈ 80 | 0.15 s |
+| HYBRID + filtre de division | 22.6 (8) | ≈ 22 | 0.32 s |
+| mélange du chat | 22.2 (8) | ≈ 25 | 0.40 s |
+
+- **Le reranker n'abaisse pas le plafond** (≈ 26 requêtes/s avec ou sans) : il rend chaque requête plus
+  lente (0,5 s contre 0,2 s). C'est la recherche HYBRID (mots-clés + vecteurs) qui plafonne ; ANN seul
+  monte trois fois plus haut. Le filtre ne coûte presque rien.
+- **La cause des 429 du chat** : une question envoie 6 à 8 requêtes d'un coup, et l'endpoint refuse
+  au-delà de ≈ 16 requêtes en cours. Deux ou trois questions qui cherchent au même instant suffisent.
+- **Corrigé dans le code le même jour** : `server/services/vs_gate.py`, une file commune au chat et à
+  l'impact search, au plus 8 requêtes Vector Search en cours par instance de l'app
+  (`VS_MAX_CONCURRENT_QUERIES`), les autres attendent au lieu d'être refusées ; un refus qui arrive
+  quand même est relancé jusqu'à 5 fois en ≈ 15 s, en respectant `Retry-After` (`VS_QUERY_RETRIES`).
+- **Au-delà** : l'endpoint « standard » a un réglage *Target QPS* (capacité réservée, payante, sans
+  autoscaling). Selon Databricks, un jeton personnel passe par une route limitée à « quelques dizaines
+  de requêtes/s » ; l'app utilise l'OAuth de son service principal : le plafond de l'app peut être
+  plus haut que celui mesuré depuis le notebook.
+
+**Second run (paliers 10 / 20 / 30) et messages de refus** : même plafond (HYBRID ≈ 25/s, refus dès
+20 requêtes en cours ; ANN ≈ 63/s). Deux limites différentes :
+- HYBRID : `Request is rejected due to heavy load` → capacité de calcul de l'endpoint (ce que règle *Target QPS*) ;
+- ANN : `Too many requests` → limite de débit des requêtes, atteinte seulement à ≈ 60/s.
+
+**Moins de requêtes par question** (`retrieval_eval`, 65 questions) :
+
+| Config | Requêtes / question | Trouvés | Golden | Synthétiques | Retours (16) | Contexte | Recherche p50 |
+|---|---|---|---|---|---|---|---|
+| `chat` (3 reclassées + 3 brutes) | 6 | 79.4 % | **96.1 %** | **94.6 %** | 31.3 % | 11 307 | 4.9 s |
+| `rawq1` (3 reclassées + 1 brute, sur la question) | 4 | 80.0 % | 87.8 % | 93.6 % | 43.8 % | 8 946 | 3.3 s |
+| `rawq1-raw5` (idem, 5 passages bruts) | 4 | 78.3 % | 80.4 % | 93.6 % | 43.8 % | 8 170 | 3.3 s |
+
+- Les recherches brutes sur les réécritures FR / EN comptent : sans elles, le golden perd 8 points
+  (définition d'APO INAPO0006, IQ19613 / IQ20189 pour le BPL R80).
+- **Décision** : on garde 6 requêtes. Pour 80 questions/min (≈ 9 requêtes/s), l'endpoint a ≈ 2,5 fois
+  la marge nécessaire une fois les rafales étalées par la file `vs_gate.py` ; reste à le vérifier par le
+  test de charge du chat (`operations_dev.md` V3.2).
+
+**Chat de bout en bout avec la file `vs_gate.py`** (`load_test_chat.py` en mode `engine` : le moteur
+tourne dans le notebook ; 6 requêtes par question) :
+
+| Questions en cours | Réussite | Premier mot p50 / p95 | Réponse complète p50 / p95 | Débit (notebook) |
+|---|---|---|---|---|
+| 10 | 100 % | 10,0 s / 16,0 s | 13,0 s / 19,6 s | 39 /min |
+| 20 | 100 % | 11,0 s / 19,5 s | 12,6 s / 23,9 s | 66 /min |
+| 30 | 100 % | 12,9 s / 22,3 s | 15,1 s / 26,4 s | 86 /min |
+| 40 | 100 % | 15,8 s / 27,3 s | 19,4 s / 32,2 s | 91 /min |
+
+- **Vector Search tient** : aucune ligne `vs_gate:` (ni refus ni relance) à aucun palier.
+- **La limite suivante est le modèle** : à 40 en cours, GPT-6 Luna répond `429 rate_limit` ; ≈ 45
+  réécritures et ≈ 75 réponses sur 160 passent par GPT-5.6 Luna. Aucun échec grâce au secours, mais une
+  question sur deux environ est traitée en partie par le modèle de secours. Rien à 10, 20, 30.
+- Ordre de grandeur : 80 questions/min × ≈ 11 000 tokens de contexte ≈ 900 000 tokens/min en entrée.
+- Suite : connaître le quota de l'endpoint `databricks-gpt-6-luna` (limite de l'organisation ou de
+  Databricks) avant de le relever ou de réserver du débit. Ne pas passer la réécriture sur GPT-5.6 Luna
+  pour économiser le quota : elle retrouve moins bien les documents (80,0 % contre 75,8 %).
+
+**Quota des modèles** (workspace DEV, partagé par tout le workspace, identique pour GPT-6 Luna et
+GPT-5.6 Luna) : 1 000 000 tokens d'entrée/min, **100 000 tokens de sortie/min**, 1 000 requêtes/s.
+À ≈ 90 questions/min, ≈ 11 000 tokens d'entrée par réponse donnent ≈ 1 000 000/min, et ≈ 1 100 tokens
+de sortie (réflexion comprise) suffisent à atteindre les 100 000 : les deux limites sont atteintes en
+même temps, d'où les 429 au palier 40 seulement. Moins de contexte par question = plus de questions
+par minute avant la limite.
+
+**Recherche brute sur une réécriture seulement** (`retrieval_eval`, 65 questions) :
+
+| Config | Requêtes / question | Trouvés | Golden | Synthétiques | Retours (16) | Contexte | Recherche p50 |
+|---|---|---|---|---|---|---|---|
+| `chat` (brute sur question, fr, en) | 6 | 79.4 % | **96.1 %** | 94.6 % | 31.3 % | 11 307 | 4.9 s |
+| `rawfr` (brute sur la réécriture FR) | 4 | **81.9 %** | 93.8 % | 94.6 % | **43.8 %** | 8 983 | 4.9 s |
+| `rawfren` (brute sur fr + en) | 5 | 81.0 % | 85.4 % | 96.6 % | 43.8 % | 9 900 | 4.7 s |
+| `rawen` (brute sur la réécriture EN) | 4 | 76.8 % | 87.1 % | 90.7 % | 37.5 % | 9 216 | 4.8 s |
+
+- `rawfr` : +2,5 points au total, +12,5 sur les retours utilisateurs, −2,3 sur le golden (NF10856 pour
+  les CND, IQ19613 pour le BPL R80), −20 % de contexte, −33 % de requêtes Vector Search.
+- `rawfren` sous `rawfr` sur le golden alors qu'il fait une requête de plus : sur 15 questions, des
+  écarts de 2 à 3 points sont à la limite du bruit.
+- Le temps de recherche ne baisse pas : la réécriture domine, les requêtes partent en parallèle.
+- **Décision (2026-10-09)** : `rawfr` devient le réglage par défaut (`CHAT_VSI_RAW_ON=fr`) ; si la
+  réécriture échoue, la recherche brute se fait sur la question. La comparaison des réponses
+  (`pairwise_answers`, `chat` = ancien réglage `rawall|rawon=question+fr+en` contre `rawfr`) reste à
+  faire pour confirmer et pour mesurer les tokens par réponse.
+
+**Comparaison des réponses `rawall` (ancien) / `rawfr`** (`pairwise_answers`, 40 questions, juge GPT-5.6 Luna,
+`eval_id` `passages-rawfr`) :
+
+| | `rawfr` | `rawall` |
+|---|---|---|
+| Victoires (verdict stable dans les deux ordres) | 9 | 14 |
+| Égalités ou verdicts instables | 17 | 17 |
+| Fidélité / exactitude (sur 3) | 2,86 / 2,80 | 2,75 / 2,79 |
+| Inventions par réponse | **0,35** | 0,44 |
+| Premier mot p50 | **7,1 s** | 8,1 s |
+| Tokens d'entrée / de sortie par réponse | 13 247 / 1 027 | ≈ 15 500 (estimé) / — |
+| Coût par question | 0,0020 € | 0,0023 € |
+
+- Le juge préfère `rawall` 14 fois contre 9, presque toujours pour « plus complet » (un ou deux documents
+  de plus cités : CND, critères QRQC / 8D, work centers) ; fidélité et exactitude égales, moins
+  d'inventions avec `rawfr`. 9 contre 14 sur 23 verdicts n'est pas un écart significatif (test du signe,
+  p ≈ 0,4), et le juge ne donne le même verdict dans les deux ordres que 65 % du temps.
+- **Capacité sous le quota** (1 M tokens d'entrée/min, 100 k de sortie/min) : avec `rawfr`,
+  1 000 000 / 13 247 ≈ **75 questions/min** côté entrée, 100 000 / 1 027 ≈ 97/min côté sortie ; l'entrée
+  limite la première. Avec `rawall`, ≈ 64/min. Pour tenir 80 questions/min en continu, il faut un quota
+  plus haut (ou moins de contexte).
+- **Décision confirmée** : `rawfr` reste le défaut.
+- Vu au passage, sans lien avec `rawfr` : « resposta em frances » est répondu en portugais par les deux
+  réglages ; la langue de réponse suit la langue de la question, pas une langue demandée dans la question.
+
 

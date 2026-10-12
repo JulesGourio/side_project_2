@@ -16,6 +16,12 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).with_name("target_env.json")
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("render_target_config_env")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         raise SystemExit(f"Usage: {sys.argv[0]} <dev|uat|uat-test|prod> [output_path]")
@@ -35,7 +41,7 @@ def main() -> None:
     # and breaking any URL built from one ("Invalid non-printable ASCII
     # character in URL, '\r'").
     output_path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8", newline="\n")
-    print(f"Wrote {len(lines)} var(s) to {output_path} for target '{target}'.")
+    logger.info(f"Wrote {len(lines)} var(s) to {output_path} for target '{target}'.")
 
 
 if __name__ == "__main__":

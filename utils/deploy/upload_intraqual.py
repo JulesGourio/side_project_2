@@ -37,6 +37,12 @@ MAX_WORKERS      = int(os.getenv("MAX_WORKERS",  "8"))
 _REPORT_INTERVAL = 3  # secondes entre chaque ligne de progression
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("upload_intraqual")
+
+
 class _Progress:
     """Compteurs thread-safe + reporter de fond."""
 
@@ -94,14 +100,11 @@ class _Progress:
         bar       = "█" * filled + "░" * (bar_len - filled)
 
         err_str = f"  ⚠ {errs} erreurs" if errs else ""
-        print(
-            f"  [{bar}] {done_f}/{self.total_files} ({pct:.1f}%)"
+        logger.info(f"  [{bar}] {done_f}/{self.total_files} ({pct:.1f}%)"
             f"  {done_b/1024/1024:.1f}/{self.total_bytes/1024/1024:.1f} Mo"
             f"  {speed/1024/1024:.2f} Mo/s"
             f"  ETA {eta_str}"
-            f"{err_str}",
-            flush=True,
-        )
+            f"{err_str}")
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -134,21 +137,21 @@ def _collect_files(src_dir: str) -> list[tuple[str, str, int]]:
 
 def main():
     if not os.path.isdir(SRC_DIR):
-        print(f"Dossier source introuvable: {SRC_DIR!r}  (lance unzip_intraqual.py d'abord).")
+        logger.info(f"Dossier source introuvable: {SRC_DIR!r}  (lance unzip_intraqual.py d'abord).")
         sys.exit(1)
 
     from databricks.sdk import WorkspaceClient
     w = WorkspaceClient(host=DATABRICKS_HOST)
 
-    print("Collecte des fichiers...", flush=True)
+    logger.info("Collecte des fichiers...")
     pairs = _collect_files(SRC_DIR)
     if not pairs:
-        print(f"Aucun fichier trouvé dans {SRC_DIR!r}.")
+        logger.info(f"Aucun fichier trouvé dans {SRC_DIR!r}.")
         return
 
     total_bytes = sum(s for _, _, s in pairs)
-    print(f"Upload de {len(pairs)} fichiers ({total_bytes/1024/1024:.1f} Mo) → {VOLUME_PATH}")
-    print(f"Parallélisme: {MAX_WORKERS} threads\n")
+    logger.info(f"Upload de {len(pairs)} fichiers ({total_bytes/1024/1024:.1f} Mo) → {VOLUME_PATH}")
+    logger.info(f"Parallélisme: {MAX_WORKERS} threads\n")
 
     try:
         w.files.create_directory(VOLUME_PATH)
@@ -170,20 +173,18 @@ def main():
                 progress.record(size)
             except Exception as e:
                 progress.record_error()
-                print(f"\n  ❌ {os.path.basename(local)}: {e}", flush=True)
+                logger.info(f"  {os.path.basename(local)}: {e}")
 
     progress.stop()
 
     elapsed = time.monotonic() - progress._start
     speed   = progress.done_bytes / elapsed if elapsed > 0 else 0
-    print(
-        f"\nTerminé en {_fmt_duration(elapsed)}"
+    logger.info(f"Terminé en {_fmt_duration(elapsed)}"
         f"  |  {progress.done_files - progress.errors} uploadés"
         f"  |  {progress.done_bytes/1024/1024:.1f} Mo"
         f"  |  moy. {speed/1024/1024:.2f} Mo/s"
-        f"  |  {progress.errors} erreurs"
-    )
-    print(f"Volume: {VOLUME_PATH}")
+        f"  |  {progress.errors} erreurs")
+    logger.info(f"Volume: {VOLUME_PATH}")
 
 
 if __name__ == "__main__":

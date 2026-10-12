@@ -24,7 +24,7 @@ from databricks.sdk.service import jobs
 from databricks.sdk.service.compute import Environment
 
 JOB_NAME = "qualibot-sync-user-capabilities-uat"
-NOTEBOOK_PATH = "/Workspace/Shared/.bundle/qualibot/qualibot-uat/files/utils/databricks_ops/user_capabilities/sync_user_capabilities_job.py"
+NOTEBOOK_PATH = "/Workspace/Shared/.bundle/qualibot/qualibot-uat/files/utils/user_capabilities/sync_user_capabilities_job.py"
 
 
 def build_job_kwargs() -> dict:
@@ -78,6 +78,12 @@ def build_job_kwargs() -> dict:
     )
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("deploy_sync_user_capabilities_uat_personal")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--profile", default="UAT", help="~/.databrickscfg profile to deploy under (default: UAT)")
@@ -85,7 +91,7 @@ def main() -> None:
 
     w = WorkspaceClient(profile=args.profile)
     me = w.current_user.me()
-    print(f"Deploying '{JOB_NAME}' as {me.user_name or me.display_name} (profile={args.profile})...")
+    logger.info(f"Deploying '{JOB_NAME}' as {me.user_name or me.display_name} (profile={args.profile})...")
 
     existing = [j for j in w.jobs.list(name=JOB_NAME)]
 
@@ -94,14 +100,14 @@ def main() -> None:
         # identity (job-runner-sa-uat) — delete + recreate so the new job
         # genuinely has no run_as override and defaults to its creator.
         prior_run_as = w.jobs.get(j.job_id).settings.run_as
-        print(f"Deleting existing job_id={j.job_id} (run_as was {prior_run_as})...")
+        logger.info(f"Deleting existing job_id={j.job_id} (run_as was {prior_run_as})...")
         w.jobs.delete(job_id=j.job_id)
 
     created = w.jobs.create(**build_job_kwargs())
     job_id = created.job_id
-    print(f"Created new job_id={job_id}.")
+    logger.info(f"Created new job_id={job_id}.")
 
-    print(f"Done. Job runs as its creator/deployer ({me.user_name or me.display_name}) — "
+    logger.info(f"Done. Job runs as its creator/deployer ({me.user_name or me.display_name}) — "
           f"re-run this script any time the notebook or schedule changes.")
 
 

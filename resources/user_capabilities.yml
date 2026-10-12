@@ -1,0 +1,46 @@
+# Sync of user capabilities.
+# Declared per target: each job exists only on the targets listed below.
+
+targets:
+  qualibot-uat-test:
+    resources:
+      jobs:
+
+        sync_user_capabilities_uat_test:
+          name: "D_1_Qualibot_Sync_User_Capabilities_Uat_Test"
+          description: "Sync user group membership (system.access.audit) -> users.groups/can_chat/can_compare, on doccompare_test. Validation job — see utils/user_capabilities/sync_user_capabilities_job.py. Point LAKEBASE_DATABASE at doccompare (qualibot-uat target) only once validated end to end."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          # Live test of job-runner-sa-uat on system.access.audit (blocked: missing USE SCHEMA/SELECT).
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          tasks:
+            # Serverless: classic job compute cannot reach the Lakebase private endpoint.
+            - task_key: sync_user_capabilities
+              notebook_task:
+                notebook_path: ../utils/user_capabilities/sync_user_capabilities_job.py
+                source: WORKSPACE
+                base_parameters:
+                  dry_run: "false"
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare_test"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 30 3 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED

@@ -8,9 +8,7 @@ import { ChatSidebar, type ChatSession } from './ChatSidebar';
 import { type Division, stripDivision } from './division';
 import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanner';
 
-// ---------------------------------------------------------------------------
-// WebSocket streaming helper
-// ---------------------------------------------------------------------------
+// --- WebSocket streaming helper ---
 
 const WS_PATH = '/api/chat/ws';
 const CHAT_TITLE = 'Qualibot';
@@ -22,16 +20,31 @@ interface StreamCallbacks {
   onError: (err: string) => void;
 }
 
+// The only failure text a user sees (same as the server's TIRED_MESSAGE): the cause is logged server-side.
+export const TIRED_MESSAGE = 'Qualibot is a bit tired right now. Please wait a moment and try again.';
+// A socket that fails before the question was sent is opened again this many times.
+const CONNECT_RETRIES = 2;
+
 function streamChat(
   messages: { role: string; content: string }[],
   sessionId: string,
   division: Division,
   callbacks: StreamCallbacks,
   signal: AbortSignal,
+  attempt = 0,
 ): Promise<void> {
   return new Promise((resolve) => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}${WS_PATH}`);
+    let sent = false;
+    // Nothing reached the server yet: open a new socket instead of failing the turn.
+    const retryConnect = () => {
+      settled = true;
+      setTimeout(() => {
+        if (signal.aborted) { resolve(); return; }
+        streamChat(messages, sessionId, division, callbacks, signal, attempt + 1).then(resolve);
+      }, 1000 * (attempt + 1));
+    };
 
     // A turn always ends with exactly one outcome: done, error, or user abort.
     // A socket that closes without one must not leave the message on "Thinking".
@@ -41,8 +54,8 @@ function streamChat(
     signal.addEventListener('abort', () => { settled = true; cleanup(); resolve(); });
 
     ws.onopen = () => {
-      // The division routes the turn to its single-source KA endpoint server-side.
       ws.send(JSON.stringify({ messages, session_id: sessionId, division }));
+      sent = true;
     };
 
     ws.onmessage = (event) => {
@@ -55,7 +68,7 @@ function streamChat(
           callbacks.onDone({ session_id: parsed.session_id, message_id: parsed.message_id, content: parsed.content, sources: parsed.sources ?? [] });
           finish();
         } else if (type === 'error') {
-          callbacks.onError(parsed.error ?? 'Unknown error');
+          callbacks.onError(parsed.error || TIRED_MESSAGE);
           finish();
         }
       } catch {
@@ -65,20 +78,21 @@ function streamChat(
 
     ws.onerror = () => {
       if (settled) return;
-      callbacks.onError('Connection error. Please try again.');
+      if (!sent && attempt < CONNECT_RETRIES) { retryConnect(); return; }
+      callbacks.onError(TIRED_MESSAGE);
       finish();
     };
 
     ws.onclose = () => {
-      if (!settled) callbacks.onError('The connection closed before the answer was complete. Please try again.');
+      if (settled) return;
+      if (!sent && attempt < CONNECT_RETRIES) { retryConnect(); return; }
+      callbacks.onError(TIRED_MESSAGE);
       finish();
     };
   });
 }
 
-// ---------------------------------------------------------------------------
-// generateId helper
-// ---------------------------------------------------------------------------
+// --- generateId helper ---
 
 function genId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -89,9 +103,7 @@ function genSessionId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Welcome state
-// ---------------------------------------------------------------------------
+// --- Welcome state ---
 
 const SUGGESTED_PROMPTS = [
   'What documents reference the NDT/NDI qualification requirements?',
@@ -159,9 +171,7 @@ function WelcomeState({ title, onPrompt }: { title: string; onPrompt: (p: string
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main ChatView
-// ---------------------------------------------------------------------------
+// --- Main ChatView ---
 
 export function ChatView() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -347,7 +357,7 @@ export function ChatView() {
             setMessages(prev =>
               prev.map(m =>
                 m.id === assistantId
-                  ? { ...m, streaming: false, error: true, content: err || 'An error occurred.' }
+                  ? { ...m, streaming: false, error: true, content: err || TIRED_MESSAGE }
                   : m,
               ),
             );
@@ -363,7 +373,7 @@ export function ChatView() {
       setMessages(prev =>
         prev.map(m =>
           m.id === assistantId
-            ? { ...m, streaming: false, error: true, content: 'Connection error. Please try again.' }
+            ? { ...m, streaming: false, error: true, content: TIRED_MESSAGE }
             : m,
         ),
       );

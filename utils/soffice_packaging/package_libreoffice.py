@@ -31,13 +31,10 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-# System libraries the TDF LibreOffice build links against that slim
-# container images (Databricks Apps) don't ship. Their .so files are merged
-# into program/ (covered by the executables' $ORIGIN rpath, plus
-# LD_LIBRARY_PATH set by server/services/soffice.py). Pulled from the Ubuntu
-# jammy (22.04) archive — the Databricks Apps base image generation; these
-# X/rendering libs have tiny, ancient glibc requirements, so a slightly
-# different container release is fine.
+# System libraries the LibreOffice build links against that slim container images (Databricks Apps) do not ship. Their
+# .so files are merged into program/
+# (executables' $ORIGIN rpath, plus LD_LIBRARY_PATH set by server/services/soffice.py), pulled from the Ubuntu 22.04
+# archive.
 _SYSLIB_PACKAGES = [
     'libx11-6', 'libxcb1', 'libxau6', 'libxdmcp6', 'libxext6', 'libxinerama1',
     'libxrender1', 'libxrandr2', 'libxcursor1', 'libxfixes3', 'libxi6',
@@ -97,13 +94,19 @@ def extract_deb(deb_bytes: bytes, dest: Path) -> None:
     raise RuntimeError('no data.tar member found in .deb')
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("package_libreoffice")
+
+
 def _load_ubuntu_index() -> dict:
     """package name -> pool Filename, from the jammy + jammy-updates indexes
     (updates last so security-patched versions win)."""
     filenames: dict = {}
     for dist in ('jammy', 'jammy-updates'):
         url = f'{_UBUNTU_MIRROR}/dists/{dist}/main/binary-amd64/Packages.gz'
-        print(f'fetching package index {url} …')
+        logger.info(f'fetching package index {url} …')
         with urllib.request.urlopen(url, timeout=120) as resp:
             data = gzip.decompress(resp.read()).decode('utf-8', errors='replace')
         name = None
@@ -127,7 +130,7 @@ def add_system_libs(rootfs_program_dir: Path) -> None:
         tmp_path = Path(tmp)
         for pkg in _SYSLIB_PACKAGES:
             url = f'{_UBUNTU_MIRROR}/{index[pkg]}'
-            print(f'  syslib {pkg}: {url.rsplit("/", 1)[-1]}')
+            logger.info(f'  syslib {pkg}: {url.rsplit("/", 1)[-1]}')
             with urllib.request.urlopen(url, timeout=120) as resp:
                 deb_bytes = resp.read()
             extract_deb(deb_bytes, tmp_path)
@@ -149,7 +152,7 @@ def add_system_libs(rootfs_program_dir: Path) -> None:
             else:
                 shutil.copy2(so, dest)
                 count += 1
-        print(f'merged {count} system libraries into program/')
+        logger.info(f'merged {count} system libraries into program/')
 
 
 def main(bundle_path: str, output_path: str) -> None:
@@ -162,14 +165,14 @@ def main(bundle_path: str, output_path: str) -> None:
         debs_dir.mkdir()
         rootfs.mkdir()
 
-        print(f'extracting bundle {bundle} …')
+        logger.info(f'extracting bundle {bundle} …')
         with tarfile.open(bundle) as tar:
             tar.extractall(debs_dir)
 
         debs = sorted(debs_dir.glob('**/*.deb'))
         if not debs:
             raise SystemExit('no .deb files found in bundle')
-        print(f'unpacking {len(debs)} debs …')
+        logger.info(f'unpacking {len(debs)} debs …')
         for deb in debs:
             extract_deb(deb.read_bytes(), rootfs)
 
@@ -184,7 +187,7 @@ def main(bundle_path: str, output_path: str) -> None:
 
         add_system_libs(lo_root / 'program')
 
-        print(f'building {output} …')
+        logger.info(f'building {output} …')
         output.parent.mkdir(parents=True, exist_ok=True)
 
         def normalize(info: tarfile.TarInfo) -> tarfile.TarInfo:
@@ -198,9 +201,9 @@ def main(bundle_path: str, output_path: str) -> None:
         with tarfile.open(output, 'w:gz', compresslevel=6) as tar:
             tar.add(lo_root, arcname=lo_root.name, filter=normalize)
 
-        print(f'done: {output} ({output.stat().st_size / 1e6:.0f} MB)')
-        print('upload with:')
-        print(f'  databricks fs cp "{output}" "dbfs:/Volumes/<catalog>/<schema>/<volume>/libreoffice/{output.name}"')
+        logger.info(f'done: {output} ({output.stat().st_size / 1e6:.0f} MB)')
+        logger.info('upload with:')
+        logger.info(f'  databricks fs cp "{output}" "dbfs:/Volumes/<catalog>/<schema>/<volume>/libreoffice/{output.name}"')
 
 
 if __name__ == '__main__':

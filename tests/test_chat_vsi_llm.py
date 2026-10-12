@@ -142,7 +142,8 @@ def test_answer_that_cannot_be_finished_says_so(monkeypatch):
         raise chat_vsi_llm.LlmFailure('server', 'down', 503)
     monkeypatch.setattr(chat_vsi_llm, 'stream_once', _once)
     events = _events([PRIMARY, BACKUP])
-    assert _text(events).startswith('Début') and 'interrupted' in _text(events) and not _of(events, 'error')
+    assert _text(events).startswith('Début') and _text(events).endswith(chat_vsi_llm.TIRED_CUT_NOTE)
+    assert not _of(events, 'error')
 
 
 class _Silent(httpx.AsyncByteStream):

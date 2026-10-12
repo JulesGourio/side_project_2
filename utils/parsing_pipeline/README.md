@@ -1,6 +1,9 @@
 # Parsing Pipeline
 
-Daily chain: `1_categories` -> `2_manifest` -> `3_parse` (GPU) -> `4_describe_images` (LLM) -> `5_sync_index`.
+Daily chain: `1_categories` -> `2_manifest` -> `3_parse` (GPU) -> `4_describe_images` (LLM) -> `5_sync_index` -> `6_update_kb_metadata`.
+
+`3_Parse_Pipeline.py` only orchestrates: each phase (scope, file selection, Docling batches, retry, `image_metadata`,
+`processed_files` / `chunks`, writes) is a function in `parse_steps.py`, driver side only.
 
 This README collects the incident/investigation narratives that used to live as
 long inline comments across `resources/parsing_pipeline.job.yml` and the

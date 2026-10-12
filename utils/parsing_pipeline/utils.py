@@ -53,9 +53,7 @@ for _noisy in ("py4j", "py4j.clientserver", "py4j.java_gateway", "pyspark", "doc
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
-# ===========================================================================
-# Configuration
-# ===========================================================================
+# --- Configuration ---
 # _DEFAULTS is the worker fallback; the notebook injects the real config via configure().
 # ---------------------------------------------------------------------------
 _DEFAULT_VOLUME_BASE_PATH = os.environ.get("PARSING_VOLUME_BASE_PATH")
@@ -177,9 +175,7 @@ def _cfg(key: str, fallback=None):
     raise RuntimeError(f"Configuration key '{key}' not set and no default exists.")
 
 
-# ===========================================================================
-# Non-configurable internal constants
-# ===========================================================================
+# --- Non-configurable internal constants ---
 TEXTLIKE_EXTENSIONS = {"csv", "json", "tsv"}
 CONVERTED_EXTS = {".doc", ".rtf", ".odt", ".ods", ".xls"}
 
@@ -191,9 +187,7 @@ _FORMAT_MAP_NAMES: Dict[str, str] = {
 
 _TIKTOKEN_ENCODER = None
 
-# ---------------------------------------------------------------------------
-# Spark schemas
-# ---------------------------------------------------------------------------
+# --- Spark schemas ---
 CHUNK_SCHEMA = T.ArrayType(T.StructType([
     T.StructField("chunk_index", T.IntegerType(), True),
     T.StructField("chunk_text", T.StringType(), True),
@@ -204,9 +198,7 @@ CHUNK_SCHEMA = T.ArrayType(T.StructType([
 ]))
 
 
-# ===========================================================================
-# Docling bootstrap (lazy, cached per worker)
-# ===========================================================================
+# --- Docling bootstrap (lazy, cached per worker) ---
 def _patch_worker_env():
     """Set offline / thread-limit env vars on Spark workers."""
     os.environ.setdefault("USER", "spark_worker")
@@ -224,6 +216,7 @@ def _patch_worker_env():
 
 
 def _import_docling():
+    """Import Docling after the worker environment is patched; it is heavy, so each process does it once, on demand."""
     _patch_worker_env()
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
@@ -262,6 +255,7 @@ _CONVERTER_CACHE: Dict = {}
 
 
 def _get_docling():
+    """Docling classes, imported once per process."""
     global _DOCLING_MODULES
     if _DOCLING_MODULES is None:
         _DOCLING_MODULES = _import_docling()
@@ -269,6 +263,7 @@ def _get_docling():
 
 
 def _get_input_format(ext: str):
+    """Docling `InputFormat` for a file extension, or None when Docling does not handle it."""
     return getattr(_get_docling()["InputFormat"], _FORMAT_MAP_NAMES.get(ext, ""), None)
 
 
@@ -330,10 +325,9 @@ def _get_converter(input_format, do_ocr: Optional[bool] = None, timings: Optiona
     return converter
 
 
-# ===========================================================================
-# Text helpers
-# ===========================================================================
+# --- Text helpers ---
 def safe_decode(raw_bytes: bytes, encodings: Optional[List[str]] = None) -> str:
+    """Decode bytes trying utf-8, utf-8-sig, cp1252 and latin-1 in turn, then utf-8 ignoring errors."""
     if not raw_bytes:
         return ""
     for enc in (encodings or ["utf-8", "utf-8-sig", "cp1252", "latin-1"]):
@@ -345,6 +339,7 @@ def safe_decode(raw_bytes: bytes, encodings: Optional[List[str]] = None) -> str:
 
 
 def normalize_text(text: str) -> str:
+    """Unify line endings, drop NUL characters, collapse runs of spaces/tabs and of blank lines."""
     if not text:
         return ""
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
@@ -353,6 +348,7 @@ def normalize_text(text: str) -> str:
 
 
 def get_tiktoken_encoder():
+    """The tiktoken encoder, built once per process (cl100k_base unless configured)."""
     global _TIKTOKEN_ENCODER
     if _TIKTOKEN_ENCODER is None:
         import tiktoken
@@ -373,15 +369,14 @@ def count_tokens(text: str) -> int:
 
 
 def _write_tmp_file(content: bytes, suffix: str) -> Path:
+    """Write bytes to a temporary file Docling can open; the caller deletes it."""
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False, prefix="docling_parse_")
     tmp.write(content)
     tmp.close()
     return Path(tmp.name)
 
 
-# ===========================================================================
-# Legacy-format pre-conversion
-# ===========================================================================
+# --- Legacy-format pre-conversion ---
 def _convert_doc_antiword(doc_path: Path) -> Tuple[Optional[Path], Optional[str]]:
     """Convert legacy .doc to Markdown via the Antiword binary (if configured).
 
@@ -491,9 +486,7 @@ def _convert_xls(content: bytes) -> Tuple[Optional[str], Optional[str]]:
             pass
 
 
-# ===========================================================================
-# Core parsing
-# ===========================================================================
+# --- Core parsing ---
 def parse_with_docling(content: bytes, extension: str, timings: Optional[dict] = None) -> Dict[str, Any]:
     """Route raw bytes to the right parser by extension. Returns a dict with
     text / parser_error / parser_strategy / parse_time_seconds / _docling_doc.
@@ -546,6 +539,7 @@ def _exc_detail(e: Exception, limit: int = 500) -> str:
 
 
 def _err(start, ext, msg, strategy=None) -> Dict[str, Any]:
+    """Result of a failed parse: no text, the error message and a `docling_error:<ext>` strategy."""
     return {
         "text": "", "parser_error": msg,
         "parser_strategy": strategy or f"docling_error:{ext.lstrip('.')}",
@@ -554,6 +548,7 @@ def _err(start, ext, msg, strategy=None) -> Dict[str, Any]:
 
 
 def _export_markdown(doc) -> str:
+    """Markdown of a Docling document with image placeholders (plain export when the installed version lacks the option)."""
     try:
         from docling_core.types.doc.document import ImageRefMode
         return doc.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)
@@ -561,9 +556,7 @@ def _export_markdown(doc) -> str:
         return doc.export_to_markdown()
 
 
-# ---------------------------------------------------------------------------
-# Pre-clean OOXML zips (.docx/.docm/.pptx/.pptm) before the size gate.
-# ---------------------------------------------------------------------------
+# --- Pre-clean OOXML zips (.docx/.docm/.pptx/.pptm) before the size gate. ---
 _OOXML_EMBEDDING_MARKER = "/embeddings/"
 _MEDIA_JUNK_EXTS = {
     ".mp4", ".avi", ".mov", ".wmv", ".mpg", ".mpeg", ".m4v", ".flv", ".mkv", ".asf",
@@ -629,6 +622,7 @@ def strip_ooxml_bloat(content: bytes, ext: str) -> bytes:
 
 
 def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, Any]:
+    """Parse with Docling through a temporary file; the step timings are recorded when `timings` is given."""
     t_tmp = time.perf_counter()
     tmp_path = _write_tmp_file(content, ext)
     if timings is not None:
@@ -689,6 +683,7 @@ def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, 
 
 
 def _parse_textlike(content: bytes, ext: str, start: float) -> Dict[str, Any]:
+    """Text-based formats: decoded and normalised; csv and tsv become one bullet per row."""
     decoded = safe_decode(content)
     if ext in {".csv", ".tsv"}:
         try:
@@ -743,6 +738,7 @@ def _parse_doc_antiword(content: bytes, start: float) -> Dict[str, Any]:
 
 
 def _parse_rtf(content: bytes, start: float) -> Dict[str, Any]:
+    """RTF: striprtf converts it to Markdown text, which Docling then reads as a Markdown document."""
     text, err_reason = _convert_rtf(content)
     if not text or not text.strip():
         return {"text": "", "parser_error": f"RTF conversion failed: {err_reason}",
@@ -767,6 +763,7 @@ def _parse_rtf(content: bytes, start: float) -> Dict[str, Any]:
 
 
 def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
+    """ODT and ODS through odfpy."""
     raw_text, err_reason = _convert_odt(content, ext)
     text = normalize_text(raw_text or "")
     return {"text": text, "parser_error": None if text else f"ODF conversion failed: {err_reason}",
@@ -775,6 +772,7 @@ def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
 
 
 def _parse_xls(content: bytes, start: float) -> Dict[str, Any]:
+    """Legacy XLS through xlrd."""
     raw_text, err_reason = _convert_xls(content)
     text = normalize_text(raw_text or "")
     return {"text": text, "parser_error": None if text else f"XLS conversion failed: {err_reason}",
@@ -895,9 +893,7 @@ def intraqual_ref_url(ref_col):
     )
 
 
-# ===========================================================================
-# Chunking
-# ===========================================================================
+# --- Chunking ---
 def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_col,
                           doc_date_col=None, include_prefix=True, type_col=None):
     """chunk_text with an optional "[Source: ...]" provenance prefix (include_prefix).
@@ -927,7 +923,7 @@ def chunk_document(text: str, docling_doc=None) -> List[Dict[str, Any]]:
 
     ``docling_doc`` is accepted for the sandbox notebook's signature only: the pipeline keeps
     the markdown, not the Docling document, so passages always come from the markdown (the
-    former Docling HybridChunker path never ran in the pipeline — audit 2026-10, P1).
+    former Docling HybridChunker path never ran in the pipeline).
     """
     text = normalize_text(text)
     if not text:
@@ -944,9 +940,7 @@ def chunk_document(text: str, docling_doc=None) -> List[Dict[str, Any]]:
     )
 
 
-# ===========================================================================
-# PySpark pandas UDFs
-# ===========================================================================
+# --- PySpark pandas UDFs ---
 @pandas_udf(CHUNK_SCHEMA)
 def build_chunks_udf(text_series: pd.Series) -> pd.Series:
     """Chunk already-parsed markdown text (chunking.chunk_markdown)."""
@@ -965,6 +959,7 @@ def language_udf(text_series: pd.Series, ref_series: pd.Series) -> pd.Series:
 
 @pandas_udf(T.IntegerType())
 def token_count_udf(text_series: pd.Series) -> pd.Series:
+    """Pandas UDF: token count of each text (0 when empty), with the settings restored on the worker."""
     ensure_config()
     return text_series.apply(
         lambda x: count_tokens(str(x)) if pd.notna(x) and str(x).strip() else 0

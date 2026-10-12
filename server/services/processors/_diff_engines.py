@@ -24,20 +24,16 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+# --- Constants ---
 
 _DHASH_SIZE = 8
 _DHASH_THRESHOLD = 4           # Hamming distance <= 4 => visually identical
-# Second-tier identity check: a 16x16 dhash (256 bits). Small edits to a large
-# diagram (added arrow, changed dimension label) can stay within the 4-bit
-# budget of the coarse 8x8 hash and be wrongly treated as "unchanged" — the
-# fine hash catches them while still tolerating JPEG recompression noise.
+# Second-tier identity check, a 16x16 dhash: small edits to a large diagram (added arrow, changed label) can stay
+# within the coarse 8x8 hash budget, while the fine hash still tolerates JPEG recompression.
 _DHASH16_SIZE = 16
 _DHASH16_THRESHOLD = 12
-# Word-level similarity above which two unmatched paragraphs pair as one
-# MODIFIED entry (below: separate REMOVED + ADDED). Tunable for eval sweeps.
+# Word similarity above which two unmatched paragraphs pair as one MODIFIED entry (below: REMOVED + ADDED). Tunable
+# for eval sweeps.
 _PAIR_RATIO_THRESHOLD = float(os.getenv('COMPARE_PAIR_RATIO_THRESHOLD', '0.55'))
 _SEM_THRESHOLD = 0.05          # canonical distance threshold for is_substantive
 _PAIR_PAGE_TOLERANCE  = 15     # max page distance to pair modified images (PDF/PPTX)
@@ -48,9 +44,7 @@ _IMG_JPEG_QUALITY = 65
 _MAX_IMAGE_BLOCKS = 95          # Claude API hard limit is 100 images/documents per request
 _MAX_DIFF_CHARS = int(os.getenv('COMPARE_MAX_DIFF_CHARS', '600000'))  # ~150K tokens
 
-# ---------------------------------------------------------------------------
-# Regexes
-# ---------------------------------------------------------------------------
+# --- Regexes ---
 
 NUMBER_RE = re.compile(r'\b\d+(?:[.,]\d+)*(?:\s*%|\s*mm|\s*in(?:ch)?|\s*kg|\s*psi)?\b')
 PART_NUM_RE = re.compile(r'\d{4,}')  # long digit runs in alphanumeric part numbers (no word-boundary)
@@ -59,32 +53,21 @@ NORM_REF_RE = re.compile(
     re.I,
 )
 MODAL_RE = re.compile(r'\b(?:shall|must|will|should|may|can|could|would)\b', re.I)
-# The bare-ALL-CAPS branch allows the punctuation that real headings actually
-# carry (en/em dash, colon, parens, ampersand, digits) — a plain [A-Z\s]-only
-# pattern never matched titles like "ANNEX C – NATIONAL AEROSPACE NONDESTRUCTIVE
-# TESTING BOARDS (NANDTB)" or "APPENDIX D – CREDIT SYSTEM FOR INITIAL
-# QUALIFICATION FOR LEVEL 3": the dash broke the match, so the heading was never
-# recognized and every paragraph under it silently inherited whatever heading
-# (often page boilerplate) came before it instead (regression found via NAS410
-# Appendices A-D, 2026-07-29).
+# The bare ALL-CAPS branch accepts the punctuation real headings carry (dashes, colon, parens, ampersand, digits): a
+# letters-and-spaces-only pattern missed titles like "ANNEX C – NATIONAL AEROSPACE NONDESTRUCTIVE TESTING BOARDS
+# (NANDTB)", so their paragraphs inherited the previous heading.
 SECTION_RE = re.compile(r"^(?:\d+(?:\.\d+)*\.?\s+[A-Z]|[A-Z][A-Z0-9 \-–—:,./()&']{3,}$)")
-# The bare-ALL-CAPS half of SECTION_RE on its own — used to recognize running
-# headers/footers (company name, standard title, address block) that recur
-# verbatim on every page and would otherwise register as a brand-new "section"
-# each time, resetting cur_sec to page-boilerplate instead of the real
-# enclosing clause.
+# The bare ALL-CAPS half of SECTION_RE, used to spot running headers/footers (company name, standard title, address)
+# that recur on every page and would each register as a new section.
 _ALLCAPS_SECTION_RE = re.compile(r"^[A-Z][A-Z0-9 \-–—:,./()&']{3,}$")
-# A trailing "N/M" page fraction on a running footer stamp ("TRA-0034 - V09
-# 4/39") — masked only when counting heading repeats, so each page's stamp
-# still counts as the same recurring label despite embedding its own number.
+# Trailing "N/M" page fraction of a running footer stamp ("TRA-0034 - V09 4/39"): masked only when counting heading
+# repeats, so each page's stamp counts as the same label.
 _TRAILING_PAGE_FRACTION_RE = re.compile(r'\s+\d+\s*/\s*\d+$')
 
 # Matches trailing structural tags: [Page 3], [Para 7], [Page 3, Para 12], [Heading 2], [Slide 4], [Item 12]
 _TAG_RE = re.compile(r'\s*\[(?:Page|Para|Heading|Slide|Item)[^\]]*\].*$', re.I)
 
-# ---------------------------------------------------------------------------
-# Text primitives
-# ---------------------------------------------------------------------------
+# --- Text primitives ---
 
 def strip_tag(text: str) -> str:
     """Remove trailing structural tags ([Page N], [Para N], [Page N, Para M], [Heading N])."""
@@ -216,9 +199,7 @@ def inline_word_diff(old_text: str, new_text: str) -> str:
     return ' '.join(out).strip()
 
 
-# ---------------------------------------------------------------------------
-# Perceptual image hashing (dhash)
-# ---------------------------------------------------------------------------
+# --- Perceptual image hashing (dhash) ---
 
 def dhash(img_bytes: bytes, size: int = _DHASH_SIZE) -> str:
     """64-bit difference hash. Resistant to slight compression/resize artifacts.
@@ -320,13 +301,9 @@ def _compute_image_diff_pairs(
     removed = [h for h in old_imgs if not any(_same_content(h, old_imgs, nh, new_imgs) for nh in new_imgs)]
     added   = [h for h in new_imgs if not any(_same_content(oh, old_imgs, h, new_imgs) for oh in old_imgs)]
 
-    # ── Orientation-change detection (same raw image, different flip/rotation) ──
-    # Only consider images that don't already have a content match on the other
-    # side. Iterating over ALL images would create false orientation pairs when
-    # BOTH documents contain the same image AND its flip: each image already
-    # content-matches its own twin, so it must NOT also be cross-paired with
-    # the flipped twin (which would falsely report two "orientation changed"
-    # rows for a document where nothing actually changed).
+    # ── Orientation-change detection (same raw image, flipped or rotated) ──
+    # Only images without a content match on the other side are considered: when BOTH documents hold an image and its
+    # flip, each already matches its own twin and must not be cross-paired.
     orientation_pairs: List[Tuple[str, str]] = []
     matched_orient_old: set = set()
     matched_orient_new: set = set()
@@ -354,10 +331,8 @@ def _compute_image_diff_pairs(
     remaining_removed: List[str] = []
 
     if show_position:
-        # Adaptive page tolerance: _PAIR_PAGE_TOLERANCE (15) is sensible for
-        # large documents but means "match anywhere" for short ones. Scale it
-        # down so a 6-page deck doesn't allow images that are 15 slides apart
-        # to be considered the same modified image.
+        # Adaptive page tolerance: _PAIR_PAGE_TOLERANCE (15) means "anywhere" in a short deck, so it is scaled down
+        # for small documents.
         max_page = 0
         for d in (old_imgs, new_imgs):
             for v in d.values():
@@ -366,9 +341,8 @@ def _compute_image_diff_pairs(
                     max_page = max(max_page, max(pages))
         page_tol = min(_PAIR_PAGE_TOLERANCE, max(3, max_page // 3))
 
-        # Pre-compute ahash for the content-gate check below. Ahash catches
-        # the case where two images are within the dhash budget by coincidence
-        # but are visibly unrelated (different overall brightness layout).
+        # ahash for the content gate below: two images can fall within the dhash budget by coincidence while being
+        # visibly unrelated.
         old_ahash_map = {h: ahash(base64.b64decode(old_imgs[h]['b64'])) for h in removed}
         new_ahash_map = {h: ahash(base64.b64decode(new_imgs[h]['b64'])) for h in added}
 
@@ -382,9 +356,7 @@ def _compute_image_diff_pairs(
                     continue
                 if len(rh) == len(ah) and hamming(rh, ah) > _PAIR_MAX_HAMMING:
                     continue
-                # Second gate: ahash content check. Reject candidates whose
-                # average-hash distance is too large even if their dhash slipped
-                # under the budget.
+                # Second gate: reject candidates whose average-hash distance is too large even if their dhash passed.
                 if rh in old_ahash_map and ah in new_ahash_map:
                     if hamming(old_ahash_map[rh], new_ahash_map[ah]) > _PAIR_MAX_AHASH:
                         continue
@@ -397,10 +369,8 @@ def _compute_image_diff_pairs(
                 remaining_removed.append(rh)
         added = added_sorted
 
-        # Final fallback: exactly ONE leftover REMOVED and ONE leftover ADDED
-        # on the same page is almost always a figure replaced in place (e.g. a
-        # redrawn schema too different for the hash gates). Pair them so the
-        # LLM compares OLD/NEW side by side instead of guessing.
+        # Final fallback: exactly ONE leftover REMOVED and ONE leftover ADDED on the same page is almost always a
+        # figure redrawn in place; pair them so the LLM compares OLD/NEW side by side.
         removed_by_page: Dict[int, List[str]] = {}
         for rh in remaining_removed:
             removed_by_page.setdefault(old_imgs[rh]['pages'][0], []).append(rh)
@@ -442,9 +412,7 @@ def _compute_image_diff_pairs(
     return modified_pairs, orientation_pairs, remaining_removed, added
 
 
-# ---------------------------------------------------------------------------
-# Image diff blocks (dual — OLD / NEW side-by-side with page-proximity pairing)
-# ---------------------------------------------------------------------------
+# --- Image diff blocks (dual — OLD / NEW side-by-side with page-proximity pairing) ---
 
 def image_diff_blocks_dual(
     old_imgs: Dict[str, Dict[str, Any]],
@@ -518,7 +486,7 @@ def image_diff_blocks_dual(
             {'type': 'image_url', 'image_url': {'url': f"data:image/jpeg;base64,{new_imgs[h]['b64']}"}},
         ]
 
-    # Cap to API limit (Claude: 100 images/documents per request)
+    # Cap to the API limit of 100 images per request
     img_count = sum(1 for b in blocks if b.get('type') == 'image_url')
     if img_count > _MAX_IMAGE_BLOCKS:
         capped: List[Dict[str, Any]] = []
@@ -603,9 +571,7 @@ def image_diff_pairs(
     return pairs
 
 
-# ---------------------------------------------------------------------------
-# Legacy paragraph diff (lower threshold, kept for reference)
-# ---------------------------------------------------------------------------
+# --- Legacy paragraph diff (lower threshold, kept for reference) ---
 
 def legacy_paragraph_diff(old_text: str, new_text: str) -> Tuple[str, int]:
     """Paragraph-level semantic alignment — legacy engine.
@@ -719,9 +685,7 @@ def legacy_paragraph_diff(old_text: str, new_text: str) -> Tuple[str, int]:
     return '\n'.join(out), filtered
 
 
-# ---------------------------------------------------------------------------
-# System prompts
-# ---------------------------------------------------------------------------
+# --- System prompts ---
 
 SYSTEM_PROMPT_STANDARD = """\
 You are an expert document comparison analyst specialising in technical, regulatory, and quality-management documentation.
@@ -1033,9 +997,7 @@ IMPORTANT: output ONLY the JSON array. No explanation. No markdown. No code fenc
 """
 
 
-# ---------------------------------------------------------------------------
-# Modal-aware helpers for paragraph_semantic_diff
-# ---------------------------------------------------------------------------
+# --- Modal-aware helpers for paragraph_semantic_diff ---
 
 def canonicalize_keep_modals(text: str) -> str:
     """Normalize text for comparison: keep modal verbs as distinct words.
@@ -1067,19 +1029,14 @@ def _modal_group_profile(text: str) -> List[str]:
     return sorted(groups)
 
 
-# Word-level net behind the character-distance gate below. That gate measures
-# the change against the WHOLE paragraph, so one decisive word in a long
-# paragraph (under 5% of its characters) was dropped before the LLM ever saw it:
-# "shall record" -> "shall not record", "before" -> "after", "operator" ->
-# "inspector", "peut" -> "doit" all came out as "filtered" (2026-10-04). Here any
-# word that is added, removed or replaced counts, except what the gate is really
-# for: punctuation/case/hyphenation, articles, spelling variants and modal swaps
-# inside one obligation group.
+# Word-level net behind the character-distance gate below. That gate measures the change against the WHOLE paragraph,
+# so one decisive word in a long paragraph ("shall record" -> "shall not record", "before" -> "after") was dropped
+# before the LLM saw it.
+# Here any added, removed or replaced word counts, except punctuation/case/hyphenation, articles, spelling variants
+# and modal swaps inside one obligation group.
 _WORD_LEVEL_CHECK = os.getenv('COMPARE_WORD_LEVEL_CHECK', 'true').lower() == 'true'
-# Unicode words (accents kept — canonicalize() turns "délai" into "d lai") plus
-# the comparison operators, which carry the meaning of a limit on their own, and
-# the table cell separator: "Release | | X" vs "Release | | | X" is the X of a
-# responsibility matrix changing column.
+# Unicode words (accents kept) plus the comparison operators, which carry the meaning of a limit on their own, and the
+# table cell separator ("Release | | X" vs "Release | | | X" is a column change).
 _WORD_TOKEN_RE = re.compile(r'[^\W_]+|[<>≤≥=±|]')
 _MODAL_TOKEN_GROUP: Dict[str, str] = {
     **{w: '\x00mandatory' for w in ('shall', 'must', 'will', 'doit', 'doivent', 'devra', 'devront')},
@@ -1135,55 +1092,34 @@ def is_substantive_keep_modals(old: str, new: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Relocation detection — catches content the pairing loop missed because it
-# moved into a differently-shaped paragraph elsewhere (merged into a longer
-# bullet list, split into its own new subsection, reworded in transit). The
-# LLM cannot reliably re-derive this by reading the whole diff itself (tested:
-# an explicit prompt instruction to do so did not reduce false "Requirement
-# removed" rows on a real document — see compare_eval notes 2026-07-28) — so
-# it's resolved here with a cheap, deterministic substring check instead.
+# Relocation detection: catches content the pairing loop missed because it moved into a differently-shaped paragraph
+# (merged into a longer list, split into its own subsection, reworded). The LLM cannot reliably re-derive this from
+# the diff, so a cheap deterministic substring check does it.
 # ---------------------------------------------------------------------------
 
 _RELOCATION_MIN_WORDS = 6
-# Below _RELOCATION_MIN_WORDS the relocation check never runs, so short blocks
-# had no safety net at all: a block still present VERBATIM in the other
-# revision was reported as a change. That happens constantly on table-heavy
-# PDFs — get_text('blocks') regroups cells differently between two revisions,
-# and a header-dedup pass with a fixed window could drop a repeat on one side only,
-# leaving a surplus occurrence that the 1:1 exact-match queue turns into a
-# phantom entry. Measured on MOP_AX AW->AX (2026-08-17): 'ANNEXE 4' (present on
-# 14 pages of BOTH revisions) and "Livrables à envoyer"/"à l'OSAC Routines"
-# (identical in both) were each reported as High-criticality removals.
-# A block this short that exists verbatim elsewhere is a segmentation artifact,
-# never a real change — the occurrence COUNT carries no meaning for a repeated
-# header or a table cell.
+# Below _RELOCATION_MIN_WORDS the relocation check never runs, so short blocks need their own net: a block still
+# present VERBATIM in the other revision is a segmentation artifact (table cells regrouped by the PDF text extraction,
+# a header-dedup pass dropping a repeat on one side only), never a real change. The occurrence COUNT means nothing for
+# a repeated header or table cell.
 _ARTIFACT_MAX_WORDS = int(os.getenv('COMPARE_ARTIFACT_MAX_WORDS', '12'))
-# "Still present verbatim" alone is NOT enough to call a block an artifact: on a
-# wiring diagram the very change IS that a short annotation moved sheets, and the
-# label reads identically on both. Require the surviving occurrence to sit at
-# roughly the SAME relative position in the document — a repagination shifts a
-# block by a fraction of a percent (MOP_AX 'ANNEXE 4': 0.860 -> 0.864), a real
-# relocation by far more ('TO PATCH' p.21 -> p.4 on WDT017W8850653: ~0.19).
-# Fractional position, not page number, so a document-wide page offset doesn't
-# make every artifact look like a move.
+# "Still present verbatim" alone is not enough: on a wiring diagram the change can be a short annotation moving
+# sheets. The surviving occurrence must also sit at roughly the SAME relative position (a repagination moves a block
+# by a fraction of a percent, a real relocation by far more). Fractional position, not page number, so a document-wide
+# page offset does not look like a move.
 _ARTIFACT_MAX_POS_DRIFT = float(os.getenv('COMPARE_ARTIFACT_MAX_POS_DRIFT', '0.035'))
-# A label recurring this many times in BOTH documents is a diagram annotation
-# ('TO PATCH', 'ENV UPDATED'), stamped once per connection. There, the count IS
-# the signal and no positional rule can separate a genuine 129th occurrence from
-# a re-segmentation: on WDT017W8850201 six new 'TO PATCH' annotations land on
-# sheets 80-82 right next to existing ones. Suppressing those silently loses a
-# real change, so dense labels are exempt from the net and stay visible.
+# A label recurring this many times in BOTH documents is a diagram annotation stamped once per connection. There the
+# count IS the signal and no positional rule separates a genuine extra occurrence from a re-segmentation, so dense
+# labels are exempt from the net and stay visible.
 _ARTIFACT_DENSE_LABEL_MIN = int(os.getenv('COMPARE_ARTIFACT_DENSE_LABEL_MIN', '20'))
 # Merged-cell net (_drop_merged_cells): only fragments of at least this many
 # words, absorbed into a container at least this many times longer. Both bounds
 # exist to keep short diagram labels out of it.
 _ARTIFACT_MERGED_MIN_WORDS = 1
 _ARTIFACT_MERGED_MIN_RATIO = 3.0
-# Above this many (old x new) occurrences of the SAME text, the exact-match DP
-# is skipped for index-wise pairing. Both lists are already sorted by position,
-# so index-wise pairing is right whenever the extra occurrences sit at the end
-# (the usual case: 6 more 'TO PATCH' annotations appended on the last sheets of
-# WDT017W8850201). The DP only earns its cost on the small, ambiguous groups.
+# Above this many (old x new) occurrences of the SAME text, the exact-match DP is skipped for index-wise pairing: both
+# lists are sorted by position, so it is right whenever the extra occurrences sit at the end. The DP only pays off on
+# small, ambiguous groups.
 _DUP_ALIGN_MAX_CELLS = 250_000
 
 
@@ -1266,28 +1202,19 @@ def _drop_present_verbatim(
     residual segmentation surplus those two cannot cancel.
 
     Gated on a surplus test so the net cannot swallow a genuine addition of text
-    that already existed elsewhere: WDT017W8850201 gained 6 'TO PATCH'
-    annotations on sheets 80-82 and every one was suppressed because another
-    'TO PATCH' sat nearby. The test counts occurrences as SUBSTRINGS of the whole
+    that already existed elsewhere: six new 'TO PATCH' annotations on a wiring
+    diagram were all suppressed because another one sat nearby. The test counts occurrences as SUBSTRINGS of the whole
     document, not as standalone blocks — the artifacts this net exists for are
     precisely cases where the text survived merged into a neighbouring block, so
-    a block-level count reads them as a surplus and protects them (MOP_AX
-    'ANNEXE 4': 2 standalone blocks in AW vs 1 in AX, but 16 substring hits in
-    each because of the 14 page headers).
+    a block-level count reads them as a surplus and protects them (a heading with 2 standalone blocks in one revision and 1 in the
+    other, but the same number of substring hits in both because of the page headers).
     """
     kept: List[Dict[str, Any]] = []
     dropped = 0
-    # A text in surplus justifies at most `surplus` entries, not one per leftover.
-    # MOP_AX lost exactly ONE '21.A.139(e)' (the page-37 citation, already reported
-    # as a MODIFIED), yet two annex table rows were left over and both were reported
-    # as High-criticality removals of a reference that is still there. Budget the
-    # surplus per text and give it to the leftovers furthest from any surviving
-    # occurrence — those are the likeliest genuine losses.
-    # A loss already visible inside a MODIFIED entry's ~~strikethrough~~ must not
-    # also be charged to a leftover elsewhere. MOP_AX lost one '21.A.139(e)' — the
-    # page-37 citation, reported as part of a MODIFIED paragraph — yet the surplus
-    # budget still funded a standalone 'REMOVED [Page 83]: 21.A.139(e)' in the
-    # cross-reference annex, where the reference is in fact still present.
+    # A text in surplus justifies at most `surplus` entries, not one per leftover: the surplus is budgeted per text
+    # and given to the leftovers furthest from any surviving occurrence (the likeliest genuine losses).
+    # A loss already visible inside a MODIFIED entry's ~~strikethrough~~ must not also be charged to a leftover
+    # elsewhere.
     budget: Dict[str, int] = {}
     for item in leftovers:
         clean = item['clean']
@@ -1345,8 +1272,7 @@ def _drop_merged_cells(
     surviving on one side only, a cell that stood alone in one revision is
     merged into its neighbour in the other. There is no standalone counterpart
     to match, so the block becomes a REMOVED/ADDED for text that did not change
-    at all — MOP_AX's revision-log cell "Ajout de l'Annexe 4" (a line of the
-    change-history table, merged into the surrounding sentence in AX).
+    at all, e.g. a line of a change-history table merged into the surrounding sentence.
 
     Deliberately narrow: same relative position, and the container must be much
     longer than the fragment. Without the length ratio this also swallows a
@@ -1361,11 +1287,7 @@ def _drop_merged_cells(
         if not (_ARTIFACT_MERGED_MIN_WORDS <= len(words) <= _ARTIFACT_MAX_WORDS):
             kept.append(item)
             continue
-        # Same surplus gate as _drop_present_verbatim, and for the same reason:
-        # an occurrence COUNT that grew or shrank is content, not layout. Without
-        # it this net dropped WDT017W8850653's real page-4 patch destinations
-        # (NVG2 6 -> 7 occurrences, DSO_02 and MAINT 2 -> 3) because each label
-        # already existed on that page inside a longer block.
+        # Same surplus gate as _drop_present_verbatim: an occurrence COUNT that grew or shrank is content, not layout.
         if own_joined.count(clean) != other_joined.count(clean):
             kept.append(item)
             continue
@@ -1382,22 +1304,13 @@ def _drop_merged_cells(
         kept.append(item)
     return kept, dropped
 
-# High bar on purpose: a REMOVED block is often several sentences merged into
-# one paragraph (PDF text-block extraction), and a genuinely mixed paragraph
-# — part relocated, part actually deleted — can still rack up a long verbatim
-# run from the relocated half alone (measured false positive: an AIPI03-11-001
-# paragraph whose first half about steel-part inspection moved elsewhere, but
-# whose second half about titanium micro-sections was genuinely deleted,
-# scored coverage=0.70/run=17 — enough to wrongly swallow the whole paragraph
-# at a lower bar). 0.75 sits between that false positive (0.70) and the
-# lowest confirmed true positive (0.79, NAS410 "grandfathering" clause).
+# High bar on purpose: a REMOVED block is often several sentences merged into one paragraph, and a genuinely mixed
+# paragraph (part relocated, part deleted) can still rack up a long verbatim run from the relocated half alone. 0.75
+# sits between the highest measured false positive (0.70) and the lowest confirmed true positive (0.79).
 _RELOCATION_COVERAGE_THRESHOLD = 0.75
-# A single long verbatim run is a much stronger relocation signal than
-# scattered short matches: a genuine deletion can still rack up 50%+ scattered
-# coverage purely from recurring boilerplate phrasing ("shall be documented
-# in accordance with the employer's written practice" recurs dozens of times
-# in a spec like NAS410) without the paragraph itself existing anywhere else.
-# Gating on both keeps that from masking a real removal as a relocation.
+# A single long verbatim run is a much stronger relocation signal than scattered short matches: recurring boilerplate
+# phrasing alone can reach 50%+ scattered coverage for a paragraph that exists nowhere else. Gating on both keeps a
+# real removal from being masked as a relocation.
 _RELOCATION_MIN_RUN_WORDS = 8
 _STRIKETHROUGH_RE = re.compile(r'~~(.+?)~~', re.S)
 
@@ -1437,9 +1350,8 @@ class _RelocationIndex:
         return sum(b.size for b in blocks) / n, max((b.size for b in blocks), default=0)
 
     def is_relocated(self, text: str) -> bool:
-        # A contiguous run of _RELOCATION_MIN_RUN_WORDS is required anyway: with
-        # no such run of the text present in the new document the answer is no,
-        # and the costly alignment is skipped.
+        # A contiguous run of _RELOCATION_MIN_RUN_WORDS is required anyway: without one in the new document the costly
+        # alignment is skipped.
         words = canonicalize_keep_modals(text).split()
         run = _RELOCATION_MIN_RUN_WORDS
         if not any(tuple(words[k:k + run]) in self._runs for k in range(len(words) - run + 1)):
@@ -1496,9 +1408,7 @@ def _tag_relocated(results: List[Dict[str, Any]], new_text: str) -> int:
     return tagged
 
 
-# ---------------------------------------------------------------------------
-# Primary text diff engine — paragraph semantic diff
-# ---------------------------------------------------------------------------
+# --- Primary text diff engine — paragraph semantic diff ---
 
 _CONT_RE = re.compile(
     r'^((?:\d+(?:\.\d+)*\.?\s+)?[A-Z][A-Z\s\d]*?)\s*\((Continued|Suite|Cont\.)\)(?:\s+(.*))?',
@@ -1506,11 +1416,9 @@ _CONT_RE = re.compile(
 )
 
 
-# A change whose identical text recurs on at least this many distinct pages is
-# title-block/boilerplate (revision stamp, classification field, footer…): one
-# real change rendered once per page by the PDF extraction. Measured on the
-# compare_eval corpus (2026-07-17): such repeats are 85-95% of all entries on
-# wiring-diagram revisions (e.g. 'ENV UPDATED' ADDED on each of 48 pages).
+# A change whose identical text recurs on at least this many distinct pages is title-block/boilerplate (revision
+# stamp, classification field, footer): one real change rendered once per page by the PDF extraction. Such repeats are
+# 85-95% of all entries on wiring-diagram revisions.
 _BOILERPLATE_MIN_PAGES = int(os.getenv('COMPARE_BOILERPLATE_MIN_PAGES', '3'))
 
 def _dedup_repeated_headers(items: List[Dict[str, Any]], window: int = 25) -> List[Dict[str, Any]]:
@@ -1518,10 +1426,9 @@ def _dedup_repeated_headers(items: List[Dict[str, Any]], window: int = 25) -> Li
 
     Table column headers repeated at page-break continuations, running footers,
     and wiring labels re-emitted a few blocks apart are all layout, not content.
-    Removing this pass entirely (tried 2026-08-17) surfaced 151 extra entries on
-    WDT017W8850653 and every sampled one was verified noise: '7168-MLB22' still
-    occurs 3 times in the new revision, '13/07/2023' and 'PILOT STATION' are
-    identical on both sides. So the pass stays.
+    Without this pass, hundreds of extra entries reach the report on wiring-diagram
+    revisions, and the sampled ones were all noise (a label still present several
+    times in the new revision, a date or title identical on both sides).
 
     It is NOT symmetric under repagination — the same repeat can fall inside the
     window in one revision and outside it in the other, leaving a surplus copy
@@ -1560,7 +1467,7 @@ def _cancel_resegmented(
     One block on a side equal to 2-3 consecutive leftover blocks on the other
     is the same text with a paragraph break added or removed: no wording
     changed. Left alone it reached the LLM as an ADDED half plus a MODIFIED
-    whose other half is struck through — two phantom changes (2026-10-04).
+    whose other half is struck through — two phantom changes.
 
     Returns (remaining_olds, remaining_news, n_blocks_cancelled).
     """
@@ -1597,17 +1504,12 @@ def _cancel_resegmented(
 
 _DIFF_ENTRY_RE = re.compile(r'^(MODIFIED|ADDED|REMOVED|RELOCATED)(?:\s+\[([^\]]*)\])?:\s?(.*)$', re.S)
 
-# Pagination fragments inside repeated header/footer text ('Page 2',
-# 'PAGE: 1 of 34', 'Sheet 5/48') — masked ONLY around these keywords when
-# grouping repeats, so a footer that embeds its own page number still groups.
-# Bare numbers are NEVER masked: two wiring rows differing by a pin number
-# must stay distinct entries.
-# A footer only reaches the diff at all when its page number CHANGED, i.e. always
-# as a MODIFIED entry carrying "PAGE : ~~16/37~~ **16/38**" — two numbers, wrapped
-# in inline markup. The old pattern matched neither, so the collapse below never
-# fired on its own main use case and every repaginated page kept its own entry
-# (59 of 144 entries — 41% of the whole diff — on MOP_AX AW->AX, 2026-08-17).
-# The trailing repeat group swallows the second (post-markup-strip) number.
+# Pagination fragments inside repeated header/footer text ('Page 2', 'PAGE: 1 of 34', 'Sheet 5/48'): masked ONLY
+# around these keywords when grouping repeats, so a footer embedding its own page number still groups. Bare numbers
+# are never masked: two wiring rows differing by a pin number stay distinct.
+# A footer only reaches the diff when its page number CHANGED, i.e. as a MODIFIED entry carrying "PAGE : ~~16/37~~
+# **16/38**": two numbers wrapped in inline markup. The trailing repeat group swallows the second (post-markup-strip)
+# number.
 _PAGINATION_RE = re.compile(
     r'\b(page|sheet|folio|feuille|list|strana|str)\s*[:.]?\s*'
     r'\d+(?:\s*(?:of|/|sur|z)\s*\d+)?'
@@ -1616,20 +1518,15 @@ _PAGINATION_RE = re.compile(
 )
 # Inline word-diff markup, stripped before computing a grouping key only.
 _MARKUP_RE = re.compile(r'~~|\*\*')
-# Table-of-contents rows: dot/dash leaders running to a page number. Section
-# renames and renumbering surface as their own body entries; the TOC echo is
-# pure noise. Matches mid-text too (a MODIFIED pair's inline markup wraps the
-# leaders in ~~…~~/**…** so they no longer sit at end-of-line); the digit
-# requirement keeps plain '------' table separators without page numbers out.
+# Table-of-contents rows: dot/dash leaders running to a page number. Section renames and renumbering surface as their
+# own body entries, so the TOC echo is noise. Matches mid-text too (inline markup wraps the leaders in ~~…~~/**…**);
+# the digit requirement keeps plain '------' separators out.
 _TOC_LINE_RE = re.compile(r'(?:\.{4,}\s*\d*\s*$|[.\-]{6,}.{0,40}\d)')
 
 
-# "PAGE : ~~1/37~~ **1/38**" — a repagination substitution. When stripping every
-# such pair from a MODIFIED entry leaves no markup at all, the entry's only change
-# is the page number and it is layout, whatever else the block happens to carry.
-# _collapse_page_repeats cannot help here: the footer is glued to the head-office
-# address, so that block occurs once and never groups across pages (it still
-# reached the MOP_AX report as 'Pagination indiquee : PAGE 1/38', 2026-08-17).
+# "PAGE : ~~1/37~~ **1/38**" is a repagination substitution. When stripping every such pair from a MODIFIED entry
+# leaves no markup, the entry's only change is the page number and it is layout. _collapse_page_repeats cannot help:
+# the footer is glued to the head-office address, so that block occurs once.
 _PAGE_FRACTION_SUB_RE = re.compile(
     r'~~\s*(?:page\s*[:.]?\s*)?\d{1,4}\s*/\s*\d{1,4}\s*~~\s*\*\*\s*(?:page\s*[:.]?\s*)?\d{1,4}\s*/\s*\d{1,4}\s*\*\*',
     re.I,
@@ -1653,8 +1550,7 @@ def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: Optional[s
     entry keeps the first occurrence's section/position and says explicitly how
     many pages repeat it — no information is lost for the LLM, but a 48-page
     title-block stamp stops drowning the real changes (and the token budget).
-    Two extra grouping rules, measured on utils/compare_eval (2026-07-17):
-    pagination fragments are masked so 'Issue A6 Page N' repeats group across
+    Two extra grouping rules: pagination fragments are masked so 'Issue A6 Page N' repeats group across
     pages, and dot-leader TOC rows group per kind into one summary entry.
     """
     if not page_label:
@@ -1681,8 +1577,8 @@ def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: Optional[s
     collapsed_keys = set()
     for key, members in groups.items():
         if key[1] == '<toc>':
-            # A rebuilt TOC lands on ONE page as dozens of dot-leader rows —
-            # group by row count, page spread proves nothing here.
+            # A rebuilt TOC lands on ONE page as dozens of dot-leader rows: group by row count, page spread proves
+            # nothing here.
             if len(members) >= _BOILERPLATE_MIN_PAGES:
                 collapsed_keys.add(key)
         elif len({p for p, _, _ in members}) >= _BOILERPLATE_MIN_PAGES:
@@ -1830,19 +1726,12 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     def _parse(text: str) -> List[Dict[str, Any]]:
         lines = text.splitlines()
         bare_lines = [strip_tag(b) for b in lines]
-        # Mask a trailing page-fraction ("... V09 4/39") before counting repeats —
-        # a running footer stamp that embeds its own page number is a different
-        # literal string on every page and would otherwise dodge the repeat
-        # check below entirely.
+        # Mask a trailing page fraction ("... V09 4/39") before counting repeats: a footer stamp embedding its page
+        # number is a different string on every page.
         _heading_key = lambda b: _TRAILING_PAGE_FRACTION_RE.sub('', b)
-        # A bare ALL-CAPS line repeating >=_BOILERPLATE_MIN_PAGES times is a
-        # running header/footer (page title, company address), not a section —
-        # e.g. a standard's name stamped on every page. Treating it as one
-        # scattered every real section's content onto that single recurring,
-        # meaningless label instead of the actual enclosing clause (regression
-        # found via NAS410's Appendix A/B/C/D all inheriting 'NATIONAL AEROSPACE
-        # STANDARD' as their section, 2026-07-29). Numbered headings are exempt:
-        # a real clause number essentially never repeats this many times.
+        # A bare ALL-CAPS line repeating >=_BOILERPLATE_MIN_PAGES times is a running header/footer (page title,
+        # company address), not a section: treating it as one would scatter every real section's content under that
+        # recurring label. Numbered headings are exempt: a real clause number essentially never repeats this often.
         running_header_counts = Counter(_heading_key(b) for b in bare_lines if _ALLCAPS_SECTION_RE.match(b))
 
         result: List[Dict[str, Any]] = []
@@ -1885,9 +1774,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
             result.append(item)
         return result
 
-    # Raw (pre-dedup) blocks are kept: the artifact nets below count occurrences
-    # on them, because the dedup pass is exactly what makes an artifact's counts
-    # look uneven between the two revisions.
+    # Raw (pre-dedup) blocks are kept: the artifact nets below count occurrences on them, because the dedup pass is
+    # what makes counts look uneven between the two revisions.
     old_raw = _merge_continued(_parse(old_text))
     new_raw = _merge_continued(_parse(new_text))
     old_items = _dedup_repeated_headers(old_raw)
@@ -1902,14 +1790,9 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     n_old = max(1, (old_items[-1]['idx'] if old_items else 0) + 1)
     n_new = max(1, (new_items[-1]['idx'] if new_items else 0) + 1)
 
-    # Exact matching, grouped by clean text so repeated blocks pair by POSITION
-    # instead of document order. With a FIFO queue, a text occurring twice in one
-    # revision and once in the other always consumed the FIRST old occurrence, so
-    # MOP_AX's page-12 revision-log cell "ANNEXE 4" was paired with the page-81
-    # annex title and the page-79 title became a phantom "removal of ANNEXE 4"
-    # (an annex that is present, unchanged, on 14 pages of both revisions).
-    # Pairing the two page-79/81 titles instead leaves the page-12 cell as the
-    # leftover — the occurrence that genuinely has no counterpart (2026-08-17).
+    # Exact matching, grouped by clean text so repeated blocks pair by POSITION instead of document order: with a FIFO
+    # queue, a text occurring twice in one revision and once in the other always consumed the FIRST old occurrence,
+    # leaving a phantom removal of an element present, unchanged, in both.
     old_by_clean: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for o in old_items:
         old_by_clean[o['clean']].append(o)
@@ -1932,13 +1815,9 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     unmatched_old.sort(key=lambda o: o['idx'])
     unmatched_old, new_leftovers, resegmented = _cancel_resegmented(unmatched_old, new_leftovers)
 
-    # Every leftover old block against every leftover new block. Two true upper
-    # bounds of ratio() — lengths, then shared words — discard a pair before any
-    # SequenceMatcher work, without changing a pairing decision. The shared-word
-    # bound is quick_ratio()'s own formula on word counts computed once per block;
-    # calling quick_ratio() meant building a matcher (and its index of the new
-    # block) for each of the n² pairs. One matcher per new block, reused for every
-    # old block that survives the bounds.
+    # Every leftover old block against every leftover new block. Two true upper bounds of ratio() (lengths, then
+    # shared words) discard a pair before any SequenceMatcher work, without changing a pairing decision; one matcher
+    # per new block is reused for every old block that survives.
     sims: List[Tuple[float, int, int]] = []
     old_words_cache = [o['clean'].split() for o in unmatched_old]
     old_counts = [Counter(words) for words in old_words_cache]
@@ -2006,10 +1885,9 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         _emit_modified(unmatched_old[i], new_leftovers[j])
 
     # ── Second-chance pairing: table rows sharing the same row key ──────────
-    # DOCX tables are emitted as "RowLabel: col: val | …". A heavily rewritten
-    # row (similarity under the 0.55 gate — e.g. many cells added) is still the
-    # SAME table row evolving: pair leftovers whose row label and section match
-    # instead of reporting a confusing REMOVED + ADDED.
+    # DOCX tables are emitted as "RowLabel: col: val | …". A heavily rewritten row (similarity under the 0.55 gate) is
+    # still the SAME row evolving: pair leftovers whose row label and section match instead of reporting REMOVED +
+    # ADDED.
     def _row_key(txt: str) -> Optional[str]:
         head, sep, _ = txt.partition(':')
         if not sep:
@@ -2039,11 +1917,9 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         _emit_modified(o, new_leftovers[j])
 
     # ── Third-chance pairing: same text behind a different leading number ───
-    # "3. INSPECTION" -> "4. INSPECTION" is too short for the similarity pass
-    # (under 3 words), so every heading after an inserted section came out as a
-    # REMOVED plus an ADDED, each under its own "##". Paired, it is one entry
-    # showing only the number — still visible, since "2.5 mm max" -> "3.5 mm max"
-    # has the same shape and must never be hidden.
+    # "3. INSPECTION" -> "4. INSPECTION" is too short for the similarity pass, so every heading after an inserted
+    # section came out as REMOVED + ADDED. Paired, it is one entry showing only the number ("2.5 mm max" -> "3.5 mm
+    # max" has the same shape and must never be hidden).
     def _numbered_key(txt: str) -> Optional[str]:
         head, _, rest = txt.strip().partition(' ')
         rest = _clean(rest)
@@ -2068,12 +1944,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         matched_n.add(j)
         _emit_modified(o, new_leftovers[j])
 
-    # Artifact filter runs on the FINAL leftovers only — never on the pairing
-    # pool. Filtering earlier removed candidates that would legitimately have
-    # paired into a MODIFIED entry, downgrading real changes (dropping the
-    # ADDED "- ISO 9001 … - EN 9100 …" side turned the deletion of FR.145.461
-    # into a bogus RELOCATED, and "II.K.3 Emission de Laissez passer" -> "… N/A"
-    # lost its before side).
+    # The artifact filter runs on the FINAL leftovers only, never on the pairing pool: filtering earlier removes
+    # candidates that would legitimately pair into a MODIFIED entry, downgrading real changes.
     old_index = _position_index(old_items, n_old)
     new_index = _position_index(new_items, n_new)
     # Canonicalized text of every ~~removed~~ span already emitted in a MODIFIED
@@ -2128,15 +2000,10 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     results, _absorbed = _collapse_page_repeats(results, page_label)
     results, _absorbed_sub = _collapse_systemic_substitutions(results)
 
-    # Section order for display: aligned via SequenceMatcher on normalized
-    # headings rather than "all old sections, then all new sections" — a
-    # revision that re-cases headings (ALL CAPS -> Title Case) or bumps clause
-    # numbers without moving the section would otherwise make almost no old
-    # heading match almost no new heading, so the naive concatenation dumped
-    # the entire new document's section order after the entire old one
-    # (symptom: page numbers climb through the doc, then restart near page 1).
-    # Aligning on normalized keys keeps only-renamed/renumbered sections
-    # anchored next to their neighbours in both documents.
+    # Section order for display: aligned via SequenceMatcher on normalized headings rather than "all old sections,
+    # then all new ones". A revision that re-cases headings or bumps clause numbers would otherwise match almost no
+    # heading and dump the new document's order after the old one. Normalized keys keep renamed/renumbered sections
+    # next to their neighbours.
     def _sec_align_key(s: str) -> str:
         s = re.sub(r'^\d+(?:\.\d+)*\.?\s*', '', s)
         return re.sub(r'\s+', ' ', s).strip().casefold()
@@ -2152,8 +2019,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         addressable runs instead of silently collapsing every occurrence onto
         the first one's slot — that collapse is what let content from an
         unrelated, much-later table get pulled up next to an earlier one with
-        the same label (regression found on a document full of recurring
-        numbered flowchart steps, 2026-07-29). Looking runs up by each result's
+        the same label (seen on documents full of recurring
+        numbered flowchart steps). Looking runs up by each result's
         own sort_idx (below), rather than by the shared label string, is what
         keeps repeated labels distinguishable.
         """
@@ -2168,12 +2035,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     old_sec_seq, old_idx_to_run = _runs_with_item_map(old_items)
     new_sec_seq, new_idx_to_run = _runs_with_item_map(new_items)
 
-    # A normalized key eligible to match ACROSS documents only if it identifies
-    # a single run on EACH side — anything that recurs (>1 run with the same
-    # key on either side) is ambiguous (which occurrence corresponds to
-    # which?) and gets a per-occurrence sentinel instead, so SequenceMatcher
-    # can never pair it with the wrong occurrence; it still lands at its
-    # natural position relative to whichever unique headings surround it.
+    # A normalized key may match ACROSS documents only if it identifies a single run on EACH side; a recurring key is
+    # ambiguous and gets a per-occurrence sentinel, so SequenceMatcher never pairs it with the wrong occurrence.
     old_raw_keys = [_sec_align_key(s) for s in old_sec_seq]
     new_raw_keys = [_sec_align_key(s) for s in new_sec_seq]
     old_key_counts = Counter(old_raw_keys)
@@ -2214,7 +2077,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         every ADDED in a section sort AFTER every MODIFIED/REMOVED in it, so in a
         30-page section the LLM read ~40 MODIFIED/REMOVED and only then ~40 ADDED:
         a REMOVED and the ADDED that replaces it ended up 60 lines apart and could
-        no longer be read as one change (MOP_AX, 2026-08-17). Page number first,
+        no longer be read as one change. Page number first,
         then the fractional block position, interleaves both sides by locality.
         """
         if r.get('from_new'):
@@ -2227,12 +2090,10 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
 
     results.sort(key=_order_key)
 
-    # Same section label, but old-document and new-document runs get distinct
-    # order slots above (repeated labels are deliberately kept unmergeable — see
-    # _runs_with_item_map). Inside ONE printed section that still put every
-    # old-side entry before every new-side one, which is the reading order that
-    # separated a REMOVED from the ADDED replacing it. Re-sort each contiguous
-    # same-label group by page: purely local, so nothing can cross a section.
+    # Same section label, but old and new runs get distinct order slots (repeated labels are kept unmergeable, see
+    # _runs_with_item_map), which put every old-side entry before every new-side one and separated a REMOVED from the
+    # ADDED replacing it. Re-sort each contiguous same-label group by page: purely local, so nothing crosses a
+    # section.
     i = 0
     while i < len(results):
         j = i + 1
@@ -2252,9 +2113,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     return '\n'.join(out), filtered
 
 
-# ---------------------------------------------------------------------------
-# Alternative text diff engine — section canonical diff
-# ---------------------------------------------------------------------------
+# --- Alternative text diff engine — section canonical diff ---
 
 def section_canonical_diff(old_text: str, new_text: str) -> Tuple[str, int]:
     """Alternative diff engine using classic unified diff grouped by section heading.

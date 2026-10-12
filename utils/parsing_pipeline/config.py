@@ -6,10 +6,6 @@ configuration or via spark.conf) so that dev / uat / prod targets diverge
 without touching this file.
 
 Priority for every parameter: env var > explicit override in notebook > this default.
-
-Usage:
-    from config import *
-    print(IMAGE_SCALE)
 """
 
 import os as _os
@@ -26,15 +22,11 @@ def _require_env(key):
     return val
 
 
-# =============================================================================
-# Catalog / Schema / Paths
-# =============================================================================
+# --- Catalog / Schema / Paths ---
 CATALOG_SCHEMA        = _require_env("PARSING_CATALOG_SCHEMA")
 
 # Appended to every table the pipeline writes — PARSING_TABLE_SUFFIX=_test isolates a whole validation run.
 TABLE_SUFFIX = _env("PARSING_TABLE_SUFFIX", "")
-
-INTRAQUAL_SOURCE_CATALOG_SCHEMA = _require_env("PARSING_INTRAQUAL_SOURCE")
 
 INTRAQUAL_BRONZE_CATALOG_SCHEMA = _require_env("PARSING_INTRAQUAL_BRONZE")
 _B = INTRAQUAL_BRONZE_CATALOG_SCHEMA
@@ -50,18 +42,14 @@ INGESTION_FRESHNESS_TABLE = _env("PARSING_INGESTION_FRESHNESS_TABLE",
                                  f"{_B}.intraqual_ingestion_freshness_all")
 MAX_SOURCE_STALENESS_HOURS = int(_env("PARSING_MAX_SOURCE_STALENESS_HOURS", "36"))
 
-# =============================================================================
-# Qualibot perimeter (scope gate)
-# =============================================================================
+# --- Qualibot perimeter (scope gate) ---
 # Do not add difftotale=1 back (excludes legitimate docs); v_qualibot_latest's MV returns only the latest delta, not full scope.
 DOC_SCOPE_FILTER = _env(
     "PARSING_DOC_SCOPE_FILTER",
     "courant = 1 AND etat = 7 AND nonvisible = 0",
 )
 
-# =============================================================================
-# Legacy fallbacks (disabled by default)
-# =============================================================================
+# --- Legacy fallbacks (disabled by default) ---
 # Empty = disabled. Kept as variables to re-enable via --var if a gap shows up.
 GD_DOC_FALLBACK          = _env("PARSING_GD_DOC_FALLBACK",          "")
 DIVISION_ARCHIVE_TABLE   = _env("PARSING_DIVISION_ARCHIVE_TABLE",   "")
@@ -81,9 +69,7 @@ OFFLINE_MODELS_DIR    = _require_env("PARSING_OFFLINE_MODELS")
 ANTIWORD_BIN_RELATIVE   = "../../data/vendor/antiword/antiword_local/usr/bin/antiword"
 ANTIWORD_SHARE_RELATIVE = "../../data/vendor/antiword/antiword_local/usr/share/antiword"
 
-# =============================================================================
-# Target Delta tables
-# =============================================================================
+# --- Target Delta tables ---
 TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.processed_files{TABLE_SUFFIX}"
 
 # All divisions; the chat filters on the `division` column at query time.
@@ -93,13 +79,10 @@ TARGET_CHUNK_TABLE     = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"
 TARGET_CHUNK_TABLE_ARCHIVE = f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}"
 
 TARGET_IMAGE_METADATA_TABLE  = f"{CATALOG_SCHEMA}.image_metadata{TABLE_SUFFIX}"
-TARGET_AUDIT_TABLE           = f"{CATALOG_SCHEMA}.audit_files_unified{TABLE_SUFFIX}"
 TARGET_HEALTH_TABLE          = f"{CATALOG_SCHEMA}.parsing_run_health{TABLE_SUFFIX}"  # one row per pipeline run, for the monitoring dashboard
 TARGET_CHANGE_LOG_TABLE      = f"{CATALOG_SCHEMA}.document_change_log{TABLE_SUFFIX}"  # one row per NEW/REVISED document, for the monitoring dashboard
 
-# =============================================================================
-# Date cutoff
-# =============================================================================
+# --- Date cutoff ---
 # Docs before this date are parsed like the others but their chunks go to
 # TARGET_CHUNK_TABLE_ARCHIVE instead of the RAG chunk tables (processed_files:
 # filtered_by_date=True, include_in_rag=False). No DATEDIFF = unknown date = recent.
@@ -126,15 +109,15 @@ ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
 # =============================================================================
 MANUAL_REF_EXCLUSIONS = set()
 
-# =============================================================================
-# Empty + small file auto-exclusion
-# =============================================================================
+# --- Category exclusion ---
+# Documents whose principal category (IDCAT) is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by 2_Cleanup_Volume.py.
+EXCLUDED_IDCATS = {3798}  # ONE_QMS-5S
+
+# --- Empty + small file auto-exclusion ---
 # Zero-text + small file = blank stub (verified by hand) -> auto-skip permanently; zero-text ABOVE this size stays ERROR for review.
 EMPTY_SMALL_FILE_SIZE_BYTES = int(_env("PARSING_EMPTY_SMALL_FILE_SIZE_BYTES", "51200"))  # 50 KiB
 
-# =============================================================================
-# Run mode
-# =============================================================================
+# --- Run mode ---
 RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full"
 
 # =============================================================================
@@ -143,32 +126,25 @@ RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full"
 # =============================================================================
 PARSE_FILTER = [int(x) for x in _env("PARSING_PARSE_FILTER", "").split(",") if x.strip().isdigit()] or None
 
-# =============================================================================
-# Feature flags
-# =============================================================================
+# --- Feature flags ---
 ENABLE_AUDIT       = True
 ENABLE_RETRY       = True
 ENABLE_TIMING_TEST = False  # gates per-step timing instrumentation in the parse UDF (utils.py/image_utils.py)
 
-# =============================================================================
-# Resilience -- batch checkpointing & per-file timeout
-# =============================================================================
+# --- Resilience -- batch checkpointing & per-file timeout ---
 CHECKPOINT_BATCH_SIZE   = 100   # Write to Delta every N files (crash-safe)
 PARSE_TIMEOUT_SECONDS   = 200   # Max seconds per file -- beyond this, mark as TIMEOUT
 MAX_CHUNKS_SPREADSHEET  = 100   # Limit chunks for xlsx/xls/xlsm (None = no limit)
 
-# =============================================================================
-# Chunk cleaning flags
-# =============================================================================
+# --- Chunk cleaning flags ---
 CLEAN_IMAGE_PLACEHOLDERS = True
 CLEAN_FORMULA_ARTIFACTS  = True
 DEDUPLICATE_CHUNKS       = True
 
-# =============================================================================
-# Docling engine settings
-# =============================================================================
+# --- Docling engine settings ---
 # USE_GPU: explicit override via PARSING_USE_GPU, else auto-detected (nvidia-smi).
 def _detect_gpu():
+    """True when nvidia-smi exists and runs."""
     import shutil as _sh, subprocess as _sp
     if _sh.which("nvidia-smi") is None:
         return False
@@ -179,12 +155,8 @@ def _detect_gpu():
 _use_gpu_env = _os.environ.get("PARSING_USE_GPU")
 USE_GPU = (_use_gpu_env.strip().lower() in ("1", "true", "yes")) if _use_gpu_env else _detect_gpu()
 DO_OCR                  = False
-# Docling's own do_ocr=True re-parse (EasyOCR, GPU) -- distinct from LLM_OCR_*
-# below (the LLM-vision transcription fallback, which IS used). Disabled:
-# checked corpus-wide, this GPU OCR path's "docling+ocr:pdf" strategy has
-# never once won out over the plain parse (0 of ~18k docs) -- pure GPU cost for
-# zero benefit. The scanned_page render + LLM-vision fallback (image_utils.py)
-# covers this case instead, off-GPU.
+# Docling's own EasyOCR re-parse is off: it never beat the plain parse (0 of ~18k docs).
+# Scanned pages go through the LLM-OCR fallback below instead.
 GPU_OCR_FALLBACK        = False
 TABLE_STRUCTURE_MODE    = "accurate"   # "accurate" | "fast"
 GENERATE_PICTURE_IMAGES = True
@@ -192,25 +164,19 @@ IMAGE_SCALE             = 3.0          # ~216 DPI -- captures fine text in diagr
 MIN_AREA_RATIO          = 0.05
 MAX_REPEAT              = 2
 
-# =============================================================================
-# Image save settings
-# =============================================================================
+# --- Image save settings ---
 IMAGE_MAX_DIMENSION = 4096      # preserves full detail for large schematics
 IMAGE_JPEG_QUALITY  = 95        # near-lossless (only used if IMAGE_FORMAT=JPEG)
 IMAGE_RESAMPLING    = "LANCZOS" # sharpest downscale algorithm
 IMAGE_FORMAT        = "PNG"     # PNG = lossless, no compression artifacts on text/diagrams
 
-# =============================================================================
-# Tokenizer / Chunking
-# =============================================================================
+# --- Tokenizer / Chunking ---
 # tiktoken (cl100k) is more accurate than CHARS_PER_TOKEN for technical French; falls back to it if unavailable offline.
 USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
-# Passage sizes (chunking.py). Overridable per run to test other sizes (DEV notebook
-# archive/evaluation/rechunk_experiment.py) without editing this file.
-# 150 / 300 / 450 tokens, 1,600 characters = DEV variant v2b, chosen 2026-10-08: 80.9 % of the
-# expected documents found vs 75.8 % for the former 250 / 500 / 1000 / 4000, with half the context
-# (retrieval_eval, u-all, 65 questions; docs/chat_vsi_tests.md § 5.6).
+# Passage sizes (chunking.py), overridable per run. 150 / 300 / 450 tokens and 1,600 characters found 80.9 % of the
+# expected documents against 75.8 % for
+# 250 / 500 / 1000 / 4000, with half the context (retrieval_eval, 65 questions; docs/chat_vsi_tests.md § 5.6).
 MIN_CHUNK_TOKENS    = int(_env("PARSING_MIN_CHUNK_TOKENS", "150"))
 TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "300"))
 MAX_CHUNK_TOKENS    = int(_env("PARSING_MAX_CHUNK_TOKENS", "450"))
@@ -222,14 +188,12 @@ CHUNK_OVERLAP_RATIO = float(_env("PARSING_CHUNK_OVERLAP_RATIO", "0.12"))
 # A passage body found in at least this many documents is marked "boilerplate".
 BOILERPLATE_MIN_DOCS = int(_env("PARSING_BOILERPLATE_MIN_DOCS", "20"))
 
-# =============================================================================
-# LLM settings (vision model for image description)
-# =============================================================================
+# --- LLM settings (vision model for image description) ---
 LLM_MODEL_ENDPOINT  = _env("PARSING_LLM_ENDPOINT", "databricks-gpt-5-6-luna")
 LLM_MAX_TOKENS      = 5000    # GPT-5 reasoning tokens need headroom beyond the visible output
 LLM_TEMPERATURE     = 1.0   # gpt-5 family: temperature=1 only
 LLM_MAX_RETRIES     = 5
-LLM_MAX_CONCURRENT  = 10   # reduced from 20 to avoid OOM on m5d.xlarge single-node (Bug3 fix)
+LLM_MAX_CONCURRENT  = 10   # 20 ran out of memory on the single-node m5d.xlarge
 # Kept below the batch size that destabilizes the kernel.
 LLM_BATCH_SIZE      = int(_env("PARSING_LLM_BATCH_SIZE", "6000"))
 
@@ -244,9 +208,7 @@ LLM_QPH_BUDGET      = int(_env("PARSING_LLM_QPH_BUDGET",  "324000"))   # real li
 LLM_AVG_INPUT_TOKENS  = int(_env("PARSING_LLM_AVG_IN",  "1050"))
 LLM_AVG_OUTPUT_TOKENS = int(_env("PARSING_LLM_AVG_OUT", "300"))
 
-# =============================================================================
-# Image filtering (deterministic — applied WITHOUT any LLM call)
-# =============================================================================
+# --- Image filtering (deterministic — applied WITHOUT any LLM call) ---
 # Deliberately conservative — no filtering on a large width/height ratio.
 IMG_SKIP_MAX_DIM   = 140   # longer side (px) < threshold -> illegible thumbnail -> skip
 IMG_SKIP_MIN_SIDE  = 85    # shorter side (px) < threshold -> band/table too short -> skip
@@ -254,12 +216,11 @@ IMG_SKIP_MIN_SIDE  = 85    # shorter side (px) < threshold -> band/table too sho
 # Post-filter: minimum useful length of a description to be injected as a chunk.
 MIN_INDEXABLE_DESC_CHARS = 40
 
-# True = provenance prefix embedded in chunk_text; False = body only (ref/division/title stay as filterable columns) — measured to hurt retrieval precision.
+# True = provenance prefix embedded in chunk_text; False = body only (ref/division/title stay filterable columns),
+# which hurt retrieval precision.
 EMBED_SOURCE_PREFIX = _env("PARSING_EMBED_SOURCE_PREFIX", "true").strip().lower() in ("1", "true", "yes")
 
-# =============================================================================
-# LLM Prompt template (vision model)
-# =============================================================================
+# --- LLM Prompt template (vision model) ---
 # Expected placeholders: {division}, {category}, {context}
 IMAGE_DESCRIPTION_PROMPT = """You are a vision extraction engine for an industrial RAG index. You are given an IMAGE plus some surrounding document text (CONTEXT). The context is ALREADY indexed separately, so do not repeat it.
 
@@ -290,18 +251,13 @@ Extraction rules by category:
 
 Do NOT copy or paraphrase the CONTEXT text: if everything you could write is already in the context, answer SKIP instead. No notes about the document, no mention of division or category."""
 
-# =============================================================================
-# LLM-OCR fallback for scanned PDFs
-# =============================================================================
-# Triggers when Docling still yields near-empty text: pages are rendered to images and queued through the same PENDING-image pipeline, using the prompt below (full transcription, never SKIP — even a stamp-only page is worth indexing).
-# 20 was too low: real digital PDFs where Docling barely parses anything (a
-# stub of 14-46 chars, 0 images) clear that floor and never reach this
-# fallback, staying invisible SUCCESS rows with effectively no indexed content.
+# --- LLM-OCR fallback for scanned PDFs ---
+# Triggers when Docling still yields near-empty text: pages are rendered to images and queued through the same
+# PENDING-image pipeline with the prompt below (full transcription, never SKIP).
+# Below 150 characters, digital PDFs that Docling barely parses stayed SUCCESS with no indexed content.
 LLM_OCR_TEXT_THRESHOLD = int(_env("PARSING_LLM_OCR_TEXT_THRESHOLD", "150"))
 LLM_OCR_MAX_PAGES      = int(_env("PARSING_LLM_OCR_MAX_PAGES", "100"))
-# Full-page transcription runs longer than a short image description and was
-# hitting the shared LLM_MAX_TOKENS cap (2048) on dense pages, truncating
-# mid-transcription -- give it its own, more generous budget.
+# Full-page transcription needs more than the shared LLM_MAX_TOKENS.
 LLM_OCR_MAX_TOKENS     = int(_env("PARSING_LLM_OCR_MAX_TOKENS", "8192"))
 
 # Expected placeholders: {division}, {category}, {context}

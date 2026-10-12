@@ -42,7 +42,7 @@ pipeline.
 
 Both tabs share the same capability-gating pattern (`can_compare`/
 `can_chat` on the `users` Lakebase table, synced by
-`utils/databricks_ops/user_capabilities/sync_user_capabilities.py`) and the
+`utils/user_capabilities/sync_user_capabilities.py`) and the
 same app shell (`client/src/App.tsx`, `TopBar.tsx`).
 
 ## Local development
@@ -169,15 +169,15 @@ By default the script builds the React frontend (`bun run build`), writes the pe
 
 ### Copy Lakebase UAT tables to a local dev catalog
 
-The local machine can't reach Lakebase directly (port 5432 is blocked). Run the export as a Databricks job first, then pull it locally — one-time setup (`psycopg2-binary`, proxy cert flag) and the `--direct` option are documented in [`utils/databricks_ops/lakebase_sync/README.md`](utils/databricks_ops/lakebase_sync/README.md):
+The local machine can't reach Lakebase directly (port 5432 is blocked). Run the export as a Databricks job first, then pull it locally — one-time setup (`psycopg2-binary`, proxy cert flag) and the `--direct` option are documented in [`utils/lakebase_sync/README.md`](utils/lakebase_sync/README.md):
 
 ```powershell
 # 1. Import + run the export notebook as a one-off job on UAT (serverless compute)
-databricks workspace import //Users/<you>/export_lakebase_uat_to_volume --profile UAT --file utils\databricks_ops\lakebase_sync\export_lakebase_uat_to_volume.py --format SOURCE --language PYTHON --overwrite
+databricks workspace import //Users/<you>/export_lakebase_uat_to_volume --profile UAT --file utils\lakebase_sync\export_lakebase_uat_to_volume.py --format SOURCE --language PYTHON --overwrite
 databricks jobs submit --profile UAT --json '{"tasks":[{"task_key":"export","notebook_task":{"notebook_path":"/Users/<you>/export_lakebase_uat_to_volume","source":"WORKSPACE"}}]}'
 
 # 2. Pull the exported JSON and push it into dev_landingzone.qualibot
-python utils\databricks_ops\lakebase_sync\copy_Lakebase_tables.py
+python utils\lakebase_sync\copy_Lakebase_tables.py
 ```
 
 ### Compare diff-engine evaluation

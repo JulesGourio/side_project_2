@@ -25,15 +25,14 @@ _caps_cache: dict[str, tuple[float, dict]] = {}
 
 # Live is_account_group_member() check (on-behalf-of-user SQL, no job/Lakebase
 # table involved) — off unless CAPS_WAREHOUSE_ID is set. Mirrors
-# utils/databricks_ops/config.py's CAPS_CHAT_GROUPS/CAPS_COMPARE_GROUPS.
+# utils/ops_config.py's CAPS_CHAT_GROUPS/CAPS_COMPARE_GROUPS.
 _CAPS_WAREHOUSE_ID = os.getenv('CAPS_WAREHOUSE_ID', '').strip()
 _CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 
-# Temporary escape hatch (2026-10-05): CAPS_BYPASS=true grants chat + compare
-# to every visitor, skipping the group check entirely. Set only for the DEV
-# target in utils/deploy/target_env.json (tests/test_deploy_config.py guards
-# that it never reaches uat/uat-test/prod).
+# CAPS_BYPASS=true grants chat + compare to every visitor, skipping the group check. DEV only, set in
+# utils/deploy/target_env.json
+# (tests/test_deploy_config.py guards that it never reaches uat/uat-test/prod).
 _CAPS_BYPASS = os.getenv('CAPS_BYPASS', 'false').strip().lower() == 'true'
 
 
@@ -136,7 +135,7 @@ async def get_capabilities(request: Request) -> dict:
     If CAPS_WAREHOUSE_ID is set and the request carries an on-behalf-of-user
     token, resolves live via is_account_group_member() — no job, no Lakebase
     table. Otherwise reads can_chat / can_compare from the users table in
-    Lakebase, populated by utils/databricks_ops/user_capabilities/sync_user_capabilities.py.
+    Lakebase, populated by utils/user_capabilities/sync_user_capabilities.py.
 
     Fail-open: grants all if neither path works (DB unavailable, user not yet
     in the table, or the live SQL check errors).

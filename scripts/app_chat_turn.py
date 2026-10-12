@@ -21,6 +21,12 @@ def token() -> str:
                                      capture_output=True, text=True, check=True).stdout)['access_token']
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("app_chat_turn")
+
+
 async def turn(base_url: str, ws_path: str, division: str, question: str) -> None:
     ws_url = re.sub(r'^http', 'ws', base_url.rstrip('/')) + ws_path
     headers = {} if 'localhost' in base_url else {'Authorization': f'Bearer {token()}'}
@@ -37,14 +43,14 @@ async def turn(base_url: str, ws_path: str, division: str, question: str) -> Non
             elif m['type'] == 'done':
                 srcs = m.get('sources') or []
                 numbered = [s for s in srcs if s.get('n')]
-                print(f'[{ws_path} {division}] OK deltas={len(deltas)} first_delta={first and round(first, 1)}s '
+                logger.info(f'[{ws_path} {division}] OK deltas={len(deltas)} first_delta={first and round(first, 1)}s '
                       f'total={time.time() - t0:.1f}s markers_in_stream={sum(1 for d in deltas if MARKER.search(d))} '
                       f'⟦n⟧_in_done={m["content"].count("⟦")} numbered_sources={len(numbered)} '
                       f'intraqual_urls={all("intraqual" in (s.get("url") or "") for s in numbered)}')
-                print('   sources:', [(s.get('n'), s['title']) for s in srcs][:12])
+                logger.info("%s", " ".join(str(x) for x in ('   sources:', [(s.get('n'), s['title']) for s in srcs][:12],)))
                 return
             elif m['type'] == 'error':
-                print(f'[{ws_path} {division}] ERROR after {time.time() - t0:.1f}s: {m["error"]}')
+                logger.info(f'[{ws_path} {division}] ERROR after {time.time() - t0:.1f}s: {m["error"]}')
                 return
 
 

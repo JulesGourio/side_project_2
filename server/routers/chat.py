@@ -1,6 +1,5 @@
 """Chat router — conversational interface answered by the Vector Search engine (services/chat_vsi.py)."""
 
-import asyncio
 import json
 import logging
 import os
@@ -9,21 +8,23 @@ import secrets
 import traceback
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..services.chat_vsi import normalize_division, stream_chat_vsi
-from ..services.doc_catalog import augment_sources
-from ..services.lakebase import get_pool, store_error, upsert_user
+from ..services.chat_vsi_llm import TIRED_MESSAGE
+from ..services.doc_catalog import augment_sources, with_document_info
+from ..services.lakebase import get_pool, store_chat_turn, store_error, upsert_user
 from ..services.translation_bridge import (
     ENABLED as TRANSLATE_BRIDGE_ENABLED,
     answer_language as answer_language_for,
     translate_answer_back,
     translate_question_to_en,
 )
+from ..services.turn_log import INFO, TurnLog
 from ..services.user import get_capabilities, get_user_identity, get_workspace_url, require_chat
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def _apply_citation_markers(text: str, citations: List[dict]) -> str:
     
     n_chars = len(text)
     
-    # 1. Identifier les plages d'index (start, end) des liens dans le texte
+    # Link spans of the text: a citation position falling inside one is moved to its end.
     protected_spans = [(m.start(), m.end()) for m in _PROTECTED_SPAN_RE.finditer(text)]
     
     seen: set = set()
@@ -89,9 +90,7 @@ def _apply_citation_markers(text: str, citations: List[dict]) -> str:
             
         pos = max(0, min(pos, n_chars))
         
-        # 2. Si la position tombe au milieu d'un lien, on la décale à la fin du lien
         for start, end in protected_spans:
-            # Si pos est strictement à l'intérieur du lien
             if start < pos < end:
                 pos = end
                 break  # On sort de la boucle, la position est corrigée
@@ -152,7 +151,7 @@ def _with_today_date(messages: List[dict]) -> List[dict]:
     role message): the engine puts its own system message first.
 
     Kept language-neutral (plain ISO date, no French/English sentence) —a
-    full "Nous sommes le lundi ..." sentence here was found (2026-07-07) to
+    full "Nous sommes le lundi ..." sentence here was found to
     bias the model toward answering in French even when the user asked in
     English, since it's the first text the model reads in the turn.
 
@@ -193,9 +192,7 @@ def _get_chat_credentials(request: Request) -> tuple[str, str]:
     return host, token
 
 
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
+# --- Pydantic models ---
 
 
 class ChatFeedbackRequest(BaseModel):
@@ -205,23 +202,35 @@ class ChatFeedbackRequest(BaseModel):
     session_id: Optional[str] = None
 
 
-# ---------------------------------------------------------------------------
-# DB helpers
-# ---------------------------------------------------------------------------
+# --- DB helpers ---
 
 
-async def _upsert_session(conn, session_id: str, user_id: str, workspace_id: Optional[str], workspace_url: str, name: str) -> None:
-    # share_token is generated for every session up front (not lazily in
-    # share_session()) purely so developers can browse any conversation
-    # straight from the database — it stays unused/undiscoverable until the
-    # owner actually clicks "Share", so this changes nothing for users.
+_SOURCE_FIELDS = ('title', 'url', 'n', 'doc_title', 'revision', 'doc_date')
+
+
+def _stored_sources(raw: Optional[str]) -> list:
+    """The source chips of a saved assistant message (chat_messages.sources_json)."""
+    if not raw:
+        return []
+    try:
+        return [{'title': s.get('title'), 'url': s.get('url'), 'n': s.get('n'),
+                 **{k: s[k] for k in _SOURCE_FIELDS[3:] if s.get(k)}} for s in json.loads(raw)]
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return []
+
+
+async def _upsert_session(conn, session_id: str, user_id: str, workspace_id: Optional[str], workspace_url: str, name: str,
+                          touch: bool = True) -> None:
+    # share_token is generated up front so developers can browse any conversation in the database; it stays unused
+    # until the owner clicks "Share". touch=False (failed or aborted turn, hidden from the thread) keeps the
+    # thread's date: the sidebar sorts and dates threads by updated_at.
     await conn.execute(
         '''
         INSERT INTO chat_sessions (id, user_id, workspace_id, workspace_url, name, share_token)
         VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
+        ON CONFLICT (id) DO UPDATE SET updated_at = CASE WHEN $7 THEN NOW() ELSE chat_sessions.updated_at END
         ''',
-        session_id, user_id, workspace_id, workspace_url, name, secrets.token_urlsafe(20),
+        session_id, user_id, workspace_id, workspace_url, name, secrets.token_urlsafe(20), touch,
     )
 
 
@@ -235,36 +244,33 @@ async def _save_turn(
     assistant_content: str,
     sources: Optional[list] = None,
     trace_id: str = '',
-    tool_name: str = '',
-    tool_query: str = '',
-    tool_result: str = '',
-    reasoning_steps: Optional[list] = None,
     email: Optional[str] = None,
     endpoint_name: str = '',
     status: str = 'ok',
     error_msg: str = '',
     division: str = 'ALL',
     question_lang: str = '',
-) -> Optional[int]:
-    """Persist user + assistant messages and retrieval sources; return assistant message DB id.
+    log: Optional[TurnLog] = None,
+) -> Tuple[Optional[int], Optional[int]]:
+    """Persist user + assistant messages and retrieval sources; return their ids
+    (user message, assistant message), (None, None) when the save failed.
 
-    A turn is saved even when it failed (``status='error'``) so the user's
-    question — and the reason it broke — is always traceable in the database.
+    A turn is saved even when it failed (``status='error'``) or the browser left
+    (``'aborted'``) so the user's question — and the reason it broke — is always
+    traceable in the database. Only ``'ok'`` turns are shown in the history.
+    The retrieval itself (queries, passages, models, durations) is saved by
+    ``store_chat_turn`` in chat_turns, under the same ``trace_id``.
     """
-    # Derive the thread title from the user's question. _strip_division is kept
-    # for legacy turns whose content still carries the old [Division: …] prefix;
-    # new turns route by endpoint and send a clean question, so it is a no-op.
+    # Thread title from the user's question; _strip_division only matters for legacy turns carrying a [Division: …]
+    # prefix.
     clean_content = _strip_division(user_content)
     name = clean_content[:60] + ('…' if len(clean_content) > 60 else '')
-    # Division now comes from the client selector (passed explicitly); fall back
-    # to detecting a legacy prefix if not provided.
+    # Division comes from the client selector; fall back to a legacy prefix.
     division = (division or 'ALL').upper()
     if division == 'ALL':
         division = _detect_division(user_content)
-    reasoning_str = '\n---\n'.join(reasoning_steps) if reasoning_steps else None
-    # Persist the consulted documents as a single compact JSON blob on the
-    # assistant message (rank + title + url) instead of one chat_sources row
-    # per document. De-duplicate by title, preserving order.
+    # Consulted documents are stored as one compact JSON blob on the assistant message (rank, title, url), de-
+    # duplicated by title in order.
     sources_payload: list[dict] = []
     seen_titles: set = set()
     for rank, src in enumerate(sources or []):
@@ -278,13 +284,14 @@ async def _save_turn(
             'url': src.get('url') or None,
             # 1-based inline-citation number; absent for prose-only sources.
             'n': src.get('n'),
+            # Catalog title, revision and date at answer time (the revision may change later).
+            **{k: src[k] for k in ('doc_title', 'revision', 'doc_date') if src.get(k)},
         })
     sources_json = json.dumps(sources_payload, ensure_ascii=False) if sources_payload else None
 
     try:
         async with pool.acquire() as conn:
-            # Register the identity in the shared `users` table so chat-only
-            # users are no longer orphaned (no matching row in `users`).
+            # Register the identity in `users` so chat-only users are not orphaned.
             await upsert_user(
                 conn,
                 user_id=user_id,
@@ -292,46 +299,48 @@ async def _save_turn(
                 email=email,
                 workspace_url=workspace_url or None,
             )
-            await _upsert_session(conn, session_id, user_id, workspace_id, workspace_url, name)
-            await conn.execute(
-                '''
-                INSERT INTO chat_messages (session_id, user_id, workspace_id, workspace_url, role, content, status, division, question_lang)
-                VALUES ($1, $2, $3, $4, 'user', $5, $6, $7, $8)
-                ''',
-                session_id, user_id, workspace_id, workspace_url, user_content, status or 'ok', division, question_lang or None,
-            )
-            row = await conn.fetchrow(
+            await _upsert_session(conn, session_id, user_id, workspace_id, workspace_url, name,
+                                  touch=(status or 'ok') == 'ok')
+            user_msg_id = await conn.fetchval(
                 '''
                 INSERT INTO chat_messages
-                    (session_id, user_id, workspace_id, workspace_url, role, content,
-                     trace_id, tool_name, tool_query, tool_result, reasoning_steps,
-                     endpoint_name, sources_json, status, error_msg, division, question_lang)
-                VALUES ($1, $2, $3, $4, 'assistant', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                    (session_id, user_id, workspace_id, workspace_url, role, content, trace_id,
+                     status, division, question_lang)
+                VALUES ($1, $2, $3, $4, 'user', $5, $6, $7, $8, $9)
                 RETURNING id
                 ''',
-                session_id, user_id, workspace_id, workspace_url, assistant_content,
-                trace_id or None, tool_name or None, tool_query or None,
-                tool_result or None, reasoning_str, endpoint_name or None, sources_json,
-                status or 'ok', (error_msg or None) and error_msg[:2000], division, question_lang or None,
+                session_id, user_id, workspace_id, workspace_url, user_content, trace_id or None,
+                status or 'ok', division, question_lang or None,
             )
-            msg_id = row['id'] if row else None
-
-        return msg_id
+            assistant_msg_id = await conn.fetchval(
+                '''
+                INSERT INTO chat_messages
+                    (session_id, user_id, workspace_id, workspace_url, role, content, trace_id,
+                     endpoint_name, sources_json, status, error_msg, division, question_lang)
+                VALUES ($1, $2, $3, $4, 'assistant', $5, $6, $7, $8, $9, $10, $11, $12)
+                RETURNING id
+                ''',
+                session_id, user_id, workspace_id, workspace_url, assistant_content, trace_id or None,
+                endpoint_name or None, sources_json, status or 'ok',
+                (error_msg or None) and error_msg[:2000], division, question_lang or None,
+            )
+        return user_msg_id, assistant_msg_id
     except Exception as exc:
         logger.warning('Chat DB save failed: %s', exc)
-        return None
+        if log is not None:
+            log.issue('persist_failed', 'persist', f'chat_messages not saved: {exc}', error_type=type(exc).__name__)
+        return None, None
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+# --- Endpoints ---
 
 
 @router.websocket('/chat/ws')
 async def chat_ws(websocket: WebSocket):
     """One chat turn over a WebSocket (avoids Databricks Apps proxy buffering), answered by
     the Vector Search engine (``stream_chat_vsi``); then citation markers, catalog sources,
-    translation back and persistence."""
+    translation back and persistence. Every turn that reached the engine — answered, failed or
+    left by the browser — is logged in chat_turns (+ chat_retrieved_chunks, errors) once over."""
     await websocket.accept()
     route = '/api/chat/ws'
 
@@ -342,7 +351,10 @@ async def chat_ws(websocket: WebSocket):
 
     host, token = _get_chat_credentials(websocket)  # type: ignore[arg-type]
     if not host or not token:
-        await websocket.send_json({'type': 'error', 'error': 'Missing Databricks credentials'})
+        logger.error('chat [ws]: no Databricks host/token for the app')
+        store_error(endpoint=route, error_type='MissingCredentials', stage='ws',
+                    error_msg='no Databricks host or token for the chat engine', user_message=TIRED_MESSAGE)
+        await websocket.send_json({'type': 'error', 'error': TIRED_MESSAGE})
         await websocket.close()
         return
 
@@ -362,10 +374,11 @@ async def chat_ws(websocket: WebSocket):
         await websocket.close()
         return
 
+    log = TurnLog()
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in data.get('messages', [])])
     session_id = data.get('session_id') or str(uuid.uuid4())
     division = (data.get('division') or 'ALL').upper()
-    # Recorded as endpoint_name (the older turns of the Knowledge Assistant carry ka-… names).
+    # Recorded as endpoint_name (older turns carry ka-… names).
     endpoint = f'vsi-{normalize_division(division).lower()}'
 
     try:
@@ -377,62 +390,78 @@ async def chat_ws(websocket: WebSocket):
     workspace_url = get_workspace_url()
 
     user_content = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), '')
-    logger.info('chat turn [ws]: division=%s endpoint=%s session=%s user=%s msgs=%d q=%r',
+    logger.info('chat turn [ws]: division=%s endpoint=%s session=%s user=%s msgs=%d q=%r trace_id=%s',
                 division, endpoint, session_id, identity.get('email') or user_id,
-                len(messages), user_content[:160])
+                len(messages), user_content[:160], log.trace_id)
+    log.data.update({'session_id': session_id, 'user_id': user_id, 'workspace_id': workspace_id,
+                     'division': normalize_division(division),
+                     'question': user_content, 'history_messages': len(messages)})
 
     accumulated: list[str] = []
     collected_sources: list = []
     collected_citations: list = []
-    collected_meta: dict = {}
-    error_occurred = False
     error_text = ''
     translate_ctx = None
-    messages_for_engine = messages
-    if TRANSLATE_BRIDGE_ENABLED and user_content:
-        en_question, translate_ctx = await translate_question_to_en(user_content, host, token)
-        if translate_ctx.needs_translation:
-            messages_for_engine = [dict(m) for m in messages]
-            for i in range(len(messages_for_engine) - 1, -1, -1):
-                if messages_for_engine[i]['role'] == 'user':
-                    messages_for_engine[i]['content'] = en_question
-                    break
-            logger.info('chat translate-bridge [ws]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
+    saved: Tuple[Optional[int], Optional[int]] = (None, None)
+    answer_stream = None
+    outcome = 'error'                            # 'ok' once the answer is saved; 'aborted' if the browser left
 
-    # The language the answer must be in, named in the prompt's language reminder: English
-    # when the bridge translated the question (it translates the answer back), else the
-    # detected French/English, else a local guess.
-    answer_language = answer_language_for(translate_ctx, user_content) if user_content else None
-    answer_stream = stream_chat_vsi(host, token, division, _with_today_date(messages_for_engine),
-                                    answer_language=answer_language)
+    async def _send_tired() -> None:
+        """The only failure message a user sees, once every retry is spent; the cause is in the turn log."""
+        log.data['user_message'] = TIRED_MESSAGE
+        await websocket.send_json({'type': 'error', 'error': TIRED_MESSAGE})
 
     async def _persist(status: str, content: str) -> Optional[int]:
-        """Persist the turn (ok or error). The question is saved even on
-        failure, so it stays traceable. Best-effort."""
+        """Persist the turn's messages (ok, error or aborted) and return the
+        assistant message id. The question is saved even on failure, so it
+        stays traceable. Best-effort."""
+        nonlocal saved
         pool = get_pool()
         if not (pool and user_content):
             return None
-        return await _save_turn(
-            pool, session_id, user_id, workspace_id, workspace_url,
-            user_content, content,
-            collected_sources,
-            collected_meta.get('trace_id', ''),
-            collected_meta.get('tool_name', ''),
-            collected_meta.get('tool_query', ''),
-            collected_meta.get('tool_result', ''),
-            collected_meta.get('reasoning_steps', []),
-            email=identity.get('email'),
-            endpoint_name=endpoint,
-            status=status,
-            error_msg=error_text,
-            division=division,
-            question_lang=translate_ctx.lang_code if translate_ctx else '',
-        )
+        with log.timed('persist'):
+            saved = await _save_turn(
+                pool, session_id, user_id, workspace_id, workspace_url,
+                user_content, content,
+                collected_sources,
+                log.trace_id,
+                email=identity.get('email'),
+                endpoint_name=endpoint,
+                status=status,
+                error_msg=error_text,
+                division=division,
+                question_lang=translate_ctx.lang_code if translate_ctx else '',
+                log=log,
+            )
+        return saved[1]
 
     try:
+        messages_for_engine = messages
+        if TRANSLATE_BRIDGE_ENABLED and user_content:
+            with log.timed('translate_in'):
+                en_question, translate_ctx = await translate_question_to_en(user_content, host, token)
+            log.data['question_lang'] = translate_ctx.lang_code
+            if translate_ctx.error:
+                log.issue('translate_in_failed', 'translate_in', translate_ctx.error)
+            if translate_ctx.needs_translation:
+                log.data['question_en'] = en_question
+                messages_for_engine = [dict(m) for m in messages]
+                for i in range(len(messages_for_engine) - 1, -1, -1):
+                    if messages_for_engine[i]['role'] == 'user':
+                        messages_for_engine[i]['content'] = en_question
+                        break
+                logger.info('chat translate-bridge [ws]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
+
+        # The language the answer must be in, named in the prompt's language reminder: English
+        # when the bridge translated the question (it translates the answer back), else the
+        # detected French/English, else a local guess.
+        answer_language = answer_language_for(translate_ctx, user_content) if user_content else None
+        answer_stream = stream_chat_vsi(host, token, division, _with_today_date(messages_for_engine),
+                                        answer_language=answer_language, log=log)
+
         async for chunk in answer_stream:
             if chunk.startswith('data: [DONE]'):
-                if not error_occurred and user_content and accumulated:
+                if user_content and accumulated:
                     final_content = _apply_citation_markers(''.join(accumulated), collected_citations)
                     # Re-surface documents the answer names in prose but the
                     # endpoint never annotated, so they become clickable chips.
@@ -440,9 +469,16 @@ async def chat_ws(websocket: WebSocket):
                     # Number only the inline-cited sources; prose-only chips
                     # (catalog-resurfaced) stay numberless.
                     _number_sources(collected_sources, collected_citations)
+                    with_document_info(collected_sources)
                     if translate_ctx:
-                        final_content = await translate_answer_back(final_content, translate_ctx, host, token)
+                        with log.timed('translate_back'):
+                            final_content = await translate_answer_back(final_content, translate_ctx, host, token)
+                        log.data['answer_translated'] = translate_ctx.answer_translated
+                        if translate_ctx.answer_error:
+                            log.issue('translate_back_failed', 'translate_back', translate_ctx.answer_error)
+                    log.data['sources_count'] = len(collected_sources)
                     msg_id = await _persist('ok', final_content)
+                    outcome = 'ok'
                     logger.info('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
                                 division, endpoint, len(collected_sources), len(collected_citations))
                     await websocket.send_json({
@@ -452,23 +488,15 @@ async def chat_ws(websocket: WebSocket):
                         'content': final_content,
                         'sources': collected_sources,
                     })
-                elif not error_occurred:
-                    # The engine finished without any text and without an error
-                    # (seen 2026-10-05 with the former Knowledge Assistant: HTTP 200,
-                    # 0 deltas). Without an outcome the browser
-                    # stays on "Thinking" — tell it the turn failed.
-                    error_text = 'No answer was produced. Please try again.'
+                else:
+                    # The engine finished without any text and without an error: tell the browser the turn failed, or
+                    # it stays on "Thinking".
+                    error_text = f'{endpoint}: stream ended with no text'
                     logger.warning('chat turn empty [ws]: division=%s endpoint=%s',
                                    division, endpoint)
-                    asyncio.create_task(store_error(
-                        endpoint=route,
-                        error_type='EmptyAnswer',
-                        error_msg=f'{endpoint}: stream ended with no text',
-                        user_id=user_id,
-                        workspace_id=workspace_id or '',
-                    ))
+                    log.fail('llm', 'EmptyAnswer', error_text)
                     await _persist('error', '')
-                    await websocket.send_json({'type': 'error', 'error': error_text})
+                    await _send_tired()
                 break
 
             if not chunk.startswith('data: '):
@@ -485,60 +513,66 @@ async def chat_ws(websocket: WebSocket):
             raw = chunk[6:].strip()
             try:
                 parsed = json.loads(raw)
-                t = parsed.get('type', '')
-                if t == 'response.output_text.delta':
-                    delta = parsed.get('delta', '')
-                    accumulated.append(delta)
-                    if translate_ctx and translate_ctx.needs_translation:
-                        # Never forward raw English to the client — the
-                        # client shows "Thinking" until the full answer is
-                        # translated in one pass and sent in the 'done' event.
-                        pass
-                    else:
-                        await websocket.send_json({'type': 'delta', 'delta': delta})
-                elif t == 'sources':
-                    srcs = parsed.get('sources')
-                    cits = parsed.get('citations')
-                    collected_sources = srcs if isinstance(srcs, list) else []
-                    collected_citations = cits if isinstance(cits, list) else []
-                elif t == 'metadata':
-                    collected_meta = parsed
-                elif t == 'error':
-                    error_occurred = True
-                    error_text = parsed.get('error', '')
-                    asyncio.create_task(store_error(
-                        endpoint=route,
-                        error_type=parsed.get('error_type', 'ChatLLMError'),
-                        error_msg=error_text,
-                        user_id=user_id,
-                        workspace_id=workspace_id or '',
-                    ))
-                    await _persist('error', ''.join(accumulated))
-                    await websocket.send_json({'type': 'error', 'error': parsed.get('error', 'Unknown error')})
-                    break
             except json.JSONDecodeError:
-                pass
+                continue
+            t = parsed.get('type', '')
+            if t == 'response.output_text.delta':
+                delta = parsed.get('delta', '')
+                accumulated.append(delta)
+                if translate_ctx and translate_ctx.needs_translation:
+                    # Never forward raw English to the client — the
+                    # client shows "Thinking" until the full answer is
+                    # translated in one pass and sent in the 'done' event.
+                    pass
+                else:
+                    await websocket.send_json({'type': 'delta', 'delta': delta})
+            elif t == 'sources':
+                srcs = parsed.get('sources')
+                cits = parsed.get('citations')
+                collected_sources = srcs if isinstance(srcs, list) else []
+                collected_citations = cits if isinstance(cits, list) else []
+            elif t == 'error':
+                error_text = parsed.get('error', '')
+                # The engine records its own failures; this covers any other.
+                if not log.error:
+                    log.fail('engine', parsed.get('error_type', 'ChatLLMError'), error_text,
+                             http_status=parsed.get('http_status') or 0)
+                await _persist('error', ''.join(accumulated))
+                await _send_tired()
+                break
 
     except WebSocketDisconnect:
         logger.info('Chat WebSocket disconnected during stream')
+        if outcome == 'ok':
+            log.issue('client_disconnected', 'ws', 'the browser left after the answer was saved', severity=INFO)
+        else:
+            outcome = 'aborted'
+            log.issue('client_disconnected', 'ws', 'the browser left before the end of the turn', severity=INFO)
+            await _persist('aborted', ''.join(accumulated))
     except Exception as exc:
         logger.error('Chat WebSocket error: %s', exc, exc_info=True)
-        error_occurred = True
-        error_text = str(exc)
-        asyncio.create_task(store_error(
-            endpoint=route,
-            error_type=type(exc).__name__,
-            error_msg=error_text,
-            user_id=user_id,
-            workspace_id=workspace_id or '',
-            stack_trace=traceback.format_exc(),
-        ))
-        await _persist('error', ''.join(accumulated))
-        try:
-            await websocket.send_json({'type': 'error', 'error': str(exc)})
-        except Exception:
-            pass
+        if outcome == 'ok':
+            # The answer is saved; only sending it failed (browser gone).
+            log.issue('send_failed', 'ws', f'{type(exc).__name__}: {exc}', severity=INFO)
+        else:
+            error_text = f'{type(exc).__name__}: {exc}'
+            log.fail('ws', type(exc).__name__, str(exc), stack_trace=traceback.format_exc(), exc=exc)
+            await _persist('error', ''.join(accumulated))
+            try:
+                await _send_tired()
+            except Exception:
+                pass
     finally:
+        if answer_stream is not None:
+            # Frees the engine's answer slot now, not when the generator is garbage-collected.
+            try:
+                await answer_stream.aclose()
+            except Exception:
+                pass
+        if user_content:
+            # After 'done' was sent: the user does not wait for this write.
+            log.finish(outcome)
+            await store_chat_turn(log, endpoint=route, user_message_id=saved[0], assistant_message_id=saved[1])
         try:
             await websocket.close()
         except Exception:
@@ -646,10 +680,7 @@ async def get_session(session_id: str, request: Request):
 
     try:
         async with pool.acquire() as conn:
-            # Scoped to the caller's own sessions — without this, any
-            # authenticated user who knew (or guessed) a session_id could read
-            # someone else's conversation. Shared conversations are served
-            # separately, through the share_token, below.
+            # Scoped to the caller's own sessions; shared conversations are served through the share_token below.
             session = await conn.fetchrow(
                 'SELECT id, name, created_at FROM chat_sessions WHERE id = $1 AND user_id = $2',
                 session_id, user_id,
@@ -667,16 +698,7 @@ async def get_session(session_id: str, request: Request):
             )
 
         def _sources_for(m) -> list:
-            raw = m['sources_json']
-            if not raw:
-                return []
-            try:
-                return [
-                    {'title': s.get('title'), 'url': s.get('url'), 'n': s.get('n')}
-                    for s in json.loads(raw)
-                ]
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                return []
+            return _stored_sources(m['sources_json'])
 
         return {
             'id': session['id'],
@@ -712,17 +734,14 @@ async def delete_session(session_id: str, request: Request):
 
     try:
         async with pool.acquire() as conn:
-            # Scoped to the caller's own sessions — same ownership gap as
-            # get_session above; a shared session_id must never let anyone else
-            # delete it.
+            # Scoped to the caller's own sessions: a shared session_id must never let anyone else delete it.
             owned = await conn.fetchval(
                 'SELECT 1 FROM chat_sessions WHERE id = $1 AND user_id = $2',
                 session_id, user_id,
             )
             if not owned:
                 return JSONResponse({'error': 'Session not found'}, status_code=404)
-            # Soft-delete: flag the session and its messages instead of removing
-            # them, so a trace is always kept in the database for audit.
+            # Soft-delete: flag the session and its messages so a trace is kept for audit.
             await conn.execute(
                 'UPDATE chat_messages SET deleted = TRUE, deleted_at = NOW()'
                 ' WHERE session_id = $1 AND deleted = FALSE',
@@ -810,16 +829,7 @@ async def get_shared_session(share_token: str, request: Request):
             )
 
         def _sources_for(m) -> list:
-            raw = m['sources_json']
-            if not raw:
-                return []
-            try:
-                return [
-                    {'title': s.get('title'), 'url': s.get('url'), 'n': s.get('n')}
-                    for s in json.loads(raw)
-                ]
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                return []
+            return _stored_sources(m['sources_json'])
 
         def _feedback_for(m) -> Optional[dict]:
             if not m['feedback_vote']:

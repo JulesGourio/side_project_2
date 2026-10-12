@@ -169,15 +169,7 @@ def _extract_pptx(pptx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
     return slide_texts, images
 
 
-def _extract_pptx_images(pptx_bytes: bytes) -> Dict[str, Dict[str, Any]]:
-    """Return only the images dict from a PPTX (helper for the debug notebook)."""
-    _, images = _extract_pptx(pptx_bytes)
-    return images
-
-
-# ---------------------------------------------------------------------------
-# Processor
-# ---------------------------------------------------------------------------
+# --- Processor ---
 
 class PptxProcessor(BaseProcessor):
 

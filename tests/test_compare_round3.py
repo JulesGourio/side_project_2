@@ -12,7 +12,7 @@ import asyncio
 import hashlib
 import io
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from docx import Document
@@ -26,9 +26,7 @@ from server.services.processors._diff_engines import (
 from server.services.processors.docx import _extract_docx
 
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
+# --- Routes ---
 
 @pytest.fixture(scope='module')
 def app():
@@ -116,7 +114,7 @@ def test_impact_reports_a_search_failure_as_an_error_event(client):
     with (
         patch('server.routers.compare.run_impact_search', new=_boom),
         patch('server.routers.compare.get_cached_impact_result', new=AsyncMock(return_value=None)),
-        patch('server.routers.compare.store_error', new=AsyncMock()),
+        patch('server.routers.compare.store_error', new=MagicMock()),
     ):
         res = client.post('/api/compare/impact', json={'changes_text': CHANGES})
     events = _events(res)
@@ -164,9 +162,7 @@ def test_summarize_document_without_text_is_a_normal_answer(client):
     assert res.status_code == 200 and res.json()['no_content'] is True
 
 
-# ---------------------------------------------------------------------------
-# Chunked analysis
-# ---------------------------------------------------------------------------
+# --- Chunked analysis ---
 
 def test_chunked_structured_stream_stays_valid_json_when_a_part_fails(monkeypatch):
     from server.services import chunked_analysis as ca
@@ -200,9 +196,7 @@ def test_chunked_structured_stream_stays_valid_json_when_a_part_fails(monkeypatc
     assert errors == ['endpoint timeout']
 
 
-# ---------------------------------------------------------------------------
-# Engine
-# ---------------------------------------------------------------------------
+# --- Engine ---
 
 def _paragraphs(prefix, n):
     return '\n'.join(f'{prefix} paragraph {i} describes requirement number {i} of the {prefix} procedure in detail. '

@@ -8,6 +8,8 @@ Coverage:
   - an engine error is relayed to the browser and the turn is saved with status=error
   - turns are saved with endpoint_name = vsi-<division>
   - a stream ending without text gives an error, not silence
+  - every turn is logged once (store_chat_turn) with its outcome, message ids and trace_id;
+    a browser that leaves mid-answer gives an 'aborted' turn
 """
 
 import json
@@ -16,6 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
+
+from server.services.chat_vsi_llm import TIRED_MESSAGE
 
 
 @pytest.fixture(scope='module')
@@ -48,7 +52,8 @@ OK_EVENTS = (
 def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=True):
     """One WebSocket turn with everything external mocked; returns (messages, mocks)."""
     engine = engine or MagicMock(side_effect=_engine_stream(*OK_EVENTS))
-    save_turn = AsyncMock(return_value=42)
+    save_turn = AsyncMock(return_value=(41, 42))
+    store_turn = AsyncMock(return_value=7)
     with (
         patch('server.routers.chat.CHAT_ENABLED', enabled),
         patch('server.routers.chat.TRANSLATE_BRIDGE_ENABLED', False),
@@ -59,7 +64,9 @@ def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=Tru
         patch('server.routers.chat._get_chat_credentials', return_value=('https://host', 'tok')),
         patch('server.routers.chat.get_pool', return_value=pool),
         patch('server.routers.chat._save_turn', save_turn),
+        patch('server.routers.chat.store_chat_turn', store_turn),
         patch('server.routers.chat.augment_sources', side_effect=lambda content, sources: sources),
+        patch('server.routers.chat.with_document_info', side_effect=lambda sources: sources),
     ):
         received = []
         with client.websocket_connect('/api/chat/ws') as ws:
@@ -73,7 +80,7 @@ def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=Tru
                         break
             except WebSocketDisconnect:
                 pass
-    return received, {'engine': engine, 'save_turn': save_turn}
+    return received, {'engine': engine, 'save_turn': save_turn, 'store_turn': store_turn}
 
 
 def test_route_calls_the_engine_with_the_division(client):
@@ -112,7 +119,8 @@ def test_engine_error_is_relayed_and_saved_as_error(client):
                     'error_type': 'VectorSearchError', 'http_status': 403}),
         'data: [DONE]\n\n'))
     received, mocks = _talk(client, pool=MagicMock(), engine=engine)
-    assert received[-1] == {'type': 'error', 'error': 'Document search failed (Vector Search returned 403).'}
+    # The user never sees the technical cause, only the tired message (the cause is in the turn log).
+    assert received[-1] == {'type': 'error', 'error': TIRED_MESSAGE}
     mocks['save_turn'].assert_awaited_once()
     assert mocks['save_turn'].await_args.kwargs['status'] == 'error'
     assert mocks['save_turn'].await_args.kwargs['endpoint_name'] == 'vsi-all'
@@ -131,5 +139,66 @@ def test_turn_saved_with_division_endpoint_name(client, division, label):
 def test_stream_ending_without_text_gives_an_error_not_silence(client):
     empty = MagicMock(side_effect=_engine_stream('data: [DONE]\n\n'))
     received, mocks = _talk(client, pool=MagicMock(), engine=empty)
-    assert received == [{'type': 'error', 'error': 'No answer was produced. Please try again.'}]
+    assert received == [{'type': 'error', 'error': TIRED_MESSAGE}]
     assert mocks['save_turn'].await_args.kwargs['status'] == 'error'
+
+
+def _logged_turn(mocks):
+    mocks['store_turn'].assert_awaited_once()
+    return mocks['store_turn'].await_args
+
+
+def test_answered_turn_is_logged_with_its_messages(client):
+    received, mocks = _talk(client, division='as', pool=MagicMock())
+    assert received[-1]['type'] == 'done' and received[-1]['message_id'] == 42
+    call = _logged_turn(mocks)
+    log = call.args[0]
+    assert log.status == 'ok' and call.kwargs == {'endpoint': '/api/chat/ws', 'user_message_id': 41,
+                                                  'assistant_message_id': 42}
+    assert mocks['engine'].call_args.kwargs['log'] is log            # the engine fills the same log
+    assert mocks['save_turn'].await_args.args[8] == log.trace_id     # chat_messages.trace_id = join key
+    assert log.data['division'] == 'AS' and log.data['question'] == 'Qui fait la qualification CND ?'
+    assert log.data['sources_count'] == 1 and 'persist' in log.timings_ms and 'total' in log.timings_ms
+
+
+def test_engine_error_turn_is_logged_as_error(client):
+    engine = MagicMock(side_effect=_engine_stream(
+        json.dumps({'type': 'error', 'error': 'busy', 'error_type': 'LLMUnavailable', 'http_status': 429}),
+        'data: [DONE]\n\n'))
+    _, mocks = _talk(client, pool=MagicMock(), engine=engine)
+    log = _logged_turn(mocks).args[0]
+    assert log.status == 'error'
+    assert log.error == {'stage': 'engine', 'type': 'LLMUnavailable', 'message': 'busy'}
+
+
+def test_browser_leaving_mid_answer_is_an_aborted_turn(client):
+    async def _slow(*args, **kwargs):
+        yield f"data: {json.dumps({'type': 'response.output_text.delta', 'delta': 'début'})}\n\n"
+        raise WebSocketDisconnect(1001)
+    _, mocks = _talk(client, pool=MagicMock(), engine=MagicMock(side_effect=_slow))
+    log = _logged_turn(mocks).args[0]
+    assert log.status == 'aborted' and log.codes == ['client_disconnected']
+    assert mocks['save_turn'].await_args.kwargs['status'] == 'aborted'
+    assert mocks['save_turn'].await_args.args[6] == 'début'
+
+
+def test_missing_credentials_show_the_tired_message_and_log_the_cause(client):
+    store = MagicMock()
+    with (
+        patch('server.routers.chat.CHAT_ENABLED', True),
+        patch('server.routers.chat._get_chat_credentials', return_value=('', '')),
+        patch('server.routers.chat.store_error', store),
+    ):
+        with client.websocket_connect('/api/chat/ws') as ws:
+            assert ws.receive_json() == {'type': 'error', 'error': TIRED_MESSAGE}
+    assert store.call_args.kwargs['error_type'] == 'MissingCredentials'
+    assert store.call_args.kwargs['user_message'] == TIRED_MESSAGE
+
+
+def test_failed_turn_records_the_message_the_user_saw(client):
+    engine = MagicMock(side_effect=_engine_stream(
+        json.dumps({'type': 'error', 'error': 'every answer model failed', 'error_type': 'LLMUnavailable'}),
+        'data: [DONE]\n\n'))
+    _, mocks = _talk(client, pool=MagicMock(), engine=engine)
+    log = _logged_turn(mocks).args[0]
+    assert log.data['user_message'] == TIRED_MESSAGE and log.error['message'] == 'every answer model failed'

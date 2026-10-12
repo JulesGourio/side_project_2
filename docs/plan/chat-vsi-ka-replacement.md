@@ -159,7 +159,7 @@ Turns are tagged through the existing `endpoint_name` column (`vsi-all`, `vsi-as
   - completeness of the final document list;
   - B11 / B12 / B13 behaviours on dedicated questions.
 - **Latency:** time to first token and total time.
-- Starting point: `utils/databricks_ops/evaluation/eval_rag_vs_agent.py` (local RAG vs KA).
+- Starting point: `utils/evaluation/eval_rag_vs_agent.py` (local RAG vs KA).
 - Acceptance thresholds: to agree with the user before step 11.
 
 ## Risks and open questions

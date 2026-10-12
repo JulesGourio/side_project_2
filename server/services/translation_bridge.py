@@ -13,7 +13,7 @@ Knowledge Assistant, where a "search in French" instruction had no effect —
 so the fix happens before the question reaches the search.)
 
 English, not French, is used as the pivot language: a side-by-side test on
-several questions (2026-07-08) showed English retrieval consistently pulling
+several questions showed English retrieval consistently pulling
 a broader, more diverse set of relevant documents (across FR/EN/ES/BG
 variants) than French, likely because the embedding model's multilingual
 alignment is itself English-anchored.
@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 
 ENABLED = os.getenv('CHAT_TRANSLATE_BRIDGE_ENABLED', 'false').lower() == 'true'
 TRANSLATE_ENDPOINT = os.getenv('CHAT_TRANSLATE_ENDPOINT', 'databricks-gpt-5-6-luna')
-# Tried in order when TRANSLATE_ENDPOINT fails (429 included) — 2026-10-08: the chatbot runs
-# on GPT-6 Luna + GPT-5.6 Luna, each the other's backup. Empty value = no fallback.
+# Tried in order when TRANSLATE_ENDPOINT fails (429 included): the chatbot runs on GPT-6 Luna + GPT-5.6 Luna, each the
+# other's backup. Empty value = no fallback.
 TRANSLATE_FALLBACK_ENDPOINTS = [e.strip() for e in os.getenv('CHAT_TRANSLATE_FALLBACK_ENDPOINTS',
                                                              'databricks-gpt-6-luna').split(',') if e.strip()]
 _TIMEOUT_S = 20.0
@@ -97,12 +97,18 @@ def _fasttext_model():
 class TranslationContext:
     """Carries the detected source language across the question/answer hop."""
 
-    __slots__ = ('lang_code', 'lang_name', 'needs_translation')
+    __slots__ = ('lang_code', 'lang_name', 'needs_translation', 'error', 'answer_translated', 'answer_error')
 
-    def __init__(self, lang_code: str, lang_name: str, needs_translation: bool):
+    def __init__(self, lang_code: str, lang_name: str, needs_translation: bool, error: str = ''):
         self.lang_code = lang_code
         self.lang_name = lang_name
         self.needs_translation = needs_translation
+        # Why the question step fell back to the original text ('' when it did not):
+        # saved as a warning of the chat turn (chat_turns / errors).
+        self.error = error
+        # Set by translate_answer_back: the answer was translated / why it was not.
+        self.answer_translated = False
+        self.answer_error = ''
 
 
 def _fast_lang_guess(text: str) -> Optional[str]:
@@ -112,7 +118,7 @@ def _fast_lang_guess(text: str) -> Optional[str]:
 
     Calls the fastText C++ binding directly rather than the `predict()`
     Python wrapper — that wrapper's final `np.array(probs, copy=False)`
-    raises under NumPy>=2.0 (confirmed 2026-07-08), while the underlying
+    raises under NumPy>=2.0, while the underlying
     binding call it wraps works fine.
     """
     cleaned = clean_for_language(text)
@@ -141,8 +147,7 @@ def _answer_language_mismatch(answer: str, expected_lang: str) -> bool:
     """True if the answer confidently looks like a different language than
     the question asked for. Guards the fr/en case, which normally skips the
     LLM bridge entirely and trusts the answer prompt's language rule — but the
-    model has been observed answering in the wrong one of the two anyway (chat
-    session 5bd9382a, 2026-07-08: an all-English conversation got one French
+    model has been observed answering in the wrong one of the two anyway (an all-English conversation got one French
     answer mid-thread with nothing in the history to explain the switch)."""
     detected = _fast_lang_guess_with_prob(clean_for_language(answer, answer=True))
     return detected is not None and detected[1] >= _MISMATCH_CONFIDENCE_THRESHOLD and detected[0] != expected_lang
@@ -270,7 +275,8 @@ async def translate_question_to_en(question: str, host: str, token: str) -> tupl
         raw = await _call_llm(_DETECT_TRANSLATE_SYSTEM, question, host, token, max_tokens=400)
     except Exception as exc:
         logger.warning('translation_bridge: detect/translate LLM call failed, using original text: %s', exc)
-        return question, TranslationContext('unknown', 'the original language', needs_translation=False)
+        return question, TranslationContext('unknown', 'the original language', needs_translation=False,
+                                            error=f'{type(exc).__name__}: {exc}')
 
     try:
         raw = raw.strip().strip('`')
@@ -279,7 +285,8 @@ async def translate_question_to_en(question: str, host: str, token: str) -> tupl
         det = json.loads(raw)
     except json.JSONDecodeError as exc:
         logger.warning('translation_bridge: LLM returned non-JSON, using original text: %s', exc)
-        return question, TranslationContext('unknown', 'the original language', needs_translation=False)
+        return question, TranslationContext('unknown', 'the original language', needs_translation=False,
+                                            error=f'non-JSON detection reply: {exc}')
 
     lang_code = (det.get('lang_code') or '').lower()
     if lang_code in _NO_TRANSLATION_NEEDED:
@@ -314,9 +321,12 @@ async def translate_answer_back(answer: str, ctx: TranslationContext, host: str,
         translated = await _call_llm(system, answer, host, token, max_tokens=max_tokens)
     except Exception as exc:
         logger.warning('translation_bridge: answer translation failed, returning original text: %s', exc)
+        ctx.answer_error = f'{type(exc).__name__}: {exc}'
         return answer
     if len(translated.strip()) < len(answer.strip()) * 0.3:
         logger.warning('translation_bridge: translation much shorter than the answer (%d vs %d chars) — '
                        'returning original text', len(translated), len(answer))
+        ctx.answer_error = f'translation much shorter than the answer ({len(translated)} vs {len(answer)} chars)'
         return answer
+    ctx.answer_translated = True
     return translated
