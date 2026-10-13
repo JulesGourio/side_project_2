@@ -107,3 +107,7 @@ utils/deploy/.intraqual_profile/
 
 # Source archive
 *.zip
+
+# Local MLflow output (tracking store and runs)
+mlruns/
+mlflow.db
