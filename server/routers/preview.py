@@ -11,8 +11,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image as PILImage
 from pptx import Presentation
 
-from ..services.conversion import doc_to_text, docx_to_html_body, pptx_to_slide_images
-from ..services.soffice import SofficeUnavailable, convert_docx_to_pdf
+from ..services.compare.conversion import doc_to_text, docx_to_html_body, pptx_to_slide_images
+from ..services.compare.soffice import SofficeUnavailable, convert_docx_to_pdf
 
 router = APIRouter()
 
@@ -48,7 +48,7 @@ async def preview_document(file: UploadFile = File(...)) -> HTMLResponse:
 @router.post('/preview/pdf')
 async def preview_document_pdf(file: UploadFile = File(...)) -> Response:
     """Exact-layout preview: convert an office document (docx/doc/pptx/xlsx)
-    to PDF through headless LibreOffice (server/services/soffice.py). Returns
+    to PDF through headless LibreOffice (server/services/compare/soffice.py). Returns
     raw PDF bytes, or 501 when no engine is provisioned so the client can fall
     back to the HTML/docx-preview rendering."""
     content = await file.read()

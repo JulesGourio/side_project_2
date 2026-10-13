@@ -14,16 +14,14 @@ import io
 
 from PIL import Image as PILImage
 
-from server.services.processors._diff_engines import (
+from server.services.compare.processors._diff_engines import (
     _compute_image_diff_pairs,
     extraction_warnings,
 )
-from server.services.processors.docx import _extract_docx
+from server.services.compare.processors.docx import _extract_docx
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# --- Helpers ---
 
 def _jpeg_b64(color=(255, 255, 255), size=(64, 64)) -> str:
     img = PILImage.new('RGB', size, color)
@@ -47,9 +45,7 @@ def _img(fine_hash=None, page=1, b64=None):
     return meta
 
 
-# ---------------------------------------------------------------------------
-# Two-tier image identity
-# ---------------------------------------------------------------------------
+# --- Two-tier image identity ---
 
 def test_identical_images_are_not_reported():
     old = {_DHASH_KEY: _img(fine_hash=_FINE_BASE)}
@@ -105,9 +101,7 @@ def test_multiple_leftovers_on_same_page_are_not_force_paired():
     assert len(removed) == 2 and len(added) == 1
 
 
-# ---------------------------------------------------------------------------
-# Extraction warnings
-# ---------------------------------------------------------------------------
+# --- Extraction warnings ---
 
 def test_warnings_for_scanned_documents():
     long_text = ('The operator shall verify the torque value at every step. ' * 20)
@@ -121,9 +115,7 @@ def test_warnings_for_scanned_documents():
     assert one[0].startswith('NEW')
 
 
-# ---------------------------------------------------------------------------
-# DOCX — image positions remapped to estimated pages
-# ---------------------------------------------------------------------------
+# --- DOCX — image positions remapped to estimated pages ---
 
 def _png_stream(pattern: str) -> io.BytesIO:
     """Structured test images — solid colors all hash to zero gradients, so
@@ -166,9 +158,7 @@ def test_docx_images_get_estimated_pages():
     assert any('[Page 2' in t for t in texts)  # page break was honoured
 
 
-# ---------------------------------------------------------------------------
-# DOCX processor end-to-end — operator-style document (text + image change)
-# ---------------------------------------------------------------------------
+# --- DOCX processor end-to-end — operator-style document (text + image change) ---
 
 def _operator_docx(torque: str, image_pattern: str) -> bytes:
     from docx import Document
@@ -186,7 +176,7 @@ def _operator_docx(torque: str, image_pattern: str) -> bytes:
 
 
 def test_docx_processor_reports_text_and_image_changes():
-    from server.services.processors.docx import DocxProcessor
+    from server.services.compare.processors.docx import DocxProcessor
 
     old_bytes = _operator_docx('35', 'left-half')
     new_bytes = _operator_docx('40', 'checker')

@@ -8,19 +8,19 @@ import yaml
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from ..services.user import get_capabilities, get_current_user, get_workspace_url
+from ..services.infra.user import get_capabilities, get_current_user, get_workspace_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _PROCESSORS_YML = os.path.join(
-    os.path.dirname(__file__), '..', '..', 'config', 'processors.yml'
+    os.path.dirname(__file__), '..', 'config', 'processors.yml'
 )
 
 
 @lru_cache(maxsize=1)
 def _load_processors_config() -> dict:
-    """Parse config/processors.yml once and cache the result."""
+    """Parse server/config/processors.yml once and cache the result."""
     path = os.path.normpath(_PROCESSORS_YML)
     try:
         with open(path, 'r', encoding='utf-8') as f:
@@ -58,7 +58,7 @@ async def get_app_config():
 
 @router.get('/config/processors')
 async def get_processors_config():
-    """Return the processor version mapping (from config/processors.yml)."""
+    """Return the processor version mapping (from server/config/processors.yml)."""
     try:
         data = _load_processors_config()
         return data
@@ -70,7 +70,7 @@ async def get_processors_config():
 @router.get('/config/knowledge-base-date')
 async def get_knowledge_base_date():
     """Return the knowledge base documents_as_of date (null when not set)."""
-    from ..services.lakebase import get_pool
+    from ..services.infra.lakebase import get_pool
     pool = get_pool()
     if not pool:
         return {'date': None}

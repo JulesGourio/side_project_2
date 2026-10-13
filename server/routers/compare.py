@@ -6,37 +6,39 @@ All heavy lifting (streaming, LLM calls, file processing) lives in services/.
 import asyncio
 import base64
 import copy
+import hashlib
 import io
 import json
 import logging
 import mimetypes
 import os
+import posixpath
 import re
 import time
 import traceback
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..services.chunked_analysis import split_messages_for_chunking, stream_analysis_chunked
-from ..services.impact_queries import changes_to_queries, changes_to_readable
-from ..services.lakebase import (
+from ..services.compare.chunked_analysis import split_messages_for_chunking, stream_analysis_chunked
+from ..services.compare.impact_queries import changes_to_queries
+from ..services.infra.lakebase import (
     get_cached_impact_result, get_cached_summary, get_pool, store_error,
     store_impact_cache, store_impact_request, store_llm_request,
-    store_summary_cache, update_llm_request_usage,
+    store_summary_cache, update_llm_request_run, update_llm_request_usage,
 )
-from ..services.processors.factory import (
-    EXTENSION_MAP, SUPPORTED_EXTENSIONS, extract_document_text, get_extension,
-    get_processor, prepare_image_content,
+from ..services.compare.processors.factory import (
+    EXTENSION_MAP, SUPPORTED_EXTENSIONS, diff_truncation_warnings, extract_document_text,
+    file_type_of, get_extension, get_processor, prepare_image_content,
 )
-from ..services.streaming import stream_analysis
-from ..services.summarize import summarize_image, summarize_text
-from ..services.user import get_user_identity, require_compare
-from ..services.vector_search import synthesize_impact_with_llm
+from ..services.infra.streaming import stream_analysis
+from ..services.compare.summarize import summarize_image, summarize_text
+from ..services.infra.user import get_user_identity, require_compare
+from ..services.infra.vector_search import run_impact_search, sort_documents
 
 
 logger = logging.getLogger(__name__)
@@ -66,8 +68,7 @@ APP_VERSION = os.getenv('APP_VERSION', '2')
 
 _analyze_semaphore = asyncio.Semaphore(int(os.getenv('COMPARE_MAX_CONCURRENT', '5')))
 
-# Default system prompt — for MODIFIED/REMOVED/ADDED inline markup format.
-# Used when COMPARE_ANALYSIS_SYSTEM_PROMPT is not set.
+# Default system prompt (MODIFIED/REMOVED/ADDED inline markup), used when COMPARE_ANALYSIS_SYSTEM_PROMPT is not set.
 _DEFAULT_ANALYSIS_PROMPT = """\
 You are Qualibot, an expert document comparison analyst specialising in technical, regulatory, and quality-management documentation.
 
@@ -94,12 +95,11 @@ IGNORE:
 
 OUTPUT: Markdown, ## per section, one bullet per change. Bold critical values. If nothing substantive changed: **No significant changes detected.**\
 """
-MAX_FILE_BYTES = int(os.getenv('MAX_COMPARE_FILE_MB', '20')) * 1024 * 1024
+# app.yaml declares MAX_COMPARE_PDF_MB (the historical name); both are honoured.
+MAX_FILE_BYTES = int(os.getenv('MAX_COMPARE_FILE_MB') or os.getenv('MAX_COMPARE_PDF_MB') or '20') * 1024 * 1024
 
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
+# --- Config ---
 
 def _get_config() -> Dict[str, Any]:
     if os.getenv('COMPARE_ENABLED', 'true').lower() != 'true':
@@ -107,17 +107,17 @@ def _get_config() -> Dict[str, Any]:
     return {
         'analysis_endpoint':     os.getenv('COMPARE_ANALYSIS_ENDPOINT', ''),
         'analysis_system_prompt': os.getenv('COMPARE_ANALYSIS_SYSTEM_PROMPT', _DEFAULT_ANALYSIS_PROMPT),
-        # Impact search: Vector Search retrieval, then a single LLM call judges
-        # which retrieved candidates are genuinely impacted.
+        # Impact search: one Vector Search query per change, then one LLM call
+        # per candidate document judges it from all of its retrieved passages.
         'impact_index':          os.getenv('COMPARE_IMPACT_INDEX', ''),
         'impact_endpoint':       os.getenv('COMPARE_IMPACT_ENDPOINT', os.getenv('COMPARE_ANALYSIS_ENDPOINT', '')),
-        'impact_num_results':    int(os.getenv('COMPARE_IMPACT_NUM_RESULTS', '30')),
-        'impact_max_candidates': int(os.getenv('COMPARE_IMPACT_MAX_CANDIDATES', '8')),
-        'impact_max_query_chars': int(os.getenv('COMPARE_IMPACT_MAX_QUERY_CHARS', '6000')),
-        'impact_max_tokens':     int(os.getenv('COMPARE_IMPACT_MAX_TOKENS', '2000')),
-        # Multi-query retrieval: one focused vector search per derived change.
-        'impact_max_queries':        int(os.getenv('COMPARE_IMPACT_MAX_QUERIES', '8')),
-        'impact_per_query_results':  int(os.getenv('COMPARE_IMPACT_PER_QUERY_RESULTS', '15')),
+        'impact_max_queries':    int(os.getenv('COMPARE_IMPACT_MAX_QUERIES', '30')),
+        'impact_per_query_results': int(os.getenv('COMPARE_IMPACT_PER_QUERY_RESULTS', '40')),
+        'impact_max_candidates': int(os.getenv('COMPARE_IMPACT_MAX_CANDIDATES', '15')),
+        'impact_max_query_chars': int(os.getenv('COMPARE_IMPACT_MAX_QUERY_CHARS', '20000')),
+        'impact_max_tokens':     int(os.getenv('COMPARE_IMPACT_MAX_TOKENS', '1500')),
+        # Documents published before this date are badged "archive" in the UI.
+        'impact_archive_before': os.getenv('COMPARE_IMPACT_ARCHIVE_BEFORE', '2018-01-01'),
         # Single-document summary: independent of the diff, a cheap model
         # summarizes whichever of the two uploaded files the user picks.
         # Images need a vision-capable model, hence the separate endpoint.
@@ -136,9 +136,7 @@ def _get_config() -> Dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
+# --- Auth ---
 
 def _get_credentials(request: Request):
     host = os.environ.get('DATABRICKS_HOST', '').rstrip('/')
@@ -162,9 +160,7 @@ def _get_credentials(request: Request):
     return host, token
 
 
-# ---------------------------------------------------------------------------
-# File helpers
-# ---------------------------------------------------------------------------
+# --- File helpers ---
 
 def _sanitize_filename(filename: str, fallback: str = 'document') -> str:
     base = os.path.basename((filename or '').strip())
@@ -184,6 +180,17 @@ def _validate_file(file: UploadFile, data: bytes) -> None:
         raise ValueError(
             f'Unsupported extension "{ext}". Supported: {", ".join(sorted(SUPPORTED_EXTENSIONS))}'
         )
+
+
+def _is_within_volume(session_path: str, volume_path: str) -> bool:
+    """True when session_path is the volume root or a path under it.
+
+    A bare startswith() accepted '<volume>/../../other' and '<volume>_other':
+    both leave the configured volume.
+    """
+    root = posixpath.normpath(volume_path)
+    path = posixpath.normpath(session_path)
+    return '..' not in session_path.split('/') and (path == root or path.startswith(root + '/'))
 
 
 async def _error_stream(message: str):
@@ -241,9 +248,7 @@ async def _cached_stream(cached: dict):
     yield 'data: [DONE]\n\n'
 
 
-# ---------------------------------------------------------------------------
-# /compare/analyze
-# ---------------------------------------------------------------------------
+# --- /compare/analyze ---
 
 @router.post('/compare/analyze', dependencies=[Depends(require_compare)])
 async def analyze_documents(
@@ -274,17 +279,6 @@ async def analyze_documents(
             media_type='text/event-stream',
         )
 
-    # ── Cache hit: return stored analysis if both hashes match ────────────────
-    _pv = processor_version.strip()
-    cached = None if force_refresh.lower() == 'true' else await _get_cached_analysis(old_file_hash.strip(), new_file_hash.strip(), _pv)
-    if cached:
-        logger.info(f'Cache hit for hashes {old_file_hash[:12]}…/{new_file_hash[:12]}… → messages.id={cached["id"]}')
-        return StreamingResponse(
-            _cached_stream(cached),
-            media_type='text/event-stream',
-            headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
-        )
-
     # ── Read & validate files before starting the generator (fast, early error) ──
     try:
         old_bytes = await old_file.read()
@@ -297,6 +291,34 @@ async def analyze_documents(
     old_name = old_file.filename or 'old_document'
     new_name = new_file.filename or 'new_document'
 
+    # The processor is picked from the old file alone: a PDF against a DOCX used
+    # to fail deep inside the extractor with an unreadable parser error.
+    if file_type_of(old_name) != file_type_of(new_name):
+        return StreamingResponse(
+            _error_stream(
+                f'The two documents must be of the same type ("{get_extension(old_name)}" vs '
+                f'"{get_extension(new_name)}"). Convert one of them first.'
+            ),
+            media_type='text/event-stream',
+        )
+
+    # Hashes are computed here from the uploaded bytes (same SHA-256 hex the
+    # client sends) instead of trusting the form fields: a stale or wrong
+    # client hash would replay another file pair's cached analysis.
+    old_file_hash = hashlib.sha256(old_bytes).hexdigest()
+    new_file_hash = hashlib.sha256(new_bytes).hexdigest()
+
+    # ── Cache hit: return stored analysis if both hashes match ────────────────
+    _pv = processor_version.strip()
+    cached = None if force_refresh.lower() == 'true' else await _get_cached_analysis(old_file_hash, new_file_hash, _pv)
+    if cached:
+        logger.info(f'Cache hit for hashes {old_file_hash[:12]}…/{new_file_hash[:12]}… → messages.id={cached["id"]}')
+        return StreamingResponse(
+            _cached_stream(cached),
+            media_type='text/event-stream',
+            headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
+        )
+
     processor = get_processor(old_name, method_override=_pv or None)
     if not processor:
         return StreamingResponse(
@@ -304,7 +326,6 @@ async def analyze_documents(
             media_type='text/event-stream',
         )
 
-    # Background upload to UC Volume
     volume_path = cfg['volume_path'].rstrip('/')
     if volume_path and not volume_path.startswith('TODO'):
         session_id = datetime.now().strftime('%Y%m%d_%H%M%S%f')
@@ -321,17 +342,21 @@ async def analyze_documents(
 
         asyncio.create_task(_upload(old_bytes, new_bytes))
 
-    # ── Return StreamingResponse immediately so the SSE connection is established
-    # before any slow work (semaphore wait, CPU-bound processing, LLM call).
-    # Keepalive SSE comments (':keepalive') keep the connection alive through
-    # Databricks Apps' HTTP gateway during long waits.
+    # Return the StreamingResponse immediately so the SSE connection exists before any slow work; keepalive comments
+    # (':keepalive') carry it through the gateway during long waits.
     _req_id = (old_file_hash or '')[:8] or 'nohash'
 
     async def _stream():
         logger.info(f'[{_req_id}] SSE stream start: {old_name!r} vs {new_name!r}')
 
-        # Establish SSE connection immediately — gateway sees first byte, won't time out
         yield ': keepalive\n\n'
+
+        # Outcome and step durations, saved on the llm_requests row at the end (finally).
+        run: Dict[str, Any] = {'status': 'aborted', 'chunked_parts': 0}
+        t_start = time.monotonic()
+
+        def _ms(t0: float) -> int:
+            return int((time.monotonic() - t0) * 1000)
 
         # ── Wait for a processing slot ────────────────────────────────────────
         _wait_start = asyncio.get_event_loop().time()
@@ -343,6 +368,7 @@ async def analyze_documents(
                 waited = asyncio.get_event_loop().time() - _wait_start
                 logger.warning(f'[{_req_id}] Semaphore wait {waited:.0f}s — all slots busy')
                 yield ': keepalive\n\n'
+        run['queue_wait_ms'] = _ms(t_start)
 
         llm_request_id = None
 
@@ -355,6 +381,7 @@ async def analyze_documents(
                 )
             )
             _build_start = asyncio.get_event_loop().time()
+            t_build = time.monotonic()
             while True:
                 done, _ = await asyncio.wait({build_task}, timeout=10.0)
                 if done:
@@ -363,11 +390,13 @@ async def analyze_documents(
                 logger.info(f'[{_req_id}] Building messages… {elapsed:.0f}s')
                 yield ': keepalive\n\n'
 
+            run['build_ms'] = _ms(t_build)
             try:
                 result = build_task.result()
             except Exception as e:
                 logger.error(f'[{_req_id}] Processor failed: {e}', exc_info=True)
-                asyncio.create_task(store_error(
+                run['status'] = 'error'
+                store_error(
                     endpoint='/api/compare/analyze',
                     error_type=type(e).__name__,
                     error_msg=f'File processing failed: {e}',
@@ -375,7 +404,9 @@ async def analyze_documents(
                     file_type=get_extension(old_name),
                     stack_trace=traceback.format_exc(),
                     llm_request_id=llm_request_id,
-                ))
+                    stage='build',
+                    context={'processor_version': _pv, 'build_ms': run['build_ms']},
+                )
                 yield f'data: {json.dumps({"type": "error", "error": f"File processing failed: {e}"})}\n\n'
                 yield 'data: [DONE]\n\n'
                 return
@@ -408,13 +439,15 @@ async def analyze_documents(
 
             # Extraction-quality warnings (e.g. scanned PDF with no text layer)
             # — without this the user gets a silent, misleading "no changes".
-            for w in result.warnings:
+            for w in result.warnings + diff_truncation_warnings(result.messages):
                 yield f'data: {json.dumps({"type": "warning", "warning": "extraction", "detail": w})}\n\n'
 
             if result.image_pairs:
                 yield f'data: {json.dumps({"type": "image_context", "images": result.image_pairs})}\n\n'
 
             # ── Stream LLM response ───────────────────────────────────────────
+            run['chunked_parts'] = len(message_parts) if message_parts else 0
+            t_llm = time.monotonic()
             if message_parts:
                 logger.info(f'[{_req_id}] LLM streaming start (chunked ×{len(message_parts)})')
                 llm_stream = stream_analysis_chunked(
@@ -428,16 +461,20 @@ async def analyze_documents(
                     host, token, endpoint, result.messages,
                     cfg['max_tokens'], cfg['thinking_budget'], cfg['temperature'],
                 )
+            run['status'] = 'ok'
             async for chunk in llm_stream:
                 if await request.is_disconnected():
                     logger.warning(f'[{_req_id}] Client disconnected during LLM streaming — aborting')
+                    run['status'] = 'aborted'
                     return
                 # Intercept usage and error events to track in DB
                 if chunk.startswith('data: ') and '[DONE]' not in chunk:
                     try:
                         event = json.loads(chunk[6:].strip())
                         etype = event.get('type')
-                        if etype == 'usage':
+                        if etype == 'response.output_text.delta' and 'first_token_ms' not in run:
+                            run['first_token_ms'] = _ms(t_llm)
+                        elif etype == 'usage':
                             asyncio.create_task(update_llm_request_usage(
                                 llm_request_id,
                                 input_tokens=event.get('input_tokens', 0),
@@ -448,7 +485,8 @@ async def analyze_documents(
                                 http_status=200,
                             ))
                         elif etype == 'error':
-                            asyncio.create_task(store_error(
+                            run['status'] = 'error'
+                            store_error(
                                 endpoint='/api/compare/analyze',
                                 error_type=event.get('error_type', 'LLMError'),
                                 error_msg=event.get('error', ''),
@@ -456,7 +494,12 @@ async def analyze_documents(
                                 new_filename=new_name,
                                 file_type=get_extension(old_name),
                                 llm_request_id=llm_request_id,
-                            ))
+                                stage='llm',
+                                http_status=event.get('http_status') or None,
+                                upstream=endpoint,
+                                context={'chunked_parts': run['chunked_parts'],
+                                         'elapsed_ms': _ms(t_llm)},
+                            )
                             asyncio.create_task(update_llm_request_usage(
                                 llm_request_id,
                                 http_status=event.get('http_status', 0),
@@ -467,11 +510,16 @@ async def analyze_documents(
                         pass
                 yield chunk
 
+            run['generation_ms'] = _ms(t_llm)
             logger.info(f'[{_req_id}] SSE stream complete')
 
+        except (asyncio.CancelledError, GeneratorExit):
+            run['status'] = 'aborted'      # the browser left
+            raise
         except Exception as e:
             logger.error(f'[{_req_id}] Unhandled error in SSE stream: {e}', exc_info=True)
-            asyncio.create_task(store_error(
+            run['status'] = 'error'
+            store_error(
                 endpoint='/api/compare/analyze',
                 error_type=type(e).__name__,
                 error_msg=str(e),
@@ -479,7 +527,8 @@ async def analyze_documents(
                 file_type=get_extension(old_name),
                 stack_trace=traceback.format_exc(),
                 llm_request_id=llm_request_id,
-            ))
+                stage='stream',
+            )
             try:
                 yield f'data: {json.dumps({"type": "error", "error": f"Internal error: {e}"})}\n\n'
                 yield 'data: [DONE]\n\n'
@@ -487,6 +536,8 @@ async def analyze_documents(
                 pass  # client already gone
         finally:
             _analyze_semaphore.release()
+            if llm_request_id:
+                asyncio.create_task(update_llm_request_run(llm_request_id, total_ms=_ms(t_start), **run))
 
     return StreamingResponse(
         _stream(),
@@ -495,25 +546,56 @@ async def analyze_documents(
     )
 
 
-# ---------------------------------------------------------------------------
-# /compare/impact
-# ---------------------------------------------------------------------------
+# --- /compare/impact ---
 
 class ImpactRequest(BaseModel):
     changes_text: str
     # File hashes of the comparison that produced changes_text — link an
-    # impact_requests row back to its messages row (the client already
-    # computes them for /compare/analyze caching), and double as the cache
-    # key for this endpoint's own result cache. Optional: an impact search
-    # replayed from history may not carry them (cache is then skipped).
+    # impact_requests row back to its messages row, and double as the cache
+    # key for this endpoint's own result cache. Optional: a manual-mode search
+    # has none (cache is then skipped).
     old_file_hash: str = ''
     new_file_hash: str = ''
+    # Names of the compared files: the compared document itself is always the
+    # top hit, so it is dropped from the candidates.
+    old_file_name: str = ''
+    new_file_name: str = ''
     # "Re-run" sets this to bypass the cache and force a fresh judgment.
     force_refresh: bool = False
 
 
+def _impact_cache_version(changes_text: str, cfg: Dict[str, Any]) -> str:
+    """Cache discriminator stored in impact_cache.app_version.
+
+    The file hashes alone are not the input of an impact search: the same pair
+    gives a different change list from the Change Table than from the Change
+    Summary, and a different result once COMPARE_IMPACT_INDEX points at another
+    index. Keyed on the hashes only, the first search was replayed for all of
+    them.
+    """
+    parts = [changes_text.strip(), cfg['impact_index'], cfg['impact_endpoint'],
+             str(cfg['impact_max_queries']), str(cfg['impact_per_query_results']),
+             str(cfg['impact_max_candidates'])]
+    return f'{APP_VERSION}:{hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()[:16]}'
+
+
+def _ndjson(event: Dict[str, Any]) -> str:
+    return json.dumps(event, ensure_ascii=False) + '\n'
+
+
+def _replay_events(result: Dict[str, Any]):
+    """Re-emit a cached result as the same event stream a fresh search produces."""
+    plan = {k: v for k, v in result.items() if k not in ('documents', 'usage', 'duration_s', 'impact_request_id')}
+    yield _ndjson({**plan, 'type': 'plan', 'cached': True})
+    for doc in result.get('documents', []):
+        yield _ndjson({'type': 'document', 'document': doc})
+    yield _ndjson({'type': 'done', 'usage': result.get('usage', {}), 'duration_s': result.get('duration_s', 0.0),
+                   'impact_request_id': result.get('impact_request_id'), 'cached': True})
+
+
 @router.post('/compare/impact', dependencies=[Depends(require_compare)])
 async def find_impacted_documents(body: ImpactRequest, request: Request):
+    """Stream NDJSON events: plan → document (one per judged candidate, as each finishes) → done | error."""
     try:
         cfg = _get_config()
     except ValueError as e:
@@ -529,87 +611,144 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
     old_hash = body.old_file_hash.strip()
     new_hash = body.new_file_hash.strip()
 
+    cache_version = _impact_cache_version(body.changes_text, cfg)
+
     if not body.force_refresh:
-        cached = await get_cached_impact_result(old_hash, new_hash, APP_VERSION)
-        if cached is not None:
-            return {**cached, 'cached': True}
+        cached = await get_cached_impact_result(old_hash, new_hash, cache_version)
+        # Results cached before the per-document redesign have no change list.
+        if cached is not None and 'changes' in cached:
+            return StreamingResponse(_replay_events(cached), media_type='application/x-ndjson')
 
     host, token = _get_credentials(request)
     if not host or not token:
         return JSONResponse({'error': 'Missing Databricks credentials'}, status_code=400)
 
     identity = await get_user_identity(request)
-    changes_chars = len(body.changes_text)
-    start = time.monotonic()
+    t_extract = time.monotonic()
+    extracted = changes_to_queries(body.changes_text, max_queries=cfg['impact_max_queries'])
+    extract_ms = int((time.monotonic() - t_extract) * 1000)
 
-    derived = changes_to_queries(body.changes_text, max_queries=cfg['impact_max_queries'])
-    queries = derived['queries']
-    if not queries:
-        return {'documents': [], 'truncated': False, 'chunks_returned': 0,
-                'candidates_considered': 0, 'queries_used': 0, 'queries_failed': 0,
-                'duration_s': 0.0, 'no_changes': True,
-                'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0, 'cost_eur': 0.0}}
-    num_results = cfg['impact_num_results'] if len(queries) == 1 else cfg['impact_per_query_results']
+    def _search(search_token: str):
+        return run_impact_search(
+            host=host, token=search_token, index_name=index_name, llm_endpoint=llm_endpoint,
+            extracted=extracted,
+            num_results=cfg['impact_per_query_results'],
+            max_candidates=cfg['impact_max_candidates'],
+            max_changes_chars=cfg['impact_max_query_chars'],
+            max_tokens=cfg['impact_max_tokens'],
+            archive_before=cfg['impact_archive_before'],
+            exclude_names=[body.old_file_name, body.new_file_name],
+        )
 
-    try:
-        try:
-            result = await synthesize_impact_with_llm(
-                host, token, index_name, llm_endpoint, queries,
-                changes_summary=changes_to_readable(body.changes_text),
-                num_results=num_results,
-                max_candidates=cfg['impact_max_candidates'],
-                max_query_chars=cfg['impact_max_query_chars'],
-                max_tokens=cfg['impact_max_tokens'],
-            )
-        except Exception as sp_err:
-            fwd = request.headers.get('x-forwarded-access-token', '')
-            if not (fwd and fwd != token and '403' in str(sp_err)):
-                raise
-            logger.info('impact: SP token denied on index — retrying with forwarded user token')
-            result = await synthesize_impact_with_llm(
-                host, fwd, index_name, llm_endpoint, queries,
-                changes_summary=changes_to_readable(body.changes_text),
-                num_results=num_results,
-                max_candidates=cfg['impact_max_candidates'],
-                max_query_chars=cfg['impact_max_query_chars'],
-                max_tokens=cfg['impact_max_tokens'],
-            )
-        usage = result.get('usage', {})
-        result['duration_s'] = round(time.monotonic() - start, 2)
-        asyncio.create_task(store_impact_request(
-            method='index_llm',
+    def _audit(**kwargs):
+        return store_impact_request(
+            method='index_llm_per_doc',
             user_id=identity['user_id'], workspace_id=identity.get('workspace_id') or '',
             old_file_hash=old_hash, new_file_hash=new_hash,
-            changes_chars=changes_chars, truncated=result.get('truncated', False),
-            chunks_returned=result.get('chunks_returned', 0), num_documents=len(result.get('documents', [])),
-            duration_s=result['duration_s'], endpoint_name=llm_endpoint, http_status=200,
+            changes_chars=len(body.changes_text), endpoint_name=llm_endpoint, index_name=index_name,
+            queries_used=len(extracted['queries']), extract_ms=extract_ms, **kwargs,
+        )
+
+    def _warn(error_type: str, stage: str, message: str, upstream: str, **context):
+        """A degraded search (it went on): errors row with severity 'warning'."""
+        store_error(
+            endpoint='/api/compare/impact', error_type=error_type, error_msg=message, severity='warning',
+            stage=stage, upstream=upstream, user_id=identity['user_id'],
+            workspace_id=identity.get('workspace_id') or '', context=context or None)
+
+    async def _events():
+        start = time.monotonic()
+        if not extracted['queries']:
+            yield _ndjson({'type': 'plan', 'changes': extracted['changes'], 'source': extracted['source'],
+                           'queries_used': 0, 'queries_failed': 0, 'chunks_returned': 0, 'candidates': 0,
+                           'excluded_refs': [], 'not_judged': [], 'no_changes': True})
+            yield _ndjson({'type': 'done', 'duration_s': 0.0,
+                           'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0, 'cost_eur': 0.0}})
+            return
+
+        plan: Dict[str, Any] = {}
+        documents: List[Dict[str, Any]] = []
+        usage: Dict[str, Any] = {}
+        search_ms: Optional[int] = None
+        judge_start = 0.0
+
+        def _counts() -> Dict[str, Any]:
+            """What the search did so far — for the audit row, whatever the outcome."""
+            return {'queries_failed': plan.get('queries_failed'), 'candidates': plan.get('candidates'),
+                    'not_judged': len(plan.get('not_judged') or []) if plan else None,
+                    'judge_failed': sum(1 for d in documents if d.get('status') == 'error'),
+                    'search_ms': search_ms,
+                    'judge_ms': int((time.monotonic() - judge_start) * 1000) if judge_start else None}
+
+        try:
+            stream = _search(token)
+            try:
+                first = await stream.__anext__()
+            except Exception as sp_err:
+                fwd = request.headers.get('x-forwarded-access-token', '')
+                if not (fwd and fwd != token and '403' in str(sp_err)):
+                    raise
+                logger.info('impact: SP token denied on index — retrying with forwarded user token')
+                stream = _search(fwd)
+                first = await stream.__anext__()
+            search_ms = int((time.monotonic() - start) * 1000)
+            judge_start = time.monotonic()
+            plan = {k: v for k, v in first.items() if k != 'type'}
+            if plan.get('queries_failed'):
+                _warn('VectorSearchPartial', 'search',
+                      f"{plan['queries_failed']}/{plan.get('queries_used')} Vector Search queries failed",
+                      index_name, queries_used=plan.get('queries_used'), queries_failed=plan['queries_failed'])
+            yield _ndjson(first)
+            async for event in stream:
+                if event['type'] == 'document':
+                    doc = event['document']
+                    documents.append(doc)
+                    if doc.get('status') == 'error':
+                        _warn(doc.get('error_type') or 'JudgeError', 'judge', doc.get('reason') or '', llm_endpoint,
+                              ref=doc.get('ref'), judge_attempts=doc.get('judge_attempts'))
+                    yield _ndjson(event)
+                elif event['type'] == 'done':
+                    usage = event['usage']
+        except (asyncio.CancelledError, GeneratorExit):
+            # The browser left (closed tab, new search): record the search as aborted.
+            asyncio.create_task(_audit(duration_s=time.monotonic() - start, status='aborted',
+                                       num_documents=len(documents), **_counts()))
+            raise
+        except Exception as e:
+            logger.error(f'Impact search failed: {e}', exc_info=True)
+            stage = 'judge' if plan else 'search'
+            store_error(
+                endpoint='/api/compare/impact', error_type=type(e).__name__, error_msg=str(e), stage=stage,
+                upstream=llm_endpoint if plan else index_name, user_id=identity['user_id'],
+                workspace_id=identity.get('workspace_id') or '', stack_trace=traceback.format_exc())
+            asyncio.create_task(_audit(duration_s=time.monotonic() - start, http_status=502, status='error',
+                                       error_type=type(e).__name__, error_msg=str(e), **_counts()))
+            yield _ndjson({'type': 'error', 'error': f'Impact search failed: {e}'})
+            return
+
+        duration_s = round(time.monotonic() - start, 2)
+        documents = sort_documents(documents)
+        # Written before 'done' (a few ms): the client needs the id to attach feedback to this search.
+        request_id = await _audit(
+            chunks_returned=plan.get('chunks_returned', 0), num_documents=len(documents),
+            duration_s=duration_s, http_status=200, status='ok',
             input_tokens=usage.get('input_tokens', 0), output_tokens=usage.get('output_tokens', 0),
             total_tokens=usage.get('total_tokens', 0), cost_eur=usage.get('cost_eur', 0.0),
-            documents=result.get('documents', []),
-        ))
-        if old_hash and new_hash:
-            asyncio.create_task(store_impact_cache(old_hash, new_hash, APP_VERSION, result))
-        return result
-    except Exception as e:
-        logger.error(f'Impact synthesis failed: {e}', exc_info=True)
-        asyncio.create_task(store_error(
-            endpoint='/api/compare/impact',
-            error_type=type(e).__name__,
-            error_msg=str(e),
-        ))
-        asyncio.create_task(store_impact_request(
-            method='index_llm',
-            user_id=identity['user_id'], workspace_id=identity.get('workspace_id') or '',
-            old_file_hash=old_hash, new_file_hash=new_hash,
-            changes_chars=changes_chars, duration_s=time.monotonic() - start,
-            endpoint_name=llm_endpoint, http_status=502, error_type=type(e).__name__, error_msg=str(e),
-        ))
-        return JSONResponse({'error': f'Impact synthesis failed: {e}'}, status_code=502)
+            documents=documents, **_counts(),
+        )
+        yield _ndjson({'type': 'done', 'usage': usage, 'duration_s': duration_s, 'impact_request_id': request_id})
+
+        if old_hash and new_hash and not any(d.get('status') == 'error' for d in documents):
+            asyncio.create_task(store_impact_cache(
+                old_hash, new_hash, cache_version,
+                {**plan, 'documents': documents, 'usage': usage, 'duration_s': duration_s,
+                 'impact_request_id': request_id},
+            ))
+
+    return StreamingResponse(_events(), media_type='application/x-ndjson')
 
 
-# ---------------------------------------------------------------------------
-# /compare/summarize — single-document summary, independent of the diff
-# ---------------------------------------------------------------------------
+# --- /compare/summarize — single-document summary, independent of the diff ---
 
 @router.post('/compare/summarize', dependencies=[Depends(require_compare)])
 async def summarize_document(
@@ -623,19 +762,22 @@ async def summarize_document(
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
 
-    file_hash = file_hash.strip()
     force = force_refresh.lower() == 'true'
-
-    if not force:
-        cached = await get_cached_summary(file_hash, APP_VERSION)
-        if cached is not None:
-            return {**cached, 'cached': True}
 
     data = await file.read()
     try:
         _validate_file(file, data)
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
+
+    # Same rule as /compare/analyze: the cache key is the hash of the bytes
+    # actually received, not the one the client claims.
+    file_hash = hashlib.sha256(data).hexdigest()
+
+    if not force:
+        cached = await get_cached_summary(file_hash, APP_VERSION)
+        if cached is not None:
+            return {**cached, 'cached': True}
 
     is_image = EXTENSION_MAP.get(get_extension(file.filename or '')) == 'image'
     endpoint = cfg['summary_image_endpoint'] if is_image else cfg['summary_endpoint']
@@ -679,13 +821,14 @@ async def summarize_document(
             )
     except Exception as e:
         logger.error(f'Summarization failed: {e}', exc_info=True)
-        asyncio.create_task(store_error(
+        store_error(
             endpoint='/api/compare/summarize',
             error_type=type(e).__name__,
             error_msg=str(e),
             user_id=identity['user_id'], workspace_id=identity.get('workspace_id') or '',
             file_type=get_extension(file.filename or ''),
-        ))
+            stage='llm', upstream=endpoint, exc=e,
+        )
         return JSONResponse({'error': f'Summarization failed: {e}'}, status_code=502)
 
     result['duration_s'] = round(time.monotonic() - start, 2)
@@ -694,9 +837,7 @@ async def summarize_document(
     return result
 
 
-# ---------------------------------------------------------------------------
-# /compare/save
-# ---------------------------------------------------------------------------
+# --- /compare/save ---
 
 @router.post('/compare/save', dependencies=[Depends(require_compare)])
 async def save_to_volume(
@@ -728,7 +869,7 @@ async def save_to_volume(
     session_path = f'{volume_path}/{timestamp}'
     saved_files: List[str] = []
 
-    try:
+    def _save() -> None:
         w = WorkspaceClient()
 
         def _ensure_dir(path: str):
@@ -751,15 +892,17 @@ async def save_to_volume(
         if impact_text.strip():
             _upload(f'{session_path}/impact.md', impact_text.encode('utf-8'))
 
+    try:
+        # The SDK calls are blocking: on the event loop they froze every open
+        # analysis stream for the duration of two 20 MB uploads.
+        await asyncio.to_thread(_save)
         return {'success': True, 'session_path': session_path, 'saved_files': saved_files}
     except Exception as e:
         logger.error(f'Failed to save to volume: {e}')
         return JSONResponse({'error': str(e), 'saved_files': saved_files}, status_code=500)
 
 
-# ---------------------------------------------------------------------------
-# /compare/load — restore files from a saved volume session
-# ---------------------------------------------------------------------------
+# --- /compare/load — restore files from a saved volume session ---
 
 @router.get('/compare/load', dependencies=[Depends(require_compare)])
 async def load_session_files(session_path: str, old_filename: str = '', new_filename: str = ''):
@@ -772,12 +915,12 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
     # session_path comes from the DB (trusted) — security check only when volume_path is configured
     volume_path = os.getenv('COMPARE_VOLUME_PATH', '').rstrip('/')
     if volume_path and not volume_path.startswith('TODO'):
-        if not session_path.startswith(volume_path):
+        if not _is_within_volume(session_path, volume_path):
             logger.warning(f'load: session_path {session_path!r} outside configured volume {volume_path!r}')
             return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
     else:
         # No volume configured — allow only UC Volume paths (starts with /Volumes/)
-        if not session_path.startswith('/Volumes/'):
+        if not _is_within_volume(session_path, '/Volumes'):
             logger.warning(f'load: session_path {session_path!r} does not look like a UC Volume path')
             return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
         logger.info(f'load: COMPARE_VOLUME_PATH not set, attempting load from trusted DB path {session_path!r}')
@@ -787,7 +930,7 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
         c = resp.contents
         return c.read() if hasattr(c, 'read') else bytes(c)
 
-    try:
+    def _load() -> dict:
         w = WorkspaceClient()
         result: dict = {}
 
@@ -826,6 +969,9 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
                 }
 
         return result
+
+    try:
+        return await asyncio.to_thread(_load)
     except Exception as e:
         logger.error(f'Failed to load session files: {e}')
         return JSONResponse({'error': str(e)}, status_code=500)

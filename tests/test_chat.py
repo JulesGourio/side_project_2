@@ -1,7 +1,6 @@
-"""Tests for chat endpoints — stream, session logs, and feedback.
+"""Tests for chat endpoints — session logs and feedback (the chat turn itself: test_chat_route.py).
 
 Coverage:
-  - POST /api/chat/stream  : disabled / missing endpoint / streaming OK / error forwarding
   - GET  /api/chat/sessions        : no DB / with rows
   - GET  /api/chat/sessions/{id}   : not found / messages + sources
   - DELETE /api/chat/sessions/{id} : success
@@ -16,9 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-# ---------------------------------------------------------------------------
-# App fixture — mock lakebase so tests don't need a real DB at startup
-# ---------------------------------------------------------------------------
+# --- App fixture — mock lakebase so tests don't need a real DB at startup ---
 
 @pytest.fixture(scope='module')
 def client():
@@ -31,21 +28,7 @@ def client():
             yield c
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _parse_sse(text: str) -> list[dict]:
-    """Parse SSE lines into a list of JSON event dicts."""
-    events = []
-    for line in text.splitlines():
-        if line.startswith('data: ') and line != 'data: [DONE]':
-            try:
-                events.append(json.loads(line[6:]))
-            except json.JSONDecodeError:
-                pass
-    return events
-
+# --- Helpers ---
 
 def _make_pool(conn):
     """Build a minimal asyncpg pool mock from a connection mock."""
@@ -55,111 +38,7 @@ def _make_pool(conn):
     return pool
 
 
-# ---------------------------------------------------------------------------
-# Stream tests
-# ---------------------------------------------------------------------------
-
-def test_stream_disabled_returns_503(client):
-    with patch('server.routers.chat.CHAT_ENABLED', False):
-        r = client.post('/api/chat/stream', json={'messages': [{'role': 'user', 'content': 'Hi'}]})
-    assert r.status_code == 503
-    assert 'disabled' in r.json()['error'].lower()
-
-
-def test_stream_no_endpoint_returns_503(client):
-    with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat.CHAT_ENDPOINT', ''),
-    ):
-        r = client.post('/api/chat/stream', json={'messages': [{'role': 'user', 'content': 'Hi'}]})
-    assert r.status_code == 503
-    assert 'endpoint' in r.json()['error'].lower()
-
-
-async def _stream_ok(*args, **kwargs):
-    yield 'data: {"type": "response.output_text.delta", "delta": "Bonjour"}\n\n'
-    yield 'data: {"type": "response.output_text.delta", "delta": " Qualibot"}\n\n'
-    yield 'data: {"type": "sources", "sources": []}\n\n'
-    yield 'data: [DONE]\n\n'
-
-
-def test_stream_yields_deltas_and_done(client):
-    with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat.CHAT_ENDPOINT', 'Qualibot_Assistant'),
-        patch('server.routers.chat.stream_chat', side_effect=_stream_ok),
-        patch('server.routers.chat.get_pool', return_value=None),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
-            return_value={'user_id': 'u1', 'workspace_id': None})),
-        patch('server.routers.chat._get_chat_credentials',
-              return_value=('https://test.azuredatabricks.net', 'tok')),
-    ):
-        r = client.post('/api/chat/stream', json={
-            'messages': [{'role': 'user', 'content': 'Bonjour'}],
-            'session_id': 'sess-test',
-        })
-    assert r.status_code == 200
-    assert r.headers['content-type'].startswith('text/event-stream')
-    events = _parse_sse(r.text)
-    deltas = [e for e in events if e.get('type') == 'response.output_text.delta']
-    assert len(deltas) == 2
-    assert deltas[0]['delta'] == 'Bonjour'
-    done_events = [e for e in events if e.get('type') == 'done']
-    assert len(done_events) == 1
-    assert 'data: [DONE]' in r.text
-
-
-def test_stream_done_payload_contains_session_id(client):
-    async def _stream(*args, **kwargs):
-        yield 'data: {"type": "response.output_text.delta", "delta": "OK"}\n\n'
-        yield 'data: [DONE]\n\n'
-
-    with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat.CHAT_ENDPOINT', 'Qualibot_Assistant'),
-        patch('server.routers.chat.stream_chat', side_effect=_stream),
-        patch('server.routers.chat.get_pool', return_value=None),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
-            return_value={'user_id': 'u1', 'workspace_id': None})),
-        patch('server.routers.chat._get_chat_credentials',
-              return_value=('https://test.azuredatabricks.net', 'tok')),
-    ):
-        r = client.post('/api/chat/stream', json={
-            'messages': [{'role': 'user', 'content': 'Test'}],
-            'session_id': 'my-session-id',
-        })
-    events = _parse_sse(r.text)
-    done = next(e for e in events if e.get('type') == 'done')
-    assert done['session_id'] == 'my-session-id'
-
-
-def test_stream_error_event_forwarded(client):
-    async def _stream_err(*args, **kwargs):
-        yield 'data: {"type": "error", "error": "Agent failure", "error_type": "AgentError"}\n\n'
-        yield 'data: [DONE]\n\n'
-
-    with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat.CHAT_ENDPOINT', 'Qualibot_Assistant'),
-        patch('server.routers.chat.stream_chat', side_effect=_stream_err),
-        patch('server.routers.chat.get_pool', return_value=None),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
-            return_value={'user_id': 'u1', 'workspace_id': None})),
-        patch('server.routers.chat._get_chat_credentials',
-              return_value=('https://test.azuredatabricks.net', 'tok')),
-        patch('server.routers.chat.store_error', new=AsyncMock()),
-    ):
-        r = client.post('/api/chat/stream', json={'messages': [{'role': 'user', 'content': 'Hi'}]})
-    assert r.status_code == 200
-    events = _parse_sse(r.text)
-    errors = [e for e in events if e.get('type') == 'error']
-    assert len(errors) == 1
-    assert errors[0]['error'] == 'Agent failure'
-
-
-# ---------------------------------------------------------------------------
-# Session / log tests
-# ---------------------------------------------------------------------------
+# --- Session / log tests ---
 
 def test_list_sessions_no_db_returns_empty(client):
     with patch('server.routers.chat.get_pool', return_value=None):
@@ -272,9 +151,7 @@ def test_delete_session_not_owner_returns_404(client):
     conn.execute.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Share / shared-view / duplicate tests
-# ---------------------------------------------------------------------------
+# --- Share / shared-view / duplicate tests ---
 
 def test_share_session_generates_token_for_first_share(client):
     conn = AsyncMock()
@@ -389,9 +266,7 @@ def test_duplicate_shared_session_not_found(client):
     assert r.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# Feedback tests
-# ---------------------------------------------------------------------------
+# --- Feedback tests ---
 
 def test_feedback_rejects_invalid_vote(client):
     r = client.post('/api/chat/feedback', json={'vote': 'meh'})
@@ -436,9 +311,7 @@ def test_feedback_down_with_comment(client):
     assert r.json()['vote'] == 'down'
 
 
-# ---------------------------------------------------------------------------
-# Division directive must not leak into thread titles
-# ---------------------------------------------------------------------------
+# --- Division directive must not leak into thread titles ---
 
 def test_strip_division_removes_directive():
     from server.routers.chat import _strip_division
@@ -466,36 +339,39 @@ def test_save_turn_strips_division_and_registers_user():
     from server.routers import chat
 
     conn = AsyncMock()
-    conn.fetchrow.return_value = {'id': 99}
+    conn.fetchval.side_effect = [98, 99]          # user message id, assistant message id
     pool = _make_pool(conn)
 
     with patch('server.routers.chat.upsert_user', new=AsyncMock()) as mock_upsert:
-        msg_id = asyncio.run(chat._save_turn(
+        ids = asyncio.run(chat._save_turn(
             pool, 'sess-1', 'u1', 'ws1', 'https://test',
             '[Division: IS] The user works in the IS division. Restrict.\n\nHow do I wire it?',
             'Here is how.',
+            trace_id='chat-abc',
             email='jules@latecoere.aero',
-            endpoint_name='ka-endpoint',
+            endpoint_name='chat-is',
         ))
 
-    assert msg_id == 99
+    assert ids == (98, 99)
     # User registered in the shared table during the chat flow
     mock_upsert.assert_awaited_once()
     assert mock_upsert.await_args.kwargs['email'] == 'jules@latecoere.aero'
 
     # Session upsert (first conn.execute) receives the stripped, truncated name
-    # Arg order: …, name, share_token (token is generated fresh on every call).
+    # Arg order: …, name, share_token (generated fresh on every call), touch.
     first_execute_args = conn.execute.await_args_list[0].args
-    session_name = first_execute_args[-2]
+    session_name = first_execute_args[-3]
+    assert first_execute_args[-1] is True          # an answered turn moves the thread to today
     assert session_name == 'How do I wire it?'
     assert 'Division' not in session_name
 
-    # The user message row records the division scope ('IS' here).
-    # Arg order: …, status, division, question_lang.
-    user_insert_args = conn.execute.await_args_list[1].args
-    assert user_insert_args[-2] == 'IS'
-    # …and so does the assistant row (…, division, question_lang)
-    assert conn.fetchrow.await_args.args[-2] == 'IS'
+    # Both rows record the division scope ('IS' here) and the turn's trace_id (join key
+    # with chat_turns). Arg order: …, division, question_lang.
+    user_insert, assistant_insert = (c.args for c in conn.fetchval.await_args_list)
+    assert user_insert[-2] == 'IS' and assistant_insert[-2] == 'IS'
+    assert 'chat-abc' in user_insert and 'chat-abc' in assistant_insert
+    # The Knowledge Assistant columns are no longer written.
+    assert 'tool_name' not in assistant_insert[0] and 'reasoning_steps' not in assistant_insert[0]
 
 
 def test_save_turn_records_error_status():
@@ -505,7 +381,7 @@ def test_save_turn_records_error_status():
     from server.routers import chat
 
     conn = AsyncMock()
-    conn.fetchrow.return_value = {'id': 5}
+    conn.fetchval.side_effect = [4, 5]
     pool = _make_pool(conn)
 
     with patch('server.routers.chat.upsert_user', new=AsyncMock()):
@@ -515,18 +391,33 @@ def test_save_turn_records_error_status():
             status='error', error_msg='Agent failure',
         ))
 
-    # The assistant INSERT (fetchrow) ends with …, status, error_msg, division, question_lang
-    args = conn.fetchrow.await_args.args
-    assert args[-4] == 'error'          # status
-    assert args[-3] == 'Agent failure'  # error_msg
-    assert args[-2] == 'ALL'            # division (no prefix in this question)
+    user_insert, assistant_insert = (c.args for c in conn.fetchval.await_args_list)
+    assert conn.execute.await_args_list[0].args[-1] is False   # a hidden failed turn keeps the thread's date
+    # The assistant INSERT ends with …, status, error_msg, division, question_lang
+    assert assistant_insert[-4] == 'error'          # status
+    assert assistant_insert[-3] == 'Agent failure'  # error_msg
+    assert assistant_insert[-2] == 'ALL'            # division (no prefix in this question)
 
     # The user message row is also flagged 'error' so the whole turn is hidden
     # on reload (get_session filters status='ok') while staying in the DB.
     # User INSERT ends with …, status, division, question_lang.
-    user_insert_args = conn.execute.await_args_list[-1].args
-    assert user_insert_args[-3] == 'error'
-    assert user_insert_args[-2] == 'ALL'
+    assert user_insert[-3] == 'error'
+    assert user_insert[-2] == 'ALL'
+
+
+def test_save_turn_failure_is_a_persist_issue_of_the_turn():
+    import asyncio
+
+    from server.routers import chat
+    from server.services.chat.turn_log import TurnLog
+
+    conn = AsyncMock()
+    conn.fetchval.side_effect = RuntimeError('connection lost')
+    log = TurnLog()
+    with patch('server.routers.chat.upsert_user', new=AsyncMock()):
+        ids = asyncio.run(chat._save_turn(_make_pool(conn), 'sess', 'u1', None, 'https://t', 'q', 'a', log=log))
+    assert ids == (None, None)
+    assert log.codes == ['persist_failed'] and 'connection lost' in log.issues[0]['message']
 
 
 def test_trim_history_bounds_prompt_and_keeps_latest_question():
@@ -545,16 +436,14 @@ def test_trim_history_bounds_prompt_and_keeps_latest_question():
     assert _trim_history(msgs[:3]) == msgs[:3]
 
 
-# ---------------------------------------------------------------------------
-# Feature access control (capabilities + 403 guards)
-# ---------------------------------------------------------------------------
+# --- Feature access control (capabilities + 403 guards) ---
 
 def test_get_capabilities_reads_user_flags_from_db():
     """Capabilities come from the Lakebase users table (per-user booleans)."""
     import asyncio
     from types import SimpleNamespace
 
-    from server.services import user as user_mod
+    from server.services.infra import user as user_mod
 
     req = SimpleNamespace(headers={'x-forwarded-user': 'jules@latecoere.aero'})
 
@@ -584,7 +473,7 @@ def test_get_capabilities_fails_open_without_db_or_row():
     import asyncio
     from types import SimpleNamespace
 
-    from server.services import user as user_mod
+    from server.services.infra import user as user_mod
 
     req = SimpleNamespace(headers={'x-forwarded-user': 'new.user@latecoere.aero'})
 
@@ -605,7 +494,17 @@ def test_get_capabilities_fails_open_without_db_or_row():
 
 def test_chat_route_returns_403_without_capability(client):
     """The require_chat dependency blocks chat endpoints for non-chat users."""
-    with patch('server.services.user.get_capabilities',
+    with patch('server.services.infra.user.get_capabilities',
                new=AsyncMock(return_value={'can_chat': False, 'can_compare': True, 'groups': []})):
         r = client.get('/api/chat/sessions')
     assert r.status_code == 403
+
+
+def test_saved_sources_keep_the_revision_shown():
+    import json as _json
+    from server.routers.chat import _stored_sources
+    raw = _json.dumps([{'rank': 0, 'title': 'QP-1518', 'url': 'u', 'n': 1, 'revision': 'D', 'doc_date': '2024-10-11'},
+                       {'rank': 1, 'title': 'MR-1', 'url': None, 'n': None}])
+    assert _stored_sources(raw) == [{'title': 'QP-1518', 'url': 'u', 'n': 1, 'revision': 'D', 'doc_date': '2024-10-11'},
+                                    {'title': 'MR-1', 'url': None, 'n': None}]
+    assert _stored_sources(None) == [] and _stored_sources('not json') == []

@@ -1,0 +1,42 @@
+# Step 4 — local e2e through the Vite proxy (http://localhost:3000 -> uvicorn :8000), 2026-10-06T18:23:21Z
+## WebSocket transcripts (scripts/app_chat_turn.py)
+[/api/chat-vsi/ws ALL] OK deltas=337 first_delta=7.3s total=22.5s markers_in_stream=0 ⟦n⟧_in_done=12 numbered_sources=12 intraqual_urls=True
+   sources: [(1, 'QP-1518'), (2, 'Q0451MQ'), (3, 'Q0451MQ_GB'), (4, 'MR-1462'), (5, 'MI-14059'), (6, 'Q0403MR'), (7, 'MR-1465'), (8, 'NF-10830'), (9, 'NF-10856'), (10, 'NF-10381'), (11, 'NF-10313'), (12, 'MI-13667_GB')]
+[/api/chat-vsi/ws AS] OK deltas=469 first_delta=6.1s total=26.1s markers_in_stream=0 ⟦n⟧_in_done=12 numbered_sources=12 intraqual_urls=True
+   sources: [(1, 'QP-1518'), (2, 'Q0197QP_FR'), (3, 'MI-13667_GB'), (4, 'MI-14059'), (5, 'NF-10830'), (6, 'NF-10856'), (7, 'NF-10312_FR'), (8, 'NF-10313'), (9, 'MR-1462'), (10, 'MR-1465'), (11, 'Q0403MR'), (12, 'Q0451MQ')]
+[/api/chat-vsi/ws IS] OK deltas=246 first_delta=5.6s total=16.5s markers_in_stream=0 ⟦n⟧_in_done=3 numbered_sources=3 intraqual_urls=True
+   sources: [(1, 'PRLAT537_EN'), (2, 'Q0298QR_IS_EN'), (3, 'PRLAT558_EN')]
+[/api/chat/ws ALL] OK deltas=192 first_delta=5.9s total=10.7s markers_in_stream=0 ⟦n⟧_in_done=4 numbered_sources=3 intraqual_urls=True
+   sources: [(1, 'QP-1518'), (2, 'MR-1465'), (3, 'QM-1063')]
+
+## Server log (uvicorn, .env.local)
+2026-10-06 18:23:02 UTC - server.app - INFO - Starting in development mode
+INFO:     127.0.0.1:62028 - "WebSocket /api/chat-vsi/ws" [accepted]
+2026-10-06 18:23:23 UTC - server.routers.chat - INFO - chat turn [ws]: engine=vsi division=ALL endpoint=vsi-all session=check-all-1791311001 user=mehdi.lamrani@databricks.com msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06 18:23:27 UTC - server.services.chat_vsi - INFO - chat_vsi: division=ALL index=dev_landingzone.qualibot.chunks_index_v1 fr_query='Quels documents référencent les exigences de qualification CND/END (NDT/NDI) ?' passages=15 documents=12 trace_id=vsi-658139f3672d4f6d83cc15a4ee36997d
+2026-10-06 18:23:43 UTC - server.routers.chat - INFO - chat turn done [ws]: engine=vsi division=ALL endpoint=vsi-all sources=13 citations=12
+INFO:     127.0.0.1:62066 - "WebSocket /api/chat-vsi/ws" [accepted]
+2026-10-06 18:23:45 UTC - server.routers.chat - INFO - chat turn [ws]: engine=vsi division=AS endpoint=vsi-as session=check-as-1791311023 user=mehdi.lamrani@databricks.com msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06 18:23:48 UTC - server.services.chat_vsi - INFO - chat_vsi: division=AS index=dev_landingzone.qualibot.chunks_as_index_v1 fr_query='Quels documents référencent les exigences de qualification CND/END (contrôle non destructif)?' passages=20 documents=15 trace_id=vsi-01d4bda07f3d41baa7b9a6aad2dadc59
+2026-10-06 18:24:09 UTC - server.routers.chat - INFO - chat turn done [ws]: engine=vsi division=AS endpoint=vsi-as sources=17 citations=12
+INFO:     127.0.0.1:62131 - "WebSocket /api/chat-vsi/ws" [accepted]
+2026-10-06 18:24:11 UTC - server.routers.chat - INFO - chat turn [ws]: engine=vsi division=IS endpoint=vsi-is session=check-is-1791311049 user=mehdi.lamrani@databricks.com msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06 18:24:14 UTC - server.services.chat_vsi - INFO - chat_vsi: division=IS index=dev_landingzone.qualibot.chunks_is_index_v1 fr_query='Quels documents référencent les exigences de qualification CND/END (NDT/NDI) ?' passages=20 documents=11 trace_id=vsi-8193b89e125a4c7096fc1dc4cd872fc3
+2026-10-06 18:24:26 UTC - server.routers.chat - INFO - chat turn done [ws]: engine=vsi division=IS endpoint=vsi-is sources=3 citations=3
+INFO:     127.0.0.1:62160 - "WebSocket /api/chat/ws" [accepted]
+2026-10-06 18:24:27 UTC - server.routers.chat - INFO - chat turn [ws]: engine=ka division=ALL endpoint=ka-4d15cb32-endpoint session=check-all-1791311066 user=mehdi.lamrani@databricks.com msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06 18:24:37 UTC - server.routers.chat - INFO - chat turn done [ws]: engine=ka division=ALL endpoint=ka-4d15cb32-endpoint sources=3 citations=6
+
+## Invalid index (CHAT_VSI_INDEX_ALL=dev_landingzone.qualibot.does_not_exist_index), backend restarted
+[/api/chat-vsi/ws ALL] ERROR after 5.5s: Document search failed (Vector Search returned 404).
+[/api/chat/ws ALL] OK deltas=197 first_delta=6.1s total=11.3s markers_in_stream=0 ⟦n⟧_in_done=6 numbered_sources=4 intraqual_urls=True
+   sources: [(1, 'QP-1518'), (2, 'MR-1465'), (3, 'MI-14059'), (4, 'QM-1063')]
+
+## Server log (uvicorn, invalid ALL index)
+2026-10-06 18:42:46 UTC - server.app - INFO - Starting in development mode
+INFO:     127.0.0.1:63772 - "WebSocket /api/chat-vsi/ws" [accepted]
+2026-10-06 18:43:00 UTC - server.routers.chat - INFO - chat turn [ws]: engine=vsi division=ALL endpoint=vsi-all session=check-all-1791312178 user=mehdi.lamrani@databricks.com msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06 18:43:03 UTC - server.services.chat_vsi - ERROR - chat_vsi: Vector Search dev_landingzone.qualibot.does_not_exist_index returned 404: {"error_code":"RESOURCE_DOES_NOT_EXIST","message":"Unity Catalog entity dev_landingzone.qualibot.does_not_exist_index does not exist.","details":[{"@type":"type.googleapis.com/google.rpc.RequestInfo","request_id":"bbf5e72a-23fa-417a-9158-d0d63d93b32b","se
+INFO:     127.0.0.1:63808 - "WebSocket /api/chat/ws" [accepted]
+2026-10-06 18:43:05 UTC - server.routers.chat - INFO - chat turn [ws]: engine=ka division=ALL endpoint=ka-4d15cb32-endpoint session=check-all-1791312183 user=mehdi.lamrani@databricks.com msgs=1 q='What documents reference the NDT/NDI qualification requirements?'
+2026-10-06 18:43:15 UTC - server.routers.chat - INFO - chat turn done [ws]: engine=ka division=ALL endpoint=ka-4d15cb32-endpoint sources=4 citations=8

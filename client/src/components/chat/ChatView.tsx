@@ -8,9 +8,11 @@ import { ChatSidebar, type ChatSession } from './ChatSidebar';
 import { type Division, stripDivision } from './division';
 import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanner';
 
-// ---------------------------------------------------------------------------
-// WebSocket streaming helper
-// ---------------------------------------------------------------------------
+// --- WebSocket streaming helper ---
+
+const WS_PATH = '/api/chat/ws';
+const CHAT_TITLE = 'Qualibot';
+const CHAT_HEADER = 'Qualibot on Intraqual Documentation';
 
 interface StreamCallbacks {
   onDelta: (text: string) => void;
@@ -18,23 +20,42 @@ interface StreamCallbacks {
   onError: (err: string) => void;
 }
 
+// The only failure text a user sees (same as the server's TIRED_MESSAGE): the cause is logged server-side.
+export const TIRED_MESSAGE = 'Qualibot is a bit tired right now. Please wait a moment and try again.';
+// A socket that fails before the question was sent is opened again this many times.
+const CONNECT_RETRIES = 2;
+
 function streamChat(
   messages: { role: string; content: string }[],
   sessionId: string,
   division: Division,
   callbacks: StreamCallbacks,
   signal: AbortSignal,
+  attempt = 0,
 ): Promise<void> {
   return new Promise((resolve) => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/api/chat/ws`);
+    const ws = new WebSocket(`${proto}//${location.host}${WS_PATH}`);
+    let sent = false;
+    // Nothing reached the server yet: open a new socket instead of failing the turn.
+    const retryConnect = () => {
+      settled = true;
+      setTimeout(() => {
+        if (signal.aborted) { resolve(); return; }
+        streamChat(messages, sessionId, division, callbacks, signal, attempt + 1).then(resolve);
+      }, 1000 * (attempt + 1));
+    };
 
+    // A turn always ends with exactly one outcome: done, error, or user abort.
+    // A socket that closes without one must not leave the message on "Thinking".
+    let settled = false;
+    const finish = () => { settled = true; resolve(); };
     const cleanup = () => { try { ws.close(); } catch { /* ignore */ } };
-    signal.addEventListener('abort', () => { cleanup(); resolve(); });
+    signal.addEventListener('abort', () => { settled = true; cleanup(); resolve(); });
 
     ws.onopen = () => {
-      // The division routes the turn to its single-source KA endpoint server-side.
       ws.send(JSON.stringify({ messages, session_id: sessionId, division }));
+      sent = true;
     };
 
     ws.onmessage = (event) => {
@@ -45,10 +66,10 @@ function streamChat(
           callbacks.onDelta(parsed.delta ?? '');
         } else if (type === 'done') {
           callbacks.onDone({ session_id: parsed.session_id, message_id: parsed.message_id, content: parsed.content, sources: parsed.sources ?? [] });
-          resolve();
+          finish();
         } else if (type === 'error') {
-          callbacks.onError(parsed.error ?? 'Unknown error');
-          resolve();
+          callbacks.onError(parsed.error || TIRED_MESSAGE);
+          finish();
         }
       } catch {
         // ignore malformed
@@ -56,17 +77,22 @@ function streamChat(
     };
 
     ws.onerror = () => {
-      callbacks.onError('Connection error. Please try again.');
-      resolve();
+      if (settled) return;
+      if (!sent && attempt < CONNECT_RETRIES) { retryConnect(); return; }
+      callbacks.onError(TIRED_MESSAGE);
+      finish();
     };
 
-    ws.onclose = () => resolve();
+    ws.onclose = () => {
+      if (settled) return;
+      if (!sent && attempt < CONNECT_RETRIES) { retryConnect(); return; }
+      callbacks.onError(TIRED_MESSAGE);
+      finish();
+    };
   });
 }
 
-// ---------------------------------------------------------------------------
-// generateId helper
-// ---------------------------------------------------------------------------
+// --- generateId helper ---
 
 function genId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -77,9 +103,7 @@ function genSessionId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Welcome state
-// ---------------------------------------------------------------------------
+// --- Welcome state ---
 
 const SUGGESTED_PROMPTS = [
   'What documents reference the NDT/NDI qualification requirements?',
@@ -88,7 +112,7 @@ const SUGGESTED_PROMPTS = [
   'What is the approval process for deviations from engineering specifications?',
 ];
 
-function WelcomeState({ onPrompt }: { onPrompt: (p: string) => void }) {
+function WelcomeState({ title, onPrompt }: { title: string; onPrompt: (p: string) => void }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-8 px-6">
       {/* En-tête recentré, plus grand et parfaitement aligné avec la grille */}
@@ -103,7 +127,7 @@ function WelcomeState({ onPrompt }: { onPrompt: (p: string) => void }) {
           className="text-3xl font-bold tracking-tight"
           style={{ color: 'var(--color-text-heading)', fontFamily: 'var(--font-heading)' }}
         >
-          Knowledge Assistant
+          {title}
         </h2>
         <p className="text-base" style={{ color: 'var(--color-text-muted)' }}>
           Ask questions about your document knowledge base (Intraqual). The assistant can retrieve relevant
@@ -147,9 +171,7 @@ function WelcomeState({ onPrompt }: { onPrompt: (p: string) => void }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main ChatView
-// ---------------------------------------------------------------------------
+// --- Main ChatView ---
 
 export function ChatView() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -335,7 +357,7 @@ export function ChatView() {
             setMessages(prev =>
               prev.map(m =>
                 m.id === assistantId
-                  ? { ...m, streaming: false, error: true, content: err || 'An error occurred.' }
+                  ? { ...m, streaming: false, error: true, content: err || TIRED_MESSAGE }
                   : m,
               ),
             );
@@ -351,7 +373,7 @@ export function ChatView() {
       setMessages(prev =>
         prev.map(m =>
           m.id === assistantId
-            ? { ...m, streaming: false, error: true, content: 'Connection error. Please try again.' }
+            ? { ...m, streaming: false, error: true, content: TIRED_MESSAGE }
             : m,
         ),
       );
@@ -400,7 +422,7 @@ export function ChatView() {
             className="text-sm font-semibold"
             style={{ color: 'var(--color-text-heading)', fontFamily: 'var(--font-heading)' }}
           >
-            Knowledge Assistant on Intraqual Documentation
+            {CHAT_HEADER}
           </span>
           {docsAsOf && (
             <>
@@ -441,7 +463,7 @@ export function ChatView() {
 
         <div className="flex-1 overflow-y-auto py-4">
           {messages.length === 0 ? (
-            <WelcomeState onPrompt={p => handleSend(p)} />
+            <WelcomeState title={CHAT_TITLE} onPrompt={p => handleSend(p)} />
           ) : (
             <>
               {messages.map(msg => (

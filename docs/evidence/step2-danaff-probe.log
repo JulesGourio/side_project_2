@@ -1,0 +1,23 @@
+=== "c'est quoi une DANAFF" — failure mode watched: invented expansion
+module #1   5.3s invented=False fr_query='Définition DANAFF'
+          'Je ne trouve pas de document dans la base de connaissances qui définisse explicitement le terme **"DANAFF"**.\n\nPourriez-vous préciser le contexte dans lequel vo'
+module #2   8.4s invented=True  fr_query='Définition DANAFF Latécoère'
+          "La **DANAFF** (Demande d'ANAlyse de Faisabilité Fournisseur) est un document utilisé dans le cadre des processus d'achats et de développement programme chez Lat"
+module #3   4.7s invented=False fr_query='Définition DANAFF'
+          'Je ne trouve pas de document dans la base de connaissances qui définisse explicitement le terme **"DANAFF"**.\n\nPourriez-vous préciser le contexte dans lequel vo'
+module #4   5.2s invented=False fr_query='Définition DANAFF'
+          'Je ne trouve pas de document dans la base de connaissances qui définisse explicitement le terme **"DANAFF"**.\n\nPourriez-vous préciser le contexte dans lequel vo'
+module #5   6.4s invented=True  fr_query='Définition DANAFF Latécoère'
+          "La **DANAFF** (Demande d'Autorisation de Non-Application de Fiche de Fabrication) est un document qualité utilisé dans le cadre de la gestion des non-conformité"
+module TOTAL invented expansion: 2/5
+v0     #1   8.6s invented=False fr_query='Définition DANAFF Latécoère'
+          'D\'après les documents disponibles dans la base de connaissances, **aucun document indexé ne définit ou ne mentionne le terme "DANAFF"**.\n\nCe terme ne figure dan'
+v0     #2   5.2s invented=False fr_query='Définition DANAFF'
+          'Je ne trouve pas de document dans la base de connaissances qui définisse explicitement le terme **"DANAFF"**.\n\nPourriez-vous préciser le contexte dans lequel vo'
+v0     #3   7.9s invented=False fr_query='Définition DANAFF Latécoère'
+          "D'après les documents disponibles dans la base de connaissances, le terme **DANAFF** n'apparaît dans aucun des documents indexés.\n\nIl est possible que ce terme "
+v0     #4   5.4s invented=True  fr_query='Définition DANAFF Latécoère'
+          "La **DANAFF** (Demande d'Autorisation de Non-Application de Fiche de Fabrication) est un terme qui n'apparaît pas dans les documents disponibles dans la base de"
+v0     #5   5.1s invented=False fr_query='Définition DANAFF'
+          'Je ne trouve pas de document dans la base de connaissances qui définisse explicitement le terme **"DANAFF"**.\n\nPourriez-vous préciser le contexte dans lequel vo'
+v0     TOTAL invented expansion: 1/5

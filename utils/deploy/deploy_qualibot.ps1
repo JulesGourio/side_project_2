@@ -1,6 +1,8 @@
 param(
     [string]$AppEnv   = 'uat',
     [switch]$SkipBuild,         # Pass -SkipBuild to skip frontend rebuild (Python-only changes)
+    [switch]$SyncOnly,          # Pass -SyncOnly to only upload the code to the workspace: no frontend
+                                # build, no app start/redeploy (notebooks reading the synced code)
     [switch]$Infra              # Pass -Infra to (re)deploy bundle resources via terraform
                                 # (app ACLs, UC volume bindings). Requires MANAGE on the
                                 # target catalog. Only needed when resources/permissions
@@ -10,18 +12,19 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Deploy orchestration metadata only (bundle target / app name / CLI profile).
-# App-facing env var overrides (COMPARE_VOLUME_PATH, CHAT_ENDPOINT*, model
+# App-facing env var overrides (COMPARE_VOLUME_PATH, CHAT_INDEX, model
 # endpoints, etc.) live in utils/deploy/target_env.json — the single source
 # of truth shared with bitbucket-pipelines.yml, rendered by
 # render_target_config_env.py below. Don't hardcode them here too.
 $Targets = @{
+    dev        = @{ Target = 'dev';               AppName = 'qualibot';           Profile = 'DEV' }
     uat        = @{ Target = 'qualibot-uat';      AppName = 'qualibot';           Profile = 'UAT' }
     prod       = @{ Target = 'qualibot-prod';     AppName = 'qualibot';           Profile = 'qualibot-prod' }
     'uat-test' = @{ Target = 'qualibot-uat-test'; AppName = 'qualibot-uat-test';  Profile = 'UAT' }
 }
 
 if (-not $Targets.ContainsKey($AppEnv)) {
-    Write-Host "Unknown environment '$AppEnv'. Use: uat | prod | uat-test" -ForegroundColor Red
+    Write-Host "Unknown environment '$AppEnv'. Use: dev | uat | prod | uat-test" -ForegroundColor Red
     exit 1
 }
 
@@ -38,7 +41,7 @@ Push-Location $ProjectRoot
 
 try {
     # 1. Build frontend (skip with -SkipBuild for Python-only changes)
-    if ($SkipBuild) {
+    if ($SkipBuild -or $SyncOnly) {
         Write-Host "[1/4] Frontend build skipped (-SkipBuild)" -ForegroundColor DarkGray
     } else {
         Write-Host "[1/4] Building frontend..." -ForegroundColor Yellow
@@ -83,6 +86,8 @@ try {
             --exclude 'client/src/**' `
             --exclude 'client/public/**' `
             --exclude 'client/node_modules/**' `
+            --exclude 'docs/**' `
+            --exclude 'archive/**' `
             --exclude 'files_to_compare/**' `
             --exclude 'debug_results/**' `
             --exclude 'debug_images/**' `
@@ -104,8 +109,6 @@ try {
             --exclude 'utils/deploy/scrap_ids_intraqual.py' `
             --exclude 'utils/deploy/unzip_intraqual.py' `
             --exclude 'utils/deploy/upload_intraqual.py' `
-            --exclude 'utils/deploy/_test_direct_head.py' `
-            --exclude 'utils/deploy/_test_docview_head.py' `
             --exclude 'user_feedbacks/**' `
             --exclude 'test_prompt/**' `
             --exclude '**/*.xlsx' `
@@ -114,7 +117,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "databricks sync failed (exit $LASTEXITCODE)" }
     }
 
-    # 3. Ensure the app compute is running before deploying. Off-hours jobs
+    # 3. Ensure the app compute is running before deploying (dev included: its
+    # off-hours jobs exist but are PAUSED). Off-hours jobs
     # (databricks.yml: apps_stop_nightly_uat) stop qualibot-uat-test nightly
     # (21h Paris, never restarted by a job) and qualibot
     # over the weekend (Fri 21h -> Mon 7h). Deploying to a stopped app fails
@@ -125,6 +129,12 @@ try {
     # active manual test session). qualibot (uat) and prod are fine to
     # auto-start here, since they're expected to be up during business hours
     # anyway and a deploy shouldn't be blocked by the off-hours job's timing.
+    if ($SyncOnly) {
+        Write-Host ""
+        Write-Host "Code synced to $SourceCodePath (-SyncOnly: app not restarted, frontend not rebuilt)." -ForegroundColor Green
+        return
+    }
+
     Write-Host "[3/4] Checking app compute state..." -ForegroundColor Yellow
     $appInfo = & databricks apps get $AppName --profile $Profile -o json | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw "databricks apps get failed (exit $LASTEXITCODE)" }

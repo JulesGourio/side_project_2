@@ -3,8 +3,8 @@
 Responsibilities (stateless, runs on both driver and workers):
   - Centralised configuration injected from the driver via configure().
   - Docling DocumentConverter (PDF, DOCX, PPTX, XLSX, HTML, MD, TXT) with
-    converters/chunkers cached per worker process.
-  - HybridChunker (semantic + token-aware) with a markdown-aware fallback.
+    converters cached per worker process.
+  - Passage splitting of the parsed markdown: chunking.py (section-aware, overlap, size caps).
   - Legacy-format pre-conversion (.doc/.rtf/.odt/.ods/.xls) and an XLSX fallback.
   - PySpark pandas UDFs for chunking and token counting.
 
@@ -32,6 +32,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+import chunking  # shipped with addPyFile, like this module
+
 from pyspark.sql import types as T
 from pyspark.sql.functions import pandas_udf
 
@@ -51,9 +53,7 @@ for _noisy in ("py4j", "py4j.clientserver", "py4j.java_gateway", "pyspark", "doc
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
-# ===========================================================================
-# Configuration
-# ===========================================================================
+# --- Configuration ---
 # _DEFAULTS is the worker fallback; the notebook injects the real config via configure().
 # ---------------------------------------------------------------------------
 _DEFAULT_VOLUME_BASE_PATH = os.environ.get("PARSING_VOLUME_BASE_PATH")
@@ -82,6 +82,8 @@ _DEFAULTS: Dict[str, Any] = {
     "MIN_CHUNK_TOKENS": 250,
     "TARGET_CHUNK_TOKENS": 500,
     "MAX_CHUNK_TOKENS": 1000,
+    "MAX_CHUNK_CHARS": 4000,
+    "CHUNK_OVERLAP_RATIO": 0.12,
     # LLM (image description)
     "LLM_MODEL_ENDPOINT": "databricks-gpt-5-nano",
     "LLM_MAX_TOKENS": 1024,
@@ -173,9 +175,7 @@ def _cfg(key: str, fallback=None):
     raise RuntimeError(f"Configuration key '{key}' not set and no default exists.")
 
 
-# ===========================================================================
-# Non-configurable internal constants
-# ===========================================================================
+# --- Non-configurable internal constants ---
 TEXTLIKE_EXTENSIONS = {"csv", "json", "tsv"}
 CONVERTED_EXTS = {".doc", ".rtf", ".odt", ".ods", ".xls"}
 
@@ -187,9 +187,7 @@ _FORMAT_MAP_NAMES: Dict[str, str] = {
 
 _TIKTOKEN_ENCODER = None
 
-# ---------------------------------------------------------------------------
-# Spark schemas
-# ---------------------------------------------------------------------------
+# --- Spark schemas ---
 CHUNK_SCHEMA = T.ArrayType(T.StructType([
     T.StructField("chunk_index", T.IntegerType(), True),
     T.StructField("chunk_text", T.StringType(), True),
@@ -200,9 +198,7 @@ CHUNK_SCHEMA = T.ArrayType(T.StructType([
 ]))
 
 
-# ===========================================================================
-# Docling bootstrap (lazy, cached per worker)
-# ===========================================================================
+# --- Docling bootstrap (lazy, cached per worker) ---
 def _patch_worker_env():
     """Set offline / thread-limit env vars on Spark workers."""
     os.environ.setdefault("USER", "spark_worker")
@@ -220,20 +216,18 @@ def _patch_worker_env():
 
 
 def _import_docling():
+    """Import Docling after the worker environment is patched; it is heavy, so each process does it once, on demand."""
     _patch_worker_env()
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import (
         PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice,
     )
-    from docling.chunking import HybridChunker
-    from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 
     mods = {
         "DocumentConverter": DocumentConverter, "PdfFormatOption": PdfFormatOption,
         "InputFormat": InputFormat, "PdfPipelineOptions": PdfPipelineOptions,
         "AcceleratorOptions": AcceleratorOptions, "AcceleratorDevice": AcceleratorDevice,
-        "HybridChunker": HybridChunker, "HuggingFaceTokenizer": HuggingFaceTokenizer,
     }
     try:
         from docling.datamodel.pipeline_options import TableFormerMode
@@ -258,10 +252,10 @@ def _import_docling():
 
 _DOCLING_MODULES = None
 _CONVERTER_CACHE: Dict = {}
-_CHUNKER_CACHE: Dict = {}
 
 
 def _get_docling():
+    """Docling classes, imported once per process."""
     global _DOCLING_MODULES
     if _DOCLING_MODULES is None:
         _DOCLING_MODULES = _import_docling()
@@ -269,6 +263,7 @@ def _get_docling():
 
 
 def _get_input_format(ext: str):
+    """Docling `InputFormat` for a file extension, or None when Docling does not handle it."""
     return getattr(_get_docling()["InputFormat"], _FORMAT_MAP_NAMES.get(ext, ""), None)
 
 
@@ -330,21 +325,9 @@ def _get_converter(input_format, do_ocr: Optional[bool] = None, timings: Optiona
     return converter
 
 
-def _get_chunker(max_tokens: int):
-    if max_tokens in _CHUNKER_CACHE:
-        return _CHUNKER_CACHE[max_tokens]
-    dl = _get_docling()
-    tokenizer_dir = Path(_cfg("OFFLINE_MODELS_DIR")) / "sentence-transformers--all-MiniLM-L6-v2"
-    tokenizer = dl["HuggingFaceTokenizer"].from_pretrained(model_name=tokenizer_dir, max_tokens=max_tokens)
-    chunker = dl["HybridChunker"](tokenizer=tokenizer, merge_peers=True)
-    _CHUNKER_CACHE[max_tokens] = chunker
-    return chunker
-
-
-# ===========================================================================
-# Text helpers
-# ===========================================================================
+# --- Text helpers ---
 def safe_decode(raw_bytes: bytes, encodings: Optional[List[str]] = None) -> str:
+    """Decode bytes trying utf-8, utf-8-sig, cp1252 and latin-1 in turn, then utf-8 ignoring errors."""
     if not raw_bytes:
         return ""
     for enc in (encodings or ["utf-8", "utf-8-sig", "cp1252", "latin-1"]):
@@ -356,6 +339,7 @@ def safe_decode(raw_bytes: bytes, encodings: Optional[List[str]] = None) -> str:
 
 
 def normalize_text(text: str) -> str:
+    """Unify line endings, drop NUL characters, collapse runs of spaces/tabs and of blank lines."""
     if not text:
         return ""
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
@@ -364,6 +348,7 @@ def normalize_text(text: str) -> str:
 
 
 def get_tiktoken_encoder():
+    """The tiktoken encoder, built once per process (cl100k_base unless configured)."""
     global _TIKTOKEN_ENCODER
     if _TIKTOKEN_ENCODER is None:
         import tiktoken
@@ -384,15 +369,14 @@ def count_tokens(text: str) -> int:
 
 
 def _write_tmp_file(content: bytes, suffix: str) -> Path:
+    """Write bytes to a temporary file Docling can open; the caller deletes it."""
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False, prefix="docling_parse_")
     tmp.write(content)
     tmp.close()
     return Path(tmp.name)
 
 
-# ===========================================================================
-# Legacy-format pre-conversion
-# ===========================================================================
+# --- Legacy-format pre-conversion ---
 def _convert_doc_antiword(doc_path: Path) -> Tuple[Optional[Path], Optional[str]]:
     """Convert legacy .doc to Markdown via the Antiword binary (if configured).
 
@@ -487,10 +471,11 @@ def _convert_xls(content: bytes) -> Tuple[Optional[str], Optional[str]]:
         wb = xlrd.open_workbook(str(tmp_path))
         lines = []
         for sheet in wb.sheets():
-            lines.append(f"## {sheet.name}")
-            for rx in range(sheet.nrows):
-                lines.append("\t".join(str(sheet.cell_value(rx, cx)) for cx in range(sheet.ncols)))
-        text = "\n".join(lines)
+            rows = chunking.sheet_lines([[sheet.cell_value(rx, cx) for cx in range(sheet.ncols)]
+                                         for rx in range(sheet.nrows)])
+            if rows:
+                lines.append(f"## {sheet.name}\n" + "\n".join(rows))
+        text = "\n\n".join(lines)
         return (text, None) if text.strip() else (None, "XLS workbook yielded no text")
     except Exception as e:
         return None, _exc_detail(e)
@@ -501,9 +486,7 @@ def _convert_xls(content: bytes) -> Tuple[Optional[str], Optional[str]]:
             pass
 
 
-# ===========================================================================
-# Core parsing
-# ===========================================================================
+# --- Core parsing ---
 def parse_with_docling(content: bytes, extension: str, timings: Optional[dict] = None) -> Dict[str, Any]:
     """Route raw bytes to the right parser by extension. Returns a dict with
     text / parser_error / parser_strategy / parse_time_seconds / _docling_doc.
@@ -556,6 +539,7 @@ def _exc_detail(e: Exception, limit: int = 500) -> str:
 
 
 def _err(start, ext, msg, strategy=None) -> Dict[str, Any]:
+    """Result of a failed parse: no text, the error message and a `docling_error:<ext>` strategy."""
     return {
         "text": "", "parser_error": msg,
         "parser_strategy": strategy or f"docling_error:{ext.lstrip('.')}",
@@ -564,6 +548,7 @@ def _err(start, ext, msg, strategy=None) -> Dict[str, Any]:
 
 
 def _export_markdown(doc) -> str:
+    """Markdown of a Docling document with image placeholders (plain export when the installed version lacks the option)."""
     try:
         from docling_core.types.doc.document import ImageRefMode
         return doc.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)
@@ -571,9 +556,7 @@ def _export_markdown(doc) -> str:
         return doc.export_to_markdown()
 
 
-# ---------------------------------------------------------------------------
-# Pre-clean OOXML zips (.docx/.docm/.pptx/.pptm) before the size gate.
-# ---------------------------------------------------------------------------
+# --- Pre-clean OOXML zips (.docx/.docm/.pptx/.pptm) before the size gate. ---
 _OOXML_EMBEDDING_MARKER = "/embeddings/"
 _MEDIA_JUNK_EXTS = {
     ".mp4", ".avi", ".mov", ".wmv", ".mpg", ".mpeg", ".m4v", ".flv", ".mkv", ".asf",
@@ -639,6 +622,7 @@ def strip_ooxml_bloat(content: bytes, ext: str) -> bytes:
 
 
 def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, Any]:
+    """Parse with Docling through a temporary file; the step timings are recorded when `timings` is given."""
     t_tmp = time.perf_counter()
     tmp_path = _write_tmp_file(content, ext)
     if timings is not None:
@@ -699,6 +683,7 @@ def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, 
 
 
 def _parse_textlike(content: bytes, ext: str, start: float) -> Dict[str, Any]:
+    """Text-based formats: decoded and normalised; csv and tsv become one bullet per row."""
     decoded = safe_decode(content)
     if ext in {".csv", ".tsv"}:
         try:
@@ -753,6 +738,7 @@ def _parse_doc_antiword(content: bytes, start: float) -> Dict[str, Any]:
 
 
 def _parse_rtf(content: bytes, start: float) -> Dict[str, Any]:
+    """RTF: striprtf converts it to Markdown text, which Docling then reads as a Markdown document."""
     text, err_reason = _convert_rtf(content)
     if not text or not text.strip():
         return {"text": "", "parser_error": f"RTF conversion failed: {err_reason}",
@@ -777,6 +763,7 @@ def _parse_rtf(content: bytes, start: float) -> Dict[str, Any]:
 
 
 def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
+    """ODT and ODS through odfpy."""
     raw_text, err_reason = _convert_odt(content, ext)
     text = normalize_text(raw_text or "")
     return {"text": text, "parser_error": None if text else f"ODF conversion failed: {err_reason}",
@@ -785,6 +772,7 @@ def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
 
 
 def _parse_xls(content: bytes, start: float) -> Dict[str, Any]:
+    """Legacy XLS through xlrd."""
     raw_text, err_reason = _convert_xls(content)
     text = normalize_text(raw_text or "")
     return {"text": text, "parser_error": None if text else f"XLS conversion failed: {err_reason}",
@@ -802,18 +790,7 @@ def _parse_xlsb_pyxlsb(content: bytes, start: float) -> Dict[str, Any]:
         with pyxlsb.open_workbook(io.BytesIO(content)) as wb:
             for sheet_name in wb.sheets:
                 with wb.get_sheet(sheet_name) as ws:
-                    rows, headers = [], None
-                    for row in ws.rows():
-                        vals = [str(c.v) if c.v is not None else "" for c in row]
-                        if not any(v.strip() for v in vals):
-                            continue
-                        if headers is None:
-                            headers = vals
-                            continue
-                        parts = [f"{(h.strip() or f'col{j+1}')}: {v.strip()}"
-                                 for j, (h, v) in enumerate(zip(headers, vals)) if v.strip()]
-                        if parts:
-                            rows.append("- " + ", ".join(parts))
+                    rows = chunking.sheet_lines([[c.v for c in row] for row in ws.rows()])
                     if rows:
                         all_text.append(f"## {sheet_name}\n" + "\n".join(rows))
         text = normalize_text("\n\n".join(all_text))
@@ -842,18 +819,7 @@ def _parse_xlsx_openpyxl(content: bytes, start: float, ext: str = "xlsx") -> Dic
         all_text = []
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
-            rows, headers = [], None
-            for row in ws.iter_rows(values_only=True):
-                vals = [str(c) if c is not None else "" for c in row]
-                if not any(v.strip() for v in vals):
-                    continue
-                if headers is None:
-                    headers = vals
-                    continue
-                parts = [f"{(h.strip() or f'col{j+1}')}: {v.strip()}"
-                         for j, (h, v) in enumerate(zip(headers, vals)) if v.strip()]
-                if parts:
-                    rows.append("- " + ", ".join(parts))
+            rows = chunking.sheet_lines(list(ws.iter_rows(values_only=True)))
             if rows:
                 all_text.append(f"## {sheet_name}\n" + "\n".join(rows))
         wb.close()
@@ -901,13 +867,7 @@ def _parse_xlsx_openpyxl(content: bytes, start: float, ext: str = "xlsx") -> Dic
                 if any(v.strip() for v in row_vals):
                     rows_data.append(row_vals)
             if rows_data:
-                headers = rows_data[0]
-                lines = []
-                for row in rows_data[1:]:
-                    parts = [f"{(headers[j].strip() or f'col{j+1}')}: {v.strip()}"
-                             for j, v in enumerate(row) if j < len(headers) and v.strip()]
-                    if parts:
-                        lines.append("- " + ", ".join(parts))
+                lines = chunking.sheet_lines(rows_data)
                 if lines:
                     all_text.append(f"## Sheet {sheet_idx}\n" + "\n".join(lines))
         zfh.close()
@@ -933,12 +893,11 @@ def intraqual_ref_url(ref_col):
     )
 
 
-# ===========================================================================
-# Chunking
-# ===========================================================================
+# --- Chunking ---
 def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_col,
-                          doc_date_col=None, include_prefix=True):
-    """chunk_text with an optional "[Source: ...]" provenance prefix (include_prefix)."""
+                          doc_date_col=None, include_prefix=True, type_col=None):
+    """chunk_text with an optional "[Source: ...]" provenance prefix (include_prefix).
+    type_col (gd_typdoc label, e.g. "05 - Procédure - QP") adds a "Type:" field."""
     from pyspark.sql import functions as F
     if not include_prefix:
         return body_col
@@ -946,9 +905,12 @@ def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_co
         F.concat(F.lit(" | Date de diffusion: "), F.coalesce(F.date_format(doc_date_col, "yyyy-MM-dd"), F.lit("inconnue")))
         if doc_date_col is not None else F.lit("")
     )
+    type_part = (F.concat(F.lit(" | Type: "), F.coalesce(type_col, F.lit("")))
+                 if type_col is not None else F.lit(""))
     return F.concat(
         F.lit("[Source: "), F.coalesce(ref_col, F.lit("")),
         F.lit(" | Title: "), F.coalesce(titre_col, F.lit("")),
+        type_part,
         F.lit(" | Division: "), F.coalesce(division_col, F.lit("")),
         F.lit(" | Category: "), F.coalesce(category_col, F.lit("")),
         date_part,
@@ -956,166 +918,48 @@ def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_co
     )
 
 
-def _build_chunk_dict(idx: int, text: str, c_type: str, meta: dict) -> dict:
-    return {
-        "chunk_index": idx, "chunk_text": text, "chunk_char_count": len(text),
-        "chunk_token_count": count_tokens(text), "chunk_content_type": c_type, "metadata": dict(meta),
-    }
-
-
-def _chunk_recursive_fallback(text: str) -> List[Dict[str, Any]]:
-    """Markdown-aware recursive splitting (used when no Docling doc is available)."""
-    from langchain_text_splitters.markdown import MarkdownHeaderTextSplitter
-    from langchain_text_splitters.character import RecursiveCharacterTextSplitter
-
-    target = _cfg("TARGET_CHUNK_TOKENS", fallback=500)
-    cpt = _cfg("CHARS_PER_TOKEN", fallback=3.5)
-
-    md_splitter = MarkdownHeaderTextSplitter(
-        headers_to_split_on=[("#", "Header 1"), ("##", "Header 2"), ("###", "Header 3")]
-    )
-    overlap = int(target * cpt * _cfg("CHUNK_OVERLAP_RATIO", fallback=0.0))
-    char_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=int(target * cpt), chunk_overlap=overlap, separators=["\n\n", "\n", ". "]
-    )
-
-    chunks, idx = [], 0
-    for sec in md_splitter.split_text(text):
-        meta = sec.metadata
-        prefix = f"[{' > '.join(meta.values())}]\n" if meta else ""
-        prefix_toks = count_tokens(prefix)
-
-        for block in sec.page_content.split("\n\n"):
-            block = block.strip()
-            if not block:
-                continue
-            is_table = block.startswith("|") and "\n|" in block and "---" in block
-
-            if is_table and count_tokens(block) + prefix_toks > target:
-                lines = block.split("\n")
-                if len(lines) >= 3:
-                    head = [lines[0], lines[1]]
-                    head_toks = count_tokens("\n".join(head))
-                    cur, cur_toks = list(head), head_toks + prefix_toks
-                    for line in lines[2:]:
-                        lt = count_tokens(line)
-                        if cur_toks + lt > target and len(cur) > 2:
-                            chunks.append(_build_chunk_dict(idx, prefix + "\n".join(cur), "table", meta)); idx += 1
-                            cur, cur_toks = [lines[0], lines[1], line], head_toks + prefix_toks + lt
-                        else:
-                            cur.append(line); cur_toks += lt
-                    if len(cur) > 2:
-                        chunks.append(_build_chunk_dict(idx, prefix + "\n".join(cur), "table", meta)); idx += 1
-                    continue
-
-            if count_tokens(block) + prefix_toks > target:
-                for sb in char_splitter.split_text(block):
-                    chunks.append(_build_chunk_dict(idx, prefix + sb, "text", meta)); idx += 1
-            else:
-                chunks.append(_build_chunk_dict(idx, prefix + block, "table" if is_table else "text", meta)); idx += 1
-    return chunks
-
-
-def _merge_meta(a: dict, b: dict) -> dict:
-    """Merge two chunk metadata dicts, preserving header lineage order."""
-    return {**(a or {}), **(b or {})}
-
-
-def merge_small_chunks(chunks: List[Dict]) -> List[Dict]:
-    """Two-pass merge respecting MIN/TARGET/MAX token bounds from CONFIG."""
-    if not chunks:
-        return []
-    min_t = _cfg("MIN_CHUNK_TOKENS", fallback=250)
-    target = _cfg("TARGET_CHUNK_TOKENS", fallback=500)
-    max_t = _cfg("MAX_CHUNK_TOKENS", fallback=1000)
-
-    # Pass 1: forward merge towards target.
-    fwd, cur = [], None
-    for ch in chunks:
-        if not cur:
-            cur = dict(ch); continue
-        combined = cur["chunk_text"].rstrip() + "\n\n" + ch["chunk_text"]
-        combined_toks = count_tokens(combined)
-        if cur["chunk_token_count"] < target and combined_toks <= max_t:
-            cur.update(chunk_text=combined, chunk_char_count=len(combined), chunk_token_count=combined_toks,
-                       metadata=_merge_meta(cur.get("metadata"), ch.get("metadata")))
-            if ch["chunk_content_type"] == "table" and cur["chunk_content_type"] != "table":
-                cur["chunk_content_type"] = "mixed"
-        else:
-            fwd.append(cur); cur = dict(ch)
-    if cur:
-        fwd.append(cur)
-
-    # Pass 2: backward merge to annihilate orphans below the minimum.
-    final, cur = [], None
-    for ch in reversed(fwd):
-        if not cur:
-            cur = dict(ch); continue
-        if cur["chunk_token_count"] < min_t:
-            combined = ch["chunk_text"].rstrip() + "\n\n" + cur["chunk_text"]
-            cur.update(chunk_text=combined, chunk_char_count=len(combined),
-                       chunk_token_count=count_tokens(combined),
-                       metadata=_merge_meta(ch.get("metadata"), cur.get("metadata")))
-            if ch["chunk_content_type"] == "table" and cur["chunk_content_type"] != "table":
-                cur["chunk_content_type"] = "mixed"
-        else:
-            final.append(cur); cur = dict(ch)
-    if cur:
-        final.append(cur)
-
-    result = list(reversed(final))
-    for i, c in enumerate(result):
-        c["chunk_index"] = i
-    return result
-
-
 def chunk_document(text: str, docling_doc=None) -> List[Dict[str, Any]]:
-    """Chunk a document: Docling HybridChunker first, markdown-aware fallback otherwise."""
+    """Passages of an already-parsed markdown document (``chunking.chunk_markdown``).
+
+    ``docling_doc`` is accepted for the sandbox notebook's signature only: the pipeline keeps
+    the markdown, not the Docling document, so passages always come from the markdown (the
+    former Docling HybridChunker path never ran in the pipeline).
+    """
     text = normalize_text(text)
     if not text:
         return []
-    max_t = _cfg("MAX_CHUNK_TOKENS", fallback=1000)
-
-    if docling_doc is not None:
-        try:
-            chunker = _get_chunker(max_t)
-            chunks = []
-            for i, ch in enumerate(chunker.chunk(docling_doc)):
-                ctext = ch.text if hasattr(ch, "text") else str(ch)
-                if not ctext.strip():
-                    continue
-                meta: Dict[str, str] = {}
-                if hasattr(ch, "meta"):
-                    try:
-                        md = ch.meta.export_json_dict() if hasattr(ch.meta, "export_json_dict") else {}
-                        for j, h in enumerate(md.get("headings", [])):
-                            meta[f"Header {j+1}"] = str(h)
-                    except Exception:
-                        pass
-                ctype = "table" if any(m in ctext for m in ["|---", "| ---", "[TABLE"]) else "text"
-                chunks.append(_build_chunk_dict(i, ctext, ctype, meta))
-            if chunks:
-                return merge_small_chunks(chunks)
-        except Exception as e:
-            logger.warning("HybridChunker failed, using fallback: %s", str(e)[:200])
-
-    return merge_small_chunks(_chunk_recursive_fallback(text))
+    return chunking.chunk_markdown(
+        text,
+        min_tokens=int(_cfg("MIN_CHUNK_TOKENS", fallback=250)),
+        target_tokens=int(_cfg("TARGET_CHUNK_TOKENS", fallback=500)),
+        max_tokens=int(_cfg("MAX_CHUNK_TOKENS", fallback=1000)),
+        max_chars=int(_cfg("MAX_CHUNK_CHARS", fallback=4000)),
+        overlap_ratio=float(_cfg("CHUNK_OVERLAP_RATIO", fallback=0.12)),
+        chars_per_token=float(_cfg("CHARS_PER_TOKEN", fallback=3.5)),
+        count_tokens=count_tokens,
+    )
 
 
-# ===========================================================================
-# PySpark pandas UDFs
-# ===========================================================================
+# --- PySpark pandas UDFs ---
 @pandas_udf(CHUNK_SCHEMA)
 def build_chunks_udf(text_series: pd.Series) -> pd.Series:
-    """Chunk already-parsed markdown text (no Docling doc available downstream)."""
+    """Chunk already-parsed markdown text (chunking.chunk_markdown)."""
     ensure_config()
     return pd.Series([
         chunk_document(str(t), docling_doc=None) if t else [] for t in text_series
     ])
 
 
+@pandas_udf(T.StringType())
+def language_udf(text_series: pd.Series, ref_series: pd.Series) -> pd.Series:
+    """Document language (chunking.detect_language): REF suffix, else stop words."""
+    return pd.Series([chunking.detect_language(str(t or ""), str(r or ""))
+                      for t, r in zip(text_series, ref_series)])
+
+
 @pandas_udf(T.IntegerType())
 def token_count_udf(text_series: pd.Series) -> pd.Series:
+    """Pandas UDF: token count of each text (0 when empty), with the settings restored on the worker."""
     ensure_config()
     return text_series.apply(
         lambda x: count_tokens(str(x)) if pd.notna(x) and str(x).strip() else 0

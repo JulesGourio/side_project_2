@@ -7,7 +7,7 @@ RATIONALE section of SYSTEM_PROMPT_STRUCTURED in _diff_engines.py.
 
 import re
 
-from server.services.processors._diff_engines import SYSTEM_PROMPT_STRUCTURED
+from server.services.compare.processors._diff_engines import SYSTEM_PROMPT_STRUCTURED
 
 _FLAT = re.sub(r'\s+', ' ', SYSTEM_PROMPT_STRUCTURED).lower()
 

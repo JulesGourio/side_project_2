@@ -1,7 +1,6 @@
 """History endpoints — save and retrieve comparison records from Lakebase."""
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -9,10 +8,11 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..services.lakebase import get_pool, upsert_user
-from ..services.user import get_user_identity, get_workspace_url, require_compare
-
-APP_VERSION = os.getenv('APP_VERSION', '1')
+from ..services.infra.lakebase import get_pool, upsert_user
+from ..services.infra.user import get_user_identity, get_workspace_url, require_compare
+# One definition: a row written with another default than the one the cache
+# lookup reads with would never be found again.
+from .compare import APP_VERSION
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -132,7 +132,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
 
             # Register (or update) the user in the shared `users` table.
             # Same helper is used by the chat flow so both surfaces populate
-            # `users` consistently — see services/lakebase.upsert_user.
+            # `users` consistently — see services/infra/lakebase.upsert_user.
             await upsert_user(
                 conn,
                 user_id=identity['user_id'],
@@ -149,6 +149,35 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
+class SaveImpactRequest(BaseModel):
+    # The impact search result as displayed (JSON), kept with the comparison it
+    # was run on so reopening the history entry shows it again.
+    impact_json: str
+
+
+@router.put('/history/{comparison_id}/impact', dependencies=[Depends(require_compare)])
+async def save_comparison_impact(comparison_id: int, body: SaveImpactRequest, request: Request):
+    pool = get_pool()
+    if not pool:
+        return _UNAVAILABLE
+    try:
+        identity = await get_user_identity(request)
+    except Exception:
+        identity = {'user_id': '', 'email': None}
+    try:
+        async with pool.acquire() as conn:
+            updated = await conn.fetchval(
+                'UPDATE messages SET impact_text = $1 WHERE id = $2 AND user_id = $3 RETURNING id',
+                body.impact_json, comparison_id, identity['user_id'],
+            )
+        if updated is None:
+            return JSONResponse({'error': 'Comparison not found'}, status_code=404)
+        return {'success': True}
+    except Exception as e:
+        logger.error(f'Failed to save impact result: {e}')
+        return JSONResponse({'error': str(e)}, status_code=500)
+
+
 @router.get('/history', dependencies=[Depends(require_compare)])
 async def list_comparisons(request: Request, limit: int = 20, offset: int = 0):
     pool = get_pool()
@@ -159,6 +188,7 @@ async def list_comparisons(request: Request, limit: int = 20, offset: int = 0):
     except Exception:
         identity = {'user_id': '', 'email': None}
     user_id = identity['user_id']
+    limit, offset = max(1, min(limit, 100)), max(0, offset)
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(

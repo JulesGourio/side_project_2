@@ -1,10 +1,9 @@
-"""FastAPI app — QualiBOT (document compare + knowledge assistant chat)."""
+"""FastAPI app — QualiBOT (document compare + chat)."""
 
 import asyncio
 import logging
 import os
 import time
-import traceback
 import uuid
 from logging import Formatter
 from contextlib import asynccontextmanager
@@ -18,8 +17,9 @@ from starlette.middleware.cors import CORSMiddleware
 
 from . import tracing  # noqa: F401 — sets up MLflow tracking URI
 from .routers import chat, compare, config, exports, feedback, health, history, preview
-from .services.lakebase import get_pool, init_lakebase, shutdown_lakebase, store_error
-from .services.translation_bridge import shutdown_http_client as shutdown_translation_bridge
+from .services.infra.doc_catalog import catalog_refresher
+from .services.infra.lakebase import get_pool, init_lakebase, shutdown_lakebase, store_error
+from .services.chat.translation_bridge import shutdown_http_client as shutdown_translation_bridge
 
 logging.basicConfig(
   level=logging.INFO,
@@ -50,7 +50,10 @@ if not _volume_path:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
   await init_lakebase()
+  # Document catalog (REF links, titles) from Lakebase, reloaded every 30 min.
+  catalog_task = asyncio.create_task(catalog_refresher(get_pool))
   yield
+  catalog_task.cancel()
   await shutdown_lakebase()
   await shutdown_translation_bridge()
 
@@ -88,12 +91,14 @@ async def log_requests(request: Request, call_next):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
   logger.error(f'Unhandled exception on {request.method} {request.url.path}: {exc}', exc_info=True)
-  asyncio.create_task(store_error(
+  store_error(
       endpoint=f'{request.method} {request.url.path}',
       error_type=type(exc).__name__,
       error_msg=str(exc),
-      stack_trace=traceback.format_exc(),
-  ))
+      stage='unhandled',
+      exc=exc,
+      user_message='Internal server error',
+  )
   return JSONResponse(status_code=500, content={'error': 'Internal server error'})
 
 API_PREFIX = '/api'

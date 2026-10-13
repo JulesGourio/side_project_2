@@ -1,1524 +1,24 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import {
-  Upload,
-  FileText,
-  X,
-  Loader2,
-  Trash2,
-  ArrowRight,
-  RotateCcw,
-  AlertCircle,
-  Download,
-  CheckCircle2,
-  History,
-  ThumbsUp,
-  ThumbsDown,
-  Eye,
-  Send,
-  Square,
-  Database,
-  ExternalLink,
-  Info,
-} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, ArrowRight, Database, FileText, History, Info, Loader2, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { MarkdownRenderer } from '@/components/shared/MarkdownRenderer';
-import { ExactDocxPreview } from '@/components/shared/ExactDocxPreview';
-import { getAppConfig, getProcessorsConfig, type ProcessorVersion } from '@/lib/config';
+import { type ProcessorVersion, getAppConfig, getProcessorsConfig } from '@/lib/config';
+import { downloadPdf } from '@/lib/exportPdf';
 import { ComparisonHistory, type FullComparison } from './ComparisonHistory';
 import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanner';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface DocFile {
-  name: string;
-  size: number;
-  data: string;
-  bytes: Uint8Array<ArrayBuffer>;
-  mimeType: string;
-}
-
-const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
-
-const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-
-const SUPPORTED_EXTENSIONS = new Set([
-  'pdf',
-  'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif',
-  'docx', 'doc',
-  'pptx', 'ppt',
-  'xlsx', 'xls',
-  'xml',
-]);
-
-
-const FILE_ACCEPT = [
-  'application/pdf',
-  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.ms-excel',
-  '.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif',
-  '.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.xls', '.xml',
-].join(',');
-
-const LS_OLD_PDF = 'compare_old_pdf';
-const LS_NEW_PDF = 'compare_new_pdf';
-const LS_ANALYSIS = 'compare_analysis';
-const LS_ANALYSIS_STD = 'compare_analysis_std';
-const LS_MESSAGE_ID_STD = 'compare_message_id_std';
-const LS_IMPACT = 'compare_impact_v4';
-const LS_SESSION_PATH = 'compare_session_path';
-const LS_MESSAGE_ID = 'compare_message_id';
-const LS_OLD_HASH = 'compare_old_hash';
-const LS_NEW_HASH = 'compare_new_hash';
-const LS_FEEDBACK_SUBMITTED = 'compare_feedback_submitted_v2'; // JSON string[]
-const LS_PROCESSING_METHOD = 'compare_processing_method';
-const LS_IMPACT_MODE = 'compare_impact_mode';
-const LS_IMPACT_MANUAL_TEXT = 'compare_impact_manual_text';
-// Manual mode UI hidden for now (business feedback: too niche/confusing) — logic kept intact behind this flag.
-const IMPACT_MANUAL_MODE_ENABLED = false;
-
-function isFeedbackSubmitted(key: string): boolean {
-  try {
-    const raw = localStorage.getItem(LS_FEEDBACK_SUBMITTED);
-    const set: string[] = raw ? JSON.parse(raw) : [];
-    return set.includes(key);
-  } catch { return false; }
-}
-
-function markFeedbackSubmitted(key: string): void {
-  try {
-    const raw = localStorage.getItem(LS_FEEDBACK_SUBMITTED);
-    const set: string[] = raw ? JSON.parse(raw) : [];
-    if (!set.includes(key)) {
-      set.push(key);
-      // Cap to avoid localStorage bloat
-      if (set.length > 200) set.splice(0, set.length - 200);
-    }
-    localStorage.setItem(LS_FEEDBACK_SUBMITTED, JSON.stringify(set));
-  } catch {}
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-async function computeFileHash(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
-  const buffer = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(buffer))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function readFile(file: File): Promise<{ base64: string; bytes: Uint8Array<ArrayBuffer>; mimeType: string }> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.split(',')[1];
-      const binary = atob(base64);
-      const buffer = new ArrayBuffer(binary.length);
-      const bytes = new Uint8Array(buffer);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      resolve({ base64, bytes, mimeType: file.type || 'application/octet-stream' });
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-function savePdfToStorage(key: string, pdf: Omit<DocFile, 'bytes'> | null) {
-  if (pdf) {
-    try {
-      localStorage.setItem(key, JSON.stringify({ name: pdf.name, size: pdf.size, data: pdf.data, mimeType: pdf.mimeType }));
-    } catch {
-      // localStorage full — silently ignore
-    }
-  } else {
-    localStorage.removeItem(key);
-  }
-}
-
-function loadPdfFromStorage(key: string): DocFile | null {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    const binary = atob(parsed.data);
-    const buffer = new ArrayBuffer(binary.length);
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return { name: parsed.name, size: parsed.size, data: parsed.data, mimeType: parsed.mimeType || 'application/octet-stream', bytes };
-  } catch {
-    return null;
-  }
-}
-
-
-// ---------------------------------------------------------------------------
-// PdfDropZone
-// ---------------------------------------------------------------------------
-
-function PdfDropZone({
-  label,
-  step,
-  file,
-  onFile,
-  onRemove,
-  onInvalidFile,
-  disabled,
-}: {
-  label: string;
-  step: number;
-  file: DocFile | null;
-  onFile: (f: DocFile) => void;
-  onRemove: () => void;
-  onInvalidFile: (msg: string) => void;
-  disabled: boolean;
-}) {
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Reset cached preview whenever a different file is loaded
-  const prevFileKeyRef = useRef<string | null>(null);
-  const fileKey = file ? `${file.name}:${file.size}` : null;
-  if (fileKey !== prevFileKeyRef.current) {
-    prevFileKeyRef.current = fileKey;
-    if (previewHtml !== null) setPreviewHtml(null);
-    if (previewLoading) setPreviewLoading(false);
-  }
-
-  const isDocxType = file ? file.mimeType === DOCX_MIME_TYPE : false;
-  const isDocType = file
-    ? file.mimeType !== 'application/pdf' && !file.mimeType.startsWith('image/') && !isDocxType
-    : false;
-
-  const openPreview = useCallback(async () => {
-    setPreviewOpen(true);
-    // .docx renders client-side (DocxPreview) — no server round-trip needed.
-    if (!file || !isDocType || previewHtml) return;
-    setPreviewLoading(true);
-    try {
-      const fd = new FormData();
-      fd.append('file', new Blob([file.bytes], { type: file.mimeType }), file.name);
-      const res = await fetch('/api/preview', { method: 'POST', body: fd });
-      if (res.ok) setPreviewHtml(await res.text());
-    } catch { /* best-effort */ }
-    finally { setPreviewLoading(false); }
-  }, [file, isDocType, previewHtml]);
-
-  const handleFile = useCallback(
-    async (f: File) => {
-      const ext = f.name.includes('.') ? f.name.split('.').pop()?.toLowerCase() : '';
-      if (!ext || !SUPPORTED_EXTENSIONS.has(ext)) {
-        onInvalidFile(`Unsupported file type ".${ext || '?'}". Supported: PDF, images, DOCX, PPTX, XML.`);
-        return;
-      }
-      if (f.size > MAX_FILE_SIZE_BYTES) {
-        onInvalidFile('Each file must be 20 MB or smaller.');
-        return;
-      }
-      const { base64, bytes, mimeType } = await readFile(f);
-      onFile({ name: f.name, size: f.size, data: base64, bytes, mimeType });
-    },
-    [onFile, onInvalidFile],
-  );
-
-  const onDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragOver(false);
-      const f = e.dataTransfer.files?.[0];
-      if (f) handleFile(f);
-    },
-    [handleFile],
-  );
-
-  // Uploaded state
-  if (file) {
-    const isPlaceholder = !file.data;
-    const borderColor = isPlaceholder
-      ? (isDragOver ? '#d97706' : 'rgba(217,119,6,0.4)')
-      : (isDragOver ? 'var(--color-accent-primary)' : 'rgba(var(--color-accent-primary-rgb,0,85,164),0.3)');
-    const bgColor = isPlaceholder
-      ? (isDragOver ? 'rgba(217,119,6,0.12)' : 'rgba(217,119,6,0.05)')
-      : (isDragOver ? 'rgba(var(--color-accent-primary-rgb,0,85,164),0.1)' : 'rgba(var(--color-accent-primary-rgb,0,85,164),0.05)');
-    return (
-      <>
-        <div
-          className="flex-1 min-w-0 rounded-2xl p-4 transition-all"
-          style={{ border: `1px solid ${borderColor}`, background: bgColor, cursor: disabled ? 'default' : 'copy' }}
-          onDrop={disabled ? undefined : onDrop}
-          onDragOver={disabled ? undefined : (e) => { e.preventDefault(); setIsDragOver(true); }}
-          onDragLeave={disabled ? undefined : () => setIsDragOver(false)}
-        >
-          {isPlaceholder && (
-            <p className="text-xs font-semibold mb-2" style={{ color: '#d97706' }}>
-              Drop file to re-upload
-            </p>
-          )}
-          <div className="flex items-center gap-3">
-            {/* Step badge */}
-            <div
-              className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
-              style={{ background: isPlaceholder ? '#d97706' : 'var(--color-accent-primary)' }}
-            >
-              <span className="text-xs font-bold text-white">{step}</span>
-            </div>
-            {/* File icon */}
-            <div
-              className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: isPlaceholder ? 'rgba(217,119,6,0.1)' : 'rgba(var(--color-accent-primary-rgb,0,85,164),0.1)' }}
-            >
-              <FileText className="h-4 w-4" style={{ color: isPlaceholder ? '#d97706' : 'var(--color-accent-primary)' }} />
-            </div>
-            {/* File info */}
-            <div className="min-w-0 flex-1">
-              <p
-                className="text-xs font-semibold uppercase tracking-wide mb-0.5"
-                style={{ color: isPlaceholder ? '#d97706' : 'var(--color-accent-primary)' }}
-              >
-                {label}
-              </p>
-              <p className="text-sm font-medium text-[var(--color-text-heading)] truncate">
-                {file.name}
-              </p>
-              <p className="text-xs text-[var(--color-text-muted)]">
-                {isPlaceholder ? 'File not available — drop to replace' : formatFileSize(file.size)}
-              </p>
-            </div>
-            {/* Preview — hidden for placeholders */}
-            {!isPlaceholder && (
-              <button
-                onClick={openPreview}
-                className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent-primary)] hover:bg-[var(--color-accent-primary)]/10 transition-all cursor-pointer"
-                title="Preview file"
-              >
-                <Eye className="h-3.5 w-3.5" />
-              </button>
-            )}
-            {/* Download — hidden for placeholders */}
-            {!isPlaceholder && (
-              <a
-                href={`data:${file.mimeType};base64,${file.data}`}
-                download={file.name}
-                className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-accent-primary)] hover:bg-[var(--color-accent-primary)]/10 transition-all cursor-pointer"
-                title="Download file"
-              >
-                <Download className="h-3.5 w-3.5" />
-              </a>
-            )}
-            {/* Remove */}
-            {!disabled && (
-              <button
-                onClick={onRemove}
-                className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-error)] hover:bg-[var(--color-error)]/10 transition-all cursor-pointer"
-                title="Remove file"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Preview modal */}
-        {previewOpen && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-            onClick={() => setPreviewOpen(false)}
-          >
-            <div
-              className="relative flex flex-col rounded-2xl shadow-2xl overflow-hidden"
-              style={{
-                width: '90vw',
-                maxWidth: '1300px',
-                height: '92vh',
-                background: 'var(--color-background)',
-              }}
-              onClick={e => e.stopPropagation()}
-            >
-              {/* Modal header */}
-              <div
-                className="flex items-center justify-between px-5 py-3 border-b"
-                style={{ borderColor: 'var(--color-border)' }}
-              >
-                <span className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-heading)' }}>
-                  {label} — {file.name}
-                </span>
-                <button
-                  onClick={() => setPreviewOpen(false)}
-                  className="w-7 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer"
-                  style={{ color: 'var(--color-text-muted)' }}
-                  onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-error)'; e.currentTarget.style.background = 'var(--color-error)/10'; }}
-                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              {/* Modal content */}
-              <div className="flex-1 overflow-hidden">
-                {file.mimeType === 'application/pdf' ? (
-                  <iframe
-                    src={`data:application/pdf;base64,${file.data}`}
-                    className="w-full h-full border-0"
-                    title={file.name}
-                  />
-                ) : file.mimeType.startsWith('image/') ? (
-                  <div className="w-full h-full flex items-center justify-center p-4 overflow-auto">
-                    <img
-                      src={`data:${file.mimeType};base64,${file.data}`}
-                      alt={file.name}
-                      className="max-w-full max-h-full object-contain rounded-lg"
-                    />
-                  </div>
-                ) : isDocxType ? (
-                  <ExactDocxPreview bytes={file.bytes} filename={file.name} />
-                ) : previewLoading ? (
-                  <div className="w-full h-full flex flex-col items-center justify-center gap-3" style={{ color: 'var(--color-text-muted)' }}>
-                    <Loader2 className="h-8 w-8 animate-spin" style={{ color: 'var(--color-accent-primary)' }} />
-                    <p className="text-sm">Generating preview…</p>
-                  </div>
-                ) : previewHtml ? (
-                  <iframe
-                    srcDoc={previewHtml}
-                    className="w-full h-full border-0"
-                    title={file.name}
-                    sandbox="allow-same-origin"
-                  />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center gap-4" style={{ color: 'var(--color-text-muted)' }}>
-                    <FileText className="h-16 w-16 opacity-30" />
-                    <p className="text-sm">Preview unavailable</p>
-                    <p className="text-xs opacity-60">{file.name}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </>
-    );
-  }
-
-  // Empty state
-  return (
-    <div
-      className={`flex-1 min-w-0 rounded-2xl border-2 border-dashed p-6 cursor-pointer group transition-all duration-200 ${
-        isDragOver
-          ? 'border-[var(--color-accent-primary)] bg-[var(--color-accent-primary)]/8 scale-[1.01]'
-          : 'border-[var(--color-border)]/50 hover:border-[var(--color-accent-primary)]/60 hover:bg-[var(--color-accent-primary)]/3'
-      } ${disabled ? 'opacity-40 pointer-events-none' : ''}`}
-      onDrop={onDrop}
-      onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-      onDragLeave={() => setIsDragOver(false)}
-      onClick={() => !disabled && inputRef.current?.click()}
-    >
-      <input
-        ref={inputRef}
-        type="file"
-        accept={FILE_ACCEPT}
-        className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
-      />
-      <div className="flex flex-col items-center gap-3 text-center">
-        {/* Step circle + icon */}
-        <div className="relative">
-          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${
-            isDragOver ? 'bg-[var(--color-accent-primary)]/15' : 'bg-[var(--color-muted)]/60 group-hover:bg-[var(--color-accent-primary)]/10'
-          }`}>
-            <Upload className={`h-6 w-6 transition-colors ${
-              isDragOver ? 'text-[var(--color-accent-primary)]' : 'text-[var(--color-text-muted)] group-hover:text-[var(--color-accent-primary)]'
-            }`} />
-          </div>
-          <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-[var(--color-accent-primary)] flex items-center justify-center text-[10px] font-bold text-white">
-            {step}
-          </span>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-[var(--color-text-heading)]">{label}</p>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Drop here or click to browse</p>
-          <p className="text-xs text-[var(--color-text-muted)]/70 mt-0.5">PDF, DOCX, PPTX, Excel, image · max 20 MB</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// FeedbackSection — standalone card shown between upload card and results
-// ---------------------------------------------------------------------------
-
-interface FeedbackProps {
-  submissionKey: string;
-  messageId: number | null;
-}
-
-
-// ---------------------------------------------------------------------------
-// Structured (JSON) diff helpers
-// ---------------------------------------------------------------------------
-
-interface DiffItem {
-  section?: string;
-  page?: string;
-  type?: string;
-  criticality?: string;
-  before?: string;
-  after?: string;
-  rationale?: string;
-}
-
-interface ImagePair {
-  status: 'modified' | 'added' | 'removed' | 'orientation_changed';
-  old_page: number | null;
-  new_page: number | null;
-  old_b64: string | null;
-  new_b64: string | null;
-  index: number;
-}
-
-// ---------------------------------------------------------------------------
-// Impact search — Vector Search retrieval, each candidate judged by an LLM
-// ---------------------------------------------------------------------------
-
-interface OtherLanguageRef {
-  ref: string;
-  division: string;
-  url: string;
-  site_code: string | null;
-  flag: string;
-  source: 'retrieved' | 'catalog';
-}
-
-interface JudgedDoc {
-  iddoc: string;
-  ref: string;
-  title?: string;
-  division: string;
-  url: string;
-  max_score: number;
-  chunk_count: number;
-  query_hits?: number;
-  impacted: boolean;
-  sections: string[];
-  confidence: string;
-  reason: string;
-  site_code?: string | null;
-  flag?: string;
-  other_languages?: OtherLanguageRef[];
-}
-
-// ---------------------------------------------------------------------------
-// Single-document summary — independent of the diff, one cheap LLM call
-// ---------------------------------------------------------------------------
-
-interface DocSummaryMeta {
-  truncated: boolean;
-  durationS: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  costEur: number;
-}
-
-interface DocSummaryState {
-  text: string;
-  error: string;
-  loading: boolean;
-  noContent: boolean;
-  meta: DocSummaryMeta | null;
-}
-
-const EMPTY_SUMMARY: DocSummaryState = { text: '', error: '', loading: false, noContent: false, meta: null };
-
-/** Extract complete JSON objects from a partial/streaming JSON array string. */
-function parsePartialJsonItems(text: string): DiffItem[] {
-  const items: DiffItem[] = [];
-  let depth = 0;
-  let start = -1;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '{') {
-      if (depth === 0) start = i;
-      depth++;
-    } else if (ch === '}') {
-      depth--;
-      if (depth === 0 && start !== -1) {
-        try {
-          const obj = JSON.parse(text.slice(start, i + 1));
-          if (typeof obj === 'object' && obj !== null) items.push(obj as DiffItem);
-        } catch { /* skip malformed */ }
-        start = -1;
-      }
-    }
-  }
-  return items;
-}
-
-const CRIT_STYLE: Record<string, { color: string; badge: string }> = {
-  critical: { color: '#dc2626', badge: '#fef2f2' },
-  high:     { color: '#ea580c', badge: '#fff7ed' },
-  medium:   { color: '#d97706', badge: '#fffbeb' },
-  low:      { color: '#16a34a', badge: '#f0fdf4' },
-  minor:    { color: '#16a34a', badge: '#f0fdf4' },
-};
-
-const IMAGE_KEYWORDS = ['image', 'figure', 'visual', 'photo', 'diagram', 'illustration', 'screenshot', 'picture'];
-
-function JsonDiffTable({
-  items,
-  isStreaming,
-  accentColor,
-  fileType,
-  imageContext = [],
-}: {
-  items: DiffItem[];
-  isStreaming: boolean;
-  accentColor: string;
-  fileType?: string;
-  imageContext?: ImagePair[];
-}) {
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const [lightboxPair, setLightboxPair] = useState<ImagePair | null>(null);
-  // Low-criticality rows are genuine changes (not model noise — the analysis
-  // prompt deliberately reports every trivial edit rather than risk missing
-  // a real one), but they drown out the changes that need action. Hide them
-  // by default; nothing is discarded, just collapsed behind a toggle.
-  const [hideLow, setHideLow] = useState(true);
-
-  const hasImages = imageContext.length > 0;
-  const lowCount = items.filter(it => (it.criticality || '').toLowerCase() === 'low').length;
-
-  useEffect(() => {
-    if (!isStreaming) return;
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 80) el.scrollTop = el.scrollHeight;
-  }, [items.length, isStreaming]);
-
-  useEffect(() => {
-    if (!lightboxPair) return;
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightboxPair(null); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [lightboxPair]);
-
-  if (items.length === 0) {
-    if (isStreaming) {
-      return (
-        <div className="flex items-center gap-2 text-[var(--color-text-muted)] p-5">
-          <Loader2 className="h-4 w-4 animate-spin" style={{ color: accentColor }} />
-          <span className="italic text-sm">Generating structured analysis…</span>
-        </div>
-      );
-    }
-    return (
-      <div className="px-5 py-4 text-sm italic text-[var(--color-text-muted)]">
-        No significant changes detected.
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      {!isStreaming && lowCount > 0 && (
-        <div className="flex items-center justify-end px-5 pt-3 pb-1">
-          <button
-            onClick={() => setHideLow(v => !v)}
-            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-accent-primary)] underline underline-offset-2"
-          >
-            {hideLow ? `Show ${lowCount} more (Low criticality)` : 'Hide Low-criticality rows'}
-          </button>
-        </div>
-      )}
-      {isStreaming && (
-        <div className="flex items-center gap-2 px-5 pt-3 pb-1 text-xs text-[var(--color-text-muted)]">
-          <Loader2 className="h-3 w-3 animate-spin" style={{ color: accentColor }} />
-          <span>{items.length} item{items.length !== 1 ? 's' : ''} found…</span>
-        </div>
-      )}
-      <div ref={scrollContainerRef} className="overflow-auto max-h-[650px] px-5 py-3">
-        <table className="w-full text-xs border-collapse" style={{ minWidth: hasImages ? 820 : 700 }}>
-          <thead>
-            <tr style={{ background: 'var(--color-muted)' }}>
-              {[
-                ...(fileType === 'pptx'
-                  ? ['Section', 'Slide', 'Type', 'Criticality', 'Before', 'After', 'Rationale']
-                  : fileType === 'xml'
-                    ? ['Section', 'No.', 'Type', 'Criticality', 'Before', 'After', 'Rationale']
-                    : fileType === 'excel'
-                      ? ['Section', 'Type', 'Criticality', 'Before', 'After', 'Rationale']
-                      : ['Section', 'Page', 'Type', 'Criticality', 'Before', 'After', 'Rationale']),
-                ...(hasImages ? ['Image'] : []),
-              ].map(h => (
-                <th
-                  key={h}
-                  className="px-2 py-1.5 text-left font-semibold whitespace-nowrap"
-                  style={{ color: 'var(--color-text-heading)', borderBottom: '1px solid var(--color-border)' }}
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {(() => {
-              let seqIdx = 0;
-              return items.map((item, i) => {
-                const critKey = (item.criticality || '').toLowerCase();
-                const crit = CRIT_STYLE[critKey] ?? { color: 'var(--color-text-body)', badge: 'transparent' };
-                const showPage = fileType !== 'excel';
-
-                // Match visual-change rows to image pairs sequentially in LLM output order.
-                // Page-number matching is unreliable: the LLM may write old_page, new_page,
-                // or an arbitrary value — sequential order is consistent with how the LLM
-                // processed the images (orientation → modified → removed → added).
-                let imgPair: ImagePair | null = null;
-                if (hasImages) {
-                  const typeStr = (item.type || '').toLowerCase();
-                  const isImgRow = IMAGE_KEYWORDS.some(kw => typeStr.includes(kw));
-                  if (isImgRow && seqIdx < imageContext.length) {
-                    imgPair = imageContext[seqIdx++];
-                  }
-                }
-
-                // seqIdx must advance over every item (computed above) so image
-                // pairing stays correct regardless of what's hidden below.
-                if (hideLow && critKey === 'low') {
-                  return null;
-                }
-
-                return (
-                  <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'var(--color-muted)' }}>
-                    <td className="px-2 py-1.5 align-top font-medium" style={{ borderBottom: '1px solid var(--color-border)', maxWidth: 140, wordBreak: 'break-word' }}>
-                      {item.section || '—'}
-                    </td>
-                    {showPage && (
-                      <td className="px-2 py-1.5 align-top whitespace-nowrap text-center" style={{ borderBottom: '1px solid var(--color-border)' }}>
-                        {item.page || '—'}
-                      </td>
-                    )}
-                    <td className="px-2 py-1.5 align-top whitespace-nowrap" style={{ borderBottom: '1px solid var(--color-border)' }}>
-                      {item.type || '—'}
-                    </td>
-                    <td className="px-2 py-1.5 align-top" style={{ borderBottom: '1px solid var(--color-border)' }}>
-                      {item.criticality ? (
-                        <span className="px-1.5 py-0.5 rounded text-xs font-semibold" style={{ color: crit.color, background: crit.badge }}>
-                          {item.criticality}
-                        </span>
-                      ) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 align-top" style={{ borderBottom: '1px solid var(--color-border)', maxWidth: 200, wordBreak: 'break-word' }}>
-                      {item.before || '—'}
-                    </td>
-                    <td className="px-2 py-1.5 align-top" style={{ borderBottom: '1px solid var(--color-border)', maxWidth: 200, wordBreak: 'break-word' }}>
-                      {item.after || '—'}
-                    </td>
-                    <td className="px-2 py-1.5 align-top" style={{ borderBottom: '1px solid var(--color-border)', maxWidth: 220, wordBreak: 'break-word' }}>
-                      {item.rationale || '—'}
-                    </td>
-                    {hasImages && (
-                      <td className="px-2 py-1 align-middle" style={{ borderBottom: '1px solid var(--color-border)', width: 120 }}>
-                        {imgPair ? (
-                          <div className="flex gap-1 items-center justify-center">
-                            {imgPair.old_b64 && (
-                              <img
-                                src={`data:image/jpeg;base64,${imgPair.old_b64}`}
-                                alt="before"
-                                title="Click to enlarge — Before"
-                                className="max-h-14 max-w-[54px] object-contain rounded border border-[var(--color-border)] cursor-pointer opacity-90 hover:opacity-100"
-                                onClick={() => setLightboxPair(imgPair)}
-                              />
-                            )}
-                            {imgPair.new_b64 && (
-                              <img
-                                src={`data:image/jpeg;base64,${imgPair.new_b64}`}
-                                alt="after"
-                                title="Click to enlarge — After"
-                                className="max-h-14 max-w-[54px] object-contain rounded border border-[var(--color-border)] cursor-pointer opacity-90 hover:opacity-100"
-                                onClick={() => setLightboxPair(imgPair)}
-                              />
-                            )}
-                          </div>
-                        ) : '—'}
-                      </td>
-                    )}
-                  </tr>
-                );
-              });
-            })()}
-          </tbody>
-        </table>
-        <div ref={bottomRef} />
-      </div>
-
-      {lightboxPair && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-6"
-          onClick={() => setLightboxPair(null)}
-        >
-          <div
-            className="relative flex flex-col rounded-2xl shadow-2xl overflow-hidden"
-            style={{ maxWidth: '95vw', maxHeight: '92vh', background: 'var(--color-background)' }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div
-              className="flex items-center justify-between px-4 py-2.5 border-b"
-              style={{ borderColor: 'var(--color-border)' }}
-            >
-              <span className="text-sm font-semibold" style={{ color: 'var(--color-text-heading)' }}>
-                Image comparison
-              </span>
-              <button
-                onClick={() => setLightboxPair(null)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center transition-all cursor-pointer"
-                style={{ color: 'var(--color-text-muted)' }}
-                onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-error)'; e.currentTarget.style.background = 'var(--color-error)/10'; }}
-                onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.background = 'transparent'; }}
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto flex flex-wrap items-start justify-center gap-4 p-4">
-              {lightboxPair.old_b64 && (
-                <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
-                    Before{lightboxPair.old_page ? ` — page ${lightboxPair.old_page}` : ''}
-                  </span>
-                  <img
-                    src={`data:image/jpeg;base64,${lightboxPair.old_b64}`}
-                    alt="before"
-                    className="object-contain rounded-lg border border-[var(--color-border)]"
-                    style={{ maxWidth: '44vw', maxHeight: '78vh' }}
-                  />
-                </div>
-              )}
-              {lightboxPair.new_b64 && (
-                <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
-                    After{lightboxPair.new_page ? ` — page ${lightboxPair.new_page}` : ''}
-                  </span>
-                  <img
-                    src={`data:image/jpeg;base64,${lightboxPair.new_b64}`}
-                    alt="after"
-                    className="object-contain rounded-lg border border-[var(--color-border)]"
-                    style={{ maxWidth: '44vw', maxHeight: '78vh' }}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// StructuredResultCard — same as ResultCard but renders a JsonDiffTable + Excel export
-// ---------------------------------------------------------------------------
-
-function StructuredResultCard({
-  items,
-  isStreaming,
-  accentColor,
-  fileType,
-  imageContext = [],
-  onExportExcel,
-  feedbackProps,
-}: {
-  items: DiffItem[];
-  isStreaming: boolean;
-  accentColor: string;
-  fileType?: string;
-  imageContext?: ImagePair[];
-  onExportExcel: () => void;
-  feedbackProps?: FeedbackProps;
-}) {
-  const [vote, setVote] = useState<'up' | 'down' | null>(null);
-  const [comment, setComment] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [feedbackDone, setFeedbackDone] = useState(false);
-
-  useEffect(() => {
-    if (!feedbackProps) return;
-    if (isFeedbackSubmitted(feedbackProps.submissionKey)) {
-      setFeedbackDone(true);
-    } else {
-      setFeedbackDone(false);
-      setVote(null);
-      setComment('');
-    }
-  }, [feedbackProps?.submissionKey]);
-
-  const submitFeedback = async () => {
-    if (!vote || submitting || !feedbackProps) return;
-    setSubmitting(true);
-    try {
-      await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, comment: comment.trim() || null, message_id: feedbackProps.messageId ?? null }),
-      });
-      markFeedbackSubmitted(feedbackProps.submissionKey);
-    } catch { /* best-effort */ }
-    finally { setSubmitting(false); setFeedbackDone(true); }
-  };
-
-  return (
-    <div className="rounded-2xl border border-[var(--color-border)]/40 bg-[var(--color-background)] shadow-sm overflow-hidden">
-      <div className="h-0.5 w-full" style={{ background: accentColor }} />
-      <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]/30 bg-[var(--color-bg-secondary)]/40 gap-3">
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          <div className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${accentColor}18` }}>
-            <FileText className="h-3.5 w-3.5" style={{ color: accentColor }} />
-          </div>
-          <span className="text-sm font-semibold text-[var(--color-text-heading)] truncate">Change Table</span>
-          {isStreaming && (
-            <span className="flex-shrink-0 flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-              <Loader2 className="h-3 w-3 animate-spin" style={{ color: accentColor }} />
-              Generating…
-            </span>
-          )}
-        </div>
-
-        <div className="flex-shrink-0 flex items-center gap-3">
-          {!isStreaming && items.length > 0 && (
-            <span className="text-xs text-[var(--color-text-muted)]">{items.length} change{items.length !== 1 ? 's' : ''}</span>
-          )}
-
-          {/* Inline feedback — thumbs in header */}
-          {feedbackProps && (
-            feedbackDone ? (
-              <div className="flex items-center gap-1.5" style={{ color: 'var(--color-success)' }}>
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                <span className="text-xs font-medium">Sent</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Feedback</span>
-                <button
-                  onClick={() => setVote(v => v === 'up' ? null : 'up')}
-                  title="Helpful"
-                  className="w-7 h-7 rounded-lg flex items-center justify-center border transition-all cursor-pointer"
-                  style={{
-                    borderColor: vote === 'up' ? '#16a34a' : 'var(--color-border)',
-                    color: vote === 'up' ? '#16a34a' : 'var(--color-text-muted)',
-                    background: vote === 'up' ? '#16a34a12' : 'transparent',
-                  }}
-                >
-                  <ThumbsUp className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => setVote(v => v === 'down' ? null : 'down')}
-                  title="Not helpful"
-                  className="w-7 h-7 rounded-lg flex items-center justify-center border transition-all cursor-pointer"
-                  style={{
-                    borderColor: vote === 'down' ? '#dc2626' : 'var(--color-border)',
-                    color: vote === 'down' ? '#dc2626' : 'var(--color-text-muted)',
-                    background: vote === 'down' ? '#dc262612' : 'transparent',
-                  }}
-                >
-                  <ThumbsDown className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )
-          )}
-
-          {!isStreaming && items.length > 0 && (
-            <button
-              onClick={onExportExcel}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
-              style={{ color: accentColor }}
-              onMouseEnter={e => (e.currentTarget.style.background = `${accentColor}12`)}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-              title="Export analysis as Excel workbook"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Export Excel
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Comment bar — slides in after a thumb is selected */}
-      {feedbackProps && vote && !feedbackDone && (
-        <div
-          className="flex items-center gap-2.5 px-5 py-2.5 border-b border-[var(--color-border)]/30"
-          style={{ background: 'var(--color-bg-secondary)', opacity: 0.95 }}
-        >
-          <input
-            type="text"
-            value={comment}
-            onChange={e => setComment(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') submitFeedback(); }}
-            placeholder="Add a comment (optional)…"
-            maxLength={1000}
-            className="flex-1 px-3 py-1.5 rounded-lg border text-sm outline-none transition-colors"
-            style={{
-              borderColor: 'var(--color-border)',
-              background: 'var(--color-background)',
-              color: 'var(--color-text-body)',
-            }}
-            onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-accent-primary)')}
-            onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-          />
-          <button
-            onClick={submitFeedback}
-            disabled={submitting}
-            className="flex-shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-40 cursor-pointer"
-            style={{ background: 'linear-gradient(135deg, var(--color-accent-primary) 0%, var(--color-accent-secondary) 100%)' }}
-          >
-            <Send className="h-3 w-3" />
-            {submitting ? 'Sending…' : 'Send'}
-          </button>
-        </div>
-      )}
-
-      <JsonDiffTable items={items} isStreaming={isStreaming} accentColor={accentColor} fileType={fileType} imageContext={imageContext} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ResultCard
-// ---------------------------------------------------------------------------
-
-function ResultCard({
-  title,
-  icon: Icon,
-  accentColor,
-  content,
-  isStreaming,
-  onDownload,
-  feedbackProps,
-}: {
-  title: string;
-  icon: React.ElementType;
-  accentColor: string;
-  content: string;
-  isStreaming: boolean;
-  onDownload: () => void;
-  feedbackProps?: FeedbackProps;
-}) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [vote, setVote] = useState<'up' | 'down' | null>(null);
-  const [comment, setComment] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [feedbackDone, setFeedbackDone] = useState(false);
-
-  // Auto-scroll only if the user is already at (or near) the bottom.
-  // Uses scrollTop directly — no smooth animation that fights manual scrolling.
-  useEffect(() => {
-    if (!isStreaming) return;
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 60) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [content, isStreaming]);
-
-  useEffect(() => {
-    if (!feedbackProps) return;
-    if (isFeedbackSubmitted(feedbackProps.submissionKey)) {
-      setFeedbackDone(true);
-    } else {
-      setFeedbackDone(false);
-      setVote(null);
-      setComment('');
-    }
-  }, [feedbackProps?.submissionKey]);
-
-  const submitFeedback = async () => {
-    if (!vote || submitting || !feedbackProps) return;
-    setSubmitting(true);
-    try {
-      await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, comment: comment.trim() || null, message_id: feedbackProps.messageId ?? null }),
-      });
-      markFeedbackSubmitted(feedbackProps.submissionKey);
-    } catch { /* best-effort */ }
-    finally { setSubmitting(false); setFeedbackDone(true); }
-  };
-
-  return (
-    <div className="rounded-2xl border border-[var(--color-border)]/40 bg-[var(--color-background)] shadow-sm overflow-hidden">
-      {/* Colored top accent bar */}
-      <div className="h-0.5 w-full" style={{ background: accentColor }} />
-
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]/30 bg-[var(--color-bg-secondary)]/40 gap-3">
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          <div className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${accentColor}18` }}>
-            <Icon className="h-3.5 w-3.5" style={{ color: accentColor }} />
-          </div>
-          <span className="text-sm font-semibold text-[var(--color-text-heading)] truncate">{title}</span>
-          {isStreaming && (
-            <span className="flex-shrink-0 flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-              <Loader2 className="h-3 w-3 animate-spin" style={{ color: accentColor }} />
-              Generating…
-            </span>
-          )}
-        </div>
-
-        <div className="flex-shrink-0 flex items-center gap-3">
-          {/* Inline feedback — thumbs in header */}
-          {feedbackProps && (
-            feedbackDone ? (
-              <div className="flex items-center gap-1.5" style={{ color: 'var(--color-success)' }}>
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                <span className="text-xs font-medium">Sent</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Feedback</span>
-                <button
-                  onClick={() => setVote(v => v === 'up' ? null : 'up')}
-                  title="Helpful"
-                  className="w-7 h-7 rounded-lg flex items-center justify-center border transition-all cursor-pointer"
-                  style={{
-                    borderColor: vote === 'up' ? '#16a34a' : 'var(--color-border)',
-                    color: vote === 'up' ? '#16a34a' : 'var(--color-text-muted)',
-                    background: vote === 'up' ? '#16a34a12' : 'transparent',
-                  }}
-                >
-                  <ThumbsUp className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => setVote(v => v === 'down' ? null : 'down')}
-                  title="Not helpful"
-                  className="w-7 h-7 rounded-lg flex items-center justify-center border transition-all cursor-pointer"
-                  style={{
-                    borderColor: vote === 'down' ? '#dc2626' : 'var(--color-border)',
-                    color: vote === 'down' ? '#dc2626' : 'var(--color-text-muted)',
-                    background: vote === 'down' ? '#dc262612' : 'transparent',
-                  }}
-                >
-                  <ThumbsDown className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )
-          )}
-
-          {content && !isStreaming && (
-            <button
-              onClick={onDownload}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
-              style={{ color: accentColor }}
-              onMouseEnter={e => (e.currentTarget.style.background = `${accentColor}12`)}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-              title="Download as PDF"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Download PDF
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Comment bar — slides in after a thumb is selected */}
-      {feedbackProps && vote && !feedbackDone && (
-        <div
-          className="flex items-center gap-2.5 px-5 py-2.5 border-b border-[var(--color-border)]/30"
-          style={{ background: 'var(--color-bg-secondary)', opacity: 0.95 }}
-        >
-          <input
-            type="text"
-            value={comment}
-            onChange={e => setComment(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') submitFeedback(); }}
-            placeholder="Add a comment (optional)…"
-            maxLength={1000}
-            className="flex-1 px-3 py-1.5 rounded-lg border text-sm outline-none transition-colors"
-            style={{
-              borderColor: 'var(--color-border)',
-              background: 'var(--color-background)',
-              color: 'var(--color-text-body)',
-            }}
-            onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-accent-primary)')}
-            onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-          />
-          <button
-            onClick={submitFeedback}
-            disabled={submitting}
-            className="flex-shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-40 cursor-pointer"
-            style={{ background: 'linear-gradient(135deg, var(--color-accent-primary) 0%, var(--color-accent-secondary) 100%)' }}
-          >
-            <Send className="h-3 w-3" />
-            {submitting ? 'Sending…' : 'Send'}
-          </button>
-        </div>
-      )}
-
-      {/* Content */}
-      <div ref={scrollContainerRef} className="p-5 max-h-[650px] overflow-y-auto text-sm leading-relaxed">
-        {content ? (
-          <MarkdownRenderer content={content} />
-        ) : (
-          <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
-            <Loader2 className="h-4 w-4 animate-spin" style={{ color: accentColor }} />
-            <span className="italic text-sm">Waiting for response…</span>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ImpactedDocsCard — deduplicated, LLM-judged impact search result
-// ---------------------------------------------------------------------------
-
-const CONFIDENCE_STYLE: Record<string, string> = {
-  high: '#16a34a',
-  medium: '#d97706',
-  low: '#6b7280',
-};
-
-// Custom popover instead of a native `title` tooltip: rendered via a portal so it's never
-// clipped by an ancestor's overflow-hidden, and some corporate remote-desktop setups
-// (Citrix/VDI) don't reliably show native title tooltips at all.
-function InfoTooltip({ children }: { children: React.ReactNode }) {
-  const anchorRef = useRef<HTMLSpanElement>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
-
-  const open = () => {
-    const rect = anchorRef.current?.getBoundingClientRect();
-    if (rect) setCoords({ top: rect.bottom + 6, left: rect.left });
-  };
-  const close = () => setCoords(null);
-
-  return (
-    <span
-      ref={anchorRef}
-      className="inline-flex cursor-help"
-      onMouseEnter={open}
-      onMouseLeave={close}
-      onFocus={open}
-      onBlur={close}
-      tabIndex={0}
-    >
-      <Info className="h-3.5 w-3.5" style={{ color: 'var(--color-text-muted)' }} />
-      {coords && createPortal(
-        <div
-          className="fixed z-50 w-80 rounded-lg border p-3 text-xs shadow-lg leading-relaxed"
-          style={{ top: coords.top, left: coords.left, borderColor: 'var(--color-border)', background: 'var(--color-background)', color: 'var(--color-text-body)' }}
-        >
-          {children}
-        </div>,
-        document.body,
-      )}
-    </span>
-  );
-}
-
-function ImpactedDocsCard({
-  title,
-  documents,
-  isLoading,
-  loadingLabel = 'Searching…',
-  error,
-  truncated,
-  accentColor,
-}: {
-  title: string;
-  documents: JudgedDoc[];
-  isLoading: boolean;
-  loadingLabel?: string;
-  error: string;
-  truncated?: boolean;
-  accentColor: string;
-}) {
-  const handleDownloadJson = () => {
-    const blob = new Blob([JSON.stringify(documents, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'impacted_documents.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div className="rounded-2xl border border-[var(--color-border)]/40 bg-[var(--color-background)] shadow-sm overflow-hidden">
-      <div className="h-0.5 w-full" style={{ background: accentColor }} />
-
-      <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]/30 bg-[var(--color-bg-secondary)]/40">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${accentColor}18` }}>
-            <Database className="h-3.5 w-3.5" style={{ color: accentColor }} />
-          </div>
-          <span className="text-sm font-semibold text-[var(--color-text-heading)]">{title}</span>
-          <InfoTooltip>
-            <p className="mb-2">
-              <strong>Impacted</strong>: this document likely needs to be updated following the reported change.
-            </p>
-            <p className="mb-1">
-              <strong>Confidence</strong> — how sure the LLM is about the impacted / not impacted verdict
-              itself, either way:
-            </p>
-            <ul className="list-disc pl-4 space-y-1">
-              <li>
-                <strong>High</strong> — impacted: a passage explicitly states the exact thing that changed.
-                Not impacted: the document is clearly about something else, nothing plausibly touched.
-              </li>
-              <li>
-                <strong>Medium</strong> — same topic either way, but nothing spells out the exact detail —
-                the verdict rests on a reasonable inference rather than a direct textual match.
-              </li>
-              <li>
-                <strong>Low</strong> — the evidence is thin either way; worth a manual double-check
-                regardless of the verdict.
-              </li>
-            </ul>
-          </InfoTooltip>
-          {isLoading && (
-            <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-              <Loader2 className="h-3 w-3 animate-spin" style={{ color: accentColor }} />
-              {loadingLabel}
-            </span>
-          )}
-        </div>
-        {!isLoading && documents.length > 0 && (
-          <button
-            onClick={handleDownloadJson}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
-            style={{ color: accentColor }}
-            onMouseEnter={e => (e.currentTarget.style.background = `${accentColor}12`)}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-            title="Download raw results as JSON"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Download JSON
-          </button>
-        )}
-      </div>
-
-      {truncated && (
-        <div className="px-5 py-2 text-xs" style={{ color: '#d97706', background: '#fffbeb' }}>
-          ⚠️ Query was truncated before hitting the index — results may be partial.
-        </div>
-      )}
-
-      <div className="p-5 max-h-[650px] overflow-y-auto text-sm">
-        {isLoading && documents.length === 0 ? (
-          <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
-            <Loader2 className="h-4 w-4 animate-spin" style={{ color: accentColor }} />
-            <span className="italic text-sm">{loadingLabel}</span>
-          </div>
-        ) : error ? (
-          <p className="text-sm" style={{ color: 'var(--color-error)' }}>{error}</p>
-        ) : documents.length === 0 ? (
-          <p className="text-sm italic text-[var(--color-text-muted)]">No potentially impacted documents found.</p>
-        ) : (
-          <div className="space-y-2.5">
-            {documents.map((doc, i) => (
-              <div
-                key={`${doc.iddoc}-${doc.ref}-${i}`}
-                className="p-3 rounded-xl border border-[var(--color-border)]/30"
-              >
-                <div className="flex items-center gap-2 flex-wrap">
-                  {doc.flag && <span title={doc.site_code ?? undefined}>{doc.flag}</span>}
-                  {doc.url ? (
-                    <a
-                      href={doc.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm font-semibold hover:underline"
-                      style={{ color: accentColor }}
-                    >
-                      {doc.ref || doc.iddoc} <ExternalLink className="inline h-3 w-3 ml-0.5" />
-                    </a>
-                  ) : (
-                    <span className="text-sm font-semibold">{doc.ref || doc.iddoc}</span>
-                  )}
-                  {doc.title && (
-                    <span className="text-xs text-[var(--color-text-muted)]">— {doc.title}</span>
-                  )}
-                  {doc.division && (
-                    <span
-                      className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase"
-                      style={{ color: accentColor, background: `${accentColor}18` }}
-                    >
-                      {doc.division}
-                    </span>
-                  )}
-                  <span
-                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase"
-                    style={{
-                      color: doc.impacted ? '#16a34a' : 'var(--color-text-muted)',
-                      background: doc.impacted ? '#16a34a18' : 'var(--color-muted)',
-                    }}
-                  >
-                    {doc.impacted ? 'Impacted' : 'Not impacted'}
-                  </span>
-                  <span className="text-xs text-[var(--color-text-muted)]">
-                    {doc.confidence && (
-                      <span style={{ color: CONFIDENCE_STYLE[doc.confidence] ?? undefined }}>{doc.confidence} confidence</span>
-                    )}
-                  </span>
-                </div>
-                {doc.reason && (
-                  <p className="text-xs mt-1 text-[var(--color-text-muted)]">
-                    {doc.impacted && doc.sections && doc.sections.length > 0 && (
-                      <strong className="text-[var(--color-text-heading)]">{doc.sections.join(', ')}: </strong>
-                    )}
-                    {doc.reason}
-                  </p>
-                )}
-                {doc.other_languages && doc.other_languages.length > 0 && (
-                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                    <span className="text-[10px] uppercase font-semibold text-[var(--color-text-muted)]">Also in:</span>
-                    {doc.other_languages.map((sib, si) => (
-                      sib.url ? (
-                        <a
-                          key={si}
-                          href={sib.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={sib.source === 'catalog' ? 'Known translation — not independently matched by this search' : 'Also matched by this search'}
-                          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium hover:underline"
-                          style={{ color: 'var(--color-text-muted)', background: 'var(--color-muted)', opacity: sib.source === 'catalog' ? 0.7 : 1 }}
-                        >
-                          {sib.flag && <span>{sib.flag}</span>}
-                          {sib.ref}
-                        </a>
-                      ) : (
-                        <span
-                          key={si}
-                          title={sib.source === 'catalog' ? 'Known translation — not independently matched by this search' : 'Also matched by this search'}
-                          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
-                          style={{ color: 'var(--color-text-muted)', background: 'var(--color-muted)', opacity: sib.source === 'catalog' ? 0.7 : 1 }}
-                        >
-                          {sib.flag && <span>{sib.flag}</span>}
-                          {sib.ref}
-                        </span>
-                      )
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// DocSummaryCard — single-document summary (independent of the diff)
-// ---------------------------------------------------------------------------
-
-function DocSummaryCard({
-  title,
-  state,
-  accentColor,
-  onDownload,
-}: {
-  title: string;
-  state: DocSummaryState;
-  accentColor: string;
-  onDownload: () => void;
-}) {
-  const { text, error, loading, noContent, meta } = state;
-  return (
-    <div className="rounded-2xl border border-[var(--color-border)]/40 bg-[var(--color-background)] shadow-sm overflow-hidden">
-      <div className="h-0.5 w-full" style={{ background: accentColor }} />
-
-      <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]/30 bg-[var(--color-bg-secondary)]/40">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${accentColor}18` }}>
-            <FileText className="h-3.5 w-3.5" style={{ color: accentColor }} />
-          </div>
-          <span className="text-sm font-semibold text-[var(--color-text-heading)]">{title}</span>
-          {loading && (
-            <span className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-              <Loader2 className="h-3 w-3 animate-spin" style={{ color: accentColor }} />
-              Summarizing…
-            </span>
-          )}
-        </div>
-        {!loading && text && (
-          <button
-            onClick={onDownload}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer"
-            style={{ color: accentColor }}
-            onMouseEnter={e => (e.currentTarget.style.background = `${accentColor}12`)}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-            title="Download as PDF"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Download PDF
-          </button>
-        )}
-      </div>
-
-      {meta?.truncated && (
-        <div className="px-5 py-2 text-xs" style={{ color: '#d97706', background: '#fffbeb' }}>
-          ⚠️ Document text was truncated before summarizing — result may be partial.
-        </div>
-      )}
-
-      <div className="p-5 max-h-[650px] overflow-y-auto text-sm leading-relaxed">
-        {loading && !text ? (
-          <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
-            <Loader2 className="h-4 w-4 animate-spin" style={{ color: accentColor }} />
-            <span className="italic text-sm">Summarizing…</span>
-          </div>
-        ) : error ? (
-          <p className="text-sm" style={{ color: 'var(--color-error)' }}>{error}</p>
-        ) : text ? (
-          <MarkdownRenderer content={text} />
-        ) : noContent ? (
-          <p className="text-sm italic text-[var(--color-text-muted)]">
-            No extractable text found in this document (e.g. a scanned page with no text layer) — nothing to summarize.
-          </p>
-        ) : (
-          <p className="text-sm italic text-[var(--color-text-muted)]">No summary yet.</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main CompareView
-// ---------------------------------------------------------------------------
+import { type ImpactResult, ImpactResultsCard } from './ImpactResults';
+import { DiffItem, DocFile, DocSummaryState, EMPTY_SUMMARY, IMPACT_MANUAL_MODE_ENABLED, ImagePair, LS_ANALYSIS, LS_ANALYSIS_STD, LS_IMPACT, LS_IMPACT_MANUAL_TEXT, LS_IMPACT_MODE, LS_MESSAGE_ID, LS_MESSAGE_ID_STD, LS_NEW_HASH, LS_NEW_PDF, LS_OLD_HASH, LS_OLD_PDF, LS_PROCESSING_METHOD, LS_SESSION_PATH, LS_STREAM_PERSIST_MS, STREAM_INTERRUPTED, computeFileHash, loadPdfFromStorage, lsSet, savePdfToStorage } from './compareShared';
+import { PdfDropZone } from './PdfDropZone';
+import { parsePartialJsonItems } from './JsonDiffTable';
+import { StructuredResultCard } from './StructuredResultCard';
+import { ResultCard } from './ResultCard';
+import { DocSummaryCard } from './DocSummaryCard';
 
 export function CompareView() {
   const [oldPdf, setOldPdf] = useState<DocFile | null>(null);
   const [newPdf, setNewPdf] = useState<DocFile | null>(null);
   const [analysis, setAnalysis] = useState('');
-  const [impact, setImpact] = useState<JudgedDoc[]>([]);
+  const [impact, setImpact] = useState<ImpactResult | null>(null);
   const [impactError, setImpactError] = useState('');
-  const [impactMeta, setImpactMeta] = useState<{
-    truncated: boolean; candidatesConsidered: number; durationS: number;
-    queriesUsed: number; queriesFailed: number;
-    inputTokens: number; outputTokens: number; totalTokens: number; costEur: number;
-  } | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isImpacting, setIsImpacting] = useState(false);
   const [_sessionPath, setSessionPath] = useState('');
@@ -1559,7 +59,12 @@ export function CompareView() {
   // Abort in-flight analysis when component unmounts (tab switch)
   const abortControllerRef = useRef<AbortController | null>(null);
   const abortControllerRefStd = useRef<AbortController | null>(null);
-  useEffect(() => () => { abortControllerRef.current?.abort(); abortControllerRefStd.current?.abort(); }, []);
+  const abortControllerRefImpact = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    abortControllerRef.current?.abort();
+    abortControllerRefStd.current?.abort();
+    abortControllerRefImpact.current?.abort();
+  }, []);
 
   useEffect(() => {
     const old = loadPdfFromStorage(LS_OLD_PDF);
@@ -1573,7 +78,7 @@ export function CompareView() {
     if (storedMidStd) setMessageIdStd(Number(storedMidStd));
     try {
       const storedImpact = localStorage.getItem(LS_IMPACT);
-      if (storedImpact) setImpact(JSON.parse(storedImpact));
+      if (storedImpact) setImpact(JSON.parse(storedImpact) as ImpactResult);
     } catch { /* ignore malformed cache */ }
     setSessionPath(localStorage.getItem(LS_SESSION_PATH) || '');
     const storedMid = localStorage.getItem(LS_MESSAGE_ID);
@@ -1618,9 +123,8 @@ export function CompareView() {
   const clearAnalysisState = () => {
     setAnalysis('');
     setAnalysisStd('');
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     setParsedJsonItems([]);
     setMessageId(null);
     setMessageIdStd(null);
@@ -1640,15 +144,14 @@ export function CompareView() {
 
   const setManualChangesTextAndPersist = (text: string) => {
     setManualChangesText(text);
-    localStorage.setItem(LS_IMPACT_MANUAL_TEXT, text);
+    lsSet(LS_IMPACT_MANUAL_TEXT, text);
   };
 
   const switchImpactMode = (mode: 'compare' | 'manual') => {
     setImpactMode(mode);
-    localStorage.setItem(LS_IMPACT_MODE, mode);
-    setImpact([]);
+    lsSet(LS_IMPACT_MODE, mode);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     localStorage.removeItem(LS_IMPACT);
   };
 
@@ -1657,9 +160,8 @@ export function CompareView() {
     setNewPdfAndPersist(null);
     setAnalysis('');
     setAnalysisStd('');
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     setSummaries({ old: EMPTY_SUMMARY, new: EMPTY_SUMMARY });
     setSessionPath('');
     setMessageId(null);
@@ -1680,9 +182,7 @@ export function CompareView() {
 
   const handleInvalidFile = (msg: string) => { toast.error(msg); setError(msg); };
 
-  // -------------------------------------------------------------------------
-  // Auto-save helpers
-  // -------------------------------------------------------------------------
+  // --- Auto-save helpers ---
 
   const autoSavePdfs = async (old: DocFile, nw: DocFile): Promise<string> => {
     try {
@@ -1691,7 +191,7 @@ export function CompareView() {
       form.append('new_file', new Blob([nw.bytes], { type: nw.mimeType }), nw.name);
       const res = await fetch('/api/compare/save', { method: 'POST', body: form });
       const data = await res.json();
-      if (data.session_path) { localStorage.setItem(LS_SESSION_PATH, data.session_path); return data.session_path; }
+      if (data.session_path) { lsSet(LS_SESSION_PATH, data.session_path); return data.session_path; }
       if (data.error) toast.warning(`Auto-save skipped: ${data.error}`);
     } catch (e) {
       toast.warning(`Auto-save unavailable: ${e instanceof Error ? e.message : String(e)}`);
@@ -1730,12 +230,14 @@ export function CompareView() {
       .catch(() => { /* best-effort — not critical */ });
   };
 
-  const autoSavePdf = (path: string, markdownText: string, title: string) => {
+  const autoSavePdf = (path: string, markdownText: string, oldName: string, newName: string) => {
     if (!path || !markdownText.trim()) return;
     const form = new FormData();
     form.append('session_path', path);
     form.append('markdown_text', markdownText);
-    form.append('title', title);
+    form.append('title', newName.replace(/\.[^.]+$/, '') || 'Change summary');
+    form.append('old_name', oldName);
+    form.append('new_name', newName);
     form.append('filename', 'analysis');
     fetch('/api/compare/save-pdf', { method: 'POST', body: form })
       .then(r => r.json())
@@ -1743,9 +245,7 @@ export function CompareView() {
       .catch(() => { /* best-effort — not critical */ });
   };
 
-  // -------------------------------------------------------------------------
-  // History helpers
-  // -------------------------------------------------------------------------
+  // --- History helpers ---
 
   const saveToHistory = async (
     oldName: string,
@@ -1800,26 +300,56 @@ export function CompareView() {
     // matching track (structured = Change Table, everything else = Change
     // Summary) and leave the other track untouched.
     const method = entry.processing_method || '';
+    // The other track and the impact results stay only if they belong to the
+    // same two files; otherwise they would sit next to this entry's file names
+    // (and feed the next impact search) while describing another comparison.
+    const entryOldHash = entry.old_file_hash || '';
+    const entryNewHash = entry.new_file_hash || '';
+    const samePair = !!entryOldHash && entryOldHash === oldFileHash && entryNewHash === newFileHash;
     setError('');
-    setOldFileHash('');
-    setNewFileHash('');
-    localStorage.removeItem(LS_OLD_HASH);
-    localStorage.removeItem(LS_NEW_HASH);
+    // The impact result saved with this entry, if a search was run on it.
+    let savedImpact: ImpactResult | null = null;
+    try {
+      const parsed = entry.impact_text ? JSON.parse(entry.impact_text) : null;
+      if (parsed && Array.isArray(parsed.changes) && Array.isArray(parsed.documents)) savedImpact = parsed;
+    } catch { /* older entries hold plain text or nothing */ }
+    setImpact(savedImpact);
+    setImpactError('');
+    if (savedImpact) lsSet(LS_IMPACT, entry.impact_text || '');
+    else localStorage.removeItem(LS_IMPACT);
+    setOldFileHash(entryOldHash);
+    setNewFileHash(entryNewHash);
+    lsSet(LS_OLD_HASH, entryOldHash);
+    lsSet(LS_NEW_HASH, entryNewHash);
     setSessionPath(entry.volume_session_path || '');
-    localStorage.setItem(LS_SESSION_PATH, entry.volume_session_path || '');
+    lsSet(LS_SESSION_PATH, entry.volume_session_path || '');
+    if (!samePair) {
+      if (method === 'structured') {
+        setAnalysisStd('');
+        setMessageIdStd(null);
+        localStorage.removeItem(LS_ANALYSIS_STD);
+        localStorage.removeItem(LS_MESSAGE_ID_STD);
+      } else {
+        setAnalysis('');
+        setParsedJsonItems([]);
+        setMessageId(null);
+        localStorage.removeItem(LS_ANALYSIS);
+        localStorage.removeItem(LS_MESSAGE_ID);
+      }
+    }
 
     if (method === 'structured') {
       setParsedJsonItems(entry.analysis_text ? parsePartialJsonItems(entry.analysis_text) : []);
       setAnalysis(entry.analysis_text || '');
       setMessageId(entry.id);
-      localStorage.setItem(LS_PROCESSING_METHOD, method);
-      localStorage.setItem(LS_ANALYSIS, entry.analysis_text || '');
-      localStorage.setItem(LS_MESSAGE_ID, String(entry.id));
+      lsSet(LS_PROCESSING_METHOD, method);
+      lsSet(LS_ANALYSIS, entry.analysis_text || '');
+      lsSet(LS_MESSAGE_ID, String(entry.id));
     } else {
       setAnalysisStd(entry.analysis_text || '');
       setMessageIdStd(entry.id);
-      localStorage.setItem(LS_ANALYSIS_STD, entry.analysis_text || '');
-      localStorage.setItem(LS_MESSAGE_ID_STD, String(entry.id));
+      lsSet(LS_ANALYSIS_STD, entry.analysis_text || '');
+      lsSet(LS_MESSAGE_ID_STD, String(entry.id));
     }
 
     // Show filename placeholders immediately (no bytes — display only, not persisted to localStorage)
@@ -1880,17 +410,14 @@ export function CompareView() {
     toast.success(`Loaded: ${entry.old_filename} → ${entry.new_filename}`);
   };
 
-  // -------------------------------------------------------------------------
-  // Analyze
-  // -------------------------------------------------------------------------
+  // --- Analyze ---
 
   const handleAnalyzeStructured = async (forceRefresh = false) => {
     if (!oldPdf || !newPdf) return;
     setError('');
     setAnalysis('');
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     setSessionPath('');
     setMessageId(null);
     setParsedJsonItems([]);
@@ -1910,8 +437,8 @@ export function CompareView() {
     ]);
     setOldFileHash(ohash);
     setNewFileHash(nhash);
-    localStorage.setItem(LS_OLD_HASH, ohash);
-    localStorage.setItem(LS_NEW_HASH, nhash);
+    lsSet(LS_OLD_HASH, ohash);
+    lsSet(LS_NEW_HASH, nhash);
 
     let currentSession = '';
 
@@ -1946,6 +473,8 @@ export function CompareView() {
       let localImageContext: ImagePair[] = [];
       let llmRequestId: number | null = null;
       let streamDone = false;
+      let lastPersist = 0;
+      let hadWarning = false;
       while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -1963,13 +492,16 @@ export function CompareView() {
               if (firstTokenTime === null) firstTokenTime = Date.now();
               accumulated += event.delta;
               setAnalysis(accumulated);
-              localStorage.setItem(LS_ANALYSIS, accumulated);
+              if (Date.now() - lastPersist > LS_STREAM_PERSIST_MS) {
+                lsSet(LS_ANALYSIS, accumulated);
+                lastPersist = Date.now();
+              }
               setParsedJsonItems(parsePartialJsonItems(accumulated));
             } else if (event.type === 'metadata') {
               fileType = event.file_type || '';
               setCurrentFileType(fileType);
               processingMethod = event.method || 'structured';
-              localStorage.setItem(LS_PROCESSING_METHOD, processingMethod);
+              lsSet(LS_PROCESSING_METHOD, processingMethod);
               llmRequestId = event.llm_request_id ?? null;
               if (event.cached) {
                 isCached = true;
@@ -1980,6 +512,7 @@ export function CompareView() {
               localImageContext = event.images || [];
               setImageContext(localImageContext);
             } else if (event.type === 'warning') {
+              hadWarning = true;
               toast.warning(event.detail || 'The report may be incomplete.');
             } else if (event.type === 'usage') {
               usageData = event;
@@ -1992,16 +525,20 @@ export function CompareView() {
         if (sseError) throw new Error(sseError);
       }
 
-      localStorage.setItem(LS_ANALYSIS, accumulated);
+      lsSet(LS_ANALYSIS, accumulated);
       setParsedJsonItems(parsePartialJsonItems(accumulated));
+      // The stream closed without its end marker: the gateway cut it. What we
+      // have is a partial report — keep it on screen, but never save it as the
+      // result for this file pair (it would then be served from cache to everyone).
+      if (!streamDone) throw new Error(STREAM_INTERRUPTED);
 
       if (isCached && cachedMessageId !== null) {
         // Result from DB cache — reuse the original session folder
         setMessageId(cachedMessageId);
-        localStorage.setItem(LS_MESSAGE_ID, String(cachedMessageId));
+        lsSet(LS_MESSAGE_ID, String(cachedMessageId));
         if (cachedSessionPath) {
           setSessionPath(cachedSessionPath);
-          localStorage.setItem(LS_SESSION_PATH, cachedSessionPath);
+          lsSet(LS_SESSION_PATH, cachedSessionPath);
         }
         toast.info('Result retrieved from cache');
       } else {
@@ -2018,13 +555,16 @@ export function CompareView() {
           await autoSaveResult(currentSession, 'analysis.md', accumulated);
           autoSaveExcel(currentSession, accumulated, fileType, localImageContext);
         }
+        // A report that came with a warning (output cut at the token limit,
+        // unreadable document, truncated diff) is saved without hashes: the
+        // cache replays the text only, so the warning would be lost next time.
         const mid = await saveToHistory(
-          oldPdf.name, newPdf.name, accumulated, '', currentSession, ohash, nhash,
+          oldPdf.name, newPdf.name, accumulated, '', currentSession, hadWarning ? '' : ohash, hadWarning ? '' : nhash,
           fileType, processingMethod, 'structured', ttftS, generationS, usageData, llmRequestId,
         );
         if (mid !== null) {
           setMessageId(mid);
-          localStorage.setItem(LS_MESSAGE_ID, String(mid));
+          lsSet(LS_MESSAGE_ID, String(mid));
         }
       }
     } catch (err) {
@@ -2050,9 +590,8 @@ export function CompareView() {
     if (!oldPdf || !newPdf) return;
     setError('');
     setAnalysisStd('');
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     setSessionPath('');
     setMessageIdStd(null);
     setIsAnalyzingStd(true);
@@ -2069,8 +608,8 @@ export function CompareView() {
     ]);
     setOldFileHash(ohash);
     setNewFileHash(nhash);
-    localStorage.setItem(LS_OLD_HASH, ohash);
-    localStorage.setItem(LS_NEW_HASH, nhash);
+    lsSet(LS_OLD_HASH, ohash);
+    lsSet(LS_NEW_HASH, nhash);
 
     let currentSession = '';
 
@@ -2102,6 +641,8 @@ export function CompareView() {
       let cachedSessionPath = '';
       let llmRequestId: number | null = null;
       let streamDone = false;
+      let lastPersist = 0;
+      let hadWarning = false;
       while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -2119,7 +660,10 @@ export function CompareView() {
               if (firstTokenTime === null) firstTokenTime = Date.now();
               accumulated += event.delta;
               setAnalysisStd(accumulated);
-              localStorage.setItem(LS_ANALYSIS_STD, accumulated);
+              if (Date.now() - lastPersist > LS_STREAM_PERSIST_MS) {
+                lsSet(LS_ANALYSIS_STD, accumulated);
+                lastPersist = Date.now();
+              }
             } else if (event.type === 'metadata') {
               fileType = event.file_type || '';
               setCurrentFileType(fileType);
@@ -2130,6 +674,7 @@ export function CompareView() {
                 cachedSessionPath = event.session_path ?? '';
               }
             } else if (event.type === 'warning') {
+              hadWarning = true;
               toast.warning(event.detail || 'The report may be incomplete.');
             } else if (event.type === 'usage') {
               usageData = event;
@@ -2142,14 +687,15 @@ export function CompareView() {
         if (sseError) throw new Error(sseError);
       }
 
-      localStorage.setItem(LS_ANALYSIS_STD, accumulated);
+      lsSet(LS_ANALYSIS_STD, accumulated);
+      if (!streamDone) throw new Error(STREAM_INTERRUPTED);
 
       if (isCached && cachedMessageId !== null) {
         setMessageIdStd(cachedMessageId);
-        localStorage.setItem(LS_MESSAGE_ID_STD, String(cachedMessageId));
+        lsSet(LS_MESSAGE_ID_STD, String(cachedMessageId));
         if (cachedSessionPath) {
           setSessionPath(cachedSessionPath);
-          localStorage.setItem(LS_SESSION_PATH, cachedSessionPath);
+          lsSet(LS_SESSION_PATH, cachedSessionPath);
         }
         toast.info('Result retrieved from cache');
       } else {
@@ -2162,16 +708,15 @@ export function CompareView() {
         }
         if (currentSession) {
           await autoSaveResult(currentSession, 'analysis.md', accumulated);
-          const docTitle = `${oldPdf.name} vs ${newPdf.name}`;
-          autoSavePdf(currentSession, accumulated, docTitle);
+          autoSavePdf(currentSession, accumulated, oldPdf.name, newPdf.name);
         }
         const mid = await saveToHistory(
-          oldPdf.name, newPdf.name, accumulated, '', currentSession, ohash, nhash,
+          oldPdf.name, newPdf.name, accumulated, '', currentSession, hadWarning ? '' : ohash, hadWarning ? '' : nhash,
           fileType, 'standard', 'standard', ttftS, generationS, usageData, llmRequestId,
         );
         if (mid !== null) {
           setMessageIdStd(mid);
-          localStorage.setItem(LS_MESSAGE_ID_STD, String(mid));
+          lsSet(LS_MESSAGE_ID_STD, String(mid));
         }
       }
     } catch (err) {
@@ -2208,43 +753,81 @@ export function CompareView() {
   const handleImpact = async (forceRefresh = false) => {
     if (!changesTextForImpact) return;
     setIsImpacting(true);
-    setImpact([]);
+    setImpact(null);
     setImpactError('');
-    setImpactMeta(null);
     localStorage.removeItem(LS_IMPACT);
     try {
+      const manual = effectiveImpactMode === 'manual';
+      const controller = new AbortController();
+      abortControllerRefImpact.current = controller;
       const res = await fetch('/api/compare/impact', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           changes_text: changesTextForImpact,
           // Link the impact_requests audit row back to this comparison's messages row
           // — also the cache key the server looks up unless force_refresh is set.
           // No comparison ran in manual mode, so no hash to key the cache on.
-          old_file_hash: effectiveImpactMode === 'manual' ? '' : (oldFileHash || ''),
-          new_file_hash: effectiveImpactMode === 'manual' ? '' : (newFileHash || ''),
+          old_file_hash: manual ? '' : (oldFileHash || ''),
+          new_file_hash: manual ? '' : (newFileHash || ''),
+          // The compared document itself would be the top hit — the server drops it.
+          old_file_name: manual ? '' : (oldPdf?.name || ''),
+          new_file_name: manual ? '' : (newPdf?.name || ''),
           force_refresh: forceRefresh,
         }),
       });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `Server error: ${res.status}`);
-      const docs: JudgedDoc[] = data.documents ?? [];
-      setImpact(docs);
-      setImpactMeta({
-        truncated: !!data.truncated,
-        candidatesConsidered: data.candidates_considered ?? 0,
-        durationS: data.duration_s ?? 0,
-        queriesUsed: data.queries_used ?? 0,
-        queriesFailed: data.queries_failed ?? 0,
-        inputTokens: data.usage?.input_tokens ?? 0,
-        outputTokens: data.usage?.output_tokens ?? 0,
-        totalTokens: data.usage?.total_tokens ?? 0,
-        costEur: data.usage?.cost_eur ?? 0,
-      });
-      if (data.cached) toast.info('Result retrieved from cache');
-      else if (data.no_changes) toast.info('Analysis reported no substantive changes — nothing to judge.');
-      localStorage.setItem(LS_IMPACT, JSON.stringify(docs));
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Server error: ${res.status}`);
+      }
+      // NDJSON stream: plan → one document per judged candidate → done | error.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let current: ImpactResult | null = null;
+      const handleEvent = (ev: Record<string, unknown>) => {
+        if (ev.type === 'error') throw new Error(String(ev.error));
+        if (ev.type === 'plan') {
+          current = { ...(ev as unknown as ImpactResult), documents: [], done: false };
+        } else if (ev.type === 'document' && current) {
+          current = { ...current, documents: [...current.documents, ev.document as ImpactResult['documents'][number]] };
+        } else if (ev.type === 'done' && current) {
+          current = {
+            ...current, done: true, usage: ev.usage as ImpactResult['usage'], duration_s: ev.duration_s as number,
+            impact_request_id: (ev.impact_request_id as number | null) ?? null,
+          };
+        }
+        setImpact(current);
+      };
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (value) buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) if (line.trim()) handleEvent(JSON.parse(line));
+        if (done) break;
+      }
+      if (buffer.trim()) handleEvent(JSON.parse(buffer));
+      const final = current as ImpactResult | null;
+      if (!final?.done) throw new Error('The search was interrupted before it finished.');
+      if (final.cached) toast.info('Result retrieved from cache');
+      else if (final.no_changes) toast.info('Analysis reported no substantive changes — nothing to judge.');
+      lsSet(LS_IMPACT, JSON.stringify(final));
+      // Kept with the comparison it was run on, so reopening the history entry shows it again.
+      const historyId = manual ? null : (analysis ? messageId : messageIdStd);
+      if (historyId !== null && !final.no_changes) {
+        fetch(`/api/history/${historyId}/impact`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ impact_json: JSON.stringify(final) }),
+        }).catch(() => { /* best-effort — the result stays on screen and in the server cache */ });
+      }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        toast.info('Impact search cancelled.');
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       setImpactError(msg);
       toast.error(`Impact search failed: ${msg}`);
@@ -2303,22 +886,17 @@ export function CompareView() {
     const text = summaries[which].text;
     if (!doc || !text) return;
     const base = doc.name.replace(/\.[^.]+$/, '') || 'document';
-    const form = new FormData();
-    form.append('markdown_text', text);
-    form.append('title', `Summary — ${doc.name}`);
-    form.append('filename', `summary_${base}`);
     try {
-      const res = await fetch('/api/compare/export-pdf', { method: 'POST', body: form });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        toast.error(`PDF export failed: ${err.error ?? res.statusText}`);
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `summary_${base}.pdf`; a.click();
-      URL.revokeObjectURL(url);
+      await downloadPdf({
+        kind: 'document_summary',
+        title: base,
+        filename: `summary_${base}`,
+        meta: [
+          { label: 'File', value: doc.name },
+          { label: 'Version', value: which === 'old' ? 'Original (A)' : 'Revised (B)' },
+        ],
+        sections: [{ markdown: text }],
+      });
     } catch (e) {
       toast.error(`PDF export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -2332,9 +910,7 @@ export function CompareView() {
   const accentAmber  = '#d97706';
   const accentGreen  = '#16a34a';
 
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
+  // --- Render ---
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-10 space-y-8">
@@ -2667,23 +1243,18 @@ export function CompareView() {
                 content={analysisStd}
                 isStreaming={isAnalyzingStd}
                 onDownload={async () => {
-                  const base = newPdf?.name.replace(/\.[^.]+$/, '') ?? 'document';
-                  const form = new FormData();
-                  form.append('markdown_text', analysisStd);
-                  form.append('title', `Analysis — ${base}`);
-                  form.append('filename', `analysis_${base}`);
+                  const base = newPdf?.name.replace(/\.[^.]+$/, '') || 'document';
                   try {
-                    const res = await fetch('/api/compare/export-pdf', { method: 'POST', body: form });
-                    if (!res.ok) {
-                      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-                      toast.error(`PDF export failed: ${err.error ?? res.statusText}`);
-                      return;
-                    }
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url; a.download = `analysis_${base}.pdf`; a.click();
-                    URL.revokeObjectURL(url);
+                    await downloadPdf({
+                      kind: 'change_summary',
+                      title: base,
+                      filename: `change_summary_${base}`,
+                      meta: [
+                        { label: 'Original (A)', value: oldPdf?.name ?? '' },
+                        { label: 'Revised (B)', value: newPdf?.name ?? '' },
+                      ],
+                      sections: [{ markdown: analysisStd }],
+                    });
                   } catch (e) {
                     toast.error(`PDF export failed: ${e instanceof Error ? e.message : String(e)}`);
                   }
@@ -2813,7 +1384,17 @@ export function CompareView() {
             {isImpacting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
             {isImpacting ? 'Judging…' : 'Judge Impacted Docs'}
           </button>
-          {impact.length > 0 && !isImpacting && (
+          {isImpacting && (
+            <button
+              onClick={() => abortControllerRefImpact.current?.abort()}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 border cursor-pointer"
+              style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-body)' }}
+            >
+              <Square className="h-3.5 w-3.5" />
+              Cancel
+            </button>
+          )}
+          {impact?.done && !isImpacting && (
             <button
               onClick={() => handleImpact(true)}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 border cursor-pointer"
@@ -2829,18 +1410,18 @@ export function CompareView() {
         </div>
       )}
 
-      {(impact.length > 0 || isImpacting || impactError) && (
-        <div className="grid grid-cols-1 gap-4">
-          <ImpactedDocsCard
-            title="Impacted Docs"
-            documents={impact}
-            isLoading={isImpacting}
-            loadingLabel="Judging…"
-            error={impactError}
-            truncated={impactMeta?.truncated}
-            accentColor={accentAmber}
-          />
-        </div>
+      {(impact || isImpacting || impactError) && (
+        <ImpactResultsCard
+          result={impact}
+          isLoading={isImpacting}
+          error={impactError}
+          accentColor={accentAmber}
+          changeTableShown={parsedJsonItems.length > 0 && !isAnalyzing}
+          messageId={analysis ? messageId : messageIdStd}
+          oldFileHash={oldFileHash}
+          newFileHash={newFileHash}
+          exportName={`impact_${(newPdf?.name || oldPdf?.name || 'search').replace(/\.[^.]+$/, '')}`}
+        />
       )}
     </div>
   );

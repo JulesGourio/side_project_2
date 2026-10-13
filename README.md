@@ -22,8 +22,8 @@ Which model does what:
 | Step | Model / endpoint | Configured via | Role |
 |---|---|---|---|
 | Compare — diff analysis (Change Summary / Change Table) | `databricks-claude-sonnet-4-6` | `COMPARE_ANALYSIS_ENDPOINT` | Identifies substantive content changes between two document versions |
-| Compare — impact search retrieval | Vector Search index `chunks_index_v1` (Databricks-managed embeddings) | `COMPARE_IMPACT_INDEX` | Multi-query retrieval over the full knowledge base, one focused query per derived change |
-| Compare — impact search judgment | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` | Judges each retrieved candidate `impacted: true/false` + a 2-4 sentence reason |
+| Compare — impact search retrieval | Vector Search index `chunks_full_index_v1` (all documents, pre-2018 archive included; `chunks_index_v1` until it is built) | `COMPARE_IMPACT_INDEX` | One query per reported change |
+| Compare — impact search judgment | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` | One call per candidate document: verdict, reason, every conflicting passage with a verbatim quote |
 | Compare — per-document summary (text) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT` | Summarizes one uploaded document (old or new) on its own, independent of the diff |
 | Compare — per-document summary (image) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_IMAGE_ENDPOINT` | Same feature, routed to a vision model for image files |
 | Chat — conversational agent | Databricks Knowledge Assistant (`ka-*-endpoint`, one per division) | `CHAT_ENDPOINT` / `_ALL` / `_AS` / `_IS` | Owns its own retrieval + answer synthesis internally |
@@ -42,8 +42,24 @@ pipeline.
 
 Both tabs share the same capability-gating pattern (`can_compare`/
 `can_chat` on the `users` Lakebase table, synced by
-`utils/databricks_ops/user_capabilities/sync_user_capabilities.py`) and the
+`utils/user_capabilities/sync_user_capabilities.py`) and the
 same app shell (`client/src/App.tsx`, `TopBar.tsx`).
+
+### Server layout
+
+```
+server/
+  app.py, tracing.py
+  routers/            one file per API area (chat, compare, history, feedback, exports, preview, config, health)
+  services/
+    chat/             engine.py (the chat), llm.py (answer model calls), prompts.py (prompt files), turn_log.py, mlflow_turns.py (one MLflow trace per turn), translation_bridge.py
+    compare/          processors/ (one per file type), chunked_analysis, impact_queries, summarize, conversion, soffice, export_helpers
+    infra/            lakebase, user, vector_search, vs_gate, doc_catalog, streaming (shared LLM streaming and cost), error_origin, pdf_report (PDF exports of chat and compare)
+  prompts/chat/       every chatbot prompt as a file: system/{base,all,as,is}.md, rewrite.md, language_reminder*.md
+  config/             processors.yml (file type -> processor versions)
+  data/               doc_catalog.json (fallback), lid.176.ftz (language id model)
+  assets/fonts/       Inter (SIL OFL) for the PDF exports
+```
 
 ## Local development
 
@@ -62,10 +78,10 @@ needed to iterate.
    COMPARE_ANALYSIS_ENDPOINT=databricks-claude-sonnet-4-6
    COMPARE_IMPACT_INDEX=uat_landingzone.qualibot.chunks_index_v1
    COMPARE_IMPACT_ENDPOINT=databricks-gpt-5-6-luna
-   COMPARE_IMPACT_NUM_RESULTS=30
-   COMPARE_IMPACT_MAX_CANDIDATES=8
-   COMPARE_IMPACT_MAX_QUERY_CHARS=6000
-   COMPARE_IMPACT_MAX_TOKENS=3500
+   COMPARE_IMPACT_MAX_QUERIES=30
+   COMPARE_IMPACT_PER_QUERY_RESULTS=40
+   COMPARE_IMPACT_MAX_CANDIDATES=25
+   COMPARE_IMPACT_MAX_TOKENS=1500
    COMPARE_SUMMARY_ENDPOINT=databricks-gpt-5-6-luna
    COMPARE_SUMMARY_IMAGE_ENDPOINT=databricks-gpt-5-6-luna
    COMPARE_SUMMARY_MAX_CHARS=300000
@@ -87,7 +103,7 @@ needed to iterate.
    blocked on the corporate wifi, but not necessarily on other networks (VPN,
    home). Rather than hardcoding "local never connects" via an empty
    `LAKEBASE_PROJECT_ID`, the connection now has a short timeout
-   (`LAKEBASE_CONNECT_TIMEOUT_S`, default 5s — see `server/services/lakebase.py`)
+   (`LAKEBASE_CONNECT_TIMEOUT_S`, default 5s — see `server/services/infra/lakebase.py`)
    — so it's safe to always set real values: when the port is reachable you
    get full history/job persistence locally for free; when it's blocked, it
    fails fast (a few seconds at startup, not asyncpg's 60s default) into the
@@ -146,6 +162,7 @@ databricks auth login --host <prod-host> --profile PROD
 ### Deploy
 
 ```powershell
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev        # DEV (copy of UAT, see operations_dev.md)
 .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat        # UAT (qualibot-uat)
 .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test   # UAT — disposable test app (qualibot-uat-test)
 .\utils\deploy\deploy_qualibot.ps1 -AppEnv prod       # PROD
@@ -157,6 +174,7 @@ By default the script builds the React frontend (`bun run build`), writes the pe
 
 | Env      | Databricks target      | Profile | Workspace                                        |
 |----------|-------------------------|---------|---------------------------------------------------|
+| DEV      | `dev`                   | `DEV`   | `https://dbc-c623749d-731b.cloud.databricks.com`   |
 | UAT      | `qualibot-uat`          | `UAT`   | `https://dbc-3a17bfce-9e88.cloud.databricks.com`   |
 | UAT-TEST | `qualibot-uat-test`     | `UAT`   | `https://dbc-3a17bfce-9e88.cloud.databricks.com`   |
 | PROD     | `qualibot-prod`         | `PROD`  | TBD                                                |
@@ -167,15 +185,15 @@ By default the script builds the React frontend (`bun run build`), writes the pe
 
 ### Copy Lakebase UAT tables to a local dev catalog
 
-The local machine can't reach Lakebase directly (port 5432 is blocked). Run the export as a Databricks job first, then pull it locally — one-time setup (`psycopg2-binary`, proxy cert flag) and the `--direct` option are documented in [`utils/databricks_ops/lakebase_sync/README.md`](utils/databricks_ops/lakebase_sync/README.md):
+The local machine can't reach Lakebase directly (port 5432 is blocked). Run the export as a Databricks job first, then pull it locally — one-time setup (`psycopg2-binary`, proxy cert flag) and the `--direct` option are documented in [`utils/lakebase_sync/README.md`](utils/lakebase_sync/README.md):
 
 ```powershell
 # 1. Import + run the export notebook as a one-off job on UAT (serverless compute)
-databricks workspace import //Users/<you>/export_lakebase_uat_to_volume --profile UAT --file utils\databricks_ops\lakebase_sync\export_lakebase_uat_to_volume.py --format SOURCE --language PYTHON --overwrite
+databricks workspace import //Users/<you>/export_lakebase_uat_to_volume --profile UAT --file utils\lakebase_sync\export_lakebase_uat_to_volume.py --format SOURCE --language PYTHON --overwrite
 databricks jobs submit --profile UAT --json '{"tasks":[{"task_key":"export","notebook_task":{"notebook_path":"/Users/<you>/export_lakebase_uat_to_volume","source":"WORKSPACE"}}]}'
 
 # 2. Pull the exported JSON and push it into dev_landingzone.qualibot
-python utils\databricks_ops\lakebase_sync\copy_Lakebase_tables.py
+python utils\lakebase_sync\copy_Lakebase_tables.py
 ```
 
 ### Compare diff-engine evaluation

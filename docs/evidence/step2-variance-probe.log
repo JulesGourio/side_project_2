@@ -1,0 +1,67 @@
+2026/10/06 20:05:53 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at /Users/mehdi.lamrani/code/Qualibot/.venv/lib/python3.11/site-packages/mlflow/assistant/skills/instrumenting-with-mlflow-tracing/SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+=== 'Quel est le processus de qualification pour faire de la peinture?' — golden document watched: IF20016
+module #1  24.1s retrieved=True  cited=False fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['NS1878', 'Q0196QP', 'Q0257F', 'Q0356MI', 'Q0674MI']
+module #2  23.5s retrieved=True  cited=True  fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['IF20016', 'NS1878', 'Q0196QP', 'Q0257F', 'Q0674MI']
+module #3  23.9s retrieved=True  cited=False fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['NS1878', 'Q0196QP', 'Q0257F', 'Q0674MI']
+module #4  27.9s retrieved=True  cited=False fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['NS1878', 'Q0196QP', 'Q0257F', 'Q0674MI']
+module #5  31.0s retrieved=True  cited=True  fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['IF20016', 'NS1878', 'Q0196QP', 'Q0257F', 'Q0674MI']
+module TOTAL IF20016: retrieved 5/5, cited 2/5
+v0     #1  25.3s retrieved=True  cited=False fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['NS1878', 'Q0196QP', 'Q0257F', 'Q0674MI']
+v0     #2  24.8s retrieved=True  cited=False fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['NS1878', 'Q0196QP', 'Q0257F', 'Q0674MI']
+v0     #3  21.1s retrieved=True  cited=False fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['NS1878', 'Q0196QP', 'Q0257F', 'Q0674MI']
+v0     #4  23.7s retrieved=True  cited=True  fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['IF20016', 'NS1878', 'Q0196QP', 'Q0257F', 'Q0674MI']
+v0     #5  29.0s retrieved=True  cited=True  fr_query='Quel est le processus de qualification pour effectuer des opérations de peinture ?'
+          retrieved=['Q0196QP', 'VA1160', 'VA1170', 'Q0674MI', 'IF20016', 'IF20016', 'P0053MI', 'MOP', 'NS1878', 'MI1191']
+          cited=['IF20016', 'NS1878', 'Q0196QP', 'Q0257F', 'Q0674MI']
+v0     TOTAL IF20016: retrieved 5/5, cited 2/5
+=== 'Trouve moi le template du CMP' — golden document watched: NF10065
+module #1   9.3s retrieved=False cited=True  fr_query='Template du CMP'
+          retrieved=['NF10442', 'MI13906', 'E0059MM', 'IQ1981961', 'MI13937', 'NF10468', 'NF10891', 'NF10468', 'MI13936', 'MI13938']
+          cited=['E0059MM', 'NF10065']
+module #2  12.1s retrieved=False cited=False fr_query='Template du CMP Latécoère'
+          retrieved=['NF10442', 'DGL1062', 'MI13906', 'IQ1981961', 'MI14009', 'MI13937', 'NF10449', 'NF10468', 'NF10468', 'QP1103', 'NF10442', 'NF10891', 'MI13936', 'MI13938', 'MI13967']
+          cited=['MI13906']
+module #3  10.8s retrieved=False cited=False fr_query='Template du CMP Latécoère'
+          retrieved=['NF10442', 'DGL1062', 'MI13906', 'IQ1981961', 'MI14009', 'MI13937', 'NF10449', 'NF10468', 'NF10468', 'QP1103', 'NF10442', 'NF10891', 'MI13936', 'MI13938', 'MI13967']
+          cited=['MI13906', 'MI13937', 'MI13938']
+module #4   7.3s retrieved=False cited=True  fr_query='Template du CMP'
+          retrieved=['NF10442', 'MI13906', 'E0059MM', 'IQ1981961', 'MI13937', 'NF10468', 'NF10891', 'NF10468', 'MI13936', 'MI13938']
+          cited=['E0059MM', 'NF10065']
+module #5  11.1s retrieved=False cited=False fr_query='Template du CMP Latécoère'
+          retrieved=['NF10442', 'DGL1062', 'MI13906', 'IQ1981961', 'MI14009', 'MI13937', 'NF10449', 'NF10468', 'NF10468', 'QP1103', 'NF10442', 'NF10891', 'MI13936', 'MI13938', 'MI13967']
+          cited=['MI13906', 'MI13938']
+module TOTAL NF10065: retrieved 0/5, cited 2/5
+v0     #1  16.3s retrieved=False cited=False fr_query='Template du CMP Latécoère'
+          retrieved=['NF10442', 'DGL1062', 'MI13906', 'IQ1981961', 'MI14009', 'MI13937', 'NF10449', 'NF10468', 'NF10468', 'QP1103', 'NF10442', 'NF10891', 'MI13936', 'MI13938', 'MI13967']
+          cited=['NF10442']
+v0     #2  15.9s retrieved=False cited=False fr_query='Template du CMP Latécoère'
+          retrieved=['NF10442', 'DGL1062', 'MI13906', 'IQ1981961', 'MI14009', 'MI13937', 'NF10449', 'NF10468', 'NF10468', 'QP1103', 'NF10442', 'NF10891', 'MI13936', 'MI13938', 'MI13967']
+          cited=['NF10442']
+v0     #3   7.0s retrieved=False cited=True  fr_query='Template du CMP'
+          retrieved=['NF10442', 'MI13906', 'E0059MM', 'IQ1981961', 'MI13937', 'NF10468', 'NF10891', 'NF10468', 'MI13936', 'MI13938']
+          cited=['E0059MM', 'NF10065']
+v0     #4   8.5s retrieved=False cited=True  fr_query='Template du CMP'
+          retrieved=['NF10442', 'MI13906', 'E0059MM', 'IQ1981961', 'MI13937', 'NF10468', 'NF10891', 'NF10468', 'MI13936', 'MI13938']
+          cited=['E0059MM', 'NF10065']
+v0     #5  16.6s retrieved=False cited=False fr_query='Template du CMP Latécoère'
+          retrieved=['NF10442', 'DGL1062', 'MI13906', 'IQ1981961', 'MI14009', 'MI13937', 'NF10449', 'NF10468', 'NF10468', 'QP1103', 'NF10442', 'NF10891', 'MI13936', 'MI13938', 'MI13967']
+          cited=['NF10442']
+v0     TOTAL NF10065: retrieved 0/5, cited 2/5

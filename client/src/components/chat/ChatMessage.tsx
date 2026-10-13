@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ThumbsUp, ThumbsDown, CheckCircle2, Send, User, Bot, FileText, Download } from 'lucide-react';
 import { MarkdownRenderer, type CitationMap } from '@/components/shared/MarkdownRenderer';
 import { Flag } from '@/components/shared/Flag';
-import { downloadAsPdf } from '@/lib/downloadAsPdf';
+import { toast } from 'sonner';
+import { downloadPdf, type PdfSection, type PdfSource } from '@/lib/exportPdf';
 
 export interface Source {
   title: string;
@@ -11,6 +12,27 @@ export interface Source {
   // inline (⟦n⟧ in the text); prose-only sources re-surfaced from the catalog
   // have no number and render as a plain REF chip.
   n?: number;
+  // From the document catalog at answer time: Intraqual title, current revision and its date (ISO).
+  doc_title?: string;
+  revision?: string;
+  doc_date?: string;
+}
+
+// "Version B (11/10/2024)", "Version B", "11/10/2024" or '' — the same wording the answer model uses.
+export function versionLabel(src: Source): string {
+  const date = src.doc_date ? new Date(src.doc_date).toLocaleDateString('en-GB') : '';
+  if (src.revision) return date ? `Version ${src.revision} (${date})` : `Version ${src.revision}`;
+  return date;
+}
+
+// One line per source for the downloads, cited ones first in their [n] order (the numbers of the text).
+function sourcesMarkdown(sources: Source[] | undefined): string {
+  if (!sources?.length) return '';
+  const cited = sources.filter(s => s.n != null).sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
+  const others = sources.filter(s => s.n == null);
+  const line = (s: Source) => [s.n != null ? `[${s.n}] ${s.title}` : s.title, s.doc_title, versionLabel(s), s.url]
+    .filter(Boolean).join(' — ');
+  return `\n\n**Sources**\n\n${[...cited, ...others].map(s => `- ${line(s)}`).join('\n')}`;
 }
 
 export interface Feedback {
@@ -32,9 +54,7 @@ export interface Message {
   feedback?: Feedback | null;
 }
 
-// ---------------------------------------------------------------------------
-// Download utilities
-// ---------------------------------------------------------------------------
+// --- Download utilities ---
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -57,6 +77,66 @@ function downloadAsMarkdown(content: string, filename: string) {
 
 
 
+// PDF sources: cited ones first in their [n] order, then the others; REF linked, details after it.
+function pdfSources(sources: Source[] | undefined): PdfSource[] {
+  return [...(sources ?? [])]
+    .sort((a, b) => (a.n ?? Infinity) - (b.n ?? Infinity))
+    .map(s => ({
+      title: s.title, url: s.url, n: s.n,
+      detail: [s.doc_title, versionLabel(s)].filter(Boolean).join(' · '),
+    }));
+}
+
+function answerSection(msg: Message, question?: string): PdfSection {
+  return { markdown: stripCiteMarkers(msg.content), question, sources: pdfSources(msg.sources) };
+}
+
+// The user question an answer replies to: the closest user message before it.
+function questionFor(message: Message, messages: Message[]): string | undefined {
+  const idx = messages.findIndex(m => m.id === message.id);
+  for (let i = idx - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return messages[i].content;
+  }
+  return undefined;
+}
+
+// One section per answered question, in conversation order.
+function sessionSections(messages: Message[]): PdfSection[] {
+  const sections: PdfSection[] = [];
+  let question: string | undefined;
+  for (const msg of messages) {
+    if (msg.role === 'user') question = msg.content;
+    else if (!msg.error && msg.content) {
+      sections.push(answerSection(msg, question));
+      question = undefined;
+    }
+  }
+  return sections;
+}
+
+function downloadResponsePdf(message: Message, allMessages: Message[], slug: string) {
+  const question = questionFor(message, allMessages)?.trim();
+  // A short question is the title; a long one goes in a question box under a generic title.
+  const asTitle = !!question && question.length <= 160;
+  return downloadPdf({
+    kind: 'chat_response',
+    title: asTitle ? question : 'Chatbot answer',
+    filename: `qualibot-answer-${slug}`,
+    sections: [answerSection(message, asTitle ? undefined : question)],
+  });
+}
+
+function downloadSessionPdf(allMessages: Message[], slug: string) {
+  const sections = sessionSections(allMessages);
+  return downloadPdf({
+    kind: 'chat_session',
+    title: 'Chatbot conversation',
+    filename: `qualibot-conversation-${slug}`,
+    meta: [{ label: 'Questions', value: String(sections.length) }],
+    sections,
+  });
+}
+
 function buildSessionMarkdown(messages: Message[]): string {
   const date = new Date().toLocaleDateString('en-GB');
   const parts = [`# QualiBOT — Session ${date}\n`];
@@ -64,16 +144,14 @@ function buildSessionMarkdown(messages: Message[]): string {
     if (msg.role === 'user') {
       parts.push(`## Question\n\n${msg.content}`);
     } else if (!msg.error && msg.content) {
-      parts.push(`## Response\n\n${stripCiteMarkers(msg.content)}`);
+      parts.push(`## Response\n\n${stripCiteMarkers(msg.content)}${sourcesMarkdown(msg.sources)}`);
     }
   }
   return parts.join('\n\n---\n\n');
 }
 
 
-// ---------------------------------------------------------------------------
-// Download menu
-// ---------------------------------------------------------------------------
+// --- Download menu ---
 
 interface DownloadMenuProps {
   message: Message;
@@ -98,11 +176,12 @@ function DownloadMenu({ message, allMessages }: DownloadMenuProps) {
   const options = [
     {
       label: 'Response — Markdown',
-      action: () => downloadAsMarkdown(stripCiteMarkers(message.content), `qualibot-response-${slug}.md`),
+      action: () => downloadAsMarkdown(stripCiteMarkers(message.content) + sourcesMarkdown(message.sources),
+        `qualibot-response-${slug}.md`),
     },
     {
       label: 'Response — PDF',
-      action: () => downloadAsPdf('Response', stripCiteMarkers(message.content), `qualibot-response-${slug}.pdf`),
+      action: () => downloadResponsePdf(message, allMessages, slug),
     },
     {
       label: 'Full session — Markdown',
@@ -110,7 +189,7 @@ function DownloadMenu({ message, allMessages }: DownloadMenuProps) {
     },
     {
       label: 'Full session — PDF',
-      action: () => downloadAsPdf('QualiBOT Session', buildSessionMarkdown(allMessages), `qualibot-session-${slug}.pdf`),
+      action: () => downloadSessionPdf(allMessages, slug),
     },
   ];
 
@@ -149,7 +228,11 @@ function DownloadMenu({ message, allMessages }: DownloadMenuProps) {
           {options.map(opt => (
             <button
               key={opt.label}
-              onClick={() => { opt.action(); setOpen(false); }}
+              onClick={() => {
+                setOpen(false);
+                Promise.resolve(opt.action()).catch((e: unknown) =>
+                  toast.error(`PDF export failed: ${e instanceof Error ? e.message : String(e)}`));
+              }}
               className="w-full text-left px-4 py-2.5 text-xs transition-colors cursor-pointer"
               style={{ color: 'var(--color-text-primary)' }}
               onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-bg-tertiary)')}
@@ -164,9 +247,7 @@ function DownloadMenu({ message, allMessages }: DownloadMenuProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Sources
-// ---------------------------------------------------------------------------
+// --- Sources ---
 
 // Mirrors doc_catalog.py's _canon(): same document, different intraqual
 // site/language suffix (GO-1316_FR / GO-1316_GB / PRLAT-529 / PRLAT-529_GB /
@@ -217,12 +298,21 @@ function chipNumberBadge(n: number) {
 }
 
 // A single, un-grouped source: exactly the plain pill this always used to be.
+// Hover text of a chip: REF — title, version, link.
+function chipTooltip(src: Source, label: string): string {
+  return [src.doc_title ? `${label} — ${src.doc_title}` : label, versionLabel(src), src.url !== label ? src.url : '']
+    .filter(Boolean).join('\n');
+}
+
 function SourceChip({ src, fallbackLabel }: { src: Source; fallbackLabel: string }) {
   const label = src.title || src.url || fallbackLabel;
   const pad = src.n != null ? 'pl-1 pr-2.5' : 'px-2.5';
   const text = (
     <span className="truncate font-medium" style={{ color: 'var(--color-text-primary)' }}>
       {label}
+      {src.revision && (
+        <span className="font-normal ml-1" style={{ color: 'var(--color-text-muted)' }}>· {src.revision}</span>
+      )}
     </span>
   );
 
@@ -231,7 +321,7 @@ function SourceChip({ src, fallbackLabel }: { src: Source; fallbackLabel: string
       href={src.url}
       target="_blank"
       rel="noopener noreferrer"
-      title={src.url && label !== src.url ? `${label}\n${src.url}` : label}
+      title={chipTooltip(src, label)}
       className={`${chipBase} ${pad} cursor-pointer`}
       style={chipStyle}
       onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--color-accent-primary)')}
@@ -241,7 +331,7 @@ function SourceChip({ src, fallbackLabel }: { src: Source; fallbackLabel: string
       {text}
     </a>
   ) : (
-    <span title={label} className={`${chipBase} ${pad}`} style={chipStyle}>
+    <span title={chipTooltip(src, label)} className={`${chipBase} ${pad}`} style={chipStyle}>
       {src.n != null && chipNumberBadge(src.n)}
       {text}
     </span>
@@ -258,7 +348,7 @@ function SourceChipGroup({ variants }: { variants: Source[] }) {
   const bare = variants.find(v => !langCode(v.title || ''));
   const label = (variants[0]?.title || variants[0]?.url || 'Source').replace(LANG_SUFFIX_RE, '');
   const flagVariants = sortVariants(variants).filter(v => v !== bare);
-  const tooltip = variants.map(v => v.title).filter(Boolean).join('  ·  ');
+  const tooltip = variants.map(v => chipTooltip(v, v.title)).filter(Boolean).join('\n\n');
 
   return (
     <span className={`${chipBase} px-2.5`} style={chipStyle} title={tooltip}>
@@ -340,9 +430,7 @@ function ChatSources({ sources }: { sources: Source[] }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Feedback
-// ---------------------------------------------------------------------------
+// --- Feedback ---
 
 interface FeedbackProps {
   messageId?: number;
@@ -477,9 +565,7 @@ function ChatFeedbackReadOnly({ feedback }: { feedback: Feedback }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Streaming cursor
-// ---------------------------------------------------------------------------
+// --- Streaming cursor ---
 
 function StreamingCursor() {
   return (
@@ -493,9 +579,7 @@ function StreamingCursor() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Message bubble
-// ---------------------------------------------------------------------------
+// --- Message bubble ---
 
 interface ChatMessageProps {
   message: Message;
@@ -559,7 +643,7 @@ export function ChatMessage({ message, showFeedback, allMessages }: ChatMessageP
             }}
           >
             {message.error ? (
-              <p className="text-sm" style={{ color: 'var(--color-error)' }}>
+              <p className="text-sm italic" style={{ color: 'var(--color-text-muted)' }}>
                 {message.content}
               </p>
             ) : message.streaming && !message.content ? (

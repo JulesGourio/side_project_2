@@ -230,6 +230,12 @@ def _fetch_filename(context, doc_id):
     return None
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("scrap_ids_intraqual")
+
+
 def _find_grid_frame(page):
     deadline = time.monotonic() + LOGIN_TIMEOUT_S
     announced = False
@@ -242,8 +248,8 @@ def _find_grid_frame(page):
             if grids:
                 return fr, grids
         if not announced:
-            print("   …grille pas encore détectée — connecte-toi / lance la "
-                  "recherche, je scrute tous les frames.", flush=True)
+            logger.info("   …grille pas encore détectée — connecte-toi / lance la "
+                  "recherche, je scrute tous les frames.")
             announced = True
         time.sleep(2)
     return None, []
@@ -275,7 +281,7 @@ def _try_auto_advanced_search(page, timeout_s=20):
                     try:
                         if locator.count() > 0:
                             locator.first.click(timeout=2000)
-                            print(f"   🔎 clic auto : {label!r}")
+                            logger.info(f"   🔎 clic auto : {label!r}")
                             clicked = True
                             break
                     except Exception:
@@ -285,7 +291,7 @@ def _try_auto_advanced_search(page, timeout_s=20):
             if not clicked:
                 time.sleep(0.5)
         if not clicked:
-            print(f"   ⚠️  bouton {label!r} introuvable après {timeout_s}s "
+            logger.warning(f"   bouton {label!r} introuvable après {timeout_s}s "
                   f"— clique-le toi-même si besoin.")
             return False
         time.sleep(1)  # laisser la page suivante se charger avant le clic suivant
@@ -295,15 +301,15 @@ def _try_auto_advanced_search(page, timeout_s=20):
 def _read_current_page(frame, grid_name, fields):
     res = frame.evaluate(_READ_JS, {"name": grid_name, "fields": fields})
     if res.get("error"):
-        print(f"   ⚠️  lecture page: {res['error']}")
+        logger.warning(f"   lecture page: {res['error']}")
         return [], 0
     rows = sorted(res.get("rows", []), key=lambda r: r.get("__i", 0))
     total = res.get("total", 0)
     raw   = res.get("rawCount", len(rows))
     if res.get("timedOut"):
-        print(f"   ⏱️  timeout JS (page de {total} lignes)")
+        logger.info(f"   ⏱️  timeout JS (page de {total} lignes)")
     elif raw != total:
-        print(f"   ℹ️  {raw}/{total} lignes renvoyées")
+        logger.info(f"   {raw}/{total} lignes renvoyées")
     return rows, total
 
 
@@ -316,7 +322,7 @@ def _read_page_with_retries(frame, grid_name, fields, attempts=3):
         # Résultat stable sur 2 tentatives consécutives = row non-data (groupe/template)
         if len(rows) == prev_count:
             return rows
-        print(f"   🔄 résultat partiel ({len(rows)}/{total}) — retry {a + 1}/{attempts}")
+        logger.info(f"   🔄 résultat partiel ({len(rows)}/{total}) — retry {a + 1}/{attempts}")
         prev_count = len(rows)
         if a < attempts - 1:
             time.sleep(1.5)
@@ -326,7 +332,7 @@ def _read_page_with_retries(frame, grid_name, fields, attempts=3):
 def _diagnose_empty(frame, grid_name, fields):
     for field in fields:
         d = frame.evaluate(_PROBE1_JS, {"name": grid_name, "field": field})
-        print(f"   🔬 {field}: {d}")
+        logger.info(f"   🔬 {field}: {d}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -340,18 +346,17 @@ def main():
         page    = context.new_page()
         page.goto(URL, wait_until="domcontentloaded")
 
-        print("\n👉 SSO transparente en cours + clic auto 'Recherche avancée' → "
-              "'Lancer la recherche avancée'…", flush=True)
+        logger.info("👉 SSO transparente en cours + clic auto 'Recherche avancée' → "
+              "'Lancer la recherche avancée'…")
         _try_auto_advanced_search(page)
 
-        print(f"   Scrape démarre dès que la grille apparaît "
+        logger.info(f"   Scrape démarre dès que la grille apparaît "
               f"(timeout {LOGIN_TIMEOUT_S // 60} min)… "
-              f"(si le clic auto a échoué, clique toi-même dans la fenêtre Edge)",
-              flush=True)
+              f"(si le clic auto a échoué, clique toi-même dans la fenêtre Edge)")
 
         frame, grids = _find_grid_frame(page)
         if frame is None:
-            print("❌ Aucune grille trouvée.")
+            logger.warning("Aucune grille trouvée.")
             context.close()
             return
 
@@ -361,40 +366,40 @@ def main():
             grid_name = GRID_FALLBACK
             info = frame.evaluate(_INFO_JS, grid_name)
             if not info.get("found"):
-                print("❌ Grille non castable.")
+                logger.warning("Grille non castable.")
                 context.close()
                 return
 
         page_count = info.get("pageCount") or 1
         per_page   = info.get("visibleRows") or 0
         if MAX_PAGES and page_count > MAX_PAGES:
-            print(f"   (cap MAX_PAGES={MAX_PAGES} sur {page_count} pages disponibles)")
+            logger.info(f"   (cap MAX_PAGES={MAX_PAGES} sur {page_count} pages disponibles)")
             page_count = MAX_PAGES
 
         # ── Modes diagnostics (env vars ponctuels) ──
         if os.getenv("LIST_COLS"):
             cols = frame.evaluate(_LIST_COLUMNS_JS, grid_name)
-            print(f"\n📋 Colonnes disponibles dans '{grid_name}' ({len(cols)}) :")
+            logger.info(f"📋 Colonnes disponibles dans '{grid_name}' ({len(cols)}) :")
             for c in cols:
                 enabled = "✓" if COLUMNS.get(c["fieldName"]) else " "
-                print(f"   [{c['index']:2d}] {enabled} {c['fieldName']:<40s} {c['caption']!r}")
+                logger.info(f"   [{c['index']:2d}] {enabled} {c['fieldName']:<40s} {c['caption']!r}")
             context.close()
             return
 
         if os.getenv("DIAG"):
             import json as _json
             diag = frame.evaluate(_DOM_DIAG_JS, grid_name)
-            print("\n🔬 DIAGNOSTIC DOM :")
-            print(_json.dumps(diag, ensure_ascii=False, indent=2)[:4000])
+            logger.info("🔬 DIAGNOSTIC DOM :")
+            logger.info(_json.dumps(diag, ensure_ascii=False, indent=2)[:4000])
             context.close()
             return
 
         # ── Scrape ──
-        print(f"\n✅ Grille '{grid_name}' — {page_count} page(s), ~{per_page} lignes/page")
-        print(f"   Champs extraits ({len(fields)}) : {', '.join(fields)}")
+        logger.info(f"Grille '{grid_name}' — {page_count} page(s), ~{per_page} lignes/page")
+        logger.info(f"   Champs extraits ({len(fields)}) : {', '.join(fields)}")
         if FETCH_FILENAMES:
-            print(f"   📎 FETCH_FILENAMES — HEAD par doc pour le vrai nom fichier")
-        print(f"   → {OUT_JSON}", flush=True)
+            logger.info(f"   📎 FETCH_FILENAMES — HEAD par doc pour le vrai nom fichier")
+        logger.info(f"   → {OUT_JSON}")
 
         frame.evaluate(_ARM_JS, grid_name)
 
@@ -416,13 +421,13 @@ def main():
                         timeout=CALLBACK_TIMEOUT_MS,
                     )
                 except Exception:
-                    print(f"   ⚠️  page {idx + 1}: callback timeout")
+                    logger.warning(f"   page {idx + 1}: callback timeout")
                 current = idx
                 time.sleep(POLITENESS_DELAY_S)
 
             rows = _read_page_with_retries(frame, grid_name, fields)
             if not rows and paginated and not diagnosed:
-                print("   (page vide après pagination — diagnostic :)")
+                logger.info("   (page vide après pagination — diagnostic :)")
                 _diagnose_empty(frame, grid_name, fields)
                 diagnosed = True
 
@@ -455,14 +460,13 @@ def main():
                 collected.append(row)
                 new += 1
 
-            print(f"   📄 page {idx + 1}/{page_count} : +{new} (total {len(collected)})",
-                  flush=True)
+            logger.info(f"   📄 page {idx + 1}/{page_count} : +{new} (total {len(collected)})")
 
         with open(OUT_JSON, "w", encoding="utf-8") as f:
             for doc in collected:
                 f.write(json.dumps(doc, ensure_ascii=False) + "\n")
 
-        print(f"\n✅ {len(collected)} documents → {OUT_JSON}")
+        logger.info(f"{len(collected)} documents → {OUT_JSON}")
         context.close()
 
 

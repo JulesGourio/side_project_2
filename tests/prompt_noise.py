@@ -29,9 +29,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional
 
-# ---------------------------------------------------------------------------
-# Number-rendering equivalence
-# ---------------------------------------------------------------------------
+# --- Number-rendering equivalence ---
 
 _NUM_WORD = (
     r'(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|'
@@ -114,9 +112,7 @@ def _is_synonym_swap(before: str, after: str) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
-# Rationale style: summary, never a command
-# ---------------------------------------------------------------------------
+# --- Rationale style: summary, never a command ---
 
 # First-word vocabulary of common French/English imperative or infinitive verbs
 # seen in "what to do about it" rationale rows (the style the prompt used

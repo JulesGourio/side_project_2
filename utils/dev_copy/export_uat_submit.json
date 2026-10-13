@@ -1,0 +1,12 @@
+{
+  "run_name": "qualibot-dev-copy-export-uat",
+  "tasks": [
+    {
+      "task_key": "export_uat_to_staging",
+      "notebook_task": {
+        "notebook_path": "/Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/export_uat_to_staging",
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}

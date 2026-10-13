@@ -1,7 +1,7 @@
 """Render target_config.env from utils/deploy/target_env.json for one target.
 
 USAGE:
-    python utils/deploy/render_target_config_env.py <uat|uat-test|prod> [output_path]
+    python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [output_path]
 
 Single source of truth for per-target app env overrides, shared by
 deploy_qualibot.ps1 (local/manual deploys) and bitbucket-pipelines.yml (CI) --
@@ -16,9 +16,15 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).with_name("target_env.json")
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("render_target_config_env")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
-        raise SystemExit(f"Usage: {sys.argv[0]} <uat|uat-test|prod> [output_path]")
+        raise SystemExit(f"Usage: {sys.argv[0]} <dev|uat|uat-test|prod> [output_path]")
     target = sys.argv[1]
     output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("target_config.env")
 
@@ -32,10 +38,10 @@ def main() -> None:
     # newline="\n" forces LF regardless of OS — write_text()'s default text
     # mode translates "\n" to the platform separator, so running this on
     # Windows silently wrote CRLF, embedding a trailing \r in every value
-    # (e.g. CHAT_ENDPOINT='ka-...-endpoint'\r) and breaking the KA request URL
-    # built from it ("Invalid non-printable ASCII character in URL, '\r'").
+    # and breaking any URL built from one ("Invalid non-printable ASCII
+    # character in URL, '\r'").
     output_path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8", newline="\n")
-    print(f"Wrote {len(lines)} var(s) to {output_path} for target '{target}'.")
+    logger.info(f"Wrote {len(lines)} var(s) to {output_path} for target '{target}'.")
 
 
 if __name__ == "__main__":

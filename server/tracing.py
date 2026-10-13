@@ -1,4 +1,4 @@
-"""Minimal MLflow configuration for feedback logging."""
+"""MLflow configuration (tracking in the workspace) for the chat traces."""
 
 import mlflow
 

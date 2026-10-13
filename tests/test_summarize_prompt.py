@@ -8,7 +8,7 @@ as SYSTEM_PROMPT_STANDARD, fixed 2026-08-19). Locks in the fix.
 
 import re
 
-from server.services.summarize import _SUMMARY_IMAGE_SYSTEM_PROMPT, _SUMMARY_SYSTEM_PROMPT
+from server.services.compare.summarize import _SUMMARY_IMAGE_SYSTEM_PROMPT, _SUMMARY_SYSTEM_PROMPT
 
 _FLAT_TEXT = re.sub(r'\s+', ' ', _SUMMARY_SYSTEM_PROMPT).lower()
 _FLAT_IMAGE = re.sub(r'\s+', ' ', _SUMMARY_IMAGE_SYSTEM_PROMPT).lower()

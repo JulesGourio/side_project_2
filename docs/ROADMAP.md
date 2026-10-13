@@ -11,7 +11,7 @@ elles-mêmes sont documentées dans `docs/{COMPARE,CHATBOT}.md`.
   (tar.gz ~290 Mo, construit par `utils/soffice_packaging/package_libreoffice.py`
   depuis les .deb officiels TDF — extraction ar/tar 100 % Python, tourne sous
   Windows) est déposé dans le Volume UC et téléchargé/extrait une fois par
-  process au premier preview PDF (`server/services/soffice.py`,
+  process au premier preview PDF (`server/services/compare/soffice.py`,
   `SOFFICE_ARCHIVE_VOLUME_PATH`). `POST /api/preview/pdf`
   convertit un docx en PDF (cache disque par hash de contenu) et le
   client l'affiche dans le viewer PDF natif du navigateur
@@ -145,6 +145,45 @@ elles-mêmes sont documentées dans `docs/{COMPARE,CHATBOT}.md`.
   Qualibot. **Ne pas retenter d'opération git en masse sur l'ancien dossier
   `dev_qualibot`** — ni `git add -A`, ni `reset --hard`, ni un merge complet.
   À nettoyer/reclôner proprement un jour, hors urgence.
+
+## Plus tard — impact search (noté 2026-10-05)
+
+- [ ] **Jeu d'évaluation de l'impact search.** 5 à 10 comparaisons réelles pour
+  lesquelles on connaît les documents réellement à mettre à jour ; un script
+  rejoue la recherche et compte les documents oubliés et les faux positifs.
+  À lancer avant tout changement de prompt, de modèle ou de réglage
+  (`COMPARE_IMPACT_*`). Les votes 👍/👎 par document (`impact_feedbacks`)
+  serviront à constituer ce jeu.
+- [ ] **Documents qui citent la référence du document modifié.** La recherche
+  retrouve un document s'il reprend le contenu modifié (« 12 N·m »). Elle rate
+  celui qui écrit seulement « serrer selon PR-2207 » sans reprendre la valeur :
+  il dépend pourtant du document modifié. Piste : une recherche en plus sur la
+  référence elle-même, affichée à part (« Documents that reference PR-2207 »).
+- [ ] **Colonne `#` dans l'export Excel de la Change Table**, pour retrouver les
+  mêmes numéros C1, C2… que dans l'impact search.
+- [ ] **Mode « décrire un changement à la main »** : désactivé volontairement
+  (`IMPACT_MANUAL_MODE_ENABLED`), à réactiver si le besoin revient.
+
+## Plus tard — chatbot et parsing
+
+Configuration retenue le 2026-10-08 et tout ce qui a été mesuré : `docs/chat_tests.md`.
+Ce qui reste à tester (fiche par document E1, contexte par passage E2, index sans préfixe,
+pistes de recherche R1–R12, documents d'avant 2018, numéros de page) : § E de ce document.
+
+## Plus tard — comparaison de documents (limites connues, audit 2026-10)
+
+Détail dans `docs/compare_audit_2026-10.md`.
+
+- [ ] **Tableau PDF sans bordures** : une valeur qui change de colonne reste
+  invisible, et les colonnes ne sont pas nommées.
+- [ ] **PDF sur deux colonnes** : le diff est juste, mais le rattachement aux
+  sections peut être faux.
+- [ ] **`.xls`** : accepté à l'envoi, mais l'analyse échoue (paquet `xlrd`
+  absent) avec un message demandant de convertir en `.xlsx`.
+- [ ] **En-têtes et pieds de page DOCX** : toujours non lus.
+- [ ] **14 autres points** listés dans la partie B du rapport d'audit, dont le
+  cache d'analyse écrit par le navigateur et les fichiers `.tmp` jamais
+  nettoyés.
 
 ## Veille (connu, non urgent)
 
