@@ -6,7 +6,7 @@ secours. **Aucun modèle Claude dans le chatbot** (décision du 2026-10-08) : r�
 traduction et secours sont tous des modèles Luna.
 
 Depuis le 2026-10-08, `app.yaml` met GPT-5.6 Luna en secours de la réponse et de la réécriture
-pour toutes les cibles. Mise en service DEV : `operations_dev.md`, bloc S ; UAT : `OPERATIONS.md`, D5.
+pour toutes les cibles. Mise en service DEV : `operations_dev.md`, bloc 0 ; UAT : `OPERATIONS.md`, D5.
 Les mesures qui ont mené à ces choix : `docs/chat_tests.md`.
 
 ## 1. Ce qui se passe maintenant à chaque question
@@ -86,7 +86,7 @@ logs de l'app, préfixe `chat_llm:`. Un tour sans incident n'y laisse rien.
 
 - `server/services/chat/llm.py` : chaîne de modèles, relances, reprise, file d'attente, appels
   courts avec secours.
-- `server/services/chat/engine.py` : réécriture et réponse via `chat_vsi_llm` ; relance par requête
+- `server/services/chat/engine.py` : réécriture et réponse via `chat/llm.py` ; relance par requête
   Vector Search (`_post_query`) ; recherches partielles acceptées ; langue de réponse transmise au
   prompt ; modèle effectif dans les métadonnées.
 - `server/routers/chat.py` : calcule la langue de la réponse (`translation_bridge.answer_language`)
