@@ -13,6 +13,7 @@ from datetime import datetime
 
 from databricks.sdk.runtime import dbutils, display, spark
 from delta.tables import DeltaTable
+from pyspark import StorageLevel
 from pyspark.sql import Window
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
@@ -704,7 +705,8 @@ def build_image_metadata(target_iddocs):
     """Explode checkpoint rows' `images` array into one row per image,
     preserving any already-DONE/SKIPPED description across a rebuild."""
     df_full_pipeline = read_checkpoint_deduped()
-    if RUN_MODE == "incremental":
+    # rechunk: only the documents in scope — the checkpoint also keeps superseded revisions.
+    if RUN_MODE in ("incremental", "rechunk"):
         df_full_pipeline = df_full_pipeline.filter(F.col("IDDOC").isin(list(target_iddocs)))
     df_full_pipeline = with_fresh_business_metadata(df_full_pipeline)
 
@@ -926,7 +928,8 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, revised_i
     """Build processed_files (one row per parsed document) and the three
     chunk DataFrames (all divisions / AS / IS) from the checkpoint."""
     df_full_pipeline = read_checkpoint_deduped()
-    if RUN_MODE == "incremental":
+    # rechunk: only the documents in scope — the checkpoint also keeps superseded revisions.
+    if RUN_MODE in ("incremental", "rechunk"):
         df_full_pipeline = df_full_pipeline.filter(F.col("IDDOC").isin(list(target_iddocs)))
     df_full_pipeline = with_fresh_business_metadata(df_full_pipeline)
     # Real language (REF suffix, else the text): gd_doc has none, selection.py writes fr-FR for all.
@@ -982,7 +985,8 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, revised_i
 
     df_processed_files, df_exclusions, cutoff = _apply_date_and_rag_filters(df_processed_files)
 
-    df_chunks = _build_chunks(df_full_pipeline, df_exclusions)
+    # Persisted: the chunking UDF is the expensive part, and every count/filter/write below would rerun it.
+    df_chunks = _build_chunks(df_full_pipeline, df_exclusions).persist(StorageLevel.MEMORY_AND_DISK)
 
     # True only for a spreadsheet that really has more passages than the cap (was: every spreadsheet).
     df_over_cap = (
