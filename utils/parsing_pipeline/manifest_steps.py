@@ -11,7 +11,8 @@ from pyspark.sql import Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 
-import selection
+from categories import normalize_cols_upper
+from tables import write_table
 from utils import logger
 from config import (
     ARCHIVE_MAX_DOCS,
@@ -269,10 +270,7 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
     try:
         if reclassified:
             spark.sql(f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} WHERE IDDOC IN ({_id_list(reclassified)})")
-        (
-            spark.createDataFrame(all_skipped).write.format("delta").mode("append")
-            .option("mergeSchema", "true").saveAsTable(TARGET_PROCESSED_FILES_TABLE)
-        )
+        write_table(spark.createDataFrame(all_skipped), TARGET_PROCESSED_FILES_TABLE, "append", merge_schema=True)
     except Exception as exc:
         logger.error(f"Error writing processed_files (run {run_id}): {exc}")
         return
@@ -292,14 +290,13 @@ def _doc_date_column(table):
     """Document date column of an Intraqual table (`dtdiff`, or `DATEDIFF` in older tables), NULL when absent."""
     cols = {c.lower() for c in spark.read.table(table).columns}
     source = "dtdiff" if "dtdiff" in cols else "DATEDIFF" if "datediff" in cols else None
-    return F.to_date(F.col(source)) if source else F.lit(None).cast("date")
+    return F.col(source).try_cast("date") if source else F.lit(None).cast("date")
 
 
 def build_manifest(rows_keep):
     """One row per KEEP document with its revision, date, hierarchy and type.
 
-    Does not reuse `selection.load_business_metadata`: that helper keeps only `COURANT > 0`, while the manifest
-    must hold every in-scope KEEP IDDOC. `indice` is the revision key `3_parse` compares across runs.
+    `indice` is the revision key `3_parse` compares across runs.
     """
     df_keep = spark.createDataFrame(
         [(r["IDDOC"], r["ref"], r["titre"], r["categorie"]) for r in rows_keep],
@@ -312,7 +309,7 @@ def build_manifest(rows_keep):
     df_dates = (
         spark.read.table(GD_DOC_LATEST)
         .select(F.col("IDDOC"), _doc_date_column(GD_DOC_LATEST).alias("doc_date"),
-                F.col("INDICE").cast("string").alias("indice"))
+                F.col("INDICE").try_cast("string").alias("indice"))
         .filter(F.col("IDDOC").isNotNull())
         .dropDuplicates(["IDDOC"])
     )
@@ -334,7 +331,7 @@ def build_manifest(rows_keep):
         )
 
     df_doc_types = (
-        selection._normalize_cols_upper(spark.read.table(GD_TYPDOC_LATEST))
+        normalize_cols_upper(spark.read.table(GD_TYPDOC_LATEST))
         .filter(F.col("IDLG") == 1)
         .select(F.col("IDTYPDOC"), F.col("NOMTYPDOC").alias("type_document"))
         .dropDuplicates(["IDTYPDOC"])
@@ -377,10 +374,7 @@ def build_manifest(rows_keep):
 
 def write_manifest(df_manifest):
     """Overwrite parse_manifest and log how many pre-cutoff documents may be parsed."""
-    (
-        df_manifest.write.format("delta").mode("overwrite").option("overwriteSchema", "true")
-        .saveAsTable(PARSE_MANIFEST_TABLE)
-    )
+    write_table(df_manifest, PARSE_MANIFEST_TABLE, "overwrite", overwrite_schema=True)
     df_written = spark.table(PARSE_MANIFEST_TABLE)
     is_archive = archive_condition()
     logger.info(f"parse_manifest written: {df_written.count()} IDDOCs in scope ({PARSE_MANIFEST_TABLE})")

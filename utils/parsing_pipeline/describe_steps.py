@@ -16,7 +16,8 @@ from delta.tables import DeltaTable
 from pyspark.sql import Row
 from pyspark.sql import functions as F
 
-from image_utils import describe_all_images, safe_requests_per_minute
+from llm_describe import describe_all_images, safe_requests_per_minute
+from tables import write_table
 from utils import intraqual_ref_url, logger, token_count_udf
 from config import (
     CATALOG_SCHEMA,
@@ -82,7 +83,7 @@ def _merge_chunk_results(results):
     ]
     # MERGE fails on a duplicated (IDDOC, image_id) in its source batch.
     df_updates = spark.createDataFrame(update_rows).dropDuplicates(["IDDOC", "image_id"])
-    df_updates.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(_UPDATES_TABLE)
+    write_table(df_updates, _UPDATES_TABLE, "overwrite", overwrite_schema=True)
     spark.sql(f"""
         MERGE INTO {IMAGE_TABLE} AS t
         USING {_UPDATES_TABLE} AS s
@@ -187,8 +188,8 @@ def described_images_without_chunk(rebuild):
             & (F.length(F.trim(F.col("description"))) >= F.lit(MIN_INDEXABLE_DESC_CHARS))
             & (~F.upper(F.trim(F.col("description"))).startswith("SKIP"))
         )
-        .withColumn("chunk_id", F.concat_ws("-", F.col("IDDOC").cast("string"), F.lit("IMG"),
-                                            F.lpad(F.col("image_id").cast("string"), 3, "0")))
+        .withColumn("chunk_id", F.concat_ws("-", F.col("IDDOC").try_cast("string"), F.lit("IMG"),
+                                            F.lpad(F.col("image_id").try_cast("string"), 3, "0")))
     )
     if rebuild:
         return df_described
@@ -232,7 +233,7 @@ def build_image_chunks(df_described):
         df_pf.select("IDDOC", "doc_date",
                      *[F.col(c) if c in df_pf.columns else F.lit(None).cast("string").alias(c)
                        for c in ("type_document", "indice", "langue")])
-        .withColumn("indice", F.col("indice").cast("string"))
+        .withColumn("indice", F.col("indice").try_cast("string"))
         .dropDuplicates(["IDDOC"])
     )
 
@@ -269,7 +270,8 @@ def build_image_chunks(df_described):
     )
     df_placed = df_images.groupBy("IDDOC").cogroup(df_texts.groupBy("IDDOC")).applyInPandas(place_images, _PLACED_SCHEMA)
 
-    image_id = F.concat_ws("-", F.col("IDDOC").cast("string"), F.lit("IMG"), F.lpad(F.col("image_id").cast("string"), 3, "0"))
+    image_id = F.concat_ws("-", F.col("IDDOC").try_cast("string"), F.lit("IMG"),
+                           F.lpad(F.col("image_id").try_cast("string"), 3, "0"))
     return (
         df_described.drop("description", "chunk_id")
         .join(df_placed, on=["IDDOC", "image_id"], how="inner")
@@ -289,7 +291,7 @@ def build_image_chunks(df_described):
                 F.when(F.col("niveau_plus_2").isNotNull(),
                        F.concat(F.lit(" > "), F.col("niveau_plus_2"))).otherwise(F.lit("")),
                 F.lit(" | Date de diffusion: "), F.coalesce(F.date_format(F.col("doc_date"), "yyyy-MM-dd"), F.lit("inconnue")),
-                F.lit(" | Image: page "), F.coalesce(F.col("page_no").cast("string"), F.lit("?")),
+                F.lit(" | Image: page "), F.coalesce(F.col("page_no").try_cast("string"), F.lit("?")),
                 F.lit(", "), F.col("label"), F.lit("]\n\n"), F.col("body"),
             ) if EMBED_SOURCE_PREFIX else F.col("body")),
         })
@@ -298,19 +300,19 @@ def build_image_chunks(df_described):
             # Part 1 keeps the historical id (the anti-join in described_images_without_chunk relies on it);
             # the next parts of a long transcription get -2, -3...
             "chunk_id": F.when(F.col("part_no") == 1, image_id)
-                         .otherwise(F.concat_ws("-", image_id, F.col("part_no").cast("string"))),
+                         .otherwise(F.concat_ws("-", image_id, F.col("part_no").try_cast("string"))),
             "chunk_content_type": F.lit("image"),
             "semantic_headers": F.to_json(F.struct(
                 F.col("label").alias("image_label"),
-                F.col("page_no").cast("string").alias("page"),
+                F.col("page_no").try_cast("string").alias("page"),
                 F.col("volume_path").alias("volume_path"),
-                F.col("area_ratio").cast("string").alias("area_ratio"),
-                F.col("captions").cast("string").alias("captions"),
+                F.col("area_ratio").try_cast("string").alias("area_ratio"),
+                F.col("captions").try_cast("string").alias("captions"),
                 F.col("section").alias("section"),
             )),
             "chunk_sha256": F.sha2(F.col("chunk_text"), 256),
             "body_sha256": F.sha2(F.col("body"), 256),
-            "indice": F.col("indice").cast("string"),
+            "indice": F.col("indice").try_cast("string"),
         })
         .withColumn("REF", F.coalesce(F.col("ref"), F.col("source_file_name")))
         .select(
@@ -324,7 +326,7 @@ def build_image_chunks(df_described):
 def _merge_chunks(df_chunks, table):
     """MERGE on chunk_id rather than delete-all-for-IDDOC then reinsert, so untouched image chunks are not rewritten."""
     if not spark.catalog.tableExists(table):
-        df_chunks.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(table)
+        write_table(df_chunks, table, "append", merge_schema=True)
         return
     (
         DeltaTable.forName(spark, table).alias("t")
@@ -394,7 +396,7 @@ def promote_empty_text_documents():
         .withColumns({
             "document_char_count": F.length("document_text"),
             "document_token_count": F.greatest(
-                F.lit(1), F.floor(F.length("document_text") / F.lit(CHARS_PER_TOKEN)).cast("int")),
+                F.lit(1), F.floor(F.length("document_text") / F.lit(CHARS_PER_TOKEN)).try_cast("int")),
         })
     )
     n_promoted = df_assembled.count()

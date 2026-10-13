@@ -8,6 +8,7 @@ without touching this file.
 Priority for every parameter: env var > explicit override in notebook > this default.
 """
 
+import datetime as _dt
 import os as _os
 
 def _env(key, default):
@@ -82,11 +83,29 @@ TARGET_IMAGE_METADATA_TABLE  = f"{CATALOG_SCHEMA}.image_metadata{TABLE_SUFFIX}"
 TARGET_HEALTH_TABLE          = f"{CATALOG_SCHEMA}.parsing_run_health{TABLE_SUFFIX}"  # one row per pipeline run, for the monitoring dashboard
 TARGET_CHANGE_LOG_TABLE      = f"{CATALOG_SCHEMA}.document_change_log{TABLE_SUFFIX}"  # one row per NEW/REVISED document, for the monitoring dashboard
 
+# Working tables of 3_parse: the parse checkpoint, the manual RAG exclusions (IDDOC, reason) and the retry scratch table.
+CHECKPOINT_TABLE     = f"{CATALOG_SCHEMA}._pipeline_checkpoint{TABLE_SUFFIX}"
+RAG_EXCLUSION_TABLE  = f"{CATALOG_SCHEMA}._rag_exclusions{TABLE_SUFFIX}"
+RETRY_TEMP_TABLE     = f"{CATALOG_SCHEMA}._retry_temp{TABLE_SUFFIX}"
+
+# Column groups shared by the steps: the document metadata of parse_manifest, the category hierarchy of
+# category_reference, and what a selected file is enriched with.
+MANIFEST_METADATA_COLS = ["ref", "titre", "type_document", "categorie", "langue", "auteur", "doc_date", "indice"]
+HIERARCHY_COLS = ["division"] + [f"niveau_plus_{n}" for n in range(1, 7)]
+BUSINESS_METADATA_COLS = MANIFEST_METADATA_COLS + HIERARCHY_COLS
+ENRICHMENT_COLS = ["ref", "titre", "type_document", "categorie", "langue", "auteur", "document_prefixes",
+                   "division", "doc_date"] + [f"niveau_plus_{n}" for n in range(1, 7)]
+
+# Modules the executors import (pandas UDFs); shipped with addPyFile by 3_parse and 4_describe_images.
+WORKER_MODULES = ("chunking.py", "utils.py", "format_parsers.py", "image_store.py", "image_fallbacks.py",
+                  "image_utils.py", "config.py")
+
 # --- Date cutoff ---
 # Docs before this date are parsed like the others but their chunks go to
 # TARGET_CHUNK_TABLE_ARCHIVE instead of the RAG chunk tables (processed_files:
 # filtered_by_date=True, include_in_rag=False). No DATEDIFF = unknown date = recent.
 DOC_DATE_CUTOFF = _env("PARSING_DOC_DATE_CUTOFF", "2018-01-01")
+_dt.date.fromisoformat(DOC_DATE_CUTOFF)  # fails at import on a malformed value: the steps cast it to a date literal
 
 # Total number of pre-cutoff documents allowed to be parsed, most recent first
 # (cumulative, not per run): 0 = none, N = the N most recent, -1 = all.
@@ -129,7 +148,6 @@ RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full" | "
 PARSE_FILTER = [int(x) for x in _env("PARSING_PARSE_FILTER", "").split(",") if x.strip().isdigit()] or None
 
 # --- Feature flags ---
-ENABLE_AUDIT       = True
 ENABLE_RETRY       = True
 ENABLE_TIMING_TEST = False  # gates per-step timing instrumentation in the parse UDF (utils.py/image_utils.py)
 
