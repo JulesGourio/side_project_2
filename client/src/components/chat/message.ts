@@ -1,0 +1,38 @@
+export interface Source {
+  title: string;
+  url?: string;
+  /**
+   * 1-based inline-citation number. Present only for sources actually cited inline (⟦n⟧ in the
+   * text); prose-only sources re-surfaced from the catalog have no number and render as a plain REF chip.
+   */
+  n?: number;
+  // From the document catalog at answer time: Intraqual title, current revision and its date (ISO).
+  doc_title?: string;
+  revision?: string;
+  doc_date?: string;
+}
+
+export interface Feedback {
+  vote: 'up' | 'down';
+  comment?: string | null;
+}
+
+export interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  streaming?: boolean;
+  dbId?: number;
+  sessionId?: string;
+  error?: boolean;
+  sources?: Source[];
+  /** Only populated on the shared read-only view: the owner's vote, never editable by a viewer. */
+  feedback?: Feedback | null;
+}
+
+/** "Version B (11/10/2024)", "Version B", "11/10/2024" or '' — the same wording the answer model uses. */
+export function versionLabel(src: Source): string {
+  const date = src.doc_date ? new Date(src.doc_date).toLocaleDateString('en-GB') : '';
+  if (src.revision) return date ? `Version ${src.revision} (${date})` : `Version ${src.revision}`;
+  return date;
+}

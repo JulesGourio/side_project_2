@@ -22,7 +22,7 @@ interface ChatSidebarProps {
 
 // Calendar days in the viewer's time zone, not 24-hour periods: a question asked yesterday evening is
 // "Yesterday" this morning even though fewer than 24 hours have passed.
-export function formatRelativeDate(isoString: string, now: Date = new Date()): string {
+function formatRelativeDate(isoString: string, now: Date = new Date()): string {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return '';
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();

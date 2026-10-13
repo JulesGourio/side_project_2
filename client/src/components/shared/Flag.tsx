@@ -80,8 +80,7 @@ const FLAGS: Record<string, ReactNode> = {
 };
 FLAGS.EN = FLAGS.GB; // "EN" and "GB" both just mean English on intraqual REFs
 
-export function Flag({ code, className }: { code: string; className?: string }) {
+export function Flag({ code }: { code: string }) {
   const flag = FLAGS[code];
-  if (!flag) return null;
-  return <span className={className}>{flag}</span>;
+  return flag ? <span>{flag}</span> : null;
 }

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Copy, MessageSquareOff } from 'lucide-react';
 import { toast } from 'sonner';
-import { ChatMessage, type Message } from '@/components/chat/ChatMessage';
+import { ChatMessage } from '@/components/chat/ChatMessage';
+import type { Message } from '@/components/chat/message';
 
 interface SharedSession {
   id: string;
