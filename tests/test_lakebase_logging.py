@@ -31,9 +31,14 @@ _ROOT = Path(__file__).resolve().parents[1]
 # TurnLog <-> chat_turns columns
 # ---------------------------------------------------------------------------
 
-def _written_keys(path: str) -> set:
+def _turn_sources() -> list:
+    """The files that fill a TurnLog: the engine and the chat router package."""
+    return [_ROOT / 'server/services/chat/engine.py', *sorted((_ROOT / 'server/routers/chat').glob('*.py'))]
+
+
+def _written_keys(path: Path) -> set:
     """Keys written to log.data (update({...}) and data['...'] = …) in a source file."""
-    text = (_ROOT / path).read_text(encoding='utf-8')
+    text = path.read_text(encoding='utf-8')
     keys = set(re.findall(r"log\.data\['(\w+)'\]\s*=", text))
     for block in re.findall(r'log\.data\.update\(\{(.*?)\}\)', text, flags=re.S):
         keys |= set(re.findall(r"'(\w+)':", block))
@@ -42,13 +47,12 @@ def _written_keys(path: str) -> set:
 
 def test_every_turn_log_key_is_a_chat_turns_column():
     columns = {c for c, _ in lakebase.CHAT_TURN_COLUMNS}
-    written = _written_keys('server/services/chat/engine.py') | _written_keys('server/routers/chat.py')
+    written = set().union(*(_written_keys(p) for p in _turn_sources()))
     assert written and written <= columns, written - columns
 
 
 def test_every_timed_step_is_a_chat_turns_column():
-    text = ''.join((_ROOT / p).read_text(encoding='utf-8')
-                   for p in ('server/services/chat/engine.py', 'server/routers/chat.py'))
+    text = ''.join(p.read_text(encoding='utf-8') for p in _turn_sources())
     steps = set(re.findall(r"log\.(?:timed|mark)\('(\w+)'\)", text)) | set(re.findall(r"timings_ms\['(\w+)'\]", text))
     assert steps and steps <= set(lakebase.CHAT_TURN_TIMINGS), steps - set(lakebase.CHAT_TURN_TIMINGS)
 

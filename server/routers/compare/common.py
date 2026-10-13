@@ -6,7 +6,7 @@ import posixpath
 import re
 from typing import Any, Dict
 
-from fastapi import Request, UploadFile
+from fastapi import UploadFile
 
 from ...services.compare.processors.factory import SUPPORTED_EXTENSIONS, get_extension
 
@@ -80,30 +80,6 @@ def _get_config() -> Dict[str, Any]:
         'chunk_threshold_chars': int(os.getenv('COMPARE_CHUNK_THRESHOLD_CHARS', '60000')),
         'chunk_size_chars':      int(os.getenv('COMPARE_CHUNK_SIZE_CHARS', '45000')),
     }
-
-
-# --- Auth ---
-
-def _get_credentials(request: Request):
-    host = os.environ.get('DATABRICKS_HOST', '').rstrip('/')
-    if host and not host.startswith('http'):
-        host = f'https://{host}'
-    token = os.environ.get('DATABRICKS_TOKEN', '')
-    if not host or not token:
-        try:
-            from databricks.sdk.core import Config
-            cfg = Config()
-            if not host:
-                host = (cfg.host or '').rstrip('/')
-            if not token:
-                auth_value = cfg.authenticate().get('Authorization', '')
-                if auth_value.startswith('Bearer '):
-                    token = auth_value[len('Bearer '):]
-        except Exception as e:
-            logger.debug(f'SDK auth unavailable: {e}')
-    if not token:
-        token = request.headers.get('x-forwarded-access-token', '')
-    return host, token
 
 
 # --- File helpers ---

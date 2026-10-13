@@ -1,4 +1,4 @@
-"""Tests for the chat WebSocket route (server/routers/chat.py), engine mocked.
+"""Tests for the chat WebSocket route (server/routers/chat/ws.py), engine mocked.
 
 Coverage:
   - /api/chat/ws calls stream_chat with the requested division and today's date
@@ -55,18 +55,18 @@ def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=Tru
     save_turn = AsyncMock(return_value=(41, 42))
     store_turn = AsyncMock(return_value=7)
     with (
-        patch('server.routers.chat.CHAT_ENABLED', enabled),
-        patch('server.routers.chat.TRANSLATE_BRIDGE_ENABLED', False),
-        patch('server.routers.chat.stream_chat', engine),
-        patch('server.routers.chat.get_capabilities', new=AsyncMock(return_value=caps or {'can_chat': True})),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.ws.CHAT_ENABLED', enabled),
+        patch('server.routers.chat.ws.TRANSLATE_BRIDGE_ENABLED', False),
+        patch('server.routers.chat.ws.stream_chat', engine),
+        patch('server.routers.chat.ws.get_capabilities', new=AsyncMock(return_value=caps or {'can_chat': True})),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None, 'email': 'u1@example.com'})),
-        patch('server.routers.chat._get_chat_credentials', return_value=('https://host', 'tok')),
-        patch('server.routers.chat.get_pool', return_value=pool),
-        patch('server.routers.chat._save_turn', save_turn),
-        patch('server.routers.chat.store_chat_turn', store_turn),
-        patch('server.routers.chat.augment_sources', side_effect=lambda content, sources: sources),
-        patch('server.routers.chat.with_document_info', side_effect=lambda sources: sources),
+        patch('server.routers.chat.ws.get_credentials', return_value=('https://host', 'tok')),
+        patch('server.routers.chat.ws.get_pool', return_value=pool),
+        patch('server.routers.chat.ws._save_turn', save_turn),
+        patch('server.routers.chat.ws.store_chat_turn', store_turn),
+        patch('server.routers.chat.ws.augment_sources', side_effect=lambda content, sources: sources),
+        patch('server.routers.chat.ws.with_document_info', side_effect=lambda sources: sources),
     ):
         received = []
         with client.websocket_connect('/api/chat/ws') as ws:
@@ -185,9 +185,9 @@ def test_browser_leaving_mid_answer_is_an_aborted_turn(client):
 def test_missing_credentials_show_the_tired_message_and_log_the_cause(client):
     store = MagicMock()
     with (
-        patch('server.routers.chat.CHAT_ENABLED', True),
-        patch('server.routers.chat._get_chat_credentials', return_value=('', '')),
-        patch('server.routers.chat.store_error', store),
+        patch('server.routers.chat.ws.CHAT_ENABLED', True),
+        patch('server.routers.chat.ws.get_credentials', return_value=('', '')),
+        patch('server.routers.chat.ws.store_error', store),
     ):
         with client.websocket_connect('/api/chat/ws') as ws:
             assert ws.receive_json() == {'type': 'error', 'error': TIRED_MESSAGE}

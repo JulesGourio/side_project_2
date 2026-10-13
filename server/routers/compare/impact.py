@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ...services.compare.impact_queries import changes_to_queries
+from ...services.infra.credentials import get_credentials
 from ...services.infra.lakebase import (
     get_cached_impact_result, store_error,
     store_impact_cache, store_impact_request,
@@ -20,7 +21,7 @@ from ...services.infra.lakebase import (
 from ...services.infra.user import get_user_identity, require_compare
 from ...services.infra.vector_search import run_impact_search, sort_documents
 from .common import (
-    APP_VERSION, _get_config, _get_credentials,
+    APP_VERSION, _get_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
         if cached is not None and 'changes' in cached:
             return StreamingResponse(_replay_events(cached), media_type='application/x-ndjson')
 
-    host, token = _get_credentials(request)
+    host, token = get_credentials(request)
     if not host or not token:
         return JSONResponse({'error': 'Missing Databricks credentials'}, status_code=400)
 

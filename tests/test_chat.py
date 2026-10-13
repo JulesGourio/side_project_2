@@ -41,7 +41,7 @@ def _make_pool(conn):
 # --- Session / log tests ---
 
 def test_list_sessions_no_db_returns_empty(client):
-    with patch('server.routers.chat.get_pool', return_value=None):
+    with patch('server.routers.chat.sessions.get_pool', return_value=None):
         r = client.get('/api/chat/sessions')
     assert r.status_code == 200
     data = r.json()
@@ -59,8 +59,8 @@ def test_list_sessions_returns_rows(client):
         'message_count': 4,
     }]
     with (
-        patch('server.routers.chat.get_pool', return_value=_make_pool(conn)),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None})),
     ):
         r = client.get('/api/chat/sessions')
@@ -76,7 +76,7 @@ def test_list_sessions_returns_rows(client):
 def test_get_session_not_found(client):
     conn = AsyncMock()
     conn.fetchrow.return_value = None
-    with patch('server.routers.chat.get_pool', return_value=_make_pool(conn)):
+    with patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)):
         r = client.get('/api/chat/sessions/no-such-id')
     assert r.status_code == 404
 
@@ -90,8 +90,8 @@ def test_get_session_scoped_to_caller(client):
     }
     conn.fetch.return_value = []
     with (
-        patch('server.routers.chat.get_pool', return_value=_make_pool(conn)),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None, 'email': None})),
     ):
         r = client.get('/api/chat/sessions/sess-1')
@@ -114,7 +114,7 @@ def test_get_session_returns_messages_with_sources(client):
          'created_at': datetime(2026, 1, 1),
          'sources_json': json.dumps([{'rank': 0, 'title': 'NAS 410', 'url': 'https://docs/nas410'}])},
     ]
-    with patch('server.routers.chat.get_pool', return_value=_make_pool(conn)):
+    with patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)):
         r = client.get('/api/chat/sessions/sess-1')
     assert r.status_code == 200
     data = r.json()
@@ -128,7 +128,7 @@ def test_get_session_returns_messages_with_sources(client):
 def test_delete_session_soft_deletes_messages_and_session(client):
     conn = AsyncMock()
     conn.fetchval.return_value = 1  # session owned by the caller
-    with patch('server.routers.chat.get_pool', return_value=_make_pool(conn)):
+    with patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)):
         r = client.delete('/api/chat/sessions/sess-1')
     assert r.status_code == 200
     assert r.json()['success'] is True
@@ -145,7 +145,7 @@ def test_delete_session_not_owner_returns_404(client):
     """A session_id that isn't the caller's own must never be deletable."""
     conn = AsyncMock()
     conn.fetchval.return_value = None
-    with patch('server.routers.chat.get_pool', return_value=_make_pool(conn)):
+    with patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)):
         r = client.delete('/api/chat/sessions/sess-1')
     assert r.status_code == 404
     conn.execute.assert_not_called()
@@ -157,8 +157,8 @@ def test_share_session_generates_token_for_first_share(client):
     conn = AsyncMock()
     conn.fetchrow.return_value = {'share_token': None}
     with (
-        patch('server.routers.chat.get_pool', return_value=_make_pool(conn)),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None, 'email': None})),
     ):
         r = client.post('/api/chat/sessions/sess-1/share')
@@ -176,8 +176,8 @@ def test_share_session_is_idempotent(client):
     conn = AsyncMock()
     conn.fetchrow.return_value = {'share_token': 'already-shared-token'}
     with (
-        patch('server.routers.chat.get_pool', return_value=_make_pool(conn)),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None, 'email': None})),
     ):
         r = client.post('/api/chat/sessions/sess-1/share')
@@ -190,8 +190,8 @@ def test_share_session_not_owner_returns_404(client):
     conn = AsyncMock()
     conn.fetchrow.return_value = None
     with (
-        patch('server.routers.chat.get_pool', return_value=_make_pool(conn)),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'someone-else', 'workspace_id': None, 'email': None})),
     ):
         r = client.post('/api/chat/sessions/sess-1/share')
@@ -201,7 +201,7 @@ def test_share_session_not_owner_returns_404(client):
 def test_get_shared_session_not_found(client):
     conn = AsyncMock()
     conn.fetchrow.return_value = None
-    with patch('server.routers.chat.get_pool', return_value=_make_pool(conn)):
+    with patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)):
         r = client.get('/api/chat/shared/no-such-token')
     assert r.status_code == 404
 
@@ -219,7 +219,7 @@ def test_get_shared_session_returns_messages_without_ownership_check(client):
          'sources_json': json.dumps([{'rank': 0, 'title': 'NAS 410', 'url': 'https://docs/nas410'}]),
          'feedback_vote': 'up', 'feedback_comment': 'Spot on'},
     ]
-    with patch('server.routers.chat.get_pool', return_value=_make_pool(conn)):
+    with patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)):
         r = client.get('/api/chat/shared/tok-abc')
     assert r.status_code == 200
     data = r.json()
@@ -237,8 +237,8 @@ def test_duplicate_shared_session_copies_messages(client):
         {'role': 'assistant', 'content': 'NDT stands for…', 'sources_json': None},
     ]
     with (
-        patch('server.routers.chat.get_pool', return_value=_make_pool(conn)),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'viewer', 'workspace_id': None, 'email': None})),
     ):
         r = client.post('/api/chat/shared/tok-abc/duplicate')
@@ -258,8 +258,8 @@ def test_duplicate_shared_session_not_found(client):
     conn = AsyncMock()
     conn.fetchrow.return_value = None
     with (
-        patch('server.routers.chat.get_pool', return_value=_make_pool(conn)),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'viewer', 'workspace_id': None, 'email': None})),
     ):
         r = client.post('/api/chat/shared/no-such-token/duplicate')
@@ -274,7 +274,7 @@ def test_feedback_rejects_invalid_vote(client):
 
 
 def test_feedback_no_db_returns_503(client):
-    with patch('server.routers.chat.get_pool', return_value=None):
+    with patch('server.routers.chat.sessions.get_pool', return_value=None):
         r = client.post('/api/chat/feedback', json={'vote': 'up', 'message_id': 1, 'session_id': 'sess-1'})
     assert r.status_code == 503
 
@@ -283,10 +283,10 @@ def test_feedback_up_saved(client):
     conn = AsyncMock()
     conn.fetchrow.return_value = {'id': 42, 'vote': 'up'}
     with (
-        patch('server.routers.chat.get_pool', return_value=_make_pool(conn)),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None})),
-        patch('server.routers.chat.get_workspace_url', return_value='https://test.azuredatabricks.net'),
+        patch('server.routers.chat.sessions.get_workspace_url', return_value='https://test.azuredatabricks.net'),
     ):
         r = client.post('/api/chat/feedback', json={
             'vote': 'up', 'message_id': 1, 'session_id': 'sess-1',
@@ -299,10 +299,10 @@ def test_feedback_down_with_comment(client):
     conn = AsyncMock()
     conn.fetchrow.return_value = {'id': 43, 'vote': 'down'}
     with (
-        patch('server.routers.chat.get_pool', return_value=_make_pool(conn)),
-        patch('server.routers.chat.get_user_identity', new=AsyncMock(
+        patch('server.routers.chat.sessions.get_pool', return_value=_make_pool(conn)),
+        patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None})),
-        patch('server.routers.chat.get_workspace_url', return_value='https://test.azuredatabricks.net'),
+        patch('server.routers.chat.sessions.get_workspace_url', return_value='https://test.azuredatabricks.net'),
     ):
         r = client.post('/api/chat/feedback', json={
             'vote': 'down', 'message_id': 2, 'session_id': 'sess-1', 'comment': 'Not relevant',
@@ -336,14 +336,14 @@ def test_save_turn_strips_division_and_registers_user():
     """Thread name is derived from the clean question and the user is upserted."""
     import asyncio
 
-    from server.routers import chat
+    from server.routers.chat import persistence
 
     conn = AsyncMock()
     conn.fetchval.side_effect = [98, 99]          # user message id, assistant message id
     pool = _make_pool(conn)
 
-    with patch('server.routers.chat.upsert_user', new=AsyncMock()) as mock_upsert:
-        ids = asyncio.run(chat._save_turn(
+    with patch('server.routers.chat.persistence.upsert_user', new=AsyncMock()) as mock_upsert:
+        ids = asyncio.run(persistence._save_turn(
             pool, 'sess-1', 'u1', 'ws1', 'https://test',
             '[Division: IS] The user works in the IS division. Restrict.\n\nHow do I wire it?',
             'Here is how.',
@@ -378,14 +378,14 @@ def test_save_turn_records_error_status():
     """A failed turn is persisted with status='error' and the failure reason."""
     import asyncio
 
-    from server.routers import chat
+    from server.routers.chat import persistence
 
     conn = AsyncMock()
     conn.fetchval.side_effect = [4, 5]
     pool = _make_pool(conn)
 
-    with patch('server.routers.chat.upsert_user', new=AsyncMock()):
-        asyncio.run(chat._save_turn(
+    with patch('server.routers.chat.persistence.upsert_user', new=AsyncMock()):
+        asyncio.run(persistence._save_turn(
             pool, 'sess', 'u1', None, 'https://t',
             'why does it fail?', '',  # no assistant text — the turn crashed
             status='error', error_msg='Agent failure',
@@ -408,14 +408,14 @@ def test_save_turn_records_error_status():
 def test_save_turn_failure_is_a_persist_issue_of_the_turn():
     import asyncio
 
-    from server.routers import chat
+    from server.routers.chat import persistence
     from server.services.chat.turn_log import TurnLog
 
     conn = AsyncMock()
     conn.fetchval.side_effect = RuntimeError('connection lost')
     log = TurnLog()
-    with patch('server.routers.chat.upsert_user', new=AsyncMock()):
-        ids = asyncio.run(chat._save_turn(_make_pool(conn), 'sess', 'u1', None, 'https://t', 'q', 'a', log=log))
+    with patch('server.routers.chat.persistence.upsert_user', new=AsyncMock()):
+        ids = asyncio.run(persistence._save_turn(_make_pool(conn), 'sess', 'u1', None, 'https://t', 'q', 'a', log=log))
     assert ids == (None, None)
     assert log.codes == ['persist_failed'] and 'connection lost' in log.issues[0]['message']
 

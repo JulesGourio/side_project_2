@@ -14,13 +14,14 @@ from ...services.compare.processors.factory import (
     get_extension, prepare_image_content,
 )
 from ...services.compare.summarize import summarize_image, summarize_text
+from ...services.infra.credentials import get_credentials
 from ...services.infra.lakebase import (
     get_cached_summary, store_error,
     store_summary_cache,
 )
 from ...services.infra.user import get_user_identity, require_compare
 from .common import (
-    APP_VERSION, _get_config, _get_credentials, _validate_file,
+    APP_VERSION, _get_config, _validate_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ async def summarize_document(
             'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0, 'cost_eur': 0.0},
         }
 
-    host, token = _get_credentials(request)
+    host, token = get_credentials(request)
     if not host or not token:
         return JSONResponse({'error': 'Missing Databricks credentials'}, status_code=400)
 

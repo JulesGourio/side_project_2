@@ -20,6 +20,7 @@ from ...services.compare.chunked_analysis import split_messages_for_chunking, st
 from ...services.compare.processors.factory import (
     diff_truncation_warnings, file_type_of, get_extension, get_processor,
 )
+from ...services.infra.credentials import get_credentials
 from ...services.infra.lakebase import (
     get_pool, store_error,
     store_llm_request,
@@ -28,7 +29,7 @@ from ...services.infra.lakebase import (
 from ...services.infra.streaming import stream_analysis
 from ...services.infra.user import require_compare
 from .common import (
-    APP_VERSION, _get_config, _get_credentials, _sanitize_filename, _validate_file,
+    APP_VERSION, _get_config, _sanitize_filename, _validate_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,7 +136,7 @@ async def analyze_documents(
             media_type='text/event-stream',
         )
 
-    host, token = _get_credentials(request)
+    host, token = get_credentials(request)
     if not host or not token:
         return StreamingResponse(
             _error_stream('Missing Databricks credentials'),
