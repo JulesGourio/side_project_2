@@ -3,7 +3,7 @@
 ``chat.py`` creates one ``TurnLog`` per turn and hands it to the engine (``chat/engine.py``); both
 fill it as the turn runs. ``lakebase.store_chat_turn`` then writes it to three tables:
 
-- ``chat_turns``: one row — ``data`` (columns of ``CHAT_TURN_COLUMNS`` in lakebase.py), the
+- ``chat_turns``: one row — ``data`` (columns of ``CHAT_TURN_COLUMNS`` in infra/lakebase/columns.py), the
   durations of every step (``timings_ms``, columns ``<step>_ms``), the outcome and the issue codes;
 - ``chat_retrieved_chunks``: one row per passage retrieved (``passages``), handed to the LLM
   (``kept``) or set aside (``drop_reason``);

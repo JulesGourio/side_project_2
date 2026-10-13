@@ -115,7 +115,7 @@ def test_store_chat_turn_writes_turn_passages_and_issues():
     log.issue('vs_partial', 'search', '1/6 failed', http_status=503)
     log.issue('client_disconnected', 'ws', severity=INFO)
     log.finish('ok')
-    with patch.object(lakebase, 'get_pool', return_value=_fake_pool(conn)):
+    with patch.object(lakebase.connection, 'get_pool', return_value=_fake_pool(conn)):
         assert asyncio.run(lakebase.store_chat_turn(log, endpoint='/api/chat/ws', assistant_message_id=5)) == 12
 
     sql, *values = conn.fetchval.await_args.args
@@ -136,7 +136,7 @@ def test_store_chat_turn_writes_turn_passages_and_issues():
 
 
 def test_store_chat_turn_without_database_is_a_no_op():
-    with patch.object(lakebase, 'get_pool', return_value=None):
+    with patch.object(lakebase.connection, 'get_pool', return_value=None):
         assert asyncio.run(lakebase.store_chat_turn(TurnLog())) is None
 
 
@@ -294,11 +294,11 @@ def test_store_error_reads_the_origin_at_the_call_site():
     rows = []
 
     async def _go():
-        with patch.object(lakebase, '_write_error', new=AsyncMock(side_effect=lambda row: rows.append(row))):
+        with patch.object(lakebase.audit, '_write_error', new=AsyncMock(side_effect=lambda row: rows.append(row))):
             task = lakebase.store_error(endpoint='/api/x', error_type='E', error_msg='m', stage='llm')
             await task
     asyncio.run(_go())
-    sql_cols = re.search(r'\((.*?)\)\s*VALUES', lakebase._ERROR_INSERT, re.S).group(1).split(',')
+    sql_cols = re.search(r'\((.*?)\)\s*VALUES', lakebase.audit._ERROR_INSERT, re.S).group(1).split(',')
     row = dict(zip([c.strip() for c in sql_cols], rows[0]))
     assert row['origin'].endswith(' in _go')                                     # the caller, not lakebase.py
     assert len(row['fingerprint']) == 12 and row['severity'] == 'error' and row['stage'] == 'llm'
@@ -314,7 +314,7 @@ def test_failed_turn_error_row_says_what_the_user_saw():
     log.issue('rewrite_failed', 'rewrite', 'down')
     log.data['user_message'] = TIRED_MESSAGE
     log.finish('error')
-    with patch.object(lakebase, 'get_pool', return_value=_fake_pool(conn)):
+    with patch.object(lakebase.connection, 'get_pool', return_value=_fake_pool(conn)):
         asyncio.run(lakebase.store_chat_turn(log))
     (_, error_rows), = [c.args for c in conn.executemany.await_args_list]
     by_severity = {r[10]: r for r in error_rows}

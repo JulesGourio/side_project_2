@@ -1,0 +1,591 @@
+"""Idempotent creation and migration of the Lakebase tables, run at every app start."""
+
+import logging
+
+import asyncpg
+
+from .columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS
+
+logger = logging.getLogger(__name__)
+
+
+async def _add_columns(conn, table: str, columns) -> None:
+    for col, typedef in columns:
+        await conn.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}')
+
+
+async def ensure_schema(pool: asyncpg.Pool) -> None:
+    # DROP COLUMN is allowed for genuinely obsolete columns (no longer written or read).
+    # Lakebase rewrites the table internally — the table appears empty for a short time,
+    # then all data is back. Never DROP TABLE or TRUNCATE.
+    async with pool.acquire() as conn:
+        # ── messages (primary history table) ─────────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS messages (
+                id                  SERIAL PRIMARY KEY,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                user_id             TEXT,
+                workspace_url       TEXT,
+                old_filename        TEXT NOT NULL,
+                new_filename        TEXT NOT NULL,
+                old_file_hash       TEXT,
+                new_file_hash       TEXT,
+                analysis_text       TEXT,
+                impact_text         TEXT,
+                volume_session_path TEXT,
+                file_type           TEXT,
+                processing_method   TEXT,
+                processor_version   TEXT,
+                ttft_s              DOUBLE PRECISION,
+                generation_s        DOUBLE PRECISION,
+                input_tokens        INTEGER,
+                output_tokens       INTEGER,
+                thinking_tokens     INTEGER,
+                total_tokens        INTEGER,
+                cost_eur            DOUBLE PRECISION,
+                app_version         TEXT
+            )
+        ''')
+        # Add columns introduced after initial deployment (idempotent)
+        await _add_columns(conn, 'messages', [
+            ('file_type',         'TEXT'),
+            ('processing_method', 'TEXT'),
+            ('processor_version', 'TEXT'),
+            ('ttft_s',            'DOUBLE PRECISION'),
+            ('generation_s',      'DOUBLE PRECISION'),
+            ('input_tokens',      'INTEGER'),
+            ('output_tokens',     'INTEGER'),
+            ('thinking_tokens',   'INTEGER'),
+            ('total_tokens',      'INTEGER'),
+            ('cost_eur',          'DOUBLE PRECISION'),
+            ('app_version',       'TEXT'),
+            ('user_id',           'TEXT'),
+            ('workspace_id',      'TEXT'),
+            ('llm_request_id',    'INTEGER'),
+            # Denormalized from llm_requests.endpoint_name so the model is visible on this row directly.
+            ('endpoint_name',     'TEXT'),
+        ])
+
+
+        # ── feedbacks ─────────────────────────────────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS feedbacks (
+                id              SERIAL PRIMARY KEY,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                message_id      INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                user_id         TEXT,
+                workspace_id    TEXT,
+                workspace_url   TEXT,
+                vote            TEXT NOT NULL CHECK (vote IN (\'up\', \'down\')),
+                comment         TEXT
+            )
+        ''')
+        await _add_columns(conn, 'feedbacks', [
+            ('workspace_id',       'TEXT'),
+            # Triage (Databricks dashboard): mark a feedback as handled + why.
+            ('resolved',           'BOOLEAN NOT NULL DEFAULT FALSE'),
+            ('resolution_reason',  'TEXT'),
+        ])
+
+        # ── llm_requests (audit: what was sent to the LLM) ───────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS llm_requests (
+                id              SERIAL PRIMARY KEY,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                old_file_hash   TEXT,
+                new_file_hash   TEXT,
+                file_type       TEXT,
+                endpoint_name   TEXT,
+                messages_json   TEXT,
+                input_tokens    INTEGER,
+                output_tokens   INTEGER,
+                thinking_tokens INTEGER,
+                total_tokens    INTEGER,
+                cost_eur        DOUBLE PRECISION,
+                http_status     INTEGER,
+                error_type      TEXT,
+                error_msg       TEXT
+            )
+        ''')
+        await _add_columns(conn, 'llm_requests', [
+            ('endpoint_name',   'TEXT'),
+            ('input_tokens',    'INTEGER'),
+            ('output_tokens',   'INTEGER'),
+            ('thinking_tokens', 'INTEGER'),
+            ('total_tokens',    'INTEGER'),
+            ('cost_eur',        'DOUBLE PRECISION'),
+            ('http_status',     'INTEGER'),
+            ('error_type',      'TEXT'),
+            ('error_msg',       'TEXT'),
+            # Outcome and step durations of the /compare/analyze stream (ms):
+            # 'ok' | 'error' | 'aborted' (browser left before the end).
+            ('status',          'TEXT'),
+            ('queue_wait_ms',   'INTEGER'),     # waiting for an analysis slot
+            ('build_ms',        'INTEGER'),     # file extraction + prompt
+            ('first_token_ms',  'INTEGER'),     # LLM call start -> first text
+            ('generation_ms',   'INTEGER'),     # LLM call start -> end
+            ('total_ms',        'INTEGER'),
+            ('chunked_parts',   'INTEGER'),     # map-reduce parts (0: one call)
+        ])
+
+        # ── errors (application errors persisted for monitoring) ──────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS errors (
+                id              SERIAL PRIMARY KEY,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                user_id         TEXT,
+                workspace_id    TEXT,
+                endpoint        TEXT,
+                error_type      TEXT,
+                error_msg       TEXT,
+                old_filename    TEXT,
+                new_filename    TEXT,
+                file_type       TEXT,
+                stack_trace     TEXT,
+                llm_request_id  INTEGER
+            )
+        ''')
+        await _add_columns(conn, 'errors', [
+            ('llm_request_id', 'INTEGER'),
+            # 'error' (the request failed) or 'warning' (it went on, degraded: a
+            # step that did not run as configured — e.g. the chat's search-query
+            # rewrite failed, so the search ran with the question only).
+            ('severity',       "TEXT NOT NULL DEFAULT 'error'"),
+            # Step that failed: chat translate_in / rewrite / search / ref_lookup /
+            # title_lookup / llm / translate_back / persist / ws; compare build / llm.
+            ('stage',          'TEXT'),
+            ('http_status',    'INTEGER'),
+            ('upstream',       'TEXT'),     # Vector Search index or model endpoint called
+            # Chat: same trace_id as chat_turns / chat_messages (join key).
+            ('trace_id',       'TEXT'),
+            ('session_id',     'TEXT'),
+            # What was expected vs what happened (configured endpoints, attempts,
+            # queries failed / sent…) and the stack trace when there is one.
+            ('context',        'JSONB'),
+            ('app_version',    'TEXT'),
+            # Where in the code: the deepest frame of the stack trace in this repository, else
+            # the code that reported it (path:line in function).
+            ('origin',         'TEXT'),
+            # Same route + step + type + origin (line ignored): groups the same error across requests.
+            ('fingerprint',    'TEXT'),
+            # What the user was shown (NULL: nothing, the request went on).
+            ('user_message',   'TEXT'),
+        ])
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_created_at ON errors (created_at)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_trace_id ON errors (trace_id)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_fingerprint ON errors (fingerprint)')
+
+        # ── impact_requests (audit: every /compare/impact call, success or failure) ──
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS impact_requests (
+                id                  SERIAL PRIMARY KEY,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                user_id             TEXT,
+                workspace_id        TEXT,
+                method              TEXT NOT NULL,
+                old_file_hash       TEXT,
+                new_file_hash       TEXT,
+                changes_chars       INTEGER,
+                truncated           BOOLEAN,
+                chunks_returned     INTEGER,
+                num_documents       INTEGER,
+                duration_s          DOUBLE PRECISION,
+                endpoint_name       TEXT,
+                input_tokens        INTEGER,
+                output_tokens       INTEGER,
+                total_tokens        INTEGER,
+                cost_eur            DOUBLE PRECISION,
+                http_status         INTEGER,
+                error_type          TEXT,
+                error_msg           TEXT
+            )
+        ''')
+        await _add_columns(conn, 'impact_requests', [
+            # 'ok' | 'error' | 'aborted' (browser left before the end)
+            ('status',          'TEXT'),
+            ('app_version',     'TEXT'),
+            ('index_name',      'TEXT'),
+            ('queries_used',    'INTEGER'),     # one Vector Search query per change
+            ('queries_failed',  'INTEGER'),
+            ('candidates',      'INTEGER'),     # documents sent to the judge
+            ('not_judged',      'INTEGER'),     # found but past impact_max_candidates
+            ('judge_failed',    'INTEGER'),     # judge calls that failed after retries
+            # Step durations (ms); duration_s stays the total.
+            ('extract_ms',      'INTEGER'),     # change list -> queries
+            ('search_ms',       'INTEGER'),
+            ('judge_ms',        'INTEGER'),     # all judge calls (run in parallel)
+        ])
+
+        # ── impact_document_results (one row per document judged by the LLM; business-readable: documents and
+        # verdict, no retrieval internals) ──
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS impact_document_results (
+                id                      SERIAL PRIMARY KEY,
+                created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                request_id              INTEGER NOT NULL REFERENCES impact_requests(id) ON DELETE CASCADE,
+                ref                     TEXT,
+                division                TEXT,
+                url                     TEXT,
+                impacted                BOOLEAN,
+                confidence              TEXT,
+                section                 TEXT,
+                reason                  TEXT,
+                other_documents_json    TEXT
+            )
+        ''')
+        await _add_columns(conn, 'impact_document_results', [
+            # Technical trace of the judge call, at the end of the row on purpose.
+            ('status',          'TEXT'),        # impacted / check / not_impacted / error
+            ('judge_ms',        'INTEGER'),
+            ('judge_attempts',  'INTEGER'),
+            ('input_tokens',    'INTEGER'),
+            ('output_tokens',   'INTEGER'),
+        ])
+        await conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_impact_document_results_request_id
+                ON impact_document_results (request_id)
+        ''')
+
+        # ── impact_feedbacks (user votes on an impact search: on the whole result (ref NULL, optional comment) or on
+        # one document's verdict) ──
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS impact_feedbacks (
+                id                  SERIAL PRIMARY KEY,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                impact_request_id   INTEGER REFERENCES impact_requests(id) ON DELETE SET NULL,
+                message_id          INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                user_id             TEXT,
+                workspace_id        TEXT,
+                workspace_url       TEXT,
+                old_file_hash       TEXT,
+                new_file_hash       TEXT,
+                ref                 TEXT,
+                verdict_shown       TEXT,
+                vote                TEXT NOT NULL CHECK (vote IN (\'up\', \'down\')),
+                comment             TEXT,
+                resolved            BOOLEAN NOT NULL DEFAULT FALSE,
+                resolution_reason   TEXT
+            )
+        ''')
+        await conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_impact_feedbacks_request_id
+                ON impact_feedbacks (impact_request_id)
+        ''')
+
+        # ── impact_cache (result cache for /compare/impact, keyed like messages; "Re-run" bypasses it) ──
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS impact_cache (
+                id              SERIAL PRIMARY KEY,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                old_file_hash   TEXT NOT NULL,
+                new_file_hash   TEXT NOT NULL,
+                app_version     TEXT NOT NULL,
+                result_json     TEXT NOT NULL
+            )
+        ''')
+        await conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_impact_cache_hashes
+                ON impact_cache (old_file_hash, new_file_hash, app_version)
+        ''')
+
+        # ── summary_cache (cache for /compare/summarize, keyed on the single document's own hash + app_version) ──
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS summary_cache (
+                id              SERIAL PRIMARY KEY,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                file_hash       TEXT NOT NULL,
+                app_version     TEXT NOT NULL,
+                result_json     TEXT NOT NULL
+            )
+        ''')
+        await conn.execute(
+            "ALTER TABLE summary_cache ADD COLUMN IF NOT EXISTS endpoint_name TEXT"
+        )
+        await conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_summary_cache_hash
+                ON summary_cache (file_hash, app_version)
+        ''')
+
+        # ── users ─────────────────────────────────────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id            SERIAL PRIMARY KEY,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                user_id       TEXT UNIQUE NOT NULL,
+                workspace_id  TEXT,
+                email         TEXT,
+                display_name  TEXT,
+                workspace_url TEXT,
+                role          TEXT NOT NULL DEFAULT \'user\',
+                is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+                can_compare   BOOLEAN NOT NULL DEFAULT TRUE,
+                can_chat      BOOLEAN NOT NULL DEFAULT TRUE
+            )
+        ''')
+        # Migrations: add columns for databases created before these existed
+        await _add_columns(conn, 'users', [
+            ('can_chat',     'BOOLEAN NOT NULL DEFAULT TRUE'),
+            ('workspace_id', 'TEXT'),
+        ])
+
+        # Migrations: add groups column (persistent group membership for traceability)
+        await conn.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS groups TEXT[] NOT NULL DEFAULT '{}'"
+        )
+
+        # Translate lives in its own app (qualibot-translate): drop the unused column.
+        await conn.execute(
+            "ALTER TABLE users DROP COLUMN IF EXISTS can_translate"
+        )
+
+        # (deduplication and unique index applied after data migrations below)
+
+        # ── chat_sessions ─────────────────────────────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                id            TEXT PRIMARY KEY,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                user_id       TEXT,
+                workspace_id  TEXT,
+                workspace_url TEXT,
+                name          TEXT NOT NULL DEFAULT 'New conversation'
+            )
+        ''')
+        await _add_columns(conn, 'chat_sessions', [
+            ('workspace_id', 'TEXT'),
+            # Soft-delete: rows are never physically removed, only flagged, so a
+            # trace of every conversation is kept in the database for audit.
+            ('deleted',      'BOOLEAN NOT NULL DEFAULT FALSE'),
+            ('deleted_at',   'TIMESTAMPTZ'),
+            # Set once the owner clicks "Share" — grants read-only access to
+            # anyone with the token, independent of the row's own `id`.
+            ('share_token',  'TEXT'),
+        ])
+        await conn.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_share_token_idx
+            ON chat_sessions(share_token)
+            WHERE share_token IS NOT NULL
+        ''')
+
+        # ── chat_messages ─────────────────────────────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id              SERIAL PRIMARY KEY,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                session_id      TEXT REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                user_id         TEXT,
+                workspace_id    TEXT,
+                workspace_url   TEXT,
+                role            TEXT NOT NULL CHECK (role IN (\'user\', \'assistant\')),
+                content         TEXT NOT NULL,
+                trace_id        TEXT,
+                tool_name       TEXT,
+                tool_query      TEXT,
+                reasoning_steps TEXT
+            )
+        ''')
+        await _add_columns(conn, 'chat_messages', [
+            # The turn's chat_turns.trace_id (chat-…); on Knowledge Assistant turns, its MLflow trace id.
+            ('trace_id',        'TEXT'),
+            # Knowledge Assistant only, no longer written (the retrieval is in chat_turns /
+            # chat_retrieved_chunks); kept for the history of the KA turns.
+            ('tool_name',       'TEXT'),
+            ('tool_query',      'TEXT'),
+            ('tool_result',     'TEXT'),
+            ('reasoning_steps', 'TEXT'),
+            ('workspace_id',    'TEXT'),
+            # Engine label: chat-all / chat-as / chat-is (KA turns: ka-… endpoint).
+            # NULL on copies of a shared conversation. The model that actually
+            # answered is chat_turns.answer_endpoint.
+            ('endpoint_name',   'TEXT'),
+            ('sources_json',    'TEXT'),
+            # Soft-delete flag — see chat_sessions above.
+            ('deleted',         'BOOLEAN NOT NULL DEFAULT FALSE'),
+            ('deleted_at',      'TIMESTAMPTZ'),
+            # Turn outcome: 'ok' or 'error'. Failed turns are saved too, so the
+            # user's question and the failure reason stay traceable.
+            ('status',          "TEXT NOT NULL DEFAULT 'ok'"),
+            ('error_msg',       'TEXT'),
+            # Division scope the question was asked under: 'ALL' / 'AS' / 'IS'.
+            ('division',        "TEXT NOT NULL DEFAULT 'ALL'"),
+            # ISO 639-1 code of the question's language, as detected by the
+            # chat translation bridge (server/services/chat/translation_bridge.py).
+            # Empty when the bridge is disabled (CHAT_TRANSLATE_BRIDGE_ENABLED).
+            ('question_lang',   'TEXT'),
+        ])
+
+        await conn.execute('''
+            CREATE INDEX IF NOT EXISTS chat_messages_session_idx
+            ON chat_messages(session_id)
+        ''')
+
+        # ── chat_turns (one row per chat turn: every step, its duration, what
+        #    it should have run with and what went wrong — services/chat/turn_log.py)
+        #    No FK on session_id: a turn whose messages could not be saved is
+        #    still logged. ──────────────────────────────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS chat_turns (
+                id                    SERIAL PRIMARY KEY,
+                created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                trace_id              TEXT NOT NULL UNIQUE,
+                user_message_id       INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
+                assistant_message_id  INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
+                -- ok | degraded (answered, a step did not run as configured) | error | aborted
+                status                TEXT NOT NULL,
+                error_stage           TEXT,
+                error_type            TEXT,
+                error_msg             TEXT,
+                warnings              TEXT[] NOT NULL DEFAULT '{}'
+            )
+        ''')
+        await _add_columns(conn, 'chat_turns',
+                           CHAT_TURN_COLUMNS + [(f'{t}_ms', 'INTEGER') for t in CHAT_TURN_TIMINGS])
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_turns_created_at ON chat_turns (created_at)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_turns_session_id ON chat_turns (session_id)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_turns_assistant_message_id '
+                           'ON chat_turns (assistant_message_id)')
+
+        # ── chat_retrieved_chunks (every passage retrieved for a turn, with its
+        #    text: the chunks of a superseded revision are deleted from the index
+        #    tables, this keeps what the answer was really built on) ────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS chat_retrieved_chunks (
+                id          BIGSERIAL PRIMARY KEY,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                turn_id     INTEGER NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE
+            )
+        ''')
+        await _add_columns(conn, 'chat_retrieved_chunks', CHAT_CHUNK_COLUMNS)
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_retrieved_chunks_turn_id '
+                           'ON chat_retrieved_chunks (turn_id)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_retrieved_chunks_ref ON chat_retrieved_chunks (ref)')
+
+        # ── knowledge_base_metadata ───────────────────────────────────────────
+        # Single-row table (id=1) holding the "documents as of" date shown in
+        # the chat UI. Update documents_as_of manually after each KB refresh.
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_base_metadata (
+                id              INTEGER PRIMARY KEY DEFAULT 1,
+                documents_as_of DATE,
+                updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT single_row CHECK (id = 1)
+            )
+        ''')
+        await conn.execute('''
+            INSERT INTO knowledge_base_metadata (id)
+            VALUES (1)
+            ON CONFLICT (id) DO NOTHING
+        ''')
+
+        # ── doc_catalog ───────────────────────────────────────────────────────
+        # Every document of the parsing scope (REF, title, link, in the chat index or
+        # not). Rewritten by the parsing pipeline after each daily run (task
+        # 6_update_kb_metadata); read by server/services/infra/doc_catalog.py.
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS doc_catalog (
+                ref        TEXT PRIMARY KEY,
+                base_ref   TEXT,               -- NULL: computed by the app (doc_catalog._canon)
+                title      TEXT,
+                url        TEXT,
+                division   TEXT,
+                in_chat    BOOLEAN NOT NULL DEFAULT TRUE,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        ''')
+        # Current revision (Intraqual indice) and its publication date, given to the chat's answer
+        # model with each document. Whichever of the app and parsing task 6 owns the table adds them;
+        # a failure here must not stop the rest of the schema.
+        # ALTER ... IF NOT EXISTS needs table ownership even when the column is there: look first.
+        have = {r['column_name'] for r in await conn.fetch(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'doc_catalog'")}
+        missing = [(c, t) for c, t in [('revision', 'TEXT'), ('doc_date', 'DATE')] if c not in have]
+        try:
+            await _add_columns(conn, 'doc_catalog', missing)
+        except Exception as e:
+            logger.warning('doc_catalog: %s not added by the app (%s) — parsing task '
+                           '6_update_kb_metadata adds them when it owns the table', '/'.join(c for c, _ in missing), e)
+
+        # ── chat_feedbacks ────────────────────────────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS chat_feedbacks (
+                id            SERIAL PRIMARY KEY,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                message_id    INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
+                session_id    TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
+                user_id       TEXT,
+                workspace_id  TEXT,
+                workspace_url TEXT,
+                vote          TEXT NOT NULL CHECK (vote IN (\'up\', \'down\')),
+                comment       TEXT
+            )
+        ''')
+        await _add_columns(conn, 'chat_feedbacks', [
+            ('workspace_id',       'TEXT'),
+            # Triage (Databricks dashboard): mark a feedback as handled + why.
+            ('resolved',           'BOOLEAN NOT NULL DEFAULT FALSE'),
+            ('resolution_reason',  'TEXT'),
+        ])
+
+
+        # ── Data migrations (idempotent — WHERE only matches old composite format) ──
+
+        # 0. Drop obsolete columns (Lakebase rewrites the table — safe but transient empty state)
+        for _tbl, _col in [
+            ('messages',     'duration_s'),
+            ('users',        'can_export'),
+            ('llm_requests', 'user_id'),
+            ('llm_requests', 'workspace_id'),
+        ]:
+            try:
+                await conn.execute(f'ALTER TABLE {_tbl} DROP COLUMN IF EXISTS {_col}')
+            except Exception as e:
+                logger.debug('Could not drop %s.%s: %s', _tbl, _col, e)
+
+        # 1. Trim trailing whitespace / \r\n from emails introduced by SCIM responses
+        await conn.execute("UPDATE users SET email = BTRIM(email) WHERE email ~ '\\s'")
+        await conn.execute("UPDATE users SET email = NULL WHERE TRIM(COALESCE(email,'')) = ''")
+
+        # 2. Delete NULL-email users whose numeric ID already has an email-carrying entry (same person from two
+        # workspaces),
+        #    otherwise the split UPDATE below hits a UNIQUE violation on user_id.
+        await conn.execute(r'''
+            DELETE FROM users
+            WHERE email IS NULL
+              AND user_id ~ '^\d+@\d+$'
+              AND SPLIT_PART(user_id, '@', 1) IN (
+                  SELECT SPLIT_PART(user_id, '@', 1) FROM users
+                  WHERE email IS NOT NULL AND user_id ~ '^\d+@\d+$'
+              )
+        ''')
+
+        # 3. Split composite user_ids (numeric@workspace) into separate columns for every table
+        for table in ('users', 'messages', 'feedbacks',
+                      'chat_sessions', 'chat_messages', 'chat_feedbacks'):
+            await conn.execute(f'''
+                UPDATE {table}
+                SET workspace_id = SPLIT_PART(user_id, '@', 2),
+                    user_id      = SPLIT_PART(user_id, '@', 1)
+                WHERE user_id ~ '^\\d+@\\d+$'
+            ''')
+
+        # ── Deduplication + unique index (run after data cleanup) ─────────────
+        # Keep the most recently updated row per email, delete older duplicates.
+        await conn.execute('''
+            DELETE FROM users a
+            USING users b
+            WHERE a.email IS NOT NULL
+              AND a.email = b.email
+              AND a.updated_at < b.updated_at
+        ''')
+
+        # Partial unique index on email so the same real-world user is never
+        # duplicated across workspaces.
+        await conn.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx
+            ON users(email)
+            WHERE email IS NOT NULL
+        ''')
+
+    logger.info('Lakebase schema ready')
