@@ -23,7 +23,7 @@ Les mesures qui ont mené à ces choix : `docs/chat_tests.md`.
 
 ## 2. La réponse : `server/services/chat/llm.py`
 
-Appelé par `chat/engine.py` pour la réponse et la réécriture. Le prompt n'est pas modifié.
+Appelé par `chat/engine/` pour la réponse et la réécriture. Le prompt n'est pas modifié.
 
 **Ordre des modèles** : `CHAT_LLM_ENDPOINT`, puis ceux de `CHAT_LLM_FALLBACK_ENDPOINTS`.
 
@@ -86,10 +86,10 @@ logs de l'app, préfixe `chat_llm:`. Un tour sans incident n'y laisse rien.
 
 - `server/services/chat/llm.py` : chaîne de modèles, relances, reprise, file d'attente, appels
   courts avec secours.
-- `server/services/chat/engine.py` : réécriture et réponse via `chat/llm.py` ; relance par requête
+- `server/services/chat/engine/` : réécriture et réponse via `chat/llm.py` ; relance par requête
   Vector Search (`_post_query`) ; recherches partielles acceptées ; langue de réponse transmise au
   prompt ; modèle effectif dans les métadonnées.
-- `server/routers/chat.py` : calcule la langue de la réponse (`translation_bridge.answer_language`)
+- `server/routers/chat/` : calcule la langue de la réponse (`translation_bridge.answer_language`)
   et la passe au moteur.
 - `server/services/chat/translation_bridge.py` : nettoyage avant détection, détection « mauvaise
   langue » plus stricte, relance sur 429, modèle de secours, plafond adapté, rejet des traductions

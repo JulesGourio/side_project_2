@@ -27,7 +27,7 @@ Gravité : 🔴 résultat faux ou faille · 🟠 gêne réelle · 🟡 mineur.
 
 ### A1 🔴 Les changements d'un seul mot dans un long paragraphe étaient perdus
 
-- **Problème.** `is_substantive_keep_modals` (`_diff_engines.py`) rejette une
+- **Problème.** `is_substantive_keep_modals` (`_diff_engines/`) rejette une
   paire de paragraphes si la distance en caractères est sous 5 %, sauf si un
   nombre, une référence normative ou un modal anglais change. La distance est
   mesurée sur tout le paragraphe : un mot décisif dans un paragraphe de 40 mots

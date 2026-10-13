@@ -103,7 +103,7 @@ needed to iterate.
    blocked on the corporate wifi, but not necessarily on other networks (VPN,
    home). Rather than hardcoding "local never connects" via an empty
    `LAKEBASE_PROJECT_ID`, the connection now has a short timeout
-   (`LAKEBASE_CONNECT_TIMEOUT_S`, default 5s — see `server/services/infra/lakebase.py`)
+   (`LAKEBASE_CONNECT_TIMEOUT_S`, default 5s — see `server/services/infra/lakebase/`)
    — so it's safe to always set real values: when the port is reachable you
    get full history/job persistence locally for free; when it's blocked, it
    fails fast (a few seconds at startup, not asyncpg's 60s default) into the

@@ -1,12 +1,12 @@
 # Lakebase — ce que l'app enregistre de chaque requête (schéma du 2026-10-09)
 
 Avec le Knowledge Assistant, le chat était une boîte noire : on ne gardait que la question, la
-réponse et les REF cités. Le moteur Vector Search (`server/services/chat/engine.py`) fait chaque étape
+réponse et les REF cités. Le moteur Vector Search (`server/services/chat/engine/`) fait chaque étape
 lui-même ; elles sont maintenant toutes enregistrées : requêtes de recherche, passages retrouvés
 (avec leur texte), modèles appelés, durées, et tout ce qui ne s'est pas passé comme prévu.
 
 Le schéma est créé et mis à jour par l'app à son démarrage (`_ensure_schema` dans
-`server/services/infra/lakebase.py`) : aucune DDL à lancer à la main. Que des `CREATE TABLE IF NOT
+`server/services/infra/lakebase/`) : aucune DDL à lancer à la main. Que des `CREATE TABLE IF NOT
 EXISTS` / `ADD COLUMN IF NOT EXISTS` : aucune donnée existante n'est touchée.
 
 ## Les tables du journal

@@ -4,7 +4,7 @@ Ce qui a été mesuré sur le chatbot : la configuration gardée (= le code actu
 été écarté, ce qui reste à tester. Le journal complet des essais (configurations KA, vague 3, audit détaillé du
 parsing P1 à P16, prix des modèles) est dans l'historique du dépôt, à la version de ce fichier au commit `f545093`.
 
-Code : `server/services/chat/engine.py` (+ `chat/llm.py`, `translation_bridge.py`). Notebooks de mesure gardés :
+Code : `server/services/chat/engine/` (+ `chat/llm.py`, `translation_bridge.py`). Notebooks de mesure gardés :
 `utils/evaluation/retrieval_eval.py` (recherche seule) et `pairwise_answers.py` (réponses côte à côte) ;
 `load_test_chat.py` et `load_test_vector_search.py` (charge). Le code des variantes testées puis écartées
 (`chat_vsi_rerank.py`, `golden_eval_ka_vs_vsi.py`, `rechunk_experiment.py`…) a été supprimé du dépôt : commit `f545093`.
