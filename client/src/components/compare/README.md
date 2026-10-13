@@ -18,7 +18,7 @@ summary" below), independent of any diff.
 |---|---|---|
 | Button | "Generate Change Summary" | "Generate Change Table" |
 | Output | Narrative Markdown, one bullet per change, grouped by section | Live JSON array parsed into a table (section, type, criticality, before/after, rationale) |
-| Rendered by | `ResultCard` | `StructuredResultCard` / `JsonDiffTable` |
+| Rendered by | `MarkdownResultCard` | `StructuredResultCard` / `JsonDiffTable` |
 | Export | PDF (`POST /export/pdf`) | Excel (`POST /compare/export-excel`) |
 
 Both call the same `POST /compare/analyze`, differing only in the
@@ -54,7 +54,7 @@ button.
 ### 3. Impact search: which documents does this change affect?
 
 **Route**: `POST /compare/impact` (NDJSON stream). **Button**: "Judge Impacted Docs".
-**UI**: `ImpactResults.tsx`. Redesigned 2026-10-02 — the earlier single-call design
+**UI**: `impact/` (`ImpactResultsCard.tsx`). Redesigned 2026-10-02 — the earlier single-call design
 (all changes packed into ≤8 queries, 12 candidates max, 5 passages × 800 chars each,
 one LLM call for every candidate, only verdict + section names shown) silently lost
 documents and passages; see git history before that date for its full write-up.
@@ -128,9 +128,8 @@ on the whole result (`ref` NULL). Rows link to `impact_requests` through the
 `messages.impact_text` of the analysis it was run on (`PUT /history/{id}/impact`);
 loading that history entry shows it again.
 
-**Manual mode** ("describe a change by hand", no files): deliberately disabled
-(`IMPACT_MANUAL_MODE_ENABLED = false` in `compareShared.ts`). It
-still works behind the flag.
+**Manual mode** ("describe a change by hand", no files): removed from the client
+(2026-10); the server still accepts a request without file hashes.
 
 **Export Excel** (`POST /compare/impact/export-excel`, `_build_impact_excel_bytes`):
 sheet *Passages* = one row per conflicting passage (the action list), *Documents* =
@@ -147,8 +146,8 @@ three different results, 2026-10-04) and replayed as the same event stream
 (`cached: true`). Results cached by the previous design (no `changes` key) are
 ignored. Not cached when a judge call failed. "Re-run" sends `force_refresh: true`.
 
-**Which text is used as input** (`changesTextForImpact` in `CompareView.tsx`):
-`analysis || analysisStd` — the Change Table (JSON) when it exists, else the Change
+**Which text is used as input** (`changesText` in `CompareView.tsx`):
+`table.text || summary.text` — the Change Table (JSON) when it exists, else the Change
 Summary (Markdown). A "Using: …" label says which.
 
 **Hard API limits** (verified 2026-07-10): `query_text` errors past ~29,000 chars
@@ -157,8 +156,8 @@ Summary (Markdown). A "Using: …" label says which.
 **Boilerplate collapse** (2026-07-17): the text diff collapses per-page
 repeats of the same change (revision stamps, classification fields — same
 text on ≥`COMPARE_BOILERPLATE_MIN_PAGES` distinct pages, default 3) and
-dot-leader table-of-contents rows into single annotated entries. Measured on
-`utils/compare_eval` (recall unchanged): 15-53% fewer diff entries and up to
+dot-leader table-of-contents rows into single annotated entries. Measured on a
+local reference set (recall unchanged): 15-53% fewer diff entries and up to
 51% smaller diff text — fewer LLM tokens per analysis and fewer noise changes
 to search.
 
@@ -256,7 +255,7 @@ logged before this was added (or replayed without hashes) keep NULL hashes.
 | `COMPARE_MAX_CONCURRENT` | Semaphore bounding concurrent `/compare/analyze` requests |
 | `MAX_COMPARE_FILE_MB` / `MAX_COMPARE_PDF_MB` | Upload size cap (`compare.py`, default 20MB). `app.yaml` declares the second, historical name; the first wins when both are set |
 | `COMPARE_PDF_MERGE_PAGE_SPLITS` / `COMPARE_PDF_TABLE_LABELS` | `false` restores the pre-2026-10-04 PDF extraction (paragraphs cut by a page break left as two blocks; table rows without column labels) |
-| `COMPARE_WORD_LEVEL_CHECK` | `false` restores the pre-2026-10-04 diff filter (drops one-word changes in long paragraphs) — for A/B runs on `compare_eval` only |
+| `COMPARE_WORD_LEVEL_CHECK` | `false` restores the pre-2026-10-04 diff filter (drops one-word changes in long paragraphs) — for A/B runs only |
 | `COMPARE_ANALYSIS_TIMEOUT_S` / `_CONNECT_TIMEOUT_S` / `_RETRIES` | HTTP timeout/retry knobs for the LLM call |
 | `COMPARE_MAX_TOKENS` / `_THINKING_BUDGET` / `_TEMPERATURE` | LLM call parameters |
 | `COMPARE_METHOD_{PDF,IMAGE,DOCX,PPTX,EXCEL}` | Default processor version per file type |
@@ -419,13 +418,16 @@ best-effort (`toast.warning`, never blocks the UI).
 
 | File | Content |
 |---|---|
-| `CompareView.tsx` | The page: state, analysis and impact streams, history, auto-save |
-| `compareShared.ts` | Types, constants, localStorage keys and file helpers shared by the components |
-| `PdfDropZone.tsx` | Upload card with the document preview |
-| `ResultCard.tsx`, `StructuredResultCard.tsx`, `JsonDiffTable.tsx` | Change Summary (Markdown) and Change Table (JSON rows) |
-| `CardFeedback.tsx` | Thumbs + comment shared by both result cards |
-| `DocSummaryCard.tsx` | Single-document summary |
-| `ImpactResults.tsx`, `ComparisonHistory.tsx` | Impact search results, history list |
+| `CompareView.tsx` | The page: composes the hooks and sections below |
+| `hooks/useAnalysisTrack.ts` | One streamed analysis (Change Table or Change Summary): state, SSE, auto-save, history row |
+| `hooks/useImpactSearch.ts`, `hooks/useDocSummaries.ts` | Impact search stream; single-document summaries |
+| `hooks/useCompareDocs.ts`, `hooks/useCompareConfig.ts`, `hooks/useHistoryLoad.ts` | The two documents and hashes; server config; reopening a history entry |
+| `api.ts`, `files.ts`, `storage.ts`, `types.ts` | Backend calls and SSE reader; file helpers; localStorage keys; shared types |
+| `DocsPanel.tsx`, `DocDropZone.tsx`, `FilePreviewModal.tsx` | Upload cards, preview, per-document summaries |
+| `AnalysisActions.tsx`, `AnalysisResults.tsx`, `ResultCards.tsx` | Generate buttons; Change Summary (Markdown) and Change Table cards |
+| `JsonDiffTable.tsx`, `ImageLightbox.tsx`, `Feedback.tsx` | Change Table rows and images; thumbs + comment |
+| `ImpactSection.tsx`, `impact/`, `ComparisonHistory.tsx` | Impact search section and results, history list |
+| `ui.tsx` | Shared buttons, card and modal shells |
 
 ### Frontend (`CompareView.tsx`) — state model
 
@@ -444,8 +446,8 @@ form field (2026-10-04). `POST /api/history` still stores the client's hashes �
 stream ended without `[DONE]`, is saved without hashes or not at all, so it is never
 served from cache.
 
-**"Run Both"** (`handleAnalyzeBoth`) is `Promise.allSettled([handleAnalyzeStructured(...), handleAnalyzeStandard(...)])`
-— each call manages its own `AbortController` and its own `isAnalyzing*` flag
+**"Run Both"** (`runBoth`) is `Promise.allSettled([table.run(), summary.run()])`
+— each `useAnalysisTrack` instance manages its own `AbortController` and its own `running` flag
 end-to-end; `allSettled` here is just a defensive wrapper against a stray unhandled
 rejection, not a real coordination point between the two tracks.
 
@@ -490,7 +492,7 @@ anywhere (Chat has one; Compare doesn't).
 `utils/compare_preview.py` is the actual scoring engine behind the "recall/precision"
 claims — it runs the real pipeline against a local file pair and, in `--score` mode,
 compares the resulting diff entries against a hand-annotated reference JSON
-(`utils/compare_eval/refs/*.json`, real Latécoère documents) to compute recall,
+(a reference JSON per file pair, kept outside this repository) to compute recall,
 precision (explicitly documented as a lower bound, since references aren't
 exhaustive), and a noise-hit count for boilerplate-collapse regressions. It's a
 manual CLI tool, not wired into CI — there's no automated regression gate on

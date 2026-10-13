@@ -4,7 +4,7 @@ A RAG chat over the company's document base: Vector Search finds the passages, G
 answers from them only, with inline citations, division scoping (ALL / AS / IS) and a
 translation bridge for questions that are neither French nor English. Every choice below
 was measured: `docs/chat_tests.md` (configuration kept, results, what was dropped).
-The former Knowledge Assistant (Agent Bricks) was removed on 2026-10-08 (`archive/`).
+The former Knowledge Assistant (Agent Bricks) was removed on 2026-10-08 (the `archive/` folder was deleted too; restorable from git commit `f545093`).
 
 ## How it works
 
@@ -124,11 +124,15 @@ user_id = $2`.
 
 ### Frontend
 
-`client/src/components/chat/`: `ChatView.tsx` (message list, streaming
-state, sidebar toggle, Share button), `ChatSidebar.tsx` (past sessions + "New
-conversation" + division selector), `ChatMessage.tsx` (streamed rendering,
-citation superscripts, source chips grouping multi-language variants of the
-same document, feedback thumbs, Markdown/PDF export), `division.tsx`
+`client/src/components/chat/`: `ChatView.tsx` (layout: message list, sidebar
+toggle, Share button) on top of `useChatConversation.ts` (messages, streamed
+turn, session load, share) and `useChatSessions.ts` (history list);
+`chatStream.ts` (WebSocket stream, retries, `TIRED_MESSAGE`); `ChatSidebar.tsx`
+(past sessions + "New conversation" + division selector); `ChatMessage.tsx`
+(bubble with citation superscripts), `ChatSources.tsx` (source chips grouping
+multi-language variants of the same document), `ChatFeedback.tsx` (thumbs),
+`DownloadMenu.tsx` + `chatExport.ts` (Markdown/PDF export), `WelcomeState.tsx`,
+`message.ts` (shared types), `division.tsx`
 (`DivisionSelector`, a 3-way ALL/AS/IS toggle). The read-only shared view
 lives outside this folder, at `client/src/pages/SharedChatPage.tsx`
 (route `/chat/shared/:token`) — it reuses `ChatMessage` with
@@ -315,7 +319,7 @@ survives message or session deletion, orphaned but preserved for audit.
 
 ### Frontend (`client/src/components/chat/`)
 
-- **`ChatView.tsx`** — `streamChat(...)` opens a raw `WebSocket` to `/api/chat/ws`,
+- **`chatStream.ts`** / **`useChatConversation.ts`** — `streamChat(...)` opens a raw `WebSocket` to `/api/chat/ws`,
   sends `{messages, session_id, division}` on `onopen`, and switches on
   `parsed.type` (`'delta'` / `'done'` / `'error'`) from `onmessage`. An
   `AbortController` wired to the Stop button closes the socket cleanly. A monotonic
@@ -326,7 +330,7 @@ survives message or session deletion, orphaned but preserved for audit.
   the baked-in `⟦n⟧` citation markers. Division is a per-turn WebSocket field, not a
   session-scoped switch — changing division mid-conversation keeps the same message
   history and only changes the division filter of the *next* turn.
-- **`ChatMessage.tsx`** — source-chip grouping strips a trailing language/locale
+- **`ChatSources.tsx`** / **`ChatFeedback.tsx`** — source-chip grouping strips a trailing language/locale
   suffix (`-FR`/`-EN`/`-GB`/…) from each source title to find its "canonical document
   key", so the FR/EN/CZ variants of the same document collapse into one chip with a
   language sub-badge row; the variant that was actually inline-cited leads that row.
