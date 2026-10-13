@@ -31,7 +31,7 @@ from ..services.infra.pdf_report import (
     build_markdown_pdf,
     build_report_pdf,
 )
-from .compare import _get_config, _is_within_volume, _sanitize_filename
+from .compare.common import _get_config, _is_within_volume, _sanitize_filename
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

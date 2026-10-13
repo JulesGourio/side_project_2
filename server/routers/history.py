@@ -12,7 +12,7 @@ from ..services.infra.lakebase import get_pool, upsert_user
 from ..services.infra.user import get_user_identity, get_workspace_url, require_compare
 # One definition: a row written with another default than the one the cache
 # lookup reads with would never be found again.
-from .compare import APP_VERSION
+from .compare.common import APP_VERSION
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

@@ -165,9 +165,9 @@ def client(app, monkeypatch):
         monkeypatch.setenv(key, value)
     app.dependency_overrides[require_compare] = lambda: None
     with (
-        patch('server.routers.compare.get_user_identity', new=AsyncMock(return_value={'user_id': 'u', 'workspace_id': 'w'})),
-        patch('server.routers.compare.get_cached_impact_result', new=AsyncMock(return_value=None)),
-        patch('server.routers.compare.store_impact_cache', new=AsyncMock()),
+        patch('server.routers.compare.impact.get_user_identity', new=AsyncMock(return_value={'user_id': 'u', 'workspace_id': 'w'})),
+        patch('server.routers.compare.impact.get_cached_impact_result', new=AsyncMock(return_value=None)),
+        patch('server.routers.compare.impact.store_impact_cache', new=AsyncMock()),
         TestClient(app) as c,
     ):
         yield c
@@ -192,9 +192,9 @@ def _search(documents, queries_failed=0):
 def _impact(client, search):
     audit, errors = AsyncMock(return_value=7), MagicMock()
     with (
-        patch('server.routers.compare.run_impact_search', new=search),
-        patch('server.routers.compare.store_impact_request', new=audit),
-        patch('server.routers.compare.store_error', new=errors),
+        patch('server.routers.compare.impact.run_impact_search', new=search),
+        patch('server.routers.compare.impact.store_impact_request', new=audit),
+        patch('server.routers.compare.impact.store_error', new=errors),
     ):
         res = client.post('/api/compare/impact', json={'changes_text': CHANGES})
     return [json.loads(line) for line in res.text.splitlines() if line.strip()], audit, errors
@@ -238,12 +238,12 @@ def test_analyze_records_outcome_and_durations(client):
 
     run = AsyncMock()
     with (
-        patch('server.routers.compare._get_cached_analysis', new=AsyncMock(return_value=None)),
-        patch('server.routers.compare.get_processor', return_value=processor),
-        patch('server.routers.compare.store_llm_request', new=AsyncMock(return_value=11)),
-        patch('server.routers.compare.update_llm_request_usage', new=AsyncMock()),
-        patch('server.routers.compare.update_llm_request_run', new=run),
-        patch('server.routers.compare.stream_analysis', new=_llm),
+        patch('server.routers.compare.analyze._get_cached_analysis', new=AsyncMock(return_value=None)),
+        patch('server.routers.compare.analyze.get_processor', return_value=processor),
+        patch('server.routers.compare.analyze.store_llm_request', new=AsyncMock(return_value=11)),
+        patch('server.routers.compare.analyze.update_llm_request_usage', new=AsyncMock()),
+        patch('server.routers.compare.analyze.update_llm_request_run', new=run),
+        patch('server.routers.compare.analyze.stream_analysis', new=_llm),
     ):
         res = client.post('/api/compare/analyze', files={
             'old_file': ('a.pdf', b'%PDF-1.4 old', 'application/pdf'),

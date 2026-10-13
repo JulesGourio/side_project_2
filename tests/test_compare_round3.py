@@ -48,9 +48,11 @@ def client(app, monkeypatch):
     }.items():
         monkeypatch.setenv(key, value)
     app.dependency_overrides[require_compare] = lambda: None
+    identity = AsyncMock(return_value={'user_id': 'u', 'workspace_id': 'w'})
     with (
-        patch('server.routers.compare.get_user_identity', new=AsyncMock(return_value={'user_id': 'u', 'workspace_id': 'w'})),
-        patch('server.routers.compare.store_impact_request', new=AsyncMock(return_value=7)),
+        patch('server.routers.compare.impact.get_user_identity', new=identity),
+        patch('server.routers.compare.summarize.get_user_identity', new=identity),
+        patch('server.routers.compare.impact.store_impact_request', new=AsyncMock(return_value=7)),
         TestClient(app) as c,
     ):
         yield c
@@ -76,9 +78,9 @@ def _events(res):
 def test_impact_streams_plan_documents_done_and_caches_under_the_fingerprint(client):
     store = AsyncMock()
     with (
-        patch('server.routers.compare.run_impact_search', new=_fake_search),
-        patch('server.routers.compare.get_cached_impact_result', new=AsyncMock(return_value=None)),
-        patch('server.routers.compare.store_impact_cache', new=store),
+        patch('server.routers.compare.impact.run_impact_search', new=_fake_search),
+        patch('server.routers.compare.impact.get_cached_impact_result', new=AsyncMock(return_value=None)),
+        patch('server.routers.compare.impact.store_impact_cache', new=store),
     ):
         res = client.post('/api/compare/impact', json={
             'changes_text': CHANGES, 'old_file_hash': 'a' * 64, 'new_file_hash': 'b' * 64,
@@ -95,8 +97,8 @@ def test_impact_streams_plan_documents_done_and_caches_under_the_fingerprint(cli
 def test_impact_replays_a_cached_result(client):
     cached = {'changes': [{'id': 'C1'}], 'source': 'structured', 'documents': [DOC], 'usage': {}, 'duration_s': 1.0}
     with (
-        patch('server.routers.compare.get_cached_impact_result', new=AsyncMock(return_value=cached)),
-        patch('server.routers.compare.run_impact_search', side_effect=AssertionError('must not search')),
+        patch('server.routers.compare.impact.get_cached_impact_result', new=AsyncMock(return_value=cached)),
+        patch('server.routers.compare.impact.run_impact_search', side_effect=AssertionError('must not search')),
     ):
         res = client.post('/api/compare/impact', json={
             'changes_text': CHANGES, 'old_file_hash': 'a' * 64, 'new_file_hash': 'b' * 64,
@@ -112,9 +114,9 @@ def test_impact_reports_a_search_failure_as_an_error_event(client):
         yield  # pragma: no cover — makes this an async generator
 
     with (
-        patch('server.routers.compare.run_impact_search', new=_boom),
-        patch('server.routers.compare.get_cached_impact_result', new=AsyncMock(return_value=None)),
-        patch('server.routers.compare.store_error', new=MagicMock()),
+        patch('server.routers.compare.impact.run_impact_search', new=_boom),
+        patch('server.routers.compare.impact.get_cached_impact_result', new=AsyncMock(return_value=None)),
+        patch('server.routers.compare.impact.store_error', new=MagicMock()),
     ):
         res = client.post('/api/compare/impact', json={'changes_text': CHANGES})
     events = _events(res)
@@ -122,7 +124,7 @@ def test_impact_reports_a_search_failure_as_an_error_event(client):
 
 
 def test_impact_without_changes_does_not_search(client):
-    with patch('server.routers.compare.run_impact_search', side_effect=AssertionError('must not search')):
+    with patch('server.routers.compare.impact.run_impact_search', side_effect=AssertionError('must not search')):
         res = client.post('/api/compare/impact', json={'changes_text': '**Aucun changement significatif détecté.**'})
     events = _events(res)
     assert events[0]['no_changes'] is True and events[-1]['type'] == 'done'
@@ -141,9 +143,9 @@ def test_summarize_caches_under_the_hash_of_the_received_bytes(client):
     store = AsyncMock()
     summary = AsyncMock(return_value={'summary': 'A short summary.', 'truncated': False, 'usage': {}})
     with (
-        patch('server.routers.compare.get_cached_summary', new=AsyncMock(return_value=None)) as lookup,
-        patch('server.routers.compare.store_summary_cache', new=store),
-        patch('server.routers.compare.summarize_text', new=summary),
+        patch('server.routers.compare.summarize.get_cached_summary', new=AsyncMock(return_value=None)) as lookup,
+        patch('server.routers.compare.summarize.store_summary_cache', new=store),
+        patch('server.routers.compare.summarize.summarize_text', new=summary),
     ):
         res = client.post('/api/compare/summarize',
                           files={'file': ('proc.docx', data, 'application/octet-stream')},
@@ -156,7 +158,7 @@ def test_summarize_caches_under_the_hash_of_the_received_bytes(client):
 
 
 def test_summarize_document_without_text_is_a_normal_answer(client):
-    with patch('server.routers.compare.get_cached_summary', new=AsyncMock(return_value=None)):
+    with patch('server.routers.compare.summarize.get_cached_summary', new=AsyncMock(return_value=None)):
         res = client.post('/api/compare/summarize',
                           files={'file': ('empty.docx', _docx_bytes(''), 'application/octet-stream')})
     assert res.status_code == 200 and res.json()['no_content'] is True

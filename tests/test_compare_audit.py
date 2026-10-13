@@ -142,7 +142,7 @@ def test_analyze_cache_lookup_uses_server_side_hashes(client):
     old_bytes, new_bytes = b'%PDF-1.4 old revision', b'%PDF-1.4 new revision'
     cached = {'id': 7, 'analysis_text': 'cached report', 'file_type': 'pdf',
               'processing_method': 'standard', 'processor_version': 'standard', 'volume_session_path': ''}
-    with patch('server.routers.compare._get_cached_analysis', new=AsyncMock(return_value=cached)) as lookup:
+    with patch('server.routers.compare.analyze._get_cached_analysis', new=AsyncMock(return_value=cached)) as lookup:
         res = client.post(
             '/api/compare/analyze',
             files={'old_file': ('a.pdf', old_bytes, 'application/pdf'),
@@ -174,7 +174,7 @@ def test_save_result_rejects_paths_outside_the_volume(client):
 
 
 def test_is_within_volume_accepts_session_folders():
-    from server.routers.compare import _is_within_volume
+    from server.routers.compare.common import _is_within_volume
     assert _is_within_volume('/Volumes/cat/sch/compare/2026-10-04_101500', '/Volumes/cat/sch/compare')
     assert _is_within_volume('/Volumes/cat/sch/compare', '/Volumes/cat/sch/compare/')
 
@@ -188,7 +188,7 @@ def test_export_excel_route(client):
 # --- Impact search ---
 
 def test_impact_cache_key_depends_on_changes_and_index():
-    from server.routers.compare import _impact_cache_version
+    from server.routers.compare.impact import _impact_cache_version
     cfg = {'impact_index': 'cat.sch.chunks_index', 'impact_endpoint': 'judge',
            'impact_max_queries': 30, 'impact_per_query_results': 40, 'impact_max_candidates': 15}
     base = _impact_cache_version('[{"section": "4.3"}]', cfg)
