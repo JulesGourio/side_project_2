@@ -144,7 +144,7 @@ def _chunk_order(chunk_id: str) -> Tuple[int, int]:
 
 
 def _parse_json_array(text: str) -> List[Dict[str, Any]] | None:
-    """Robust JSON array parser — mirrors compare.py's _parse_json_response fallback chain."""
+    """Robust JSON array parser — mirrors the compare exports' parse_json_response fallback chain."""
     stripped = text.strip()
     for candidate in (
         stripped,

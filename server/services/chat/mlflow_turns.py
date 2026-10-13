@@ -1,6 +1,6 @@
 """Every finished chat turn as one MLflow trace — the live view of what the chatbot does.
 
-``chat.py`` calls ``export_turn`` once the answer is sent, just before the turn is saved to Lakebase
+The chat route calls ``export_turn`` once the answer is sent, just before the turn is saved to Lakebase
 (the MLflow trace id is stored in ``chat_turns.mlflow_trace_id``). The trace is rebuilt from the turn's
 ``TurnLog`` (``turn_log.py``): the same steps, durations, passages and issues as in ``chat_turns``, at
 their real start offsets, so nothing is measured twice; the user has already got the answer. Off unless

@@ -212,8 +212,8 @@ def test_vector_search_query_retried_on_503(monkeypatch):
     async def _post(self, url, json=None, headers=None):
         return httpx.Response(statuses.pop(0), json={}, request=httpx.Request('POST', url))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
-    monkeypatch.setattr(engine.asyncio, 'sleep', AsyncMock())
-    resp = asyncio.run(engine._post_query('https://h', 't', 'idx', {'query_text': 'q'}))
+    monkeypatch.setattr(asyncio, 'sleep', AsyncMock())
+    resp = asyncio.run(engine.search._post_query('https://h', 't', 'idx', {'query_text': 'q'}))
     assert resp.status_code == 200 and not statuses
 
 
@@ -282,7 +282,7 @@ def test_no_claude_model_in_the_chatbot_config():
     import os as _os
     import yaml
     root = _os.path.join(_os.path.dirname(__file__), '..')
-    assert 'claude' not in engine._DEFAULT_LLM_ENDPOINT
+    assert 'claude' not in engine.config._DEFAULT_LLM_ENDPOINT
     env = {e['name']: str(e.get('value', '')) for e in yaml.safe_load(open(_os.path.join(root, 'app.yaml')))['env']}
     targets = _json.load(open(_os.path.join(root, 'utils', 'deploy', 'target_env.json')))
     for values in [env] + [v for k, v in targets.items() if isinstance(v, dict)]:

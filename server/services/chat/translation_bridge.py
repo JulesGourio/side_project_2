@@ -63,7 +63,7 @@ _NO_TRANSLATION_NEEDED = {'fr', 'en'}
 _MISMATCH_CONFIDENCE_THRESHOLD = 0.8
 
 # English names of the languages met in Latécoère's sites (FR, CZ, BG, MX, BR) and a few
-# neighbours — named in the answer-language reminder (chat/engine.py).
+# neighbours — named in the answer-language reminder (chat/engine/answer.py).
 LANGUAGE_NAMES = {'fr': 'French', 'en': 'English', 'es': 'Spanish', 'cs': 'Czech', 'bg': 'Bulgarian',
                   'pt': 'Portuguese', 'de': 'German', 'it': 'Italian', 'pl': 'Polish', 'ro': 'Romanian',
                   'sk': 'Slovak', 'nl': 'Dutch', 'ru': 'Russian', 'uk': 'Ukrainian'}

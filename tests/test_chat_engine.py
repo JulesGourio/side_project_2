@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from server.services.chat import engine
+from server.services.chat import engine, llm as chat_llm
 from server.services.chat.engine import CitationStreamParser, parse_citations
 from server.services.chat.turn_log import TurnLog
 
@@ -175,7 +175,7 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
          llm=None, named=(), language=None):
     sent = []
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer or (lambda p: DEFAULT_ROWS), sent))
-    monkeypatch.setattr(engine.asyncio, 'sleep', AsyncMock())
+    monkeypatch.setattr(asyncio, 'sleep', AsyncMock())
     monkeypatch.setenv('CHAT_INDEX', 'cat.sch.chunks_index')
     rewrite_mock = AsyncMock(side_effect=rewrite) if isinstance(rewrite, BaseException) or callable(rewrite) else \
         AsyncMock(return_value=(rewrite, 'databricks-gpt-6-luna'))
@@ -191,9 +191,9 @@ def _run(monkeypatch, messages=MESSAGES, division='ALL', answer=None, rewrite='F
     async def _collect():
         return [c async for c in engine.stream_chat('https://host', 'tok', division, messages, language, log=log)]
 
-    with (patch.object(engine.chat_llm, 'complete', rewrite_mock),
-          patch.object(engine.chat_llm, 'stream_answer', side_effect=_llm_spy),
-          patch.object(engine, 'refs_named_in', lambda text: list(named) if QUESTION in text else [])):
+    with (patch.object(chat_llm, 'complete', rewrite_mock),
+          patch.object(chat_llm, 'stream_answer', side_effect=_llm_spy),
+          patch.object(engine.retrieval, 'refs_named_in', lambda text: list(named) if QUESTION in text else [])):
         raw = asyncio.run(_collect())
     events = []
     for chunk in raw:
@@ -249,8 +249,8 @@ def test_union_merges_by_best_rank(monkeypatch):
     async def _go():
         found.update(await engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer, []))
-    with (patch.object(engine.chat_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
-          patch.object(engine, 'refs_named_in', lambda t: [])):
+    with (patch.object(chat_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
+          patch.object(engine.retrieval, 'refs_named_in', lambda t: [])):
         asyncio.run(_go())
     assert [r['chunk_id'] for r in found['rows']] == ['r1', 'both', 'raw2']
 
@@ -292,8 +292,8 @@ def test_failed_rewrite_keeps_a_raw_search_on_the_question(monkeypatch):
         sent.append(p)
         return [_row('a', 'A-1')]
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer, []))
-    with (patch.object(engine.chat_llm, 'complete', AsyncMock(side_effect=RuntimeError('down'))),
-          patch.object(engine, 'refs_named_in', lambda t: [])):
+    with (patch.object(chat_llm, 'complete', AsyncMock(side_effect=RuntimeError('down'))),
+          patch.object(engine.retrieval, 'refs_named_in', lambda t: [])):
         asyncio.run(_go())
     assert [p['query_text'] for p in sent if 'reranker' not in p] == [QUESTION]
 
@@ -313,8 +313,8 @@ def test_cap_keeps_the_best_ranked_search_passages(monkeypatch):
     async def _go():
         found.update(await engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(lambda p: [_row('a', 'A-1'), _row('b', 'B-1'), _row('c', 'C-1')], []))
-    with (patch.object(engine.chat_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
-          patch.object(engine, 'refs_named_in', lambda t: [])):
+    with (patch.object(chat_llm, 'complete', AsyncMock(return_value=('FR: q', 'x'))),
+          patch.object(engine.retrieval, 'refs_named_in', lambda t: [])):
         asyncio.run(_go())
     assert [r['chunk_id'] for r in found['rows']] == ['a', 'b']
 
@@ -627,7 +627,7 @@ def test_turn_log_keeps_passages_past_the_cap(monkeypatch):
 
 def test_prompt_gives_the_catalog_revision_of_each_document(monkeypatch):
     info = {'QP-1518': {'title': 'NDT qualification', 'revision': 'D', 'doc_date': '2024-10-11'}}
-    monkeypatch.setattr(engine, 'document_info', lambda ref: info.get(ref, {}))
+    monkeypatch.setattr(engine.answer, 'document_info', lambda ref: info.get(ref, {}))
     _, m = _run(monkeypatch)
     user_turn = m['prompt'][-1]['content']
     assert '[1] Document QP-1518 (current revision D, published 2024-10-11)\npassage 1' in user_turn

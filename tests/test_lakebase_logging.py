@@ -32,8 +32,9 @@ _ROOT = Path(__file__).resolve().parents[1]
 # ---------------------------------------------------------------------------
 
 def _turn_sources() -> list:
-    """The files that fill a TurnLog: the engine and the chat router package."""
-    return [_ROOT / 'server/services/chat/engine.py', *sorted((_ROOT / 'server/routers/chat').glob('*.py'))]
+    """The files that fill a TurnLog: the engine and the chat router packages."""
+    return [*sorted((_ROOT / 'server/services/chat/engine').glob('*.py')),
+            *sorted((_ROOT / 'server/routers/chat').glob('*.py'))]
 
 
 def _written_keys(path: Path) -> set:
@@ -58,7 +59,7 @@ def test_every_timed_step_is_a_chat_turns_column():
 
 
 def test_every_passage_key_is_a_chat_retrieved_chunks_column():
-    from server.services.chat.engine import _passage
+    from server.services.chat.engine.retrieval import _passage
     row = {'chunk_id': 'c', 'IDDOC': 3, 'REF': 'R', 'division': 'AS', 'url': 'u', 'semantic_headers': '',
            'chunk_text': 't', '_hits': [{'q': 0, 'via': 'raw', 'rank': 0, 'score': 0.5}]}
     keys = set(_passage(row, 0))

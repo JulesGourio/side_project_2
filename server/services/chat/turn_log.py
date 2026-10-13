@@ -1,6 +1,6 @@
 """What one chat turn did, step by step — saved to Lakebase once the turn is over.
 
-``chat.py`` creates one ``TurnLog`` per turn and hands it to the engine (``chat/engine.py``); both
+The chat route (``routers/chat/ws.py``) creates one ``TurnLog`` per turn and hands it to the engine (``chat/engine/``); both
 fill it as the turn runs. ``lakebase.store_chat_turn`` then writes it to three tables:
 
 - ``chat_turns``: one row — ``data`` (columns of ``CHAT_TURN_COLUMNS`` in infra/lakebase/columns.py), the

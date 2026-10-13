@@ -61,7 +61,7 @@ _REWRITE_REASONING_MIN_TOKENS = 1000
 CONTINUE_PROMPT = ('Your previous answer was cut off by a technical problem. Continue it exactly where it '
                    'stops: no preamble, do not repeat what is already written, same language, same citation '
                    'markers.')
-# The only failure texts a user ever sees (chat.py sends TIRED_MESSAGE for every failed turn); the
+# The only failure texts a user ever sees (the chat route sends TIRED_MESSAGE for every failed turn); the
 # technical cause goes to the turn log, never to the browser.
 TIRED_MESSAGE = 'Qualibot is a bit tired right now. Please wait a moment and try again.'
 TIRED_CUT_NOTE = '\n\n_(Qualibot got tired before the end of this answer. Please wait a moment and ask again.)_'
