@@ -243,7 +243,7 @@ prévenir, je change la valeur, vous redéployez.
   ```
 
 - [ ] **D3. Règle « documents archivés » dans le chatbot** (avant D4) : la règle écrite pour le
-  KA (`archive/knowledge_assistant/provisioning/ka_profiles.py`) doit passer dans
+  KA (`archive/knowledge_assistant/provisioning/ka_profiles.py` (removed, see git history at commit bbb1016)) doit passer dans
   `server/prompts/chat/system/base.md`. Me prévenir : je l'ajoute, vous redéployez l'app.
 
 - [ ] **D4. Mettre les fiches dans l'index du chatbot** (après D3 et D5) : je passe

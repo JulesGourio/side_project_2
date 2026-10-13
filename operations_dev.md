@@ -866,7 +866,7 @@ des fils à gauche sont comptées en jours calendaires.
 **Remplacé le 2026-10-12 par le bloc Y (notation des traces MLflow vivantes, job `D_2_Qualibot_Score_Chat_Traces_dev`). Ne rien lancer de ce bloc ; seule la suppression de l'ancien job `D_1_Qualibot_Score_Production_Qa` (W2) reste utile, si elle n'a pas été faite.**
 
 `score_production_qa` (KA contre RAG naïf) est archivé : `utils/evaluation/score_production_qa.py` →
-`archive/evaluation/`, `resources/evaluation.yml` → `archive/evaluation/score_production_qa.job.yml`.
+`archive/evaluation/` (removed, see git history at commit bbb1016), `resources/evaluation.yml` → `archive/evaluation/score_production_qa.job.yml` (removed, see git history at commit bbb1016).
 Le prototype `utils/evaluation/score_chat_traces.py` rejoue les tours du Lakebase en traces MLflow et
 les note avec les scorers MLflow (juge GPT-5.6 Luna).
 
@@ -877,8 +877,8 @@ les note avec les scorers MLflow (juge GPT-5.6 Luna).
   Remove-Item resources\evaluation.yml
   ```
 
-  Puis recopier à la main : `utils/evaluation/score_chat_traces.py` (nouveau), `archive/README.md`,
-  `archive/evaluation/score_production_qa.py`, `archive/evaluation/score_production_qa.job.yml`,
+  Puis recopier à la main : `utils/evaluation/score_chat_traces.py` (nouveau), `archive/README.md` (removed, see git history at commit bbb1016),
+  `archive/evaluation/score_production_qa.py` (removed, see git history at commit bbb1016), `archive/evaluation/score_production_qa.job.yml` (removed, see git history at commit bbb1016),
   `CLAUDE.md`, `OPERATIONS.md`, `operations_dev.md`, `docs/lakebase_schema.md`, `utils/README.md`.
 - [ ] **W2.** Supprimer le job DEV `D_1_Qualibot_Score_Production_Qa` (il n'est plus dans le bundle) et
   envoyer le notebook :

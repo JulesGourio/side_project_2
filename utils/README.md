@@ -16,7 +16,7 @@ Everything that runs outside the app, one folder per concern:
 | `evaluation/` | Chat evaluation and production-traffic quality scoring, results in `docs/chat_tests.md`; `create_chat_experiment.py` creates the MLflow experiment of the live chat traces |
 | `soffice_packaging/` | Portable LibreOffice build for the exact-layout PDF preview |
 
-The former Knowledge Assistant provisioning is in `archive/knowledge_assistant/`;
+The former Knowledge Assistant provisioning is in `archive/knowledge_assistant/` (removed, see git history at commit bbb1016);
 the sections below that mention the KA describe the chatbot as it was then.
 
 Longer incident/rationale write-ups that don't belong inline in the code live
@@ -24,7 +24,7 @@ here, one section per topic.
 
 ## chatbot-quality-scoring-luna-and-retrieval
 
-**Archived 2026-10-09** (`archive/evaluation/score_production_qa.py`; prototype successor
+**Archived 2026-10-09** (`archive/evaluation/score_production_qa.py` (removed, see git history at commit bbb1016); prototype successor
 `evaluation/score_chat_traces.py`: logged turns replayed as MLflow traces, MLflow scorers). History below.
 
 **2026-09-02/03**: `evaluation/score_production_qa.py` LLM-judges every
@@ -301,7 +301,7 @@ relying on the API to tolerate a redundant request.
 
 ## capabilities-snapshot-account-group-visibility
 
-**Archived 2026-10-12** (`archive/user_capabilities/`, no reader left in the app). **Why `build_capabilities_snapshot.py` existed**: feature
+**Archived 2026-10-12** (`archive/user_capabilities/` (removed, see git history at commit bbb1016), no reader left in the app). **Why `build_capabilities_snapshot.py` existed**: feature
 access (chat / compare) is driven by membership in account-level groups
 (`Role-Project-LEAP-End-users-Qualibot-*`). At runtime the app reads a user's
 groups via workspace SCIM `/Me`, but `/Me` does NOT surface ACCOUNT-level

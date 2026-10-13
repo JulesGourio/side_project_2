@@ -7,7 +7,7 @@ tester. La partie 2 est le journal complet, tel qu'il a été tenu pendant les e
 Code : `server/services/chat/engine.py` (+ `chat/llm.py`, `chat_vsi_titles.py`,
 `translation_bridge.py`). Notebooks de mesure gardés : `utils/evaluation/retrieval_eval.py`
 (recherche seule) et `pairwise_answers.py` (réponses côte à côte). Tout le reste est dans `archive/`
-(`archive/README.md`). Robustesse (secours, relances) : `docs/chat_robustesse_2026-10.md`.
+(`archive/README.md` (removed, see git history at commit bbb1016)). Robustesse (secours, relances) : `docs/chat_robustesse_2026-10.md`.
 
 # Partie 1 — Ce qu'on garde
 
@@ -42,13 +42,13 @@ Le journal garde les noms utilisés pendant les essais. Ils ne figurent plus dan
 
 | Nom dans le journal | Ce que c'était | Aujourd'hui |
 |---|---|---|
-| KA, `ka`, Chat KA | Knowledge Assistant (Agent Bricks), le premier chatbot | Retiré le 2026-10-08 (`archive/knowledge_assistant/`) |
+| KA, `ka`, Chat KA | Knowledge Assistant (Agent Bricks), le premier chatbot | Retiré le 2026-10-08 (`archive/knowledge_assistant/` (removed, see git history at commit bbb1016)) |
 | VSI, Chat VSI | Le chatbot sans KA : Vector Search + un LLM | Le chatbot, onglet « Chat » |
-| `baseline` | Première version du Chat VSI : une requête, 10 passages, Sonnet 4.6 | `archive/chat_vsi_base/` |
+| `baseline` | Première version du Chat VSI : une requête, 10 passages, Sonnet 4.6 | `archive/chat_vsi_base/` (removed, see git history at commit bbb1016) |
 | `rerank`, `union`, `union-ctx`, `u-*`, `u-all` | Réglages de la recherche dans `chat_vsi_rerank.py` | `u-all` = la recherche actuelle, sans réglage |
 | Instructions `ka` | Les instructions du KA, recopiées | `server/config/chat_vsi/instructions_<div>.md` |
-| Instructions `v2` | Instructions réécrites pour le VSI | Écartées (`archive/chat_vsi_lab/config/rewritten_instructions/`) |
-| Instructions `v3`, « addendum » | Instructions KA + règles d'ancrage, refus hors sujet, glossaire | `answer_rules.md` (premier jet : `archive/chat_vsi_lab/config/answer_rules_first_draft.md`) |
+| Instructions `v2` | Instructions réécrites pour le VSI | Écartées (`archive/chat_vsi_lab/config/rewritten_instructions/` (removed, see git history at commit bbb1016)) |
+| Instructions `v3`, « addendum » | Instructions KA + règles d'ancrage, refus hors sujet, glossaire | `answer_rules.md` (premier jet : `archive/chat_vsi_lab/config/answer_rules_first_draft.md` (removed, see git history at commit bbb1016)) |
 | `lang`, `CHAT_LANGUAGE_REMINDER` | Ligne de langue après la question | Toujours active |
 | `CHAT_SKIP_NOISE`, `-clean` | Écarter sommaires et cartouches de la recherche | Écarté (−11 points) |
 | Index `v1` (`chunks_index_v1`) | Découpage 250 / 500 / 1 000 tokens, l'index UAT copié en DEV | Remplacé |
@@ -84,13 +84,13 @@ Le journal garde les noms utilisés pendant les essais. Ils ne figurent plus dan
 - Sonnet 4.6, Sonnet 5.5 pour répondre ; Sonnet 4.6 et GPT-5.6 Luna pour réécrire.
 - Le Knowledge Assistant.
 
-Le code de chacune de ces options est dans `archive/chat_vsi_lab/`.
+Le code de chacune de ces options est dans `archive/chat_vsi_lab/` (removed, see git history at commit bbb1016).
 
 ## E. À tester plus tard
 
 | Piste | Ce que c'est | Où en est le code |
 |---|---|---|
-| E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € | `archive/evaluation/rechunk_experiment.py`, widget `doc_cards` (désactivé) |
+| E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € | `archive/evaluation/rechunk_experiment.py` (removed, see git history at commit bbb1016), widget `doc_cards` (désactivé) |
 | E2 — contexte par passage | Une ou deux phrases en tête de chaque passage pour le situer (méthode « Contextual Retrieval »). ≈ 50 € | Même notebook, widget `chunk_context` (désactivé) |
 | `v2c` — sans préfixe `[Source: …]` | Mesure l'effet du préfixe sur la recherche | Même notebook |
 | **Nombre de passages** (recherche mesurée le 2026-10-08, journal § 5.7 ; reste la comparaison des réponses) | Jusqu'à 3 × 12 reclassés + 10 bruts = 46 passages, sans plafond (66 avant `rawfr`). Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), le reranker seul n'a jamais été remesuré | Réglages `CHAT_RERANK_TOP_K`, `CHAT_RAW_TOP_K`, `CHAT_MAX_SEARCH_PASSAGES` (défauts inchangés) ; `operations_dev.md`, bloc T |
