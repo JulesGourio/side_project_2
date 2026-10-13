@@ -188,15 +188,10 @@ By default the script builds the React frontend (`bun run build`), writes the pe
 The local machine can't reach Lakebase directly (port 5432 is blocked). Run the export as a Databricks job first, then pull it locally — one-time setup (`psycopg2-binary`, proxy cert flag) and the `--direct` option are documented in [`utils/lakebase_sync/README.md`](utils/lakebase_sync/README.md):
 
 ```powershell
-# 1. Import + run the export notebook as a one-off job on UAT (serverless compute)
-databricks workspace import //Users/<you>/export_lakebase_uat_to_volume --profile UAT --file utils\lakebase_sync\export_lakebase_uat_to_volume.py --format SOURCE --language PYTHON --overwrite
-databricks jobs submit --profile UAT --json '{"tasks":[{"task_key":"export","notebook_task":{"notebook_path":"/Users/<you>/export_lakebase_uat_to_volume","source":"WORKSPACE"}}]}'
+# 1. Run the deployed export job on UAT (notebook utils/lakebase_sync/export_lakebase_uat_to_volume_job.py)
+databricks bundle run lakebase_export_uat_to_volume -t qualibot-uat --profile UAT
 
 # 2. Pull the exported JSON and push it into dev_landingzone.qualibot
 python utils\lakebase_sync\copy_Lakebase_tables.py
 ```
 
-### Compare diff-engine evaluation
-
-Token-free scoring of the diff engine (recall/precision against annotated
-reference pairs) — see [`utils/compare_eval/README.md`](utils/compare_eval/README.md).

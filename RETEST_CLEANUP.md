@@ -335,7 +335,7 @@ Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `
 
 ## 2026-10-09 — notation des tours archivée, prototype `score_chat_traces`
 
-- `utils/evaluation/score_production_qa.py` et `resources/evaluation.yml` sont dans `archive/evaluation/` :
+- `utils/evaluation/score_production_qa.py` et `resources/evaluation.yml` ont été supprimés (historique git, commit `f545093`, `archive/evaluation/`) :
   les entrées `score_production_qa` plus haut dans ce fichier ne sont plus à relancer.
 - À lancer à la place : `utils/evaluation/score_chat_traces.py` (`operations_dev.md`, bloc W).
 
