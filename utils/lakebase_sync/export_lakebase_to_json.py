@@ -11,60 +11,25 @@ USAGE:
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
+import logging
 import sys
-from decimal import Decimal
 from pathlib import Path
 
-import psycopg2
 import psycopg2.extras
 from databricks.sdk import WorkspaceClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
-from ops_config import MIGRATE_TO_PROD_TABLES_TO_SKIP
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/: ops_config
+from ops_config import MIGRATE_TO_PROD_TABLES_TO_SKIP, json_serializer, lakebase_connect_with
 
 PROJECT_ID = "qualibot"
 BRANCH = "production"
 ENDPOINT = "primary"
 
 
-def json_serializer(obj):
-    if isinstance(obj, (datetime.date, datetime.datetime)):
-        return obj.isoformat()
-    if isinstance(obj, Decimal):
-        return float(obj)
-    if isinstance(obj, (bytes, memoryview)):
-        return obj.hex() if isinstance(obj, bytes) else bytes(obj).hex()
-    return str(obj)
-
-
 def connect(profile: str, database: str):
-    w = WorkspaceClient(profile=profile)
-    branch_path = f"projects/{PROJECT_ID}/branches/{BRANCH}"
-    endpoint_path = f"{branch_path}/endpoints/{ENDPOINT}"
+    return lakebase_connect_with(WorkspaceClient(profile=profile), PROJECT_ID, BRANCH, ENDPOINT, database)
 
-    eps = list(w.postgres.list_endpoints(parent=branch_path))
-    if not eps:
-        raise RuntimeError(f"No endpoint found for {branch_path}")
-    host = eps[0].status.hosts.host
-
-    me = w.current_user.me()
-    username = me.user_name or me.display_name or ""
-    if not username:
-        raise RuntimeError("Could not resolve the current identity.")
-
-    cred = w.postgres.generate_database_credential(endpoint=endpoint_path)
-    if not cred.token:
-        raise RuntimeError("generate_database_credential returned an empty token.")
-
-    return psycopg2.connect(
-        host=host, port=5432, database=database,
-        user=username, password=cred.token, sslmode="require",
-    )
-
-
-import logging
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("export_lakebase_to_json")

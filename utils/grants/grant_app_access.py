@@ -26,6 +26,7 @@
 
 # COMMAND ----------
 
+dbutils.widgets.removeAll()
 dbutils.widgets.text("app_service_principal", "8e411164-a7e8-46ff-8013-8c56af2c3656")
 dbutils.widgets.text("catalog", "dev_landingzone")
 dbutils.widgets.text("schema_name", "qualibot")

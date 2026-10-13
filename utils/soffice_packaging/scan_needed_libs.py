@@ -41,7 +41,7 @@ def elf_needed(path: Path):
 
         f.seek(e_shoff)
         sections = [f.read(e_shentsize) for _ in range(e_shnum)]
-        dynamic = dynstr = None
+        dynamic = None
         for s in sections:
             if is64:
                 sh_type, = struct.unpack_from(endian + 'I', s, 4)

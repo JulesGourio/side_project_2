@@ -1,65 +1,23 @@
-"""Lakebase schema migrations — independent of the app's own deployment.
+"""Apply the idempotent Lakebase schema migrations (migrations.py) from a workstation.
 
-Uses generate_database_credential (same method the app uses at startup) to
-get full DDL rights without requiring a redeploy.
+Independent of the app deployment: connects with generate_database_credential for full DDL rights.
+Run it after every new column or table is added to migrations.py.
 
-Run once after every new column or table is added.
-
-USAGE
------
     python utils/lakebase_sync/migrate_lakebase.py --env DEV
     python utils/lakebase_sync/migrate_lakebase.py --env UAT
 """
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
-import psycopg2
-from databricks.sdk import WorkspaceClient
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/: ops_config
+from ops_config import LAKEBASE_PROJECTS, lakebase_connect
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
-from ops_config import LAKEBASE_PROJECTS, LAKEBASE
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # this directory — shared migrations.py
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # this directory: migrations
 from migrations import MIGRATIONS, apply_migrations
-
-
-def sdk_lakebase_connect(env: str) -> psycopg2.extensions.connection:
-    """Lakebase connection via generate_database_credential (full DDL rights)."""
-    cfg = LAKEBASE_PROJECTS.get(env)
-    if not cfg:
-        raise ValueError(f"Env '{env}' missing from LAKEBASE_PROJECTS in config.py")
-
-    profile = LAKEBASE[env]["profile"]
-    w = WorkspaceClient(profile=profile)
-
-    branch_path   = f"projects/{cfg['project_id']}/branches/{cfg['branch']}"
-    endpoint_path = f"{branch_path}/endpoints/{cfg['endpoint']}"
-
-    eps = list(w.postgres.list_endpoints(parent=branch_path))
-    if not eps:
-        raise RuntimeError(f"No endpoint found for {branch_path}")
-    host = eps[0].status.hosts.host
-
-    me       = w.current_user.me()
-    username = me.user_name or me.display_name or ""
-    if not username:
-        raise RuntimeError("Could not resolve the current identity.")
-
-    cred  = w.postgres.generate_database_credential(endpoint=endpoint_path)
-    token = cred.token
-    if not token:
-        raise RuntimeError("generate_database_credential returned an empty token.")
-
-    return psycopg2.connect(
-        host=host, port=5432, database=cfg["database"],
-        user=username, password=token, sslmode="require",
-    )
-
-
-import logging
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("migrate_lakebase")
@@ -71,16 +29,15 @@ def main() -> None:
                     help="Target Lakebase environment. Default: DEV")
     args = ap.parse_args()
 
-    logger.info(f"Connecting to Lakebase {args.env} via generate_database_credential...")
-    conn = sdk_lakebase_connect(args.env)
-
+    logger.info(f"Connecting to Lakebase {args.env}...")
+    conn = lakebase_connect(args.env)
     try:
         applied, failed = apply_migrations(conn, MIGRATIONS)
-        logger.info(f"Done — {len(applied)}/{len(MIGRATIONS)} migration(s) applied.")
+        logger.info(f"Done: {len(applied)}/{len(MIGRATIONS)} migration(s) applied.")
         if failed:
             logger.warning(f"Failed ({len(failed)}):")
             for name, err in failed:
-                logger.info(f"  [{name}] {err.strip()}")
+                logger.warning(f"  [{name}] {err.strip()}")
     finally:
         conn.close()
 

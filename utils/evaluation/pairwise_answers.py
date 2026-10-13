@@ -28,6 +28,7 @@
 
 # COMMAND ----------
 
+dbutils.widgets.removeAll()
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 dbutils.widgets.text('eval_id', 'chat-check')
 dbutils.widgets.text('reference', 'databricks-gpt-6-luna@chat')              # the chat as deployed

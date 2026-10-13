@@ -31,6 +31,7 @@
 import json
 import os
 
+dbutils.widgets.removeAll()
 dbutils.widgets.text("SOURCE_DIR", "/Volumes/uat_landingzone/qualibot/staging/dev_copy")
 dbutils.widgets.text("TARGET_CATALOG_SCHEMA", "dev_landingzone.qualibot")
 dbutils.widgets.text("TABLE_SUFFIX", "")

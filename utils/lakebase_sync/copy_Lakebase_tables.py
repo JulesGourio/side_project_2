@@ -1,11 +1,11 @@
-"""Copie les tables Lakebase (UAT) vers Databricks DEV.
+"""Copy the Lakebase tables of UAT into Delta tables of the DEV catalog.
 
-USAGE :
-    1. (Par défaut) Lancez d'abord le job Databricks UAT 'lakebase_sync/export_lakebase_uat_to_volume.py'.
-       Puis lancez ce script :
+USAGE:
+    1. (Default) Run the UAT job `lakebase_export_uat_to_volume` first (it writes JSON Lines files to the UAT
+       staging volume), then:
        python utils/lakebase_sync/copy_Lakebase_tables.py
 
-    2. (Mode direct - si port 5432 ouvert) :
+    2. Direct mode (needs network access to port 5432, blocked from the corporate network):
        python utils/lakebase_sync/copy_Lakebase_tables.py --direct
 """
 
@@ -17,14 +17,13 @@ import sys
 import time
 import psycopg2
 import psycopg2.extras
-from decimal import Decimal
 from pathlib import Path
-import datetime
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState, Disposition, Format
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
 from ops_config import (
+    json_serializer,
     lakebase_connect,
     COPY_SOURCE_ENV,
     COPY_TARGET_PROFILE,
@@ -41,16 +40,11 @@ from ops_config import (
 STAGING_VOLUME_DBFS = f"dbfs:/Volumes/{COPY_STAGING_CATALOG}/{COPY_STAGING_SCHEMA}/{COPY_STAGING_VOLUME}"
 STAGING_VOLUME_SQL  = f"/Volumes/{COPY_STAGING_CATALOG}/{COPY_STAGING_SCHEMA}/{COPY_STAGING_VOLUME}"
 
-# Volume alimenté par export_lakebase_uat_to_volume.py (job Databricks, compute UAT).
+# Volume filled by the UAT job export_lakebase_uat_to_volume_job.py.
 UAT_SOURCE_PROFILE          = LAKEBASE[COPY_SOURCE_ENV]["profile"]
 LAKEBASE_EXPORT_VOLUME_DBFS = "dbfs:/Volumes/uat_landingzone/qualibot/staging/lakebase_export"
 
 OUTPUT_DIR = "lakebase_export"
-
-# Fichier JSONL (hors Lakebase) à copier tel quel vers une table Delta,
-# dans le même catalogue/schéma cible que les tables Lakebase.
-INTRAQUAL_JSONL = os.path.join(os.path.dirname(__file__), "..", "intraqual_docs.jsonl")
-INTRAQUAL_TABLE = "intraqual_docs"
 
 TERMINAL_STATES = {
     StatementState.SUCCEEDED,
@@ -58,16 +52,6 @@ TERMINAL_STATES = {
     StatementState.CANCELED,
     StatementState.CLOSED,
 }
-
-
-def json_serializer(obj):
-    if isinstance(obj, (datetime.date, datetime.datetime)):
-        return obj.isoformat()
-    if isinstance(obj, Decimal):
-        return float(obj)
-    if isinstance(obj, (bytes, memoryview)):
-        return obj.hex() if isinstance(obj, bytes) else bytes(obj).hex()
-    return str(obj)
 
 
 # ── Lakebase helpers ───────────────────────────────────────────────────────────
@@ -115,7 +99,7 @@ def export_table_to_json(conn, schema: str, table: str) -> tuple[str, int]:
 
 
 def list_uat_export_files() -> list[str]:
-    """Liste les JSON déjà exportés par export_lakebase_uat_to_volume.py sur le volume UAT."""
+    """Lists the JSON files already exported to the UAT volume by the export job."""
     result = subprocess.run(
         ["databricks", "fs", "ls", LAKEBASE_EXPORT_VOLUME_DBFS,
          "--profile", UAT_SOURCE_PROFILE, "--output", "json"],
@@ -127,7 +111,7 @@ def list_uat_export_files() -> list[str]:
 
 
 def download_from_uat_volume(fname: str) -> tuple[str, int]:
-    """Télécharge un JSON déjà exporté par export_lakebase_uat_to_volume.py. Retourne (chemin, nb_lignes)."""
+    """Downloads one exported JSON file. Returns (path, row count)."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     local_file = os.path.join(OUTPUT_DIR, fname)
     result = subprocess.run(
@@ -198,9 +182,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument(
         "--direct", action="store_true",
-        help="Connexion psycopg2 directe à Lakebase (nécessite un accès réseau direct au port 5432, "
-             "indisponible depuis le réseau entreprise). Par défaut, récupère le JSON déjà exporté "
-             "par export_lakebase_uat_to_volume.py (job Databricks, à lancer avant ce script).",
+        help="Direct psycopg2 connection to Lakebase (needs access to port 5432, blocked from the corporate "
+             "network). By default, fetches the JSON exported by the UAT job lakebase_export_uat_to_volume.",
     )
     args = ap.parse_args()
 
@@ -236,7 +219,7 @@ def main():
         files = list_uat_export_files()
         if not files:
             logger.info(f"Aucun fichier trouvé sur {LAKEBASE_EXPORT_VOLUME_DBFS}.\n"
-                "Lancer d'abord le job Databricks export_lakebase_uat_to_volume.py sur le workspace UAT.")
+                "Run the UAT job lakebase_export_uat_to_volume first.")
             return
 
         logger.info(f"{len(files)} fichier(s) trouvé(s) : {files}\n")
@@ -248,14 +231,6 @@ def main():
             local_file, n_rows = download_from_uat_volume(fname)
             exported.append(("public", table, local_file, n_rows))
             logger.info(f"  {table}: {n_rows} lignes")
-
-    # ── JSONL supplémentaire (Intraqual) ──────────────────────────────────────
-    if os.path.exists(INTRAQUAL_JSONL):
-        n_rows = sum(1 for _ in open(INTRAQUAL_JSONL, encoding="utf-8"))
-        exported.append(("(jsonl)", INTRAQUAL_TABLE, INTRAQUAL_JSONL, n_rows))
-        logger.info(f"  JSONL {INTRAQUAL_TABLE} depuis {INTRAQUAL_JSONL}: {n_rows} lignes")
-    else:
-        logger.info(f"  JSONL introuvable ({INTRAQUAL_JSONL}) — étape ignorée.")
 
     # ── Étape 2 : push vers Databricks DEV ────────────────────────────────────
     logger.info(f"=== [2/2] Push vers {COPY_TARGET_CATALOG}.{COPY_TARGET_SCHEMA} (profil {COPY_TARGET_PROFILE}) ===")

@@ -30,6 +30,7 @@ import json
 import os
 from datetime import datetime, timezone
 
+dbutils.widgets.removeAll()
 dbutils.widgets.text("SOURCE_CATALOG_SCHEMA", "uat_landingzone.qualibot")
 # UAT table names carry no suffix once OPERATIONS.md D5 renamed them; "_v1" before.
 dbutils.widgets.text("TABLE_SUFFIX", "")

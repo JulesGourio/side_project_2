@@ -1,15 +1,15 @@
 # Databricks notebook source
-import datetime
 import json
+import logging
 import os
-from decimal import Decimal
+import sys
 
-import psycopg2
 import psycopg2.extras
 from databricks.sdk import WorkspaceClient
 
-# Serverless job tasks have no spark_env_vars: parameters come through notebook widgets. Classic compute cannot reach
-# the Lakebase private endpoint (TCP timeout on 5432).
+# Serverless job tasks have no spark_env_vars: parameters come through widgets. Classic compute cannot reach the
+# Lakebase private endpoint (TCP timeout on 5432).
+dbutils.widgets.removeAll()
 dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")
 dbutils.widgets.text("LAKEBASE_ENDPOINT", "primary")
@@ -35,54 +35,18 @@ TABLES_TO_SKIP = {
 OUTPUT_DIR = f"/Volumes/{OUTPUT_VOLUME_CATALOG}/{OUTPUT_VOLUME_SCHEMA}/{OUTPUT_VOLUME_NAME}/lakebase_export"
 
 
-def json_serializer(obj):
-    if isinstance(obj, (datetime.date, datetime.datetime)):
-        return obj.isoformat()
-    if isinstance(obj, Decimal):
-        return float(obj)
-    if isinstance(obj, (bytes, memoryview)):
-        return obj.hex() if isinstance(obj, bytes) else bytes(obj).hex()
-    return str(obj)
-
+# The notebook's directory is the cwd and on sys.path: one level up is utils/ (ops_config).
+sys.path.insert(0, os.path.dirname(os.getcwd()))
+from ops_config import json_serializer, lakebase_connect_with
 
 spark.sql(
     f"CREATE VOLUME IF NOT EXISTS `{OUTPUT_VOLUME_CATALOG}`.`{OUTPUT_VOLUME_SCHEMA}`.`{OUTPUT_VOLUME_NAME}`"
 )
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-w = WorkspaceClient()
-branch_path = f"projects/{LAKEBASE_PROJECT_ID}/branches/{LAKEBASE_BRANCH}"
-endpoint_path = f"{branch_path}/endpoints/{LAKEBASE_ENDPOINT}"
-
-endpoints = list(w.postgres.list_endpoints(parent=branch_path))
-if not endpoints:
-    raise RuntimeError(f"No endpoint found for {branch_path}")
-
-endpoint = next(
-    (ep for ep in endpoints if getattr(ep, "name", None) == LAKEBASE_ENDPOINT),
-    endpoints[0],
+conn = lakebase_connect_with(
+    WorkspaceClient(), LAKEBASE_PROJECT_ID, LAKEBASE_BRANCH, LAKEBASE_ENDPOINT, LAKEBASE_DATABASE
 )
-lakebase_host = endpoint.status.hosts.host
-
-me = w.current_user.me()
-username = me.user_name or me.display_name
-if not username:
-    raise RuntimeError("Could not resolve the current identity.")
-
-credential = w.postgres.generate_database_credential(endpoint=endpoint_path)
-if not credential.token:
-    raise RuntimeError("generate_database_credential returned an empty token.")
-
-conn = psycopg2.connect(
-    host=lakebase_host,
-    port=5432,
-    database=LAKEBASE_DATABASE,
-    user=username,
-    password=credential.token,
-    sslmode="require",
-)
-
-import logging
 
 logger = logging.getLogger("export_lakebase_uat_to_volume_job")
 logger.setLevel(logging.INFO)
@@ -130,8 +94,3 @@ finally:
     conn.close()
 
 logger.info(f"Done. Export available in {OUTPUT_DIR}")
-
-
-# COMMAND ----------
-
-

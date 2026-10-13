@@ -30,6 +30,7 @@
 
 # COMMAND ----------
 
+dbutils.widgets.removeAll()
 dbutils.widgets.text('index', 'dev_landingzone.qualibot.chunks_index')
 dbutils.widgets.text('endpoint', 'qualibot')
 dbutils.widgets.text('scenarios', 'hybrid10,rerank12,rerank12_text,ann10,hybrid10_filter,chat_mix')

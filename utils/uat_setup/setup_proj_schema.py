@@ -18,6 +18,7 @@
 
 # COMMAND ----------
 
+dbutils.widgets.removeAll()
 dbutils.widgets.text("target_catalog_schema", "uat_proj.qualibot")
 dbutils.widgets.text("target_suffix", "_test")
 dbutils.widgets.text("source_catalog_schema", "uat_landingzone.qualibot")

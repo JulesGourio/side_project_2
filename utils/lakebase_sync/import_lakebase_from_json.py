@@ -16,14 +16,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
 import psycopg2.extras
 from databricks.sdk import WorkspaceClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
-from ops_config import MIGRATE_TO_PROD_TABLE_ORDER
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/: ops_config
+from ops_config import MIGRATE_TO_PROD_TABLE_ORDER, lakebase_connect_with
 
 PROJECT_ID = "qualibot"
 BRANCH = "production"
@@ -31,28 +32,7 @@ ENDPOINT = "primary"
 
 
 def connect(profile: str, database: str):
-    w = WorkspaceClient(profile=profile)
-    branch_path = f"projects/{PROJECT_ID}/branches/{BRANCH}"
-    endpoint_path = f"{branch_path}/endpoints/{ENDPOINT}"
-
-    eps = list(w.postgres.list_endpoints(parent=branch_path))
-    if not eps:
-        raise RuntimeError(f"No endpoint found for {branch_path}")
-    host = eps[0].status.hosts.host
-
-    me = w.current_user.me()
-    username = me.user_name or me.display_name or ""
-    if not username:
-        raise RuntimeError("Could not resolve the current identity.")
-
-    cred = w.postgres.generate_database_credential(endpoint=endpoint_path)
-    if not cred.token:
-        raise RuntimeError("generate_database_credential returned an empty token.")
-
-    return psycopg2.connect(
-        host=host, port=5432, database=database,
-        user=username, password=cred.token, sslmode="require",
-    )
+    return lakebase_connect_with(WorkspaceClient(profile=profile), PROJECT_ID, BRANCH, ENDPOINT, database)
 
 
 def ordered_files(in_dir: Path) -> list[Path]:
@@ -60,8 +40,6 @@ def ordered_files(in_dir: Path) -> list[Path]:
     ordered = [available.pop(t) for t in MIGRATE_TO_PROD_TABLE_ORDER if t in available]
     return ordered + [available[k] for k in sorted(available)]
 
-
-import logging
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("import_lakebase_from_json")

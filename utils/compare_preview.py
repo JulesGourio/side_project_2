@@ -6,19 +6,11 @@ engine changes on real documents before deploying:
 
     python -m utils.compare_preview old.docx new.docx
     python -m utils.compare_preview old.pdf new.pdf --method structured --dump-diff diff.txt
-
-Scoring mode — recall/precision of the deterministic diff against a human
-reference (utils/compare_eval/refs/*.json, see utils/compare_eval/README.md).
-Every engine change becomes measurable, still without a single token:
-
-    python -m utils.compare_preview --score utils/compare_eval/refs/NE07-011.json
-    python -m utils.compare_preview --score utils/compare_eval/refs/NE07-011.json --threshold 0.45
-
-Exit code 0 always (diagnostic tool); errors are printed.
+    python -m utils.compare_preview old.docx new.docx --threshold 0.45   # override the similarity threshold
 """
 
 import argparse
-import json
+import logging
 import os
 import re
 import sys
@@ -26,8 +18,6 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-_DIFF_KINDS = ('MODIFIED', 'ADDED', 'REMOVED')
 
 
 def _diff_stats(diff_text: str) -> str:
@@ -50,110 +40,8 @@ def _build_text_block(old: Path, new: Path, method: str) -> tuple[str, object]:
     return text_block, result
 
 
-def parse_diff_entries(diff_text: str) -> list[dict]:
-    """Split the diff text block into one entry per MODIFIED/ADDED/REMOVED
-    block (an entry runs until the next block start or a blank line run)."""
-    entries: list[dict] = []
-    current: dict | None = None
-    for line in diff_text.splitlines():
-        m = re.match(r'^(MODIFIED|ADDED|REMOVED)\b', line)
-        if m:
-            current = {'kind': m.group(1), 'text': line}
-            entries.append(current)
-        elif current is not None and line.strip():
-            current['text'] += '\n' + line
-        elif current is not None and not line.strip():
-            current = None
-    return entries
-
-
-def score_against_reference(diff_text: str, ref: dict) -> dict:
-    """Recall/precision of the diff entries against the reference list.
-
-    An expected change matches an entry when the kinds agree ('*' matches
-    any) and every `must_contain` string appears (case-insensitive) in the
-    entry text. Precision counts entries claimed by at least one expected
-    change — the reference lists the changes that MATTER, so precision is a
-    lower bound whenever the reference is not exhaustive."""
-    entries = parse_diff_entries(diff_text)
-    matched_entries: set[int] = set()
-    results = []
-    for exp in ref.get('expected_changes', []):
-        needles = [s.casefold() for s in exp.get('must_contain', [])]
-        kind = exp.get('kind', '*')
-        hit = None
-        for i, e in enumerate(entries):
-            if kind not in ('*', e['kind']):
-                continue
-            text = e['text'].casefold()
-            if all(n in text for n in needles):
-                hit = i
-                break
-        if hit is not None:
-            matched_entries.add(hit)
-        results.append({'id': exp.get('id', '?'), 'matched': hit is not None,
-                        'note': exp.get('note', '')})
-
-    noise_hits = []
-    for noise in ref.get('must_not_flag', []):
-        needles = [s.casefold() for s in noise.get('must_contain', [])]
-        kind = noise.get('kind', '*')
-        hits = [e for e in entries
-                if kind in ('*', e['kind']) and all(n in e['text'].casefold() for n in needles)]
-        # One collapsed, explicitly-annotated occurrence is fine — noise means
-        # the motif is PRESENTED repeatedly (threshold aligned with the diff
-        # engine's _BOILERPLATE_MIN_PAGES collapse). A motif that must NEVER
-        # appear — a fabricated removal of content present in both revisions —
-        # sets its own "max_hits": 0 instead.
-        if len(hits) > noise.get('max_hits', 2):
-            noise_hits.append({'id': noise.get('id', '?'), 'note': noise.get('note', ''),
-                               'count': len(hits), 'entry': hits[0]['text'][:120]})
-
-    n_expected = len(results)
-    n_matched = sum(1 for r in results if r['matched'])
-    return {
-        'entries': len(entries),
-        'expected': n_expected,
-        'matched': n_matched,
-        'recall': n_matched / n_expected if n_expected else None,
-        'precision': len(matched_entries) / len(entries) if entries else None,
-        'per_expected': results,
-        'noise_hits': noise_hits,
-    }
-
-
-import logging
-
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("compare_preview")
-
-
-def run_score(ref_path: Path, method: str, dump_diff: Path | None) -> None:
-    ref = json.loads(ref_path.read_text(encoding='utf-8'))
-    base = ref_path.parent.parent  # refs/ -> compare_eval/
-    old = (base / ref['old']).resolve()
-    new = (base / ref['new']).resolve()
-    if not old.exists() or not new.exists():
-        logger.info(f'{ref_path.name}: document pair not found locally — run '
-              f'python -m utils.compare_eval.fetch_pairs first ({old.name}, {new.name})')
-        return
-    t0 = time.perf_counter()
-    diff_text, _ = _build_text_block(old, new, method)
-    s = score_against_reference(diff_text, ref)
-    thr = os.getenv('COMPARE_PAIR_RATIO_THRESHOLD', '0.55')
-    rec = f"{s['recall']:.0%}" if s['recall'] is not None else 'n/a'
-    prec = f"{s['precision']:.0%}" if s['precision'] is not None else 'n/a'
-    logger.info(f"{ref.get('name', ref_path.stem)} [threshold={thr}] — "
-          f"recall {s['matched']}/{s['expected']} ({rec}) | "
-          f"precision {prec} of {s['entries']} entries | {time.perf_counter() - t0:.1f}s")
-    for r in s['per_expected']:
-        mark = 'OK  ' if r['matched'] else 'MISS'
-        logger.info(f"  {mark} {r['id']}: {r['note']}")
-    for n in s['noise_hits']:
-        logger.info(f"  NOISE {n['id']} (x{n['count']}): {n['note']} -> {n['entry']!r}")
-    if dump_diff:
-        dump_diff.write_text(diff_text, encoding='utf-8')
-        logger.info(f'  diff written to {dump_diff}')
 
 
 def main() -> None:
@@ -164,8 +52,6 @@ def main() -> None:
     ap.add_argument('--chunk-threshold', type=int, default=60000)
     ap.add_argument('--chunk-size', type=int, default=45000)
     ap.add_argument('--dump-diff', type=Path, help='write the full text block to this file')
-    ap.add_argument('--score', type=Path, action='append',
-                    help='reference JSON (utils/compare_eval/refs/*.json) — repeatable')
     ap.add_argument('--threshold', type=float,
                     help='override the 0.55 similarity threshold (COMPARE_PAIR_RATIO_THRESHOLD)')
     args = ap.parse_args()
@@ -173,13 +59,8 @@ def main() -> None:
     if args.threshold is not None:
         os.environ['COMPARE_PAIR_RATIO_THRESHOLD'] = str(args.threshold)
 
-    if args.score:
-        for ref_path in args.score:
-            run_score(ref_path, args.method, args.dump_diff)
-        return
-
     if not args.old or not args.new:
-        ap.error('old and new documents are required (or use --score)')
+        ap.error('old and new documents are required')
 
     from server.services.compare.chunked_analysis import split_messages_for_chunking
 

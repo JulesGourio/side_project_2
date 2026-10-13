@@ -19,6 +19,7 @@
 
 # COMMAND ----------
 
+dbutils.widgets.removeAll()
 dbutils.widgets.text("service_principal", "", "Service principal client id (or account) to grant")
 dbutils.widgets.text("catalog", "", "Catalog (e.g. prod_landingzone)")
 dbutils.widgets.text("schema_name", "", "Schema (e.g. intraqual)")

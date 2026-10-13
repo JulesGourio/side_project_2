@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import os
 import sys
 from pathlib import Path
@@ -25,6 +26,7 @@ from databricks.sdk import WorkspaceClient
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
 from ops_config import (
     lakebase_connect,
+    sync_users_from_audit,
     WAREHOUSE_ID,
     PROFILE_DEV,
     CAPS_CHAT_GROUPS,
@@ -70,8 +72,6 @@ ORDER BY 1
 """
 
 
-import logging
-
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("sync_user_capabilities")
 
@@ -93,8 +93,7 @@ def list_leap_groups(profile: str) -> None:
     for group_name, nb_users, adds, removes in rows:
         status = "tracked" if group_name in tracked else "not tracked"
         logger.info(f"{group_name:<65} {nb_users:>6} {adds:>5} {removes:>5}  {status}")
-    logger.info(f"{len(rows)} LEAP group(s) found. "
-          f"{sum(1 for r in rows if r[0] not in tracked)} not tracked.")
+    logger.info(f"{len(rows)} LEAP group(s) found. {sum(1 for r in rows if r[0] not in tracked)} not tracked.")
 
 
 def fetch_audit_events(profile: str) -> dict[tuple[str, str], dict]:
@@ -121,114 +120,8 @@ def fetch_audit_events(profile: str) -> dict[tuple[str, str], dict]:
 def sync_to_lakebase(audit: dict[tuple[str, str], dict], env: str) -> int:
     """Merges the audit with the existing users.groups, writes groups/can_chat/can_compare."""
     conn = lakebase_connect(env)
-    updated = 0
     try:
-        with conn.cursor() as cur:
-            # ── Check whether the optional columns exist ──────────────────────
-            cur.execute("""
-                SELECT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name='users' AND column_name='groups'
-                )
-            """)
-            has_groups = cur.fetchone()[0]
-
-            cur.execute("""
-                SELECT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name='users' AND column_name='is_manual'
-                )
-            """)
-            has_is_manual = cur.fetchone()[0]
-
-            # ── Read current state ─────────────────────────────────────────────
-            if has_groups:
-                extra = ", is_manual" if has_is_manual else ""
-                cur.execute(f"SELECT user_id, email, groups{extra} FROM users")
-                db_rows = {
-                    row[0]: {
-                        'email': row[1],
-                        'groups': set(row[2] or []),
-                        'is_manual': bool(row[3]) if has_is_manual else False,
-                    }
-                    for row in cur.fetchall()
-                }
-            else:
-                extra = ", is_manual" if has_is_manual else ""
-                cur.execute(f"SELECT user_id, email{extra} FROM users")
-                db_rows = {
-                    row[0]: {
-                        'email': row[1],
-                        'groups': set(),
-                        'is_manual': bool(row[2]) if has_is_manual else False,
-                    }
-                    for row in cur.fetchall()
-                }
-
-            # ── Collect all user_ids involved (audit + DB) ────────────────────
-            audit_users: dict[str, dict] = {}
-            for (uid, grp), info in audit.items():
-                entry = audit_users.setdefault(uid, {'email': info['email'], 'groups': set()})
-                entry['email'] = entry['email'] or info['email']
-                if info['is_member']:
-                    entry['groups'].add(grp)
-
-            all_uids = set(audit_users) | set(db_rows)
-
-            for uid in all_uids:
-                db      = db_rows.get(uid, {'email': None, 'groups': set(), 'is_manual': False})
-                if db['is_manual']:
-                    continue
-                audit_u = audit_users.get(uid, {'email': None, 'groups': set()})
-
-                # Merge: for each tracked group, the audit is authoritative if
-                # a (uid, grp) pair appears in it; otherwise keep the DB value.
-                merged_groups = set(db['groups'])
-                for grp in CAPS_ALL_GROUPS:
-                    if (uid, grp) in audit:
-                        if audit[(uid, grp)]['is_member']:
-                            merged_groups.add(grp)
-                        else:
-                            merged_groups.discard(grp)
-                # Groups outside CAPS_ALL_GROUPS: kept as-is from the DB.
-
-                email       = db['email'] or audit_u['email']
-                can_chat    = bool(merged_groups & CAPS_CHAT_GROUPS)
-                can_compare = bool(merged_groups & CAPS_COMPARE_GROUPS)
-                groups_list = sorted(merged_groups)
-
-                # Optional columns/values assembled dynamically to avoid
-                # duplicating the 4 query variants.
-                extra_cols: list[tuple[str, object]] = []
-                if has_groups:
-                    extra_cols.append(("groups", groups_list))
-
-                if email:
-                    set_extra = "".join(f", {c}=%s" for c, _ in extra_cols)
-                    cur.execute(
-                        f"UPDATE users SET can_chat=%s, can_compare=%s{set_extra}, updated_at=NOW() WHERE email=%s",
-                        (can_chat, can_compare, *[v for _, v in extra_cols], email),
-                    )
-                    if cur.rowcount:
-                        updated += 1
-                        continue
-
-                cols = "".join(f", {c}" for c, _ in extra_cols)
-                placeholders = ", %s" * len(extra_cols)
-                conflict_extra = "".join(f", {c} = EXCLUDED.{c}" for c, _ in extra_cols)
-                cur.execute(
-                    f"""INSERT INTO users (user_id, email, can_chat, can_compare{cols})
-                        VALUES (%s, %s, %s, %s{placeholders})
-                        ON CONFLICT (user_id) DO UPDATE SET
-                            email       = COALESCE(EXCLUDED.email, users.email),
-                            can_chat    = EXCLUDED.can_chat,
-                            can_compare = EXCLUDED.can_compare{conflict_extra},
-                            updated_at  = NOW()""",
-                    (uid, email, can_chat, can_compare, *[v for _, v in extra_cols]),
-                )
-                updated += 1
-
-        conn.commit()
+        updated, _ = sync_users_from_audit(conn, audit)
     finally:
         conn.close()
     return updated

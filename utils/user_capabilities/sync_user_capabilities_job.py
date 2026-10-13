@@ -19,6 +19,7 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
+dbutils.widgets.removeAll()
 dbutils.widgets.dropdown("dry_run", "true", ["true", "false"], "Dry run (preview only, no write)")
 dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")
@@ -38,11 +39,10 @@ LAKEBASE_DATABASE = dbutils.widgets.get("LAKEBASE_DATABASE")
 import os
 import sys
 
-# Path(__file__) is not the deployed notebook path in a job task. Databricks puts the notebook's own directory on
-# sys.path, so os.getcwd() is that
-# directory and one level up is utils/, where ops_config.py lives.
+# Path(__file__) is not the notebook path in a job task. The notebook's directory is on sys.path and is the cwd,
+# so one level up is utils/, where ops_config.py lives.
 sys.path.insert(0, os.path.dirname(os.getcwd()))
-from ops_config import CAPS_CHAT_GROUPS, CAPS_COMPARE_GROUPS, CAPS_ALL_GROUPS
+from ops_config import CAPS_ALL_GROUPS, lakebase_connect_with, sync_users_from_audit
 
 import logging
 
@@ -100,153 +100,23 @@ logger.info(f"{len(audit)} (user, group) pair(s) — {adds} active, {removes} re
 
 # COMMAND ----------
 
-# MAGIC %md ### 2. Connect to Lakebase (ambient identity, no profile)
+# MAGIC %md ### 2. Merge audit into `users` and write (unless dry run)
 
 # COMMAND ----------
 
-import psycopg2
 from databricks.sdk import WorkspaceClient
 
-w = WorkspaceClient()  # ambient auth — this notebook's own identity in this workspace
-
-branch_path = f"projects/{LAKEBASE_PROJECT_ID}/branches/{LAKEBASE_BRANCH}"
-endpoint_path = f"{branch_path}/endpoints/{LAKEBASE_ENDPOINT}"
-
-eps = list(w.postgres.list_endpoints(parent=branch_path))
-if not eps:
-    raise RuntimeError(f"No endpoint found for {branch_path}")
-host = eps[0].status.hosts.host
-
-me = w.current_user.me()
-username = me.user_name or me.display_name or ""
-if not username:
-    raise RuntimeError("Could not resolve the current identity.")
-
-cred = w.postgres.generate_database_credential(endpoint=endpoint_path)
-if not cred.token:
-    raise RuntimeError("generate_database_credential returned an empty token.")
-
-conn = psycopg2.connect(
-    host=host, port=5432, database=LAKEBASE_DATABASE,
-    user=username, password=cred.token, sslmode="require",
-)
-logger.info(f"Connected to {host}/{LAKEBASE_DATABASE} as {username}")
-
-# COMMAND ----------
-
-# MAGIC %md ### 3. Merge audit → `users` and write (unless dry run)
-
-# COMMAND ----------
-
-updated = 0
-preview_rows = []
+w = WorkspaceClient()  # ambient identity of this notebook in this workspace
+conn = lakebase_connect_with(w, LAKEBASE_PROJECT_ID, LAKEBASE_BRANCH, LAKEBASE_ENDPOINT, LAKEBASE_DATABASE)
+logger.info(f"Connected to {conn.info.host}/{LAKEBASE_DATABASE} as {conn.info.user}")
 try:
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='users' AND column_name='groups'
-            )
-        """)
-        has_groups = cur.fetchone()[0]
-
-        cur.execute("""
-            SELECT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='users' AND column_name='is_manual'
-            )
-        """)
-        has_is_manual = cur.fetchone()[0]
-
-        extra = ", is_manual" if has_is_manual else ""
-        if has_groups:
-            cur.execute(f"SELECT user_id, email, groups{extra} FROM users")
-            db_rows = {
-                row[0]: {"email": row[1], "groups": set(row[2] or []), "is_manual": bool(row[3]) if has_is_manual else False}
-                for row in cur.fetchall()
-            }
-        else:
-            cur.execute(f"SELECT user_id, email{extra} FROM users")
-            db_rows = {
-                row[0]: {"email": row[1], "groups": set(), "is_manual": bool(row[2]) if has_is_manual else False}
-                for row in cur.fetchall()
-            }
-
-        audit_users: dict[str, dict] = {}
-        for (uid, grp), info in audit.items():
-            entry = audit_users.setdefault(uid, {"email": info["email"], "groups": set()})
-            entry["email"] = entry["email"] or info["email"]
-            if info["is_member"]:
-                entry["groups"].add(grp)
-
-        for uid in set(audit_users) | set(db_rows):
-            db = db_rows.get(uid, {"email": None, "groups": set(), "is_manual": False})
-            if db["is_manual"]:
-                continue
-            audit_u = audit_users.get(uid, {"email": None, "groups": set()})
-
-            merged_groups = set(db["groups"])
-            for grp in CAPS_ALL_GROUPS:
-                if (uid, grp) in audit:
-                    if audit[(uid, grp)]["is_member"]:
-                        merged_groups.add(grp)
-                    else:
-                        merged_groups.discard(grp)
-
-            email = db["email"] or audit_u["email"]
-            can_chat = bool(merged_groups & CAPS_CHAT_GROUPS)
-            can_compare = bool(merged_groups & CAPS_COMPARE_GROUPS)
-            groups_list = sorted(merged_groups)
-
-            if not email:
-                continue
-
-            preview_rows.append((email, can_chat, can_compare, groups_list))
-
-            if DRY_RUN:
-                continue
-
-            # Optional columns assembled dynamically (same 4 variants as
-            # sync_user_capabilities.py — keep in sync).
-            extra_cols = []
-            if has_groups:
-                extra_cols.append(("groups", groups_list))
-
-            set_extra = "".join(f", {c}=%s" for c, _ in extra_cols)
-            cur.execute(
-                f"UPDATE users SET can_chat=%s, can_compare=%s{set_extra}, updated_at=NOW() WHERE email=%s",
-                (can_chat, can_compare, *[v for _, v in extra_cols], email),
-            )
-            if cur.rowcount:
-                updated += 1
-                continue
-
-            cols = "".join(f", {c}" for c, _ in extra_cols)
-            placeholders = ", %s" * len(extra_cols)
-            conflict_extra = "".join(f", {c} = EXCLUDED.{c}" for c, _ in extra_cols)
-            cur.execute(
-                f"""INSERT INTO users (user_id, email, can_chat, can_compare{cols})
-                    VALUES (%s, %s, %s, %s{placeholders})
-                    ON CONFLICT (user_id) DO UPDATE SET
-                        email       = COALESCE(EXCLUDED.email, users.email),
-                        can_chat    = EXCLUDED.can_chat,
-                        can_compare = EXCLUDED.can_compare{conflict_extra},
-                        updated_at  = NOW()""",
-                (uid, email, can_chat, can_compare, *[v for _, v in extra_cols]),
-            )
-            updated += 1
-
-    if not DRY_RUN:
-        conn.commit()
+    updated, preview_rows = sync_users_from_audit(conn, audit, dry_run=DRY_RUN)
 finally:
     conn.close()
 
 if DRY_RUN:
-    logger.info(f"[dry-run] {len(preview_rows)} user(s) computed — nothing written. Sample:")
+    logger.info(f"[dry-run] {len(preview_rows)} user(s) computed, nothing written. Sample:")
     for row in preview_rows[:20]:
-        logger.info("%s", " ".join(str(x) for x in (" ", row,)))
+        logger.info("  %s", row)
 else:
     logger.info(f"{updated} user(s) updated in {LAKEBASE_DATABASE} (groups / can_chat / can_compare).")
-
-
-# COMMAND ----------

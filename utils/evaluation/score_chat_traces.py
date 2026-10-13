@@ -37,13 +37,13 @@
 
 import json
 import logging
-import os
 import sys
 from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger('score_chat_traces')
 
+dbutils.widgets.removeAll()
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 dbutils.widgets.text('experiment', '/Shared/qualibot/chat_turns')
 dbutils.widgets.text('days', '7')
@@ -237,5 +237,5 @@ display(spark.table(RESULTS).filter(F.col('run_id') == RUN_ID)
         .groupBy('scorer', F.coalesce('vote', F.lit('none')).alias('vote'))
         .agg(F.count('*').alias('turns'),
              F.round(F.avg(F.when(F.lower('value') == 'yes', 1).when(F.lower('value') == 'no', 0)) * 100, 1).alias('yes_pct'),
-             F.round(F.avg(F.col('value').cast('double')), 2).alias('avg_value'))
+             F.round(F.avg(F.expr('try_cast(value AS double)')), 2).alias('avg_value'))
         .orderBy('scorer', 'vote'))

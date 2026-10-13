@@ -1,55 +1,29 @@
-# Lancer copy_Lakebase_tables.py
+# lakebase_sync/
 
-Ce script n'est pas lié aux dépendances de l'app (pas dans le `pyproject.toml` racine).
-Il utilise le `.venv` du projet (géré par `uv`) + `psycopg2-binary` installé à part.
+| File | Kind | Used by |
+|---|---|---|
+| `migrations.py` | Idempotent schema migrations, one list | `migrate_lakebase.py`, `migrate_lakebase_job.py` |
+| `migrate_lakebase.py` | CLI: `--env DEV\|UAT\|UAT-TEST\|PROD` | by hand |
+| `migrate_lakebase_job.py` | Notebook, defaults to `doccompare_test` and refuses `doccompare` in the UAT workspace | `migrate_lakebase_*` jobs |
+| `export_lakebase_uat_to_volume_job.py` | Notebook: one JSON Lines file per table into the staging volume | `lakebase_export_uat_to_volume` job |
+| `import_lakebase_uat_volume_to_dev_job.py` | Notebook: staging volume to Delta tables of `dev_landingzone.qualibot` (feeds the usage dashboard) | DEV job |
+| `import_chatbot_tables_to_uat_job.py` | Notebook: chatbot tables to UAT | UAT job |
+| `export_lakebase_to_json.py`, `import_lakebase_from_json.py` | CLI pair for the UAT to PROD data migration (CI steps, `--profile`) | `bitbucket-pipelines.yml` |
+| `copy_Lakebase_tables.py` | CLI: pulls the exported JSON from the UAT volume and creates Delta tables in `dev_landingzone.qualibot` | by hand |
 
-## Setup (une fois)
+Connection settings and helpers shared by the scripts live in `utils/ops_config.py`.
 
-```powershell
-cd C:\Users\L0041770\Desktop\GenAI\Qualibot\latec-compare
-uv pip install --python .venv/Scripts/python.exe --system-certs psycopg2-binary
-```
+## Copy UAT Lakebase tables to the DEV catalog
 
-`--system-certs` est nécessaire ici (proxy d'entreprise / certificat non reconnu par uv sinon).
+The workstation cannot reach Lakebase (port 5432 is blocked from the corporate network), so:
 
-## Run
+1. Run the UAT job `lakebase_export_uat_to_volume`.
+2. `python utils/lakebase_sync/copy_Lakebase_tables.py` (needs `psycopg2-binary` in the project `.venv`; with the
+   corporate proxy install it with `uv pip install --system-certs psycopg2-binary`).
+   `--direct` connects to Lakebase straight from the workstation when port 5432 is open.
 
-```powershell
-cd C:\Users\L0041770\Desktop\GenAI\Qualibot\latec-compare
-.venv\Scripts\python.exe utils\lakebase_sync\copy_Lakebase_tables.py
-```
+## DEV is never deployed by a script
 
-Prérequis : avoir lancé avant le job Databricks UAT `lakebase_sync/export_lakebase_uat_to_volume.py`
-(le script lit le JSON déjà exporté sur le volume UAT, pas de connexion directe à Lakebase par défaut).
-
-Option `--direct` : connexion psycopg2 directe à Lakebase (nécessite l'accès réseau au port 5432, indisponible depuis le réseau entreprise).
-
-## Job planifié `import_lakebase_uat_volume_to_dev_job.py` — cible et déploiement
-
-Ce job (`D_1_Qualibot_Lakebase_Import_Uat_To_Dev`, target `dev` de `databricks.yml`)
-écrit dans **`dev_landingzone.qualibot`** — même catalog/schema que
-`copy_Lakebase_tables.py` ci-dessus (un seul "dev" canonique). Les valeurs
-viennent des `spark_env_vars` du job dans `databricks.yml`
-(`targets.dev.resources.jobs.lakebase_import_uat_to_dev`) ; les
-`os.getenv(..., "dev_landingzone")` / `"qualibot"` dans le script ne sont que
-des filets de sécurité si ces env vars n'étaient pas injectées.
-
-**Piège d'architecture — `dev` n'est jamais déployé par un script** :
-`utils/deploy/deploy_qualibot.ps1` ne connaît que `uat` / `uat-test` / `prod`
-dans sa table `$Targets` (aucune app QualiBOT ne tourne sur `dev`). Résultat :
-modifier les `spark_env_vars` (ou n'importe quelle autre ressource) sous
-`targets.dev` dans `databricks.yml` **ne change rien tant que personne ne
-lance manuellement** :
-
-```powershell
-databricks bundle deploy --target dev --profile DEV
-```
-
-Vérifier après coup que le job a bien pris le changement :
-
-```powershell
-databricks jobs get <job_id> --profile DEV --output json
-```
-
-(chercher `job_id` via `databricks jobs list --profile DEV` — nom
-`D_1_Qualibot_Lakebase_Import_Uat_To_Dev`).
+`utils/deploy/deploy_qualibot.ps1` only knows `uat`, `uat-test` and `prod`. Changing anything under `targets.dev` in
+`databricks.yml` (for example the `spark_env_vars` of `lakebase_import_uat_to_dev`) has no effect until someone runs
+`databricks bundle deploy --target dev --profile DEV`. Check the result with `databricks jobs get <job_id> --profile DEV`.

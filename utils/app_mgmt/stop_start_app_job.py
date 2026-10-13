@@ -15,6 +15,7 @@
 
 # COMMAND ----------
 
+dbutils.widgets.removeAll()
 dbutils.widgets.dropdown("action", "stop", ["start", "stop"], "Action")
 dbutils.widgets.text("app_names", "", "Comma-separated app names")
 

@@ -17,6 +17,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.vectorsearch import EndpointType
 
+dbutils.widgets.removeAll()
 dbutils.widgets.text("vector_search_endpoint", "qualibot")
 dbutils.widgets.text("wait_minutes", "30")
 

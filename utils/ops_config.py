@@ -1,14 +1,14 @@
-"""Central configuration for utils/.
+"""Shared settings and helpers for utils/ (CLI profiles, Lakebase connection, user-capability sync).
 
-All scripts import from this file instead of redefining connections,
-profiles, and credentials every time.
+Notebooks reach it with ``sys.path.insert(0, os.path.dirname(os.getcwd()))`` (their folder is on sys.path,
+one level up is utils/). psycopg2 is imported lazily so notebooks that never touch Lakebase can import this file.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import subprocess
-
-import psycopg2
+from decimal import Decimal
 
 # ── Databricks CLI profiles ────────────────────────────────────────────────────
 PROFILE_DEV  = "DEV"
@@ -19,16 +19,13 @@ PROFILE_PROD = "qualibot-prod"
 WAREHOUSE_ID = "13eff4a6095513cb"
 
 # ── Lakebase environments ──────────────────────────────────────────────────────
-# Each env just needs the CLI profile to obtain the OAuth token; the host/user
-# are resolved dynamically at connect time (see lakebase_connect below) via
-# w.postgres.list_endpoints + w.current_user.me() — the token must come from
-# the same workspace as the targeted Lakebase.
+# Host and user are resolved at connect time (lakebase_connect_with); the token must come from the workspace of the
+# targeted Lakebase, hence one CLI profile per env.
 LAKEBASE: dict[str, dict] = {
     "UAT": {
         "profile": PROFILE_UAT,
     },
-    # Isolated database (qualibot-uat-test) — same Lakebase project/branch/
-    # endpoint as UAT, just a different database. Never "doccompare".
+    # Isolated database (qualibot-uat-test): same project as UAT, other database. Never "doccompare".
     "UAT-TEST": {
         "profile": PROFILE_UAT,
     },
@@ -40,7 +37,7 @@ LAKEBASE: dict[str, dict] = {
     },
 }
 
-# ── copy_Lakebase_tables: source → destination ────────────────────────────────
+# ── copy_Lakebase_tables: source → destination ──────────────────────────────
 COPY_SOURCE_ENV      = "UAT"          # Lakebase source (key in LAKEBASE)
 COPY_TARGET_PROFILE  = PROFILE_DEV   # Destination Databricks workspace
 COPY_TARGET_CATALOG  = "dev_landingzone"
@@ -53,8 +50,7 @@ COPY_TABLES_TO_SKIP  = {
 }
 
 # ── Lakebase: project config (for migrate_lakebase.py) ────────────────────────
-# generate_database_credential needs the Lakebase project_id, not a PostgreSQL URI.
-# project_id is the Lakebase project name as shown in the Databricks UI.
+# generate_database_credential needs the Lakebase project_id (name shown in the Databricks UI), not a URI.
 LAKEBASE_PROJECTS: dict[str, dict] = {
     "UAT": {"project_id": "qualibot",  "branch": "production", "endpoint": "primary", "database": "doccompare"},
     "UAT-TEST": {"project_id": "qualibot", "branch": "production", "endpoint": "primary", "database": "doccompare_test"},
@@ -113,34 +109,131 @@ def get_token(profile: str) -> str:
     return token
 
 
-def lakebase_connect(env: str) -> psycopg2.extensions.connection:
-    """Returns a psycopg2 connection via generate_database_credential (same method as the app)."""
-    if env not in LAKEBASE_PROJECTS:
-        raise ValueError(f"Unknown Lakebase environment: '{env}'. Available: {list(LAKEBASE_PROJECTS)}")
-    from databricks.sdk import WorkspaceClient
-    cfg     = LAKEBASE_PROJECTS[env]
-    profile = LAKEBASE[env]["profile"]
-    w       = WorkspaceClient(profile=profile)
+def lakebase_connect_with(w, project_id: str, branch: str, endpoint: str, database: str):
+    """psycopg2 connection to a Lakebase database, authenticated by generate_database_credential (as the app does).
 
-    branch_path   = f"projects/{cfg['project_id']}/branches/{cfg['branch']}"
-    endpoint_path = f"{branch_path}/endpoints/{cfg['endpoint']}"
+    ``w`` is a WorkspaceClient of the workspace that hosts the Lakebase (CLI profile or ambient notebook identity).
+    """
+    import psycopg2
 
-    eps = list(w.postgres.list_endpoints(parent=branch_path))
-    if not eps:
+    branch_path = f"projects/{project_id}/branches/{branch}"
+    endpoint_path = f"{branch_path}/endpoints/{endpoint}"
+
+    endpoints = list(w.postgres.list_endpoints(parent=branch_path))
+    if not endpoints:
         raise RuntimeError(f"No endpoint found for {branch_path}")
-    host = eps[0].status.hosts.host
+    host = endpoints[0].status.hosts.host
 
-    me       = w.current_user.me()
+    me = w.current_user.me()
     username = me.user_name or me.display_name or ""
     if not username:
         raise RuntimeError("Could not resolve the current identity.")
 
-    cred  = w.postgres.generate_database_credential(endpoint=endpoint_path)
-    token = cred.token
+    token = w.postgres.generate_database_credential(endpoint=endpoint_path).token
     if not token:
         raise RuntimeError("generate_database_credential returned an empty token.")
 
     return psycopg2.connect(
-        host=host, port=5432, database=cfg["database"],
+        host=host, port=5432, database=database,
         user=username, password=token, sslmode="require",
     )
+
+
+def lakebase_connect(env: str):
+    """Connection to the Lakebase of an env of LAKEBASE_PROJECTS, through its CLI profile."""
+    if env not in LAKEBASE_PROJECTS:
+        raise ValueError(f"Unknown Lakebase environment: '{env}'. Available: {list(LAKEBASE_PROJECTS)}")
+    from databricks.sdk import WorkspaceClient
+    cfg = LAKEBASE_PROJECTS[env]
+    w = WorkspaceClient(profile=LAKEBASE[env]["profile"])
+    return lakebase_connect_with(w, cfg["project_id"], cfg["branch"], cfg["endpoint"], cfg["database"])
+
+
+def json_serializer(obj):
+    """``default=`` hook of json.dumps for Lakebase rows (dates, Decimal, bytes)."""
+    if isinstance(obj, (datetime.date, datetime.datetime)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, (bytes, memoryview)):
+        return bytes(obj).hex()
+    return str(obj)
+
+
+def sync_users_from_audit(conn, audit: dict, dry_run: bool = False) -> tuple[int, list]:
+    """Merge the audit-log group membership into ``users`` (groups, can_chat, can_compare) and commit.
+
+    ``audit`` is {(user_id, group): {"is_member": bool, "email": str}}, the latest add/remove event per pair.
+    For each tracked group (CAPS_ALL_GROUPS) the audit wins; pairs absent from it, and groups outside the tracked
+    set, keep the stored value. Rows flagged ``is_manual`` and users without any email are left alone.
+    Returns (rows written, [(email, can_chat, can_compare, groups)] preview of every computed row).
+    """
+    updated = 0
+    preview: list = []
+    with conn.cursor() as cur:
+        cur.execute("""SELECT column_name FROM information_schema.columns
+                       WHERE table_name = 'users' AND column_name IN ('groups', 'is_manual')""")
+        optional = {r[0] for r in cur.fetchall()}
+        has_groups, has_is_manual = "groups" in optional, "is_manual" in optional
+
+        cols = ["user_id", "email"] + (["groups"] if has_groups else []) + (["is_manual"] if has_is_manual else [])
+        cur.execute(f"SELECT {', '.join(cols)} FROM users")
+        db_rows = {}
+        for row in cur.fetchall():
+            rec = dict(zip(cols, row))
+            db_rows[rec["user_id"]] = {
+                "email": rec["email"],
+                "groups": set(rec.get("groups") or []),
+                "is_manual": bool(rec.get("is_manual")),
+            }
+
+        audit_users: dict[str, dict] = {}
+        for (uid, grp), info in audit.items():
+            entry = audit_users.setdefault(uid, {"email": info["email"], "groups": set()})
+            entry["email"] = entry["email"] or info["email"]
+            if info["is_member"]:
+                entry["groups"].add(grp)
+
+        for uid in set(audit_users) | set(db_rows):
+            db = db_rows.get(uid, {"email": None, "groups": set(), "is_manual": False})
+            if db["is_manual"]:
+                continue
+
+            merged = set(db["groups"])
+            for grp in CAPS_ALL_GROUPS:
+                if (uid, grp) in audit:
+                    (merged.add if audit[(uid, grp)]["is_member"] else merged.discard)(grp)
+
+            email = db["email"] or audit_users.get(uid, {}).get("email")
+            if not email:
+                continue
+            can_chat = bool(merged & CAPS_CHAT_GROUPS)
+            can_compare = bool(merged & CAPS_COMPARE_GROUPS)
+            groups_list = sorted(merged)
+            preview.append((email, can_chat, can_compare, groups_list))
+            if dry_run:
+                continue
+
+            extra = [("groups", groups_list)] if has_groups else []
+            set_extra = "".join(f", {c}=%s" for c, _ in extra)
+            cur.execute(
+                f"UPDATE users SET can_chat=%s, can_compare=%s{set_extra}, updated_at=NOW() WHERE email=%s",
+                (can_chat, can_compare, *[v for _, v in extra], email),
+            )
+            if cur.rowcount:
+                updated += 1
+                continue
+            cur.execute(
+                f"""INSERT INTO users (user_id, email, can_chat, can_compare{''.join(f', {c}' for c, _ in extra)})
+                    VALUES (%s, %s, %s, %s{', %s' * len(extra)})
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        email       = COALESCE(EXCLUDED.email, users.email),
+                        can_chat    = EXCLUDED.can_chat,
+                        can_compare = EXCLUDED.can_compare{''.join(f', {c} = EXCLUDED.{c}' for c, _ in extra)},
+                        updated_at  = NOW()""",
+                (uid, email, can_chat, can_compare, *[v for _, v in extra]),
+            )
+            updated += 1
+    if not dry_run:
+        conn.commit()
+    return updated, preview
