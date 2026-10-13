@@ -5,7 +5,6 @@ Everything that runs outside the app, one folder per concern.
 | Folder / file | What | Wired in |
 |---|---|---|
 | `parsing_pipeline/` | Daily parsing chain (`1_` to `6_`), see its README | `resources/parsing_pipeline.job.yml` |
-| `generic_pipeline/` | Parsing of an arbitrary volume of documents into a chunk table | not wired to a job |
 | `deploy/` | `deploy_qualibot.ps1` (manual deploy), `render_target_config_env.py` + `target_env.json` (per-target app settings, shared by the script and the Bitbucket pipeline), Intraqual download / scrape / unzip / upload helpers, `deploy_sync_user_capabilities_uat_personal.py` (job deployed outside the bundle) | `bitbucket-pipelines.yml`, `app.yaml` |
 | `alerts/` | SQL of the Databricks SQL alerts (created by hand, see its README) | by hand |
 | `app_mgmt/` | `stop_start_app_job.py`: start / stop schedule of the Databricks Apps | `resources/app_schedules.yml` |

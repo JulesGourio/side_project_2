@@ -365,3 +365,10 @@ Modules déplacés : `server/services/*.py` → `services/{chat,compare,infra}/`
 ## 2026-10-12 (suite) — renommages DEV, MLflow du chat, notation
 Aucun nom de table n'a changé. Changé : variables d'environnement `CHAT_VSI_*` → `CHAT_*` (app.yaml, target_env.json ; une variable posée à la main dans l'app DEV sous l'ancien nom est ignorée, la valeur par défaut s'applique), `stream_chat_vsi` → `stream_chat`, préfixe des identifiants de tours et libellé du moteur `vsi-…` → `chat-…` (les anciens tours gardent `vsi-…`), préfixes de logs `chat_vsi:` → `chat:` / `chat_llm:`, tag MLflow `vsi_trace_id` → `chat_trace_id`, `docs/chat_vsi_tests.md` → `docs/chat_tests.md`.
 Tout le détail et les commandes : `operations_dev.md`, bloc 0 (ordre complet).
+
+## 2026-10-13 — refactor du pipeline de parsing
+
+- `generic_pipeline/` supprimé (non référencé; historique git).
+- Nouveaux garde-fous RED (`quality.py`) : `2_manifest` échoue si `parse_manifest` est vide ou a un IDDOC en double; `5_sync_index` échoue si `chunks_full` est vide. À observer au premier run DEV.
+- Notebooks 5 et 6 (serverless) importent désormais `quality` / `tables` depuis leur dossier : vérifier le premier run.
+- À relancer : `1_categories` → `6_update_kb_metadata` sur DEV (run complet), puis `pytest tests`.

@@ -52,7 +52,7 @@ def test_every_pipeline_notebook_explains_each_code_block():
     sections = ["Technical debt", "Configuration", "Inputs", "Data Preparation", "Data Transformations",
                 "Quality Checks", "Outputs"]
     offenders = []
-    for folder in ("parsing_pipeline", "generic_pipeline"):
+    for folder in ("parsing_pipeline",):
         for path in sorted(glob.glob(os.path.join(ROOT, "utils", folder, "[0-9]_*.py"))):
             text = open(path, encoding="utf-8").read()
             cells = text.split(sep)
