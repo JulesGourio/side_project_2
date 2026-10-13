@@ -1,139 +1,77 @@
 # Opérations manuelles — copie DEV de l'UAT (Jules)
 
-Même règle que `OPERATIONS.md` : Claude n'a pas accès à Databricks, chaque
-étape à faire à la main est listée ici, prête à copier-coller. Cocher et dater
-une fois faite. Ce fichier ne couvre **que** la mise en place de l'environnement
-DEV ; `OPERATIONS.md` reste la référence pour UAT / uat-test / PROD.
+Même règle que `OPERATIONS.md` : Claude n'a pas accès à Databricks, chaque étape à faire à la main est listée ici,
+prête à copier-coller. Cocher et dater une fois faite. Ce fichier ne couvre **que** l'environnement DEV ;
+`OPERATIONS.md` reste la référence pour UAT / uat-test / PROD.
 
-Branche : **`feature/chat-vsi-merged-on-impact-search`** (= `claude/hopeful-bardeen-57zeur`).
-Pas de PR ; le zip à déployer est celui de cette branche.
+Branche : **`feature/chat-vsi-merged-on-impact-search`** (= `claude/hopeful-bardeen-57zeur`). Pas de PR ; le zip à
+déployer est celui de cette branche.
 
-Mis à jour le 2026-10-12 : **suivre le bloc 0 (ordre complet), il reprend tout ce qui suit dans l'ordre**.
-Avant : **commencer par le bloc S** (DEV propre : un seul chatbot, un seul index,
-plus aucun nom versionné, plus de Knowledge Assistant). Les blocs G, K, L, P, A et C3 décrivent l'état
-d'avant (KA, tables `_v1`) : remplacés par S, gardés pour l'historique.
+Mis à jour le 2026-10-13 : le fichier est réduit à ce qui reste vrai et utile. **Suivre le bloc 0 (ordre complet).**
+Les anciens blocs (Knowledge Assistants, tables `_v1`, notation `score_production_qa`, comparaison KA contre VSI, test de
+découpage) sont supprimés du fichier ; ils sont dans l'historique du dépôt (commit `bbb1016`).
+Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce qui est coché l'est.
 
-## Décisions prises (2026-10-05)
+## Décisions (2026-10-05, mises à jour)
 
 | Sujet | Choix |
 |---|---|
 | Workspace | DEV — `https://dbc-c623749d-731b.cloud.databricks.com`, profil CLI `DEV` |
-| Cible bundle | `dev` (réécrite en miroir de `qualibot-uat`) |
-| App | `qualibot` (même nom qu'en UAT, workspace différent) |
-| Catalog / schema | `dev_landingzone.qualibot` (écriture), `dev_proj.qualibot` (projet) |
-| Suffixe tables / index | aucun depuis le 2026-10-08 (bloc S) ; `_v1` avant |
-| Identité des jobs (`run_as`) | SP DEV `fde6ff28-739f-4a41-b61e-604a298c8478` |
-| Lakebase | projet `qualibot` neuf, base `doccompare` vide (l'app crée ses tables) |
-| Corpus | copie UAT → DEV via le volume `uat_landingzone.qualibot.staging` (format Delta) : chunks + état du pipeline. **Aucun run complet du pipeline de parsing** |
+| Cible bundle | `dev` (en miroir de `qualibot-uat`) |
+| App | `qualibot` (même nom qu'en UAT, workspace différent), SP de l'app `8e411164-a7e8-46ff-8013-8c56af2c3656` |
+| Catalog / schema | `dev_landingzone.qualibot` (ce que le pipeline et l'app écrivent), `dev_proj.qualibot` (projet : évaluation, prompts, traces) |
+| Suffixe tables / index | aucun depuis le 2026-10-08 (un seul index `chunks_index`, filtre de division) |
+| Identité des jobs (`run_as`) | SP DEV `job-runner-sa-dev`, `fde6ff28-739f-4a41-b61e-604a298c8478` |
+| Lakebase | projet `qualibot`, branche `production`, base `doccompare` (l'app crée ses tables) |
+| Corpus | copie UAT → DEV via le volume `uat_landingzone.qualibot.staging` : chunks + état du pipeline. **Aucun run complet du parsing** |
 | Phase archive avant 2018 | ignorée en DEV (plafond 0, fiches hors RAG, pas de `chunks_full`) |
-| Export côté UAT | run ponctuel `databricks jobs submit` — la cible `qualibot-uat` n'est pas modifiée |
-| Vector Search | endpoint `qualibot`, un seul index `chunks_index` (filtre de division), embeddings `databricks-qwen3-embedding-0-6b` |
-| Knowledge Assistants | retirés le 2026-10-08 (bloc S7) |
-| Contrôle par groupe (can_chat / can_compare) | **désactivé temporairement en DEV seulement** (`CAPS_BYPASS=true`) |
-| Accès à l'app (ACL) | mêmes groupes qu'en UAT + `jules.gourio.external@latecoere.aero` + `mehdi.lamrani@databricks.com` + SP DEV (app existante rattachée ; `users` CAN_MANAGE retiré) |
-| Jobs répliqués | pipeline de parsing, export Lakebase, stop/start de l'app, provisioning KA, migrations Lakebase — **tous planifiés en PAUSED** |
-| Jobs DEV existants | `lakebase_import_uat_to_dev` et `score_production_qa` gardés tels quels (UNPAUSED) |
-| Bitbucket | pipelines manuelles `deploy-dev` / `deploy-dev-jobs`, environnement de déploiement Bitbucket **Development** |
-| LibreOffice (aperçu PDF exact) | archive copiée depuis l'UAT par la copie |
+| Vector Search | endpoint `qualibot`, embeddings `databricks-qwen3-embedding-0-6b` |
+| Contrôle par groupe (can_chat / can_compare) | **désactivé en DEV seulement** (`CAPS_BYPASS=true`) |
+| Accès à l'app | mêmes groupes qu'en UAT + `jules.gourio.external@latecoere.aero` + `mehdi.lamrani@databricks.com` + SP DEV |
+| Plannings | tous en PAUSED, sauf `lakebase_import_uat_to_dev` |
+| Bitbucket | pipelines manuelles `deploy-dev` / `deploy-dev-jobs`, environnement de déploiement **Development** |
+| LibreOffice (aperçu PDF exact) | archive copiée depuis l'UAT par le job de copie |
 | Modèles Docling | volume DEV existant `/Volumes/dev_landingzone/qualibot/docling_models/docling_models` |
-| Endpoints LLM | identiques à l'UAT (disponibles en DEV) |
 
-## Vue d'ensemble
+## Ressources DEV
 
-| Bloc | Quoi | Où | Touche l'UAT ? |
-|---|---|---|---|
-| P | Prérequis : droits, profil CLI, vérifications | DEV + UAT | lecture seule |
-| E | Export du corpus UAT vers le volume staging (run ponctuel) | UAT | écrit seulement dans `uat_landingzone.qualibot.staging/dev_copy` |
-| R | Reliquat de l'ancien Qualibot DEV : app rattachée, vieux index/tables facultatifs | DEV | non |
-| I | Infra DEV : bind + `bundle deploy -t dev` (app, Lakebase, volumes, jobs) | DEV | non |
-| C | Copie : job `Z_1_Qualibot_Copy_Uat_To_Dev` (tables + endpoint + 3 index) | DEV | lecture du volume staging |
-| K | Knowledge Assistants DEV + report des endpoints dans `target_env.json` | DEV | non |
-| A | Déploiement du code de l'app + tests | DEV | non |
-| B | Bitbucket : environnement « Development » + pipelines `deploy-dev` | Bitbucket | non |
+Workspace : https://dbc-c623749d-731b.cloud.databricks.com (id `2865348338307293`).
 
-Ordre imposé : P → E → R → I → C → K → A. B peut se faire à tout moment, mais
-les pipelines `deploy-dev*` ne marcheront qu'après P.
-
-Ce qui change dans le code (branche `claude/adoring-cray-trexmn`) :
-
-- `databricks.yml`, cible `dev` : réécrite en copie de `qualibot-uat`
-  (app `qualibot`, projet Lakebase, schemas/volumes, jobs). Les jobs
-  `lakebase_import_uat_to_dev` et `score_production_qa` sont repris à
-  l'identique (toujours UNPAUSED).
-- `resources/parsing_pipeline.job.yml` : `run_as` = SP DEV pour la cible `dev`
-  (UAT/PROD gardent le leur). Planning PAUSED.
-- `server/services/infra/user.py` + `app.yaml` : nouveau flag `CAPS_BYPASS`
-  (défaut `false`) qui accorde chat + compare à tout visiteur.
-- `utils/deploy/target_env.json` : bloc `dev` (volumes, index, `CAPS_BYPASS=true`,
-  endpoints KA vides tant qu'ils ne sont pas créés).
-- `tests/test_deploy_config.py` : garde-fou — `CAPS_BYPASS` ne peut être
-  activé que pour `dev`.
-- `utils/dev_copy/` : notebooks de la copie (export UAT,
-  import DEV, endpoint Vector Search) + JSON du `jobs submit` UAT.
-
-## Récapitulatif — ce qui est déployé en DEV (2026-10-05)
-
-Workspace DEV : https://dbc-c623749d-731b.cloud.databricks.com (id `2865348338307293`). Liens construits à partir des
-noms/ids connus ; si un chemin d'UI a bougé, la commande CLI de la ligne donne
-l'objet.
-
-| Quoi | Lien | CLI |
-|---|---|---|
-| **App `qualibot`** (utilisateurs) | https://qualibot-2865348338307293.aws.databricksapps.com | |
-| App — gestion (déploiements, logs, permissions) | https://dbc-c623749d-731b.cloud.databricks.com/apps/qualibot | `databricks apps get qualibot --profile DEV` |
-| **Catalog** — schema `dev_landingzone.qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot | `databricks tables list dev_landingzone qualibot --profile DEV` |
-| Tables corpus : `chunks_v1`, `src_chunks_as_v1`, `src_chunks_is_v1` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot/chunks_v1 | |
-| État pipeline : `_pipeline_checkpoint_v1`, `processed_files_v1`, `image_metadata_v1`, `parse_manifest_v1`, `category_reference_v1` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot | |
-| Volumes `doc_compare`, `test`, `images`, `staging` (+ `docling_models`, existant) | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/volumes/dev_landingzone/qualibot/doc_compare | `databricks volumes list dev_landingzone qualibot --profile DEV` |
-| Schema projet `dev_proj.qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_proj/qualibot | |
-| **Vector Search** — endpoint `qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/compute/vector-search/qualibot | `databricks vector-search-indexes list-indexes qualibot --profile DEV` |
-| Index `chunks_index_v1` (ALL, impact search), `chunks_as_index_v1`, `chunks_is_index_v1` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot/chunks_index_v1 | `databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_index_v1 --profile DEV` |
-| **Agents** `qualibot_ALL_v2` → `ka-4d15cb32-endpoint` | https://dbc-c623749d-731b.cloud.databricks.com/ml/endpoints/ka-4d15cb32-endpoint | `databricks knowledge-assistants list-knowledge-assistants --profile DEV` |
-| `qualibot_AS_v2` → `ka-2ef8a9ac-endpoint` | https://dbc-c623749d-731b.cloud.databricks.com/ml/endpoints/ka-2ef8a9ac-endpoint | |
-| `qualibot_IS_v2` → `ka-710526e7-endpoint` | https://dbc-c623749d-731b.cloud.databricks.com/ml/endpoints/ka-710526e7-endpoint | |
-| **Lakebase** — projet `qualibot` (« Qualibot History », uid `e9185a28-…`), branche `production`, base `doccompare` | UI : menu Lakebase (ou SQL Warehouses ▸ Lakebase) ▸ « Qualibot History » | `databricks postgres get-project projects/qualibot --profile DEV` |
-| Rôles Postgres : app SP, SP DEV, `leap-qualibot-service-accounts`, CoreDev, Mehdi | | `databricks postgres list-roles projects/qualibot/branches/production --profile DEV` |
-| Bundle (fichiers, état) | https://dbc-c623749d-731b.cloud.databricks.com/browse/folders/Workspace/Shared/.bundle/qualibot/dev | `databricks bundle summary -t dev --profile DEV` |
-
-Jobs (planning PAUSED sauf mention) — liste : https://dbc-c623749d-731b.cloud.databricks.com/jobs?filter=qualibot
-
-| Job | Lien / déclenchement |
+| Quoi | Lien / commande |
 |---|---|
-| `Z_1_Qualibot_Copy_Uat_To_Dev` (manuel) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/685542214168730 |
-| `D_1_Qualibot_Parsing_Pipeline_dev` (PAUSED) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/362367007936662 |
-| `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` (**actif**, 2h30/14h30) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/728257090536196 |
-| `D_1_Qualibot_Score_Production_Qa` (**actif**, 2h45/14h45) | https://dbc-c623749d-731b.cloud.databricks.com/jobs/715033309841102 |
-| `Z_1_Qualibot_Grant_App_Access_dev` (manuel) | `databricks bundle run grant_app_access_dev -t dev --profile DEV` |
-| `qualibot-provision-knowledge-assistant-dev` (manuel) | `databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV` |
-| `Z_1_Qualibot_Migrate_Lakebase_dev` (manuel) | `databricks bundle run migrate_lakebase_dev -t dev --profile DEV` |
-| `D_1_Qualibot_Lakebase_Export_To_Volume_dev` (PAUSED) | |
-| `D_1_Qualibot_Apps_Stop_Nightly_Dev`, `W_1_Qualibot_Stop_Weekend_Dev`, `W_1_Qualibot_Start_Weekend_Dev` (PAUSED) | |
+| App `qualibot` (utilisateurs) | https://qualibot-2865348338307293.aws.databricksapps.com |
+| App — gestion | https://dbc-c623749d-731b.cloud.databricks.com/apps/qualibot · `databricks apps get qualibot --profile DEV` |
+| Schema `dev_landingzone.qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot · `databricks tables list dev_landingzone qualibot --profile DEV` |
+| Volumes `doc_compare`, `test`, `images`, `staging`, `docling_models` | `databricks volumes list dev_landingzone qualibot --profile DEV` |
+| Schema projet `dev_proj.qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_proj/qualibot |
+| Vector Search, endpoint `qualibot`, index `chunks_index` | https://dbc-c623749d-731b.cloud.databricks.com/compute/vector-search/qualibot · `databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_index --profile DEV` |
+| Lakebase, projet `qualibot` (« Qualibot History »), branche `production`, base `doccompare` | `databricks postgres get-project projects/qualibot --profile DEV` ; rôles : `databricks postgres list-roles projects/qualibot/branches/production --profile DEV` |
+| Bundle (fichiers, état) | https://dbc-c623749d-731b.cloud.databricks.com/browse/folders/Workspace/Shared/.bundle/qualibot/dev · `databricks bundle summary -t dev --profile DEV` |
+| Jobs | https://dbc-c623749d-731b.cloud.databricks.com/jobs?filter=qualibot |
 
-Identités : app SP `8e411164-a7e8-46ff-8013-8c56af2c3656` ; SP des jobs
-`job-runner-sa-dev` (`fde6ff28-739f-4a41-b61e-604a298c8478`). Contrôle par
-groupe désactivé (`CAPS_BYPASS=true`, DEV seulement).
+Jobs du bundle `dev` : `Z_1_Qualibot_Copy_Uat_To_Dev` (manuel), `D_1_Qualibot_Parsing_Pipeline_dev` (PAUSED),
+`D_1_Qualibot_Lakebase_Import_Uat_To_Dev` (actif), `D_1_Qualibot_Lakebase_Export_To_Volume_dev` (PAUSED),
+`Z_1_Qualibot_Grant_App_Access_dev` (manuel), `Z_1_Qualibot_Migrate_Lakebase_dev` (manuel),
+`Z_2_…_Create_Chat_Experiment`, `Z_3_…_Register_Chat_Prompts`, `D_2_Qualibot_Score_Chat_Traces_dev`,
+`D_1_Qualibot_Apps_Stop_Nightly_Dev`, `W_1_Qualibot_Stop_Weekend_Dev`, `W_1_Qualibot_Start_Weekend_Dev` (PAUSED).
 
 ## Prérequis
 
-- [x] **P1. Profil CLI `DEV`** _(OK 2026-10-05)_ sur la machine de déploiement
+- [x] **P1. Profil CLI `DEV`** _(OK 2026-10-05)_
 
   ```powershell
   databricks auth login --host https://dbc-c623749d-731b.cloud.databricks.com --profile DEV
   databricks current-user me --profile DEV
   ```
 
-- [x] **P2. Le SP DEV existe dans le workspace DEV** _(OK 2026-10-05 : `job-runner-sa-dev`, ACTIVE)_ et vous pouvez l'utiliser
-  en `run_as` (rôle « Service principal: User » sur le SP, sinon `bundle deploy`
+- [x] **P2. Le SP DEV existe** _(OK 2026-10-05)_ et vous avez le rôle « Service principal: User » dessus (sinon `bundle deploy`
   refuse le `run_as`) :
 
   ```powershell
   databricks service-principals list --profile DEV --filter "applicationId eq 'fde6ff28-739f-4a41-b61e-604a298c8478'"
   ```
 
-- [ ] **P3. Droits Unity Catalog du SP DEV.** Un premier essai de GRANT a
-  échoué le 2026-10-05 (« User does not have MANAGE on Catalog
-  'dev_landingzone' ») : vous n'avez pas MANAGE sur le catalog. Vérifier
-  d'abord ce que le SP a **déjà** (il est peut-être déjà couvert via un groupe) :
+- [ ] **P3. Droits Unity Catalog du SP DEV.** Vérifier ce qu'il a déjà (peut-être via un groupe) :
 
   ```powershell
   $sp = 'fde6ff28-739f-4a41-b61e-604a298c8478'
@@ -145,62 +83,24 @@ groupe désactivé (`CAPS_BYPASS=true`, DEV seulement).
   "=== prod_landingzone.intraqual"; databricks grants get-effective schema prod_landingzone.intraqual --principal $sp --profile DEV
   ```
 
-  Ce qu'il lui faut : `USE CATALOG` sur `dev_landingzone`, `dev_proj`,
-  `uat_landingzone`, `prod_bronze`, `prod_landingzone` ; sur
-  `dev_landingzone.qualibot` : `USE SCHEMA`, `CREATE TABLE`, `CREATE VOLUME`,
-  `SELECT`, `MODIFY`, `READ VOLUME`, `WRITE VOLUME` ; `READ VOLUME` sur
-  `uat_landingzone.qualibot.staging` ; `SELECT` sur `prod_bronze.intraqual` et
-  `prod_landingzone.intraqual`, `READ VOLUME` sur
-  `prod_landingzone.intraqual.intraqual_documents`.
-
-  Ce qui manque au niveau **schema `dev_landingzone.qualibot`**, vous pouvez le
-  donner vous-même (vous en êtes owner) :
+  Il lui faut : `USE CATALOG` sur `dev_landingzone`, `dev_proj`, `uat_landingzone`, `prod_bronze`, `prod_landingzone` ; sur
+  `dev_landingzone.qualibot` : `USE SCHEMA`, `CREATE TABLE`, `CREATE VOLUME`, `SELECT`, `MODIFY`, `READ VOLUME`,
+  `WRITE VOLUME` ; `READ VOLUME` sur `uat_landingzone.qualibot.staging` ; `SELECT` sur `prod_bronze.intraqual` et
+  `prod_landingzone.intraqual`, `READ VOLUME` sur `prod_landingzone.intraqual.intraqual_documents`.
+  Le niveau schema `dev_landingzone.qualibot`, vous pouvez le donner (vous en êtes owner) :
 
   ```sql
   GRANT USE SCHEMA, CREATE TABLE, CREATE VOLUME, SELECT, MODIFY, READ VOLUME, WRITE VOLUME
     ON SCHEMA dev_landingzone.qualibot TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
   ```
 
-  Le reste (`USE CATALOG`, droits sur `uat_landingzone` / `prod_*`) est à
-  demander à un admin des catalogs, uniquement pour ce qui manque.
+  Le reste (`USE CATALOG`, droits sur `uat_landingzone` / `prod_*`, owner de `dev_proj` : `leap-core-service_accounts-dev`)
+  est à demander à un admin des catalogs, pour ce qui manque seulement.
 
-- [x] **P4. Catalog `dev_proj`** _(existe, owner `leap-core-service_accounts-dev` ; schema `dev_proj.qualibot` absent → créé par le bundle, il faut CREATE SCHEMA sur `dev_proj`)_ : le bundle crée le schema `dev_proj.qualibot`
-  mais pas le catalog.
-
-  ```powershell
-  databricks catalogs get dev_proj --profile DEV
-  ```
-
-  S'il n'existe pas : me le dire (je pointe le schema projet ailleurs) ou le
-  faire créer par un admin.
-
-- [x] **P5. Ce qui existe déjà dans `dev_landingzone.qualibot`** _(2026-10-05 : schema présent ;
-  seul volume `docling_models` ; aucun projet Lakebase ; **app `qualibot` déjà
-  créée** le 2026-07-09, jamais déployée, SP `8e411164-a7e8-46ff-8013-8c56af2c3656`,
-  modifiée le 2026-10-05 par Mehdi → **rattachée au bundle en I1** ; endpoint
-  Vector Search `qualibot` supprimé depuis, index orphelins → R)_ :
-
-  ```powershell
-  databricks schemas get dev_landingzone.qualibot --profile DEV
-  databricks volumes list dev_landingzone qualibot --profile DEV
-  databricks postgres list-projects --profile DEV
-  databricks apps get qualibot --profile DEV
-  databricks vector-search-endpoints list-endpoints --profile DEV
-  ```
-
-  Noter : le schema (existe sûrement), les volumes `doc_compare`, `test`,
-  `images`, `staging` (existent ou non), un projet Lakebase `qualibot`
-  (normalement absent), une app `qualibot` (normalement absente), un
-  endpoint `qualibot` (normalement absent).
-
-- [x] **P6. Groupes de compte visibles en DEV** _(2026-10-05 : CoreAdmin, CoreDev,
-  leap-qualibot-service-accounts, Mehdi et les deux groupes
-  End-users-Qualibot-* présents — ces derniers n'apparaissaient pas dans la
-  1re page de `groups list`, mais l'ACL de l'app les référence)_ : `Role-Project-LEAP-CoreAdmin`,
-  `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-End-users-Qualibot-DocCompare`,
-  `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `leap-qualibot-service-accounts`,
-  et l'utilisateur `mehdi.lamrani@databricks.com` (sinon le `bundle deploy`
-  échoue sur la permission correspondante — me dire lequel manque, je le retire).
+- [x] **P4. Groupes de compte visibles en DEV** _(OK 2026-10-05)_ : `Role-Project-LEAP-CoreAdmin`, `Role-Project-LEAP-CoreDev`,
+  `Role-Project-LEAP-End-users-Qualibot-DocCompare`, `Role-Project-LEAP-End-users-Qualibot-ChatBot`,
+  `leap-qualibot-service-accounts`, utilisateur `mehdi.lamrani@databricks.com` (sinon le `bundle deploy` échoue sur la permission
+  correspondante) :
 
   ```powershell
   databricks groups list --profile DEV --filter "displayName sw 'Role-Project-LEAP'"
@@ -210,23 +110,13 @@ groupe désactivé (`CAPS_BYPASS=true`, DEV seulement).
 
 ## À faire
 
-PowerShell, depuis la racine du projet (branche `feature/chat-vsi-merged-on-impact-search`)
-sur la machine de déploiement. Toujours commencer la session par :
+PowerShell, depuis la racine du projet, sur la machine de déploiement.
 
-```powershell
-Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
-# autorise les scripts .ps1 du projet pour cette fenêtre seulement
-# (sinon « n'est pas signé numériquement »)
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
+### 0. Ordre complet du DEV (2026-10-12)
 
-### 0. ORDRE COMPLET DU DEV — tout ce qui reste, dans l'ordre (2026-10-12)
+Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et dater au fur et à mesure.
 
-Ce bloc remplace la lecture des blocs S à Z un par un : toutes les commandes sont ici, dans l'ordre où il faut les lancer. Les blocs
-plus bas gardent le détail et l'historique (leurs étiquettes S5, Y3… sont rappelées entre parenthèses). Cocher et dater au fur et à mesure.
-Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu as coché l'est.
-
-- [ ] **0.1 Session PowerShell** (au début de chaque session, depuis la racine du projet, branche `feature/chat-vsi-merged-on-impact-search`) :
+- [ ] **0.1 Session PowerShell** (au début de chaque session) :
 
   ```powershell
   Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
@@ -235,7 +125,7 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   ```
 
   Le profil `DEV` doit apparaître comme valide. Sinon : `databricks auth login --profile DEV`.
-- [ ] **0.2 Code** : extraire le zip de la branche dans un **dossier vide** (le code serveur a été réorganisé : `server/services/{chat,compare,infra}/`,
+- [ ] **0.2 Code** : extraire le zip de la branche dans un **dossier vide** (le code a été réorganisé : `server/services/{chat,compare,infra}/`,
   prompts dans `server/prompts/chat/`, tests renommés ; extrait par-dessus l'ancien dossier, les anciens fichiers resteraient et seraient
   redéployés). Si tu dois quand même copier par-dessus, supprimer d'abord les anciens :
 
@@ -243,10 +133,12 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   Remove-Item server\services\chat_vsi.py, server\services\chat_vsi_llm.py, server\services\turn_log.py, server\services\mlflow_turns.py, server\services\translation_bridge.py -ErrorAction SilentlyContinue
   Remove-Item server\services\lakebase.py, server\services\user.py, server\services\vector_search.py, server\services\vs_gate.py, server\services\error_origin.py, server\services\doc_catalog.py, server\services\streaming.py -ErrorAction SilentlyContinue
   Remove-Item server\services\chunked_analysis.py, server\services\impact_queries.py, server\services\summarize.py, server\services\conversion.py, server\services\soffice.py, server\services\export_helpers.py -ErrorAction SilentlyContinue
-  Remove-Item -Recurse server\services\processors, server\config\chat_vsi, config, scripts -ErrorAction SilentlyContinue
-  Remove-Item server\config\capabilities_snapshot.json, tests\test_chat_vsi.py, tests\test_chat_vsi_llm.py -ErrorAction SilentlyContinue
-  Remove-Item utils\user_capabilities\build_capabilities_snapshot.py -ErrorAction SilentlyContinue
-  Remove-Item resources\chat_experiment.yml -ErrorAction SilentlyContinue
+  Remove-Item -Recurse server\services\processors, server\config\chat_vsi, config, scripts, archive, mlruns -ErrorAction SilentlyContinue
+  Remove-Item server\config\capabilities_snapshot.json, tests\test_chat_vsi.py, tests\test_chat_vsi_llm.py, mlflow.db -ErrorAction SilentlyContinue
+  Remove-Item utils\user_capabilities\build_capabilities_snapshot.py, utils\evaluation\score_production_qa.py -ErrorAction SilentlyContinue
+  Remove-Item utils\deploy\watch_uat.ps1, utils\deploy\pull_from_uat.ps1, utils\lakebase_sync\export_lakebase_uat_to_volume.py -ErrorAction SilentlyContinue
+  Remove-Item -Recurse utils\dev, docs\archive, docs\evidence -ErrorAction SilentlyContinue
+  Remove-Item resources\chat_experiment.yml, resources\evaluation.yml -ErrorAction SilentlyContinue
   Remove-Item client\src\lib\downloadAsPdf.ts -ErrorAction SilentlyContinue
   ```
 
@@ -259,7 +151,8 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   ```
 
   Attendu : `"""Chat — the chat engine: answers from the Vector Search index, no Knowledge Assistant."""`, puis `True`, `True`.
-- [ ] **0.3 L'index `chunks_index` est ONLINE avec toutes ses lignes** (S5 ; l'embedding prenait 30 à 60 min) :
+  Si `bundle validate` dit `dev: no such target` ou `unknown field`, le `databricks.yml` local est abîmé : le remplacer par celui de la branche.
+- [ ] **0.3 L'index `chunks_index` est ONLINE avec toutes ses lignes** (l'embedding prend 30 à 60 min) :
 
   ```powershell
   databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_index --profile DEV
@@ -271,25 +164,37 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   SELECT count(*) AS chunks FROM dev_landingzone.qualibot.chunks;
   ```
 
-  Si l'index n'existe pas ou reste en création : la commande de création est dans S5 plus bas ; **ne pas continuer** avant qu'il soit ONLINE
-  (le chat et le contrôle 0.12 en ont besoin).
-- [ ] **0.4 Déployer le bundle** (nouveaux jobs : création de l'expérience, enregistrement des prompts, notation ; job de droits étendu à
-  `dev_proj`) — Y1 :
+  Si l'index n'existe pas, le créer (sous votre identité, propriétaire de l'endpoint `qualibot` et de la table `chunks`) ; même
+  spécification que l'UAT, la création lance la première synchronisation :
+
+  ```powershell
+  $json = '{"name": "dev_landingzone.qualibot.chunks_index", "endpoint_name": "qualibot", "primary_key": "chunk_id", "index_type": "DELTA_SYNC", "delta_sync_index_spec": {"source_table": "dev_landingzone.qualibot.chunks", "pipeline_type": "TRIGGERED", "embedding_source_columns": [{"name": "chunk_text", "embedding_model_endpoint_name": "databricks-qwen3-embedding-0-6b"}]}}'
+  [IO.File]::WriteAllText("$PWD\chunks_index.json", $json)
+  databricks vector-search-indexes create-index --json "@chunks_index.json" --profile DEV
+  Remove-Item chunks_index.json
+  ```
+
+  **Ne pas continuer** avant qu'il soit ONLINE (le chat et le contrôle 0.12 en ont besoin). La table `chunks` doit avoir
+  `delta.enableChangeDataFeed = true` et 60 jours de rétention (`delta.deletedFileRetentionDuration`, `delta.logRetentionDuration`).
+- [ ] **0.4 Déployer le bundle** (jobs de création de l'expérience, d'enregistrement des prompts, de notation ; job de droits étendu à
+  `dev_proj`) :
 
   ```powershell
   databricks bundle deploy -t dev --profile DEV
   ```
 
   Les plannings restent en pause. Contrôle (UI DEV → Jobs & Pipelines, filtre `Qualibot`) : aucun planning actif en dehors de
-  `lakebase_import_uat_to_dev` (I3).
-- [ ] **0.5 Droits** (S8 et Y2) — le job donne au SP de l'app et au SP des jobs ce qu'ils utilisent, `dev_proj.qualibot` compris :
+  `lakebase_import_uat_to_dev`. Pour prévisualiser sans rien modifier : `databricks bundle validate -t dev --profile DEV` puis
+  `databricks bundle plan -t dev --profile DEV` (chaque ressource doit être `create` ou `update`, rien en `delete` / `recreate` sans accord).
+- [ ] **0.5 Droits** — le job donne au SP de l'app et au SP des jobs ce qu'ils utilisent (volumes, index, endpoints LLM, `dev_proj.qualibot`) :
 
   ```powershell
   databricks bundle run grant_app_access_dev -t dev --profile DEV
   ```
 
-  Attendu : une ligne `OK:` par droit, aucune `FAILED`. Une ligne `FAILED` sur `dev_proj` : exécuter à la main (éditeur SQL DEV, compte qui peut
-  donner ces droits) puis relancer le job :
+  Attendu : une ligne `OK:` par droit, aucune `FAILED`. Pour changer ce qui est accordé : les listes `volumes` / `indexes` /
+  `serving_endpoints` du job `grant_app_access_dev` dans `databricks.yml` (`base_parameters`). Une ligne `FAILED` sur `dev_proj` : exécuter à
+  la main (éditeur SQL DEV, compte qui peut donner ces droits) puis relancer le job :
 
   ```sql
   GRANT USE CATALOG ON CATALOG dev_proj TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
@@ -298,9 +203,21 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA dev_proj.qualibot TO `Role-Project-LEAP-CoreDev`;
   ```
 
-  Une ligne `FAILED: CAN_QUERY on serving endpoint …` : c'est le bloc V2 plus bas (un administrateur du workspace doit donner le droit).
-- [ ] **0.6 Tables d'évaluation dans `dev_proj.qualibot`** (S6 et Z2). Éditeur SQL DEV, **une instruction à la fois** ; une table qui n'existe pas
-  donne `TABLE_OR_VIEW_NOT_FOUND` : passer à la suivante. Les droits sur `dev_proj` viennent de 0.5 :
+  Une ligne `FAILED: CAN_QUERY on serving endpoint …` : le SP des jobs n'a pas CAN_MANAGE sur cet endpoint LLM (souvent réservé à un
+  admin du workspace). Faire accorder le droit par un admin, ou :
+
+  ```powershell
+  $id = (databricks serving-endpoints get databricks-gpt-6-luna --profile DEV -o json | ConvertFrom-Json).id
+  databricks serving-endpoints get-permissions $id --profile DEV
+  databricks serving-endpoints update-permissions $id --profile DEV --json '{\"access_control_list\":[{\"service_principal_name\":\"8e411164-a7e8-46ff-8013-8c56af2c3656\",\"permission_level\":\"CAN_QUERY\"}]}'
+  ```
+
+  (même chose pour `databricks-gpt-5-6-luna`.) En cas de 403 de l'app : « Document search failed (Vector Search returned 403) » = index,
+  « Chat failed … endpoint returned 403 » = endpoint LLM ; `databricks apps logs qualibot --profile DEV` donne la ligne.
+- [ ] **0.6 Tables d'évaluation dans `dev_proj.qualibot`**. Éditeur SQL DEV, **une instruction à la fois** ; une table qui n'existe pas
+  donne `TABLE_OR_VIEW_NOT_FOUND` : passer à la suivante. Les droits sur `dev_proj` viennent de 0.5. Règle : `dev_landingzone.qualibot`
+  garde ce que le pipeline et l'app écrivent, `dev_proj.qualibot` reçoit ce qui définit ou mesure le projet (les notebooks de
+  `utils/evaluation/` ont `dev_proj.qualibot.*` comme défauts). Les tables sont copiées, pas déplacées :
 
   ```sql
   CREATE TABLE IF NOT EXISTS dev_proj.qualibot.qualibot_eval_golden DEEP CLONE dev_landingzone.qualibot.qualibot_eval_golden;
@@ -313,8 +230,7 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases DEEP CLONE dev_landingzone.qualibot.feedback_failure_cases;
   ```
 
-  Si `synthetic_retrieval_questions` / `feedback_failure_cases` n'existent pas encore dans `dev_landingzone` (S6 jamais fait), les créer
-  directement depuis l'UAT :
+  Si `synthetic_retrieval_questions` / `feedback_failure_cases` n'existent pas dans `dev_landingzone`, les créer depuis l'UAT :
 
   ```sql
   CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions AS SELECT * FROM uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
@@ -322,7 +238,7 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   ```
 
   Contrôle : `SELECT count(*) FROM dev_proj.qualibot.qualibot_eval_golden;` donne le même nombre que dans `dev_landingzone.qualibot`.
-- [ ] **0.7 Supprimer les 3 Knowledge Assistants DEV** (S7 ; sans effet sur le reste) : UI DEV → **Agents** → `qualibot_ALL_v2`, `qualibot_AS_v2`,
+- [ ] **0.7 Supprimer les 3 Knowledge Assistants DEV** (sans effet sur le reste) : UI DEV → **Agents** → `qualibot_ALL_v2`, `qualibot_AS_v2`,
   `qualibot_IS_v2` → ⋮ → **Delete**. Si l'UI refuse, dans une cellule Python d'un notebook DEV serverless :
 
   ```python
@@ -335,9 +251,9 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
           print('  deleted')
   ```
 
-  `PERMISSION_DENIED` : me renvoyer l'erreur (ou lancer la cellule en job sous le SP DEV). Méthode absente : `%pip install -U databricks-sdk` puis
+  `PERMISSION_DENIED` : lancer la cellule en job sous le SP DEV. Méthode absente : `%pip install -U databricks-sdk` puis
   `dbutils.library.restartPython()`.
-- [ ] **0.8 Expérience MLflow du chat** (Y3) — propriétaire = le SP DEV, type GenAI :
+- [ ] **0.8 Expérience MLflow du chat** — propriétaire = le SP DEV, type GenAI :
 
   ```powershell
   databricks bundle run create_chat_experiment_dev -t dev --profile DEV
@@ -345,23 +261,28 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
 
   Attendu : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot (service principal …) can edit the experiment`.
   Si une expérience du même nom existe déjà à ton nom (essai manuel), la supprimer d'abord dans l'UI (Experiments → ⋮ → Delete).
-- [ ] **0.9 Prompts dans le registre** (Y4) — enregistre aussi chaque version en tag `chat_prompt.<clé>` de l'expérience (qui doit exister : 0.8) ; l'app lit ces tags, jamais le registre :
+- [ ] **0.9 Prompts dans le registre** — enregistre aussi chaque version en tag `chat_prompt.<clé>` de l'expérience (qui doit exister : 0.8) ;
+  l'app lit ces tags, jamais le registre :
 
   ```powershell
   databricks bundle run register_chat_prompts_dev -t dev --profile DEV
   ```
 
-  Attendu : 8 lignes `registered version … alias deployed` (la nouvelle : `chat_translate_query`). **À refaire après chaque déploiement qui change un fichier de
-  `server/prompts/chat/`.**
-- [ ] **0.10 Déployer l'app** (S8, L1, X1, Y5 : un seul déploiement pour tout ; l'app crée ses nouvelles colonnes — `chat_turns.mlflow_trace_id`,
-  `doc_catalog.revision`/`doc_date`, `errors.origin`… — à son démarrage) :
+  Attendu : une ligne `registered version … alias deployed` par prompt (8 prompts `dev_proj.qualibot.chat_*`). **À refaire après chaque
+  déploiement qui change un fichier de `server/prompts/chat/`** : tant que le texte enregistré diffère du fichier, l'app n'attache pas la
+  version à la trace (log `prompt … differs from the registered "deployed" version`).
+- [ ] **0.10 Déployer l'app** (un seul déploiement pour tout ; l'app crée ses nouvelles colonnes — `chat_turns.mlflow_trace_id`,
+  `doc_catalog.revision`/`doc_date`, `errors.origin`/`fingerprint`/`user_message`… — à son démarrage ; `CHAT_MLFLOW_EXPERIMENT` vient de
+  `utils/deploy/target_env.json`) :
 
   ```powershell
   .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
   ```
 
-  Logs de l'app au démarrage : `Lakebase schema ready` (une erreur juste avant : me l'envoyer).
-- [ ] **0.11 Catalogue des documents avec les révisions** (S8 et X2) — la tâche 6 seule (rien n'est parsé), puis redémarrage de l'app :
+  Logs de l'app au démarrage : `Lakebase schema ready` (une erreur juste avant : me l'envoyer). Les nouveaux champs du chat sont décrits dans
+  `docs/lakebase_schema.md`.
+- [ ] **0.11 Catalogue des documents avec les révisions** — la tâche 6 seule (rien n'est parsé), puis redémarrage de l'app (sinon l'app recharge
+  le catalogue au plus tard 30 min après) :
 
   ```powershell
   databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
@@ -370,36 +291,40 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   ```
 
   Attendu : `doccompare: doc_catalog N -> N documents`, **sans** la ligne `has no revision/doc_date columns` ; dans les logs de l'app :
-  `doc_catalog: loaded N documents from Lakebase`. Éditeur SQL Lakebase (projet « Qualibot History », base `doccompare`) :
+  `doc_catalog: loaded N documents from Lakebase`. Si la ligne `has no revision/doc_date columns` apparaît, la ligne
+  `cannot add revision/doc_date as … (table owner: …)` juste avant dit qui possède la table ; la vérifier (éditeur SQL Lakebase, base `doccompare`) :
 
   ```sql
+  SELECT tableowner FROM pg_tables WHERE tablename = 'doc_catalog';
   SELECT COUNT(*) AS docs, COUNT(revision) AS with_revision, COUNT(doc_date) AS with_date FROM doc_catalog;
   SELECT ref, revision, doc_date FROM doc_catalog WHERE ref IN ('MI-14059', 'QP-1518', 'MIT-1087');
   ```
-- [ ] **0.12 Contrôle de la recherche** (S10 ; ≈ 1 €, ≈ 10 min) : notebook
-  `/Workspace/Shared/.bundle/qualibot/dev/files/utils/evaluation/retrieval_eval`, calcul **serverless**, Run all avec les défauts
-  (`indexes = chat`). Attendu : environ 83 % des documents attendus trouvés. **M'envoyer le dernier tableau.**
+
+  Si la tâche 6 échoue (droits Lakebase du SP), l'app marche quand même avec l'ancien instantané `doc_catalog.json` (log `using the bundled snapshot`).
+- [ ] **0.12 Contrôle de la recherche** (≈ 1 €, ≈ 10 min) : notebook `/Workspace/Shared/.bundle/qualibot/dev/files/utils/evaluation/retrieval_eval`,
+  calcul **serverless**, Run all avec les défauts (`indexes = chat`). Attendu : environ 83 % des documents attendus trouvés. **M'envoyer le dernier tableau.**
+  Les résultats vont dans `dev_proj.qualibot.eval_retrieval_runs` ; seules les questions pas encore réussies pour une configuration sont relancées.
 - [ ] **0.12b Mesurer « le premier message est seulement traduit »** (option `CHAT_TRANSLATE_ONLY`, **éteinte par défaut depuis le 2026-10-12** : allumée,
   elle perdait les développements d'acronymes et de synonymes de la réécriture, la question « qui est le CEO de Latécoère » ne retrouvait plus les
-  documents qui disent « PDG »). Premier message français → traduit en anglais, anglais → français (un appel court), puis **deux** requêtes de
-  18 passages reclassés + 12 bruts sur la requête française, au lieu de la réécriture bilingue et des 3 requêtes de 12 + 10. Même notebook que
-  0.12 (`retrieval_eval`, serverless), le widget `indexes` à `chat,translate|translate=on` (`chat` = la réécriture, comportement actif ; `translate` =
-  la traduction seule), Run all, ≈ 2 €. **M'envoyer le dernier tableau.** On ne l'allume (`CHAT_TRANSLATE_ONLY=on`, je change la valeur, tu redéploies)
-  que si `translate` est au moins aussi bon que `chat` sur les documents attendus trouvés **et** que la question du CEO redonne la bonne réponse.
-- [ ] **0.12c Accélérer la réécriture** (2026-10-12). Trois leviers déjà dans le code : (1) `CHAT_REWRITE_REASONING_EFFORT=low` (par défaut : le modèle réfléchit
-  moins avant de répondre ; un endpoint qui refuse le paramètre est rappelé sans, une seule fois, log `refused reasoning_effort`) ; (2) la recherche reclassée de
-  la question telle quelle part **pendant** la réécriture (elle ne l'attend plus : on gagne la durée de cette recherche) ; (3) un modèle qui ne réfléchit pas
-  (`databricks-gemini-3-1-flash-lite`, à mesurer). Pour comparer qualité **et** vitesse : même notebook que 0.12, widget `indexes` à
-  `chat,effort-off|effort=off,minimal|effort=minimal,flash|rewrite=databricks-gemini-3-1-flash-lite`, Run all, ≈ 6 €. **M'envoyer le dernier tableau** (documents attendus
-  trouvés **et** `latency_s`) : on garde la configuration la plus rapide qui ne perd rien ; `flash` ne devient la réécriture (`CHAT_REWRITE_ENDPOINT`, je change la valeur,
-  tu redéploies) que s'il ne perd rien sur les documents trouvés.
-- [ ] **0.13 Tests dans l'app** (S9, X3, Y6) — quatre questions : une normale en AS, une en IS, une avec un numéro de document (ex. `MI-14242`),
-  une hors sujet (attendu : refus poli), une en espagnol ; 👍 sur une réponse et 👎 sur une autre ; bouton **Télécharger → Response —
-  Markdown** (le fichier finit par la liste **Sources**), puis les PDF du chat et du compare (bloc P) ; « Judge Impacted Docs » dans Compare sur deux révisions connues ; la question
-  NDT (« quels documents parlent des exigences de qualification CND ? ) : plus de « version not stated », pastilles `REF · B`. Puis (1 min
-  après) l'expérience : DEV → **Experiments** → `/Shared/qualibot/chat_turns` → **Traces** : une trace par question, l'arbre
-  `chat_turn → retrieval → answer`, les passages dans la sortie de `retrieval`, 4 prompts liés, `user_vote` sur les deux réponses votées.
-  Éditeur SQL Lakebase :
+  documents qui disent « PDG »). Même notebook que 0.12, widget `indexes` à `chat,translate|translate=on`, Run all, ≈ 2 €. **M'envoyer le dernier tableau.**
+  On ne l'allume (`CHAT_TRANSLATE_ONLY=on`, je change la valeur, tu redéploies) que si `translate` est au moins aussi bon que `chat` sur les
+  documents attendus trouvés **et** que la question du CEO redonne la bonne réponse.
+- [ ] **0.12c Accélérer la réécriture** (2026-10-12). Trois leviers dans le code : `CHAT_REWRITE_REASONING_EFFORT=low` (par défaut ; un endpoint
+  qui refuse le paramètre est rappelé sans, une seule fois, log `refused reasoning_effort`) ; la recherche reclassée de la question telle quelle part
+  **pendant** la réécriture ; un modèle qui ne réfléchit pas (`databricks-gemini-3-1-flash-lite`, à mesurer). Pour comparer qualité **et** vitesse : même
+  notebook, widget `indexes` à
+  `chat,effort-off|effort=off,minimal|effort=minimal,flash|rewrite=databricks-gemini-3-1-flash-lite`, Run all, ≈ 6 €. **M'envoyer le dernier tableau**
+  (documents attendus trouvés **et** `latency_s`) : on garde la configuration la plus rapide qui ne perd rien ; `flash` ne devient la réécriture
+  (`CHAT_REWRITE_ENDPOINT`) que s'il ne perd rien.
+- [ ] **0.13 Tests dans l'app** — une question normale en AS, une en IS, une avec un numéro de document (ex. `MI-14242`), une hors sujet (attendu :
+  refus poli), une en espagnol ; « donne-moi le lien de l'OPEX Sharepoint » (→ l'URL de INAQ-742) ; 👍 sur une réponse et 👎 sur une autre ;
+  un seul onglet **Chat** ; les documents cités sont bien de la division demandée. Bouton **Télécharger → Response — Markdown** (le fichier finit
+  par la liste **Sources** `[1] REF — titre — Version … — lien`), PDF du chat (**Response — PDF**, **Full session — PDF**) et du compare
+  (**Download PDF** du Change Summary et du résumé d'un document). « Judge Impacted Docs » dans Compare sur deux révisions connues. La question
+  NDT (« quels documents parlent des exigences de qualification CND ? ») : plus de « version not stated », pastilles `REF · B`, titre et « Version B
+  (jj/mm/aaaa) » au survol ; un fil d'hier affiche « Yesterday ». Puis (1 min après) l'expérience : DEV → **Experiments** → `/Shared/qualibot/chat_turns`
+  → **Traces** : une trace par question, l'arbre `chat_turn → retrieval → answer`, les passages dans la sortie de `retrieval`, 4 prompts liés,
+  `user_vote` sur les deux réponses votées. Éditeur SQL Lakebase (base `doccompare`) :
 
   ```sql
   SELECT created_at, trace_id, mlflow_trace_id, status, warnings, answer_endpoint, first_token_ms, total_ms
@@ -414,26 +339,50 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
   FROM errors ORDER BY id DESC LIMIT 20;
   ```
 
-  **M'envoyer** : une capture d'une trace ouverte, les trois résultats SQL, une capture de la réponse NDT. Si rien n'apparaît dans MLflow : les
-  lignes `mlflow_turns:` des logs de l'app.
-- [ ] **0.14 Notation des traces, à blanc puis réelle** (Y7, Y8) — d'abord l'estimation (ne juge rien) :
+  Attendu : une ligne par question (`ok` ou `degraded`, `aborted` si l'onglet est fermé avant la fin), une trentaine de passages par tour. **M'envoyer** :
+  une capture d'une trace ouverte, les trois résultats SQL, une capture de la réponse NDT. Si rien n'apparaît dans MLflow : les lignes `mlflow_turns:` des
+  logs de l'app. Pour voir le message « Qualibot is a bit tired… » : me demander de mettre un index inexistant dans `CHAT_INDEX` pour `dev`
+  (`utils/deploy/target_env.json`), redéployer, poser une question (attendu : une ligne `errors` `stage = search`), puis remettre la valeur.
+- [ ] **0.14 Notation des traces, à blanc puis réelle** — d'abord l'estimation (ne juge rien) :
 
   ```powershell
   databricks bundle run score_chat_traces_dev -t dev --profile DEV
   ```
 
   UI → Jobs → `D_2_Qualibot_Score_Chat_Traces_dev` → dernier run : par juge, le nombre de traces lues et `estimated input tokens`. **M'envoyer
-  ces lignes.** Puis, hors des heures d'usage du chat (le juge partage les quotas de tokens de l'endpoint Luna), le run réel :
+  ces lignes.** Puis, hors des heures d'usage du chat (le juge partage les quotas de tokens de l'endpoint Luna), le run réel (plafonds :
+  `max_input_tokens` = 2 000 000, 2 appels en parallèle, 2 appels par seconde, reprises sur 429) :
 
   ```powershell
   databricks bundle run score_chat_traces_dev -t dev --profile DEV --params dry_run=false
   ```
 
-  **M'envoyer** le tableau final du notebook et les lignes `failed` de « Quality Checks ».
+  **M'envoyer** le tableau final du notebook (table `dev_proj.qualibot.chat_trace_scores`) et les lignes `failed` de « Quality Checks ». Quand les juges
+  sont validés, on baisse les échantillons (`chat_scorers.TARGET_SAMPLE_RATES`) et on active le planning (PAUSED aujourd'hui).
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
-  - ancien job de notation, si encore présent : UI DEV → Jobs → `D_1_Qualibot_Score_Production_Qa` → ⋮ → **Delete** ;
-  - anciens index et tables versionnés : les deux listes de commandes de **S11** plus bas (index puis `DROP TABLE`) ;
-  - copies d'évaluation restées dans `dev_landingzone` (après un run d'évaluation réussi depuis `dev_proj`, Z4) :
+  - ancien job de notation, si encore présent : UI DEV → Jobs → `D_1_Qualibot_Score_Production_Qa` → ⋮ → **Delete** (tables `chat_quality_scores` et
+    `chat_quality_scoring_runs` : rien ne les supprime) ;
+  - anciens index, puis leurs tables (ignorer « does not exist » pour ce qui n'a pas été construit) :
+
+    ```powershell
+    databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v1    --profile DEV
+    databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_as_index_v1 --profile DEV
+    databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is_index_v1 --profile DEV
+    databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2a   --profile DEV
+    databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2b   --profile DEV
+    databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2c   --profile DEV
+    ```
+
+    ```sql
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v1;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_as_v1;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_is_v1;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2a;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2b;
+    DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2c;
+    ```
+
+  - copies d'évaluation restées dans `dev_landingzone` (après un run d'évaluation réussi depuis `dev_proj`) :
 
     ```sql
     DROP TABLE IF EXISTS dev_landingzone.qualibot.qualibot_eval_golden;
@@ -447,602 +396,50 @@ Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce que tu a
     DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_golden_runs;
     ```
 
-    (`UNDROP TABLE` reste possible 7 jours.)
+    (`UNDROP TABLE` reste possible 7 jours.) À **garder** dans `dev_landingzone.qualibot` : les tables écrites chaque jour par
+    `lakebase_import_uat_to_dev` (`chat_feedbacks`, `chat_messages`, `chat_sessions`, `errors`, `feedbacks`, `impact_cache`, `impact_document_results`,
+    `impact_requests`, `knowledge_base_metadata`, `llm_requests`, `messages`, `summary_cache`, `users`), `chat_quality_scores` /
+    `chat_quality_scoring_runs`, les tables de l'application Translator (`dnt_rules`, `glossary_terms`) et celles du pipeline (`chunks`, `chunks_index`,
+    `_pipeline_checkpoint`, `processed_files`, `image_metadata`, `parse_manifest`, `category_reference`). Les tables `eval_*` gardent les anciens
+    noms d'essai dans leurs lignes : c'est l'historique des mesures (`docs/chat_tests.md`).
 
-**Facultatif, à ta décision** (aucun n'est nécessaire pour avancer) : T (nombre de passages), U / V2 / V3 (tests de charge), G / P (comparaisons de
-réponses), R (nouveau découpage), Y9 (traces en tables Delta). **Pas maintenant** : tout ce qui touche `qualibot-uat`, `qualibot-uat-test` ou
-`prod` (`OPERATIONS.md`, blocs A à D, dont D5 qui déploie cette branche en UAT) : il faut d'abord que le DEV soit validé.
+**Facultatif, à ta décision** : T (nombre de passages), U / V (tests de charge), traces MLflow en tables Delta Unity Catalog (plus adapté à un gros
+volume, requêtable en SQL ; exige MLflow ≥ 3.11.1 dans l'app et un entrepôt SQL ; non modifiable ensuite pour cette expérience ; non testé : me le demander).
+**Pas maintenant** : tout ce qui touche `qualibot-uat`, `qualibot-uat-test` ou `prod` (`OPERATIONS.md`, dont D5 qui déploie cette branche en UAT) : il faut
+d'abord que le DEV soit validé.
 
-### S. DEV propre : un chatbot, un index, aucun nom versionné (2026-10-08)
+### T. Combien de passages garder ? (2026-10-08)
 
-Ce que le code attend désormais en DEV : la table `chunks` (découpage retenu, aujourd'hui dans
-`chunks_v2b`) et son index `chunks_index` ; les tables d'état du pipeline sans suffixe ; plus de
-`src_chunks_as` / `src_chunks_is`, plus d'index par division, plus de KA. Rien ne se perd :
-`chunks` est une copie de `chunks_v2b`, l'ancien est supprimé seulement à la fin (S8), après test.
-Durée : surtout l'embedding du nouvel index (30 à 60 min). Le reste prend quelques minutes.
+Aujourd'hui : 3 requêtes × (12 passages reclassés + 10 bruts), fusionnés sans plafond. Les passages bruts viennent d'un test fait avec les anciens
+passages de 4 000 caractères : à remesurer sur le découpage actuel. Les défauts du code ne changent pas tant que ce test n'a pas tranché.
 
-- [x] **S0. Inventaire** _(2026-10-08 : tables `_v1` de la copie UAT + `chunks_v2a/v2b` et leurs index ; pas de `v2c`, pas d'autre table d'état `_v1` que les 5 de S3)_ (éditeur SQL DEV) — à garder sous les yeux pour S2 à S11 :
-
-  ```sql
-  SHOW TABLES IN dev_landingzone.qualibot;
-  ```
-
-  ```powershell
-  databricks vector-search-indexes list-indexes qualibot --profile DEV
-  ```
-
-- [x] **S1. Code et jobs** _(2026-10-08)_ : extraire le zip dans un **dossier vide** (beaucoup de fichiers ont été
-  déplacés vers `archive/` ou renommés : extrait par-dessus l'ancien dossier, les anciens fichiers
-  resteraient et seraient redéployés avec le reste). Vérifier ensuite que le fichier de config de
-  l'app est le bon — la première ligne doit être `"""Config endpoint — exposes app configuration to the frontend."""` :
-
-  ```powershell
-  Get-Content server\routers\config.py -TotalCount 1
-  ```
-
-  Puis, depuis ce dossier :
-
-  ```powershell
-  databricks bundle deploy -t dev --profile DEV
-  ```
-
-  Ce déploiement supprime le job `qualibot-provision-knowledge-assistant-dev` (pas les KA eux-mêmes,
-  voir S7) et passe les jobs DEV sur les noms sans suffixe. Les plannings restent en pause.
-
-- [x] **S2. Restes de l'ancien Qualibot DEV** _(2026-10-08 : inventaire S0 → aucune table sans suffixe ni index `chunks_all/as/is` : rien à faire)_ (bloc R4, s'il n'a pas été fait). Seulement si S0
-  liste ces tables **sans** suffixe (ce sont celles de juillet, jamais relues depuis) :
-
-  ```sql
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot._pipeline_checkpoint;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.processed_files;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.intraqual_docs;
-  ```
-
-  Index orphelins de juillet (bloc R3 ; si « endpoint not found », les laisser) :
-
-  ```powershell
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_all --profile DEV
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_as  --profile DEV
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is  --profile DEV
-  ```
-
-- [x] **S3. Tables d'état du pipeline** _(2026-10-08)_ : retirer le suffixe** (renommage instantané, aucune copie) :
-
-  ```sql
-  ALTER TABLE dev_landingzone.qualibot._pipeline_checkpoint_v1 RENAME TO dev_landingzone.qualibot._pipeline_checkpoint;
-  ALTER TABLE dev_landingzone.qualibot.processed_files_v1      RENAME TO dev_landingzone.qualibot.processed_files;
-  ALTER TABLE dev_landingzone.qualibot.image_metadata_v1       RENAME TO dev_landingzone.qualibot.image_metadata;
-  ALTER TABLE dev_landingzone.qualibot.parse_manifest_v1       RENAME TO dev_landingzone.qualibot.parse_manifest;
-  ALTER TABLE dev_landingzone.qualibot.category_reference_v1   RENAME TO dev_landingzone.qualibot.category_reference;
-  ```
-
-  Toute autre table `…_v1` de S0 qui n'est **pas** une table de passages (`chunks_v1`,
-  `src_chunks_as_v1`, `src_chunks_is_v1`) : même commande (ex. `parsing_run_health_v1`,
-  `document_change_log_v1`, `audit_files_unified_v1`).
-
-- [x] **S4. La table `chunks`** _(2026-10-08)_ = le découpage retenu** (copie de `chunks_v2b`, avec les propriétés
-  qu'exige un index : Change Data Feed et 60 jours d'historique) :
-
-  ```sql
-  CREATE TABLE dev_landingzone.qualibot.chunks
-  TBLPROPERTIES (
-    'delta.enableChangeDataFeed' = 'true',
-    'delta.deletedFileRetentionDuration' = 'interval 60 days',
-    'delta.logRetentionDuration' = 'interval 60 days')
-  AS SELECT * FROM dev_landingzone.qualibot.chunks_v2b;
-
-  SELECT (SELECT count(*) FROM dev_landingzone.qualibot.chunks)     AS chunks,
-         (SELECT count(*) FROM dev_landingzone.qualibot.chunks_v2b) AS chunks_v2b;   -- identiques
-  ```
-
-- [ ] **S5. L'index `chunks_index`** _(créé 2026-10-08, embedding en cours : ~10 % indexé à la dernière vérification)_, créé sous votre identité (propriétaire de l'endpoint `qualibot`
-  et de la table `chunks`) ; même spécification que les index UAT. La création lance la première
-  synchronisation (embedding de tout `chunks`).
-
-  ```powershell
-  $json = '{"name": "dev_landingzone.qualibot.chunks_index", "endpoint_name": "qualibot", "primary_key": "chunk_id", "index_type": "DELTA_SYNC", "delta_sync_index_spec": {"source_table": "dev_landingzone.qualibot.chunks", "pipeline_type": "TRIGGERED", "embedding_source_columns": [{"name": "chunk_text", "embedding_model_endpoint_name": "databricks-qwen3-embedding-0-6b"}]}}'
-  [IO.File]::WriteAllText("$PWD\chunks_index.json", $json)
-  databricks vector-search-indexes create-index --json "@chunks_index.json" --profile DEV
-  Remove-Item chunks_index.json
-  ```
-
-  Attendre `ONLINE` dans l'UI Vector Search (endpoint `qualibot`), avec autant de lignes indexées que
-  `chunks` (30 à 60 min).
-
-- [ ] **S6. Questions d'évaluation en DEV** (copies des deux tables UAT que lit `retrieval_eval`) _(depuis le 2026-10-12 : dans
-  `dev_proj.qualibot`, plus dans `dev_landingzone`, voir le bloc Z)_ :
-
-  ```sql
-  CREATE TABLE dev_proj.qualibot.synthetic_retrieval_questions
-  AS SELECT * FROM uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
-  CREATE TABLE dev_proj.qualibot.feedback_failure_cases
-  AS SELECT * FROM uat_landingzone.qualibot.feedback_failure_cases;
-  ```
-
-- [ ] **S7. Supprimer les 3 Knowledge Assistants DEV** (`qualibot_ALL_v2`, `qualibot_AS_v2`,
-  `qualibot_IS_v2`, endpoints `ka-4d15cb32-endpoint`, `ka-2ef8a9ac-endpoint`, `ka-710526e7-endpoint`).
-  UI DEV : **Agents** → chaque KA → menu ⋮ → **Delete**. Si l'UI refuse (ils ont été créés par le
-  SP DEV), même chose dans une cellule Python d'un notebook DEV serverless :
-
-  ```python
-  from databricks.sdk import WorkspaceClient
-  w = WorkspaceClient()
-  for ka in w.knowledge_assistants.list_knowledge_assistants():
-      print(ka.name, ka.display_name, ka.endpoint_name)
-      if ka.display_name in ('qualibot_ALL_v2', 'qualibot_AS_v2', 'qualibot_IS_v2'):
-          w.knowledge_assistants.delete_knowledge_assistant(name=ka.name)
-          print('  deleted')
-  ```
-
-  Si `PERMISSION_DENIED` : la lancer en job sous le SP DEV
-  (`fde6ff28-739f-4a41-b61e-604a298c8478`), ou me renvoyer l'erreur. Si la méthode
-  `delete_knowledge_assistant` n'existe pas dans la version du SDK du notebook :
-  `%pip install -U databricks-sdk` puis `dbutils.library.restartPython()`.
-
-- [ ] **S8. Droits du SP de l'app, catalogue des documents, puis l'app** _(2026-10-08 : droits + tâche 6 faits, `doc_catalog 0 -> 4937 documents` ; reste le déploiement de l'app une fois l'index ONLINE)_ (une fois `chunks_index`
-  `ONLINE`). Le catalogue (REF, titre, lien de chaque document) vient désormais de la table
-  Lakebase `doc_catalog`, écrite par la dernière tâche du pipeline depuis `parse_manifest` et
-  `chunks`. Cette tâche tourne sous le SP DEV : le job de droits lui donne la lecture de ces
-  tables (créées par vous en S3/S4), puis on la lance seule (rien n'est parsé) :
-
-  ```powershell
-  databricks bundle run grant_app_access_dev -t dev --profile DEV
-  databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
-  ```
-
-  Sortie attendue de la tâche 6 : `doccompare: doc_catalog 0 -> N documents` (N ≈ le nombre de
-  documents en périmètre). Dans les logs de l'app après démarrage :
-  `doc_catalog: loaded N documents from Lakebase`. Si la tâche 6 échoue (droits Lakebase du SP),
-  **m'envoyer l'erreur** : l'app marche quand même, avec l'ancien instantané `doc_catalog.json`
-  (log `using the bundled snapshot`).
-
-  Sortie attendue du job de droits : une ligne `OK:` par droit, dont une pour `chunks_index` et
-  une `SELECT, MODIFY` par table du pipeline pour le SP DEV.
-
-- [ ] **S9. Tester** :
-  - un seul onglet **Chat** (plus de « Chat KA » / « Chat VSI ») ;
-  - une question en ALL, une en AS, une en IS : les documents cités sont bien de la division
-    (filtre) ;
-  - une question en espagnol ou tchèque, une hors sujet (→ refus), « donne-moi le lien de l'OPEX
-    Sharepoint » (→ l'URL de INAQ-742) ;
-  - Compare : « Judge Impacted Docs » sur deux révisions connues (index `chunks_index`).
-
-- [ ] **S10. Mesure de contrôle** (≈ 1 €, ≈ 10 min) : notebook
-  `utils/evaluation/retrieval_eval.py`, Run all avec les défauts (`indexes = chat`).
-  Attendu : environ 83 % des documents attendus trouvés (le score de `idx-v2b-all`). Envoyer le
-  dernier tableau.
-
-- [ ] **S11. Supprimer l'ancien** (après S9 et S10 réussis). D'abord les index, puis leurs tables :
-
-  ```powershell
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v1    --profile DEV
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_as_index_v1 --profile DEV
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is_index_v1 --profile DEV
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2a   --profile DEV
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2b   --profile DEV
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2c   --profile DEV
-  ```
-
-  (Ignorer « does not exist » pour un index qui n'a pas été construit, ex. `v2c`.)
-
-  ```sql
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v1;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_as_v1;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_is_v1;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2a;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2b;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2c;
-  ```
-
-  `UNDROP TABLE` reste possible 7 jours.
-
-  À **garder** dans `dev_landingzone.qualibot` (inventaire du 2026-10-08) :
-  - écrites chaque jour par `lakebase_import_uat_to_dev` (copie de la base de l'app UAT) :
-    `chat_feedbacks`, `chat_messages`, `chat_sessions`, `errors`, `feedbacks`, `impact_cache`,
-    `impact_document_results`, `impact_requests`, `knowledge_base_metadata`, `llm_requests`,
-    `messages`, `summary_cache`, `users` ;
-  - écrites par `score_production_qa` : `chat_quality_scores`, `chat_quality_scoring_runs` ;
-  - application Translator (autre projet) : `dnt_rules`, `glossary_terms` ;
-  - évaluation : `qualibot_eval_golden` (jeu golden), `eval_retrieval_runs`, `eval_pairwise_runs`,
-    `eval_pairwise_runs_cache` (écrites par les deux notebooks gardés) — **depuis le 2026-10-12 elles vivent dans
-    `dev_proj.qualibot`** (bloc Z) ; les copies de `dev_landingzone` sont à supprimer en Z4 ;
-  - pipeline : `chunks`, `chunks_index`, `_pipeline_checkpoint`, `processed_files`,
-    `image_metadata`, `parse_manifest`, `category_reference`.
-
-  Facultatif : `eval_golden_runs` n'est plus écrite (notebook KA contre VSI archivé) ; ses
-  résultats sont dans `docs/chat_tests.md` : `DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_golden_runs;` Ensuite `SHOW TABLES IN dev_landingzone.qualibot` ne doit
-  plus montrer aucun nom en `_v1` / `_v2…` (les tables `eval_*` gardent les anciens noms d'essai
-  **dans leurs lignes** : c'est l'historique des mesures, `docs/chat_tests.md` § B).
-
-Trop long ou bloqué en DEV ? Le seul pas lent est S5 (embedding). Si un pas bloque (droits sur les
-KA, index orphelins), le laisser et me renvoyer l'erreur : le reste ne dépend pas de lui, et l'UAT
-se fera proprement de toute façon (`OPERATIONS.md`, D5).
-
-### T. Combien de passages garder ? (après S, 2026-10-08)
-
-Aujourd'hui : 3 requêtes × (12 passages reclassés + 10 bruts), fusionnés sans plafond (≈ 35
-passages et 11 k tokens en moyenne, 66 au plus avant les REF et titres). Les passages bruts
-viennent d'un test fait avec les anciens passages de 4 000 caractères, que le reranker lisait à
-moitié : à remesurer sur le découpage actuel. Les défauts du code ne changent pas tant que ce
-test n'a pas tranché.
-
-- [ ] **T1. Recherche seule** (≈ 4 €, ≈ 30 min) : notebook
-  `utils/evaluation/retrieval_eval.py`, widget `indexes` =
+- [ ] **T1. Recherche seule** (≈ 4 €, ≈ 30 min) : notebook `utils/evaluation/retrieval_eval.py`, widget `indexes` =
 
   ```text
   chat,rerank-only|raw=0,raw5|raw=5,cap40|cap=40,cap25|cap=25,rerank8-only|rerank=8|raw=0
   ```
 
-  puis Run all. **M'envoyer les deux derniers tableaux** (par source et global : documents
-  trouvés, dans les 5 premiers, tokens de contexte).
-
-- [ ] **T2. Réponses** (≈ 2 €, ≈ 20 min, après T1, sur la meilleure configuration plus courte) :
-  notebook `pairwise_answers.py`, widgets `indexes` = la même liste que T1, `reference` =
-  `databricks-gpt-6-luna@chat`, `contenders` = `databricks-gpt-6-luna@<label retenu en T1>`,
-  `eval_id` = `passages-<label>`. **M'envoyer les trois tableaux.**
-
-### U. Test de charge du chat (après S, 2026-10-08)
-
-Combien de questions simultanées l'app DEV tient avant de casser, et pourquoi elle casse
-(quota du modèle, Vector Search, instance de l'app). Notebook
-`utils/evaluation/load_test_chat.py` : paliers de 5, 10, 20, 40, 80 questions en
-cours en même temps, 4 questions par « utilisateur » et par palier, questions réelles (golden +
-vraies questions DEV). ≈ 620 questions, ≈ 2 €, 30 à 60 min. S'arrête au premier palier où plus
-de la moitié des questions échouent.
-
-- [ ] **U1. Lancer** : app DEV démarrée, notebook en serverless, Run all (défauts). La cellule
-  « Mode » dit si le test passe par l'app (`MODE = app`) ou, si l'app refuse le jeton du
-  notebook, par le moteur appelé dans le notebook (`MODE = engine` : mêmes modèles et mêmes
-  limites, sans l'instance de l'app).
-- [ ] **U2. M'envoyer** les deux tableaux de la dernière cellule et la ligne `MODE = …`, plus,
-  dans les logs de l'app pendant le test, les lignes `chat_llm:` (bascule vers le modèle de
-  secours, relances).
-
-### V2. Test de charge de Vector Search seul (2026-10-08)
-
-Le test de charge du chat (bloc U, run du 2026-10-08) : 100 % de réussite jusqu'à 10 questions
-simultanées, puis `Vector Search returned 429` dès 20 (9 % d'échecs), 40 (16 %) et 80 (24 %) ; débit
-plafonné vers 50 questions/min. Toutes les erreurs viennent de Vector Search, aucune des modèles.
-Notebook `utils/evaluation/load_test_vector_search.py` : seulement des requêtes
-Vector Search (aucun appel LLM), sans relance, par paliers de 1 à 64 requêtes simultanées,
-20 s par palier, pour chaque type de requête (brute, avec reranker, reranker sur le texte seul,
-ANN, avec filtre, mélange du chat). ≈ 20 min.
-
-- [ ] **V2.1. Lancer** : notebook en serverless, Run all (défauts).
-- [ ] **V2.2. M'envoyer** la sortie de la cellule « endpoint and index » et les trois tableaux de la
-  dernière cellule.
-
-### V3. Refaire le test de charge du chat avec la file Vector Search (2026-10-08)
-
-Résultat V2 : ≈ 26 requêtes HYBRID/s au plus, refus au-delà de ≈ 16 en cours, reranker non en cause
-(`docs/chat_tests.md` § 5.8). Code : file commune `server/services/infra/vs_gate.py` (8 requêtes en
-cours au plus, relances sur 429).
-
-- [x] **V3.1.** Recopier `server/services/infra/vs_gate.py` (nouveau), `server/services/chat/engine.py`,
-  `server/services/infra/vector_search.py`, `tests/test_vs_gate.py`, `tests/test_chat_llm.py`,
-  `docs/chat_tests.md`, `operations_dev.md` ; puis `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev`
-  (sans `-SyncOnly` : l'app doit redémarrer).
-- [x] **V3.2.** Notebook `load_test_chat`, widget `levels` = `10,20,30,40` (80 questions/min ≈ 25
-  questions en cours), Run all. M'envoyer les deux tableaux.
-  _(fait 2026-10-08 : 100 % de réussite de 10 à 40 questions en cours, 77 questions/min à 40, aucun refus Vector Search ; à 40, GPT-6 Luna en 429 → secours GPT-5.6 Luna pour ≈ la moitié des questions)_
-- [x] **V3.2b.** Moins de requêtes par question (recherche brute seulement sur la question telle que
-  posée : 4 requêtes au lieu de 6) : notebook `retrieval_eval`, widget `indexes` =
-  `chat,rawq1|rawq=1,rawq1-raw5|rawq=1|raw=5`, Run all. M'envoyer les deux derniers tableaux.
-  _(fait 2026-10-08 : recherche brute sur la question seule = −8 points sur le golden)_
-- [x] **V3.2c.** Recherche brute sur une réécriture seulement (4 requêtes) ou sur les deux (5) :
-  notebook `retrieval_eval`, widget `indexes` = `chat,rawfr|rawon=fr,rawen|rawon=en,rawfren|rawon=fr+en`,
-  Run all (≈ 1 €). M'envoyer les deux derniers tableaux.
-  _(fait 2026-10-09 : `rawfr` 81,9 % au total, golden 93,8 % contre 96,1 %, −20 % de contexte)_
-- [x] **V3.2d.** Quota du modèle : workspace DEV → Serving → `databricks-gpt-6-luna` → section
-  AI Gateway / Rate limits (si présente). M'envoyer la limite affichée (ou « aucune »).
-  _(fait 2026-10-09 : 1 M tokens d'entrée/min, 100 k de sortie/min, mêmes limites pour les deux modèles)_
-- [x] **V3.2e.** `rawfr` est le défaut depuis 2026-10-09. Recopier `server/services/chat/engine.py`,
-  `tests/test_chat_engine.py`, `docs/chat_tests.md`, `CLAUDE.md`, `operations_dev.md`, puis
-  `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (sans `-SyncOnly` : l'app doit redémarrer).
-  Puis comparer les réponses ancien réglage / `rawfr` : notebook `pairwise_answers`, widgets
-  `indexes` = `rawall|rawon=question+fr+en,chat`, `reference` = `databricks-gpt-6-luna@rawall`,
-  `contenders` = `databricks-gpt-6-luna@chat`, `eval_id` = `passages-rawfr`, Run all.
-  M'envoyer le tableau final (verdicts, tokens d'entrée et de sortie, latence).
-  _(fait 2026-10-09 : 9 victoires contre 14, égalité de fidélité, 13 247 tokens d'entrée par réponse ; `rawfr` gardé)_
-- [ ] **V3.3.** M'envoyer aussi la sortie de la cellule « The endpoint and the index » du notebook
-  `load_test_vector_search` (type d'endpoint, `scaling_info`) et son troisième tableau (texte des refus).
-
-### L. Journal Lakebase de chaque tour de chat (code du 2026-10-09)
-
-Le chat enregistre maintenant chaque étape de chaque tour : `chat_turns` (requêtes, modèles,
-durées, ce qui n'a pas tourné comme prévu), `chat_retrieved_chunks` (passages retrouvés, avec leur
-texte), et des colonnes en plus dans `errors`, `llm_requests` et `impact_requests` (référence :
-`docs/lakebase_schema.md`). Rien à créer à la main : l'app crée les tables et colonnes à son
-démarrage, sans toucher aux données existantes.
-
-- [ ] **L1. Déployer l'app DEV** avec le zip de cette branche (le même déploiement que S8 ; s'il a
-  déjà été fait avec un zip plus ancien, le refaire) :
-
-  ```powershell
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
-  ```
-
-  Dans les logs de l'app au démarrage : `Lakebase schema ready` (une erreur juste avant = me
-  l'envoyer).
-
-- [ ] **L2. Poser 2 ou 3 questions dans le chat**, dont une où l'on ferme l'onglet avant la fin de
-  la réponse, puis dans l'éditeur SQL Lakebase (projet « Qualibot History », base `doccompare`) :
-
-  ```sql
-  SELECT created_at, status, warnings, answer_endpoint, vs_calls_ok, vs_calls_expected,
-         passages_sent, documents_sent, first_token_ms, total_ms, fr_query
-  FROM chat_turns ORDER BY id DESC LIMIT 5;
-
-  SELECT t.trace_id, COUNT(*) AS passages, SUM(CASE WHEN c.kept THEN 1 ELSE 0 END) AS sent,
-         SUM(CASE WHEN c.cited THEN 1 ELSE 0 END) AS cited
-  FROM chat_turns t JOIN chat_retrieved_chunks c ON c.turn_id = t.id
-  GROUP BY t.id, t.trace_id ORDER BY t.id DESC LIMIT 5;
-
-  SELECT created_at, endpoint, severity, stage, error_type, LEFT(error_msg, 120)
-  FROM errors ORDER BY id DESC LIMIT 10;
-  ```
-
-  Attendu : une ligne par question (`ok` ou `degraded`, et `aborted` pour l'onglet fermé), une
-  trentaine de passages par tour dont `sent` envoyés au modèle. **M'envoyer** les trois résultats.
-
-### X. Message « Qualibot is tired », versions des documents, dates des fils, erreurs (code du 2026-10-09)
-
-Ce qui change : en cas d'échec (après toutes les relances), l'utilisateur ne voit plus qu'un message
-« Qualibot is a bit tired right now. Please wait a moment and try again. » ; la cause est dans
-Lakebase (`errors.origin` = fichier:ligne, `fingerprint`, `user_message`). Le modèle reçoit la
-révision et la date de chaque document (`doc_catalog.revision` / `doc_date`) et n'écrit plus de
-liste de sources à la fin : les pastilles sous la réponse portent la version (`MI-14059 · B`,
-titre et date au survol) et les téléchargements ajoutent la liste des sources numérotée. Les dates
-des fils à gauche sont comptées en jours calendaires.
-
-- [ ] **X1. Déployer l'app DEV** (le client est reconstruit par le script ; l'app ajoute les
-  colonnes `doc_catalog.revision` / `doc_date` et `errors.origin` / `fingerprint` / `user_message`
-  à son démarrage) :
-
-  ```powershell
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
-  ```
-
-- [ ] **X2. Remplir les révisions du catalogue** (après X1 : la tâche n'a pas le droit d'ajouter
-  les colonnes elle-même), puis redémarrer l'app pour qu'elle recharge le catalogue tout de suite
-  (sinon : 30 min au plus) :
-
-  ```powershell
-  databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
-  databricks apps stop qualibot --profile DEV
-  databricks apps start qualibot --profile DEV
-  ```
-
-  Sortie attendue de la tâche : `doccompare: doc_catalog N -> N documents`, précédée de
-  `revision/doc_date columns added` si c'est la tâche qui est propriétaire de la table, et **sans**
-  la ligne `has no revision/doc_date columns`. Si cette ligne apparaît quand même, la ligne
-  `cannot add revision/doc_date as … (table owner: …)` juste avant dit qui possède la table :
-  m'envoyer ces deux lignes, plus le résultat de (éditeur SQL Lakebase, base `doccompare`) :
-
-  ```sql
-  SELECT tableowner FROM pg_tables WHERE tablename = 'doc_catalog';
-  SELECT column_name FROM information_schema.columns WHERE table_name = 'doc_catalog' ORDER BY ordinal_position;
-  ```
-
-  et, dans les logs de l'app au démarrage, une éventuelle ligne `doc_catalog: revision/doc_date not
-  added by the app` ou `Lakebase schema ensure failed`. Puis, dans l'éditeur SQL Lakebase (base `doccompare`) :
-
-  ```sql
-  SELECT COUNT(*) AS docs, COUNT(revision) AS with_revision, COUNT(doc_date) AS with_date FROM doc_catalog;
-  SELECT ref, revision, doc_date FROM doc_catalog WHERE ref IN ('MI-14059', 'QP-1518', 'MIT-1087');
-  ```
-
-- [ ] **X3. Tester dans le chat** :
-  - reposer la question NDT/NDI (« quels documents parlent des exigences de qualification
-    CND ? ») : plus de « version/status not stated », plus de liste « Sources and metadata » à la
-    fin ; les numéros du texte vont de 1 à N dans l'ordre ; les pastilles sous la réponse montrent
-    `REF · B` et, au survol, le titre et « Version B (jj/mm/aaaa) » ;
-  - bouton **Télécharger → Response — Markdown** : le fichier finit par une liste **Sources**
-    `[1] REF — titre — Version … — lien`, dans l'ordre des numéros ;
-  - barre de gauche : un fil d'hier affiche « Yesterday », même le matin.
-
-- [ ] **X4. Erreurs** (éditeur SQL Lakebase) — chaque nouvelle ligne a son `origin` et son
-  `fingerprint` :
-
-  ```sql
-  SELECT created_at, endpoint, severity, stage, error_type, origin, fingerprint, user_message,
-         LEFT(error_msg, 120) AS msg
-  FROM errors ORDER BY id DESC LIMIT 20;
-  ```
-
-- [ ] **X5. (facultatif) Voir le message « tired »** : me demander de mettre un index inexistant
-  dans `CHAT_INDEX` pour `dev` (`utils/deploy/target_env.json`), redéployer, poser une question
-  (attendu : après les relances, le message gris « Qualibot is a bit tired… », et une ligne
-  `errors` `stage = search`, `origin = server/services/chat/engine.py:… in _query`), puis remettre
-  la valeur et redéployer.
-
-- [ ] **X6. M'envoyer** les résultats de X2 (les deux requêtes) et de X4, et une capture de la
-  réponse NDT.
-
-### W. Notation des tours du chat : archivage de l'ancien job, prototype (2026-10-09)
-
-**Remplacé le 2026-10-12 par le bloc Y (notation des traces MLflow vivantes, job `D_2_Qualibot_Score_Chat_Traces_dev`). Ne rien lancer de ce bloc ; seule la suppression de l'ancien job `D_1_Qualibot_Score_Production_Qa` (W2) reste utile, si elle n'a pas été faite.**
-
-`score_production_qa` (KA contre RAG naïf) est archivé : `utils/evaluation/score_production_qa.py` →
-`archive/evaluation/` (removed, see git history at commit bbb1016), `resources/evaluation.yml` → `archive/evaluation/score_production_qa.job.yml` (removed, see git history at commit bbb1016).
-Le prototype `utils/evaluation/score_chat_traces.py` rejoue les tours du Lakebase en traces MLflow et
-les note avec les scorers MLflow (juge GPT-5.6 Luna).
-
-- [ ] **W1.** Sur ton PC, dans `latec-compare` :
-
-  ```powershell
-  Remove-Item utils\evaluation\score_production_qa.py
-  Remove-Item resources\evaluation.yml
-  ```
-
-  Puis recopier à la main : `utils/evaluation/score_chat_traces.py` (nouveau), `archive/README.md` (removed, see git history at commit bbb1016),
-  `archive/evaluation/score_production_qa.py` (removed, see git history at commit bbb1016), `archive/evaluation/score_production_qa.job.yml` (removed, see git history at commit bbb1016),
-  `CLAUDE.md`, `OPERATIONS.md`, `operations_dev.md`, `docs/lakebase_schema.md`, `utils/README.md`.
-- [ ] **W2.** Supprimer le job DEV `D_1_Qualibot_Score_Production_Qa` (il n'est plus dans le bundle) et
-  envoyer le notebook :
-
-  ```powershell
-  databricks bundle deploy -t dev --profile DEV
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly
-  ```
-
-  Les tables `chat_quality_scores` / `chat_quality_scoring_runs` restent (rien ne les supprime).
-- [ ] **W3.** Premier essai sur 10 tours : notebook
-  `/Workspace/Shared/.bundle/qualibot/dev/files/utils/evaluation/score_chat_traces`, calcul
-  **serverless**, widgets `limit` = `10`, `days` = `30`, le reste par défaut, Run all.
-  M'envoyer : la sortie de la cellule « Quality Checks » (nombre de traces, scorers en échec) et le
-  tableau final. Si les scorers juges échouent tous, relancer avec `judge_model` vide (juge géré par
-  Databricks) et me le dire.
-- [ ] **W4.** Puis les tours mal notés par les utilisateurs : `selection` = `down`, `limit` = `50`,
-  `days` = `90`, Run all ; m'envoyer le tableau final.
-
-### Y. Traces MLflow du chat, prompts enregistrés, notation (code du 2026-10-12)
-
-Chaque tour de chat terminé devient **une trace MLflow** dans `/Shared/qualibot/chat_turns` : question, réponse, étapes (traduction,
-réécriture, recherche, recherche par REF, réponse, un span par appel au modèle) à leurs vraies durées, passages envoyés au modèle
-(texte compris), tokens, coût, avertissements, version des prompts utilisés. L'envoi se fait après la réponse ; une panne MLflow ne
-touche pas le chat. L'identifiant de la trace est gardé dans `chat_turns.mlflow_trace_id` et le vote 👍/👎 y est attaché
-(`user_vote`). Les prompts sont des fichiers (`server/prompts/chat/`), enregistrés dans le registre de prompts de `dev_proj.qualibot`.
-La notation est un **job par lots** (jamais pendant un tour) : scorers gratuits sur tous les tours, juges LLM (GPT-5.6 Luna) sur un
-échantillon, débit limité, estimation des tokens avant de juger. Tout est créé par des jobs qui tournent sous le SP DEV
-(`fde6ff28-…`), qui devient propriétaire de l'expérience et des prompts. Toutes les commandes, dans l'ordre, sont aussi dans le bloc 0.
-
-- [ ] **Y1. Déployer les jobs** (nouveaux : `Z_2_…_Create_Chat_Experiment`, `Z_3_…_Register_Chat_Prompts`, `D_2_…_Score_Chat_Traces`) :
-
-  ```powershell
-  databricks bundle deploy -t dev --profile DEV
-  ```
-- [ ] **Y2. Droits sur `dev_proj.qualibot`** (le job de droits les donne au SP DEV ; voir 0.5) :
-
-  ```powershell
-  databricks bundle run grant_app_access_dev -t dev --profile DEV
-  ```
-
-  Sortie attendue : une ligne `OK:` par droit, dont `GRANT USE SCHEMA, CREATE TABLE, CREATE FUNCTION, EXECUTE, SELECT, MODIFY ON SCHEMA
-  dev_proj.qualibot` (au SP des jobs ; le SP de l'app n'a aucun droit sur `dev_proj`, il ne lit pas le registre). Si une ligne `FAILED` sur `dev_proj` (propriétaire du catalogue : `leap-core-service_accounts-dev`), exécuter ces
-  `GRANT` à la main avec un compte qui peut les donner (bloc Z1).
-- [ ] **Y3. Créer l'expérience** (propriétaire = le SP DEV ; type GenAI ; droits : le SP de l'app écrit, CoreAdmin / CoreDev gèrent) :
-
-  ```powershell
-  databricks bundle run create_chat_experiment_dev -t dev --profile DEV
-  ```
-
-  Sortie : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot (service principal …) can edit the experiment`.
-  Une expérience déjà créée à la main avec ton compte t'appartient : la supprimer d'abord (Experiments → ⋮ → Delete), puis relancer.
-- [ ] **Y4. Enregistrer les prompts** (8 prompts `dev_proj.qualibot.chat_*`, alias `deployed`) :
-
-  ```powershell
-  databricks bundle run register_chat_prompts_dev -t dev --profile DEV
-  ```
-
-  Sortie : une ligne `registered version 1, alias deployed` par prompt. À **refaire après chaque déploiement qui modifie un fichier de
-  `server/prompts/chat/`** : tant que le texte enregistré diffère du fichier, l'app n'attache pas la version à la trace (ligne de log
-  `prompt … differs from the registered "deployed" version`).
-- [ ] **Y5. Déployer l'app DEV** (`CHAT_MLFLOW_EXPERIMENT` vient de `utils/deploy/target_env.json` ; l'app
-  ajoute la colonne `chat_turns.mlflow_trace_id` à son démarrage) :
-
-  ```powershell
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
-  ```
-- [ ] **Y6. Poser 4 questions** (une normale en AS, une avec un numéro de document, une hors sujet, une en espagnol), mettre 👍 sur une
-  réponse et 👎 sur une autre, attendre une minute, puis ouvrir DEV → **Experiments** → `/Shared/qualibot/chat_turns` → **Traces**.
-  Attendu : 4 traces ; en ouvrir une : `chat_turn` → `retrieval` (rewrite, search) → `answer` (call_1…), durées, passages dans la sortie de
-  `retrieval`, tokens sur `answer`, onglet **Prompts** / tag `mlflow.linkedPrompts` avec 4 prompts, évaluation `user_vote` sur les deux
-  réponses votées. Éditeur SQL Lakebase (base `doccompare`) :
-
-  ```sql
-  SELECT created_at, trace_id, mlflow_trace_id, status, answer_endpoint, first_token_ms, total_ms
-  FROM chat_turns ORDER BY id DESC LIMIT 5;
-  ```
-
-  `mlflow_trace_id` doit être rempli. **M'envoyer** une capture d'une trace ouverte et le résultat de la requête ; si rien n'apparaît, les
-  lignes `mlflow_turns:` des logs de l'app.
-- [ ] **Y7. Notation, d'abord à blanc** (estime les tokens, ne juge rien ; les juges lisent 100 % des tours tant qu'on vérifie qu'ils marchent) :
-
-  ```powershell
-  databricks bundle run score_chat_traces_dev -t dev --profile DEV
-  ```
-
-  La sortie du notebook (UI → Jobs → D_2_… → dernier run) donne, par juge, le nombre de traces lues et `estimated input tokens: …`.
-  **M'envoyer ces lignes** avant de juger.
-- [ ] **Y8. Notation réelle** (un premier essai sur peu de tours ; le job est soumis aux plafonds `max_input_tokens` = 2 000 000,
-  2 appels en parallèle, 2 appels par seconde, reprises sur 429) :
-
-  ```powershell
-  databricks bundle run score_chat_traces_dev -t dev --profile DEV --params dry_run=false
-  ```
-
-  À lancer **hors des heures d'usage du chat** (le juge partage les quotas de tokens de l'endpoint Luna). Résultat : verdicts sur les
-  traces (colonnes dans l'onglet Traces), tableau final du notebook, table `dev_proj.qualibot.chat_trace_scores`. **M'envoyer** le tableau
-  final et les lignes `failed` éventuelles de la cellule « Quality Checks ». Quand les juges sont validés, on baisse les échantillons
-  (`chat_scorers.TARGET_SAMPLE_RATES`) et on active le planning (PAUSED aujourd'hui).
-- [ ] **Y9. (Optionnel, à décider) Traces dans des tables Delta Unity Catalog** au lieu du stockage de l'expérience (plus adapté à un gros
-  volume, requêtable en SQL ; exige MLflow ≥ 3.11.1 dans l'app, un entrepôt SQL ; non modifiable ensuite pour cette expérience ; non testé
-  ici) : me le demander, je prépare le job et la valeur de `CHAT_MLFLOW_EXPERIMENT`.
-
-### Z. Artefacts d'évaluation et de projet : de `dev_landingzone` vers `dev_proj` (2026-10-12)
-
-Règle : `dev_landingzone.qualibot` garde ce que le pipeline et l'app écrivent (chunks, index, tables
-Lakebase importées, volumes) ; `dev_proj.qualibot` reçoit ce qui définit ou mesure le projet (jeu golden,
-résultats d'évaluation, notes de qualité, et bientôt le registre de prompts et les traces MLflow en tables
-Delta). Les notebooks de `utils/evaluation/` ont maintenant `dev_proj.qualibot.*` comme valeurs par défaut
-(`chat_messages` et l'index restent dans `dev_landingzone`). **Les tables existantes sont copiées, pas
-déplacées** : les originaux restent en place jusqu'à ce que tu confirmes, rien n'est perdu.
-
-- [ ] **Z1. Droits** sur `dev_proj.qualibot` : donnés par le job de droits (Y2). Seulement si ce job échoue sur `dev_proj`, à la main (éditeur SQL DEV, avec un compte qui peut les donner) :
-
-  ```sql
-  GRANT USE CATALOG ON CATALOG dev_proj TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
-  GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA dev_proj.qualibot TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
-  GRANT USE CATALOG ON CATALOG dev_proj TO `Role-Project-LEAP-CoreDev`;
-  GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA dev_proj.qualibot TO `Role-Project-LEAP-CoreDev`;
-  ```
-
-  Si `USE CATALOG` est refusé : propriétaire du catalogue = `leap-core-service_accounts-dev` (cf. bloc M).
-- [ ] **Z2. Copier les tables d'évaluation** (une instruction à la fois ; une table qui n'existe pas
-  chez toi donne `TABLE_OR_VIEW_NOT_FOUND` : passer à la suivante) :
-
-  ```sql
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.qualibot_eval_golden DEEP CLONE dev_landingzone.qualibot.qualibot_eval_golden;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions DEEP CLONE dev_landingzone.qualibot.synthetic_retrieval_questions;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases DEEP CLONE dev_landingzone.qualibot.feedback_failure_cases;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_retrieval_runs DEEP CLONE dev_landingzone.qualibot.eval_retrieval_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs DEEP CLONE dev_landingzone.qualibot.eval_pairwise_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_load_runs DEEP CLONE dev_landingzone.qualibot.eval_load_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_vs_load_runs DEEP CLONE dev_landingzone.qualibot.eval_vs_load_runs;
-  ```
-
-  (`chat_trace_scores` n'existe pas encore : le bloc W est en pause.) Vérifier :
-  `SELECT COUNT(*) FROM dev_proj.qualibot.qualibot_eval_golden;` doit donner le même nombre que dans
-  `dev_landingzone`.
-- [ ] **Z3. Recopier à la main** `utils/evaluation/load_test_chat.py`, `load_test_vector_search.py`,
-  `pairwise_answers.py`, `retrieval_eval.py`, `score_chat_traces.py`, `create_chat_experiment.py`, puis
-  déployer : `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`.
-- [ ] **Z4. Plus tard, sur ta décision** : supprimer les originaux de `dev_landingzone` une fois un
-  run d'évaluation lancé avec succès depuis `dev_proj`.
-
-### P. Nouveaux exports PDF du chat et du compare (code du 2026-10-12)
-
-Un seul générateur côté serveur (`server/services/infra/pdf_report.py`, `POST /api/export/pdf`) pour les PDF du chat (réponse,
-conversation) et du compare (résumé des changements, résumé d'un document) ; police Inter embarquée dans `server/assets/fonts/`.
-Remplace le PDF du chat fait dans le navigateur (gabarit du compare, bandeau « COMPARISON REPORT ») et l'ancien PDF fpdf2 du compare.
-Rien à créer (ni table, ni droit, ni variable d'app) : il part avec le déploiement de l'app (0.10), `client/out` est déjà construit.
-
-- [ ] **P1. Vérifier** dans l'app DEV (avec 0.13) : chat → **Télécharger → Response — PDF** (en-tête « Chatbot answer », la question en
-  titre, renvois `[n]` cliquables, sources avec titre et version) et **Full session — PDF** (« Chatbot conversation », une case par question) ;
-  compare → **Download PDF** sur le Change Summary (fichiers A et B sous le titre) et sur le résumé d'un document. **M'envoyer** un PDF qui
-  ne va pas, s'il y en a.
+  puis Run all. **M'envoyer les deux derniers tableaux** (par source et global : documents trouvés, dans les 5 premiers, tokens de contexte).
+- [ ] **T2. Réponses** (≈ 2 €, ≈ 20 min, après T1) : notebook `pairwise_answers.py`, widgets `indexes` = la même liste que T1, `reference` =
+  `databricks-gpt-6-luna@chat`, `contenders` = `databricks-gpt-6-luna@<label retenu en T1>`, `eval_id` = `passages-<label>`. **M'envoyer les trois tableaux.**
+
+### U. Tests de charge (2026-10-08)
+
+Mesures déjà faites : `docs/chat_tests.md` (§ 5.8). Le chat tient 40 questions simultanées avec la file Vector Search commune
+(`server/services/infra/vs_gate.py`, 8 requêtes en cours au plus, relances sur 429) ; sans elle, Vector Search refusait (429) dès 20.
+
+- [ ] **U1. Chat** : app DEV démarrée, notebook `utils/evaluation/load_test_chat.py` en serverless, Run all (défauts : paliers de 5, 10, 20, 40, 80
+  questions en cours, ≈ 620 questions, ≈ 2 €, 30 à 60 min ; s'arrête au premier palier où plus de la moitié échoue). La cellule « Mode » dit si le test passe
+  par l'app (`MODE = app`) ou, si l'app refuse le jeton du notebook, par le moteur appelé dans le notebook (`MODE = engine`). **M'envoyer** les deux
+  tableaux de la dernière cellule, la ligne `MODE = …`, et les lignes `chat_llm:` des logs de l'app (bascule vers le modèle de secours, relances).
+- [ ] **U2. Vector Search seul** (≈ 20 min, aucun appel LLM) : notebook `utils/evaluation/load_test_vector_search.py`, serverless, Run all. **M'envoyer** la
+  sortie de la cellule « endpoint and index » (type d'endpoint, `scaling_info`) et les tableaux de la dernière cellule.
 
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
-Lecture seule sur les tables UAT ; écrit uniquement dans
-`/Volumes/uat_landingzone/qualibot/staging/dev_copy/`. La cible `qualibot-uat`
-du bundle n'est pas touchée. Tables exportées (`_v1`) : `chunks`,
-`src_chunks_as`, `src_chunks_is`, `_pipeline_checkpoint`, `processed_files`,
-`image_metadata`, `parse_manifest`, `category_reference` + l'archive
-LibreOffice. Rien de la phase archive avant 2018.
+Lecture seule sur les tables UAT ; écrit uniquement dans `/Volumes/uat_landingzone/qualibot/staging/dev_copy/`. La cible `qualibot-uat` du bundle
+n'est pas touchée. Tables exportées : chunks, `src_chunks_as`, `src_chunks_is`, `_pipeline_checkpoint`, `processed_files`, `image_metadata`,
+`parse_manifest`, `category_reference` + l'archive LibreOffice. Rien de la phase archive avant 2018.
 
 - [x] **E1. Importer le notebook dans votre dossier et lancer le run** _(2026-10-05 : chunks 75 086, as 59 897, is 11 241, checkpoint 7 097, processed_files 18 610, image_metadata 49 342, parse_manifest 4 942, category_reference 18 587)_
 
@@ -1053,84 +450,20 @@ LibreOffice. Rien de la phase archive avant 2018.
   databricks jobs submit --json "@utils/dev_copy/export_uat_submit.json" --profile UAT
   ```
 
-  Compute serverless, sous votre identité. Si l'écriture Delta dans le volume
-  est refusée, relancer en Parquet : ajouter dans le JSON, sous
-  `notebook_task`, `"base_parameters": {"FORMAT": "parquet"}` (l'import DEV lit
-  le format dans le manifeste, rien d'autre à changer).
-
-- [ ] **E2. Vérifier le manifeste** (nombre de lignes par table), depuis UAT
-  puis **depuis DEV** (preuve que DEV lit bien ce volume) :
+  Compute serverless, sous votre identité. Si l'écriture Delta dans le volume est refusée, relancer en Parquet : ajouter dans le JSON, sous
+  `notebook_task`, `"base_parameters": {"FORMAT": "parquet"}` (l'import DEV lit le format dans le manifeste).
+- [ ] **E2. Vérifier le manifeste** (nombre de lignes par table), depuis UAT puis **depuis DEV** (preuve que DEV lit ce volume) :
 
   ```powershell
   databricks fs cat dbfs:/Volumes/uat_landingzone/qualibot/staging/dev_copy/manifest.json --profile UAT
   databricks fs ls  dbfs:/Volumes/uat_landingzone/qualibot/staging/dev_copy/tables --profile DEV
   ```
 
-### R. Reliquat de l'ancien Qualibot DEV (2026-10-05)
+### I. Infra DEV (`bundle deploy -t dev`, fait le 2026-10-05)
 
-Constat : l'app `qualibot` DEV existe hors du bundle (créée à la main le
-2026-07-09, jamais déployée, SP `8e411164-a7e8-46ff-8013-8c56af2c3656`) ;
-l'endpoint Vector Search `qualibot` (id `0571f7cf-…`) a été supprimé, ses 3
-index `chunks_all` / `chunks_as` / `chunks_is` restent orphelins dans
-`dev_landingzone.qualibot` avec leurs `*_writeback_table`, plus d'anciennes
-tables de pipeline.
+Crée l'app `qualibot`, le projet Lakebase `qualibot` (base `doccompare`), le schema `dev_proj.qualibot`, les volumes, les rôles Postgres et les jobs.
 
-**L'app n'est pas supprimée** : elle est rattachée au bundle (I1) et garde son
-SP, son URL et les droits déjà donnés à ce SP. Le bundle remplace en revanche
-sa liste de permissions par celle de `databricks.yml` (R2 pour comparer avant).
-
-**Ne pas toucher** : les tables des jobs DEV conservés
-(`lakebase_import_uat_to_dev` : `chat_feedbacks`, `chat_messages`,
-`chat_sessions`, `errors`, `feedbacks`, `impact_*`, `knowledge_base_metadata`,
-`llm_requests`, `messages`, `summary_cache`, `users` ; `score_production_qa` :
-`chat_quality_*`), le volume `docling_models`, `glossary_terms` / `dnt_rules`
-(Translator).
-
-- [x] **R1. Vector Search** _(2026-10-05 : `get-index` → « endpoint
-  0571f7cf-… not found » : l'endpoint n'existe plus, index orphelins)_
-
-- [x] **R2. Permissions actuelles de l'app** _(2026-10-05 : users CAN_MANAGE,
-  CoreAdmin/CoreDev CAN_MANAGE, End-users DocCompare/ChatBot CAN_USE, Jules
-  CAN_MANAGE, admins hérité. Le déploiement garde tout sauf **`users` CAN_MANAGE,
-  retiré** ; ajoute Mehdi CAN_USE et le SP DEV CAN_MANAGE. L'app « custom » de
-  Mehdi est une autre app, non concernée)_
-
-- [ ] **R3. Index orphelins** (facultatif, aucun conflit de nom avec les index
-  `_v1`). Essayer ; si l'erreur « endpoint not found » revient, les laisser :
-
-  ```powershell
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_all --profile DEV
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_as  --profile DEV
-  databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is  --profile DEV
-  ```
-
-- [ ] **R4. Anciennes tables du pipeline** (facultatif, aucun conflit de nom ;
-  SQL editor DEV, `UNDROP TABLE` possible 7 jours) :
-
-  ```sql
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot._pipeline_checkpoint;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.processed_files;
-  DROP TABLE IF EXISTS dev_landingzone.qualibot.intraqual_docs;
-  ```
-
-### I. Infra DEV (`bundle deploy -t dev`)
-
-Crée l'app `qualibot`, le projet Lakebase `qualibot` (base `doccompare`), le
-schema `dev_proj.qualibot`, les volumes, les rôles Postgres et les jobs ;
-met à jour le job de parsing DEV existant (il écrit désormais dans
-`dev_landingzone.qualibot`, tables `_v1`, planning PAUSED).
-
-- [x] **I0. État du bundle** _(2026-10-05 : app, schemas, volumes, Lakebase et
-  nouveaux jobs « not deployed » ; `parsing_pipeline`, `lakebase_import_uat_to_dev`,
-  `score_production_qa` déjà déployés → mis à jour sur place)_
-
-- [x] **I1. Binder le schema** _(2026-10-05 : `dev_landingzone.qualibot` bindé.
-  L'app : « Resource already managed by Terraform » — elle est déjà dans l'état
-  du bundle `dev` (créée par un ancien `bundle deploy -t dev` le 2026-07-09),
-  rien à binder)_
-
-- [x] **I1b. Prévisualiser le déploiement, sans rien modifier** _(2026-10-05 : 25 create, 5 update, 0 delete)_ :
+- [x] **I1b. Prévisualiser sans rien modifier** _(25 create, 5 update, 0 delete)_ :
 
   ```powershell
   python utils/deploy/render_target_config_env.py dev target_config.env
@@ -1138,483 +471,61 @@ met à jour le job de parsing DEV existant (il écrit désormais dans
   databricks bundle plan -t dev --profile DEV
   ```
 
-  Me coller la sortie de `plan` : chaque ressource doit être `create` ou
-  `update`. Rien en `delete` / `recreate`, sauf accord explicite.
-
-- [x] **I2. Déployer l'infra, puis le code de l'app** _(2026-10-05 : `bundle deploy` OK au 3e essai ; code déployé 11:03 UTC, « App started successfully »)_ — sous votre identité
-  (profil `DEV`). Vous devenez owner de ce qui est créé ; le SP DEV a CAN_MANAGE
-  sur l'app, le projet Lakebase et chaque job propre à DEV, pour que la
-  pipeline Bitbucket (qui déploie en tant que SP) puisse les mettre à jour
-  ensuite. Exception : `D_1_Qualibot_Parsing_Pipeline_dev` (définition partagée
-  avec UAT/PROD) — à régler au bloc B.
+- [x] **I2. Déployer l'infra, puis le code de l'app** sous votre identité (profil `DEV`) : vous devenez owner de ce qui est créé ; le SP DEV a
+  CAN_MANAGE sur l'app, le projet Lakebase et chaque job propre à DEV, pour que la pipeline Bitbucket (qui déploie en tant que SP) puisse les mettre à jour.
 
   ```powershell
   databricks bundle deploy -t dev --profile DEV
   .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
   ```
 
-  Erreurs possibles au `bundle deploy` (le déploiement s'arrête, relançable
-  après correction) :
-  - `run_as` refusé → il vous faut le rôle « Service principal: User » sur
-    `job-runner-sa-dev` (Settings ▸ Identity and access ▸ Service principals ▸
-    job-runner-sa-dev ▸ Permissions) ;
-  - création de `dev_proj.qualibot` refusée → CREATE SCHEMA sur `dev_proj`
-    (owner `leap-core-service_accounts-dev`) ;
-  - création du projet Lakebase refusée → droit de création Lakebase.
-
-  **1er essai (2026-10-05) — échec partiel** : volumes, projet Lakebase
-  (id `e9185a28-13c6-42da-9ccc-0dbcf6b97b60`) et jobs créés ; échecs sur l'app
-  (« Volume … doc_compare does not exist ») et les rôles Postgres (« Project
-  projects/qualibot not found », puis « not authorized … Can Manage for
-  Database project »). Causes corrigées dans `databricks.yml` : l'app et les
-  rôles référencent maintenant le volume / le projet (ils attendent leur
-  création), et vous êtes déclaré en CAN_MANAGE du projet Lakebase. Vérifié
-  ensuite : le projet existe (uid `e9185a28-…`), vous en avez Can Manage, le
-  rôle `app-doc-compare-sp` est créé — le « not authorized » venait de la même
-  course, aucun admin nécessaire.
-
-  Puis relancer `git pull` + `databricks bundle deploy -t dev --profile DEV`.
-
-  **2e essai (2026-10-05)** : tout passe sauf l'app — « all account users lack
-  USE CATALOG permission on catalog dev_landingzone, and the user does not
-  have MANAGE ». Rattacher un volume à une app oblige le déployeur à avoir
-  MANAGE sur le catalog. Corrigé : plus de rattachement de volumes sur l'app
-  DEV (elle n'en a pas besoin, elle lit `COMPARE_VOLUME_PATH`) ; les droits de
-  son SP passent par le job `Z_1_Qualibot_Grant_App_Access_dev` (I2b).
-
-- [x] **I2b. Droits du SP de l'app sur ses volumes** _(OK 2026-10-05)_ — job manuel, sous le SP
-  DEV. Il ne marche que si le SP DEV peut accorder des droits sur
-  `dev_landingzone` (owner du catalog = son groupe `leap-core-service_accounts-dev`,
-  ou MANAGE). Vérifier l'owner, puis lancer :
-
-  ```powershell
-  (databricks catalogs get dev_landingzone --profile DEV -o json | ConvertFrom-Json).owner
-  databricks bundle run grant_app_access_dev -t dev --profile DEV
-  ```
-
-  En cas d'échec « run_as lacks GRANT rights » : faire passer par un admin du
-  catalog, en SQL :
-
-  ```sql
-  GRANT USE CATALOG ON CATALOG dev_landingzone TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT READ VOLUME, WRITE VOLUME ON VOLUME dev_landingzone.qualibot.doc_compare TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT READ VOLUME, WRITE VOLUME ON VOLUME dev_landingzone.qualibot.test TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  ```
-
-  À ce stade : Compare marche ; impact search et chat non (pas encore d'index
-  ni de KA) — normal.
-
-- [ ] **I3. Vérifier que tous les nouveaux plannings sont en PAUSED** (UI
-  Jobs DEV, filtre `qualibot`) : `D_1_Qualibot_Parsing_Pipeline_dev`,
-  `D_1_Qualibot_Lakebase_Export_To_Volume_dev`, `D_1_Qualibot_Apps_Stop_Nightly_Dev`,
-  `W_1_Qualibot_Stop_Weekend_Dev`, `W_1_Qualibot_Start_Weekend_Dev` = PAUSED.
-  `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` et `D_1_Qualibot_Score_Production_Qa`
-  restent actifs, comme avant.
-
-- [x] **I4. Client id du SP de l'app DEV** _(`8e411164-a7e8-46ff-8013-8c56af2c3656`, app existante rattachée, figé dans `databricks.yml`)_
-
-- [ ] **I5. Tests sans index ni KA** (pendant la copie) _(logs OK 2026-10-05 : production mode, `doccompare` créée, Lakebase ready ; tests UI à faire)_ — app :
-  https://qualibot-2865348338307293.aws.databricksapps.com
-
-  ```powershell
-  databricks apps logs qualibot --profile DEV
-  ```
-
-  Dans les logs : `Starting in production mode`, `Database "doccompare" created`
-  (1er démarrage seulement), `Lakebase schema ready`, `Lakebase ready` ; pas de
-  `history feature disabled` ni de trace d'erreur.
-
-  - Mehdi (hors groupes End-users) ouvre l'app : Compare et Chat visibles,
-    pas d'« Access denied » (`CAPS_BYPASS`) ;
-  - Compare : deux révisions d'un document → Change Summary, Change Table,
-    exports Excel et PDF ;
-  - « History » : la comparaison apparaît, la recharger (Lakebase OK) ;
-  - aperçu « Exact (PDF) » d'un DOCX — seulement une fois la tâche
-    `1_import_tables` de la copie finie (elle copie l'archive LibreOffice) ;
-  - attendu en échec à ce stade : « Judge Impacted Docs » (index pas prêt) et
-    le Chat (pas de KA).
+  Erreurs possibles (le déploiement s'arrête, relançable après correction) : `run_as` refusé → rôle « Service principal: User » sur
+  `job-runner-sa-dev` (Settings ▸ Identity and access ▸ Service principals ▸ job-runner-sa-dev ▸ Permissions) ; création de `dev_proj.qualibot`
+  refusée → CREATE SCHEMA sur `dev_proj` ; création du projet Lakebase refusée → droit de création Lakebase. Aucun volume n'est rattaché à
+  l'app DEV (rattacher un volume exige MANAGE sur le catalog) : les droits de son SP passent par le job de droits (0.5).
+- [ ] **I3. Plannings** : `D_1_Qualibot_Parsing_Pipeline_dev`, `D_1_Qualibot_Lakebase_Export_To_Volume_dev`, `D_1_Qualibot_Apps_Stop_Nightly_Dev`,
+  `W_1_Qualibot_Stop_Weekend_Dev`, `W_1_Qualibot_Start_Weekend_Dev` = PAUSED (UI Jobs DEV, filtre `qualibot`) ; `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` reste actif.
+- [ ] **I5. Logs de l'app** (`databricks apps logs qualibot --profile DEV`) : `Starting in production mode`, `Database "doccompare" created`
+  (1er démarrage seulement), `Lakebase schema ready`, `Lakebase ready` ; pas de `history feature disabled`. Mehdi (hors groupes End-users) ouvre l'app :
+  Compare et Chat visibles, pas d'« Access denied » (`CAPS_BYPASS`). Compare : deux révisions → Change Summary, Change Table, exports Excel et PDF ;
+  « History » recharge la comparaison ; aperçu « Exact (PDF) » d'un DOCX une fois la copie C finie (elle copie l'archive LibreOffice).
 
 ### C. Copie du corpus + index Vector Search (job DEV)
 
-Job `Z_1_Qualibot_Copy_Uat_To_Dev`, déclenchement manuel, sous l'identité de qui
-le lance (il faut READ VOLUME sur `uat_landingzone.qualibot.staging`), serverless :
-`1_import_tables` (snapshot → `dev_landingzone.qualibot.*_v1`, rétention
-60 jours, Change Data Feed sur les 3 tables de chunks, archive LibreOffice
-→ volume `doc_compare`) → `2_vector_search_endpoint` (crée l'endpoint
-`qualibot` s'il manque) → `3_sync_indexes` (crée les 3 index `_v1` et les
-synchronise — embedding de tout le corpus, peut être long). **Le pipeline de
-parsing n'est pas lancé.**
+Job `Z_1_Qualibot_Copy_Uat_To_Dev`, déclenchement manuel, serverless, sous **votre** identité (il faut READ VOLUME sur `uat_landingzone.qualibot.staging` ;
+le SP DEV ne lit pas ce volume) : `1_import_tables` (snapshot → tables `dev_landingzone.qualibot.*`, rétention 60 jours, Change Data Feed sur les tables de
+chunks, archive LibreOffice → volume `doc_compare`) → `2_vector_search_endpoint` (crée l'endpoint `qualibot` s'il manque) → `3_sync_indexes` (crée les index
+déclarés et les synchronise — embedding de tout le corpus, peut être long). **Le pipeline de parsing n'est pas lancé.**
 
-- [ ] **C1. Lancer la copie** _(1er run 2026-10-05 13:00 en échec : « User does
-  not have READ VOLUME on Volume staging » — le SP DEV ne lit pas le volume
-  UAT. 2e run idem : retirer `run_as` avait laissé le SP en place. Le job a
-  maintenant `run_as` = **votre** utilisateur, explicitement, et tourne en
-  serverless (plus les ~7 min de démarrage de cluster) : `git pull`,
-  `databricks bundle deploy -t dev --profile DEV`, puis relancer)_
+```powershell
+databricks bundle run copy_uat_to_dev -t dev --profile DEV
+```
 
-  ```powershell
-  databricks bundle run copy_uat_to_dev -t dev --profile DEV
-  ```
-
-  Une table déjà présente n'est pas écrasée (message « left as is »). Pour
-  forcer : `--params overwrite=true`, puis supprimer l'index de chaque table
-  de chunks remplacée (UI Vector Search) et relancer : `3_sync_indexes` le recrée.
-
-- [ ] **C2. Vérifier les tables** (SQL editor DEV) — mêmes nombres que le
-  manifeste E2 :
-
-  ```sql
-  SELECT 'chunks' AS t, count(*) FROM dev_landingzone.qualibot.chunks_v1
-  UNION ALL SELECT 'as', count(*) FROM dev_landingzone.qualibot.src_chunks_as_v1
-  UNION ALL SELECT 'is', count(*) FROM dev_landingzone.qualibot.src_chunks_is_v1
-  UNION ALL SELECT 'checkpoint', count(*) FROM dev_landingzone.qualibot._pipeline_checkpoint_v1
-  UNION ALL SELECT 'processed', count(*) FROM dev_landingzone.qualibot.processed_files_v1
-  UNION ALL SELECT 'images', count(*) FROM dev_landingzone.qualibot.image_metadata_v1
-  UNION ALL SELECT 'manifest', count(*) FROM dev_landingzone.qualibot.parse_manifest_v1
-  UNION ALL SELECT 'categories', count(*) FROM dev_landingzone.qualibot.category_reference_v1;
-
-  SHOW TBLPROPERTIES dev_landingzone.qualibot.chunks_v1;  -- enableChangeDataFeed = true, retentions = interval 60 days
-  ```
-
-- [x] **C3a. Spec des index alignée sur l'UAT** _(2026-10-05 : UAT `chunks_index_v1` =
-  `databricks-qwen3-embedding-0-6b` sur `chunk_text`, TRIGGERED, pas de
-  `columns_to_sync` → identique à ce que crée `3_sync_indexes`)_
-
-- [ ] **C3. Vérifier les index** (UI Vector Search DEV, endpoint `qualibot`) :
-  `chunks_index_v1`, `chunks_as_index_v1`, `chunks_is_index_v1` ONLINE, nombre
-  de lignes indexées = nombre de lignes des tables. Si le job s'arrête avant la
-  fin de l'embedding (« Still running after 120 min »), ce n'est pas une erreur :
-  la sync continue côté serveur.
-
-### K. Knowledge Assistants DEV
-
-- [x] **K1. Créer les 3 KA** _(2026-10-05)_ (`qualibot_ALL_v2` / `qualibot_AS_v2` /
-  `qualibot_IS_v2`, sur les index `_v1` DEV, CAN_QUERY pour le SP de l'app) :
-
-  ```powershell
-  databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
-  ```
-
-- [ ] **K1b. Vous donner Can Manage sur les 3 KA** (créés par le SP : « User does
-  not have permission 'View' on Endpoint ka-4d15cb32-endpoint », 2026-10-05).
-  Le job accepte maintenant `extra_manager_users` (défaut en DEV : vous). Il est
-  idempotent : il ne recrée rien, il complète les droits. 1er essai : droits
-  posés sur les KA mais toujours « no permission 'View' » sur l'endpoint → le
-  job accorde maintenant aussi CAN_MANAGE directement sur les 3 endpoints de
-  serving (ligne `CAN_MANAGE on endpoint … for [...]` dans la sortie).
-
-  ```powershell
-  git pull
-  databricks bundle deploy -t dev --profile DEV
-  databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
-  ```
-
-- [x] **K2. Me donner les 3 `endpoint_name`** _(2026-10-05 : ALL `ka-4d15cb32-endpoint`, AS `ka-2ef8a9ac-endpoint`, IS `ka-710526e7-endpoint` — reportés dans `target_env.json`)_ affichés dans le résumé du run
-  (`[ALL] … -> endpoint_name=ka-…`, idem AS et IS). Je les mets dans le bloc
-  `dev` de `utils/deploy/target_env.json` (`CHAT_ENDPOINT` = `CHAT_ENDPOINT_ALL`
-  = ALL, `CHAT_ENDPOINT_AS`, `CHAT_ENDPOINT_IS`), puis bloc A.
-
-### D. Droits du SP de l'app (`8e411164-…`) — audit du 2026-10-05
-
-L'app appelle tout avec le token de son SP (l'impact search retente avec le
-token de l'utilisateur sur un 403). Constat : chat en échec de permission.
-
-| Appel | Droit | Accordé par |
-|---|---|---|
-| Chat → 3 endpoints KA | CAN_QUERY sur chaque endpoint de serving | `provision_knowledge_assistant_dev` (`GRANT_ON_ENDPOINTS=true`) |
-| Impact search → `chunks_index_v1` (+ AS, IS) | USE CATALOG/SCHEMA + SELECT | `Z_1_Qualibot_Grant_App_Access_dev` |
-| Volumes `doc_compare`, `test` | READ + WRITE VOLUME | `Z_1_Qualibot_Grant_App_Access_dev` |
-| Lakebase | rôle Postgres `app-doc-compare-sp` | bundle (OK, logs du 2026-10-05) |
-| LLM `databricks-claude-sonnet-4-6`, `databricks-gpt-5-6-luna` | CAN_QUERY | en général ouverts à tous — D3 |
-
-- [ ] **D1. Rejouer les droits**
-
-  ```powershell
-  git pull
-  databricks bundle deploy -t dev --profile DEV
-  databricks bundle run grant_app_access_dev -t dev --profile DEV
-  databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
-  ```
-
-  Sortie attendue du 2e job : 3 lignes `[ALL|AS|IS] endpoint ka-…: CAN_MANAGE [...], CAN_QUERY app SP 8e411164-…`.
-
-- [ ] **D2. Vérifier sur un endpoint KA**
-
-  ```powershell
-  $id = (databricks serving-endpoints get ka-4d15cb32-endpoint --profile DEV -o json | ConvertFrom-Json).id
-  databricks serving-endpoints get-permissions $id --profile DEV
-  ```
-
-- [ ] **D3. Endpoints LLM** : si Compare ou le judge d'impact renvoie un 403,
-  regarder qui peut les interroger :
-
-  ```powershell
-  foreach ($e in 'databricks-claude-sonnet-4-6','databricks-gpt-5-6-luna') {
-    $id = (databricks serving-endpoints get $e --profile DEV -o json | ConvertFrom-Json).id
-    "== $e"; databricks serving-endpoints get-permissions $id --profile DEV
-  }
-  ```
-
-### V. Chat VSI — 403 et droits du SP de l'app (2026-10-07)
-
-Le Chat VSI appelle tout avec le token du SP de l'app (`8e411164-a7e8-46ff-8013-8c56af2c3656`) :
-Vector Search sur `dev_landingzone.qualibot.chunks_index_v1` / `chunks_as_index_v1` /
-`chunks_is_index_v1` (SELECT), puis `databricks-claude-sonnet-4-6` (CAN_QUERY) pour la
-reformulation et la réponse. Le message d'erreur dit lequel répond 403 :
-« Document search failed (Vector Search returned 403) » → index ; « Chat failed … endpoint
-returned 403 » → endpoint LLM.
-
-- [ ] **V0. Erreur `dev: no such target. Available targets: default`** (+ `unknown field: nclude` /
-  `ariables`) : le `databricks.yml` local n'est pas celui de la branche (début de fichier abîmé).
-  Le remplacer par celui de `feature/chat-vsi-merged-on-impact-search`, puis vérifier :
-
-  ```powershell
-  databricks bundle validate -t dev --profile DEV
-  ```
-
-- [ ] **V1. Rejouer les droits par le job** — il accorde maintenant, en un seul run : USE
-  CATALOG/SCHEMA, volumes, SELECT sur les 3 index, et CAN_QUERY sur
-  `databricks-claude-sonnet-4-6` et `databricks-gpt-5-6-luna`. Pour changer ce qui est
-  accordé : les 3 listes `volumes` / `indexes` / `serving_endpoints` du job
-  `grant_app_access_dev` dans `databricks.yml` (`base_parameters`), rien d'autre.
-
-  ```powershell
-  databricks bundle deploy -t dev --profile DEV
-  databricks bundle run grant_app_access_dev -t dev --profile DEV
-  ```
-
-  Sortie attendue : une ligne `OK:` par droit, puis `All 9 grants applied.`
-
-- [ ] **V2. Si une ligne `FAILED: CAN_QUERY on serving endpoint …`** : le SP des jobs n'a pas
-  CAN_MANAGE sur cet endpoint LLM (souvent réservé à un admin du workspace). Vérifier, puis
-  faire accorder le droit par un admin :
-
-  ```powershell
-  $id = (databricks serving-endpoints get databricks-claude-sonnet-4-6 --profile DEV -o json | ConvertFrom-Json).id
-  databricks serving-endpoints get-permissions $id --profile DEV
-  databricks serving-endpoints update-permissions $id --profile DEV --json '{\"access_control_list\":[{\"service_principal_name\":\"8e411164-a7e8-46ff-8013-8c56af2c3656\",\"permission_level\":\"CAN_QUERY\"}]}'
-  ```
-
-- [ ] **V3. Retester** une question en ALL, AS et IS dans l'onglet Chat VSI ; en cas
-  d'erreur, `databricks apps logs qualibot --profile DEV` montre la ligne
-  `chat: Vector Search … returned 403` ou `… returned 403` sur l'endpoint.
-
-### G. Évaluation golden — Chat KA vs Chat VSI (DEV, 2026-10-07)
-
-Notebook `utils/evaluation/golden_eval_ka_vs_vsi.py` : chaque cas de
-`dev_landingzone.qualibot.qualibot_eval_golden` passe par le code de l'app déployée, mêmes
-étapes qu'un tour de chat (historique, traduction, date, moteur, citations, sources,
-retraduction), avec la config de l'app DEV (`app.yaml` + `target_config.env`). Un run MLflow
-par moteur : `Correctness`, `ExpectationsGuidelines`, `golden_doc_recall`, `latency_s`.
-
-- [ ] **G1. Déployer le code en DEV** (le notebook lit le code et la config déployés) :
-
-  ```powershell
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
-  ```
-
-- [ ] **G2. Lancer le notebook** dans le workspace DEV, en serverless :
-  `/Workspace/Shared/.bundle/qualibot/dev/files/utils/evaluation/golden_eval_ka_vs_vsi`
-  → Run all. Il enchaîne tous les essais de la cellule *Plan* qui ne sont pas encore dans
-  `eval_golden_runs` (les essais déjà enregistrés sont sautés) ; chaque essai est enregistré
-  dès qu'il finit. Nouvel essai = une ligne de plus dans *Plan*, puis Run all.
-
-- [ ] **G2b. Juger à l'œil, sans run complet** : notebook
-  `utils/evaluation/replay_compare.py` — widgets `configs` (noms de la cellule
-  CONFIGS), `question_filter` (morceaux de questions golden séparés par `|`), `extra_question`,
-  `stored_evals` (réponses déjà enregistrées, sans relance). Run all → une carte par question,
-  une colonne par configuration. Rien n'est enregistré.
-
-- [ ] **G2c. Évaluer la recherche seule (sans réponse, sans juge)** : notebook
-  `utils/evaluation/retrieval_eval.py` → Run all. Questions golden + synthétiques
-  (UAT) + retours négatifs (UAT) qui ont un document attendu ; mesure si ces documents sont
-  dans le contexte envoyé au LLM, pour chaque configuration de recherche (cellule CONFIGS).
-  Résultats dans `dev_landingzone.qualibot.eval_retrieval_runs`. Seules les questions pas encore
-  réussies pour une configuration sont lancées (les erreurs sont relancées, 3 essais chacune) ;
-  les tableaux ne comptent que les questions réussies par toutes les configurations.
-  Vague 3 (configs `u-*`, 2026-10-07) : recherche par titre du catalogue, réécriture FR + EN
-  (dont `u-bi-luna`, réécriture par GPT-5.6 Luna), une langue par document, 20 passages
-  plafonnés à 3 par document, puis tout ensemble (`u-all`).
-  Colonne `recall_top5_pct` : documents attendus parmi les 5 premiers du contexte, pour comparer
-  à taille égale.
-
-- [ ] **G2d. Requêtes de diagnostic de l'index** : `docs/chat_tests.md` § 7, Q1 à Q8,
-  dans l'éditeur SQL DEV (lecture seule). Envoyer les résultats : ils chiffrent les constats
-  de l'audit du parsing (part d'images, tables des matières, documents attendus absents de
-  l'index…).
-
-- [ ] **R. Tester le nouveau découpage sur des index de test** (étapes 1 à 3 faites le 2026-10-08 :
-  **v2b retenu**, 80.9 % contre 75.8 % avec deux fois moins de contexte ; audit § 5.6) (code du 2026-10-08, audit
-  `docs/chat_tests.md` § 5 ; ne touche ni `chunks_v1` ni `chunks_index_v1`).
-  1. `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SyncOnly`.
-  2. Notebook `utils/evaluation/rechunk_experiment.py`, serverless, Run all, trois
-     fois avec ces widgets (le reste par défaut) :
-     - `variant=v2a` : découpage corrigé, tailles actuelles (250 / 500 / 1 000 tokens, 4 000 caractères) ;
-     - `variant=v2b`, `min_tokens=150`, `target_tokens=300`, `max_tokens=450`, `max_chars=1600` :
-       passages courts (tiennent dans la fenêtre du reranker) ;
-     - `variant=v2c`, `embed_prefix=false` : comme v2a sans le préfixe `[Source: …]`.
-     Chaque run crée `chunks_<variant>` et lance l'index `chunks_index_<variant>` (30 à 60 min
-     d'embedding avant `ONLINE`).
-  3. Quand les index sont `ONLINE` : `retrieval_eval`, widgets `index_variants=v2a,v2b` (`,v2c` si
-     construit) et `configs=u-all-luna6` (pas vide : sinon toutes les anciennes configs restent dans la
-     liste ; celles déjà mesurées sont sautées, mais autant ne lancer que les nouvelles). Run all.
-     Configs lancées : `idx-v1` et `idx-v1-all` (index actuel), puis pour chaque variante `idx-v2a`
-     (union-ctx), `idx-v2a-clean` (sommaires, cartouches et textes répétés écartés), `idx-v2a-all`
-     (`u-all`, la config du chat). Tout est réécrit par GPT-6 Luna (widget `rewrite_model`, comme le
-     chat) ; `u-all-luna6` se compare à l'ancienne ligne `u-all` (réécriture Sonnet 4.6) et dit ce que le
-     passage à GPT-6 Luna coûte en recherche. Envoyer les tableaux.
-  3b. _(fait 2026-10-08 : k20 moins bon que 12, réponses v2b au moins aussi bonnes et −39 % de coût ;
-     audit § 5.6)_ Deux vérifications sur v2b avant le re-découpage UAT (copier le nouveau zip, `-SyncOnly`) :
-     - `retrieval_eval`, widgets `index_variants=v2b`, `configs` = `idx-v2b-all-k20` (une seule ligne
-       nouvelle : 20 passages reclassés au lieu de 12 ; ≈ 10 min). Si elle dépasse nettement 80.9 %
-       sans repasser au-dessus de ≈ 20k tokens, on met `CHAT_RERANK_TOP_K=20` dans le chat.
-     - `pairwise_answers`, Run all avec les **nouveaux défauts** (supprimer les widgets si le notebook
-       garde les anciens) : `eval_id=luna6-v2b`, référence `databricks-gpt-6-luna@u-all-v1+v3+lang`,
-       concurrent `databricks-gpt-6-luna@u-all-v2b+v3+lang`, juge GPT-5.6 Luna. Même modèle, seul
-       l'index change : dit si les réponses sont au moins aussi bonnes avec des passages courts.
-       ≈ 2 €, ≈ 20 min. Envoyer les trois tableaux.
-  4. Plus tard, si ça vaut la dépense : `variant=v2d`, `doc_cards=true` (fiche par document,
-     ≈ 15 €), puis `variant=v2e`, `doc_cards=true`, `chunk_context=true` (≈ 65 € au total).
-     `enrich_max_docs=50` pour un essai à quelques euros d'abord.
-
-- [ ] **P. Comparer des versions de réponse côte à côte** (2026-10-08) : notebook
-  `utils/evaluation/pairwise_answers.py`, serverless, Run all. Référence Sonnet 5.5 +
-  recherche `union-ctx`, contre GPT-6 Luna avec `union-ctx`, `u-title`, `u-bi`, `u-all`, et les réponses
-  **déjà stockées** du KA. 40 questions (les 21 du golden + 19 vraies questions DEV auxquelles le KA a
-  répondu). Juge GPT-5.6 Luna, dans les deux ordres. Vérifier d'abord le nom exact des endpoints dans
-  Serving (widgets `reference`, `contenders`, `judge`). Résultats dans
-  `dev_landingzone.qualibot.eval_pairwise_runs` ; une autre série = un autre `eval_id`.
-  Fait le 2026-10-08 (`luna6-versions`), résultats dans `docs/chat_tests.md` § 2.6.
-
-- [x] **P2. Rerun prompt de GPT-6 Luna** _(fait 2026-10-08, `luna6-prompt`)_ : `u-all+v3+lang` retenu
-  (19 gagnés / 16 perdus contre Sonnet 5.5, 0.63 invention contre 1.59, juge constant 88 %). Détail :
-  `docs/chat_tests.md` § 2.6.
-
-- [ ] **L. Passer le Chat VSI DEV sur GPT-6 Luna + GPT-5.6 Luna en secours, sans aucun modèle Claude**
-  (décision 2026-10-08 ; récap `docs/chat_robustesse_2026-10.md`). Tout est déjà dans le code :
-  `app.yaml` (réponse GPT-6 Luna, secours GPT-5.6 Luna, pour toutes les cibles) et le bloc `"dev"` de
-  `utils/deploy/target_env.json` (variante `rerank` + `u-all`, réécriture GPT-6 Luna avec secours GPT-5.6
-  Luna, `CHAT_INSTRUCTIONS=v3`, `CHAT_LANGUAGE_REMINDER=on`). Le pont de traduction était déjà sur
-  GPT-5.6 Luna (secours GPT-6 Luna). À faire, dans l'ordre :
-  1. Serving DEV : vérifier que `databricks-gpt-6-luna` et `databricks-gpt-5-6-luna` existent.
-  2. Copier le zip, puis donner au SP de l'app le droit d'interroger GPT-6 Luna (ajouté au job) :
-     ```powershell
-     databricks bundle deploy -t dev --profile DEV
-     databricks bundle run grant_app_access_dev -t dev --profile DEV
-     ```
-     Sortie attendue : une ligne `OK:` par droit, dont `CAN_QUERY on serving endpoint databricks-gpt-6-luna`.
-     Si `FAILED` sur cet endpoint : bloc V2 avec `databricks-gpt-6-luna`.
-  3. `.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev` (**sans** `-SyncOnly` : l'app doit redémarrer).
-  4. Test dans l'onglet Chat VSI : une question en français, une en espagnol ou tchèque, une hors sujet
-     (« recette de riz au thon » → refus), « donne-moi le lien de l'OPEX Sharepoint » (→ l'URL de INAQ-742),
-     une question de suivi courte (« et pour IS ? ») pour voir la réécriture.
-  5. Logs de l'app : `chat_vsi_llm` (aucune ligne = aucun incident ; une ligne « answered by fallback »
-     = GPT-6 Luna indisponible), `chat turn done`.
-  Notebooks d'éval : ils reprennent les index et le modèle de réponse de l'app ; `retrieval_eval` et
-  `pairwise_answers` réécrivent désormais avec GPT-6 Luna (widget `rewrite_model`). UAT : bloc `"uat"` de
-  `target_env.json` + droits du SP UAT, seulement avec ton accord (déploiement de la vraie app).
-
-- [ ] **G3. Lire le résultat** : tableau des moyennes par moteur, puis le détail cas par cas ;
-  les runs sont dans l'expérience MLflow `/Users/<toi>/qualibot-golden-ka-vs-vsi`.
-
-- [ ] **G3b. Comparer les essais en SQL** : chaque essai est ajouté à
-  `dev_landingzone.qualibot.eval_golden_runs` sous son nom (widgets `ka_eval_id`, défaut `ka`,
-  et `vsi_eval_id`, défaut `baseline` ; `notes` pour décrire ce qui a changé). Coller tout
-  `utils/evaluation/golden_eval_queries.sql` dans l'éditeur SQL DEV, renseigner
-  `eval_a`, `eval_b`, `question_like`, Run all.
-
-- [ ] **G3c. Variante `rerank`** (2026-10-07, `server/services/chat_vsi_rerank.py`, baseline
-  `chat/engine.py` inchangé) : une fois, ajouter les nouvelles colonnes à la table existante :
-
-  ```sql
-  ALTER TABLE dev_landingzone.qualibot.eval_golden_runs ADD COLUMNS (
-    vsi_variant string, vsi_settings string, app_code_hash string,
-    retrieved_refs array<string>, search string);
-  ```
-
-  puis déployer, et lancer le notebook avec `engines=vsi`, `vsi_variant=rerank` (eval id
-  `rerank` par défaut). Vérifier dans la requête 1 que `settings` montre `databricks_reranker`
-  et dans la table que `search` vaut `vector_search+rerank` (sinon le reranker a été refusé
-  par l'index et la baseline a répondu).
-
-- [ ] **G4. Comparer un autre modèle pour VSI** : `engines=vsi`, `vsi_llm_endpoint=<endpoint>`,
-  `vsi_eval_id=<nom>` (ex. `databricks-gpt-5-6-luna`). Pour `databricks-claude-sonnet-5-5`, la
-  température forcée doit d'abord être retirée dans `streaming.py` (voir le rapport Chat VSI).
-
-### A. Déploiement de l'app avec les endpoints KA + tests
-
-- [ ] **A1. Redéployer le code** (après mon commit de K2) :
-
-  ```powershell
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
-  ```
-
-- [ ] **A2. Contrôle par groupe désactivé** : ouvrir l'app avec un compte
-  **hors** des groupes End-users (ex. `mehdi.lamrani@databricks.com`) — Chat
-  et Compare accessibles, pas d'écran « Access denied ».
-
-- [ ] **A3. Chat** : une question en ALL, AS et IS ; les citations et liens
-  REF s'affichent.
-
-- [ ] **A4. Compare** : deux révisions d'un document connu, Change Table,
-  puis « Judge Impacted Docs » (index `dev_landingzone.qualibot.chunks_index_v1`) ;
-  aperçu « Exact (PDF) » d'un DOCX (archive LibreOffice copiée en C1).
-  En cas de 403 sur l'index (USE CATALOG vient de I2b ; le reste, vous pouvez
-  l'accorder comme owner du schema) :
-
-  ```sql
-  GRANT USE CATALOG ON CATALOG dev_landingzone TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT USE SCHEMA ON SCHEMA dev_landingzone.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  GRANT SELECT ON TABLE dev_landingzone.qualibot.chunks_index_v1 TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
-  ```
-
-- [ ] **A5. Date « documents as of »** : vide dans une base Lakebase neuve.
-  Pour la remplir **sans** lancer la chaîne de parsing, uniquement la dernière
-  tâche du job :
-
-  ```powershell
-  databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_metadata
-  ```
+Une table déjà présente n'est pas écrasée (message « left as is »). Pour forcer : `--params overwrite=true`, puis supprimer l'index de chaque table de
+chunks remplacée (UI Vector Search) et relancer : `3_sync_indexes` le recrée. Si le job s'arrête avant la fin de l'embedding (« Still running after
+120 min »), ce n'est pas une erreur : la synchronisation continue côté serveur.
 
 ### M. Accès développeur pour Mehdi (`mehdi.lamrani@databricks.com`, 2026-10-05)
 
-Deux familles d'objets :
-- **gérés par le bundle** (app, projet Lakebase, rôles Postgres, jobs DEV) :
-  liste de permissions = état complet, un droit ajouté à la main dans l'UI
-  est **effacé au prochain `bundle deploy`** → Mehdi est déclaré dans
-  `databricks.yml` (M1) ;
-- **hors bundle** (Unity Catalog, endpoint Vector Search, KA) : à la main,
-  ça reste (M2–M4).
+Objets **gérés par le bundle** (app, projet Lakebase, rôles Postgres, jobs DEV) : la liste de permissions est l'état complet, un droit ajouté à la
+main dans l'UI est **effacé au prochain `bundle deploy`** → Mehdi est déclaré dans `databricks.yml`. Objets **hors bundle** (Unity Catalog, endpoint Vector
+Search) : à la main, ça reste.
 
-- [ ] **M1. Bundle** : app CAN_MANAGE, projet Lakebase CAN_MANAGE, rôle Postgres
-  `mehdi-lamrani` (SUPERUSER sur la base `doccompare`), CAN_MANAGE sur les 10
-  jobs DEV ; puis le job KA, qui l'ajoute en CAN_MANAGE sur les 3 KA et leurs
-  endpoints.
+- [ ] **M1. Bundle** : app CAN_MANAGE, projet Lakebase CAN_MANAGE, rôle Postgres `mehdi-lamrani` (SUPERUSER sur la base `doccompare`), CAN_MANAGE sur les jobs DEV :
 
   ```powershell
-  git pull
   databricks bundle plan -t dev --profile DEV     # permissions en update, create postgres_roles.mehdi, 0 to delete
   databricks bundle deploy -t dev --profile DEV
-  databricks bundle run provision_knowledge_assistant_dev -t dev --profile DEV
   ```
 
-- [ ] **M2. Unity Catalog — catalogs, volumes, index** (USE CATALOG demande des
-  droits que vous n'avez pas : on passe par le job de droits, qui tourne sous le
-  SP DEV, avec Mehdi comme destinataire) :
+- [ ] **M2. Unity Catalog — catalogs, volumes, index** (USE CATALOG demande des droits que vous n'avez pas : on passe par le job de droits, sous le SP DEV) :
 
   ```powershell
   databricks bundle run grant_app_access_dev -t dev --profile DEV --params app_service_principal=mehdi.lamrani@databricks.com
   ```
 
-  → USE CATALOG `dev_landingzone`, USE SCHEMA `qualibot`, READ+WRITE sur
-  `doc_compare`/`test`, SELECT sur les 3 index.
-
-- [ ] **M3. Unity Catalog — tables** (SQL editor DEV ; vous êtes owner de
-  `dev_landingzone.qualibot` et de `dev_proj.qualibot`). **Attention** :
-  `dev_landingzone.qualibot` contient aussi la copie des conversations UAT
-  réelles (`chat_messages`, `chat_sessions`, `users`, `feedbacks`… écrites par
-  `lakebase_import_uat_to_dev`). Choisir :
+- [ ] **M3. Unity Catalog — tables** (éditeur SQL DEV ; vous êtes owner de `dev_landingzone.qualibot` et `dev_proj.qualibot`). **Attention** :
+  `dev_landingzone.qualibot` contient aussi la copie des conversations UAT réelles (`chat_messages`, `chat_sessions`, `users`, `feedbacks`…). Choisir :
 
   ```sql
   -- (a) tout le schema, données de chat UAT comprises
@@ -1622,25 +533,19 @@ Deux familles d'objets :
 
   -- (b) seulement le corpus et l'état du pipeline
   GRANT CREATE TABLE ON SCHEMA dev_landingzone.qualibot TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.chunks_v1               TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.src_chunks_as_v1        TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.src_chunks_is_v1        TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot._pipeline_checkpoint_v1 TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.processed_files_v1      TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.image_metadata_v1       TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.parse_manifest_v1       TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.category_reference_v1   TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.chunks               TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot._pipeline_checkpoint TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.processed_files      TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.image_metadata       TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.parse_manifest       TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.category_reference   TO `mehdi.lamrani@databricks.com`;
 
-  -- schema projet (MLflow, traces) : vide pour l'instant
+  -- schema projet
   GRANT ALL PRIVILEGES ON SCHEMA dev_proj.qualibot TO `mehdi.lamrani@databricks.com`;
   ```
 
-  Pour `dev_proj`, USE CATALOG : propriétaire `leap-core-service_accounts-dev`
-  (demander, ou me dire et j'étends le job de M2).
-
-- [ ] **M4. Endpoint Vector Search `qualibot`** (créé sous votre identité) — UI :
-  Compute ▸ Vector Search ▸ `qualibot` ▸ Permissions ▸ Mehdi « Can manage ».
-  Ou :
+  Pour `dev_proj`, USE CATALOG : propriétaire `leap-core-service_accounts-dev` (demander, ou étendre le job de M2).
+- [ ] **M4. Endpoint Vector Search `qualibot`** — UI : Compute ▸ Vector Search ▸ `qualibot` ▸ Permissions ▸ Mehdi « Can manage ». Ou :
 
   ```powershell
   $ep = (databricks vector-search-endpoints get-endpoint qualibot --profile DEV -o json | ConvertFrom-Json).id
@@ -1648,68 +553,31 @@ Deux familles d'objets :
     --json '{\"access_control_list\":[{\"user_name\":\"mehdi.lamrani@databricks.com\",\"permission_level\":\"CAN_MANAGE\"}]}'
   ```
 
-- [ ] **M5. Pour qu'il puisse déployer lui-même** (`bundle deploy -t dev`) :
-  - rôle « Service principal: User » sur `job-runner-sa-dev` (Settings ▸
-    Identity and access ▸ Service principals ▸ job-runner-sa-dev ▸
-    Permissions) — sinon le `run_as` des jobs est refusé ;
-  - accès au repo Bitbucket (hors Databricks) ;
-  - le dossier du bundle `/Workspace/Shared/.bundle/qualibot/dev` est déjà
-    accessible à tous.
-
-- [ ] **M6. Job de parsing `D_1_Qualibot_Parsing_Pipeline_dev`** : sa
-  définition est partagée avec UAT/PROD, Mehdi n'y est pas déclaré. Un droit
-  ajouté à la main dans l'UI tient jusqu'au prochain `bundle deploy`. Solution
-  durable et la plus simple pour tout : l'ajouter au groupe
-  `Role-Project-LEAP-CoreDev` (CAN_MANAGE partout) — décision / action d'un admin.
-
-- [ ] **A6. Impact search — « Judgment failed: judge returned no JSON object: '' »**
-  (2 documents sur une douzaine, 2026-10-05). Cause : le juge
-  (`databricks-gpt-5-6-luna`, modèle à raisonnement) épuise ses 1 500 tokens
-  en raisonnement sur les documents à nombreux passages et ne répond rien. Corrigé
-  dans le code : la relance se fait avec 3× le budget (plafond 8 000), et l'erreur
-  dit maintenant `ran out of tokens` si ça arrive encore. Redéployer l'app puis
-  relancer la même impact search (les résultats en erreur ne sont jamais mis en
-  cache) :
-
-  ```powershell
-  git pull
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev -SkipBuild
-  ```
+- [ ] **M5. Pour qu'il puisse déployer lui-même** (`bundle deploy -t dev`) : rôle « Service principal: User » sur `job-runner-sa-dev` ; accès au repo
+  Bitbucket ; le dossier du bundle `/Workspace/Shared/.bundle/qualibot/dev` est déjà accessible à tous.
+- [ ] **M6. Job de parsing `D_1_Qualibot_Parsing_Pipeline_dev`** : sa définition est partagée avec UAT/PROD, Mehdi n'y est pas déclaré. Un droit ajouté
+  à la main tient jusqu'au prochain `bundle deploy`. Solution durable : l'ajouter au groupe `Role-Project-LEAP-CoreDev` (CAN_MANAGE partout) — action d'un admin.
 
 ### B. Bitbucket — pipelines DEV
 
-- [ ] **B1. Créer l'environnement de déploiement « Development »**
-  (Repository settings ▸ Deployments) avec la variable sécurisée
-  `DATABRICKS_TOKEN` = PAT du SP DEV `fde6ff28-…` (optionnel :
-  `DATABRICKS_HOST`, défaut `https://dbc-c623749d-731b.cloud.databricks.com`).
-  Créer le PAT (en tant qu'admin du workspace DEV) :
+- [ ] **B1. Créer l'environnement de déploiement « Development »** (Repository settings ▸ Deployments) avec la variable sécurisée `DATABRICKS_TOKEN` =
+  PAT du SP DEV `fde6ff28-…` (optionnel : `DATABRICKS_HOST`, défaut `https://dbc-c623749d-731b.cloud.databricks.com`). Créer le PAT (admin du workspace DEV) :
 
   ```powershell
   databricks token-management create-obo-token fde6ff28-739f-4a41-b61e-604a298c8478 --lifetime-seconds 7776000 --comment "bitbucket qualibot dev" --profile DEV
   ```
 
-  Le SP doit pouvoir déployer le bundle : CAN_MANAGE sur l'app (déclaré),
-  sur le projet Lakebase (déclaré), droits UC de P3, et écriture sur
+  Le SP doit pouvoir déployer le bundle : CAN_MANAGE sur l'app et le projet Lakebase (déclaré), droits UC de P3, écriture sur
   `/Workspace/Shared/.bundle/qualibot/dev`.
-
-- [ ] **B2. Premier essai** : Pipelines ▸ Run pipeline ▸ branche
-  `claude/adoring-cray-trexmn` ▸ `deploy-dev-jobs` (ne touche pas l'app),
-  puis `deploy-dev` (bundle + redéploiement de l'app).
+- [ ] **B2. Premier essai** : Pipelines ▸ Run pipeline ▸ branche voulue ▸ `deploy-dev-jobs` (ne touche pas l'app), puis `deploy-dev` (bundle + redéploiement de l'app).
 
 ### Plus tard — non fait, sur décision
 
-- Réactiver le contrôle par groupe en DEV : passer `CAPS_BYPASS` à `false`
-  (ou retirer la clé) dans le bloc `dev` de `target_env.json`, redéployer.
-- Activer les plannings DEV (parsing quotidien, export Lakebase, stop/start
-  de l'app) : me dire lesquels, je passe `pause_status` / `parsing_schedule_pause`
-  à `UNPAUSED`.
-- Si le pipeline de parsing DEV est un jour réactivé (sous le SP DEV) : vérifier
-  que le SP peut synchroniser les index et utiliser l'endpoint `qualibot`
-  créés sous votre identité par `copy_uat_to_dev` (CAN_MANAGE sur l'endpoint
-  au besoin).
-- Copier aussi les images du volume `uat_landingzone.qualibot.images` (pas
-  nécessaire au chat ni à l'impact search ; seulement si un run de parsing
-  DEV doit retravailler des images déjà extraites).
+- Réactiver le contrôle par groupe en DEV : passer `CAPS_BYPASS` à `false` (ou retirer la clé) dans le bloc `dev` de `utils/deploy/target_env.json`, redéployer.
+- Activer les plannings DEV (parsing quotidien, export Lakebase, stop/start de l'app) : me dire lesquels, je passe `pause_status` / `parsing_schedule_pause` à `UNPAUSED`.
+- Si le pipeline de parsing DEV est un jour réactivé (sous le SP DEV) : vérifier que le SP peut synchroniser les index et utiliser l'endpoint `qualibot`
+  créés sous votre identité (CAN_MANAGE sur l'endpoint au besoin).
+- Copier aussi les images du volume `uat_landingzone.qualibot.images` (seulement si un run de parsing DEV doit retravailler des images déjà extraites).
 
 ## Fait
 

@@ -90,19 +90,7 @@ cette app : la démarrer d'abord.
   - lancer une impact search, recharger la comparaison depuis « History » :
     le résultat d'impact réapparaît sans relancer la recherche.
 
-- [ ] **A5. Mesurer le bruit sur le corpus d'évaluation** (machine où se trouve
-  `utils/compare_eval`), avec et sans le contrôle mot à mot :
-
-  ```powershell
-  python utils\compare_preview.py <ancien> <nouveau> --score
-  $env:COMPARE_WORD_LEVEL_CHECK = 'false'; python utils\compare_preview.py <ancien> <nouveau> --score
-  Remove-Item Env:COMPARE_WORD_LEVEL_CHECK
-  ```
-
-  Même comparaison pour l'extraction PDF (`COMPARE_PDF_MERGE_PAGE_SPLITS`,
-  `COMPARE_PDF_TABLE_LABELS` à `false`), surtout sur MOP_AX et les WDT.
-
-- [ ] **A6. Me dire si on fusionne `audit/doc-compare` dans `main`.**
+- [ ] **A5. Me dire si on fusionne `audit/doc-compare` dans `main`.**
 
 ### B. Pipeline de parsing — phase de test « documents d'avant 2018 »
 
@@ -205,7 +193,7 @@ et ses notebooks ; il ne redéploie pas le code de l'app (pas de `apps deploy`).
 
 ### C. Mettre l'app en service sur `qualibot-uat`
 
-Après A6 (fusion décidée). App seule : pas de `-Infra`.
+Après A5 (fusion décidée). App seule : pas de `-Infra`.
 
 - [ ] **C1. Déployer**
 
@@ -243,7 +231,7 @@ prévenir, je change la valeur, vous redéployez.
   ```
 
 - [ ] **D3. Règle « documents archivés » dans le chatbot** (avant D4) : la règle écrite pour le
-  KA (`archive/knowledge_assistant/provisioning/ka_profiles.py` (removed, see git history at commit bbb1016)) doit passer dans
+  KA (`ka_profiles.py`, supprimé du dépôt, voir le commit bbb1016) doit passer dans
   `server/prompts/chat/system/base.md`. Me prévenir : je l'ajoute, vous redéployez l'app.
 
 - [ ] **D4. Mettre les fiches dans l'index du chatbot** (après D3 et D5) : je passe
@@ -258,7 +246,7 @@ prévenir, je change la valeur, vous redéployez.
 - [ ] **D5. Passer l'UAT sur le chatbot retenu** : un seul chatbot (plus de KA), un seul index
   `chunks_index` avec filtre de division, le découpage retenu (150 / 300 / 450 tokens), plus aucun
   nom versionné. Tout est mesuré en DEV (`docs/chat_tests.md`, partie 1) et doit d'abord être
-  passé en DEV (`operations_dev.md`, bloc S). **Avec ton accord seulement** : c'est la vraie app.
+  passé en DEV (`operations_dev.md`, bloc 0). **Avec ton accord seulement** : c'est la vraie app.
   Les tables et index `_v1` restent en place jusqu'à D5.9 : l'app actuelle continue de tourner
   pendant D5.1 à D5.5, et le retour arrière reste possible.
 
@@ -333,11 +321,11 @@ prévenir, je change la valeur, vous redéployez.
     .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
     ```
 
-  - [ ] **D5.8. Tester** comme `operations_dev.md` S9 (ALL / AS / IS, langue, hors sujet, lien,
+  - [ ] **D5.8. Tester** comme `operations_dev.md` 0.13 (ALL / AS / IS, langue, hors sujet, lien,
     impact search). Retour arrière : redéployer l'ancien zip, puis `bundle deploy` de l'ancien zip
     (tables et index `_v1` intacts). Vérifier aussi le journal Lakebase des tours (`chat_turns`,
     `chat_retrieved_chunks`, colonnes ajoutées à `errors` : créés par l'app à son démarrage, rien à
-    faire à la main) avec les requêtes de `operations_dev.md` L2, dans l'éditeur SQL Lakebase de
+    faire à la main) avec les requêtes de `operations_dev.md` 0.13, dans l'éditeur SQL Lakebase de
     l'UAT (base `doccompare` ; `doccompare_test` pour `qualibot-uat-test`). Référence :
     `docs/lakebase_schema.md`.
 
@@ -354,9 +342,9 @@ prévenir, je change la valeur, vous redéployez.
     SELECT COUNT(*) FROM uat_landingzone.qualibot.chat_retrieved_chunks;
     ```
 
-    Le job de notation `D_1_Qualibot_Score_Production_Qa_Uat` est archivé (2026-10-09) : il n'est
-    plus dans le bundle, le prochain `bundle deploy -t qualibot-uat` (avec ton accord) le supprime.
-    Son remplaçant est le prototype `utils/evaluation/score_chat_traces.py`, pas encore en job.
+    Le job de notation `D_1_Qualibot_Score_Production_Qa_Uat` n'est plus dans le bundle (son code est
+    supprimé du dépôt, voir le commit bbb1016) : le prochain `bundle deploy -t qualibot-uat` (avec ton
+    accord) le supprime. Son remplaçant est `utils/evaluation/score_chat_traces.py`.
 
   - [ ] **D5.8c. Révisions des documents dans le catalogue** (après D5.7 : c'est l'app qui ajoute
     les colonnes `doc_catalog.revision` / `doc_date`, la tâche de D5.4 a donc écrit le catalogue
@@ -367,7 +355,7 @@ prévenir, je change la valeur, vous redéployez.
     ```
 
     Puis redémarrer l'app UAT (Apps → `qualibot` → Stop / Start), ou attendre 30 min. Vérifier
-    comme `operations_dev.md` X2 et X3.
+    comme `operations_dev.md` 0.11 et 0.13.
 
   - [ ] **D5.8d. Alertes SQL** (workspace UAT, après D5.8b : les tables Delta `chat_turns` et
     `errors` doivent exister). Fichiers `utils/alerts/01` à `06`, mode d'emploi dans
@@ -409,9 +397,9 @@ prévenir, je change la valeur, vous redéployez.
         RENAME TO uat_landingzone.qualibot.synthetic_retrieval_questions;
       ```
 
-    - **avant** de supprimer les index : me prévenir, je passe sur `chunks_index` (+ filtre de
-      division) les notebooks de notation qui interrogent encore les index `_v1`
-      (`utils/evaluation/score_production_qa.py`, jobs DEV et UAT).
+    - **avant** de supprimer les index : vérifier qu'aucun job de notation déployé n'interroge encore
+      les index `_v1` (l'ancien `score_production_qa`, jobs DEV et UAT, dont le code n'est plus dans le
+      dépôt) ; le cas échéant, le supprimer ou le passer sur `chunks_index` (+ filtre de division).
 
 ## Fait
 
