@@ -242,6 +242,7 @@ def _create_index(name, source_table):
 
 
 before = {}
+created = set()
 for name in INDEXES:
     try:
         idx = w.vector_search_indexes.get_index(index_name=name)
@@ -251,6 +252,7 @@ for name in INDEXES:
             raise RuntimeError(f"{name}: index doesn't exist and isn't one of the pipeline-managed indexes -- "
                                 f"can't auto-create it (unknown source table).")
         _create_index(name, source_table)
+        created.add(name)
         idx = w.vector_search_indexes.get_index(index_name=name)
 
     src = idx.delta_sync_index_spec.source_table if idx.delta_sync_index_spec else "?"
@@ -268,10 +270,17 @@ for name in INDEXES:
 
 failed = []
 for name in INDEXES:
+    if name in created:
+        # Creating an index starts its first full sync, and a trigger is refused until that one ends.
+        logger.info(f"sync not triggered: {name} — just created, its initial sync is running")
+        continue
     try:
         w.vector_search_indexes.sync_index(index_name=name)
         logger.info(f"sync triggered: {name}")
     except Exception as exc:
+        if "not ready to sync yet" in str(exc):
+            logger.info(f"sync not triggered: {name} — a sync is already running, waiting for it instead")
+            continue
         logger.warning(f"sync rejected: {name} — {exc}")
         failed.append((name, str(exc)))
 
