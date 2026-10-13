@@ -1,30 +1,12 @@
-"""Document catalog — resolves document references (``REF``) cited in a chat
-answer back to their intraqual URL, so they can be surfaced as clickable
-"Sources" chips even when the endpoint emitted no ``url_citation`` annotation
-for them.
+"""Document catalog: resolves the document references (``REF``) of a chat answer to their Intraqual link, title and
+revision, so documents named in prose become clickable "Sources" chips even without an annotation.
 
-Why this exists
----------------
-The "Sources" chips under a chat answer are built from the documents the
-engine cites (``sources`` event). But the model is prompted to *name* many documents in prose
-(metadata-derived lists, contextual mentions), and those are never annotated —
-so they appear in the text but not as clickable chips. This module closes that
-gap by matching catalog ``REF`` strings against the answer text.
-
-Where the catalog comes from
-----------------------------
-The Lakebase table ``doc_catalog``: every document in the parsing scope (``parse_manifest``,
-the same scope as the index) with its title, its link and whether it has passages in the chat
-index (``in_chat``). The parsing pipeline rewrites it after each successful daily run (task
-``6_update_kb_metadata``); the app reloads it at startup and every
-``DOC_CATALOG_REFRESH_S`` seconds (``catalog_refresher``).
-
-Until that table has rows (an app started before the pipeline's first run, local dev, tests),
-the bundled ``server/data/doc_catalog.json`` is used instead: a one-off snapshot of a portal
-scrape (2026-07; the script that generated it is in git history at commit f545093), with links in the old
-``liredocumentdepuisrecherche?id=`` scheme, that is never refreshed — new documents are missing from it and
-withdrawn ones are still in it. Every
-function degrades to a no-op when neither source is available.
+The catalog is the Lakebase table ``doc_catalog`` (every document of the parsing scope, with title, link, ``in_chat``),
+rewritten by parsing task ``6_update_kb_metadata`` after each daily run; the app reloads it at startup and every
+``DOC_CATALOG_REFRESH_S`` seconds (``catalog_refresher``). Until that table has rows (app started before the first
+pipeline run, local dev, tests) the bundled ``server/data/doc_catalog.json`` is used: a stale 2026-07 portal scrape
+(old ``liredocumentdepuisrecherche?id=`` links; its generator is in git history at commit f545093) that is never
+refreshed. Every function degrades to a no-op when neither source is available.
 """
 
 import asyncio

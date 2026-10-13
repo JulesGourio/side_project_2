@@ -15,22 +15,14 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from .base import BaseProcessor, ProcessMetadata, ProcessResult
+from .text_diff import TextDiffProcessor
 from ._diff_engines import (
     _IMG_MAX_DIM,
     _IMG_JPEG_QUALITY,
-    SYSTEM_PROMPT_STANDARD,
-    SYSTEM_PROMPT_STRUCTURED,
     dhash,
-    extraction_warnings,
     hash16,
     images_are_similar,
-    image_diff_blocks_dual,
     looks_like_table_header,
-    image_diff_pairs,
-    paragraph_semantic_diff,
-    section_canonical_diff,
-    truncate_diff,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,9 +48,7 @@ def _import_fitz():
 
 # --- Text extraction ---
 
-# Standalone pagination artifacts: "12", "- 12 -", "12/70", "Page 12 of 70",
-# "Page 12 sur 70", "Page 12". They shift on every repagination and would
-# otherwise produce a REMOVED/ADDED pair per page of the document.
+# Standalone pagination artifacts ("12", "- 12 -", "12/70", "Page 12 sur 70"): they shift on every repagination.
 _PAGE_ARTIFACT_RE = re.compile(
     r'^\s*(?:[-–—]\s*)?(?:page\s+)?\d{1,4}\s*(?:(?:/|of|de|sur)\s*\d{1,4})?\s*(?:[-–—]\s*)?$',
     re.I,
@@ -70,43 +60,29 @@ def _is_page_artifact(text: str) -> bool:
     return bool(_PAGE_ARTIFACT_RE.match(text))
 
 
-# A table row extracted as ONE line keeps its identity across a repagination, so two revisions of the same row pair as
-# a single MODIFIED entry;
-# as isolated cells, whose grouping PyMuPDF changes between revisions, a table turns into cell soup that the LLM
-# merges or drops.
-#
-# find_tables() is only worth it on text/tabular documents: on a wiring diagram it reads the drawing grid as tables
-# and costs ~0.5s per page.
-# Blocks per page separates the two cleanly and for free (the blocks are extracted anyway): 13-24 on text/tabular
-# documents against 114-180 on schematics.
-# The threshold sits with a ~3x margin on both sides.
+# A table row extracted as ONE line keeps its identity across a repagination (isolated cells regroup between
+# revisions). find_tables() is only worth it on text/tabular documents (on a wiring diagram it reads the drawing grid
+# as tables, ~0.5 s per page); blocks per page tell them apart for free: 13-24 on text, 114-180 on schematics.
 _TABLE_MAX_BLOCKS_PER_PAGE = int(os.getenv('COMPARE_TABLE_MAX_BLOCKS_PER_PAGE', '60'))
 _TABLE_MIN_ROWS = 2
 _TABLE_MIN_COLS = 2
-# The running header cartouche is itself a bordered grid that find_tables() returns on every page; emitting it as a
-# table row would re-create the
-# pagination noise. Small grids confined to the header/footer band are skipped (the cartouche spans 4.4%-15.8% of the
-# page height, real tables start
-# lower); the row-count condition keeps a genuine table that starts high on the page.
+# The running header cartouche is a bordered grid that find_tables() returns on every page: small grids confined to the
+# header/footer band are skipped (the row-count condition keeps a genuine table that starts high on the page).
 _TABLE_HEADER_BAND = 0.18
 _TABLE_FOOTER_BAND = 0.88
 _TABLE_BAND_MAX_ROWS = 3
 
 
-# Data rows are labelled with their column header ("Activity: Release the part | Quality manager: X"), as the DOCX
-# extractor does: a changed row
-# reaches the LLM alone, without the unchanged header row, so it could not say WHICH column a value belongs to. false
-# = positional rows only.
+# Data rows are labelled with their column header ("Activity: Release the part | Quality manager: X"), as in the DOCX
+# extractor: a changed row reaches the LLM without the header row. false = positional rows only.
 _TABLE_LABELS = os.getenv('COMPARE_PDF_TABLE_LABELS', 'true').lower() == 'true'
 
 
 def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[Any]:
     """[(y, 'cell | cell | cell', bbox), ...] for every real table on the page.
 
-    `state` carries the last header from one page to the next, so a table that
-    continues on the following page without repeating its header keeps the same
-    labels (otherwise a row would be labelled or not depending on which side of
-    a page break it falls).
+    `state` carries the last header to the next page, so a table continuing without repeating its header keeps its
+    labels.
     """
     out: List[Any] = []
     state = state if state is not None else {}
@@ -133,10 +109,8 @@ def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[A
             continue
         bbox = table.bbox
         height = max(1.0, bbox[3] - bbox[1])
-        # Empty cells keep their place ("M8 | 22 Nm |  | Wrench B"): dropping them makes a value that moved to another
-        # column read the same on both revisions.
-        # Columns that are empty on every row (merged-cell artefacts of find_tables) carry no position and are
-        # removed.
+        # Empty cells keep their place ("M8 | 22 Nm |  | Wrench B") so a value moving column reads differently; columns
+        # empty on every row (merged-cell artefacts) are removed.
         norm = [[' '.join((c or '').split()) for c in row] for row in rows]
         n_cols = max((len(r) for r in norm), default=0)
         norm = [r + [''] * (n_cols - len(r)) for r in norm]
@@ -343,118 +317,21 @@ def _extract_and_hash_images(pdf_bytes: bytes) -> Dict[str, Dict[str, Any]]:
     return images
 
 
-# --- Processor ---
+class PDFProcessor(TextDiffProcessor):
+    file_type = 'pdf'
 
-class PDFProcessor(BaseProcessor):
+    def extract(self, old_bytes, old_name, new_bytes, new_name):
+        return (_extract_text_with_pages(old_bytes), _extract_text_with_pages(new_bytes),
+                _extract_and_hash_images(old_bytes), _extract_and_hash_images(new_bytes))
 
-    def __init__(self, method: str = 'standard') -> None:
-        self.method = method
+    def paragraph_notes(self, filtered):
+        return (f'Global paragraph alignment: {filtered} trivial lines filtered '
+                '(within-group modal swaps, whitespace, TOC entries, layout shifts).\n'
+                'Page-split blocks pre-merged. Similar paragraphs shown as '
+                'MODIFIED with ~~removed~~ and **added** words inline.\n'
+                'Each block tagged with its source page.')
 
-    def build_messages(
-        self,
-        old_bytes: bytes,
-        old_name: str,
-        new_bytes: bytes,
-        new_name: str,
-        system_prompt: str = '',
-    ) -> ProcessResult:
-        if self.method == 'structured':
-            return self._paragraph_diff(old_bytes, old_name, new_bytes, new_name, SYSTEM_PROMPT_STRUCTURED, 'structured')
-        if self.method == 'comparative':
-            return self._comparative_diff(old_bytes, old_name, new_bytes, new_name, system_prompt)
-        return self._paragraph_diff(old_bytes, old_name, new_bytes, new_name, SYSTEM_PROMPT_STANDARD, 'standard')
-
-    # --- Standard / Structured — paragraph semantic diff ---
-
-    def _paragraph_diff(
-        self,
-        old_bytes: bytes,
-        old_name: str,
-        new_bytes: bytes,
-        new_name: str,
-        system_prompt: str,
-        method_name: str,
-    ) -> ProcessResult:
-        logger.info(f'PDFProcessor [{method_name}]: paragraph semantic diff — {old_name} → {new_name}')
-
-        old_text = _extract_text_with_pages(old_bytes)
-        new_text = _extract_text_with_pages(new_bytes)
-        warnings = extraction_warnings(old_text, new_text)
-
-        diff_text, filtered = paragraph_semantic_diff(old_text, new_text, page_label='Page')
-        diff_text = truncate_diff(diff_text)
-
-        old_images = _extract_and_hash_images(old_bytes)
-        new_images = _extract_and_hash_images(new_bytes)
-        img_blocks = image_diff_blocks_dual(old_images, new_images)
-        img_pairs = image_diff_pairs(old_images, new_images)
-
-        intro = (
-            f'Global paragraph alignment: {filtered} trivial lines filtered '
-            '(within-group modal swaps, whitespace, TOC entries, layout shifts).\n'
-            'Page-split blocks pre-merged. Similar paragraphs shown as '
-            'MODIFIED with ~~removed~~ and **added** words inline.\n'
-            'Each block tagged with its source page.\n\n'
-            f'--- TEXT CHANGES ---\n{diff_text}\n\n--- VISUAL CHANGES ---'
-        )
-        if not diff_text.strip():
-            intro = 'No significant text changes detected.\n\n--- VISUAL CHANGES ---'
-
-        content_blocks: List[Dict[str, Any]] = [{'type': 'text', 'text': intro}] + img_blocks
-        messages: List[Dict[str, Any]] = [
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': content_blocks},
-        ]
-
-        return ProcessResult(
-            messages=messages,
-            metadata=ProcessMetadata(file_type='pdf', method=method_name, old_name=old_name, new_name=new_name),
-            image_pairs=img_pairs,
-            warnings=warnings,
-        )
-
-    # --- Comparative — section canonical diff ---
-
-    def _comparative_diff(
-        self,
-        old_bytes: bytes,
-        old_name: str,
-        new_bytes: bytes,
-        new_name: str,
-        system_prompt: str,
-    ) -> ProcessResult:
-        logger.info(f'PDFProcessor [comparative]: section canonical diff — {old_name} → {new_name}')
-
-        old_text = _extract_text_with_pages(old_bytes)
-        new_text = _extract_text_with_pages(new_bytes)
-        warnings = extraction_warnings(old_text, new_text)
-
-        diff_text, filtered = section_canonical_diff(old_text, new_text)
-        diff_text = truncate_diff(diff_text)
-
-        old_images = _extract_and_hash_images(old_bytes)
-        new_images = _extract_and_hash_images(new_bytes)
-        img_blocks = image_diff_blocks_dual(old_images, new_images)
-        img_pairs = image_diff_pairs(old_images, new_images)
-
-        intro = (
-            f'Section canonical diff: {filtered} trivial pairs filtered '
-            '(modal verbs, whitespace, synonyms).\n'
-            'Changes grouped by section. Each line tagged with its source page.\n\n'
-            f'--- CHANGES BY SECTION ---\n{diff_text}\n\n--- VISUAL CHANGES ---'
-        )
-        if not diff_text.strip():
-            intro = 'No significant text changes detected.\n\n--- VISUAL CHANGES ---'
-
-        content_blocks: List[Dict[str, Any]] = [{'type': 'text', 'text': intro}] + img_blocks
-        messages: List[Dict[str, Any]] = []
-        if system_prompt:
-            messages.append({'role': 'system', 'content': system_prompt})
-        messages.append({'role': 'user', 'content': content_blocks})
-
-        return ProcessResult(
-            messages=messages,
-            metadata=ProcessMetadata(file_type='pdf', method='comparative', old_name=old_name, new_name=new_name),
-            image_pairs=img_pairs,
-            warnings=warnings,
-        )
+    def comparative_notes(self, filtered):
+        return (f'Section canonical diff: {filtered} trivial pairs filtered '
+                '(modal verbs, whitespace, synonyms).\n'
+                'Changes grouped by section. Each line tagged with its source page.')

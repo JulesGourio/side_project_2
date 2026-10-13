@@ -8,25 +8,16 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from .text import _DIFF_ENTRY_RE
 
 # A change whose identical text recurs on at least this many distinct pages is title-block/boilerplate (revision
-# stamp, classification field, footer): one real change rendered once per page by the PDF extraction. Such repeats are
-# 85-95% of all entries on wiring-diagram revisions.
+# stamp, classification field, footer): one real change rendered once per page by the PDF extraction.
 _BOILERPLATE_MIN_PAGES = int(os.getenv('COMPARE_BOILERPLATE_MIN_PAGES', '3'))
 
+
 def _dedup_repeated_headers(items: List[Dict[str, Any]], window: int = 25) -> List[Dict[str, Any]]:
-    """Drop a short block that reappears within `window` source lines.
+    """Drop a short block that reappears within `window` source lines (repeated column headers, running footers,
+    wiring labels: layout, not content).
 
-    Table column headers repeated at page-break continuations, running footers,
-    and wiring labels re-emitted a few blocks apart are all layout, not content.
-    Without this pass, hundreds of extra entries reach the report on wiring-diagram
-    revisions, and the sampled ones were all noise (a label still present several
-    times in the new revision, a date or title identical on both sides).
-
-    It is NOT symmetric under repagination — the same repeat can fall inside the
-    window in one revision and outside it in the other, leaving a surplus copy
-    that becomes a phantom REMOVED. That asymmetry is caught downstream by
-    _drop_present_verbatim / _drop_merged_cells rather than by tuning `window`,
-    because no window value is symmetric (a page anchor was also tried and ate
-    real wiring labels on dense sheets).
+    Not symmetric under repagination: the leftover surplus copy is caught downstream by _drop_present_verbatim /
+    _drop_merged_cells, since no window value is symmetric.
     """
     MAX_WORDS = 15
     seen: Dict[str, int] = {}
@@ -43,8 +34,8 @@ def _dedup_repeated_headers(items: List[Dict[str, Any]], window: int = 25) -> Li
     return result
 
 
-# A paragraph cut in two (or two merged into one) between revisions: up to this
-# many consecutive blocks, no further apart than this many source lines.
+# A paragraph cut in two (or two merged into one) between revisions: up to this many consecutive blocks, no further
+# apart than this many source lines.
 _RESEGMENT_MAX_RUN = 3
 _RESEGMENT_MAX_GAP = 3
 _RESEGMENT_MIN_WORDS = 8
@@ -53,12 +44,8 @@ _RESEGMENT_MIN_WORDS = 8
 def _cancel_resegmented(
     olds: List[Dict[str, Any]], news: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
-    """Remove blocks whose text is unchanged but cut differently.
-
-    One block on a side equal to 2-3 consecutive leftover blocks on the other
-    is the same text with a paragraph break added or removed: no wording
-    changed. Left alone it reached the LLM as an ADDED half plus a MODIFIED
-    whose other half is struck through — two phantom changes.
+    """Remove blocks whose text is unchanged but cut differently (one block equal to 2-3 consecutive leftovers on the
+    other side: a paragraph break added or removed).
 
     Returns (remaining_olds, remaining_news, n_blocks_cancelled).
     """
@@ -93,12 +80,9 @@ def _cancel_resegmented(
     )
 
 
-# Pagination fragments inside repeated header/footer text ('Page 2', 'PAGE: 1 of 34', 'Sheet 5/48'): masked ONLY
-# around these keywords when grouping repeats, so a footer embedding its own page number still groups. Bare numbers
-# are never masked: two wiring rows differing by a pin number stay distinct.
-# A footer only reaches the diff when its page number CHANGED, i.e. as a MODIFIED entry carrying "PAGE : ~~16/37~~
-# **16/38**": two numbers wrapped in inline markup. The trailing repeat group swallows the second (post-markup-strip)
-# number.
+# Pagination fragments inside repeated header/footer text ('Page 2', 'PAGE: 1 of 34', 'Sheet 5/48'): masked only
+# around these keywords when grouping repeats; bare numbers are never masked (wiring rows differing by a pin number
+# stay distinct). The trailing repeat group also swallows the second number of "PAGE : ~~16/37~~ **16/38**".
 _PAGINATION_RE = re.compile(
     r'\b(page|sheet|folio|feuille|list|strana|str)\s*[:.]?\s*'
     r'\d+(?:\s*(?:of|/|sur|z)\s*\d+)?'
@@ -107,15 +91,13 @@ _PAGINATION_RE = re.compile(
 )
 # Inline word-diff markup, stripped before computing a grouping key only.
 _MARKUP_RE = re.compile(r'~~|\*\*')
-# Table-of-contents rows: dot/dash leaders running to a page number. Section renames and renumbering surface as their
-# own body entries, so the TOC echo is noise. Matches mid-text too (inline markup wraps the leaders in ~~…~~/**…**);
-# the digit requirement keeps plain '------' separators out.
+# Table-of-contents rows (dot/dash leaders to a page number): their section changes appear as body entries. Matches
+# mid-text too (inline markup wraps the leaders); the digit requirement keeps plain '------' separators out.
 _TOC_LINE_RE = re.compile(r'(?:\.{4,}\s*\d*\s*$|[.\-]{6,}.{0,40}\d)')
 
 
-# "PAGE : ~~1/37~~ **1/38**" is a repagination substitution. When stripping every such pair from a MODIFIED entry
-# leaves no markup, the entry's only change is the page number and it is layout. _collapse_page_repeats cannot help:
-# the footer is glued to the head-office address, so that block occurs once.
+# "PAGE : ~~1/37~~ **1/38**" is a repagination substitution: a MODIFIED entry left without markup once every such
+# pair is stripped changed only its page number.
 _PAGE_FRACTION_SUB_RE = re.compile(
     r'~~\s*(?:page\s*[:.]?\s*)?\d{1,4}\s*/\s*\d{1,4}\s*~~\s*\*\*\s*(?:page\s*[:.]?\s*)?\d{1,4}\s*/\s*\d{1,4}\s*\*\*',
     re.I,
@@ -132,15 +114,11 @@ def _is_pagination_only(content: str) -> bool:
 
 
 def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: Optional[str]) -> Tuple[List[Dict[str, Any]], int]:
-    """Collapse per-page repeats of the SAME change into one annotated entry.
+    """Collapse per-page repeats of the SAME change into one entry that keeps the first occurrence's position and
+    says how many pages repeat it. Untagged entries are never collapsed. Pagination fragments are masked so
+    'Issue A6 Page N' repeats group across pages, and dot-leader TOC rows group per kind.
 
-    Returns (collapsed_results, n_entries_absorbed). Entries with no page tag
-    are never collapsed (nothing proves they are page artefacts). The collapsed
-    entry keeps the first occurrence's section/position and says explicitly how
-    many pages repeat it — no information is lost for the LLM, but a 48-page
-    title-block stamp stops drowning the real changes (and the token budget).
-    Two extra grouping rules: pagination fragments are masked so 'Issue A6 Page N' repeats group across
-    pages, and dot-leader TOC rows group per kind into one summary entry.
+    Returns (collapsed_results, n_entries_absorbed).
     """
     if not page_label:
         return results, 0
@@ -166,8 +144,7 @@ def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: Optional[s
     collapsed_keys = set()
     for key, members in groups.items():
         if key[1] == '<toc>':
-            # A rebuilt TOC lands on ONE page as dozens of dot-leader rows: group by row count, page spread proves
-            # nothing here.
+            # A rebuilt TOC lands on ONE page as dozens of rows: count rows, not pages.
             if len(members) >= _BOILERPLATE_MIN_PAGES:
                 collapsed_keys.add(key)
         elif len({p for p, _, _ in members}) >= _BOILERPLATE_MIN_PAGES:
@@ -204,8 +181,7 @@ def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: Optional[s
     return out, absorbed
 
 
-# A 'replace' span from inline_word_diff(): "~~old words~~ **new words**" with
-# only whitespace between the two markup runs.
+# A 'replace' span from inline_word_diff(): "~~old words~~ **new words**".
 _WORD_SUB_RE = re.compile(r'~~([^~]*)~~\s*\*\*([^*]*)\*\*')
 _SYSTEMIC_SUB_MIN = int(os.getenv('COMPARE_SYSTEMIC_SUB_MIN', '5'))
 
@@ -213,18 +189,12 @@ _SYSTEMIC_SUB_MIN = int(os.getenv('COMPARE_SYSTEMIC_SUB_MIN', '5'))
 def _collapse_systemic_substitutions(
     results: List[Dict[str, Any]], min_occurrences: int = _SYSTEMIC_SUB_MIN
 ) -> Tuple[List[Dict[str, Any]], int]:
-    """Collapse a document-wide restyle (bullet marker swap, ANNEX->APPENDIX
-    rename, spelling unification) that recurs identically across many MODIFIED
-    entries into one annotated example.
+    """Collapse a document-wide restyle (bullet marker swap, ANNEX->APPENDIX rename) that recurs identically across
+    many MODIFIED entries into one annotated example.
 
-    Without this, a single global find/replace-style edit — applied identically
-    across dozens of otherwise-unrelated paragraphs — multiplies into one diff
-    entry per occurrence and drowns out the genuinely distinct changes. Only
-    entries made up ENTIRELY of already-known recurring pairs are collapsed: an
-    entry mixing a systemic swap with other wording changes is always kept in
-    full, so nothing substantive is silently dropped. Any pair where either
-    side contains a digit is never treated as systemic — a value repeated
-    across many table rows (e.g. a pin number) must stay visible per row.
+    Only entries made up ENTIRELY of recurring pairs are collapsed (an entry mixing a systemic swap with other wording
+    changes is kept in full), and a pair with a digit on either side is never systemic (a pin number repeated across
+    table rows must stay visible per row).
     """
 
     def _norm(tok: str) -> str:

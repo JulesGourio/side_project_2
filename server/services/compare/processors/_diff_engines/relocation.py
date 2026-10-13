@@ -9,28 +9,20 @@ from typing import Any, Dict, List, Set, Tuple
 from .text import _DIFF_ENTRY_RE, canonicalize_keep_modals
 
 _RELOCATION_MIN_WORDS = 6
-# Below _RELOCATION_MIN_WORDS the relocation check never runs, so short blocks need their own net: a block still
-# present VERBATIM in the other revision is a segmentation artifact (table cells regrouped by the PDF text extraction,
-# a header-dedup pass dropping a repeat on one side only), never a real change. The occurrence COUNT means nothing for
-# a repeated header or table cell.
+# Shorter blocks skip the relocation check, so a short block still present VERBATIM in the other revision is treated as
+# a segmentation artifact (regrouped table cells, header dedup on one side only), never as a change.
 _ARTIFACT_MAX_WORDS = int(os.getenv('COMPARE_ARTIFACT_MAX_WORDS', '12'))
-# "Still present verbatim" alone is not enough: on a wiring diagram the change can be a short annotation moving
-# sheets. The surviving occurrence must also sit at roughly the SAME relative position (a repagination moves a block
-# by a fraction of a percent, a real relocation by far more). Fractional position, not page number, so a document-wide
-# page offset does not look like a move.
+# The surviving occurrence must also sit at about the SAME fractional position (a repagination moves a block by a
+# fraction of a percent, a real relocation by far more); page numbers would see a document-wide offset as a move.
 _ARTIFACT_MAX_POS_DRIFT = float(os.getenv('COMPARE_ARTIFACT_MAX_POS_DRIFT', '0.035'))
-# A label recurring this many times in BOTH documents is a diagram annotation stamped once per connection. There the
-# count IS the signal and no positional rule separates a genuine extra occurrence from a re-segmentation, so dense
-# labels are exempt from the net and stay visible.
+# A label recurring this often in BOTH documents is a diagram annotation stamped once per connection: its count is the
+# signal, so such labels are exempt from the nets.
 _ARTIFACT_DENSE_LABEL_MIN = int(os.getenv('COMPARE_ARTIFACT_DENSE_LABEL_MIN', '20'))
-# Merged-cell net (_drop_merged_cells): only fragments of at least this many
-# words, absorbed into a container at least this many times longer. Both bounds
-# exist to keep short diagram labels out of it.
+# Merged-cell net bounds (keep short diagram labels out of it): fragment of at least this many words, absorbed into a
+# container this many times longer.
 _ARTIFACT_MERGED_MIN_WORDS = 1
 _ARTIFACT_MERGED_MIN_RATIO = 3.0
-# Above this many (old x new) occurrences of the SAME text, the exact-match DP is skipped for index-wise pairing: both
-# lists are sorted by position, so it is right whenever the extra occurrences sit at the end. The DP only pays off on
-# small, ambiguous groups.
+# Above this many (old x new) occurrences of the same text the exact-match DP is skipped for index-wise pairing.
 _DUP_ALIGN_MAX_CELLS = 250_000
 
 
@@ -107,25 +99,16 @@ def _drop_present_verbatim(
     other_joined: str,
     already_reported: str = '',
 ) -> Tuple[List[Dict[str, Any]], int]:
-    """Drop short leftovers that still exist verbatim at the same spot elsewhere.
+    """Drop short leftovers that still exist verbatim at the same spot elsewhere (segmentation surplus).
 
-    Safety net behind _align_duplicates, for the
-    residual segmentation surplus those two cannot cancel.
-
-    Gated on a surplus test so the net cannot swallow a genuine addition of text
-    that already existed elsewhere: six new 'TO PATCH' annotations on a wiring
-    diagram were all suppressed because another one sat nearby. The test counts occurrences as SUBSTRINGS of the whole
-    document, not as standalone blocks — the artifacts this net exists for are
-    precisely cases where the text survived merged into a neighbouring block, so
-    a block-level count reads them as a surplus and protects them (a heading with 2 standalone blocks in one revision and 1 in the
-    other, but the same number of substring hits in both because of the page headers).
+    Gated on a surplus test so a genuine addition of text that already existed elsewhere is kept. Occurrences are
+    counted as SUBSTRINGS of the whole document: in the artifacts this net targets, the text survived merged into a
+    neighbouring block, which a block-level count would read as a surplus.
     """
     kept: List[Dict[str, Any]] = []
     dropped = 0
-    # A text in surplus justifies at most `surplus` entries, not one per leftover: the surplus is budgeted per text
-    # and given to the leftovers furthest from any surviving occurrence (the likeliest genuine losses).
-    # A loss already visible inside a MODIFIED entry's ~~strikethrough~~ must not also be charged to a leftover
-    # elsewhere.
+    # A text in surplus protects at most `surplus` leftovers, the ones furthest from a surviving occurrence (the likeliest
+    # genuine losses); a loss already shown inside a MODIFIED entry's strikethrough is not charged again.
     budget: Dict[str, int] = {}
     for item in leftovers:
         clean = item['clean']
@@ -177,18 +160,10 @@ def _drop_merged_cells(
     own_joined: str,
     other_joined: str,
 ) -> Tuple[List[Dict[str, Any]], int]:
-    """Drop leftovers whose whole text was absorbed into a longer nearby block.
+    """Drop leftovers whose whole text was absorbed into a longer nearby block of the other revision.
 
-    The other half of the segmentation problem: instead of a repeated cell
-    surviving on one side only, a cell that stood alone in one revision is
-    merged into its neighbour in the other. There is no standalone counterpart
-    to match, so the block becomes a REMOVED/ADDED for text that did not change
-    at all, e.g. a line of a change-history table merged into the surrounding sentence.
-
-    Deliberately narrow: same relative position, and the container must be much
-    longer than the fragment. Without the length ratio this also swallows a
-    label sitting next to a longer sibling that merely starts with it
-    ('TO PATCH' vs 'TO PATCH DC12_14+').
+    Deliberately narrow: same relative position and a much longer container; without the length ratio it would
+    swallow a label next to a longer sibling that merely starts with it ('TO PATCH' vs 'TO PATCH DC12_14+').
     """
     kept: List[Dict[str, Any]] = []
     dropped = 0
@@ -215,24 +190,17 @@ def _drop_merged_cells(
         kept.append(item)
     return kept, dropped
 
-# High bar on purpose: a REMOVED block is often several sentences merged into one paragraph, and a genuinely mixed
-# paragraph (part relocated, part deleted) can still rack up a long verbatim run from the relocated half alone. 0.75
-# sits between the highest measured false positive (0.70) and the lowest confirmed true positive (0.79).
+# High bar on purpose: 0.75 sits between the highest measured false positive (0.70) and the lowest confirmed true
+# positive (0.79). A long verbatim run is also required: scattered boilerplate phrasing alone can reach 50%+ coverage.
 _RELOCATION_COVERAGE_THRESHOLD = 0.75
-# A single long verbatim run is a much stronger relocation signal than scattered short matches: recurring boilerplate
-# phrasing alone can reach 50%+ scattered coverage for a paragraph that exists nowhere else. Gating on both keeps a
-# real removal from being masked as a relocation.
 _RELOCATION_MIN_RUN_WORDS = 8
 _STRIKETHROUGH_RE = re.compile(r'~~(.+?)~~', re.S)
 
 
 class _RelocationIndex:
-    """The new document, indexed once, to ask "does this removed text still
-    exist somewhere?" for every REMOVED entry and struck-through span.
+    """The new document indexed once, to ask "does this removed text still exist somewhere?" per entry.
 
-    Built once per comparison: constructing a SequenceMatcher per entry
-    re-indexed the whole new document each time, which was 80% of the diff
-    time on a large pair (10 s out of 12 for 600 removed paragraphs).
+    Built once per comparison: a SequenceMatcher per entry re-indexed the whole document (80% of the diff time).
     """
 
     def __init__(self, new_text: str) -> None:
@@ -243,15 +211,8 @@ class _RelocationIndex:
         self._runs = {tuple(words[k:k + run]) for k in range(len(words) - run + 1)}
 
     def signal(self, text: str) -> Tuple[float, int]:
-        """(coverage, longest_run_words): coverage is the fraction of `text`'s
-        words matched, in order, anywhere in the new document; longest_run_words
-        is the single longest contiguous match.
-
-        Uses difflib's word-level LCS (get_matching_blocks()) — unlike a rigid
-        n-gram scan, one inserted word ("training program" -> "training and
-        examination program") doesn't fracture an otherwise-long match into two
-        just-under-threshold fragments.
-        """
+        """(coverage, longest_run_words): the fraction of `text`'s words matched in order anywhere in the new document,
+        and its longest contiguous match. Word-level LCS, so one inserted word does not split a long match."""
         words = canonicalize_keep_modals(text).split()
         n = len(words)
         if n < _RELOCATION_MIN_WORDS:
@@ -261,8 +222,7 @@ class _RelocationIndex:
         return sum(b.size for b in blocks) / n, max((b.size for b in blocks), default=0)
 
     def is_relocated(self, text: str) -> bool:
-        # A contiguous run of _RELOCATION_MIN_RUN_WORDS is required anyway: without one in the new document the costly
-        # alignment is skipped.
+        # Cheap pre-check: without a long enough contiguous run in the new document, skip the costly alignment.
         words = canonicalize_keep_modals(text).split()
         run = _RELOCATION_MIN_RUN_WORDS
         if not any(tuple(words[k:k + run]) in self._runs for k in range(len(words) - run + 1)):
@@ -272,15 +232,8 @@ class _RelocationIndex:
 
 
 def _tag_relocated(results: List[Dict[str, Any]], new_text: str) -> int:
-    """Mark content that moved rather than disappeared, so the analysis
-    prompt sees a plain fact ("this text is still present, just moved")
-    instead of having to infer it from reading the whole diff itself:
-
-    - A standalone REMOVED entry whose substance reappears elsewhere becomes
-      a RELOCATED entry.
-    - A ~~struck-through~~ span inside a MODIFIED entry gets an inline note
-      when its substance reappears elsewhere — the surrounding MODIFIED
-      block is left intact (never split into separate rows).
+    """Mark content that moved rather than disappeared: a REMOVED entry whose text reappears elsewhere becomes
+    RELOCATED, and a struck-through span of a MODIFIED entry gets an inline note (the entry itself stays whole).
 
     Returns the number of entries/spans annotated.
     """

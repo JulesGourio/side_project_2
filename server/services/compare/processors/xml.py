@@ -7,16 +7,9 @@ comparative: section canonical diff + section-grouped output.
 
 import logging
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List
+from typing import List
 
-from .base import BaseProcessor, ProcessMetadata, ProcessResult
-from ._diff_engines import (
-    SYSTEM_PROMPT_STANDARD,
-    SYSTEM_PROMPT_STRUCTURED,
-    paragraph_semantic_diff,
-    section_canonical_diff,
-    truncate_diff,
-)
+from .text_diff import TextDiffProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -54,86 +47,20 @@ def _extract_xml(xml_bytes: bytes) -> List[str]:
     return lines
 
 
-class XMLProcessor(BaseProcessor):
+class XMLProcessor(TextDiffProcessor):
+    file_type = 'xml'
 
-    def __init__(self, method: str = 'standard') -> None:
-        self.method = method
+    page_label = 'Item'
+    with_images = False
+    warn_paragraph = False
+    warn_comparative = False
 
-    def build_messages(
-        self,
-        old_bytes: bytes,
-        old_name: str,
-        new_bytes: bytes,
-        new_name: str,
-        system_prompt: str = '',
-    ) -> ProcessResult:
-        if self.method == 'structured':
-            return self._paragraph_diff(old_bytes, old_name, new_bytes, new_name, SYSTEM_PROMPT_STRUCTURED, 'structured')
-        if self.method == 'comparative':
-            return self._comparative_diff(old_bytes, old_name, new_bytes, new_name, system_prompt)
-        return self._paragraph_diff(old_bytes, old_name, new_bytes, new_name, SYSTEM_PROMPT_STANDARD, 'standard')
+    def extract(self, old_bytes, old_name, new_bytes, new_name):
+        return '\n'.join(_extract_xml(old_bytes)), '\n'.join(_extract_xml(new_bytes)), {}, {}
 
-    def _paragraph_diff(
-        self,
-        old_bytes: bytes,
-        old_name: str,
-        new_bytes: bytes,
-        new_name: str,
-        system_prompt: str,
-        method_name: str,
-    ) -> ProcessResult:
-        logger.info('XMLProcessor [%s]: paragraph semantic diff — %s → %s', method_name, old_name, new_name)
-        old_text = '\n'.join(_extract_xml(old_bytes))
-        new_text = '\n'.join(_extract_xml(new_bytes))
+    def paragraph_notes(self, filtered):
+        return (f'Global paragraph alignment: {filtered} trivial lines filtered.\n'
+                'Similar elements shown as MODIFIED with ~~removed~~ and **added** words inline.')
 
-        diff_text, filtered = paragraph_semantic_diff(old_text, new_text, page_label='Item')
-        diff_text = truncate_diff(diff_text)
-
-        intro = (
-            f'Global paragraph alignment: {filtered} trivial lines filtered.\n'
-            'Similar elements shown as MODIFIED with ~~removed~~ and **added** words inline.\n\n'
-            f'--- TEXT CHANGES ---\n{diff_text}'
-        )
-        if not diff_text.strip():
-            intro = 'No significant text changes detected.'
-
-        messages: List[Dict[str, Any]] = [
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': [{'type': 'text', 'text': intro}]},
-        ]
-        return ProcessResult(
-            messages=messages,
-            metadata=ProcessMetadata(file_type='xml', method=method_name, old_name=old_name, new_name=new_name),
-        )
-
-    def _comparative_diff(
-        self,
-        old_bytes: bytes,
-        old_name: str,
-        new_bytes: bytes,
-        new_name: str,
-        system_prompt: str,
-    ) -> ProcessResult:
-        logger.info('XMLProcessor [comparative]: section canonical diff — %s → %s', old_name, new_name)
-        old_text = '\n'.join(_extract_xml(old_bytes))
-        new_text = '\n'.join(_extract_xml(new_bytes))
-
-        diff_text, filtered = section_canonical_diff(old_text, new_text)
-        diff_text = truncate_diff(diff_text)
-
-        intro = (
-            f'Section canonical diff: {filtered} trivial pairs filtered.\n'
-            'Changes grouped by section.\n\n'
-            f'--- CHANGES BY SECTION ---\n{diff_text}'
-        )
-        if not diff_text.strip():
-            intro = 'No significant text changes detected.'
-
-        messages: List[Dict[str, Any]] = []
-        if system_prompt:
-            messages.append({'role': 'system', 'content': system_prompt})
-        messages.append({'role': 'user', 'content': [{'type': 'text', 'text': intro}]})
-        return ProcessResult(
-            messages=messages,
-            metadata=ProcessMetadata(file_type='xml', method='comparative', old_name=old_name, new_name=new_name),
-        )
+    def comparative_notes(self, filtered):
+        return f'Section canonical diff: {filtered} trivial pairs filtered.\nChanges grouped by section.'

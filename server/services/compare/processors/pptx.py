@@ -15,19 +15,11 @@ import io
 import logging
 from typing import Any, Dict, List, Tuple
 
-from .base import BaseProcessor, ProcessMetadata, ProcessResult
+from .text_diff import TextDiffProcessor
 from ._diff_engines import (
-    SYSTEM_PROMPT_STANDARD,
-    SYSTEM_PROMPT_STRUCTURED,
     dhash,
-    extraction_warnings,
     hash16,
-    image_diff_blocks_dual,
-    image_diff_pairs,
     images_are_similar,
-    paragraph_semantic_diff,
-    section_canonical_diff,
-    truncate_diff,
 )
 
 logger = logging.getLogger(__name__)
@@ -171,118 +163,21 @@ def _extract_pptx(pptx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
 
 # --- Processor ---
 
-class PptxProcessor(BaseProcessor):
+class PptxProcessor(TextDiffProcessor):
+    file_type = 'pptx'
 
-    def __init__(self, method: str = 'standard') -> None:
-        self.method = method
+    page_label = 'Slide'
+    warn_comparative = False
 
-    def build_messages(
-        self,
-        old_bytes: bytes,
-        old_name: str,
-        new_bytes: bytes,
-        new_name: str,
-        system_prompt: str = '',
-    ) -> ProcessResult:
-        if self.method == 'structured':
-            return self._paragraph_diff(
-                old_bytes, old_name, new_bytes, new_name,
-                SYSTEM_PROMPT_STRUCTURED, 'structured',
-            )
-        if self.method == 'comparative':
-            return self._comparative_diff(old_bytes, old_name, new_bytes, new_name, system_prompt)
-        return self._paragraph_diff(
-            old_bytes, old_name, new_bytes, new_name,
-            SYSTEM_PROMPT_STANDARD, 'standard',
-        )
-
-    def _paragraph_diff(
-        self,
-        old_bytes: bytes,
-        old_name: str,
-        new_bytes: bytes,
-        new_name: str,
-        system_prompt: str,
-        method_name: str,
-    ) -> ProcessResult:
-        logger.info('PptxProcessor [%s]: paragraph semantic diff — %s → %s',
-                    method_name, old_name, new_name)
+    def extract(self, old_bytes, old_name, new_bytes, new_name):
         old_slides, old_imgs = _extract_pptx(old_bytes)
         new_slides, new_imgs = _extract_pptx(new_bytes)
+        return '\n'.join(old_slides), '\n'.join(new_slides), old_imgs, new_imgs
 
-        old_text = '\n'.join(old_slides)
-        new_text = '\n'.join(new_slides)
-        warnings = extraction_warnings(old_text, new_text)
-        diff_text, filtered = paragraph_semantic_diff(old_text, new_text, page_label='Slide')
-        diff_text = truncate_diff(diff_text)
+    def paragraph_notes(self, filtered):
+        return (f'Global paragraph alignment across slides: {filtered} trivial lines filtered.\n'
+                'Similar text blocks shown as MODIFIED with ~~removed~~ and **added** words inline.\n'
+                'Each block tagged with its source slide.')
 
-        # Slides are ordered, so pass show_position=True to use the page-aware
-        # pairing path (same as PDF). Slide numbers replace page numbers.
-        img_blocks = image_diff_blocks_dual(old_imgs, new_imgs, show_position=True)
-        img_pairs  = image_diff_pairs(old_imgs, new_imgs, show_position=True)
-
-        intro = (
-            f'Global paragraph alignment across slides: {filtered} trivial lines filtered.\n'
-            'Similar text blocks shown as MODIFIED with ~~removed~~ and **added** words inline.\n'
-            'Each block tagged with its source slide.\n\n'
-            f'--- TEXT CHANGES ---\n{diff_text}\n\n--- VISUAL CHANGES ---'
-        )
-        if not diff_text.strip():
-            intro = 'No significant text changes detected.\n\n--- VISUAL CHANGES ---'
-
-        content_blocks: List[Dict[str, Any]] = [{'type': 'text', 'text': intro}] + img_blocks
-        messages = [
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': content_blocks},
-        ]
-        return ProcessResult(
-            messages=messages,
-            metadata=ProcessMetadata(
-                file_type='pptx', method=method_name,
-                old_name=old_name, new_name=new_name,
-            ),
-            image_pairs=img_pairs,
-            warnings=warnings,
-        )
-
-    def _comparative_diff(
-        self,
-        old_bytes: bytes,
-        old_name: str,
-        new_bytes: bytes,
-        new_name: str,
-        system_prompt: str,
-    ) -> ProcessResult:
-        logger.info('PptxProcessor [comparative]: section canonical diff — %s → %s',
-                    old_name, new_name)
-        old_slides, old_imgs = _extract_pptx(old_bytes)
-        new_slides, new_imgs = _extract_pptx(new_bytes)
-
-        old_text = '\n'.join(old_slides)
-        new_text = '\n'.join(new_slides)
-        diff_text, filtered = section_canonical_diff(old_text, new_text)
-        diff_text = truncate_diff(diff_text)
-
-        img_blocks = image_diff_blocks_dual(old_imgs, new_imgs, show_position=True)
-        img_pairs  = image_diff_pairs(old_imgs, new_imgs, show_position=True)
-
-        intro = (
-            f'Section canonical diff across slides: {filtered} trivial pairs filtered.\n\n'
-            f'--- CHANGES BY SECTION ---\n{diff_text}\n\n--- VISUAL CHANGES ---'
-        )
-        if not diff_text.strip():
-            intro = 'No significant text changes detected.\n\n--- VISUAL CHANGES ---'
-
-        content_blocks: List[Dict[str, Any]] = [{'type': 'text', 'text': intro}] + img_blocks
-        messages: List[Dict[str, Any]] = []
-        if system_prompt:
-            messages.append({'role': 'system', 'content': system_prompt})
-        messages.append({'role': 'user', 'content': content_blocks})
-        return ProcessResult(
-            messages=messages,
-            metadata=ProcessMetadata(
-                file_type='pptx', method='comparative',
-                old_name=old_name, new_name=new_name,
-            ),
-            image_pairs=img_pairs,
-        )
+    def comparative_notes(self, filtered):
+        return f'Section canonical diff across slides: {filtered} trivial pairs filtered.'

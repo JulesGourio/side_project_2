@@ -40,89 +40,162 @@ _CONT_RE = re.compile(
 )
 
 
+def _clean(s: str) -> str:
+    s = re.sub(r'[\.\-_]{2,}', ' ', s)
+    return re.sub(r'\s+', ' ', s).strip().lower()
+
+
+def _parse_blocks(text: str, page_label: Optional[str]) -> List[Dict[str, Any]]:
+    lines = text.splitlines()
+    bare_lines = [strip_tag(b) for b in lines]
+    # Mask a trailing page fraction ("... V09 4/39") before counting repeats: a footer stamp embedding its page
+    # number is a different string on every page.
+    _heading_key = lambda b: _TRAILING_PAGE_FRACTION_RE.sub('', b)
+    # A bare ALL-CAPS line repeating >=_BOILERPLATE_MIN_PAGES times is a running header/footer (page title,
+    # company address), not a section: treating it as one would scatter every real section's content under that
+    # recurring label. Numbered headings are exempt: a real clause number essentially never repeats this often.
+    running_header_counts = Counter(_heading_key(b) for b in bare_lines if _ALLCAPS_SECTION_RE.match(b))
+
+    result: List[Dict[str, Any]] = []
+    cur_sec = 'Preamble'
+    for idx, (block, bare) in enumerate(zip(lines, bare_lines)):
+        pm = re.search(r'\[(?:Page|Slide|Item)\s+(\d+)', block, re.I) if page_label else None
+        page_num = int(pm.group(1)) if pm else None
+        is_toc = bool(re.search(r'\.{3,}\s*\d+$', bare))
+        is_running_header = running_header_counts.get(_heading_key(bare), 0) >= _BOILERPLATE_MIN_PAGES
+        if SECTION_RE.match(bare) and 2 < len(bare) < 100 and not is_toc and not is_running_header:
+            cur_sec = re.sub(
+                r'\s*\((?:Continued|Suite|Cont\.)\)\s*$', '', bare, flags=re.I
+            ).strip() or bare
+        if bare.strip():
+            result.append({'idx': idx, 'sec': cur_sec, 'txt': bare, 'clean': _clean(bare), 'page': page_num})
+    return result
+
+
+def _merge_continued(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    last_content_idx: Dict[str, int] = {}
+    for item in items:
+        m = _CONT_RE.match(item['txt'])
+        if m:
+            continuation = (m.group(3) or '').strip()
+            sec_from_header = m.group(1).strip()
+            target = next(
+                (c for c in [sec_from_header.lower(), item['sec'].lower()] if c in last_content_idx),
+                None,
+            )
+            if target is not None and continuation:
+                ti = last_content_idx[target]
+                result[ti]['txt'] += ' ' + continuation
+                result[ti]['clean'] += ' ' + _clean(continuation)
+                continue
+            elif not continuation:
+                continue  # Pure page-break header — drop to avoid false MODIFIED
+        sec_key = item['sec'].lower()
+        if len(item['txt'].split()) >= 10:
+            last_content_idx[sec_key] = len(result)
+        result.append(item)
+    return result
+
+
+def _sort_for_display(results: List[Dict[str, Any]], old_items: List[Dict[str, Any]],
+                      new_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Order entries by section, aligning the two documents' headings with SequenceMatcher on normalized
+    keys (a revision that re-cases headings or bumps clause numbers would otherwise match almost none)."""
+    def _sec_align_key(s: str) -> str:
+        s = re.sub(r'^\d+(?:\.\d+)*\.?\s*', '', s)
+        return re.sub(r'\s+', ' ', s).strip().casefold()
+
+    def _runs_with_item_map(items: List[Dict[str, Any]]) -> Tuple[List[str], Dict[int, int]]:
+        """One entry per contiguous run of the same heading, plus a map from each item's 'idx' to its run.
+
+        A heading recurring at distant points (a generic 'General', a repeated workflow step) stays several separate
+        runs instead of collapsing onto the first one's slot.
+        """
+        seq: List[str] = []
+        idx_to_run: Dict[int, int] = {}
+        for i in items:
+            if not seq or seq[-1] != i['sec']:
+                seq.append(i['sec'])
+            idx_to_run[i['idx']] = len(seq) - 1
+        return seq, idx_to_run
+
+    old_sec_seq, old_idx_to_run = _runs_with_item_map(old_items)
+    new_sec_seq, new_idx_to_run = _runs_with_item_map(new_items)
+
+    # A normalized key may match ACROSS documents only if it identifies a single run on EACH side; a recurring key is
+    # ambiguous and gets a per-occurrence sentinel, so SequenceMatcher never pairs it with the wrong occurrence.
+    old_raw_keys = [_sec_align_key(s) for s in old_sec_seq]
+    new_raw_keys = [_sec_align_key(s) for s in new_sec_seq]
+    old_key_counts = Counter(old_raw_keys)
+    new_key_counts = Counter(new_raw_keys)
+
+    def _disambiguate(raw_keys: List[str], counts_here: Counter, counts_other: Counter) -> List[str]:
+        return [
+            k if counts_here[k] <= 1 and counts_other.get(k, 0) <= 1 else f'{k}\x00{i}'
+            for i, k in enumerate(raw_keys)
+        ]
+
+    old_sec_keys = _disambiguate(old_raw_keys, old_key_counts, new_key_counts)
+    new_sec_keys = _disambiguate(new_raw_keys, new_key_counts, old_key_counts)
+
+    old_run_order: List[int] = [0] * len(old_sec_seq)
+    new_run_order: List[int] = [0] * len(new_sec_seq)
+    idx_sec = 0
+    sec_sm = difflib.SequenceMatcher(None, old_sec_keys, new_sec_keys, autojunk=False)
+    for tag, i1, i2, j1, j2 in sec_sm.get_opcodes():
+        if tag == 'equal':
+            for k in range(i2 - i1):
+                old_run_order[i1 + k] = idx_sec
+                new_run_order[j1 + k] = idx_sec
+                idx_sec += 1
+        else:
+            for k in range(i1, i2):
+                old_run_order[k] = idx_sec
+                idx_sec += 1
+            for k in range(j1, j2):
+                new_run_order[k] = idx_sec
+                idx_sec += 1
+
+    def _order_key(r: Dict[str, Any]) -> Tuple[int, int, float]:
+        """(section run, page, fractional position): one axis for both documents, so a REMOVED and the ADDED that
+        replaces it end up next to each other."""
+        if r.get('from_new'):
+            run = new_idx_to_run.get(r['sort_idx'])
+            order = new_run_order[run] if run is not None else 999_999
+        else:
+            run = old_idx_to_run.get(r['sort_idx'])
+            order = old_run_order[run] if run is not None else 999_999
+        return order, r.get('page') or 0, r.get('pos') or 0.0
+
+    results.sort(key=_order_key)
+
+    # Old and new runs of one label get distinct slots, which would put every old-side entry before every new-side one:
+    # re-sort each contiguous same-label group by page (local, nothing crosses a section).
+    i = 0
+    while i < len(results):
+        j = i + 1
+        while j < len(results) and results[j]['sec'] == results[i]['sec']:
+            j += 1
+        results[i:j] = sorted(results[i:j], key=lambda r: (r.get('page') or 0, r.get('pos') or 0.0))
+        i = j
+    return results
+
+
 def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[str] = None) -> Tuple[str, int]:
     """Primary paragraph-level semantic alignment engine.
 
-    1. Pre-merges '(Continued)' page-split blocks to eliminate false REMOVED/ADDED
-       entries caused by content reflowing across pages.
-    2. Exact matches are removed first (unchanged content).
-    3. Near matches (word-level ratio > 0.55, min 3 words) become MODIFIED with
-       inline ~~removed~~ / **added** markup.
-    4. Remaining old → REMOVED, remaining new → ADDED.
-    5. Results grouped by section (## heading), sorted by document order.
-    6. Modal-aware: within-group swaps (shall↔must) are ignored; cross-group
-       swaps (shall→may) are reported.
-    7. Per-page boilerplate repeats (same change on >=_BOILERPLATE_MIN_PAGES
-       distinct pages — revision stamps, classification fields) collapse into
-       one annotated entry.
-    8. Document-wide restyles (same word-level substitution recurring across
-       >=_SYSTEMIC_SUB_MIN otherwise-unrelated MODIFIED entries — e.g. a bullet
-       marker or terminology swap applied everywhere) collapse into one
-       annotated example.
+    '(Continued)' page splits are merged, exact matches dropped, near matches (word ratio > 0.55, 3+ words) become
+    MODIFIED with inline ~~removed~~ / **added** markup, the rest REMOVED / ADDED, grouped by section in document
+    order. Modal swaps inside one obligation group (shall/must) are ignored, cross-group ones (shall/may) reported.
+    Per-page boilerplate repeats and document-wide restyles collapse into one annotated entry.
 
-    Returns:
-        (diff_string, filtered_count)
+    Returns (diff_string, filtered_count).
     """
-
-    def _clean(s: str) -> str:
-        s = re.sub(r'[\.\-_]{2,}', ' ', s)
-        return re.sub(r'\s+', ' ', s).strip().lower()
-
-    def _parse(text: str) -> List[Dict[str, Any]]:
-        lines = text.splitlines()
-        bare_lines = [strip_tag(b) for b in lines]
-        # Mask a trailing page fraction ("... V09 4/39") before counting repeats: a footer stamp embedding its page
-        # number is a different string on every page.
-        _heading_key = lambda b: _TRAILING_PAGE_FRACTION_RE.sub('', b)
-        # A bare ALL-CAPS line repeating >=_BOILERPLATE_MIN_PAGES times is a running header/footer (page title,
-        # company address), not a section: treating it as one would scatter every real section's content under that
-        # recurring label. Numbered headings are exempt: a real clause number essentially never repeats this often.
-        running_header_counts = Counter(_heading_key(b) for b in bare_lines if _ALLCAPS_SECTION_RE.match(b))
-
-        result: List[Dict[str, Any]] = []
-        cur_sec = 'Preamble'
-        for idx, (block, bare) in enumerate(zip(lines, bare_lines)):
-            pm = re.search(r'\[(?:Page|Slide|Item)\s+(\d+)', block, re.I) if page_label else None
-            page_num = int(pm.group(1)) if pm else None
-            is_toc = bool(re.search(r'\.{3,}\s*\d+$', bare))
-            is_running_header = running_header_counts.get(_heading_key(bare), 0) >= _BOILERPLATE_MIN_PAGES
-            if SECTION_RE.match(bare) and 2 < len(bare) < 100 and not is_toc and not is_running_header:
-                cur_sec = re.sub(
-                    r'\s*\((?:Continued|Suite|Cont\.)\)\s*$', '', bare, flags=re.I
-                ).strip() or bare
-            if bare.strip():
-                result.append({'idx': idx, 'sec': cur_sec, 'txt': bare, 'clean': _clean(bare), 'page': page_num})
-        return result
-
-    def _merge_continued(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        result: List[Dict[str, Any]] = []
-        last_content_idx: Dict[str, int] = {}
-        for item in items:
-            m = _CONT_RE.match(item['txt'])
-            if m:
-                continuation = (m.group(3) or '').strip()
-                sec_from_header = m.group(1).strip()
-                target = next(
-                    (c for c in [sec_from_header.lower(), item['sec'].lower()] if c in last_content_idx),
-                    None,
-                )
-                if target is not None and continuation:
-                    ti = last_content_idx[target]
-                    result[ti]['txt'] += ' ' + continuation
-                    result[ti]['clean'] += ' ' + _clean(continuation)
-                    continue
-                elif not continuation:
-                    continue  # Pure page-break header — drop to avoid false MODIFIED
-            sec_key = item['sec'].lower()
-            if len(item['txt'].split()) >= 10:
-                last_content_idx[sec_key] = len(result)
-            result.append(item)
-        return result
-
     # Raw (pre-dedup) blocks are kept: the artifact nets below count occurrences on them, because the dedup pass is
     # what makes counts look uneven between the two revisions.
-    old_raw = _merge_continued(_parse(old_text))
-    new_raw = _merge_continued(_parse(new_text))
+    old_raw = _merge_continued(_parse_blocks(old_text, page_label))
+    new_raw = _merge_continued(_parse_blocks(new_text, page_label))
     old_items = _dedup_repeated_headers(old_raw)
     new_items = _dedup_repeated_headers(new_raw)
     # Newline-joined so a single-line block can only match inside one block.
@@ -345,107 +418,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     results, _absorbed = _collapse_page_repeats(results, page_label)
     results, _absorbed_sub = _collapse_systemic_substitutions(results)
 
-    # Section order for display: aligned via SequenceMatcher on normalized headings rather than "all old sections,
-    # then all new ones". A revision that re-cases headings or bumps clause numbers would otherwise match almost no
-    # heading and dump the new document's order after the old one. Normalized keys keep renamed/renumbered sections
-    # next to their neighbours.
-    def _sec_align_key(s: str) -> str:
-        s = re.sub(r'^\d+(?:\.\d+)*\.?\s*', '', s)
-        return re.sub(r'\s+', ' ', s).strip().casefold()
-
-    def _runs_with_item_map(items: List[Dict[str, Any]]) -> Tuple[List[str], Dict[int, int]]:
-        """One entry per contiguous run of the same heading, plus a map from
-        each item's own 'idx' to the run it belongs to.
-
-        Unlike dict.fromkeys()/a plain sections_order[label]=... dict, this
-        keeps a heading that recurs at DISTANT points in the same document (a
-        generic subsection name like 'General', or a numbered workflow step
-        repeated across two unrelated tables) as separate, individually
-        addressable runs instead of silently collapsing every occurrence onto
-        the first one's slot — that collapse is what let content from an
-        unrelated, much-later table get pulled up next to an earlier one with
-        the same label (seen on documents full of recurring
-        numbered flowchart steps). Looking runs up by each result's
-        own sort_idx (below), rather than by the shared label string, is what
-        keeps repeated labels distinguishable.
-        """
-        seq: List[str] = []
-        idx_to_run: Dict[int, int] = {}
-        for i in items:
-            if not seq or seq[-1] != i['sec']:
-                seq.append(i['sec'])
-            idx_to_run[i['idx']] = len(seq) - 1
-        return seq, idx_to_run
-
-    old_sec_seq, old_idx_to_run = _runs_with_item_map(old_items)
-    new_sec_seq, new_idx_to_run = _runs_with_item_map(new_items)
-
-    # A normalized key may match ACROSS documents only if it identifies a single run on EACH side; a recurring key is
-    # ambiguous and gets a per-occurrence sentinel, so SequenceMatcher never pairs it with the wrong occurrence.
-    old_raw_keys = [_sec_align_key(s) for s in old_sec_seq]
-    new_raw_keys = [_sec_align_key(s) for s in new_sec_seq]
-    old_key_counts = Counter(old_raw_keys)
-    new_key_counts = Counter(new_raw_keys)
-
-    def _disambiguate(raw_keys: List[str], counts_here: Counter, counts_other: Counter) -> List[str]:
-        return [
-            k if counts_here[k] <= 1 and counts_other.get(k, 0) <= 1 else f'{k}\x00{i}'
-            for i, k in enumerate(raw_keys)
-        ]
-
-    old_sec_keys = _disambiguate(old_raw_keys, old_key_counts, new_key_counts)
-    new_sec_keys = _disambiguate(new_raw_keys, new_key_counts, old_key_counts)
-
-    old_run_order: List[int] = [0] * len(old_sec_seq)
-    new_run_order: List[int] = [0] * len(new_sec_seq)
-    idx_sec = 0
-    sec_sm = difflib.SequenceMatcher(None, old_sec_keys, new_sec_keys, autojunk=False)
-    for tag, i1, i2, j1, j2 in sec_sm.get_opcodes():
-        if tag == 'equal':
-            for k in range(i2 - i1):
-                old_run_order[i1 + k] = idx_sec
-                new_run_order[j1 + k] = idx_sec
-                idx_sec += 1
-        else:
-            for k in range(i1, i2):
-                old_run_order[k] = idx_sec
-                idx_sec += 1
-            for k in range(j1, j2):
-                new_run_order[k] = idx_sec
-                idx_sec += 1
-
-    def _order_key(r: Dict[str, Any]) -> Tuple[int, int, float]:
-        """(section run, page, fractional position) — one axis for both documents.
-
-        Ordering used to tiebreak on sort_idx alone, with ADDED entries offset by
-        +1_000_000 to mark them as new-document indexes. That offset also made
-        every ADDED in a section sort AFTER every MODIFIED/REMOVED in it, so in a
-        30-page section the LLM read ~40 MODIFIED/REMOVED and only then ~40 ADDED:
-        a REMOVED and the ADDED that replaces it ended up 60 lines apart and could
-        no longer be read as one change. Page number first,
-        then the fractional block position, interleaves both sides by locality.
-        """
-        if r.get('from_new'):
-            run = new_idx_to_run.get(r['sort_idx'])
-            order = new_run_order[run] if run is not None else 999_999
-        else:
-            run = old_idx_to_run.get(r['sort_idx'])
-            order = old_run_order[run] if run is not None else 999_999
-        return order, r.get('page') or 0, r.get('pos') or 0.0
-
-    results.sort(key=_order_key)
-
-    # Same section label, but old and new runs get distinct order slots (repeated labels are kept unmergeable, see
-    # _runs_with_item_map), which put every old-side entry before every new-side one and separated a REMOVED from the
-    # ADDED replacing it. Re-sort each contiguous same-label group by page: purely local, so nothing crosses a
-    # section.
-    i = 0
-    while i < len(results):
-        j = i + 1
-        while j < len(results) and results[j]['sec'] == results[i]['sec']:
-            j += 1
-        results[i:j] = sorted(results[i:j], key=lambda r: (r.get('page') or 0, r.get('pos') or 0.0))
-        i = j
+    results = _sort_for_display(results, old_items, new_items)
 
     out: List[str] = []
     cur_sec = ''
