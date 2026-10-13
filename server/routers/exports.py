@@ -1,7 +1,7 @@
 """Exports router — endpoints for generating and saving formatted analysis outputs.
 
 Handles Excel, PDF, and raw text exports of compare analysis results, and the
-PDF exports of the chatbot (one layout for both: services/infra/pdf_report.py).
+PDF exports of the chatbot (one layout for both: services/infra/pdf_report/).
 Pure helper functions live in services/export_helpers.py (no FastAPI deps) so
 the debug notebook can import them directly without triggering the server
 import chain.

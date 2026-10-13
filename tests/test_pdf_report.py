@@ -1,4 +1,4 @@
-"""PDF exports (server/services/infra/pdf_report.py): layout per kind, Markdown parsing, endpoint."""
+"""PDF exports (server/services/infra/pdf_report/): layout per kind, Markdown parsing, endpoint."""
 
 import pymupdf
 import pytest
