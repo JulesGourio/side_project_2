@@ -1,6 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { CustomThemeProvider } from '@/contexts/ThemeContext';
 import { TopBar } from '@/components/layout/TopBar';
 import { ComparePage } from '@/pages/ComparePage';
 import { ChatPage } from '@/pages/ChatPage';
@@ -57,10 +56,8 @@ function Layout() {
 
 export default function App() {
   return (
-    <CustomThemeProvider>
-      <BrowserRouter>
-        <Layout />
-      </BrowserRouter>
-    </CustomThemeProvider>
+    <BrowserRouter>
+      <Layout />
+    </BrowserRouter>
   );
 }

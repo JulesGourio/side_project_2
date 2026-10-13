@@ -1,7 +1,6 @@
 /* Import fonts and CSS files - imports must come first */
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Montserrat:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&family=Open+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Open+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
 @import "./theme.css";
-@import "./textures.css";
 
 @tailwind base;
 @tailwind components;
@@ -14,9 +13,8 @@
  * - Font imports (Google Fonts)
  * - Typography defaults (h1-h6, p, a)
  * - Custom scrollbar styling
- * - Utility animations
  *
- * COLOR VARIABLES are NOT defined here - see ThemeContext + lib/themes.ts
+ * COLOR VARIABLES are defined in theme.css
  */
 
 @layer base {
@@ -161,109 +159,6 @@
   background-clip: padding-box;
 }
 
-/* Aviation/Aerospace Themed Animations */
-@keyframes float-0 {
-  0%,
-  100% {
-    transform: translateY(0px) translateX(0px);
-    opacity: 0.6;
-  }
-  25% {
-    transform: translateY(-20px) translateX(10px);
-    opacity: 1;
-  }
-  50% {
-    transform: translateY(-40px) translateX(-5px);
-    opacity: 0.8;
-  }
-  75% {
-    transform: translateY(-20px) translateX(-15px);
-    opacity: 1;
-  }
-}
-
-@keyframes float-1 {
-  0%,
-  100% {
-    transform: translateY(0px) translateX(0px) rotate(0deg);
-    opacity: 0.4;
-  }
-  33% {
-    transform: translateY(-30px) translateX(-10px) rotate(120deg);
-    opacity: 0.8;
-  }
-  66% {
-    transform: translateY(-15px) translateX(15px) rotate(240deg);
-    opacity: 0.6;
-  }
-}
-
-@keyframes float-2 {
-  0%,
-  100% {
-    transform: translateY(0px) translateX(0px) scale(1);
-    opacity: 0.5;
-  }
-  50% {
-    transform: translateY(-25px) translateX(8px) scale(1.2);
-    opacity: 0.9;
-  }
-}
-
-@keyframes grid-move {
-  0% {
-    transform: translate(0, 0);
-  }
-  100% {
-    transform: translate(50px, 50px);
-  }
-}
-
-@keyframes radar-pulse {
-  0% {
-    transform: scale(0.8);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1.2);
-    opacity: 0;
-  }
-}
-
-@keyframes constellation-twinkle {
-  0%,
-  100% {
-    opacity: 0.3;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.5);
-  }
-}
-
-@keyframes flight-path {
-  0% {
-    stroke-dashoffset: 1000;
-    opacity: 0;
-  }
-  10% {
-    opacity: 1;
-  }
-  90% {
-    opacity: 1;
-  }
-  100% {
-    stroke-dashoffset: 0;
-    opacity: 0;
-  }
-}
-
-/* Gradient utilities */
-.bg-gradient-radial {
-  background: radial-gradient(ellipse at center, var(--tw-gradient-stops));
-}
-
 /* Tab underline animation */
 @keyframes slideIn {
   from {
@@ -274,4 +169,15 @@
     transform: scaleX(1);
     opacity: 1;
   }
+}
+
+/* Chat streaming indicators */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
 }
