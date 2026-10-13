@@ -1,40 +1,28 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 05 — Sync Vector Search indexes
+# MAGIC # 5_SYNC_INDEX — SYNC VECTOR SEARCH INDEXES
 # MAGIC
 # MAGIC **Description:**
-# MAGIC Last link of the daily chain: triggers a sync on the Delta Sync indexes
-# MAGIC whose source tables were just rewritten by tasks `3_parse`/`4_describe_images`.
+# MAGIC Last link of the chain that writes the chunks: triggers a sync of the Delta Sync indexes whose source tables were just rewritten by tasks
+# MAGIC `3_parse` and `4_describe_images`. An index of `indexes` that does not exist yet is created, not just synced.
+# MAGIC When `build_chunks_full` is on (or `chunks_full_index` is in `indexes`), the table `chunks_full` (`chunks` + `chunks_archive`: every document
+# MAGIC whatever its date, for impact search only) is refreshed by MERGE first.
 # MAGIC
 # MAGIC **Highlighted complexities:**
-# MAGIC Indexes are `pipeline_type = TRIGGERED`: without this step, new chunks sit
-# MAGIC in the Delta table and are never queryable — the rest of the chain would
-# MAGIC have run for nothing.
-# MAGIC
-# MAGIC Self-provisioning: an index in `indexes` that doesn't exist yet is created
-# MAGIC (not just synced) — this task runs `run_as` the environment's owning SP, so
-# MAGIC it already holds whatever grant creating the index needs (no separate
-# MAGIC manual step or elevated personal access required for a new environment).
-# MAGIC
-# MAGIC When `build_chunks_full` is on (or `chunks_full_index` is in `indexes`), the
-# MAGIC table `chunks_full` (`chunks` + `chunks_archive`, every document whatever its
-# MAGIC date — impact search only) is first refreshed by MERGE. The index itself is
-# MAGIC only created/synced when it is listed in `indexes`. Otherwise this notebook is plain
-# MAGIC Vector Search SDK calls — see Outputs for the sync trigger + wait logic.
+# MAGIC The indexes are `pipeline_type = TRIGGERED`: without this task new chunks sit in the Delta table and are never queryable, the rest of the chain
+# MAGIC would have run for nothing. This task runs `run_as` the environment's owning service principal, which already holds the grant needed to
+# MAGIC create an index (no separate manual step for a new environment). Apart from the `chunks_full` MERGE it is plain Vector Search SDK calls.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `5_sync_index`)
 # MAGIC
-# MAGIC **Input Tables Pipeline**
-# MAGIC - `{catalog_schema}.chunks{table_suffix}` + `chunks_archive{table_suffix}` — only to refresh `chunks_full`
-# MAGIC
-# MAGIC **Inputs Reference Data**
-# MAGIC - *(none)*
+# MAGIC **Inputs Data**
+# MAGIC - `{catalog_schema}.chunks{table_suffix}` and `chunks_archive{table_suffix}` — only to refresh `chunks_full`
+# MAGIC - The Vector Search indexes named by `indexes` (or `PARSING_VECTOR_SEARCH_INDEXES`): comma-separated, empty = nothing to do (the DEV case)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{catalog_schema}.chunks_full{table_suffix}` — only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`
-# MAGIC - `{indexes}` (or `{PARSING_VECTOR_SEARCH_INDEXES}`) — comma-separated Vector Search index names, empty = nothing to do (the DEV case, no index deployed there)
-# MAGIC - `{vector_search_endpoint}`/`{embedding_model}`/`{catalog_schema}`/`{table_suffix}` — only read if one of `indexes` doesn't exist yet and needs creating
+# MAGIC - The synced indexes; `vector_search_endpoint`, `embedding_model`, `catalog_schema` and `table_suffix` are only read to create an index
 
 # COMMAND ----------
 
@@ -48,16 +36,31 @@
 
 # MAGIC %md
 # MAGIC # Configuration
-# MAGIC ## Config logger and widgets
-# MAGIC This task is serverless: it has no `PARSING_*` environment variables and cannot import `config.py`, so everything comes from the job parameters as widgets. `indexes` falls back on `PARSING_VECTOR_SEARCH_INDEXES` for an interactive run.
-# MAGIC
-# MAGIC The endpoint, embedding model, catalog and suffix are only read when an index has to be created.
+# MAGIC ## Config Standard Package Imports
 
 # COMMAND ----------
 
 import logging
 import os
 import time
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Project Imports
+# MAGIC `quality` and `tables` live next to this notebook; Databricks puts the notebook folder on `sys.path`, and neither module needs the `PARSING_*` environment variables this serverless task does not have.
+
+# COMMAND ----------
+
+import quality
+from tables import write_table
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config logger
+
+# COMMAND ----------
 
 logger = logging.getLogger("parsing_pipeline.sync_index")
 logger.setLevel(logging.INFO)
@@ -66,6 +69,18 @@ if not logger.handlers:
     _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
     logger.addHandler(_handler)
     logger.propagate = False
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Widgets
+# MAGIC This task is serverless: it has no `PARSING_*` environment variables and cannot import `config.py`, so everything comes from the job parameters. `indexes` falls back on `PARSING_VECTOR_SEARCH_INDEXES` for an interactive run.
+# MAGIC
+# MAGIC The endpoint, embedding model, catalog and suffix are only read when an index has to be created.
+
+# COMMAND ----------
+
+dbutils.widgets.removeAll()
 
 dbutils.widgets.text("indexes", "", "Vector Search indexes (comma-separated)")
 dbutils.widgets.text("wait_minutes", "45", "Max wait for sync completion (minutes, 0 = don't wait)")
@@ -138,7 +153,18 @@ if REFRESH_CHUNKS_FULL:
 
 # MAGIC %md
 # MAGIC # Quality Checks
-# MAGIC #N/A
+# MAGIC ## chunks_full
+# MAGIC The MERGE below deletes every `chunks_full` row missing from the source: an empty source would empty the table and its index (RED). `chunk_id` is the primary key of the index (RED).
+
+# COMMAND ----------
+
+if REFRESH_CHUNKS_FULL:
+    quality.check_dataframe(df_src, "chunks_full", [
+        quality.non_empty(),
+        quality.not_null("chunk_id"),
+        quality.unique("chunk_id"),
+        quality.not_null("chunk_text"),
+    ], logger)
 
 # COMMAND ----------
 
@@ -153,7 +179,7 @@ if REFRESH_CHUNKS_FULL:
     from delta.tables import DeltaTable
 
     if not spark.catalog.tableExists(FULL_TABLE):
-        df_src.write.format("delta").saveAsTable(FULL_TABLE)
+        write_table(df_src, FULL_TABLE, "errorifexists")
         # 60-day history, like the chunk tables: a TRIGGERED sync cannot resume once the Change Data Feed it
         # needs has aged out (VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION).
         spark.sql(f"""

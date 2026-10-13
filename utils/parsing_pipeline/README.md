@@ -3,7 +3,13 @@
 Daily chain: `1_categories` -> `2_manifest` -> `3_parse` (GPU) -> `4_describe_images` (LLM) -> `5_sync_index` -> `6_update_kb_metadata`.
 
 `3_Parse_Pipeline.py` only orchestrates: each phase (scope, file selection, Docling batches, retry, `image_metadata`,
-`processed_files` / `chunks`, writes) is a function in `parse_steps.py`, driver side only.
+`processed_files` / `chunks`, writes) is a function in `parse_steps.py` (scope, selection, parse, retry),
+`build_steps.py` (tables) or `output_steps.py` (writes), driver side only.
+
+Modules: `config.py` (parameters), `utils.py` (worker config, tokens, Spark helpers), `format_parsers.py` (Docling and
+legacy formats), `image_utils.py` (parsing UDF), `image_store.py`, `image_fallbacks.py` (docx/pptx/ppt/scanned PDF),
+`llm_describe.py` (vision LLM), `categories.py`, `selection.py`, `chunking.py`, `tables.py` (`write_table`),
+`quality.py` (RED/AMBER checks, run in each notebook's `# Quality Checks`), `parse_checks.py`.
 
 This README collects the incident/investigation narratives that used to live as
 long inline comments across `resources/parsing_pipeline.job.yml` and the
@@ -138,12 +144,12 @@ Fix, two parts:
   at 17/28 MB need the LLM-OCR fallback a chance to run instead of being
   pre-excluded), `MAX_SIZE_OTHER` (100 MB — antiword/openpyxl/etc., no
   page-rasterization OOM risk). docx/docm/pptx/pptm above the Docling-safe
-  threshold are no longer excluded at all: `image_utils._fallback_parse_docx`/
+  threshold are no longer excluded at all: `image_fallbacks.fallback_parse_docx`/
   `_pptx` reads the zip/XML directly (no rasterization, no OOM risk) and
   gets real text + images out without Docling. Legacy binary `.ppt` (never a
   Docling format — always errors immediately, never rasterizes) belongs in
   the high-ceiling bucket for the same reason, handled by
-  `image_utils._fallback_parse_ppt_legacy`.
+  `image_fallbacks.fallback_parse_ppt_legacy`.
 
 ## uc-not-enabled-single-user
 
@@ -516,7 +522,7 @@ immediate "Unsupported format" error, no attempt made — and unlike docx/pptx
 there's no zip/XML to read.
 
 A byte-accurate MS-PPT record parser needs the full record-type table to tell
-atoms from containers. `image_utils._fallback_parse_ppt_legacy` instead scans
+atoms from containers. `image_fallbacks.fallback_parse_ppt_legacy` instead scans
 the raw "PowerPoint Document" OLE stream for runs of printable UTF-16LE/ASCII
 text (the classic `strings`-style trick) and the "Pictures" stream for
 JPEG/PNG file signatures. Ordering is approximate and some non-content strings
@@ -751,7 +757,7 @@ applied inside the character splitter, and was never passed to the workers anywa
 keeps markdown only. `chunking.py` replaces all of it (pure Python, `tests/test_parsing_chunking.py`),
 adds a character ceiling, marks tables of contents / front matter / repeated text in
 `chunk_content_type`, and builds image passages with their section and caption. Measured first on
-DEV test indexes (`archive/evaluation/rechunk_experiment.py`), applied to UAT by one
+DEV test indexes (the experiment lives in git history at commit f545093, `archive/evaluation/rechunk_experiment.py`), applied to UAT by one
 `full` run (`OPERATIONS.md` D5).
 
 ## uat-table-versions

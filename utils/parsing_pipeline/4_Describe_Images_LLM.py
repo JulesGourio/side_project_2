@@ -1,44 +1,33 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 04 — Describe Images with Vision LLM
+# MAGIC # 4_DESCRIBE_IMAGES — VISION LLM DESCRIPTION AND IMAGE PASSAGES
 # MAGIC
 # MAGIC **Description:**
-# MAGIC Describes `PENDING` images from `image_metadata` using a vision LLM, then
-# MAGIC injects the descriptions as enriched chunks into the `chunks` table.
-# MAGIC
-# MAGIC The phases are functions of `describe_steps.py`.
-# MAGIC
-# MAGIC **Workflow:**
-# MAGIC 1. Load images with status = `PENDING` from `image_metadata`
-# MAGIC 2. Call the vision LLM asynchronously (batched, with concurrency control)
-# MAGIC 3. UPDATE descriptions back into `image_metadata` (targeted row-level updates)
-# MAGIC 4. Build image-based chunks and APPEND/overwrite them into `chunks`
+# MAGIC Describes the `PENDING` images of `image_metadata` with a vision LLM, then injects the descriptions as image passages into the chunk tables.
+# MAGIC The phases are functions of `describe_steps.py`:
+# MAGIC 1. Load the images with status `PENDING` (and the `ERROR` ones, retried) from `image_metadata`
+# MAGIC 2. Call the vision LLM asynchronously (batched, with concurrency control and a rate limiter)
+# MAGIC 3. MERGE the descriptions back into `image_metadata`, chunk by chunk
+# MAGIC 4. Build the image passages and MERGE them into `chunks` / `chunks_archive`
+# MAGIC 5. Promote the `EMPTY_TEXT` documents whose images are now all described
 # MAGIC
 # MAGIC **Highlighted complexities:**
-# MAGIC This notebook has two sequential read-then-write phases (description, then
-# MAGIC chunk injection) where the second phase's read of `image_metadata`
-# MAGIC intentionally happens AFTER the first phase's writes, to pick up the
-# MAGIC freshly-described rows. So not every table read is hoisted into the
-# MAGIC top-level Inputs section below — the second phase's reads stay attached to
-# MAGIC their own Data Transformations subsection, right where they need to run.
-# MAGIC
-# MAGIC **Pre-requisite:** task `3_parse` must run first to populate `image_metadata`.
+# MAGIC Two sequential read-then-write phases (description, then passage injection): the second phase reads `image_metadata` AFTER the
+# MAGIC first one wrote to it, to pick up the freshly described rows. Its reads therefore stay in `# Data Transformations`, not in `# Inputs`.
+# MAGIC Task `3_parse` must have run first to fill `image_metadata`.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `4_describe_images`)
 # MAGIC
-# MAGIC **Input Tables Pipeline**
+# MAGIC **Inputs Data**
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` (max chunk index per IDDOC)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (doc_date)
-# MAGIC
-# MAGIC **Inputs Reference Data**
-# MAGIC - *(none)*
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}` (text passages and max chunk index per IDDOC)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (document metadata for the source prefix)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (description/status columns)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (EMPTY_TEXT -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all of a document's images are described)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (description and status columns)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}` (image passages)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (EMPTY_TEXT -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all the images of a document are described)
 
 # COMMAND ----------
 
@@ -53,10 +42,8 @@
 
 # MAGIC %md
 # MAGIC # Configuration
-# MAGIC ## Config Imports
-# MAGIC No `%pip install`: the dependencies are job-cluster libraries in `parsing_pipeline.job.yml`.
-# MAGIC
-# MAGIC `addPyFile` ships the modules to every executor, which the image placement of Tr. 2 needs for `chunking`.
+# MAGIC ## Config Standard Package Imports
+# MAGIC No `%pip install`: the dependencies are job-cluster libraries in `parsing_pipeline.job.yml`. The repository folder is added to `sys.path` for the driver.
 
 # COMMAND ----------
 
@@ -69,12 +56,21 @@ sys.path.insert(0, REPO_DIR)
 
 from pyspark.sql import functions as F
 
-for _mod in ("chunking.py", "utils.py", "image_utils.py", "selection.py", "config.py"):
-    spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Project Imports
+# MAGIC `addPyFile` ships the modules to every executor, which the image placement of Tr. 2 needs for `chunking`.
+
+# COMMAND ----------
 
 import config as cfg
 import describe_steps
+import quality
 from utils import configure, logger
+
+for _mod in cfg.WORKER_MODULES:
+    spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
 
 # COMMAND ----------
 
@@ -83,6 +79,8 @@ from utils import configure, logger
 # MAGIC `rebuild_image_chunks = true` rewrites the passage of EVERY described image from its stored description (new section, caption, long transcriptions split), without any LLM call. It is not needed after a FULL run of `3_parse`, which already empties the chunk tables.
 
 # COMMAND ----------
+
+dbutils.widgets.removeAll()
 
 dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])
 REBUILD_IMAGE_CHUNKS = dbutils.widgets.get("rebuild_image_chunks") == "true"
@@ -96,10 +94,7 @@ REBUILD_IMAGE_CHUNKS = dbutils.widgets.get("rebuild_image_chunks") == "true"
 # COMMAND ----------
 
 configure(
-    VOLUME_BASE_PATH=cfg.VOLUME_BASE_PATH, LLM_MODEL_ENDPOINT=cfg.LLM_MODEL_ENDPOINT,
-    LLM_MAX_TOKENS=cfg.LLM_MAX_TOKENS, LLM_TEMPERATURE=cfg.LLM_TEMPERATURE,
-    LLM_MAX_RETRIES=cfg.LLM_MAX_RETRIES, LLM_MAX_CONCURRENT=cfg.LLM_MAX_CONCURRENT,
-    USE_TIKTOKEN=cfg.USE_TIKTOKEN, CHARS_PER_TOKEN=cfg.CHARS_PER_TOKEN,
+    VOLUME_BASE_PATH=cfg.VOLUME_BASE_PATH, USE_TIKTOKEN=cfg.USE_TIKTOKEN, CHARS_PER_TOKEN=cfg.CHARS_PER_TOKEN,
 )
 
 try:
@@ -177,13 +172,26 @@ if described_count == 0:
     describe_steps.log_nothing_to_inject()
 else:
     logger.info(f"{described_count} new image chunks to inject into chunk tables.")
-    df_image_chunks = describe_steps.build_image_chunks(df_described)
+    df_image_chunks = describe_steps.build_image_chunks(df_described).cache()
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Quality Checks
-# MAGIC #N/A
+# MAGIC ## Image passages
+# MAGIC `chunk_id` is the key of the MERGE and of the Vector Search index: a duplicate fails the MERGE and a null breaks the sync (RED). A passage without `IDDOC`, `REF` or text cannot be served (RED); `division` is expected on 99 % of them (AMBER). The passages are cached here, so the write below does not compute them again.
+
+# COMMAND ----------
+
+if described_count > 0:
+    quality.check_dataframe(df_image_chunks, "image chunks", [
+        quality.not_null("chunk_id"),
+        quality.unique("chunk_id"),
+        quality.not_null("IDDOC"),
+        quality.not_null("REF"),
+        quality.not_null("chunk_text"),
+        quality.not_null("division", mostly=0.99, severity=quality.AMBER),
+    ], logger)
 
 # COMMAND ----------
 

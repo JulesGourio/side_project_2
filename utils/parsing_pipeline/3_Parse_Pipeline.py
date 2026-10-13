@@ -1,39 +1,34 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 03 — Document Parse Pipeline
+# MAGIC # 3_PARSE — DOCUMENT PARSE AND CHUNK
 # MAGIC
 # MAGIC **Description:**
-# MAGIC Performs the full document parsing and chunking pipeline:
+# MAGIC Parses the documents of the manifest and builds the tables the chat reads. One function per phase, in `parse_steps.py`,
+# MAGIC `build_steps.py` and `output_steps.py`:
+# MAGIC 1. **File selection** — scans the volume folders of the target IDDOCs and keeps the best candidate file per IDDOC
+# MAGIC 2. **Parsing** — converts PDF, DOC(X), PPT(X), ODT, XLS(X)… to Markdown with Docling or a format fallback, saves the detected images to the volume
+# MAGIC 3. **Retry** — re-attempts the failed IDDOCs with their next-best file variant
+# MAGIC 4. **Chunking** — splits the successful parses into passages (section-aware, table-aware)
+# MAGIC 5. **Persistence** — writes `processed_files`, `chunks` / `chunks_archive` and `image_metadata`, then the run health, the change log and the archive notices
 # MAGIC
-# MAGIC 1. **File Selection** — Scans the volume, loads business metadata, ranks candidates per IDDOC
-# MAGIC 2. **Parsing** — Converts documents (PDF, DOC, DOCX, ODT, XLSX…) to Markdown via Docling
-# MAGIC 3. **Image Extraction** — Saves detected images to a UC Volume with deduplication
-# MAGIC 4. **Retry** — Re-attempts failed IDDOCs using the next-best file variant
-# MAGIC 5. **Chunking** — Splits successful parses into semantic chunks (table-aware hybrid strategy)
-# MAGIC 6. **Persistence** — Writes `processed_files`, `chunks`, and `image_metadata` Delta tables
-# MAGIC
-# MAGIC **Dependencies:** `parse_steps.py` (one function per phase below), `utils.py` (parse/chunk engine), `image_utils.py` (image extraction UDF), `selection.py` (file selection & audit).
-# MAGIC
-# MAGIC **Highlighted complexities:** the selection, parse and retry phases all read and write the same checkpoint table, so the notebook stays strictly sequential.
+# MAGIC **Highlighted complexities:**
+# MAGIC The selection, parse and retry phases all read and write the same checkpoint table, so the notebook stays strictly sequential.
+# MAGIC The Docling parse runs on the executors (GPU): the modules listed in `config.WORKER_MODULES` are shipped to them.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `3_parse`, GPU cluster)
 # MAGIC
-# MAGIC **Input Tables Pipeline**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}` (from task `2_manifest`)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.category_reference{PARSING_TABLE_SUFFIX}` (from task `1_categories`)
+# MAGIC **Inputs Data**
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}` (task `2_manifest`), `category_reference{PARSING_TABLE_SUFFIX}` (task `1_categories`)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}._pipeline_checkpoint{PARSING_TABLE_SUFFIX}` (own checkpoint, re-read across phases)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (resume/staleness detection)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (preserve already-described rows across a rebuild)
-# MAGIC - `{PARSING_VOLUME_ROOT_PATH}` (volume listing + binary content)
-# MAGIC
-# MAGIC **Inputs Reference Data**
-# MAGIC - *(none)*
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (resume and revision detection)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (keeps the rows already described across a rebuild)
+# MAGIC - `{PARSING_VOLUME_ROOT_PATH}` (volume listing and binary content)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PARSING_CATALOG_SCHEMA}._pipeline_checkpoint{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` (all divisions)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}`, `chunks_archive_notices{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.parsing_run_health{PARSING_TABLE_SUFFIX}` (one row per run, for the monitoring dashboard)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.document_change_log{PARSING_TABLE_SUFFIX}` (one row per NEW/REVISED document, for the monitoring dashboard)
@@ -42,8 +37,9 @@
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - The phase functions in `parse_steps.py` have no unit tests: they need a Spark session and the UC tables.
-# MAGIC - `parse_steps` keeps run-level state (`INGESTION_RUN_ID`, `JOB_RUN_ID`) as module globals, set once by `set_job_run_id`.
+# MAGIC - The phase functions have no unit test: they need a Spark session and the Unity Catalog tables (the quality rules in `quality.py` and the chunking in `chunking.py` do).
+# MAGIC - `parse_steps` keeps run-level state (`INGESTION_RUN_ID`, `JOB_RUN_ID`) as module globals, set once by `set_job_run_id` and passed on to `build_steps` / `output_steps` as arguments.
+# MAGIC - The quality checks read the lazy DataFrames before the write, so `processed_files` and `image_metadata` are computed once more than the write needs.
 
 # COMMAND ----------
 
@@ -63,7 +59,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC The repository folder goes on `sys.path` for the driver, and `addPyFile` ships the modules to every executor, late joiners included.
+# MAGIC The repository folder goes on `sys.path` for the driver.
 
 # COMMAND ----------
 
@@ -76,22 +72,27 @@ sys.path.insert(0, REPO_DIR)
 
 from pyspark.sql import functions as F
 
-# addPyFile ships the modules to every executor, late-joining ones included; sys.path only covers the driver.
-for _mod in ("chunking.py", "utils.py", "image_utils.py", "selection.py", "config.py"):
-    spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
-
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Config Project Imports
 # MAGIC
-# MAGIC `config` holds every parameter (tables, volumes, chunking, Docling), `parse_steps` the phases below, `utils.configure` and the two worker helpers ship the settings to the executors.
+# MAGIC `config` holds every parameter (tables, volumes, chunking, Docling); `parse_steps`, `build_steps` and `output_steps` the phases below;
+# MAGIC `utils.configure` and the two worker helpers ship the settings to the executors. `addPyFile` ships the modules to every
+# MAGIC executor, late-joining ones included (`sys.path` only covers the driver).
 
 # COMMAND ----------
 
 import config as cfg
+import build_steps
+import output_steps
+import parse_checks
 import parse_steps
+import quality
 from utils import configure, broadcast_config, write_worker_config, logger
+
+for _mod in cfg.WORKER_MODULES:
+    spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
 
 # COMMAND ----------
 
@@ -101,6 +102,8 @@ from utils import configure, broadcast_config, write_worker_config, logger
 # MAGIC The parent job run id is written on every row so `2_manifest` rows and these rows can be correlated.
 
 # COMMAND ----------
+
+dbutils.widgets.removeAll()
 
 dbutils.widgets.text("JOB_RUN_ID", "", "Parent job run_id (correlates with 2_manifest's processed_files rows)")
 parse_steps.set_job_run_id(dbutils.widgets.get("JOB_RUN_ID"))
@@ -136,9 +139,6 @@ configure(
     MIN_CHUNK_TOKENS=cfg.MIN_CHUNK_TOKENS, TARGET_CHUNK_TOKENS=cfg.TARGET_CHUNK_TOKENS,
     MAX_CHUNK_TOKENS=cfg.MAX_CHUNK_TOKENS, MAX_CHUNK_CHARS=cfg.MAX_CHUNK_CHARS,
     CHUNK_OVERLAP_RATIO=cfg.CHUNK_OVERLAP_RATIO,
-    LLM_MODEL_ENDPOINT=cfg.LLM_MODEL_ENDPOINT, LLM_MAX_TOKENS=cfg.LLM_MAX_TOKENS,
-    LLM_TEMPERATURE=cfg.LLM_TEMPERATURE, LLM_MAX_RETRIES=cfg.LLM_MAX_RETRIES,
-    LLM_MAX_CONCURRENT=cfg.LLM_MAX_CONCURRENT,
 )
 
 if IS_SHARED_CLUSTER:
@@ -185,7 +185,7 @@ df_business_meta = spark.read.table(cfg.PARSE_MANIFEST_TABLE).cache()
 
 target_iddocs, revised_iddocs = parse_steps.resolve_parse_scope(df_business_meta)
 if cfg.RUN_MODE != "rechunk":  # a rebuild changes no document: nothing to log as NEW or REVISED
-    parse_steps.log_document_changes(df_business_meta, target_iddocs, revised_iddocs, parse_steps.JOB_RUN_ID)
+    output_steps.log_document_changes(df_business_meta, target_iddocs, revised_iddocs, parse_steps.JOB_RUN_ID)
 
 # COMMAND ----------
 
@@ -257,12 +257,12 @@ else:
 # COMMAND ----------
 
 if num_files == 0:
-    df_full_pipeline = None
+    logger.info("Nothing was parsed - no failed document to retry.")
 elif cfg.ENABLE_RETRY:
-    df_full_pipeline = parse_steps.retry_failed_iddocs(df_matched_full, df_content, df_business_meta)
+    parse_steps.retry_failed_iddocs(df_matched_full, df_content, df_business_meta)
 else:
-    df_full_pipeline = parse_steps.read_checkpoint_deduped()
-    logger.info(f"Retry disabled. {df_full_pipeline.filter(F.col('parse_status') != 'SUCCESS').count()} documents still in error.")
+    n_in_error = parse_steps.read_checkpoint_deduped().filter(F.col("parse_status") != "SUCCESS").count()
+    logger.info(f"Retry disabled. {n_in_error} documents still in error.")
 
 # COMMAND ----------
 
@@ -272,7 +272,7 @@ else:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    df_image_metadata = parse_steps.build_image_metadata(target_iddocs)
+    df_image_metadata = build_steps.build_image_metadata(target_iddocs, parse_steps.INGESTION_RUN_ID)
 
 # COMMAND ----------
 
@@ -283,21 +283,75 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    df_processed_files, df_chunks_all, df_chunks_archive = parse_steps.build_processed_files_and_chunks(
-        target_iddocs, df_image_metadata, revised_iddocs
+    df_processed_files, df_chunks_all, df_chunks_archive = build_steps.build_processed_files_and_chunks(
+        target_iddocs, df_image_metadata, parse_steps.JOB_RUN_ID, revised_iddocs
     )
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Quality Checks
-# MAGIC ## REF mapping consistency
-# MAGIC Reports chunks whose `ref` disagrees with `processed_files`; informational, it does not stop the write.
+# MAGIC Run on the DataFrames before anything is written: a RED failure stops the task and leaves the tables as they were. Each table is read once.
+# MAGIC
+# MAGIC ## REF mapping consistency (AMBER)
+# MAGIC Reports the chunks whose `REF` disagrees with `parse_manifest`, belongs to no manifest row, or disagrees with their own `[Source: …]` prefix; it does not stop the write.
 
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    ref_issues = parse_steps.validate_ref_mapping(df_chunks_all, df_processed_files)
+    parse_checks.check_ref_mapping(spark, df_chunks_all, logger)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## processed_files
+# MAGIC One row per `IDDOC` (RED): the incremental runs and the deletes of the next steps key on it. `ref` and `division` are expected on 99 % of the documents (AMBER).
+
+# COMMAND ----------
+
+if HAS_TARGET_IDDOCS:
+    quality.check_dataframe(df_processed_files, "processed_files", [
+        quality.not_null("IDDOC"),
+        quality.unique("IDDOC"),
+        quality.not_null("parse_status"),
+        quality.not_null("ref", mostly=0.99, severity=quality.AMBER),
+        quality.not_null("division", mostly=0.99, severity=quality.AMBER),
+    ], logger)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## chunks (and chunks_archive)
+# MAGIC `chunk_id` is the primary key of the Vector Search index: a null or a duplicate breaks the sync (RED), checked across `chunks` and `chunks_archive` together. A chunk without `IDDOC`, `REF` or text cannot be served (RED). The search filters on `division` and shows `titre`: expected on 99 % of the passages (AMBER).
+
+# COMMAND ----------
+
+if HAS_TARGET_IDDOCS:
+    quality.check_dataframe(df_chunks_all.unionByName(df_chunks_archive), "chunks", [
+        quality.not_null("chunk_id"),
+        quality.unique("chunk_id"),
+        quality.not_null("IDDOC"),
+        quality.not_null("REF"),
+        quality.not_null("chunk_text"),
+        quality.not_null("division", mostly=0.99, severity=quality.AMBER),
+        quality.not_null("titre", mostly=0.99, severity=quality.AMBER),
+    ], logger)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## image_metadata
+# MAGIC The key is `(IDDOC, image_id)`: the MERGE of the description step fails on a duplicate (RED). An image without a file on the volume (`EXTRACTION_FAILED`) is expected on less than 5 % of the images (AMBER).
+
+# COMMAND ----------
+
+if HAS_TARGET_IDDOCS:
+    quality.check_dataframe(df_image_metadata, "image_metadata", [
+        quality.not_null("IDDOC"),
+        quality.not_null("image_id"),
+        quality.unique("IDDOC", "image_id"),
+        quality.not_null("volume_path", mostly=0.95, severity=quality.AMBER),
+    ], logger)
 
 # COMMAND ----------
 
@@ -308,7 +362,9 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    parse_steps.write_outputs(df_processed_files, df_chunks_all, df_chunks_archive, df_image_metadata, revised_iddocs)
+    output_steps.write_outputs(
+        df_processed_files, df_chunks_all, df_chunks_archive, df_image_metadata, parse_steps.JOB_RUN_ID, revised_iddocs
+    )
 else:
     logger.info("No target IDDOCs - nothing to write.")
 
@@ -321,7 +377,7 @@ else:
 
 # COMMAND ----------
 
-parse_steps.write_archive_notices(parse_steps.build_archive_notices(df_business_meta))
+output_steps.write_archive_notices(build_steps.build_archive_notices(df_business_meta))
 
 # COMMAND ----------
 
@@ -333,4 +389,4 @@ parse_steps.write_archive_notices(parse_steps.build_archive_notices(df_business_
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    parse_steps.flag_ghost_documents()
+    output_steps.flag_ghost_documents()

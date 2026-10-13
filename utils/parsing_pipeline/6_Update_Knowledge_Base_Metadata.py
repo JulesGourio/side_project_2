@@ -1,41 +1,31 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 06 — Update Knowledge Base metadata (Lakebase)
+# MAGIC # 6_UPDATE_KB_METADATA — DOCUMENT CATALOG AND KNOWLEDGE BASE DATE (LAKEBASE)
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Last link of the daily chain. Two writes to Lakebase:
-# MAGIC 1. `doc_catalog` rewritten from `parse_manifest` (every document in scope: REF, title,
-# MAGIC    division, link, current revision and its date) and `chunks` (`in_chat` = the document
-# MAGIC    has passages in the chat index). The app reads it every 30 min
-# MAGIC    (`server/services/infra/doc_catalog.py`): links of the REFs cited in an answer, titles for the
-# MAGIC    title lookup of the chat, revision and date given to the answer model with each document,
-# MAGIC    titles in impact search.
-# MAGIC 2. `knowledge_base_metadata.documents_as_of` (today's date) and `updated_at` (now) —
-# MAGIC    the "documents as of" date shown in the chat UI toolbar (`GET /config/knowledge-base-date`).
+# MAGIC 1. `doc_catalog` rewritten from `parse_manifest` (every document in scope: REF, title, division, link, current revision and its date) and
+# MAGIC    `chunks` (`in_chat` = the document has passages in the chat index). The app reads it every 30 min (`server/services/infra/doc_catalog.py`):
+# MAGIC    links of the REFs cited in an answer, titles for the title lookup of the chat, revision and date given to the answer model with each
+# MAGIC    document, titles in impact search.
+# MAGIC 2. `knowledge_base_metadata.documents_as_of` (today's date) and `updated_at` (now): the "documents as of" date shown in the chat UI toolbar
+# MAGIC    (`GET /config/knowledge-base-date`).
 # MAGIC
 # MAGIC **Highlighted complexities:**
-# MAGIC Lakebase is a Postgres endpoint, not Unity Catalog — unreachable from
-# MAGIC classic job compute over its private endpoint. This task has no cluster
-# MAGIC spec on purpose (serverless `environment_key`), same as `5_sync_index` above.
-# MAGIC
-# MAGIC Depends on `5_sync_index`, not `4_describe_images`: the date should only
-# MAGIC advance once the chunks are actually queryable, not just written to Delta.
+# MAGIC Lakebase is a Postgres endpoint, not Unity Catalog: unreachable from classic job compute over its private endpoint, so this task has no
+# MAGIC cluster spec on purpose (serverless `environment_key`), like `5_sync_index`. It depends on `5_sync_index`, not on `4_describe_images`:
+# MAGIC the date should only advance once the chunks are actually queryable, not just written to Delta.
+# MAGIC `LAKEBASE_DATABASE` may list several databases, comma-separated (the app's and a test app's); empty = skip.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `6_update_kb_metadata`)
 # MAGIC
-# MAGIC **Input Tables Pipeline**
+# MAGIC **Inputs Data**
 # MAGIC - `{CATALOG_SCHEMA}.parse_manifest{TABLE_SUFFIX}`, `{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}`
-# MAGIC
-# MAGIC **Inputs Reference Data**
-# MAGIC - *(none)*
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{LAKEBASE_DATABASE}.doc_catalog` (Lakebase/Postgres, full rewrite in one transaction)
 # MAGIC - `{LAKEBASE_DATABASE}.knowledge_base_metadata` (Lakebase/Postgres, id=1 single row)
-# MAGIC
-# MAGIC `LAKEBASE_DATABASE` may list several databases, comma-separated (e.g. the app's and a
-# MAGIC test app's); empty = skip.
 
 # COMMAND ----------
 
@@ -50,12 +40,28 @@
 
 # MAGIC %md
 # MAGIC # Configuration
-# MAGIC ## Config logger and widgets
-# MAGIC This task is serverless, like `5_sync_index`: no `PARSING_*` environment variables, so the Lakebase target and the parsing tables come from the job parameters. `LAKEBASE_DATABASE` may list several databases, comma-separated (the app's and a test app's); empty means nothing to do.
+# MAGIC ## Config Standard Package Imports
 
 # COMMAND ----------
 
 import logging
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Project Imports
+# MAGIC `quality` lives next to this notebook; Databricks puts the notebook folder on `sys.path`.
+
+# COMMAND ----------
+
+import quality
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config logger
+
+# COMMAND ----------
 
 logger = logging.getLogger("parsing_pipeline.kb_metadata")
 logger.setLevel(logging.INFO)
@@ -64,6 +70,16 @@ if not logger.handlers:
     _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
     logger.addHandler(_handler)
     logger.propagate = False
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Widgets
+# MAGIC This task is serverless, like `5_sync_index`: no `PARSING_*` environment variables, so the Lakebase target and the parsing tables come from the job parameters. `LAKEBASE_DATABASE` may list several databases, comma-separated (the app's and a test app's); empty means nothing to do.
+
+# COMMAND ----------
+
+dbutils.widgets.removeAll()
 
 dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")
@@ -141,13 +157,23 @@ logger.info(f"{len(catalog_rows)} documents in scope, {n_in_chat} with passages 
 
 # MAGIC %md
 # MAGIC # Quality Checks
-# MAGIC ## Catalog not empty
-# MAGIC A manifest that gave no document means an upstream failure; writing it would empty the app's catalog.
+# MAGIC ## doc_catalog rows
+# MAGIC A manifest that gave no document means an upstream failure; writing it would empty the app's catalog (RED). `ref` is the primary key of `doc_catalog` (RED). The title and the division are expected on 99 % of the documents (AMBER).
 
 # COMMAND ----------
 
-if not catalog_rows:
-    raise RuntimeError(f"{MANIFEST_TABLE} gave no document - the catalog would be emptied")
+quality.check_rows(
+    [{"ref": r[0], "title": r[1], "division": r[3]} for r in catalog_rows],
+    f"doc_catalog (from {MANIFEST_TABLE})",
+    [
+        quality.non_empty(),
+        quality.not_null("ref"),
+        quality.unique("ref"),
+        quality.not_null("title", mostly=0.99, severity=quality.AMBER),
+        quality.not_null("division", mostly=0.99, severity=quality.AMBER),
+    ],
+    logger,
+)
 
 # COMMAND ----------
 

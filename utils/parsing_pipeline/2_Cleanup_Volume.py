@@ -4,51 +4,36 @@
 # environment_version = "5"
 # ///
 # MAGIC %md
-# MAGIC # 02 — Cleanup Volume and Build Parse Manifest
+# MAGIC # 2_MANIFEST — CLEANUP VOLUME AND PARSE MANIFEST
 # MAGIC
-# MAGIC Build the `parse_manifest` used by task `3_parse` and reconcile the volume
-# MAGIC root with the current Qualibot scope. The phases are functions of `manifest_steps.py`.
-# MAGIC
-# MAGIC This notebook applies the following filters sequentially:
-# MAGIC
-# MAGIC * **Scope gate** (`courant = 1 AND etat = 7 AND nonvisible = 0` on
-# MAGIC   `gd_doc_latest`): only current, validated, visible documents pass.
-# MAGIC * **Category exclusion** (IDCAT 3798 — ONE_QMS-5S): documents whose
-# MAGIC   principal category belongs to `EXCLUDED_IDCATS` are logged as
+# MAGIC **Description:**
+# MAGIC Builds the `parse_manifest` read by task `3_parse` and reconciles the volume root with the current Qualibot scope.
+# MAGIC The phases are functions of `manifest_steps.py`, applied in this order:
+# MAGIC * **Scope gate** (`courant = 1 AND etat = 7 AND nonvisible = 0` on `gd_doc_latest`): only current, validated, visible documents pass.
+# MAGIC * **Category exclusion** (IDCAT 3798 — ONE_QMS-5S): documents whose principal category belongs to `EXCLUDED_IDCATS` are logged as
 # MAGIC   `SKIPPED_CATEGORY_EXCLUDED` and removed from the parse manifest.
-# MAGIC * **Folder name convention**: only root folders named `D_<IDDOC>` or
-# MAGIC   `Dm_<IDDOC>` are processed (case-insensitive). Other names are ignored
-# MAGIC   because the IDDOC cannot be extracted from them.
-# MAGIC * **Orphan detection**: folders whose extracted IDDOC does not exist in
-# MAGIC   `gd_doc_latest` (nor in the optional fallback table) are kept on the
-# MAGIC   volume but excluded from parsing and logged as `SKIPPED_IDDOC_NOT_FOUND`.
-# MAGIC * **Date cutoff = a parse budget, not an exclusion**: documents published
-# MAGIC   before `DOC_DATE_CUTOFF` stay in the manifest, but only the
-# MAGIC   `ARCHIVE_MAX_DOCS` most recent get `parse_content=True`. `3_parse` routes
-# MAGIC   those to `chunks_archive` (impact search only) instead of the RAG tables.
+# MAGIC * **Folder name convention**: only root folders named `D_<IDDOC>` or `Dm_<IDDOC>` are processed (case-insensitive); the IDDOC cannot be extracted from other names.
+# MAGIC * **Orphan detection**: folders whose IDDOC is not in `gd_doc_latest` (nor in the optional fallback table) stay on the volume,
+# MAGIC   are excluded from parsing and logged as `SKIPPED_IDDOC_NOT_FOUND`.
+# MAGIC * **Date cutoff = a parse budget, not an exclusion**: documents published before `DOC_DATE_CUTOFF` stay in the manifest, but only the
+# MAGIC   `ARCHIVE_MAX_DOCS` most recent get `parse_content=True`; `3_parse` routes those to `chunks_archive` (impact search only).
 # MAGIC
-# MAGIC Physical deletion of out-of-scope folders only happens when `DRY_RUN` is
-# MAGIC set to `non`. Derived-table cleanup (stale chunks, image metadata) always
-# MAGIC runs because it only removes indexed content, not source files.
+# MAGIC **Highlighted complexities:**
+# MAGIC Physical deletion of out-of-scope folders only happens when `DRY_RUN` is `non`. The cleanup of derived tables (stale chunks, image metadata)
+# MAGIC always runs, because it only removes indexed content, not source files.
 # MAGIC
 # MAGIC **Intended Pipeline**
-# MAGIC * Qualibot Parsing Pipeline — Daily (task `2_manifest`)
+# MAGIC - Qualibot Parsing Pipeline — Daily (task `2_manifest`)
 # MAGIC
-# MAGIC **Pipeline Inputs**
-# MAGIC * `{PARSING_CATALOG_SCHEMA}.category_reference{PARSING_TABLE_SUFFIX}`
-# MAGIC * `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}`
+# MAGIC **Inputs Data**
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.category_reference{PARSING_TABLE_SUFFIX}`, `processed_files{PARSING_TABLE_SUFFIX}`
+# MAGIC - `{PARSING_INTRAQUAL_BRONZE}.gd_doc_latest`, `gd_doc_cat_latest`, `gd_cat_latest`, `gd_typdoc_latest`
+# MAGIC - `{PARSING_VOLUME_ROOT_PATH}` volume listing
 # MAGIC
-# MAGIC **Reference Inputs**
-# MAGIC * `{PARSING_INTRAQUAL_BRONZE}.gd_doc_latest`
-# MAGIC * `{PARSING_INTRAQUAL_BRONZE}.gd_doc_cat_latest`
-# MAGIC * `{PARSING_INTRAQUAL_BRONZE}.gd_cat_latest`
-# MAGIC * `{PARSING_INTRAQUAL_BRONZE}.gd_typdoc_latest`
-# MAGIC * `{PARSING_VOLUME_ROOT_PATH}` volume listing
-# MAGIC
-# MAGIC **Outputs**
-# MAGIC * `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}`
-# MAGIC * `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}`
-# MAGIC * `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` / `chunks_archive` / `image_metadata` for stale-IDDOC pruning only
+# MAGIC **Output Tables (Pipeline)**
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}`
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (skip rows)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` / `chunks_archive` / `image_metadata` (stale-IDDOC pruning only)
 
 # COMMAND ----------
 
@@ -56,15 +41,14 @@
 # MAGIC # Technical debt
 # MAGIC - Pruning, un-skip and reconciliation write to Delta tables (`chunks`, `chunks_archive`, `image_metadata`, `processed_files`) in `# Data Transformations`, before the manifest is written: a failure in a later step leaves those tables already pruned.
 # MAGIC - `reconcile_processed_files` logs a failed write to `processed_files` but does not stop the task, so the manifest can be written while the skip rows are not.
-# MAGIC - `manifest_steps.build_manifest` calls the private `selection._normalize_cols_upper`.
 # MAGIC - The `V_QUALIBOT` view filters (`DIFFTOTALE`, confidentiality) are not re-applied here; the scope gate relies on the volume having been filled through that view.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Configuration
-# MAGIC ## Config Imports
-# MAGIC `manifest_steps` holds the phases of this task; `selection` and `config` live next to this notebook. The repository folder is added to `sys.path` because a job task does not do it for a notebook.
+# MAGIC ## Config Standard Package Imports
+# MAGIC The repository folder is added to `sys.path` because a job task does not do it for a notebook.
 
 # COMMAND ----------
 
@@ -77,8 +61,17 @@ sys.path.insert(0, REPO_DIR)
 
 from pyspark.sql import functions as F
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Project Imports
+# MAGIC `manifest_steps` holds the phases of this task; `categories`, `quality`, `tables` and `config` live next to this notebook.
+
+# COMMAND ----------
+
+import categories
 import manifest_steps
-import selection
+import quality
 from utils import logger
 from config import (
     DOC_SCOPE_FILTER, GD_CAT_LATEST, GD_DOC_CAT_LATEST, GD_DOC_FALLBACK, GD_DOC_LATEST,
@@ -104,6 +97,8 @@ spark.conf.set("spark.databricks.remoteFiltering.blockSelfJoins", "false")
 # MAGIC `JOB_RUN_ID` is written on every `processed_files` row so `3_parse` rows and these rows can be correlated.
 
 # COMMAND ----------
+
+dbutils.widgets.removeAll()
 
 dbutils.widgets.dropdown("DRY_RUN", "oui", ["oui", "non"], "DRY_RUN — 'non' to actually delete")
 dbutils.widgets.text("JOB_RUN_ID", "", "Parent job run_id (correlates with 3_parse's processed_files rows)")
@@ -148,7 +143,7 @@ logger.info(f"Scope: {DOC_SCOPE_FILTER} | excluded categories: {sorted(EXCLUDED_
 
 # COMMAND ----------
 
-df_scope_docs = selection.load_scope_docs(spark)
+df_scope_docs = categories.load_scope_docs(spark)
 scope_iddocs = {r.IDDOC for r in df_scope_docs.select("IDDOC").collect()}
 logger.info(f"{len(scope_iddocs)} IDDOCs in the Qualibot perimeter")
 
@@ -290,13 +285,13 @@ manifest_steps.reconcile_processed_files(classified, all_rows.keys(), JOB_RUN_ID
 
 # COMMAND ----------
 
-df_manifest = manifest_steps.build_manifest(classified["keep"])
+df_manifest = manifest_steps.build_manifest(classified["keep"]).cache()
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Quality Checks
-# MAGIC ## Review of the excluded folders
+# MAGIC ## Excluded folders
 # MAGIC Informational: lists what the volume holds that will not be parsed (out of scope, unknown IDDOC, unusual name) so an unexpected exclusion is visible in the run output.
 
 # COMMAND ----------
@@ -312,6 +307,22 @@ if classified["orphan"]:
 
 for r in classified["skip"]:
     logger.info(f"Ignored folder (non-conforming name): {r['name']} ({r['path']})")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## parse_manifest
+# MAGIC `IDDOC` is the key `3_parse` joins on: a duplicate would multiply the rows of the checkpoint (RED), and an empty manifest means an upstream failure (RED). `ref` and `titre` are expected on 99 % of the documents (AMBER).
+
+# COMMAND ----------
+
+quality.check_dataframe(df_manifest, "parse_manifest", [
+    quality.non_empty(),
+    quality.not_null("IDDOC"),
+    quality.unique("IDDOC"),
+    quality.not_null("ref", mostly=0.99, severity=quality.AMBER),
+    quality.not_null("titre", mostly=0.99, severity=quality.AMBER),
+], logger)
 
 # COMMAND ----------
 
@@ -333,3 +344,4 @@ manifest_steps.write_manifest(df_manifest)
 # COMMAND ----------
 
 manifest_steps.delete_out_of_scope_folders(classified["delete"], DRY_RUN)
+
