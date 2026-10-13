@@ -9,15 +9,10 @@ from typing import List, Optional
 from ...services.infra.user import get_user_identity
 
 
-# Cap how many past messages are replayed to the endpoint each turn, so the
-# prompt stays bounded as a conversation grows (this is a RAG assistant — each
-# answer is grounded in retrieval, so long conversational memory matters less).
-# The latest user question is always the last message and is never dropped.
+# Past messages replayed to the engine each turn (answers are grounded in retrieval, so long memory matters less).
 CHAT_MAX_HISTORY = int(os.getenv('CHAT_MAX_HISTORY', '10'))
 
-# Matches the division-scoping directive the client prepends to a question
-# (see client/src/components/chat/division.tsx). Stripped before deriving the
-# session name so the directive never leaks into the thread title.
+# Division-scoping directive the client may prepend to a question; stripped before deriving the thread title.
 _DIVISION_PREFIX_RE = re.compile(r'^\[Division: (?:AS|IS)\][\s\S]*?\n\n')
 _DIVISION_DETECT_RE = re.compile(r'^\[Division: (AS|IS)\]')
 
@@ -33,10 +28,8 @@ def _detect_division(text: str) -> str:
     return m.group(1) if m else 'ALL'
 
 
-# Inline-citation markers are written into the answer text as ``⟦n⟧`` (rare
-# math brackets, U+27E6/U+27E7 — practically never present in source docs) and
-# rendered by the client as a superscript link to source #n. Storing them in
-# the content means a reloaded conversation shows the same inline citations.
+# Inline citations are stored in the answer as ``⟦n⟧`` (U+27E6/U+27E7, absent from source documents) and rendered by
+# the client as a link to source n, so a reloaded conversation shows them too.
 _CITE_MARKER_TMPL = '⟦{n}⟧'
 
 # Regex to protect links to be splitted by databricks agent citations.
@@ -44,62 +37,41 @@ _PROTECTED_SPAN_RE = re.compile(r'\[[^\]]+\]\([^)]+\)|https?://[^\s)\]\'">]+')
 
 def _apply_citation_markers(text: str, citations: List[dict]) -> str:
     """Insert ``⟦n⟧`` markers into ``text`` at each citation's character offset.
-    
-    If the provided offset falls inside a Markdown link or a raw URL, the marker
-    is pushed to the end of that link so it doesn't break the hyper-reference.
+
+    An offset inside a Markdown link or a raw URL is pushed to the end of that link so the link keeps working.
     """
     if not text or not citations:
         return text
-    
     n_chars = len(text)
-    
-    # Link spans of the text: a citation position falling inside one is moved to its end.
     protected_spans = [(m.start(), m.end()) for m in _PROTECTED_SPAN_RE.finditer(text)]
-    
     seen: set = set()
     valid: list = []
-    
     for c in citations:
         try:
             n = int(c['n'])
             pos = int(c['pos'])
         except (KeyError, TypeError, ValueError):
             continue
-            
         pos = max(0, min(pos, n_chars))
-        
         for start, end in protected_spans:
             if start < pos < end:
                 pos = end
-                break  # On sort de la boucle, la position est corrigée
-                
-        if (n, pos) in seen:
-            continue
-        seen.add((n, pos))
-        valid.append((pos, n))
-        
-    # Insert right-to-left; for markers at the same offset keep ascending order
-    # of n once rendered (so a fact cited by 2 and 3 reads "[2][3]").
-    valid.sort(key=lambda t: (t[0], t[1]))
-    
+                break
+        if (n, pos) not in seen:
+            seen.add((n, pos))
+            valid.append((pos, n))
+    # Insert right-to-left; markers at the same offset read in ascending order of n ("[2][3]").
+    valid.sort()
     out = text
     for pos, n in reversed(valid):
         out = out[:pos] + _CITE_MARKER_TMPL.format(n=n) + out[pos:]
-        
     return out
 
 
 def _number_sources(sources: List[dict], citations: List[dict]) -> List[dict]:
-    """Tag each source that is referenced by an inline citation with its 1-based
-    citation number (``n``); leave prose-only sources (re-surfaced from the
-    catalog, never cited inline) without a number.
-
-    The streaming layer numbers citations as the position of their source in the
-    annotation order (1-based), and those annotation sources are always the
-    first entries of ``sources`` — so a source at index ``i`` is cited inline iff
-    ``i + 1`` is among the citation numbers. The chip then shows that same number
-    as the inline ``[n]`` marker; catalog-only sources show just their REF.
-    """
+    """Give each inline-cited source its 1-based citation number ``n``; prose-only sources (re-surfaced from the
+    catalog) get none. The cited sources are the first entries of ``sources``: index ``i`` is cited iff ``i + 1`` is
+    among the citation numbers."""
     cited = {c.get('n') for c in (citations or []) if isinstance(c.get('n'), int)}
     for i, s in enumerate(sources or []):
         if (i + 1) in cited:
@@ -121,20 +93,11 @@ def _trim_history(messages: List[dict]) -> List[dict]:
 
 
 def _with_today_date(messages: List[dict]) -> List[dict]:
-    """Return a COPY of messages with today's date prepended to the last user
-    turn. The answer model has no way to know the current
-    date on its own (it can't call a clock), so date-relative questions
-    ("les documents publiés cette année", "diffusés depuis 2024"...) fail
-    silently otherwise. Injected into the user turn itself (not a 'system'
-    role message): the engine puts its own system message first.
+    """A COPY of messages with today's date prepended to the last user turn, so date-relative questions work (the
+    engine puts its own system message first, hence the user turn).
 
-    Kept language-neutral (plain ISO date, no French/English sentence) —a
-    full "Nous sommes le lundi ..." sentence here was found to
-    bias the model toward answering in French even when the user asked in
-    English, since it's the first text the model reads in the turn.
-
-    Returns a new list — callers must keep using the ORIGINAL `messages` for
-    logging/persistence, so stored chat history doesn't carry this prefix.
+    Plain ISO date, no sentence: a French sentence biased the model toward French answers to English questions.
+    Callers keep the ORIGINAL `messages` for logging and persistence.
     """
     if not messages:
         return messages

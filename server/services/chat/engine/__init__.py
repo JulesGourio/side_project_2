@@ -47,10 +47,8 @@ from .config import (
 )
 from .queries import REWRITE_PROMPT, rewrite_queries, split_bilingual, strip_added_noise
 from .retrieval import _clean_history, group_documents, retrieve_for_turn
-from .search import ChatVsiError
 
 __all__ = [
-    'ChatVsiError',
     'CitationStreamParser',
     'LANGUAGE_REMINDER',
     'REWRITE_PROMPT',
