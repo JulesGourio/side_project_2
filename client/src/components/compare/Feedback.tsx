@@ -1,24 +1,28 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Send, ThumbsDown, ThumbsUp } from 'lucide-react';
-import { FeedbackProps, isFeedbackSubmitted, markFeedbackSubmitted } from './compareShared';
+import type { FeedbackProps } from './types';
+import { isFeedbackSubmitted, markFeedbackSubmitted } from './storage';
+
+type Vote = 'up' | 'down';
 
 /** Thumbs-up / thumbs-down vote with an optional comment on a result card, sent once per comparison. */
 export function useCardFeedback(feedbackProps?: FeedbackProps) {
-  const [vote, setVote] = useState<'up' | 'down' | null>(null);
+  const [vote, setVote] = useState<Vote | null>(null);
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const submissionKey = feedbackProps?.submissionKey;
 
   useEffect(() => {
-    if (!feedbackProps) return;
-    if (isFeedbackSubmitted(feedbackProps.submissionKey)) {
+    if (!submissionKey) return;
+    if (isFeedbackSubmitted(submissionKey)) {
       setDone(true);
     } else {
       setDone(false);
       setVote(null);
       setComment('');
     }
-  }, [feedbackProps?.submissionKey]);
+  }, [submissionKey]);
 
   const submit = async () => {
     if (!vote || submitting || !feedbackProps) return;
@@ -39,6 +43,27 @@ export function useCardFeedback(feedbackProps?: FeedbackProps) {
 
 export type CardFeedbackState = ReturnType<typeof useCardFeedback>;
 
+const VOTE_COLOR: Record<Vote, string> = { up: '#16a34a', down: '#dc2626' };
+
+function ThumbButton({ kind, active, title, onClick }: { kind: Vote; active: boolean; title: string; onClick: () => void }) {
+  const Icon = kind === 'up' ? ThumbsUp : ThumbsDown;
+  const color = VOTE_COLOR[kind];
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="w-7 h-7 rounded-lg flex items-center justify-center border transition-all cursor-pointer"
+      style={{
+        borderColor: active ? color : 'var(--color-border)',
+        color: active ? color : 'var(--color-text-muted)',
+        background: active ? `${color}12` : 'transparent',
+      }}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
 export function FeedbackThumbs({ feedback }: { feedback: CardFeedbackState }) {
   if (!feedback.enabled) return null;
   if (feedback.done) {
@@ -53,30 +78,8 @@ export function FeedbackThumbs({ feedback }: { feedback: CardFeedbackState }) {
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Feedback</span>
-      <button
-        onClick={() => setVote(v => v === 'up' ? null : 'up')}
-        title="Helpful"
-        className="w-7 h-7 rounded-lg flex items-center justify-center border transition-all cursor-pointer"
-        style={{
-          borderColor: vote === 'up' ? '#16a34a' : 'var(--color-border)',
-          color: vote === 'up' ? '#16a34a' : 'var(--color-text-muted)',
-          background: vote === 'up' ? '#16a34a12' : 'transparent',
-        }}
-      >
-        <ThumbsUp className="h-3.5 w-3.5" />
-      </button>
-      <button
-        onClick={() => setVote(v => v === 'down' ? null : 'down')}
-        title="Not helpful"
-        className="w-7 h-7 rounded-lg flex items-center justify-center border transition-all cursor-pointer"
-        style={{
-          borderColor: vote === 'down' ? '#dc2626' : 'var(--color-border)',
-          color: vote === 'down' ? '#dc2626' : 'var(--color-text-muted)',
-          background: vote === 'down' ? '#dc262612' : 'transparent',
-        }}
-      >
-        <ThumbsDown className="h-3.5 w-3.5" />
-      </button>
+      <ThumbButton kind="up" title="Helpful" active={vote === 'up'} onClick={() => setVote(v => (v === 'up' ? null : 'up'))} />
+      <ThumbButton kind="down" title="Not helpful" active={vote === 'down'} onClick={() => setVote(v => (v === 'down' ? null : 'down'))} />
     </div>
   );
 }
@@ -95,14 +98,8 @@ export function FeedbackCommentBox({ feedback }: { feedback: CardFeedbackState }
         onKeyDown={e => { if (e.key === 'Enter') feedback.submit(); }}
         placeholder="Add a comment (optional)…"
         maxLength={1000}
-        className="flex-1 px-3 py-1.5 rounded-lg border text-sm outline-none transition-colors"
-        style={{
-          borderColor: 'var(--color-border)',
-          background: 'var(--color-background)',
-          color: 'var(--color-text-body)',
-        }}
-        onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-accent-primary)')}
-        onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-border)')}
+        className="flex-1 px-3 py-1.5 rounded-lg border text-sm outline-none transition-colors border-[var(--color-border)] focus:border-[var(--color-accent-primary)]"
+        style={{ background: 'var(--color-background)', color: 'var(--color-text-body)' }}
       />
       <button
         onClick={feedback.submit}
