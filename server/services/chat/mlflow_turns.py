@@ -33,7 +33,7 @@ import os
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from . import prompts
 from ..infra.doc_catalog import document_info

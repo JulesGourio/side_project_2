@@ -176,7 +176,7 @@ def _build_diff_keyed(
         out_parts.append(f'Key column: {key_col}')
         if volatile_names:
             out_parts.append(
-                f'Auto-excluded columns (recalculated every update — not shown): '
+                'Auto-excluded columns (recalculated every update — not shown): '
                 + ', '.join(f'"{n}"' for n in volatile_names)
             )
 
