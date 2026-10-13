@@ -1,0 +1,390 @@
+{
+ "img_empty_False_blocks": [
+  "\nNo embedded images added, removed, or modified."
+ ],
+ "img_empty_False_pairs": [],
+ "img_empty_True_blocks": [
+  "\nNo embedded images added, removed, or modified."
+ ],
+ "img_empty_True_pairs": [],
+ "img_identical_False_blocks": [
+  "\nNo embedded images added, removed, or modified."
+ ],
+ "img_identical_False_pairs": [],
+ "img_identical_True_blocks": [
+  "\nNo embedded images added, removed, or modified."
+ ],
+ "img_identical_True_pairs": [],
+ "img_modified_and_added_False_blocks": [
+  "\n1 image(s) MODIFIED (OLD → NEW):",
+  "hamming=17/64 | OLD IMAGE:",
+  "IMAGE",
+  "NEW IMAGE:",
+  "IMAGE",
+  "ADDED image:",
+  "IMAGE"
+ ],
+ "img_modified_and_added_False_pairs": [
+  {
+   "index": 0,
+   "new_page": null,
+   "old_page": null,
+   "status": "modified"
+  },
+  {
+   "index": 1,
+   "new_page": null,
+   "old_page": null,
+   "status": "added"
+  }
+ ],
+ "img_modified_and_added_True_blocks": [
+  "\n1 image(s) MODIFIED (OLD → NEW):",
+  "Page 5 → 5 | hamming=17/64 | OLD IMAGE:",
+  "IMAGE",
+  "NEW IMAGE:",
+  "IMAGE",
+  "ADDED image (page 9):",
+  "IMAGE"
+ ],
+ "img_modified_and_added_True_pairs": [
+  {
+   "index": 0,
+   "new_page": 5,
+   "old_page": 5,
+   "status": "modified"
+  },
+  {
+   "index": 1,
+   "new_page": 9,
+   "old_page": null,
+   "status": "added"
+  }
+ ],
+ "img_orientation_False_blocks": [
+  "\n1 image(s) ORIENTATION CHANGED (flipped/rotated):",
+  "flipH: False → True | IMAGE (new orientation):",
+  "IMAGE"
+ ],
+ "img_orientation_False_pairs": [
+  {
+   "index": 0,
+   "new_page": null,
+   "old_page": null,
+   "status": "orientation_changed"
+  }
+ ],
+ "img_orientation_True_blocks": [
+  "\n1 image(s) ORIENTATION CHANGED (flipped/rotated):",
+  "flipH: False → True | IMAGE (new orientation):",
+  "IMAGE"
+ ],
+ "img_orientation_True_pairs": [
+  {
+   "index": 0,
+   "new_page": 1,
+   "old_page": 1,
+   "status": "orientation_changed"
+  }
+ ],
+ "img_removed_False_blocks": [
+  "REMOVED image:",
+  "IMAGE"
+ ],
+ "img_removed_False_pairs": [
+  {
+   "index": 0,
+   "new_page": null,
+   "old_page": null,
+   "status": "removed"
+  }
+ ],
+ "img_removed_True_blocks": [
+  "REMOVED image (page 3):",
+  "IMAGE"
+ ],
+ "img_removed_True_pairs": [
+  {
+   "index": 0,
+   "new_page": null,
+   "old_page": 3,
+   "status": "removed"
+  }
+ ],
+ "para_continued_None": [
+  "",
+  3
+ ],
+ "para_continued_Page": [
+  "",
+  3
+ ],
+ "para_duplicate_labels_None": [
+  "\n## Preamble\nADDED: TO PATCH\nADDED: TO PATCH\nADDED: TO PATCH\nREMOVED: TO PATCH\nADDED: TO PATCH\nREMOVED: TO PATCH\nADDED: TO PATCH",
+  2
+ ],
+ "para_duplicate_labels_Page": [
+  "\n## Preamble\nADDED [Page 1-12, repeated on 5 pages — recurring header/footer block]: TO PATCH\nREMOVED [Page 7]: TO PATCH\nREMOVED [Page 10]: TO PATCH",
+  2
+ ],
+ "para_empty_new_None": [
+  "\n## Preamble\nREMOVED: Old paragraph with several words inside it",
+  0
+ ],
+ "para_empty_new_Page": [
+  "\n## Preamble\nREMOVED: Old paragraph with several words inside it",
+  0
+ ],
+ "para_empty_old_None": [
+  "\n## Preamble\nADDED: New paragraph with several words inside it",
+  0
+ ],
+ "para_empty_old_Page": [
+  "\n## Preamble\nADDED: New paragraph with several words inside it",
+  0
+ ],
+ "para_identical_None": [
+  "",
+  0
+ ],
+ "para_identical_Page": [
+  "",
+  0
+ ],
+ "para_modal_cross_group_None": [
+  "\n## Preamble\nMODIFIED: The supplier ~~shall~~ **may** deliver the part within ten working days after approval of the drawing.",
+  0
+ ],
+ "para_modal_cross_group_Page": [
+  "\n## Preamble\nMODIFIED: The supplier ~~shall~~ **may** deliver the part within ten working days after approval of the drawing.",
+  0
+ ],
+ "para_modal_same_group_None": [
+  "",
+  1
+ ],
+ "para_modal_same_group_Page": [
+  "",
+  1
+ ],
+ "para_modified_with_relocated_span_None": [
+  "\n## 1. A\nADDED: The operator shall sign the page\nMODIFIED: ~~The operator shall keep~~ The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. ~~and sign the page~~\n\n## 2. B\nADDED: 2. B",
+  0
+ ],
+ "para_modified_with_relocated_span_Page": [
+  "\n## 1. A\nADDED [Page 1]: The operator shall sign the page\nMODIFIED [Page 1→2]: ~~The operator shall keep~~ The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. ~~and sign the page~~\n\n## 2. B\nADDED: 2. B",
+  0
+ ],
+ "para_page_repeats_None": [
+  "\n## Preamble\nMODIFIED: Revision ~~ALPHA~~ **BRAVO** classification field value",
+  0
+ ],
+ "para_page_repeats_Page": [
+  "\n## Preamble\nMODIFIED [Page 1]: Revision ~~ALPHA~~ **BRAVO** classification field value",
+  0
+ ],
+ "para_relocation_None": [
+  "\n## 1. SCOPE\nADDED: Something else entirely different goes here now\n\n## 2. OTHER\nREMOVED: Unrelated short line here ok",
+  0
+ ],
+ "para_relocation_Page": [
+  "\n## 1. SCOPE\nADDED [Page 1]: Something else entirely different goes here now\n\n## 2. OTHER\nREMOVED [Page 2]: Unrelated short line here ok",
+  0
+ ],
+ "para_row_key_None": [
+  "\n## Preamble\nMODIFIED: Torque value check: col a: 1 | col b: 2 **| col c: totally new content here**",
+  0
+ ],
+ "para_row_key_Page": [
+  "\n## Preamble\nMODIFIED [Page 1]: Torque value check: col a: 1 | col b: 2 **| col c: totally new content here**",
+  0
+ ],
+ "para_seed1_None": [
+  "bb0beb04cb440eb421fda39849537500f237b177a0551ee6621231be7c0a1fc1",
+  2487,
+  8
+ ],
+ "para_seed1_Page": [
+  "c5aea5fc54d92c7557d41192e6913fbc4afc5e7f6c61d13d77bc32a689db80f6",
+  2658,
+  8
+ ],
+ "para_seed2_None": [
+  "779252d343b30a74ec47d2f058b82d4e76d2414f29fffd4bfd2b2c84f07dd992",
+  2422,
+  8
+ ],
+ "para_seed2_Page": [
+  "cbf99cc66e4d2552ce9ddb8442014bf23eb88454da6d22071f2cf5102c6eaaba",
+  2602,
+  8
+ ],
+ "para_seed3_None": [
+  "d9aed181258f8e5421062e754a841c052ec14985b0aae2432fe3b0978965a95a",
+  2910,
+  8
+ ],
+ "para_seed3_Page": [
+  "12817dbf7b82763497eeeb94546d8ccc1458ab0de1067e5e0932433af4e1263f",
+  3099,
+  8
+ ],
+ "para_seed4_None": [
+  "f84fc4ba416bfa591a0fe792eabfbd2be12b0c5f4963e0008f32dd870afe786f",
+  2603,
+  8
+ ],
+ "para_seed4_Page": [
+  "c8cd8b707983360b7a37b0cd1a1c5e301a6f32c39b9b07e8e1b6fa824d60b95e",
+  2756,
+  8
+ ],
+ "para_seed5_None": [
+  "780e06c432b3199946c93f64b854fe51e714a0334790b86e3d039e4b30007685",
+  2559,
+  7
+ ],
+ "para_seed5_Page": [
+  "9f4f512cfed39363e3c52a618a64b03ce342ba2e12cba8149cec57f05a2862f3",
+  2730,
+  7
+ ],
+ "para_seed6_None": [
+  "cb7210b3b7af682ff35ce65f5d56f0c2b2d345344afdb2b9502f501c96ee3dac",
+  2653,
+  7
+ ],
+ "para_seed6_Page": [
+  "44c8a1dd052a72f452be0dfb612110d179c1ceb2e1e5694a6705d90c8f4d36de",
+  2815,
+  7
+ ],
+ "para_seed7_None": [
+  "031a26f212958a683232f4efc28db242f0068ef4083a7280a8950f2e73f88941",
+  2844,
+  8
+ ],
+ "para_seed7_Page": [
+  "302221a5825974eeca393dda3ea256a308ce37cc814d334b3d600281777fec44",
+  3024,
+  8
+ ],
+ "para_seed8_None": [
+  "d8a7d69062fb0eb091b403d1ca5735d0a8d70b7da0862878df5d8597e70854dc",
+  2324,
+  8
+ ],
+ "para_seed8_Page": [
+  "3399b76c47da8e1f3010722b38ace58190763f7718c6a4d617388734ea089dd4",
+  2486,
+  8
+ ],
+ "para_systemic_substitution_None": [
+  "\n## Preamble\nMODIFIED: Paragraph 1 refers to the ~~ANNEX~~ **APPENDIX** section and the ~~ANNEX~~ **APPENDIX** list for details [same substitution repeated in 6 more entries — 'annex' -> 'appendix']",
+  0
+ ],
+ "para_systemic_substitution_Page": [
+  "\n## Preamble\nMODIFIED [Page 1]: Paragraph 1 refers to the ~~ANNEX~~ **APPENDIX** section and the ~~ANNEX~~ **APPENDIX** list for details [same substitution repeated in 6 more entries — 'annex' -> 'appendix']",
+  0
+ ],
+ "para_toc_None": [
+  "\n## Preamble\nMODIFIED: 1. SECTION 1 ........ ~~4~~ **5**\nMODIFIED: 2. SECTION 2 ........ ~~5~~ **6**\nMODIFIED: 3. SECTION 3 ........ ~~6~~ **7**\nMODIFIED: 4. SECTION 4 ........ ~~7~~ **8**\nMODIFIED: 5. SECTION 5 ........ ~~8~~ **9**\nMODIFIED: 6. SECTION 6 ........ ~~9~~ **10**\nMODIFIED: 7. SECTION 7 ........ ~~10~~ **11**",
+  0
+ ],
+ "para_toc_Page": [
+  "\n## Preamble\nMODIFIED: 1. SECTION 1 ........ ~~4~~ **5**\nMODIFIED: 2. SECTION 2 ........ ~~5~~ **6**\nMODIFIED: 3. SECTION 3 ........ ~~6~~ **7**\nMODIFIED: 4. SECTION 4 ........ ~~7~~ **8**\nMODIFIED: 5. SECTION 5 ........ ~~8~~ **9**\nMODIFIED: 6. SECTION 6 ........ ~~9~~ **10**\nMODIFIED: 7. SECTION 7 ........ ~~10~~ **11**",
+  0
+ ],
+ "section_continued": [
+  "\n## 3. INSPECTION\nREMOVED: The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. \nREMOVED: 3. INSPECTION (Continued)\nREMOVED: More text continues here after the break\nADDED: The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. More text continues here after the break",
+  0
+ ],
+ "section_duplicate_labels": [
+  "ADDED: TO PATCH [Page 3]\nREMOVED: TO PATCH [Page 4]\nADDED: TO PATCH [Page 6]\nREMOVED: TO PATCH [Page 7]\nADDED: TO PATCH [Page 9]\nREMOVED: TO PATCH [Page 10]\nADDED: TO PATCH [Page 12]\nADDED: TO PATCH [Page 12]",
+  0
+ ],
+ "section_empty_new": [
+  "REMOVED: Old paragraph with several words inside it",
+  0
+ ],
+ "section_empty_old": [
+  "ADDED: New paragraph with several words inside it",
+  0
+ ],
+ "section_identical": [
+  "",
+  0
+ ],
+ "section_modal_cross_group": [
+  "",
+  1
+ ],
+ "section_modal_same_group": [
+  "",
+  1
+ ],
+ "section_modified_with_relocated_span": [
+  "\n## 1. A\nREMOVED: The operator shall keep The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. and sign the page [Page 1]\nADDED: The operator shall sign the page [Page 1]\nADDED: 2. B\nADDED: The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. [Page 2]",
+  0
+ ],
+ "section_page_repeats": [
+  "REMOVED: Revision ALPHA classification field value [Page 1]\nREMOVED: Revision ALPHA classification field value [Page 2]\nREMOVED: Revision ALPHA classification field value [Page 3]\nREMOVED: Revision ALPHA classification field value [Page 4]\nREMOVED: Revision ALPHA classification field value [Page 5]\nADDED: Revision BRAVO classification field value [Page 1]\nADDED: Revision BRAVO classification field value [Page 2]\nADDED: Revision BRAVO classification field value [Page 3]\nADDED: Revision BRAVO classification field value [Page 4]\nADDED: Revision BRAVO classification field value [Page 5]",
+  0
+ ],
+ "section_relocation": [
+  "\n## 1. SCOPE\nREMOVED: The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. [Page 1]\nADDED: Something else entirely different goes here now [Page 1]\n\n## 2. OTHER\nREMOVED: Unrelated short line here ok [Page 2]\nADDED: The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. The operator shall record every torque value measured on the primary fastener assembly and verify the result against the drawing before delivery. [Page 2]",
+  0
+ ],
+ "section_row_key": [
+  "REMOVED: Torque value check: col a: 1 | col b: 2 [Page 1]\nADDED: Torque value check: col a: 1 | col b: 2 | col c: totally new content here [Page 1]",
+  0
+ ],
+ "section_seed1": [
+  "0722a73efac81e6094a9202c3cf3f48e6343fcaf30668b9e43e9a79064877a32",
+  9008,
+  1
+ ],
+ "section_seed2": [
+  "6140fa2a904dcc766f956b2d6ea34751050b6db559bec77915d51ca414f2b988",
+  11304,
+  0
+ ],
+ "section_seed3": [
+  "cad951c648a8d8255cf860f62acea161be0a6d7d3b4539cecee66c524d6f0090",
+  11584,
+  1
+ ],
+ "section_seed4": [
+  "c6c9ebd4e63ad184de65019bc6d15b8f65513246fab09a43caec2f500e802dd1",
+  10929,
+  0
+ ],
+ "section_seed5": [
+  "aa91a78424314550bb9db7db4a852f8d1f4856b4c089818158b70e436cd51c0a",
+  14577,
+  0
+ ],
+ "section_seed6": [
+  "1678322ac84f63dbd09f3dac2db6cff16a0b84475b03910b4d7489ce65364837",
+  11423,
+  0
+ ],
+ "section_seed7": [
+  "c8459d456cdc2202596deb30b4c0f8864e755ce9ea8122dd76a2d7c16bd310ee",
+  12691,
+  0
+ ],
+ "section_seed8": [
+  "d7b79e31ebab57e99c1375664b9a96fbea730599d581e5d51f1a45b599bc2464",
+  13876,
+  0
+ ],
+ "section_systemic_substitution": [
+  "REMOVED: Paragraph 1 refers to the ANNEX section and the ANNEX list for details [Page 1]\nREMOVED: Paragraph 2 refers to the ANNEX section and the ANNEX list for details [Page 2]\nREMOVED: Paragraph 3 refers to the ANNEX section and the ANNEX list for details [Page 3]\nREMOVED: Paragraph 4 refers to the ANNEX section and the ANNEX list for details [Page 4]\nREMOVED: Paragraph 5 refers to the ANNEX section and the ANNEX list for details [Page 5]\nREMOVED: Paragraph 6 refers to the ANNEX section and the ANNEX list for details [Page 6]\nREMOVED: Paragraph 7 refers to the ANNEX section and the ANNEX list for details [Page 7]\nADDED: Paragraph 1 refers to the APPENDIX section and the APPENDIX list for details [Page 1]\nADDED: Paragraph 2 refers to the APPENDIX section and the APPENDIX list for details [Page 2]\nADDED: Paragraph 3 refers to the APPENDIX section and the APPENDIX list for details [Page 3]\nADDED: Paragraph 4 refers to the APPENDIX section and the APPENDIX list for details [Page 4]\nADDED: Paragraph 5 refers to the APPENDIX section and the APPENDIX list for details [Page 5]\nADDED: Paragraph 6 refers to the APPENDIX section and the APPENDIX list for details [Page 6]\nADDED: Paragraph 7 refers to the APPENDIX section and the APPENDIX list for details [Page 7]",
+  0
+ ],
+ "section_toc": [
+  "REMOVED: 1. SECTION 1 ........ 4\nREMOVED: 2. SECTION 2 ........ 5\nREMOVED: 3. SECTION 3 ........ 6\nREMOVED: 4. SECTION 4 ........ 7\nREMOVED: 5. SECTION 5 ........ 8\nREMOVED: 6. SECTION 6 ........ 9\nREMOVED: 7. SECTION 7 ........ 10\nADDED: 1. SECTION 1 ........ 5\nADDED: 2. SECTION 2 ........ 6\nADDED: 3. SECTION 3 ........ 7\nADDED: 4. SECTION 4 ........ 8\nADDED: 5. SECTION 5 ........ 9\nADDED: 6. SECTION 6 ........ 10\nADDED: 7. SECTION 7 ........ 11",
+  0
+ ]
+}

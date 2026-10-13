@@ -83,7 +83,7 @@ def test_french_same_group_modal_swap_stays_filtered():
 # --- Truncated diff ---
 
 def test_truncated_diff_produces_a_user_warning(monkeypatch):
-    monkeypatch.setattr('server.services.compare.processors._diff_engines._MAX_DIFF_CHARS', 50)
+    monkeypatch.setattr('server.services.compare.processors._diff_engines.text._MAX_DIFF_CHARS', 50)
     text = truncate_diff('ADDED: ' + 'x' * 200)
     assert DIFF_TRUNCATED_MARKER in text
     messages = [{'role': 'system', 'content': 'prompt'},
