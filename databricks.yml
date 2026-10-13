@@ -133,7 +133,6 @@ sync:
     - "**/*.pyc"
     - ".venv/**"
     - "**/*.ipynb"               # notebooks (debug_prompt.ipynb embeds base64 images — ~12MB)
-    - "utils/dev/**"              # local debug/dev-only scripts (debug_prompt.py etc.), never deployed
     - "debug_results/**"
     - "files_to_compare/**"
     - "debug_images/**"

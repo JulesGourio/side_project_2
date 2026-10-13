@@ -40,10 +40,6 @@ Thumbs.db
 # debugging artifacts only, got swept into a UAT deploy (2026-07-07).
 .playwright-mcp/
 
-# Staging area for utils/deploy/pull_from_uat.ps1 — raw export of the UAT
-# workspace source folder, reviewed/merged by hand, never committed as-is.
-.uat_pull/
-
 files_to_compare/
 debug_images/
 debug_results/

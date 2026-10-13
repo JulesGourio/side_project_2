@@ -92,7 +92,6 @@ try {
             --exclude 'debug_images/**' `
             --exclude 'lakebase_export/**' `
             --exclude '**/*.ipynb' `
-            --exclude 'utils/dev/**' `
             --exclude '.databricks/**' `
             --exclude '.playwright-mcp/**' `
             --exclude 'Intraqual_files/**' `
