@@ -2,12 +2,12 @@
 
 Ce qui a été mesuré sur le chatbot : la configuration gardée (= le code actuel), les résultats qui ont décidé, ce qui a
 été écarté, ce qui reste à tester. Le journal complet des essais (configurations KA, vague 3, audit détaillé du
-parsing P1 à P16, prix des modèles) est dans l'historique du dépôt, à la version de ce fichier au commit `bbb1016`.
+parsing P1 à P16, prix des modèles) est dans l'historique du dépôt, à la version de ce fichier au commit `f545093`.
 
 Code : `server/services/chat/engine.py` (+ `chat/llm.py`, `translation_bridge.py`). Notebooks de mesure gardés :
 `utils/evaluation/retrieval_eval.py` (recherche seule) et `pairwise_answers.py` (réponses côte à côte) ;
 `load_test_chat.py` et `load_test_vector_search.py` (charge). Le code des variantes testées puis écartées
-(`chat_vsi_rerank.py`, `golden_eval_ka_vs_vsi.py`, `rechunk_experiment.py`…) a été supprimé du dépôt : commit `bbb1016`.
+(`chat_vsi_rerank.py`, `golden_eval_ka_vs_vsi.py`, `rechunk_experiment.py`…) a été supprimé du dépôt : commit `f545093`.
 Robustesse (secours, relances) : `docs/chat_robustesse_2026-10.md`.
 
 # Partie 1 — Ce qu'on garde
@@ -89,7 +89,7 @@ Ils ne figurent plus dans le code.
 
 | Piste | Ce que c'est | Où en est le code |
 |---|---|---|
-| E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € pour environ 6 000 documents | Le script d'essai est supprimé du dépôt (commit `bbb1016`) |
+| E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € pour environ 6 000 documents | Le script d'essai est supprimé du dépôt (commit `f545093`) |
 | E2 — contexte par passage | Une ou deux phrases en tête de chaque passage pour le situer (méthode « Contextual Retrieval »). ≈ 50 € | Idem |
 | `v2c` — sans préfixe `[Source: …]` | Mesure l'effet du préfixe sur la recherche (jamais mesuré sur la recherche : seule trace, un test local sur 3 documents) | Idem |
 | **Nombre de passages** | Jusqu'à 3 × 12 reclassés + 10 bruts, sans plafond. Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), la comparaison des réponses reste à faire (§ 5) | Réglages `CHAT_RERANK_TOP_K`, `CHAT_RAW_TOP_K`, `CHAT_MAX_SEARCH_PASSAGES` ; `operations_dev.md`, bloc T |

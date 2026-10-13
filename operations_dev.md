@@ -9,7 +9,7 @@ déployer est celui de cette branche.
 
 Mis à jour le 2026-10-13 : le fichier est réduit à ce qui reste vrai et utile. **Suivre le bloc 0 (ordre complet).**
 Les anciens blocs (Knowledge Assistants, tables `_v1`, notation `score_production_qa`, comparaison KA contre VSI, test de
-découpage) sont supprimés du fichier ; ils sont dans l'historique du dépôt (commit `bbb1016`).
+découpage) sont supprimés du fichier ; ils sont dans l'historique du dépôt (commit `f545093`).
 Rien de ce qui suit n'a été confirmé comme fait par Claude : seul ce qui est coché l'est.
 
 ## Décisions (2026-10-05, mises à jour)

@@ -231,7 +231,7 @@ prévenir, je change la valeur, vous redéployez.
   ```
 
 - [ ] **D3. Règle « documents archivés » dans le chatbot** (avant D4) : la règle écrite pour le
-  KA (`ka_profiles.py`, supprimé du dépôt, voir le commit bbb1016) doit passer dans
+  KA (`ka_profiles.py`, supprimé du dépôt, voir le commit f545093) doit passer dans
   `server/prompts/chat/system/base.md`. Me prévenir : je l'ajoute, vous redéployez l'app.
 
 - [ ] **D4. Mettre les fiches dans l'index du chatbot** (après D3 et D5) : je passe
@@ -343,7 +343,7 @@ prévenir, je change la valeur, vous redéployez.
     ```
 
     Le job de notation `D_1_Qualibot_Score_Production_Qa_Uat` n'est plus dans le bundle (son code est
-    supprimé du dépôt, voir le commit bbb1016) : le prochain `bundle deploy -t qualibot-uat` (avec ton
+    supprimé du dépôt, voir le commit f545093) : le prochain `bundle deploy -t qualibot-uat` (avec ton
     accord) le supprime. Son remplaçant est `utils/evaluation/score_chat_traces.py`.
 
   - [ ] **D5.8c. Révisions des documents dans le catalogue** (après D5.7 : c'est l'app qui ajoute
