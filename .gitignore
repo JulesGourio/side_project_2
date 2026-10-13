@@ -1,0 +1,108 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+.ruff_cache/
+
+# Node
+client/node_modules/
+client/.vite/
+
+# Scratch export artifacts (utils/databricks_ops/lakebase_sync/copy_dev_tables_to_uat_v2.py) —
+# reproducible, and too large for Databricks Apps' 10MB per-file deploy limit.
+dev_to_uat_v2_export/
+utils/databricks_ops/dev_to_uat_v2_export/
+
+# Scratch intraqual scraping artifacts (download_intraqual.py / manual restage) —
+# already uploaded to the target UC volume, not app source. Slowed/broke a
+# UAT app deploy by getting swept into the sync (2026-07-07).
+intraqual_downloads_missing/
+intraqual_missing_staged/
+
+# Environment
+.env.local
+.env
+
+# IDE
+# .vscode/ is intentionally NOT ignored — tasks.json must ship with the repo
+.idea/
+.claude
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright MCP session traces (browser_snapshot/console dumps) — local
+# debugging artifacts only, got swept into a UAT deploy (2026-07-07).
+.playwright-mcp/
+
+# Staging area for utils/deploy/pull_from_uat.ps1 — raw export of the UAT
+# workspace source folder, reviewed/merged by hand, never committed as-is.
+.uat_pull/
+
+files_to_compare/
+debug_images/
+debug_results/
+sql_data/
+# utils/databricks_ops/ : on versionne les .py (outils Databricks), on ignore les données générées
+utils/databricks_ops/*.json
+utils/databricks_ops/*.jsonl
+utils/databricks_ops/*.csv
+utils/databricks_ops/lakebase_export/
+utils/databricks_ops/temp_processed_files/
+lakebase_export/
+
+# Intraqual — données locales, ne pas versionner
+Intraqual_files/
+intraqual_downloads/
+intraqual_extracted/
+intraqual_*.csv
+intraqual_*.json
+# Raw intraqual export — only the slim server/data/doc_catalog.json (built by
+# utils/deploy/build_doc_catalog.py) is committed and shipped.
+intraqual_*.jsonl
+scripts/.intraqual_profile/
+scripts/intraqual_*.csv
+scripts/download_intraqual.py
+scripts/scrap_ids_intraqual.py
+scripts/unzip_intraqual.py
+scripts/upload_intraqual.py
+scripts/_test_direct_head.py
+scripts/_test_docview_head.py
+
+# Données / feedbacks locaux
+user_feedbacks/
+test_prompt/
+
+# Fichiers Office et archives
+*.xlsx
+*.xls
+*.zip
+
+# Office temp/lock files (Windows)
+~$*
+
+debug/
+
+# Generated per-env vars (COMPARE_VOLUME_PATH, CHAT_ENDPOINT_*) written by
+# deploy_qualibot.ps1 and uploaded to the workspace — not to be committed.
+target_config.env
+
+# Generated typings (IDE stubs — not handwritten)
+typings/
+
+# Translator/ : ancien prototype, feature migrée vers le repo qualibot-translate
+# (voir project_qualibot_translate_extraction.md). Dossier local non nettoyé
+# (archivage encore à faire) — on continue d'ignorer ses gros artefacts
+# générés/binaires (docx source/traduits, rapports HTML, workbench par job).
+Translator/reports/
+Translator/Sample Docs/
+Translator/Translated/
+Translator/workbench/
+Translator/_inspect/
+# Edge browser profile used by intraqual scraping (cache/cookies) - never commit
+utils/deploy/.intraqual_profile/

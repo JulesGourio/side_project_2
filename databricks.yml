@@ -1,0 +1,1228 @@
+﻿# Databricks Asset Bundle (DABs) — QualiBOT
+#
+# Deploy via script: .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat|uat-test|prod
+
+bundle:
+  name: qualibot
+
+include:
+  - resources/*.yml
+
+variables:
+  app_name:
+    default: "qualibot"
+    description: "Unique name for the Databricks App"
+  app_write_catalog:
+    description: The write catalog
+    default: dev_lab
+  app_write_schema:
+    description: The write schema
+    default: lab_jules
+  app_volume_name:
+    description: "Name of the main storage volume"
+    default: doc_compare
+  app_proj_catalog:
+    description: "Project catalog (UC experiments, traces, eval assets)"
+    default: ${var.app_write_catalog}
+  app_proj_schema:
+    description: "Project schema inside app_proj_catalog"
+    default: ${var.app_write_schema}
+
+  # ---------------------------------------------------------------------------
+  # Parsing pipeline
+  # ---------------------------------------------------------------------------
+  parsing_node_type:
+    description: "(legacy) Node type for the parsing job cluster"
+    default: "r6idn.2xlarge"
+  parsing_gpu_node_type:
+    description: "GPU node type for the Docling parse cluster (g4dn.4xlarge = T4 64Go)"
+    default: "g4dn.4xlarge"
+  parsing_describe_node_type:
+    description: "Small CPU node for the LLM image-description task (I/O-bound)"
+    default: "m5d.xlarge"
+  parsing_num_workers:
+    description: "Number of GPU workers for the parse cluster"
+    default: "2"
+  parsing_run_mode:
+    description: "Parsing run mode: 'incremental' (new docs only) or 'full' (rebuild all)"
+    default: "incremental"
+  parsing_parse_filter:
+    description: "Comma-separated IDDOC list to restrict a run to (empty = no filter, normal mode). Override via --var for a one-off targeted test run."
+    default: ""
+  parsing_table_suffix:
+    description: "Suffix appended to every WRITE target table (checkpoint, chunks, image_metadata, processed_files, audit, retry/rag temp tables). Empty = real tables. Override via --var (e.g. '_test') for a one-off validation run that never touches production tables."
+    default: ""
+  intraqual_source_catalog_schema:
+    description: "catalog.schema of the Intraqual landing-zone stack tables (gd_*_stack)"
+    default: "prod_landingzone.intraqual"
+  intraqual_bronze_catalog_schema:
+    description: >-
+      catalog.schema of the Intraqual bronze materialized views (gd_*_latest) —
+      the pipeline's real metadata source. prod_bronze became official on
+      2026-07-27; dev_bronze had stopped refreshing on 2026-07-21.
+    default: "prod_bronze.intraqual"
+  intraqual_suffix:
+    description: "Suffix for Intraqual tables (empty by default)"
+    default: ""
+  intraqual_volume_root:
+    description: "Volume path containing the raw Intraqual D_XXXXX document folders"
+    default: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
+  parsing_offline_models_path:
+    description: >-
+      Volume path to the offline Docling/embedding models. Per-environment —
+      each workspace's compute can only reach volumes in its own metastore
+      catalogs, never a different environment's (UAT cannot read dev_landingzone).
+      DEV's volume has an extra nested docling_models/ subfolder that UAT's
+      copy does not; the two paths are not the same suffix on a different catalog.
+    default: "/Volumes/dev_landingzone/qualibot/docling_models/docling_models"
+  parsing_max_source_staleness_hours:
+    description: >-
+      00b fails the run if an Intraqual source table hasn't been refreshed within
+      this window. 0 disables the check (catch-up run on a stalled ingestion).
+    default: "36"
+  parsing_vector_search_indexes:
+    description: >-
+      Comma-separated Vector Search index names synced by task 5_sync_index.
+      Empty = nothing to sync (DEV has no index deployed).
+    default: ""
+  parsing_lakebase_database:
+    description: >-
+      Lakebase database updated by task 6_update_kb_metadata with the daily
+      run's documents_as_of/updated_at. Empty = skip (DEV has no Qualibot app/
+      Lakebase database in service, unlike qualibot-uat/qualibot-prod).
+    default: ""
+  parsing_schedule_cron:
+    description: "Quartz cron for the daily parsing run (Europe/Paris)"
+    default: "0 0 4 * * ?"
+  parsing_schedule_pause:
+    description: "PAUSED | UNPAUSED for the daily parsing schedule"
+    default: "PAUSED"
+  parsing_job_activity_tag:
+    description: >-
+      activity-type tag value, matching the org-wide {env}-job convention
+      used by other jobs in the shared UAT/PROD workspaces (see e.g.
+      D_0_intraqual_documents_sync's activity-type=uat-job/prod-job tag).
+    default: "dev-job"
+
+sync:
+  include:
+    - "target_config.env"        # gitignored but must reach the workspace (per-env overrides)
+  exclude:
+    - "~$*"                      # Excel/Word lock files (Windows, file open in Office)
+    - "client/src/**"            # frontend source — only built output (client/out) is needed
+    - "client/public/**"         # source assets duplicated in client/out after build
+    - "client/node_modules/**"
+    - ".git/**"
+    - ".databricks/**"           # local CLI cache — contains 64MB+ terraform binaries
+    - "__pycache__/**"
+    - "**/*.pyc"
+    - ".venv/**"
+    - "**/*.ipynb"               # notebooks (debug_prompt.ipynb embeds base64 images — ~12MB)
+    - "utils/dev/**"              # local debug/dev-only scripts (debug_prompt.py etc.), never deployed
+    - "debug_results/**"
+    - "files_to_compare/**"
+    - "debug_images/**"
+    - "Intraqual_files/**"
+    - "intraqual_downloads/**"
+    - "intraqual_extracted/**"
+    - "intraqual_*.csv"
+    - "intraqual_*.json"
+    - "intraqual_*.jsonl"        # raw export — only server/data/doc_catalog.json ships
+    - "utils/deploy/intraqual_*.csv"
+    - "utils/deploy/.intraqual_profile/**"
+    - "utils/deploy/download_intraqual.py"
+    - "utils/deploy/scrap_ids_intraqual.py"
+    - "utils/deploy/unzip_intraqual.py"
+    - "utils/deploy/upload_intraqual.py"
+    - "utils/deploy/_test_direct_head.py"
+    - "utils/deploy/_test_docview_head.py"
+    - "user_feedbacks/**"
+    - "test_prompt/**"
+    - "**/*.xlsx"
+    - "**/*.xls"
+    - "**/*.zip"
+
+resources:
+  apps:
+    doc-compare:
+      name: ${var.app_name}
+      description: "QualiBOT — document comparison and knowledge assistant"
+      source_code_path: .
+      # On-behalf-of-user OAuth (X-Forwarded-Access-Token header) — lets the app
+      # run is_account_group_member() as the actual visitor instead of the app's
+      # own service principal. Used by the live capability check in
+      # server/services/user.py (off unless CAPS_WAREHOUSE_ID is set).
+      user_api_scopes:
+        - sql
+      permissions:
+        - group_name: "Role-Project-LEAP-CoreAdmin"
+          level: CAN_MANAGE
+        - group_name: "Role-Project-LEAP-CoreDev"
+          level: CAN_MANAGE
+        - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+          level: CAN_USE
+        - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
+          level: CAN_USE
+
+targets:
+  # ---------------------------------------------------------------------------
+  # DEV target — import job + off-hours app management (no Qualibot app is
+  # deployed on DEV: sps-rfq-analysis lives in its own bundle, but a job in
+  # this bundle can call the Apps API on any app name).
+  # ---------------------------------------------------------------------------
+  dev:
+    workspace:
+      host: https://dbc-c623749d-731b.cloud.databricks.com
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    resources:
+      jobs:
+        # No run_as: job-runner-sa-uat is UAT-workspace scoped — a live test
+        # 2026-08-19 (jobs submit --profile dev, run_as set) silently ran as
+        # the submitting user instead (creator_user_name didn't match the
+        # SP), rather than erroring. Needs a DEV-local service principal or
+        # this SP explicitly provisioned in DEV — both admin actions.
+        lakebase_import_uat_to_dev:
+          name: "qualibot-lakebase-import-uat-to-dev"
+          description: "Import the UAT staging volume export into DEV Delta tables"
+          max_concurrent_runs: 1
+          tasks:
+            - task_key: import_lakebase_uat_volume
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/lakebase_sync/import_lakebase_uat_volume_to_dev_job.py
+                source: WORKSPACE
+              new_cluster:
+                spark_version: "17.3.x-scala2.13"
+                node_type_id: "m5d.xlarge"
+                num_workers: 0
+                aws_attributes:
+                  availability: ON_DEMAND
+                spark_conf:
+                  spark.databricks.cluster.profile: singleNode
+                  spark.master: "local[*]"
+                custom_tags:
+                  ResourceClass: SingleNode
+                spark_env_vars:
+                  SOURCE_EXPORT_DIR: "/Volumes/uat_landingzone/qualibot/staging/lakebase_export"
+                  TARGET_CATALOG: "dev_landingzone"
+                  TARGET_SCHEMA: "qualibot"
+                  TABLES_TO_SKIP: "llm_requests"
+          schedule:
+            quartz_cron_expression: "0 30 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+
+        # Runs 15 min after each lakebase_import_uat_to_dev above, so the
+        # freshly-landed chat_messages rows are in place before this reads
+        # them. LLM-judge quality scoring of already-answered chat turns —
+        # no call to the KA endpoints (see the notebook's own header).
+        score_production_qa:
+          name: "qualibot-score-production-qa"
+          description: "LLM-judge quality scoring of real ChatBot turns already answered (no KA call)"
+          max_concurrent_runs: 1
+          tasks:
+            - task_key: score_production_qa
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/evaluation/score_production_qa.py
+                source: WORKSPACE
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]
+          schedule:
+            quartz_cron_expression: "0 45 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+    variables:
+      app_write_catalog: dev_lab
+      app_write_schema: lab_jules
+      # DEV reads the SAME prod sources as UAT but writes to dev_lab.lab_jules,
+      # so a DEV run validates the chain on real data without touching UAT
+      # tables or indexes. No Vector Search index is deployed in DEV.
+      parsing_vector_search_indexes: ""
+      parsing_schedule_pause: "PAUSED"
+      # `_test` while validating: the DEV tables in service (chunks,
+      # src_chunks_as/is, processed_files, parse_manifest, category_reference)
+      # feed UAT via copy — keep them intact to compare old vs new. Clear once validated.
+      parsing_table_suffix: "_test"
+
+  qualibot-uat:
+    default: true
+    workspace:
+      host: https://dbc-3a17bfce-9e88.cloud.databricks.com
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    resources:
+      postgres_projects:
+        qualibot-history:
+          project_id: qualibot
+          display_name: "Qualibot History"
+          # Allow Postgres native (username/password) login IN ADDITION to the
+          # default Databricks OAuth-token auth on the connection.
+          enable_pg_native_login: true
+          default_endpoint_settings:
+            # Fixed 1 CU (~2 GB RAM) — no autoscaling (min = max).
+            autoscaling_limit_min_cu: 1
+            autoscaling_limit_max_cu: 1
+            # Scale-to-zero: suspend the compute endpoint after 5 min idle.
+            suspend_timeout_duration: "300s"
+          lifecycle:
+            prevent_destroy: true
+          # Declared block = full desired state: any grant made manually in the
+          # UI and not listed here is removed on the next deploy (same behaviour
+          # as the app's `permissions:` block).
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - group_name: "leap-qualibot-service-accounts"
+              level: CAN_MANAGE
+            # Added manually in the UI 2026-08-24 after bundle deploy itself
+            # failed to read this project's permissions as job-runner-sa-uat
+            # ("does not have database-projects.ruleSets/get") — membership in
+            # leap-qualibot-service-accounts alone wasn't enough. Declared here
+            # too so the next deploy doesn't revert the UI grant.
+            - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+              level: CAN_USE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
+              level: CAN_USE
+      # Database-level Postgres role: map the Databricks group to a Lakebase
+      # role and grant it DATABRICKS_SUPERUSER on the `production` branch.
+      postgres_roles:
+        qualibot-service-accounts:
+          role_id: "leap-qualibot-service-accounts"
+          parent: "projects/qualibot/branches/production"
+          identity_type: GROUP
+          postgres_role: "leap-qualibot-service-accounts"
+          attributes:
+            # All three must be provided: the API's update_mask covers the whole
+            # `attributes` object, so an omitted field is rejected (400).
+            createdb: true
+            createrole: false
+            bypassrls: false
+          membership_roles:
+            - DATABRICKS_SUPERUSER
+          # Adopt the role if it already exists on the branch instead of failing.
+          replace_existing: true
+        # The app connects to Lakebase as its OWN service principal. Grant that
+        # SP its own role (in addition to the group role above).
+        #
+        # postgres_role is hardcoded (not ${resources.apps.doc-compare.service_
+        # principal_client_id}) since 2026-09-02: any unrelated change to the
+        # apps.doc-compare resource (e.g. adding a user_api_scope) makes
+        # Terraform treat that interpolated value as "unknown after apply",
+        # which — since postgres_role is immutable — forces a DELETE+CREATE
+        # "recreate" of this role on every such deploy. Empirically verified
+        # (throwaway role owning a table on qualibot-uat-test) that Postgres
+        # refuses to drop a role that still owns objects, so this would have
+        # failed loudly rather than silently breaking anything — but hardcoding
+        # avoids hitting that failure at all. Only update this value if the app
+        # is ever destroyed and recreated with a new service principal (rare,
+        # deliberate — check `databricks apps get qualibot` for the current id).
+        # prevent_destroy is the second line of defense in case that ever slips.
+        app-service-principal:
+          # role_id = a Databricks resource identifier (RFC1123, must start with
+          # a letter) — NOT the SP UUID. The SP identity is carried by
+          # postgres_role, which for identity_type SERVICE_PRINCIPAL must equal
+          # the SP's application id (the username the app connects with).
+          role_id: "app-doc-compare-sp"
+          parent: "projects/qualibot/branches/production"
+          identity_type: SERVICE_PRINCIPAL
+          postgres_role: "ed8abb86-e0db-423b-8f35-5cda58e89b80"  # qualibot-uat app SP client id
+          attributes:
+            createdb: true
+            createrole: false
+            bypassrls: false
+          membership_roles:
+            - DATABRICKS_SUPERUSER
+          replace_existing: true
+          lifecycle:
+            prevent_destroy: true
+        # CoreDev group — full access via DATABRICKS_SUPERUSER membership
+        # (superuser can read every table without per-table GRANTs).
+        coredev:
+          role_id: "coredev"
+          parent: "projects/qualibot/branches/production"
+          identity_type: GROUP
+          postgres_role: "Role-Project-LEAP-CoreDev"
+          attributes:
+            createdb: false
+            createrole: false
+            bypassrls: false
+          membership_roles:
+            - DATABRICKS_SUPERUSER
+          replace_existing: true
+      schemas:
+        qualibot_schema:
+          catalog_name: ${var.app_write_catalog}
+          name: ${var.app_write_schema}
+        qualibot_proj_schema:
+          catalog_name: ${var.app_proj_catalog}
+          name: ${var.app_proj_schema}
+      volumes:
+        qualibot_doc_compare:
+          catalog_name: ${var.app_write_catalog}
+          schema_name: ${resources.schemas.qualibot_schema.name}
+          name: doc_compare
+          volume_type: MANAGED
+        qualibot_test:
+          catalog_name: ${var.app_write_catalog}
+          schema_name: ${resources.schemas.qualibot_schema.name}
+          name: test
+          volume_type: MANAGED
+        # Written by parsing_pipeline's 3_parse task (PARSING_VOLUME_BASE_PATH).
+        # Pre-existing volume, created by hand 2026-08-05 — bind, don't deploy
+        # blind: `databricks bundle deployment bind qualibot_images
+        # uat_landingzone.qualibot.images -t qualibot-uat`, else the first
+        # deploy after this change tries CREATE VOLUME on an already-existing
+        # one and fails.
+        qualibot_images:
+          catalog_name: ${var.app_write_catalog}
+          schema_name: ${resources.schemas.qualibot_schema.name}
+          name: images
+          volume_type: MANAGED
+      apps:
+        doc-compare:
+          # Declared explicitly (mirrors the live ACL as of 2026-08-19) so a
+          # deploy can't silently reset it — confirmed elsewhere the same day
+          # that an app's `permissions:` block, once declared, IS treated as
+          # the full desired state (a manual grant not listed here disappears
+          # on the next deploy).
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+              level: CAN_USE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
+              level: CAN_USE
+            - user_name: "jules.gourio.external@latecoere.aero"
+              level: CAN_MANAGE
+            - user_name: "christophe.pelissier@latecoere.aero"
+              level: CAN_USE
+            - user_name: "yosif.karapendov@latecoere.aero"
+              level: CAN_USE
+            - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat
+              level: CAN_MANAGE
+          resources:
+            - name: doc-compare-volume
+              uc_securable:
+                securable_type: VOLUME
+                securable_full_name: uat_landingzone.qualibot.doc_compare
+                permission: WRITE_VOLUME
+            - name: test-volume
+              uc_securable:
+                securable_type: VOLUME
+                securable_full_name: uat_landingzone.qualibot.test
+                permission: WRITE_VOLUME
+      jobs:
+        # parsing_pipeline itself now lives in resources/parsing_pipeline.job.yml
+        # under this target directly (not a globally-included resource) — see
+        # that file for the full job spec and the run_as rationale.
+        lakebase_export_uat_to_volume:
+          name: "qualibot-lakebase-export-uat-to-volume-${bundle.target}"
+          description: "Export Lakebase UAT tables to a Unity Catalog staging volume"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          # Without this, run_as=job-runner-sa-uat makes the SP sole owner and
+          # humans get "does not have View/Admin/Manage Run/Owner" from bundle
+          # deploy itself — same pattern as parsing_pipeline.job.yml.
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          # Validated live 2026-08-19 via a one-time run_as=SP submit against
+          # the real doccompare database (see 6_update_kb_metadata in
+          # parsing_pipeline.job.yml for the first proof this SP can write
+          # Lakebase — the Postgres-role blocker noted below is resolved).
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          tasks:
+            # Serverless (no new_cluster) — classic job compute can't reach the
+            # Lakebase private endpoint from UAT (TCP timeout on port 5432, same
+            # blocker as migrate_lakebase_uat_test / sync_user_capabilities_uat).
+            - task_key: export_lakebase_uat_to_volume
+              description: "Extract Lakebase tables to JSONL files in the UAT staging volume"
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/lakebase_sync/export_lakebase_uat_to_volume_job.py
+                source: WORKSPACE
+                base_parameters:
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare"
+                  OUTPUT_VOLUME_CATALOG: "uat_landingzone"
+                  OUTPUT_VOLUME_SCHEMA: "qualibot"
+                  OUTPUT_VOLUME_NAME: "staging"
+                  TABLES_TO_SKIP: "llm_requests"
+              environment_key: default
+            - task_key: import_chatbot_tables_to_uat
+              description: "Load chatbot JSON exports (chat_feedbacks, chat_messages, chat_sessions) as Delta tables in uat_landingzone.qualibot"
+              depends_on:
+                - task_key: export_lakebase_uat_to_volume
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/lakebase_sync/import_chatbot_tables_to_uat_job.py
+                source: WORKSPACE
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+
+        # LLM-judge quality scoring of real ChatBot turns, retrieval-grounded
+        # against the real Vector Search index (only reachable from this
+        # workspace — dev_landingzone/uat_landingzone catalogs are workspace-
+        # bound, confirmed empirically). See the notebook's own header for the
+        # full design.
+        score_production_qa_uat:
+          name: "qualibot-score-production-qa-uat"
+          description: "LLM-judge quality scoring (Luna, retrieval-grounded) of real ChatBot turns"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          parameters:
+            # Empty = no cap on the daily incremental run: judge verdicts are
+            # validated now (15+15 sample batches + real trace_backfill +
+            # 2026-09-08 production run all checked by hand) and real daily
+            # traffic (~25-50 turns) is naturally bounded, so nothing left to
+            # protect against here. Still a real cap on the historical
+            # backlog (~1.1k turns) if that's ever run through this same job —
+            # pass test_limit explicitly for that, don't rely on this default.
+            - name: test_limit
+              default: ""
+            - name: catalog_schema
+              default: "uat_landingzone.qualibot"
+            - name: source_type
+              default: "volume_json"
+            - name: enable_retrieval
+              default: "true"
+            # Both are overrides for an ad-hoc validation run (--job-parameters),
+            # never for the schedule: selection=negative_feedback restricts to
+            # thumbed-down turns, rescore=true re-judges already-scored ones into
+            # chat_quality_scores_rescore.
+            - name: selection
+              default: "recent"
+            - name: rescore
+              default: "false"
+          tasks:
+            - task_key: score_production_qa
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/evaluation/score_production_qa.py
+                source: WORKSPACE
+                base_parameters:
+                  test_limit: "{{job.parameters.test_limit}}"
+                  catalog_schema: "{{job.parameters.catalog_schema}}"
+                  source_type: "{{job.parameters.source_type}}"
+                  enable_retrieval: "{{job.parameters.enable_retrieval}}"
+                  selection: "{{job.parameters.selection}}"
+                  rescore: "{{job.parameters.rescore}}"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]
+                  - httpx
+          # 20 min after each lakebase_export_uat_to_volume run above (02:00 and
+          # 14:00), so the staging volume JSON this reads already has the day's
+          # turns — matches the Qualibot Usage Tracking dashboard's own refresh
+          # (02:45/14:45), which reads this table straight through.
+          schedule:
+            quartz_cron_expression: "0 20 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+
+        # Materializes MLflow's own continuous-monitoring scorer assessments
+        # (registered 2026-09-08 on the KA's 3 native experiments — see
+        # mlflow_genai_eval_qualibot_uat.py's ENABLE_CONTINUOUS_MONITORING) into
+        # a queryable Delta table, since those experiments use classic
+        # MLFLOW_EXPERIMENT trace storage, not UC-native tables Lakeview could
+        # read directly. Feeds the "MLflow Native Scorers" section at the top
+        # of the ChatBot - Quality dashboard tab.
+        sync_mlflow_scorer_assessments_uat:
+          name: "qualibot-sync-mlflow-scorer-assessments-uat"
+          description: "Materialize MLflow's native scorer assessments (continuous monitoring) into a Delta table for the dashboard"
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          parameters:
+            - name: catalog_schema
+              default: "uat_landingzone.qualibot"
+          tasks:
+            - task_key: sync_mlflow_scorer_assessments
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/evaluation/sync_mlflow_scorer_assessments.py
+                source: WORKSPACE
+                base_parameters:
+                  catalog_schema: "{{job.parameters.catalog_schema}}"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]
+          # 15 min after score_production_qa_uat above (02:20/14:20), before the
+          # dashboard's own 02:45/14:45 refresh.
+          schedule:
+            quartz_cron_expression: "0 35 2,14 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+
+        # sync_user_capabilities_uat REMOVED from the bundle 2026-09-02: the
+        # pipeline's identity (job-runner-sa-uat) lacks USE SCHEMA on
+        # system.access (metastore-admin grant, still pending) and — per the
+        # 2026-08-25 finding below — a non-admin deployer can only set run_as
+        # to itself, never to a human user. So this job can never succeed when
+        # deployed by the pipeline. Role-Project-LEAP-CoreDev members (e.g.
+        # the deploying human) already HAVE that grant, and a job deployed
+        # directly by a human (run_as left unset) runs as its creator — so
+        # this job now lives outside the bundle entirely and must be deployed
+        # by a CoreDev human directly: see
+        # utils/deploy/deploy_sync_user_capabilities_uat_personal.py.
+        #
+        # (Prior history, for context: run_as left unset here previously —
+        # deploy no longer broke, but the scheduled runs just kept failing on
+        # the system.access read, same error, before any Lakebase write, so
+        # no risk of a bad write in the meantime.)
+
+        # ── App off-hours (UAT) ─────────────────────────────────────────────
+        # Generic notebook (utils/databricks_ops/app_mgmt/stop_start_app_job.py).
+        # qualibot-uat-test is stop-only since 2026-08-11 — the nightly start
+        # job that used to bring it back up Mon-Fri 7h was deleted, so it
+        # stays down until someone starts it by hand. Only qualibot keeps a
+        # start job (weekend pair below), since it's the app actually in service.
+        # sps-rfq-analysis moved out 2026-08-19 into its own bundle
+        # (sps_rfq_analysis) — Qualibot doesn't own that app.
+        #
+        # run_as job-runner-sa-uat: granted CAN_MANAGE on qualibot /
+        # qualibot-uat-test and validated live 2026-08-19.
+        apps_stop_nightly_uat:
+          name: "apps-stop-nightly-uat"
+          description: "Stop qualibot-uat-test every night at 21h. Never restarted by a job — start it manually when needed."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          tasks:
+            - task_key: stop_apps
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "stop"
+                  app_names: "qualibot-uat-test"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 21 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+
+        qualibot_stop_weekend_uat:
+          name: "qualibot-stop-weekend-uat"
+          description: "Stop qualibot for the weekend (no nightly schedule for this app, unlike qualibot-uat-test/sps-rfq-analysis)."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          tasks:
+            - task_key: stop_app
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "stop"
+                  app_names: "qualibot"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 21 ? * FRI"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+
+        qualibot_start_weekend_uat:
+          name: "qualibot-start-weekend-uat"
+          description: "Restart qualibot on Monday morning."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          tasks:
+            - task_key: start_app
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "start"
+                  app_names: "qualibot"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 0 7 ? * MON"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+    variables:
+      app_name: "qualibot"
+      app_write_catalog: uat_landingzone
+      app_write_schema: qualibot
+      app_volume_name: doc_compare
+      app_proj_catalog: uat_proj
+      app_proj_schema: qualibot
+      parsing_node_type: "r6idn.4xlarge"
+      parsing_num_workers: "4"
+      parsing_run_mode: "incremental"
+      # prod sources (refreshed daily), not uat_*: uat_bronze.intraqual stayed
+      # at 14,886 docs vs 18,683 in prod_bronze. UAT workspace can see
+      # prod_bronze/prod_landingzone (same metastore) — verified 2026-07-27.
+      intraqual_source_catalog_schema: "prod_landingzone.intraqual"
+      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
+      intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
+      # UAT's own docling_models volume copy (populated 2026-07-29) — no nested
+      # docling_models/ subfolder unlike DEV's, and DEV's volume isn't reachable
+      # from UAT anyway (confirmed live: PermissionError, 2026-07-30).
+      parsing_offline_models_path: "/Volumes/uat_landingzone/qualibot/docling_models"
+      # Promoted to _v3 2026-07-31: chunks_v2/src_chunks_as_v2/src_chunks_is_v2/
+      # the 3 live _v2 indexes have every column typed as string (a pre-existing
+      # bug in copy_dev_tables_to_uat_v2.py's schema-less JSON import, live in
+      # prod since 2026-07-07 — IDDOC/chunk_index/doc_date etc. should be
+      # bigint/int/date). Fixing types in place would require recreating the
+      # physical table, which breaks the live index's CDF sync tracking
+      # (DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE, confirmed 2026-07-07).
+      # So chunks_v3/src_chunks_as_v3/src_chunks_is_v3 + 3 new _v3 indexes were
+      # built in parallel with correct types (full re-embed accepted), leaving
+      # _v2 + its indexes untouched and still serving the app.
+      #
+      # Promoted to _v4 -> named _v1 2026-08-18: the _v3 indexes' TRIGGERED
+      # Vector Search sync went silently stale from 2026-07-31 (5_sync_index/
+      # 6_update_kb_metadata were new, unvalidated tasks — see
+      # utils/parsing_pipeline/README.md) until the CDF history the incremental
+      # sync needed to resume from aged out of chunks_v3/src_chunks_as_v3/
+      # src_chunks_is_v3's default 7-day delta.deletedFileRetentionDuration —
+      # [DLT ERROR CODE: VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION], which a
+      # TRIGGERED incremental sync can never recover from once tripped. Fixed by
+      # deep-cloning into chunks_v1/src_chunks_as_v1/src_chunks_is_v1 with
+      # delta.deletedFileRetentionDuration/delta.logRetentionDuration explicitly
+      # set to 'interval 60 days' (comfortably longer than any realistic gap
+      # between successful daily runs, including a multi-day incident) + fresh
+      # _v1 indexes (full re-embed). This finally also cuts the chat KAs
+      # (qualibot_ALL_v2/AS_v2/IS_v2 — see target_config.env's CHAT_ENDPOINT_*)
+      # over from the never-migrated _v2 indexes to _v1.
+      # _pipeline_checkpoint_v1/image_metadata_v1/processed_files_v1 were
+      # seeded (deep clone from the _v3 equivalents) so the daily job resumes
+      # incrementally instead of reparsing the whole corpus on GPU.
+      parsing_table_suffix: "_v1"
+      parsing_vector_search_indexes: "uat_landingzone.qualibot.chunks_index_v1,uat_landingzone.qualibot.chunks_as_index_v1,uat_landingzone.qualibot.chunks_is_index_v1"
+      parsing_schedule_pause: "UNPAUSED"
+      # Same Lakebase database the deployed qualibot-uat app itself reads/writes
+      # (LAKEBASE_DATABASE in app.yaml / target_config.env) — never doccompare_test.
+      parsing_lakebase_database: "doccompare"
+      parsing_job_activity_tag: "uat-job"
+
+  # Disposable test target (2026-07-08): evaluates the v2 KA endpoints + the
+  # chat translation bridge (server/services/translation_bridge.py) without
+  # touching the real qualibot-uat app or its Lakebase data. Separate
+  # terraform state (own bundle target) — deploying/destroying this target
+  # never affects qualibot-uat.
+  #
+  # Deliberately does NOT declare postgres_projects/schemas/volumes: those
+  # already exist (created by the qualibot-uat target) and this identity
+  # lacks MANAGE on uat_landingzone to grant a new service principal access
+  # to them (confirmed 2026-07-08 — terraform apply failed on both the
+  # catalog grant and the already-exists schema/postgres_project). This app
+  # only needs the chat feature (KA endpoints), not document comparison, so
+  # it runs with no UC volume binding (COMPARE_VOLUME_PATH unset — compare
+  # gracefully disables) and Lakebase history disabled unless/until an admin
+  # grants this app's service principal access. Chat still works either way
+  # (get_capabilities fails open without a Lakebase pool).
+  # Remove this target once the evaluation is done.
+  qualibot-uat-test:
+    workspace:
+      host: https://dbc-3a17bfce-9e88.cloud.databricks.com
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    resources:
+      jobs:
+        # No parsing_pipeline job for this target on purpose: it's defined
+        # per-target in resources/parsing_pipeline.job.yml (dev/qualibot-uat/
+        # qualibot-prod only) rather than globally included, specifically so
+        # this app — chat-only, no document comparison — never gets one.
+
+        # One-off admin utility, mirrors sps_rfq_analysis's "Grant Reference
+        # Access" job (job_id 538456350455869). Manual trigger only, not part
+        # of the daily chain.
+        #
+        # run_as=job-runner-sa-uat's grant authority is catalog-specific:
+        # confirmed 2026-07-29 it FAILS on prod_landingzone.intraqual ("run_as
+        # lacks GRANT rights"), confirmed it SUCCEEDS on uat_landingzone
+        # (granted a specific SP USE CATALOG/USE SCHEMA/WRITE_VOLUME there
+        # without issue). For a catalog where this SP lacks authority, run this
+        # job as the deploying user (personal account) instead.
+        #
+        # This job grants a SPECIFIC service principal — it cannot fix
+        # `bundle deploy`'s "all account users lack USE CATALOG on
+        # uat_landingzone" failure on the qualibot app resource (confirmed
+        # 2026-07-30, tested end-to-end on this exact target): that error is
+        # Terraform checking/granting the broad `account users` principal, not
+        # any specific SP, so no per-SP grant — via this job or otherwise —
+        # touches it. Fixing THAT needs `GRANT USE CATALOG ON CATALOG
+        # uat_landingzone TO \`account users\`` — i.e. catalog access for
+        # every account in the org, a deliberate governance decision, not a
+        # one-off admin task. See CLAUDE.md.
+        grant_volume_access:
+          name: "qualibot-grant-volume-access-${bundle.target}"
+          description: "Grants USE CATALOG + USE SCHEMA + READ/WRITE VOLUME on a volume to a service principal. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          parameters:
+            - name: service_principal
+              default: "3e5cd4e5-f765-4760-b974-ee7715258b39"
+            - name: catalog
+              default: "prod_landingzone"
+            - name: schema_name
+              default: "intraqual"
+            - name: volume_name
+              default: "intraqual_documents"
+            - name: volume_permission
+              default: "READ VOLUME"
+          tasks:
+            - task_key: grant
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/grant_volume_access_job.py
+                source: WORKSPACE
+                base_parameters:
+                  service_principal: "{{job.parameters.service_principal}}"
+                  catalog: "{{job.parameters.catalog}}"
+                  schema_name: "{{job.parameters.schema_name}}"
+                  volume_name: "{{job.parameters.volume_name}}"
+                  volume_permission: "{{job.parameters.volume_permission}}"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+
+        migrate_lakebase_uat_test:
+          name: "qualibot-migrate-lakebase-${bundle.target}"
+          description: "Apply idempotent Lakebase schema migrations (utils/databricks_ops/lakebase_sync/migrate_lakebase.py) to doccompare_test — never doccompare. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          # doccompare_test's tables are owned by the qualibot-uat-test app's
+          # own service principal, not job-runner-sa-uat — confirmed working
+          # 2026-08-19 (a live run succeeded; an earlier same-day run had
+          # failed on Postgres auth, since resolved on the Lakebase side).
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          tasks:
+            # No cluster spec -> serverless compute (matches "alter Lakebase"
+            # notebook, which works; the classic new_cluster job compute
+            # cannot reach the Lakebase private endpoint — confirmed via two
+            # failed runs, both timing out on the TCP handshake).
+            - task_key: migrate_lakebase
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/lakebase_sync/migrate_lakebase_job.py
+                source: WORKSPACE
+                base_parameters:
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare_test"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
+
+        # Provisions/updates the qualibot_ALL_v2/AS_v2/IS_v2 Knowledge Assistants
+        # via the SDK (utils/databricks_ops/knowledge_assistant/): idempotent
+        # create-or-update on display_name, attaches the Vector Search index
+        # source, merges CAN_MANAGE/CAN_QUERY permissions. Manual trigger only —
+        # a KA is provisioned once per environment (or re-run after a deliberate
+        # prompt/index change), never as part of the daily parsing chain, since
+        # the daily chain only refreshes the already-attached index (the KA
+        # picks that up on its own, no re-provisioning needed).
+        #
+        # Points at uat_landingzone.qualibot (shared with the real qualibot-uat
+        # app) even though this is the -test target: qualibot-uat-test already
+        # reads that same catalog/schema (see app_write_catalog above), and its
+        # app service principal already holds CAN_QUERY on these exact KAs
+        # (confirmed live 2026-08-24) — so this is a safe validation run before
+        # promoting an equivalent job to qualibot-uat with APP_NAME=qualibot.
+        provision_knowledge_assistant_uat_test:
+          name: "qualibot-provision-knowledge-assistant-${bundle.target}"
+          description: "Idempotent create-or-update of the Qualibot Knowledge Assistants. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          parameters:
+            - name: ka_profiles
+              default: "ALL,AS,IS"
+            - name: catalog
+              default: "uat_landingzone"
+            - name: schema_name
+              default: "qualibot"
+            - name: index_suffix
+              default: "_v1"
+            - name: app_name
+              default: "qualibot-uat-test"
+          tasks:
+            - task_key: provision_knowledge_assistant
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/knowledge_assistant/provision_knowledge_assistant_job.py
+                source: WORKSPACE
+                base_parameters:
+                  KA_PROFILES: "{{job.parameters.ka_profiles}}"
+                  CATALOG: "{{job.parameters.catalog}}"
+                  SCHEMA: "{{job.parameters.schema_name}}"
+                  INDEX_SUFFIX: "{{job.parameters.index_suffix}}"
+                  APP_NAME: "{{job.parameters.app_name}}"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.102.0
+
+        sync_user_capabilities_uat_test:
+          name: "qualibot-sync-user-capabilities-uat-test"
+          description: "Sync user group membership (system.access.audit) -> users.groups/can_chat/can_compare, on doccompare_test. Validation job — see utils/databricks_ops/user_capabilities/sync_user_capabilities_job.py. Point LAKEBASE_DATABASE at doccompare (qualibot-uat target) only once validated end to end."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          # Live test of job-runner-sa-uat on system.access.audit — known
+          # blocker as of 2026-07-23 (missing USE SCHEMA/SELECT there).
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          tasks:
+            # Serverless compute (no new_cluster) — same reasoning as
+            # migrate_lakebase above: classic job compute cannot reach the
+            # Lakebase private endpoint (2 confirmed failed runs, TCP timeout).
+            - task_key: sync_user_capabilities
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/user_capabilities/sync_user_capabilities_job.py
+                source: WORKSPACE
+                base_parameters:
+                  dry_run: "false"
+                  LAKEBASE_PROJECT_ID: "qualibot"
+                  LAKEBASE_BRANCH: "production"
+                  LAKEBASE_ENDPOINT: "primary"
+                  LAKEBASE_DATABASE: "doccompare_test"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - psycopg2-binary
+                  - databricks-sdk>=0.118.0
+          schedule:
+            quartz_cron_expression: "0 30 3 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: UNPAUSED
+    variables:
+      app_name: "qualibot-uat-test"
+      app_write_catalog: uat_landingzone
+      app_write_schema: qualibot
+      app_volume_name: doc_compare
+      parsing_node_type: "r6idn.4xlarge"
+      parsing_num_workers: "4"
+      parsing_run_mode: "incremental"
+      # Disposable target: `*_test` tables and no synced index, same as
+      # qualibot-uat until the chain is validated.
+      parsing_table_suffix: "_test"
+      parsing_vector_search_indexes: ""
+      parsing_schedule_pause: "PAUSED"
+      intraqual_source_catalog_schema: "prod_landingzone.intraqual"
+      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
+      intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
+
+  qualibot-prod:
+    mode: production
+    workspace:
+      host: https://dbc-77b87d5a-6bcb.cloud.databricks.com
+      root_path: /Workspace/.bundle/${bundle.name}/${bundle.target}
+    resources:
+      postgres_projects:
+        qualibot-history:
+          project_id: qualibot
+          display_name: "Qualibot History"
+          # Allow Postgres native (username/password) login IN ADDITION to the
+          # default Databricks OAuth-token auth on the connection.
+          enable_pg_native_login: true
+          default_endpoint_settings:
+            # Fixed 1 CU (~2 GB RAM) — no autoscaling (min = max).
+            autoscaling_limit_min_cu: 1
+            autoscaling_limit_max_cu: 1
+            # Scale-to-zero: suspend the compute endpoint after 5 min idle.
+            suspend_timeout_duration: "300s"
+          lifecycle:
+            prevent_destroy: true
+          # Declared block = full desired state: any grant made manually in the
+          # UI and not listed here is removed on the next deploy (same behaviour
+          # as the app's `permissions:` block).
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - group_name: "leap-qualibot-service-accounts"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
+              level: CAN_USE
+            - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
+              level: CAN_USE
+      # Database-level Postgres role: map the Databricks group to a Lakebase
+      # role and grant it DATABRICKS_SUPERUSER on the `production` branch.
+      postgres_roles:
+        qualibot-service-accounts:
+          role_id: "leap-qualibot-service-accounts"
+          parent: "projects/qualibot/branches/production"
+          identity_type: GROUP
+          postgres_role: "leap-qualibot-service-accounts"
+          attributes:
+            # All three must be provided: the API's update_mask covers the whole
+            # `attributes` object, so an omitted field is rejected (400).
+            createdb: true
+            createrole: false
+            bypassrls: false
+          membership_roles:
+            - DATABRICKS_SUPERUSER
+          # Adopt the role if it already exists on the branch instead of failing.
+          replace_existing: true
+        # The app connects to Lakebase as its OWN service principal. Grant that
+        # SP its own role (in addition to the group role above). The SP client id
+        # is referenced dynamically from the app resource — never hard-coded, and
+        # automatically correct per environment (UAT vs prod have different SPs).
+        app-service-principal:
+          # role_id = a Databricks resource identifier (RFC1123, must start with
+          # a letter) — NOT the SP UUID. The SP identity is carried by
+          # postgres_role, which for identity_type SERVICE_PRINCIPAL must equal
+          # the SP's application id (the username the app connects with).
+          role_id: "app-doc-compare-sp"
+          parent: "projects/qualibot/branches/production"
+          identity_type: SERVICE_PRINCIPAL
+          postgres_role: ${resources.apps.doc-compare.service_principal_client_id}
+          attributes:
+            createdb: true
+            createrole: false
+            bypassrls: false
+          membership_roles:
+            - DATABRICKS_SUPERUSER
+          replace_existing: true
+        # CoreDev group — full access via DATABRICKS_SUPERUSER membership
+        # (superuser can read every table without per-table GRANTs).
+        coredev:
+          role_id: "coredev"
+          parent: "projects/qualibot/branches/production"
+          identity_type: GROUP
+          postgres_role: "Role-Project-LEAP-CoreDev"
+          attributes:
+            createdb: false
+            createrole: false
+            bypassrls: false
+          membership_roles:
+            - DATABRICKS_SUPERUSER
+          replace_existing: true
+      jobs:
+        # Same idempotent create-or-update as qualibot-uat-test's
+        # provision_knowledge_assistant_uat_test (see that job's comment for
+        # the full rationale) -- points at prod_landingzone.qualibot with no
+        # index suffix (prod's clean naming, see resources/parsing_pipeline.job.yml)
+        # and run_as job-runner-sa-prod, which already owns this schema.
+        provision_knowledge_assistant_prod:
+          name: "qualibot-provision-knowledge-assistant-${bundle.target}"
+          description: "Idempotent create-or-update of the Qualibot Knowledge Assistants. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          parameters:
+            - name: ka_profiles
+              default: "ALL,AS,IS"
+            - name: catalog
+              default: "prod_landingzone"
+            - name: schema_name
+              default: "qualibot"
+            - name: index_suffix
+              default: ""
+            # Unlike qualibot-uat-test (which keeps "_v2" to match the live
+            # qualibot-uat KAs by name), prod gets clean, unsuffixed KA names.
+            - name: display_name_suffix
+              default: ""
+            - name: app_name
+              default: "qualibot"
+          tasks:
+            - task_key: provision_knowledge_assistant
+              notebook_task:
+                notebook_path: ./utils/databricks_ops/knowledge_assistant/provision_knowledge_assistant_job.py
+                source: WORKSPACE
+                base_parameters:
+                  KA_PROFILES: "{{job.parameters.ka_profiles}}"
+                  CATALOG: "{{job.parameters.catalog}}"
+                  SCHEMA: "{{job.parameters.schema_name}}"
+                  INDEX_SUFFIX: "{{job.parameters.index_suffix}}"
+                  DISPLAY_NAME_SUFFIX: "{{job.parameters.display_name_suffix}}"
+                  APP_NAME: "{{job.parameters.app_name}}"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk>=0.102.0
+      schemas:
+        qualibot_schema:
+          catalog_name: ${var.app_write_catalog}
+          name: ${var.app_write_schema}
+      volumes:
+        qualibot_doc_compare:
+          catalog_name: ${var.app_write_catalog}
+          schema_name: ${resources.schemas.qualibot_schema.name}
+          name: doc_compare
+          volume_type: MANAGED
+        qualibot_docling_models:
+          catalog_name: ${var.app_write_catalog}
+          schema_name: ${resources.schemas.qualibot_schema.name}
+          name: docling_models
+          volume_type: MANAGED
+        qualibot_test:
+          catalog_name: ${var.app_write_catalog}
+          schema_name: ${resources.schemas.qualibot_schema.name}
+          name: test
+          volume_type: MANAGED
+        # Written by parsing_pipeline's 3_parse task (PARSING_VOLUME_BASE_PATH).
+        # Existence in prod_landingzone.qualibot unconfirmed as of 2026-08-26
+        # (PROD CLI profile needs re-auth) — check with `databricks volumes
+        # list prod_landingzone qualibot` before deploying this target; if it
+        # doesn't exist yet, a normal deploy creates it, if it does, bind
+        # first like qualibot-uat's (see that target's comment).
+        qualibot_images:
+          catalog_name: ${var.app_write_catalog}
+          schema_name: ${resources.schemas.qualibot_schema.name}
+          name: images
+          volume_type: MANAGED
+      apps:
+        doc-compare:
+          resources:
+            - name: doc-compare-volume
+              uc_securable:
+                securable_type: VOLUME
+                securable_full_name: prod_landingzone.qualibot.doc_compare
+                permission: WRITE_VOLUME
+            - name: test-volume
+              uc_securable:
+                securable_type: VOLUME
+                securable_full_name: prod_landingzone.qualibot.test
+                permission: WRITE_VOLUME
+    variables:
+      app_name: "qualibot"
+      app_write_catalog: prod_landingzone
+      app_write_schema: qualibot
+      app_volume_name: doc_compare
+      parsing_node_type: "r6idn.4xlarge"
+      parsing_num_workers: "8"
+      parsing_run_mode: "incremental"
+      intraqual_source_catalog_schema: "prod_landingzone.intraqual"
+      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
+      intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
+      parsing_job_activity_tag: "prod-job"
+      parsing_offline_models_path: "/Volumes/prod_landingzone/qualibot/docling_models"
+      # Same Lakebase database the deployed qualibot-prod app itself reads/writes
+      # (LAKEBASE_DATABASE in app.yaml) — matches the qualibot-uat pattern.
+      parsing_lakebase_database: "doccompare"
+      # No suffix (unlike qualibot-uat's _v1) -- prod is the one environment,
+      # no version history to carry. 5_sync_index creates these the first time
+      # it runs if they don't exist yet (see that notebook + its job task).
+      parsing_vector_search_indexes: "prod_landingzone.qualibot.chunks_index,prod_landingzone.qualibot.chunks_as_index,prod_landingzone.qualibot.chunks_is_index"

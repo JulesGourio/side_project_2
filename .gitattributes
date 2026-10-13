@@ -1,0 +1,15 @@
+# Normalise text files to LF in the repo (the working tree was CRLF).
+* text=auto eol=lf
+
+# Force LF line endings for shell scripts — prevents CRLF crash on Linux (Databricks Apps)
+*.sh    text eol=lf
+
+# Binary files — no line ending conversion
+*.deb   binary
+*.whl   binary
+*.png   binary
+*.jpg   binary
+*.ico   binary
+
+# antiword executable (no extension) — must not have line endings converted
+data/vendor/antiword/antiword_local/usr/bin/antiword binary
