@@ -704,6 +704,12 @@ def validate_ref_mapping(df_chunks_all, df_processed_files):
 def build_image_metadata(target_iddocs):
     """Explode checkpoint rows' `images` array into one row per image,
     preserving any already-DONE/SKIPPED description across a rebuild."""
+    if RUN_MODE == "rechunk" and spark.catalog.tableExists(TARGET_IMAGE_METADATA_TABLE):
+        # Kept as is: a checkpoint copied from another environment does not list the images already described,
+        # and rebuilding from it would drop their descriptions. Materialised because the same table is overwritten.
+        df_kept = spark.table(TARGET_IMAGE_METADATA_TABLE).filter(F.col("IDDOC").isin(list(target_iddocs))).localCheckpoint()
+        logger.info(f"Image metadata kept from {TARGET_IMAGE_METADATA_TABLE}: {df_kept.count()} rows")
+        return df_kept
     df_full_pipeline = read_checkpoint_deduped()
     # rechunk: only the documents in scope — the checkpoint also keeps superseded revisions.
     if RUN_MODE in ("incremental", "rechunk"):
