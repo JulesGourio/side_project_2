@@ -118,7 +118,9 @@ EXCLUDED_IDCATS = {3798}  # ONE_QMS-5S
 EMPTY_SMALL_FILE_SIZE_BYTES = int(_env("PARSING_EMPTY_SMALL_FILE_SIZE_BYTES", "51200"))  # 50 KiB
 
 # --- Run mode ---
-RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full"
+RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full" | "rechunk"
+# "rechunk": rebuild chunks and image_metadata from the checkpoint as it is, without scanning the volume or parsing
+# (a checkpoint copied from another environment does not match its file paths, so "full" would reparse everything).
 
 # =============================================================================
 # Scope filter (None = all IDDOCs, list = specific)

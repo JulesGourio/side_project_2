@@ -184,18 +184,23 @@ df_business_meta = spark.read.table(cfg.PARSE_MANIFEST_TABLE).cache()
 # COMMAND ----------
 
 target_iddocs, revised_iddocs = parse_steps.resolve_parse_scope(df_business_meta)
-parse_steps.log_document_changes(df_business_meta, target_iddocs, revised_iddocs, parse_steps.JOB_RUN_ID)
+if cfg.RUN_MODE != "rechunk":  # a rebuild changes no document: nothing to log as NEW or REVISED
+    parse_steps.log_document_changes(df_business_meta, target_iddocs, revised_iddocs, parse_steps.JOB_RUN_ID)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Prep2 - File selection
 # MAGIC Scans only the target IDDOCs' folders on the volume, ranks every candidate file per IDDOC and keeps the best one.
-# MAGIC The runners-up stay available for the retry phase.
+# MAGIC The runners-up stay available for the retry phase. `rechunk` reads no file: it only rebuilds from the checkpoint.
 
 # COMMAND ----------
 
-df_files, df_matched_full, df_content = parse_steps.select_files_for_target_iddocs(target_iddocs, df_business_meta)
+RECHUNK_ONLY = cfg.RUN_MODE == "rechunk"
+if RECHUNK_ONLY:
+    df_files = df_matched_full = df_content = None
+else:
+    df_files, df_matched_full, df_content = parse_steps.select_files_for_target_iddocs(target_iddocs, df_business_meta)
 
 # COMMAND ----------
 
@@ -205,11 +210,11 @@ df_files, df_matched_full, df_content = parse_steps.select_files_for_target_iddo
 
 # COMMAND ----------
 
-if target_iddocs:
+if target_iddocs and not RECHUNK_ONLY:
     target_iddocs = parse_steps.mark_empty_folders(target_iddocs, df_files, df_business_meta)
 HAS_TARGET_IDDOCS = len(target_iddocs) > 0
 
-num_files = df_files.count()
+num_files = 0 if RECHUNK_ONLY else df_files.count()
 logger.info(f"[SELECT] {num_files} files selected for parsing")
 
 # COMMAND ----------

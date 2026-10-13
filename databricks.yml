@@ -43,7 +43,7 @@ variables:
     description: "Number of GPU workers for the parse cluster"
     default: "2"
   parsing_run_mode:
-    description: "Parsing run mode: 'incremental' (new docs only) or 'full' (rebuild all)"
+    description: "Parsing run mode: 'incremental' (new docs only), 'full' (rebuild all, reparses files whose path or hash is not in the checkpoint) or 'rechunk' (chunks rebuilt from the checkpoint, no parsing)"
     default: "incremental"
   parsing_parse_filter:
     description: "Comma-separated IDDOC list to restrict a run to (empty = no filter, normal mode). Override via --var for a one-off targeted test run."

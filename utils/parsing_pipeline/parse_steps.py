@@ -140,6 +140,8 @@ def resolve_parse_scope(df_business_meta):
             logger.warning(f"[INCREMENTAL] Table {TARGET_PROCESSED_FILES_TABLE} unreadable ({exc}) — no IDDOC excluded.")
     elif RUN_MODE == "full":
         logger.info("[FULL] Parsing all documents. Tables will be overwritten.")
+    elif RUN_MODE == "rechunk":
+        logger.info("[RECHUNK] No parsing: chunks rebuilt from the checkpoint for every document. Tables will be overwritten.")
 
     pending_iddocs = manifest_iddocs - (already_done_iddocs - revised_iddocs)
     if isinstance(PARSE_FILTER, (list, tuple, set)):
@@ -1128,12 +1130,12 @@ def log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_ru
 
 def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
                   df_image_metadata, revised_iddocs=frozenset()):
-    """Write processed_files/chunks/image_metadata — overwrite on a FULL
-    run, append (+ MERGE for image_metadata) on an incremental run."""
+    """Write processed_files/chunks/image_metadata — overwrite on a full or
+    rechunk run, append (+ MERGE for image_metadata) on an incremental run."""
     spark.conf.set("spark.databricks.delta.optimizeWrite.enabled", "true")
     spark.conf.set("spark.databricks.delta.autoCompact.enabled", "true")
 
-    if RUN_MODE == "full":
+    if RUN_MODE in ("full", "rechunk"):
         df_processed_files.write.format("delta").mode("overwrite") \
             .option("overwriteSchema", "true").saveAsTable(TARGET_PROCESSED_FILES_TABLE)
         logger.info(f"Wrote {TARGET_PROCESSED_FILES_TABLE}")
