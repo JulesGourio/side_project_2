@@ -303,7 +303,7 @@ async def stream_once(host: str, token: str, endpoint: str, messages: List[Dict[
 
 # --- The answer: chain, rounds, continuation ---
 
-def _event(payload: Dict[str, Any]) -> str:
+def sse_event(payload: Dict[str, Any]) -> str:
     return f'data: {json.dumps(payload)}\n\n'
 
 
@@ -399,7 +399,7 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
                         if written and not got:
                             value = value.lstrip() if written.endswith((' ', '\n')) else value
                         got += value
-                        yield _event({'type': 'response.output_text.delta', 'delta': value})
+                        yield sse_event({'type': 'response.output_text.delta', 'delta': value})
                     elif kind == 'usage':
                         for k in ('input_tokens', 'output_tokens', 'thinking_tokens'):
                             usage[k] += value.get(k) or 0
@@ -433,22 +433,22 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
     if answered_by and len(chain) > 1 and answered_by != chain[0]:
         logger.warning('chat_llm: answered by fallback %s (primary %s)', answered_by, chain[0])
     if truncated:
-        yield _event({'type': 'warning', 'warning': 'output_truncated',
+        yield sse_event({'type': 'warning', 'warning': 'output_truncated',
                       'detail': f'The model hit the output limit ({max_tokens} tokens) — the end may be missing.'})
     if usage['input_tokens'] or usage['output_tokens']:
-        yield _event({'type': 'usage', **usage, 'total_tokens': usage['input_tokens'] + usage['output_tokens']})
-    yield _event({'type': 'llm', 'endpoint': answered_by, 'fallback': bool(answered_by and answered_by != chain[0]),
+        yield sse_event({'type': 'usage', **usage, 'total_tokens': usage['input_tokens'] + usage['output_tokens']})
+    yield sse_event({'type': 'llm', 'endpoint': answered_by, 'fallback': bool(answered_by and answered_by != chain[0]),
                   'attempts': attempts, 'queue_wait_ms': queue_wait_ms, 'truncated': truncated,
                   'continuations': continuations, 'interrupted': bool(written and not answered_by)})
     if not answered_by and not written:
         logger.error('chat_llm: no endpoint answered (%s) after %.0f s: %s', ', '.join(chain),
                      time.monotonic() - started, attempts)
-        yield _event({'type': 'error', 'error': NO_MODEL_ANSWERED, 'error_type': 'LLMUnavailable',
+        yield sse_event({'type': 'error', 'error': NO_MODEL_ANSWERED, 'error_type': 'LLMUnavailable',
                       'http_status': last.status if last else 0})
     elif not answered_by:
         # Part of the answer is out but no endpoint could finish it: say so at the end.
         logger.error('chat_llm: answer cut after %d chars, no endpoint could continue: %s', len(written), attempts)
-        yield _event({'type': 'response.output_text.delta',
+        yield sse_event({'type': 'response.output_text.delta',
                       'delta': TIRED_CUT_NOTE})
     yield 'data: [DONE]\n\n'
 

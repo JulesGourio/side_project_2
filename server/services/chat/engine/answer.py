@@ -8,6 +8,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 
 from .. import llm as chat_llm, prompts
+from ..llm import sse_event
 from ...infra.doc_catalog import document_info
 from ..turn_log import TurnLog
 from .citations import CitationStreamParser
@@ -54,12 +55,8 @@ def build_prompt(division: str, conversation: List[Dict[str, str]], documents: L
                                   answer_language)
 
 
-def _event(payload: Dict[str, Any]) -> str:
-    return f'data: {json.dumps(payload)}\n\n'
-
-
 def _error_events(message: str, error_type: str, http_status: int = 0) -> List[str]:
-    return [_event({'type': 'error', 'error': message, 'error_type': error_type, 'http_status': http_status}),
+    return [sse_event({'type': 'error', 'error': message, 'error_type': error_type, 'http_status': http_status}),
             'data: [DONE]\n\n']
 
 
@@ -171,7 +168,7 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
             clean = parser.feed(event.get('delta', ''))
             if clean:
                 log.mark('first_token')
-                yield _event({'type': 'response.output_text.delta', 'delta': clean})
+                yield sse_event({'type': 'response.output_text.delta', 'delta': clean})
         elif kind == 'error':
             logger.error('chat: generation failed: %s', event.get('error'))
             _generation_done()
@@ -194,9 +191,9 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
     tail = parser.flush()
     if tail:
         log.mark('first_token')
-        yield _event({'type': 'response.output_text.delta', 'delta': tail})
+        yield sse_event({'type': 'response.output_text.delta', 'delta': tail})
     _generation_done()
     if parser.sources or parser.citations:
-        yield _event({'type': 'sources', 'sources': parser.sources, 'citations': parser.citations})
-    yield _event({'type': 'metadata', 'trace_id': trace_id})
+        yield sse_event({'type': 'sources', 'sources': parser.sources, 'citations': parser.citations})
+    yield sse_event({'type': 'metadata', 'trace_id': trace_id})
     yield 'data: [DONE]\n\n'

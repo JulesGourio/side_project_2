@@ -21,8 +21,9 @@ index (``in_chat``). The parsing pipeline rewrites it after each successful dail
 
 Until that table has rows (an app started before the pipeline's first run, local dev, tests),
 the bundled ``server/data/doc_catalog.json`` is used instead: a one-off snapshot of a portal
-scrape, with links in the old ``liredocumentdepuisrecherche?id=`` scheme, that is
-never refreshed — new documents are missing from it and withdrawn ones are still in it. Every
+scrape (2026-07; the script that generated it is in git history at commit f545093), with links in the old
+``liredocumentdepuisrecherche?id=`` scheme, that is never refreshed — new documents are missing from it and
+withdrawn ones are still in it. Every
 function degrades to a no-op when neither source is available.
 """
 
@@ -36,6 +37,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Fallback only: a stale 2026-07 snapshot; its generator is in git history at commit f545093.
 _DEFAULT_CATALOG = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'doc_catalog.json')
 _CATALOG_PATH = os.getenv('DOC_CATALOG_PATH', _DEFAULT_CATALOG)
 _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
@@ -63,10 +65,8 @@ def _norm(ref: str) -> str:
     return ' '.join(ref.split()).upper()
 
 
-# Mirrors archive/doc_catalog/build_doc_catalog.py:_base_ref: a citation in the chat text may use a spelling that
-# never existed in the catalog
-# ("PRLAT529" for "PRLAT-529" / "PRLAT-529_GB"); canonicalizing both sides the same way resolves it to the document's
-# group.
+# A citation in the chat text may use a spelling that never existed in the catalog ("PRLAT529" for "PRLAT-529" /
+# "PRLAT-529_GB"); canonicalizing both sides the same way resolves it to the document's group.
 _LANG_SUFFIX_RE = re.compile(r'[-_. ]+(FR|EN|GB|MX|BG|CZ|BR|ES)$', re.IGNORECASE)
 _NON_ALNUM_RE = re.compile(r'[^A-Z0-9]')
 
@@ -153,8 +153,7 @@ class _Catalog:
         # catalog URL -> canonical REF (reverse lookup, to relabel chips)
         self.url_to_ref: Dict[str, str] = {}
         # base_ref (canonical, punctuation- and suffix-stripped) -> [entries]
-        # sharing it, i.e. the same document in other site/languages (see
-        # archive/doc_catalog/build_doc_catalog.py:_base_ref)
+        # sharing it, i.e. the same document in other site/languages (see _canon)
         self.by_canon: Dict[str, List[dict]] = {}
         for e in entries:
             ref = e.get('ref') or ''

@@ -104,7 +104,7 @@ def _build_diff_keyed(
         if new_block is None:
             out_parts.append(f'\n{sheet}: sheet removed entirely')
             continue
-        _, new_header, new_data = new_block
+        _, _, new_data = new_block
 
         headers = old_header.split('\t') if old_header else []
 
