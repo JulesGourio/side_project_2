@@ -1,58 +1,60 @@
 # Runbooks
 
-Dossier de ce qu'un opérateur lance à la main : les étapes de déploiement et d'exploitation par environnement, la liste des retests et les scripts ponctuels. Rien ici n'est déployé : le dossier est exclu du bundle (`databricks.yml`, `.databricksignore`, `utils/deploy/deploy_qualibot.ps1`). Ce qui crée une ressource à partir du dépôt (bundle, `resources/*.yml`, notebooks des jobs, scripts de `utils/deploy/`) reste dans le code.
+This folder holds everything that is run by hand: the operator runbooks for each environment, the retest list and the one-shot scripts. Nothing here is deployed. The folder is excluded from the bundle (`databricks.yml`, `.databricksignore`, `utils/deploy/deploy_qualibot.ps1`). Anything that creates a resource from the repository (bundle, `resources/*.yml`, job notebooks, scripts of `utils/deploy/`) stays in the code.
+
+The operator runbooks (`dev.md`, `uat.md`, `prod.md`, `retest.md`) are written in French, for the operator.
 
 ## Runbooks
 
-| Fichier | Contenu |
+| File | Content |
 |---|---|
-| `dev.md` | Environnement DEV : copie de l'UAT dans `dev_proj.qualibot`, déploiement, index, évaluation, notation des traces, pipeline de parsing |
-| `uat.md` | Environnement UAT et cible `qualibot-uat-test` : migration vers `uat_proj.qualibot`, validation, mise en service, bascule du chatbot, alertes |
-| `prod.md` | Environnement PROD : `prod_proj.qualibot`, volumes, index, droits, déploiement sur accord |
-| `retest.md` | Ce qui reste à rejouer ou retester après les derniers changements de code, avec la commande et le statut |
-| `scripts/` | Scripts ponctuels : migrations de schéma, copie de tables, empaquetage de LibreOffice, contrôle hors ligne d'une comparaison (voir ci-dessous) |
+| `dev.md` | DEV environment: copy of the UAT corpus into `dev_proj.qualibot`, deployment, indexes, evaluation, trace scoring, parsing pipeline |
+| `uat.md` | UAT environment and the `qualibot-uat-test` target: migration to `uat_proj.qualibot`, validation, going live, chatbot switch-over, activations after validation |
+| `prod.md` | PROD environment: `prod_proj.qualibot`, volumes, indexes, grants, deployment on explicit approval |
+| `retest.md` | What still has to be re-run or re-tested after the latest code changes, with the command and the status of each item |
+| `scripts/` | One-shot scripts: schema migrations, table copies, LibreOffice packaging, offline comparison report (see below) |
 
-## Règles
+## Rules
 
-- Chaque étape donne toutes ses commandes, dans l'ordre (PowerShell, `databricks bundle run`, SQL). Aucune étape ne renvoie à une autre étape sans recopier ses commandes.
-- Une étape marquée « sur accord » ne se lance pas sans accord explicite.
-- Statut : `[ ]` à faire ; `[x] (jj/mm/aaaa)` fait et confirmé à la date indiquée.
-- Profils CLI : `DEV` (DEV), `UAT` (UAT et `qualibot-uat-test`), `qualibot-prod` (PROD). `migrate_lakebase.py` accepte les environnements `DEV`, `UAT`, `UAT-TEST` et `PROD`.
-- Les objets de l'application et du pipeline sont dans `<env>_proj.qualibot` (`qualibot-uat-test` : `uat_proj.qualibot`, suffixe `_test`). Seule source hors de ce schéma : le catalogue Intraqual `prod_landingzone.intraqual`.
+- Every manual step gives all its commands in full, in order (PowerShell, `databricks bundle run`, SQL). A step never refers to another step without repeating its commands.
+- A step marked "on approval" is never run without an explicit go-ahead.
+- Status: `[ ]` to do; `[x]` done and confirmed by the operator, with the confirmation date written after it.
+- CLI profiles: `DEV` (DEV), `UAT` (UAT and `qualibot-uat-test`), `qualibot-prod` (PROD). `migrate_lakebase.py` accepts the environments `DEV`, `UAT`, `UAT-TEST` and `PROD`.
+- The application and pipeline objects (tables, volumes, Vector Search indexes) live in `<env>_proj.qualibot`. On `qualibot-uat-test` the schema is `uat_proj.qualibot` and the names carry the `_test` suffix. The Intraqual catalog (`prod_landingzone.intraqual`) is not modified by these runbooks.
 
-## Où trouver une opération ponctuelle
+## Where to find an operation
 
-- Copie du corpus UAT vers DEV : `dev.md` 00.3, 00.4 et bloc C.
-- Export Lakebase vers le volume, chargement des tables de chat : `uat.md` étape 0.5 (UAT) et `dev.md` 00.6 (DEV).
-- Validation de l'UAT sur `qualibot-uat-test` : `uat.md` bloc A.
-- Parsing, index et métadonnées : `uat.md` blocs B et D ; `dev.md` bloc Q.
-- Notation des traces et expérience MLflow : `dev.md` 0.8, 0.9 et 0.14.
-- Scripts : tableau ci-dessous.
+- Copy of the UAT corpus to DEV: `dev.md` 00.3, 00.4 and block C.
+- Lakebase export to the volume, loading of the chat tables: `uat.md` step 0.5 (UAT) and `dev.md` 00.6 (DEV).
+- Validation of UAT on `qualibot-uat-test`: `uat.md` block A.
+- Parsing, indexes and metadata: `uat.md` blocks B and D; `dev.md` block Q.
+- Trace scoring and the MLflow experiment: `dev.md` 0.8, 0.9 and 0.14.
+- Scripts: the table below.
 
 ## Scripts (`scripts/`)
 
-Scripts ponctuels : migrations de schéma, copies de tables, empaquetage et contrôles lancés à la main, une fois ou rarement. Aucun job de bundle ne les lance, et ce dossier n'est jamais déployé. Les scripts utilisés par l'application, par un job ou par un déploiement sont dans [`utils/`](../utils/README.md).
+One-shot scripts: schema migrations, table copies, packaging and checks, run by hand once or rarely. No bundle job runs them, and this folder is never deployed. Scripts used by the application, a job or a deployment are in [`utils/`](../utils/README.md).
 
-Toutes les commandes se lancent depuis la racine du dépôt. Les scripts Python en ligne de commande importent `utils/ops_config.py` quand ils en ont besoin.
+Run every command from the repository root. Command-line Python scripts import `utils/ops_config.py` when they need it.
 
-| Fichier | Rôle | Comment le lancer |
+| File | What it does | How to run it |
 |---|---|---|
-| [`scripts/dev_copy/export_uat_to_staging.py`](scripts/dev_copy/export_uat_to_staging.py) | Notebook, workspace UAT. Copie les tables `chunks` et l'état du parsing de `uat_proj.qualibot` vers le volume `staging/dev_copy`, avec l'archive LibreOffice. Lecture seule sur les tables UAT. Amorce la copie du corpus dans DEV | Voir « Commandes des notebooks » |
-| [`scripts/dev_copy/export_uat_submit.json`](scripts/dev_copy/export_uat_submit.json) | Corps de la commande `jobs submit` qui lance le notebook précédent | `databricks jobs submit --json @runbooks/scripts/dev_copy/export_uat_submit.json --profile UAT` |
-| [`scripts/lakebase/copy_Lakebase_tables.py`](scripts/lakebase/copy_Lakebase_tables.py) | CLI : crée ou remplace dans `dev_proj.qualibot` une table Delta par table Lakebase de l'UAT, à partir de l'export du volume (ou en direct avec `--direct`, port 5432 requis) | Après le job `lakebase_export_uat_to_volume` : `python runbooks/scripts/lakebase/copy_Lakebase_tables.py` ; `python runbooks/scripts/lakebase/copy_Lakebase_tables.py --direct` |
-| [`scripts/lakebase/migrate_lakebase.py`](scripts/lakebase/migrate_lakebase.py) | CLI : applique les changements de `migrations.py` à une base Lakebase (`--env DEV \| UAT \| UAT-TEST \| PROD`, défaut `DEV`) | `python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV` |
-| [`scripts/lakebase/migrate_lakebase_job.py`](scripts/lakebase/migrate_lakebase_job.py) | Notebook : même migration, depuis le workspace. Par défaut la base `doccompare_test` ; la base `doccompare` est refusée sur l'hôte UAT | Voir « Commandes des notebooks » |
-| [`scripts/lakebase/migrations.py`](scripts/lakebase/migrations.py) | Liste ordonnée et idempotente des changements de schéma (`ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, `DROP TABLE IF EXISTS`) et la fonction `apply_migrations` | Module, importé par les deux scripts de migration : aucune commande |
-| [`scripts/uat/setup_proj_schema.py`](scripts/uat/setup_proj_schema.py) | Notebook, workspace UAT, identité `job-runner-sa-uat`. Crée le volume `images_test` s'il manque, clone en profond les tables d'état du parsing (`parsing_checkpoint`, `parsed_documents`, `image_metadata`, `parse_manifest`, `category_reference`) de l'ancien schéma UAT (widget `source_catalog_schema`, lecture seule) vers `uat_proj.qualibot.*_test`, puis accorde la lecture | Voir « Commandes des notebooks » |
-| [`scripts/soffice/package_libreoffice.py`](scripts/soffice/package_libreoffice.py) | CLI : construit l'archive LibreOffice portable (tar.gz) utilisée par l'aperçu « Exact (PDF) », à partir du bundle TDF déjà téléchargé | `python runbooks/scripts/soffice/package_libreoffice.py <bundle.tar.gz> <sortie.tar.gz>`, puis `databricks fs cp <sortie.tar.gz> dbfs:/Volumes/<catalog>/<schema>/<volume>/libreoffice/libreoffice-linux-x64.tar.gz` |
-| [`scripts/soffice/scan_needed_libs.py`](scripts/soffice/scan_needed_libs.py) | CLI : liste les bibliothèques partagées qu'un arbre LibreOffice demande et qu'il ne fournit pas (ni l'arbre ni une image glibc de base ne les contiennent) | `python runbooks/scripts/soffice/scan_needed_libs.py <dossier_extrait>` |
-| [`scripts/compare/compare_preview.py`](scripts/compare/compare_preview.py) | CLI : rapport hors ligne d'une paire de documents (extraction, diff, images, découpage), sans appel au modèle | `python runbooks/scripts/compare/compare_preview.py old.docx new.docx` ; options : `--method {standard,structured,comparative}`, `--dump-diff <fichier>`, `--threshold <valeur>` |
+| [`scripts/dev_copy/export_uat_to_staging.py`](scripts/dev_copy/export_uat_to_staging.py) | Notebook, UAT workspace. Copies the `chunks` table and the parsing state of `uat_proj.qualibot` to the volume `staging/dev_copy`, with the LibreOffice archive. Read-only on the UAT tables. Starts the copy of the corpus into DEV. | See "Notebook commands" below |
+| [`scripts/dev_copy/export_uat_submit.json`](scripts/dev_copy/export_uat_submit.json) | Body of the `jobs submit` command that runs the notebook above | `databricks jobs submit --json @runbooks/scripts/dev_copy/export_uat_submit.json --profile UAT` |
+| [`scripts/lakebase/copy_Lakebase_tables.py`](scripts/lakebase/copy_Lakebase_tables.py) | CLI. Creates or replaces, in `dev_proj.qualibot`, one Delta table per table of the UAT Lakebase database, from the export on the volume (or read directly from Lakebase with `--direct`, which needs port 5432) | After the job `lakebase_export_uat_to_volume` has run: `python runbooks/scripts/lakebase/copy_Lakebase_tables.py`; direct: `python runbooks/scripts/lakebase/copy_Lakebase_tables.py --direct` |
+| [`scripts/lakebase/migrate_lakebase.py`](scripts/lakebase/migrate_lakebase.py) | CLI. Applies the changes of `migrations.py` to one Lakebase database. `--env` takes `DEV`, `UAT`, `UAT-TEST` or `PROD` (default `DEV`) | `python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV` |
+| [`scripts/lakebase/migrate_lakebase_job.py`](scripts/lakebase/migrate_lakebase_job.py) | Notebook. The same migration, run from the workspace. Default database `doccompare_test`; the `doccompare` database is refused on the UAT host | See "Notebook commands" below |
+| [`scripts/lakebase/migrations.py`](scripts/lakebase/migrations.py) | Ordered, idempotent list of schema changes (table renames, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, `DROP TABLE IF EXISTS`) and the function `apply_migrations` | Module imported by the two migration scripts: no command |
+| [`scripts/uat/setup_proj_schema.py`](scripts/uat/setup_proj_schema.py) | Notebook, UAT workspace, identity `job-runner-sa-uat`. Creates the volume `images_test` if missing, deep-clones the parsing state tables (`parsing_checkpoint`, `parsed_documents`, `image_metadata`, `parse_manifest`, `category_reference`) from the source schema (widget `source_catalog_schema`, read only) into `uat_proj.qualibot.*_test`, then grants read access | See "Notebook commands" below |
+| [`scripts/soffice/package_libreoffice.py`](scripts/soffice/package_libreoffice.py) | CLI. Builds the portable LibreOffice archive (tar.gz) used by the "Exact (PDF)" preview, from the LibreOffice bundle downloaded beforehand. Needs network access to the Ubuntu archive | `python runbooks/scripts/soffice/package_libreoffice.py <bundle.tar.gz> <sortie.tar.gz>`, then `databricks fs cp <sortie.tar.gz> dbfs:/Volumes/<catalog>/<schema>/<volume>/libreoffice/libreoffice-linux-x64.tar.gz` |
+| [`scripts/soffice/scan_needed_libs.py`](scripts/soffice/scan_needed_libs.py) | CLI. Lists the shared libraries a portable LibreOffice tree needs but does not ship. Used to check the system libraries that `package_libreoffice.py` bundles | `python runbooks/scripts/soffice/scan_needed_libs.py <dossier_extrait>` |
+| [`scripts/compare/compare_preview.py`](scripts/compare/compare_preview.py) | CLI. Offline report on a document pair: extraction, diff, images and chunking, with no model call. Logs what would be sent to the model | `python runbooks/scripts/compare/compare_preview.py old.docx new.docx`. Options: `--method {standard,structured,comparative}` (default `structured`), `--dump-diff <fichier>` (writes the full text block), `--threshold <valeur>` (overrides the similarity threshold, default 0.55), `--chunk-threshold` (default 60000), `--chunk-size` (default 45000) |
 
-### Commandes des notebooks
+### Notebook commands
 
-Les notebooks ne se lancent pas depuis le poste : il faut d'abord les importer dans le workspace, au chemin voulu, puis les lancer avec leurs paramètres.
+Notebooks do not run from a workstation. Import each one into the workspace at the path given, then run it with its parameters.
 
-**Copie UAT vers DEV** (profil `UAT`, depuis la racine du dépôt). Le chemin du notebook doit être identique au `notebook_path` de `export_uat_submit.json` :
+**Copy UAT to DEV** (profile `UAT`, from the repository root). The notebook path must be identical to `notebook_path` in `export_uat_submit.json`:
 
 ```powershell
 databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile UAT
@@ -60,24 +62,24 @@ databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot
 databricks jobs submit --json @runbooks/scripts/dev_copy/export_uat_submit.json --profile UAT
 ```
 
-**Migration Lakebase depuis le workspace** (le notebook lit ses paramètres dans des widgets) :
+**Lakebase migration from the workspace** (the notebook reads its parameters from widgets). Import it, then run the imported notebook:
 
 ```powershell
 databricks workspace import <chemin workspace> --file runbooks/scripts/lakebase/migrate_lakebase_job.py --format SOURCE --language PYTHON --overwrite --profile <profil>
 ```
 
-Lancer ensuite le notebook importé. Widgets : `LAKEBASE_DATABASE` (défaut `doccompare_test` ; `doccompare` est refusée sur l'hôte UAT), `LAKEBASE_PROJECT_ID`, `LAKEBASE_BRANCH`, `LAKEBASE_ENDPOINT`.
+Widgets: `LAKEBASE_DATABASE` (default `doccompare_test`; `doccompare` is refused on the UAT host), `LAKEBASE_PROJECT_ID`, `LAKEBASE_BRANCH`, `LAKEBASE_ENDPOINT`.
 
-**Tables d'état du parsing pour `qualibot-uat-test`** (profil de l'identité `job-runner-sa-uat`) :
+**Parsing state tables for `qualibot-uat-test`** (profile of the identity `job-runner-sa-uat`). Import the notebook, then run it with its widgets:
 
 ```powershell
 databricks workspace import <chemin workspace> --file runbooks/scripts/uat/setup_proj_schema.py --format SOURCE --language PYTHON --overwrite --profile job-runner-sa-uat
 ```
 
-Lancer ensuite le notebook importé, avec ses widgets. Les valeurs par défaut sont celles de la répétition `qualibot-uat-test` ; `overwrite` vaut `false` (une table existante est gardée).
+The defaults are those of the `qualibot-uat-test` rehearsal. `overwrite` is `false` by default: an existing table is kept, so a second run changes nothing.
 
-### Règles des scripts
+### Rules for the scripts
 
-- Rien ici n'est importé par `server/`, par `utils/` ni par un fichier de `resources/`. Un script qui doit être lancé par un job ou un déploiement reste dans `utils/`.
-- Les notebooks de ce dossier journalisent avec `logger`, jamais `print`.
-- Les valeurs par défaut (widgets, constantes) ne sont relues par aucun job : les vérifier avant de relancer un script.
+- Nothing here is imported by `server/`, `utils/` or any file of `resources/`. A script that a job or a deployment must run belongs in `utils/`.
+- Notebooks and CLI scripts log with `logger`, never `print`.
+- No job reads the default values (widgets, constants) of these scripts. Check them before running a script again.

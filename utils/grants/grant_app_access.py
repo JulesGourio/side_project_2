@@ -6,10 +6,8 @@
 # MAGIC the DEV job SP, which holds grant rights on the target catalogs. Idempotent:
 # MAGIC re-running it never removes anything, an existing grant is a no-op.
 # MAGIC
-# MAGIC **To add or remove a grant, edit only the lists below** (the job passes the
-# MAGIC same values from `databricks.yml` → `grant_app_access_dev` → `base_parameters`;
-# MAGIC a one-off run can also override them with "Run now with different parameters").
-# MAGIC Comma-separated names, no catalog/schema prefix.
+# MAGIC The lists below are the job's parameters (`databricks.yml` → `grant_app_access_dev` →
+# MAGIC `base_parameters`). Comma-separated names, no catalog/schema prefix.
 # MAGIC
 # MAGIC | List | Schema | Grant | Used by |
 # MAGIC |---|---|---|---|

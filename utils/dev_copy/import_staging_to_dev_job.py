@@ -15,8 +15,7 @@
 # MAGIC **Highlighted complexities:**
 # MAGIC An existing target table is left alone unless `OVERWRITE=true`:
 # MAGIC replacing a chunk table under a live index breaks its incremental sync
-# MAGIC (`DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE`). After an overwrite of
-# MAGIC a chunk table, delete its index and let the next task recreate it.
+# MAGIC (`DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE`).
 # MAGIC
 # MAGIC **Input**
 # MAGIC - `{SOURCE_DIR}/manifest.json`, `{SOURCE_DIR}/tables/<table>`, `{SOURCE_DIR}/libreoffice/*.tar.gz`

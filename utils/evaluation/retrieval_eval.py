@@ -3,9 +3,9 @@
 # MAGIC # Qualibot — retrieval evaluation of the chat (no answer, no judge)
 # MAGIC
 # MAGIC Measures only the search: for each question, are the expected documents among the passages
-# MAGIC the chat hands to the LLM? Deterministic apart from the rewrite, ~100x cheaper than an answer
-# MAGIC comparison (no answer generated, no judge), so it runs on every question we have with an
-# MAGIC expected document:
+# MAGIC the chat hands to the LLM? Deterministic apart from the rewrite, and much cheaper than an answer
+# MAGIC comparison (no answer generated, no judge), so it runs on every question with an expected
+# MAGIC document:
 # MAGIC
 # MAGIC | Source | Table | Expected documents |
 # MAGIC |---|---|---|
@@ -13,14 +13,14 @@
 # MAGIC | `synthetic` | `dev_proj.qualibot.eval_synthetic_questions` | `positive_refs` (FULL), `partial_refs` reported apart |
 # MAGIC | `feedback` | `dev_proj.qualibot.eval_feedback_failures` | `extracted_expected_ref` (user-named document) |
 # MAGIC
-# MAGIC Caveat: synthetic positives were judged among the top-K of another retriever, so they lean toward
+# MAGIC Caveat: synthetic positives are judged among the top-K of another retriever, so they lean toward
 # MAGIC it; compare runs with each other, per source.
 # MAGIC
 # MAGIC Same steps as the app: history, translation bridge, date, then `engine.retrieve_for_turn`
-# MAGIC (rewrite, 3 queries, REF lookup). What is compared: the **index** (the chat's own,
+# MAGIC (rewrite, Vector Search queries). What is compared: the **index** (the chat's own,
 # MAGIC or one built with another chunking) and the **search sizes** (reranked / raw passages per
 # MAGIC query, cap on the merged list) — widget `indexes`. Questions
-# MAGIC already saved in `results_table` for a label are skipped. Run all.
+# MAGIC already saved in `results_table` for a label are skipped.
 
 # COMMAND ----------
 

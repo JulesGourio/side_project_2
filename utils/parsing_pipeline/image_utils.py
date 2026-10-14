@@ -320,7 +320,7 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
             results.append(_fallback_or_error(fb, ext_lower, timings))
             continue
 
-        # Manual "column: value" parser, not Docling — Docling's one large markdown table chunks/embeds poorly.
+        # Spreadsheets use the column-value parser: Docling turns each sheet into one large markdown table, which chunks badly.
         try:
             with _ParseTimeout(PARSE_TIMEOUT_SECONDS):
                 if ext_lower in ("xlsx", "xlsm", "xlsb"):

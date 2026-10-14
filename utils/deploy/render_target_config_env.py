@@ -3,9 +3,7 @@
 USAGE:
     python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [output_path]
 
-Single source of truth for per-target app env overrides, shared by
-deploy_qualibot.ps1 (local/manual deploys) and bitbucket-pipelines.yml (CI) --
-avoids hardcoding the same values twice in two different scripting languages.
+Writes the per-target app env overrides of target_env.json as shell exports.
 """
 from __future__ import annotations
 
@@ -35,7 +33,7 @@ def main() -> None:
         raise SystemExit(f"Unknown target '{target}'. Available: {available}")
 
     lines = [f"export {name}='{value}'" for name, value in values.items()]
-    # LF on every OS: text mode would write CRLF on Windows, leaving a trailing \r in each value.
+    # Explicit LF: a CRLF newline would leave a trailing \r in every value.
     output_path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8", newline="\n")
     logger.info(f"Wrote {len(lines)} var(s) to {output_path} for target '{target}'.")
 

@@ -99,17 +99,14 @@ export function ComparisonHistory({ open, onClose, onLoad }: Props) {
 
   return (
     <>
-      {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/30 backdrop-blur-[2px] z-40"
         onClick={onClose}
       />
 
-      {/* Drawer */}
       <div className="fixed right-0 top-0 h-full w-[400px] max-w-full z-50 flex flex-col shadow-2xl"
         style={{ background: 'var(--color-background)', borderLeft: '1px solid var(--color-border)' }}>
 
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b"
           style={{ borderColor: 'var(--color-border)' }}>
           <div className="flex items-center gap-2.5">
@@ -147,7 +144,6 @@ export function ComparisonHistory({ open, onClose, onLoad }: Props) {
           </div>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto">
           {!available ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 px-8 text-center">
@@ -211,7 +207,6 @@ export function ComparisonHistory({ open, onClose, onLoad }: Props) {
           )}
         </div>
 
-        {/* Load more */}
         {available && entries.length < total && (
           <div className="px-5 py-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
             <button

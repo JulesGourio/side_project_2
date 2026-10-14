@@ -6,7 +6,7 @@ export interface PdfSource {
   title: string;
   url?: string;
   n?: number;
-  detail?: string;  // Intraqual title, revision and date, shown after the REF
+  detail?: string;  // Document title, revision and date, shown after the REF
 }
 
 export interface PdfSection {

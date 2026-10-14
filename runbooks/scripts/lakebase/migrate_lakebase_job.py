@@ -1,7 +1,7 @@
 # Databricks notebook source
 """Notebook version of migrate_lakebase.py: applies migrations.py to a Lakebase database from a workspace job. One-shot.
 
-Not deployed (runbooks/scripts/ is excluded from the bundle sync) and no bundle job runs it any more. To run it by hand: import
+Not deployed (runbooks/scripts/ is excluded from the bundle sync) and no bundle job runs it. To run it by hand: import
 this file into the workspace with `databricks workspace import <path> --file runbooks/scripts/lakebase/migrate_lakebase_job.py
 --format SOURCE --language PYTHON --overwrite --profile <profile>`, then run it with the widgets. The default
 database is doccompare_test; the real doccompare database of UAT is refused.

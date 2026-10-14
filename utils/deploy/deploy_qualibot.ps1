@@ -1,21 +1,16 @@
 param(
     [string]$AppEnv   = 'uat',
-    [switch]$SkipBuild,         # Pass -SkipBuild to skip frontend rebuild (Python-only changes)
-    [switch]$SyncOnly,          # Pass -SyncOnly to only upload the code to the workspace: no frontend
-                                # build, no app start/redeploy (notebooks reading the synced code)
-    [switch]$Infra              # Pass -Infra to (re)deploy bundle resources via terraform
-                                # (app ACLs, UC volume bindings). Requires MANAGE on the
-                                # target catalog. Only needed when the bundle resources
-                                # (resources/, databricks.yml) change — routine code deploys do NOT need it.
+    [switch]$SkipBuild,         # Skip the frontend build (Python-only changes)
+    [switch]$SyncOnly,          # Upload the code only: no frontend build, no app start or redeploy
+                                # (notebooks reading the synced code)
+    [switch]$Infra              # Full bundle deploy via terraform (app ACLs, UC volume bindings);
+                                # needs MANAGE on the target catalog
 )
 
 $ErrorActionPreference = 'Stop'
 
-# Deploy orchestration metadata only (bundle target / app name / CLI profile).
-# App-facing env var overrides (COMPARE_VOLUME_PATH, CHAT_INDEX, model
-# endpoints, etc.) live in utils/deploy/target_env.json — the single source
-# of truth shared with bitbucket-pipelines.yml, rendered by
-# render_target_config_env.py below. Don't hardcode them here too.
+# Bundle target, app name and CLI profile per environment. The app's env overrides
+# are in target_env.json, rendered by render_target_config_env.py.
 $Targets = @{
     dev        = @{ Target = 'dev';               AppName = 'qualibot';           Profile = 'DEV' }
     uat        = @{ Target = 'qualibot-uat';      AppName = 'qualibot';           Profile = 'UAT' }
@@ -56,31 +51,24 @@ try {
         }
     }
 
-    # 2. Generate per-env config (from target_env.json) and push source files
-    # to the workspace. target_config.env overrides app.yaml's defaults; it is
-    # gitignored and uploaded separately — not committed.
+    # 2. Render target_config.env from target_env.json (it overrides app.yaml's defaults,
+    # is gitignored and is uploaded with the code) and push the source files.
     Write-Host "[2/4] Writing target_config.env and uploading source files..." -ForegroundColor Yellow
     & python utils/deploy/render_target_config_env.py $AppEnv target_config.env
     if ($LASTEXITCODE -ne 0) { throw "render_target_config_env.py failed (exit $LASTEXITCODE)" }
 
-    # qualibot-prod's root_path is /Workspace/.bundle (not /Workspace/Shared/.bundle
-    # like the other targets) -- avoids the "writable by all workspace users" warning.
+    # The prod bundle lives outside /Workspace/Shared: Databricks warns when a bundle root there is writable by all users.
     $BundleRoot = if ($AppEnv -eq 'prod') { '/Workspace/.bundle' } else { '/Workspace/Shared/.bundle' }
     $SourceCodePath = "$BundleRoot/qualibot/$Target/files"
 
     if ($Infra) {
-        # Full bundle deploy: (re)applies app ACLs + UC volume bindings via terraform.
-        # This grants the app's service principal USE CATALOG on the target catalog,
-        # which REQUIRES the deploying user to have MANAGE on that catalog. Reserve
-        # for the first deploy or when the bundle resources actually change.
+        # Grants the app's service principal USE CATALOG, which requires MANAGE on the catalog for the deploying user.
         Write-Host "      -Infra: deploying bundle resources via terraform (needs catalog MANAGE)..." -ForegroundColor Yellow
         & databricks bundle deploy --target $Target --profile $Profile
         if ($LASTEXITCODE -ne 0) { throw "databricks bundle deploy failed (exit $LASTEXITCODE)" }
     } else {
-        # Routine code deploy: just upload the source files. No terraform, so it
-        # never touches catalog/volume permissions and works without admin rights.
-        # --include force-uploads target_config.env (gitignored); the --exclude set
-        # mirrors the bundle's sync excludes so we skip frontend source and caches.
+        # Upload only: no terraform, so catalog and volume permissions stay untouched.
+        # --include forces target_config.env (gitignored); the excludes match the bundle's sync excludes.
         & databricks sync . $SourceCodePath --profile $Profile `
             --include 'target_config.env' `
             --exclude 'client/src/**' `
@@ -109,9 +97,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "databricks sync failed (exit $LASTEXITCODE)" }
     }
 
-    # 3. Deploying to a stopped app fails ("not in RUNNING state"), and the off-hours jobs
-    # (databricks.yml: apps_stop_nightly_uat) stop the apps, so the compute is checked first.
-    # qualibot-uat-test is never auto-started: it is a disposable test app, stopped outside test sessions.
+    # 3. A deploy to a stopped app fails ("not in RUNNING state"); the nightly jobs of databricks.yml
+    # stop the apps, so the compute state is checked first.
+    # qualibot-uat-test is never auto-started: it is a disposable test app.
     if ($SyncOnly) {
         Write-Host ""
         Write-Host "Code synced to $SourceCodePath (-SyncOnly: app not restarted, frontend not rebuilt)." -ForegroundColor Green

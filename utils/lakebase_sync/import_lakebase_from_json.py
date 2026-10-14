@@ -3,8 +3,7 @@ TARGET workspace's Lakebase database.
 
 Overwrites existing rows: DELETE then INSERT per table, all in one
 transaction (a failure midway rolls back to the target's exact prior state).
-Meant to run as a CI pipeline step authenticated as whichever identity has
-access to the TARGET workspace (--profile) -- no personal login role needed.
+Authenticates with the CLI profile (--profile) of the target workspace.
 
 Prerequisite: the target app must have started at least once, so that its schema setup
 (server/services/infra/lakebase/schema.py) has created the tables.

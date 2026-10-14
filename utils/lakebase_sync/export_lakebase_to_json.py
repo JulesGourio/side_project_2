@@ -1,9 +1,7 @@
 """Export every Lakebase table to local JSON Lines files.
 
-Meant to run as a CI pipeline step authenticated as whichever identity has
-access to the SOURCE workspace (--profile) -- no personal login role needed.
-Paired with import_lakebase_from_json.py, run in a later pipeline step
-against the TARGET workspace.
+Authenticates with the CLI profile (--profile) of the workspace that hosts the source database.
+The files are loaded by import_lakebase_from_json.py.
 
 USAGE:
     python export_lakebase_to_json.py --profile job-runner-sa-uat --out-dir staging/lakebase

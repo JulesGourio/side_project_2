@@ -20,10 +20,9 @@
 # MAGIC if this notebook can open the app's WebSocket, else `engine` (the app may refuse a notebook
 # MAGIC token: the first cell says which mode ran).
 # MAGIC
-# MAGIC Cost ≈ 0.003 € per question (rewrite + answer + translation): the defaults (5, 10, 20, 40,
-# MAGIC 80 × 4 rounds = 620 questions) ≈ 2 €. Questions: the golden set + real DEV questions,
-# MAGIC languages and divisions as asked. In `app` mode every question is saved in the app's history
-# MAGIC under your user, in sessions named `loadtest-<run>-…`.
+# MAGIC Each question costs one rewrite, one answer and one translation call. Questions: the golden set
+# MAGIC and real DEV questions, languages and divisions as asked. In `app` mode every question is saved in the
+# MAGIC app's history under the notebook's user, in sessions named `loadtest-<run>-…`.
 
 # COMMAND ----------
 

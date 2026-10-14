@@ -49,7 +49,6 @@ export function ChatSidebar({
       className="flex flex-col w-60 flex-shrink-0 border-r h-full"
       style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
     >
-      {/* New chat button */}
       <div className="p-3 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
         <button
           onClick={onNewChat}
@@ -63,11 +62,9 @@ export function ChatSidebar({
           New conversation
         </button>
 
-        {/* Division scope selector */}
         <DivisionSelector value={division} onChange={onDivisionChange} />
       </div>
 
-      {/* Session list */}
       <div className="flex-1 overflow-y-auto py-2">
         {loading ? (
           <div className="px-3 py-4 text-center text-xs" style={{ color: 'var(--color-text-muted)' }}>
@@ -109,7 +106,6 @@ export function ChatSidebar({
                     </p>
                   </div>
 
-                  {/* Delete button */}
                   <button
                     onClick={e => { e.stopPropagation(); onDeleteSession(session.id); }}
                     className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-lg items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer hidden group-hover:flex"

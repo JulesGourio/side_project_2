@@ -5,7 +5,7 @@ const TEAMS_CHANNEL_URL =
 
 type TabId = 'compare' | 'chat';
 
-// Placeholder copy, edited by hand: one news list per tool page, newest entry first.
+// One news list per tool page, newest entry first.
 const README_CONTENT: Record<TabId, { title: string; news: { date: string; features: string[] }[] }> = {
   compare: {
     title: "Compare — What's New",
@@ -81,7 +81,6 @@ export function WhatsNewModal({ tabId, onClose }: { tabId: TabId; onClose: () =>
         style={{ width: '50vw', height: '70vh', background: 'var(--color-background)' }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Static: title + close */}
         <div
           className="flex items-center justify-between gap-3 px-6 py-4 border-b flex-shrink-0"
           style={{ borderColor: 'var(--color-border)' }}
@@ -109,7 +108,6 @@ export function WhatsNewModal({ tabId, onClose }: { tabId: TabId; onClose: () =>
           </button>
         </div>
 
-        {/* Static: Teams link */}
         <div className="px-6 py-4 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
           <a
             href={TEAMS_CHANNEL_URL}
@@ -123,7 +121,6 @@ export function WhatsNewModal({ tabId, onClose }: { tabId: TabId; onClose: () =>
           </a>
         </div>
 
-        {/* Scrollable: news list */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
           {content.news.map((item, i) => (
             <div 
@@ -131,7 +128,6 @@ export function WhatsNewModal({ tabId, onClose }: { tabId: TabId; onClose: () =>
               className={i > 0 ? 'pt-6 border-t' : ''} 
               style={{ borderColor: 'var(--color-border)' }}
             >
-              {/* Date Badge */}
               <div className="mb-3">
                 <span 
                   className="inline-block px-2.5 py-0.5 rounded-md text-xs font-semibold select-none" 
@@ -144,7 +140,6 @@ export function WhatsNewModal({ tabId, onClose }: { tabId: TabId; onClose: () =>
                 </span>
               </div>
               
-              {/* Features List */}
               <ul className="space-y-2.5">
                 {item.features.map((feature, index) => (
                   <li 
@@ -152,7 +147,6 @@ export function WhatsNewModal({ tabId, onClose }: { tabId: TabId; onClose: () =>
                     className="flex items-start gap-2.5 text-base leading-relaxed" 
                     style={{ color: 'var(--color-text-primary)' }}
                   >
-                    {/* Custom bullet dot matching accent color */}
                     <span 
                       className="mt-1.5 h-1.5 w-1.5 rounded-full flex-shrink-0" 
                       style={{ background: 'var(--color-accent-primary)' }} 

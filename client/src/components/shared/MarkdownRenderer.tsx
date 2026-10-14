@@ -8,7 +8,7 @@ import {
 } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
-// Type workaround for react-syntax-highlighter with React 18
+// Type workaround for the syntax highlighter with React 18
 const SyntaxHighlighterComponent =
   SyntaxHighlighter as unknown as React.ComponentType<SyntaxHighlighterProps>;
 
@@ -80,7 +80,7 @@ function stripFootnotes(text: string): string {
     "",
   );
   cleaned = cleaned.replace(/<sup[^>]*>[\s\S]*?<\/sup>/gi, "");
-  // Models sometimes emit bare tags that react-markdown cannot parse.
+  // The model sometimes emits bare tags the Markdown parser cannot read.
   cleaned = cleaned.replace(/<\/?(?:section|sup|a\s+href="#fn)[^>]*>/gi, "");
 
   cleaned = cleaned.replace(/^\[\^\d+\]:.*$/gm, "");

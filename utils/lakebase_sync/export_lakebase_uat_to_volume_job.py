@@ -7,8 +7,8 @@ import sys
 import psycopg2.extras
 from databricks.sdk import WorkspaceClient
 
-# Serverless job tasks have no spark_env_vars: parameters come through widgets. Classic compute cannot reach the
-# Lakebase private endpoint (TCP timeout on 5432).
+# Parameters come through widgets: serverless tasks have no spark_env_vars. Classic compute cannot reach
+# the Lakebase endpoint (TCP timeout on 5432).
 dbutils.widgets.removeAll()
 dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")
@@ -35,7 +35,6 @@ TABLES_TO_SKIP = {
 OUTPUT_DIR = f"/Volumes/{OUTPUT_VOLUME_CATALOG}/{OUTPUT_VOLUME_SCHEMA}/{OUTPUT_VOLUME_NAME}/lakebase_export"
 
 
-# The notebook's directory is the cwd and on sys.path: one level up is utils/ (ops_config).
 sys.path.insert(0, os.path.dirname(os.getcwd()))
 from ops_config import json_serializer, lakebase_connect_with
 

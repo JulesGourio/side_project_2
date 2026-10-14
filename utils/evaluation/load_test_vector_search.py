@@ -2,9 +2,9 @@
 # MAGIC %md
 # MAGIC # Qualibot — load test of Vector Search alone (where does it refuse, and why)
 # MAGIC
-# MAGIC The chat load test (`load_test_chat.py`) can fail with `Vector Search returned 429`. This notebook sends **only Vector Search queries** (no LLM), the
-# MAGIC same ones the chat sends, by steps of simultaneous queries (widget `levels`), for `step_s`
-# MAGIC seconds each, **without retries**: what is measured is the endpoint's own capacity.
+# MAGIC Sends **only Vector Search queries** (no LLM), the same ones the chat sends, by steps of simultaneous
+# MAGIC queries (widget `levels`), for `step_s` seconds each, **without retries**: what is measured is the
+# MAGIC endpoint's own capacity. Tells whether a refusal of the chat load test (`load_test_chat.py`) comes from Vector Search.
 # MAGIC
 # MAGIC One scenario = one kind of query, measured step after step (widget `scenarios`):
 # MAGIC
@@ -15,7 +15,7 @@
 # MAGIC | `rerank12_text` | same, reranker on the text only | does the number of reranked columns matter? |
 # MAGIC | `ann10` | ANN (vectors only), 10 results | is the keyword part of HYBRID the cost? |
 # MAGIC | `hybrid10_filter` | HYBRID, 10 results, division filter AS | do filters cost? |
-# MAGIC | `chat_mix` | half `rerank12`, half `hybrid10` | what one chat question sends (3 + 3 queries, plus the REF lookup) |
+# MAGIC | `chat_mix` | half `rerank12`, half `hybrid10` | a mix close to what one chat question sends |
 # MAGIC
 # MAGIC Per step: queries answered per second, share refused (429) or failed, latency. A scenario
 # MAGIC stops at the first step where more than `stop_429_pct` % are refused. Results:
@@ -36,7 +36,7 @@ dbutils.widgets.text('scenarios', 'hybrid10,rerank12,rerank12_text,ann10,hybrid1
 dbutils.widgets.text('levels', '1,2,4,8,16,32,64')     # queries in progress at once
 dbutils.widgets.text('step_s', '20')                    # duration of each step
 dbutils.widgets.text('stop_429_pct', '50')
-dbutils.widgets.text('queries_per_question', '7')       # 3 reranked + 3 raw + ~1 REF lookup
+dbutils.widgets.text('queries_per_question', '7')       # queries per chat question, to convert the capacity into questions per minute
 dbutils.widgets.text('golden_table', 'dev_proj.qualibot.eval_golden_questions')
 dbutils.widgets.text('chat_table', 'dev_proj.qualibot.chat_messages')
 dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_load_vector_search_runs')

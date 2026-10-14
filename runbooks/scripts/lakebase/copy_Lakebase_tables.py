@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "utils"))
 from ops_config import PROFILE_DEV, LAKEBASE, json_serializer, lakebase_connect
 
 COPY_SOURCE_ENV      = "UAT"          # Lakebase source (key in LAKEBASE)
-COPY_TARGET_PROFILE  = PROFILE_DEV    # Destination Databricks workspace
+COPY_TARGET_PROFILE  = PROFILE_DEV
 COPY_TARGET_CATALOG  = "dev_proj"
 COPY_TARGET_SCHEMA   = "qualibot"
 COPY_STAGING_CATALOG = "uat_proj"
@@ -42,7 +42,7 @@ WAREHOUSE_ID = "13eff4a6095513cb"  # SQL Warehouse used for the CREATE TABLE sta
 STAGING_VOLUME_DBFS = f"dbfs:/Volumes/{COPY_STAGING_CATALOG}/{COPY_STAGING_SCHEMA}/{COPY_STAGING_VOLUME}"
 STAGING_VOLUME_SQL  = f"/Volumes/{COPY_STAGING_CATALOG}/{COPY_STAGING_SCHEMA}/{COPY_STAGING_VOLUME}"
 
-# Volume filled by the UAT job export_lakebase_uat_to_volume_job.py.
+# Volume filled by the UAT job lakebase_export_uat_to_volume (utils/lakebase_sync/export_lakebase_uat_to_volume_job.py).
 UAT_SOURCE_PROFILE          = LAKEBASE[COPY_SOURCE_ENV]["profile"]
 LAKEBASE_EXPORT_VOLUME_DBFS = "dbfs:/Volumes/uat_proj/qualibot/staging/lakebase_export"
 
@@ -83,7 +83,7 @@ def list_tables(cursor, schemas: list) -> list:
 
 
 def export_table_to_json(conn, schema: str, table: str) -> tuple[str, int]:
-    """Exporte une table Lakebase en JSON local. Retourne (chemin, nb_lignes)."""
+    """Export one Lakebase table to a local JSON Lines file. Returns (path, row count)."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(f'SELECT * FROM "{schema}"."{table}"')
         rows = [dict(row) for row in cur.fetchall()]
@@ -92,7 +92,7 @@ def export_table_to_json(conn, schema: str, table: str) -> tuple[str, int]:
     os.makedirs(out_dir, exist_ok=True)
     out_file = os.path.join(out_dir, f"{table}.json")
 
-    # Format JSON Lines (1 objet par ligne) requis par Databricks SQL json.`path`
+    # JSON Lines (one object per line), the format read by Databricks SQL json.`path`
     with open(out_file, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False, default=json_serializer) + "\n")
@@ -139,7 +139,7 @@ def wait_for_statement(w: WorkspaceClient, response) -> None:
 
 
 def upload_to_staging(local_file: str, table: str) -> str:
-    """Upload le fichier JSON vers le volume de staging via la CLI Databricks."""
+    """Upload the JSON file to the staging volume with the Databricks CLI."""
     staging_path = f"{STAGING_VOLUME_DBFS}/{table}.json"
     result = subprocess.run(
         [
@@ -158,7 +158,7 @@ def upload_to_staging(local_file: str, table: str) -> str:
 
 
 def create_or_replace_table(w: WorkspaceClient, table: str, volume_path: str) -> None:
-    """Crée ou écrase la table Delta dans le catalogue cible depuis le JSON stagé."""
+    """Create or replace the Delta table in the target catalog from the staged JSON."""
     target = f"`{COPY_TARGET_CATALOG}`.`{COPY_TARGET_SCHEMA}`.`{table}`"
     sql = f"CREATE OR REPLACE TABLE {target} USING DELTA AS SELECT * FROM json.`{volume_path}`"
 
@@ -193,7 +193,7 @@ def main():
     exported = []
 
     if args.direct:
-        # ── Étape 1 : export Lakebase en direct ───────────────────────────────
+        # ── Step 1: export from Lakebase directly ───────────────────────────────
         logger.info(f"=== [1/2] Export depuis Lakebase {COPY_SOURCE_ENV} (connexion directe) ===")
         conn = lakebase_connect(COPY_SOURCE_ENV)
         try:
@@ -216,7 +216,7 @@ def main():
         finally:
             conn.close()
     else:
-        # ── Étape 1 : récupération du JSON déjà exporté sur le volume UAT ──────
+        # ── Step 1: fetch the JSON already exported to the UAT volume ──────
         logger.info(f"=== [1/2] Récupération de l'export Lakebase {COPY_SOURCE_ENV} depuis {LAKEBASE_EXPORT_VOLUME_DBFS} ===")
         files = list_uat_export_files()
         if not files:
@@ -234,7 +234,7 @@ def main():
             exported.append(("public", table, local_file, n_rows))
             logger.info(f"  {table}: {n_rows} lignes")
 
-    # ── Étape 2 : push vers Databricks DEV ────────────────────────────────────
+    # ── Step 2: push to Databricks DEV ────────────────────────────────────
     logger.info(f"=== [2/2] Push vers {COPY_TARGET_CATALOG}.{COPY_TARGET_SCHEMA} (profil {COPY_TARGET_PROFILE}) ===")
     w = WorkspaceClient(profile=COPY_TARGET_PROFILE)
 

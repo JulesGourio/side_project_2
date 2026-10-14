@@ -2,16 +2,12 @@
 # MAGIC %md
 # MAGIC # Stop/start Databricks Apps (generic, parameterized)
 # MAGIC
-# MAGIC One reusable notebook for every "off-hours" job (nightly 21h-7h, weekend)
-# MAGIC across the UAT and DEV workspaces. `action` and `app_names` come from job
-# MAGIC parameters (see `databricks.yml`) — this file is never edited per-schedule,
-# MAGIC only the job's `base_parameters` change.
+# MAGIC One notebook for every off-hours job (nightly and weekend) of the UAT and DEV
+# MAGIC workspaces. `action` and `app_names` come from the job's `base_parameters`
+# MAGIC (see `databricks.yml`).
 # MAGIC
-# MAGIC Uses the job's own ambient identity (`WorkspaceClient()`, no profile) —
-# MAGIC whoever the job's `run_as` is set to must have CAN_MANAGE on every app
-# MAGIC named in `app_names` for that workspace.
-# MAGIC
-# MAGIC The SDK does not tolerate a redundant stop/start.
+# MAGIC Runs under the job's own identity (`WorkspaceClient()`, no profile), which needs
+# MAGIC CAN_MANAGE on every app in `app_names`.
 
 # COMMAND ----------
 

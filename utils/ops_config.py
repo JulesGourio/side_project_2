@@ -1,7 +1,6 @@
 """Shared settings and helpers for utils/ (CLI profiles, Lakebase connection).
 
-Notebooks reach it with ``sys.path.insert(0, os.path.dirname(os.getcwd()))`` (their folder is on sys.path,
-one level up is utils/). psycopg2 is imported lazily so notebooks that never touch Lakebase can import this file.
+psycopg2 is imported lazily so that modules which never touch Lakebase can import this file.
 """
 from __future__ import annotations
 

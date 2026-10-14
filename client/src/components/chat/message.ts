@@ -3,7 +3,7 @@ export interface Source {
   url?: string;
   /** 1-based inline-citation number; set only for sources cited inline (⟦n⟧). */
   n?: number;
-  // From the document catalog at answer time: Intraqual title, current revision and its date (ISO).
+  // From the document catalog at answer time: document title, current revision and its date (ISO).
   doc_title?: string;
   revision?: string;
   doc_date?: string;

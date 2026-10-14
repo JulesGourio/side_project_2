@@ -14,13 +14,13 @@
 # MAGIC
 # MAGIC **Protecting the token quota** (the judge shares the model endpoint's limits with the chat): the plan is printed with an
 # MAGIC estimate of input tokens first (`dry_run` = stop there); the run refuses to start above `max_input_tokens`; judge calls are
-# MAGIC throttled by `max_workers` calls in flight and `calls_per_second` starting per second, 429s are retried with doubling waits;
-# MAGIC run it off peak hours. Turns with a thumbs down or a degraded status are read by every judge, whatever the sample.
+# MAGIC throttled by `max_workers` calls in flight and `calls_per_second` starting per second, 429s are retried with doubling waits.
+# MAGIC Turns with a thumbs down or a degraded status are read by every judge, whatever the sample.
 # MAGIC `sample_rates` (JSON, e.g. `{"retrieval_groundedness": 0.25}`) overrides `chat_scorers.SAMPLE_RATES`; the target
 # MAGIC rates are `chat_scorers.TARGET_SAMPLE_RATES`.
 # MAGIC
 # MAGIC ## Technical debt
-# MAGIC 1. Judge prompts are MLflow's; their real token cost per turn is still to be read from the first dry runs.
+# MAGIC 1. Judge prompts are MLflow's; their token cost per turn is not measured yet.
 # MAGIC 2. `databricks:/<endpoint>` judges need MLflow >= 3.4; with an older MLflow leave `judge_model` empty (managed judge).
 
 # COMMAND ----------

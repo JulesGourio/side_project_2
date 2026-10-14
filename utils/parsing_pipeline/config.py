@@ -1,4 +1,4 @@
-"""config.py — Single source of truth for all pipeline parameters.
+"""config.py — All pipeline parameters.
 
 Each parameter can be overridden via environment variables (set in the Job task
 configuration or via spark.conf) so that dev / uat / prod targets diverge
@@ -50,7 +50,7 @@ DOC_SCOPE_FILTER = _env(
 )
 
 # --- Optional fallbacks (disabled by default) ---
-# Empty = disabled. Kept as variables to re-enable via --var if a gap shows up.
+# Empty = disabled.
 GD_DOC_FALLBACK          = _env("PARSING_GD_DOC_FALLBACK",          "")
 DIVISION_ARCHIVE_TABLE   = _env("PARSING_DIVISION_ARCHIVE_TABLE",   "")
 DIVISION_REFERENCE_TABLE = _env("PARSING_DIVISION_REFERENCE_TABLE",
@@ -174,8 +174,7 @@ def _detect_gpu():
 _use_gpu_env = _os.environ.get("PARSING_USE_GPU")
 USE_GPU = (_use_gpu_env.strip().lower() in ("1", "true", "yes")) if _use_gpu_env else _detect_gpu()
 DO_OCR                  = False
-# Docling's own EasyOCR re-parse is off: it gains nothing over the plain parse.
-# Scanned pages go through the LLM-OCR fallback below instead.
+# Docling's own EasyOCR re-parse is off; scanned pages go through the LLM-OCR fallback below.
 GPU_OCR_FALLBACK        = False
 TABLE_STRUCTURE_MODE    = "accurate"   # "accurate" | "fast"
 GENERATE_PICTURE_IMAGES = True
@@ -193,7 +192,7 @@ IMAGE_FORMAT        = "PNG"     # PNG = lossless, no compression artifacts on te
 # tiktoken (cl100k) is more accurate than CHARS_PER_TOKEN for technical French; falls back to it if unavailable offline.
 USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
-# Passage sizes (chunking.py), overridable per run; tuned with utils/evaluation/retrieval_eval.py.
+# Passage sizes (chunking.py), overridable per run; utils/evaluation/retrieval_eval.py measures their effect on retrieval.
 MIN_CHUNK_TOKENS    = int(_env("PARSING_MIN_CHUNK_TOKENS", "150"))
 TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "300"))
 MAX_CHUNK_TOKENS    = int(_env("PARSING_MAX_CHUNK_TOKENS", "450"))
@@ -220,7 +219,7 @@ LLM_BREAKER_FAILURES = int(_env("PARSING_LLM_BREAKER_FAILURES", "5"))
 # Runs in which an image is attempted before it is set aside as FAILED_LIMIT (a full run resets the count).
 IMAGE_MAX_ATTEMPTS = int(_env("PARSING_IMAGE_MAX_ATTEMPTS", "10"))
 LLM_MAX_CONCURRENT  = 10   # Memory of the single-node m5d.xlarge caps the concurrency
-# Kept below the batch size that destabilizes the kernel.
+# Kept below the batch size at which the kernel becomes unstable.
 LLM_BATCH_SIZE      = int(_env("PARSING_LLM_BATCH_SIZE", "6000"))
 
 # Persists progress periodically instead of one MERGE at the very end of a multi-hour run.
@@ -242,8 +241,7 @@ IMG_SKIP_MIN_SIDE  = 85    # shorter side (px) < threshold -> band/table too sho
 # Post-filter: minimum useful length of a description to be injected as a chunk.
 MIN_INDEXABLE_DESC_CHARS = 40
 
-# True = provenance prefix embedded in chunk_text; False = body only (ref/division/title stay filterable columns),
-# which hurt retrieval precision.
+# True = the provenance prefix is embedded in chunk_text; False = body only (ref/division/title stay filterable columns).
 EMBED_SOURCE_PREFIX = _env("PARSING_EMBED_SOURCE_PREFIX", "true").strip().lower() in ("1", "true", "yes")
 
 # --- LLM Prompt template (vision model) ---

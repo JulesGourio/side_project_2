@@ -66,8 +66,8 @@ for entry in source_files:
         continue
 
     target_table = f"`{TARGET_CATALOG}`.`{TARGET_SCHEMA}`.`{table}`"
-    # Drop and recreate, not overwriteSchema alone: a column that is all NULL in one export and typed in the next
-    # fails the merge (DELTA_FAILED_TO_MERGE_FIELDS). Each run replaces the table wholesale anyway.
+    # Drop and recreate: overwriteSchema alone fails when a column is all NULL in one export and typed in the next
+    # (DELTA_FAILED_TO_MERGE_FIELDS).
     spark.sql(f"DROP TABLE IF EXISTS {target_table}")
     df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(target_table)
     loaded_tables += 1

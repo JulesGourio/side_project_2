@@ -73,7 +73,7 @@ const FLAGS: Record<string, ReactNode> = {
     </Svg>
   ),
 };
-FLAGS.EN = FLAGS.GB; // Intraqual uses both codes for English, never on the same document.
+FLAGS.EN = FLAGS.GB; // The source system uses both codes for English, never on the same document.
 
 export function Flag({ code }: { code: string }) {
   const flag = FLAGS[code];

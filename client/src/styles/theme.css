@@ -13,7 +13,7 @@
   --color-success: #16A34A;
   --color-error: #DC2626;
 
-  /* Aliases consumed by the Tailwind config and by utility classes. */
+  /* Aliases used by the utility classes. */
   --color-foreground: var(--color-text-primary);
   --color-background: var(--color-bg-primary);
   --color-muted: var(--color-bg-tertiary);

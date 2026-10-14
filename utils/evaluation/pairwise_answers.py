@@ -23,8 +23,8 @@
 # MAGIC parallel, by batches of 20. **Every batch is saved as soon as it ends**: searches and answers
 # MAGIC in `eval_pairwise_cache` (reused by any later run, whatever its `eval_id`), judgments in
 # MAGIC `eval_pairwise_runs`, one line per (question, contender). A run that crashes loses at most
-# MAGIC the batch in progress: Run all again and it resumes. Nothing already judged for the same
-# MAGIC `eval_id` is re-run.
+# MAGIC the batch in progress; a rerun resumes from the saved batches. Nothing already judged for
+# MAGIC the same `eval_id` is judged again.
 
 # COMMAND ----------
 

@@ -28,8 +28,7 @@ MIGRATIONS: list[tuple[str, str]] = [
         "chat_feedbacks.resolution_reason",
         "ALTER TABLE chat_feedbacks ADD COLUMN IF NOT EXISTS resolution_reason TEXT",
     ),
-    # Translate glossary: term definition and its provenance ('REF#chunk' extracted from the corpus, 'generated' by an
-    # LLM, 'cross_lang_pair' corroborated by a translation pair).
+    # glossary_terms: definition and its source ('REF#chunk', 'generated', 'cross_lang_pair').
     (
         "glossary_terms.definition",
         "ALTER TABLE glossary_terms ADD COLUMN IF NOT EXISTS definition TEXT",
@@ -51,8 +50,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     # users.can_translate is not dropped here: only the app's own service principal owns table users; the app's
     # startup migrations (server/services/infra/lakebase/schema.py) drop it.
 
-    # Add future migrations here:
-    # ("description", "ALTER TABLE ..."),
+    # Append new migrations here: idempotent SQL, applied in order.
 ]
 
 

@@ -36,7 +36,6 @@ export function TopBar() {
     >
       <div className="flex items-center justify-between h-full px-5 lg:px-8 max-w-7xl mx-auto">
 
-        {/* Logo + App title */}
         <Link to="/compare" className="flex items-center gap-3 flex-shrink-0">
           <img
             src={branding.logo}
@@ -51,7 +50,6 @@ export function TopBar() {
           </span>
         </Link>
 
-        {/* Navigation */}
         <nav className="flex items-center gap-1">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id;

@@ -19,8 +19,7 @@ SOURCE_EXPORT_DIR = os.getenv(
 )
 TARGET_CATALOG = os.getenv("TARGET_CATALOG", "uat_proj")
 TARGET_SCHEMA = os.getenv("TARGET_SCHEMA", "qualibot")
-# Only the chatbot tables (and errors, which holds the chat's failures) — the
-# rest are either unused in UAT or already served directly from Lakebase by the app.
+# Only the chatbot tables. The other tables are unused in UAT or read from Lakebase directly by the app.
 CHATBOT_TABLES = {"chat_feedbacks", "chat_messages", "chat_sessions", "chat_turns", "chat_retrieved_chunks",
                   "app_errors"}
 
@@ -73,8 +72,8 @@ for entry in source_files:
         continue
 
     target_table = f"`{TARGET_CATALOG}`.`{TARGET_SCHEMA}`.`{table}`"
-    # Drop and recreate, not overwriteSchema alone: a column that is all NULL in one export and typed in the next
-    # fails the merge (DELTA_FAILED_TO_MERGE_FIELDS). Each run replaces the table wholesale anyway.
+    # Drop and recreate: overwriteSchema alone fails when a column is all NULL in one export and typed in the next
+    # (DELTA_FAILED_TO_MERGE_FIELDS).
     spark.sql(f"DROP TABLE IF EXISTS {target_table}")
     df.write.format("delta").mode("overwrite").option(
         "overwriteSchema", "true"

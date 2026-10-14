@@ -1,204 +1,200 @@
-# Comparaison de documents
+# Document comparison
 
-Onglet Comparaison (`/compare`, [`ComparePage.tsx`](../../pages/ComparePage.tsx)).
-L'utilisateur dépose deux versions d'un document. Le composant `CompareView`
-produit, séparément ou ensemble :
+Compare tab (`/compare`, [`ComparePage.tsx`](../../pages/ComparePage.tsx)). The user
+drops two versions of a document. The `CompareView` component produces, separately
+or together:
 
-- un **résumé des changements** (Markdown, une puce par changement) ;
-- un **tableau des changements** (JSON affiché en tableau) ;
-- une **recherche d'impact** : les autres documents de la base que ces
-  changements touchent, avec un verdict par document et les passages à mettre à
-  jour ;
-- un **résumé d'un document** pris seul.
+- a **change summary** (Markdown, one bullet per change);
+- a **change table** (JSON shown as a table);
+- an **impact search**: the other documents of the base that these changes touch,
+  with a verdict per document and the passages to update;
+- a **summary of one document** on its own.
 
-Le serveur fournit les analyses (`server/routers/compare/`), les exports
-(`server/routers/exports.py`), l'historique (`server/routers/history.py`), les
-votes (`server/routers/feedback.py`) et les aperçus (`server/routers/preview.py`).
-Le dossier ne contient que l'interface et l'état du navigateur.
+The server provides the analyses (`server/routers/compare/`), the exports
+(`server/routers/exports.py`), the history (`server/routers/history.py`), the votes
+(`server/routers/feedback.py`) and the previews (`server/routers/preview.py`). This
+folder holds only the interface and the browser state.
 
-## Fichiers
+## Files
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `CompareView.tsx` | Page : assemble les panneaux, les deux analyses, la recherche d'impact et l'historique |
-| `DocsPanel.tsx` | Deux zones de dépôt et les résumés par document (un seul affiché à la fois) |
-| `DocDropZone.tsx` | Une zone de dépôt : contrôle du type et de la taille, aperçu, remplacement |
-| `FilePreviewModal.tsx` | Aperçu plein écran d'un fichier (PDF, image, DOCX, autres formats convertis par le serveur) |
-| `AnalysisActions.tsx` | Boutons de génération, d'annulation et de relance (« Re-run ») pour chaque analyse, et « Run Both » |
-| `AnalysisResults.tsx` | Affiche la carte du résumé ou du tableau ; onglets quand les deux existent |
-| `ResultCards.tsx` | Cartes : résumé Markdown, tableau structuré, résumé d'un document |
-| `JsonDiffTable.tsx` | Tableau des changements : colonnes selon le type de fichier, masquage des changements peu critiques, images |
-| `ImageLightbox.tsx` | Vue avant / après d'un changement visuel |
-| `Feedback.tsx` | Vote et commentaire sur une carte de résultat |
-| `ImpactSection.tsx` | Section recherche d'impact : boutons, état, carte de résultats |
-| `impact/ImpactResultsCard.tsx` | Résultats d'impact, « par document » ou « par changement », filtres par verdict |
-| `impact/ImpactParts.tsx` | Sous-composants : passages en conflit, changements, badges, liste des changements |
-| `impact/ImpactFeedback.tsx` | Votes sur le verdict d'un document et avis sur la recherche |
-| `impact/types.ts` | Types du résultat d'impact (flux NDJSON) |
-| `ComparisonHistory.tsx` | Panneau d'historique paginé |
-| `hooks/useAnalysisTrack.ts` | Une analyse en flux SSE ; instanciée deux fois (tableau, résumé) |
-| `hooks/useImpactSearch.ts` | Recherche d'impact en flux NDJSON, annulation, résultat restauré |
-| `hooks/useDocSummaries.ts` | Résumés d'un document seul |
-| `hooks/useCompareDocs.ts` | Les deux documents et leurs empreintes, reflétés dans le stockage local |
-| `hooks/useCompareConfig.ts` | Configuration serveur : volume, index d'impact, versions de traitement disponibles pour le type du fichier |
-| `hooks/useHistoryLoad.ts` | Recharge une entrée d'historique dans la bonne piste et restaure les fichiers |
-| `api.ts` | Appels HTTP, lecture du flux SSE, sauvegardes automatiques, historique |
-| `files.ts` | Types de fichiers acceptés, taille maximale, empreinte SHA-256, fichiers « placeholder » |
-| `storage.ts` | Clés du stockage local, écriture limitée dans le temps pendant un flux |
-| `types.ts` | Types partagés : document, paire d'images, changement, résumé |
-| `ui.tsx` | Composants communs : boutons, onglets, carte, fenêtre modale, défilement suivant le flux |
+| `CompareView.tsx` | Page: assembles the panels, both analyses, the impact search and the history |
+| `DocsPanel.tsx` | Two drop zones and the per-document summaries (one shown at a time) |
+| `DocDropZone.tsx` | One drop zone: type and size check, preview, replacement |
+| `FilePreviewModal.tsx` | Full-screen preview of a file (PDF, image, DOCX; other formats converted by the server) |
+| `AnalysisActions.tsx` | Generate, cancel and re-run buttons for each analysis, and "Run Both" |
+| `AnalysisResults.tsx` | Shows the summary or table card; tabs when both exist |
+| `ResultCards.tsx` | Cards: Markdown summary, structured table, document summary |
+| `JsonDiffTable.tsx` | Change table: columns by file type, hiding of low-criticality changes, images |
+| `ImageLightbox.tsx` | Before / after view of a visual change |
+| `Feedback.tsx` | Vote and comment on a result card |
+| `ImpactSection.tsx` | Impact search section: buttons, state, result card |
+| `impact/ImpactResultsCard.tsx` | Impact results, "by document" or "by change", verdict filters |
+| `impact/ImpactParts.tsx` | Sub-components: conflicting passages, changes, badges, change list |
+| `impact/ImpactFeedback.tsx` | Votes on a document verdict and a general opinion on the search |
+| `impact/types.ts` | Types of the impact result (NDJSON stream) |
+| `ComparisonHistory.tsx` | Paginated history panel |
+| `hooks/useAnalysisTrack.ts` | One analysis over an SSE stream; instantiated twice (table, summary) |
+| `hooks/useImpactSearch.ts` | Impact search over an NDJSON stream, cancellation, restored result |
+| `hooks/useDocSummaries.ts` | Summaries of one document |
+| `hooks/useCompareDocs.ts` | The two documents and their hashes, mirrored to local storage |
+| `hooks/useCompareConfig.ts` | Server configuration: volume, impact index, processor versions available for the file type |
+| `hooks/useHistoryLoad.ts` | Loads a history entry into the right track and restores the files |
+| `api.ts` | HTTP calls, SSE stream reading, automatic saves, history |
+| `files.ts` | Accepted file types, maximum size, SHA-256 hash, placeholder files |
+| `storage.ts` | Local storage keys, time-limited writes during a stream |
+| `types.ts` | Shared types: document, image pair, change, summary |
+| `ui.tsx` | Shared components: buttons, tabs, card, modal, scrolling that follows the stream |
 
-## Dépôt des fichiers
+## Dropping files
 
-- Un fichier est accepté si son extension figure dans `SUPPORTED_EXTENSIONS`
-  (`files.ts`) : PDF, images, Word, PowerPoint, Excel, XML. Il est refusé au-delà
-  de `MAX_FILE_SIZE_BYTES` (20 Mo).
-- Le contenu est lu dans le navigateur (base64 et octets). Il est gardé dans le
-  stockage local, sauf pour les placeholders.
-- Changer un des deux fichiers efface les résultats, la recherche d'impact et les
-  empreintes en cours.
+- A file is accepted when its extension is in `SUPPORTED_EXTENSIONS` (`files.ts`):
+  PDF, images, Word, PowerPoint, Excel, XML. A file larger than
+  `MAX_FILE_SIZE_BYTES` (20 MB) is refused.
+- The content is read in the browser (base64 and bytes). It is kept in local storage,
+  except for placeholders.
+- Changing either file clears the results, the impact search and the hashes in
+  progress.
 
-## Analyse : tableau et résumé
+## Analysis: table and summary
 
-`useAnalysisTrack` fait l'appel. Le navigateur calcule les empreintes SHA-256 des
-deux fichiers, puis envoie un `FormData` à `POST /api/compare/analyze` avec
-`old_file`, `new_file`, les empreintes, `force_refresh` et `processor_version`
-(`structured` pour le tableau, `standard` pour le résumé).
+`useAnalysisTrack` makes the call. The browser computes the SHA-256 hashes of both
+files, then sends a `FormData` to `POST /api/compare/analyze` with `old_file`,
+`new_file`, the hashes, `force_refresh` and `processor_version` (`structured` for the
+table, `standard` for the summary).
 
-La réponse est un flux SSE (`data: …`). Événements lus par `readAnalysisStream` :
+The response is an SSE stream (`data: …` lines). Events read by `readAnalysisStream`:
 
-| Événement | Effet |
+| Event | Effect |
 |---|---|
-| `metadata` | Type de fichier, méthode, identifiant de la requête ; si `cached` est vrai, le résultat vient du cache serveur |
-| `image_context` | Paires d'images envoyées au modèle |
-| `response.output_text.delta` | Texte qui s'ajoute au résultat |
-| `warning` | Notification ; le rapport est marqué comme possiblement incomplet |
-| `usage` | Consommation, gardée avec l'entrée d'historique |
-| `error` | Erreur affichée au-dessus des résultats |
-| `[DONE]` | Fin normale du flux |
+| `metadata` | File type, method, request id; when `cached` is true, the result comes from the server cache |
+| `image_context` | Image pairs sent to the model |
+| `response.output_text.delta` | Text appended to the result |
+| `warning` | Notification; the report is marked as possibly incomplete |
+| `usage` | Consumption, kept with the history entry |
+| `error` | Error shown above the results |
+| `[DONE]` | Normal end of the stream |
 
-À la fin, dans l'ordre :
+At the end, in this order:
 
-1. Si le flux s'est coupé sans `[DONE]`, le texte partiel reste à l'écran, avec un
-   message « réessayez » ; il n'est ni ajouté à l'historique ni mis en cache.
-2. Si le serveur a répondu depuis son cache, le résultat est affiché tel quel.
-3. Sinon, si le volume de sauvegarde est configuré, le dossier de session reçoit
-   les deux documents, le texte (`analysis.md`), puis l'Excel (tableau) ou le PDF
-   (résumé).
-4. Le résultat est ajouté à l'historique (`POST /api/history`).
+1. If the stream was cut without `[DONE]`, the partial text stays on screen with a
+   "retry" message. It is neither added to the history nor cached.
+2. If the server answered from its cache, the result is shown as it is.
+3. Otherwise, if the save volume is configured, the session folder receives both
+   documents, the text (`analysis.md`), then the Excel file (table) or the PDF file
+   (summary).
+4. The result is added to the history (`POST /api/history`).
 
-Les étapes 3 et 4 ne bloquent jamais l'affichage : leur échec est ignoré.
+Steps 3 and 4 never block the display: their failures are ignored.
 
-**Annulation** : le résultat partiel reste à l'écran avec un message d'information,
-sans être enregistré.
+**Cancellation**: the partial result stays on screen with an information message,
+and it is not saved.
 
-**Avertissement** : un rapport accompagné d'un `warning` est enregistré sans
-empreintes. Le cache ne rejoue que le texte, et l'avertissement serait perdu.
+**Warning**: a report that comes with a `warning` is saved without hashes. The cache
+replays only the text, so the warning would be lost.
 
-**Re-run** envoie `force_refresh=true` et contourne le cache.
+**Re-run** sends `force_refresh=true` and bypasses the cache.
 
-Les deux analyses sont indépendantes : chacune a son état, son annulation et son
-cache. « Run Both » les démarre ensemble ; le bouton n'apparaît que si les deux
-analyses sont proposées pour le type de fichier.
+The two analyses are independent: each has its own state, cancellation and cache.
+"Run Both" starts them together; the button appears only when both analyses are
+offered for the file type.
 
-**Tableau des changements** : les lignes sont numérotées en ordre de document. La
-colonne « # » reprend les identifiants `C1`, `C2`… utilisés par la recherche
-d'impact. Les changements de criticité faible sont masqués par défaut, sans être
-supprimés. Les images sont associées aux lignes par ordre d'apparition, et non par
-numéro de page, car le numéro renvoyé par le modèle n'est pas fiable.
+**Change table**: rows are numbered in document order. The "#" column shows the
+identifiers `C1`, `C2`, … used by the impact search. Low-criticality changes are hidden
+by default, not removed. Images are paired with rows by order of appearance, not by
+page number, because the page number returned by the model is unreliable.
 
-**Flux partiel** : le tableau est lu au fil du texte (`parsePartialJsonItems`),
-sans attendre la fin.
+**Partial stream**: the table is read as the text arrives (`parsePartialJsonItems`),
+without waiting for the end.
 
-## Recherche d'impact
+## Impact search
 
-`useImpactSearch` appelle `POST /api/compare/impact` en JSON : `changes_text`,
-empreintes, noms des fichiers, `force_refresh`. Le texte des changements vient du
-tableau s'il existe, sinon du résumé. La recherche ne démarre pas pendant qu'une
-analyse est en cours.
+`useImpactSearch` calls `POST /api/compare/impact` with a JSON body: `changes_text`,
+the hashes, the file names, `force_refresh`. The change text comes from the table if
+there is one, otherwise from the summary. The search does not start while an analysis
+is streaming.
 
-Le flux est en NDJSON, une ligne par évènement :
+The stream is NDJSON, one event per line:
 
-| Évènement | Contenu |
+| Event | Content |
 |---|---|
-| `plan` | Liste des changements, nombre de candidats, requêtes utilisées ou échouées |
-| `document` | Un document jugé, affiché dès qu'il est prêt |
-| `done` | Consommation, durée, identifiant de la requête d'impact |
-| `error` | Erreur, qui interrompt la recherche |
+| `plan` | List of changes, number of candidates, queries used or failed |
+| `document` | One judged document, shown as soon as it is ready |
+| `done` | Consumption, duration, impact request id |
+| `error` | Error, which stops the search |
 
-**Verdicts** (`status`) : `impacted` (impacté), `check` (à vérifier),
-`not_impacted` (non impacté), `error` (jugement échoué). Le filtre de la carte
-porte sur ces quatre valeurs.
+**Verdicts** (`status`): `impacted`, `check` (to check), `not_impacted`, `error`
+(judgment failed). The card filter works on these four values.
 
-**Vues** : « par document » (verdict, raison, passages à mettre à jour, passage
-en conflit surligné) ou « par changement » (seuls les changements qui touchent un
-document). Les changements « C12 » cliqués dans les passages font défiler le
-tableau jusqu'à la ligne correspondante, quand ce tableau est affiché.
+**Views**: "by document" (verdict, reason, passages to update, conflicting passage
+highlighted) or "by change" (only the changes that touch a document). Clicking a
+change such as "C12" in the passages scrolls the change table to the matching row,
+when that table is displayed.
 
-**Badge « Archive »** : affiché pour un document publié avant 2018 (champ
-`archive` du résultat serveur).
+**"Archive" badge**: shown for a document published before the archive cutoff (the
+`archive` field of the server result).
 
-**Sauvegarde** : le résultat est gardé dans le stockage local et, si la comparaison
-a une entrée d'historique, rattaché à celle-ci (`PUT /api/history/{id}/impact`).
-Une recherche sans changement n'est pas rattachée.
+**Saving**: the result is kept in local storage and, when the comparison has a history
+entry, attached to it (`PUT /api/history/{id}/impact`). A search without changes is
+not attached.
 
-**Votes** : un vote par verdict de document, et un avis global, envoyés à
-`POST /api/compare/impact/feedback` avec l'identifiant de la requête.
+**Votes**: one vote per document verdict, and one general opinion, sent to
+`POST /api/compare/impact/feedback` with the request id.
 
+## History
 
-## Historique
+The panel reads `GET /api/history` by pages, then `GET /api/history/{id}` for one
+entry. `useHistoryLoad` puts the entry into its track: `structured` goes to the table,
+the others to the summary. The other track is kept only if it belongs to the same two
+files (same hashes); otherwise it is reset. The saved impact result is restored in the
+same operation.
 
-Le panneau lit `GET /api/history` par pages, puis `GET /api/history/{id}` pour une
-entrée. `useHistoryLoad` range l'entrée dans la piste de son traitement : `structured`
-va dans le tableau, les autres dans le résumé. L'autre piste n'est conservée que si
-elle correspond aux deux mêmes fichiers (mêmes empreintes) ; sinon elle est
-réinitialisée. Le résultat d'impact enregistré est restauré dans la même opération.
+The files are reloaded from the session folder on the volume (`GET /api/compare/load`).
+Without an available file, the drop zone shows the file name as a placeholder, with the
+message "File not available — drop to replace".
 
-Les fichiers sont rechargés depuis le dossier de session du volume
-(`GET /api/compare/load`). Sans fichier disponible, la zone de dépôt affiche le nom
-du fichier comme placeholder, avec le message « File not available — drop to replace ».
+## Summary of one document
 
-## Résumé d'un document
+`useDocSummaries` sends the file and its hash to `POST /api/compare/summarize`. A
+document without extractable text gets a "no content" summary, not an error. Each card
+can be exported to PDF.
 
-`useDocSummaries` envoie le fichier et son empreinte à `POST /api/compare/summarize`.
-Un document sans texte extractible reçoit un résumé « sans contenu », et non une
-erreur. Chaque carte peut être exportée en PDF.
+## Feedback
 
-## Retours
+- `Feedback.tsx`: thumbs up or down with an optional comment, sent to
+  `POST /api/feedback`. One send per comparison, remembered in local storage.
+- `impact/ImpactFeedback.tsx`: votes on the verdicts and a general opinion (see above).
 
-- `Feedback.tsx` : pouce haut ou bas et commentaire facultatif, envoyés à
-  `POST /api/feedback`. Un seul envoi par comparaison, mémorisé dans le stockage
-  local.
-- `impact/ImpactFeedback.tsx` : votes sur les verdicts et avis global (voir plus haut).
+## Exports and previews
 
-## Exports et aperçus
+- PDF: `downloadPdf` in [`lib/exportPdf.ts`](../../lib/exportPdf.ts), rendered by the
+  server (`POST /api/export/pdf`).
+- Excel: `downloadExport` in `api.ts`, for the table (`POST /api/compare/export-excel`)
+  and for the impact search (`POST /api/compare/impact/export-excel`).
+- Preview: PDF and images are read locally; a DOCX goes through
+  [`ExactDocxPreview`](../shared/ExactDocxPreview.tsx) (`POST /api/preview/pdf`); other
+  formats are converted to HTML by `POST /api/preview`.
 
-- PDF : `downloadPdf` dans [`lib/exportPdf.ts`](../../lib/exportPdf.ts), rendu par le serveur (`POST /api/export/pdf`).
-- Excel : `downloadExport` dans `api.ts`, pour le tableau (`POST /api/compare/export-excel`) et pour la recherche d'impact (`POST /api/compare/impact/export-excel`).
-- Aperçu : PDF et images sont lus localement ; un DOCX passe par
-  [`ExactDocxPreview`](../shared/ExactDocxPreview.tsx) (`POST /api/preview/pdf`) ;
-  les autres formats sont convertis en HTML par `POST /api/preview`.
+## Local storage
 
-## Stockage local
+[`storage.ts`](storage.ts) keeps the documents, hashes, texts and results so that the
+page survives a reload. Writes are limited to one per second during a stream. A failed
+write (quota exceeded) is ignored: the result in memory stays correct.
 
-[`storage.ts`](storage.ts) garde les documents, les empreintes, les textes et les
-résultats pour que la page survive au rechargement. Les écritures sont limitées à
-une par seconde pendant un flux. Un échec d'écriture (quota dépassé) est ignoré :
-le résultat en mémoire reste juste.
+## Interface configuration
 
-## Configuration côté interface
+`useCompareConfig` reads `/api/config/app` and `/api/config/processors`:
 
-`useCompareConfig` lit `/api/config/app` et `/api/config/processors` :
-
-- la sauvegarde automatique n'est active que si le chemin du volume est renseigné
-  et n'est pas un marqueur de configuration non renseignée (`TODO…`) ;
-- la recherche d'impact n'est proposée que si le nom de l'index est valide ;
-- les versions de traitement proposées (`standard`, `structured`) dépendent du type
-  du fichier. Les types et leurs versions sont définis dans
+- automatic saving is enabled only when the volume path is set and is not a
+  placeholder marker (`TODO…`);
+- the impact search is offered only when the index name is valid;
+- the processor versions offered (`standard`, `structured`) depend on the file type.
+  The types and their versions are defined in
   `server/services/compare/processors/versions.yml`.
 
-## Accès
+## Access
 
-`ComparePage` affiche le panneau d'accès refusé si `can_compare` est faux. Côté serveur,
-les routes d'analyse, d'impact, de résumé, de sauvegarde et d'historique exigent
-l'accès à la comparaison (`require_compare`).
+`ComparePage` shows the access-denied panel when `can_compare` is false. On the
+server, the analysis, impact, summary, save and history routes require access to the
+comparison (`require_compare`).

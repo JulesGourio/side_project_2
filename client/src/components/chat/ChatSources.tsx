@@ -14,7 +14,7 @@ function canonicalDocKey(title: string): string {
   return title.toUpperCase().replace(LANG_SUFFIX_RE, '').replace(/[^A-Z0-9]/g, '');
 }
 
-// Display order only: Intraqual has no reliable default language, so no variant is "the" REF.
+// Display order only: the source has no reliable default language, so no variant is "the" REF.
 const LANG_ORDER = ['FR', 'EN', 'GB', 'ES', 'MX', 'BG', 'CZ', 'BR'];
 
 // The inline-cited variant leads the row: it is the one the model actually cited.
