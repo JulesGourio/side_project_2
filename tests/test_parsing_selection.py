@@ -61,26 +61,6 @@ def test_the_rate_limiter_spends_its_burst_token_then_waits():
     assert 0.015 <= elapsed < 1.0     # two refills of 10 ms after the burst token
 
 
-def test_a_failed_description_is_returned_not_raised():
-    class Client:
-        class chat:
-            class completions:
-                @staticmethod
-                async def create(**kwargs):
-                    raise RuntimeError("429 REQUEST_LIMIT_EXCEEDED")
-
-    pytest.importorskip("tenacity")
-
-    async def scenario():
-        limiter = llm_describe._AsyncRateLimiter(rate_per_minute=600000)
-        row = {"IDDOC": 1, "image_id": 0, "volume_path": __file__, "label": "picture"}
-        return await llm_describe.describe_one_image(Client, row, asyncio.Semaphore(1), "m", 100, 1.0, 1, limiter)
-
-    out = asyncio.run(scenario())
-    assert out["status"] == "ERROR" and out["description"].startswith("[RATE_LIMITED after 1 retries")
-    assert out["IDDOC"] == 1 and out["input_tokens"] == 0
-
-
 # --- Spark ---
 @pytest.fixture(scope="module")
 def spark():

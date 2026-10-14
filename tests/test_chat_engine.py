@@ -281,21 +281,16 @@ def test_raw_search_on_every_query_when_asked(monkeypatch):
     assert sorted(raw) == sorted([QUESTION, 'qualification CND', 'NDT qualification'])
 
 
-def test_failed_rewrite_keeps_a_raw_search_on_the_question(monkeypatch):
-    found = {}
-
+def test_failed_rewrite_stops_the_turn_after_its_retries(monkeypatch):
     async def _go():
-        found.update(await engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
-    sent = []
-
-    def answer(p):
-        sent.append(p)
-        return [_row('a', 'A-1')]
-    monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer, []))
-    with (patch.object(chat_llm, 'complete', AsyncMock(side_effect=RuntimeError('down'))),
+        await engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}])
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(lambda p: [_row('a', 'A-1')], []))
+    complete = AsyncMock(side_effect=RuntimeError('down'))
+    with (patch.object(chat_llm, 'complete', complete), patch.object(chat_llm.asyncio, 'sleep', AsyncMock()),
           patch.object(engine.retrieval, 'refs_named_in', lambda t: [])):
-        asyncio.run(_go())
-    assert [p['query_text'] for p in sent if 'reranker' not in p] == [QUESTION]
+        with pytest.raises(RuntimeError):
+            asyncio.run(_go())
+    assert complete.await_count == 1 + len(chat_llm.PATIENT_WAITS_S)
 
 
 def test_reranked_only_with_reranker_refused_falls_back_to_raw(monkeypatch):
@@ -372,10 +367,10 @@ def test_history_markers_stripped_and_date_kept_out_of_search(monkeypatch):
     assert f'[Date: 2026-10-06]\n\n{QUESTION}' in m['prompt'][-1]['content']
 
 
-def test_rewrite_failure_searches_with_the_question_only(monkeypatch):
+def test_rewrite_failure_ends_the_turn_with_an_error(monkeypatch):
     events, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
-    assert {p['query_text'] for p in m['sent']} == {QUESTION}
-    assert 'error' not in _types(events)
+    assert 'error' in _types(events)
+    assert m['rewrite'].await_count == 1 + len(chat_llm.PATIENT_WAITS_S)
 
 
 def test_llm_error_mid_stream_emits_no_partial_marker(monkeypatch):
@@ -426,13 +421,12 @@ def test_an_english_opening_question_is_translated_into_french_and_the_raw_searc
         ['What are the NDT qualification requirements?', 'Quelles sont les exigences de qualification CND ?'])
 
 
-def test_a_failed_translation_searches_with_the_question_alone(monkeypatch):
+def test_a_failed_translation_ends_the_turn_with_an_error(monkeypatch):
     _lang(monkeypatch, 'fr')
-    _, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
-    d = m['log'].data
-    assert d['rewrite_ok'] is False and (d['fr_query'], d['en_query']) == (QUESTION, '')
-    assert sorted((p['num_results'], 'reranker' in p) for p in m['sent']) == [(12, False), (12, True)]   # usual sizes, one query
-    assert [i['code'] for i in m['log'].issues] == ['rewrite_failed']
+    events, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
+    assert 'error' in _types(events)
+    assert m['log'].data['rewrite_ok'] is False
+    assert 'rewrite_failed' in [i['code'] for i in m['log'].issues]
 
 
 @pytest.mark.parametrize('code,history,env', [

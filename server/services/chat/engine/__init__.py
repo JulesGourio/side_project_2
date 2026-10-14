@@ -1,6 +1,6 @@
 """Chat — the chat engine: answers from the Vector Search index.
 
-What happens for each question (measures behind the configuration: ``docs/chat_tests.md``):
+What happens for each question:
 
 1. **Search queries** (``queries.py``) — two cases (``opening_language()``). The first message of a conversation,
    in French or English: only translated into the other language (``translate_query``, no rewrite, nothing

@@ -23,7 +23,7 @@ import os
 import re
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from ..infra.streaming import stream_analysis
+from .llm import stream_analysis
 
 logger = logging.getLogger(__name__)
 

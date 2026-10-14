@@ -13,6 +13,7 @@ from ...services.compare.processors.factory import (
     EXTENSION_MAP, extract_document_text,
     get_extension, prepare_image_content,
 )
+from ...services.compare.llm import TIRED_MESSAGE
 from ...services.compare.summarize import summarize_image, summarize_text
 from ...services.infra.credentials import get_credentials
 from ...services.infra.lakebase import (
@@ -102,14 +103,14 @@ async def summarize_document(
         store_error(
             endpoint='/api/compare/summarize',
             error_type=type(e).__name__,
-            error_msg=str(e),
+            error_msg=getattr(e, 'detail', None) or str(e),
             user_id=identity['user_id'], workspace_id=identity.get('workspace_id') or '',
             file_type=get_extension(file.filename or ''),
             stage='llm', upstream=endpoint, exc=e,
         )
-        return JSONResponse({'error': f'Summarization failed: {e}'}, status_code=502)
+        return JSONResponse({'error': TIRED_MESSAGE}, status_code=502)
 
     result['duration_s'] = round(time.monotonic() - start, 2)
     if file_hash:
-        asyncio.create_task(store_summary_cache(file_hash, APP_VERSION, result, endpoint_name=endpoint))
+        asyncio.create_task(store_summary_cache(file_hash, APP_VERSION, result, endpoint_name=result.get('endpoint') or endpoint))
     return result

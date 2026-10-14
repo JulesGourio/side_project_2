@@ -120,6 +120,7 @@
  "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS rewrite_ok BOOLEAN",
  "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS rewrite_mode TEXT",
  "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS rewrite_endpoint TEXT",
+ "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS rewrite_attempts JSONB",
  "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS rewrite_input_tokens INTEGER",
  "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS rewrite_output_tokens INTEGER",
  "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS rewrite_cost_eur DOUBLE PRECISION",

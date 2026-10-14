@@ -68,23 +68,22 @@ def strip_added_noise(query: str, conversation_text: str) -> str:
 
 async def translate_query(host: str, token: str, question: str, target: str,
                           log: Optional[TurnLog] = None) -> str:
-    """``question`` translated into ``target`` ('fr' or 'en'); '' when every model failed — the search then runs with the
-    question only."""
+    """``question`` translated into ``target`` ('fr' or 'en'); raises when every model failed after its retries."""
     log = log if log is not None else TurnLog()
     system = prompts.read('translate_query').replace('{language}', _TRANSLATE_NAMES[target])
     chain = chat_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
     info: Dict[str, Any] = {}
     try:
-        text, used = await chat_llm.complete(host, token, chain, [{'role': 'system', 'content': system},
+        text, used = await chat_llm.complete_patiently(host, token, chain, [{'role': 'system', 'content': system},
                                                                    {'role': 'user', 'content': question}],
                                              translate_max_tokens(), rewrite_timeout_s(), info=info)
-    except Exception as exc:  # noqa: BLE001 — the turn goes on with the question only
-        logger.warning('chat: query translation failed (%s) — searching with the question only', exc)
-        log.data['rewrite_ok'] = False
-        log.issue('rewrite_failed', 'rewrite', f'search ran with the question only: {exc}',
+    except Exception as exc:
+        logger.warning('chat: query translation failed after its retries (%s)', exc)
+        log.data.update({'rewrite_ok': False, 'rewrite_attempts': info.get('attempts')})
+        log.issue('rewrite_failed', 'rewrite', f'every model failed after the retries: {exc}',
                   error_type=type(exc).__name__, http_status=getattr(exc, 'status', 0), upstream=','.join(chain),
                   context={'attempts': info.get('attempts')}, exc=exc)
-        return ''
+        raise
     usage = info.get('usage') or {}
     log.data.update({'rewrite_ok': True, 'rewrite_endpoint': used,
                      'rewrite_input_tokens': usage.get('input_tokens'),
@@ -98,23 +97,22 @@ async def translate_query(host: str, token: str, question: str, target: str,
 
 async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, str]],
                           log: Optional[TurnLog] = None) -> Tuple[str, str]:
-    """(French query, English query) for the last question; ('', '') when every rewrite model
-    failed — the search then runs with the question only."""
+    """(French query, English query) for the last question; raises when every rewrite model failed after its retries."""
     log = log if log is not None else TurnLog()
     transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)
     messages = [{'role': 'system', 'content': REWRITE_PROMPT}, {'role': 'user', 'content': transcript}]
     chain = chat_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
     info: Dict[str, Any] = {}
     try:
-        text, used = await chat_llm.complete(host, token, chain, messages, rewrite_max_tokens(),
+        text, used = await chat_llm.complete_patiently(host, token, chain, messages, rewrite_max_tokens(),
                                                  rewrite_timeout_s(), info=info)
-    except Exception as exc:  # noqa: BLE001 — the turn goes on with the question only
-        logger.warning('chat: search query rewrite failed (%s) — searching with the question only', exc)
-        log.data['rewrite_ok'] = False
-        log.issue('rewrite_failed', 'rewrite', f'search ran with the question only: {exc}',
+    except Exception as exc:
+        logger.warning('chat: search query rewrite failed after its retries (%s)', exc)
+        log.data.update({'rewrite_ok': False, 'rewrite_attempts': info.get('attempts')})
+        log.issue('rewrite_failed', 'rewrite', f'every model failed after the retries: {exc}',
                   error_type=type(exc).__name__, http_status=getattr(exc, 'status', 0), upstream=','.join(chain),
                   context={'attempts': info.get('attempts')}, exc=exc)
-        return '', ''
+        raise
     usage = info.get('usage') or {}
     log.data.update({'rewrite_ok': True, 'rewrite_endpoint': used,
                      'rewrite_input_tokens': usage.get('input_tokens'),

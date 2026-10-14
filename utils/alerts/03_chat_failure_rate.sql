@@ -3,7 +3,7 @@
 -- Alert condition: alert_triggered = 1.
 -- Reads the Delta copy of chat_messages (`lakebase_export_*` + import jobs): the alert is only as fresh as that copy.
 -- Turns the browser left before the end (status = 'aborted') are neither failures nor answers: left out.
--- Per-step detail of each turn (degraded steps, durations): chat_turns, see docs/lakebase_schema.md.
+-- Per-step detail of each turn (degraded steps, durations): chat_turns.
 WITH stats AS (
   SELECT
     COUNT(*) AS total_messages,

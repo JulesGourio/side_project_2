@@ -1,4 +1,4 @@
-"""Tests for what the app records in Lakebase about each request (docs/lakebase_schema.md).
+"""Tests for what the app records in Lakebase about each request.
 
 Coverage:
   - every key the chat engine and route put in TurnLog.data / timings_ms is a chat_turns column
@@ -91,7 +91,7 @@ def test_turn_log_outcome_and_timers():
 
 
 # ---------------------------------------------------------------------------
-# store_chat_turn — SQL shape (a real Postgres run is described in docs/lakebase_schema.md)
+# store_chat_turn — SQL shape
 # ---------------------------------------------------------------------------
 
 def _fake_pool(conn):

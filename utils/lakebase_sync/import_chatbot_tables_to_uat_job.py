@@ -8,7 +8,7 @@
 # Consumers: the "Qualibot Usage Tracking" Lakeview dashboard (UAT workspace),
 # which reads uat_proj.qualibot.{chat_messages,chat_sessions,
 # chat_feedbacks}; chat_turns / chat_retrieved_chunks / errors for per-step
-# durations, passages and failures (docs/lakebase_schema.md).
+# durations, passages and failures.
 import os
 from pathlib import PurePosixPath
 

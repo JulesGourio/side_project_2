@@ -47,6 +47,7 @@ dbutils.widgets.removeAll()
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 dbutils.widgets.text('experiment', '/Shared/qualibot/chat_turns')
 dbutils.widgets.text('days', '7')
+dbutils.widgets.text('min_date', '', 'Earliest trace kept, YYYY-MM-DD (empty = no bound)')
 dbutils.widgets.text('limit', '200')
 dbutils.widgets.dropdown('skip_scored', 'true', ['true', 'false'])
 dbutils.widgets.dropdown('dry_run', 'true', ['true', 'false'])
@@ -61,6 +62,7 @@ dbutils.widgets.text('results_table', 'dev_proj.qualibot.chat_trace_scores')
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 EXPERIMENT = dbutils.widgets.get('experiment').strip()
 DAYS = max(1, int(dbutils.widgets.get('days') or 7))
+MIN_DATE = dbutils.widgets.get('min_date').strip()
 LIMIT = max(1, int(dbutils.widgets.get('limit') or 200))
 SKIP_SCORED = dbutils.widgets.get('skip_scored') == 'true'
 DRY_RUN = dbutils.widgets.get('dry_run') == 'true'
@@ -95,7 +97,10 @@ mlflow.set_tracking_uri('databricks')
 experiment = mlflow.get_experiment_by_name(EXPERIMENT)
 if experiment is None:
     raise RuntimeError(f'Experiment {EXPERIMENT} does not exist: run the create_chat_experiment job first')
-since_ms = int((datetime.now(timezone.utc) - timedelta(days=DAYS)).timestamp() * 1000)
+since = datetime.now(timezone.utc) - timedelta(days=DAYS)
+if MIN_DATE:
+    since = max(since, datetime.fromisoformat(MIN_DATE).replace(tzinfo=timezone.utc))
+since_ms = int(since.timestamp() * 1000)
 found = mlflow.search_traces(locations=[experiment.experiment_id], filter_string=f'timestamp > {since_ms}',
                              order_by=['timestamp DESC'], max_results=LIMIT * 3, return_type='list')
 

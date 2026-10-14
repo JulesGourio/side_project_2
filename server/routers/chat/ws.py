@@ -225,6 +225,8 @@ async def chat_ws(websocket: WebSocket):
                     pass
                 else:
                     await websocket.send_json({'type': 'delta', 'delta': delta})
+            elif t == 'status':
+                await websocket.send_json({'type': 'status', 'status': parsed.get('status', '')})
             elif t == 'sources':
                 srcs = parsed.get('sources')
                 cits = parsed.get('citations')

@@ -5,8 +5,8 @@
 # MAGIC **Description:**
 # MAGIC Describes the `PENDING` images of `image_metadata` with a vision LLM, then injects the descriptions as image passages into the chunk tables.
 # MAGIC The phases are functions of `describe_steps.py`:
-# MAGIC 1. Load the images with status `PENDING` (and the `ERROR` ones, retried) from `image_metadata`
-# MAGIC 2. Call the vision LLM asynchronously (batched, with concurrency control and a rate limiter)
+# MAGIC 1. Load the images with status `PENDING` (and legacy `ERROR` rows) from `image_metadata`
+# MAGIC 2. Call the vision LLM asynchronously (batched, with concurrency control and a rate limiter), through the endpoint chain
 # MAGIC 3. MERGE the descriptions back into `image_metadata`, chunk by chunk
 # MAGIC 4. Build the image passages and MERGE them into `chunks` / `chunks_archive`
 # MAGIC 5. Promote the `EMPTY_TEXT` documents whose images are now all described
@@ -66,6 +66,7 @@ from pyspark.sql import functions as F
 
 import config as cfg
 import describe_steps
+import llm_describe
 import quality
 from utils import configure, logger
 
@@ -77,6 +78,8 @@ for _mod in cfg.WORKER_MODULES:
 # MAGIC %md
 # MAGIC ## Config Widgets
 # MAGIC `rebuild_image_chunks = true` rewrites the passage of EVERY described image from its stored description (new section, caption, long transcriptions split), without any LLM call. It is not needed after a FULL run of `3_parse`, which already empties the chunk tables.
+# MAGIC
+# MAGIC `llm_fallback_endpoints` is a comma-separated list of vision endpoints tried, in order, after the primary `PARSING_LLM_ENDPOINT`. Each endpoint must take image input.
 
 # COMMAND ----------
 
@@ -84,6 +87,9 @@ dbutils.widgets.removeAll()
 
 dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])
 REBUILD_IMAGE_CHUNKS = dbutils.widgets.get("rebuild_image_chunks") == "true"
+
+dbutils.widgets.text("llm_fallback_endpoints", cfg.LLM_FALLBACK_ENDPOINTS, "Fallback endpoints (comma-separated)")
+LLM_FALLBACK_ENDPOINTS = dbutils.widgets.get("llm_fallback_endpoints")
 
 # COMMAND ----------
 
@@ -103,7 +109,8 @@ except Exception:
     WS_TOKEN = _ctx.apiToken().get()
 WS_HOST = spark.conf.get("spark.databricks.workspaceUrl")
 
-logger.info(f"RUN_MODE={cfg.RUN_MODE} | Model={cfg.LLM_MODEL_ENDPOINT} | concurrency={cfg.LLM_MAX_CONCURRENT} | "
+LLM_ENDPOINTS = llm_describe.endpoint_chain(cfg.LLM_MODEL_ENDPOINT, LLM_FALLBACK_ENDPOINTS)
+logger.info(f"RUN_MODE={cfg.RUN_MODE} | Endpoints={' -> '.join(LLM_ENDPOINTS)} | concurrency={cfg.LLM_MAX_CONCURRENT} | "
             f"batch={cfg.LLM_BATCH_SIZE or 'ALL'}")
 
 # COMMAND ----------
@@ -111,7 +118,7 @@ logger.info(f"RUN_MODE={cfg.RUN_MODE} | Model={cfg.LLM_MODEL_ENDPOINT} | concurr
 # MAGIC %md
 # MAGIC # Inputs
 # MAGIC ## Images needing a description
-# MAGIC `incremental` (default, safe to re-run): `PENDING` images and the `ERROR` ones, which are retried because a failure is usually a blank LLM answer. `DONE`, `SKIPPED` and `SKIPPED_DECORATIVE` stay terminal.
+# MAGIC `incremental` (default, safe to re-run): `PENDING` images, plus legacy `ERROR` rows. An image that failed on every endpoint is left `PENDING` with no description, so the next run describes it again. `DONE`, `SKIPPED` and `SKIPPED_DECORATIVE` stay terminal.
 # MAGIC
 # MAGIC `full` resets every status to `PENDING` first and describes everything again.
 
@@ -150,10 +157,11 @@ logger.info(f"Batch: {len(rows_to_process)} images ({n_pending} new + {n_retry} 
 # MAGIC # Data Transformations
 # MAGIC ## Tr. 1 - Describe the images (checkpointed)
 # MAGIC The vision LLM is called in chunks of `LLM_CHECKPOINT_CHUNK_SIZE`, at a rate bounded by the endpoint quota. Each chunk is merged into `image_metadata` as soon as it is done, so a failure in the middle of a multi-hour run keeps the progress.
+# MAGIC Each image tries the endpoint chain in `LLM_ROUNDS` passes, with a wait between passes. No description is stored for an image that failed everywhere: it stays `PENDING` for the next run.
 
 # COMMAND ----------
 
-describe_steps.describe_images(rows_to_process, WS_HOST, WS_TOKEN)
+describe_steps.describe_images(rows_to_process, WS_HOST, WS_TOKEN, LLM_ENDPOINTS)
 
 # COMMAND ----------
 

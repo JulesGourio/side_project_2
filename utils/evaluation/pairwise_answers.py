@@ -24,7 +24,7 @@
 # MAGIC in `eval_pairwise_runs_cache` (reused by any later run, whatever its `eval_id`), judgments in
 # MAGIC `eval_pairwise_runs`, one line per (question, contender). A run that crashes loses at most
 # MAGIC the batch in progress: Run all again and it resumes. Nothing already judged for the same
-# MAGIC `eval_id` is re-run. Results of every test so far: `docs/chat_tests.md`.
+# MAGIC `eval_id` is re-run.
 
 # COMMAND ----------
 

@@ -205,6 +205,9 @@ targets:
               notebook_task:
                 notebook_path: ../utils/parsing_pipeline/4_Describe_Images_LLM.py
                 source: WORKSPACE
+                base_parameters:
+                  # Tried in order after the primary PARSING_LLM_ENDPOINT; each must accept image input.
+                  llm_fallback_endpoints: "databricks-gpt-5-6-luna"
               libraries:
                 - pypi: {package: "openai"}
                 - pypi: {package: "tenacity"}

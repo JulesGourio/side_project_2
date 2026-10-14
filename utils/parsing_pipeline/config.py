@@ -209,7 +209,13 @@ BOILERPLATE_MIN_DOCS = int(_env("PARSING_BOILERPLATE_MIN_DOCS", "20"))
 LLM_MODEL_ENDPOINT  = _env("PARSING_LLM_ENDPOINT", "databricks-gpt-5-6-luna")
 LLM_MAX_TOKENS      = 5000    # GPT-5 reasoning tokens need headroom beyond the visible output
 LLM_TEMPERATURE     = 1.0   # gpt-5 family: temperature=1 only
-LLM_MAX_RETRIES     = 5
+LLM_MAX_RETRIES     = 5    # per endpoint and per pass
+# Tried in order after the primary, comma-separated. The default is GPT-5.6 Luna, which takes image input (it is the
+# primary's default too). GPT-6 Luna is not verified for image input, so it is not in the default.
+LLM_FALLBACK_ENDPOINTS = _env("PARSING_LLM_FALLBACK_ENDPOINTS", "databricks-gpt-5-6-luna")
+# Passes over the endpoint chain; the waits are slept before the second and the following passes.
+LLM_ROUNDS          = int(_env("PARSING_LLM_ROUNDS", "2"))
+LLM_ROUND_WAITS_S   = (5.0, 15.0, 30.0)
 LLM_MAX_CONCURRENT  = 10   # Memory of the single-node m5d.xlarge caps the concurrency
 # Kept below the batch size that destabilizes the kernel.
 LLM_BATCH_SIZE      = int(_env("PARSING_LLM_BATCH_SIZE", "6000"))

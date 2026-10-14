@@ -16,3 +16,5 @@ debug_images/
 debug_results/
 sql_data/
 debug_*.py
+runbooks/
+archive/

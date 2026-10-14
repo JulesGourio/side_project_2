@@ -13,7 +13,6 @@ from datetime import datetime
 import nest_asyncio
 from databricks.sdk.runtime import spark
 from delta.tables import DeltaTable
-from pyspark.sql import Row
 from pyspark.sql import functions as F
 
 from llm_describe import describe_all_images, safe_requests_per_minute
@@ -31,9 +30,10 @@ from config import (
     LLM_MAX_CONCURRENT,
     LLM_MAX_RETRIES,
     LLM_MAX_TOKENS,
-    LLM_MODEL_ENDPOINT,
     LLM_OTPM_BUDGET,
     LLM_QPH_BUDGET,
+    LLM_ROUND_WAITS_S,
+    LLM_ROUNDS,
     LLM_TEMPERATURE,
     MAX_CHUNK_CHARS,
     MAX_CHUNK_TOKENS,
@@ -63,26 +63,34 @@ def reset_images_to_pending():
 
 
 def pending_images():
-    """Images to describe: PENDING, plus ERROR ones (a failed LLM call, e.g. a blank answer) which are retried."""
+    """Images to describe: PENDING ones, plus ERROR rows left by earlier runs (they are described again too)."""
     return spark.table(IMAGE_TABLE).filter(F.col("status").isin("PENDING", "ERROR") & F.col("volume_path").isNotNull())
 
 
+_UPDATES_SCHEMA = ("IDDOC long, image_id int, description string, input_tokens int, output_tokens int, "
+                   "status string, described_at timestamp")
+
+
 def _merge_chunk_results(results):
-    """Persist one checkpoint chunk of descriptions into the image table with a MERGE."""
+    """Persist one checkpoint chunk of descriptions into the image table with a MERGE.
+
+    The schema is explicit: a chunk where every image stayed PENDING has no description to infer the type from.
+    """
+    now = datetime.now()
     update_rows = [
-        Row(
-            IDDOC=int(r["IDDOC"]),
-            image_id=int(r["image_id"]),
-            description=r["description"],
-            input_tokens=int(r.get("input_tokens") or 0),
-            output_tokens=int(r.get("output_tokens") or 0),
-            status=r["status"],
-            described_at=datetime.now(),
+        (
+            int(r["IDDOC"]),
+            int(r["image_id"]),
+            r["description"],
+            int(r.get("input_tokens") or 0),
+            int(r.get("output_tokens") or 0),
+            r["status"],
+            None if r["status"] == "PENDING" else now,
         )
         for r in results
     ]
     # MERGE fails on a duplicated (IDDOC, image_id) in its source batch.
-    df_updates = spark.createDataFrame(update_rows).dropDuplicates(["IDDOC", "image_id"])
+    df_updates = spark.createDataFrame(update_rows, _UPDATES_SCHEMA).dropDuplicates(["IDDOC", "image_id"])
     write_table(df_updates, _UPDATES_TABLE, "overwrite", overwrite_schema=True)
     spark.sql(f"""
         MERGE INTO {IMAGE_TABLE} AS t
@@ -97,14 +105,18 @@ def _merge_chunk_results(results):
     """)
 
 
-def describe_images(rows, ws_host, ws_token):
+def describe_images(rows, ws_host, ws_token, endpoints):
     """Call the vision LLM on `rows` in checkpoint chunks, merging each chunk's results as soon as it is done.
 
+    `endpoints` is the chain tried for each image. An image no endpoint described stays PENDING for the next run.
     A mid-run failure keeps the chunks already persisted. `nest_asyncio` lets `asyncio.run` work inside a notebook.
     """
     if not rows:
         logger.info("Nothing to describe - no PENDING or ERROR images found in image_metadata.")
         return
+    # Without an endpoint every image would stay PENDING with no error: a missing setting must fail the run instead.
+    if not endpoints:
+        raise ValueError("No LLM endpoint: set PARSING_LLM_ENDPOINT (primary) or llm_fallback_endpoints.")
 
     nest_asyncio.apply()
     # Throughput bounded by the endpoint quota; the output tokens per minute are the bottleneck.
@@ -113,27 +125,30 @@ def describe_images(rows, ws_host, ws_token):
     )
     logger.info(f"Rate limiter : {rpm:.0f} req/min  (ITPM<={LLM_ITPM_BUDGET:,}, OTPM<={LLM_OTPM_BUDGET:,}, "
                 f"QPH<={LLM_QPH_BUDGET:,})")
+    logger.info(f"Endpoints  : {' -> '.join(endpoints)}  ({LLM_ROUNDS} passes, waits {list(LLM_ROUND_WAITS_S)} s)")
 
     n_chunks = math.ceil(len(rows) / LLM_CHECKPOINT_CHUNK_SIZE)
     logger.info(f"{len(rows)} images -> {n_chunks} chunk(s) of up to {LLM_CHECKPOINT_CHUNK_SIZE}, persisted after each chunk")
 
-    total_done = total_err = total_tin = total_tout = 0
+    total_done = total_failed = total_tin = total_tout = 0
     for chunk_idx in range(n_chunks):
         chunk = rows[chunk_idx * LLM_CHECKPOINT_CHUNK_SIZE:(chunk_idx + 1) * LLM_CHECKPOINT_CHUNK_SIZE]
         started = time.time()
         try:
             described = asyncio.run(describe_all_images(
-                rows=chunk, ws_host=ws_host, ws_token=ws_token, model=LLM_MODEL_ENDPOINT,
+                rows=chunk, ws_host=ws_host, ws_token=ws_token, endpoints=endpoints,
                 max_tokens=LLM_MAX_TOKENS, temperature=LLM_TEMPERATURE, max_retries=LLM_MAX_RETRIES,
                 max_concurrent=LLM_MAX_CONCURRENT, requests_per_minute=rpm,
+                rounds=LLM_ROUNDS, round_waits_s=LLM_ROUND_WAITS_S,
             ))
         except Exception as exc:
             logger.error(f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} describe_all_images failed: {str(exc)[:300]}")
-            logger.info(f"        {total_done} ok / {total_err} err from prior chunks are already persisted.")
+            logger.info(f"        {total_done} ok / {total_failed} failed from prior chunks are already persisted.")
             raise
 
         done = sum(1 for r in described if r["status"] == "DONE")
-        err = sum(1 for r in described if r["status"] == "ERROR")
+        failed = sum(1 for r in described if r["status"] == "PENDING")
+        failure_sample = next((r["last_error"] for r in described if r["status"] == "PENDING"), "")
         tin = sum(r.get("input_tokens", 0) for r in described)
         tout = sum(r.get("output_tokens", 0) for r in described)
         _merge_chunk_results(described)
@@ -143,33 +158,28 @@ def describe_images(rows, ws_host, ws_token):
         gc.collect()
 
         total_done += done
-        total_err += err
+        total_failed += failed
         total_tin += tin
         total_tout += tout
         logger.info(f"[chunk {chunk_idx + 1}/{n_chunks}] {len(chunk)} images in {time.time() - started:.1f}s | "
-                    f"ok={done} err={err} | tokens {tin:,} in / {tout:,} out | cumulative: ok={total_done} err={total_err}")
+                    f"ok={done} left_pending={failed} | tokens {tin:,} in / {tout:,} out | "
+                    f"cumulative: ok={total_done} left_pending={total_failed}")
+        if failed:
+            logger.warning(f"  {failed} image(s) failed on every endpoint and stay PENDING; first error: {failure_sample}")
 
     spark.sql(f"DROP TABLE IF EXISTS {_UPDATES_TABLE}")
-    _log_description_summary(len(rows), total_done, total_err, total_tin, total_tout)
+    _log_description_summary(len(rows), total_done, total_failed, total_tin, total_tout)
 
 
-def _log_description_summary(n_rows, total_done, total_err, total_tin, total_tout):
-    """Log the totals of the run and what remains PENDING or in ERROR."""
+def _log_description_summary(n_rows, total_done, total_failed, total_tin, total_tout):
+    """Log the totals of the run and the images the next run describes again."""
     df_images = spark.table(IMAGE_TABLE)
-    remaining_pending = df_images.filter(F.col("status") == "PENDING").count()
-    remaining_error = df_images.filter(F.col("status") == "ERROR").count()
-    logger.info(f"Description summary: {total_done} ok / {total_err} err over {n_rows} images")
+    remaining = df_images.filter(F.col("status").isin("PENDING", "ERROR")).count()
+    logger.info(f"Description summary: {total_done} ok / {total_failed} left pending over {n_rows} images")
     logger.info(f"  Tokens: {total_tin:,} in / {total_tout:,} out")
-    logger.info(f"  Remaining: {remaining_pending} PENDING, {remaining_error} ERROR (will retry next run)")
-    if remaining_error > 0:
-        n_docs = df_images.filter(F.col("status") == "ERROR").select("IDDOC").distinct().count()
-        logger.warning(f"  {remaining_error} images in ERROR across {n_docs} documents")
-    if remaining_pending:
-        logger.info("  -> Re-run for the rest.")
-    elif remaining_error == 0:
-        logger.info("  -> All images described successfully.")
-    else:
-        logger.info("  -> No PENDING left, but ERROR images remain - they will be retried next run.")
+    logger.info(f"  Remaining to describe: {remaining} (PENDING or legacy ERROR, described again next run)")
+    if remaining == 0:
+        logger.info("  -> All images described.")
 
 
 def described_images_without_chunk(rebuild):
@@ -205,11 +215,11 @@ def log_nothing_to_inject():
     """Explain why no image passage is written: every DONE image already has one."""
     df_images = spark.table(IMAGE_TABLE)
     n_done = df_images.filter((F.col("status") == "DONE") & F.col("description").isNotNull()).count()
-    n_error = df_images.filter(F.col("status") == "ERROR").count()
+    n_pending = df_images.filter(F.col("status").isin("PENDING", "ERROR")).count()
     logger.info("No new image chunks to inject.")
     logger.info(f"  {n_done} DONE images -> all already have chunks in {TARGET_CHUNK_TABLE}")
-    if n_error > 0:
-        logger.info(f"  {n_error} ERROR images -> not injected (will retry description next run)")
+    if n_pending > 0:
+        logger.info(f"  {n_pending} images not described -> not injected (described again next run)")
 
 
 def build_image_chunks(df_described):
@@ -373,10 +383,9 @@ def promote_empty_text_documents():
         return
 
     df_their_images = spark.table(IMAGE_TABLE).join(F.broadcast(df_empty_text), on="IDDOC", how="inner")
-    # Ready = no PENDING image left. ERROR, EXTRACTION_FAILED and SKIPPED_DECORATIVE are terminal here: an image that
-    # failed must not block the document from being promoted with its successful descriptions (ERROR ones are
-    # retried by the description phase anyway).
-    df_not_ready = df_their_images.filter(F.col("status") == "PENDING").select("IDDOC").distinct()
+    # Ready = no image left to describe. A failed image keeps its document EMPTY_TEXT until the next run describes it:
+    # a document promoted without it would never get its text. EXTRACTION_FAILED and SKIPPED_DECORATIVE are final.
+    df_not_ready = df_their_images.filter(F.col("status").isin("PENDING", "ERROR")).select("IDDOC").distinct()
     df_ready = df_empty_text.join(F.broadcast(df_not_ready), on="IDDOC", how="left_anti")
     if df_ready.count() == 0:
         logger.info(f"{n_empty_text} EMPTY_TEXT document(s), none fully described yet.")

@@ -1,6 +1,5 @@
 # Creates the MLflow experiment of the live chat traces (server/services/chat/mlflow_turns.py), owned by the job service principal
 # instead of the person who runs the script. Manual trigger; idempotent (an existing experiment is left as is, permissions re-applied).
-# Steps: runbooks/dev.md block 0 (0.8 to 0.14).
 
 targets:
   dev:
@@ -108,6 +107,7 @@ targets:
                 source: WORKSPACE
                 base_parameters:
                   dry_run: "{{job.parameters.dry_run}}"
+                  min_date: "2026-10-12"
                   app_code_path: "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
                   experiment: "/Shared/qualibot/chat_turns"
                   results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
@@ -290,6 +290,7 @@ targets:
                 source: WORKSPACE
                 base_parameters:
                   dry_run: "{{job.parameters.dry_run}}"
+                  min_date: "2026-10-12"
                   app_code_path: "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
                   experiment: "/Shared/qualibot/chat_turns"
                   results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
@@ -400,6 +401,7 @@ targets:
                 source: WORKSPACE
                 base_parameters:
                   dry_run: "{{job.parameters.dry_run}}"
+                  min_date: "2026-10-12"
                   app_code_path: "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
                   experiment: "/Shared/qualibot/chat_turns"
                   results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"

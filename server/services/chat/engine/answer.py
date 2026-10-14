@@ -1,5 +1,6 @@
 """The prompt, the answer stream and the turn log of the answer step."""
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -15,6 +16,8 @@ from .citations import CitationStreamParser
 from .retrieval import _clean_history, group_documents, retrieve_for_turn
 from .search import ChatVsiError
 from .config import answer_max_tokens, index_name, llm_endpoint, load_instructions, normalize_division, settings
+
+_STATUS_AFTER_S = 8.0          # a search or rewrite slower than this shows 'still searching'
 
 logger = logging.getLogger(__name__)
 
@@ -124,13 +127,23 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
         for e in _error_events('Chat: the last message must be a user question.', 'InputError'):
             yield e
         return
+    search = asyncio.ensure_future(retrieve_for_turn(host, token, div, conversation, log=log))
+    while not search.done():
+        await asyncio.wait({search}, timeout=_STATUS_AFTER_S)
+        if not search.done():
+            yield sse_event({'type': 'status', 'status': 'still_searching'})
     try:
-        found = await retrieve_for_turn(host, token, div, conversation, log=log)
+        found = search.result()
     except ChatVsiError as exc:
         log.fail('search', exc.error_type, exc.message, http_status=exc.http_status, upstream=index_name(),
                  context={'vs_calls_expected': log.data.get('vs_calls_expected'),
                           'vs_calls_ok': log.data.get('vs_calls_ok')}, exc=exc.__cause__ or exc)
         for e in _error_events(exc.message, exc.error_type, exc.http_status):
+            yield e
+        return
+    except Exception as exc:
+        log.fail('search', type(exc).__name__, str(exc)[:300], exc=exc)
+        for e in _error_events('Chat: the search failed.', type(exc).__name__):
             yield e
         return
     rows = found['rows']

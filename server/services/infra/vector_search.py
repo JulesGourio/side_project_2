@@ -17,11 +17,11 @@ import re
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
-import httpx
-
+from ..compare.llm import CompareLlmUnavailable, LlmFailure, TIRED_MESSAGE, compare_chain, complete_chain
+from ..compare.llm import message_text as _message_text
 from . import vs_gate
 from .doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
-from .streaming import _cost_eur, supports_temperature
+from .streaming import _cost_eur
 
 logger = logging.getLogger(__name__)
 
@@ -354,44 +354,34 @@ class JudgeTruncated(ValueError):
     """The judge hit max_tokens before writing a complete JSON answer."""
 
 
-def _message_text(message: Dict[str, Any]) -> str:
-    """Text of a chat completion message — a plain string, or a list of parts (reasoning models)."""
-    content = message.get('content') or ''
-    if isinstance(content, list):
-        return ''.join(p.get('text', '') for p in content if isinstance(p, dict) and p.get('type', 'text') == 'text')
-    return content
-
-
 async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: Dict[str, Any], max_tokens: int) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
-        'messages': [
-            {'role': 'system', 'content': _JUDGE_SYSTEM_PROMPT},
-            {'role': 'user', 'content': f'CHANGES:\n{changes_text}\n\nCANDIDATE DOCUMENT:\n{_candidate_block(cand)}'},
-        ],
-        'max_tokens': max_tokens,
-    }
-    if supports_temperature(endpoint):
-        payload['temperature'] = 0.0
-    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-    async with httpx.AsyncClient(timeout=_LLM_TIMEOUT_S) as client:
-        resp = await client.post(f'{host}/serving-endpoints/{endpoint}/invocations', json=payload, headers=headers)
-        resp.raise_for_status()
-        completion = resp.json()
-    choice = (completion.get('choices') or [{}])[0]
-    content = _message_text(choice.get('message') or {})
-    usage = completion.get('usage') or {}
-    judgment = _parse_json_object(content)
-    if judgment is None:
-        if choice.get('finish_reason') == 'length':
-            reasoning = (usage.get('completion_tokens_details') or {}).get('reasoning_tokens')
-            raise JudgeTruncated(f'judge ran out of tokens (max_tokens={max_tokens}, reasoning_tokens={reasoning}) '
-                                 f'before a complete answer: {content[:200]!r}')
-        raise ValueError(f'judge returned no JSON object (finish_reason={choice.get("finish_reason")!r}): {content[:200]!r}')
-    return {
-        'judgment': judgment,
-        'input_tokens': usage.get('prompt_tokens', 0) or 0,
-        'output_tokens': usage.get('completion_tokens', 0) or 0,
-    }
+    """One judgment, through the endpoint chain of ``endpoint``. Raises ``JudgeTruncated`` (a bigger budget may
+    help) or ``CompareLlmUnavailable`` (every endpoint failed)."""
+    messages = [
+        {'role': 'system', 'content': _JUDGE_SYSTEM_PROMPT},
+        {'role': 'user', 'content': f'CHANGES:\n{changes_text}\n\nCANDIDATE DOCUMENT:\n{_candidate_block(cand)}'},
+    ]
+
+    def accept(completion: Dict[str, Any]) -> Dict[str, Any]:
+        choice = (completion.get('choices') or [{}])[0]
+        content = _message_text(choice.get('message') or {})
+        usage = completion.get('usage') or {}
+        judgment = _parse_json_object(content)
+        if judgment is None:
+            if choice.get('finish_reason') == 'length':
+                reasoning = (usage.get('completion_tokens_details') or {}).get('reasoning_tokens')
+                raise JudgeTruncated(f'judge ran out of tokens (max_tokens={max_tokens}, reasoning_tokens={reasoning}) '
+                                     f'before a complete answer: {content[:200]!r}')
+            raise LlmFailure('empty', f'judge returned no JSON object (finish_reason={choice.get("finish_reason")!r}): '
+                                      f'{content[:200]!r}')
+        return {
+            'judgment': judgment,
+            'input_tokens': usage.get('prompt_tokens', 0) or 0,
+            'output_tokens': usage.get('completion_tokens', 0) or 0,
+        }
+
+    res, used = await complete_chain(host, token, compare_chain(endpoint), messages, max_tokens, _LLM_TIMEOUT_S, accept=accept)
+    return {**res, 'endpoint': used, 'cost_eur': _cost_eur(used, res['input_tokens'], res['output_tokens'])}
 
 
 def _status(impacted: bool, confidence: str, has_passages: bool = True) -> str:
@@ -533,7 +523,7 @@ async def run_impact_search(
     }
 
     sem = asyncio.Semaphore(_JUDGE_CONCURRENCY)
-    usage = {'input_tokens': 0, 'output_tokens': 0}
+    usage = {'input_tokens': 0, 'output_tokens': 0, 'cost_eur': 0.0}
 
     async def _one(cand: Dict[str, Any]) -> Dict[str, Any]:
         async with sem:
@@ -542,15 +532,22 @@ async def run_impact_search(
             started = time.monotonic()
             last_err: Exception | None = None
             budget = max_tokens
+            attempts = 0
             for attempt in range(_JUDGE_RETRIES + 1):
+                attempts = attempt + 1
                 try:
                     changes_text = _changes_block(extracted['changes'], max_changes_chars, tuple(cand['change_ids']))
                     res = await _judge(host, token, llm_endpoint, changes_text, cand, budget)
                     usage['input_tokens'] += res['input_tokens']
                     usage['output_tokens'] += res['output_tokens']
+                    usage['cost_eur'] = round(usage['cost_eur'] + (res.get('cost_eur') or 0.0), 6)
                     return {**_judged_doc(cand, res['judgment'], archive_before),
-                            'judge_ms': int((time.monotonic() - started) * 1000), 'judge_attempts': attempt + 1,
+                            'judge_ms': int((time.monotonic() - started) * 1000), 'judge_attempts': attempts,
                             'input_tokens': res['input_tokens'], 'output_tokens': res['output_tokens']}
+                except CompareLlmUnavailable as e:
+                    # The chain already went through its rounds: no retry on top of that.
+                    last_err = e
+                    break
                 except Exception as e:  # noqa: BLE001 — one bad candidate must not sink the search
                     last_err = e
                     if isinstance(e, JudgeTruncated):
@@ -558,10 +555,12 @@ async def run_impact_search(
                     if attempt < _JUDGE_RETRIES:
                         await asyncio.sleep(1.0)
             logger.warning(f'impact judge failed for {cand["ref"]}: {last_err}')
+            # error_detail is the cause for the error log only; the router drops it before the browser sees the document.
             return {**_doc_base(cand, archive_before), 'judged': True, 'status': 'error', 'impacted': False,
-                    'confidence': '', 'reason': f'Judgment failed: {last_err}', 'sections': [], 'passages': [],
+                    'confidence': '', 'reason': TIRED_MESSAGE, 'error_detail': f'{type(last_err).__name__}: {last_err}',
+                    'sections': [], 'passages': [],
                     'error_type': type(last_err).__name__,
-                    'judge_ms': int((time.monotonic() - started) * 1000), 'judge_attempts': _JUDGE_RETRIES + 1}
+                    'judge_ms': int((time.monotonic() - started) * 1000), 'judge_attempts': attempts}
 
     # Explicit tasks, cancelled if the consumer goes away: with bare coroutines
     # a closed browser tab left every remaining judge call running (and billed).
@@ -575,11 +574,7 @@ async def run_impact_search(
                 t.cancel()
 
     total = usage['input_tokens'] + usage['output_tokens']
-    yield {
-        'type': 'done',
-        'usage': {**usage, 'total_tokens': total,
-                  'cost_eur': _cost_eur(llm_endpoint, usage['input_tokens'], usage['output_tokens'])},
-    }
+    yield {'type': 'done', 'usage': {**usage, 'total_tokens': total}}
 
 
 def sort_documents(documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

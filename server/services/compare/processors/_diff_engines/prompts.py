@@ -150,18 +150,14 @@ RULE FOR VISUAL CHANGES (images in the diff): The section "--- VISUAL CHANGES --
                    Low if cosmetic or decorative only
     - rationale: one short sentence explaining what changed in the image; "" if cosmetic/decorative only
   Name elements, never the figure as a whole:
-    Good: before: "branche « Responsable de Production Partie 21G — Directeur des Achats »
-                   (Renaud DURAND)"
-          after:  "branche « Responsable de Production Partie 21G — Vice président des
-                   Achats » (Renaud DURAND)"
+    Good: before: "branche « Responsable de Production — Directeur des Achats »"
+          after:  "branche « Responsable de Production — Vice président des Achats »"
     Bad:  before: "organigramme avec les responsables production, qualité et sécurité"
           after:  "organigramme mis à jour"
   RENAME vs ADDITION - check before you claim a rename: if the OLD element is
   STILL PRESENT in the new image, the new element is an ADDITION, not a rename.
-  Count the boxes/nodes on each side first. On MOP_AX the model reported
-  "Responsable de la Gestion de la Securite renamed to Responsable de la
-  Surveillance de la Conformite a la Partie IS" while the new chart clearly shows
-  BOTH boxes (7 boxes -> 8) - a fabricated rename that hides a real new function.
+  Count the boxes/nodes on each side first. A box that is still on the new chart
+  was not renamed: if the count goes from 7 to 8 boxes, the new box is an addition.
 
   NEVER emit a row saying an element is unchanged ("still present", "no change on
   this site"). A row exists only for a difference.

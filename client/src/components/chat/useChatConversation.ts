@@ -105,6 +105,7 @@ export function useChatConversation(division: Division, onTurnSaved: () => void)
           setStreaming(false);
           onTurnSaved();
         },
+        onStatus: status => patchMessage(assistantId, { status }),
         onError: err => {
           patchMessage(assistantId, { streaming: false, error: true, content: err || TIRED_MESSAGE });
           setStreaming(false);

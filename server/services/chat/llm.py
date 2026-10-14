@@ -525,3 +525,26 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
             if last.kind in _FINAL_KINDS:
                 given_up.add(endpoint)
     raise last or LlmFailure('empty', 'no endpoint')
+
+
+# Waits between the attempts of a rewrite or a translation: the turn cannot go on without its text, so
+# every model is tried again after these waits before the turn gives up with TIRED_MESSAGE.
+PATIENT_WAITS_S = (2.0, 8.0)
+
+
+async def complete_patiently(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
+                             max_tokens: int, timeout_s: float = 30.0,
+                             info: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+    """``complete`` again after each of PATIENT_WAITS_S while every endpoint fails; the last failure is raised
+    once the waits are spent. ``info`` accumulates the attempts of every try."""
+    info = {} if info is None else info
+    last: Optional[Exception] = None
+    for wait in (0.0,) + PATIENT_WAITS_S:
+        if wait:
+            await asyncio.sleep(wait + random.random())
+        try:
+            return await complete(host, token, endpoints, messages, max_tokens, timeout_s, info=info)
+        except Exception as exc:  # noqa: BLE001 — every failure is retried, the last one is raised below
+            last = exc
+    raise last or LlmFailure('empty', 'no attempt')
+

@@ -20,8 +20,7 @@
 # MAGIC (rewrite, 3 queries, REF lookup). What is compared: the **index** (the chat's own,
 # MAGIC or one built with another chunking) and the **search sizes** (reranked / raw passages per
 # MAGIC query, cap on the merged list) — widget `indexes`. Questions
-# MAGIC already saved in `results_table` for a label are skipped. Results of every test so far:
-# MAGIC `docs/chat_tests.md`. Run all.
+# MAGIC already saved in `results_table` for a label are skipped. Run all.
 
 # COMMAND ----------
 

@@ -28,6 +28,7 @@ CHAT_TURN_COLUMNS: List[tuple] = [
     ('rewrite_ok',            'BOOLEAN'),
     ('rewrite_mode',          'TEXT'),               # translate: opening message in French / English, translated into the other; rewrite: bilingual rewrite
     ('rewrite_endpoint',      'TEXT'),               # model that rewrote (NULL: every model failed)
+    ('rewrite_attempts',      'JSONB'),              # every try of the rewrite or translation, retries included
     ('rewrite_input_tokens',  'INTEGER'),
     ('rewrite_output_tokens', 'INTEGER'),
     ('rewrite_cost_eur',      'DOUBLE PRECISION'),

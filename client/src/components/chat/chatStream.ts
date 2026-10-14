@@ -13,6 +13,7 @@ export interface StreamCallbacks {
   onDelta: (text: string) => void;
   onDone: (data: { session_id: string; message_id?: number; content?: string; sources?: Source[] }) => void;
   onError: (err: string) => void;
+  onStatus?: (status: string) => void;
 }
 
 /**
@@ -68,6 +69,8 @@ export function streamChat(
         } else if (parsed.type === 'done') {
           callbacks.onDone({ session_id: parsed.session_id, message_id: parsed.message_id, content: parsed.content, sources: parsed.sources ?? [] });
           finish();
+        } else if (parsed.type === 'status') {
+          callbacks.onStatus?.(parsed.status ?? '');
         } else if (parsed.type === 'error') {
           callbacks.onError(parsed.error || TIRED_MESSAGE);
           finish();

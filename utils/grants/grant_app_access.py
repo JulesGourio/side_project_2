@@ -114,7 +114,7 @@ for name in _list("serving_endpoints"):
     except Exception as exc:
         # Typical cause: the job SP is not CAN_MANAGE on this endpoint (foundation
         # model endpoints are usually managed by a workspace admin) — ask one to run
-        # the same grant, see runbooks/dev.md block V.
+        # the same grant.
         failed.append((what, str(exc).splitlines()[0][:300]))
         logger.warning(f"  FAILED: {what}\n    -> {str(exc).splitlines()[0][:300]}")
 

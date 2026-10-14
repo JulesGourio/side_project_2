@@ -328,3 +328,40 @@ def test_an_endpoint_that_refuses_reasoning_effort_is_retried_at_once_without_it
     assert ['reasoning_effort' in p for p in sent] == [True, False]
     asyncio.run(chat_llm.complete('https://h', 't', ['databricks-gpt-6-luna'], messages, 100))
     assert ['reasoning_effort' in p for p in sent] == [True, False, False]     # not sent again
+
+
+# --- Patient retries: a rewrite or translation waits, then gives up loudly -----
+
+def test_patient_retry_succeeds_on_a_later_attempt(monkeypatch):
+    calls = []
+
+    async def flaky(host, token, endpoints, messages, max_tokens, timeout_s=30.0, info=None):
+        calls.append(1)
+        if len(calls) < 3:
+            raise _slow_model()
+        return 'ok', 'e'
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(chat_llm, 'complete', flaky)
+    monkeypatch.setattr(chat_llm.asyncio, 'sleep', no_sleep)
+    assert asyncio.run(chat_llm.complete_patiently('h', 't', ['e'], [], 10)) == ('ok', 'e')
+    assert len(calls) == 3
+
+
+def test_rewrite_every_model_refuses_raises_instead_of_searching_blind(monkeypatch):
+    async def always_fail(*args, **kwargs):
+        raise _slow_model()
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(chat_llm, 'complete', always_fail)
+    monkeypatch.setattr(chat_llm.asyncio, 'sleep', no_sleep)
+    with pytest.raises(chat_llm.LlmFailure):
+        asyncio.run(engine.rewrite_queries('https://h', 't', [{'role': 'user', 'content': 'NDT?'}]))
+
+
+def _slow_model():
+    return chat_llm.LlmFailure('timeout', 'slow')

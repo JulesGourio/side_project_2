@@ -182,9 +182,10 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
             async for event in stream:
                 if event['type'] == 'document':
                     doc = event['document']
+                    detail = doc.pop('error_detail', '')
                     documents.append(doc)
                     if doc.get('status') == 'error':
-                        _warn(doc.get('error_type') or 'JudgeError', 'judge', doc.get('reason') or '', llm_endpoint,
+                        _warn(doc.get('error_type') or 'JudgeError', 'judge', detail or doc.get('reason') or '', llm_endpoint,
                               ref=doc.get('ref'), judge_attempts=doc.get('judge_attempts'))
                     yield _ndjson(event)
                 elif event['type'] == 'done':

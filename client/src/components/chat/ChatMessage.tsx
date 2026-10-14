@@ -16,10 +16,10 @@ function StreamingCursor() {
   );
 }
 
-function ThinkingDots() {
+function ThinkingDots({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-1.5 py-1">
-      <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Thinking</span>
+      <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>{label}</span>
       <span className="flex gap-1">
         {[0, 1, 2].map(i => (
           <span
@@ -88,7 +88,7 @@ export function ChatMessage({ message, showFeedback, allMessages }: {
             {message.error ? (
               <p className="text-sm italic" style={{ color: 'var(--color-text-muted)' }}>{message.content}</p>
             ) : message.streaming && !message.content ? (
-              <ThinkingDots />
+              <ThinkingDots label={message.status === 'still_searching' ? 'Still searching' : 'Thinking'} />
             ) : (
               <div className="text-sm">
                 <MarkdownRenderer content={message.content} citations={citationsOf(message)} />

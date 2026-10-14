@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from ...services.compare.chunked_analysis import split_messages_for_chunking, stream_analysis_chunked
+from ...services.compare.llm import TIRED_MESSAGE, stream_analysis
 from ...services.compare.processors.factory import (
     diff_truncation_warnings, file_type_of, get_extension, get_processor,
 )
@@ -26,7 +27,6 @@ from ...services.infra.lakebase import (
     store_llm_request,
     update_llm_request_run, update_llm_request_usage,
 )
-from ...services.infra.streaming import stream_analysis
 from ...services.infra.user import require_compare
 from .common import (
     APP_VERSION, _get_config, _sanitize_filename, _validate_file,
@@ -55,6 +55,11 @@ def _sanitize_messages(messages: list) -> list:
     return result
 
 _analyze_semaphore = asyncio.Semaphore(int(os.getenv('COMPARE_MAX_CONCURRENT', '5')))
+
+
+def _public_error_chunk(event: Dict[str, Any]) -> str:
+    """The error event without its technical ``detail`` (the browser gets the user message only)."""
+    return f'data: {json.dumps({k: v for k, v in event.items() if k != "detail"})}\n\n'
 
 
 async def _error_stream(message: str):
@@ -349,10 +354,12 @@ async def analyze_documents(
                             ))
                         elif etype == 'error':
                             run['status'] = 'error'
+                            detail = event.get('detail') or event.get('error', '')
+                            chunk = _public_error_chunk(event)
                             store_error(
                                 endpoint='/api/compare/analyze',
                                 error_type=event.get('error_type', 'LLMError'),
-                                error_msg=event.get('error', ''),
+                                error_msg=detail,
                                 old_filename=old_name,
                                 new_filename=new_name,
                                 file_type=get_extension(old_name),
@@ -367,7 +374,7 @@ async def analyze_documents(
                                 llm_request_id,
                                 http_status=event.get('http_status', 0),
                                 error_type=event.get('error_type', 'LLMError'),
-                                error_msg=event.get('error', ''),
+                                error_msg=detail,
                             ))
                     except Exception:
                         pass
@@ -393,7 +400,7 @@ async def analyze_documents(
                 stage='stream',
             )
             try:
-                yield f'data: {json.dumps({"type": "error", "error": f"Internal error: {e}"})}\n\n'
+                yield f'data: {json.dumps({"type": "error", "error": TIRED_MESSAGE})}\n\n'
                 yield 'data: [DONE]\n\n'
             except Exception:
                 pass  # client already gone
