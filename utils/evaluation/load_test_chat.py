@@ -202,7 +202,7 @@ if MODE in ('auto', 'app'):
     if probe['status'] != 'ok':
         if MODE == 'app':
             raise RuntimeError(f'The app refused this notebook ({probe.get("error")}). Run with mode=engine, '
-                               'or from your PC (see operations_dev.md, block U).')
+                               'or from your PC (see runbooks/dev.md, block U).')
         MODE = 'engine'
     else:
         MODE = 'app'

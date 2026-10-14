@@ -1,8 +1,8 @@
-# Opérations manuelles — copie DEV de l'UAT (Jules)
+# Opérations manuelles — copie DEV de l'UAT
 
-Même règle que `OPERATIONS.md` : Claude n'a pas accès à Databricks, chaque étape à faire à la main est listée ici,
+Même règle que `runbooks/uat.md` : Claude n'a pas accès à Databricks, chaque étape à faire à la main est listée ici,
 prête à copier-coller. Cocher et dater une fois faite. Ce fichier ne couvre **que** l'environnement DEV ;
-`OPERATIONS.md` reste la référence pour UAT / uat-test / PROD.
+`runbooks/uat.md` reste la référence pour UAT / uat-test / PROD.
 
 Branche : **`feature/chat-vsi-merged-on-impact-search`** (= `claude/hopeful-bardeen-57zeur`). Pas de PR ; le zip à
 déployer est celui de cette branche.
@@ -114,7 +114,7 @@ PowerShell, depuis la racine du projet, sur la machine de déploiement.
 
 ### 00. Tables, volumes et index hors landingzone (DEV)
 
-Règle : tout objet qualibot (tables, volumes, index) vit dans `dev_proj.qualibot`. Les volumes sont créés par le déploiement (00.2), sauf `docling_models` qui n'est pas une ressource du bundle en DEV (00.2a), puis leurs données sont copiées (00.2b). `dev_lab` n'est plus utilisé. L'ordre compte : la copie DEV lit les tables UAT, donc `uat_proj` doit être prêt (voir `OPERATIONS.md`, étape 0).
+Règle : tout objet qualibot (tables, volumes, index) vit dans `dev_proj.qualibot`. Les volumes sont créés par le déploiement (00.2), sauf `docling_models` qui n'est pas une ressource du bundle en DEV (00.2a), puis leurs données sont copiées (00.2b). `dev_lab` n'est plus utilisé. L'ordre compte : la copie DEV lit les tables UAT, donc `uat_proj` doit être prêt (voir `runbooks/uat.md`, étape 0).
 
 **00.1 — Inventaire DEV (PowerShell, profil `DEV`)**
 
@@ -152,7 +152,7 @@ Le volume `staging` n'est pas copié (échanges transitoires).
 
 **00.3 — Export du corpus depuis UAT (workspace UAT, notebook `utils/dev_copy/export_uat_to_staging.py`)**
 
-Lancer ce notebook depuis le workspace UAT (ponctuel, voir le bloc E plus bas). Son source par défaut est désormais `uat_proj.qualibot` : la copie UAT de `OPERATIONS.md` étape 0 doit être faite avant.
+Lancer ce notebook depuis le workspace UAT (ponctuel, voir le bloc E plus bas). Son source par défaut est désormais `uat_proj.qualibot` : la copie UAT de `runbooks/uat.md` étape 0 doit être faite avant.
 
 **00.4 — Import et index (job DEV)**
 
@@ -538,7 +538,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
 
 **Facultatif, à ta décision** : T (nombre de passages), U / V (tests de charge), traces MLflow en tables Delta Unity Catalog (plus adapté à un gros
 volume, requêtable en SQL ; exige MLflow ≥ 3.11.1 dans l'app et un entrepôt SQL ; non modifiable ensuite pour cette expérience ; non testé : me le demander).
-**Pas maintenant** : tout ce qui touche `qualibot-uat`, `qualibot-uat-test` ou `prod` (`OPERATIONS.md`, dont D5 qui déploie cette branche en UAT) : il faut
+**Pas maintenant** : tout ce qui touche `qualibot-uat`, `qualibot-uat-test` ou `prod` (`runbooks/uat.md`, dont D5 qui déploie cette branche en UAT) : il faut
 d'abord que le DEV soit validé.
 
 ### T. Combien de passages garder ? (2026-10-08)

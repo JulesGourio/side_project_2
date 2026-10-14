@@ -54,5 +54,5 @@ dans `server/` et `client/` (voir le [README racine](../README.md)).
 - **Déploiement** : l'application se déploie avec `deploy/deploy_qualibot.ps1`
   (ou le pipeline Bitbucket), et les jobs avec `databricks bundle deploy`. Le
   [README racine](../README.md) décrit les cibles. Les étapes à faire dans
-  Databricks sont dans [OPERATIONS.md](../OPERATIONS.md) et
-  [operations_dev.md](../operations_dev.md).
+  Databricks sont dans [runbooks/uat.md](../runbooks/uat.md) et
+  [runbooks/dev.md](../runbooks/dev.md).

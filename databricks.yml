@@ -169,7 +169,7 @@ resources:
 
 targets:
   # ---------------------------------------------------------------------------
-  # DEV target: full copy of qualibot-uat in the DEV workspace (steps in operations_dev.md).
+  # DEV target: full copy of qualibot-uat in the DEV workspace (steps in runbooks/dev.md).
   # Own app, Lakebase project, Vector Search endpoint and dev_proj.qualibot tables, loaded from a UAT snapshot (copy_uat_to_dev).
   # Every new schedule is PAUSED. run_as is the DEV service principal: job-runner-sa-uat is UAT-scoped and silently ignored here.
   # The in-app group check is off for this target only: CAPS_BYPASS in utils/deploy/target_env.json.
@@ -276,7 +276,7 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
-      # The volumes of dev_proj.qualibot are created by the first deploy; their data is copied from dev_landingzone (operations_dev.md, step 00.2b).
+      # The volumes of dev_proj.qualibot are created by the first deploy; their data is copied from dev_landingzone (runbooks/dev.md, step 00.2b).
       schemas:
         qualibot_proj_schema:
           catalog_name: ${var.app_proj_catalog}
@@ -447,7 +447,7 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
-        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy; copy the existing images first (OPERATIONS.md, step 0.2b).
+        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy; copy the existing images first (runbooks/uat.md, step 0.2b).
         qualibot_images:
           catalog_name: ${var.app_proj_catalog}
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
@@ -497,7 +497,7 @@ targets:
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
       parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
-      # Real tables, no suffix: copy the former _v1 state tables to these names (OPERATIONS.md D5.3) BEFORE the next deploy,
+      # Real tables, no suffix: copy the former _v1 state tables to these names (runbooks/uat.md D5.3) BEFORE the next deploy,
       # or the daily run reparses the whole corpus on GPU. One index serves the chat and impact search.
       parsing_table_suffix: ""
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"

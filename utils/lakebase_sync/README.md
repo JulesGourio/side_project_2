@@ -27,7 +27,7 @@ Le poste de travail n'atteint pas Lakebase directement (port 5432 bloqué sur
 le réseau d'entreprise). Le chemin par défaut passe par le volume de staging :
 
 1. Lancer le job d'export de l'UAT (`lakebase_export_uat_to_volume`). Les
-   étapes sont dans [OPERATIONS.md](../../OPERATIONS.md).
+   étapes sont dans [runbooks/uat.md](../../runbooks/uat.md).
 2. À la racine du dépôt, dans le `.venv` du projet (avec `psycopg2-binary`) :
 
    ```

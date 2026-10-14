@@ -272,4 +272,4 @@ Les prompts sont des fichiers dans `server/prompts/chat/` (`system/base.md`,
 `translate_query.md`, `language_reminder*.md`), lus par `chat/prompts.py`.
 Un prompt n'est jamais une chaîne Python. Après une modification, la tâche
 d'enregistrement des prompts doit être relancée pour que les traces MLflow
-pointent sur la bonne version (voir [operations_dev.md](../../../../operations_dev.md)).
+pointent sur la bonne version (voir [runbooks/dev.md](../../../../runbooks/dev.md)).

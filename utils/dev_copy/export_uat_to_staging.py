@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Runs once, in the **UAT** workspace, as a one-off `databricks jobs submit`
-# MAGIC (steps in `operations_dev.md`) — not part of any bundle target, so the
+# MAGIC (steps in `runbooks/dev.md`) — not part of any bundle target, so the
 # MAGIC `qualibot-uat` target is left untouched. Writes a snapshot of the chunk
 # MAGIC tables and of the parsing pipeline state to
 # MAGIC `uat_proj.qualibot.staging`, the volume the DEV workspace can

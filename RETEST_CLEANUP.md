@@ -9,7 +9,7 @@ est à rejouer sur **DEV** (`-t dev`) après un `bundle deploy`. Cocher et dater
 PowerShell, profil CLI `DEV`. Si un pas échoue, collez-moi l'erreur et arrêtez-vous là.
 
 **Deux interdits**, parce que votre DEV a un chunking et des index plus récents que ceux de l'UAT :
-- ne **jamais** lancer `copy_uat_to_dev` ni les blocs **C**, **E** et **S** d'`operations_dev.md` : ils recopient le chunking de l'UAT par-dessus le vôtre;
+- ne **jamais** lancer `copy_uat_to_dev` ni les blocs **C**, **E** et **S** d'`runbooks/dev.md` : ils recopient le chunking de l'UAT par-dessus le vôtre;
 - `bundle deploy` ne touche **ni aux tables ni aux index Vector Search** (ils ne sont pas dans le bundle) : il ne peut pas les écraser. Il ne gère que l'app, le projet Lakebase, les schemas, les volumes, les rôles et les jobs.
 
 ### 0.1 Préparer
@@ -200,7 +200,7 @@ Dans les logs : `Starting in production mode`, `Lakebase ready`, `doc_catalog: l
 
 ### 0.8 Me renvoyer
 
-La sortie de 0.2 (PowerShell et SQL), puis l'erreur de chaque pas qui échoue, ou « tout est vert ». Je coche alors les sections 1 à 6 et je mets `operations_dev.md` à jour (daté).
+La sortie de 0.2 (PowerShell et SQL), puis l'erreur de chaque pas qui échoue, ou « tout est vert ». Je coche alors les sections 1 à 6 et je mets `runbooks/dev.md` à jour (daté).
 
 ## 1. Rangement de `utils/` (2026-10-08)
 
@@ -326,7 +326,7 @@ Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `
 `impact_requests`, `impact_document_results` (créées par l'app au démarrage ; référence
 `docs/lakebase_schema.md`).
 
-- [ ] App DEV redéployée, puis `operations_dev.md` bloc **L** (L1, L2 : une ligne `chat_turns` par question,
+- [ ] App DEV redéployée, puis `runbooks/dev.md` bloc **L** (L1, L2 : une ligne `chat_turns` par question,
   passages dans `chat_retrieved_chunks`).
 - [ ] Une comparaison + « Judge Impacted Docs » : dans Lakebase, la dernière ligne `impact_requests` a
   `status = 'ok'` et `search_ms` / `judge_ms` remplis ; la dernière `llm_requests` a `status` et `total_ms`.
@@ -337,16 +337,16 @@ Nouvelles tables `chat_turns` / `chat_retrieved_chunks`, colonnes ajoutées à `
 
 - `utils/evaluation/score_production_qa.py` et `resources/evaluation.yml` ont été supprimés (historique git, commit `f545093`, `archive/evaluation/`) :
   les entrées `score_production_qa` plus haut dans ce fichier ne sont plus à relancer.
-- À lancer à la place : `utils/evaluation/score_chat_traces.py` (`operations_dev.md`, bloc W).
+- À lancer à la place : `utils/evaluation/score_chat_traces.py` (`runbooks/dev.md`, bloc W).
 
 ## 12. Message « tired », révisions des documents, dates des fils, origine des erreurs (2026-10-09)
 
-À tester dans `operations_dev.md`, bloc **X** (X1 à X6) ; en UAT, `OPERATIONS.md` D5.8c (tâche 6 relancée après l'app) et D5.8d (alertes 01 à 06).
+À tester dans `runbooks/dev.md`, bloc **X** (X1 à X6) ; en UAT, `runbooks/uat.md` D5.8c (tâche 6 relancée après l'app) et D5.8d (alertes 01 à 06).
 
 ## 2026-10-12 — traces MLflow du chat
-- Après le déploiement DEV : `operations_dev.md` bloc Y (créer l'expérience, déployer, poser des questions, vérifier les traces).
+- Après le déploiement DEV : `runbooks/dev.md` bloc Y (créer l'expérience, déployer, poser des questions, vérifier les traces).
 - Prompts du chat : `base.md` + `division_*.md` (plus de `instructions_*.md`) ; après déploiement, poser une question en AS, IS et ALL et vérifier qu'elles répondent comme avant (`instructions_sha` change dans `chat_turns`).
-- Évaluation : défauts des notebooks passés à `dev_proj.qualibot` ; `operations_dev.md` bloc Z (droits + copie des tables).
+- Évaluation : défauts des notebooks passés à `dev_proj.qualibot` ; `runbooks/dev.md` bloc Z (droits + copie des tables).
 
 ## 2026-10-12 — réorganisation de `server/` (code seulement, aucun nom de table, variable ou log changé)
 Modules déplacés : `server/services/*.py` → `services/{chat,compare,infra}/` (`chat_vsi.py` → `chat/engine.py`, `chat_vsi_llm.py` → `chat/llm.py`), prompts → `server/prompts/chat/`, `config/processors.yml` → `server/config/`, `scripts/app_chat_turn.py` → `utils/dev/`, `docs/ka-*.md` et `docs/plan/` → `docs/archive/`, tests `test_chat_vsi*.py` → `test_chat_engine.py` / `test_chat_llm.py`, `capabilities_snapshot.json` supprimé.
@@ -364,7 +364,7 @@ Modules déplacés : `server/services/*.py` → `services/{chat,compare,infra}/`
 
 ## 2026-10-12 (suite) — renommages DEV, MLflow du chat, notation
 Aucun nom de table n'a changé. Changé : variables d'environnement `CHAT_VSI_*` → `CHAT_*` (app.yaml, target_env.json ; une variable posée à la main dans l'app DEV sous l'ancien nom est ignorée, la valeur par défaut s'applique), `stream_chat_vsi` → `stream_chat`, préfixe des identifiants de tours et libellé du moteur `vsi-…` → `chat-…` (les anciens tours gardent `vsi-…`), préfixes de logs `chat_vsi:` → `chat:` / `chat_llm:`, tag MLflow `vsi_trace_id` → `chat_trace_id`, `docs/chat_vsi_tests.md` → `docs/chat_tests.md`.
-Tout le détail et les commandes : `operations_dev.md`, bloc 0 (ordre complet).
+Tout le détail et les commandes : `runbooks/dev.md`, bloc 0 (ordre complet).
 
 ## 2026-10-13 — refactor du pipeline de parsing
 
@@ -373,4 +373,4 @@ Tout le détail et les commandes : `operations_dev.md`, bloc 0 (ordre complet).
 - Notebooks 5 et 6 (serverless) importent désormais `quality` / `tables` depuis leur dossier : vérifier le premier run.
 - À relancer : `1_categories` → `6_update_kb_metadata` sur DEV (run complet), puis `pytest tests`.
 
-- Refactor tables vers `<env>_proj.qualibot` et suppression de la sync des capacités : relancer les tests (`pytest`), puis sur UAT et DEV vérifier le chat, la comparaison d'impact et le job `grant_app_access` après les étapes de `OPERATIONS.md` 0 et `operations_dev.md` 00. Vérifier que le job `D_1_Qualibot_Sync_User_Capabilities_Uat_Test` et le job hors bundle `qualibot-sync-user-capabilities-uat` ont disparu.
+- Refactor tables vers `<env>_proj.qualibot` et suppression de la sync des capacités : relancer les tests (`pytest`), puis sur UAT et DEV vérifier le chat, la comparaison d'impact et le job `grant_app_access` après les étapes de `runbooks/uat.md` 0 et `runbooks/dev.md` 00. Vérifier que le job `D_1_Qualibot_Sync_User_Capabilities_Uat_Test` et le job hors bundle `qualibot-sync-user-capabilities-uat` ont disparu.

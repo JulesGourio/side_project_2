@@ -81,7 +81,7 @@ def _experiment_id(name: str) -> Optional[str]:
             _experiment[name] = found.experiment_id
             return found.experiment_id
         _missing_until[name] = time.monotonic() + _RETRY_MISSING_S
-    logger.warning('mlflow_turns: experiment %s does not exist, chat traces are off until it is created (operations_dev.md block Y)', name)
+    logger.warning('mlflow_turns: experiment %s does not exist, chat traces are off until it is created (runbooks/dev.md block Y)', name)
     return None
 
 

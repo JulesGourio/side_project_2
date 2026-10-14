@@ -1,4 +1,4 @@
-# Opérations manuelles (Jules)
+# Opérations manuelles
 
 Claude n'a pas accès à Databricks : chaque étape à faire à la main (côté
 machine de déploiement ou UI Databricks) est listée ici, prête à
@@ -12,7 +12,7 @@ branche tant qu'elle n'est pas fusionnée.
 Mis à jour le 2026-10-09 (journal Lakebase du chat : D5.8, D5.8b ; révisions et alertes : D5.8c, D5.8d). Rien de ce qui suit n'a encore
 été confirmé comme fait.
 
-La mise en place de l'environnement **DEV** a son propre fichier : `operations_dev.md`.
+La mise en place de l'environnement **DEV** a son propre fichier : `runbooks/dev.md`.
 
 > **Branche `feature/chat-vsi-merged-on-impact-search` (2026-10-08) : ne la déployer sur
 > `qualibot-uat` / `qualibot-uat-test` qu'au bloc D5, dans son ordre.** Son code attend des tables
@@ -451,7 +451,7 @@ prévenir, je change la valeur, vous redéployez.
 - [ ] **D5. Passer l'UAT sur le chatbot retenu** : un seul chatbot (plus de KA), un seul index
   `chunks_index` avec filtre de division, le découpage retenu (150 / 300 / 450 tokens), plus aucun
   nom versionné. Tout est mesuré en DEV (`docs/chat_tests.md`, partie 1) et doit d'abord être
-  passé en DEV (`operations_dev.md`, bloc 0). **Avec ton accord seulement** : c'est la vraie app.
+  passé en DEV (`runbooks/dev.md`, bloc 0). **Avec ton accord seulement** : c'est la vraie app.
   Les tables et index `_v1` restent en place jusqu'à D5.9 : l'app actuelle continue de tourner
   pendant D5.1 à D5.5, et le retour arrière reste possible.
 
@@ -526,11 +526,11 @@ prévenir, je change la valeur, vous redéployez.
     .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
     ```
 
-  - [ ] **D5.8. Tester** comme `operations_dev.md` 0.13 (ALL / AS / IS, langue, hors sujet, lien,
+  - [ ] **D5.8. Tester** comme `runbooks/dev.md` 0.13 (ALL / AS / IS, langue, hors sujet, lien,
     impact search). Retour arrière : redéployer l'ancien zip, puis `bundle deploy` de l'ancien zip
     (tables et index `_v1` intacts). Vérifier aussi le journal Lakebase des tours (`chat_turns`,
     `chat_retrieved_chunks`, colonnes ajoutées à `errors` : créés par l'app à son démarrage, rien à
-    faire à la main) avec les requêtes de `operations_dev.md` 0.13, dans l'éditeur SQL Lakebase de
+    faire à la main) avec les requêtes de `runbooks/dev.md` 0.13, dans l'éditeur SQL Lakebase de
     l'UAT (base `doccompare` ; `doccompare_test` pour `qualibot-uat-test`). Référence :
     `docs/lakebase_schema.md`.
 
@@ -560,7 +560,7 @@ prévenir, je change la valeur, vous redéployez.
     ```
 
     Puis redémarrer l'app UAT (Apps → `qualibot` → Stop / Start), ou attendre 30 min. Vérifier
-    comme `operations_dev.md` 0.11 et 0.13.
+    comme `runbooks/dev.md` 0.11 et 0.13.
 
   - [ ] **D5.8d. Alertes SQL** (workspace UAT, après D5.8b : les tables Delta `chat_turns` et
     `errors` doivent exister). Fichiers `utils/alerts/01` à `06`, mode d'emploi dans

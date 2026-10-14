@@ -4,7 +4,7 @@ Six requêtes SQL, une alerte par requête. Chaque requête renvoie une colonne
 qui déclenche l'alerte quand sa condition est vraie. Les requêtes lisent les
 tables du schéma du projet (`dev_proj.qualibot` dans les fichiers ; pour
 l'UAT, remplacer `dev_proj` par `uat_proj`). Les alertes sont créées à la
-main dans Databricks : étapes dans [OPERATIONS.md](../../OPERATIONS.md)
+main dans Databricks : étapes dans [runbooks/uat.md](../../runbooks/uat.md)
 (section D5.8d).
 
 | Fichier | Déclenche quand (fenêtre) | Colonne et condition | Table lue |

@@ -92,7 +92,7 @@ Ils ne figurent plus dans le code.
 | E1 — fiche par document | Un passage de synthèse par document, généré par LLM (objet, domaine, sujets, rôles, documents cités). ≈ 15 € pour environ 6 000 documents | Le script d'essai est supprimé du dépôt (commit `f545093`) |
 | E2 — contexte par passage | Une ou deux phrases en tête de chaque passage pour le situer (méthode « Contextual Retrieval »). ≈ 50 € | Idem |
 | `v2c` — sans préfixe `[Source: …]` | Mesure l'effet du préfixe sur la recherche (jamais mesuré sur la recherche : seule trace, un test local sur 3 documents) | Idem |
-| **Nombre de passages** | Jusqu'à 3 × 12 reclassés + 10 bruts, sans plafond. Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), la comparaison des réponses reste à faire (§ 5) | Réglages `CHAT_RERANK_TOP_K`, `CHAT_RAW_TOP_K`, `CHAT_MAX_SEARCH_PASSAGES` ; `operations_dev.md`, bloc T |
+| **Nombre de passages** | Jusqu'à 3 × 12 reclassés + 10 bruts, sans plafond. Les passages bruts ont été gardés parce que le reranker seul perdait des réponses (48 % contre 76 %), mais c'était avec les passages de 4 000 caractères dont le reranker ne lit que les 2 000 premiers. Avec le découpage actuel (≤ 1 600), la comparaison des réponses reste à faire (§ 5) | Réglages `CHAT_RERANK_TOP_K`, `CHAT_RAW_TOP_K`, `CHAT_MAX_SEARCH_PASSAGES` ; `runbooks/dev.md`, bloc T |
 | Pistes côté recherche R1 à R12 | § 6 | Rien de codé |
 | Documents d'avant 2018 | Leur fiche dans le chatbot | Décision métier ; pipeline prêt (`parsing_archive_notices_in_rag`) |
 | Numéros de page et de slide | Le markdown exporté ne garde ni les pages des PDF ni les slides des PPTX ; il faudrait un marqueur de saut de page à l'export Docling (option `page_break_placeholder`, à vérifier) et un re-parsing GPU | Rien de codé |
@@ -333,7 +333,7 @@ hypothétiques par passage (≈ 20 €, mais l'index double de taille).
 ## 8. Découpage et parsing : ce qui a été codé le 2026-10-08
 
 Issu d'un audit du pipeline (P1 à P16, détail dans l'historique du dépôt). Code poussé ; l'UAT est re-découpée seulement avec accord
-(`OPERATIONS.md`, D5).
+(`runbooks/uat.md`, D5).
 
 | Constat | Ce qui est codé | Où |
 |---|---|---|

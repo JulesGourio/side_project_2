@@ -142,7 +142,7 @@ Dépendances Python : `pip install -r requirements.txt`. Pour les tests :
 | `prod` | `qualibot-prod` | `qualibot` | `qualibot-prod` | `dbc-77b87d5a-6bcb` |
 
 Les hôtes complets sont dans `databricks.yml`. Le profil CLI de la cible doit
-être authentifié : les étapes sont dans OPERATIONS.md et operations_dev.md.
+être authentifié : les étapes sont dans runbooks/uat.md et runbooks/dev.md.
 
 Déploiement de l'application, à la racine du dépôt :
 
@@ -169,8 +169,8 @@ l'UAT. Les autres cibles se déploient à la main, par les pipelines « custom �
 PROD est déployé à la main, après l'UAT.
 
 Les étapes à faire dans Databricks (authentification, premier déploiement, jobs
-à lancer ou à activer, droits) sont dans [OPERATIONS.md](OPERATIONS.md) pour
-l'UAT et la PROD, et dans [operations_dev.md](operations_dev.md) pour la DEV.
+à lancer ou à activer, droits) sont dans [runbooks/uat.md](runbooks/uat.md) pour
+l'UAT et la PROD, et dans [runbooks/dev.md](runbooks/dev.md) pour la DEV.
 
 ## Ressources par environnement
 
@@ -231,6 +231,6 @@ bun run lint
 | [docs/chat_tests.md](docs/chat_tests.md) | Mesures et choix de configuration du chat |
 | [docs/lakebase_schema.md](docs/lakebase_schema.md) | Colonnes du journal Lakebase |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Pistes non réalisées |
-| [OPERATIONS.md](OPERATIONS.md) | Étapes à réaliser dans Databricks (UAT, PROD) |
-| [operations_dev.md](operations_dev.md) | Étapes à réaliser dans Databricks (DEV) |
+| [runbooks/uat.md](runbooks/uat.md) | Étapes à réaliser dans Databricks (UAT, PROD) |
+| [runbooks/dev.md](runbooks/dev.md) | Étapes à réaliser dans Databricks (DEV) |
 | [RETEST_CLEANUP.md](RETEST_CLEANUP.md) | Ce qu'il faut relancer après un changement de chemins ou de notebooks |

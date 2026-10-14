@@ -323,7 +323,7 @@ python -m pytest tests/test_parsing_*.py tests/test_code_conventions.py
   cible). `-SyncOnly` ne synchronise que le code.
 - Une exécution ciblée passe la liste d'IDDOC dans `parsing_parse_filter`.
 - Les étapes à faire dans Databricks (copie des tables, premières exécutions,
-  activation de la planification) sont dans [OPERATIONS.md](../../OPERATIONS.md)
-  et [operations_dev.md](../../operations_dev.md). Ce README ne les répète pas.
+  activation de la planification) sont dans [runbooks/uat.md](../../runbooks/uat.md)
+  et [runbooks/dev.md](../../runbooks/dev.md). Ce README ne les répète pas.
 - Les passages servis au chat sont décrits dans
   [`client/src/components/chat/README.md`](../../client/src/components/chat/README.md).

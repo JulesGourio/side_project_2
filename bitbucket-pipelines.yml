@@ -23,7 +23,7 @@ definitions:
     # -----------------------------------------------------------------------
     # DEV — target dev / profil job-runner-sa-dev (SP DEV
     # fde6ff28-739f-4a41-b61e-604a298c8478). Copie de l'UAT dans le workspace
-    # DEV (operations_dev.md). Variables dans l'environnement Bitbucket
+    # DEV (runbooks/dev.md). Variables dans l'environnement Bitbucket
     # "Development" :
     #   DATABRICKS_TOKEN (secured) — PAT du SP DEV
     #   DATABRICKS_HOST  (optional) — défaut: https://dbc-c623749d-731b.cloud.databricks.com
