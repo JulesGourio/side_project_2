@@ -1,86 +1,76 @@
-# utils/
+# utils
 
-Scripts qui tournent en dehors de l'application web : chaîne de parsing des
-documents, déploiement, alertes, évaluation du chat et de la recherche, droits
-Unity Catalog et outils d'exploitation Lakebase. Un dossier par sujet.
+Scripts and jobs that run outside the web application: the document parsing pipeline, the manual deployment of the
+application, the chat alerts, the chat and search evaluation, the Unity Catalog grants, the Lakebase copies, and the
+start and stop of the applications. One folder per concern.
 
-L'application elle-même est dans `server/` et `client/` (voir le
-[README racine](../README.md)). Les scripts ponctuels (migrations, copies,
-empaquetages lancés une fois) sont dans
-[`runbooks/scripts/`](../runbooks/scripts/README.md) et ne sont jamais déployés.
-Les étapes à faire à la main dans Databricks sont dans
-[runbooks/uat.md](../runbooks/uat.md) et [runbooks/dev.md](../runbooks/dev.md).
+The application is in [`server/`](../server/) and [`client/`](../client/); see the [root README](../README.md).
+One-shot scripts (migrations, copies, packaging) are in `runbooks/scripts/`, and the manual steps per environment
+are in [`runbooks/README.md`](../runbooks/README.md).
 
-## Carte du dossier
+## Files
 
-| Dossier ou fichier | Contenu | Lancé par |
+| Folder or file | Content | Runs as |
 |---|---|---|
-| [`parsing_pipeline/`](parsing_pipeline/README.md) | Chaîne quotidienne de parsing, de découpage et d'indexation des documents (tâches `1_categories` à `6_update_kb_metadata`) | job `parsing_pipeline` (`resources/parsing_pipeline.job.yml`) |
-| [`deploy/`](deploy/) | `deploy_qualibot.ps1` : déploiement manuel du code de l'application. `render_target_config_env.py` : écrit `target_config.env` à partir de `target_env.json`. `target_env.json` : réglages de l'application par cible | `deploy_qualibot.ps1` à la main ; `render_target_config_env.py` par le pipeline Bitbucket (`bitbucket-pipelines.yml`) |
-| [`alerts/`](alerts/README.md) | Six requêtes SQL d'alertes de suivi du parsing, du chat et des jobs | à la main, dans Databricks SQL |
-| [`app_mgmt/`](app_mgmt/) | `stop_start_app_job.py` : arrêt et démarrage planifiés des applications Databricks | jobs de `resources/app_schedules.yml` |
-| [`lakebase_sync/`](lakebase_sync/README.md) | Export de la base Lakebase vers un volume, import vers DEV, export et import JSON vers PROD | jobs de `resources/lakebase_sync.yml` ; étapes « Sync prod data » de `bitbucket-pipelines.yml` |
-| [`dev_copy/`](dev_copy/) | Import du corpus copié de l'UAT dans DEV, et création de l'endpoint Vector Search | job `copy_uat_to_dev` (`resources/dev_copy.yml`) |
-| [`grants/`](grants/) | Droits Unity Catalog des identités de service (application, pipeline) et accès aux volumes | jobs de `resources/grants.yml` |
-| [`evaluation/`](evaluation/) | Évaluation du chat et de la recherche : tests de charge, comparaison de réponses, évaluation de la recherche, expérience et prompts MLflow, scores des traces, contrôle des endpoints de vision | `create_chat_experiment.py`, `register_chat_prompts.py`, `score_chat_traces.py` : jobs de `resources/chat_mlflow.yml` ; le reste à la main (voir [runbooks/dev.md](../runbooks/dev.md)) |
-| [`ops_config.py`](ops_config.py) | Réglages partagés : profils CLI, bases Lakebase par environnement, connexion (`lakebase_connect`, `lakebase_connect_with`), listes d'ordre des tables | importé par `lakebase_sync/` et `runbooks/scripts/lakebase/` |
+| [`parsing_pipeline/`](parsing_pipeline/README.md) | Daily chain of parsing, passage splitting and indexing (tasks `1_categories` to `6_update_kb_metadata`) | Tasks of the job `parsing_pipeline` (`resources/parsing_pipeline.job.yml`) |
+| [`deploy/`](deploy/) | `deploy_qualibot.ps1`: deploys the application code. `render_target_config_env.py`: writes `target_config.env` from `target_env.json`. `target_env.json`: application settings per target | `deploy_qualibot.ps1` from PowerShell; `render_target_config_env.py` from the Bitbucket pipeline (`bitbucket-pipelines.yml`) |
+| [`alerts/`](alerts/README.md) | Six SQL queries of alerts on the parsing, the chat and the jobs | Pasted as the query of a Databricks SQL alert; no job runs them |
+| [`app_mgmt/`](app_mgmt/) | `stop_start_app_job.py`: stop and start of the Databricks Apps on a schedule | Tasks of the jobs in `resources/app_schedules.yml` |
+| [`lakebase_sync/`](lakebase_sync/README.md) | Export of the Lakebase database to a volume, import into DEV, JSON export and import for PROD | Tasks of the jobs in `resources/lakebase_sync.yml`; CLI steps of `bitbucket-pipelines.yml` |
+| [`dev_copy/`](dev_copy/) | Import of the UAT snapshot into DEV, creation of the Vector Search endpoint | Tasks of the job `copy_uat_to_dev` (`resources/dev_copy.yml`) |
+| [`grants/`](grants/) | Unity Catalog grants of the service principals of the application and of the pipeline, and volume access | Tasks of the jobs in `resources/grants.yml` |
+| [`evaluation/`](evaluation/) | Chat and search evaluation: load tests, answer comparison, retrieval evaluation, MLflow experiment and prompts, trace scoring, vision endpoint check | Jobs in `resources/chat_mlflow.yml` (`create_chat_experiment.py`, `register_chat_prompts.py`, `score_chat_traces.py`); the others by hand |
+| [`ops_config.py`](ops_config.py) | Shared settings: CLI profiles, Lakebase projects per environment, connection helpers, table order of the PROD copy | Imported by `lakebase_sync/` and by the scripts of `runbooks/scripts/` |
 
-## Commandes
+## How each script runs
 
-Les scripts en ligne de commande se lancent depuis la racine du dépôt :
+Notebooks (files that start with `# Databricks notebook source`) are tasks of the jobs listed above. They take their
+parameters from the job (`base_parameters` or the widgets). They do not run from the command line.
+
+Command-line scripts run from the repository root:
 
 ```
-python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [chemin_de_sortie]
-python utils/evaluation/create_chat_experiment.py --profile DEV --app qualibot
-python utils/evaluation/register_chat_prompts.py --profile DEV --schema dev_proj.qualibot --experiment /Shared/qualibot/chat_turns
-python utils/evaluation/check_vision_endpoints.py --profile DEV --images <dossier_d_images>
-python utils/lakebase_sync/export_lakebase_to_json.py --profile job-runner-sa-uat --out-dir staging/lakebase
-python utils/lakebase_sync/import_lakebase_from_json.py --profile job-runner-sa-prod --in-dir staging/lakebase
+python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [output_path]
+python utils/lakebase_sync/export_lakebase_to_json.py --profile <cli-profile> [--database doccompare] [--out-dir staging/lakebase]
+python utils/lakebase_sync/import_lakebase_from_json.py --profile <cli-profile> [--database doccompare] [--in-dir staging/lakebase]
+python utils/evaluation/check_vision_endpoints.py --profile <cli-profile> --images <folder> [--endpoints <a,b>] [--question <text>] [--timeout 120]
+python utils/evaluation/create_chat_experiment.py --profile <cli-profile> --app qualibot [--experiment /Shared/qualibot/chat_turns] [--uc-schema <catalog.schema> --warehouse-id <id>] [--managers <group,group>]
+python utils/evaluation/register_chat_prompts.py --profile <cli-profile> --schema <catalog.schema> [--experiment /Shared/qualibot/chat_turns] [--app-root <folder>]
 ```
 
-Déploiement manuel de l'application (PowerShell, depuis la racine) :
+- `render_target_config_env.py` writes `target_config.env` (default path) with one `export` line per setting.
+- `export_lakebase_to_json.py` and `import_lakebase_from_json.py` default to the database `doccompare` and to the folder `staging/lakebase`.
+- `check_vision_endpoints.py` exits with 0 when every request was answered, 1 when one failed, 2 on a bad folder or an empty list.
+- `create_chat_experiment.py` and `register_chat_prompts.py` run as Python tasks of the job without `--profile`.
+  `register_chat_prompts.py` needs `--app-root` inside a job, where it runs through `exec` and has no `__file__`.
+
+PowerShell, from the repository root:
 
 ```
 .\utils\deploy\deploy_qualibot.ps1 -AppEnv <dev|uat|prod|uat-test> [-SkipBuild] [-SyncOnly] [-Infra]
 ```
 
-`-SkipBuild` saute la compilation du frontend (changements Python seuls), `-SyncOnly`
-ne fait que synchroniser le code, `-Infra` relance le déploiement complet du bundle
-(permissions et volumes, droits MANAGE sur le catalogue requis).
+`-AppEnv` defaults to `uat`. `-SkipBuild` skips the frontend build, `-SyncOnly` only uploads the code, and
+`-Infra` runs the full bundle deployment (app permissions, volume bindings), which needs MANAGE on the catalog.
 
-Les notebooks (`*_job.py`, `ensure_*`, `import_*`, `grant_*`, `stop_start_app_job.py`,
-`evaluation/*.py` marqués `# Databricks notebook source`) ne se lancent pas en ligne
-de commande : ce sont des tâches de jobs, ou des notebooks ouverts dans Databricks.
+## Settings
 
-## Conventions
+- `target_env.json` holds the application settings per target (`dev`, `uat`, `uat-test`, `prod`). A key that a target
+  does not set keeps its value from `app.yaml`. `render_target_config_env.py` turns one target into `target_config.env`.
+- `ops_config.py` holds the Databricks CLI profiles, the Lakebase project (`qualibot`, branch `production`,
+  endpoint `primary`) and the database of each environment. The `uat-test` environment uses its own database
+  `doccompare_test`.
 
-- Journalisation avec `logger` (module `logging`), jamais `print`. Les notebooks
-  et les scripts en ligne de commande suivent la même règle.
-- Un notebook qui reçoit des paramètres les déclare en widgets, après
-  `dbutils.widgets.removeAll()`.
-- Les notebooks importent `ops_config.py` après avoir ajouté `utils/` à `sys.path` :
-  `sys.path.insert(0, os.path.dirname(os.getcwd()))` dans les notebooks (leur dossier
-  est sur `sys.path`, son parent est `utils/`), `Path(__file__).resolve().parent.parent`
-  dans les scripts en ligne de commande.
-- Sur les colonnes de données, `try_cast` et `try_to_date` remplacent `cast` et
-  `to_date`, pour qu'une valeur mal formée ne fasse pas échouer toute la tâche.
-- `target_env.json` est la source unique des réglages de l'application par
-  cible. Le script PowerShell et le pipeline Bitbucket les lisent tous les
-  deux : ne pas les recopier ailleurs.
+## Rules
 
-## Points de vigilance
-
-- **Arrêt et démarrage des applications** (`app_mgmt/stop_start_app_job.py`) :
-  le SDK lève `BadRequest` quand l'application est déjà dans l'état demandé.
-  Le notebook lit donc d'abord l'état et passe l'appel si l'application y est
-  déjà.
-- **Fins de ligne de `target_env.json` rendu** : `render_target_config_env.py`
-  écrit `target_config.env` en fins de ligne LF. Un fichier en CRLF ajoute un
-  `\r` à chaque valeur, et toutes les URL construites à partir de ces valeurs
-  deviennent fausses.
-- **Notebook importé dans le workspace** : `databricks workspace import` doit
-  viser exactement le `notebook_path` du job (sans suffixe `.py`). Sinon, un
-  doublon apparaît sans erreur.
-- **Déploiement** : l'application se déploie avec `deploy/deploy_qualibot.ps1`
-  (ou le pipeline Bitbucket), et les jobs avec `databricks bundle deploy`. Le
-  [README racine](../README.md) décrit les cibles.
+- The Lakebase copies to PROD replace the rows of each table of the target database: `import_lakebase_from_json.py`
+  runs one `DELETE` and one `INSERT` per table in a single transaction, so a failure rolls back the whole import.
+- The import writes the `id` values as they are and sets each table's sequence to its maximum `id`.
+- The tables of `MIGRATE_TO_PROD_TABLES_TO_SKIP` (`llm_requests`) are not copied to PROD. The other tables are copied in
+  the order of `MIGRATE_TO_PROD_TABLE_ORDER`, parents first.
+- The exported files hold user data (questions, answers, identifiers). They stay in the staging folders and volumes.
+- The grant jobs cover the volumes, the indexes, the tables and the project schemas. They never grant on serving
+  endpoints: every workspace user already queries them.
+- `stop_start_app_job.py` reads the state of each application before it acts, and skips an application that is
+  already in the requested state.
+- The parsing pipeline (`parsing_pipeline/`) is described in its own README.

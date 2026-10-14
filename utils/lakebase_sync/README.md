@@ -1,71 +1,67 @@
-# lakebase_sync/ — copies de la base Lakebase
+# lakebase_sync
 
-Scripts qui sortent les données de la base Lakebase de l'application (export vers
-un volume, export JSON) et qui les chargent ailleurs : tables Delta de DEV et de
-l'UAT, base de PROD. Les réglages de connexion communs (profils CLI, projet
-Lakebase, bases par environnement, ordre des tables) sont dans
-[`utils/ops_config.py`](../ops_config.py).
+Scripts that take the data out of the Lakebase database of the application (to a volume, or as JSON Lines files) and
+load it elsewhere: Delta tables of DEV and of UAT, and the Lakebase database of PROD. The connection settings shared
+with the other folders (CLI profiles, Lakebase projects, databases per environment, table order) are in
+[`ops_config.py`](../ops_config.py).
 
-Les migrations du schéma et les copies ponctuelles de tables ne sont pas ici :
-elles sont dans [`runbooks/scripts/`](../../runbooks/scripts/README.md).
+One-shot migrations and one-off table copies are in `runbooks/scripts/`; the manual steps are indexed in
+[`runbooks/README.md`](../../runbooks/README.md).
 
-## Fichiers
+## Files
 
-| Fichier | Rôle | Lancé par |
+| File | Role | Run by |
 |---|---|---|
-| `export_lakebase_uat_to_volume_job.py` | Notebook : une table = un fichier JSON Lines dans le volume de staging. Paramètres (projet, branche, base, volume, tables à sauter) passés par `base_parameters` | job `lakebase_export_uat_to_volume` (cible `qualibot-uat`) ; job `lakebase_export_dev_to_volume` (cible `dev`) |
-| `import_chatbot_tables_to_uat_job.py` | Notebook : charge les tables du chat (`chat_feedbacks`, `chat_messages`, `chat_sessions`, `chat_turns`, `chat_retrieved_chunks`, `errors`) du staging dans des tables Delta de l'UAT (`uat_proj.qualibot`) | deuxième tâche du job `lakebase_export_uat_to_volume` |
-| `import_lakebase_uat_volume_to_dev_job.py` | Notebook : charge le staging dans des tables Delta de DEV, schéma `dev_proj.qualibot` (`TARGET_CATALOG` et `TARGET_SCHEMA` dans `resources/lakebase_sync.yml`) | job `lakebase_import_uat_to_dev` (cible `dev`) |
-| `export_lakebase_to_json.py` | CLI : exporte toutes les tables d'une base en JSON Lines | étape « Sync prod data (1/2): export from UAT » de `bitbucket-pipelines.yml` |
-| `import_lakebase_from_json.py` | CLI : importe ces fichiers dans la base cible. Pour chaque table, `DELETE` puis `INSERT` dans une seule transaction : un échec annule tout | étape « Sync prod data (2/2): import to PROD » de `bitbucket-pipelines.yml` |
+| `export_lakebase_uat_to_volume_job.py` | Notebook: one table becomes one JSON Lines file in the staging volume. Parameters: project, branch, endpoint, database, output volume, tables to skip | Task `export_lakebase_uat_to_volume` of `lakebase_export_uat_to_volume` (target `qualibot-uat`); task `export_lakebase_dev_to_volume` of `lakebase_export_dev_to_volume` (target `dev`) |
+| `import_chatbot_tables_to_uat_job.py` | Notebook: loads the chat tables (`chat_feedbacks`, `chat_messages`, `chat_sessions`, `chat_turns`, `chat_retrieved_chunks`, `app_errors`) from the staging folder into Delta tables of UAT | Task `import_chatbot_tables_to_uat` of `lakebase_export_uat_to_volume`, after the export |
+| `import_lakebase_uat_volume_to_dev_job.py` | Notebook: loads the staging folder into Delta tables of DEV | Task `import_lakebase_uat_volume` of `lakebase_import_uat_to_dev` (target `dev`) |
+| `export_lakebase_to_json.py` | CLI: exports every table of a database to JSON Lines | Bitbucket step "Sync prod data (1/2)" |
+| `import_lakebase_from_json.py` | CLI: imports these files into a database | Bitbucket step "Sync prod data (2/2)" |
 
-Les jobs sont définis dans `resources/lakebase_sync.yml`.
+The jobs are defined in [`resources/lakebase_sync.yml`](../../resources/lakebase_sync.yml).
 
-## Lancer
+## Command-line scripts
 
-Les deux CLI se lancent depuis la racine du dépôt, avec un profil Databricks CLI
-dont le jeton vient de l'espace de travail qui héberge la base :
+Run from the repository root, with a Databricks CLI profile whose token comes from the workspace that hosts the database:
 
 ```
-python utils/lakebase_sync/export_lakebase_to_json.py --profile job-runner-sa-uat --out-dir staging/lakebase
-python utils/lakebase_sync/import_lakebase_from_json.py --profile job-runner-sa-prod --in-dir staging/lakebase
+python utils/lakebase_sync/export_lakebase_to_json.py --profile <cli-profile> [--database doccompare] [--out-dir staging/lakebase]
+python utils/lakebase_sync/import_lakebase_from_json.py --profile <cli-profile> [--database doccompare] [--in-dir staging/lakebase]
 ```
 
-Options : `--profile` (obligatoire), `--database` (défaut `doccompare`),
-`--out-dir` / `--in-dir` (défaut `staging/lakebase`). Les pas de la chaîne
-« Sync prod data » sont dans `bitbucket-pipelines.yml`.
+`--profile` is required. The export reads the source database and writes one `<table>.json` per table into the
+output folder. The import reads the same files from the input folder.
 
-Les notebooks tournent comme tâches de leur job et lisent leurs paramètres dans
-des widgets (`dbutils.widgets`) ou, pour les deux imports Delta, dans des
-variables d'environnement avec une valeur par défaut (`SOURCE_EXPORT_DIR`,
-`TARGET_CATALOG`, `TARGET_SCHEMA`, `TABLES_TO_SKIP`).
+## Notebook parameters
 
-## Environnements Lakebase
+- `export_lakebase_uat_to_volume_job.py` takes the widgets `LAKEBASE_PROJECT_ID`, `LAKEBASE_BRANCH`,
+  `LAKEBASE_ENDPOINT`, `LAKEBASE_DATABASE`, `OUTPUT_VOLUME_CATALOG`, `OUTPUT_VOLUME_SCHEMA`, `OUTPUT_VOLUME_NAME`
+  and `TABLES_TO_SKIP` (default `llm_requests`). It writes to `/Volumes/<catalog>/<schema>/<volume>/lakebase_export`.
+  The export tasks run on serverless compute: classic compute cannot reach the Lakebase endpoint.
+- The two Delta imports read their settings from environment variables with defaults: `SOURCE_EXPORT_DIR`
+  (`/Volumes/uat_proj/qualibot/staging/lakebase_export`), `TARGET_CATALOG`, `TARGET_SCHEMA`, and for the DEV import
+  `TABLES_TO_SKIP`. The UAT chat import loads only its fixed table list.
 
-Les environnements connus de `ops_config.py` (lus par `lakebase_connect`) :
+## Lakebase environments
 
-| Environnement | Profil CLI | Base | Note |
+The environments known by `ops_config.py`:
+
+| Environment | CLI profile | Database | Note |
 |---|---|---|---|
-| `UAT` | `UAT` | `doccompare` | Base de l'application UAT |
-| `UAT-TEST` | `UAT` | `doccompare_test` | Base jetable de la cible `qualibot-uat-test` |
-| `DEV` | `DEV` | `doccompare` | Base de l'application DEV |
-| `PROD` | `qualibot-prod` | `doccompare` | Base de l'application PROD |
+| `UAT` | `UAT` | `doccompare` | Database of the UAT application |
+| `UAT-TEST` | `UAT` | `doccompare_test` | Disposable database of the `qualibot-uat-test` target |
+| `DEV` | `DEV` | `doccompare` | Database of the DEV application |
+| `PROD` | `qualibot-prod` | `doccompare` | Database of the PROD application |
 
-Le projet Lakebase est `qualibot`, branche `production`, endpoint `primary`
-pour les quatre.
+All four use the Lakebase project `qualibot`, branch `production`, endpoint `primary`.
 
-## Règles
+## Rules
 
-- `import_lakebase_from_json.py` remplace le contenu des tables de la base cible.
-  Il ne sert qu'à la synchronisation UAT vers PROD.
-- L'ordre d'import des tables est `MIGRATE_TO_PROD_TABLE_ORDER` dans
-  `ops_config.py` (parents avant enfants). Les tables absentes de cette liste
-  sont importées ensuite, dans l'ordre de l'export. `llm_requests` n'est jamais
-  exportée vers PROD (`MIGRATE_TO_PROD_TABLES_TO_SKIP`).
-- Les imports écrivent les valeurs d'identifiant telles quelles et recalent les
-  séquences `id` : sans cela, l'application réutiliserait un identifiant déjà importé.
-- Les JSON exportés contiennent les données des utilisateurs (questions,
-  réponses, identifiants). Ne pas les déposer hors des volumes et dossiers de
-  staging prévus.
-- La cible `qualibot-uat-test` a sa propre base (`doccompare_test`) : un test ne
-  doit jamais écrire dans `doccompare`.
+- `import_lakebase_from_json.py` replaces the contents of each imported table. For each table it runs a `DELETE` and an
+  `INSERT` in one transaction, so a failure rolls back the whole import. It is the UAT-to-PROD copy.
+- The import order is `MIGRATE_TO_PROD_TABLE_ORDER` in `ops_config.py`: parent tables first. Tables missing from that list
+  come after, in the order of the export. `llm_requests` is never exported to PROD (`MIGRATE_TO_PROD_TABLES_TO_SKIP`).
+- The import writes the `id` values as they are and sets each table's `id` sequence to the maximum imported value.
+  Without it, the next insert of the application would reuse an imported id.
+- The JSON files hold user data (questions, answers, identifiers). They stay in the staging folders and volumes.
+- The target `qualibot-uat-test` has its own database (`doccompare_test`). A test run never writes to `doccompare`.

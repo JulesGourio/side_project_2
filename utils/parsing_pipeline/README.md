@@ -1,379 +1,283 @@
-# Pipeline de parsing
+# parsing_pipeline
 
-Chaîne quotidienne qui transforme les documents de la GED Intraqual en passages
-indexés. Le chat et la recherche d'impact lisent ces passages.
+Daily chain that turns the documents of the Intraqual document management system into indexed passages.
+The chatbot and the impact search read these passages.
 
-La chaîne tourne sur Databricks, en six tâches enchaînées, définies dans
-[`resources/parsing_pipeline.job.yml`](../../resources/parsing_pipeline.job.yml).
-Le job s'appelle `D_1_Qualibot_Parsing_Pipeline_<cible>` et se déclenche chaque nuit
-à 4 h (Europe/Paris). La planification est réglée par la variable
-`parsing_schedule_pause` (`PAUSED` par défaut dans `databricks.yml` ; la cible
-`qualibot-uat` la met à `UNPAUSED`).
+The chain is the job `D_1_Qualibot_Parsing_Pipeline_<target>`, defined in
+[`resources/parsing_pipeline.job.yml`](../../resources/parsing_pipeline.job.yml). It runs six tasks in order.
+Each notebook is a task; the modules next to them hold the logic. The notebooks follow the section layout
+`Technical debt`, `Configuration`, `Inputs`, `Data Preparation`, `Data Transformations`, `Quality Checks`, `Outputs`.
 
-Les notebooks suivent la structure LEAP (en-tête, `Technical debt`,
-`Configuration`, `Inputs`, `Data Preparation`, `Data Transformations`,
-`Quality Checks`, `Outputs`). La logique est dans les modules à côté d'eux : le
-notebook ne fait qu'orchestrer.
+## Files
 
-## Fichiers
-
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `create_proj_category_reference.py` | Tâche `1_categories` : garde de fraîcheur des sources, table `category_reference` |
-| `create_proj_parse_manifest.py` | Tâche `2_manifest` : périmètre, nettoyage, classement des dossiers, table `parse_manifest` |
-| `create_proj_chunks.py` | Tâche `3_parse` : sélection, parsing, reprise, découpage, écriture des tables |
-| `create_proj_image_metadata.py` | Tâche `4_describe_images` : description des images par le modèle de vision |
-| `update_proj_vector_indexes.py` | Tâche `5_sync_index` : création des index absents, synchronisation, `chunks_full` |
-| `create_proj_doc_catalog.py` | Tâche `6_update_kb_metadata` : catalogue des documents et date de la base dans Lakebase |
-| `config.py` | Tous les paramètres (variables `PARSING_*`, valeurs par défaut), les seuils et les prompts des modèles |
-| `categories.py` | Hiérarchie des catégories, division, périmètre Intraqual (Spark) |
-| `manifest_steps.py` | Phases de `2_manifest` : nettoyage des contenus obsolètes, classement des dossiers, manifeste |
-| `selection.py` | Choix du meilleur fichier par IDDOC (ordre des formats) |
-| `parse_steps.py` | Phases de `3_parse` : périmètre du run, parsing par lots, reprise, relance des échecs |
-| `build_steps.py` | Construction des tables de `3_parse` : `image_metadata`, `parsed_documents`, passages, notices d'archive |
-| `output_steps.py` | Écritures de `3_parse` : tables, historique du run, notices, contrôle des documents sans passage |
-| `describe_steps.py` | Phases de `4_describe_images` : appels au modèle, passages d'images, promotion des documents |
-| `llm_describe.py` | Appels asynchrones au modèle de vision : limiteur de débit, chaîne d'endpoints, disjoncteur |
-| `format_parsers.py` | Octets vers texte, un parseur par format (Docling et secours) |
-| `image_utils.py` | UDF de parsing de `3_parse` : Docling ou secours, extraction des images, sauvegarde |
-| `image_fallbacks.py` | Texte et images des fichiers que Docling ne lit pas : DOCX/PPTX (XML), `.ppt` (OLE), pages de PDF scannés |
-| `image_store.py` | Écriture d'une image sur le volume, avec contrôle du chemin |
-| `chunking.py` | Découpage d'un Markdown en passages (sections, tables, préfixe de provenance) |
-| `doc_status.py` | Statuts partagés des documents et des images |
-| `quality.py` | Contrôles de qualité RED et AMBER sur les tables |
-| `parse_checks.py` | Contrôle de cohérence des REF entre passages et `parse_manifest` (AMBER) |
-| `tables.py` | Seule couche d'écriture Delta (`save_table`, `merge_into`, via `leap_utils`) |
-| `utils.py` | Runtime partagé : configuration des workers, comptage de tokens, helpers Spark |
+| `create_proj_category_reference.py` | Task `1_categories`: freshness guard of the Intraqual sources, table `category_reference` |
+| `create_proj_parse_manifest.py` | Task `2_manifest`: scope, pruning of stale content, classification of the volume folders, table `parse_manifest` |
+| `create_proj_chunks.py` | Task `3_parse`: file selection, parsing, retry, passages, writes of the tables |
+| `create_proj_image_metadata.py` | Task `4_describe_images`: image descriptions by a vision model, image passages |
+| `update_proj_vector_indexes.py` | Task `5_sync_index`: creates missing indexes, triggers their sync, refreshes `chunks_full` |
+| `create_proj_doc_catalog.py` | Task `6_update_kb_metadata`: document catalog and knowledge-base date in Lakebase |
+| `config.py` | Parameters (`PARSING_*` environment variables with their defaults), thresholds, model prompts |
+| `categories.py` | Category hierarchy, division of each document, scope gate (Spark) |
+| `manifest_steps.py` | Phases of `2_manifest` |
+| `selection.py` | Choice of the best file per IDDOC (format priorities) |
+| `parse_steps.py` | Phases of `3_parse`: run scope, selection, batched parsing, resume, retry, empty folders |
+| `build_steps.py` | Tables of `3_parse` built from the checkpoint: `image_metadata`, `parsed_documents`, passages, archive notices |
+| `output_steps.py` | Writes of `3_parse`: tables, run health, change log, archive notices, ghost-document guard |
+| `describe_steps.py` | Phases of `4_describe_images`: model calls, image passages, promotion of documents |
+| `llm_describe.py` | Asynchronous vision calls: rate limiter, endpoint chain, circuit breaker |
+| `format_parsers.py` | Bytes to text, one parser per format (Docling and the fallback parsers) |
+| `image_utils.py` | Parsing UDF of `3_parse`: Docling or fallback, image extraction, volume save |
+| `image_fallbacks.py` | Text and images of the files Docling does not read: DOCX and PPTX (XML), binary PPT (OLE), scanned PDF pages |
+| `image_store.py` | Writes one image to the volume, with a path check |
+| `chunking.py` | Splits a Markdown document into passages (sections, tables, provenance prefix) |
+| `doc_status.py` | Statuses of documents and images shared by the tasks |
+| `quality.py` | RED and AMBER quality checks on the tables |
+| `parse_checks.py` | Consistency of the REF of the passages with `parse_manifest` (AMBER) |
+| `tables.py` | The only Delta write layer (`save_table`, `merge_into`, from `leap_utils`) |
+| `utils.py` | Runtime shared by the driver and the workers: configuration, token counting, Spark helpers |
 
-Les modules `chunking.py`, `quality.py`, `doc_status.py` et `tables.py` sont
-testés en unitaire (`tests/test_parsing_*.py`). Les modules listés dans
-`config.WORKER_MODULES` sont envoyés aux workers Spark ; les autres restent côté
-driver.
+The modules listed in `config.WORKER_MODULES` (`chunking`, `utils`, `format_parsers`, `image_store`, `image_fallbacks`, `image_utils`, `config`) are shipped to the Spark workers; the others run on the driver.
 
-## Lancer
+Unit tests in `tests/` cover `chunking.py`, `quality.py`, `doc_status.py`, `tables.py`, `selection.py`
+and the image description in `llm_describe.py`.
 
-- La chaîne tourne dans le job. Déployer le code et le job :
-  `databricks bundle deploy -t <cible>`, puis lancer une exécution :
-  `databricks bundle run parsing_pipeline -t <cible>`.
-- Le code des notebooks et des modules est synchronisé avec le bundle. L'option
-  `-Infra` de [`deploy/deploy_qualibot.ps1`](../deploy/deploy_qualibot.ps1) relance
-  le déploiement complet du bundle pour la cible ; sans elle, `-SyncOnly` ne
-  synchronise que le code.
-- Une exécution ciblée passe la liste d'IDDOC dans la variable
-  `parsing_parse_filter` (`databricks bundle deploy -t <cible> --var parsing_parse_filter=123,456`
-  puis lancement du job).
-- Les étapes à faire dans Databricks (copie des tables, premières exécutions,
-  activation de la planification) sont dans [runbooks/uat.md](../../runbooks/uat.md)
-  et [runbooks/dev.md](../../runbooks/dev.md). Ce README ne les répète pas.
-- Tests unitaires :
+## Tasks
 
-```
-python -m pytest tests/test_parsing_*.py tests/test_code_conventions.py
-```
+| Task | Notebook | Compute | Writes |
+|---|---|---|---|
+| `1_categories` | `create_proj_category_reference.py` | single-node CPU | `category_reference` |
+| `2_manifest` | `create_proj_parse_manifest.py` | single-node CPU | `parse_manifest`, `parsed_documents` (skip rows), pruning in the passage and image tables |
+| `3_parse` | `create_proj_chunks.py` | GPU | `parsing_checkpoint`, `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health`, `document_change_log` |
+| `4_describe_images` | `create_proj_image_metadata.py` | CPU | `image_metadata`, image passages in `chunks` and `chunks_archive`, `parsed_documents` |
+| `5_sync_index` | `update_proj_vector_indexes.py` | serverless | `chunks_full`, Vector Search indexes |
+| `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata` (Lakebase) |
 
-## Les six tâches
+Each task depends on the previous one. `3_parse` pins `opencv-python-headless==4.12.0.88` in a `%pip` cell: it
+replaces the OpenCV build that Docling pulls in, which fails on the GPU runtime.
 
-| Tâche | Notebook | Cluster | Rôle | Écrit |
-|---|---|---|---|---|
-| `1_categories` | `create_proj_category_reference.py` | CPU (`meta_cpu_cluster`) | Vérifie la fraîcheur des sources Intraqual, construit la hiérarchie des catégories et les divisions | `category_reference` |
-| `2_manifest` | `create_proj_parse_manifest.py` | CPU (`meta_cpu_cluster`) | Applique le périmètre, retire les contenus obsolètes, classe les dossiers du volume, construit la liste des documents du jour | `parse_manifest`, `parsed_documents`, et suppressions dans les tables de passages |
-| `3_parse` | `create_proj_chunks.py` | GPU (`parse_gpu_cluster`) | Choisit un fichier par document, le parse, extrait les images, découpe en passages et écrit les tables | `parsing_checkpoint`, `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health`, `document_change_log` |
-| `4_describe_images` | `create_proj_image_metadata.py` | CPU (`describe_cpu_cluster`) | Décrit les images par un modèle de vision et ajoute leurs passages | `image_metadata`, `chunks`, `chunks_archive`, `parsed_documents` |
-| `5_sync_index` | `update_proj_vector_indexes.py` | serverless | Crée les index absents, lance leur synchronisation, reconstruit `chunks_full` si demandé | `chunks_full`, index Vector Search |
-| `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | Reconstruit le catalogue des documents et la date de la base dans Lakebase | `doc_catalog`, `catalog_metadata` (Lakebase) |
+The notebooks that join the `gd_*_latest` views set `spark.databricks.remoteFiltering.blockSelfJoins` to `false`
+(`create_proj_parse_manifest.py`, `categories.build_category_hierarchy`).
 
-Chaque tâche attend la tâche qui la précède. Si `5_sync_index` échoue, le catalogue
-n'est pas mis à jour. Sans la tâche 5, les nouveaux passages ne sont jamais
-interrogeables : les index sont en mode `TRIGGERED`.
+## Settings
 
-**Sources** :
+The job sets the environment variables read by `config.py`. The main ones, with their defaults in `config.py`:
 
-- Métadonnées : les vues `gd_doc_latest`, `gd_doc_cat_latest`, `gd_cat_latest`,
-  `gd_typdoc_latest` et `gd_utilisateur_latest` du schéma
-  `prod_bronze.intraqual` (variable `intraqual_bronze_catalog_schema`).
-- Fichiers : le volume source Intraqual `/Volumes/prod_landingzone/intraqual/intraqual_documents`
-  (variable `intraqual_volume_root`), un dossier `D_<IDDOC>` (ou `Dm_<IDDOC>`) par
-  document.
-
-**Garde de fraîcheur** : `1_categories` échoue si une source a plus de
-`PARSING_MAX_SOURCE_STALENESS_HOURS` heures (36 par défaut ; 0 désactive la garde).
-Une chaîne qui tourne sur des données périmées s'arrête donc au lieu d'indexer un
-corpus partiel.
-
-## Périmètre
-
-- **Périmètre** (`DOC_SCOPE_FILTER`, `config.py`) : `courant = 1 AND etat = 7 AND
-  nonvisible = 0` sur `gd_doc_latest`. Seule la révision courante d'un document,
-  à l'état 7 et non masqué, entre dans la chaîne. `difftotale` n'est pas un
-  critère : des documents affichés par le portail ont cette valeur à 0.
-- **Une révision, un IDDOC** : chaque révision d'un document a son propre IDDOC.
-  Quand un IDDOC sort du périmètre (révision remplacée ou document supprimé),
-  `2_manifest` supprime ses lignes dans `chunks`, `chunks_archive`,
-  `image_metadata` et `parsed_documents`. Quand un REF a encore plusieurs IDDOC
-  dans le périmètre, seule la révision la plus récente (`indice` le plus haut)
-  garde ses passages. Les lignes `parsed_documents` des autres restent, pour qu'elles
-  ne soient pas parsées à nouveau.
-- **Suppressions** : cette étape s'exécute à chaque run. Le paramètre
-  `DRY_RUN` ne protège que les fichiers du volume (ceux des dossiers hors
-  périmètre, supprimés seulement si `DRY_RUN` vaut `non`). Il ne protège pas les
-  lignes des tables.
-- **Classement des dossiers du volume** : `KEEP` (à parser), `DELETE` (hors
-  périmètre), `ORPHAN` (IDDOC absent de `gd_doc`, conservé sur le volume mais non
-  parsé), `SKIP` (nom de dossier non conforme), `MANUAL` (REF exclu à la main,
-  `MANUAL_REF_EXCLUSIONS`), `CAT_EXCL` (catégorie exclue, `EXCLUDED_IDCATS`).
-- **Documents antérieurs à 2018** (`DOC_DATE_CUTOFF`, `2018-01-01`) : ils passent par la même
-  chaîne, mais leurs passages vont dans `chunks_archive`, jamais dans `chunks`
-  (l'index du chat). `PARSING_ARCHIVE_MAX_DOCS` fixe le nombre total de ces
-  documents parsés, les plus récents d'abord (0 : aucun, -1 : tous). Un
-  passage-notice sans contenu par document antérieur est écrit dans
-  `archive_notices` ; il n'entre dans `chunks` que si
-  `PARSING_ARCHIVE_NOTICES_IN_RAG` vaut `true`.
-- **Statuts de `parsed_documents`** (une ligne par IDDOC) :
-
-| `parse_status` | Sens |
-|---|---|
-| `SUCCESS` | Parsé, passages écrits |
-| `ERROR`, `TIMEOUT` | Échec du parsing ou dépassement de `PARSE_TIMEOUT_SECONDS` (200 s) : retenté au run suivant |
-| `EMPTY_TEXT` | Aucun texte et aucune image restant à décrire |
-| `IMAGES_PENDING` | Aucun texte, des images restent à décrire : le parsing ne le reprend pas, `4_describe_images` le fait passer en `SUCCESS` ou `SKIPPED_EMPTY_IMAGES` |
-| `SKIP_TOO_LARGE` | Au-delà du plafond de taille du format |
-| `SKIPPED_EMPTY_SMALL_FILE` | Fichier vide de moins de 50 Kio : gabarit sans contenu, exclu |
-| `SKIPPED_EMPTY_IMAGES` | Toutes les images décrites comme non informatives |
-| `SKIPPED_EMPTY_FOLDER` | Dossier sans fichier exploitable |
-| `SKIPPED_REF_OUT_OF_SCOPE`, `SKIPPED_IDDOC_NOT_FOUND`, `SKIPPED_SOURCE_REMOVED` | Hors périmètre, IDDOC inconnu, source supprimée à Intraqual |
-| `SKIPPED_REF_MANUAL`, `SKIPPED_CATEGORY_EXCLUDED` | Exclusions décidées à la main |
-| `MISSING_CHUNKS` | `SUCCESS` sans passage : repris au run suivant |
-
-`is_filtered_by_date = true` signale un document antérieur à 2018 ; son résultat va
-dans `chunks_archive`.
-
-## Sélection, parsing et secours (`3_parse`)
-
-**Choix du fichier** (`selection.py`) : pour chaque IDDOC cible, seuls les
-dossiers concernés sont listés sur le volume. Les fichiers sont classés par
-préfixe (`D_` d'abord, puis `Dm_`), puis par priorité de format, puis par date de
-modification la plus récente. Les formats sans priorité sont exclus, ainsi que
-quelques fichiers parasites (`thumbs.db`, `desktop.ini`, etc.).
-
-| Format | Priorité |
-|---|---|
-| docx 1, pdf 2, docm 3, doc 4, html 5, pptx 6, ppt 7, txt 8, xml 9 | 1 à 9 |
-| xlsx 10, xls 11, xlsm 12, xlsb 13, rtf 14, odt 15, ods 16 | 10 à 16 |
-
-**Reprise** (`incremental`, mode par défaut) : un IDDOC déjà en statut terminal
-est ignoré, sauf si son `indice`, sa date de publication ou son REF a changé, ou
-si le hachage du fichier (`document_sha256`) a changé. Les modes `full`
-(tout reparser) et `rechunk` (reconstruire les tables à partir du checkpoint,
-sans lire le volume) se choisissent par `PARSING_RUN_MODE` (variable `parsing_run_mode`).
-
-**Parsing** (`format_parsers.py`, `image_utils.py`) : Docling sur GPU pour les
-formats qu'il lit (PDF, Word, PowerPoint, HTML, texte), avec la structure de
-tableaux en mode précis. Le OCR de Docling est désactivé. Les autres formats
-passent par des parseurs dédiés : `.doc` par antiword (binaire fourni dans
-`data/vendor/antiword/`), `.rtf` par striprtf, `.odt` et `.ods` par odfpy,
-`.xls` par xlrd, `.xlsx` et `.xlsm` par openpyxl (repli sur le XML brut du zip),
-`.xlsb` par pyxlsb, `.ppt` par la lecture des flux OLE (texte et images JPEG/PNG).
-Les `.docx` et `.pptx` lisent leur XML directement quand Docling ne peut pas les traiter.
-
-**Plafonds de taille** (`parse_steps.py`) : 15 Mo pour les formats lus par Docling,
-35 Mo pour les PDF, 100 Mo pour les formats lus par les parseurs dédiés et pour
-les fichiers OOXML (`.docx`, `.docm`, `.pptx`, `.pptm`). Un `.docx` ou `.pptx`
-au-delà de 15 Mo (après retrait des objets incorporés inutiles) passe par la
-lecture XML. Au-delà du plafond, le fichier reçoit `SKIP_TOO_LARGE`, sans tentative.
-
-**PDF scannés** : si le texte extrait fait moins de 150 caractères
-(`PARSING_LLM_OCR_TEXT_THRESHOLD`), les 100 premières pages au plus sont rendues
-en images. Elles sont décrites comme des pages à transcrire intégralement, par
-le prompt `PDF_PAGE_OCR_PROMPT`. Les tampons et annotations sont relevés sur une
-ligne `STAMP/WATERMARK:`, car ils portent souvent un statut.
-
-**Images** : extraites à une échelle de 3 (environ 216 DPI), en PNG, sur le volume
-`{images}/{IDDOC}/{IDDOC}_IMG_{NNN}.png` (rendus de pages : `_PAGE_{NNN}`). L'écriture
-est forcée sur le disque (`fsync`). Une image dont le plus grand côté est
-inférieur à 140 px, ou dont le plus petit côté est inférieur à 85 px, est
-marquée `SKIPPED_DECORATIVE` : elle est illisible, et aucun appel au modèle n'est
-fait.
-
-**Retry** : `ENABLE_RETRY` reprend les IDDOC en échec avec leur fichier suivant
-(second choix du classement).
-
-**Points de contrôle** : le checkpoint est écrit tous les 100 fichiers
-(`CHECKPOINT_BATCH_SIZE`). Une exécution complète (`full`) copie d'abord le
-checkpoint existant (clone superficiel nommé `_pipeline_checkpoint_AAAAMMJJ_HHMM`).
-
-## Découpage en passages (`chunking.py`)
-
-Le Markdown est coupé sur les titres de niveau 1 à 3. Un passage ne traverse pas
-deux sections de niveau 1 ou 2 (sauf les sections trop petites pour exister
-seules). Tailles en tokens (tiktoken, cl100k) : 150 minimum, 300 visés, 450 au
-maximum, et 1 600 caractères au plus (le reranker ne lit que les premiers
-2 000 caractères). Chevauchement de 12 % entre passages d'une même section. Les
-tableaux trop longs sont découpés par lignes, avec l'en-tête répété. Chaque
-passage porte son fil de titres (`semantic_headers`) et commence par un préfixe
-de provenance :
-
-```
-[Source: <REF> | Title: <titre> | Division: <division> | Date de diffusion: <date> | …]
-```
-
-Les tables des matières, les pages de garde et les blocs répétés
-(`BOILERPLATE_MIN_DOCS` : présents dans au moins 20 documents) sont marqués dans
-`chunk_content_type`.
-
-## Descriptions d'images (`4_describe_images`)
-
-- Traite les images `PENDING` et `ERROR`, dans la limite de
-  `PARSING_LLM_BATCH_SIZE` (6 000) par exécution. Au-delà, le noyau Python du
-  nœud CPU devient instable ; le reste attend le run suivant.
-- Une image sans description reste `PENDING`, avec `attempts` incrémenté et
-  `last_error_kind` renseigné ; le run suivant la reprend, jusqu'à
-  `PARSING_IMAGE_MAX_ATTEMPTS` (10) tentatives, puis elle passe en `FAILED_LIMIT`.
-- Appels au modèle `PARSING_LLM_ENDPOINT` (`databricks-gpt-5-6-luna` par défaut) :
-  10 en parallèle, avec un limiteur de débit (jetons par minute, requêtes par
-  heure). Les résultats sont fusionnés dans `image_metadata` par tranches de
-  2 000 (`PARSING_LLM_CHECKPOINT_CHUNK_SIZE`) : une interruption garde le travail
-  fait.
-- Le prompt `IMAGE_DESCRIPTION_PROMPT` (`config.py`) demande une catégorie (tableau,
-  organigramme, schéma, graphique, photo technique, texte), puis une extraction.
-  Une image décorative ou déjà couverte par le texte reçoit `SKIP`.
-- Statuts : `PENDING`, `DONE`, `SKIPPED` (réponse `SKIP`), `SKIPPED_DECORATIVE`
-  (filtre géométrique), `EXTRACTION_FAILED` (fichier image absent), `FAILED_LIMIT`
-  (tentatives épuisées).
-- Chaque endpoint de la chaîne (`PARSING_LLM_ENDPOINT`, puis
-  `PARSING_LLM_FALLBACK_ENDPOINTS`) est essayé sur `PARSING_LLM_ROUNDS` passes,
-  avec des attentes entre les passes. Après `PARSING_LLM_BREAKER_FAILURES` images
-  en échec consécutives sur un endpoint, celui-ci est écarté pour le reste du run.
-  Un 429 ne compte ni comme échec de l'endpoint ni comme tentative de l'image.
-- Les jetons de chaque tentative qui a répondu sont comptés, les tentatives en
-  échec à part.
-- Mode `full` : remet toutes les images en `PENDING`. Le paramètre
-  `rebuild_image_chunks` reconstruit les passages d'images à partir des
-  descriptions stockées, sans appel au modèle.
-- Un passage d'image contient la section, la légende et le préfixe de provenance.
-  Seules les descriptions d'au moins 40 caractères, sans `SKIP`, sont indexées.
-- La clé de fusion de `image_metadata` est `(IDDOC, image_id)`, celle des passages
-  est `chunk_id`. Une fusion ne réécrit que les lignes qui changent.
-- Un document `IMAGES_PENDING` dont toutes les images sont décrites passe en `SUCCESS`
-  (ou en `SKIPPED_EMPTY_IMAGES` si aucune image n'est informative).
-- Le jeton du modèle est lu dans le secret `qualibot/serving_token`. Sans ce
-  secret, le notebook utilise son propre jeton.
-
-## Index Vector Search (`5_sync_index`)
-
-- Les index à synchroniser sont listés par cible dans `parsing_vector_search_indexes`
-  (`databricks.yml`). Une liste vide ne synchronise rien.
-- Seuls `chunks_index` et `chunks_full_index` peuvent être créés par la tâche. Un
-  index absent est créé sur l'endpoint `qualibot`, avec le modèle d'embedding
-  `databricks-qwen3-embedding-0-6b`, en mode `TRIGGERED`. Tout autre index listé
-  est synchronisé mais jamais créé. La tâche attend la fin de la synchronisation
-  pendant 45 minutes au plus.
-- `chunks_full` réunit `chunks` et `chunks_archive` : tous les documents, quelle
-  que soit leur date, pour la recherche d'impact. Il est reconstruit quand
-  `parsing_build_chunks_full` vaut `true` ou quand son index est listé. Sur la cible
-  `qualibot-uat`, la table est construite sans son index.
-- Les tables lues par un index gardent 60 jours de historique de modifications
-  (`delta.deletedFileRetentionDuration` et `delta.logRetentionDuration`) : la
-  synchronisation incrémentale ne peut pas reprendre au-delà.
-
-## Catalogue des documents (`6_update_kb_metadata`)
-
-Reconstruit la table `doc_catalog` de la base Lakebase indiquée par la variable
-`parsing_lakebase_database` (vide : tâche sautée), à partir de `parse_manifest` et des
-passages : REF, titre, lien, division, révision (`indice`) et date de publication.
-Met aussi à jour `catalog_metadata` (date des documents affichée dans le
-chat). L'application relit le catalogue toutes les 30 minutes.
-
-## Tables et volumes
-
-Tables Delta du schéma `<env>_proj.qualibot` (`catalog_schema` des variables) :
-
-| Table | Rôle |
-|---|---|
-| `parse_manifest` | Documents du jour : REF, titre, révision, date, catégories, `parse_content` |
-| `parsed_documents` | Une ligne par IDDOC : statut, fichier retenu, parseur, erreur, `is_in_rag`, `is_filtered_by_date` |
-| `parsing_checkpoint` | Résultat de chaque fichier tenté ; relu par toutes les étapes de `3_parse` |
-| `chunks` | Passages du chat (texte et images), tous divisions confondues |
-| `chunks_archive` | Passages des documents antérieurs à 2018 |
-| `archive_notices` | Un passage-notice par document antérieur, sans contenu |
-| `chunks_full` | `chunks` + `chunks_archive` (recherche d'impact), si construit |
-| `image_metadata` | Une ligne par image : emplacement, statut, description, jetons |
-| `category_reference` | Hiérarchie des catégories et division de chaque catégorie |
-| `parsing_run_health` | Une ligne par exécution (tableau de bord) |
-| `document_change_log` | Une ligne par document nouveau ou révisé (tableau de bord) |
-| `rag_exclusions`, `parsing_retry_temp` | Tables de travail |
-
-Toutes les tables reçoivent le suffixe `PARSING_TABLE_SUFFIX` (variable
-`parsing_table_suffix` : vide, sauf pour une validation où il vaut `_test`). Les
-écritures passent par `tables.py`.
-
-Volumes :
-
-| Volume | Usage |
-|---|---|
-| `/Volumes/prod_landingzone/intraqual/intraqual_documents` | Documents Intraqual, lecture seule |
-| `<app_proj_catalog>.<app_proj_schema>.images` (`images_test` en cible de test) | Images extraites, un dossier par IDDOC (variable `parsing_images_volume`) |
-| `parsing_offline_models_path` (par cible) | Modèles Docling et d'embedding, hors ligne |
-
-## Variables principales
-
-Variables Databricks (`databricks.yml`) :
-
-| Variable | Défaut | Rôle |
+| Variable | Default | Effect |
 |---|---|---|
-| `parsing_run_mode` | `incremental` | `incremental`, `full` ou `rechunk` |
-| `parsing_parse_filter` | vide | Liste d'IDDOC séparés par des virgules : exécution ciblée |
-| `parsing_table_suffix` | vide | Suffixe des tables en écriture (`_test` pour une validation) |
-| `parsing_vector_search_indexes` | vide | Index synchronisés par la tâche 5 |
-| `parsing_build_chunks_full` | `false` | Reconstruit `chunks_full` sans son index |
-| `parsing_archive_max_docs` | `0` | Nombre de documents antérieurs à 2018 parsés (-1 : tous) |
-| `parsing_archive_notices_in_rag` | `false` | Copie les notices des documents antérieurs dans `chunks` |
-| `parsing_max_source_staleness_hours` | `36` | Garde de fraîcheur (0 : désactivée) |
-| `parsing_gpu_node_type` | `g4dn.4xlarge` | Nœud GPU (T4) |
-| `parsing_num_workers` | `2` | Workers GPU |
-| `parsing_describe_node_type` | `m5d.xlarge` | Nœud CPU de la description d'images |
-| `parsing_schedule_cron`, `parsing_schedule_pause` | `0 0 4 * * ?`, `PAUSED` | Planification (Europe/Paris) et pause |
-| `parsing_lakebase_database` | vide | Base Lakebase du catalogue (vide : tâche 6 sautée) |
-| `parsing_images_volume` | `images` | Volume des images extraites, dans le schéma du projet |
+| `PARSING_RUN_MODE` | `incremental` | `incremental`, `full` (reparse everything, the checkpoint is cloned first) or `rechunk` (rebuild the tables from the checkpoint, no volume scan, no parsing) |
+| `PARSING_PARSE_FILTER` | empty | Comma-separated IDDOCs: restricts the run to them |
+| `PARSING_TABLE_SUFFIX` | empty | Suffix of every table written and of the indexes (`_test` for a validation run) |
+| `PARSING_MAX_SOURCE_STALENESS_HOURS` | `36` | Freshness guard of `1_categories`; `0` disables it |
+| `PARSING_DOC_DATE_CUTOFF` | `2018-01-01` | Date below which a document is archived |
+| `PARSING_ARCHIVE_MAX_DOCS` | `0` | Number of archived documents parsed, most recent first; `-1` for all |
+| `PARSING_ARCHIVE_NOTICES_IN_RAG` | `false` | Copies the archive notices into `chunks` |
+| `PARSING_VECTOR_SEARCH_INDEXES` | empty | Indexes synced by `5_sync_index` (widget `indexes` takes precedence) |
+| `PARSING_LLM_ENDPOINT` | `databricks-gpt-5-6-luna` | Vision model of `4_describe_images` |
+| `PARSING_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-5-6-luna` | Comma-separated endpoints tried after the primary |
+| `PARSING_LLM_BATCH_SIZE` | `6000` | Images described per run |
+| `PARSING_IMAGE_MAX_ATTEMPTS` | `10` | Attempts before an image is set aside as `FAILED_LIMIT` |
 
-Constantes de `config.py`, lues dans l'environnement quand elles sont
-surchargeables : `PARSING_DOC_DATE_CUTOFF` (`2018-01-01`), `PARSING_TARGET_CHUNK_TOKENS`
-(300), `PARSING_MAX_CHUNK_CHARS` (1600), `PARSING_LLM_BATCH_SIZE` (6000),
-`PARSING_LLM_ENDPOINT`, `PARSING_EMBED_SOURCE_PREFIX` (`true`).
+The other variables (volumes, catalog and schema, GPU, rate budgets, chunk sizes, OCR thresholds) are
+listed at the top of `config.py`.
 
-## Clusters et exécution
+## Documents and scope
 
-- `meta_cpu_cluster` et `describe_cpu_cluster` : mode `SINGLE_USER`, sans worker
-  pour les tâches 1 et 2 et pour la description.
-- `parse_gpu_cluster` : runtime GPU ML. Le driver est à la demande
-  (`first_on_demand: 1`) ; les workers peuvent être en spot. Un GPU par tâche
-  (`spark.task.resource.gpu.amount = 1`), donc une parse à la fois par GPU.
-- `3_parse` installe `opencv-python-headless==4.12.0.88` par une cellule `%pip`.
-  La version 4.13 ne s'importe pas sur ce runtime. Cette cellule ne doit pas être
-  remplacée par une bibliothèque du cluster.
-- Les vues `gd_*_latest` sont filtrées à distance : `create_proj_parse_manifest.py`
-  autorise leurs auto-jointures (`spark.databricks.remoteFiltering.blockSelfJoins = false`).
-- Le parallélisme du cluster se lit avec `spark.sparkContext.defaultParallelism`.
-- Les tâches tournent sous l'identité de service de leur cible (`run_as` dans
-  `resources/parsing_pipeline.job.yml`).
-- Aucune politique de cluster n'est attachée (voulu : aucune politique de
-  l'organisation ne convient à ces clusters).
+- **Scope gate** (`DOC_SCOPE_FILTER`): `courant = 1 AND etat = 7 AND nonvisible = 0` on `gd_doc_latest`. Only the
+  current revision of a validated, visible document enters the chain. `difftotale` is not part of the gate: the
+  Intraqual portal shows documents with `difftotale = 0`.
+- **Manifest**: `2_manifest` keeps the in-scope documents, with their REF, title, revision (`indice`), date,
+  category hierarchy, document type and `parse_content` flag. A category listed in `EXCLUDED_IDCATS` and a REF
+  listed in `MANUAL_REF_EXCLUSIONS` are excluded.
+- **One revision, one IDDOC**: each revision of a document has its own IDDOC. When an IDDOC leaves the scope,
+  `2_manifest` deletes its rows in `chunks`, `chunks_archive`, `image_metadata` and the `parsed_documents` rows
+  of statuses `SUCCESS`, `ERROR`, `EMPTY_TEXT` and `IMAGES_PENDING`. When several in-scope IDDOCs share a REF,
+  only the newest revision (highest `indice`, then highest IDDOC) keeps its passages. The `parsed_documents`
+  rows of the other IDDOCs stay, so they are not parsed again.
+- **Pruning and `DRY_RUN`**: the pruning of derived rows runs on every run. The widget `DRY_RUN` (default `oui`)
+  protects the volume only: out-of-scope folders are deleted when it is `non`.
+- **Volume folders** are classified by `2_manifest`: `KEEP` (parsed), `DELETE` (out of scope), `ORPHAN` (IDDOC
+  unknown in `gd_doc`, kept on the volume, not parsed), `SKIP` (name not `D_<IDDOC>` or `Dm_<IDDOC>`), `MANUAL`,
+  `CAT_EXCL`.
+- **Archive**: a document published before `PARSING_DOC_DATE_CUTOFF` is parsed like the others, but its passages go
+  to `chunks_archive` and never to `chunks`. `parsed_documents.is_filtered_by_date` is `true` for these. A document
+  without date counts as recent. `archive_notices` holds one passage per archived document (REF, title, revision,
+  type, date and a statement that the content is not indexed), rebuilt on every run; it reaches `chunks` only when
+  `PARSING_ARCHIVE_NOTICES_IN_RAG` is `true`.
+- **Empty folder**: an in-scope IDDOC whose folder has no parseable file is recorded as `SKIPPED_EMPTY_FOLDER`.
 
-## Contrôles qualité (`quality.py`)
+### Statuses of `parsed_documents` (one row per IDDOC)
 
-`quality.py` contrôle les tables à écrire. Un contrôle `RED` arrête la
-tâche sans rien écrire : les tables restent inchangées. Un contrôle
-`AMBER` est journalisé, et la tâche continue.
+| `parse_status` | Meaning |
+|---|---|
+| `SUCCESS` | Parsed, passages written |
+| `ERROR` | Parsing failed, or the file exceeded `PARSE_TIMEOUT_SECONDS` (200 s, `parser_strategy` = `timeout`); retried by the next incremental run |
+| `EMPTY_TEXT` | No text and no image left to describe |
+| `IMAGES_PENDING` | No text, images still to describe; `4_describe_images` moves it to `SUCCESS` or `SKIPPED_EMPTY_IMAGES` |
+| `SKIP_TOO_LARGE` | Above the size ceiling of the format |
+| `SKIPPED_EMPTY_SMALL_FILE` | No text and at most 50 KiB |
+| `SKIPPED_EMPTY_IMAGES` | No usable image |
+| `SKIPPED_EMPTY_FOLDER` | No parseable file in the folder |
+| `SKIPPED_REF_OUT_OF_SCOPE`, `SKIPPED_IDDOC_NOT_FOUND`, `SKIPPED_SOURCE_REMOVED` | Out of scope, unknown IDDOC, source removed from Intraqual |
+| `SKIPPED_REF_MANUAL`, `SKIPPED_CATEGORY_EXCLUDED` | Manual exclusions |
+| `MISSING_CHUNKS` | `SUCCESS` without passage, set by the ghost-document guard; parsed again by the next run |
 
-| Table | Contrôle | Niveau |
-|---|---|---|
-| `category_reference` | Non vide ; `IDDOC` non nul et unique ; `division` sur 99 % des lignes | RED ; AMBER |
-| `parse_manifest` | Non vide ; `IDDOC` non nul et unique ; `ref` et `titre` présents sur 99 % des lignes | RED ; AMBER |
-| `parsed_documents` | `IDDOC` non nul et unique ; `parse_status` non nul ; `ref` et `division` présents sur 99 % des lignes | RED ; AMBER |
-| `chunks`, `chunks_archive` | `chunk_id` non nul et unique sur les deux tables ; `IDDOC`, `REF` et texte présents ; `division` et `titre` sur 99 % | RED ; AMBER |
-| `image_metadata` | `(IDDOC, image_id)` non nuls et uniques ; fichier présent sur plus de 95 % des images | RED ; AMBER |
-| passages d'images (`chunks`, `chunks_archive`) | `chunk_id` non nul et unique ; `IDDOC`, `REF` et texte présents ; `division` sur 99 % | RED ; AMBER |
-| `doc_catalog` (Lakebase) | Non vide ; `ref` unique ; `title` et `division` sur 99 % ; refus si le catalogue perd plus de la moitié de ses lignes | RED ; AMBER |
-| `chunks_full` | Non vide ; `chunk_id` non nul et unique ; `chunk_text` non nul (une source vide viderait l'index) | RED |
+## Selection and parsing (`3_parse`)
 
-La cohérence entre `REF` des passages et `parse_manifest` est signalée (AMBER) sans
-bloquer l'écriture.
+- **File choice** (`selection.py`): only the folders of the target IDDOCs are listed. Candidates are ranked by
+  folder prefix (`D_` before `Dm_`), then by format priority, then by the newest modification time. Formats
+  without priority and temporary files (`~`) are excluded, as are `headers.html`, `thumbs.db`, `.ds_store`,
+  `desktop.ini` and `copyright.txt`.
+
+  | Format | Priority |
+  |---|---|
+  | docx 1, pdf 2, docm 3, doc 4, html 5, pptx 6, ppt 7, txt 8, xml 9 | 1 to 9 |
+  | xlsx 10, xls 11, xlsm 12, xlsb 13, rtf 14, odt 15, ods 16 | 10 to 16 |
+
+- **Resume**: a file already `SUCCESS` with the same path and `document_sha256` is not parsed again. An IDDOC
+  already in a terminal status is skipped in `incremental` mode, unless its `indice`, `doc_date` or `ref` changed.
+- **Retry**: an IDDOC that failed is parsed again with its next-best file (`ENABLE_RETRY` in `config.py`).
+- **Size ceilings** (`parse_steps.py`): 15 MB for the formats read by Docling, 35 MB for PDF, 100 MB for the other
+  formats and for the OOXML files (`docx`, `docm`, `pptx`, `pptm`). Above 15 MB, an OOXML file goes straight to the
+  XML reader. Above the ceiling, the file is recorded as `SKIP_TOO_LARGE` without a parse attempt. Before the
+  size check, OOXML files lose their embedded objects and video or audio, and large images are recompressed.
+- **Parsers** (`format_parsers.py`, `image_utils.py`): Docling for PDF, DOCX, PPTX, HTML and Markdown or text, with
+  the accurate table mode; Docling's own OCR is off. `.doc` through antiword, `.rtf` through striprtf, `.odt` and
+  `.ods` through odfpy, `.xls` through xlrd, `.xlsx` and `.xlsm` through openpyxl (raw XML of the zip as fallback),
+  `.xlsb` through pyxlsb, `.csv`, `.tsv` and `.json` as text, one bullet per row for CSV and TSV. Binary `.ppt`
+  is read from the OLE streams (text runs and embedded JPEG or PNG). DOCX and PPTX are read from their XML when
+  Docling fails or finds no image.
+- **Spreadsheets** keep at most `MAX_CHUNKS_SPREADSHEET` (100) passages per file.
+- **Scanned PDF**: when the extracted text is shorter than `PARSING_LLM_OCR_TEXT_THRESHOLD` (150 characters), the
+  first `PARSING_LLM_OCR_MAX_PAGES` (100) pages are rendered and queued for transcription by the vision model
+  (`PDF_PAGE_OCR_PROMPT`). Stamps and watermarks are written on a `STAMP/WATERMARK:` line.
+- **Images**: extracted at scale 3.0 (about 216 DPI) as PNG to `<VOLUME_BASE_PATH>/<IDDOC>/<IDDOC>_IMG_<NNN>.png`
+  (page renders: `_PAGE_<NNN>`), with an `fsync` after the write. An image is set aside as `SKIPPED_DECORATIVE`
+  without a model call when its longer side is under 140 px or its shorter side is under 85 px. An image covering
+  less than 5 % of its page is not kept, and an image that appears on more than two pages is dropped.
+- **Checkpoint**: the parsing writes the checkpoint every 100 files. A full run first clones the existing
+  checkpoint to `_pipeline_checkpoint_<YYYYMMDD_HHMM>` (shallow clone).
+
+## Passages (`chunking.py`)
+
+- The Markdown is cut on the headings of levels 1 to 3. A passage never spans two sections of level 1 or 2; a
+  section too small to stand alone joins the next one.
+- Sizes are bounded in tokens (tiktoken `cl100k_base`: 150 minimum, 300 target, 450 maximum) and in characters
+  (1 600), because dot leaders and form underscores use few tokens for many characters.
+- Consecutive passages of one section overlap by 12 % of the target size. Tables longer than the target are split
+  by rows, with the header repeated.
+- `semantic_headers` is the heading path common to the blocks of a passage. The passage starts with the section
+  path, written once.
+- Each passage starts with a provenance prefix (`EMBED_SOURCE_PREFIX`):
+
+  ```
+  [Source: <REF> | Title: <title> | Type: <type> | Division: <division> | Category: <category> | Date de diffusion: <date>]
+  ```
+
+- Table of contents, cover and approval blocks, and front matter get their own `chunk_content_type` (`toc`,
+  `front_matter`). A body found in at least 20 documents (`BOILERPLATE_MIN_DOCS`) is marked `boilerplate`.
+- Duplicate passages of one IDDOC (same text hash) are removed. The text of `<!-- image -->` and
+  `<!-- formula-not-decoded -->` placeholders is removed before chunking.
+- `chunk_id` is `<IDDOC>-<NNNNNN>` (chunk index plus one, six digits). The archive notice is `<IDDOC>-000000`.
+- The language of a document comes from its REF suffix (`_FR`, `_GB`, ...); without a suffix, from stop words.
+
+## Image descriptions (`4_describe_images`)
+
+- The images with status `PENDING` or `ERROR` are described, at most `PARSING_LLM_BATCH_SIZE` per run. The
+  others wait for the next run.
+- Each image goes through the endpoint chain: the primary endpoint, then the fallbacks. Each endpoint is tried
+  in `PARSING_LLM_ROUNDS` (2) passes, with waits of 5, 15 and 30 seconds between passes. Up to 10 calls run at
+  once, under a rate limiter. The limit is the smallest of the input-token, output-token and request budgets,
+  divided by the average tokens per image.
+- An endpoint that fails `PARSING_LLM_BREAKER_FAILURES` (5) images in a row is skipped for the rest of the run.
+  A rate-limit error (429) counts neither as a failure of the endpoint nor as an attempt on the image.
+- An image no endpoint described stays `PENDING` with `attempts` and `last_error_kind` set. After
+  `PARSING_IMAGE_MAX_ATTEMPTS` attempts it becomes `FAILED_LIMIT` and is not retried.
+- Results are merged into `image_metadata` in chunks of `PARSING_LLM_CHECKPOINT_CHUNK_SIZE` (2 000): an interrupted
+  run keeps the chunks already merged.
+- Statuses: `PENDING`, `DONE` (described), `SKIPPED` (the model answered `SKIP`), `SKIPPED_DECORATIVE`
+  (size filter), `EXTRACTION_FAILED` (no file on the volume), `FAILED_LIMIT`.
+- The prompt `IMAGE_DESCRIPTION_PROMPT` asks for a category (TABLE, FLOWCHART, DIAGRAM, DATA_CHART, SCHEMATIC,
+  PHOTO_TECH, TEXT_DOC), then the extraction, or `SKIP:` for an image that carries no information or repeats the
+  text around it.
+- An image passage is written only for a `DONE` image whose description has at least 40 characters and is not a
+  `SKIP` answer. Its body holds the section and the caption; its prefix adds `Image: page <N>, <label>`.
+- The rows are merged on `(IDDOC, image_id)` in `image_metadata` and on `chunk_id` in the passage tables. Only the
+  rows that change are rewritten.
+- A document waiting for its images (`IMAGES_PENDING`, `EMPTY_TEXT`) is promoted once none of its images is left
+  to describe: to `SUCCESS` with the text assembled from the descriptions, or to `SKIPPED_EMPTY_IMAGES`.
+- The serving token is read from the secret `qualibot/serving_token`; without the secret, the notebook's own token.
+- The widget `rebuild_image_chunks` rebuilds the image passages from the stored descriptions, without model calls.
+
+## Vector Search indexes (`5_sync_index`)
+
+- The indexes come from the widget `indexes`, or from `PARSING_VECTOR_SEARCH_INDEXES` when it is empty. An empty
+  list syncs nothing.
+- Only `chunks_index` and `chunks_full_index` are created by this task, on the endpoint named by the widget
+  `vector_search_endpoint` (default `qualibot`), with the embedding model of the widget `embedding_model`, on
+  `chunk_text`, primary key `chunk_id`, pipeline type `TRIGGERED`. Any other index in the list is synced only.
+- The task triggers each sync, then waits for it, up to `wait_minutes` (45). A failed or offline index raises an error.
+  A sync still running at the end of the wait is reported, not failed.
+- `chunks_full` holds `chunks` and `chunks_archive` (every document whatever its date, for the impact search). It
+  is refreshed by a MERGE on `chunk_id` when the widget `build_chunks_full` is `true` or when `chunks_full_index`
+  is in the list. The MERGE deletes the rows that left the source. Archive notices are not copied.
+- The chunk tables keep 60 days of Change Data Feed history (`delta.deletedFileRetentionDuration` and
+  `delta.logRetentionDuration`), so that a triggered sync can resume.
+
+## Document catalog (`6_update_kb_metadata`)
+
+- Writes to the Lakebase databases named by the widget `LAKEBASE_DATABASE` (comma-separated). An empty value skips
+  the task. The task runs serverless, because the Lakebase endpoint is a private endpoint that classic compute
+  cannot reach.
+- `doc_catalog` is rebuilt in one transaction from `parse_manifest`: REF, title, Intraqual link (built from the
+  REF), division, `in_chat` (the REF has passages in `chunks`), current revision and its date. The write is refused
+  when the new catalog has fewer than half the rows of the current one.
+- The `revision` and `doc_date` columns are added when the notebook's identity owns the table; otherwise the catalog
+  is written without them and a warning names the owner.
+- `catalog_metadata` (single row, `id = 1`) receives `documents_as_of` = today and `updated_at`. The chat shows
+  `documents_as_of` in its toolbar.
+- The application reloads `doc_catalog` every 30 minutes (`server/services/infra/doc_catalog.py`).
+
+## Tables, volumes and checks
+
+Tables (schema `PARSING_CATALOG_SCHEMA`, suffix `PARSING_TABLE_SUFFIX`):
+
+| Table | Content |
+|---|---|
+| `parse_manifest` | In-scope documents of the day, one row per IDDOC |
+| `parsed_documents` | One row per IDDOC: status, file retained, parser, error, `is_in_rag`, `is_filtered_by_date` |
+| `parsing_checkpoint` | Result of each file attempted; read by every step of `3_parse` |
+| `chunks` | Chat passages (text and images), all divisions |
+| `chunks_archive` | Passages of documents published before the cutoff |
+| `archive_notices` | One notice per archived document |
+| `chunks_full` | `chunks` and `chunks_archive`, for the impact search |
+| `image_metadata` | One row per image: location, status, description, tokens |
+| `category_reference` | Category hierarchy and division of each IDDOC |
+| `parsing_run_health`, `document_change_log` | One row per run; one row per new or revised document (monitoring) |
+| `rag_exclusions`, `parsing_retry_temp` | Working tables |
+
+Volumes: the Intraqual documents (`PARSING_VOLUME_ROOT_PATH`, read, one folder per IDDOC named `D_<IDDOC>` or
+`Dm_<IDDOC>`; `2_manifest` may delete out-of-scope folders), the images (`PARSING_VOLUME_BASE_PATH`) and the
+offline models (`PARSING_OFFLINE_MODELS`).
+
+Quality checks (`quality.py`): a RED failure stops the task before anything is written. An AMBER failure is logged.
+
+| Table | Checks |
+|---|---|
+| `category_reference` | Not empty; `IDDOC` not null and unique (RED); `division` on 99 % of the rows (AMBER) |
+| `parse_manifest` | Not empty; `IDDOC` not null and unique (RED); `ref` and `titre` on 99 % (AMBER) |
+| `parsed_documents` | `IDDOC` not null and unique; `parse_status` not null (RED); `ref` and `division` on 99 % (AMBER) |
+| `chunks` and `chunks_archive` | `chunk_id` not null and unique across both; `IDDOC`, `REF`, `chunk_text` not null (RED); `division` and `titre` on 99 % (AMBER) |
+| image passages | `chunk_id` not null and unique; `IDDOC`, `REF`, `chunk_text` not null (RED); `division` on 99 % (AMBER) |
+| `image_metadata` | `(IDDOC, image_id)` not null and unique (RED); `volume_path` on 95 % (AMBER) |
+| `doc_catalog` | Not empty; `ref` not null and unique (RED); `title` and `division` on 99 % (AMBER) |
+| `chunks_full` | Not empty; `chunk_id` not null and unique; `chunk_text` not null (RED) |
+
+`parse_checks.py` compares the REF of each passage with `parse_manifest` and logs the mismatches (AMBER).
+
+## Links
+
+- [`runbooks/README.md`](../../runbooks/README.md): the manual steps of each environment.
+- [`resources/parsing_pipeline.job.yml`](../../resources/parsing_pipeline.job.yml): the job, its clusters and its parameters.
+- [`utils/README.md`](../README.md): the other scripts of `utils/`.

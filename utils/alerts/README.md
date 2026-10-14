@@ -1,47 +1,32 @@
-# alerts/ — alertes SQL de suivi
+# alerts
 
-Six requêtes SQL de suivi du parsing, du chat et des jobs, à coller dans Databricks
-SQL. Chaque fichier correspond à une alerte : la requête renvoie une colonne qui
-déclenche l'alerte quand sa condition est vraie. Les fichiers ne sont exécutés par
-aucun job : ils sont lus et créés à la main.
+Six SQL queries that watch the parsing, the chat and the jobs. Each file is the query of one Databricks SQL alert.
+The query returns a column that triggers the alert when its condition holds. No job runs these files.
 
-## Fichiers
+## Files
 
-| Fichier | Déclenche quand (fenêtre) | Colonne et condition | Table lue |
+| File | Triggers when (window) | Column and condition | Table read |
 |---|---|---|---|
-| `01_parsed_without_chunks.sql` | Un document `SUCCESS` destiné au RAG n'a aucun passage dans `chunks` 4 h après son parsing (documents des 7 derniers jours) | `docs_without_chunks` > 0 | `parsed_documents`, `chunks` |
-| `02_parse_errors.sql` | La dernière tentative de parsing d'un document est `ERROR` ou `TIMEOUT` (24 h). Un document réparé par une nouvelle tentative n'est pas compté | `docs_in_error` > 0 | `parsed_documents` |
-| `03_chat_failure_rate.sql` | Sur la dernière heure, trop de réponses du chat sont en erreur ou sans source. Le seuil dépend du trafic : en dessous de 5 messages, rien ne se déclenche | `alert_triggered` = 1 | `chat_messages` |
-| `04_job_failures.sql` | Un job dont le nom contient `_Qualibot_` a échoué sur les 24 dernières heures | `failed_runs` > 0 | `system.lakeflow` |
-| `05_new_error_kinds.sql` | Une nouvelle `fingerprint` d'erreur (route, étape, type, emplacement dans le code) apparaît sur les 24 dernières heures et n'existe pas dans la table. Les avertissements (`severity` = `warning`) sont exclus | `new_error_kinds` > 0 | `errors` |
-| `06_chat_degraded_turns.sql` | Sur 24 heures, au moins 20 % des tours de chat (et au moins 10 tours) ont `status` = `degraded` (étape non exécutée comme configurée) | `alert_triggered` = 1 | `chat_turns` |
+| `01_parsed_without_chunks.sql` | A document `SUCCESS` meant for the RAG has no passage in `chunks` 4 hours after its parse (documents of the last 7 days) | `docs_without_chunks` > 0 | `parsed_documents`, `chunks` |
+| `02_parse_errors.sql` | The latest parse attempt of a document is `ERROR` or `TIMEOUT` (last 24 hours). A document that succeeded on a retry is not counted | `docs_in_error` > 0 | `parsed_documents` |
+| `03_chat_failure_rate.sql` | In the last hour, too many chat answers are errors or have no source. The threshold depends on the traffic; below 5 answers nothing triggers | `alert_triggered` = 1 | `chat_messages` |
+| `04_job_failures.sql` | A job whose name contains `_Qualibot_` has a failed run in the last 24 hours | `failed_runs` > 0 | `system.lakeflow` |
+| `05_new_error_kinds.sql` | An error fingerprint (route, step, type and place in the code) appears in the last 24 hours and was never seen before. Warnings are left out | `new_error_kinds` > 0 | `app_errors` |
+| `06_chat_degraded_turns.sql` | Over 24 hours, at least 20 % of the chat turns (and at least 10 turns) have `status` = `degraded` | `alert_triggered` = 1 | `chat_turns` |
 
-Les colonnes de contexte (`sample_refs`, `failed_jobs`, `sample_errors`,
-`top_causes`) servent au modèle de message de l'alerte : elles listent les
-documents, les jobs, les erreurs ou les causes concernés.
+The context columns (`sample_refs`, `failed_jobs`, `sample_errors`, `top_causes`) feed the message template of the
+alert. They list the documents, jobs, errors or causes concerned.
 
-## Mise en place
+## Rules
 
-- Les requêtes lisent les tables du schéma `dev_proj.qualibot`. Pour l'UAT,
-  remplacer `dev_proj` par `uat_proj` dans chaque fichier.
-- Une alerte se crée dans Databricks SQL à partir de chaque requête : planification,
-  entrepôt SQL serverless, destinataires et modèle de message se règlent dans
-  Databricks. Les destinataires ne sont pas dans le dépôt.
-- Pour `03` et `06`, une seule notification par jour suffit : sinon, un problème
-  persistant envoie un message à chaque évaluation.
-- Les étapes manuelles (UAT) sont dans [runbooks/uat.md](../../runbooks/uat.md),
-  section D5.8d.
-
-## Règles
-
-- `03`, `05` et `06` lisent les copies Delta de `chat_messages`, `errors` et
-  `chat_turns`, alimentées par les jobs d'export et d'import décrits dans
-  [`utils/lakebase_sync/README.md`](../lakebase_sync/README.md). Elles ne sont
-  donc aussi fraîches que cette copie. Tant que la table n'existe pas (aucune
-  ligne importée), la requête échoue avec « table not found ».
-- `04` exige `SELECT` sur `system.lakeflow` pour le propriétaire de l'alerte.
-- `01` et `02` lisent `parsed_documents` : elles ne voient que les documents
-  parsés par la chaîne quotidienne (voir
-  [`utils/parsing_pipeline/README.md`](../parsing_pipeline/README.md)).
-- Non couverts : la fraîcheur des sources Intraqual (la tâche `1_categories`
-  échoue déjà dans ce cas, et `04` le signale) et la santé des index Vector Search.
+- The queries name the schema `dev_proj.qualibot`. It is the only environment-specific part of the files.
+- `03`, `05` and `06` read the Delta copies of `chat_messages`, `app_errors` and `chat_turns`, which the export and
+  import jobs of [`lakebase_sync/`](../lakebase_sync/README.md) write. They are only as fresh as those copies. While
+  a table does not exist (no row imported), the query fails with "table not found".
+- `04` needs SELECT on `system.lakeflow`.
+- `01` and `02` read `parsed_documents`: they see the documents parsed by the daily chain only
+  (see [`parsing_pipeline/`](../parsing_pipeline/README.md)).
+- Not covered: the freshness of the Intraqual sources (task `1_categories` fails in that case, and `04` reports the
+  failed run) and the health of the Vector Search indexes.
+- The alert schedule, the SQL warehouse, the recipients and the message template are set in Databricks SQL. The
+  repository holds none of them.

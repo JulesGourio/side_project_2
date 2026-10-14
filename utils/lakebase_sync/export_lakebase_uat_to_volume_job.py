@@ -8,7 +8,7 @@ import psycopg2.extras
 from databricks.sdk import WorkspaceClient
 
 # Parameters come through widgets: serverless tasks have no spark_env_vars. Classic compute cannot reach
-# the Lakebase endpoint (TCP timeout on 5432).
+# the Lakebase endpoint.
 dbutils.widgets.removeAll()
 dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")

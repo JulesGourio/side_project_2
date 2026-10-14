@@ -309,7 +309,7 @@ def parse_with_docling(content: bytes, extension: str, timings: Optional[dict] =
     if ext == ".xls":
         return parse_xls(content, start)
 
-    # Fast-fail for invalid DOCX/DOCM (otherwise Docling can hang ~45s).
+    # Fast-fail for invalid DOCX/DOCM (otherwise Docling can hang for a long time).
     if ext in {".docx", ".docm"}:
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zfh:

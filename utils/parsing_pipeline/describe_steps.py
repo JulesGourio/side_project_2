@@ -247,7 +247,7 @@ def described_images_without_chunk(rebuild):
     Scoped by an anti-join on `chunk_id` against the chunk tables, not by "described this run": a run that crashed
     after the descriptions were merged but before the passages were written would otherwise leave those images
     without a passage forever (DONE is never selected again). This makes the phase idempotent and self-healing, at
-    the price of scanning all DONE images each run, which is cheap at the current volume.
+    the price of scanning all DONE images each run.
     """
     df_described = (
         spark.table(IMAGE_TABLE)
