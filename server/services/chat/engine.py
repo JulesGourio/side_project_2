@@ -8,7 +8,7 @@ What happens for each question (measures behind the configuration: ``docs/chat_t
    the conversation as context, into one standalone search query in French and one in English (acronyms
    expanded when certain).
 2. **Search** — the queries (the question as asked + the rewrites or the translation) in HYBRID mode on the
-   single passage index: for each, the top ``rerank_top_k()`` passages (12; ``pair_rerank_top_k()``, 18, with two
+   single passage index: for each, the top ``rerank_top_k()`` passages (10; ``pair_rerank_top_k()``, 10, with two
    queries) reranked by the
    Databricks reranker (reading REF, section headings and text); for the French rewrite only
    (``raw_on()``), also the raw top ``raw_top_k()`` (10). Everything is merged by best rank (``union``), then cut to
@@ -67,10 +67,10 @@ _DEFAULT_INDEX = 'dev_landingzone.qualibot.chunks_index'
 _DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'      # no Claude model in the chatbot (2026-10-08)
 _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside it
 _DEFAULT_REWRITE_MAX_TOKENS = 2000
-_RERANK_TOP_K = 12               # reranked passages kept per query (20 measured worse, 2026-10-08)
+_RERANK_TOP_K = 10               # reranked passages kept per query (20 measured worse than 12)
 _RAW_TOP_K = 10                  # raw HYBRID passages per query (0 = reranked passages only)
-_PAIR_RERANK_TOP_K = 18          # two queries (the question and its translation) instead of three: as many candidates in all
-_PAIR_RAW_TOP_K = 12
+_PAIR_RERANK_TOP_K = 10          # two queries (the question and its translation) instead of three
+_PAIR_RAW_TOP_K = 10
 _RERANK_COLUMNS = ['REF', 'semantic_headers', 'chunk_text']
 _RERANKER_MODEL = 'databricks_reranker'
 _REF_LOOKUP_MAX = 6              # REFs (language variants included) filtered on
