@@ -88,6 +88,7 @@ try {
             --exclude 'client/node_modules/**' `
             --exclude 'docs/**' `
             --exclude 'runbooks/**' `
+            --exclude 'oneshot/**' `
             --exclude 'archive/**' `
             --exclude 'files_to_compare/**' `
             --exclude 'debug_results/**' `
