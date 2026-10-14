@@ -493,7 +493,7 @@ targets:
 
   # Disposable test target: evaluates the chat without touching the real qualibot-uat app or its Lakebase data (own terraform state).
   # It does not declare postgres_projects/schemas/volumes (they exist, and this identity cannot grant on them).
-  # No UC volume binding, so compare is disabled; Lakebase history stays off unless an admin grants the app SP access.
+  # The compare volumes are granted by the grant_app_access_uat_test job, not bound in the bundle.
   # Test copy of the UAT chatbot: writes only uat_proj.qualibot.*_test (owned by job-runner-sa-uat),
   # the images_test volume, the chunks_index_test index and Lakebase doccompare_test — never anything the
   # running qualibot app or its parsing job read. runbooks/scripts/uat/setup_proj_schema.py copies the
