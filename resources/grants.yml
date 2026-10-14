@@ -42,7 +42,7 @@ targets:
                   proj_schema: ${var.app_proj_schema}
                   volumes: "doc_compare,test"
                   indexes: "chunks_index"
-                  serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna"
+                  serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna,databricks-gemini-3-1-flash-lite"
                   # The DEV SP itself (this job's run_as), on the tables a person created.
                   pipeline_service_principal: fde6ff28-739f-4a41-b61e-604a298c8478
                   pipeline_tables: "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference,chunks"
