@@ -6,8 +6,8 @@ WITH missing AS (
          pf.chunking_strategy, pf.ingestion_timestamp
   FROM dev_proj.qualibot.processed_files pf
   WHERE pf.parse_status = 'SUCCESS'
-    AND pf.include_in_rag = true
-    AND pf.filtered_by_date = false
+    AND pf.is_in_rag = true
+    AND pf.is_filtered_by_date = false
     AND pf.ingestion_timestamp >= current_date() - INTERVAL 7 DAY
     AND pf.ingestion_timestamp < current_timestamp() - INTERVAL 4 HOUR
     AND NOT EXISTS (SELECT 1 FROM dev_proj.qualibot.chunks c WHERE c.IDDOC = pf.IDDOC)

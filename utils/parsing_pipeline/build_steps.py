@@ -168,16 +168,16 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
 
 
 def _apply_date_and_rag_filters(df_processed_files):
-    """Flag filtered_by_date and include_in_rag on df_processed_files.
+    """Flag is_filtered_by_date and is_in_rag on df_processed_files.
 
     doc_date < DOC_DATE_CUTOFF: parsed, chunks routed to chunks_archive instead of
-    the RAG tables (include_in_rag=False). NULL doc_date = recent. Manual exclusions come from
+    the RAG tables (is_in_rag=False). NULL doc_date = recent. Manual exclusions come from
     _rag_exclusions (INSERT INTO {CATALOG_SCHEMA}._rag_exclusions VALUES (IDDOC, 'reason')).
     Returns (df_processed_files, df_exclusions_or_none, cutoff_col).
     """
     cutoff = F.lit(DOC_DATE_CUTOFF).cast("date")
     df_processed_files = df_processed_files.withColumn(
-        "filtered_by_date",
+        "is_filtered_by_date",
         F.when(
             (F.col("parse_status") == "SUCCESS")
             & F.col("doc_date").isNotNull()
@@ -185,7 +185,7 @@ def _apply_date_and_rag_filters(df_processed_files):
             F.lit(True)
         ).otherwise(F.lit(False))
     )
-    filtered_by_date_count = df_processed_files.filter(F.col("filtered_by_date") == True).count()
+    filtered_by_date_count = df_processed_files.filter(F.col("is_filtered_by_date") == True).count()
     if filtered_by_date_count:
         logger.info(f"[DATE FILTER] {filtered_by_date_count} documents routed to chunks_archive (predating {DOC_DATE_CUTOFF})")
 
@@ -200,15 +200,15 @@ def _apply_date_and_rag_filters(df_processed_files):
         df_processed_files = df_processed_files.join(
             df_exclusions.withColumn("_excluded", F.lit(True)), on="IDDOC", how="left"
         ).withColumn(
-            "include_in_rag",
+            "is_in_rag",
             F.when(F.col("_excluded").isNotNull(), F.lit(False))
-             .when(F.col("filtered_by_date") == True, F.lit(False))
+             .when(F.col("is_filtered_by_date") == True, F.lit(False))
              .otherwise(F.lit(True))
         ).drop("_excluded")
     else:
         df_processed_files = df_processed_files.withColumn(
-            "include_in_rag",
-            F.when(F.col("filtered_by_date") == True, F.lit(False)).otherwise(F.lit(True))
+            "is_in_rag",
+            F.when(F.col("is_filtered_by_date") == True, F.lit(False)).otherwise(F.lit(True))
         )
     return df_processed_files, df_exclusions, cutoff
 
@@ -405,7 +405,7 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
     )
     df_processed_files = (
         df_processed_files.join(df_over_cap, on="IDDOC", how="left")
-        .withColumn("chunks_truncated", F.coalesce(F.col("_over_cap"), F.lit(False)))
+        .withColumn("is_chunks_truncated", F.coalesce(F.col("_over_cap"), F.lit(False)))
         .drop("_over_cap")
     )
 

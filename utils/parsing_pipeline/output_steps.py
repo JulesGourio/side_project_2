@@ -253,8 +253,8 @@ def flag_ghost_documents():
         spark.table(TARGET_PROCESSED_FILES_TABLE)
         .filter(
             (F.col("parse_status") == "SUCCESS")
-            & (F.col("include_in_rag") == True)
-            & (F.col("filtered_by_date") == False)
+            & (F.col("is_in_rag") == True)
+            & (F.col("is_filtered_by_date") == False)
         )
         .join(spark.table(TARGET_CHUNK_TABLE).select("IDDOC").distinct(), on="IDDOC", how="left_anti")
     )

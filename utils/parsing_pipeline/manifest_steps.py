@@ -230,8 +230,8 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
             "parse_status": status,
             # The monitoring dashboard explains each exclusion from this reason.
             "removal_reason": r.get("reason"),
-            "include_in_rag": False,
-            "filtered_by_date": False,
+            "is_in_rag": False,
+            "is_filtered_by_date": False,
             "ingestion_run_id": run_id,
             "ingestion_timestamp": run_ts,
             "job_run_id": job_run_id,
@@ -257,7 +257,7 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
     all_skipped += [{
         "IDDOC": iddoc, "source_path": None, "source_file_name": None, "ref": None, "titre": None,
         "categorie": None, "parse_status": "SKIPPED_SOURCE_REMOVED", "removal_reason": "NOT_IN_VOLUME_LISTING",
-        "include_in_rag": False, "filtered_by_date": False, "ingestion_run_id": run_id,
+        "is_in_rag": False, "is_filtered_by_date": False, "ingestion_run_id": run_id,
         "ingestion_timestamp": run_ts, "job_run_id": job_run_id,
     } for iddoc in existing_iddocs - folder_iddocs - set(known_iddocs)]
 

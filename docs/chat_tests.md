@@ -347,7 +347,7 @@ Issu d'un audit du pipeline (P1 à P16, détail dans l'historique du dépôt). C
 | P8 | Plafond de 4 000 caractères en plus des tokens (`PARSING_MAX_CHUNK_CHARS`) | `chunking.py`, `config.py` |
 | P9 | `chunk_content_type` = `toc`, `front_matter`, `boilerplate` (même texte dans 20 documents ou plus), décidé **paragraphe par paragraphe** : un passage ne mélange jamais cartouche ou sommaire et contenu. Côté app, `CHAT_SKIP_NOISE=on` les écarte (désactivé par défaut) | `chunking.py`, `3_Parse` |
 | P10 | Colonnes `titre`, `type_document`, `indice`, `langue`, `body_sha256` ; `Type :` dans le préfixe `[Source: …]` | `3_Parse`, `utils.py`, `4_Describe` |
-| P12 | Ligne d'en-tête des tableurs = la première qui remplit au moins 60 % des colonnes ; `chunks_truncated` vrai seulement au-delà de 100 passages | `chunking.py`, `utils.py`, `3_Parse` |
+| P12 | Ligne d'en-tête des tableurs = la première qui remplit au moins 60 % des colonnes ; `is_chunks_truncated` vrai seulement au-delà de 100 passages | `chunking.py`, `utils.py`, `3_Parse` |
 
 Pas fait : P11 (documents d'avant 2018, décision métier ; ≈ 1 500 documents `courant=1` publiés avant 2018 ne sont pas dans
 l'index du chatbot), P13 (numéros de page, re-parsing GPU), P16 (colonnes de recherche : `chunk_index` et `chunk_content_type` ne
@@ -382,7 +382,7 @@ indexed AS (
   FROM dev_proj.qualibot.chunks),
 files AS (
   SELECT regexp_replace(regexp_replace(upper(ref), '[-_. ]+(FR|EN|GB|MX|BG|CZ|BR|ES)$', ''), '[^A-Z0-9]', '') AS doc,
-         max(parse_status) AS parse_status, max(CAST(filtered_by_date AS INT)) AS before_2018, max(doc_date) AS doc_date
+         max(parse_status) AS parse_status, max(CAST(is_filtered_by_date AS INT)) AS before_2018, max(doc_date) AS doc_date
   FROM dev_proj.qualibot.processed_files GROUP BY 1)
 SELECT e.source, e.doc, f.parse_status, f.before_2018, f.doc_date
 FROM expected e
@@ -442,7 +442,7 @@ FROM (SELECT c.IDDOC, count(*) AS n
 
 **Q7 — Couverture du corpus : statut de chaque document**
 ```sql
-SELECT parse_status, filtered_by_date, include_in_rag, count(*) AS documents
+SELECT parse_status, is_filtered_by_date, is_in_rag, count(*) AS documents
 FROM dev_proj.qualibot.processed_files
 GROUP BY ALL ORDER BY documents DESC;
 ```

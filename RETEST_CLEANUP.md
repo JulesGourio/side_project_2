@@ -390,3 +390,4 @@ Tout le détail et les commandes : `runbooks/dev.md`, bloc 0 (ordre complet).
 - `utils/ops_config.py` : `COPY_*` et `WAREHOUSE_ID` retirés (déplacés dans `oneshot/lakebase/copy_Lakebase_tables.py`, seul consommateur).
 - Commentaires de chemin mis à jour : `server/services/compare/soffice.py`, `app.yaml`, `client/src/components/compare/README.md`, `utils/dev_copy/import_staging_to_dev_job.py`, `resources/dev_copy.yml`.
 - À relancer : `python -m pytest -q` ; `databricks bundle validate -t dev` et `-t qualibot-uat-test` (jobs retirés) ; `python oneshot/compare/compare_preview.py <a.docx> <b.docx>` une fois, pour vérifier les imports de `oneshot/`.
+- 2026-10-14 : colonnes booléennes renommées dans le code (`is_in_rag`, `is_filtered_by_date`, `is_chunks_truncated`) ; migration DEV dans `runbooks/dev.md` bloc R, à exécuter avant le déploiement.

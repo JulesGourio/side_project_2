@@ -86,7 +86,7 @@ partiel.
 | `SKIPPED_REF_MANUAL`, `SKIPPED_CATEGORY_EXCLUDED` | Exclusions décidées à la main |
 | `MISSING_CHUNKS` | `SUCCESS` sans passage : repris au run suivant |
 
-`filtered_by_date = true` signale un document antérieur à 2018 ; son résultat va
+`is_filtered_by_date = true` signale un document antérieur à 2018 ; son résultat va
 dans `chunks_archive`.
 
 ## Sélection, parsing et secours (`3_parse`)
@@ -226,7 +226,7 @@ Tables Delta du schéma `<env>_proj.qualibot` (`catalog_schema` des variables) :
 | Table | Rôle |
 |---|---|
 | `parse_manifest` | Documents du jour : REF, titre, révision, date, catégories, `parse_content` |
-| `processed_files` | Une ligne par IDDOC : statut, fichier retenu, parseur, erreur, `include_in_rag`, `filtered_by_date` |
+| `processed_files` | Une ligne par IDDOC : statut, fichier retenu, parseur, erreur, `is_in_rag`, `is_filtered_by_date` |
 | `_pipeline_checkpoint` | Résultat de chaque fichier tenté ; relu par toutes les étapes de `3_parse` |
 | `chunks` | Passages du chat (texte et images), tous divisions confondues |
 | `chunks_archive` | Passages des documents antérieurs à 2018 |

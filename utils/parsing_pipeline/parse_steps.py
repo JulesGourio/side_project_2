@@ -557,8 +557,8 @@ def mark_empty_folders(target_iddocs, df_files, df_business_meta):
         .withColumns({
             "parse_status": F.lit("SKIPPED_EMPTY_FOLDER"),
             "removal_reason": F.lit("NO_PARSEABLE_FILE_ON_VOLUME"),
-            "include_in_rag": F.lit(False),
-            "filtered_by_date": F.lit(False),
+            "is_in_rag": F.lit(False),
+            "is_filtered_by_date": F.lit(False),
             "ingestion_run_id": F.lit(INGESTION_RUN_ID),
             "ingestion_timestamp": F.current_timestamp(),
             "job_run_id": F.lit(JOB_RUN_ID),

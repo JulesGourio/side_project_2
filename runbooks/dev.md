@@ -788,6 +788,38 @@ Ce bloc ne touche pas aux données ; seul Q3 lance le pipeline (GPU, plusieurs h
 - Q5, `failed_limit` : 0 au premier run ; sinon la liste de la dernière requête donne les images à regarder (le `last_error_kind` dit pourquoi). Elles ne sont pas retentées : seul un run `full` les remet en attente.
 - Un document dont toutes les images sont en `FAILED_LIMIT` passe à `SKIPPED_EMPTY_IMAGES` (aucune image exploitable) ; la cause est dans `image_metadata`.
 
+### R. Renommer trois colonnes booléennes de `processed_files` (2026-10-14, à faire)
+
+Le code lit `is_in_rag`, `is_filtered_by_date` et `is_chunks_truncated` (préfixe `is_` pour les booléens, `CLAUDE.md`). Les tables DEV gardent les anciens noms tant que ce bloc n'est pas passé.
+
+Ordre impératif : **1. SQL ci-dessous, 2. déploiement du code, 3. run de parsing ou de `copy_uat_to_dev`**. Si le code arrive avant le SQL, la tâche `2_manifest` ajoute les nouvelles colonnes à côté des anciennes (`merge_schema`) et les lignes se retrouvent avec deux colonnes pour une même information.
+
+Dans l'éditeur SQL du workspace DEV (SQL warehouse, compte du déployeur) :
+
+```sql
+SHOW COLUMNS IN dev_proj.qualibot.processed_files;
+```
+
+Attendu : `include_in_rag`, `filtered_by_date`, `chunks_truncated` présentes et `is_*` absentes. Si un nom `is_*` existe déjà, arrêter et me le dire.
+
+```sql
+ALTER TABLE dev_proj.qualibot.processed_files SET TBLPROPERTIES (
+  'delta.columnMapping.mode' = 'name',
+  'delta.minReaderVersion' = '2',
+  'delta.minWriterVersion' = '5'
+);
+ALTER TABLE dev_proj.qualibot.processed_files RENAME COLUMN include_in_rag TO is_in_rag;
+ALTER TABLE dev_proj.qualibot.processed_files RENAME COLUMN filtered_by_date TO is_filtered_by_date;
+ALTER TABLE dev_proj.qualibot.processed_files RENAME COLUMN chunks_truncated TO is_chunks_truncated;
+SHOW COLUMNS IN dev_proj.qualibot.processed_files;
+```
+
+Attendu après : les trois `is_*` présentes, les anciens noms absents.
+
+- Le `copy_uat_to_dev` recrée les tables depuis l'UAT, qui a encore les anciens noms : relancer ce bloc après chaque copie tant que l'UAT n'a pas été migré (`runbooks/uat.md`, à faire au moment de la bascule).
+- Même migration pour la rehearsal de test `uat_proj.qualibot.processed_files_test` (`qualibot-uat-test`), avant son run de validation : remplacer `dev_proj.qualibot.processed_files` par `uat_proj.qualibot.processed_files_test` dans les quatre instructions.
+- Les colonnes ne sont pas dans `chunks` ni dans l'index `chunks_index` : pas de resynchronisation d'index à prévoir.
+
 ### Plus tard — non fait, sur décision
 
 - Réactiver le contrôle par groupe en DEV : passer `CAPS_BYPASS` à `false` (ou retirer la clé) dans le bloc `dev` de `utils/deploy/target_env.json`, redéployer.

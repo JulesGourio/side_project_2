@@ -102,7 +102,7 @@ WORKER_MODULES = ("chunking.py", "utils.py", "format_parsers.py", "image_store.p
 # --- Date cutoff ---
 # Docs before this date are parsed like the others but their chunks go to
 # TARGET_CHUNK_TABLE_ARCHIVE instead of the RAG chunk tables (processed_files:
-# filtered_by_date=True, include_in_rag=False). No DATEDIFF = unknown date = recent.
+# is_filtered_by_date=True, is_in_rag=False). No DATEDIFF = unknown date = recent.
 DOC_DATE_CUTOFF = _env("PARSING_DOC_DATE_CUTOFF", "2018-01-01")
 _dt.date.fromisoformat(DOC_DATE_CUTOFF)  # fails at import on a malformed value: the steps cast it to a date literal
 
