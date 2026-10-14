@@ -30,7 +30,7 @@ export function parsePartialJsonItems(text: string): DiffItem[] {
   return items;
 }
 
-export function saveBlob(blob: Blob, filename: string): void {
+function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -40,7 +40,7 @@ export function saveBlob(blob: Blob, filename: string): void {
 }
 
 /** Throws with the server's `{error}` message when the response is not OK. */
-export async function ensureOk(res: Response): Promise<Response> {
+async function ensureOk(res: Response): Promise<Response> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     throw new Error(err.error ?? res.statusText);
@@ -135,7 +135,7 @@ export function autoSavePdf(path: string, markdown: string, oldName: string, new
 // History
 // ---------------------------------------------------------------------------
 
-export interface HistorySaveInput {
+interface HistorySaveInput {
   oldName: string;
   newName: string;
   analysisText: string;
@@ -215,7 +215,7 @@ export async function loadSessionFiles(
 // Analysis stream (SSE from POST /api/compare/analyze)
 // ---------------------------------------------------------------------------
 
-export interface AnalysisStreamResult {
+interface AnalysisStreamResult {
   text: string;
   fileType: string;
   method: string;

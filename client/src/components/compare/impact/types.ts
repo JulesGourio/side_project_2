@@ -24,7 +24,7 @@ export interface ImpactPassage {
   explanation: string;
 }
 
-export type ImpactStatus = 'impacted' | 'check' | 'not_impacted' | 'error';
+type ImpactStatus = 'impacted' | 'check' | 'not_impacted' | 'error';
 
 export interface ImpactDoc {
   iddoc: string | number;
@@ -71,7 +71,7 @@ export type ChangesById = Record<string, ImpactChange>;
 
 const STATUS_ORDER: Record<string, number> = { impacted: 0, check: 1, not_impacted: 2, error: 3 };
 
-export const STATUS_STYLE: Record<string, { label: string; color: string; border: string }> = {
+const STATUS_STYLE: Record<string, { label: string; color: string; border: string }> = {
   impacted: { label: 'Impacted', color: '#16a34a', border: '#16a34a' },
   check: { label: 'To check', color: '#d97706', border: '#d97706' },
   not_impacted: { label: 'Not impacted', color: 'var(--color-text-muted)', border: 'transparent' },

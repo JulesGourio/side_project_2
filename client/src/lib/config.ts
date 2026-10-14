@@ -1,21 +1,17 @@
 export interface AppBranding {
-  name: string;
   logo: string;
-  company_name?: string;
 }
 
-export interface CompareConfig {
-  enabled: boolean;
+interface CompareConfig {
   volume_path: string;
   impact_index: string;
 }
 
-export interface ChatConfig {
+interface ChatConfig {
   enabled: boolean;
 }
 
-export interface AppConfig {
-  app_name: string;
+interface AppConfig {
   branding: AppBranding;
   compare: CompareConfig;
   chat?: ChatConfig;
@@ -29,18 +25,16 @@ export interface ProcessorVersion {
   hidden?: boolean;
 }
 
-export interface ProcessorFileType {
+interface ProcessorFileType {
   extensions: string[];
   versions: ProcessorVersion[];
 }
 
-export interface ProcessorsConfig {
+interface ProcessorsConfig {
   file_types: Record<string, ProcessorFileType>;
 }
 
-export interface UserMe {
-  user: string;
-  workspace_url: string;
+interface UserMe {
   can_compare: boolean;
   can_chat: boolean;
 }
@@ -58,9 +52,8 @@ export async function getAppConfig(): Promise<AppConfig> {
     return cachedConfig!;
   } catch {
     return {
-      app_name: 'QualiBOT',
-      branding: { name: 'QualiBOT', logo: '/logos/LOGO_LATECOERE.png' },
-      compare: { enabled: true, volume_path: '', impact_index: '' },
+      branding: { logo: '/logos/LOGO_LATECOERE.png' },
+      compare: { volume_path: '', impact_index: '' },
     };
   }
 }
@@ -73,7 +66,7 @@ export async function getUserMe(): Promise<UserMe> {
     cachedMe = await res.json();
     return cachedMe!;
   } catch {
-    return { user: '', workspace_url: '', can_compare: true, can_chat: true };
+    return { can_compare: true, can_chat: true };
   }
 }
 

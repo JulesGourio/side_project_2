@@ -9,7 +9,7 @@ export const TIRED_MESSAGE = 'Qualibot is a bit tired right now. Please wait a m
 /** A socket that fails before the question was sent is opened again this many times. */
 const CONNECT_RETRIES = 2;
 
-export interface StreamCallbacks {
+interface StreamCallbacks {
   onDelta: (text: string) => void;
   onDone: (data: { session_id: string; message_id?: number; content?: string; sources?: Source[] }) => void;
   onError: (err: string) => void;

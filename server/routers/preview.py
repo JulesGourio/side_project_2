@@ -31,7 +31,7 @@ async def preview_document(file: UploadFile = File(...)) -> HTMLResponse:
     name_lower = name.lower()
 
     if 'wordprocessingml' in mime or name_lower.endswith('.docx'):
-        return _preview_docx(content, name)
+        return _preview_docx(content)
 
     if name_lower.endswith('.doc'):
         return _preview_doc(content, name)
@@ -40,7 +40,7 @@ async def preview_document(file: UploadFile = File(...)) -> HTMLResponse:
         return _preview_pptx(content, name)
 
     if 'spreadsheet' in mime or 'excel' in mime or name_lower.endswith(('.xlsx', '.xls')):
-        return _preview_excel(content, name)
+        return _preview_excel(content)
 
     return HTMLResponse('<p>Preview not available for this file type.</p>', status_code=400)
 
@@ -63,22 +63,22 @@ async def preview_document_pdf(file: UploadFile = File(...)) -> Response:
     return Response(content=pdf_bytes, media_type='application/pdf')
 
 
-def _preview_docx(content: bytes, filename: str) -> HTMLResponse:
-    return HTMLResponse(_wrap(docx_to_html_body(content), filename))
+def _preview_docx(content: bytes) -> HTMLResponse:
+    return HTMLResponse(_wrap(docx_to_html_body(content)))
 
 
 def _preview_doc(content: bytes, filename: str) -> HTMLResponse:
     # Some .doc files are actually valid OOXML — try mammoth first
     result = mammoth.convert_to_html(io.BytesIO(content))
     if result.value and len(result.value.strip()) > 20:
-        return HTMLResponse(_wrap(result.value, filename))
+        return HTMLResponse(_wrap(result.value))
 
     text = doc_to_text(content, filename)
     if text:
         paragraphs = '\n'.join(f'<p>{_esc(p)}</p>' for p in text.splitlines() if p.strip())
-        return HTMLResponse(_wrap(paragraphs or '<p class="empty">Document appears empty.</p>', filename))
+        return HTMLResponse(_wrap(paragraphs or '<p class="empty">Document appears empty.</p>'))
 
-    return HTMLResponse(_wrap('<p class="empty">Preview could not be generated for this file.</p>', filename))
+    return HTMLResponse(_wrap('<p class="empty">Preview could not be generated for this file.</p>'))
 
 
 def _preview_pptx(content: bytes, filename: str) -> HTMLResponse:
@@ -100,7 +100,7 @@ def _preview_pptx(content: bytes, filename: str) -> HTMLResponse:
             'overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.12);background:#fff;}'
             '.slide-lo img{width:100%;height:auto;display:block;}'
         )
-        return HTMLResponse(_wrap('\n'.join(slides_html), filename, extra_css=css_lo))
+        return HTMLResponse(_wrap('\n'.join(slides_html), extra_css=css_lo))
 
     # Fallback: python-pptx positioned renderer
     prs = Presentation(io.BytesIO(content))
@@ -136,7 +136,7 @@ def _preview_pptx(content: bytes, filename: str) -> HTMLResponse:
         '.sl-pos th{background:rgba(0,0,0,.07);font-weight:600;}'
         '.sl-pos img{width:100%;height:100%;object-fit:contain;display:block;}'
     )
-    return HTMLResponse(_wrap('\n'.join(slides_html), filename, extra_css=css_pptx))
+    return HTMLResponse(_wrap('\n'.join(slides_html), extra_css=css_pptx))
 
 
 def _pptx_collect(shapes, slide_w: int, slide_h: int, out: list) -> None:
@@ -228,11 +228,11 @@ def _pptx_collect(shapes, slide_w: int, slide_h: int, out: list) -> None:
             pass
 
 
-def _preview_excel(content: bytes, filename: str) -> HTMLResponse:
+def _preview_excel(content: bytes) -> HTMLResponse:
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception as e:
-        return HTMLResponse(_wrap(f'<p class="warning">Could not open Excel file: {_esc(str(e))}</p>', filename))
+        return HTMLResponse(_wrap(f'<p class="warning">Could not open Excel file: {_esc(str(e))}</p>'))
 
     sheets_html: list[str] = []
     for sheet_name in wb.sheetnames:
@@ -253,7 +253,7 @@ def _preview_excel(content: bytes, filename: str) -> HTMLResponse:
         )
 
     wb.close()
-    return HTMLResponse(_wrap(''.join(sheets_html), filename))
+    return HTMLResponse(_wrap(''.join(sheets_html)))
 
 
 def _normalise_image(img_bytes: bytes, max_px: int = 960) -> bytes:
@@ -275,7 +275,7 @@ def _esc(text: str) -> str:
     )
 
 
-def _wrap(body: str, filename: str, extra_css: str = '') -> str:
+def _wrap(body: str, extra_css: str = '') -> str:
     return f"""<!DOCTYPE html>
 <html>
 <head>

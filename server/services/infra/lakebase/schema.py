@@ -152,7 +152,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             # rewrite failed, so the search ran with the question only).
             ('severity',       "TEXT NOT NULL DEFAULT 'error'"),
             # Step that failed: chat translate_in / rewrite / search / ref_lookup /
-            # title_lookup / llm / translate_back / persist / ws; compare build / llm.
+            # llm / translate_back / persist / ws; compare build / llm.
             ('stage',          'TEXT'),
             ('http_status',    'INTEGER'),
             ('upstream',       'TEXT'),     # Vector Search index or model endpoint called
@@ -372,20 +372,12 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                 workspace_url   TEXT,
                 role            TEXT NOT NULL CHECK (role IN (\'user\', \'assistant\')),
                 content         TEXT NOT NULL,
-                trace_id        TEXT,
-                tool_name       TEXT,
-                tool_query      TEXT,
-                reasoning_steps TEXT
+                trace_id        TEXT
             )
         ''')
         await _add_columns(conn, 'chat_messages', [
             # The turn's chat_turns.trace_id (chat-…).
             ('trace_id',        'TEXT'),
-            # Not written: the retrieval is in chat_turns / chat_retrieved_chunks.
-            ('tool_name',       'TEXT'),
-            ('tool_query',      'TEXT'),
-            ('tool_result',     'TEXT'),
-            ('reasoning_steps', 'TEXT'),
             ('workspace_id',    'TEXT'),
             # Engine label: chat-all / chat-as / chat-is.
             # NULL on copies of a shared conversation. The model that actually

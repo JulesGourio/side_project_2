@@ -37,8 +37,6 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _CONVERT_TIMEOUT_S = int(os.getenv('SOFFICE_CONVERT_TIMEOUT_S', '180'))
-# Portable-tree extraction can take a while for a ~700 MB tree; one-time cost.
-_EXTRACT_TIMEOUT_HINT_S = 600
 
 # soffice is single-document-per-invocation here (isolated profiles), but each
 # invocation is CPU/RAM hungry — cap parallel conversions.

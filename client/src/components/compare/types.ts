@@ -41,7 +41,7 @@ export interface FeedbackProps {
   messageId: number | null;
 }
 
-export interface DocSummaryMeta {
+interface DocSummaryMeta {
   truncated: boolean;
   durationS: number;
   inputTokens: number;

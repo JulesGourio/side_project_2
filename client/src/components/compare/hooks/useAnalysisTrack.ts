@@ -5,9 +5,9 @@ import { computeFileHash, docBlob } from '../files';
 import { LS_STREAM_PERSIST_MS, lsGet, lsRemove, lsSet } from '../storage';
 import type { DocFile, ImagePair } from '../types';
 
-export type ProcessorVersionId = 'structured' | 'standard';
+type ProcessorVersionId = 'structured' | 'standard';
 
-export interface SavedAnalysis {
+interface SavedAnalysis {
   sessionPath: string;
   text: string;
   fileType: string;

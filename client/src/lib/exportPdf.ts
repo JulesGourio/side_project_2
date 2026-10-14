@@ -4,7 +4,7 @@
  * `kind` only sets the label shown above the title.
  */
 
-export type PdfKind = 'chat_response' | 'chat_session' | 'change_summary' | 'document_summary';
+type PdfKind = 'chat_response' | 'chat_session' | 'change_summary' | 'document_summary';
 
 export interface PdfSource {
   title: string;
@@ -19,7 +19,7 @@ export interface PdfSection {
   sources?: PdfSource[];
 }
 
-export interface PdfExport {
+interface PdfExport {
   kind: PdfKind;
   title: string;
   filename: string;

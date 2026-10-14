@@ -49,7 +49,7 @@ function BeforeAfter({ change }: { change: ImpactChange }) {
 }
 
 /** The change a passage conflicts with, spelled out: a bare "C37" means nothing when the comparison has dozens. */
-export function ChangeLine({ id, changes }: { id: string; changes: ChangesById }) {
+function ChangeLine({ id, changes }: { id: string; changes: ChangesById }) {
   const c = changes[id];
   if (!c) return <ChangeChip id={id} changes={changes} />;
   return (

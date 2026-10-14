@@ -230,7 +230,6 @@ async def init_lakebase() -> None:
 
 
 async def shutdown_lakebase() -> None:
-    global _pool, _refresh_task
     if _refresh_task:
         _refresh_task.cancel()
         try:

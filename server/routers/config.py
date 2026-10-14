@@ -8,7 +8,7 @@ import yaml
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from ..services.infra.user import get_capabilities, get_current_user, get_workspace_url
+from ..services.infra.user import get_capabilities, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,14 +35,10 @@ async def get_app_config():
     """Return application configuration (branding, compare settings)."""
     try:
         safe = {
-            'app_name': 'QualiBOT',
             'branding': {
-                'name': 'QualiBOT',
                 'logo': '/logos/LOGO_LATECOERE.png',
-                'company_name': 'Powered by Databricks',
             },
             'compare': {
-                'enabled': os.getenv('COMPARE_ENABLED', 'true').lower() == 'true',
                 'volume_path': os.getenv('COMPARE_VOLUME_PATH', ''),
                 'impact_index': os.getenv('COMPARE_IMPACT_INDEX', ''),
             },
@@ -90,11 +86,9 @@ async def get_knowledge_base_date():
 async def get_me(request: Request):
     """Return current user info with feature permissions."""
     try:
-        user = await get_current_user(request)
+        await get_current_user(request)  # no identity in the headers: the request fails
         caps = await get_capabilities(request)
         return {
-            'user': user,
-            'workspace_url': get_workspace_url(),
             'can_compare': caps['can_compare'],
             'can_chat': caps['can_chat'],
         }

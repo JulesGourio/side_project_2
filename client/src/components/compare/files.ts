@@ -42,7 +42,7 @@ export function extensionOf(name: string): string {
   return name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
 }
 
-export function mimeForName(name: string): string {
+function mimeForName(name: string): string {
   return MIME_BY_EXTENSION[extensionOf(name)] || 'application/octet-stream';
 }
 

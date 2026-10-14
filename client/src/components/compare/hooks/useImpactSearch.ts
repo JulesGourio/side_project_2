@@ -4,7 +4,7 @@ import { errorMessage, saveImpactToHistory } from '../api';
 import type { ImpactResult } from '../impact/types';
 import { LS, lsGetJson, lsRemove, lsSet } from '../storage';
 
-export interface ImpactSearchInput {
+interface ImpactSearchInput {
   changesText: string;
   oldHash: string;
   newHash: string;

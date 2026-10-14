@@ -41,7 +41,7 @@ export function useCardFeedback(feedbackProps?: FeedbackProps) {
   return { enabled: !!feedbackProps, vote, setVote, comment, setComment, submitting, done, submit };
 }
 
-export type CardFeedbackState = ReturnType<typeof useCardFeedback>;
+type CardFeedbackState = ReturnType<typeof useCardFeedback>;
 
 const VOTE_COLOR: Record<Vote, string> = { up: '#16a34a', down: '#dc2626' };
 

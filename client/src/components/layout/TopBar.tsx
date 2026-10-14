@@ -11,7 +11,6 @@ const ALL_TABS = [
 export function TopBar() {
   const location = useLocation();
   const [branding, setBranding] = useState<AppBranding>({
-    name: 'Document Compare',
     logo: '/logos/LOGO_LATECOERE.png',
   });
 

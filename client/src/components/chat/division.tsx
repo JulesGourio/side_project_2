@@ -7,7 +7,7 @@
 
 export type Division = 'ALL' | 'AS' | 'IS';
 
-export const DIVISIONS: { value: Division; label: string; title: string }[] = [
+const DIVISIONS: { value: Division; label: string; title: string }[] = [
   { value: 'ALL', label: 'All', title: 'Search across every division' },
   { value: 'AS', label: 'AS', title: 'Aerostructures — search the AS / shared documents only' },
   { value: 'IS', label: 'IS', title: 'Interconnection — search the IS / shared documents only' },

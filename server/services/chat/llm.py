@@ -343,7 +343,7 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
             sem.release()
     queue_wait_ms = int((time.monotonic() - queued_at) * 1000)
     try:
-        async for event in _stream_answer(host, token, endpoints, messages, max_tokens, operation, queue_wait_ms):
+        async for event in _stream_answer(host, token, endpoints, messages, max_tokens, queue_wait_ms):
             # Callers stop reading at [DONE] or at an error: free the slot before they do,
             # not when the abandoned generator is garbage-collected.
             if event.startswith(('data: [DONE]', 'data: {"type": "error"')):
@@ -354,7 +354,7 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
 
 
 async def _stream_answer(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
-                         max_tokens: int, operation: str, queue_wait_ms: int = 0) -> AsyncGenerator[str, None]:
+                         max_tokens: int, queue_wait_ms: int = 0) -> AsyncGenerator[str, None]:
     started = time.monotonic()
     chain = _dedup(endpoints)
     given_up: set = set()                       # endpoints not retried this turn

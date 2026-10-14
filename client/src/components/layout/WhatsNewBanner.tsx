@@ -3,7 +3,7 @@ import { Newspaper, X, ExternalLink } from 'lucide-react';
 const TEAMS_CHANNEL_URL =
   'https://teams.microsoft.com/l/channel/19%3Acd4f046237804a1c8e9c830bd8267aac%40thread.tacv2/Qualibot?groupId=768d4e4c-de5e-48cf-80d1-54befd55fb09&tenantId=bbd06402-4bce-4ba0-81fd-babe864e4af1';
 
-export type TabId = 'compare' | 'chat';
+type TabId = 'compare' | 'chat';
 
 // Placeholder copy — meant to be edited by hand as real news comes in. One
 // news list per tool page, newest entry first; add more objects to `news` as

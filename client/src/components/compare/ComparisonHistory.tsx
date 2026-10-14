@@ -3,7 +3,7 @@ import { History, X, FileText, ChevronRight, Loader2, RefreshCw } from 'lucide-r
 
 // --- Types ---
 
-export interface HistoryEntry {
+interface HistoryEntry {
   id: number;
   created_at: string;
   old_filename: string;
