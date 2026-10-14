@@ -88,7 +88,7 @@ targets:
                   proj_schema: ""
                   volumes: ""
                   indexes: "chunks_index${var.parsing_table_suffix}"
-                  serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna"
+                  serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna,databricks-gemini-3-1-flash-lite"
                   pipeline_service_principal: ""
                   pipeline_tables: ""
               environment_key: default
