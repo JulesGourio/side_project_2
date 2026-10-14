@@ -5,10 +5,6 @@ logger = logging.getLogger(__name__)
 
 # ── Migrations (idempotent, in order) ─────────────────────────────────────────
 MIGRATIONS: list[tuple[str, str]] = [
-    (
-        "users.groups",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS groups TEXT[] NOT NULL DEFAULT '{}'",
-    ),
     # Feedback triage (Databricks dashboard): mark a feedback as handled + why.
     # Nullable/additive columns, no impact on the app.
     (

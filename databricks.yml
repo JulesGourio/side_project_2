@@ -97,7 +97,7 @@ variables:
     description: "Quartz cron for the daily parsing run (Europe/Paris)"
     default: "0 0 4 * * ?"
   parsing_schedule_pause:
-    description: "PAUSED | UNPAUSED for the daily parsing schedule"
+    description: "PAUSED: the daily parsing job does not run on its schedule. UNPAUSED: it runs every day at parsing_schedule_cron."
     default: "PAUSED"
   parsing_job_activity_tag:
     description: >-
@@ -487,7 +487,7 @@ targets:
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
       # chunks_full is built but its index is not: add uat_proj.qualibot.chunks_full_index to parsing_vector_search_indexes to create and sync it.
       parsing_build_chunks_full: "true"
-      parsing_schedule_pause: "UNPAUSED"
+      parsing_schedule_pause: "PAUSED"
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
       # (LAKEBASE_DATABASE in app.yaml / target_config.env) — never doccompare_test.
       parsing_lakebase_database: "doccompare"

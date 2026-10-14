@@ -282,30 +282,11 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
 
   En cas de 403 de l'app : `databricks apps logs qualibot --profile DEV` donne la ligne.
 
-- [ ] **0.6 Tables d'évaluation dans `dev_proj.qualibot`**. Les notebooks de `utils/evaluation/` ont `dev_proj.qualibot.*` comme défauts :
-  les tables d'évaluation sont donc déjà dans le schéma. Les commandes ci-dessous créent une copie (`DEEP CLONE`) si la table manque
-  et sont sans effet si elle existe. Éditeur SQL DEV, **une instruction à la fois** ; une table qui n'existe pas donne
-  `TABLE_OR_VIEW_NOT_FOUND` : passer à la suivante. Les droits sur `dev_proj` viennent de 0.5.
+- [ ] **0.6 Tables d'évaluation dans `dev_proj.qualibot`**. Les notebooks de `utils/evaluation/` écrivent dans `dev_proj.qualibot` par défaut : aucune copie à faire. Contrôle, éditeur SQL DEV :
 
   ```sql
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.qualibot_eval_golden DEEP CLONE dev_proj.qualibot.qualibot_eval_golden;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_retrieval_runs DEEP CLONE dev_proj.qualibot.eval_retrieval_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs DEEP CLONE dev_proj.qualibot.eval_pairwise_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs_cache DEEP CLONE dev_proj.qualibot.eval_pairwise_runs_cache;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_load_runs DEEP CLONE dev_proj.qualibot.eval_load_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_vs_load_runs DEEP CLONE dev_proj.qualibot.eval_vs_load_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions DEEP CLONE dev_proj.qualibot.synthetic_retrieval_questions;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases DEEP CLONE dev_proj.qualibot.feedback_failure_cases;
+  SHOW TABLES IN dev_proj.qualibot LIKE 'eval_*';
   ```
-
-  Si `synthetic_retrieval_questions` / `feedback_failure_cases` n'existent pas dans `dev_proj`, les créer depuis l'UAT :
-
-  ```sql
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions AS SELECT * FROM uat_proj.qualibot.synthetic_retrieval_questions_v2;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases AS SELECT * FROM uat_proj.qualibot.feedback_failure_cases;
-  ```
-
-  Contrôle : `SELECT count(*) FROM dev_proj.qualibot.qualibot_eval_golden;` (le nombre de lignes doit être celui de la source).
 
 - [ ] **0.7 Supprimer les 3 Knowledge Assistants DEV** (sans effet sur le reste) : UI DEV → **Agents** → `qualibot_ALL_v2`, `qualibot_AS_v2`,
   `qualibot_IS_v2` → ⋮ → **Delete**. Si l'UI refuse, dans une cellule Python d'un notebook DEV serverless :
@@ -440,14 +421,6 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Quand les juges sont validés : baisser les échantillons (`TARGET_SAMPLE_RATES` dans `utils/evaluation/chat_scorers.py`) et activer le planning (PAUSED aujourd'hui).
 
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
-  - ancien job de notation, s'il est encore présent : UI DEV → Jobs → `D_1_Qualibot_Score_Production_Qa` → ⋮ → **Delete**. Les tables qu'il
-    alimentait ne sont plus écrites par le code ; les supprimer si elles existent (éditeur SQL DEV) :
-
-    ```sql
-    DROP TABLE IF EXISTS dev_proj.qualibot.chat_quality_scores;
-    DROP TABLE IF EXISTS dev_proj.qualibot.chat_quality_scoring_runs;
-    ```
-
   - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, sauf les tables de test `*_test`. Les tables
     d'évaluation (`eval_*`, `qualibot_eval_golden`, `synthetic_retrieval_questions`, `feedback_failure_cases`) sont les défauts des notebooks :
     ne pas les supprimer.

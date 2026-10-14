@@ -269,7 +269,7 @@ def _carve_images_from_bytes(buf: bytes) -> List[bytes]:
     return chunks
 
 
-def fallback_parse_ppt_legacy(content_bytes: bytes, doc_id: str, volume_base_path: str,
+def fallback_parse_ppt_ole(content_bytes: bytes, doc_id: str, volume_base_path: str,
                               min_area_ratio: float, max_repeat: int) -> Optional[Dict[str, Any]]:
     """Binary .ppt: text runs and carved images read from the OLE container, since Docling does not handle the format."""
     from PIL import Image
@@ -279,7 +279,7 @@ def fallback_parse_ppt_legacy(content_bytes: bytes, doc_id: str, volume_base_pat
         import olefile
         ole = olefile.OleFileIO(io.BytesIO(content_bytes))
     except Exception as e:
-        logger.warning("PPT (legacy) fallback: not a readable OLE container for doc_id=%s: %s", doc_id, str(e)[:200])
+        logger.warning("PPT (OLE) fallback: not a readable OLE container for doc_id=%s: %s", doc_id, str(e)[:200])
         return None
 
     def _find_stream(name: str):
@@ -313,11 +313,11 @@ def fallback_parse_ppt_legacy(content_bytes: bytes, doc_id: str, volume_base_pat
             w, h = pil_img.size
             candidates.append({"md5": md5, "pil_img": pil_img, "area_ratio": (w * h) / _XML_FALLBACK_REF_AREA})
         except Exception as e:
-            logger.warning("PPT (legacy) fallback: unreadable carved image for doc_id=%s: %s", doc_id, str(e)[:200])
+            logger.warning("PPT (OLE) fallback: unreadable carved image for doc_id=%s: %s", doc_id, str(e)[:200])
 
     repeating = {h for h, c in hash_count.items() if c > max_repeat}
     images = _save_candidate_images(candidates, repeating, doc_id, volume_base_path, min_area_ratio,
-                                    "PPT (legacy) fallback")
+                                    "PPT (OLE) fallback")
     return {"text": "\n".join(_extract_ole_text_runs(doc_bytes)), "parser_strategy": "ole_heuristic:ppt",
             "parse_time_seconds": round(time.time() - t0, 3), "images": images}
 

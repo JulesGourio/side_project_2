@@ -21,7 +21,7 @@ from pyspark.sql.functions import pandas_udf
 from config import IMG_SKIP_MAX_DIM, IMG_SKIP_MIN_SIDE, LLM_OCR_MAX_PAGES, LLM_OCR_TEXT_THRESHOLD, PARSE_TIMEOUT_SECONDS
 from format_parsers import parse_with_docling, parse_xls, parse_xlsx_openpyxl, patch_worker_env
 from image_fallbacks import (
-    fallback_parse_docx, fallback_parse_pptx, fallback_parse_ppt_legacy, render_pdf_pages_for_llm_ocr,
+    fallback_parse_docx, fallback_parse_pptx, fallback_parse_ppt_ole, render_pdf_pages_for_llm_ocr,
 )
 from image_store import image_record, image_target_path, save_image_to_volume
 from utils import _cfg, count_tokens, ensure_config
@@ -316,7 +316,7 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
 
         # Docling does not read binary .ppt — go straight to the OLE heuristic fallback.
         if ext_lower == "ppt":
-            fb = fallback_parse_ppt_legacy(bytes(content), doc_id_str, vol_base, min_ar_val, max_rep_val)
+            fb = fallback_parse_ppt_ole(bytes(content), doc_id_str, vol_base, min_ar_val, max_rep_val)
             results.append(_fallback_or_error(fb, ext_lower, timings))
             continue
 

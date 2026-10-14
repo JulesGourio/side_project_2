@@ -53,12 +53,10 @@ CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parse_manifest         DEEP CLONE u
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.category_reference     DEEP CLONE uat_landingzone.qualibot.category_reference_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parsing_run_health     DEEP CLONE uat_landingzone.qualibot.parsing_run_health_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.document_change_log    DEEP CLONE uat_landingzone.qualibot.document_change_log_v1;
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot.audit_files_unified    DEEP CLONE uat_landingzone.qualibot.audit_files_unified_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks                 DEEP CLONE uat_landingzone.qualibot.chunks_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_archive         DEEP CLONE uat_landingzone.qualibot.chunks_archive_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_archive_notices DEEP CLONE uat_landingzone.qualibot.chunks_archive_notices_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_full            DEEP CLONE uat_landingzone.qualibot.chunks_full_v1;
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot.synthetic_retrieval_questions_v2 DEEP CLONE uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.feedback_failure_cases DEEP CLONE uat_landingzone.qualibot.feedback_failure_cases;
 ```
 
@@ -158,14 +156,6 @@ GRANT USE CATALOG ON CATALOG uat_proj TO `<PIPELINE_SP>`;
 GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA uat_proj.qualibot TO `<PIPELINE_SP>`;
 ```
 
-**0.4b — Modèles de chat : `CAN_QUERY` pour l'app UAT (PowerShell, profil `UAT`)**
-
-Même liste de modèles que le job de droits DEV. Remplacer `<APP_SP>` par le client ID de l'app (étape 0.4) :
-
-```powershell
-python -c "from databricks.sdk import WorkspaceClient; from databricks.sdk.service.serving import ServingEndpointAccessControlRequest as A, ServingEndpointPermissionLevel as L; w = WorkspaceClient(profile='UAT'); [w.serving_endpoints.update_permissions(w.serving_endpoints.get(n).id, access_control_list=[A(service_principal_name='<APP_SP>', permission_level=L.CAN_QUERY)]) for n in ['databricks-claude-sonnet-4-6','databricks-gpt-5-6-luna','databricks-gpt-6-luna','databricks-gemini-3-1-flash-lite']]; print('CAN_QUERY ok')"
-```
-
 **0.5 — Tables chat depuis Lakebase (run ponctuel)**
 
 ```powershell
@@ -248,7 +238,7 @@ Les tables `*_v1`, les index `*_v1` et les volumes de l'ancien emplacement ne so
 
 ### A. Valider l'app sur `qualibot-uat-test` (branche `audit/doc-compare`)
 
-App seule, pas de `-Infra` : aucune table, aucun index, aucun droit à créer. L'app y utilise l'index de l'audit (`chunks_index_v1`). `deploy_qualibot.ps1` ne démarre jamais cette app : la démarrer d'abord.
+App seule, pas de `-Infra` : aucune table, aucun index, aucun droit à créer. `deploy_qualibot.ps1` ne démarre jamais cette app : la démarrer d'abord.
 
 - [ ] **A1. Déployer**
 
@@ -435,8 +425,6 @@ Chaque point est indépendant et demande une modification de la configuration : 
       'delta.deletedFileRetentionDuration' = 'interval 60 days', 'delta.logRetentionDuration' = 'interval 60 days');
     ALTER TABLE uat_proj.qualibot.document_change_log SET TBLPROPERTIES (
       'delta.deletedFileRetentionDuration' = 'interval 60 days', 'delta.logRetentionDuration' = 'interval 60 days');
-    ALTER TABLE uat_proj.qualibot.audit_files_unified SET TBLPROPERTIES (
-      'delta.deletedFileRetentionDuration' = 'interval 60 days', 'delta.logRetentionDuration' = 'interval 60 days');
     ```
 
   - [ ] **D5.4. Re-découper le corpus dans `chunks`** (aucun re-parsing GPU : les fichiers déjà parsés sont relus depuis `_pipeline_checkpoint` ; les passages d'image sont reconstruits depuis les descriptions existantes, sans appel LLM). Copier le zip de cette branche, puis :
@@ -507,13 +495,6 @@ Chaque point est indépendant et demande une modification de la configuration : 
 
   - [ ] **D5.9. Supprimer l'ancien** (quelques jours plus tard, une fois l'app validée) :
     - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de test `trace_test` aussi s'il existe encore ;
-    - renommer la table de questions d'évaluation :
-
-      ```sql
-      ALTER TABLE uat_proj.qualibot.synthetic_retrieval_questions_v2
-        RENAME TO uat_proj.qualibot.synthetic_retrieval_questions;
-      ```
-
     Les objets `_v1` (tables, index, volumes) ne sont pas supprimés par ce runbook (voir étape 0.11).
 
 ## Fait

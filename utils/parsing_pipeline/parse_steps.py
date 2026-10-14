@@ -481,7 +481,7 @@ def retry_failed_iddocs(df_matched_full, df_content, df_business_meta):
         logger.info("Nothing to retry.")
         return
 
-    # .ppt stays a rank-2 candidate: image_fallbacks.fallback_parse_ppt_legacy parses it.
+    # .ppt stays a rank-2 candidate: image_fallbacks.fallback_parse_ppt_ole parses it.
     df_alt = (
         df_matched_full
         .filter(F.col("IDDOC").isin(failed_iddocs))

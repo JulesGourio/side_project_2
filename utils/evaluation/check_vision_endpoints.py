@@ -26,7 +26,7 @@ import httpx
 
 logger = logging.getLogger('check_vision_endpoints')
 
-DEFAULT_ENDPOINTS = 'databricks-gpt-5-6-luna,databricks-gpt-6-luna,databricks-claude-sonnet-4-6'
+DEFAULT_ENDPOINTS = 'databricks-gpt-5-6-luna,databricks-gpt-6-luna'
 DEFAULT_QUESTION = 'Describe this image in one sentence.'
 IMAGE_SUFFIXES = ('.png', '.jpg', '.jpeg')
 # Reasoning models spend output tokens before the first visible word: a one-sentence answer still needs room.
