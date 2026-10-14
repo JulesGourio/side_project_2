@@ -13,7 +13,7 @@
 # MAGIC **Highlighted complexities:**
 # MAGIC The indexes are `pipeline_type = TRIGGERED`: without this task new chunks sit in the Delta table and are never queryable, the rest of the chain
 # MAGIC would have run for nothing. This task runs `run_as` the environment's owning service principal, which already holds the grant needed to
-# MAGIC create an index (no separate manual step for a new environment). Apart from the `chunks_full` MERGE it is plain Vector Search SDK calls.
+# MAGIC create an index. Apart from the `chunks_full` MERGE it is plain Vector Search SDK calls.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `5_sync_index`)
@@ -79,7 +79,7 @@ logger = get_logger("sync_index")
 
 # MAGIC %md
 # MAGIC ## Config Widgets
-# MAGIC This task is serverless: it has no `PARSING_*` environment variables and cannot import `config.py`, so everything comes from the job parameters. `indexes` falls back on `PARSING_VECTOR_SEARCH_INDEXES` for an interactive run.
+# MAGIC This task is serverless: it has no `PARSING_*` environment variables and cannot import `config.py`, so everything comes from the job parameters. `indexes` falls back on `PARSING_VECTOR_SEARCH_INDEXES` when it is empty.
 # MAGIC
 # MAGIC The endpoint, embedding model, catalog and suffix are only read when an index has to be created.
 
@@ -114,7 +114,7 @@ for n in INDEXES:
 # MAGIC %md
 # MAGIC # Inputs
 # MAGIC ## Tables behind chunks_full
-# MAGIC `chunks_full` = `chunks` (post-cutoff, the chatbot) + `chunks_archive` (pre-cutoff): every document whatever its date, for impact search only. It is rebuilt only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`; the table can be checked in SQL before its index is ever created.
+# MAGIC `chunks_full` = `chunks` (post-cutoff, the chatbot) + `chunks_archive` (pre-cutoff): every document whatever its date, for impact search only. It is rebuilt only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`.
 
 # COMMAND ----------
 

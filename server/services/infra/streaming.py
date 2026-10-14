@@ -14,7 +14,7 @@ DEFAULT_CONNECT_TIMEOUT_S = float(os.getenv('COMPARE_ANALYSIS_CONNECT_TIMEOUT_S'
 
 _PRICING_USD: Dict[str, Dict[str, float]] = {
     'databricks-claude-haiku-4-5': {'input': 1.0, 'output': 5.0},
-    # USD per 1M tokens = workspace console DBU rate x 0.078 EUR/DBU, via _EUR_PER_USD. DBU in/out: Sonnet 4.6 42.857/214.286,
+    # USD per 1M tokens = Databricks DBU rate x 0.078 EUR/DBU, via _EUR_PER_USD. DBU in/out: Sonnet 4.6 42.857/214.286,
     # Sonnet 5.5 28.571/142.857.
     'databricks-claude-sonnet-4-6': {'input': 3.634, 'output': 18.168},
     'databricks-claude-sonnet-5-5': {'input': 2.422, 'output': 12.112},

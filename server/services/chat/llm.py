@@ -140,7 +140,7 @@ _semaphores: Dict[int, Tuple[int, asyncio.Semaphore]] = {}
 
 
 def _semaphore() -> Optional[asyncio.Semaphore]:
-    """One semaphore per event loop (notebooks run each question in its own loop)."""
+    """One semaphore per event loop: a semaphore cannot gate calls running on another loop."""
     limit = max_concurrent_answers()
     if limit <= 0:
         return None

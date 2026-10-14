@@ -10,8 +10,7 @@ still happens (429, 5xx, timeout) is retried with a growing pause that honours `
 (``VS_QUERY_RETRIES`` times, default 5: about 15 s in all). The slot is held only during the
 HTTP call, never during a pause.
 
-The limit is per instance of the app; several instances share the endpoint, so lower it if the
-app runs on more than one.
+The limit is per app instance: each instance sharing the endpoint may send this many.
 """
 
 import asyncio
@@ -43,7 +42,7 @@ def query_retries() -> int:
 
 
 def _semaphore() -> Optional[asyncio.Semaphore]:
-    """One semaphore per event loop (the eval notebooks run each question in its own loop)."""
+    """One semaphore per event loop: a semaphore cannot gate calls running on another loop."""
     limit = max_concurrent_queries()
     if limit <= 0:
         return None

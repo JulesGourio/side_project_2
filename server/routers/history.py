@@ -50,7 +50,7 @@ def _serialize(row) -> dict:
     for k, v in d.items():
         if isinstance(v, datetime):
             # Ensure timezone info is present — asyncpg may return naive UTC datetimes.
-            # Without it, JS treats the string as local time and introduces a 2h offset.
+            # Without it, JS reads the string as local time.
             if v.tzinfo is None:
                 v = v.replace(tzinfo=timezone.utc)
             result[k] = v.isoformat()  # "YYYY-MM-DDTHH:MM:SS+00:00"

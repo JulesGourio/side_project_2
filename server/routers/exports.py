@@ -1,7 +1,7 @@
 """Exports router: Excel, PDF and raw text downloads of compare analyses and chatbot answers.
 
-Pure helpers live in services/compare/export_helpers.py (no FastAPI import), so notebooks can import them
-without the server import chain. PDF layout: services/infra/pdf_report/.
+Pure helpers live in services/compare/export_helpers.py (no FastAPI import).
+PDF layout: services/infra/pdf_report/.
 """
 
 import asyncio

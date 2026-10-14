@@ -476,8 +476,7 @@ def _exclusion_keys(names: List[str], known_refs: List[str]) -> frozenset:
     out = set()
     for ref in known_refs:
         key = canon_ref(ref)
-        # Not followed by a digit: "GO131" inside the file name "GO1316…" is a
-        # different document, not the one being compared.
+        # Not followed by a digit: "AB12" inside "AB123" is another document.
         if len(key) >= 5 and any(re.search(re.escape(key) + r'(?!\d)', n) for n in canon_names):
             out.add(key)
     return frozenset(out)

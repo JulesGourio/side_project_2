@@ -77,7 +77,7 @@ def main() -> None:
                 )
             rows = [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines() if line.strip()]
             with conn.cursor() as cur:
-                # JSON/JSONB columns (chat_turns.config, chat_retrieved_chunks.hits, errors.context…)
+                # JSON/JSONB columns (chat_turns.config, chat_retrieved_chunks.hits, app_errors.context…)
                 # come back from the export as dicts/lists: psycopg2 cannot adapt a dict and would
                 # send a list as a Postgres ARRAY, so they are wrapped explicitly.
                 cur.execute(

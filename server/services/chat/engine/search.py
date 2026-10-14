@@ -133,7 +133,7 @@ def start_question_search(host: str, token: str, index: str, filters: Dict[str, 
     """Starts the reranked search of the question as asked, now: the rewrite runs while it does, and ``search``
     (``first=``) picks the result up instead of querying again."""
     task = asyncio.ensure_future(_recorded_query(host, token, index, filters, log, 0, question, rerank_top_k(), True))
-    task.add_done_callback(lambda t: t.cancelled() or t.exception())      # an unused failure is not an unhandled one
+    task.add_done_callback(lambda t: t.cancelled() or t.exception())      # Read the exception so an unused failure is not logged.
     return task
 
 

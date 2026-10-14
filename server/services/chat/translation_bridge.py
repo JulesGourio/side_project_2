@@ -12,8 +12,7 @@ reaches the search, not inside the answer prompt.
 English is the pivot language: its retrievals cover a broader set of documents than French ones, since
 the embedding model's multilingual alignment is English-anchored.
 
-Kept off by default (CHAT_TRANSLATE_BRIDGE_ENABLED) — enable only on
-environments where this is being evaluated.
+Off unless CHAT_TRANSLATE_BRIDGE_ENABLED is true.
 """
 
 import json
@@ -38,11 +37,10 @@ TRANSLATE_FALLBACK_ENDPOINTS = [e.strip() for e in os.getenv('CHAT_TRANSLATE_FAL
                                                              'databricks-gpt-6-luna').split(',') if e.strip()]
 _TIMEOUT_S = 20.0
 
-# fastText's lid.176 model: langdetect is noisy on short or technical text. Sub-millisecond per call once loaded
-# (about 0.26 s at first use).
+# fastText's lid.176 model: langdetect is noisy on short or technical text.
 _FASTTEXT_MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'lid.176.ftz')
 
-# Below this confidence a fastText guess is noise (a short REF-only message can come out Polish at 12%): the LLM decides.
+# Below this confidence a fastText guess is noise: the LLM decides.
 _FASTTEXT_CONFIDENCE_THRESHOLD = 0.65
 
 # Skip the LLM round trip entirely for the two languages the corpus and the

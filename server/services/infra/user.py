@@ -26,7 +26,7 @@ _CAPS_WAREHOUSE_ID = os.getenv('CAPS_WAREHOUSE_ID', '').strip()
 _CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 
-# CAPS_BYPASS=true grants chat and compare to every visitor (DEV only, set in utils/deploy/target_env.json);
+# DEV only: CAPS_BYPASS=true grants chat and compare to every visitor.
 # tests/test_deploy_config.py guards that it never reaches uat, uat-test or prod.
 _CAPS_BYPASS = os.getenv('CAPS_BYPASS', 'false').strip().lower() == 'true'
 

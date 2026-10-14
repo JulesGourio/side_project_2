@@ -47,3 +47,12 @@ def test_ensure_schema_emits_expected_sql():
     asyncio.run(ensure_schema(pool))
     expected = json.loads(GOLDEN.read_text(encoding='utf-8'))
     assert pool.conn.statements == expected
+
+
+def test_every_index_targets_a_table_the_schema_creates():
+    import re
+    statements = json.loads(GOLDEN.read_text(encoding='utf-8'))
+    created = {m.group(1) for s in statements for m in re.finditer(r'CREATE TABLE IF NOT EXISTS (\w+)', s)}
+    indexed = {m.group(1) for s in statements for m in re.finditer(r'CREATE INDEX IF NOT EXISTS \w+ ON (\w+)', s)}
+    assert indexed, 'no index statement found: the pattern is out of date'
+    assert indexed <= created, sorted(indexed - created)

@@ -41,7 +41,7 @@ IGNORE:
 
 OUTPUT: Markdown, ## per section, one bullet per change. Bold critical values. If nothing substantive changed: **No significant changes detected.**\
 """
-# app.yaml declares MAX_COMPARE_PDF_MB; both names are honoured.
+# MAX_COMPARE_FILE_MB takes precedence over MAX_COMPARE_PDF_MB.
 MAX_FILE_BYTES = int(os.getenv('MAX_COMPARE_FILE_MB') or os.getenv('MAX_COMPARE_PDF_MB') or '20') * 1024 * 1024
 
 
@@ -106,8 +106,8 @@ def _validate_file(file: UploadFile, data: bytes) -> None:
 def _is_within_volume(session_path: str, volume_path: str) -> bool:
     """True when session_path is the volume root or a path under it.
 
-    A bare startswith() accepted '<volume>/../../other' and '<volume>_other':
-    both leave the configured volume.
+    A bare startswith() would also accept '<volume>/../../other' and '<volume>_other',
+    both outside the configured volume.
     """
     root = posixpath.normpath(volume_path)
     path = posixpath.normpath(session_path)

@@ -1,153 +1,150 @@
 # QualiBOT
 
-Application FastAPI + React déployée sur Databricks Apps. Elle donne accès à une
-base commune de documents qualité et techniques (aéronautique) et réunit trois
-fonctions :
+QualiBOT is a Databricks App: a FastAPI backend serving a React frontend, on top of
+a shared base of quality and technical documents (aerospace). It provides three features:
 
-| Fonction | Ce qu'elle fait | Documentation |
+| Feature | What it does | Documentation |
 |---|---|---|
-| **Comparaison** (`/compare`) | Compare deux versions d'un document et produit un résumé ou un tableau des changements. | [`client/src/components/compare/README.md`](client/src/components/compare/README.md) |
-| **Recherche d'impact** (onglet Comparaison) | Cherche dans la base les autres documents que les changements touchent, avec les passages concernés. | [`client/src/components/compare/README.md`](client/src/components/compare/README.md) |
-| **Chat** (`/chat`) | Assistant qui répond à partir de la base documentaire, avec des citations numérotées et un filtre par division (ALL, AS, IS). | [`client/src/components/chat/README.md`](client/src/components/chat/README.md) |
+| **Document comparison** (`/compare`) | Compares two versions of a document and produces a summary or a table of changes. | [client/src/components/compare/README.md](client/src/components/compare/README.md) |
+| **Impact search** (Compare tab) | Finds the other documents of the base that the changes touch, with the relevant passages. | [client/src/components/compare/README.md](client/src/components/compare/README.md) |
+| **Chat** (`/chat`) | Answers questions from the document base, with numbered citations and a division filter (ALL, AS, IS). | [client/src/components/chat/README.md](client/src/components/chat/README.md) |
 
-La base documentaire est construite chaque nuit par la chaîne de parsing
-([`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md)). Le chat
-et la recherche d'impact l'interrogent par le même index Vector Search.
+The document base is produced by the parsing pipeline, a daily chain of Databricks
+jobs (`1_categories` to `6_update_kb_metadata`) described in
+[utils/parsing_pipeline/README.md](utils/parsing_pipeline/README.md). The chat and the
+impact search query the Vector Search index that this pipeline maintains.
 
-## Organisation du dépôt
+## Repository layout
 
 ### Application
 
-- `server/` : backend FastAPI. `app.py` est le point d'entrée et sert le frontend
-  construit ; `routers/` expose les routes sous `/api` (chat, comparaison,
-  configuration, exports, retours, santé, historique, aperçu) ; `services/`
-  contient le moteur du chat (`chat/`), les processeurs et analyses de comparaison
-  (`compare/`) et les accès partagés à Lakebase, aux droits, à Vector Search et au
-  catalogue (`infra/`) ; `prompts/chat/` contient les prompts du chat, en fichiers ;
-  `assets/fonts/` contient la police Inter des exports PDF ; `tracing.py` configure le
-  suivi MLflow des traces du chat.
-- `client/` : frontend React et TypeScript (Vite). `src/` contient les pages et les
-  composants (`chat/`, `compare/`, `layout/`, `shared/`, `lib/`) ; `out/` est le
-  build servi par le backend.
-- `start.sh` : démarrage de l'application. Il charge `target_config.env` s'il existe.
-- `app.yaml` : variables d'environnement de l'application, avec leurs valeurs par
-  défaut et leur rôle.
+- `server/`: FastAPI backend (layout below).
+- `client/`: React and TypeScript frontend, built with Vite. `src/` holds the pages
+  (`pages/`) and the components (`chat/`, `compare/`, `layout/`, `shared/`) and `lib/`;
+  `out/` is the build served by the backend.
+- `start.sh`: start command of the app. It installs antiword when it is missing, loads
+  `target_config.env` when present, then runs uvicorn.
+- `app.yaml`: environment variables of the app, with their default values and their role.
 
-### Déploiement et exploitation
+#### Server layout
 
-- `databricks.yml` : bundle `qualibot`, cibles `dev`, `qualibot-uat` (cible par
-  défaut), `qualibot-uat-test` et `qualibot-prod`, variables et exclusions de
-  synchronisation.
-- `resources/` : jobs et application déclarés par cible, un fichier par sujet.
-  `parsing_pipeline.job.yml` (chaîne quotidienne de parsing et d'indexation),
-  `chat_mlflow.yml` (traces et prompts du chat), `dev_copy.yml` (copie des données
-  UAT vers DEV), `grants.yml` (droits), `lakebase_sync.yml` (export et import
-  Lakebase), `app_schedules.yml` (arrêt et démarrage de l'application).
-- `utils/` : outils hors application (déploiement, parsing, évaluation, droits,
-  Lakebase, alertes). La carte du dossier est dans [`utils/README.md`](utils/README.md).
-- `runbooks/` : étapes à réaliser à la main dans Databricks. `uat.md`, `prod.md` et
-  `dev.md` ; l'index est dans [`runbooks/README.md`](runbooks/README.md).
-  `retest.md` liste ce qu'il faut relancer après un changement de chemin ou de
-  notebook. `scripts/` contient les scripts ponctuels, lancés à la main.
-- `bitbucket-pipelines.yml` : déploiement par Bitbucket (DEV, UAT, PROD).
-- `pyproject.toml` et `requirements.txt` : dépendances Python.
-- Fichiers de configuration racine : `.databricksignore` (exclusions de
-  synchronisation), `.gitignore`, `.gitattributes`, `.gitleaksignore`, `.vscode/`.
+```
+server/
+  app.py              entry point; serves the built frontend
+  tracing.py          MLflow tracing setup
+  routers/            /api routes: chat, compare, config, exports, feedback, health, history, preview
+  services/chat/      chat engine (engine/), LLM calls, prompt loading, translation bridge, turn log, MLflow traces
+  services/compare/   comparison processors (processors/), analysis, impact queries, summaries, PDF conversion
+  services/infra/     Lakebase, access rights, Vector Search, document catalog, streaming, PDF report rendering
+  prompts/chat/       chat prompts, one file per prompt
+  assets/fonts/       Inter font used by the PDF exports
+```
 
-### Données et tests
+### Deployment and operations
 
-- `tests/` : suite pytest. `golden/` et `fixtures/` contiennent les sorties attendues
-  et les réponses enregistrées ; `diff_corpus.py` et `prompt_noise.py` sont des jeux
-  de données et des détecteurs utilisés par les tests.
-- `data/` : `lid.176.ftz` (modèle fastText de détection de langue) et
-  `vendor/antiword/` (binaire antiword, pour convertir les fichiers `.doc`).
-- `leap_utils/` : copie de la bibliothèque partagée LEAP (écriture et fusion de
-  tables, contrôles qualité). Ne pas la modifier dans ce dépôt.
+- `databricks.yml`: Databricks Asset Bundle `qualibot`: variables, sync exclusions and targets.
+- `resources/`: jobs and the app, declared per target, one file per concern:
+  `parsing_pipeline.job.yml` (daily parsing and indexing chain), `chat_mlflow.yml`
+  (chat traces and prompt registry), `dev_copy.yml` (copy of UAT data into DEV),
+  `grants.yml` (access grants), `lakebase_sync.yml` (Lakebase export and import),
+  `app_schedules.yml` (stop and start of the apps).
+- `utils/`: tools that run outside the app, one folder per concern (deployment, parsing
+  pipeline, evaluation, grants, Lakebase sync, alerts, app management, DEV copy). Map in
+  [utils/README.md](utils/README.md).
+- `runbooks/`: steps to perform by hand in Databricks, written in French: `README.md`
+  (index), `dev.md`, `uat.md`, `prod.md`, and `retest.md` (what to run again after a path
+  or notebook change). `runbooks/scripts/` holds the one-shot scripts (migrations, copies,
+  packaging): they are run by hand and never deployed.
+- `bitbucket-pipelines.yml`: CI pipeline that deploys the bundle and the app. See [Deployment](#deployment).
+- `pyproject.toml`: Python project, dependencies and pytest settings. `requirements.txt`:
+  flat list of runtime packages.
+- Root files: `.databricksignore` (sync exclusions for the workspace), `.gitignore`,
+  `.gitattributes`, `.gitleaksignore` (secret-scan exceptions), `.vscode/` (editor tasks),
+  `CLAUDE.md` (working rules for this repository).
+
+### Tests and data
+
+- `tests/`: pytest suite. `golden/` and `fixtures/` hold expected outputs and recorded
+  model answers; `diff_corpus.py` and `prompt_noise.py` are test data and detectors used by the tests.
+- `data/`: `lid.176.ftz` (fastText language-identification model) and `vendor/antiword/`
+  (the antiword package and its data, used to convert `.doc` files).
+- `leap_utils/`: copy of the shared LEAP library (table writes and merges, quality checks).
+  Do not edit it in this repository.
 
 ### Documentation
 
-- `docs/` : [`lakebase_schema.md`](docs/lakebase_schema.md), colonnes du journal
-  Lakebase. C'est le seul document de référence de ce dossier.
-- `archive/` : documentation remplacée (`archive/docs/`, `archive/readmes/`).
-  Elle n'est jamais déployée.
+- `docs/`: [lakebase_schema.md](docs/lakebase_schema.md), the columns of the Lakebase tables.
+- `archive/`: superseded documentation (`docs/`, `readmes/`). Never deployed.
 
-Les dossiers `runbooks/`, `docs/` et `archive/` sont exclus de la synchronisation du
-bundle (`databricks.yml`) : ils ne sont pas lus à l'exécution.
+`runbooks/`, `docs/` and `archive/` are excluded from the bundle sync in `databricks.yml`:
+nothing reads them at run time.
 
-## Modèles et index
+## Models and indexes
 
-| Étape | Modèle ou index | Réglage |
+| Step | Model or index | Setting |
 |---|---|---|
-| Comparaison : analyse (résumé et tableau des changements) | Modèle configuré dans `app.yaml` | `COMPARE_ANALYSIS_ENDPOINT` |
-| Comparaison : recherche d'impact | Index Vector Search | `COMPARE_IMPACT_INDEX` |
-| Comparaison : jugement de chaque document candidat | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` |
-| Comparaison : résumé d'un document (texte, image) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |
-| Chat : réponse | `databricks-gpt-6-luna`, secours `databricks-gpt-5-6-luna` | `CHAT_LLM_ENDPOINT`, `CHAT_LLM_FALLBACK_ENDPOINTS` |
-| Chat : réécriture des requêtes | `databricks-gpt-6-luna`, secours `databricks-gpt-5-6-luna` ; sur toutes les cibles déployées, `databricks-gemini-3-1-flash-lite` | `CHAT_REWRITE_ENDPOINT`, `CHAT_REWRITE_FALLBACK_ENDPOINTS` |
-| Chat : pont de traduction (désactivé) | `databricks-gpt-5-6-luna` | `CHAT_TRANSLATE_ENDPOINT` |
-| Base : description des images (vision) | `databricks-gpt-5-6-luna` | `PARSING_LLM_ENDPOINT` |
-| Base : embeddings des passages | `databricks-qwen3-embedding-0-6b` (index géré par Databricks) | `embedding_model` (tâche `5_sync_index`) |
+| Comparison: analysis (summary and table of changes) | `databricks-claude-sonnet-4-6` (default; `databricks-gpt-5-6-luna` on UAT-TEST) | `COMPARE_ANALYSIS_ENDPOINT` |
+| Comparison: impact search | Vector Search index | `COMPARE_IMPACT_INDEX` |
+| Comparison: judgement of each candidate document | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` |
+| Comparison: single-document summary (text and images) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |
+| Chat: answer | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_LLM_ENDPOINT`, `CHAT_LLM_FALLBACK_ENDPOINTS` |
+| Chat: query rewrite | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna`; `databricks-gemini-3-1-flash-lite` on every deployed target | `CHAT_REWRITE_ENDPOINT`, `CHAT_REWRITE_FALLBACK_ENDPOINTS` |
+| Chat: translation bridge (disabled) | `databricks-gpt-5-6-luna` | `CHAT_TRANSLATE_ENDPOINT` |
+| Parsing: image description (vision) | `databricks-gpt-5-6-luna` | `PARSING_LLM_ENDPOINT` |
+| Parsing: passage embeddings | `databricks-qwen3-embedding-0-6b` | `embedding_model` of task `5_sync_index` |
 
-Les valeurs exactes par cible sont dans `app.yaml` et dans
-`utils/deploy/target_env.json`.
+The exact values per target are in `app.yaml` (defaults) and `utils/deploy/target_env.json`
+(per-target overrides).
 
-## Démarrage
+## Startup and access
 
-Au démarrage, l'application ouvre la connexion à Lakebase et charge le catalogue
-des documents, rechargé toutes les 30 minutes. Si Lakebase est injoignable,
-l'application fonctionne sans historique.
+At startup the app opens the Lakebase connection and loads the document catalog, which is
+reloaded every 30 minutes. If Lakebase cannot be reached, the app runs without history.
 
-## Accès
+The visitor's identity comes from the `x-forwarded-user` header set by Databricks Apps.
+Access is checked live, without an intermediate table: the app asks Databricks, on behalf of
+the visitor (on-behalf-of-user token), whether the visitor belongs to one of these account groups:
 
-L'identité du visiteur est fournie par Databricks Apps (en-tête
-`x-forwarded-user`). Les droits se vérifient en direct, sans table intermédiaire :
-l'application demande à Databricks, au nom du visiteur (jeton OBO), s'il
-appartient à l'un des groupes de compte autorisés :
-
-| Fonctionnalité | Groupes autorisés |
+| Feature | Account groups |
 |---|---|
-| Comparaison | `Role-Project-LEAP-End-users-Qualibot-DocCompare`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
+| Comparison | `Role-Project-LEAP-End-users-Qualibot-DocCompare`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
 | Chat | `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
 
-La vérification passe par un entrepôt SQL (`CAPS_WAREHOUSE_ID`, renseigné par
-cible dans `utils/deploy/target_env.json`). Le résultat est gardé
-`CAPS_TTL_S` secondes (600 par défaut). Sans jeton, sans entrepôt ou si la
-vérification échoue, l'accès est refusé, et l'échec n'est pas gardé en cache.
-`CAPS_BYPASS=true` ouvre les deux fonctionnalités à tous : ce réglage n'est
-activé que sur la cible DEV. En local (`ENV=development`), une requête sans en-tête
-d'identité est acceptée.
+The check runs a query on the SQL warehouse set in `CAPS_WAREHOUSE_ID`. Its result is cached
+for `CAPS_TTL_S` seconds (600 by default). Without a token, without a warehouse, or when the
+check fails, access is denied, and the failure is not cached. `CAPS_BYPASS=true` opens both
+features to every visitor; it is set on the DEV target only. In development (`ENV=development`),
+a request without the identity header is accepted.
 
 ## Configuration
 
-Trois sources, dans cet ordre de priorité :
+Three sources, in this order of priority:
 
-1. `utils/deploy/target_env.json` : surcharges par cible. Le script de
-   déploiement et le pipeline Bitbucket les écrivent dans `target_config.env`,
-   que `start.sh` charge au démarrage de l'application.
-2. `app.yaml` : valeur par défaut de chaque variable, avec un commentaire sur son
-   rôle. Les variables du chat, de la comparaison, de Lakebase et des droits y
-   sont.
-3. Le code : valeur de repli quand la variable est absente.
+1. `utils/deploy/target_env.json`: per-target overrides. The deploy script renders them into
+   `target_config.env`, which `start.sh` loads at startup.
+2. `app.yaml`: default value of each variable, with a comment on its role.
+3. The code: fallback value when a variable is absent.
 
-Le fichier `app.yaml` fait foi pour ce qui est déployé. Les valeurs par défaut du
-code peuvent différer, et les READMEs des fonctionnalités indiquent les deux.
+`app.yaml` is the default that is deployed; code defaults can differ.
 
-## Lancer en local
+## Running locally
 
-L'application locale appelle les vrais points d'accès Databricks sous votre
-identité : aucun déploiement n'est nécessaire.
+Local runs call the real Databricks endpoints under your own identity; no deployment is needed.
 
-1. Créer un fichier `.env.local` à la racine (ignoré par git). Y mettre
-   `ENV=development`, `DATABRICKS_CONFIG_PROFILE` (profil CLI de l'environnement
-   visé), `COMPARE_ENABLED=true`, `CHAT_ENABLED=true`, et les variables
-   `CHAT_INDEX`, `COMPARE_IMPACT_INDEX`, `LAKEBASE_PROJECT_ID`, `LAKEBASE_DATABASE`
-   avec les valeurs de la cible `uat-test` de `utils/deploy/target_env.json`.
-   `LAKEBASE_PROJECT_ID` se renseigne même en local : si le port 5432 est
-   fermé, la connexion échoue vite (`LAKEBASE_CONNECT_TIMEOUT_S`, 5 s) et
-   l'application fonctionne sans historique.
-2. Retirer `DATABRICKS_TOKEN` de l'environnement s'il est défini : il est prioritaire
-   sur le profil CLI. Sous PowerShell : `Remove-Item Env:\DATABRICKS_TOKEN`.
-3. Lancer le backend et le frontend, chacun dans son terminal :
+1. Install the Python project: `pip install -e ".[dev]"`.
+2. Create `.env.local` at the repository root (git-ignored) with:
+   - `ENV=development`
+   - `DATABRICKS_CONFIG_PROFILE`: the CLI profile of the environment you test against
+   - `COMPARE_ENABLED=true` and `CHAT_ENABLED=true`
+   - `CHAT_INDEX`, `COMPARE_IMPACT_INDEX` and `LAKEBASE_DATABASE`: the values of the
+     `qualibot-uat-test` target in `utils/deploy/target_env.json`
+   - `LAKEBASE_PROJECT_ID=qualibot`
+
+   `LAKEBASE_PROJECT_ID` is needed even locally. If port 5432 is closed, the connection fails
+   quickly (`LAKEBASE_CONNECT_TIMEOUT_S`, 5 seconds by default) and the app runs without history.
+3. Remove `DATABRICKS_TOKEN` from the environment if it is set: it takes precedence over the CLI
+   profile. In PowerShell: `Remove-Item Env:\DATABRICKS_TOKEN`.
+4. Start the backend and the frontend, each in its own terminal:
 
    ```
    python -m uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
@@ -156,11 +153,9 @@ identité : aucun déploiement n'est nécessaire.
    bun run dev
    ```
 
-   Le serveur de développement écoute sur `http://localhost:3000` et transmet
-   `/api` au port 8000. Ouvrir `/compare` ou `/chat`. Au démarrage, le backend
-   journalise `Starting in development mode` si `.env.local` est chargé.
-
-Dépendances Python : `pip install -r requirements.txt`.
+   The Vite dev server runs on `http://localhost:3000` and forwards `/api` (WebSockets included)
+   to port 8000. Open `/compare` or `/chat`. The backend logs `Starting in development mode`
+   when `.env.local` is loaded.
 
 ## Tests
 
@@ -168,12 +163,11 @@ Dépendances Python : `pip install -r requirements.txt`.
 python -m pytest
 ```
 
-La suite est dans `tests/` (`testpaths` dans `pyproject.toml`). Les appels à
-Databricks et aux modèles sont remplacés par des doubles ; les tests Spark sont
-ignorés si pyspark ou la JVM manquent. Chaque README de fonctionnalité indique
-les tests qui la couvrent.
+The suite is in `tests/` (`testpaths` in `pyproject.toml`). Calls to Databricks and to model
+endpoints are replaced by fakes. Spark-based tests are skipped when pyspark or a JVM is missing,
+and tests that need a local sample (`test_prompt/`, git-ignored) are skipped when it is absent.
 
-Le frontend se vérifie par le lint et le build :
+The frontend is checked by lint and build:
 
 ```
 cd client
@@ -181,86 +175,70 @@ bun run lint
 bun run build
 ```
 
-## Déploiement
+## Deployment
 
-| Environnement (`-AppEnv`) | Cible Databricks | Application | Profil CLI | Workspace |
+| Deploy script `-AppEnv` | Bundle target | Databricks app | CLI profile | Workspace |
 |---|---|---|---|---|
 | `dev` | `dev` | `qualibot` | `DEV` | `dbc-c623749d-731b` |
 | `uat` | `qualibot-uat` | `qualibot` | `UAT` | `dbc-3a17bfce-9e88` |
 | `uat-test` | `qualibot-uat-test` | `qualibot-uat-test` | `UAT` | `dbc-3a17bfce-9e88` |
 | `prod` | `qualibot-prod` | `qualibot` | `qualibot-prod` | `dbc-77b87d5a-6bcb` |
 
-Les hôtes complets sont dans `databricks.yml`. Le profil CLI de la cible doit
-être authentifié. Les étapes à faire dans Databricks (authentification, premier
-déploiement, jobs à lancer ou à activer, droits) sont dans
-[runbooks/uat.md](runbooks/uat.md) pour l'UAT, [runbooks/prod.md](runbooks/prod.md)
-pour la PROD et [runbooks/dev.md](runbooks/dev.md) pour la DEV.
+The full host names are in `databricks.yml`. The CLI profile of the target must be authenticated.
+The steps to perform in Databricks (authentication, first deployment, jobs to run or enable,
+grants) are in [runbooks/README.md](runbooks/README.md), with one runbook per environment
+(`runbooks/dev.md`, `runbooks/uat.md`, `runbooks/prod.md`). The working rules are in `CLAUDE.md`.
 
-Déploiement de l'application, à la racine du dépôt :
+The application is deployed from the repository root with `utils/deploy/deploy_qualibot.ps1`:
 
 ```powershell
 .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv prod
 ```
 
-Le script construit le frontend (`bun run build`), écrit `target_config.env`
-à partir de `target_env.json`, synchronise le code vers le workspace, démarre
-l'application si elle est arrêtée (`uat-test` se démarre à la main), puis la
-redéploie. Options :
+The script:
 
-- `-SkipBuild` : pas de reconstruction du frontend (changement Python seul) ;
-- `-SyncOnly` : synchronise le code sans redémarrer l'application ;
-- `-Infra` : applique aussi le bundle (`databricks bundle deploy`, ressources,
-  droits d'application et volumes). À utiliser quand les ressources ou les
-  droits changent.
+1. builds the frontend (`bun install`, `bun run build`);
+2. renders `target_config.env` from `utils/deploy/target_env.json`, then uploads the code to the
+   workspace (with `-Infra`, it runs `databricks bundle deploy` instead, for resources, app
+   permissions and volume bindings; this needs MANAGE on the catalog);
+3. checks the compute state of the app and starts it when it is stopped (the `uat-test` app is
+   never started by the script);
+4. deploys the app from the uploaded code.
 
-Pipeline Bitbucket (`bitbucket-pipelines.yml`) : un push sur `main` déploie
-l'UAT. Les autres cibles se déploient à la main, par les pipelines « custom ».
-PROD est déployé à la main, après l'UAT.
+Options: `-SkipBuild` skips the frontend build; `-SyncOnly` uploads the code only, without
+rebuilding the frontend and without restarting the app.
 
-## Ressources par environnement
+`bitbucket-pipelines.yml` runs the same bundle and app deployments in CI. Its custom pipelines
+are triggered by hand. A push to `main` deploys UAT, and PROD is a manual step after it.
 
-| Environnement | Tables (`<env>_proj.qualibot`) | Volume de l'application | Index du chat | Base Lakebase |
+### Resources per environment
+
+| Environment | Tables (`<env>_proj.qualibot`) | App volume | Chat index | Lakebase database |
 |---|---|---|---|---|
 | DEV | `dev_proj.qualibot` | `dev_proj.qualibot.doc_compare` | `dev_proj.qualibot.chunks_index` | `doccompare` |
 | UAT | `uat_proj.qualibot` | `uat_proj.qualibot.doc_compare` | `uat_proj.qualibot.chunks_index` | `doccompare` |
-| UAT-TEST | `uat_proj.qualibot`, suffixe `_test` | `uat_proj.qualibot.doc_compare_test` | `uat_proj.qualibot.chunks_index_test` | `doccompare_test` |
+| UAT-TEST | `uat_proj.qualibot`, `_test` suffix | `uat_proj.qualibot.doc_compare_test` | `uat_proj.qualibot.chunks_index_test` | `doccompare_test` |
 | PROD | `prod_proj.qualibot` | `prod_proj.qualibot.doc_compare` | `prod_proj.qualibot.chunks_index` | `doccompare` |
 
-Les tables Delta, les volumes et les index Vector Search sont dans le schéma
-`<env>_proj.qualibot`. La base Lakebase est celle du projet `qualibot`. La cible
-`uat-test` est un environnement de test isolé : elle ne touche ni aux données ni
-aux index de l'UAT.
+Delta tables, volumes and Vector Search indexes live in the schema `<env>_proj.qualibot`. The
+`uat-test` target is an isolated test environment: it touches neither the data nor the indexes of UAT.
 
-Tables de l'application dans Lakebase : `messages`, `feedbacks`, `llm_requests`,
-`errors` (comparaison et journal commun), `impact_requests`,
-`impact_document_results`, `impact_feedbacks`, `impact_cache`, `summary_cache`
-(comparaison), `chat_sessions`, `chat_messages`, `chat_feedbacks`, `chat_turns`,
-`chat_retrieved_chunks` (chat), `doc_catalog`, `catalog_metadata`, `users`.
-Le schéma est créé et complété par l'application au démarrage. Le détail des
-colonnes est dans [docs/lakebase_schema.md](docs/lakebase_schema.md).
-
-## Maintenance
-
-- Copier les tables Lakebase de l'UAT vers DEV, à partir d'un poste :
-  [`utils/lakebase_sync/README.md`](utils/lakebase_sync/README.md).
-- Alertes SQL de suivi (chat, parsing, erreurs, jobs) :
-  [`utils/alerts/README.md`](utils/alerts/README.md).
-- Outils, conventions et carte du dossier `utils/` :
-  [`utils/README.md`](utils/README.md).
+The application's Lakebase tables are `compare_messages`, `compare_feedbacks`, `llm_requests`,
+`app_errors`, `impact_requests`, `impact_document_results`, `impact_feedbacks`, `impact_cache`,
+`summary_cache`, `chat_sessions`, `chat_messages`, `chat_feedbacks`, `chat_turns`,
+`chat_retrieved_chunks`, `doc_catalog`, `catalog_metadata` and `users`. The application creates
+and completes this schema at startup. Column reference: [docs/lakebase_schema.md](docs/lakebase_schema.md).
 
 ## Documentation
 
-| Document | Contenu |
+| Document | Content |
 |---|---|
-| [client/src/components/chat/README.md](client/src/components/chat/README.md) | Chatbot : moteur, réponses, partage, journal, configuration |
-| [client/src/components/compare/README.md](client/src/components/compare/README.md) | Comparaison et recherche d'impact |
-| [utils/parsing_pipeline/README.md](utils/parsing_pipeline/README.md) | Chaîne de parsing et d'indexation |
-| [utils/README.md](utils/README.md) | Carte de `utils/` |
-| [utils/lakebase_sync/README.md](utils/lakebase_sync/README.md) | Export, import et mise à jour du schéma de Lakebase |
-| [utils/alerts/README.md](utils/alerts/README.md) | Alertes SQL |
-| [docs/lakebase_schema.md](docs/lakebase_schema.md) | Colonnes du journal Lakebase |
-| [runbooks/README.md](runbooks/README.md) | Index des étapes à réaliser dans Databricks |
-| [runbooks/retest.md](runbooks/retest.md) | Ce qu'il faut relancer après un changement de chemins ou de notebooks |
+| [client/src/components/chat/README.md](client/src/components/chat/README.md) | Chat feature |
+| [client/src/components/compare/README.md](client/src/components/compare/README.md) | Comparison and impact search |
+| [utils/parsing_pipeline/README.md](utils/parsing_pipeline/README.md) | Parsing and indexing pipeline |
+| [utils/README.md](utils/README.md) | Map of `utils/` |
+| [utils/lakebase_sync/README.md](utils/lakebase_sync/README.md) | Lakebase export, import and schema maintenance |
+| [utils/alerts/README.md](utils/alerts/README.md) | SQL alert queries |
+| [docs/lakebase_schema.md](docs/lakebase_schema.md) | Column reference of the Lakebase tables |
+| [runbooks/README.md](runbooks/README.md) | Index of the steps to perform in Databricks |
+| [runbooks/retest.md](runbooks/retest.md) | What to run again after a path or notebook change |

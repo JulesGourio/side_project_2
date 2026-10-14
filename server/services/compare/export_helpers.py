@@ -1,7 +1,6 @@
 """Pure export helper functions — no FastAPI / Databricks / asyncpg dependencies.
 
-Extracted here so the notebook (debug_prompt.ipynb) can import them directly
-without triggering the server-side import chain in routers/exports.py.
+Kept apart from routers/exports.py so importing them does not load the server import chain.
 """
 
 import base64

@@ -67,8 +67,8 @@ def file_type_of(filename: str) -> Optional[str]:
 def diff_truncation_warnings(messages: List[Dict[str, Any]]) -> List[str]:
     """A user-facing warning when truncate_diff() cut the diff sent to the LLM.
 
-    Without it the report silently stops partway through the document: the
-    truncation note only ever reached the model, never the reader.
+    Without it the report silently stops partway through the document: the truncation
+    note reaches only the model.
     """
     for msg in messages:
         content = msg.get('content')

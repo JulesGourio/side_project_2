@@ -55,7 +55,7 @@ def test_throttle_spaces_the_calls():
     throttle = chat_scorers.Throttle(2.0, clock=lambda: now[0], sleep=lambda s: slept.append(s))
     for _ in range(3):
         throttle.wait()
-    assert slept == [0.5, 1.0]                                      # 2 calls a second: the 2nd waits 0.5 s, the 3rd 1 s
+    assert slept == [0.5, 1.0]
 
 
 def test_rate_limited_calls_are_retried_with_doubling_waits():

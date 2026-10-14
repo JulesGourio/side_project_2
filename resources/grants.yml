@@ -7,8 +7,7 @@ targets:
       jobs:
 
         # Manual trigger. Grants the DEV app SP what it uses (catalog and schema usage, volumes, index),
-        # and the DEV SP itself SELECT + MODIFY on `pipeline_tables`. Edit the lists in base_parameters, deploy, run;
-        # re-run after recreating an index, a table or the app. LLM endpoints are never granted: every workspace user can already query them.
+        # and the DEV SP itself SELECT + MODIFY on `pipeline_tables`. LLM endpoints are never granted: every workspace user can already query them.
         grant_app_access_dev:
           name: "Z_1_Qualibot_Grant_App_Access_${bundle.target}"
           description: "Grant the DEV qualibot app SP its volumes and index, and the DEV job SP the pipeline tables. Manual trigger only."
@@ -22,7 +21,7 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
-            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP: the deploy runs as this SP, which updates jobs created by a person
               level: CAN_MANAGE
             - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
               level: CAN_MANAGE
@@ -56,8 +55,7 @@ targets:
     resources:
       jobs:
         # Manual trigger. Grants the qualibot-uat-test app SP USE CATALOG / USE SCHEMA on uat_proj.qualibot, SELECT on its
-        # index in uat_proj.qualibot. Run as job-runner-sa-uat, owner of uat_proj.qualibot. Re-run after
-        # recreating the index or the app.
+        # index in uat_proj.qualibot. Runs as job-runner-sa-uat, owner of uat_proj.qualibot.
         grant_app_access_uat_test:
           name: "Z_1_Qualibot_Grant_App_Access_${bundle.target}"
           description: "Grant the qualibot-uat-test app SP its index in uat_proj.qualibot. Manual trigger only."
@@ -98,8 +96,8 @@ targets:
                   - databricks-sdk>=0.118.0
 
 
-        # One-off admin utility, manual trigger, outside the daily chain.
-        # run_as job-runner-sa-uat cannot grant on the Intraqual source catalog: run it as the deploying user there.
+        # Admin utility, manual trigger, outside the daily chain.
+        # run_as job-runner-sa-uat cannot grant on the Intraqual source catalog, so the grant there needs the deploying user's rights.
         # It grants one specific SP. The `account users` USE CATALOG failure of `bundle deploy` needs a governance decision.
         grant_volume_access:
           name: "Z_1_Qualibot_Grant_Volume_Access_${bundle.target}"

@@ -1,19 +1,13 @@
-# Bitbucket Pipelines — QualiBOT (latec-compare)
+# Bitbucket Pipelines for QualiBOT (latec-compare)
 # =============================================================================
-# Déploiement du Databricks Asset Bundle sur DEV (manuel), UAT puis PROD.
+# Deploys the Databricks Asset Bundle to DEV, UAT and PROD.
 #
-# AUTH — chaque step reconstruit son profil (~/.databrickscfg) à partir de
-# variables d'environnement Bitbucket SÉCURISÉES, définies dans un environnement
-# de déploiement Bitbucket (Repository settings ▸ Deployments):
+# Each step writes ~/.databrickscfg from the secured DATABRICKS_TOKEN variable of its
+# Bitbucket deployment environment (Development, UAT, Production). DATABRICKS_HOST is
+# optional: each step carries the default host of its workspace.
 #
-#   DEV  (environnement "Development"): DATABRICKS_TOKEN = PAT du SP DEV fde6ff28-739f-4a41-b61e-604a298c8478
-#   UAT  (environnement "UAT")        : DATABRICKS_TOKEN = PAT du SP job-runner-sa-uat
-#   PROD (environnement "Production") : DATABRICKS_TOKEN = PAT du SP job-runner-sa-prod
-#   DATABRICKS_HOST (optionnel dans chaque env) — sinon le host par défaut est câblé ci-dessous.
-#
-# Les déploiements sont MANUELS (pipelines "custom") : on les déclenche
-# explicitement depuis l'UI Bitbucket (Pipelines ▸ Run pipeline) ou via l'API.
-# Rien ne part automatiquement.
+# Custom pipelines are triggered by hand. A push to main runs the UAT deployment, then
+# offers the PROD deployment as a manual step.
 # =============================================================================
 
 image: python:3.11-slim
@@ -21,12 +15,8 @@ image: python:3.11-slim
 definitions:
   steps:
     # -----------------------------------------------------------------------
-    # DEV — target dev / profil job-runner-sa-dev (SP DEV
-    # fde6ff28-739f-4a41-b61e-604a298c8478). Copie de l'UAT dans le workspace
-    # DEV. Variables dans l'environnement Bitbucket
-    # "Development" :
-    #   DATABRICKS_TOKEN (secured) — PAT du SP DEV
-    #   DATABRICKS_HOST  (optional) — défaut: https://dbc-c623749d-731b.cloud.databricks.com
+    # DEV: target dev, profile job-runner-sa-dev (DEV service principal
+    # fde6ff28-739f-4a41-b61e-604a298c8478). Copy of the UAT data in the DEV workspace.
     # -----------------------------------------------------------------------
     - step: &deploy-dev
         name: Deploy bundle to DEV (dev)
@@ -56,8 +46,8 @@ definitions:
           - databricks bundle run doc-compare -t dev -p job-runner-sa-dev
 
     # -----------------------------------------------------------------------
-    # DEV, jobs and notebooks only — same as deploy-dev without
-    # "bundle run doc-compare": the app is neither redeployed nor restarted.
+    # DEV jobs and notebooks only: same as deploy-dev without "bundle run doc-compare",
+    # so the app is neither redeployed nor restarted.
     # -----------------------------------------------------------------------
     - step: &deploy-dev-jobs
         name: Deploy jobs and notebooks to DEV, app untouched (dev)
@@ -86,10 +76,7 @@ definitions:
           - databricks bundle deploy   -t dev -p job-runner-sa-dev
 
     # -----------------------------------------------------------------------
-    # UAT — target qualibot-uat / profil job-runner-sa-uat.
-    # Variables dans l'environnement Bitbucket "UAT" :
-    #   DATABRICKS_TOKEN (secured) — PAT du SP job-runner-sa-uat
-    #   DATABRICKS_HOST  (optional) — défaut: https://dbc-3a17bfce-9e88.cloud.databricks.com
+    # UAT: target qualibot-uat, profile job-runner-sa-uat.
     # -----------------------------------------------------------------------
     - step: &deploy-uat
         name: Deploy bundle to UAT (qualibot-uat)
@@ -119,11 +106,9 @@ definitions:
           - databricks bundle run doc-compare -t qualibot-uat -p job-runner-sa-uat
 
     # -----------------------------------------------------------------------
-    # UAT, jobs and notebooks only — target qualibot-uat / profile job-runner-sa-uat.
-    # Same as deploy-uat without "bundle run doc-compare": the jobs, notebooks and
-    # other resources of the target are updated, but the app is neither redeployed
-    # nor restarted (its running code stays the one of the last deploy-uat).
-    # Can be run on any branch (Pipelines ▸ Run pipeline ▸ branch ▸ deploy-uat-jobs).
+    # UAT jobs and notebooks only: target qualibot-uat, profile job-runner-sa-uat.
+    # Same as deploy-uat without "bundle run doc-compare": the jobs, notebooks and other
+    # resources of the target are updated, but the app is neither redeployed nor restarted.
     # -----------------------------------------------------------------------
     - step: &deploy-uat-jobs
         name: Deploy jobs and notebooks to UAT, app untouched (qualibot-uat)
@@ -152,10 +137,9 @@ definitions:
           - databricks bundle deploy   -t qualibot-uat -p job-runner-sa-uat
 
     # -----------------------------------------------------------------------
-    # UAT-TEST — target qualibot-uat-test / profil job-runner-sa-uat (même SP
-    # que deploy-uat — a CAN_MANAGE sur l'app qualibot-uat-test).
-    # Cible jetable, isolée (own app, own Lakebase doccompare_test)
-    # — pas besoin d'environnement Bitbucket dédié, réutilise "UAT".
+    # UAT-TEST: target qualibot-uat-test, profile job-runner-sa-uat (same SP as deploy-uat,
+    # which holds CAN_MANAGE on the app qualibot-uat-test). Disposable, isolated target
+    # (own app, own Lakebase database doccompare_test); uses the UAT deployment environment.
     # -----------------------------------------------------------------------
     - step: &deploy-uat-test
         name: Deploy bundle to UAT-TEST (qualibot-uat-test)
@@ -185,10 +169,7 @@ definitions:
           - databricks bundle run doc-compare -t qualibot-uat-test -p job-runner-sa-uat
 
     # -----------------------------------------------------------------------
-    # PROD — target qualibot-prod / profil job-runner-sa-prod.
-    # Variables dans l'environnement Bitbucket "Production" :
-    #   DATABRICKS_TOKEN (secured) — PAT du SP job-runner-sa-prod
-    #   DATABRICKS_HOST  (optional) — défaut: https://dbc-77b87d5a-6bcb.cloud.databricks.com
+    # PROD: target qualibot-prod, profile job-runner-sa-prod.
     # -----------------------------------------------------------------------
     - step: &deploy-prod
         name: Deploy bundle to PROD (qualibot-prod)
@@ -218,10 +199,8 @@ definitions:
           - databricks bundle run doc-compare -t qualibot-prod -p job-runner-sa-prod
 
     # -----------------------------------------------------------------------
-    # One-off UAT -> PROD data migration (docling models volume + Lakebase).
-    # Runs entirely as job-runner-sa-uat / job-runner-sa-prod — no personal
-    # login role needed on either side. Staging files pass between the two
-    # steps via Bitbucket artifacts (deleted with the pipeline run).
+    # Copies the docling models volume and the Lakebase data from UAT to PROD, in two steps.
+    # Staging files pass between the steps as pipeline artifacts.
     # -----------------------------------------------------------------------
     - step: &export-from-uat
         name: "Sync prod data (1/2): export from UAT"
@@ -274,7 +253,7 @@ definitions:
           - python3 utils/lakebase_sync/import_lakebase_from_json.py --profile job-runner-sa-prod --in-dir staging/lakebase
 
 pipelines:
-  # Déclenchement MANUEL depuis l'UI Bitbucket (UAT d'abord, puis PROD).
+  # Manual triggers (UAT first, then PROD).
   custom:
     deploy-dev:
       - step: *deploy-dev
@@ -292,14 +271,14 @@ pipelines:
       - step: *export-from-uat
       - step: *import-to-prod
 
-  # Pipeline lancé à chaque push sur main : les steps s'exécutent dans l'ordre, et un step en échec
-  # arrête la suite (PROD ne part donc pas si UAT a échoué).
+  # Runs on every push to main: steps run in order, and a failing step stops the rest
+  # (PROD does not start if UAT failed).
   branches:
     main:
-      # Automatique : déploie l'UAT à chaque push sur main.
+      # Automatic: deploys UAT on every push to main.
       - step: *deploy-uat
-      # Manuel : apparaît comme un bouton dans l'UI Bitbucket une fois l'UAT vert. Bitbucket n'accepte pas un
-      # step manuel en premier, d'où le step UAT automatique avant. Il sert aussi de porte UAT -> PROD.
+      # Manual: available once UAT is green; it is the gate between UAT and PROD. A manual step
+      # cannot come first in a pipeline, hence the automatic UAT step before it.
       - step:
           <<: *deploy-prod
           trigger: manual

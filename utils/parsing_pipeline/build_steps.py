@@ -334,7 +334,7 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
     if RUN_MODE in ("incremental", "rechunk"):
         df_full_pipeline = df_full_pipeline.filter(F.col("IDDOC").isin(list(target_iddocs)))
     df_full_pipeline = with_fresh_business_metadata(df_full_pipeline)
-    # Real language (REF suffix, else the text): gd_doc has none, selection.py writes fr-FR for all.
+    # Real language (REF suffix, else the text): the manifest's langue is always fr-FR.
     df_full_pipeline = df_full_pipeline.withColumn(
         "langue", utils.language_udf(F.col("document_text"), F.col("ref")))
 

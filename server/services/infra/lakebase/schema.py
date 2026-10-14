@@ -15,7 +15,7 @@ async def _add_columns(conn, table: str, columns) -> None:
 
 
 async def ensure_schema(pool: asyncpg.Pool) -> None:
-    # DROP COLUMN only for obsolete columns that nothing reads or writes; never DROP TABLE or TRUNCATE.
+    # DROP COLUMN only for columns that nothing reads or writes; never DROP TABLE or TRUNCATE.
     # Lakebase rewrites the table, so it looks empty for a moment before the data is back.
     async with pool.acquire() as conn:
         # ── messages (primary history table) ─────────────────────────────────
@@ -170,9 +170,9 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             # What the user was shown (NULL: nothing, the request went on).
             ('user_message',   'TEXT'),
         ])
-        await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_created_at ON errors (created_at)')
-        await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_trace_id ON errors (trace_id)')
-        await conn.execute('CREATE INDEX IF NOT EXISTS idx_errors_fingerprint ON errors (fingerprint)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_app_errors_created_at ON app_errors (created_at)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_app_errors_trace_id ON app_errors (trace_id)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_app_errors_fingerprint ON app_errors (fingerprint)')
 
         # ── impact_requests (audit: every /compare/impact call, success or failure) ──
         await conn.execute('''
@@ -320,12 +320,11 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                 is_active     BOOLEAN NOT NULL DEFAULT TRUE
             )
         ''')
-        # Columns added to tables created by an older schema.
+        # Columns added to existing tables (idempotent).
         await _add_columns(conn, 'users', [
             ('workspace_id', 'TEXT'),
         ])
 
-        # Unused column, dropped when present.
         await conn.execute(
             "ALTER TABLE users DROP COLUMN IF EXISTS can_translate"
         )
@@ -440,7 +439,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_retrieved_chunks_ref ON chat_retrieved_chunks (ref)')
 
         # ── catalog_metadata ───────────────────────────────────────────
-        # Single-row table (id=1) holding the 'documents as of' date shown in the chat UI, updated by hand after each KB refresh.
+        # Single-row table (id=1) holding the 'documents as of' date shown in the chat UI.
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS catalog_metadata (
                 id              INTEGER PRIMARY KEY DEFAULT 1,
@@ -504,7 +503,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
 
         # ── Data migrations (idempotent — WHERE only matches rows in the composite format) ──
 
-        # 0. Drop obsolete columns (Lakebase rewrites the table — safe but transient empty state)
+        # 0. Drop unused columns (Lakebase rewrites the table: briefly empty).
         for _tbl, _col in [
             ('compare_messages', 'duration_s'),
             ('users',        'can_export'),
@@ -516,7 +515,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             except Exception as e:
                 logger.debug('Could not drop %s.%s: %s', _tbl, _col, e)
 
-        # 1. Trim trailing whitespace / \r\n from emails introduced by SCIM responses
+        # 1. Trim trailing whitespace and line breaks from emails.
         await conn.execute("UPDATE users SET email = BTRIM(email) WHERE email ~ '\\s'")
         await conn.execute("UPDATE users SET email = NULL WHERE TRIM(COALESCE(email,'')) = ''")
 

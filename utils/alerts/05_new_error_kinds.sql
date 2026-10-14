@@ -1,7 +1,7 @@
--- Error kinds (errors.fingerprint: same route + step + type + place in the code) seen in the last 24 h
+-- Error kinds (app_errors.fingerprint: same route + step + type + place in the code) seen in the last 24 h
 -- and never before: a new bug or a new failing dependency, not the usual noise. Warnings left out.
 -- Alert condition: new_error_kinds > 0. The custom template can list {{sample_errors}}.
--- Reads the Delta copy of errors (`lakebase_export_*` + import jobs): only as fresh as that copy.
+-- Reads the Delta copy of app_errors (`lakebase_export_*` + import jobs): only as fresh as that copy.
 WITH kinds AS (
   SELECT fingerprint,
          MIN(TRY_CAST(created_at AS TIMESTAMP)) AS first_seen,
@@ -9,7 +9,7 @@ WITH kinds AS (
          MAX_BY(CONCAT(COALESCE(endpoint, ''), ' | ', COALESCE(stage, ''), ' | ', COALESCE(error_type, ''), ' | ',
                        COALESCE(origin, ''), ' | ', LEFT(COALESCE(error_msg, ''), 120)),
                 TRY_CAST(created_at AS TIMESTAMP)) AS sample
-  FROM dev_proj.qualibot.errors
+  FROM dev_proj.qualibot.app_errors
   WHERE fingerprint IS NOT NULL AND COALESCE(severity, 'error') = 'error'
   GROUP BY fingerprint
 )

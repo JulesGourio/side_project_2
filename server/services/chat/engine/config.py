@@ -18,7 +18,7 @@ _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside 
 _DEFAULT_REWRITE_MAX_TOKENS = 2000
 _RERANK_TOP_K = 12               # reranked passages kept per query
 _RAW_TOP_K = 12                  # raw HYBRID passages per query (0 = reranked passages only)
-_PAIR_RERANK_TOP_K = 16          # two queries (the question and its translation) + one raw: the same 48 candidates as the rewrite
+_PAIR_RERANK_TOP_K = 16          # two reranked queries (question, translation) + one raw query: 48 candidates in all
 _PAIR_RAW_TOP_K = 16
 
 
@@ -110,7 +110,7 @@ def division_filter(division: str) -> Dict[str, Any]:
 
 
 def settings() -> Dict[str, Any]:
-    """What the engine runs with — saved with evaluation results."""
+    """What the engine runs with, recorded with each turn (chat_turns.config)."""
     return {'index': index_name(), 'llm': llm_endpoint(),
             'llm_fallbacks': chat_llm.answer_chain(llm_endpoint())[1:],
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),

@@ -70,14 +70,12 @@ def doc_to_text(doc_bytes: bytes, filename: str = 'document.doc') -> Optional[st
 
     Returns the text string on success, or None if all methods fail.
     """
-    # Method 1: antiword
     if _antiword_available():
         result = _antiword_extract(doc_bytes, filename)
         if result:
             return result
         logger.warning('antiword returned no text for %s, trying olefile fallback', filename)
 
-    # Method 2: olefile — directly reads the WordDocument OLE stream
     result = _olefile_extract(doc_bytes, filename)
     if result:
         return result

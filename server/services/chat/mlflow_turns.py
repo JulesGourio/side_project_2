@@ -60,9 +60,11 @@ def experiment_name() -> str:
 
 
 def _experiment_id(name: str) -> Optional[str]:
-    """Id of the experiment ``name``, looked up once it exists. Never created here: the experiment is created by the
-    ``create_chat_experiment`` job (owned by the job service principal, GenAI type). A missing one is looked up again
-    after a minute, so creating it needs no app restart."""
+    """Id of the experiment ``name``, looked up once it exists.
+
+    Never created here: the ``create_chat_experiment`` job creates it, as the job service principal.
+    A missing one is looked up again after a minute.
+    """
     with _lock:
         if _experiment.get(name):
             return _experiment[name]

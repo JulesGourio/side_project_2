@@ -48,8 +48,8 @@ targets:
               level: CAN_MANAGE
 
           job_clusters:
-            # No policy_id on the 3 clusters: the org's "Job Compute *" policies force SPOT_WITH_FALLBACK (spot-driver-reclaim risk
-            # on these single-node ON_DEMAND clusters) and none allows a GPU-ML spark_version.
+            # No policy_id on the 3 clusters: the org's "Job Compute *" policies force SPOT_WITH_FALLBACK, which can reclaim the driver
+            # of these single-node ON_DEMAND clusters, and none allows a GPU-ML spark_version.
             #
             # ── Small CPU cluster for the metadata tasks (1_categories, 2_manifest) ──
             # Delta/SQL work and one dbutils.fs.ls on the volume: no GPU or workers.

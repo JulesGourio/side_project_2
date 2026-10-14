@@ -18,7 +18,7 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
-            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP: the deploy runs as this SP, which updates jobs created by a person
               level: CAN_MANAGE
             - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
               level: CAN_MANAGE
@@ -62,7 +62,7 @@ targets:
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
-            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP — lets the Bitbucket deploy (run as this SP) update jobs a human created
+            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP: the deploy runs as this SP, which updates jobs created by a person
               level: CAN_MANAGE
             - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
               level: CAN_MANAGE

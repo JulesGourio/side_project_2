@@ -37,7 +37,6 @@ def _new_pdf(kind_label: str, title: str):
 
     class _Report(FPDF):
         def header(self):
-            # Thin accent stripe on every page.
             self.set_fill_color(*ACCENT)
             self.rect(0, 0, PAGE_W, 1.6, 'F')
             if self.page_no() == 1:

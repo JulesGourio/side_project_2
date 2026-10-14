@@ -181,13 +181,9 @@ def _with_parse_result(df, xml_only_col):
 def make_parse_fn(cluster_parallelism):
     """Build the per-batch parse function, closing over cluster_parallelism.
 
-    Partitioning strategy: one partition per file, capped at cluster
-    parallelism, so the ~2 concurrent GPU slots (1 task/GPU, enforced by
-    Databricks' GPU-ML runtime) are kept continuously fed from a fine-grained
-    queue instead of waiting on a few coarse partitions that each bundle many
-    files sequentially. PySpark reuses Python worker processes across tasks
-    by default, so Docling is still only imported once per worker even with
-    many small partitions.
+    One partition per file, capped at cluster parallelism: the GPU slots (one task per GPU) are fed from a
+    fine-grained queue instead of waiting on a few coarse partitions that each bundle many files. Python workers
+    are reused across tasks, so Docling is still imported once per worker.
     """
     def parse(df, file_count):
         partitions = max(1, min(file_count, cluster_parallelism))

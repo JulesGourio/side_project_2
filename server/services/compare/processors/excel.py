@@ -99,7 +99,6 @@ def _build_diff_keyed(
     out_parts: List[str] = [f'--- {old_name}', f'+++ {new_name}']
 
     for (sheet, old_header, old_data) in blocks:
-        # Find matching new block for this sheet
         new_block = next((b for b in new_blocks if b[0] == sheet), None)
         if new_block is None:
             out_parts.append(f'\n{sheet}: sheet removed entirely')
@@ -108,7 +107,6 @@ def _build_diff_keyed(
 
         headers = old_header.split('\t') if old_header else []
 
-        # Build key → cells dicts; check for usability as key
         def _parse_rows(rows: List[str]) -> Optional[Dict[str, List[str]]]:
             d: Dict[str, List[str]] = {}
             empty = 0
@@ -154,7 +152,6 @@ def _build_diff_keyed(
         removed_keys = sorted(old_keys - new_keys)
         common_keys  = old_keys & new_keys
 
-        # Detect volatile columns
         col_change: Dict[int, int] = {}
         for key in common_keys:
             o, n = old_rows[key], new_rows[key]
@@ -202,7 +199,6 @@ def _build_diff_keyed(
                 ]
                 out_parts.append(f'  - {key} | ' + ' | '.join(fields)[:300])
 
-        # Modified rows
         modified: List[Tuple[str, List[str]]] = []
         for key in sorted(common_keys):
             o, n = old_rows[key], new_rows[key]
@@ -220,7 +216,7 @@ def _build_diff_keyed(
             out_parts.append(f'\nMODIFIED rows ({len(modified)} with changes in retained columns):')
             for key, changes in modified:
                 out_parts.append(f'  ~ {key}:')
-                for ch in changes[:10]:  # cap at 10 fields per row
+                for ch in changes[:10]:
                     out_parts.append(f'    {ch[:200]}')
 
         if not added_keys and not removed_keys and not modified:

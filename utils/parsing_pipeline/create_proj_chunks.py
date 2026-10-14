@@ -52,7 +52,7 @@
 
 # MAGIC %md
 # MAGIC ## Config Standard Package Imports
-# MAGIC The pinned `opencv-python-headless` replaces the build Docling pulls in, which fails on the GPU runtime. Do not remove.
+# MAGIC The pinned `opencv-python-headless` replaces the build Docling pulls in, which fails on the GPU runtime.
 
 # COMMAND ----------
 
@@ -174,7 +174,7 @@ logger.info(
 # MAGIC # Inputs
 # MAGIC ## Import Qualibot tables
 # MAGIC ### Parse manifest
-# MAGIC One row per in-scope document, written by `2_manifest`. Run `create_proj_parse_manifest` first if it is not up to date.
+# MAGIC One row per in-scope document, written by `2_manifest`.
 
 # COMMAND ----------
 

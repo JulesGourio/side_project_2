@@ -1,13 +1,13 @@
 # Databricks notebook source
 # Loads only the chatbot-related JSON exports (chat_feedbacks, chat_messages,
-# chat_sessions, chat_turns, chat_retrieved_chunks, errors) from the UAT
+# chat_sessions, chat_turns, chat_retrieved_chunks, app_errors) from the UAT
 # staging volume into uat_proj.qualibot Delta tables.  Runs as a second
 # task in the lakebase_export_uat_to_volume job, right after the export task
 # that produces the JSON files.
 #
 # Consumers: the "Qualibot Usage Tracking" Lakeview dashboard (UAT workspace),
 # which reads uat_proj.qualibot.{chat_messages,chat_sessions,
-# chat_feedbacks}; chat_turns / chat_retrieved_chunks / errors for per-step
+# chat_feedbacks}; chat_turns / chat_retrieved_chunks / app_errors for per-step
 # durations, passages and failures.
 import os
 from pathlib import PurePosixPath

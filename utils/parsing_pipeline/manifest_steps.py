@@ -61,7 +61,7 @@ def _delete_iddocs(tables, iddocs):
 
 
 def doc_rows(table):
-    """IDDOC -> (ref, title) for every known document of a Intraqual document table."""
+    """IDDOC -> (ref, title) for every known document of an Intraqual document table."""
     return {
         r.IDDOC: (r.ref, r.titre)
         for r in (

@@ -180,7 +180,7 @@ Accorde les volumes, l'index et les tables de `dev_proj.qualibot` au SP de l'app
 databricks bundle run -t dev lakebase_import_uat_to_dev --profile DEV
 ```
 
-Recharge `messages`, `feedbacks`, `users`, `chat_*`… dans `dev_proj.qualibot` depuis le volume de staging.
+Recharge `compare_messages`, `compare_feedbacks`, `users`, `chat_*`… dans `dev_proj.qualibot` depuis le volume de staging.
 
 **00.7 — Contrôle**
 
@@ -325,7 +325,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   version à la trace (log `prompt … differs from the registered "deployed" version`).
 
 - [ ] **0.10 Déployer l'app** (un seul déploiement pour tout ; l'app crée ses nouvelles colonnes au démarrage — `chat_turns.mlflow_trace_id`,
-  `doc_catalog.revision`/`doc_date`, `errors.origin`/`fingerprint`/`user_message`… ; `CHAT_MLFLOW_EXPERIMENT` vient de
+  `doc_catalog.revision`/`doc_date`, `app_errors.origin`/`fingerprint`/`user_message`… ; `CHAT_MLFLOW_EXPERIMENT` vient de
   `utils/deploy/target_env.json`) :
 
   ```powershell
@@ -400,7 +400,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Attendu : une ligne par question (`ok` ou `degraded`, `aborted` si l'onglet est fermé avant la fin), une trentaine de passages par tour.
   Transmettre : une capture d'une trace ouverte, les trois résultats SQL, une capture de la réponse NDT. Si rien n'apparaît dans MLflow : les lignes
   `mlflow_turns:` des logs de l'app. Pour tester le message de repli « Qualibot is a bit tired… » : mettre temporairement un index inexistant
-  dans `CHAT_INDEX` pour `dev` (`utils/deploy/target_env.json`), redéployer, poser une question (attendu : une ligne `errors` `stage = search`),
+  dans `CHAT_INDEX` pour `dev` (`utils/deploy/target_env.json`), redéployer, poser une question (attendu : une ligne `app_errors` `stage = search`),
   puis remettre la valeur et redéployer.
 
 - [ ] **0.14 Notation des traces, à blanc puis réelle** — d'abord l'estimation (ne juge rien) :

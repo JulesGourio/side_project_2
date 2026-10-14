@@ -1,6 +1,4 @@
 ﻿# Databricks Asset Bundle (DABs) — QualiBOT
-#
-# Deploy via script: .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev|uat|uat-test|prod
 
 bundle:
   name: qualibot
@@ -389,7 +387,7 @@ targets:
           replace_existing: true
         # The app connects as its own service principal: grant it its own role.
         # postgres_role is hardcoded: an interpolated app SP id is unknown after apply, which would recreate this immutable role on unrelated app changes.
-        # Update it only if the app is recreated with a new SP (`databricks apps get qualibot`); prevent_destroy is the second safeguard.
+        # Update it only if the app is recreated with a new service principal; prevent_destroy is the second safeguard.
         app-service-principal:
           # role_id is a Databricks resource identifier (RFC1123, starts with a letter), not the SP UUID; the SP identity is postgres_role.
           role_id: "app-doc-compare-sp"
@@ -433,7 +431,7 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
-        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy (copy steps: runbooks/uat.md).
+        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy; the data copy steps are in runbooks/uat.md.
         qualibot_images:
           catalog_name: ${var.app_proj_catalog}
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
@@ -485,7 +483,7 @@ targets:
       # corpus on GPU (runbooks/uat.md). One index serves the chat and impact search.
       parsing_table_suffix: ""
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
-      # chunks_full is built but its index is not: add uat_proj.qualibot.chunks_full_index to parsing_vector_search_indexes to create and sync it.
+      # chunks_full is built, but chunks_full_index is not in parsing_vector_search_indexes, so it is neither created nor synced.
       parsing_build_chunks_full: "true"
       parsing_schedule_pause: "PAUSED"
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
@@ -496,7 +494,6 @@ targets:
   # Disposable test target: evaluates the chat without touching the real qualibot-uat app or its Lakebase data (own terraform state).
   # It does not declare postgres_projects/schemas/volumes (they exist, and this identity cannot grant on them).
   # No UC volume binding, so compare is disabled; Lakebase history stays off unless an admin grants the app SP access.
-  # Remove this target once the evaluation is done.
   # Test copy of the UAT chatbot: writes only uat_proj.qualibot.*_test (owned by job-runner-sa-uat),
   # the images_test volume, the chunks_index_test index and Lakebase doccompare_test — never anything the
   # running qualibot app or its parsing job read. runbooks/scripts/uat/setup_proj_schema.py copies the

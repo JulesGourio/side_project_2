@@ -128,7 +128,6 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
                 except Exception:
                     pass
 
-            # Fall back to directory listing
             if file_bytes is None:
                 try:
                     entries = list(w.files.list_directory_contents(session_path))
@@ -136,7 +135,7 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
                         name = getattr(entry, 'name', '') or ''
                         if name.startswith(f'{prefix}_') and not name.endswith('.md'):
                             file_bytes = _read_file(w, f'{session_path}/{name}')
-                            found_name = name[len(prefix) + 1:]  # strip prefix_
+                            found_name = name[len(prefix) + 1:]
                             break
                 except Exception:
                     pass

@@ -112,7 +112,7 @@ python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV
 # 3. export de la base Lakebase DEV vers le volume staging
 databricks bundle run lakebase_export_dev_to_volume -t dev --profile DEV
 
-# 4. import des tables de chat de l'UAT dans dev_proj.qualibot (chat_*, feedbacks...); n'écrit pas dans chunks
+# 4. import des tables de chat de l'UAT dans dev_proj.qualibot (chat_*, compare_feedbacks...); n'écrit pas dans chunks
 databricks bundle run lakebase_import_uat_to_dev -t dev --profile DEV
 
 # 5. notation : estimation seulement, aucun juge appelé
@@ -254,7 +254,7 @@ Les notebooks sont `create_proj_<asset>.py` et `update_proj_vector_indexes.py` d
 
 ## 4. Journal Lakebase des tours et des requêtes
 
-- [ ] App DEV redéployée, puis `runbooks/dev.md` 0.13 (requêtes `chat_turns`, `chat_retrieved_chunks`, `errors`) : une ligne `chat_turns` par question, passages dans `chat_retrieved_chunks`.
+- [ ] App DEV redéployée, puis `runbooks/dev.md` 0.13 (requêtes `chat_turns`, `chat_retrieved_chunks`, `app_errors`) : une ligne `chat_turns` par question, passages dans `chat_retrieved_chunks`.
 - [ ] Une comparaison + « Judge Impacted Docs », puis dans l'éditeur SQL Lakebase (base `doccompare`) :
 
   ```sql

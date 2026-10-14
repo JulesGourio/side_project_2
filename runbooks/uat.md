@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_full            DEEP CLONE u
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.eval_feedback_failures DEEP CLONE uat_landingzone.qualibot.eval_feedback_failures;
 ```
 
-Les tables chat (`chat_messages`, `chat_sessions`, `chat_feedbacks`, `chat_turns`, `chat_retrieved_chunks`, `errors`) ne se clonent pas : elles sont rechargées depuis Lakebase à l'étape 0.5.
+Les tables chat (`chat_messages`, `chat_sessions`, `chat_feedbacks`, `chat_turns`, `chat_retrieved_chunks`, `app_errors`) ne se clonent pas : elles sont rechargées depuis Lakebase à l'étape 0.5.
 
 Contrôle après clonage (doit donner les mêmes nombres que la source, à la date de copie près) :
 
@@ -162,7 +162,7 @@ GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA uat_proj.qualibot TO `<
 databricks bundle run -t qualibot-uat lakebase_export_uat_to_volume --profile UAT
 ```
 
-Ce job exporte Lakebase vers le volume, puis recharge `chat_*` et `errors` dans `uat_proj.qualibot`.
+Ce job exporte Lakebase vers le volume, puis recharge `chat_*` et `app_errors` dans `uat_proj.qualibot`.
 
 **0.6 — Contrôle avant déploiement**
 
@@ -480,7 +480,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
 
     Puis redémarrer l'app UAT (Apps → `qualibot` → Stop / Start), ou attendre 30 min. Vérifier comme `runbooks/dev.md` 0.11 et 0.13.
 
-  - [ ] **D5.8d. Alertes SQL** (workspace UAT, après D5.8b : les tables Delta `chat_turns` et `errors` doivent exister). Fichiers `utils/alerts/01` à `06`, mode d'emploi dans `utils/alerts/README.md`. Pour chacun : SQL Editor → coller la requête en remplaçant `dev_proj` par `uat_proj` → **Save** sous `Qualibot - <but>` (warehouse serverless) → **Create alert** :
+  - [ ] **D5.8d. Alertes SQL** (workspace UAT, après D5.8b : les tables Delta `chat_turns` et `app_errors` doivent exister). Fichiers `utils/alerts/01` à `06`, mode d'emploi dans `utils/alerts/README.md`. Pour chacun : SQL Editor → coller la requête en remplaçant `dev_proj` par `uat_proj` → **Save** sous `Qualibot - <but>` (warehouse serverless) → **Create alert** :
 
     | Fichier | Nom | Condition | Planning (Europe/Paris) |
     |---|---|---|---|

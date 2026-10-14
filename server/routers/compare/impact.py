@@ -211,7 +211,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
 
         duration_s = round(time.monotonic() - start, 2)
         documents = sort_documents(documents)
-        # Written before 'done' (a few ms): the client needs the id to attach feedback to this search.
+        # Written before 'done': the client needs the id to attach feedback to this search.
         request_id = await _audit(
             endpoint_name=_judges(),
             chunks_returned=plan.get('chunks_returned', 0), num_documents=len(documents),

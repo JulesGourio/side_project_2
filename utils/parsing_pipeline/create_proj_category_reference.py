@@ -13,7 +13,7 @@
 # MAGIC    `gd_doc_cat_latest` x `gd_cat_latest` (+ `DIVISION_ARCHIVE_TABLE` if enabled, empty by default).
 # MAGIC
 # MAGIC **Highlighted complexities:**
-# MAGIC The freshness guard fails the task after `category_reference` is built but before it is written, so a stale run leaves yesterday's table in place.
+# MAGIC The freshness guard fails the task after `category_reference` is built but before it is written, so a stale run leaves the previous table in place.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `1_categories`)
@@ -108,7 +108,7 @@ REQUIRED_SOURCES = [
 # MAGIC
 # MAGIC The category tables themselves are read inside `categories.build_division_reference()`, see Technical debt.
 # MAGIC
-# MAGIC `MAX_SOURCE_STALENESS_HOURS` set to 0 disables the guard (catch-up run after an ingestion outage).
+# MAGIC A `MAX_SOURCE_STALENESS_HOURS` of 0 disables the guard.
 
 # COMMAND ----------
 

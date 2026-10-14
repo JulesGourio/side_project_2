@@ -41,7 +41,7 @@ files_to_compare/
 debug_images/
 debug_results/
 sql_data/
-# utils/ : on versionne les .py (outils Databricks), on ignore les données générées
+# utils/: the .py tools are versioned; generated data is ignored
 utils/*.json
 utils/*.jsonl
 utils/*.csv
@@ -49,17 +49,17 @@ utils/lakebase_export/
 utils/temp_processed_files/
 lakebase_export/
 
-# Intraqual — données locales, ne pas versionner
+# Local Intraqual data: not versioned
 Intraqual_files/
 intraqual_downloads/
 intraqual_extracted/
 scripts/.intraqual_profile/
 
-# Données / feedbacks locaux
+# Local data and feedback
 user_feedbacks/
 test_prompt/
 
-# Fichiers Office et archives
+# Office files and archives
 *.xlsx
 *.xls
 *.zip
@@ -76,8 +76,8 @@ target_config.env
 # Generated typings (IDE stubs — not handwritten)
 typings/
 
-# Translator/ : dossier local d'un autre projet ; on ignore ses artefacts générés et binaires
-# (docx source et traduits, rapports HTML, workbench par job).
+# Translator/: local folder of another project; its generated artifacts and binaries are ignored
+# (source and translated .docx files, HTML reports, per-job workbench).
 Translator/reports/
 Translator/Sample Docs/
 Translator/Translated/

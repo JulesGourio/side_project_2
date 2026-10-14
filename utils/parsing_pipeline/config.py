@@ -122,8 +122,7 @@ ARCHIVE_NOTICE_CONTENT_TYPE = "archive_notice"
 ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
 
 # =============================================================================
-# Manual REF exclusions — reviewed by hand, add sparingly. Excluded permanently
-# as SKIPPED_REF_MANUAL by create_proj_parse_manifest.py.
+# Manual REF exclusions, recorded as SKIPPED_REF_MANUAL (permanent) by create_proj_parse_manifest.py.
 # =============================================================================
 MANUAL_REF_EXCLUSIONS = set()
 

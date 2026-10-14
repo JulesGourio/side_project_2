@@ -5,10 +5,7 @@ date metadata, synonym swaps). This test runs the noise detectors over the
 sample output(s) under test_prompt/ and fails if the noise level exceeds a
 budget — so a prompt change that re-introduces minor-wording rows is caught.
 
-Run only the detectors (no LLM, no token needed):
-    pytest tests/test_prompt_noise.py -v
-
-The thresholds below are budgets for the sample output; tighten them when the prompt improves.
+The thresholds below are budgets for that sample output.
 """
 
 import glob
@@ -36,7 +33,7 @@ def test_noise_within_budget(xlsx):
     for f in findings:
         by_cat.setdefault(f.category, []).append(f)
 
-    # Human-readable report on failure / with -s.
+    # Printed report, shown by pytest on failure.
     print(f'\n=== Noise report: {os.path.basename(xlsx)} ===')
     for cat, items in sorted(by_cat.items()):
         print(f'  {cat}: {len(items)}')

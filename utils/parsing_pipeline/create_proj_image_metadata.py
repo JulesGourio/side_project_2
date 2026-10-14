@@ -84,7 +84,7 @@ for _mod in cfg.WORKER_MODULES:
 
 # MAGIC %md
 # MAGIC ## Config Widgets
-# MAGIC `rebuild_image_chunks = true` rewrites the passage of EVERY described image from its stored description (new section, caption, long transcriptions split), without any LLM call. It is not needed after a FULL run of `3_parse`, which already empties the chunk tables.
+# MAGIC `rebuild_image_chunks = true` rewrites the passage of EVERY described image from its stored description (new section, caption, long transcriptions split), without any LLM call.
 # MAGIC
 # MAGIC `llm_fallback_endpoints` is a comma-separated list of vision endpoints tried, in order, after the primary `PARSING_LLM_ENDPOINT`. Each endpoint must take image input.
 

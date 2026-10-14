@@ -12,8 +12,7 @@ def test_bare_gpt_5_mini_does_not_support_temperature():
 
 
 def test_gpt_5_4_mini_still_supports_temperature():
-    # Distinct model, confirmed live to accept temperature=0 — the regex
-    # must not over-match and exclude it too.
+    # Distinct model that accepts temperature=0: the regex must not over-match it.
     assert supports_temperature('databricks-gpt-5-4-mini') is True
 
 

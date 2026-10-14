@@ -200,7 +200,7 @@ _STRIKETHROUGH_RE = re.compile(r'~~(.+?)~~', re.S)
 class _RelocationIndex:
     """The new document indexed once, to ask "does this removed text still exist somewhere?" per entry.
 
-    Built once per comparison: a SequenceMatcher per entry re-indexed the whole document (80% of the diff time).
+    Built once per comparison, not once per entry: re-indexing the whole document for each entry is the costly part.
     """
 
     def __init__(self, new_text: str) -> None:

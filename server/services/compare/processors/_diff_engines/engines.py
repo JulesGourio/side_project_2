@@ -24,8 +24,7 @@ from .relocation import (
 )
 from .text import SECTION_RE, inline_word_diff, is_substantive, is_substantive_keep_modals, strip_tag
 
-# Word similarity above which two unmatched paragraphs pair as one MODIFIED entry (below: REMOVED + ADDED). Tunable
-# for eval sweeps.
+# Word similarity above which two unmatched paragraphs pair as one MODIFIED entry (below: REMOVED + ADDED).
 _PAIR_RATIO_THRESHOLD = float(os.getenv('COMPARE_PAIR_RATIO_THRESHOLD', '0.55'))
 # The bare ALL-CAPS half of SECTION_RE, used to spot running headers/footers (company name, standard title, address)
 # that recur on every page and would each register as a new section.
