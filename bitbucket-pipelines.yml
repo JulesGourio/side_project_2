@@ -292,12 +292,14 @@ pipelines:
       - step: *export-from-uat
       - step: *import-to-prod
 
-  # Sur main : déploie UAT automatiquement, puis PROD sur déclenchement MANUEL.
-  # (Bitbucket interdit un 1er step manuel — d'où le step UAT auto en amont,
-  # qui sert aussi de porte de promotion UAT -> PROD.)
+  # Pipeline lancé à chaque push sur main : les steps s'exécutent dans l'ordre, et un step en échec
+  # arrête la suite (PROD ne part donc pas si UAT a échoué).
   branches:
     main:
+      # Automatique : déploie l'UAT à chaque push sur main.
       - step: *deploy-uat
+      # Manuel : apparaît comme un bouton dans l'UI Bitbucket une fois l'UAT vert. Bitbucket n'accepte pas un
+      # step manuel en premier, d'où le step UAT automatique avant. Il sert aussi de porte UAT -> PROD.
       - step:
           <<: *deploy-prod
           trigger: manual
