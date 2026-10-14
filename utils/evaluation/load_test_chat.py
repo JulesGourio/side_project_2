@@ -38,7 +38,6 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------
 
-dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 dbutils.widgets.dropdown('mode', 'auto', ['auto', 'app', 'engine'])
 dbutils.widgets.text('app_name', 'qualibot')
 dbutils.widgets.text('levels', '5,10,20,40,80')        # questions in progress at once, step after step

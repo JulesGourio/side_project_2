@@ -6,8 +6,6 @@ one level up is utils/). psycopg2 is imported lazily so notebooks that never tou
 from __future__ import annotations
 
 import datetime
-import json
-import subprocess
 from decimal import Decimal
 
 # ── Databricks CLI profiles ────────────────────────────────────────────────────
@@ -84,24 +82,6 @@ MIGRATE_TO_PROD_TABLE_ORDER = [
 ]
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
-
-def get_token(profile: str) -> str:
-    """Returns an OAuth JWT via the Databricks CLI for the given profile."""
-    result = subprocess.run(
-        ["databricks", "auth", "token", "--profile", profile],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to retrieve token (profile={profile}):\n{result.stderr.strip()}")
-    output = result.stdout.strip()
-    try:
-        token = json.loads(output).get("access_token", "")
-    except json.JSONDecodeError:
-        token = output
-    if not token:
-        raise RuntimeError(f"CLI returned an empty token (profile={profile}).")
-    return token
-
 
 def lakebase_connect_with(w, project_id: str, branch: str, endpoint: str, database: str):
     """psycopg2 connection to a Lakebase database, authenticated by generate_database_credential (as the app does).

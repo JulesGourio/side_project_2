@@ -114,8 +114,6 @@ env:
     value: "300"
   - name: COMPARE_ANALYSIS_CONNECT_TIMEOUT_S
     value: "30"
-  - name: COMPARE_ANALYSIS_RETRIES
-    value: "1"
   - name: COMPARE_MAX_TOKENS
     value: "16000"
   - name: COMPARE_THINKING_BUDGET

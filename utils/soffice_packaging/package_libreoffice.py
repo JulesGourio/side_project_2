@@ -83,9 +83,6 @@ def extract_deb(deb_bytes: bytes, dest: Path) -> None:
             stream = io.BytesIO(lzma.decompress(payload))
         elif name.endswith('.gz') or name.endswith('.tar'):
             stream = io.BytesIO(payload)
-        elif name.endswith('.zst'):
-            import zstandard  # only needed if TDF ever switches to zstd
-            stream = io.BytesIO(zstandard.ZstdDecompressor().decompress(payload, max_output_size=2**33))
         else:
             raise RuntimeError(f'unsupported data member {name}')
         with tarfile.open(fileobj=stream) as tar:

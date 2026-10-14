@@ -13,9 +13,6 @@ variables:
   app_name:
     default: "qualibot"
     description: "Unique name for the Databricks App"
-  app_volume_name:
-    description: "Name of the main storage volume"
-    default: doc_compare
   app_proj_catalog:
     description: "Catalog of every table of the app and of the pipeline, plus UC experiments, traces and eval assets"
     default: dev_proj
@@ -24,9 +21,6 @@ variables:
     default: qualibot
 
   # --- Parsing pipeline ---
-  parsing_node_type:
-    description: "(legacy) Node type for the parsing job cluster"
-    default: "r6idn.2xlarge"
   parsing_gpu_node_type:
     description: "GPU node type for the Docling parse cluster (g4dn.4xlarge = T4 64Go)"
     default: "g4dn.4xlarge"
@@ -328,10 +322,8 @@ targets:
           # The SP gets its grants from the grant_app_access_dev job below.
     variables:
       app_name: "qualibot"
-      app_volume_name: doc_compare
       app_proj_catalog: dev_proj
       app_proj_schema: qualibot
-      parsing_node_type: "r6idn.4xlarge"
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Same prod sources as UAT.
@@ -488,10 +480,8 @@ targets:
                 permission: WRITE_VOLUME
     variables:
       app_name: "qualibot"
-      app_volume_name: doc_compare
       app_proj_catalog: uat_proj
       app_proj_schema: qualibot
-      parsing_node_type: "r6idn.4xlarge"
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_bronze through the shared metastore.
@@ -525,10 +515,8 @@ targets:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
     variables:
       app_name: "qualibot-uat-test"
-      app_volume_name: doc_compare_test
       app_proj_catalog: uat_proj
       app_proj_schema: qualibot
-      parsing_node_type: "r6idn.4xlarge"
       # One GPU worker: after the clone only documents new since the last UAT run are parsed, the rest is re-chunked.
       parsing_num_workers: "1"
       parsing_run_mode: "incremental"
@@ -679,10 +667,8 @@ targets:
                 permission: WRITE_VOLUME
     variables:
       app_name: "qualibot"
-      app_volume_name: doc_compare
       app_proj_catalog: prod_proj
       app_proj_schema: qualibot
-      parsing_node_type: "r6idn.4xlarge"
       parsing_num_workers: "8"
       parsing_run_mode: "incremental"
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"

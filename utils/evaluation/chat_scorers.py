@@ -34,8 +34,6 @@ TARGET_SAMPLE_RATES: Dict[str, float] = {
 # Judges that read the passages sent (~27k tokens a turn): the ones that cost.
 CONTEXT_JUDGES = {'retrieval_groundedness', 'numeric_fidelity', 'honest_limits', 'retrieval_sufficiency',
                   'retrieval_relevance'}
-# Turns judged whatever the sample: a thumbs down, an error-free but degraded answer.
-ALWAYS_JUDGED_TAGS = ('degraded',)
 
 
 def _tag(trace, name: str) -> str:

@@ -188,24 +188,6 @@ def _active_fields():
     return fields
 
 
-def _csv_fieldnames():
-    """Colonnes du CSV dans l'ordre : Reference, [filename,] autres..., url."""
-    names = []
-    for col in COLUMNS:
-        if not COLUMNS[col]:
-            continue
-        if col == "Reference":
-            names.append("Reference")
-            if FETCH_FILENAMES:
-                names.append("filename")
-        elif col == "UrlLectureDocument":
-            names.append("url")
-        else:
-            names.append(col)
-    # Si Reference ou UrlLectureDocument était désactivé, on s'assure qu'on n'a pas de trou.
-    return names
-
-
 def _parse_cd(cd):
     """Extrait le nom de fichier d'un header Content-Disposition."""
     m = re.search(r"filename\*=(?:UTF-8'')?([^;]+)", cd, re.IGNORECASE)

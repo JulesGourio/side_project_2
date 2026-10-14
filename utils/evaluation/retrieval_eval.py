@@ -35,7 +35,6 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------
 
-dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 # What to measure, comma-separated: "label[=catalog.schema.index][|rerank=N][|raw=N][|cap=N]".
 # "chat" alone = the app as deployed. Index after a rechunk: "chat,rechunk=dev_proj.qualibot.chunks_test_index".
 # Search sizes (reranked / raw passages per query, cap on the merged list):
