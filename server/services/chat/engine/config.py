@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 _DIVISIONS = ('ALL', 'AS', 'IS')
 
-_DEFAULT_INDEX = 'dev_landingzone.qualibot.chunks_index'
+_DEFAULT_INDEX = 'dev_proj.qualibot.chunks_index'
 _DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'      # no Claude model in the chatbot (2026-10-08)
 _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside it
 _DEFAULT_REWRITE_MAX_TOKENS = 2000

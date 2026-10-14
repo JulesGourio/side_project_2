@@ -39,6 +39,172 @@ D ne se fait qu'après B, étape par étape, sur décision explicite.
 
 ## À faire
 
+### 0. Tables hors landingzone : migrer `uat_landingzone.qualibot` vers `uat_proj.qualibot`
+
+Règle : aucune table de qualibot dans `*_landingzone`. Les volumes (`doc_compare`, `images`, `staging`, `test`, `docling_models`) restent dans `uat_landingzone.qualibot`. Un index Vector Search ne se déplace pas : on le recrée sur la nouvelle table. Rien ici ne touche à l'app tant que tu n'as pas dit de déployer (étape 0.7).
+
+**0.1 — Inventaire (PowerShell, profil `UAT`)**
+
+```powershell
+databricks tables list uat_landingzone qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks vector-search-indexes list-indexes qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
+```
+
+**0.2 — Clonage des tables (SQL, éditeur SQL du workspace UAT, un utilisateur qui lit `uat_landingzone` et crée dans `uat_proj.qualibot`)**
+
+Pour chaque table listée en 0.1 dans `uat_landingzone.qualibot` (sauf les volumes et les `*_v1`), une ligne `DEEP CLONE`. Si la table sans suffixe n'existe pas, cloner la version `_v1` correspondante. Liste de référence (issue du code) :
+
+```sql
+CREATE SCHEMA IF NOT EXISTS uat_proj.qualibot;
+
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot._pipeline_checkpoint   DEEP CLONE uat_landingzone.qualibot._pipeline_checkpoint_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.processed_files        DEEP CLONE uat_landingzone.qualibot.processed_files_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.image_metadata         DEEP CLONE uat_landingzone.qualibot.image_metadata_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parse_manifest         DEEP CLONE uat_landingzone.qualibot.parse_manifest_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.category_reference     DEEP CLONE uat_landingzone.qualibot.category_reference_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parsing_run_health     DEEP CLONE uat_landingzone.qualibot.parsing_run_health_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.document_change_log    DEEP CLONE uat_landingzone.qualibot.document_change_log_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.audit_files_unified    DEEP CLONE uat_landingzone.qualibot.audit_files_unified_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks                 DEEP CLONE uat_landingzone.qualibot.chunks_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_archive         DEEP CLONE uat_landingzone.qualibot.chunks_archive_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_archive_notices DEEP CLONE uat_landingzone.qualibot.chunks_archive_notices_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_full            DEEP CLONE uat_landingzone.qualibot.chunks_full_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.synthetic_retrieval_questions_v2 DEEP CLONE uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.feedback_failure_cases DEEP CLONE uat_landingzone.qualibot.feedback_failure_cases;
+```
+
+Les tables chat (`chat_messages`, `chat_sessions`, `chat_feedbacks`, `chat_turns`, `chat_retrieved_chunks`, `errors`) ne se clonent pas : elles sont rechargées depuis Lakebase à l'étape 0.5.
+
+Contrôle des volumes après clonage (doit donner les mêmes nombres que la source, à la date de copie près) :
+
+```sql
+SELECT 'chunks' AS t, (SELECT count(*) FROM uat_landingzone.qualibot.chunks_v1) AS source, (SELECT count(*) FROM uat_proj.qualibot.chunks) AS copie;
+```
+
+**0.3 — Index Vector Search `uat_proj.qualibot.chunks_index`**
+
+Les index sont recréés, pas copiés. Le notebook `5_Sync_Vector_Indexes` crée l'index manquant avec le schéma voulu ; le plus sûr est de reprendre la définition de l'index actuel :
+
+```powershell
+databricks vector-search-indexes get-index uat_landingzone.qualibot.chunks_index --profile UAT -o json > chunks_index_def.json
+```
+
+Éditer `chunks_index_def.json` : remplacer `name` par `uat_proj.qualibot.chunks_index` et `primary_key`/`source_table` (le champ de la table source) par `uat_proj.qualibot.chunks`, puis :
+
+```powershell
+databricks vector-search-indexes create-index --json @chunks_index_def.json --profile UAT
+databricks vector-search-indexes sync-index uat_proj.qualibot.chunks_index --profile UAT
+```
+
+Si la CLI refuse le format (`create-index` attend un corps différent de `get-index`), ne pas forcer : l'index sera créé par le job parsing au déploiement (étape 0.7, `parsing_vector_search_indexes` pointe déjà sur `uat_proj`). Dans ce cas, ne pas déployer avant que l'index soit `ONLINE`.
+
+Même opération pour `chunks_full_index` si tu veux le garder (absent du déploiement aujourd'hui, voir `databricks.yml`).
+
+**0.4 — Droits (SQL, éditeur SQL du workspace UAT)**
+
+Remplacer `<APP_SP>` par le client ID de l'app : `databricks apps get qualibot --profile UAT -o json` (champ `service_principal_client_id`). Remplacer `<PIPELINE_SP>` par `3e5cd4e5-f765-4760-b974-ee7715258b39` (job-runner-sa-uat).
+
+```sql
+GRANT USE CATALOG ON CATALOG uat_proj TO `<APP_SP>`;
+GRANT USE SCHEMA ON SCHEMA uat_proj.qualibot TO `<APP_SP>`;
+GRANT SELECT ON TABLE uat_proj.qualibot.chunks_index TO `<APP_SP>`;
+
+GRANT USE CATALOG ON CATALOG uat_proj TO `<PIPELINE_SP>`;
+GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA uat_proj.qualibot TO `<PIPELINE_SP>`;
+```
+
+**0.5 — Tables chat depuis Lakebase (run ponctuel)**
+
+```powershell
+databricks bundle run -t qualibot-uat lakebase_export_uat_to_volume --profile UAT
+```
+
+Ce job exporte Lakebase vers le volume puis recharge `chat_*` et `errors` dans `uat_proj.qualibot` (le notebook d'import a désormais ce catalogue par défaut).
+
+**0.6 — Contrôle avant déploiement**
+
+```powershell
+databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks vector-search-indexes get-index uat_proj.qualibot.chunks_index --profile UAT -o json | ConvertFrom-Json | Select-Object name, status
+```
+
+Attendu : toutes les tables de 0.2 et les tables chat présentes, `status.ready` à `true` pour l'index.
+
+**0.7 — Déploiement (seulement après ton accord explicite)**
+
+Le déploiement UAT n'est jamais lancé sans ton accord (`CLAUDE.md`). Une fois donné :
+
+```powershell
+databricks bundle deploy -t qualibot-uat --profile UAT
+```
+
+Puis l'app pointe sur `uat_proj.qualibot.chunks_index` (`utils/deploy/target_env.json`). Vérifier le chat et la comparaison d'impact sur l'URL de l'app.
+
+**0.8 — Suppression du job de synchronisation des droits (user capabilities)**
+
+Le job `D_1_Qualibot_Sync_User_Capabilities_Uat_Test` disparaît du bundle `qualibot-uat-test` au déploiement (étape 0.9). Le job posé hors bundle, `qualibot-sync-user-capabilities-uat`, n'est plus déployé par aucun script : il faut le supprimer à la main.
+
+```powershell
+databricks jobs list --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.settings.name -match "Sync_User_Capabilities|sync-user-capabilities" } | ForEach-Object { "$($_.job_id) $($_.settings.name)" }
+```
+
+Pour chaque `job_id` affiché : `databricks jobs delete <JOB_ID> --profile UAT` (supprime le job, pas de données).
+
+Puis, dans l'éditeur SQL de la base Lakebase `doccompare` (projet `qualibot`, branche `production`), une fois que `qualibot-uat` n'utilise plus les colonnes :
+
+```sql
+ALTER TABLE users DROP COLUMN IF EXISTS can_chat, DROP COLUMN IF EXISTS can_compare, DROP COLUMN IF EXISTS groups;
+```
+
+Les droits sont désormais vérifiés à chaque requête par l'app (`is_account_group_member()` avec le token du visiteur, `CAPS_WAREHOUSE_ID` déjà renseigné sur `uat`, `uat-test` et `prod`). Après le déploiement, vérifier dans les logs de l'app l'absence de `live group check failed`.
+
+**0.9 — Déploiement du test (libre, cible jetable)**
+
+```powershell
+databricks bundle deploy -t qualibot-uat-test --profile UAT
+```
+
+**0.10 — Nettoyage de `dev_lab`**
+
+Rien ne doit vivre dans `dev_lab`. Vérifier, puis supprimer seulement après ton accord :
+
+```sql
+SHOW SCHEMAS IN dev_lab;
+SHOW TABLES IN dev_lab.lab_jules;
+```
+
+```sql
+DROP SCHEMA IF EXISTS dev_lab.lab_jules CASCADE;
+```
+
+(Les deux `DROP` détruisent les données : ne les lancer qu'après relecture de `SHOW TABLES`.)
+
+**0.11 — Suppression des tables legacy dans `uat_landingzone` (après validation complète)**
+
+Uniquement quand le chat, la comparaison d'impact, le parsing et le tableau de bord d'usage marchent depuis `uat_proj` :
+
+```sql
+DROP TABLE IF EXISTS uat_landingzone.qualibot.chunks_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.chunks_archive_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.chunks_archive_notices_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.chunks_full_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.processed_files_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.image_metadata_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.parse_manifest_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.category_reference_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.parsing_run_health_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.document_change_log_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.audit_files_unified_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot._pipeline_checkpoint_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.src_chunks_as_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.src_chunks_is_v1;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
+DROP TABLE IF EXISTS uat_landingzone.qualibot.feedback_failure_cases;
+```
+
+Puis `databricks vector-search-indexes delete-index uat_landingzone.qualibot.chunks_index_v1 --profile UAT` (et `chunks_as_index_v1`, `chunks_is_index_v1`, `chunks_index` s'ils existent encore après 0.3 : vérifier avec 0.1 avant).
+
 ### A. Valider l'app sur `qualibot-uat-test` (branche `audit/doc-compare`)
 
 App seule, pas de `-Infra` : aucune table, aucun index, aucun droit à créer.
@@ -214,7 +380,7 @@ prévenir, je change la valeur, vous redéployez.
   (`parsing_archive_max_docs` à `500`, puis `-1`), même procédure que B4.
 
 - [ ] **D2. Créer l'index complet pour l'impact search** (après D5) : je rajoute
-  `uat_landingzone.qualibot.chunks_full_index` à
+  `uat_proj.qualibot.chunks_full_index` à
   `parsing_vector_search_indexes` ; `bundle deploy` + un run le créent. Une fois
   l'index `ONLINE`, je bascule `COMPARE_IMPACT_INDEX` (uat + uat-test) dans
   `utils/deploy/target_env.json`, puis :
@@ -227,7 +393,7 @@ prévenir, je change la valeur, vous redéployez.
   En cas d'erreur 403 sur l'index :
 
   ```sql
-  GRANT SELECT ON TABLE uat_landingzone.qualibot.chunks_full_index TO `<application id du SP de l'app qualibot>`;
+  GRANT SELECT ON TABLE uat_proj.qualibot.chunks_full_index TO `<application id du SP de l'app qualibot>`;
   ```
 
 - [ ] **D3. Règle « documents archivés » dans le chatbot** (avant D4) : la règle écrite pour le
@@ -263,20 +429,20 @@ prévenir, je change la valeur, vous redéployez.
     job actuels gardent leurs tables jusqu'à D5.9), avec 60 jours d'historique :
 
     ```sql
-    CREATE TABLE uat_landingzone.qualibot._pipeline_checkpoint DEEP CLONE uat_landingzone.qualibot._pipeline_checkpoint_v1;
-    CREATE TABLE uat_landingzone.qualibot.processed_files      DEEP CLONE uat_landingzone.qualibot.processed_files_v1;
-    CREATE TABLE uat_landingzone.qualibot.image_metadata       DEEP CLONE uat_landingzone.qualibot.image_metadata_v1;
-    CREATE TABLE uat_landingzone.qualibot.parse_manifest       DEEP CLONE uat_landingzone.qualibot.parse_manifest_v1;
-    CREATE TABLE uat_landingzone.qualibot.category_reference   DEEP CLONE uat_landingzone.qualibot.category_reference_v1;
-    CREATE TABLE uat_landingzone.qualibot.parsing_run_health   DEEP CLONE uat_landingzone.qualibot.parsing_run_health_v1;
-    CREATE TABLE uat_landingzone.qualibot.document_change_log  DEEP CLONE uat_landingzone.qualibot.document_change_log_v1;
-    CREATE TABLE uat_landingzone.qualibot.audit_files_unified  DEEP CLONE uat_landingzone.qualibot.audit_files_unified_v1;
+    CREATE TABLE uat_proj.qualibot._pipeline_checkpoint DEEP CLONE uat_landingzone.qualibot._pipeline_checkpoint_v1;
+    CREATE TABLE uat_proj.qualibot.processed_files      DEEP CLONE uat_landingzone.qualibot.processed_files_v1;
+    CREATE TABLE uat_proj.qualibot.image_metadata       DEEP CLONE uat_landingzone.qualibot.image_metadata_v1;
+    CREATE TABLE uat_proj.qualibot.parse_manifest       DEEP CLONE uat_landingzone.qualibot.parse_manifest_v1;
+    CREATE TABLE uat_proj.qualibot.category_reference   DEEP CLONE uat_landingzone.qualibot.category_reference_v1;
+    CREATE TABLE uat_proj.qualibot.parsing_run_health   DEEP CLONE uat_landingzone.qualibot.parsing_run_health_v1;
+    CREATE TABLE uat_proj.qualibot.document_change_log  DEEP CLONE uat_landingzone.qualibot.document_change_log_v1;
+    CREATE TABLE uat_proj.qualibot.audit_files_unified  DEEP CLONE uat_landingzone.qualibot.audit_files_unified_v1;
     ```
 
     (Une table absente de D5.2 : sauter sa ligne.) Puis, pour chacune :
 
     ```sql
-    ALTER TABLE uat_landingzone.qualibot._pipeline_checkpoint SET TBLPROPERTIES (
+    ALTER TABLE uat_proj.qualibot._pipeline_checkpoint SET TBLPROPERTIES (
       'delta.deletedFileRetentionDuration' = 'interval 60 days', 'delta.logRetentionDuration' = 'interval 60 days');
     ```
 
@@ -290,7 +456,7 @@ prévenir, je change la valeur, vous redéployez.
     ```
 
     Le run écrit `chunks`, `chunks_archive`, `processed_files`, puis crée l'index
-    `uat_landingzone.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si
+    `uat_proj.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si
     la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`. Sa
     dernière tâche remplit aussi le catalogue des documents de l'app (table Lakebase `doc_catalog`
     de `doccompare` : REF, titre, lien). `qualibot-uat-test` (base `doccompare_test`) garde
@@ -307,7 +473,7 @@ prévenir, je change la valeur, vous redéployez.
     - `SELECT` sur l'index :
 
       ```sql
-      GRANT SELECT ON TABLE uat_landingzone.qualibot.chunks_index TO `<application id du SP de l'app qualibot>`;
+      GRANT SELECT ON TABLE uat_proj.qualibot.chunks_index TO `<application id du SP de l'app qualibot>`;
       ```
 
     - **Can Query** sur `databricks-gpt-6-luna` et `databricks-gpt-5-6-luna` (UI UAT → Serving →
@@ -339,7 +505,7 @@ prévenir, je change la valeur, vous redéployez.
     ```
 
     ```sql
-    SELECT COUNT(*) FROM uat_landingzone.qualibot.chat_retrieved_chunks;
+    SELECT COUNT(*) FROM uat_proj.qualibot.chat_retrieved_chunks;
     ```
 
     Le job de notation `D_1_Qualibot_Score_Production_Qa_Uat` n'est plus dans le bundle (son code est
@@ -393,8 +559,8 @@ prévenir, je change la valeur, vous redéployez.
     - renommer la table de questions d'évaluation :
 
       ```sql
-      ALTER TABLE uat_landingzone.qualibot.synthetic_retrieval_questions_v2
-        RENAME TO uat_landingzone.qualibot.synthetic_retrieval_questions;
+      ALTER TABLE uat_proj.qualibot.synthetic_retrieval_questions_v2
+        RENAME TO uat_proj.qualibot.synthetic_retrieval_questions;
       ```
 
     - **avant** de supprimer les index : vérifier qu'aucun job de notation déployé n'interroge encore

@@ -22,7 +22,6 @@ def save_image_to_volume(pil_img, volume_path: str, volume_base_path: str) -> tu
     resampling = getattr(Image.Resampling, IMAGE_RESAMPLING, Image.Resampling.LANCZOS)
     fmt = IMAGE_FORMAT.upper()
 
-    # Adjust file extension to match format
     base_path, _ = os.path.splitext(volume_path)
     ext = ".png" if fmt == "PNG" else ".jpg"
     volume_path = base_path + ext

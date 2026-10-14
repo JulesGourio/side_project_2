@@ -318,21 +318,13 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                 display_name  TEXT,
                 workspace_url TEXT,
                 role          TEXT NOT NULL DEFAULT \'user\',
-                is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-                can_compare   BOOLEAN NOT NULL DEFAULT TRUE,
-                can_chat      BOOLEAN NOT NULL DEFAULT TRUE
+                is_active     BOOLEAN NOT NULL DEFAULT TRUE
             )
         ''')
         # Migrations: add columns for databases created before these existed
         await _add_columns(conn, 'users', [
-            ('can_chat',     'BOOLEAN NOT NULL DEFAULT TRUE'),
             ('workspace_id', 'TEXT'),
         ])
-
-        # Migrations: add groups column (persistent group membership for traceability)
-        await conn.execute(
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS groups TEXT[] NOT NULL DEFAULT '{}'"
-        )
 
         # Translate lives in its own app (qualibot-translate): drop the unused column.
         await conn.execute(

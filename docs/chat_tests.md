@@ -98,7 +98,7 @@ Ils ne figurent plus dans le code.
 | Numéros de page et de slide | Le markdown exporté ne garde ni les pages des PDF ni les slides des PPTX ; il faudrait un marqueur de saut de page à l'export Docling (option `page_break_placeholder`, à vérifier) et un re-parsing GPU | Rien de codé |
 
 Pour mesurer une piste : construire un index de test en DEV, puis `retrieval_eval` avec
-`indexes = chat,essai=dev_landingzone.qualibot.<index de test>` et, si la recherche gagne, `pairwise_answers` avec le
+`indexes = chat,essai=dev_proj.qualibot.<index de test>` et, si la recherche gagne, `pairwise_answers` avec le
 même index en concurrent.
 
 ---
@@ -367,7 +367,7 @@ SELECT chunk_content_type,
        percentile(length(chunk_text), 0.9) AS p90_chars,
        max(length(chunk_text)) AS max_chars,
        round(avg(CASE WHEN length(chunk_text) > 2000 THEN 1 ELSE 0 END) * 100, 1) AS pct_over_2000_chars
-FROM dev_landingzone.qualibot.chunks
+FROM dev_proj.qualibot.chunks
 GROUP BY ALL ORDER BY passages DESC;
 ```
 
@@ -379,11 +379,11 @@ WITH expected AS (
   WHERE config = 'baseline'),
 indexed AS (
   SELECT DISTINCT regexp_replace(regexp_replace(upper(REF), '[-_. ]+(FR|EN|GB|MX|BG|CZ|BR|ES)$', ''), '[^A-Z0-9]', '') AS doc
-  FROM dev_landingzone.qualibot.chunks),
+  FROM dev_proj.qualibot.chunks),
 files AS (
   SELECT regexp_replace(regexp_replace(upper(ref), '[-_. ]+(FR|EN|GB|MX|BG|CZ|BR|ES)$', ''), '[^A-Z0-9]', '') AS doc,
          max(parse_status) AS parse_status, max(CAST(filtered_by_date AS INT)) AS before_2018, max(doc_date) AS doc_date
-  FROM dev_landingzone.qualibot.processed_files GROUP BY 1)
+  FROM dev_proj.qualibot.processed_files GROUP BY 1)
 SELECT e.source, e.doc, f.parse_status, f.before_2018, f.doc_date
 FROM expected e
 LEFT JOIN indexed i ON e.doc = i.doc
@@ -400,7 +400,7 @@ SELECT chunk_content_type,
        count_if(size(regexp_extract_all(chunk_text, '\\.{5,}\\s*\\d+', 0)) >= 3) AS toc_like,
        count_if(length(chunk_text) / greatest(chunk_token_count, 1) > 8) AS many_chars_per_token,
        count(*) AS passages
-FROM dev_landingzone.qualibot.chunks
+FROM dev_proj.qualibot.chunks
 GROUP BY ALL;
 ```
 
@@ -408,7 +408,7 @@ GROUP BY ALL;
 ```sql
 WITH paras AS (
   SELECT IDDOC, trim(p) AS para
-  FROM dev_landingzone.qualibot.chunks
+  FROM dev_proj.qualibot.chunks
   LATERAL VIEW explode(split(regexp_replace(chunk_text, '^\\[Source:[^\\]]*\\]\\s*', ''), '\n\n')) t AS p
   WHERE chunk_content_type <> 'image')
 SELECT left(para, 140) AS paragraph, count(DISTINCT IDDOC) AS documents
@@ -424,8 +424,8 @@ SELECT p.source_file_extension,
             WHEN c.semantic_headers LIKE '%Header 2%' THEN 2
             WHEN c.semantic_headers LIKE '%Header 1%' THEN 1 ELSE 0 END AS heading_depth,
        count(*) AS passages
-FROM dev_landingzone.qualibot.chunks c
-JOIN (SELECT DISTINCT IDDOC, source_file_extension FROM dev_landingzone.qualibot.processed_files) p USING (IDDOC)
+FROM dev_proj.qualibot.chunks c
+JOIN (SELECT DISTINCT IDDOC, source_file_extension FROM dev_proj.qualibot.processed_files) p USING (IDDOC)
 WHERE c.chunk_content_type <> 'image'
 GROUP BY ALL ORDER BY 1, 2;
 ```
@@ -434,8 +434,8 @@ GROUP BY ALL ORDER BY 1, 2;
 ```sql
 SELECT count(*) AS spreadsheets, count_if(n >= 100) AS at_cap
 FROM (SELECT c.IDDOC, count(*) AS n
-      FROM dev_landingzone.qualibot.chunks c
-      JOIN (SELECT DISTINCT IDDOC, source_file_extension FROM dev_landingzone.qualibot.processed_files) p USING (IDDOC)
+      FROM dev_proj.qualibot.chunks c
+      JOIN (SELECT DISTINCT IDDOC, source_file_extension FROM dev_proj.qualibot.processed_files) p USING (IDDOC)
       WHERE lower(p.source_file_extension) IN ('xlsx', 'xls', 'xlsm') AND c.chunk_content_type <> 'image'
       GROUP BY c.IDDOC);
 ```
@@ -443,7 +443,7 @@ FROM (SELECT c.IDDOC, count(*) AS n
 **Q7 — Couverture du corpus : statut de chaque document**
 ```sql
 SELECT parse_status, filtered_by_date, include_in_rag, count(*) AS documents
-FROM dev_landingzone.qualibot.processed_files
+FROM dev_proj.qualibot.processed_files
 GROUP BY ALL ORDER BY documents DESC;
 ```
 
@@ -451,7 +451,7 @@ GROUP BY ALL ORDER BY documents DESC;
 ```sql
 SELECT coalesce(nullif(regexp_extract(description, '^#\\s*\\[([A-Z_]+)\\]', 1), ''), label) AS category,
        count(*) AS images, round(avg(length(description))) AS avg_chars
-FROM dev_landingzone.qualibot.image_metadata
+FROM dev_proj.qualibot.image_metadata
 WHERE status = 'DONE'
 GROUP BY ALL ORDER BY images DESC;
 ```

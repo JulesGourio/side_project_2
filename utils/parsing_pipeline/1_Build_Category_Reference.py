@@ -126,7 +126,6 @@ else:
 
 # MAGIC %md
 # MAGIC # Data Preparation
-# MAGIC #N/A
 
 # COMMAND ----------
 

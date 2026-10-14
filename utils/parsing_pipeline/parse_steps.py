@@ -95,7 +95,7 @@ def resolve_parse_scope(df_business_meta):
                     .select("IDDOC", *[F.col(c).alias(f"_pf_{c}") for c in _STALENESS_COLS])
                     .dropDuplicates(["IDDOC"])
                 )
-                # _pf_<col> NULL = parsed before this column existed — can't tell if revised, don't flag.
+                # A NULL _pf_<col> has no value to compare with: revision cannot be told, so the IDDOC is not flagged.
                 is_revised = F.lit(False)
                 for c in _STALENESS_COLS:
                     is_revised = is_revised | (F.col(f"_pf_{c}").isNotNull() & ~F.col(c).eqNullSafe(F.col(f"_pf_{c}")))
@@ -465,7 +465,7 @@ def retry_failed_iddocs(df_matched_full, df_content, df_business_meta):
         logger.info("Nothing to retry.")
         return
 
-    # .ppt is a legitimate rank-2 candidate — image_utils._fallback_parse_ppt_legacy handles it.
+    # .ppt stays a rank-2 candidate: image_fallbacks.fallback_parse_ppt_legacy parses it.
     df_alt = (
         df_matched_full
         .filter(F.col("IDDOC").isin(failed_iddocs))

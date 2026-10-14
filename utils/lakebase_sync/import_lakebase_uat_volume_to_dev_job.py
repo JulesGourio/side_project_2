@@ -1,6 +1,6 @@
 # Databricks notebook source
 # Only consumer today: the "Qualibot Usage Tracking" Lakeview dashboard (DEV
-# workspace), which reads dev_landingzone.qualibot.{messages,feedbacks,users,
+# workspace), which reads dev_proj.qualibot.{messages,feedbacks,users,
 # chat_messages,chat_sessions,chat_feedbacks} written by this job.
 import os
 from pathlib import PurePosixPath
@@ -10,7 +10,7 @@ SOURCE_EXPORT_DIR = os.getenv(
     "SOURCE_EXPORT_DIR",
     "/Volumes/uat_landingzone/qualibot/staging/lakebase_export",
 )
-TARGET_CATALOG = os.getenv("TARGET_CATALOG", "dev_landingzone")
+TARGET_CATALOG = os.getenv("TARGET_CATALOG", "dev_proj")
 TARGET_SCHEMA = os.getenv("TARGET_SCHEMA", "qualibot")
 TABLES_TO_SKIP = {
     table.strip()
@@ -66,10 +66,8 @@ for entry in source_files:
         continue
 
     target_table = f"`{TARGET_CATALOG}`.`{TARGET_SCHEMA}`.`{table}`"
-    # Drop and recreate rather than rely on overwriteSchema: a column that was all NULL on a first run is inferred
-    # with a different type once real values appear,
-    # and overwriteSchema alone then fails with DELTA_FAILED_TO_MERGE_FIELDS. Each run replaces the table wholesale
-    # anyway.
+    # Drop and recreate, not overwriteSchema alone: a column that is all NULL in one export and typed in the next
+    # fails the merge (DELTA_FAILED_TO_MERGE_FIELDS). Each run replaces the table wholesale anyway.
     spark.sql(f"DROP TABLE IF EXISTS {target_table}")
     df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(target_table)
     loaded_tables += 1

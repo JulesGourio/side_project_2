@@ -46,7 +46,7 @@ dbutils.widgets.text('rounds', '4')                    # questions per worker at
 dbutils.widgets.text('timeout_s', '300')               # a question without an outcome after this = timeout
 dbutils.widgets.text('stop_error_pct', '50')           # stop after the first step above this failure rate
 dbutils.widgets.text('golden_table', 'dev_proj.qualibot.qualibot_eval_golden')
-dbutils.widgets.text('chat_table', 'dev_landingzone.qualibot.chat_messages')
+dbutils.widgets.text('chat_table', 'dev_proj.qualibot.chat_messages')
 dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_load_runs')
 
 import os, re, shlex, sys, json, time, random, asyncio

@@ -1,10 +1,9 @@
 """chunking.py — splits a parsed document (markdown) into indexable passages.
 
 Pure Python, no Spark/Docling import: unit-tested in tests/test_parsing_chunking.py and used
-by utils.chunk_document (pipeline). The DEV re-chunking experiment lives in git history
-(commit f545093, archive/evaluation/rechunk_experiment.py).
+by utils.chunk_document (pipeline).
 
-Rules (audit docs/chat_tests.md, § 5.2, P2–P9):
+Rules (docs/chat_tests.md, § 5.2, P2–P9):
 - the markdown is cut on headings of level 1–3 into sections; a passage never spans two
   sections of level 1 or 2 (P3) — except sections too small to stand alone (under a third of
   the minimum size), which join the next one;
@@ -218,7 +217,7 @@ def _tail(text: str, max_chars: int) -> str:
 def block_kind(text: str, path: Path, in_front_zone: bool) -> str:
     """'toc', 'front' (cover block, approval circuit, revision history) or 'content', for ONE
     block (paragraph or table). Passages never mix kinds, so a summary written right after the
-    cover block stays searchable (rechunk of 2026-10-08: whole passages were marked before)."""
+    cover block stays searchable."""
     titles = " ".join(t for _, t in path)
     leaders = len(_DOT_LEADER_RE.findall(text))
     numbered = len(_NUMBERED_PAGE_RE.findall(text))

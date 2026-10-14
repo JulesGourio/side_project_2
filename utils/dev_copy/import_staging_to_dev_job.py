@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # DEV copy (2/2) — load the UAT snapshot into `dev_landingzone.qualibot`
+# MAGIC # DEV copy (2/2) — load the UAT snapshot into `dev_proj.qualibot`
 # MAGIC
 # MAGIC **Description:**
 # MAGIC First task of the DEV job `Z_1_Qualibot_Copy_Uat_To_Dev` (`databricks.yml`,
@@ -8,8 +8,7 @@
 # MAGIC (UAT workspace) from the staging volume and recreates each table as
 # MAGIC `{TARGET_CATALOG_SCHEMA}.<table>{TABLE_SUFFIX}`, with the same table
 # MAGIC properties as the UAT tables: 60-day retention everywhere (see
-# MAGIC `utils/parsing_pipeline/README.md`, `uat-table-versions`, for the incident
-# MAGIC behind it) and Change Data Feed on `chunks` (required by a Delta Sync
+# MAGIC `utils/parsing_pipeline/README.md`) and Change Data Feed on `chunks` (required by a Delta Sync
 # MAGIC Vector Search index). The next tasks of the job create the endpoint and
 # MAGIC the index — no run of the parsing pipeline needed.
 # MAGIC
@@ -33,7 +32,7 @@ import os
 
 dbutils.widgets.removeAll()
 dbutils.widgets.text("SOURCE_DIR", "/Volumes/uat_landingzone/qualibot/staging/dev_copy")
-dbutils.widgets.text("TARGET_CATALOG_SCHEMA", "dev_landingzone.qualibot")
+dbutils.widgets.text("TARGET_CATALOG_SCHEMA", "dev_proj.qualibot")
 dbutils.widgets.text("TABLE_SUFFIX", "")
 dbutils.widgets.dropdown("OVERWRITE", "false", ["false", "true"])
 dbutils.widgets.text("SOFFICE_TARGET_DIR", "/Volumes/dev_landingzone/qualibot/doc_compare/libreoffice")

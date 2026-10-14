@@ -6,8 +6,7 @@
 # MAGIC Last link of the daily chain. Two writes to Lakebase:
 # MAGIC 1. `doc_catalog` rewritten from `parse_manifest` (every document in scope: REF, title, division, link, current revision and its date) and
 # MAGIC    `chunks` (`in_chat` = the document has passages in the chat index). The app reads it every 30 min (`server/services/infra/doc_catalog.py`):
-# MAGIC    links of the REFs cited in an answer, titles for the title lookup of the chat, revision and date given to the answer model with each
-# MAGIC    document, titles in impact search.
+# MAGIC    links of the REFs cited in an answer, titles in impact search, revision and date given to the answer model with each document.
 # MAGIC 2. `knowledge_base_metadata.documents_as_of` (today's date) and `updated_at` (now): the "documents as of" date shown in the chat UI toolbar
 # MAGIC    (`GET /config/knowledge-base-date`).
 # MAGIC
@@ -126,7 +125,6 @@ for table in (MANIFEST_TABLE, CHUNKS_TABLE):
 
 # MAGIC %md
 # MAGIC # Data Preparation
-# MAGIC #N/A
 
 # COMMAND ----------
 

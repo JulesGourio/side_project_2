@@ -9,7 +9,7 @@ WITH kinds AS (
          MAX_BY(CONCAT(COALESCE(endpoint, ''), ' | ', COALESCE(stage, ''), ' | ', COALESCE(error_type, ''), ' | ',
                        COALESCE(origin, ''), ' | ', LEFT(COALESCE(error_msg, ''), 120)),
                 TRY_CAST(created_at AS TIMESTAMP)) AS sample
-  FROM dev_landingzone.qualibot.errors
+  FROM dev_proj.qualibot.errors
   WHERE fingerprint IS NOT NULL AND COALESCE(severity, 'error') = 'error'
   GROUP BY fingerprint
 )

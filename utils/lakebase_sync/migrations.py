@@ -37,8 +37,8 @@ MIGRATIONS: list[tuple[str, str]] = [
         "glossary_terms.definition_source",
         "ALTER TABLE glossary_terms ADD COLUMN IF NOT EXISTS definition_source TEXT",
     ),
-    # ── Cleanup: dead tables left behind by feature removals ──────────────────
-    # Translate lives in its own app (qualibot-translate); chat_sources is superseded by chat_messages.sources_json.
+    # ── Cleanup: tables the app no longer uses ────────────────────────────────
+    # Translate lives in its own app (qualibot-translate); the chat's sources are in chat_messages.sources_json.
     ("drop translation_llm_calls", "DROP TABLE IF EXISTS translation_llm_calls CASCADE"),
     ("drop translation_questions", "DROP TABLE IF EXISTS translation_questions CASCADE"),
     ("drop translation_segments", "DROP TABLE IF EXISTS translation_segments CASCADE"),

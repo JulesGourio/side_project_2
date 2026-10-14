@@ -68,7 +68,7 @@ targets:
                 custom_tags:
                   ResourceClass: SingleNode
                 spark_env_vars:
-                  PARSING_CATALOG_SCHEMA:   ${var.app_write_catalog}.${var.app_write_schema}
+                  PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
@@ -100,7 +100,7 @@ targets:
                   spark.databricks.delta.optimizeWrite.enabled: "true"
                   spark.databricks.delta.autoCompact.enabled: "true"
                 spark_env_vars:
-                  PARSING_CATALOG_SCHEMA:   ${var.app_write_catalog}.${var.app_write_schema}
+                  PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
@@ -137,7 +137,7 @@ targets:
                 custom_tags:
                   ResourceClass: SingleNode
                 spark_env_vars:
-                  PARSING_CATALOG_SCHEMA:   ${var.app_write_catalog}.${var.app_write_schema}
+                  PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
@@ -223,7 +223,7 @@ targets:
                   # Only used if one of `indexes` doesn't exist yet and needs creating.
                   vector_search_endpoint: "qualibot"
                   embedding_model: "databricks-qwen3-embedding-0-6b"
-                  catalog_schema: ${var.app_write_catalog}.${var.app_write_schema}
+                  catalog_schema: ${var.app_proj_catalog}.${var.app_proj_schema}
                   table_suffix: ${var.parsing_table_suffix}
                   build_chunks_full: ${var.parsing_build_chunks_full}
               # Serverless: SDK calls, plus a MERGE into chunks_full when build_chunks_full is on or chunks_full_index is listed.
@@ -241,7 +241,7 @@ targets:
                   LAKEBASE_BRANCH: "production"
                   LAKEBASE_ENDPOINT: "primary"
                   LAKEBASE_DATABASE: ${var.parsing_lakebase_database}
-                  CATALOG_SCHEMA: ${var.app_write_catalog}.${var.app_write_schema}
+                  CATALOG_SCHEMA: ${var.app_proj_catalog}.${var.app_proj_schema}
                   TABLE_SUFFIX: ${var.parsing_table_suffix}
               # Serverless: classic job compute cannot reach the Lakebase private endpoint. Separate environment from "default" (psycopg2 is only needed here).
               environment_key: lakebase_env

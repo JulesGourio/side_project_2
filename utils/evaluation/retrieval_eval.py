@@ -13,11 +13,11 @@
 # MAGIC | `synthetic` | `dev_proj.qualibot.synthetic_retrieval_questions` | `positive_refs` (FULL), `partial_refs` reported apart |
 # MAGIC | `feedback` | `dev_proj.qualibot.feedback_failure_cases` | `extracted_expected_ref` (user-named document) |
 # MAGIC
-# MAGIC Caveat: synthetic positives were judged among the former Knowledge Assistant's own top-K, so
-# MAGIC they lean toward what it retrieved; compare runs with each other, per source.
+# MAGIC Caveat: synthetic positives were judged among the top-K of another retriever, so they lean toward
+# MAGIC it; compare runs with each other, per source.
 # MAGIC
 # MAGIC Same steps as the app: history, translation bridge, date, then `engine.retrieve_for_turn`
-# MAGIC (rewrite, 3 queries, REF and title lookups). What is compared: the **index** (the chat's own,
+# MAGIC (rewrite, 3 queries, REF lookup). What is compared: the **index** (the chat's own,
 # MAGIC or one built with another chunking) and the **search sizes** (reranked / raw passages per
 # MAGIC query, cap on the merged list) — widget `indexes`. Questions
 # MAGIC already saved in `results_table` for a label are skipped. Results of every test so far:
@@ -38,7 +38,7 @@ APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 # What to measure, comma-separated: "label[=catalog.schema.index][|rerank=N][|raw=N][|cap=N]".
-# "chat" alone = the app as deployed. Index after a rechunk: "chat,rechunk=dev_landingzone.qualibot.chunks_test_index".
+# "chat" alone = the app as deployed. Index after a rechunk: "chat,rechunk=dev_proj.qualibot.chunks_test_index".
 # Search sizes (reranked / raw passages per query, cap on the merged list):
 # "chat,rerank-only|raw=0,raw5|raw=5,cap40|cap=40"; raw search on the French rewrite only: "rawfr|rawon=fr".
 # Opening message only translated, searched with two queries (translate=on; the app's default is off) against the rewrite:
@@ -143,7 +143,7 @@ from datetime import datetime, timezone
 
 from databricks.sdk import WorkspaceClient
 
-# Re-run after a -SyncOnly: drop the app modules Python kept from the previous run.
+# Drop the app modules imported by an earlier run, so the current app code is loaded.
 for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
     del sys.modules[_m]
 
@@ -156,9 +156,8 @@ from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _strip_division, _trim
 from server.services.infra.doc_catalog import canon_ref
 from server.services.chat.translation_bridge import translate_question_to_en
 
-# Each question runs in its own event loop (asyncio.run in a thread): the bridge's shared
-# httpx client is bound to the first loop and fails in the others ("Event loop is closed",
-# empty error) — the question was then searched untranslated. One client per call here.
+# The bridge's shared httpx client is bound to the first event loop, and each question runs in its own
+# loop (asyncio.run in a thread): one client per call.
 import httpx as _httpx
 from server.services.chat import translation_bridge as _tb
 _tb._get_http_client = lambda: _httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
@@ -228,8 +227,8 @@ if 'feedback' in SOURCES:
         expected = _refs(re.split(r'[,;\s]+', r['extracted_expected_ref']))
         if expected and r['question']:
             CASES.append({'source': 'feedback', 'case_id': str(r['message_id']), 'division': (r['division'] or 'ALL').upper(),
-                          # Questions of the former Knowledge Assistant carry its "[Division: AS] (system
-                          # routing note…)" prefix: the app no longer sends it, the eval mustn't either.
+                          # Some stored questions carry a "[Division: …] (system routing note…)" prefix that the app
+                          # does not send: strip it here too.
                           'messages': [{'role': 'user', 'content': _strip_division(r['question'])}],
                           'expected': expected, 'partial': []})
 _by_source = {}

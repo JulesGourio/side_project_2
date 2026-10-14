@@ -4,7 +4,7 @@
 -- Reads the Delta copy of chat_turns (`lakebase_export_*` + import jobs): only as fresh as that copy.
 WITH turns AS (
   SELECT status, warnings
-  FROM dev_landingzone.qualibot.chat_turns
+  FROM dev_proj.qualibot.chat_turns
   WHERE status IN ('ok', 'degraded', 'error')
     AND TRY_CAST(created_at AS TIMESTAMP) >= current_timestamp() - INTERVAL 1 DAY
 ),

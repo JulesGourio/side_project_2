@@ -123,9 +123,6 @@ targets:
     resources:
       jobs:
 
-        # sync_user_capabilities_uat is not in the bundle: its run_as lacks USE SCHEMA on system.access, and a non-admin deployer can only set run_as to itself.
-        # A CoreDev member deploys it directly: utils/deploy/deploy_sync_user_capabilities_uat_personal.py.
-
         # ── App off-hours (UAT) ─────────────────────────────────────────────
         # Generic notebook utils/app_mgmt/stop_start_app_job.py; run_as job-runner-sa-uat holds CAN_MANAGE on the app (declared in databricks.yml,
         # the block is the full desired state). Only qualibot has a start job (weekend pair below); qualibot-uat-test has its own nightly stop,

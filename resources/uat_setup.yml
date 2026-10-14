@@ -1,6 +1,6 @@
 # Rehearsal of the UAT switch to the new chatbot on qualibot-uat-test (see databricks.yml).
 # Manual trigger. Creates the pipeline volume and deep-clones the parsing state tables of the running UAT
-# (uat_landingzone.qualibot.*_v1, read only) into uat_proj.qualibot with the `_test` suffix, so the first
+# (uat_proj.qualibot.*_v1, read only) into uat_proj.qualibot with the `_test` suffix, so the first
 # parsing run re-chunks from the checkpoint instead of reparsing the corpus on GPU. Run as job-runner-sa-uat:
 # the SP owns everything it creates. An existing table is kept unless the overwrite parameter is "true".
 
@@ -30,7 +30,7 @@ targets:
                 notebook_path: ../utils/uat_setup/setup_proj_schema.py
                 source: WORKSPACE
                 base_parameters:
-                  target_catalog_schema: ${var.app_write_catalog}.${var.app_write_schema}
+                  target_catalog_schema: ${var.app_proj_catalog}.${var.app_proj_schema}
                   target_suffix: ${var.parsing_table_suffix}
                   source_catalog_schema: "uat_landingzone.qualibot"
                   source_suffix: "_v1"

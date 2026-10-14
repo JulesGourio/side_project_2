@@ -48,13 +48,11 @@ def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCH
     df_doc_cat = normalize_cols_upper(spark.read.table(GD_DOC_CAT_LATEST))
     df_cat = normalize_cols_upper(spark.read.table(GD_CAT_LATEST)).filter(F.col("IDLG") == idlg)
 
-    # Flag principal category
     df_doc_cat = df_doc_cat.withColumn(
         "est_principale",
         F.when(F.lower(F.col("PRINCIPALE")) == "oui", True).otherwise(False)
     )
 
-    # Build initial hierarchy (leaf level)
     df_hierarchy = (
         df_doc_cat
         .join(df_cat.select("IDCAT", "IDPERE", "NIVEAU", "NOMCAT"), on="IDCAT", how="inner")
@@ -71,7 +69,6 @@ def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCH
         )
     )
 
-    # Walk up the tree following IDPERE
     for _ in range(max_depth - 1):
         df_parent = df_cat.select(
             F.col("IDCAT").alias("parent_idcat"),
@@ -107,7 +104,6 @@ def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCH
             .drop("parent_idcat", "parent_idpere", "parent_niveau", "parent_nomcat")
         )
 
-    # Determine root category (NIVEAU=1) and derive division
     df_hierarchy = df_hierarchy.withColumn(
         "root_idcat",
         F.expr("get(filter(categories, x -> x.niveau = 1), 0).idcat")
@@ -126,7 +122,6 @@ def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCH
          .otherwise(F.lit("AUTRE"))
     ).drop("_root_nomcat")
 
-    # Extract raw level names
     for niv in range(1, max_depth + 1):
         df_hierarchy = df_hierarchy.withColumn(
             f"raw_niv{niv}",
@@ -163,7 +158,6 @@ def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCH
             )
         )
 
-    # Final selection
     hierarchy_cols = ["IDDOC", "est_principale", "division"] + \
                      [f"niveau_plus_{niv}" for niv in range(1, max_depth)]
     raw_cols = [f"raw_niv{niv}" for niv in range(1, max_depth + 1)]

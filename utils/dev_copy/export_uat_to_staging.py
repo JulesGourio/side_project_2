@@ -10,7 +10,7 @@
 # MAGIC `uat_landingzone.qualibot.staging`, the volume the DEV workspace can
 # MAGIC already read (`lakebase_import_uat_to_dev` reads it the same way). The DEV
 # MAGIC side (`import_staging_to_dev_job.py`) then recreates the tables in
-# MAGIC `dev_landingzone.qualibot` and builds the Vector Search indexes, so the
+# MAGIC `dev_proj.qualibot` and builds the Vector Search indexes, so the
 # MAGIC DEV parsing pipeline never needs a full (GPU) run.
 # MAGIC
 # MAGIC Read-only on the UAT tables. Overwrites `{OUTPUT_DIR}` on every run.
@@ -31,12 +31,10 @@ import os
 from datetime import datetime, timezone
 
 dbutils.widgets.removeAll()
-dbutils.widgets.text("SOURCE_CATALOG_SCHEMA", "uat_landingzone.qualibot")
-# UAT table names carry no suffix once OPERATIONS.md D5 renamed them; "_v1" before.
+dbutils.widgets.text("SOURCE_CATALOG_SCHEMA", "uat_proj.qualibot")
 dbutils.widgets.text("TABLE_SUFFIX", "")
-# Chunk table (source of the Vector Search index) + parsing pipeline
-# state (so the first DEV run is incremental). Archive tables (pre-2018 test
-# phase) deliberately left out.
+# Chunk table (source of the Vector Search index) and parsing pipeline state
+# (so the first DEV run is incremental). Archive tables are left out on purpose.
 dbutils.widgets.text(
     "TABLES",
     "chunks,"

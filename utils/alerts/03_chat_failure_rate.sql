@@ -11,7 +11,7 @@ WITH stats AS (
     COUNT_IF(status = 'ok' AND sources_json IS NULL) AS zero_doc_responses,
     ROUND(COUNT_IF(status = 'error') * 100.0 / NULLIF(COUNT(*), 0), 1) AS http_error_rate_pct,
     ROUND(COUNT_IF(status = 'ok' AND sources_json IS NULL) * 100.0 / NULLIF(COUNT(*), 0), 1) AS zero_doc_rate_pct
-  FROM dev_landingzone.qualibot.chat_messages
+  FROM dev_proj.qualibot.chat_messages
   WHERE role = 'assistant' AND status != 'aborted'
     AND TRY_CAST(created_at AS TIMESTAMP) >= current_timestamp() - INTERVAL 1 HOUR
 )

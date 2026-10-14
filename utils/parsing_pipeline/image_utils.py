@@ -148,7 +148,6 @@ def extract_images_from_doc(doc, doc_id: str, volume_base_path: str,
         if t.prov:
             texts_by_page[t.prov[0].page_no].append(t)
 
-    # Hash + dedup pass.
     t_hash = time.perf_counter()
     hash_to_pages: Dict[str, set] = {}
     pic_cache = []

@@ -3,12 +3,11 @@
 # MAGIC # Grant Volume Access
 # MAGIC
 # MAGIC One-off admin utility: grants USE CATALOG + USE SCHEMA + READ VOLUME on a
-# MAGIC single volume to a service principal. Mirrors the sps_rfq_analysis bundle's
-# MAGIC `Grant_Reference_Access` job (job_id 538456350455869) — same pattern
-# MAGIC (run_as a service principal that already has grant authority on the target
-# MAGIC catalog), extended to volumes since that job only handles tables.
+# MAGIC single volume to a service principal. Same pattern as the `Grant_Reference_Access`
+# MAGIC job of the sps_rfq_analysis bundle (run_as a service principal that already has grant
+# MAGIC authority on the target catalog), extended to volumes.
 # MAGIC
-# MAGIC Immediate use case: `job-runner-sa-uat` needs READ VOLUME on
+# MAGIC Used for: `job-runner-sa-uat` needs READ VOLUME on
 # MAGIC `prod_landingzone.intraqual.intraqual_documents` to run
 # MAGIC `utils/parsing_pipeline/2_Cleanup_Volume.py` (`dbutils.fs.ls` on that
 # MAGIC volume) under `run_as` in the qualibot-uat/-test bundle targets.

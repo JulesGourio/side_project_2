@@ -1,6 +1,5 @@
 """config.py — Single source of truth for all pipeline parameters.
 
-This file is the version deployed with the Declarative Automation Bundle.
 Each parameter can be overridden via environment variables (set in the Job task
 configuration or via spark.conf) so that dev / uat / prod targets diverge
 without touching this file.
@@ -44,13 +43,13 @@ INGESTION_FRESHNESS_TABLE = _env("PARSING_INGESTION_FRESHNESS_TABLE",
 MAX_SOURCE_STALENESS_HOURS = int(_env("PARSING_MAX_SOURCE_STALENESS_HOURS", "36"))
 
 # --- Qualibot perimeter (scope gate) ---
-# Do not add difftotale=1 back (excludes legitimate docs); v_qualibot_latest's MV returns only the latest delta, not full scope.
+# No difftotale=1 here: it drops documents the portal shows. The v_qualibot_latest view only returns the latest delta, not the full scope.
 DOC_SCOPE_FILTER = _env(
     "PARSING_DOC_SCOPE_FILTER",
     "courant = 1 AND etat = 7 AND nonvisible = 0",
 )
 
-# --- Legacy fallbacks (disabled by default) ---
+# --- Optional fallbacks (disabled by default) ---
 # Empty = disabled. Kept as variables to re-enable via --var if a gap shows up.
 GD_DOC_FALLBACK          = _env("PARSING_GD_DOC_FALLBACK",          "")
 DIVISION_ARCHIVE_TABLE   = _env("PARSING_DIVISION_ARCHIVE_TABLE",   "")
@@ -175,7 +174,7 @@ def _detect_gpu():
 _use_gpu_env = _os.environ.get("PARSING_USE_GPU")
 USE_GPU = (_use_gpu_env.strip().lower() in ("1", "true", "yes")) if _use_gpu_env else _detect_gpu()
 DO_OCR                  = False
-# Docling's own EasyOCR re-parse is off: it never beat the plain parse (0 of ~18k docs).
+# Docling's own EasyOCR re-parse is off: it gains nothing over the plain parse.
 # Scanned pages go through the LLM-OCR fallback below instead.
 GPU_OCR_FALLBACK        = False
 TABLE_STRUCTURE_MODE    = "accurate"   # "accurate" | "fast"
@@ -194,9 +193,7 @@ IMAGE_FORMAT        = "PNG"     # PNG = lossless, no compression artifacts on te
 # tiktoken (cl100k) is more accurate than CHARS_PER_TOKEN for technical French; falls back to it if unavailable offline.
 USE_TIKTOKEN        = True
 CHARS_PER_TOKEN     = 3.5
-# Passage sizes (chunking.py), overridable per run. 150 / 300 / 450 tokens and 1,600 characters found 80.9 % of the
-# expected documents against 75.8 % for
-# 250 / 500 / 1000 / 4000, with half the context (retrieval_eval, 65 questions; docs/chat_tests.md § 5.6).
+# Passage sizes (chunking.py), overridable per run. Chosen on the retrieval eval (see docs/chat_tests.md).
 MIN_CHUNK_TOKENS    = int(_env("PARSING_MIN_CHUNK_TOKENS", "150"))
 TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "300"))
 MAX_CHUNK_TOKENS    = int(_env("PARSING_MAX_CHUNK_TOKENS", "450"))
@@ -213,7 +210,7 @@ LLM_MODEL_ENDPOINT  = _env("PARSING_LLM_ENDPOINT", "databricks-gpt-5-6-luna")
 LLM_MAX_TOKENS      = 5000    # GPT-5 reasoning tokens need headroom beyond the visible output
 LLM_TEMPERATURE     = 1.0   # gpt-5 family: temperature=1 only
 LLM_MAX_RETRIES     = 5
-LLM_MAX_CONCURRENT  = 10   # 20 ran out of memory on the single-node m5d.xlarge
+LLM_MAX_CONCURRENT  = 10   # Memory of the single-node m5d.xlarge caps the concurrency
 # Kept below the batch size that destabilizes the kernel.
 LLM_BATCH_SIZE      = int(_env("PARSING_LLM_BATCH_SIZE", "6000"))
 
@@ -274,7 +271,7 @@ Do NOT copy or paraphrase the CONTEXT text: if everything you could write is alr
 # --- LLM-OCR fallback for scanned PDFs ---
 # Triggers when Docling still yields near-empty text: pages are rendered to images and queued through the same
 # PENDING-image pipeline with the prompt below (full transcription, never SKIP).
-# Below 150 characters, digital PDFs that Docling barely parses stayed SUCCESS with no indexed content.
+# Below this length the parse counts as a scan: a digital PDF with almost no text would otherwise stay SUCCESS with nothing indexed.
 LLM_OCR_TEXT_THRESHOLD = int(_env("PARSING_LLM_OCR_TEXT_THRESHOLD", "150"))
 LLM_OCR_MAX_PAGES      = int(_env("PARSING_LLM_OCR_MAX_PAGES", "100"))
 # Full-page transcription needs more than the shared LLM_MAX_TOKENS.

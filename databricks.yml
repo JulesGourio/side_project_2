@@ -14,20 +14,20 @@ variables:
     default: "qualibot"
     description: "Unique name for the Databricks App"
   app_write_catalog:
-    description: The write catalog
-    default: dev_lab
+    description: "Catalog of the volumes (doc_compare, images, staging, test). Tables live in app_proj_catalog."
+    default: dev_landingzone
   app_write_schema:
-    description: The write schema
-    default: lab_jules
+    description: "Schema of the volumes, inside app_write_catalog"
+    default: qualibot
   app_volume_name:
     description: "Name of the main storage volume"
     default: doc_compare
   app_proj_catalog:
-    description: "Project catalog (UC experiments, traces, eval assets)"
-    default: ${var.app_write_catalog}
+    description: "Catalog of every table of the app and of the pipeline, plus UC experiments, traces and eval assets"
+    default: dev_proj
   app_proj_schema:
-    description: "Project schema inside app_proj_catalog"
-    default: ${var.app_write_schema}
+    description: "Schema of the tables, inside app_proj_catalog"
+    default: qualibot
 
   # --- Parsing pipeline ---
   parsing_node_type:
@@ -176,7 +176,7 @@ resources:
 targets:
   # ---------------------------------------------------------------------------
   # DEV target: full copy of qualibot-uat in the DEV workspace (steps in operations_dev.md).
-  # Own app, Lakebase project, Vector Search endpoint and dev_landingzone.qualibot tables, loaded from a UAT snapshot (copy_uat_to_dev).
+  # Own app, Lakebase project, Vector Search endpoint and dev_proj.qualibot tables, loaded from a UAT snapshot (copy_uat_to_dev).
   # Every new schedule is PAUSED. run_as is the DEV service principal: job-runner-sa-uat is UAT-scoped and silently ignored here.
   # The in-app group check is off for this target only: CAPS_BYPASS in utils/deploy/target_env.json.
   # ---------------------------------------------------------------------------
@@ -350,7 +350,7 @@ targets:
       parsing_offline_models_path: "/Volumes/dev_landingzone/qualibot/docling_models/docling_models"
       # Real tables, no suffix. One index serves the chat (division filter) and impact search.
       parsing_table_suffix: ""
-      parsing_vector_search_indexes: "dev_landingzone.qualibot.chunks_index"
+      parsing_vector_search_indexes: "dev_proj.qualibot.chunks_index"
       # PAUSED on purpose — unpause only on explicit decision.
       parsing_schedule_pause: "PAUSED"
       parsing_lakebase_database: "doccompare"
@@ -517,8 +517,8 @@ targets:
       # Real tables, no suffix: copy the former _v1 state tables to these names (OPERATIONS.md D5.3) BEFORE the next deploy,
       # or the daily run reparses the whole corpus on GPU. One index serves the chat and impact search.
       parsing_table_suffix: ""
-      parsing_vector_search_indexes: "uat_landingzone.qualibot.chunks_index"
-      # chunks_full is built but its index is not: append uat_landingzone.qualibot.chunks_full_index above to create and sync it.
+      parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
+      # chunks_full is built but its index is not: append uat_proj.qualibot.chunks_full_index above to create and sync it.
       parsing_build_chunks_full: "true"
       parsing_schedule_pause: "UNPAUSED"
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
@@ -533,7 +533,7 @@ targets:
   # Rehearsal of the UAT switch to the new chatbot: writes only uat_proj.qualibot.*_test (owned by job-runner-sa-uat),
   # the images_test volume, the chunks_index_test index and Lakebase doccompare_test — never anything the running
   # qualibot app, its agents or its parsing job read. setup_proj_schema (resources/uat_setup.yml) deep-clones the
-  # parsing state from uat_landingzone.qualibot.*_v1 (read only), so the first run re-chunks without a GPU reparse.
+  # parsing state from uat_proj.qualibot.*_v1 (read only), so the first run re-chunks without a GPU reparse.
   qualibot-uat-test:
     workspace:
       host: https://dbc-3a17bfce-9e88.cloud.databricks.com
@@ -699,6 +699,8 @@ targets:
       app_write_catalog: prod_landingzone
       app_write_schema: qualibot
       app_volume_name: doc_compare
+      app_proj_catalog: prod_proj
+      app_proj_schema: qualibot
       parsing_node_type: "r6idn.4xlarge"
       parsing_num_workers: "8"
       parsing_run_mode: "incremental"
@@ -709,4 +711,4 @@ targets:
       # Same Lakebase database the deployed qualibot-prod app reads and writes (LAKEBASE_DATABASE in app.yaml).
       parsing_lakebase_database: "doccompare"
       # 5_sync_index creates the index on its first run if it does not exist.
-      parsing_vector_search_indexes: "prod_landingzone.qualibot.chunks_index"
+      parsing_vector_search_indexes: "prod_proj.qualibot.chunks_index"

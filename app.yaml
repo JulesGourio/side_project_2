@@ -23,7 +23,7 @@ env:
   # documents named by REF or title, answer by GPT-6 Luna. One index for every division (AS / IS = filter on `division`);
   # per-target index: utils/deploy/target_env.json.
   - name: CHAT_INDEX
-    value: "dev_landingzone.qualibot.chunks_index"
+    value: "dev_proj.qualibot.chunks_index"
   # No Claude model in the chatbot: GPT-6 Luna answers and rewrites, GPT-5.6 Luna is the fallback of both.
   - name: CHAT_LLM_ENDPOINT
     value: "databricks-gpt-6-luna"
@@ -58,11 +58,11 @@ env:
   # Empty = off. The experiment must exist (utils/evaluation/create_chat_experiment.py); per-target value in utils/deploy/target_env.json.
   - name: CHAT_MLFLOW_EXPERIMENT
     value: ""
-  # How long can_chat / can_compare stay cached per user; sync_user_capabilities.py changes apply after the next cache miss.
+  # How long can_chat / can_compare stay cached per user.
   - name: CAPS_TTL_S
     value: "600"
-  # SQL warehouse for the live is_account_group_member() check (server/services/infra/user.py); empty = off, falls back to the Lakebase table.
-  # Set per target in utils/deploy/target_env.json.
+  # SQL warehouse for the is_account_group_member() check run on behalf of the visitor (server/services/infra/user.py).
+  # Required on every target except DEV, which bypasses the check. Set per target in utils/deploy/target_env.json.
   - name: CAPS_WAREHOUSE_ID
     value: ""
   # "true" skips the group check: every visitor gets chat + compare. DEV only, via utils/deploy/target_env.json.
@@ -77,7 +77,7 @@ env:
   # retrieved passages and returns every conflicting passage with a verbatim quote (client/src/components/compare/README.md).
   # Per-target index in utils/deploy/target_env.json; the target once built is chunks_full_index (pre-2018 archive included).
   - name: COMPARE_IMPACT_INDEX
-    value: "dev_landingzone.qualibot.chunks_index"
+    value: "dev_proj.qualibot.chunks_index"
   # gpt-5-4-mini matched Claude Sonnet's verdicts on real UAT data and 2 trap candidates, at ~11x lower cost; gemini-3-1-flash-lite gave false positives.
   - name: COMPARE_IMPACT_ENDPOINT
     value: "databricks-gpt-5-6-luna"
@@ -150,7 +150,7 @@ env:
   - name: DATABRICKS_WAREHOUSE_ID
     value: "13eff4a6095513cb"
   # COMPARE_VOLUME_PATH: volume path for saving / restoring comparison files, empty = disabled. Set per environment in the Databricks App UI:
-  #   dev : /Volumes/dev_lab/lab_jules/doc_compare
+  #   dev : /Volumes/dev_landingzone/qualibot/doc_compare
   #   uat : /Volumes/uat_landingzone/qualibot/doc_compare
   #   prod: /Volumes/prod_landingzone/qualibot/doc_compare
   - name: COMPARE_VOLUME_PATH

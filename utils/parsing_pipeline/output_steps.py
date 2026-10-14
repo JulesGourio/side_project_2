@@ -29,9 +29,7 @@ def _merge_image_metadata(df_image_metadata):
     tokens only take the fresh value when the existing row isn't already
     DONE/SKIPPED."""
     if not spark.catalog.tableExists(TARGET_IMAGE_METADATA_TABLE):
-        # First-ever write on a fresh catalog (e.g. a brand-new environment with
-        # no promoted checkpoint) — DeltaTable.forName() requires the table to
-        # already exist, so there's nothing to MERGE into yet.
+        # First write into an empty catalog: DeltaTable.forName() needs the table to exist before a MERGE.
         write_table(df_image_metadata, TARGET_IMAGE_METADATA_TABLE, "append", merge_schema=True)
         logger.info(f"Created {TARGET_IMAGE_METADATA_TABLE} (first write)")
         return
@@ -195,7 +193,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
         logger.info("[INCREMENTAL] New rows appended (stale failures cleaned).")
 
     # CDF required for Vector Search index sync; 60 days of history so a few failed daily runs never age out
-    # the CDF the index resumes from (the _v3 -> _v1 incident, utils/parsing_pipeline/README.md).
+    # the CDF the index resumes from.
     try:
         spark.sql(f"""ALTER TABLE {TARGET_CHUNK_TABLE} SET TBLPROPERTIES (
             delta.enableChangeDataFeed = true,

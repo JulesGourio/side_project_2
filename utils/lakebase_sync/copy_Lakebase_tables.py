@@ -191,7 +191,7 @@ def main():
     exported = []
 
     if args.direct:
-        # ── Étape 1 (legacy) : export Lakebase en direct ───────────────────────
+        # ── Étape 1 : export Lakebase en direct ───────────────────────────────
         logger.info(f"=== [1/2] Export depuis Lakebase {COPY_SOURCE_ENV} (connexion directe) ===")
         conn = lakebase_connect(COPY_SOURCE_ENV)
         try:

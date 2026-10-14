@@ -131,8 +131,8 @@ def select_best_files(df_matched_full, df_business_meta):
 
     Re-ranks among the supported candidates only: an IDDOC whose overall rank-1 file is an unsupported format (a stray
     .msg or .zip) still gets its best supported file. IDDOCs whose `ref` cannot be resolved are dropped: their folder
-    is an orphan (created then deleted in Intraqual before the first ingestion), so there is no metadata to parse
-    with. REF '-' is a placeholder of legacy documents and is kept.
+    is an orphan (the document was created then deleted in Intraqual), so there is no metadata to parse with.
+    REF '-' is a placeholder used by some documents and is kept.
     """
     df_sel = (
         df_matched_full.filter(F.col("ext_priority") < UNSUPPORTED_PRIORITY)

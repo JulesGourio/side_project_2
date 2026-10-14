@@ -1,7 +1,7 @@
 """image_fallbacks.py — text and images of the files Docling cannot (or should not) read.
 
 DOCX / PPTX are read straight from the zip and its XML, which rasterizes nothing and so cannot run out of memory on
-a large file; legacy .ppt is scanned for text runs and embedded JPEG / PNG; the pages of a scanned PDF are rendered
+a large file; binary .ppt is scanned for text runs and embedded JPEG / PNG; the pages of a scanned PDF are rendered
 for the LLM-OCR fallback. Each parser returns {text, parser_strategy, parse_time_seconds, images} or None.
 """
 
@@ -213,13 +213,13 @@ def fallback_parse_pptx(content_bytes: bytes, doc_id: str, volume_base_path: str
             "parse_time_seconds": round(time.time() - t0, 3), "images": images}
 
 
-# Legacy .ppt (binary OLE compound file, pre-2007): a byte-scan heuristic, not a real MS-PPT record parser (no
-# maintained pure-Python one exists).
+# Binary .ppt (OLE compound file): a byte-scan heuristic, not a real MS-PPT record parser (no maintained
+# pure-Python one exists).
 _OLE_MIN_TEXT_RUN_CHARS = 4
 
 
 def _extract_ole_text_runs(buf: bytes) -> List[str]:
-    """Printable UTF-16LE text runs of a binary OLE stream (legacy .ppt text), at least _OLE_MIN_TEXT_RUN_CHARS long."""
+    """Printable UTF-16LE text runs of a binary OLE stream (.ppt text), at least _OLE_MIN_TEXT_RUN_CHARS long."""
     runs: List[str] = []
     n = len(buf)
     i = 0
@@ -271,7 +271,7 @@ def _carve_images_from_bytes(buf: bytes) -> List[bytes]:
 
 def fallback_parse_ppt_legacy(content_bytes: bytes, doc_id: str, volume_base_path: str,
                               min_area_ratio: float, max_repeat: int) -> Optional[Dict[str, Any]]:
-    """Legacy .ppt: text runs and carved images read from the OLE container, since Docling does not handle the format."""
+    """Binary .ppt: text runs and carved images read from the OLE container, since Docling does not handle the format."""
     from PIL import Image
 
     t0 = time.time()

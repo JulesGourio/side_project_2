@@ -8,8 +8,6 @@ from typing import Optional, TypedDict
 
 from fastapi import HTTPException, Request
 
-from . import lakebase
-
 
 class UserIdentity(TypedDict):
     user_id: str                 # Numeric part only — e.g. "78655966095635"
@@ -23,9 +21,7 @@ _dev_user_cache: Optional[str] = None
 _CAPS_TTL_S = int(os.getenv('CAPS_TTL_S', '600'))
 _caps_cache: dict[str, tuple[float, dict]] = {}
 
-# Live is_account_group_member() check (on-behalf-of-user SQL, no job/Lakebase
-# table involved) — off unless CAPS_WAREHOUSE_ID is set. Mirrors
-# utils/ops_config.py's CAPS_CHAT_GROUPS/CAPS_COMPARE_GROUPS.
+# Group check: is_account_group_member() run on behalf of the visitor, the only source of capabilities.
 _CAPS_WAREHOUSE_ID = os.getenv('CAPS_WAREHOUSE_ID', '').strip()
 _CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
@@ -132,20 +128,20 @@ def _live_caps_via_sql(token: str) -> Optional[dict]:
 async def get_capabilities(request: Request) -> dict:
     """Resolve {can_chat, can_compare, groups} for the current user.
 
-    If CAPS_WAREHOUSE_ID is set and the request carries an on-behalf-of-user
-    token, resolves live via is_account_group_member() — no job, no Lakebase
-    table. Otherwise reads can_chat / can_compare from the users table in
-    Lakebase, populated by utils/user_capabilities/sync_user_capabilities.py.
+    The visitor's own on-behalf-of token runs is_account_group_member(), so the
+    answer is live and no job or table holds a copy of the groups. Fail-closed:
+    a missing token, a missing warehouse or a failing check grants nothing, and
+    a failure is not cached.
 
-    Fail-open: grants all if neither path works (DB unavailable, user not yet
-    in the table, or the live SQL check errors).
-
-    CAPS_BYPASS=true short-circuits all of the above and grants everything.
+    CAPS_BYPASS=true short-circuits and grants everything (DEV only).
     """
     if _CAPS_BYPASS:
         return dict(_OPEN_CAPS)
 
     forwarded = request.headers.get('x-forwarded-user', '').strip()
+    if _is_dev() and not forwarded:
+        return dict(_OPEN_CAPS)
+
     key = forwarded or 'anon'
     now = time.monotonic()
     hit = _caps_cache.get(key)
@@ -153,59 +149,17 @@ async def get_capabilities(request: Request) -> dict:
         return hit[1]
 
     obo_token = request.headers.get('x-forwarded-access-token', '').strip()
-    if obo_token and _CAPS_WAREHOUSE_ID:
-        try:
-            caps = await asyncio.to_thread(_live_caps_via_sql, obo_token)
-            if caps is not None:
-                logger.info('Capabilities %s: can_chat=%s can_compare=%s (live SQL)',
-                            key, caps['can_chat'], caps['can_compare'])
-                _caps_cache[key] = (now + _CAPS_TTL_S, caps)
-                return caps
-        except Exception as e:
-            logger.warning('Live capability SQL check failed for %s: %s — falling back', key, e)
-
-    if _is_dev() and not forwarded:
-        return dict(_OPEN_CAPS)
-
-    if _is_real_email(forwarded):
-        email, user_id = forwarded, forwarded
-    elif forwarded:
-        user_id = forwarded.split('@', 1)[0]
-        email = None
-    else:
+    if not obo_token or not _CAPS_WAREHOUSE_ID:
+        logger.error('Capabilities %s: no on-behalf-of token or CAPS_WAREHOUSE_ID — access denied', key)
         return dict(_CLOSED_CAPS)
 
-    pool = lakebase.get_pool()
-    if not pool:
-        logger.warning('Capabilities: Lakebase unavailable for %s — granting all (fail-open)', key)
-        return dict(_OPEN_CAPS)
-
     try:
-        async with pool.acquire() as conn:
-            row = None
-            if email:
-                row = await conn.fetchrow(
-                    'SELECT can_chat, can_compare FROM users WHERE email = $1', email
-                )
-            if row is None:
-                row = await conn.fetchrow(
-                    'SELECT can_chat, can_compare FROM users WHERE user_id = $1', user_id
-                )
+        caps = await asyncio.to_thread(_live_caps_via_sql, obo_token)
     except Exception as e:
-        logger.warning('Capabilities DB lookup failed for %s: %s — granting all (fail-open)', key, e)
-        return dict(_OPEN_CAPS)
+        logger.error('Capabilities %s: live group check failed (%s) — access denied', key, e)
+        return dict(_CLOSED_CAPS)
 
-    if row is None:
-        logger.warning('Capabilities: %s not in users table — granting all (fail-open)', key)
-        return dict(_OPEN_CAPS)
-
-    caps = {
-        'can_chat': bool(row['can_chat']),
-        'can_compare': bool(row['can_compare']),
-        'groups': [],
-    }
-    logger.info('Capabilities %s: can_chat=%s can_compare=%s (DB)',
-                key, caps['can_chat'], caps['can_compare'])
+    logger.info('Capabilities %s: can_chat=%s can_compare=%s', key, caps['can_chat'], caps['can_compare'])
     _caps_cache[key] = (now + _CAPS_TTL_S, caps)
     return caps
 

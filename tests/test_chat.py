@@ -438,56 +438,50 @@ def test_trim_history_bounds_prompt_and_keeps_latest_question():
 
 # --- Feature access control (capabilities + 403 guards) ---
 
-def test_get_capabilities_reads_user_flags_from_db():
-    """Capabilities come from the Lakebase users table (per-user booleans)."""
+def test_get_capabilities_uses_the_live_group_check():
+    """Capabilities come from is_account_group_member() on the visitor's own token."""
     import asyncio
     from types import SimpleNamespace
 
     from server.services.infra import user as user_mod
 
-    req = SimpleNamespace(headers={'x-forwarded-user': 'jules@latecoere.aero'})
-
-    def run_with_row(row):
-        user_mod._caps_cache.clear()
-        conn = AsyncMock()
-        conn.fetchrow.return_value = row
-        pool = _make_pool(conn)
-        with patch.object(user_mod.lakebase, 'get_pool', return_value=pool):
-            return asyncio.run(user_mod.get_capabilities(req))
-
-    chat_only = run_with_row({'can_chat': True, 'can_compare': False})
-    assert chat_only['can_chat'] is True
-    assert chat_only['can_compare'] is False
-
-    all_caps = run_with_row({'can_chat': True, 'can_compare': True})
-    assert all_caps['can_chat'] and all_caps['can_compare']
-
-    none = run_with_row({'can_chat': False, 'can_compare': False})
-    assert not (none['can_chat'] or none['can_compare'])
-
+    req = SimpleNamespace(headers={'x-forwarded-user': 'visitor@example.com',
+                                   'x-forwarded-access-token': 'obo-token'})
+    user_mod._caps_cache.clear()
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'), \
+         patch.object(user_mod, '_live_caps_via_sql',
+                      return_value={'can_chat': True, 'can_compare': False, 'groups': []}) as live:
+        caps = asyncio.run(user_mod.get_capabilities(req))
+    assert caps['can_chat'] is True and caps['can_compare'] is False
+    live.assert_called_once_with('obo-token')
     user_mod._caps_cache.clear()
 
 
-def test_get_capabilities_fails_open_without_db_or_row():
-    """DB down or user not yet synced → grant all (fail-open by design)."""
+def test_get_capabilities_fails_closed():
+    """No token, no warehouse or a failing check grants nothing, and a failure is not cached."""
     import asyncio
     from types import SimpleNamespace
 
     from server.services.infra import user as user_mod
 
-    req = SimpleNamespace(headers={'x-forwarded-user': 'new.user@latecoere.aero'})
-
     user_mod._caps_cache.clear()
-    with patch.object(user_mod.lakebase, 'get_pool', return_value=None):
-        caps = asyncio.run(user_mod.get_capabilities(req))
-    assert caps['can_chat'] and caps['can_compare']
+    with_token = SimpleNamespace(headers={'x-forwarded-user': 'visitor@example.com',
+                                          'x-forwarded-access-token': 'obo-token'})
+    without_token = SimpleNamespace(headers={'x-forwarded-user': 'visitor@example.com'})
 
-    user_mod._caps_cache.clear()
-    conn = AsyncMock()
-    conn.fetchrow.return_value = None  # not in the users table yet
-    with patch.object(user_mod.lakebase, 'get_pool', return_value=_make_pool(conn)):
-        caps = asyncio.run(user_mod.get_capabilities(req))
-    assert caps['can_chat'] and caps['can_compare']
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'):
+        caps = asyncio.run(user_mod.get_capabilities(without_token))
+    assert not (caps['can_chat'] or caps['can_compare'])
+
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''):
+        caps = asyncio.run(user_mod.get_capabilities(with_token))
+    assert not (caps['can_chat'] or caps['can_compare'])
+
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'), \
+         patch.object(user_mod, '_live_caps_via_sql', side_effect=RuntimeError('warehouse down')):
+        caps = asyncio.run(user_mod.get_capabilities(with_token))
+    assert not (caps['can_chat'] or caps['can_compare'])
+    assert 'visitor@example.com' not in user_mod._caps_cache
 
     user_mod._caps_cache.clear()
 

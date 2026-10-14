@@ -541,7 +541,7 @@ def test_settings_defaults(monkeypatch):
     for name in ('CHAT_INDEX', 'CHAT_LLM_ENDPOINT', 'CHAT_REWRITE_ENDPOINT', 'CHAT_ANSWER_MAX_TOKENS'):
         monkeypatch.delenv(name, raising=False)
     s = engine.settings()
-    assert s['index'] == 'dev_landingzone.qualibot.chunks_index' and s['llm'] == 'databricks-gpt-6-luna'
+    assert s['index'] == 'dev_proj.qualibot.chunks_index' and s['llm'] == 'databricks-gpt-6-luna'
     assert s['rewrite_llm'] == 'databricks-gpt-6-luna' and s['answer_max_tokens'] == 8000
     assert s['rerank_top_k'] == 12 and s['raw_top_k'] == 12 and s['max_search_passages'] == 0
 

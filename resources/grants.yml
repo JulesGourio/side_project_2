@@ -84,8 +84,8 @@ targets:
                   app_service_principal: "{{job.parameters.app_service_principal}}"
                   catalog: ${var.app_write_catalog}
                   schema_name: ${var.app_write_schema}
-                  proj_catalog: ""
-                  proj_schema: ""
+                  proj_catalog: ${var.app_proj_catalog}
+                  proj_schema: ${var.app_proj_schema}
                   volumes: ""
                   indexes: "chunks_index${var.parsing_table_suffix}"
                   serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna,databricks-gemini-3-1-flash-lite"

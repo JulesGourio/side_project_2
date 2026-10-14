@@ -72,7 +72,7 @@ def doc_rows(table):
 
 
 def find_stale_iddocs(df_scope_docs):
-    """Previously parsed IDDOCs that are no longer in scope (SKIPPED_* rows are reconciled separately)."""
+    """Parsed IDDOCs that are no longer in scope (SKIPPED_* rows are reconciled separately)."""
     try:
         return [
             r.IDDOC for r in
@@ -225,7 +225,7 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
             "titre": r.get("titre"),
             "categorie": r.get("categorie"),
             "parse_status": status,
-            # Downstream monitoring explains why a document was excluded from this reason.
+            # The monitoring dashboard explains each exclusion from this reason.
             "removal_reason": r.get("reason"),
             "include_in_rag": False,
             "filtered_by_date": False,
@@ -287,7 +287,7 @@ def archive_condition():
 
 
 def _doc_date_column(table):
-    """Document date column of an Intraqual table (`dtdiff`, or `DATEDIFF` in older tables), NULL when absent."""
+    """Document date column of an Intraqual table (`dtdiff`, or `DATEDIFF` when the table uses that name), NULL when absent."""
     cols = {c.lower() for c in spark.read.table(table).columns}
     source = "dtdiff" if "dtdiff" in cols else "DATEDIFF" if "datediff" in cols else None
     return F.col(source).try_cast("date") if source else F.lit(None).cast("date")

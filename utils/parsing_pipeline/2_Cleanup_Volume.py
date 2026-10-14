@@ -138,8 +138,7 @@ logger.info(f"Scope: {DOC_SCOPE_FILTER} | excluded categories: {sorted(EXCLUDED_
 # MAGIC | Latest revision per REF | `MAX(IDDOC) GROUP BY REF` | one IDDOC per REF
 # MAGIC
 # MAGIC Because the volume content is pre-filtered by this view, the two missing
-# MAGIC filters have no practical effect **unless** files were synced before the
-# MAGIC view was in place.
+# MAGIC filters have no practical effect **unless** a file reached the volume outside that view.
 
 # COMMAND ----------
 
@@ -150,7 +149,7 @@ logger.info(f"{len(scope_iddocs)} IDDOCs in the Qualibot perimeter")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Previously parsed IDDOCs that left scope
+# MAGIC ## Parsed IDDOCs that left scope
 # MAGIC Compared with `processed_files` (SUCCESS, ERROR and EMPTY_TEXT only; the SKIPPED rows are reconciled in Tr. 5). They are pruned in Tr. 1.
 
 # COMMAND ----------

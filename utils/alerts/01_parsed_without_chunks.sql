@@ -4,13 +4,13 @@
 WITH missing AS (
   SELECT pf.IDDOC, pf.ref, pf.titre, pf.type_document, pf.source_file_extension AS file_type, pf.parser_strategy,
          pf.chunking_strategy, pf.ingestion_timestamp
-  FROM dev_landingzone.qualibot.processed_files pf
+  FROM dev_proj.qualibot.processed_files pf
   WHERE pf.parse_status = 'SUCCESS'
     AND pf.include_in_rag = true
     AND pf.filtered_by_date = false
     AND pf.ingestion_timestamp >= current_date() - INTERVAL 7 DAY
     AND pf.ingestion_timestamp < current_timestamp() - INTERVAL 4 HOUR
-    AND NOT EXISTS (SELECT 1 FROM dev_landingzone.qualibot.chunks c WHERE c.IDDOC = pf.IDDOC)
+    AND NOT EXISTS (SELECT 1 FROM dev_proj.qualibot.chunks c WHERE c.IDDOC = pf.IDDOC)
 )
 SELECT
   COUNT(*) AS docs_without_chunks,

@@ -3,26 +3,27 @@
 # MAGIC # DEV copy — grant the app's and the pipeline's service principals what they use
 # MAGIC
 # MAGIC Job `Z_1_Qualibot_Grant_App_Access_dev` (`databricks.yml`, target `dev`), run as
-# MAGIC the DEV job SP, which holds grant rights on `dev_landingzone`. Idempotent:
+# MAGIC the DEV job SP, which holds grant rights on the target catalogs. Idempotent:
 # MAGIC re-running it never removes anything, an existing grant is a no-op.
 # MAGIC
 # MAGIC **To add or remove a grant, edit only the lists below** (the job passes the
 # MAGIC same values from `databricks.yml` → `grant_app_access_dev` → `base_parameters`;
 # MAGIC a one-off run can also override them with "Run now with different parameters").
-# MAGIC Comma-separated names, no catalog/schema prefix for volumes and indexes.
+# MAGIC Comma-separated names, no catalog/schema prefix.
 # MAGIC
-# MAGIC | List | Grant | Used by |
-# MAGIC |---|---|---|
-# MAGIC | `volumes` | READ + WRITE VOLUME | Compare files, LibreOffice archive |
-# MAGIC | `indexes` | SELECT | Impact search, Chat VSI |
-# MAGIC | `serving_endpoints` | CAN_QUERY | Chat VSI, Compare, impact judge, translation |
-# MAGIC | `pipeline_tables` | SELECT + MODIFY, to `pipeline_service_principal` | Parsing pipeline jobs (run as the DEV SP) on tables created by a person: copy of the UAT corpus, `chunks` (`operations_dev.md` S3/S4) — e.g. task `6_update_kb_metadata` reads `parse_manifest` and `chunks` |
+# MAGIC | List | Schema | Grant | Used by |
+# MAGIC |---|---|---|---|
+# MAGIC | `volumes` | `catalog`.`schema_name` | READ + WRITE VOLUME | Compare files, LibreOffice archive |
+# MAGIC | `indexes` | `proj_catalog`.`proj_schema` | SELECT | Impact search, Chat VSI |
+# MAGIC | `serving_endpoints` | — | CAN_QUERY | Chat VSI, Compare, impact judge, translation |
+# MAGIC | `pipeline_tables` | `proj_catalog`.`proj_schema` | SELECT + MODIFY, to `pipeline_service_principal` | Parsing pipeline jobs (run as the DEV SP) on the tables of the project schema, e.g. task `6_update_kb_metadata` reads `parse_manifest` and `chunks` |
 # MAGIC
-# MAGIC USE CATALOG / USE SCHEMA on `catalog`.`schema_name` are always granted to both.
+# MAGIC The app SP gets USE CATALOG / USE SCHEMA on `catalog`.`schema_name` (volumes) and on `proj_catalog`.`proj_schema` (indexes).
+# MAGIC The pipeline SP gets USE CATALOG / USE SCHEMA on both schemas.
 # MAGIC
-# MAGIC **Project schema** (`proj_catalog`.`proj_schema`, e.g. `dev_proj.qualibot`: evaluation tables, quality scores, MLflow prompt
+# MAGIC **Project schema** (`proj_catalog`.`proj_schema`, e.g. `dev_proj.qualibot`: tables, evaluation tables, quality scores, MLflow prompt
 # MAGIC registry): the job SP gets what the evaluation / scoring / prompt-registration jobs need (tables and prompts: create, read,
-# MAGIC write, execute). The app SP gets nothing there: it never reads the registry (prompt versions reach it as experiment tags). Empty `proj_catalog` = skip.
+# MAGIC write, execute). The app SP never reads the registry (prompt versions reach it as experiment tags).
 
 # COMMAND ----------
 
@@ -56,22 +57,25 @@ statements = [
     f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO `{sp}`",
 ]
 statements += [f"GRANT READ VOLUME, WRITE VOLUME ON VOLUME `{catalog}`.`{schema}`.`{v}` TO `{sp}`" for v in _list("volumes")]
-statements += [f"GRANT SELECT ON TABLE `{catalog}`.`{schema}`.`{i}` TO `{sp}`" for i in _list("indexes")]
+
+proj_catalog = dbutils.widgets.get("proj_catalog").strip()
+proj_schema = dbutils.widgets.get("proj_schema").strip()
+assert proj_catalog and proj_schema, "proj_catalog and proj_schema are required: the tables and indexes live there"
+proj = f"`{proj_catalog}`.`{proj_schema}`"
+statements += [
+    f"GRANT USE CATALOG ON CATALOG `{proj_catalog}` TO `{sp}`",
+    f"GRANT USE SCHEMA ON SCHEMA {proj} TO `{sp}`",
+]
+statements += [f"GRANT SELECT ON TABLE {proj}.`{i}` TO `{sp}`" for i in _list("indexes")]
 if pipeline_sp:
     statements += [
         f"GRANT USE CATALOG ON CATALOG `{catalog}` TO `{pipeline_sp}`",
         f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO `{pipeline_sp}`",
+        f"GRANT USE CATALOG ON CATALOG `{proj_catalog}` TO `{pipeline_sp}`",
+        f"GRANT USE SCHEMA, CREATE TABLE, CREATE FUNCTION, EXECUTE, SELECT, MODIFY ON SCHEMA {proj} TO `{pipeline_sp}`",
     ]
-    statements += [f"GRANT SELECT, MODIFY ON TABLE `{catalog}`.`{schema}`.`{t}` TO `{pipeline_sp}`"
-                   for t in _list("pipeline_tables")]
+    statements += [f"GRANT SELECT, MODIFY ON TABLE {proj}.`{t}` TO `{pipeline_sp}`" for t in _list("pipeline_tables")]
 
-proj_catalog = dbutils.widgets.get("proj_catalog").strip()
-proj_schema = dbutils.widgets.get("proj_schema").strip()
-if proj_catalog:
-    proj = f"`{proj_catalog}`.`{proj_schema}`"
-    if pipeline_sp:
-        statements += [f"GRANT USE CATALOG ON CATALOG `{proj_catalog}` TO `{pipeline_sp}`",
-                       f"GRANT USE SCHEMA, CREATE TABLE, CREATE FUNCTION, EXECUTE, SELECT, MODIFY ON SCHEMA {proj} TO `{pipeline_sp}`"]
 failed = []
 import logging
 

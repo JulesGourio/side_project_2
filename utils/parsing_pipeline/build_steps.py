@@ -288,7 +288,7 @@ def _dedupe_and_limit_chunks(df_chunks):
             logger.info(f"[LIMIT] {truncated} spreadsheet chunks truncated "
                         f"(max {MAX_CHUNKS_SPREADSHEET}/file, {before_limit} -> {after_limit})")
 
-    return df_chunks.drop("source_file_extension")  # chunk_index kept — notebook 02 needs it
+    return df_chunks.drop("source_file_extension")  # chunk_index stays: 4_describe_images numbers the image passages after it
 
 
 def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_id, revised_iddocs=frozenset()):
@@ -355,7 +355,7 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
     # Persisted: the chunking UDF is the expensive part, and every count/filter/write below would rerun it.
     df_chunks = _build_chunks(df_full_pipeline, df_exclusions).persist(StorageLevel.MEMORY_AND_DISK)
 
-    # True only for a spreadsheet that really has more passages than the cap (was: every spreadsheet).
+    # True only for a spreadsheet that has more passages than the cap.
     df_over_cap = (
         df_chunks.filter(F.lower(F.col("source_file_extension")).isin(*_SPREADSHEET_EXTS))
         .groupBy("IDDOC").count()

@@ -58,15 +58,15 @@ SHOW TABLES IN dev_landingzone.qualibot;
 -- la table qui nourrit chunks_index : le chunking est-il celui du code (150/300/450 jetons, 1 600 caractères) ?
 SELECT count(*) AS passages, count(DISTINCT IDDOC) AS documents,
        round(avg(chunk_token_count)) AS jetons_moyens, max(chunk_token_count) AS jetons_max, max(length(chunk_text)) AS caracteres_max
-FROM dev_landingzone.qualibot.chunks;
-SHOW TBLPROPERTIES dev_landingzone.qualibot.chunks;   -- delta.enableChangeDataFeed doit valoir true
+FROM dev_proj.qualibot.chunks;
+SHOW TBLPROPERTIES dev_proj.qualibot.chunks;   -- delta.enableChangeDataFeed doit valoir true
 
 -- l'état du pipeline : s'il manque, un run complet de 3_parse reparserait tout le corpus sur GPU
-SELECT '_pipeline_checkpoint' AS t, count(*) AS n FROM dev_landingzone.qualibot._pipeline_checkpoint
-UNION ALL SELECT 'processed_files', count(*) FROM dev_landingzone.qualibot.processed_files
-UNION ALL SELECT 'image_metadata', count(*) FROM dev_landingzone.qualibot.image_metadata
-UNION ALL SELECT 'parse_manifest', count(*) FROM dev_landingzone.qualibot.parse_manifest
-UNION ALL SELECT 'category_reference', count(*) FROM dev_landingzone.qualibot.category_reference;
+SELECT '_pipeline_checkpoint' AS t, count(*) AS n FROM dev_proj.qualibot._pipeline_checkpoint
+UNION ALL SELECT 'processed_files', count(*) FROM dev_proj.qualibot.processed_files
+UNION ALL SELECT 'image_metadata', count(*) FROM dev_proj.qualibot.image_metadata
+UNION ALL SELECT 'parse_manifest', count(*) FROM dev_proj.qualibot.parse_manifest
+UNION ALL SELECT 'category_reference', count(*) FROM dev_proj.qualibot.category_reference;
 -- TABLE_OR_VIEW_NOT_FOUND : cette table n'existe plus, retirez sa ligne et notez-la.
 ```
 
@@ -80,7 +80,7 @@ UNION ALL SELECT 'category_reference', count(*) FROM dev_landingzone.qualibot.ca
 | App ou volume existe mais le déploiement dit « already exists » | rattacher la ressource avant de redéployer : `databricks bundle deployment bind doc-compare qualibot -t dev --profile DEV` (app), `databricks bundle deployment bind qualibot_images dev_landingzone.qualibot.images -t dev --profile DEV` (volume; même forme pour `qualibot_doc_compare`, `qualibot_test`, `qualibot_staging`) |
 | Le dossier des modèles Docling est vide ou absent | aucun job de parsing ne peut tourner : dites-le moi, ce volume n'est pas dans le bundle |
 | Endpoint `qualibot` absent | à recréer avant tout index : dites-le moi |
-| `chunks_index` absent, `pret = False`, ou sa `source` n'est pas `dev_landingzone.qualibot.chunks` | me le dire avec la sortie : je vous donne la commande de (re)création sur **votre** table (pas de copie depuis l'UAT) |
+| `chunks_index` absent, `pret = False`, ou sa `source` n'est pas `dev_proj.qualibot.chunks` | me le dire avec la sortie : je vous donne la commande de (re)création sur **votre** table (pas de copie depuis l'UAT) |
 | `jetons_max` ≈ 450 et `caracteres_max` ≈ 1 600 (+ préfixe `[Source: …]`) | le chunking en base est celui du code actuel |
 | `jetons_max` vers 1 000 ou plus | `chunks` a l'ancien chunking : dites-moi quelle table contient le bon, je vous donne la commande |
 | `_pipeline_checkpoint`, `processed_files` ou `image_metadata` absentes ou vides | **ne lancez pas `3_parse` sans filtre** : utilisez seulement le test filtré `_test` de 0.5 |
@@ -142,8 +142,8 @@ Prenez de préférence des documents qui ont des images (c'est ce qui exerce le 
 
 ```sql
 SELECT m.IDDOC, m.ref, count(i.image_id) AS images
-FROM dev_landingzone.qualibot.parse_manifest m
-LEFT JOIN dev_landingzone.qualibot.image_metadata i ON i.IDDOC = m.IDDOC
+FROM dev_proj.qualibot.parse_manifest m
+LEFT JOIN dev_proj.qualibot.image_metadata i ON i.IDDOC = m.IDDOC
 WHERE m.parse_content
 GROUP BY m.IDDOC, m.ref
 HAVING count(i.image_id) BETWEEN 1 AND 15
@@ -160,8 +160,8 @@ databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_im
 ```
 
 ```sql
-SELECT parse_status, count(*) FROM dev_landingzone.qualibot.processed_files_test GROUP BY 1;
-SELECT IDDOC, count(*) AS passages, max(chunk_token_count) AS jetons_max FROM dev_landingzone.qualibot.chunks_test GROUP BY 1;
+SELECT parse_status, count(*) FROM dev_proj.qualibot.processed_files_test GROUP BY 1;
+SELECT IDDOC, count(*) AS passages, max(chunk_token_count) AS jetons_max FROM dev_proj.qualibot.chunks_test GROUP BY 1;
 ```
 
 Attendu : `SUCCESS` pour vos IDDOC, des passages avec `jetons_max` ≈ 450. Puis **remettre la configuration normale et nettoyer** :
@@ -171,12 +171,12 @@ databricks bundle deploy -t dev --profile DEV
 ```
 
 ```sql
-DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_test;
-DROP TABLE IF EXISTS dev_landingzone.qualibot.processed_files_test;
-DROP TABLE IF EXISTS dev_landingzone.qualibot.image_metadata_test;
-DROP TABLE IF EXISTS dev_landingzone.qualibot._pipeline_checkpoint_test;
-DROP TABLE IF EXISTS dev_landingzone.qualibot.parse_manifest_test;
-DROP TABLE IF EXISTS dev_landingzone.qualibot.category_reference_test;
+DROP TABLE IF EXISTS dev_proj.qualibot.chunks_test;
+DROP TABLE IF EXISTS dev_proj.qualibot.processed_files_test;
+DROP TABLE IF EXISTS dev_proj.qualibot.image_metadata_test;
+DROP TABLE IF EXISTS dev_proj.qualibot._pipeline_checkpoint_test;
+DROP TABLE IF EXISTS dev_proj.qualibot.parse_manifest_test;
+DROP TABLE IF EXISTS dev_proj.qualibot.category_reference_test;
 ```
 
 (Si `SHOW TABLES IN dev_landingzone.qualibot LIKE '*_test'` en montre d'autres, supprimez-les aussi.)
@@ -294,7 +294,7 @@ Changements de comportement à connaître :
 
 À rejouer sur DEV après un `bundle deploy -t dev` :
 - [ ] `--only 1_categories` : `All sources fresh`, `category_reference` écrite.
-- [ ] `--only 2_manifest` avec `DRY_RUN` par défaut : les compteurs `KEEP/DELETE/ORPHAN/...`, `parse_manifest written: N IDDOCs in scope`, `[DRY RUN] ... would be deleted`. Comparer N avec la valeur d'hier (`SELECT count(*) FROM dev_landingzone.qualibot.parse_manifest`).
+- [ ] `--only 2_manifest` avec `DRY_RUN` par défaut : les compteurs `KEEP/DELETE/ORPHAN/...`, `parse_manifest written: N IDDOCs in scope`, `[DRY RUN] ... would be deleted`. Comparer N avec la valeur d'hier (`SELECT count(*) FROM dev_proj.qualibot.parse_manifest`).
 - [ ] `--only 4_describe_images` sur des tables à jour : `Nothing to describe`, `No new image chunks to inject`, `No EMPTY_TEXT document pending promotion` ou la promotion; le test `_test` de la section 0.5 exerce le placement des images.
 - [ ] `--only 5_sync_index` puis `--only 6_update_kb_metadata` : comme avant (`sync triggered`, `doc_catalog N -> N documents`).
 - [ ] `generic_pipeline/1_Parse_Chunk_Generic` (facultatif) : l'ouvrir dans DEV avec `environment = dev`; les modèles se trouvent par défaut dans `docling_models/docling_models`.
@@ -372,3 +372,5 @@ Tout le détail et les commandes : `operations_dev.md`, bloc 0 (ordre complet).
 - Nouveaux garde-fous RED (`quality.py`) : `2_manifest` échoue si `parse_manifest` est vide ou a un IDDOC en double; `5_sync_index` échoue si `chunks_full` est vide. À observer au premier run DEV.
 - Notebooks 5 et 6 (serverless) importent désormais `quality` / `tables` depuis leur dossier : vérifier le premier run.
 - À relancer : `1_categories` → `6_update_kb_metadata` sur DEV (run complet), puis `pytest tests`.
+
+- Refactor tables vers `<env>_proj.qualibot` et suppression de la sync des capacités : relancer les tests (`pytest`), puis sur UAT et DEV vérifier le chat, la comparaison d'impact et le job `grant_app_access` après les étapes de `OPERATIONS.md` 0 et `operations_dev.md` 00. Vérifier que le job `D_1_Qualibot_Sync_User_Capabilities_Uat_Test` et le job hors bundle `qualibot-sync-user-capabilities-uat` ont disparu.

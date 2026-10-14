@@ -2,8 +2,7 @@
 # MAGIC %md
 # MAGIC # Qualibot — load test of Vector Search alone (where does it refuse, and why)
 # MAGIC
-# MAGIC The chat load test (`load_test_chat.py`) failed from 20 questions at once with
-# MAGIC `Vector Search returned 429`. This notebook sends **only Vector Search queries** (no LLM), the
+# MAGIC The chat load test (`load_test_chat.py`) can fail with `Vector Search returned 429`. This notebook sends **only Vector Search queries** (no LLM), the
 # MAGIC same ones the chat sends, by steps of simultaneous queries (widget `levels`), for `step_s`
 # MAGIC seconds each, **without retries**: what is measured is the endpoint's own capacity.
 # MAGIC
@@ -11,12 +10,12 @@
 # MAGIC
 # MAGIC | Scenario | Query | Why |
 # MAGIC |---|---|---|
-# MAGIC | `hybrid10` | HYBRID, 10 results | the chat's raw query (and the only kind before the reranker) |
+# MAGIC | `hybrid10` | HYBRID, 10 results | the chat's raw query, without the reranker |
 # MAGIC | `rerank12` | HYBRID, 12 results, reranker on REF + section headings + text | the chat's reranked query |
 # MAGIC | `rerank12_text` | same, reranker on the text only | does the number of reranked columns matter? |
 # MAGIC | `ann10` | ANN (vectors only), 10 results | is the keyword part of HYBRID the cost? |
 # MAGIC | `hybrid10_filter` | HYBRID, 10 results, division filter AS | do filters cost? |
-# MAGIC | `chat_mix` | half `rerank12`, half `hybrid10` | what one chat question sends (3 + 3 queries, plus REF / title lookups) |
+# MAGIC | `chat_mix` | half `rerank12`, half `hybrid10` | what one chat question sends (3 + 3 queries, plus the REF lookup) |
 # MAGIC
 # MAGIC Per step: queries answered per second, share refused (429) or failed, latency. A scenario
 # MAGIC stops at the first step where more than `stop_429_pct` % are refused. Results:
@@ -31,15 +30,15 @@
 # COMMAND ----------
 
 dbutils.widgets.removeAll()
-dbutils.widgets.text('index', 'dev_landingzone.qualibot.chunks_index')
+dbutils.widgets.text('index', 'dev_proj.qualibot.chunks_index')
 dbutils.widgets.text('endpoint', 'qualibot')
 dbutils.widgets.text('scenarios', 'hybrid10,rerank12,rerank12_text,ann10,hybrid10_filter,chat_mix')
 dbutils.widgets.text('levels', '1,2,4,8,16,32,64')     # queries in progress at once
 dbutils.widgets.text('step_s', '20')                    # duration of each step
 dbutils.widgets.text('stop_429_pct', '50')
-dbutils.widgets.text('queries_per_question', '7')       # 3 reranked + 3 raw + ~1 REF / title lookup
+dbutils.widgets.text('queries_per_question', '7')       # 3 reranked + 3 raw + ~1 REF lookup
 dbutils.widgets.text('golden_table', 'dev_proj.qualibot.qualibot_eval_golden')
-dbutils.widgets.text('chat_table', 'dev_landingzone.qualibot.chat_messages')
+dbutils.widgets.text('chat_table', 'dev_proj.qualibot.chat_messages')
 dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_vs_load_runs')
 
 import asyncio, json, random, re, time

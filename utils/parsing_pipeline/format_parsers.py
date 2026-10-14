@@ -1,4 +1,4 @@
-"""format_parsers.py — raw bytes to text, one parser per file format (Docling and the legacy-format fallbacks).
+"""format_parsers.py — raw bytes to text, one parser per file format (Docling and the fallbacks for older binary formats).
 
 Runs on the executors: the Docling modules are imported on first use and the converters cached per worker process.
 Settings come from `utils._cfg` (restored on the worker by `utils.ensure_config`).
@@ -183,9 +183,9 @@ def _write_tmp_file(content: bytes, suffix: str) -> Path:
     return Path(tmp.name)
 
 
-# --- Legacy-format pre-conversion ---
+# --- Binary-format conversion (no Docling) ---
 def _convert_doc_antiword(doc_path: Path) -> Tuple[Optional[Path], Optional[str]]:
-    """Convert legacy .doc to Markdown via the Antiword binary (if configured).
+    """Convert .doc to Markdown via the Antiword binary (if configured).
 
     Returns (path, None) on success or (None, reason) on failure.
     """
@@ -221,8 +221,7 @@ def _convert_doc_antiword(doc_path: Path) -> Tuple[Optional[Path], Optional[str]
 
 
 def _convert_rtf(content: bytes) -> Tuple[Optional[str], Optional[str]]:
-    """Returns (text, None) on success or (None, error_detail) on failure —
-    the real cause is preserved instead of a generic string."""
+    """Returns (text, None) on success or (None, error_detail) on failure."""
     try:
         from striprtf.striprtf import rtf_to_text
         text = rtf_to_text(content.decode("utf-8", errors="replace"))
@@ -232,8 +231,7 @@ def _convert_rtf(content: bytes) -> Tuple[Optional[str], Optional[str]]:
 
 
 def _convert_odt(content: bytes, suffix: str) -> Tuple[Optional[str], Optional[str]]:
-    """Returns (text, None) on success or (None, error_detail) on failure —
-    the real cause is preserved instead of a generic string."""
+    """Returns (text, None) on success or (None, error_detail) on failure."""
     try:
         from odf.opendocument import load as odf_load
         from odf.text import P
@@ -267,8 +265,7 @@ def _convert_odt(content: bytes, suffix: str) -> Tuple[Optional[str], Optional[s
 
 
 def _convert_xls(content: bytes) -> Tuple[Optional[str], Optional[str]]:
-    """Returns (text, None) on success or (None, error_detail) on failure —
-    the real cause is preserved instead of a generic string."""
+    """Returns (text, None) on success or (None, error_detail) on failure."""
     try:
         import xlrd
     except ImportError as e:
@@ -400,8 +397,7 @@ def strip_ooxml_bloat(content: bytes, ext: str) -> bytes:
     """Rebuild a .docx/.docm/.pptx/.pptm zip without embedded OLE/Office
     objects or embedded video/audio, and with large embedded images
     recompressed. Returns the ORIGINAL bytes unchanged on any error or if the
-    file isn't a zip we recognise — this must never be the reason a file that
-    would otherwise have parsed fine now fails."""
+    file isn't a zip we recognise: a file that parses without this step must not fail because of it."""
     if ext.lstrip(".").lower() not in {"docx", "docm", "pptx", "pptm"}:
         return content
     try:
@@ -577,7 +573,7 @@ def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
 
 
 def parse_xls(content: bytes, start: float) -> Dict[str, Any]:
-    """Legacy XLS through xlrd."""
+    """XLS (binary Excel) through xlrd."""
     raw_text, err_reason = _convert_xls(content)
     text = normalize_text(raw_text or "")
     return {"text": text, "parser_error": None if text else f"XLS conversion failed: {err_reason}",
@@ -586,9 +582,8 @@ def parse_xls(content: bytes, start: float) -> Dict[str, Any]:
 
 
 def _parse_xlsb_pyxlsb(content: bytes, start: float) -> Dict[str, Any]:
-    """.xlsb is a ZIP container like .xlsx, but its sheets are binary BIFF12
-    records, not XML — openpyxl can't open it and the XML-raw fallback finds
-    no xl/worksheets/sheetN.xml to read, so both silently yield empty text."""
+    """.xlsb is a ZIP container like .xlsx, but its sheets are binary BIFF12 records, not XML:
+    openpyxl and the XML fallback cannot read it, so it has its own parser."""
     try:
         import pyxlsb
         all_text = []

@@ -6,7 +6,7 @@ targets:
     resources:
       jobs:
         # ── Pre-existing DEV jobs, unchanged ────────────────────────────────
-        # No run_as: they keep running as the deploying user. Both write UAT chat data to dev_landingzone.qualibot (Usage Tracking dashboard).
+        # No run_as: they keep running as the deploying user. Both write UAT chat data to dev_proj.qualibot (Usage Tracking dashboard).
         lakebase_import_uat_to_dev:
           name: "D_1_Qualibot_Lakebase_Import_Uat_To_Dev"
           description: "Import the UAT staging volume export into DEV Delta tables"
@@ -41,7 +41,7 @@ targets:
                   ResourceClass: SingleNode
                 spark_env_vars:
                   SOURCE_EXPORT_DIR: "/Volumes/uat_landingzone/qualibot/staging/lakebase_export"
-                  TARGET_CATALOG: "dev_landingzone"
+                  TARGET_CATALOG: "dev_proj"
                   TARGET_SCHEMA: "qualibot"
                   TABLES_TO_SKIP: "llm_requests"
           schedule:
@@ -166,7 +166,7 @@ targets:
                   TABLES_TO_SKIP: "llm_requests"
               environment_key: default
             - task_key: import_chatbot_tables_to_uat
-              description: "Load chatbot JSON exports (chat_feedbacks, chat_messages, chat_sessions) as Delta tables in uat_landingzone.qualibot"
+              description: "Load chatbot JSON exports (chat_feedbacks, chat_messages, chat_sessions) as Delta tables in uat_proj.qualibot"
               depends_on:
                 - task_key: export_lakebase_uat_to_volume
               notebook_task:

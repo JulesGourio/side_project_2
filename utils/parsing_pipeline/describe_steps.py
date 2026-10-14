@@ -138,7 +138,7 @@ def describe_images(rows, ws_host, ws_token):
         tout = sum(r.get("output_tokens", 0) for r in described)
         _merge_chunk_results(described)
 
-        # Single-node clusters run out of memory when the chunks pile up.
+        # Released per chunk: the single-node cluster has little memory.
         del described
         gc.collect()
 
@@ -297,7 +297,7 @@ def build_image_chunks(df_described):
         })
         .withColumns({
             "chunk_token_count": token_count_udf(F.col("chunk_text")),
-            # Part 1 keeps the historical id (the anti-join in described_images_without_chunk relies on it);
+            # Part 1 keeps the plain image id (the anti-join in described_images_without_chunk relies on it);
             # the next parts of a long transcription get -2, -3...
             "chunk_id": F.when(F.col("part_no") == 1, image_id)
                          .otherwise(F.concat_ws("-", image_id, F.col("part_no").try_cast("string"))),
@@ -339,7 +339,7 @@ def _merge_chunks(df_chunks, table):
 
 def write_image_chunks(df_image_chunks):
     """Pre-cutoff documents go to chunks_archive, the others to chunks (Change Data Feed on, as Vector Search needs)."""
-    # Columns added since the first runs must be able to reach chunk tables written before them.
+    # Columns added upstream reach the chunk tables on write (schema auto-merge).
     spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
     # Cached because the left_anti join that built df_described would return 0 rows once the first MERGE ran.

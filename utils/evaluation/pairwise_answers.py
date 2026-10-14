@@ -32,7 +32,7 @@ dbutils.widgets.removeAll()
 dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
 dbutils.widgets.text('eval_id', 'chat-check')
 dbutils.widgets.text('reference', 'databricks-gpt-6-luna@chat')              # the chat as deployed
-# e.g. "databricks-gpt-6-luna@rechunk" with indexes "chat,rechunk=dev_landingzone.qualibot.chunks_test_index"
+# e.g. "databricks-gpt-6-luna@rechunk" with indexes "chat,rechunk=dev_proj.qualibot.chunks_test_index"
 dbutils.widgets.text('contenders', '')
 # Same syntax as retrieval_eval: "label[=catalog.schema.index][|rerank=N][|raw=N][|cap=N]",
 # comma-separated; "chat" = the app as deployed.
@@ -44,7 +44,7 @@ dbutils.widgets.text('n_questions', '40')                               # golden
 dbutils.widgets.text('seed', '7')
 dbutils.widgets.text('max_parallel', '4')
 dbutils.widgets.text('golden_table', 'dev_proj.qualibot.qualibot_eval_golden')
-dbutils.widgets.text('chat_table', 'dev_landingzone.qualibot.chat_messages')
+dbutils.widgets.text('chat_table', 'dev_proj.qualibot.chat_messages')
 dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_pairwise_runs')
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
@@ -366,7 +366,7 @@ if n_chat > 0:
         history.setdefault(h['session_id'], []).append(h)
     for r in picked:
         earlier = [h for h in history.get(r['session_id'], []) if h['created_at'] < r['created_at']][-4:]
-        # Turns of the former Knowledge Assistant carry its "[Division: …]" routing prefix.
+        # Stored turns may carry a "[Division: …]" routing prefix: removed before the search.
         messages = [{'role': h['role'], 'content': _strip_division(h['content'])} for h in earlier] + \
                    [{'role': 'user', 'content': _strip_division(r['content'])}]
         while messages and messages[0]['role'] != 'user':

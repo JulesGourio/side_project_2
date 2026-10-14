@@ -44,7 +44,7 @@ Workspace : https://dbc-c623749d-731b.cloud.databricks.com (id `2865348338307293
 | Schema `dev_landingzone.qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_landingzone/qualibot · `databricks tables list dev_landingzone qualibot --profile DEV` |
 | Volumes `doc_compare`, `test`, `images`, `staging`, `docling_models` | `databricks volumes list dev_landingzone qualibot --profile DEV` |
 | Schema projet `dev_proj.qualibot` | https://dbc-c623749d-731b.cloud.databricks.com/explore/data/dev_proj/qualibot |
-| Vector Search, endpoint `qualibot`, index `chunks_index` | https://dbc-c623749d-731b.cloud.databricks.com/compute/vector-search/qualibot · `databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_index --profile DEV` |
+| Vector Search, endpoint `qualibot`, index `chunks_index` | https://dbc-c623749d-731b.cloud.databricks.com/compute/vector-search/qualibot · `databricks vector-search-indexes get-index dev_proj.qualibot.chunks_index --profile DEV` |
 | Lakebase, projet `qualibot` (« Qualibot History »), branche `production`, base `doccompare` | `databricks postgres get-project projects/qualibot --profile DEV` ; rôles : `databricks postgres list-roles projects/qualibot/branches/production --profile DEV` |
 | Bundle (fichiers, état) | https://dbc-c623749d-731b.cloud.databricks.com/browse/folders/Workspace/Shared/.bundle/qualibot/dev · `databricks bundle summary -t dev --profile DEV` |
 | Jobs | https://dbc-c623749d-731b.cloud.databricks.com/jobs?filter=qualibot |
@@ -112,6 +112,111 @@ Jobs du bundle `dev` : `Z_1_Qualibot_Copy_Uat_To_Dev` (manuel), `D_1_Qualibot_Pa
 
 PowerShell, depuis la racine du projet, sur la machine de déploiement.
 
+### 00. Tables hors landingzone (DEV)
+
+Règle : les tables de DEV vivent dans `dev_proj.qualibot`, les volumes restent dans `dev_landingzone.qualibot`. `dev_lab` n'est plus utilisé. L'ordre compte : la copie DEV lit les tables UAT, donc `uat_proj` doit être prêt (voir `OPERATIONS.md`, étape 0).
+
+**00.1 — Inventaire DEV (PowerShell, profil `DEV`)**
+
+```powershell
+databricks tables list dev_landingzone qualibot --profile DEV -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks tables list dev_proj qualibot --profile DEV -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks vector-search-indexes list-indexes qualibot --profile DEV -o json | ConvertFrom-Json | ForEach-Object { $_.name }
+```
+
+**00.2 — Déployer le bundle DEV (crée le schéma proj, pointe l'app sur `dev_proj`)**
+
+```powershell
+databricks bundle deploy -t dev --profile DEV
+```
+
+Le job `copy_uat_to_dev` et l'app pointent alors sur `dev_proj.qualibot.chunks_index`, qui n'existe pas encore : c'est attendu, le job le crée (00.4).
+
+**00.3 — Export du corpus depuis UAT (workspace UAT, notebook `utils/dev_copy/export_uat_to_staging.py`)**
+
+Lancer ce notebook depuis le workspace UAT (ponctuel, voir le bloc E plus bas). Son source par défaut est désormais `uat_proj.qualibot` : la copie UAT de `OPERATIONS.md` étape 0 doit être faite avant.
+
+**00.4 — Import et index (job DEV)**
+
+```powershell
+databricks bundle run -t dev copy_uat_to_dev --profile DEV
+```
+
+Le job charge les tables dans `dev_proj.qualibot`, crée `dev_proj.qualibot.chunks_index` s'il n'existe pas et le synchronise (tâche `3_sync_indexes`). Attendre la fin avant la suite.
+
+**00.5 — Droits (job DEV)**
+
+```powershell
+databricks bundle run -t dev grant_app_access_dev --profile DEV
+```
+
+Accorde les volumes (`dev_landingzone.qualibot`), l'index et les tables pipeline (`dev_proj.qualibot`).
+
+**00.6 — Tables chat pour le tableau de bord d'usage**
+
+```powershell
+databricks bundle run -t dev lakebase_import_uat_to_dev --profile DEV
+```
+
+Recharge `dev_proj.qualibot.{messages,feedbacks,users,...}` depuis le volume de staging.
+
+**00.7 — Contrôle**
+
+Chat et comparaison d'impact sur l'URL de l'app DEV, puis :
+
+```powershell
+databricks vector-search-indexes get-index dev_proj.qualibot.chunks_index --profile DEV -o json | ConvertFrom-Json | Select-Object name, status
+```
+
+**00.8 — Suppression dans `dev_landingzone` (après validation, sur ton accord)**
+
+Index (seulement ceux présents en 00.1) :
+
+```powershell
+databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index --profile DEV
+databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v1 --profile DEV
+databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_as_index_v1 --profile DEV
+databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is_index_v1 --profile DEV
+```
+
+Tables (SQL, éditeur DEV) :
+
+```sql
+DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_archive;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_full;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.processed_files;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.image_metadata;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.parse_manifest;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.category_reference;
+DROP TABLE IF EXISTS dev_landingzone.qualibot._pipeline_checkpoint;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.chat_messages;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.chat_turns;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.chat_retrieved_chunks;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.errors;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v1;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_as_v1;
+DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_is_v1;
+```
+
+Toute autre table restante de l'inventaire 00.1 se supprime de la même façon : `DROP TABLE IF EXISTS dev_landingzone.qualibot.<nom>;`.
+
+**00.9 — `dev_lab`**
+
+Vérifier puis supprimer (sur ton accord, les données sont détruites) :
+
+```sql
+SHOW SCHEMAS IN dev_lab;
+SHOW TABLES IN dev_lab.lab_jules;
+DROP SCHEMA IF EXISTS dev_lab.lab_jules CASCADE;
+```
+
+Si plus aucun schéma utilisateur ne reste dans `dev_lab`, un admin metastore peut supprimer le catalogue : `DROP CATALOG IF EXISTS dev_lab;`.
+
+**00.10 — Job user capabilities (DEV)**
+
+Aucun job n'existe sur DEV : le contrôle de groupe est désactivé (`CAPS_BYPASS=true`, `utils/deploy/target_env.json`). Rien à faire.
+
 ### 0. Ordre complet du DEV (2026-10-12)
 
 Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et dater au fur et à mesure.
@@ -155,20 +260,20 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
 - [ ] **0.3 L'index `chunks_index` est ONLINE avec toutes ses lignes** (l'embedding prend 30 à 60 min) :
 
   ```powershell
-  databricks vector-search-indexes get-index dev_landingzone.qualibot.chunks_index --profile DEV
+  databricks vector-search-indexes get-index dev_proj.qualibot.chunks_index --profile DEV
   ```
 
   Chercher `"ready": true` (ou l'état `ONLINE`) et `indexed_row_count` ; éditeur SQL DEV, doit donner le même nombre :
 
   ```sql
-  SELECT count(*) AS chunks FROM dev_landingzone.qualibot.chunks;
+  SELECT count(*) AS chunks FROM dev_proj.qualibot.chunks;
   ```
 
   Si l'index n'existe pas, le créer (sous votre identité, propriétaire de l'endpoint `qualibot` et de la table `chunks`) ; même
   spécification que l'UAT, la création lance la première synchronisation :
 
   ```powershell
-  $json = '{"name": "dev_landingzone.qualibot.chunks_index", "endpoint_name": "qualibot", "primary_key": "chunk_id", "index_type": "DELTA_SYNC", "delta_sync_index_spec": {"source_table": "dev_landingzone.qualibot.chunks", "pipeline_type": "TRIGGERED", "embedding_source_columns": [{"name": "chunk_text", "embedding_model_endpoint_name": "databricks-qwen3-embedding-0-6b"}]}}'
+  $json = '{"name": "dev_proj.qualibot.chunks_index", "endpoint_name": "qualibot", "primary_key": "chunk_id", "index_type": "DELTA_SYNC", "delta_sync_index_spec": {"source_table": "dev_proj.qualibot.chunks", "pipeline_type": "TRIGGERED", "embedding_source_columns": [{"name": "chunk_text", "embedding_model_endpoint_name": "databricks-qwen3-embedding-0-6b"}]}}'
   [IO.File]::WriteAllText("$PWD\chunks_index.json", $json)
   databricks vector-search-indexes create-index --json "@chunks_index.json" --profile DEV
   Remove-Item chunks_index.json
@@ -220,21 +325,21 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   `utils/evaluation/` ont `dev_proj.qualibot.*` comme défauts). Les tables sont copiées, pas déplacées :
 
   ```sql
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.qualibot_eval_golden DEEP CLONE dev_landingzone.qualibot.qualibot_eval_golden;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_retrieval_runs DEEP CLONE dev_landingzone.qualibot.eval_retrieval_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs DEEP CLONE dev_landingzone.qualibot.eval_pairwise_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs_cache DEEP CLONE dev_landingzone.qualibot.eval_pairwise_runs_cache;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_load_runs DEEP CLONE dev_landingzone.qualibot.eval_load_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_vs_load_runs DEEP CLONE dev_landingzone.qualibot.eval_vs_load_runs;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions DEEP CLONE dev_landingzone.qualibot.synthetic_retrieval_questions;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases DEEP CLONE dev_landingzone.qualibot.feedback_failure_cases;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.qualibot_eval_golden DEEP CLONE dev_proj.qualibot.qualibot_eval_golden;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_retrieval_runs DEEP CLONE dev_proj.qualibot.eval_retrieval_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs DEEP CLONE dev_proj.qualibot.eval_pairwise_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs_cache DEEP CLONE dev_proj.qualibot.eval_pairwise_runs_cache;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_load_runs DEEP CLONE dev_proj.qualibot.eval_load_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_vs_load_runs DEEP CLONE dev_proj.qualibot.eval_vs_load_runs;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions DEEP CLONE dev_proj.qualibot.synthetic_retrieval_questions;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases DEEP CLONE dev_proj.qualibot.feedback_failure_cases;
   ```
 
   Si `synthetic_retrieval_questions` / `feedback_failure_cases` n'existent pas dans `dev_landingzone`, les créer depuis l'UAT :
 
   ```sql
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions AS SELECT * FROM uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
-  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases AS SELECT * FROM uat_landingzone.qualibot.feedback_failure_cases;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.synthetic_retrieval_questions AS SELECT * FROM uat_proj.qualibot.synthetic_retrieval_questions_v2;
+  CREATE TABLE IF NOT EXISTS dev_proj.qualibot.feedback_failure_cases AS SELECT * FROM uat_proj.qualibot.feedback_failure_cases;
   ```
 
   Contrôle : `SELECT count(*) FROM dev_proj.qualibot.qualibot_eval_golden;` donne le même nombre que dans `dev_landingzone.qualibot`.
@@ -368,32 +473,32 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
     databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v1    --profile DEV
     databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_as_index_v1 --profile DEV
     databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_is_index_v1 --profile DEV
-    databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2a   --profile DEV
-    databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2b   --profile DEV
-    databricks vector-search-indexes delete-index dev_landingzone.qualibot.chunks_index_v2c   --profile DEV
+    databricks vector-search-indexes delete-index dev_proj.qualibot.chunks_index_v2a   --profile DEV
+    databricks vector-search-indexes delete-index dev_proj.qualibot.chunks_index_v2b   --profile DEV
+    databricks vector-search-indexes delete-index dev_proj.qualibot.chunks_index_v2c   --profile DEV
     ```
 
     ```sql
     DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v1;
     DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_as_v1;
     DROP TABLE IF EXISTS dev_landingzone.qualibot.src_chunks_is_v1;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2a;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2b;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.chunks_v2c;
+    DROP TABLE IF EXISTS dev_proj.qualibot.chunks_v2a;
+    DROP TABLE IF EXISTS dev_proj.qualibot.chunks_v2b;
+    DROP TABLE IF EXISTS dev_proj.qualibot.chunks_v2c;
     ```
 
   - copies d'évaluation restées dans `dev_landingzone` (après un run d'évaluation réussi depuis `dev_proj`) :
 
     ```sql
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.qualibot_eval_golden;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_retrieval_runs;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_pairwise_runs;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_pairwise_runs_cache;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_load_runs;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_vs_load_runs;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.synthetic_retrieval_questions;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.feedback_failure_cases;
-    DROP TABLE IF EXISTS dev_landingzone.qualibot.eval_golden_runs;
+    DROP TABLE IF EXISTS dev_proj.qualibot.qualibot_eval_golden;
+    DROP TABLE IF EXISTS dev_proj.qualibot.eval_retrieval_runs;
+    DROP TABLE IF EXISTS dev_proj.qualibot.eval_pairwise_runs;
+    DROP TABLE IF EXISTS dev_proj.qualibot.eval_pairwise_runs_cache;
+    DROP TABLE IF EXISTS dev_proj.qualibot.eval_load_runs;
+    DROP TABLE IF EXISTS dev_proj.qualibot.eval_vs_load_runs;
+    DROP TABLE IF EXISTS dev_proj.qualibot.synthetic_retrieval_questions;
+    DROP TABLE IF EXISTS dev_proj.qualibot.feedback_failure_cases;
+    DROP TABLE IF EXISTS dev_proj.qualibot.eval_golden_runs;
     ```
 
     (`UNDROP TABLE` reste possible 7 jours.) À **garder** dans `dev_landingzone.qualibot` : les tables écrites chaque jour par
@@ -493,7 +598,7 @@ Crée l'app `qualibot`, le projet Lakebase `qualibot` (base `doccompare`), le sc
 ### C. Copie du corpus + index Vector Search (job DEV)
 
 Job `Z_1_Qualibot_Copy_Uat_To_Dev`, déclenchement manuel, serverless, sous **votre** identité (il faut READ VOLUME sur `uat_landingzone.qualibot.staging` ;
-le SP DEV ne lit pas ce volume) : `1_import_tables` (snapshot → tables `dev_landingzone.qualibot.*`, rétention 60 jours, Change Data Feed sur les tables de
+le SP DEV ne lit pas ce volume) : `1_import_tables` (snapshot → tables `dev_proj.qualibot.*`, rétention 60 jours, Change Data Feed sur les tables de
 chunks, archive LibreOffice → volume `doc_compare`) → `2_vector_search_endpoint` (crée l'endpoint `qualibot` s'il manque) → `3_sync_indexes` (crée les index
 déclarés et les synchronise — embedding de tout le corpus, peut être long). **Le pipeline de parsing n'est pas lancé.**
 
@@ -533,12 +638,12 @@ Search) : à la main, ça reste.
 
   -- (b) seulement le corpus et l'état du pipeline
   GRANT CREATE TABLE ON SCHEMA dev_landingzone.qualibot TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.chunks               TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot._pipeline_checkpoint TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.processed_files      TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.image_metadata       TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.parse_manifest       TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_landingzone.qualibot.category_reference   TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.chunks               TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot._pipeline_checkpoint TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.processed_files      TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.image_metadata       TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.parse_manifest       TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.category_reference   TO `mehdi.lamrani@databricks.com`;
 
   -- schema projet
   GRANT ALL PRIVILEGES ON SCHEMA dev_proj.qualibot TO `mehdi.lamrani@databricks.com`;

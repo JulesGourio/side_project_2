@@ -1,4 +1,4 @@
-"""Shared settings and helpers for utils/ (CLI profiles, Lakebase connection, user-capability sync).
+"""Shared settings and helpers for utils/ (CLI profiles, Lakebase connection).
 
 Notebooks reach it with ``sys.path.insert(0, os.path.dirname(os.getcwd()))`` (their folder is on sys.path,
 one level up is utils/). psycopg2 is imported lazily so notebooks that never touch Lakebase can import this file.
@@ -40,10 +40,10 @@ LAKEBASE: dict[str, dict] = {
 # ── copy_Lakebase_tables: source → destination ──────────────────────────────
 COPY_SOURCE_ENV      = "UAT"          # Lakebase source (key in LAKEBASE)
 COPY_TARGET_PROFILE  = PROFILE_DEV   # Destination Databricks workspace
-COPY_TARGET_CATALOG  = "dev_landingzone"
+COPY_TARGET_CATALOG  = "dev_proj"
 COPY_TARGET_SCHEMA   = "qualibot"
-COPY_STAGING_CATALOG = "dev_lab"
-COPY_STAGING_SCHEMA  = "lab_jules"
+COPY_STAGING_CATALOG = "uat_landingzone"
+COPY_STAGING_SCHEMA  = "qualibot"
 COPY_STAGING_VOLUME  = "staging"
 COPY_TABLES_TO_SKIP  = {
     "llm_requests",      # too large, not useful for analysis
@@ -82,12 +82,6 @@ MIGRATE_TO_PROD_TABLE_ORDER = [
     "errors",
     "knowledge_base_metadata",
 ]
-
-# ── Databricks groups → capabilities (kept in sync with app.yaml) ────────────
-CAPS_CHAT_GROUPS    = {"Role-Project-LEAP-End-users-Qualibot-ChatBot", "Role-Project-LEAP-CoreDev", "Role-Project-LEAP-CoreAdmin"}
-CAPS_COMPARE_GROUPS = {"Role-Project-LEAP-End-users-Qualibot-DocCompare", "Role-Project-LEAP-CoreDev", "Role-Project-LEAP-CoreAdmin"}
-CAPS_ALL_GROUPS     = CAPS_CHAT_GROUPS | CAPS_COMPARE_GROUPS
-
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -158,82 +152,3 @@ def json_serializer(obj):
     if isinstance(obj, (bytes, memoryview)):
         return bytes(obj).hex()
     return str(obj)
-
-
-def sync_users_from_audit(conn, audit: dict, dry_run: bool = False) -> tuple[int, list]:
-    """Merge the audit-log group membership into ``users`` (groups, can_chat, can_compare) and commit.
-
-    ``audit`` is {(user_id, group): {"is_member": bool, "email": str}}, the latest add/remove event per pair.
-    For each tracked group (CAPS_ALL_GROUPS) the audit wins; pairs absent from it, and groups outside the tracked
-    set, keep the stored value. Rows flagged ``is_manual`` and users without any email are left alone.
-    Returns (rows written, [(email, can_chat, can_compare, groups)] preview of every computed row).
-    """
-    updated = 0
-    preview: list = []
-    with conn.cursor() as cur:
-        cur.execute("""SELECT column_name FROM information_schema.columns
-                       WHERE table_name = 'users' AND column_name IN ('groups', 'is_manual')""")
-        optional = {r[0] for r in cur.fetchall()}
-        has_groups, has_is_manual = "groups" in optional, "is_manual" in optional
-
-        cols = ["user_id", "email"] + (["groups"] if has_groups else []) + (["is_manual"] if has_is_manual else [])
-        cur.execute(f"SELECT {', '.join(cols)} FROM users")
-        db_rows = {}
-        for row in cur.fetchall():
-            rec = dict(zip(cols, row))
-            db_rows[rec["user_id"]] = {
-                "email": rec["email"],
-                "groups": set(rec.get("groups") or []),
-                "is_manual": bool(rec.get("is_manual")),
-            }
-
-        audit_users: dict[str, dict] = {}
-        for (uid, grp), info in audit.items():
-            entry = audit_users.setdefault(uid, {"email": info["email"], "groups": set()})
-            entry["email"] = entry["email"] or info["email"]
-            if info["is_member"]:
-                entry["groups"].add(grp)
-
-        for uid in set(audit_users) | set(db_rows):
-            db = db_rows.get(uid, {"email": None, "groups": set(), "is_manual": False})
-            if db["is_manual"]:
-                continue
-
-            merged = set(db["groups"])
-            for grp in CAPS_ALL_GROUPS:
-                if (uid, grp) in audit:
-                    (merged.add if audit[(uid, grp)]["is_member"] else merged.discard)(grp)
-
-            email = db["email"] or audit_users.get(uid, {}).get("email")
-            if not email:
-                continue
-            can_chat = bool(merged & CAPS_CHAT_GROUPS)
-            can_compare = bool(merged & CAPS_COMPARE_GROUPS)
-            groups_list = sorted(merged)
-            preview.append((email, can_chat, can_compare, groups_list))
-            if dry_run:
-                continue
-
-            extra = [("groups", groups_list)] if has_groups else []
-            set_extra = "".join(f", {c}=%s" for c, _ in extra)
-            cur.execute(
-                f"UPDATE users SET can_chat=%s, can_compare=%s{set_extra}, updated_at=NOW() WHERE email=%s",
-                (can_chat, can_compare, *[v for _, v in extra], email),
-            )
-            if cur.rowcount:
-                updated += 1
-                continue
-            cur.execute(
-                f"""INSERT INTO users (user_id, email, can_chat, can_compare{''.join(f', {c}' for c, _ in extra)})
-                    VALUES (%s, %s, %s, %s{', %s' * len(extra)})
-                    ON CONFLICT (user_id) DO UPDATE SET
-                        email       = COALESCE(EXCLUDED.email, users.email),
-                        can_chat    = EXCLUDED.can_chat,
-                        can_compare = EXCLUDED.can_compare{''.join(f', {c} = EXCLUDED.{c}' for c, _ in extra)},
-                        updated_at  = NOW()""",
-                (uid, email, can_chat, can_compare, *[v for _, v in extra]),
-            )
-            updated += 1
-    if not dry_run:
-        conn.commit()
-    return updated, preview
