@@ -405,8 +405,8 @@ def test_a_french_opening_question_is_only_translated_into_english(monkeypatch):
     d = m['log'].data
     assert d['rewrite_mode'] == 'translate' and (d['fr_query'], d['en_query']) == (QUESTION, 'Search for NDT qualification procedures')
     assert sorted((p['num_results'], 'reranker' in p, p['query_text']) for p in m['sent']) == [
-        (12, False, QUESTION), (18, True, QUESTION), (18, True, 'Search for NDT qualification procedures')]
-    assert d['vs_calls_expected'] == 3 and d['config']['pair_rerank_top_k'] == 18 and not m['log'].issues
+        (16, False, QUESTION), (16, True, QUESTION), (16, True, 'Search for NDT qualification procedures')]
+    assert d['vs_calls_expected'] == 3 and d['config']['pair_rerank_top_k'] == 16 and not m['log'].issues
     assert m['log'].prompts[0] == 'translate_query' and 'rewrite' not in m['log'].prompts
     assert 'rewrite' in m['log'].timings_ms
 
@@ -421,7 +421,7 @@ def test_an_english_opening_question_is_translated_into_french_and_the_raw_searc
     assert d['rewrite_mode'] == 'translate'
     assert (d['fr_query'], d['en_query']) == ('Quelles sont les exigences de qualification CND ?', 'What are the NDT qualification requirements?')
     raw = [p for p in m['sent'] if 'reranker' not in p]
-    assert [(p['query_text'], p['num_results']) for p in raw] == [('Quelles sont les exigences de qualification CND ?', 12)]
+    assert [(p['query_text'], p['num_results']) for p in raw] == [('Quelles sont les exigences de qualification CND ?', 16)]
     assert sorted(p['query_text'] for p in m['sent'] if 'reranker' in p) == sorted(
         ['What are the NDT qualification requirements?', 'Quelles sont les exigences de qualification CND ?'])
 
