@@ -319,14 +319,14 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Les plannings restent en pause. Contrôle (UI DEV → Jobs & Pipelines, filtre `Qualibot`) : aucun planning actif en dehors de
   `lakebase_import_uat_to_dev`. Pour prévisualiser sans rien modifier : `databricks bundle validate -t dev --profile DEV` puis
   `databricks bundle plan -t dev --profile DEV` (chaque ressource doit être `create` ou `update`, rien en `delete` / `recreate` sans accord).
-- [ ] **0.5 Droits** — le job donne au SP de l'app et au SP des jobs ce qu'ils utilisent (volumes, index, endpoints LLM, `dev_proj.qualibot`) :
+- [ ] **0.5 Droits** — le job donne au SP de l'app et au SP des jobs ce qu'ils utilisent (volumes, index, `dev_proj.qualibot`). Les endpoints LLM ne sont jamais accordés : tout utilisateur du workspace peut déjà les interroger.
 
   ```powershell
   databricks bundle run grant_app_access_dev -t dev --profile DEV
   ```
 
   Attendu : une ligne `OK:` par droit, aucune `FAILED`. Pour changer ce qui est accordé : les listes `volumes` / `indexes` /
-  `serving_endpoints` du job `grant_app_access_dev` dans `databricks.yml` (`base_parameters`). Une ligne `FAILED` sur `dev_proj` : exécuter à
+  `indexes` du job `grant_app_access_dev` dans `resources/grants.yml` (`base_parameters`). Une ligne `FAILED` sur `dev_proj` : exécuter à
   la main (éditeur SQL DEV, compte qui peut donner ces droits) puis relancer le job :
 
   ```sql
@@ -336,17 +336,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA dev_proj.qualibot TO `Role-Project-LEAP-CoreDev`;
   ```
 
-  Une ligne `FAILED: CAN_QUERY on serving endpoint …` : le SP des jobs n'a pas CAN_MANAGE sur cet endpoint LLM (souvent réservé à un
-  admin du workspace). Faire accorder le droit par un admin, ou :
-
-  ```powershell
-  $id = (databricks serving-endpoints get databricks-gpt-6-luna --profile DEV -o json | ConvertFrom-Json).id
-  databricks serving-endpoints get-permissions $id --profile DEV
-  databricks serving-endpoints update-permissions $id --profile DEV --json '{\"access_control_list\":[{\"service_principal_name\":\"8e411164-a7e8-46ff-8013-8c56af2c3656\",\"permission_level\":\"CAN_QUERY\"}]}'
-  ```
-
-  (même chose pour `databricks-gpt-5-6-luna`.) En cas de 403 de l'app : « Document search failed (Vector Search returned 403) » = index,
-  « Chat failed … endpoint returned 403 » = endpoint LLM ; `databricks apps logs qualibot --profile DEV` donne la ligne.
+  En cas de 403 de l'app : `databricks apps logs qualibot --profile DEV` donne la ligne.
 - [ ] **0.6 Tables d'évaluation dans `dev_proj.qualibot`**. Éditeur SQL DEV, **une instruction à la fois** ; une table qui n'existe pas
   donne `TABLE_OR_VIEW_NOT_FOUND` : passer à la suivante. Les droits sur `dev_proj` viennent de 0.5. Règle : `dev_proj.qualibot`
   garde ce que le pipeline et l'app écrivent, `dev_proj.qualibot` reçoit ce qui définit ou mesure le projet (les notebooks de

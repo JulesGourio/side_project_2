@@ -6,12 +6,12 @@ targets:
     resources:
       jobs:
 
-        # Manual trigger. Grants the DEV app SP what it uses (catalog and schema usage, volumes, indexes, serving endpoints),
+        # Manual trigger. Grants the DEV app SP what it uses (catalog and schema usage, volumes, index),
         # and the DEV SP itself SELECT + MODIFY on `pipeline_tables`. Edit the lists in base_parameters, deploy, run;
-        # re-run after recreating an index, a table or the app.
+        # re-run after recreating an index, a table or the app. LLM endpoints are never granted: every workspace user can already query them.
         grant_app_access_dev:
           name: "Z_1_Qualibot_Grant_App_Access_${bundle.target}"
-          description: "Grant the DEV qualibot app SP its volumes, indexes and LLM endpoints, and the DEV job SP the pipeline tables. Manual trigger only."
+          description: "Grant the DEV qualibot app SP its volumes and index, and the DEV job SP the pipeline tables. Manual trigger only."
           max_concurrent_runs: 1
           tags:
             project: Qualibot
@@ -42,7 +42,6 @@ targets:
                   proj_schema: ${var.app_proj_schema}
                   volumes: "doc_compare,test"
                   indexes: "chunks_index"
-                  serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna,databricks-gemini-3-1-flash-lite"
                   # The DEV SP itself (this job's run_as), on the tables a person created.
                   pipeline_service_principal: fde6ff28-739f-4a41-b61e-604a298c8478
                   pipeline_tables: "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference,chunks"
@@ -57,11 +56,11 @@ targets:
     resources:
       jobs:
         # Manual trigger. Grants the qualibot-uat-test app SP USE CATALOG / USE SCHEMA on uat_proj.qualibot, SELECT on its
-        # index and CAN_QUERY on the LLM endpoints. Run as job-runner-sa-uat, owner of uat_proj.qualibot. Re-run after
+        # index in uat_proj.qualibot. Run as job-runner-sa-uat, owner of uat_proj.qualibot. Re-run after
         # recreating the index or the app.
         grant_app_access_uat_test:
           name: "Z_1_Qualibot_Grant_App_Access_${bundle.target}"
-          description: "Grant the qualibot-uat-test app SP its index in uat_proj.qualibot and the LLM endpoints. Manual trigger only."
+          description: "Grant the qualibot-uat-test app SP its index in uat_proj.qualibot. Manual trigger only."
           max_concurrent_runs: 1
           tags:
             project: Qualibot
@@ -88,7 +87,6 @@ targets:
                   proj_schema: ${var.app_proj_schema}
                   volumes: "doc_compare_test,test_test,images_test"
                   indexes: "chunks_index${var.parsing_table_suffix}"
-                  serving_endpoints: "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna,databricks-gemini-3-1-flash-lite"
                   pipeline_service_principal: ""
                   pipeline_tables: ""
               environment_key: default

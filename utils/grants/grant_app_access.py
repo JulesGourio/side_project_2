@@ -15,7 +15,6 @@
 # MAGIC |---|---|---|---|
 # MAGIC | `volumes` | `catalog`.`schema_name` | READ + WRITE VOLUME | Compare files, LibreOffice archive |
 # MAGIC | `indexes` | `proj_catalog`.`proj_schema` | SELECT | Impact search, Chat VSI |
-# MAGIC | `serving_endpoints` | — | CAN_QUERY | Chat VSI, Compare, impact judge, translation |
 # MAGIC | `pipeline_tables` | `proj_catalog`.`proj_schema` | SELECT + MODIFY, to `pipeline_service_principal` | Parsing pipeline jobs (run as the DEV SP) on the tables of the project schema, e.g. task `6_update_kb_metadata` reads `parse_manifest` and `chunks` |
 # MAGIC
 # MAGIC The app SP gets USE CATALOG / USE SCHEMA on `catalog`.`schema_name` (volumes) and on `proj_catalog`.`proj_schema` (indexes).
@@ -33,7 +32,6 @@ dbutils.widgets.text("catalog", "dev_proj")
 dbutils.widgets.text("schema_name", "qualibot")
 dbutils.widgets.text("volumes", "doc_compare,test")
 dbutils.widgets.text("indexes", "chunks_index")
-dbutils.widgets.text("serving_endpoints", "databricks-claude-sonnet-4-6,databricks-gpt-5-6-luna,databricks-gpt-6-luna")
 dbutils.widgets.text("proj_catalog", "dev_proj")
 dbutils.widgets.text("proj_schema", "qualibot")
 dbutils.widgets.text("pipeline_service_principal", "fde6ff28-739f-4a41-b61e-604a298c8478")
@@ -98,29 +96,7 @@ for stmt in statements:
 
 # COMMAND ----------
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.serving import ServingEndpointAccessControlRequest, ServingEndpointPermissionLevel
-
-w = WorkspaceClient()
-for name in _list("serving_endpoints"):
-    what = f"CAN_QUERY on serving endpoint {name}"
-    try:
-        endpoint_id = w.serving_endpoints.get(name).id
-        w.serving_endpoints.update_permissions(endpoint_id, access_control_list=[
-            ServingEndpointAccessControlRequest(service_principal_name=sp,
-                                                permission_level=ServingEndpointPermissionLevel.CAN_QUERY),
-        ])
-        logger.info(f"  OK: {what}")
-    except Exception as exc:
-        # Typical cause: the job SP is not CAN_MANAGE on this endpoint (foundation
-        # model endpoints are usually managed by a workspace admin) — ask one to run
-        # the same grant.
-        failed.append((what, str(exc).splitlines()[0][:300]))
-        logger.warning(f"  FAILED: {what}\n    -> {str(exc).splitlines()[0][:300]}")
-
-# COMMAND ----------
-
-total = len(statements) + len(_list("serving_endpoints"))
+total = len(statements)
 if failed:
     details = "\n".join(f"- {what}\n    -> {err}" for what, err in failed)
     raise RuntimeError(f"{len(failed)}/{total} grant(s) failed:\n{details}")
