@@ -51,3 +51,19 @@ Daily chain: `1_categories` -> `2_manifest` -> `3_parse` (GPU) -> `4_describe_im
 - **Table state before a run**: a target whose `parsing_checkpoint` + `image_metadata` are missing re-parses the whole corpus on GPU — copy them first (UAT: `runbooks/uat.md` D5.3, deep clones of the former `_v1` tables).
 - **Incident narratives live in READMEs, not in code**: `utils/parsing_pipeline/README.md` and `utils/README.md` hold the postmortem-length stories (spot-driver-reclaim, GPU contention, opencv/CUDA crash, etc.). Job YAML/notebooks keep a one-line pointer only — see the `databricks-job-conventions` skill for the org-wide version of this rule.
 - Two personal (not repo-tracked) Claude Code skills back this section: `leap-notebook-conventions` and `databricks-job-conventions` in `~/.claude/skills/` — load them before touching a `leap-dbx-repository` notebook or any Databricks job/cluster resource.
+
+## Operational conventions (for Claude, not for the repository documentation)
+
+These rules are for whoever changes the code. They do not belong in the READMEs or in the code comments.
+
+- Notebooks under `utils/` (`*_job.py`, `ensure_*`, `import_*`, `grant_*`, `stop_start_app_job.py`, `evaluation/*.py` marked `# Databricks notebook source`) do not run from the command line. They are job tasks or notebooks opened in Databricks.
+- Logging uses `logger` (the `logging` module), never `print`. Notebooks and command-line scripts follow the same rule.
+- A notebook that takes parameters declares them as widgets, after `dbutils.widgets.removeAll()`.
+- Notebooks import `ops_config.py` after adding `utils/` to `sys.path`: `sys.path.insert(0, os.path.dirname(os.getcwd()))` in notebooks (their folder is on `sys.path`, its parent is `utils/`), `Path(__file__).resolve().parent.parent` in command-line scripts.
+- On data columns, `try_cast` and `try_to_date` replace `cast` and `to_date`, so one malformed value does not fail the whole task.
+- `target_env.json` is the single source of the application settings per target. The PowerShell deploy script and the Bitbucket pipeline both read it: never copy its values elsewhere.
+- Application start and stop (`app_mgmt/stop_start_app_job.py`): the SDK raises `BadRequest` when the application is already in the requested state. The notebook reads the state first and skips the call when it is already there.
+- Line endings of the rendered `target_config.env`: `render_target_config_env.py` writes LF. A CRLF file adds a `\r` to every value, and every URL built from those values becomes wrong.
+- A notebook imported into the workspace: `databricks workspace import` must target exactly the job's `notebook_path` (without the `.py` suffix), otherwise a duplicate appears without an error.
+- Deployment: the application is deployed with `utils/deploy/deploy_qualibot.ps1` (or the Bitbucket pipeline), the jobs with `databricks bundle deploy`. The root README describes the targets.
+- `CAN_QUERY` is never granted on serving endpoints: every workspace user already queries them (`CLAUDE.md`, Databricks section).
