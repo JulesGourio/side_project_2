@@ -27,7 +27,7 @@ A et B sont indépendants et peuvent se faire dans n'importe quel ordre. D ne se
 
 ### 0. Migration vers `uat_proj.qualibot`
 
-Tout l'app et le pipeline vivent dans `uat_proj.qualibot`. Les volumes de l'UAT ne portent pas de suffixe ; ceux de `qualibot-uat-test` ont le suffixe `_test`. Les tables `*_v1` et les volumes de l'ancien emplacement ne servent qu'à la copie unique de cette étape. Rien ne touche à l'app tant que le déploiement n'a pas été accordé (0.7).
+L'app et le pipeline vivent dans `uat_proj.qualibot`. Les volumes de l'UAT ne portent pas de suffixe ; ceux de `qualibot-uat-test` ont le suffixe `_test`. Les tables `*_v1` et les volumes de l'ancien emplacement ne servent qu'à la copie unique de cette étape. Rien ne touche à l'app tant que le déploiement n'a pas été accordé (0.7).
 
 **0.1 — Inventaire (PowerShell, profil `UAT`)**
 
