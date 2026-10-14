@@ -54,7 +54,7 @@ async def get_app_config():
 
 @router.get('/config/processors')
 async def get_processors_config():
-    """Return the processor version mapping (from server/config/processors.yml)."""
+    """Return the processor version mapping (from server/services/compare/processors/versions.yml)."""
     try:
         data = _load_processors_config()
         return data

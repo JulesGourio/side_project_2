@@ -442,7 +442,7 @@ n'a pas tranché.
 
 ### U. Tests de charge
 
-Mesures et configuration retenue : `archive/docs/chat_tests.md` (§ 5.8). Le chat tient 40 questions simultanées avec la file Vector Search
+Mesures et configuration retenue : the chat measurement log in `archive/docs/chat_tests.md`, section 5.8. Le chat tient 40 questions simultanées avec la file Vector Search
 commune (`server/services/infra/vs_gate.py`, 8 requêtes en cours au plus, relances sur 429).
 
 - [ ] **U1. Chat** : app DEV démarrée, notebook `utils/evaluation/load_test_chat.py` en serverless, Run all (défauts : paliers de 5, 10, 20, 40, 80
