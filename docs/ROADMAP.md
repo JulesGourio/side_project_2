@@ -5,7 +5,7 @@ Fichier de suivi : cocher / dater au fur et à mesure. Les chantiers terminés s
 ## Aperçu exact des DOCX (livré, à connaître)
 
 Le rendu « Exact (PDF) » du Compare convertit le DOCX en PDF avec un LibreOffice **portable** (aucun paquet système n'est
-installable sur Databricks Apps, mais un arbre de fichiers s'exécute) : `utils/soffice_packaging/package_libreoffice.py`
+installable sur Databricks Apps, mais un arbre de fichiers s'exécute) : `oneshot/soffice/package_libreoffice.py`
 construit une archive tar.gz (~290 Mo) à partir des .deb officiels, `scan_needed_libs.py` calcule la fermeture transitive des
 bibliothèques (lecteur ELF `DT_NEEDED` en Python pur ; 157 .so Ubuntu jammy fusionnés dans `program/`, 317 Mo une fois
 extrait). L'archive est déposée dans le volume UC, téléchargée et extraite une fois par process au premier aperçu
@@ -50,7 +50,7 @@ Détail dans `docs/compare_audit_2026-10.md`.
   présentateur PPTX non extraites (choix délibéré : bruit).
 - [ ] **14 autres points** listés dans la partie B du rapport d'audit, dont le cache d'analyse écrit par le navigateur et les fichiers `.tmp` jamais nettoyés.
 - [ ] **Mesure automatique de la qualité de détection** : le corpus d'évaluation (paires de documents annotées, rappel / précision du
-  diff, seuil de similarité 0,55 tranché le 2026-07-17) n'est pas dans ce dépôt, et le mode `--score` de `utils/compare_preview.py` a été
+  diff, seuil de similarité 0,55 tranché le 2026-07-17) n'est pas dans ce dépôt, et le mode `--score` de `oneshot/compare/compare_preview.py` a été
   supprimé avec lui. À versionner (ou un sous-ensemble) pour que chaque changement de moteur soit mesurable.
 
 ## Divers

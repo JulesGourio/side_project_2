@@ -130,15 +130,7 @@ sync:
     - "Intraqual_files/**"
     - "intraqual_downloads/**"
     - "intraqual_extracted/**"
-    - "intraqual_*.csv"
-    - "intraqual_*.json"
-    - "intraqual_*.jsonl"        # raw export — only server/data/doc_catalog.json ships
-    - "utils/deploy/intraqual_*.csv"
     - "utils/deploy/.intraqual_profile/**"
-    - "utils/deploy/download_intraqual.py"
-    - "utils/deploy/scrap_ids_intraqual.py"
-    - "utils/deploy/unzip_intraqual.py"
-    - "utils/deploy/upload_intraqual.py"
     - "user_feedbacks/**"
     - "test_prompt/**"
     - "**/*.xlsx"
@@ -508,7 +500,7 @@ targets:
   # Remove this target once the evaluation is done.
   # Rehearsal of the UAT switch to the new chatbot: writes only uat_proj.qualibot.*_test (owned by job-runner-sa-uat),
   # the images_test volume, the chunks_index_test index and Lakebase doccompare_test — never anything the running
-  # qualibot app, its agents or its parsing job read. setup_proj_schema (resources/uat_setup.yml) deep-clones the
+  # qualibot app, its agents or its parsing job read. the one-shot oneshot/uat/setup_proj_schema.py deep-clones the
   # parsing state from uat_proj.qualibot.*_v1 (read only), so the first run re-chunks without a GPU reparse.
   qualibot-uat-test:
     workspace:
