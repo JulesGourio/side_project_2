@@ -184,7 +184,7 @@ async def search(messages, division, index):
 async def generate(model, prompt):
     """The app's answer call (chat/llm), pinned to one model; keeps the raw text with its [n] markers."""
     started, first, text, usage = time.monotonic(), None, [], {}
-    async for chunk in chat_llm.stream_answer(HOST, token(), [model], prompt, MAX_TOKENS, 'Chat'):
+    async for chunk in chat_llm.stream_answer(HOST, token(), [model], prompt, MAX_TOKENS):
         if not chunk.startswith('data: '):
             continue
         data = chunk[6:].strip()

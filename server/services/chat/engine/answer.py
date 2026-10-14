@@ -21,7 +21,6 @@ _STATUS_AFTER_S = 15.0         # a search or rewrite slower than this shows 'sti
 
 logger = logging.getLogger(__name__)
 
-_OPERATION = 'Chat'              # label used in user-facing error messages
 
 LANGUAGE_REMINDER = prompts.read('language_reminder')
 NAMED_LANGUAGE_REMINDER = prompts.read('language_reminder_named')
@@ -165,7 +164,7 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
         log.timings_ms['generation'] = max(0, llm_ms - (llm.get('queue_wait_ms') or 0))
         _record_answer(log, chain, llm, usage, parser)
 
-    async for chunk in chat_llm.stream_answer(host, token, chain, prompt, answer_max_tokens(), _OPERATION):
+    async for chunk in chat_llm.stream_answer(host, token, chain, prompt, answer_max_tokens()):
         if not chunk.startswith('data: '):
             yield chunk                          # keepalive comments
             continue

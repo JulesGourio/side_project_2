@@ -314,7 +314,7 @@ def cooldown_for(kind: str) -> float:
 
 
 async def stream_answer(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
-                        max_tokens: int, operation: str = 'Chat') -> AsyncGenerator[str, None]:
+                        max_tokens: int) -> AsyncGenerator[str, None]:
     """Stream the answer of the first endpoint of ``endpoints`` that works (see module doc)."""
     sem = _semaphore()
     queued_at = time.monotonic()
