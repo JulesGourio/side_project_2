@@ -264,10 +264,12 @@ async def _stream_once(host: str, token: str, endpoint: str, messages: List[Dict
 
 
 async def stream_analysis(host: str, token: str, endpoint: str, messages: List[Dict[str, Any]], max_tokens: int,
-                          thinking_budget: int, temperature: float) -> AsyncGenerator[str, None]:
+                          thinking_budget: int, temperature: float,
+                          info: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
     """SSE of the analysis of the first endpoint of the chain that answers: text deltas, a ``warning`` when the
     output hit max_tokens, one ``usage`` event, then ``[DONE]``; keepalive comments while waiting. When every
-    attempt failed: one ``error`` event with ``TIRED_MESSAGE`` (``detail`` = the cause, dropped by the router)."""
+    attempt failed: one ``error`` event with ``TIRED_MESSAGE`` (``detail`` = the cause, dropped by the router).
+    ``info['endpoint']`` is set to the endpoint that finished the answer (not set when none answered)."""
     chain = compare_chain(endpoint)
     started = time.monotonic()
     given_up: set = set()
@@ -321,6 +323,8 @@ async def stream_analysis(host: str, token: str, endpoint: str, messages: List[D
                     raise LlmFailure('empty', 'no answer text')
                 written += got
                 answered = True
+                if info is not None:
+                    info['endpoint'] = candidate
                 if candidate != chain[0]:
                     logger.warning('compare_llm: answered by fallback %s (primary %s)', candidate, chain[0])
                 break

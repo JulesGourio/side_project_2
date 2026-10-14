@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -257,3 +258,94 @@ def test_error_event_detail_is_dropped_before_the_browser(monkeypatch):
     event = {'type': 'error', 'error': TIRED_MESSAGE, 'error_type': 'LLMUnavailable', 'detail': 'every endpoint failed'}
     public = json.loads(_public_error_chunk(event)[6:])
     assert 'detail' not in public and public['error'] == TIRED_MESSAGE
+
+
+def test_analysis_info_names_the_endpoint_that_answered(monkeypatch):
+    FakeService({CLAUDE: _status(429), GPT_5_6_LUNA: _sse('ok.')}, monkeypatch)
+    info = {}
+    _run(_collect(stream_analysis(HOST, 't', CLAUDE, [], 100, 0, 0.0, info=info)))
+    assert info == {'endpoint': GPT_5_6_LUNA}
+
+
+def test_analysis_info_is_unset_when_nothing_answered(monkeypatch):
+    FakeService({CLAUDE: _status(503), GPT_5_6_LUNA: _status(503)}, monkeypatch)
+    info = {}
+    _run(_collect(stream_analysis(HOST, 't', CLAUDE, [], 100, 0, 0.0, info=info)))
+    assert info == {}
+
+
+def test_chunked_analysis_info_lists_the_parts_endpoints_in_document_order(monkeypatch):
+    from server.services.compare import chunked_analysis as ca
+
+    async def fake_stream(host, token, ep, messages, *args, info=None, **kwargs):
+        i = int(messages[-1]['content'][0]['text'])
+        info['endpoint'] = ['fallback-b', 'primary-a', 'primary-a'][i]
+        yield f'data: {json.dumps({"type": "response.output_text.delta", "delta": f"part {i} "})}\n\n'
+        yield 'data: [DONE]\n\n'
+
+    monkeypatch.setattr(ca, 'stream_analysis', fake_stream)
+    parts = [[{'role': 'user', 'content': [{'type': 'text', 'text': str(i)}]}] for i in range(3)]
+    info = {}
+    _run(_collect(ca.stream_analysis_chunked(HOST, 't', 'primary-a', parts, 100, 0, 0.0, structured=False,
+                                             info=info)))
+    assert info == {'endpoint': 'fallback-b,primary-a'}
+
+
+def test_update_usage_writes_the_answering_endpoint_and_keeps_it_when_empty(monkeypatch):
+    from server.services.infra.lakebase import audit, connection
+
+    class _Conn:
+        def __init__(self):
+            self.execute = AsyncMock()
+
+    class _Acquire:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn
+
+        async def __aexit__(self, *exc):
+            return False
+
+    conn = _Conn()
+    pool = MagicMock()
+    pool.acquire.return_value = _Acquire(conn)
+    monkeypatch.setattr(connection, 'get_pool', lambda: pool)
+
+    _run(audit.update_llm_request_usage(5, endpoint_name=GPT_5_6_LUNA))
+    sql, *params = conn.execute.await_args.args
+    assert "endpoint_name   = COALESCE(NULLIF($10::text, ''), endpoint_name)" in sql
+    assert params[0] == 5 and params[9] == GPT_5_6_LUNA
+
+    _run(audit.update_llm_request_usage(5, input_tokens=3))
+    assert conn.execute.await_args.args[10] == ''
+
+
+def test_impact_judge_endpoints_are_reported_in_order_of_first_answer(monkeypatch):
+    service = FakeService({GPT_5_6_LUNA: _status(500), GPT_6_LUNA: _ok(
+        '{"impacted": false, "confidence": "high", "reason": "r", "passages": []}')}, monkeypatch)
+    monkeypatch.setattr(vector_search, '_changes_block', lambda *a, **k: 'CHANGES')
+
+    async def fake_fetch(host, token, index_name, queries, num_results):
+        chunks = [{'chunk_id': 'D1-0', 'IDDOC': '1', 'REF': 'PR-100', 'division': '', 'url': '',
+                   'semantic_headers': '', 'chunk_text': 'apply 35 Nm', 'score': 1.0, '_change_ids': ['C1']}]
+        return {'chunks': chunks, 'queries_failed': 0}
+
+    monkeypatch.setattr(vector_search, '_fetch_chunks_multi', fake_fetch)
+    info = {}
+
+    async def collect():
+        stream = run_impact_search(
+            host=HOST, token='t', index_name='i', llm_endpoint=GPT_5_6_LUNA,
+            extracted={'changes': [{'id': 'C1', 'text': 'x'}], 'source': 'structured',
+                       'queries': [{'text': 'q', 'change_ids': ['C1']}]},
+            num_results=5, max_candidates=1, max_changes_chars=1000, max_tokens=100,
+            archive_before='', exclude_names=[], info=info,
+        )
+        return [e async for e in stream]
+
+    events = _run(collect())
+    assert next(e['document'] for e in events if e['type'] == 'document')['status'] == 'not_impacted'
+    assert info == {'endpoints': [GPT_6_LUNA]}
+    assert service.endpoints()[-1] == GPT_6_LUNA

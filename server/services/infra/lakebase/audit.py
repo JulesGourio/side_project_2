@@ -200,8 +200,13 @@ async def update_llm_request_usage(
     http_status: int = 0,
     error_type: str = '',
     error_msg: str = '',
+    endpoint_name: str = '',
 ) -> None:
-    """Update token usage and status on an llm_requests row (best-effort, never raises)."""
+    """Update token usage and status on an llm_requests row (best-effort, never raises).
+
+    ``endpoint_name`` is the endpoint that answered when it differs from the one the row was created with;
+    an empty value keeps the stored name.
+    """
     pool = connection.get_pool()
     if not pool or not llm_request_id:
         return
@@ -217,7 +222,8 @@ async def update_llm_request_usage(
                     cost_eur        = COALESCE($6, cost_eur),
                     http_status     = COALESCE($7, http_status),
                     error_type      = COALESCE($8, error_type),
-                    error_msg       = COALESCE($9, error_msg)
+                    error_msg       = COALESCE($9, error_msg),
+                    endpoint_name   = COALESCE(NULLIF($10::text, ''), endpoint_name)
                 WHERE id = $1
                 ''',
                 llm_request_id,
@@ -229,6 +235,7 @@ async def update_llm_request_usage(
                 http_status or None,
                 error_type or None,
                 (error_msg or '')[:2000] or None,
+                endpoint_name or '',
             )
     except Exception as e:
         logger.debug('update_llm_request_usage failed: %s', e)

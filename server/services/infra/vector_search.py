@@ -497,11 +497,13 @@ async def run_impact_search(
     max_tokens: int,
     archive_before: str,
     exclude_names: List[str],
+    info: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Yield 'plan' → one 'document' per judged candidate (as each finishes) → 'done'.
 
     Raises before 'plan' on retrieval failure (caller reports it); a failed
     judge call yields that document with status 'error' instead of aborting.
+    ``info['endpoints']``, when given, lists the endpoints that answered a judge call, in order of first answer.
     """
     queries = extracted['queries']
     fetched = await _fetch_chunks_multi(host, token, index_name, queries, num_results)
@@ -538,6 +540,10 @@ async def run_impact_search(
                 try:
                     changes_text = _changes_block(extracted['changes'], max_changes_chars, tuple(cand['change_ids']))
                     res = await _judge(host, token, llm_endpoint, changes_text, cand, budget)
+                    if info is not None and res.get('endpoint'):
+                        seen = info.setdefault('endpoints', [])
+                        if res['endpoint'] not in seen:
+                            seen.append(res['endpoint'])
                     usage['input_tokens'] += res['input_tokens']
                     usage['output_tokens'] += res['output_tokens']
                     usage['cost_eur'] = round(usage['cost_eur'] + (res.get('cost_eur') or 0.0), 6)

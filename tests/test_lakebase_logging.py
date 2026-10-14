@@ -231,6 +231,49 @@ def test_impact_search_failure_is_an_error_audit(client):
     assert errors.call_args.kwargs['stage'] == 'search' and errors.call_args.kwargs['upstream'] == 'cat.sch.chunks_index'
 
 
+def test_analyze_audit_row_gets_the_endpoint_that_answered(client):
+    processor = MagicMock()
+    processor.build_messages.return_value = ProcessResult(
+        messages=[{'role': 'user', 'content': 'diff'}], metadata=ProcessMetadata('pdf', 'visual'))
+
+    async def _fallback(*args, info=None, **kwargs):
+        info['endpoint'] = 'databricks-gpt-5-6-luna'      # the primary (analysis) failed
+        yield f"data: {json.dumps({'type': 'response.output_text.delta', 'delta': 'rapport'})}\n\n"
+        yield 'data: [DONE]\n\n'
+
+    usage = AsyncMock()
+    with (
+        patch('server.routers.compare.analyze._get_cached_analysis', new=AsyncMock(return_value=None)),
+        patch('server.routers.compare.analyze.get_processor', return_value=processor),
+        patch('server.routers.compare.analyze.store_llm_request', new=AsyncMock(return_value=11)),
+        patch('server.routers.compare.analyze.update_llm_request_usage', new=usage),
+        patch('server.routers.compare.analyze.update_llm_request_run', new=AsyncMock()),
+        patch('server.routers.compare.analyze.stream_analysis', new=_fallback),
+    ):
+        client.post('/api/compare/analyze', files={
+            'old_file': ('a.pdf', b'%PDF-1.4 old', 'application/pdf'),
+            'new_file': ('b.pdf', b'%PDF-1.4 new', 'application/pdf')})
+    assert usage.call_args.args == (11,)
+    assert usage.call_args.kwargs == {'endpoint_name': 'databricks-gpt-5-6-luna'}
+
+
+def test_impact_audit_row_gets_the_endpoints_that_judged(client):
+    async def _judged_by(**kwargs):
+        kwargs['info']['endpoints'] = ['databricks-gpt-6-luna', 'databricks-gpt-5-6-luna']
+        yield {'type': 'plan', 'changes': kwargs['extracted']['changes'], 'source': 'structured', 'queries_used': 1,
+               'queries_failed': 0, 'chunks_returned': 1, 'candidates': 1, 'excluded_refs': [], 'not_judged': []}
+        yield {'type': 'document', 'document': {'ref': 'PR-1', 'status': 'not_impacted', 'change_ids': ['C1']}}
+        yield {'type': 'done', 'usage': {'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2, 'cost_eur': 0.0}}
+
+    _, audit, _ = _impact(client, _judged_by)
+    assert audit.await_args.kwargs['endpoint_name'] == 'databricks-gpt-6-luna,databricks-gpt-5-6-luna'
+
+
+def test_impact_audit_row_keeps_the_configured_endpoint_when_nobody_judged(client):
+    _, audit, _ = _impact(client, _search([]))
+    assert audit.await_args.kwargs['endpoint_name'] == 'judge'
+
+
 def test_analyze_records_outcome_and_durations(client):
     processor = MagicMock()
     processor.build_messages.return_value = ProcessResult(

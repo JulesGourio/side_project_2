@@ -108,9 +108,12 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
     extracted = changes_to_queries(body.changes_text, max_queries=cfg['impact_max_queries'])
     extract_ms = int((time.monotonic() - t_extract) * 1000)
 
+    # Filled by the judge calls: the endpoint(s) that answered, which may be a fallback.
+    judge_info: Dict[str, Any] = {}
+
     def _search(search_token: str):
         return run_impact_search(
-            host=host, token=search_token, index_name=index_name, llm_endpoint=llm_endpoint,
+            host=host, token=search_token, index_name=index_name, llm_endpoint=llm_endpoint, info=judge_info,
             extracted=extracted,
             num_results=cfg['impact_per_query_results'],
             max_candidates=cfg['impact_max_candidates'],
@@ -120,12 +123,13 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
             exclude_names=[body.old_file_name, body.new_file_name],
         )
 
-    def _audit(**kwargs):
+    def _audit(endpoint_name: str = '', **kwargs):
+        # The endpoints that judged, comma-joined; the configured endpoint when none answered.
         return store_impact_request(
             method='index_llm_per_doc',
             user_id=identity['user_id'], workspace_id=identity.get('workspace_id') or '',
             old_file_hash=old_hash, new_file_hash=new_hash,
-            changes_chars=len(body.changes_text), endpoint_name=llm_endpoint, index_name=index_name,
+            changes_chars=len(body.changes_text), endpoint_name=endpoint_name or llm_endpoint, index_name=index_name,
             queries_used=len(extracted['queries']), extract_ms=extract_ms, **kwargs,
         )
 
@@ -135,6 +139,9 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
             endpoint='/api/compare/impact', error_type=error_type, error_msg=message, severity='warning',
             stage=stage, upstream=upstream, user_id=identity['user_id'],
             workspace_id=identity.get('workspace_id') or '', context=context or None)
+
+    def _judges() -> str:
+        return ','.join(judge_info.get('endpoints') or [])
 
     async def _events():
         start = time.monotonic()
@@ -192,7 +199,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
                     usage = event['usage']
         except (asyncio.CancelledError, GeneratorExit):
             # The browser left (closed tab, new search): record the search as aborted.
-            asyncio.create_task(_audit(duration_s=time.monotonic() - start, status='aborted',
+            asyncio.create_task(_audit(endpoint_name=_judges(), duration_s=time.monotonic() - start, status='aborted',
                                        num_documents=len(documents), **_counts()))
             raise
         except Exception as e:
@@ -202,7 +209,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
                 endpoint='/api/compare/impact', error_type=type(e).__name__, error_msg=str(e), stage=stage,
                 upstream=llm_endpoint if plan else index_name, user_id=identity['user_id'],
                 workspace_id=identity.get('workspace_id') or '', stack_trace=traceback.format_exc())
-            asyncio.create_task(_audit(duration_s=time.monotonic() - start, http_status=502, status='error',
+            asyncio.create_task(_audit(endpoint_name=_judges(), duration_s=time.monotonic() - start, http_status=502, status='error',
                                        error_type=type(e).__name__, error_msg=str(e), **_counts()))
             yield _ndjson({'type': 'error', 'error': f'Impact search failed: {e}'})
             return
@@ -211,6 +218,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
         documents = sort_documents(documents)
         # Written before 'done' (a few ms): the client needs the id to attach feedback to this search.
         request_id = await _audit(
+            endpoint_name=_judges(),
             chunks_returned=plan.get('chunks_returned', 0), num_documents=len(documents),
             duration_s=duration_s, http_status=200, status='ok',
             input_tokens=usage.get('input_tokens', 0), output_tokens=usage.get('output_tokens', 0),

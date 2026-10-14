@@ -175,6 +175,7 @@ async def _run_part(
     host: str, token: str, endpoint_name: str,
     part_messages: List[Dict[str, Any]],
     max_tokens: int, thinking_budget: int, temperature: float,
+    info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Consume one stream_analysis call fully; return its buffered outcome."""
     text = ''
@@ -184,7 +185,7 @@ async def _run_part(
 
     async for chunk in stream_analysis(
         host, token, endpoint_name, part_messages,
-        max_tokens, thinking_budget, temperature,
+        max_tokens, thinking_budget, temperature, info=info,
     ):
         if not chunk.startswith('data: '):
             continue  # inner keepalives — outer generator emits its own
@@ -217,6 +218,7 @@ async def stream_analysis_chunked(
     thinking_budget: int,
     temperature: float,
     structured: bool,
+    info: Optional[Dict[str, Any]] = None,
 ) -> AsyncGenerator[str, None]:
     """Run the per-part LLM calls concurrently (bounded) and merge them into a
     single SSE stream, emitting parts in document order as they complete.
@@ -224,12 +226,15 @@ async def stream_analysis_chunked(
     Emits the same events as stream_analysis: text deltas, at most one usage
     event (summed over parts), warning/error events, then [DONE]. Keepalives
     are emitted while waiting so the gateway never sees an idle connection.
+    ``info['endpoint']``, when given, lists the endpoints that answered the parts,
+    comma-joined in document order without repeats (set even when the stream stops early).
     """
     total_usage = {'input_tokens': 0, 'output_tokens': 0, 'thinking_tokens': 0,
                    'total_tokens': 0, 'cost_eur': 0.0}
     emitted_objects = 0
     n = len(message_parts)
     sem = asyncio.Semaphore(_CHUNK_PARALLELISM)
+    part_infos: List[Dict[str, Any]] = [{} for _ in message_parts]
 
     def _delta_event(text: str) -> str:
         return f'data: {json.dumps({"type": "response.output_text.delta", "delta": text})}\n\n'
@@ -238,7 +243,7 @@ async def stream_analysis_chunked(
         async with sem:
             logger.info('Chunked analysis: part %d/%d start', idx + 1, n)
             return await _run_part(host, token, endpoint_name, msgs,
-                                   max_tokens, thinking_budget, temperature)
+                                   max_tokens, thinking_budget, temperature, info=part_infos[idx])
 
     tasks = [asyncio.create_task(_guarded(i, m)) for i, m in enumerate(message_parts)]
 
@@ -285,6 +290,10 @@ async def stream_analysis_chunked(
         for t in tasks:
             if not t.done():
                 t.cancel()
+        if info is not None:
+            used = list(dict.fromkeys(p['endpoint'] for p in part_infos if p.get('endpoint')))
+            if used:
+                info['endpoint'] = ','.join(used)
 
     if structured:
         yield _delta_event('\n]' if emitted_objects else '[]')

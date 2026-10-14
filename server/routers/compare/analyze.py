@@ -221,6 +221,8 @@ async def analyze_documents(
 
         # Outcome and step durations, saved on the llm_requests row at the end (finally).
         run: Dict[str, Any] = {'status': 'aborted', 'chunked_parts': 0}
+        # Filled by the stream: the endpoint(s) that answered, which may be a fallback.
+        answered: Dict[str, Any] = {}
         t_start = time.monotonic()
 
         def _ms(t0: float) -> int:
@@ -321,13 +323,13 @@ async def analyze_documents(
                 llm_stream = stream_analysis_chunked(
                     host, token, endpoint, message_parts,
                     cfg['max_tokens'], cfg['thinking_budget'], cfg['temperature'],
-                    structured=(result.metadata.method == 'structured'),
+                    structured=(result.metadata.method == 'structured'), info=answered,
                 )
             else:
                 logger.info(f'[{_req_id}] LLM streaming start')
                 llm_stream = stream_analysis(
                     host, token, endpoint, result.messages,
-                    cfg['max_tokens'], cfg['thinking_budget'], cfg['temperature'],
+                    cfg['max_tokens'], cfg['thinking_budget'], cfg['temperature'], info=answered,
                 )
             run['status'] = 'ok'
             async for chunk in llm_stream:
@@ -408,6 +410,8 @@ async def analyze_documents(
             _analyze_semaphore.release()
             if llm_request_id:
                 asyncio.create_task(update_llm_request_run(llm_request_id, total_ms=_ms(t_start), **run))
+                if answered.get('endpoint'):
+                    asyncio.create_task(update_llm_request_usage(llm_request_id, endpoint_name=answered['endpoint']))
 
     return StreamingResponse(
         _stream(),
