@@ -23,6 +23,7 @@ Impact search v2 + archive index (code done 2026-10-02, deployment steps in `run
 ## Databricks (this project)
 
 - **Tables, volumes and indexes** (since the 2026-10-14 refactor): every table, volume and Vector Search index of the app and the pipeline lives in `<env>_proj.qualibot` (`uat-test`: `uat_proj.qualibot` with the `_test` suffix). Nothing qualibot lives in `<env>_landingzone` any more (the Intraqual source stays in `prod_landingzone.intraqual`). Nothing lives in `dev_lab`. The `*_v1` names exist only as the one-time copy source in `runbooks/uat.md` step 0.
+- **Deployed repository**: the code is deployed from the user's own repository, not from this copy. `runbooks/`, `archive/` and `docs/` live in this repository for reference only: they are excluded from every deploy path (`databricks.yml` sync, `.databricksignore`, `utils/deploy/deploy_qualibot.ps1`), and the user removes them from the deployed repository.
 - **Access**: the app checks group membership live with `is_account_group_member()` on the visitor's own token (`server/services/infra/user.py`). There is no sync job and no capability table; a failed check denies access.
 Bundle name: `qualibot`. Targets: `dev`, `uat`, `qualibot-uat-test`, `prod`.
 

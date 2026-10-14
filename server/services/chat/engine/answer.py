@@ -17,7 +17,7 @@ from .retrieval import _clean_history, group_documents, retrieve_for_turn
 from .search import ChatVsiError
 from .config import answer_max_tokens, index_name, llm_endpoint, load_instructions, normalize_division, settings
 
-_STATUS_AFTER_S = 8.0          # a search or rewrite slower than this shows 'still searching'
+_STATUS_AFTER_S = 15.0         # a search or rewrite slower than this shows 'still searching'
 
 logger = logging.getLogger(__name__)
 

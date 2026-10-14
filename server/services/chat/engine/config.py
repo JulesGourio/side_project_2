@@ -100,7 +100,7 @@ def translate_max_tokens() -> int:
 
 
 def rewrite_timeout_s() -> float:
-    return float(_int_env('CHAT_REWRITE_TIMEOUT_S', 45))
+    return float(_int_env('CHAT_REWRITE_TIMEOUT_S', 15))
 
 
 def division_filter(division: str) -> Dict[str, Any]:
