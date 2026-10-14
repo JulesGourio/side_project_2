@@ -7,7 +7,7 @@
 # MAGIC (steps in `operations_dev.md`) — not part of any bundle target, so the
 # MAGIC `qualibot-uat` target is left untouched. Writes a snapshot of the chunk
 # MAGIC tables and of the parsing pipeline state to
-# MAGIC `uat_landingzone.qualibot.staging`, the volume the DEV workspace can
+# MAGIC `uat_proj.qualibot.staging`, the volume the DEV workspace can
 # MAGIC already read (`lakebase_import_uat_to_dev` reads it the same way). The DEV
 # MAGIC side (`import_staging_to_dev_job.py`) then recreates the tables in
 # MAGIC `dev_proj.qualibot` and builds the Vector Search indexes, so the
@@ -40,11 +40,11 @@ dbutils.widgets.text(
     "chunks,"
     "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference",
 )
-dbutils.widgets.text("OUTPUT_DIR", "/Volumes/uat_landingzone/qualibot/staging/dev_copy")
+dbutils.widgets.text("OUTPUT_DIR", "/Volumes/uat_proj/qualibot/staging/dev_copy")
 dbutils.widgets.dropdown("FORMAT", "delta", ["delta", "parquet"])
 dbutils.widgets.text(
     "SOFFICE_ARCHIVE",
-    "/Volumes/uat_landingzone/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
+    "/Volumes/uat_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
 )
 
 SOURCE_CATALOG_SCHEMA = dbutils.widgets.get("SOURCE_CATALOG_SCHEMA").strip()

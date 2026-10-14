@@ -8,7 +8,7 @@ from pathlib import PurePosixPath
 
 SOURCE_EXPORT_DIR = os.getenv(
     "SOURCE_EXPORT_DIR",
-    "/Volumes/uat_landingzone/qualibot/staging/lakebase_export",
+    "/Volumes/uat_proj/qualibot/staging/lakebase_export",
 )
 TARGET_CATALOG = os.getenv("TARGET_CATALOG", "dev_proj")
 TARGET_SCHEMA = os.getenv("TARGET_SCHEMA", "qualibot")

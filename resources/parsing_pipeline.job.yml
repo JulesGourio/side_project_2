@@ -72,7 +72,7 @@ targets:
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/${var.parsing_images_volume}
+                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
                   PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
                   PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
                   PARSING_MAX_SOURCE_STALENESS_HOURS: ${var.parsing_max_source_staleness_hours}
@@ -104,7 +104,7 @@ targets:
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/${var.parsing_images_volume}
+                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
                   PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
                   PARSING_RUN_MODE:         ${var.parsing_run_mode}
                   PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
@@ -141,7 +141,7 @@ targets:
                   PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
                   PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
                   PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_write_catalog}/${var.app_write_schema}/${var.parsing_images_volume}
+                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
                   PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
                   PARSING_RUN_MODE:         ${var.parsing_run_mode}
                   PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}

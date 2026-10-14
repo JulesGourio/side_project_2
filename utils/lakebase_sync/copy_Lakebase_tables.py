@@ -42,7 +42,7 @@ STAGING_VOLUME_SQL  = f"/Volumes/{COPY_STAGING_CATALOG}/{COPY_STAGING_SCHEMA}/{C
 
 # Volume filled by the UAT job export_lakebase_uat_to_volume_job.py.
 UAT_SOURCE_PROFILE          = LAKEBASE[COPY_SOURCE_ENV]["profile"]
-LAKEBASE_EXPORT_VOLUME_DBFS = "dbfs:/Volumes/uat_landingzone/qualibot/staging/lakebase_export"
+LAKEBASE_EXPORT_VOLUME_DBFS = "dbfs:/Volumes/uat_proj/qualibot/staging/lakebase_export"
 
 OUTPUT_DIR = "lakebase_export"
 

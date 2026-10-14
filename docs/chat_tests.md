@@ -357,7 +357,7 @@ sont pas demandées par la recherche, nécessaires pour R1, R2 et la mesure de l
 ## 9. Requêtes de diagnostic
 
 À lancer dans l'éditeur SQL du workspace DEV (lecture seule). Elles lisent les tables du pipeline sans suffixe de
-`dev_landingzone.qualibot` (depuis le 2026-10-08) et la table d'évaluation.
+`dev_proj.qualibot` (depuis le 2026-10-08) et la table d'évaluation.
 
 **Q1 — Composition de l'index : types de passages et tailles**
 ```sql

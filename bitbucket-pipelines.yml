@@ -244,7 +244,7 @@ definitions:
             token = ${DATABRICKS_TOKEN}
             EOF
           - chmod 600 "$HOME/.databrickscfg"
-          - databricks fs cp -r dbfs:/Volumes/uat_landingzone/qualibot/docling_models staging/docling_models --profile job-runner-sa-uat
+          - databricks fs cp -r dbfs:/Volumes/uat_proj/qualibot/docling_models staging/docling_models --profile job-runner-sa-uat
           - python3 utils/lakebase_sync/export_lakebase_to_json.py --profile job-runner-sa-uat --out-dir staging/lakebase
         artifacts:
           - staging/**
@@ -270,7 +270,7 @@ definitions:
             token = ${DATABRICKS_TOKEN}
             EOF
           - chmod 600 "$HOME/.databrickscfg"
-          - databricks fs cp -r staging/docling_models dbfs:/Volumes/prod_landingzone/qualibot/docling_models --overwrite --profile job-runner-sa-prod
+          - databricks fs cp -r staging/docling_models dbfs:/Volumes/prod_proj/qualibot/docling_models --overwrite --profile job-runner-sa-prod
           - python3 utils/lakebase_sync/import_lakebase_from_json.py --profile job-runner-sa-prod --in-dir staging/lakebase
 
 pipelines:

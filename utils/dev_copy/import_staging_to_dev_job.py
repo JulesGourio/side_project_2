@@ -31,11 +31,11 @@ import json
 import os
 
 dbutils.widgets.removeAll()
-dbutils.widgets.text("SOURCE_DIR", "/Volumes/uat_landingzone/qualibot/staging/dev_copy")
+dbutils.widgets.text("SOURCE_DIR", "/Volumes/uat_proj/qualibot/staging/dev_copy")
 dbutils.widgets.text("TARGET_CATALOG_SCHEMA", "dev_proj.qualibot")
 dbutils.widgets.text("TABLE_SUFFIX", "")
 dbutils.widgets.dropdown("OVERWRITE", "false", ["false", "true"])
-dbutils.widgets.text("SOFFICE_TARGET_DIR", "/Volumes/dev_landingzone/qualibot/doc_compare/libreoffice")
+dbutils.widgets.text("SOFFICE_TARGET_DIR", "/Volumes/dev_proj/qualibot/doc_compare/libreoffice")
 
 SOURCE_DIR = dbutils.widgets.get("SOURCE_DIR").rstrip("/")
 TARGET_CATALOG_SCHEMA = dbutils.widgets.get("TARGET_CATALOG_SCHEMA").strip()

@@ -176,13 +176,12 @@ l'UAT et la PROD, et dans [operations_dev.md](operations_dev.md) pour la DEV.
 
 | Environnement | Tables (`<env>_proj.qualibot`) | Volume de l'application | Index du chat | Base Lakebase |
 |---|---|---|---|---|
-| DEV | `dev_proj.qualibot` | `dev_landingzone.qualibot.doc_compare` | `dev_proj.qualibot.chunks_index` | `doccompare` |
-| UAT | `uat_proj.qualibot` | `uat_landingzone.qualibot.doc_compare` | `uat_proj.qualibot.chunks_index` | `doccompare` |
-| UAT-TEST | `uat_proj.qualibot`, suffixe `_test` | `uat_landingzone.qualibot.test` | `uat_proj.qualibot.chunks_index_test` | `doccompare_test` |
-| PROD | `prod_proj.qualibot` | `prod_landingzone.qualibot.doc_compare` | `prod_proj.qualibot.chunks_index` | `doccompare` |
+| DEV | `dev_proj.qualibot` | `dev_proj.qualibot.doc_compare` | `dev_proj.qualibot.chunks_index` | `doccompare` |
+| UAT | `uat_proj.qualibot` | `uat_proj.qualibot.doc_compare` | `uat_proj.qualibot.chunks_index` | `doccompare` |
+| UAT-TEST | `uat_proj.qualibot`, suffixe `_test` | `uat_proj.qualibot.test` | `uat_proj.qualibot.chunks_index_test` | `doccompare_test` |
+| PROD | `prod_proj.qualibot` | `prod_proj.qualibot.doc_compare` | `prod_proj.qualibot.chunks_index` | `doccompare` |
 
-Les tables Delta sont dans le schéma `<env>_proj.qualibot`. Les volumes sont dans
-`<env>_landingzone.qualibot`. La base Lakebase est celle du projet `qualibot`.
+Les tables Delta, les volumes et les index Vector Search sont dans le schéma `<env>_proj.qualibot`. La base Lakebase est celle du projet `qualibot`.
 La cible `uat-test` est un environnement de test isolé : elle ne touche ni aux
 données ni aux index de l'UAT.
 

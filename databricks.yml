@@ -13,12 +13,6 @@ variables:
   app_name:
     default: "qualibot"
     description: "Unique name for the Databricks App"
-  app_write_catalog:
-    description: "Catalog of the volumes (doc_compare, images, staging, test). Tables live in app_proj_catalog."
-    default: dev_landingzone
-  app_write_schema:
-    description: "Schema of the volumes, inside app_write_catalog"
-    default: qualibot
   app_volume_name:
     description: "Name of the main storage volume"
     default: doc_compare
@@ -49,7 +43,7 @@ variables:
     description: "Comma-separated IDDOC list to restrict a run to (empty = no filter, normal mode). Override via --var for a one-off targeted test run."
     default: ""
   parsing_images_volume:
-    description: "Volume (in app_write_catalog.app_write_schema) the parsing pipeline extracts images to"
+    description: "Volume (in app_proj_catalog.app_proj_schema) the parsing pipeline extracts images to"
     default: "images"
   parsing_table_suffix:
     description: "Suffix appended to every WRITE target table (checkpoint, chunks, image_metadata, processed_files, audit, retry/rag temp tables). Empty = real tables. Override via --var (e.g. '_test') for a one-off validation run that never touches production tables."
@@ -70,10 +64,10 @@ variables:
     description: >-
       Volume path to the offline Docling/embedding models. Per-environment —
       each workspace's compute can only reach volumes in its own metastore
-      catalogs, never a different environment's (UAT cannot read dev_landingzone).
+      catalogs, never a different environment's (UAT cannot read dev_proj).
       DEV's volume has an extra nested docling_models/ subfolder that UAT's
       copy does not; the two paths are not the same suffix on a different catalog.
-    default: "/Volumes/dev_landingzone/qualibot/docling_models/docling_models"
+    default: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
   parsing_max_source_staleness_hours:
     description: >-
       00b fails the run if an Intraqual source table hasn't been refreshed within
@@ -282,34 +276,31 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
-      # dev_landingzone.qualibot already exists: bind it before the first deploy (operations_dev.md, step "bind"), like any volume `databricks volumes list dev_landingzone qualibot` shows.
+      # The volumes of dev_proj.qualibot are created by the first deploy; their data is copied from dev_landingzone (operations_dev.md, step 00.2b).
       schemas:
-        qualibot_schema:
-          catalog_name: ${var.app_write_catalog}
-          name: ${var.app_write_schema}
         qualibot_proj_schema:
           catalog_name: ${var.app_proj_catalog}
           name: ${var.app_proj_schema}
       volumes:
         qualibot_doc_compare:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
         qualibot_test:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
         qualibot_images:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
         # Lakebase export of the DEV app (lakebase_export_dev_to_volume below).
         qualibot_staging:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: staging
           volume_type: MANAGED
       apps:
@@ -331,12 +322,10 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP (stop/start jobs)
               level: CAN_MANAGE
-          # No UC volume binding on this target: it would grant USE CATALOG on dev_landingzone to the app SP, which a human deployer cannot do.
+          # No UC volume binding on this target: it would grant USE CATALOG on dev_proj to the app SP, which a human deployer cannot do.
           # The SP gets its grants from the grant_app_access_dev job below.
     variables:
       app_name: "qualibot"
-      app_write_catalog: dev_landingzone
-      app_write_schema: qualibot
       app_volume_name: doc_compare
       app_proj_catalog: dev_proj
       app_proj_schema: qualibot
@@ -347,7 +336,7 @@ targets:
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
-      parsing_offline_models_path: "/Volumes/dev_landingzone/qualibot/docling_models/docling_models"
+      parsing_offline_models_path: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
       # Real tables, no suffix. One index serves the chat (division filter) and impact search.
       parsing_table_suffix: ""
       parsing_vector_search_indexes: "dev_proj.qualibot.chunks_index"
@@ -444,28 +433,24 @@ targets:
             - DATABRICKS_SUPERUSER
           replace_existing: true
       schemas:
-        qualibot_schema:
-          catalog_name: ${var.app_write_catalog}
-          name: ${var.app_write_schema}
         qualibot_proj_schema:
           catalog_name: ${var.app_proj_catalog}
           name: ${var.app_proj_schema}
       volumes:
         qualibot_doc_compare:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
         qualibot_test:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
-        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). It already exists: bind it
-        # (`databricks bundle deployment bind qualibot_images uat_landingzone.qualibot.images -t qualibot-uat`), or the first deploy tries to create it.
+        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy; copy the existing images first (OPERATIONS.md, step 0.2b).
         qualibot_images:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
       apps:
@@ -492,17 +477,15 @@ targets:
             - name: doc-compare-volume
               uc_securable:
                 securable_type: VOLUME
-                securable_full_name: uat_landingzone.qualibot.doc_compare
+                securable_full_name: uat_proj.qualibot.doc_compare
                 permission: WRITE_VOLUME
             - name: test-volume
               uc_securable:
                 securable_type: VOLUME
-                securable_full_name: uat_landingzone.qualibot.test
+                securable_full_name: uat_proj.qualibot.test
                 permission: WRITE_VOLUME
     variables:
       app_name: "qualibot"
-      app_write_catalog: uat_landingzone
-      app_write_schema: qualibot
       app_volume_name: doc_compare
       app_proj_catalog: uat_proj
       app_proj_schema: qualibot
@@ -513,7 +496,7 @@ targets:
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
-      parsing_offline_models_path: "/Volumes/uat_landingzone/qualibot/docling_models"
+      parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
       # Real tables, no suffix: copy the former _v1 state tables to these names (OPERATIONS.md D5.3) BEFORE the next deploy,
       # or the daily run reparses the whole corpus on GPU. One index serves the chat and impact search.
       parsing_table_suffix: ""
@@ -540,8 +523,6 @@ targets:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
     variables:
       app_name: "qualibot-uat-test"
-      app_write_catalog: uat_proj
-      app_write_schema: qualibot
       app_volume_name: doc_compare
       app_proj_catalog: uat_proj
       app_proj_schema: qualibot
@@ -552,7 +533,7 @@ targets:
       parsing_table_suffix: "_test"
       parsing_images_volume: "images_test"
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index_test"
-      parsing_offline_models_path: "/Volumes/uat_landingzone/qualibot/docling_models"
+      parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
       parsing_lakebase_database: "doccompare_test"
       parsing_build_chunks_full: "false"
       parsing_archive_max_docs: "0"
@@ -656,29 +637,29 @@ targets:
             - DATABRICKS_SUPERUSER
           replace_existing: true
       schemas:
-        qualibot_schema:
-          catalog_name: ${var.app_write_catalog}
-          name: ${var.app_write_schema}
+        qualibot_proj_schema:
+          catalog_name: ${var.app_proj_catalog}
+          name: ${var.app_proj_schema}
       volumes:
         qualibot_doc_compare:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
         qualibot_docling_models:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: docling_models
           volume_type: MANAGED
         qualibot_test:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
-        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Check `databricks volumes list prod_landingzone qualibot` before deploying: bind it if it exists.
+        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy on prod_proj; copy the existing images into it first.
         qualibot_images:
-          catalog_name: ${var.app_write_catalog}
-          schema_name: ${resources.schemas.qualibot_schema.name}
+          catalog_name: ${var.app_proj_catalog}
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
       apps:
@@ -687,17 +668,15 @@ targets:
             - name: doc-compare-volume
               uc_securable:
                 securable_type: VOLUME
-                securable_full_name: prod_landingzone.qualibot.doc_compare
+                securable_full_name: prod_proj.qualibot.doc_compare
                 permission: WRITE_VOLUME
             - name: test-volume
               uc_securable:
                 securable_type: VOLUME
-                securable_full_name: prod_landingzone.qualibot.test
+                securable_full_name: prod_proj.qualibot.test
                 permission: WRITE_VOLUME
     variables:
       app_name: "qualibot"
-      app_write_catalog: prod_landingzone
-      app_write_schema: qualibot
       app_volume_name: doc_compare
       app_proj_catalog: prod_proj
       app_proj_schema: qualibot
@@ -707,7 +686,7 @@ targets:
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       parsing_job_activity_tag: "prod-job"
-      parsing_offline_models_path: "/Volumes/prod_landingzone/qualibot/docling_models"
+      parsing_offline_models_path: "/Volumes/prod_proj/qualibot/docling_models"
       # Same Lakebase database the deployed qualibot-prod app reads and writes (LAKEBASE_DATABASE in app.yaml).
       parsing_lakebase_database: "doccompare"
       # 5_sync_index creates the index on its first run if it does not exist.

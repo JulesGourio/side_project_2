@@ -238,7 +238,7 @@ Volumes :
 | Volume | Usage |
 |---|---|
 | `/Volumes/prod_landingzone/intraqual/intraqual_documents` | Documents Intraqual, lecture seule |
-| `<app_write_catalog>.<app_write_schema>.images` (`images_test` en cible de test) | Images extraites, un dossier par IDDOC |
+| `<app_proj_catalog>.<app_proj_schema>.images` (`images_test` en cible de test) | Images extraites, un dossier par IDDOC |
 | `parsing_offline_models_path` (par cible) | Modèles Docling et d'embedding, hors ligne |
 
 ## Variables principales

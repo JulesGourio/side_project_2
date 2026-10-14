@@ -234,7 +234,7 @@ Les tours sont notés **depuis les traces MLflow**, pas depuis Lakebase (`utils/
 `D_2_Qualibot_Score_Chat_Traces_<cible>`, par lots, jamais pendant un tour) : scorers gratuits sur tous les tours, juges LLM sur un
 échantillon, résultats dans `dev_proj.qualibot.chat_trace_scores` (clé `chat_trace_id` = `chat_turns.trace_id`). Le vote 👍/👎 est une
 évaluation `user_vote` sur la trace (`chat_turns.mlflow_trace_id` fait le lien). La tâche d'import du job d'export UAT
-(`import_chatbot_tables_to_uat_job.py`) charge `chat_turns`, `chat_retrieved_chunks` et `errors` dans `uat_landingzone.qualibot`
+(`import_chatbot_tables_to_uat_job.py`) charge `chat_turns`, `chat_retrieved_chunks` et `errors` dans `uat_proj.qualibot`
 (tableaux de bord, alertes `utils/alerts/05` et `06`).
 
 ## Vérifié

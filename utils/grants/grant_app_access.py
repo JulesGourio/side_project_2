@@ -29,7 +29,7 @@
 
 dbutils.widgets.removeAll()
 dbutils.widgets.text("app_service_principal", "8e411164-a7e8-46ff-8013-8c56af2c3656")
-dbutils.widgets.text("catalog", "dev_landingzone")
+dbutils.widgets.text("catalog", "dev_proj")
 dbutils.widgets.text("schema_name", "qualibot")
 dbutils.widgets.text("volumes", "doc_compare,test")
 dbutils.widgets.text("indexes", "chunks_index")

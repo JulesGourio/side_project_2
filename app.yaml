@@ -150,14 +150,14 @@ env:
   - name: DATABRICKS_WAREHOUSE_ID
     value: "13eff4a6095513cb"
   # COMPARE_VOLUME_PATH: volume path for saving / restoring comparison files, empty = disabled. Set per environment in the Databricks App UI:
-  #   dev : /Volumes/dev_landingzone/qualibot/doc_compare
-  #   uat : /Volumes/uat_landingzone/qualibot/doc_compare
-  #   prod: /Volumes/prod_landingzone/qualibot/doc_compare
+  #   dev : /Volumes/dev_proj/qualibot/doc_compare
+  #   uat : /Volumes/uat_proj/qualibot/doc_compare
+  #   prod: /Volumes/prod_proj/qualibot/doc_compare
   - name: COMPARE_VOLUME_PATH
     value: ""
   # Exact-layout PDF preview (server/services/compare/soffice.py): UC Volume path of a portable LibreOffice tar.gz built by
   # utils/soffice_packaging/package_libreoffice.py, extracted once per app process. Absent = no "Exact (PDF)" mode (docx-preview instead).
-  #   uat : /Volumes/uat_landingzone/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz
+  #   uat : /Volumes/uat_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz
   - name: SOFFICE_ARCHIVE_VOLUME_PATH
     value: ""
   # Local dev: absolute path to an existing soffice binary, takes precedence over the archive.

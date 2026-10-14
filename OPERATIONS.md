@@ -21,7 +21,7 @@ La mise en place de l'environnement **DEV** a son propre fichier : `operations_d
 > UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui
 > n'existe pas encore. Les blocs A à C ci-dessous restent sur `audit/doc-compare`.
 > Exception depuis le 2026-10-12 : `qualibot-uat-test` sert de répétition de la bascule (tables
-> `uat_proj.qualibot.*_test`, rien dans `uat_landingzone.qualibot`) ; étapes données dans le chat.
+> `uat_proj.qualibot.*_test`, rien dans `uat_proj.qualibot`) ; étapes données dans le chat.
 
 > **Nettoyage du code (2026-10-08)** : `utils/databricks_ops/` n'existe plus, le notebook `3_parse` est découpé, le client allégé. Tout ce qu'il faut rejouer est dans [`RETEST_CLEANUP.md`](RETEST_CLEANUP.md) (DEV d'abord).
 
@@ -39,21 +39,23 @@ D ne se fait qu'après B, étape par étape, sur décision explicite.
 
 ## À faire
 
-### 0. Tables hors landingzone : migrer `uat_landingzone.qualibot` vers `uat_proj.qualibot`
+### 0. Tables, volumes et index hors landingzone : migration vers `uat_proj.qualibot`
 
-Règle : aucune table de qualibot dans `*_landingzone`. Les volumes (`doc_compare`, `images`, `staging`, `test`, `docling_models`) restent dans `uat_landingzone.qualibot`. Un index Vector Search ne se déplace pas : on le recrée sur la nouvelle table. Rien ici ne touche à l'app tant que tu n'as pas dit de déployer (étape 0.7).
+Règle : aucun objet qualibot (table, volume, index) dans `*_landingzone`. Tout vit dans `uat_proj.qualibot`. Les volumes ne se déplacent pas : on les crée dans `uat_proj` puis on copie leurs données (0.2b). Rien ne touche à l'app tant que tu n'as pas donné ton accord pour le déploiement (0.7).
 
 **0.1 — Inventaire (PowerShell, profil `UAT`)**
 
 ```powershell
 databricks tables list uat_landingzone qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks volumes list uat_landingzone qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
 databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks volumes list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
 databricks vector-search-indexes list-indexes qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
 ```
 
-**0.2 — Clonage des tables (SQL, éditeur SQL du workspace UAT, un utilisateur qui lit `uat_landingzone` et crée dans `uat_proj.qualibot`)**
+**0.2 — Clonage des tables (SQL, éditeur SQL du workspace UAT, un utilisateur qui lit `uat_proj` et crée dans `uat_proj.qualibot`)**
 
-Pour chaque table listée en 0.1 dans `uat_landingzone.qualibot` (sauf les volumes et les `*_v1`), une ligne `DEEP CLONE`. Si la table sans suffixe n'existe pas, cloner la version `_v1` correspondante. Liste de référence (issue du code) :
+Pour chaque table listée en 0.1 dans `uat_proj.qualibot` (sauf les volumes et les `*_v1`), une ligne `DEEP CLONE`. Si la table sans suffixe n'existe pas, cloner la version `_v1` correspondante. Liste de référence (issue du code) :
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS uat_proj.qualibot;
@@ -80,6 +82,32 @@ Contrôle des volumes après clonage (doit donner les mêmes nombres que la sour
 
 ```sql
 SELECT 'chunks' AS t, (SELECT count(*) FROM uat_landingzone.qualibot.chunks_v1) AS source, (SELECT count(*) FROM uat_proj.qualibot.chunks) AS copie;
+```
+
+**0.2b — Volumes : créer dans `uat_proj` et copier les données (PowerShell, profil `UAT`)**
+
+Point ouvert, à trancher avant cette étape : `qualibot-uat-test` utilise déjà `uat_proj.qualibot` (volumes `doc_compare` et `test`). Tant que ce conflit de noms n'est pas réglé (suffixe `_test` sur les volumes du test, à décider), ne pas lancer cette étape : elle écrirait dans les volumes du test.
+
+```powershell
+databricks volumes create uat_proj qualibot docling_models MANAGED --profile UAT
+databricks fs cp -r dbfs:/Volumes/uat_landingzone/qualibot/docling_models dbfs:/Volumes/uat_proj/qualibot/docling_models --profile UAT
+
+databricks volumes create uat_proj qualibot doc_compare MANAGED --profile UAT
+databricks fs cp -r dbfs:/Volumes/uat_landingzone/qualibot/doc_compare dbfs:/Volumes/uat_proj/qualibot/doc_compare --profile UAT
+
+databricks volumes create uat_proj qualibot test MANAGED --profile UAT
+databricks fs cp -r dbfs:/Volumes/uat_landingzone/qualibot/test dbfs:/Volumes/uat_proj/qualibot/test --profile UAT
+
+databricks volumes create uat_proj qualibot images MANAGED --profile UAT
+databricks fs cp -r dbfs:/Volumes/uat_landingzone/qualibot/images dbfs:/Volumes/uat_proj/qualibot/images --profile UAT
+```
+
+Le volume `staging` n'est pas copié (échanges transitoires). Les trois volumes déclarés dans le bundle pour `qualibot-uat` (`doc_compare`, `test`, `images`) doivent être liés au bundle avant le déploiement, sinon celui-ci essaie de les recréer :
+
+```powershell
+databricks bundle deployment bind qualibot_doc_compare uat_proj.qualibot.doc_compare -t qualibot-uat --profile UAT
+databricks bundle deployment bind qualibot_test uat_proj.qualibot.test -t qualibot-uat --profile UAT
+databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t qualibot-uat --profile UAT
 ```
 
 **0.3 — Index Vector Search `uat_proj.qualibot.chunks_index`**
@@ -126,6 +154,7 @@ Ce job exporte Lakebase vers le volume puis recharge `chat_*` et `errors` dans `
 
 ```powershell
 databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks volumes list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
 databricks vector-search-indexes get-index uat_proj.qualibot.chunks_index --profile UAT -o json | ConvertFrom-Json | Select-Object name, status
 ```
 
@@ -151,7 +180,7 @@ databricks jobs list --profile UAT -o json | ConvertFrom-Json | Where-Object { $
 
 Pour chaque `job_id` affiché : `databricks jobs delete <JOB_ID> --profile UAT` (supprime le job, pas de données).
 
-Puis, dans l'éditeur SQL de la base Lakebase `doccompare` (projet `qualibot`, branche `production`), une fois que `qualibot-uat` n'utilise plus les colonnes :
+Ce DROP ne se lance qu'après le contrôle de 0.7 : chat et comparaison d'impact validés, logs de l'app sans `live group check failed`. Puis, dans l'éditeur SQL de la base Lakebase `doccompare` (projet `qualibot`, branche `production`), une fois que `qualibot-uat` n'utilise plus les colonnes :
 
 ```sql
 ALTER TABLE users DROP COLUMN IF EXISTS can_chat, DROP COLUMN IF EXISTS can_compare, DROP COLUMN IF EXISTS groups;
@@ -180,7 +209,7 @@ DROP SCHEMA IF EXISTS dev_lab.lab_jules CASCADE;
 
 (Les deux `DROP` détruisent les données : ne les lancer qu'après relecture de `SHOW TABLES`.)
 
-**0.11 — Suppression des tables legacy dans `uat_landingzone` (après validation complète)**
+**0.11 — Suppression des tables legacy dans `uat_proj` (après validation complète)**
 
 Uniquement quand le chat, la comparaison d'impact, le parsing et le tableau de bord d'usage marchent depuis `uat_proj` :
 
@@ -201,6 +230,16 @@ DROP TABLE IF EXISTS uat_landingzone.qualibot.src_chunks_as_v1;
 DROP TABLE IF EXISTS uat_landingzone.qualibot.src_chunks_is_v1;
 DROP TABLE IF EXISTS uat_landingzone.qualibot.synthetic_retrieval_questions_v2;
 DROP TABLE IF EXISTS uat_landingzone.qualibot.feedback_failure_cases;
+```
+
+Volumes (après contrôle de la copie, sur ton accord) :
+
+```powershell
+databricks volumes delete uat_landingzone.qualibot.doc_compare --profile UAT
+databricks volumes delete uat_landingzone.qualibot.test --profile UAT
+databricks volumes delete uat_landingzone.qualibot.images --profile UAT
+databricks volumes delete uat_landingzone.qualibot.docling_models --profile UAT
+databricks volumes delete uat_landingzone.qualibot.staging --profile UAT
 ```
 
 Puis `databricks vector-search-indexes delete-index uat_landingzone.qualibot.chunks_index_v1 --profile UAT` (et `chunks_as_index_v1`, `chunks_is_index_v1`, `chunks_index` s'ils existent encore après 0.3 : vérifier avec 0.1 avant).
@@ -422,7 +461,7 @@ prévenir, je change la valeur, vous redéployez.
   - [ ] **D5.2. Inventaire** (éditeur SQL UAT) :
 
     ```sql
-    SHOW TABLES IN uat_landingzone.qualibot;
+    SHOW TABLES IN uat_proj.qualibot;
     ```
 
   - [ ] **D5.3. Tables d'état du pipeline sans suffixe** : copies (pas de renommage : l'app et le
@@ -498,7 +537,7 @@ prévenir, je change la valeur, vous redéployez.
   - [ ] **D5.8b. Exporter le journal pour la notation** : lancer une fois le job d'export Lakebase
     (`D_1_Qualibot_Lakebase_Export_To_Volume_qualibot-uat`) ; il écrit toutes les tables, dont
     `chat_turns` et `chat_retrieved_chunks`, dans le volume de staging, et sa 2e tâche les charge
-    aussi dans `uat_landingzone.qualibot` (avec `errors`) :
+    aussi dans `uat_proj.qualibot` (avec `errors`) :
 
     ```powershell
     databricks bundle run lakebase_export_uat_to_volume -t qualibot-uat --profile UAT
@@ -526,7 +565,7 @@ prévenir, je change la valeur, vous redéployez.
   - [ ] **D5.8d. Alertes SQL** (workspace UAT, après D5.8b : les tables Delta `chat_turns` et
     `errors` doivent exister). Fichiers `utils/alerts/01` à `06`, mode d'emploi dans
     `utils/alerts/README.md`. Pour chacun : SQL Editor → coller la requête en remplaçant
-    `dev_landingzone` par `uat_landingzone` → **Save** sous `Qualibot - <but>` (warehouse
+    `dev_proj` par `uat_proj` → **Save** sous `Qualibot - <but>` (warehouse
     serverless) → **Create alert** :
 
     | Fichier | Nom | Condition | Planning (Europe/Paris) |

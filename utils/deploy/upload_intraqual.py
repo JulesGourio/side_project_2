@@ -7,11 +7,11 @@ Usage:
 
 Variables d'environnement:
     SRC_DIR        dossier local source        (défaut: intraqual_extracted)
-    VOLUME_PATH    chemin Unity Catalog        (défaut: /Volumes/uat_landingzone/qualibot/doc_compare/intraqual)
+    VOLUME_PATH    chemin Unity Catalog        (défaut: /Volumes/uat_proj/qualibot/doc_compare/intraqual)
     MAX_WORKERS    threads parallèles          (défaut: 8)
 
 Le chemin VOLUME_PATH doit pointer vers un volume existant. Adapter pour UAT/prod:
-    /Volumes/uat_landingzone/qualibot/doc_compare/intraqual
+    /Volumes/uat_proj/qualibot/doc_compare/intraqual
 """
 
 import io
@@ -30,7 +30,7 @@ except Exception:
 
 _ROOT            = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR          = os.getenv("SRC_DIR",          os.path.join(_ROOT, "intraqual_extracted"))
-VOLUME_PATH      = os.getenv("VOLUME_PATH",      "/Volumes/uat_landingzone/qualibot/doc_compare/intraqual")
+VOLUME_PATH      = os.getenv("VOLUME_PATH",      "/Volumes/uat_proj/qualibot/doc_compare/intraqual")
 DATABRICKS_HOST  = os.getenv("DATABRICKS_HOST",  "https://dbc-c623749d-731b.cloud.databricks.com")
 MAX_WORKERS      = int(os.getenv("MAX_WORKERS",  "8"))
 
