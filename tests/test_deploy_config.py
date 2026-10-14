@@ -1,14 +1,9 @@
 """Regression guard for utils/deploy/target_env.json's per-target overrides.
 
-Bug found 2026-08-20: the 'uat-test' target never set its impact index, so it
-silently fell back to app.yaml's default -- an index dropped two days earlier.
-Real symptom: "Impacted Docs" 404ing on uat-test. Nothing caught it because every
-eval queried the index directly by name, never through the app's env var. This
-guard stops a target from omitting its index overrides again.
+A target that omits its index override silently falls back to app.yaml's default index. Evals query
+the index by name, not through the app's env var, so only this guard sees the omission.
 
-Since 2026-10-08 the names carry no version (chunks_index, not chunks_index_v1)
-and the Knowledge Assistant is gone: no versioned index and no KA endpoint key
-may come back.
+Names carry no version (chunks_index, not chunks_index_v1) and no CHAT_ENDPOINT* key is set.
 """
 
 import json
@@ -57,14 +52,13 @@ def test_no_versioned_index_names():
 
 def test_no_knowledge_assistant_endpoint():
     for target, values in _targets(_load_target_env()):
-        assert not [k for k in values if k.startswith('CHAT_ENDPOINT')], f'{target}: KA endpoint key (removed 2026-10-08)'
+        assert not [k for k in values if k.startswith('CHAT_ENDPOINT')], f'{target}: no chatbot endpoint key other than CHAT_ENDPOINT_*'
     with open(APP_YAML_PATH, encoding='utf-8') as f:
         assert 'CHAT_ENDPOINT' not in f.read()
 
 
 # CAPS_BYPASS (server/services/infra/user.py) turns off the group check for every
-# visitor. Temporary, DEV only (2026-10-05) -- must never be switched on for a
-# target that serves real users.
+# visitor. DEV only: it must never be switched on for a target that serves real users.
 _CAPS_BYPASS_ALLOWED = ('dev',)
 
 

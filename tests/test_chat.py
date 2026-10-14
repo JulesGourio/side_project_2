@@ -348,14 +348,14 @@ def test_save_turn_strips_division_and_registers_user():
             '[Division: IS] The user works in the IS division. Restrict.\n\nHow do I wire it?',
             'Here is how.',
             trace_id='chat-abc',
-            email='jules@latecoere.aero',
+            email='user@example.com',
             endpoint_name='chat-is',
         ))
 
     assert ids == (98, 99)
     # User registered in the shared table during the chat flow
     mock_upsert.assert_awaited_once()
-    assert mock_upsert.await_args.kwargs['email'] == 'jules@latecoere.aero'
+    assert mock_upsert.await_args.kwargs['email'] == 'user@example.com'
 
     # Session upsert (first conn.execute) receives the stripped, truncated name
     # Arg order: …, name, share_token (generated fresh on every call), touch.
@@ -370,7 +370,7 @@ def test_save_turn_strips_division_and_registers_user():
     user_insert, assistant_insert = (c.args for c in conn.fetchval.await_args_list)
     assert user_insert[-2] == 'IS' and assistant_insert[-2] == 'IS'
     assert 'chat-abc' in user_insert and 'chat-abc' in assistant_insert
-    # The Knowledge Assistant columns are no longer written.
+    # The retrieval is saved in chat_turns / chat_retrieved_chunks, not in these columns.
     assert 'tool_name' not in assistant_insert[0] and 'reasoning_steps' not in assistant_insert[0]
 
 

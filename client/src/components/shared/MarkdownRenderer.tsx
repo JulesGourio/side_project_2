@@ -111,8 +111,7 @@ export type CitationMap = Record<number, { url?: string; title?: string }>;
  * Turn every mention of a cited document's reference into a clickable
  * superscript [n] link, inline in the answer.
  *
- * Older answers (former Knowledge Assistant) carry a flat list of consulted
- * documents but NOT the character position of each citation. So instead of
+ * A flat list of consulted documents carries no character position for each citation, so instead of
  * guessing positions, we anchor each citation on the document's own reference
  * code wherever it appears in the text (the "📋 Référence : …" header and any
  * inline mentions). Each occurrence of the ref `T` for source `n` becomes

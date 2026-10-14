@@ -208,9 +208,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     n_old = max(1, (old_items[-1]['idx'] if old_items else 0) + 1)
     n_new = max(1, (new_items[-1]['idx'] if new_items else 0) + 1)
 
-    # Exact matching, grouped by clean text so repeated blocks pair by POSITION instead of document order: with a FIFO
-    # queue, a text occurring twice in one revision and once in the other always consumed the FIRST old occurrence,
-    # leaving a phantom removal of an element present, unchanged, in both.
+    # Exact matching, grouped by clean text so repeated blocks pair by POSITION instead of document order: a FIFO
+    # queue would always consume the FIRST old occurrence and leave a phantom removal.
     old_by_clean: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for o in old_items:
         old_by_clean[o['clean']].append(o)
@@ -265,7 +264,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
             if ratio > _PAIR_RATIO_THRESHOLD:
                 sims.append((ratio, i, j))
 
-    # Best ratio first; ties in (old, new) order, as the old-major scan gave.
+    # Best ratio first; ties in (old, new) order.
     sims.sort(key=lambda x: (-x[0], x[1], x[2]))
     matched_o: set = set()
     matched_n: set = set()

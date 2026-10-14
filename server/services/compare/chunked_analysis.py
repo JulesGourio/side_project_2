@@ -29,9 +29,8 @@ logger = logging.getLogger(__name__)
 
 _TEXT_MARKER = '--- TEXT CHANGES ---'
 _VISUAL_MARKER = '--- VISUAL CHANGES ---'
-# Parts run concurrently (bounded) — sequential execution pushed the total SSE
-# response past the Databricks Apps gateway's hard duration limit on large
-# documents (the connection was killed mid-run on a 4-part analysis).
+# Parts run concurrently (bounded): sequential execution would push the total SSE
+# response past the Databricks Apps gateway's hard duration limit on large documents.
 # Wall-clock becomes ~the slowest part instead of the sum of all parts.
 _CHUNK_PARALLELISM = int(os.getenv('COMPARE_CHUNK_PARALLELISM', '3'))
 

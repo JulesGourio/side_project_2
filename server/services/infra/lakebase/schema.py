@@ -15,7 +15,7 @@ async def _add_columns(conn, table: str, columns) -> None:
 
 
 async def ensure_schema(pool: asyncpg.Pool) -> None:
-    # DROP COLUMN is allowed for genuinely obsolete columns (no longer written or read).
+    # DROP COLUMN is allowed for obsolete columns that nothing writes or reads.
     # Lakebase rewrites the table internally — the table appears empty for a short time,
     # then all data is back. Never DROP TABLE or TRUNCATE.
     async with pool.acquire() as conn:
@@ -379,16 +379,15 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             )
         ''')
         await _add_columns(conn, 'chat_messages', [
-            # The turn's chat_turns.trace_id (chat-…); on Knowledge Assistant turns, its MLflow trace id.
+            # The turn's chat_turns.trace_id (chat-…).
             ('trace_id',        'TEXT'),
-            # Knowledge Assistant only, no longer written (the retrieval is in chat_turns /
-            # chat_retrieved_chunks); kept for the history of the KA turns.
+            # Not written: the retrieval is in chat_turns / chat_retrieved_chunks.
             ('tool_name',       'TEXT'),
             ('tool_query',      'TEXT'),
             ('tool_result',     'TEXT'),
             ('reasoning_steps', 'TEXT'),
             ('workspace_id',    'TEXT'),
-            # Engine label: chat-all / chat-as / chat-is (KA turns: ka-… endpoint).
+            # Engine label: chat-all / chat-as / chat-is.
             # NULL on copies of a shared conversation. The model that actually
             # answered is chat_turns.answer_endpoint.
             ('endpoint_name',   'TEXT'),
@@ -521,7 +520,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         ])
 
 
-        # ── Data migrations (idempotent — WHERE only matches old composite format) ──
+        # ── Data migrations (idempotent — WHERE only matches rows in the composite format) ──
 
         # 0. Drop obsolete columns (Lakebase rewrites the table — safe but transient empty state)
         for _tbl, _col in [

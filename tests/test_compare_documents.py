@@ -3,7 +3,7 @@
 Each test builds two revisions of a small quality procedure with ONE known
 difference and checks what reaches the LLM: the real change, and nothing else.
 Documents are generated on the fly (PyMuPDF Story / python-docx), so the suite
-needs no fixture files. See docs/compare_audit_2026-10.md, part E.
+needs no fixture files.
 """
 
 import copy

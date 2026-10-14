@@ -62,7 +62,7 @@ def _extract_root() -> Path:
     base = Path(os.getenv('SOFFICE_EXTRACT_DIR', '') or (Path(tempfile.gettempdir()) / 'qualibot_soffice'))
     # Version the extract dir by archive basename: uploading a fixed archive
     # under a new filename guarantees a fresh extraction even if /tmp survived
-    # the app restart (the old broken tree would otherwise be reused forever).
+    # the app restart, where a stale extraction would otherwise be reused.
     archive = os.getenv('SOFFICE_ARCHIVE_VOLUME_PATH', '').strip()
     if archive:
         stem = re.sub(r'[^A-Za-z0-9._-]', '_', archive.rsplit('/', 1)[-1]).removesuffix('.tar.gz')

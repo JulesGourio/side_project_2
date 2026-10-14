@@ -1,11 +1,8 @@
 """One gate for every Vector Search query of the app (chat and impact search).
 
-Measured on the DEV endpoint (``load_test_vector_search.py``, runbooks/dev.md V2):
-HYBRID queries are served at most ~25 per second; past ~8 queries in flight the latency rises,
-and past ~16 the endpoint answers 429. The reranker does not lower that ceiling (it only makes
-each query slower: 0.5 s instead of 0.2 s). One chat question sends 6 to 8 queries at once, so
-two or three questions searching at the same moment were enough to get refusals — the chat
-load test failed from 20 questions in progress.
+The endpoint has a throughput ceiling: past a few queries in flight the latency rises, and past a
+higher count it answers 429. The reranker does not lower that ceiling (it only makes each query
+slower). One chat question sends several queries at once, so concurrent questions share the ceiling.
 
 So the app never sends more than ``VS_MAX_CONCURRENT_QUERIES`` queries at once (default 8): the
 others wait their turn, a few hundred milliseconds, instead of being refused. A refusal that

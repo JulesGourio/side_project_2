@@ -50,7 +50,7 @@ function chipNumberBadge(n: number) {
   );
 }
 
-// A single, un-grouped source: exactly the plain pill this always used to be.
+// A single, un-grouped source: the plain pill.
 // Hover text of a chip: REF — title, version, link.
 function chipTooltip(src: Source, label: string): string {
   return [src.doc_title ? `${label} — ${src.doc_title}` : label, versionLabel(src), src.url !== label ? src.url : '']

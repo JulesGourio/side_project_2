@@ -18,9 +18,8 @@ NORM_REF_RE = re.compile(
     re.I,
 )
 MODAL_RE = re.compile(r'\b(?:shall|must|will|should|may|can|could|would)\b', re.I)
-# The bare ALL-CAPS branch accepts the punctuation real headings carry (dashes, colon, parens, ampersand, digits): a
-# letters-and-spaces-only pattern missed titles like "ANNEX C – NATIONAL AEROSPACE NONDESTRUCTIVE TESTING BOARDS
-# (NANDTB)", so their paragraphs inherited the previous heading.
+# The bare ALL-CAPS branch accepts the punctuation real headings carry (dashes, colon, parens, ampersand, digits),
+# otherwise their paragraphs would inherit the previous heading.
 SECTION_RE = re.compile(r"^(?:\d+(?:\.\d+)*\.?\s+[A-Z]|[A-Z][A-Z0-9 \-–—:,./()&']{3,}$)")
 
 # Matches trailing structural tags: [Page 3], [Para 7], [Page 3, Para 12], [Heading 2], [Slide 4], [Item 12]
@@ -176,9 +175,8 @@ def _modal_group_profile(text: str) -> List[str]:
     return sorted(groups)
 
 
-# Word-level net behind the character-distance gate below. That gate measures the change against the WHOLE paragraph,
-# so one decisive word in a long paragraph ("shall record" -> "shall not record", "before" -> "after") was dropped
-# before the LLM saw it.
+# Word-level net behind the character-distance gate below. That gate measures against the WHOLE paragraph, so a decisive
+# word in a long paragraph ("shall record" -> "shall not record") would otherwise be lost.
 # Here any added, removed or replaced word counts, except punctuation/case/hyphenation, articles, spelling variants
 # and modal swaps inside one obligation group.
 _WORD_LEVEL_CHECK = os.getenv('COMPARE_WORD_LEVEL_CHECK', 'true').lower() == 'true'

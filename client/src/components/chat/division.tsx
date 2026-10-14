@@ -13,12 +13,11 @@ export const DIVISIONS: { value: Division; label: string; title: string }[] = [
   { value: 'IS', label: 'IS', title: 'Interconnection — search the IS / shared documents only' },
 ];
 
-// Legacy turns persisted before endpoint routing still carry a "[Division: …]"
-// directive at the start of the stored question. Strip it when re-displaying so
+// The stored question may start with a "[Division: …]" directive. Strip it when re-displaying so
 // the user sees only their original question.
 const DIVISION_PREFIX_RE = /^\[Division: (?:AS|IS)\][\s\S]*?\n\n/;
 
-/** Remove the legacy division directive so the user sees only their question. */
+/** Remove the division directive so the user sees only their question. */
 export function stripDivision(content: string): string {
   return content.replace(DIVISION_PREFIX_RE, '');
 }

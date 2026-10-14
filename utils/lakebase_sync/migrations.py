@@ -37,7 +37,7 @@ MIGRATIONS: list[tuple[str, str]] = [
         "glossary_terms.definition_source",
         "ALTER TABLE glossary_terms ADD COLUMN IF NOT EXISTS definition_source TEXT",
     ),
-    # ── Cleanup: tables the app no longer uses ────────────────────────────────
+    # ── Cleanup: tables the app does not use ──────────────────────────────────
     # Translate lives in its own app (qualibot-translate); the chat's sources are in chat_messages.sources_json.
     ("drop translation_llm_calls", "DROP TABLE IF EXISTS translation_llm_calls CASCADE"),
     ("drop translation_questions", "DROP TABLE IF EXISTS translation_questions CASCADE"),
@@ -48,7 +48,7 @@ MIGRATIONS: list[tuple[str, str]] = [
     ("drop dnt_rules", "DROP TABLE IF EXISTS dnt_rules CASCADE"),
     ("drop chat_sources", "DROP TABLE IF EXISTS chat_sources CASCADE"),
     # users.can_translate is not dropped here: only the app's own service principal owns table users; the app's
-    # startup migrations (server/services/infra/lakebase.py) drop it.
+    # startup migrations (server/services/infra/lakebase/schema.py) drop it.
 
     # Add future migrations here:
     # ("description", "ALTER TABLE ..."),

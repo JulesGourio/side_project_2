@@ -8,8 +8,8 @@ budget — so a prompt change that re-introduces minor-wording rows is caught.
 Run only the detectors (no LLM, no token needed):
     pytest tests/test_prompt_noise.py -v
 
-The thresholds below are the CURRENT (pre-fix) baseline observed on the
-NAS 410 sample. Tighten them after improving the prompt to lock in the gain.
+The thresholds below are the budgets measured on the NAS 410 sample. Tighten them after improving
+the prompt to lock in the gain.
 """
 
 import glob
@@ -23,9 +23,9 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAMPLES = glob.glob(os.path.join(HERE, 'test_prompt', 'analysis_*.xlsx'))
 
 # Budgets — lower these once the prompt is fixed to prevent regressions.
-MAX_NUMBER_RENDERING = 8     # currently 8 on the NAS 410 sample (target: 0)
-MAX_HIGH_NOISE = 4           # noise rows wrongly marked High (currently 4; target: 0)
-MAX_IMPERATIVE_RATIONALE = 0  # rationale must read as a summary, never a command (2026-08-19)
+MAX_NUMBER_RENDERING = 8     # target: 0
+MAX_HIGH_NOISE = 4           # noise rows wrongly marked High (target: 0)
+MAX_IMPERATIVE_RATIONALE = 0  # rationale must read as a summary, never a command
 
 
 @pytest.mark.skipif(not SAMPLES, reason='no analysis_*.xlsx sample under test_prompt/')
@@ -66,7 +66,7 @@ def test_noise_within_budget(xlsx):
 
 # ---------------------------------------------------------------------------
 # Rationale style — pure in-memory rows, no xlsx sample or LLM call needed.
-# These lock in what the 2026-08-19 "summary, not instruction" rewrite expects.
+# These lock in the "summary, not instruction" rationale style.
 # ---------------------------------------------------------------------------
 
 def _row(rationale, criticality='Medium', type_='Value changed', before='10 bar', after='15 bar'):

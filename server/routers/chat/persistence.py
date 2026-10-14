@@ -54,11 +54,10 @@ async def _save_turn(
     The retrieval itself (queries, passages, models, durations) is saved by
     ``store_chat_turn`` in chat_turns, under the same ``trace_id``.
     """
-    # Thread title from the user's question; _strip_division only matters for legacy turns carrying a [Division: …]
-    # prefix.
+    # Thread title from the user's question, without the [Division: …] prefix.
     clean_content = _strip_division(user_content)
     name = clean_content[:60] + ('…' if len(clean_content) > 60 else '')
-    # Division comes from the client selector; fall back to a legacy prefix.
+    # Division comes from the client selector; fall back to the [Division: …] prefix of the question.
     division = (division or 'ALL').upper()
     if division == 'ALL':
         division = _detect_division(user_content)

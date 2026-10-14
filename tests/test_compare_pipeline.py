@@ -109,8 +109,7 @@ def test_diff_does_not_pair_different_row_keys():
 
 def test_diff_collapses_per_page_boilerplate():
     # A title-block stamp added on every page must become ONE annotated entry,
-    # not one ADDED per page — measured as 85-95% of all entries on real
-    # wiring-diagram revisions (utils/compare_eval, 2026-07-17).
+    # not one ADDED per page, which would flood the entries of a wiring-diagram revision.
     def page(i, stamp):
         lines = [f'Wire {i}-{k} routed from connector J{i} to terminal T{k} [Page {i}]'
                  for k in range(30)]
@@ -131,8 +130,7 @@ def test_diff_keeps_below_threshold_repeats_expanded():
     # page artefact - keep both entries untouched. Pages carry enough filler for
     # the two occurrences to sit further apart than _dedup_repeated_headers'
     # window, which would otherwise absorb the second one and make this test
-    # pass for the wrong reason (it did until 2026-08-17: the old assertion
-    # counted the '## NEW NOTE' section heading plus a single surviving entry).
+    # pass for the wrong reason (the count would include the '## NEW NOTE' section heading).
     def page(i, stamp):
         rows = [f'Wiring for connector J{i} pin {k} routed to terminal T{k} [Page {i}]'
                 for k in range(30)]
@@ -182,10 +180,8 @@ def test_section_order_does_not_merge_distant_identical_labels():
     # where SECTION_RE picks up "N <Capitalized text>" step labels as
     # headings). A change living in the SECOND table must not be pulled up to
     # sort next to the FIRST table just because both reuse the same label
-    # string — regression found on a real document full of recurring
-    # numbered flowchart steps (2026-07-29): a plain sections_order[label]=idx
-    # dict can only remember one order per label text, so the second,
-    # unrelated occurrence silently inherited the first one's position.
+    # string. A plain sections_order[label]=idx dict remembers one order per label text, so the second,
+    # unrelated occurrence would silently inherit the first one's position.
     old = (
         '1. TABLE ONE [Page 1]\n'
         'Process one overview text describing the initial workflow steps in general. [Page 1]\n'
@@ -214,14 +210,9 @@ def test_section_order_does_not_merge_distant_identical_labels():
 
 def test_running_header_does_not_swallow_real_sections():
     # A standard's title stamped on every page (a running header/footer) must
-    # never register as a section — every real clause under it would
-    # otherwise silently inherit that single recurring, meaningless label
-    # instead of its own heading. Also covers the companion fix: a heading
-    # with real-world punctuation (en dash, parentheses) must still be
-    # recognized as its own section — regression found on NAS410, where
-    # 'ANNEX C – NATIONAL AEROSPACE ... (NANDTB)' never matched the old
-    # ALL-CAPS-only pattern and fell back to whatever running header preceded
-    # it (2026-07-29).
+    # never register as a section, or every real clause under it would inherit that label.
+    # A heading with real-world punctuation (en dash, parentheses) must still be
+    # recognized as its own section, not fall back to the running header above it.
     old = (
         'STANDARD TITLE [Page 1]\n'
         '1. FIRST CLAUSE [Page 1]\n'

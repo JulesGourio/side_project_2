@@ -155,8 +155,7 @@ async def analyze_documents(
     old_name = old_file.filename or 'old_document'
     new_name = new_file.filename or 'new_document'
 
-    # The processor is picked from the old file alone: a PDF against a DOCX used
-    # to fail deep inside the extractor with an unreadable parser error.
+    # A mixed pair (PDF against DOCX) is rejected here, before any extraction starts.
     if file_type_of(old_name) != file_type_of(new_name):
         return StreamingResponse(
             _error_stream(

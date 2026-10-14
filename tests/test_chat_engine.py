@@ -454,7 +454,7 @@ def test_the_bilingual_rewrite_still_runs_otherwise(monkeypatch, code, history, 
     m['rewrite'].assert_called_once()
     assert 'Using the conversation for context' in m['rewrite'].call_args.args[3][0]['content']
     assert m['log'].data['rewrite_mode'] == 'rewrite' and m['log'].prompts[0] == 'rewrite'
-    assert sorted(p['num_results'] for p in m['sent']) == [12, 12, 12, 12]      # the measured configuration
+    assert sorted(p['num_results'] for p in m['sent']) == [12, 12, 12, 12]      # the default configuration
 
 
 def test_the_question_is_searched_while_the_rewrite_runs(monkeypatch):

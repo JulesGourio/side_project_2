@@ -277,7 +277,7 @@ def test_slot_is_freed_when_the_caller_stops_at_done(monkeypatch):
 
 
 def test_no_claude_model_in_the_chatbot_config():
-    """Decision 2026-10-08: the chatbot (answer, fallback, rewrite, translation) runs on Luna models only."""
+    """The chatbot (answer, fallback, rewrite, translation) runs on Luna models only."""
     import json as _json
     import os as _os
     import yaml

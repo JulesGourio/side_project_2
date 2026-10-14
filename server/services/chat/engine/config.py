@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 _DIVISIONS = ('ALL', 'AS', 'IS')
 
 _DEFAULT_INDEX = 'dev_proj.qualibot.chunks_index'
-_DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'      # no Claude model in the chatbot (2026-10-08)
+_DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'
 _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside it
 _DEFAULT_REWRITE_MAX_TOKENS = 2000
-_RERANK_TOP_K = 12               # reranked passages kept per query (20 measured worse)
+_RERANK_TOP_K = 12               # reranked passages kept per query
 _RAW_TOP_K = 12                  # raw HYBRID passages per query (0 = reranked passages only)
 _PAIR_RERANK_TOP_K = 16          # two queries (the question and its translation) + one raw: the same 48 candidates as the rewrite
 _PAIR_RAW_TOP_K = 16
@@ -76,8 +76,8 @@ def raw_on() -> List[str]:
 
 
 def translate_only_enabled() -> bool:
-    """Off by default (it lost the acronym and synonym expansions of the rewrite: "CEO" no longer reached the
-    documents that say "PDG"). On: the first message of a conversation, in French or English, only gets its
+    """Off by default: translating the question alone loses the acronym and synonym expansions the rewrite
+    adds. On: the first message of a conversation, in French or English, only gets its
     translation into the other language (one short call, no rewrite, nothing expanded)."""
     return os.getenv('CHAT_TRANSLATE_ONLY', 'off').strip().lower() in ('on', 'true', '1', 'yes')
 

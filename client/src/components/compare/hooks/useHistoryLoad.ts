@@ -23,7 +23,7 @@ function parseSavedImpact(raw: string | null): ImpactResult | null {
     const parsed = raw ? JSON.parse(raw) : null;
     return parsed && Array.isArray(parsed.changes) && Array.isArray(parsed.documents) ? parsed : null;
   } catch {
-    return null; // older entries hold plain text or nothing
+    return null; // an entry saved without an impact result holds no structured data
   }
 }
 

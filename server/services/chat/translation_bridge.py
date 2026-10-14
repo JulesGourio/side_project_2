@@ -6,17 +6,11 @@ Why this exists
 The search embeds the question text. A question asked in a third
 language (Czech, German, Spanish, ...) embeds far from the (mostly French,
 partly English) corpus and only matches the sparse same-language document
-slice, missing most of the relevant content (confirmed empirically
-2026-07-08 — a Czech question about warehouse rules retrieved a different,
-narrower set of documents than the same question in French/English). (Measured with the former
-Knowledge Assistant, where a "search in French" instruction had no effect —
-so the fix happens before the question reaches the search.)
+slice, missing most of the relevant content. The translation therefore happens before the question
+reaches the search, not inside the answer prompt.
 
-English, not French, is used as the pivot language: a side-by-side test on
-several questions showed English retrieval consistently pulling
-a broader, more diverse set of relevant documents (across FR/EN/ES/BG
-variants) than French, likely because the embedding model's multilingual
-alignment is itself English-anchored.
+English is the pivot language: its retrievals cover a broader set of documents than French ones, since
+the embedding model's multilingual alignment is English-anchored.
 
 Kept off by default (CHAT_TRANSLATE_BRIDGE_ENABLED) — enable only on
 environments where this is being evaluated.

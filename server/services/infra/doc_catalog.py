@@ -4,9 +4,8 @@ revision, so documents named in prose become clickable "Sources" chips even with
 The catalog is the Lakebase table ``doc_catalog`` (every document of the parsing scope, with title, link, ``in_chat``),
 rewritten by parsing task ``6_update_kb_metadata`` after each daily run; the app reloads it at startup and every
 ``DOC_CATALOG_REFRESH_S`` seconds (``catalog_refresher``). Until that table has rows (app started before the first
-pipeline run, local dev, tests) the bundled ``server/data/doc_catalog.json`` is used: a stale 2026-07 portal scrape
-(old ``liredocumentdepuisrecherche?id=`` links; its generator is in git history at commit f545093) that is never
-refreshed. Every function degrades to a no-op when neither source is available.
+pipeline run, local dev, tests) the bundled ``server/data/doc_catalog.json`` is used as a fallback; it is a
+static snapshot and is never refreshed. Every function degrades to a no-op when neither source is available.
 """
 
 import asyncio
@@ -19,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Fallback only: a stale 2026-07 snapshot; its generator is in git history at commit f545093.
+# Fallback only, read while the Lakebase table has no rows.
 _DEFAULT_CATALOG = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'doc_catalog.json')
 _CATALOG_PATH = os.getenv('DOC_CATALOG_PATH', _DEFAULT_CATALOG)
 _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
@@ -28,8 +27,8 @@ _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
 _live: Optional['_Catalog'] = None
 
 # Our own intraqual_ref_url() scheme (parsing/utils.py) embeds the REF in the URL: .../identification.aspx?ref=<REF>.
-# The catalog's url_to_ref map is keyed on the old liredocumentdepuisrecherche?id= scheme and never matches these
-# URLs, so the REF is read straight from the URL.
+# The bundled catalog's url_to_ref map uses the portal's liredocumentdepuisrecherche?id= links and never matches
+# these URLs, so the REF is read straight from the URL.
 _REF_IN_URL_RE = re.compile(r'[?&]ref=([^&]+)', re.IGNORECASE)
 
 

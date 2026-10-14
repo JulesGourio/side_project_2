@@ -1,9 +1,7 @@
 """Regression guard for the standard-comparison prompt's LANGUAGE contract.
 
-Bug found 2026-08-19 on MOP_AX (003)/(004).pdf (French document): the
-Change Summary (standard method) came back in English while quoting French
-content, because SYSTEM_PROMPT_STANDARD — unlike SYSTEM_PROMPT_STRUCTURED —
-had no instruction to match the document's language. Locks in the fix.
+SYSTEM_PROMPT_STANDARD must tell the model to answer in the document's language, as
+SYSTEM_PROMPT_STRUCTURED does; without it the Change Summary comes back in English while quoting French content.
 """
 
 import re

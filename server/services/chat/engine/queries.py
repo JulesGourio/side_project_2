@@ -44,7 +44,7 @@ def split_bilingual(text: str) -> Tuple[str, str]:
     return fr, en
 
 
-# Context words the rewrite model used to append to every query: noise for the search. Dropped unless the
+# Context words the rewrite model appends to a query: noise for the search. Dropped unless the
 # conversation itself says them (so "organigramme Latécoère" keeps its company name).
 _COMPANY = r'lat[eé]co[eè]re'
 _NOISE_PHRASES = [re.compile(p, re.IGNORECASE) for p in (

@@ -85,7 +85,7 @@ def _is_toc_paragraph(p_elem) -> bool:
 def _iter_block_items(parent):
     """Yield the w:p / w:tbl elements of a body, descending into block-level
     content controls (w:sdt) — cover pages, form sections and locked clauses
-    live there and used to be skipped entirely."""
+    live there, so they must not be skipped."""
     for child in parent:
         if child.tag in (_W_P, _W_TBL):
             yield child
@@ -139,8 +139,8 @@ def _vml_shape_lines(body, seen_ids: set = None) -> List[str]:
     shapes are skipped to avoid noise.
 
     `seen_ids` may be passed by the caller to share dedup state across repeated
-    per-paragraph calls (used to interleave shapes at their real document
-    position instead of dumping them all at the end).
+    per-paragraph calls (so shapes interleave at their real document position
+    instead of all at the end).
     """
     lines: List[str] = []
     if seen_ids is None:
@@ -212,10 +212,8 @@ def _textbox_texts(element) -> List[str]:
 def _row_cells(row) -> List[Tuple[int, str]]:
     """(column index, text) for each non-empty cell of a table row.
 
-    The column index is kept so a value is labelled with ITS column: the
-    previous version dropped empty cells and cells repeating a value already
-    seen in the row, which shifted every following label one column to the
-    left ("Min: 10 | Max: 10 | Tool: A" came out as "Min: 10 | Max: A").
+    The column index is kept so a value is labelled with ITS column: empty cells keep their
+    place in the numbering, so no label shifts to a neighbouring column.
     A merged cell spans several grid columns but is one w:tc — it is reported
     once, at its first column. Nested tables and text boxes are included.
     """

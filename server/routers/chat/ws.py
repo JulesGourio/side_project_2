@@ -79,7 +79,7 @@ async def chat_ws(websocket: WebSocket):
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in data.get('messages', [])])
     session_id = data.get('session_id') or str(uuid.uuid4())
     division = (data.get('division') or 'ALL').upper()
-    # Recorded as endpoint_name (older turns carry ka-… names).
+    # Recorded as endpoint_name.
     endpoint = f'chat-{normalize_division(division).lower()}'
 
     identity = await _identity_or_anonymous(websocket)

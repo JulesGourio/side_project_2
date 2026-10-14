@@ -169,10 +169,8 @@ def _merge_page_split_paragraphs(pages: List[List[Dict[str, Any]]]) -> None:
     """Re-join, in place, a paragraph that a page break cut into two blocks.
 
     Where the break falls depends on everything above it: one paragraph added
-    on page 1 moves every later break, and each paragraph that used to straddle
-    a break (or now does) reached the diff as two half-blocks on one side and a
-    whole block on the other. On a 6-page procedure, one
-    inserted paragraph produced 6 phantom MODIFIED entries.
+    on page 1 moves every later break, so each paragraph straddling a break must
+    be re-joined, or the diff sees two half-blocks on one side and a whole block on the other.
 
     Running headers/footers sit between the two halves in reading order, so
     they are identified first (same text on most pages, in the top or bottom

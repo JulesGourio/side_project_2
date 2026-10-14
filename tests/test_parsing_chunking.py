@@ -123,7 +123,7 @@ def test_tiny_section_joins_the_next_one_with_its_own_marker():
     assert '[1. Objet]' in first['chunk_text'] and first['metadata'] == {'Header 1': 'Doc'}
 
 
-# Real first pages seen in chunks_v2a (2026-10-08).
+# Real first pages, as the chunker receives them.
 COVER = """Type de document : 13 - Notice de Formulaire et formulaire - NF
 Répartition des tâches
 CONFIDENTIALITE

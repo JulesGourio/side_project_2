@@ -41,7 +41,7 @@ IGNORE:
 
 OUTPUT: Markdown, ## per section, one bullet per change. Bold critical values. If nothing substantive changed: **No significant changes detected.**\
 """
-# app.yaml declares MAX_COMPARE_PDF_MB (the historical name); both are honoured.
+# app.yaml declares MAX_COMPARE_PDF_MB; both names are honoured.
 MAX_FILE_BYTES = int(os.getenv('MAX_COMPARE_FILE_MB') or os.getenv('MAX_COMPARE_PDF_MB') or '20') * 1024 * 1024
 
 

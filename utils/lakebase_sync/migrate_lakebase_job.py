@@ -39,7 +39,7 @@ _UAT_HOST = "dbc-3a17bfce-9e88.cloud.databricks.com"
 if LAKEBASE_DATABASE == "doccompare" and _UAT_HOST in (w.config.host or ""):
     raise RuntimeError(
         "LAKEBASE_DATABASE='doccompare' rejected on this job: it is the real UAT database. "
-        "This job is reserved for doccompare_test until the migration is validated."
+        "This job only writes to doccompare_test."
     )
 
 logger.info(f"Connecting to Lakebase {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASE}...")

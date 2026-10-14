@@ -382,7 +382,7 @@ def run_docling_batches(df_to_parse, parse_count, parse_fn):
 
 def log_run_summary(df_to_parse, parse_count, elapsed):
     """Log OK/SKIP/ERR counts scoped to exactly the files parsed THIS run
-    (source_path, document_sha256) — not the whole historical checkpoint."""
+    (source_path, document_sha256) — not the whole checkpoint."""
     df_this_run = read_checkpoint_deduped().join(
         df_to_parse.select("source_path", "document_sha256"),
         on=["source_path", "document_sha256"], how="inner",

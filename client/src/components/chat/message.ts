@@ -30,7 +30,7 @@ export interface Message {
   feedback?: Feedback | null;
 }
 
-/** "Version B (11/10/2024)", "Version B", "11/10/2024" or '' — the same wording the answer model uses. */
+/** "Version B (dd/mm/yyyy)", "Version B", "dd/mm/yyyy" or '' — the same wording the answer model uses. */
 export function versionLabel(src: Source): string {
   const date = src.doc_date ? new Date(src.doc_date).toLocaleDateString('en-GB') : '';
   if (src.revision) return date ? `Version ${src.revision} (${date})` : `Version ${src.revision}`;

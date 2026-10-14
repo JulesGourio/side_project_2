@@ -17,7 +17,7 @@ Used for the answer (``stream_answer``) and for the search-query rewrite (``comp
   next questions straight to the backup instead of each paying a failed call first;
 - ``CHAT_MAX_CONCURRENT_ANSWERS`` (32, 0 = no limit) — answers generated at once by this
   app instance; the others wait their turn (keepalives sent) instead of all hitting the
-  per-minute token quota (1M input tokens/min per endpoint ≈ 40 questions of 25k tokens);
+  per-minute token quota of the endpoint;
 - ``CHAT_REASONING_MIN_TOKENS`` (6000) — output ceiling floor on reasoning models (their
   thinking counts inside it): a small answer budget would truncate GPT-6 Luna when the
   chain falls back to it. The rewrite uses a floor of 1000.

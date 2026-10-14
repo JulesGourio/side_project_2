@@ -12,9 +12,8 @@ These detectors quantify the kind of rows the structured-comparison prompt is
                          -> "this document".
   * IMPERATIVE_RATIONALE: the rationale reads as a command ("Update the...",
                          "Vérifier que...") instead of an explanation of the
-                         change — a regression back to the pre-2026-08-19
-                         action-style rationale (see _diff_engines.py RATIONALE
-                         section: rationale is now a summary, never an
+                         change — a regression back to an action-style rationale (see _diff_engines.py RATIONALE
+                         section: rationale is a summary, never an
                          instruction).
 
 The detectors are deliberately *conservative*: they only fire when the change
@@ -115,8 +114,7 @@ def _is_synonym_swap(before: str, after: str) -> bool:
 # --- Rationale style: summary, never a command ---
 
 # First-word vocabulary of common French/English imperative or infinitive verbs
-# seen in "what to do about it" rationale rows (the style the prompt used
-# before 2026-08-19). Deliberately conservative — a curated list, not an NLP
+# seen in "what to do about it" rationale rows. Deliberately conservative — a curated list, not an NLP
 # check — same spirit as _SYNONYMS above.
 _IMPERATIVE_FIRST_WORDS = frozenset({
     # French
@@ -140,7 +138,7 @@ def _first_word(text: str) -> str:
 
 def _is_imperative_rationale(rationale: str) -> bool:
     """True when the rationale opens with a command verb instead of explaining
-    the change — the pre-2026-08-19 action style the prompt no longer wants."""
+    the change — the action style the prompt must not produce."""
     if not rationale or rationale == '--':
         return False
     return _first_word(rationale) in _IMPERATIVE_FIRST_WORDS

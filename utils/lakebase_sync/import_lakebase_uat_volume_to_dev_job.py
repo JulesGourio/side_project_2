@@ -1,5 +1,5 @@
 # Databricks notebook source
-# Only consumer today: the "Qualibot Usage Tracking" Lakeview dashboard (DEV
+# Consumer: the "Qualibot Usage Tracking" Lakeview dashboard (DEV
 # workspace), which reads dev_proj.qualibot.{messages,feedbacks,users,
 # chat_messages,chat_sessions,chat_feedbacks} written by this job.
 import os

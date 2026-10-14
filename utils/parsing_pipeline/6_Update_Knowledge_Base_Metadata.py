@@ -222,7 +222,7 @@ def connect(database):
 
 # MAGIC %md
 # MAGIC ## Rewrite doc_catalog, then bump documents_as_of and updated_at
-# MAGIC Both tables are created by the app's startup migration (`server/services/infra/lakebase.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by whichever of the app and this notebook owns the table; when neither has done it yet, the catalog is written without them and the warning names the owner.
+# MAGIC Both tables are created by the app's startup migration (`server/services/infra/lakebase/schema.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by whichever of the app and this notebook owns the table; when neither has done it yet, the catalog is written without them and the warning names the owner.
 # MAGIC
 # MAGIC The catalog is replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `knowledge_base_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
 

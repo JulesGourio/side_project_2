@@ -143,7 +143,7 @@ from datetime import datetime, timezone
 
 from databricks.sdk import WorkspaceClient
 
-# Drop the app modules imported by an earlier run, so the current app code is loaded.
+# Drop the app modules already imported, so the current app code is loaded.
 for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
     del sys.modules[_m]
 

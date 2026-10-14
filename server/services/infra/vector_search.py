@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 _QUERY_TIMEOUT_S = 30.0
 _LLM_TIMEOUT_S = 90.0
 _COLUMNS = ['chunk_id', 'IDDOC', 'REF', 'division', 'url', 'semantic_headers', 'chunk_text']
-# Metadata-only chunk the parsing pipeline writes for a pre-2018 document (config.ARCHIVE_NOTICE_MARKER):
+# Metadata-only chunk the parsing pipeline writes for an archived document (config.ARCHIVE_NOTICE_MARKER):
 # it holds no content, so it can never be an impacted passage.
 _ARCHIVE_NOTICE_MARKER = 'ARCHIVED DOCUMENT — CONTENT NOT INDEXED'
 # Cost scales with max_candidates * this * _PASSAGE_CHARS; lower-scoring hits past
@@ -96,7 +96,7 @@ LANGUAGE: write "reason" and "explanation" in the SAME language as the CHANGES t
 passages. Do not switch to English when they are not in English.\
 """
 
-# "[Source: REF | Title: ... | Division: ... | Category: ... | Date de diffusion: 2016-03-01 | Image: page 4, ...]\n\n"
+# "[Source: REF | Title: ... | Division: ... | Category: ... | Date de diffusion: YYYY-MM-DD | Image: page 4, ...]\n\n"
 # — the provenance prefix the parsing pipeline embeds in every chunk (utils.source_prefixed_text).
 _PREFIX_RE = re.compile(r'^\[Source:([^\n]*)\]\n\n')
 _TITLE_RE = re.compile(r'\| Title: (.*?) \| Division:')

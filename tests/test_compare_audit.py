@@ -1,7 +1,7 @@
-"""Regression tests for the 2026-10-04 Compare audit (see docs/compare_audit_2026-10.md).
+"""Regression tests for the Compare diff, analysis, volume and impact paths.
 
 Coverage:
-  - diff engine: one-word changes in long paragraphs are no longer filtered
+  - diff engine: one-word changes in long paragraphs are reported
   - truncated diff surfaces a user warning
   - /compare/analyze: mixed file types, server-side hashes for the cache lookup
   - volume path guard (/compare/load, auto-save routes)

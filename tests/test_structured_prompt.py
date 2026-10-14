@@ -1,6 +1,6 @@
 """Regression guard for the structured-comparison prompt's RATIONALE contract.
 
-Locks in the 2026-08-19 rewrite: rationale is a short summary of what
+Rationale is a short summary of what
 changed, never an instruction telling the reader what to do. See the
 RATIONALE section of SYSTEM_PROMPT_STRUCTURED in _diff_engines.py.
 """

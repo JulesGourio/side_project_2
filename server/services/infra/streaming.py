@@ -46,8 +46,8 @@ _RETRY_DELAY_5XX_S = 2.0
 
 # These families reject any non-default temperature (a 0 sends a 400): GPT-5.6 (Luna/Terra/Sol, names containing
 # "gpt-5-6"), bare "gpt-5-mini"
-# (the `\b` keeps it from matching "gpt-5-4-mini", which accepts 0), the Claude 5 generation (Sonnet 5 / 5.5, Opus 5 /
-# 5.5, Fable), and GPT-6 (assumed like GPT-5.6).
+# (the `\b` keeps it from matching "gpt-5-4-mini", which accepts 0), the 5 generation of the Sonnet / Opus / Fable
+# family, and GPT-6 (assumed like GPT-5.6).
 _NO_TEMPERATURE_RE = re.compile(r'gpt-5-6|gpt-6|gpt-5-mini\b|claude-(?:sonnet|opus)-5|claude-fable', re.I)
 
 
@@ -131,8 +131,8 @@ async def stream_analysis(
         'stream': True,
         'stream_options': {'include_usage': True},
     }
-    # 'thinking' is an Anthropic-specific parameter — non-Claude endpoints
-    # (Gemini, GPT…) reject it, so gate on the endpoint name to keep
+    # 'thinking' is accepted by one model family only: other endpoints (Gemini, GPT…) reject it,
+    # so gate on the endpoint name to keep
     # COMPARE_ANALYSIS_ENDPOINT freely swappable for A/B tests.
     if thinking_budget > 0 and 'claude' in endpoint_name.lower():
         payload['thinking'] = {'type': 'enabled', 'budget_tokens': thinking_budget}

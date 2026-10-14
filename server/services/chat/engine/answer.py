@@ -35,7 +35,7 @@ def with_language_reminder(messages: List[Dict[str, str]], language: Optional[st
 
 
 def revision_note(ref: str) -> str:
-    """' (current revision B, published 2024-10-11)' from the catalog, '' when it has neither: the
+    """' (current revision B, published YYYY-MM-DD)' from the catalog, '' when it has neither: the
     passages themselves never carry the revision, and every document of the index is the current one."""
     info = document_info(ref)
     parts = ([f"current revision {info['revision']}"] if info.get('revision') else []) + \

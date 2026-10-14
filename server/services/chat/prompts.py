@@ -2,7 +2,7 @@
 
 Each prompt has a key (``system_base``, ``system_as``, ``rewrite``…). ``utils/evaluation/register_chat_prompts.py``
 registers the same files in the MLflow prompt registry (``<schema>.chat_<key>``, alias ``deployed``) and
-``mlflow_turns`` links the registered version of every prompt a turn used to its trace, when the file's
+``mlflow_turns`` links the registered version of every prompt used by a turn to its trace, when the file's
 hash matches the registered one.
 """
 

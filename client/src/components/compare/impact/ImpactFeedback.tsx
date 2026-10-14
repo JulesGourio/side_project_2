@@ -45,7 +45,7 @@ async function sendImpactFeedback(target: FeedbackTarget, body: Record<string, u
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-/** "Is this verdict right?" — one click, no comment: the per-document signal used to measure the judge. */
+/** "Is this verdict right?" — one click, no comment: the per-document signal that measures the judge. */
 export function VerdictVote({ doc }: { doc: ImpactDoc }) {
   const target = useContext(FeedbackContext);
   const key = `${target?.impactRequestId ?? 'none'}:${doc.ref}`;

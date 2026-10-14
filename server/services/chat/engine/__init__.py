@@ -1,4 +1,4 @@
-"""Chat — the chat engine: answers from the Vector Search index, no Knowledge Assistant.
+"""Chat — the chat engine: answers from the Vector Search index.
 
 What happens for each question (measures behind the configuration: ``docs/chat_tests.md``):
 
@@ -32,7 +32,7 @@ step, its duration, the passages retrieved, what went wrong — saved in Lakebas
 ``CHAT_ANSWER_MAX_TOKENS``, ``CHAT_REWRITE_MAX_TOKENS``, ``VS_MAX_CONCURRENT_QUERIES`` /
 ``VS_QUERY_RETRIES`` (``vs_gate.py``),
 ``CHAT_RERANK_TOP_K`` / ``CHAT_RAW_TOP_K`` / ``CHAT_RAW_ON`` / ``CHAT_MAX_SEARCH_PASSAGES`` (search sizes,
-defaults = the measured configuration; other values are for ``retrieval_eval`` comparisons),
+defaults = the configuration in use; other values are for ``retrieval_eval`` comparisons),
 plus the resilience settings documented in ``chat/llm.py``.
 """
 

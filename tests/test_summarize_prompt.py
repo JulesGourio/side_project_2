@@ -1,9 +1,7 @@
 """Regression guard for the single-document summary prompts' LANGUAGE contract.
 
-Bug found 2026-08-20 while evaluating a model swap: gpt-5-4-mini/gpt-5-mini
-summarized a French document in English because _SUMMARY_SYSTEM_PROMPT and
-_SUMMARY_IMAGE_SYSTEM_PROMPT had no language instruction (same class of bug
-as SYSTEM_PROMPT_STANDARD, fixed 2026-08-19). Locks in the fix.
+_SUMMARY_SYSTEM_PROMPT and _SUMMARY_IMAGE_SYSTEM_PROMPT must carry the language instruction, so a French
+document is summarized in French, as SYSTEM_PROMPT_STANDARD does.
 """
 
 import re

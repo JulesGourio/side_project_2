@@ -1,11 +1,7 @@
 """Regression guard for supports_temperature() endpoint coverage.
 
-Bug found 2026-08-20: databricks-gpt-5-mini rejects temperature=0 with a 400
-("Only the default (1) value is supported"), exactly like the gpt-5-6
-family, but _NO_TEMPERATURE_RE only excluded "gpt-5-6" — every
-/compare/summarize call on an image was failing in production, since
-COMPARE_SUMMARY_IMAGE_ENDPOINT defaults to databricks-gpt-5-mini. Confirmed
-live against the endpoint before fixing.
+databricks-gpt-5-mini rejects temperature=0 with a 400 ("Only the default (1) value is supported"), like the
+gpt-5-6 family, so it must be in _NO_TEMPERATURE_RE.
 """
 
 from server.services.infra.streaming import supports_temperature

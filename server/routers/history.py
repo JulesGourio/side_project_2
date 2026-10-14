@@ -56,7 +56,7 @@ def _serialize(row) -> dict:
             # Without it, JS treats the string as local time and introduces a 2h offset.
             if v.tzinfo is None:
                 v = v.replace(tzinfo=timezone.utc)
-            result[k] = v.isoformat()  # "2025-05-11T10:34:56+00:00"
+            result[k] = v.isoformat()  # "YYYY-MM-DDTHH:MM:SS+00:00"
         elif isinstance(v, (str, int, float, bool, type(None))):
             result[k] = v
         else:
@@ -90,7 +90,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
                 )
                 endpoint_name = endpoint_row['endpoint_name'] if endpoint_row else None
 
-            # Insert into messages (primary table — comparisons no longer written)
+            # Insert into messages (primary table)
             row = await conn.fetchrow(
                 '''
                 INSERT INTO messages

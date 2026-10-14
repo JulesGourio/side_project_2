@@ -190,8 +190,8 @@ def _drop_merged_cells(
         kept.append(item)
     return kept, dropped
 
-# High bar on purpose: 0.75 sits between the highest measured false positive (0.70) and the lowest confirmed true
-# positive (0.79). A long verbatim run is also required: scattered boilerplate phrasing alone can reach 50%+ coverage.
+# High bar on purpose, and a long verbatim run is also required: scattered boilerplate phrasing alone can cover
+# much of a block.
 _RELOCATION_COVERAGE_THRESHOLD = 0.75
 _RELOCATION_MIN_RUN_WORDS = 8
 _STRIKETHROUGH_RE = re.compile(r'~~(.+?)~~', re.S)

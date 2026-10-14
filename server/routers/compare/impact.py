@@ -50,7 +50,7 @@ def _impact_cache_version(changes_text: str, cfg: Dict[str, Any]) -> str:
     The file hashes alone are not the input of an impact search: the same pair
     gives a different change list from the Change Table than from the Change
     Summary, and a different result once COMPARE_IMPACT_INDEX points at another
-    index. Keyed on the hashes only, the first search was replayed for all of
+    index. A cache keyed on the hashes alone would replay one search for all of
     them.
     """
     parts = [changes_text.strip(), cfg['impact_index'], cfg['impact_endpoint'],
@@ -95,7 +95,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request):
 
     if not body.force_refresh:
         cached = await get_cached_impact_result(old_hash, new_hash, cache_version)
-        # Results cached before the per-document redesign have no change list.
+        # A cached result without a change list is not replayed.
         if cached is not None and 'changes' in cached:
             return StreamingResponse(_replay_events(cached), media_type='application/x-ndjson')
 

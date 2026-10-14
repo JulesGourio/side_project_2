@@ -1,9 +1,7 @@
 """Regression guard for the impact-search judge prompt's LANGUAGE contract.
 
-Bug found 2026-08-20 while evaluating a model swap: gpt-5-4-mini answered
-"reason" in English for a French document because _SYNTHESIS_SYSTEM_PROMPT
-had no language instruction (same class of bug as SYSTEM_PROMPT_STANDARD,
-fixed 2026-08-19). Locks in the fix.
+A French document must get its "reason" in French: _SYNTHESIS_SYSTEM_PROMPT carries the language
+instruction that keeps a small model from answering in English, as SYSTEM_PROMPT_STANDARD does.
 """
 
 import re

@@ -1,4 +1,4 @@
-"""Third pass of the 2026-10-04 Compare audit (docs/compare_audit_2026-10.md, part F).
+"""Compare regression tests: streams, cache, chunked analysis and warnings.
 
 Coverage:
   - /compare/impact and /compare/summarize through FastAPI (stream shape, cache)

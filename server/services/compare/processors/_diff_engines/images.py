@@ -19,7 +19,7 @@ _PAIR_MAX_HAMMING     = 25     # max dhash distance to accept a pair as MODIFIED
 _PAIR_MAX_AHASH       = 15     # max ahash distance — second gate for DOCX pairing (content check)
 _IMG_MAX_DIM = 1024
 _IMG_JPEG_QUALITY = 65
-_MAX_IMAGE_BLOCKS = 95          # Claude API hard limit is 100 images/documents per request
+_MAX_IMAGE_BLOCKS = 95          # the model API accepts at most 100 images/documents per request
 
 
 def dhash(img_bytes: bytes, size: int = _DHASH_SIZE) -> str:
@@ -74,7 +74,7 @@ def hash16(img_bytes: bytes) -> str:
 def _fine_hashes_match(meta1: Dict[str, Any], meta2: Dict[str, Any]) -> bool:
     """Second-tier identity: compare 16x16 hashes when both sides carry one.
 
-    Missing hashes (old cached extractions, PIL fallback) keep the legacy
+    Missing hashes (cached extractions without them, PIL fallback) keep the
     coarse-only behaviour.
     """
     f1 = meta1.get('hash16')
