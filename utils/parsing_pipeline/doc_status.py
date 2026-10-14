@@ -18,7 +18,7 @@ MOVED_BY_IMAGES = (EMPTY_TEXT, IMAGES_PENDING)
 
 # Image statuses (image_metadata.status). An image still to describe is retried by the next run; the others are final
 # for the description step (DONE and SKIPPED are the results, FAILED_LIMIT is reported in the run summary).
-IMAGE_RETRIED_STATUSES = ("PENDING", "ERROR")   # no write produces ERROR any more; rows still carrying it are retried
+IMAGE_RETRIED_STATUSES = ("PENDING", "ERROR")   # rows left with ERROR are retried too
 IMAGE_TERMINAL_STATUSES = ("DONE", "SKIPPED", "SKIPPED_DECORATIVE", "EXTRACTION_FAILED", "FAILED_LIMIT")
 
 # Statuses whose derived rows (chunks, image_metadata) are pruned when the document leaves scope.

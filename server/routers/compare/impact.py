@@ -30,10 +30,8 @@ router = APIRouter()
 
 class ImpactRequest(BaseModel):
     changes_text: str
-    # File hashes of the comparison that produced changes_text — link an
-    # impact_requests row back to its messages row, and double as the cache
-    # key for this endpoint's own result cache. Optional: a manual-mode search
-    # has none (cache is then skipped).
+    # File hashes of the comparison that produced changes_text: they link the impact_requests row to its messages row and key
+    # this endpoint's result cache. Optional: a manual-mode search has none, so the cache is skipped.
     old_file_hash: str = ''
     new_file_hash: str = ''
     # Names of the compared files: the compared document itself is always the
@@ -47,11 +45,8 @@ class ImpactRequest(BaseModel):
 def _impact_cache_version(changes_text: str, cfg: Dict[str, Any]) -> str:
     """Cache discriminator stored in impact_cache.app_version.
 
-    The file hashes alone are not the input of an impact search: the same pair
-    gives a different change list from the Change Table than from the Change
-    Summary, and a different result once COMPARE_IMPACT_INDEX points at another
-    index. A cache keyed on the hashes alone would replay one search for all of
-    them.
+    The file hashes alone do not determine an impact search: the change source (Change Table or Change Summary)
+    and the impact index both change the result, so they are part of the key.
     """
     parts = [changes_text.strip(), cfg['impact_index'], cfg['impact_endpoint'],
              str(cfg['impact_max_queries']), str(cfg['impact_per_query_results']),

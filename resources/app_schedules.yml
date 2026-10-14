@@ -124,9 +124,8 @@ targets:
       jobs:
 
         # ── App off-hours (UAT) ─────────────────────────────────────────────
-        # Generic notebook utils/app_mgmt/stop_start_app_job.py; run_as job-runner-sa-uat holds CAN_MANAGE on the app (declared in databricks.yml,
-        # the block is the full desired state). Only qualibot has a start job (weekend pair below); qualibot-uat-test has its own nightly stop,
-        # declared in the qualibot-uat-test target.
+        # Generic notebook utils/app_mgmt/stop_start_app_job.py; run_as job-runner-sa-uat holds CAN_MANAGE on the app (declared in databricks.yml).
+        # Only qualibot has a start job (weekend pair below); qualibot-uat-test has its own nightly stop (further down).
         qualibot_stop_weekend_uat:
           name: "W_1_Qualibot_Stop_Weekend_Uat"
           description: "Stop qualibot for the weekend (no nightly schedule for this app)."

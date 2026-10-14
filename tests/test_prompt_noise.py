@@ -8,8 +8,7 @@ budget — so a prompt change that re-introduces minor-wording rows is caught.
 Run only the detectors (no LLM, no token needed):
     pytest tests/test_prompt_noise.py -v
 
-The thresholds below are the budgets measured on the NAS 410 sample. Tighten them after improving
-the prompt to lock in the gain.
+The thresholds below are budgets for the sample output; tighten them when the prompt improves.
 """
 
 import glob
@@ -22,7 +21,7 @@ from tests.prompt_noise import scan_rows, scan_xlsx
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAMPLES = glob.glob(os.path.join(HERE, 'test_prompt', 'analysis_*.xlsx'))
 
-# Budgets — lower these once the prompt is fixed to prevent regressions.
+# Budgets: a prompt change that adds noise must fail these.
 MAX_NUMBER_RENDERING = 8     # target: 0
 MAX_HIGH_NOISE = 4           # noise rows wrongly marked High (target: 0)
 MAX_IMPERATIVE_RATIONALE = 0  # rationale must read as a summary, never a command

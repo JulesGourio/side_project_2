@@ -5,7 +5,7 @@
 bundle:
   name: qualibot
 
-# Jobs live in resources/*.job.yml (one file per concern, declared per target).
+# Jobs and apps live in resources/*.yml (one file per concern, declared per target).
 include:
   - resources/*.yml
 
@@ -122,7 +122,7 @@ sync:
     - "__pycache__/**"
     - "**/*.pyc"
     - ".venv/**"
-    - "**/*.ipynb"               # notebooks (debug_prompt.ipynb embeds base64 images — ~12MB)
+    - "**/*.ipynb"               # notebooks (exploratory ones embed base64 images, several MB)
     - "debug_results/**"
     - "files_to_compare/**"
     - "debug_images/**"
@@ -158,7 +158,7 @@ resources:
 targets:
   # ---------------------------------------------------------------------------
   # DEV target: full copy of qualibot-uat in the DEV workspace.
-  # Own app, Lakebase project, Vector Search endpoint and dev_proj.qualibot tables, loaded from a UAT snapshot (copy_uat_to_dev).
+  # Own app, Lakebase project, Vector Search endpoint and dev_proj.qualibot tables, loaded from a UAT snapshot by the copy_uat_to_dev job (resources/dev_copy.yml).
   # Every new schedule is PAUSED. run_as is the DEV service principal: job-runner-sa-uat is UAT-scoped and silently ignored here.
   # The in-app group check is off for this target only: CAPS_BYPASS in utils/deploy/target_env.json.
   # ---------------------------------------------------------------------------
@@ -211,7 +211,7 @@ targets:
             - DATABRICKS_SUPERUSER
           replace_existing: true
         # The app connects to Lakebase as its own service principal, hardcoded: an interpolated value would force a recreate of this immutable role.
-        # The DEV app predates the bundle and is bound to it.
+        # The DEV app is bound to this role.
         app-service-principal:
           role_id: "app-doc-compare-sp"
           parent: "projects/${resources.postgres_projects.qualibot-history.project_id}/branches/production"
@@ -239,7 +239,7 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
-        # Direct SQL access to the DEV doccompare database for Mehdi (developer).
+        # Direct SQL access to the DEV doccompare database for the developer.
         mehdi:
           role_id: "mehdi-lamrani"
           parent: "projects/${resources.postgres_projects.qualibot-history.project_id}/branches/production"
@@ -264,7 +264,7 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
-      # The volumes of dev_proj.qualibot are created by the first deploy; their data is copied from dev_landingzone.
+      # The volumes of dev_proj.qualibot are created by the first deploy; their data is loaded by the copy job (resources/dev_copy.yml).
       schemas:
         qualibot_proj_schema:
           catalog_name: ${var.app_proj_catalog}
@@ -330,7 +330,7 @@ targets:
       parsing_schedule_pause: "PAUSED"
       parsing_lakebase_database: "doccompare"
       parsing_job_activity_tag: "dev-job"
-      # Pre-2018 archive test phase: not carried over to DEV.
+      # The pre-2018 archive is not built on DEV.
       parsing_archive_max_docs: "0"
       parsing_archive_notices_in_rag: "false"
       parsing_build_chunks_full: "false"
@@ -363,7 +363,7 @@ targets:
               level: CAN_MANAGE
             - group_name: "leap-qualibot-service-accounts"
               level: CAN_MANAGE
-            # Also needed for bundle deploy to read this project's permissions as job-runner-sa-uat (group membership alone was not enough).
+            # Also needed for bundle deploy to read this project's permissions as job-runner-sa-uat.
             - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat
               level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
@@ -433,7 +433,7 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
-        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy; copy the existing images first.
+        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy (copy steps: runbooks/uat.md).
         qualibot_images:
           catalog_name: ${var.app_proj_catalog}
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
@@ -481,11 +481,11 @@ targets:
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
       parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
-      # Real tables, no suffix: copy the former _v1 state tables to these names BEFORE the next deploy,
-      # or the daily run reparses the whole corpus on GPU. One index serves the chat and impact search.
+      # Real tables, no suffix. Without the parsing state in these tables the daily run reparses the whole
+      # corpus on GPU (runbooks/uat.md). One index serves the chat and impact search.
       parsing_table_suffix: ""
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
-      # chunks_full is built but its index is not: append uat_proj.qualibot.chunks_full_index above to create and sync it.
+      # chunks_full is built but its index is not: add uat_proj.qualibot.chunks_full_index to parsing_vector_search_indexes to create and sync it.
       parsing_build_chunks_full: "true"
       parsing_schedule_pause: "UNPAUSED"
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
@@ -497,10 +497,10 @@ targets:
   # It does not declare postgres_projects/schemas/volumes (they exist, and this identity cannot grant on them).
   # No UC volume binding, so compare is disabled; Lakebase history stays off unless an admin grants the app SP access.
   # Remove this target once the evaluation is done.
-  # Rehearsal of the UAT switch to the new chatbot: writes only uat_proj.qualibot.*_test (owned by job-runner-sa-uat),
-  # the images_test volume, the chunks_index_test index and Lakebase doccompare_test — never anything the running
-  # qualibot app, its agents or its parsing job read. the one-shot runbooks/scripts/uat/setup_proj_schema.py deep-clones the
-  # parsing state from uat_proj.qualibot.*_v1 (read only), so the first run re-chunks without a GPU reparse.
+  # Test copy of the UAT chatbot: writes only uat_proj.qualibot.*_test (owned by job-runner-sa-uat),
+  # the images_test volume, the chunks_index_test index and Lakebase doccompare_test — never anything the
+  # running qualibot app or its parsing job read. runbooks/scripts/uat/setup_proj_schema.py copies the
+  # parsing state in (read only), so the first run re-chunks without a GPU reparse.
   qualibot-uat-test:
     workspace:
       host: https://dbc-3a17bfce-9e88.cloud.databricks.com
@@ -509,7 +509,7 @@ targets:
       app_name: "qualibot-uat-test"
       app_proj_catalog: uat_proj
       app_proj_schema: qualibot
-      # One GPU worker: after the clone only documents new since the last UAT run are parsed, the rest is re-chunked.
+      # One GPU worker: only documents new since the copied state are parsed, the rest is re-chunked.
       parsing_num_workers: "1"
       parsing_run_mode: "incremental"
       parsing_table_suffix: "_test"
@@ -526,8 +526,8 @@ targets:
     resources:
       apps:
         doc-compare:
-          # Declared explicitly: this block is the full desired state of the app's ACL. Without it a deploy fell back to the groups of the base
-          # definition and removed job-runner-sa-uat, whose nightly stop job then failed on permissions.
+          # Declared explicitly: this block is the full desired state of the app's ACL. Without it a deploy
+          # would fall back to the groups of the base definition and drop job-runner-sa-uat.
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
               level: CAN_MANAGE
@@ -638,7 +638,7 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
-        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy on prod_proj; copy the existing images into it first.
+        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy on prod_proj.
         qualibot_images:
           catalog_name: ${var.app_proj_catalog}
           schema_name: ${resources.schemas.qualibot_proj_schema.name}

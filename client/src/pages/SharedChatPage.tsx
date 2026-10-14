@@ -33,11 +33,7 @@ function NotFound() {
   );
 }
 
-// Read-only view of a shared conversation — anyone with the link can open it
-// (no ownership check, see GET /api/chat/shared/{token}). The owner's own
-// vote/comment is displayed (showFeedback=false still renders it read-only in
-// ChatMessage), but a viewer can never cast a new vote — that would pollute
-// the owner's own triage signal.
+// Read-only: anyone with the link can open it. A viewer never casts a vote, which would mix into the owner's feedback.
 export function SharedChatPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();

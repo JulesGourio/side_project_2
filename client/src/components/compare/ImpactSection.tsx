@@ -4,7 +4,6 @@ import type { ImpactResult } from './impact/types';
 import { baseName } from './files';
 import { ACCENT, AccentButton, CancelButton, OutlineButton, Spinner } from './ui';
 
-/** Impact search: which change summary feeds it, the run buttons and the results card. */
 export function ImpactSection({ configured, result, error, running, usingTable, hasBothAnalyses, canSearch, changeTableShown, messageId, hashes, names, onRun, onCancel }: {
   /** The impact index is set up on the server; without it only a restored result is shown. */
   configured: boolean;

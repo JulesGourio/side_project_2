@@ -49,9 +49,8 @@ def _libreoffice_cmd() -> Optional[str]:
                 logger.info('LibreOffice found: %s', path)
                 break
         if not _lo_cmd:
-            # No system install — fall back to the portable tree the exact-PDF
-            # preview engine provisions from a UC Volume (soffice.py). This is
-            # what makes PPTX slide rendering work on Databricks Apps.
+            # No system install: use the portable LibreOffice tree that soffice.py provisions from a UC Volume.
+            # That is what makes PPTX slide rendering work on Databricks Apps.
             from .soffice import SofficeUnavailable, find_soffice
             try:
                 _lo_cmd = find_soffice()

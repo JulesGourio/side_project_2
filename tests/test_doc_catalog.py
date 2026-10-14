@@ -1,7 +1,7 @@
 """Tests for the document catalog's source (server/services/infra/doc_catalog.py).
 
 Coverage:
-  - the Lakebase table replaces the bundled snapshot once loaded
+  - the Lakebase table is the catalog once it has rows
   - an empty or unreadable table keeps the catalog already loaded
   - the link written by the pipeline (task 6) is the same as the chunks' url column
 """

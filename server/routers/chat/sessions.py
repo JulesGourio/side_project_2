@@ -212,8 +212,7 @@ async def delete_session(session_id: str, request: Request):
 async def share_session(session_id: str, request: Request):
     """Grant read-only access to this conversation to anyone with the link.
 
-    Idempotent: returns the existing token if the session was already shared,
-    rather than rotating it — a previously distributed link keeps working.
+    Idempotent: returns the existing token rather than rotating it, so a link already distributed keeps working.
     """
     pool = get_pool()
     if not pool:

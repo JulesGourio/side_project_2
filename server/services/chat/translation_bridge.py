@@ -38,14 +38,11 @@ TRANSLATE_FALLBACK_ENDPOINTS = [e.strip() for e in os.getenv('CHAT_TRANSLATE_FAL
                                                              'databricks-gpt-6-luna').split(',') if e.strip()]
 _TIMEOUT_S = 20.0
 
-# fastText's own lid.176 language-ID model — chosen over langdetect (noisy on
-# short/technical text) for the local pre-check. Sub-millisecond per call
-# once loaded; ~0.26s one-time load cost at first use.
+# fastText's lid.176 model: langdetect is noisy on short or technical text. Sub-millisecond per call once loaded
+# (about 0.26 s at first use).
 _FASTTEXT_MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'lid.176.ftz')
 
-# Below this, a fastText guess is treated as noise (e.g. a short REF-code-only
-# message can get labelled Polish at 12% confidence) and detection falls back
-# to the LLM instead of trusting the low-confidence label.
+# Below this confidence a fastText guess is noise (a short REF-only message can come out Polish at 12%): the LLM decides.
 _FASTTEXT_CONFIDENCE_THRESHOLD = 0.65
 
 # Skip the LLM round trip entirely for the two languages the corpus and the
@@ -62,8 +59,8 @@ LANGUAGE_NAMES = {'fr': 'French', 'en': 'English', 'es': 'Spanish', 'cs': 'Czech
                   'pt': 'Portuguese', 'de': 'German', 'it': 'Italian', 'pl': 'Polish', 'ro': 'Romanian',
                   'sk': 'Slovak', 'nl': 'Dutch', 'ru': 'Russian', 'uk': 'Ukrainian'}
 
-# What says nothing about the language and misleads fastText: document codes (QP-1518,
-# MI_14242_GB, NF-10065), anything with a digit, URLs, e-mails, citation markers, code.
+# What says nothing about the language and misleads fastText: document codes (REF-like tokens), anything with a digit,
+# URLs, e-mails, citation markers, code.
 _CODE_BLOCK_RE = re.compile(r'```.*?```', re.S)
 _NOISE_RE = re.compile(r'https?://\S+|\S+@\S+|⟦\d+⟧|\[\d+\]|`[^`]*`|\b\S*\d\S*\b|\b[A-Z]{2,}(?:[-_/][A-Z0-9]+)+\b')
 # In an answer: quoted passages (the instructions quote documents in their own language),
@@ -129,9 +126,7 @@ def _fast_lang_guess(text: str) -> Optional[str]:
         return None
     prob, label = predictions[0]
     if prob < _FASTTEXT_CONFIDENCE_THRESHOLD:
-        # A short/technical message (a bare REF code, an acronym) can get a
-        # confident-looking top-1 label at a low actual probability — e.g.
-        # "X12-B" scoring 12% Polish. Below threshold, let the LLM decide.
+        # A short or technical message can get a confident-looking top label at a low real probability: below the threshold the LLM decides.
         logger.debug('translation_bridge: fasttext confidence too low (%.2f) for %r', prob, label)
         return None
     return label.replace('__label__', '')
@@ -139,10 +134,8 @@ def _fast_lang_guess(text: str) -> Optional[str]:
 
 def _answer_language_mismatch(answer: str, expected_lang: str) -> bool:
     """True if the answer confidently looks like a different language than
-    the question asked for. Guards the fr/en case, which normally skips the
-    LLM bridge entirely and trusts the answer prompt's language rule — but the
-    model has been observed answering in the wrong one of the two anyway (an all-English conversation got one French
-    answer mid-thread with nothing in the history to explain the switch)."""
+    the question asked for. Guards the fr/en case, which normally skips the LLM bridge and trusts the
+    answer prompt's language rule, because the model still answers in the wrong one of the two sometimes."""
     detected = _fast_lang_guess_with_prob(clean_for_language(answer, answer=True))
     return detected is not None and detected[1] >= _MISMATCH_CONFIDENCE_THRESHOLD and detected[0] != expected_lang
 
@@ -297,9 +290,7 @@ async def translate_answer_back(answer: str, ctx: TranslationContext, host: str,
     if not answer.strip():
         return answer
     if not ctx.needs_translation:
-        # Only the confidently-detected fr/en case gets the mismatch safety
-        # net — an 'unknown' lang_code (detection itself failed earlier)
-        # gives _answer_language_mismatch nothing reliable to compare against.
+        # Only the confident fr/en case gets the mismatch check: an 'unknown' lang_code leaves nothing to compare against.
         if ctx.lang_code not in _NO_TRANSLATION_NEEDED or not _answer_language_mismatch(answer, ctx.lang_code):
             return answer
     system = (

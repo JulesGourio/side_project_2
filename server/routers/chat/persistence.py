@@ -14,9 +14,8 @@ logger = logging.getLogger(__name__)
 
 async def _upsert_session(conn, session_id: str, user_id: str, workspace_id: Optional[str], workspace_url: str, name: str,
                           touch: bool = True) -> None:
-    # share_token is generated up front so developers can browse any conversation in the database; it stays unused
-    # until the owner clicks "Share". touch=False (failed or aborted turn, hidden from the thread) keeps the
-    # thread's date: the sidebar sorts and dates threads by updated_at.
+    # share_token is minted up front; it stays unused until the owner shares the conversation.
+    # touch=False keeps the thread's date for a hidden turn (error, aborted): the sidebar sorts by updated_at.
     await conn.execute(
         '''
         INSERT INTO chat_sessions (id, user_id, workspace_id, workspace_url, name, share_token)
@@ -45,14 +44,11 @@ async def _save_turn(
     question_lang: str = '',
     log: Optional[TurnLog] = None,
 ) -> Tuple[Optional[int], Optional[int]]:
-    """Persist user + assistant messages and retrieval sources; return their ids
-    (user message, assistant message), (None, None) when the save failed.
+    """Persist the user and assistant messages with their sources; return (user message id, assistant message id),
+    or (None, None) when the save failed.
 
-    A turn is saved even when it failed (``status='error'``) or the browser left
-    (``'aborted'``) so the user's question — and the reason it broke — is always
-    traceable in the database. Only ``'ok'`` turns are shown in the history.
-    The retrieval itself (queries, passages, models, durations) is saved by
-    ``store_chat_turn`` in chat_turns, under the same ``trace_id``.
+    A failed or aborted turn is saved too, so the question and the reason it broke stay traceable. Only 'ok' turns
+    are shown in the history. The retrieval itself is saved by store_chat_turn (chat_turns), under the same trace_id.
     """
     # Thread title from the user's question, without the [Division: …] prefix.
     clean_content = _strip_division(user_content)

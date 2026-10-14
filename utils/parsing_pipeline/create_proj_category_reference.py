@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # PROJ CATEGORY_REFERENCE — FRESHNESS GUARD AND CATEGORY REFERENCE
 # MAGIC
-# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the Bronze Intraqual tables (`gd_*_latest`) and checks their freshness (`CLAUDE.md`, naming).
+# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the Bronze Intraqual tables (`gd_*_latest`) and checks their freshness.
 # MAGIC
 # MAGIC **Description:**
 # MAGIC First link of the daily chain. Two roles:
@@ -10,7 +10,7 @@
 # MAGIC    `MAX_SOURCE_STALENESS_HOURS`. A stale source must **fail** the run: otherwise the pipeline recomputes a scope on stale
 # MAGIC    data and silently ships a partial index.
 # MAGIC 2. **Category consolidation** — `division` / `niveau_plus_1..N` per IDDOC into `category_reference`, from
-# MAGIC    `gd_doc_cat_latest` x `gd_cat_latest` (+ `DIVISION_ARCHIVE_TABLE` if enabled, empty by default: prod_bronze resolves 99.6 % alone).
+# MAGIC    `gd_doc_cat_latest` x `gd_cat_latest` (+ `DIVISION_ARCHIVE_TABLE` if enabled, empty by default).
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC The freshness guard fails the task after `category_reference` is built but before it is written, so a stale run leaves yesterday's table in place.

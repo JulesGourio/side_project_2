@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # PROJ VECTOR_INDEXES — SYNC VECTOR SEARCH INDEXES
 # MAGIC
-# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook creates no table: it synchronises the Vector Search indexes built on `chunks` (`CLAUDE.md`, naming).
+# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook creates no table: it synchronises the Vector Search indexes built on `chunks`.
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Last link of the chain that writes the chunks: triggers a sync of the Delta Sync indexes whose source tables were just rewritten by tasks
@@ -20,7 +20,7 @@
 # MAGIC
 # MAGIC **Inputs Data**
 # MAGIC - `{catalog_schema}.chunks{table_suffix}` and `chunks_archive{table_suffix}` — only to refresh `chunks_full`
-# MAGIC - The Vector Search indexes named by `indexes` (or `PARSING_VECTOR_SEARCH_INDEXES`): comma-separated, empty = nothing to do (the DEV case)
+# MAGIC - The Vector Search indexes named by `indexes` (or `PARSING_VECTOR_SEARCH_INDEXES`): comma-separated, empty = nothing to do
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{catalog_schema}.chunks_full{table_suffix}` — only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`

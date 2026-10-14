@@ -30,7 +30,7 @@ _PAIR_RATIO_THRESHOLD = float(os.getenv('COMPARE_PAIR_RATIO_THRESHOLD', '0.55'))
 # The bare ALL-CAPS half of SECTION_RE, used to spot running headers/footers (company name, standard title, address)
 # that recur on every page and would each register as a new section.
 _ALLCAPS_SECTION_RE = re.compile(r"^[A-Z][A-Z0-9 \-–—:,./()&']{3,}$")
-# Trailing "N/M" page fraction of a running footer stamp ("TRA-0034 - V09 4/39"): masked only when counting heading
+# Trailing "N/M" page fraction of a running footer stamp ("ABC-0001 - V09 4/39"): masked only when counting heading
 # repeats, so each page's stamp counts as the same label.
 _TRAILING_PAGE_FRACTION_RE = re.compile(r'\s+\d+\s*/\s*\d+$')
 
@@ -51,9 +51,8 @@ def _parse_blocks(text: str, page_label: Optional[str]) -> List[Dict[str, Any]]:
     # Mask a trailing page fraction ("... V09 4/39") before counting repeats: a footer stamp embedding its page
     # number is a different string on every page.
     _heading_key = lambda b: _TRAILING_PAGE_FRACTION_RE.sub('', b)
-    # A bare ALL-CAPS line repeating >=_BOILERPLATE_MIN_PAGES times is a running header/footer (page title,
-    # company address), not a section: treating it as one would scatter every real section's content under that
-    # recurring label. Numbered headings are exempt: a real clause number essentially never repeats this often.
+    # A bare ALL-CAPS line repeating on at least _BOILERPLATE_MIN_PAGES pages is a running header or footer, not a section.
+    # Numbered headings are exempt: a clause number essentially never repeats that often.
     running_header_counts = Counter(_heading_key(b) for b in bare_lines if _ALLCAPS_SECTION_RE.match(b))
 
     result: List[Dict[str, Any]] = []
@@ -202,9 +201,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     old_joined = '\n'.join(i['clean'] for i in old_raw)
     new_joined = '\n'.join(i['clean'] for i in new_raw)
 
-    # Denominators for the fractional 'pos' each result carries: old-document and
-    # new-document block indexes live in different spaces, and interleaving
-    # REMOVED with ADDED needs one axis comparable across both.
+    # Old and new block indexes live in different spaces: the fractional position gives both documents one comparable axis,
+    # so REMOVED and ADDED entries interleave.
     n_old = max(1, (old_items[-1]['idx'] if old_items else 0) + 1)
     n_new = max(1, (new_items[-1]['idx'] if new_items else 0) + 1)
 
@@ -232,9 +230,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     unmatched_old.sort(key=lambda o: o['idx'])
     unmatched_old, new_leftovers, resegmented = _cancel_resegmented(unmatched_old, new_leftovers)
 
-    # Every leftover old block against every leftover new block. Two true upper bounds of ratio() (lengths, then
-    # shared words) discard a pair before any SequenceMatcher work, without changing a pairing decision; one matcher
-    # per new block is reused for every old block that survives.
+    # Every leftover old block against every leftover new block. Cheap upper bounds (lengths, shared words) skip most pairs
+    # before any SequenceMatcher work, without changing a pairing decision.
     sims: List[Tuple[float, int, int]] = []
     old_words_cache = [o['clean'].split() for o in unmatched_old]
     old_counts = [Counter(words) for words in old_words_cache]
@@ -302,9 +299,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         _emit_modified(unmatched_old[i], new_leftovers[j])
 
     # ── Second-chance pairing: table rows sharing the same row key ──────────
-    # DOCX tables are emitted as "RowLabel: col: val | …". A heavily rewritten row (similarity under the 0.55 gate) is
-    # still the SAME row evolving: pair leftovers whose row label and section match instead of reporting REMOVED +
-    # ADDED.
+    # DOCX table rows are emitted as 'RowLabel: col: val | …'. A heavily rewritten row is still the same row evolving:
+    # pair leftovers with the same row label and section instead of reporting REMOVED + ADDED.
     def _row_key(txt: str) -> Optional[str]:
         head, sep, _ = txt.partition(':')
         if not sep:
@@ -334,9 +330,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         _emit_modified(o, new_leftovers[j])
 
     # ── Third-chance pairing: same text behind a different leading number ───
-    # "3. INSPECTION" -> "4. INSPECTION" is too short for the similarity pass, so every heading after an inserted
-    # section came out as REMOVED + ADDED. Paired, it is one entry showing only the number ("2.5 mm max" -> "3.5 mm
-    # max" has the same shape and must never be hidden).
+    # '3. INSPECTION' -> '4. INSPECTION' is too short for the similarity pass. Paired, it shows only the number change;
+    # a real value change ('2.5 mm max' -> '3.5 mm max') must never be hidden.
     def _numbered_key(txt: str) -> Optional[str]:
         head, _, rest = txt.strip().partition(' ')
         rest = _clean(rest)

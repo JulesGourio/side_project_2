@@ -5,12 +5,9 @@ from typing import Any, Dict, List, Tuple
 from .ooxml import _W_BR, _W_LRPB, _W_TYPE
 
 # --- Page-number estimation ---
-# A DOCX has no reliable page numbers without a rendering engine, so pages are approximated from the page-break
-# markers plus a content-flow estimate.
-# _PAGE_WEIGHT_CAP: flow weight that fills one page (characters of flowing text + _IMG_WEIGHT per image). Overlay
-# content (text boxes, VML arrows) weighs 0:
-#                     it sits on a page that is already counted.
-#   _IMG_WEIGHT:      vertical space one embedded image is worth, in characters.
+# No rendering engine: pages are estimated from the page-break markers plus a content-flow estimate.
+# _PAGE_WEIGHT_CAP: flow weight that fills one page (text characters + _IMG_WEIGHT per image); overlay content weighs 0.
+# _IMG_WEIGHT: vertical space of one embedded image, in characters.
 _PAGE_WEIGHT_CAP = 2200
 _IMG_WEIGHT = 400
 
@@ -37,13 +34,10 @@ def _count_breaks_split(element) -> Tuple[int, int]:
 def _lrpb_is_stale(total_forced: int, total_lrpb: int) -> bool:
     """Decide whether <w:lastRenderedPageBreak/> markers should be ignored.
 
-    On a freshly rendered document Word emits a lastRenderedPageBreak at every
-    page boundary — including just before each forced break — so the count is
-    normally >= the number of forced breaks. When it is much smaller, the
-    document was edited after its last full render and the markers are a stale
-    subset that would inflate the page count (e.g. one CAD file had 65 forced
-    breaks but only 27 lastRendered, pushing a 70-page doc to 93). In that case
-    we discard them and rely on forced breaks + content flow instead.
+    On a freshly rendered document Word emits a lastRenderedPageBreak at every page boundary, including just before
+    each forced break, so the count is normally >= the number of forced breaks. When it is much smaller, the document
+    was edited after its last full render: the markers are a stale subset that would inflate the page count, so they
+    are discarded in favour of forced breaks and content flow.
     """
     return total_lrpb < total_forced * 0.5
 

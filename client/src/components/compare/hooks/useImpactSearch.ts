@@ -60,7 +60,6 @@ export function useImpactSearch() {
     lsRemove(LS.impact);
   };
 
-  /** Show an impact result saved with a history entry (or clear it when there is none). */
   const restore = (saved: ImpactResult | null, rawJson: string) => {
     setResult(saved);
     setError('');
@@ -81,8 +80,7 @@ export function useImpactSearch() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           changes_text: input.changesText,
-          // Link the impact_requests audit row back to this comparison's messages row —
-          // also the cache key the server looks up unless force_refresh is set.
+          // Links the impact_requests row to this comparison; the server also uses these hashes as its cache key unless force_refresh.
           old_file_hash: input.oldHash,
           new_file_hash: input.newHash,
           // The compared document itself would be the top hit — the server drops it.

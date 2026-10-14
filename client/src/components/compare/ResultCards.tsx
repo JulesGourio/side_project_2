@@ -17,7 +17,6 @@ function Pending({ accent, label }: { accent: string; label: string }) {
   );
 }
 
-/** Markdown report (the Change Summary track). */
 export function MarkdownResultCard({ title, icon, accent, content, isStreaming, onDownload, feedbackProps }: {
   title: string;
   icon: ElementType;
@@ -51,7 +50,6 @@ export function MarkdownResultCard({ title, icon, accent, content, isStreaming, 
   );
 }
 
-/** Structured report (the Change Table track). */
 export function StructuredResultCard({ items, isStreaming, accent, fileType, imageContext, onExportExcel, feedbackProps }: {
   items: DiffItem[];
   isStreaming: boolean;
@@ -84,7 +82,6 @@ export function StructuredResultCard({ items, isStreaming, accent, fileType, ima
   );
 }
 
-/** Single-document summary. */
 export function DocSummaryCard({ title, state, accent, onDownload }: {
   title: string;
   state: DocSummaryState;

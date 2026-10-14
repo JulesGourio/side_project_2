@@ -32,7 +32,7 @@ def _detect_division(text: str) -> str:
 # the client as a link to source n, so a reloaded conversation shows them too.
 _CITE_MARKER_TMPL = '⟦{n}⟧'
 
-# Regex to protect links to be splitted by databricks agent citations.
+# Keeps Markdown links and raw URLs whole when citation markers are inserted.
 _PROTECTED_SPAN_RE = re.compile(r'\[[^\]]+\]\([^)]+\)|https?://[^\s)\]\'">]+')
 
 def _apply_citation_markers(text: str, citations: List[dict]) -> str:
@@ -93,11 +93,10 @@ def _trim_history(messages: List[dict]) -> List[dict]:
 
 
 def _with_today_date(messages: List[dict]) -> List[dict]:
-    """A COPY of messages with today's date prepended to the last user turn, so date-relative questions work (the
-    engine puts its own system message first, hence the user turn).
+    """A COPY of messages with today's date prepended to the last user turn, so date-relative questions work.
 
-    Plain ISO date, no sentence: a French sentence biased the model toward French answers to English questions.
-    Callers keep the ORIGINAL `messages` for logging and persistence.
+    The engine puts its own system message first, hence the user turn. A plain ISO date, no sentence: a French
+    sentence pushes the model toward French answers. Callers keep the ORIGINAL `messages` for logging and persistence.
     """
     if not messages:
         return messages

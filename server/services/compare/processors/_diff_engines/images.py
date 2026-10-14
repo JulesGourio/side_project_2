@@ -10,8 +10,7 @@ logger = logging.getLogger(__name__)
 
 _DHASH_SIZE = 8
 _DHASH_THRESHOLD = 4           # Hamming distance <= 4 => visually identical
-# Second-tier identity check, a 16x16 dhash: small edits to a large diagram (added arrow, changed label) can stay
-# within the coarse 8x8 hash budget, while the fine hash still tolerates JPEG recompression.
+# Second-tier 16x16 dhash: a small edit to a large diagram can stay within the coarse 8x8 budget.
 _DHASH16_SIZE = 16
 _DHASH16_THRESHOLD = 12
 _PAIR_PAGE_TOLERANCE  = 15     # max page distance to pair modified images (PDF/PPTX)
@@ -123,8 +122,8 @@ def _compute_image_diff_pairs(
     added   = [h for h in new_imgs if not any(_same_content(oh, old_imgs, h, new_imgs) for oh in old_imgs)]
 
     # ── Orientation-change detection (same raw image, flipped or rotated) ──
-    # Only images without a content match on the other side are considered: when BOTH documents hold an image and its
-    # flip, each already matches its own twin and must not be cross-paired.
+    # Only images without a content match on the other side are considered: a document holding an image and its flip
+    # would otherwise cross-pair its own twin.
     orientation_pairs: List[Tuple[str, str]] = []
     matched_orient_old: set = set()
     matched_orient_new: set = set()

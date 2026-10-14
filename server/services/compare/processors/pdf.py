@@ -60,9 +60,8 @@ def _is_page_artifact(text: str) -> bool:
     return bool(_PAGE_ARTIFACT_RE.match(text))
 
 
-# A table row extracted as ONE line keeps its identity across a repagination (isolated cells regroup between
-# revisions). find_tables() is only worth it on text/tabular documents (on a wiring diagram it reads the drawing grid
-# as tables, ~0.5 s per page); blocks per page tell them apart for free: 13-24 on text, 114-180 on schematics.
+# A table row extracted as one line keeps its identity across a repagination. find_tables() is slow on drawings (~0.5 s a page),
+# so the blocks per page tell text (13-24) from schematics (114-180) for free.
 _TABLE_MAX_BLOCKS_PER_PAGE = int(os.getenv('COMPARE_TABLE_MAX_BLOCKS_PER_PAGE', '60'))
 _TABLE_MIN_ROWS = 2
 _TABLE_MIN_COLS = 2

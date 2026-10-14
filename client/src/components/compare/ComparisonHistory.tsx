@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { History, X, FileText, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 
-// --- Types ---
-
 interface HistoryEntry {
   id: number;
   created_at: string;
@@ -25,8 +23,6 @@ interface Props {
   onLoad: (entry: FullComparison) => void | Promise<void>;
 }
 
-// --- Helpers ---
-
 function formatDate(iso: string): string {
   try {
     return new Intl.DateTimeFormat(undefined, {
@@ -48,8 +44,6 @@ function shortName(name: string, maxLen = 22): string {
   const suffix = ext > 0 ? name.slice(ext) : '';
   return `${base.slice(0, maxLen - 3 - suffix.length)}…${suffix}`;
 }
-
-// --- Component ---
 
 export function ComparisonHistory({ open, onClose, onLoad }: Props) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);

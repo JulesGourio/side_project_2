@@ -6,7 +6,6 @@ function stripCiteMarkers(content: string): string {
   return content.replace(/⟦(\d+)⟧/g, '[$1]');
 }
 
-/** One line per source, cited ones first in their [n] order (the numbers of the text). */
 function sourcesMarkdown(sources: Source[] | undefined): string {
   if (!sources?.length) return '';
   const cited = sources.filter(s => s.n != null).sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
@@ -16,7 +15,6 @@ function sourcesMarkdown(sources: Source[] | undefined): string {
   return `\n\n**Sources**\n\n${[...cited, ...others].map(s => `- ${line(s)}`).join('\n')}`;
 }
 
-/** PDF sources: cited ones first in their [n] order, then the others; REF linked, details after it. */
 function pdfSources(sources: Source[] | undefined): PdfSource[] {
   return [...(sources ?? [])]
     .sort((a, b) => (a.n ?? Infinity) - (b.n ?? Infinity))
@@ -30,7 +28,6 @@ function answerSection(msg: Message, question?: string): PdfSection {
   return { markdown: stripCiteMarkers(msg.content), question, sources: pdfSources(msg.sources) };
 }
 
-/** The user question an answer replies to: the closest user message before it. */
 function questionFor(message: Message, messages: Message[]): string | undefined {
   const idx = messages.findIndex(m => m.id === message.id);
   for (let i = idx - 1; i >= 0; i--) {
@@ -39,7 +36,6 @@ function questionFor(message: Message, messages: Message[]): string | undefined 
   return undefined;
 }
 
-/** One section per answered question, in conversation order. */
 function sessionSections(messages: Message[]): PdfSection[] {
   const sections: PdfSection[] = [];
   let question: string | undefined;
@@ -68,7 +64,6 @@ export function sessionMarkdown(messages: Message[]): string {
 
 export function downloadResponsePdf(message: Message, allMessages: Message[], slug: string): Promise<void> {
   const question = questionFor(message, allMessages)?.trim();
-  // A short question is the title; a long one goes in a question box under a generic title.
   const asTitle = !!question && question.length <= 160;
   return downloadPdf({
     kind: 'chat_response',

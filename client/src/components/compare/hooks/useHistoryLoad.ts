@@ -17,7 +17,6 @@ interface HistoryLoadContext {
   setError: (message: string) => void;
 }
 
-/** The impact result saved with a history entry, if a search was run on it. */
 function parseSavedImpact(raw: string | null): ImpactResult | null {
   try {
     const parsed = raw ? JSON.parse(raw) : null;
@@ -27,13 +26,8 @@ function parseSavedImpact(raw: string | null): ImpactResult | null {
   }
 }
 
-/**
- * Reopen a past comparison. A history row is one run of one processor version, so it is routed
- * into the matching track (structured = Change Table, everything else = Change Summary) and the
- * other track is left alone — but only if it belongs to the same two files; otherwise it would
- * sit next to this entry's file names (and feed the next impact search) while describing
- * another comparison.
- */
+// A history row fills one track. The other track is kept only if it belongs to the same two files;
+// otherwise it is reset, so it cannot describe another comparison next to these file names.
 export function useHistoryLoad({ docs, structured, standard, impact, setError }: HistoryLoadContext) {
   return async (entry: FullComparison) => {
     const isStructured = entry.processing_method === 'structured';

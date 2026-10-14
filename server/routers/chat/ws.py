@@ -41,7 +41,7 @@ async def chat_ws(websocket: WebSocket):
     """One chat turn over a WebSocket (avoids Databricks Apps proxy buffering), answered by
     the Vector Search engine (``stream_chat``); then citation markers, catalog sources,
     translation back and persistence. Every turn that reached the engine — answered, failed or
-    left by the browser — is logged in chat_turns (+ chat_retrieved_chunks, errors) once over."""
+    left by the browser — is logged in chat_turns (+ chat_retrieved_chunks, errors) when the turn ends."""
     await websocket.accept()
     route = '/api/chat/ws'
 
@@ -79,7 +79,6 @@ async def chat_ws(websocket: WebSocket):
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in data.get('messages', [])])
     session_id = data.get('session_id') or str(uuid.uuid4())
     division = (data.get('division') or 'ALL').upper()
-    # Recorded as endpoint_name.
     endpoint = f'chat-{normalize_division(division).lower()}'
 
     identity = await _identity_or_anonymous(websocket)
@@ -150,9 +149,8 @@ async def chat_ws(websocket: WebSocket):
                         break
                 logger.info('chat translate-bridge [ws]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
 
-        # The language the answer must be in, named in the prompt's language reminder: English
-        # when the bridge translated the question (it translates the answer back), else the
-        # detected French/English, else a local guess.
+        # Named in the language reminder: English when the bridge translated the question (it translates the answer back),
+        # else the detected French/English, else a local guess.
         answer_language = answer_language_for(translate_ctx, user_content) if user_content else None
         answer_stream = stream_chat(host, token, division, _with_today_date(messages_for_engine),
                                         answer_language=answer_language, log=log)
@@ -199,9 +197,8 @@ async def chat_ws(websocket: WebSocket):
                 break
 
             if not chunk.startswith('data: '):
-                # Keepalive comment lines (": keepalive") from the engine: forward a
-                # no-op ping so a proxy idle timeout (~30 s) never closes the socket
-                # while the model is still thinking.
+                # Keepalive lines from the engine are forwarded as no-op pings, so a proxy idle timeout (~30 s)
+                # does not close the socket while the model is still thinking.
                 if chunk.startswith(': '):
                     try:
                         await websocket.send_json({'type': 'ping'})
@@ -219,9 +216,7 @@ async def chat_ws(websocket: WebSocket):
                 delta = parsed.get('delta', '')
                 accumulated.append(delta)
                 if translate_ctx and translate_ctx.needs_translation:
-                    # Never forward raw English to the client — the
-                    # client shows "Thinking" until the full answer is
-                    # translated in one pass and sent in the 'done' event.
+                    # Raw English never reaches the client: 'Thinking' stays until the full answer is translated and sent in 'done'.
                     pass
                 else:
                     await websocket.send_json({'type': 'delta', 'delta': delta})

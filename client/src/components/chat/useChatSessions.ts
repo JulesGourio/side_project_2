@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { ChatSession } from './ChatSidebar';
 
-/** The user's saved conversations (sidebar history). */
 export function useChatSessions() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [available, setAvailable] = useState(false);

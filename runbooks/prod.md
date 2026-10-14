@@ -1,6 +1,8 @@
-# Runbook PROD — tables, volumes et index dans `prod_proj.qualibot`
+# Opérations manuelles — PROD (`prod_proj.qualibot`)
 
-Cible : `qualibot-prod` (profil CLI `qualibot-prod`). Rien ici ne déploie : le déploiement prod n'est jamais lancé sans accord explicite (`CLAUDE.md`). Les commandes sont à taper à la main, dans l'ordre.
+Cible : `qualibot-prod` (profil CLI `qualibot-prod`). Rien ici ne déploie : le déploiement prod n'est jamais lancé sans accord explicite. Les commandes sont à taper à la main, dans l'ordre.
+
+Le catalogue `prod_landingzone.intraqual` (source Intraqual) ne se touche pas.
 
 ## 0. État de départ (lecture seule, profil `qualibot-prod`)
 
@@ -12,7 +14,7 @@ databricks volumes list prod_landingzone qualibot --profile qualibot-prod -o jso
 databricks vector-search-indexes list-indexes qualibot --profile qualibot-prod -o json | ConvertFrom-Json | ForEach-Object { $_.name }
 ```
 
-Attendu : `prod_proj` existe ou non. Le catalogue `prod_landingzone.intraqual` (source Intraqual) ne se touche pas. Si le schéma `prod_landingzone.qualibot` contient des tables ou un index, les étapes 3 et 4 s'appliquent ; sinon elles sont sans objet.
+Attendu : `prod_proj` existe ou non. Si l'ancien schéma `prod_landingzone.qualibot` contient des tables, des volumes ou un index, les étapes 2, 3 et 4 s'appliquent (copie) ; sinon elles sont sans objet.
 
 ## 1. Catalogue et schéma `prod_proj` (admin metastore, seulement si absent)
 
@@ -36,7 +38,7 @@ databricks volumes create prod_proj qualibot images MANAGED --profile qualibot-p
 databricks volumes create prod_proj qualibot docling_models MANAGED --profile qualibot-prod
 ```
 
-Copier les données depuis `prod_landingzone` (ignorer une ligne si la source n'existe pas, voir étape 0) :
+Copier les données depuis l'ancien emplacement (ignorer une ligne si la source n'existe pas, voir étape 0) :
 
 ```powershell
 databricks fs cp -r dbfs:/Volumes/prod_landingzone/qualibot/docling_models dbfs:/Volumes/prod_proj/qualibot/docling_models --profile qualibot-prod
@@ -54,9 +56,9 @@ databricks bundle deployment bind qualibot_images prod_proj.qualibot.images -t q
 databricks bundle deployment bind qualibot_docling_models prod_proj.qualibot.docling_models -t qualibot-prod --profile qualibot-prod
 ```
 
-## 3. Tables (seulement si `prod_landingzone.qualibot` en contient, étape 0)
+## 3. Tables (seulement si l'ancien schéma `prod_landingzone.qualibot` en contient, étape 0)
 
-Cloner chaque table listée à l'étape 0 (éditeur SQL du workspace prod, un utilisateur qui lit `prod_landingzone` et crée dans `prod_proj.qualibot`) :
+Cloner chaque table listée à l'étape 0 (éditeur SQL du workspace prod, un utilisateur qui lit l'ancien schéma et crée dans `prod_proj.qualibot`) :
 
 ```sql
 CREATE TABLE IF NOT EXISTS prod_proj.qualibot.<table> DEEP CLONE prod_landingzone.qualibot.<table>;
@@ -64,9 +66,9 @@ CREATE TABLE IF NOT EXISTS prod_proj.qualibot.<table> DEEP CLONE prod_landingzon
 
 Contrôle : le nombre de lignes doit être identique entre source et copie (`SELECT count(*) FROM ...`).
 
-## 4. Index Vector Search `prod_proj.qualibot.chunks_index` (seulement si l'index existe en prod, étape 0)
+## 4. Index Vector Search `prod_proj.qualibot.chunks_index` (seulement si l'index existe dans l'ancien schéma, étape 0)
 
-Même méthode que `runbooks/uat.md` étape 0.3 : reprendre la définition de l'index source puis le recréer sur `prod_proj.qualibot.chunks` :
+Reprendre la définition de l'index source puis le recréer sur `prod_proj.qualibot.chunks` (même méthode que `runbooks/uat.md` étape 0.3) :
 
 ```powershell
 databricks vector-search-indexes get-index prod_landingzone.qualibot.chunks_index --profile qualibot-prod -o json > chunks_index_def.json
@@ -79,7 +81,7 @@ databricks vector-search-indexes create-index --json @chunks_index_def.json --pr
 databricks vector-search-indexes sync-index prod_proj.qualibot.chunks_index --profile qualibot-prod
 ```
 
-Si `prod_landingzone.qualibot.chunks_index` n'existe pas, cette étape n'est pas nécessaire : l'index est créé par le job parsing au premier déploiement (`parsing_vector_search_indexes` pointe déjà sur `prod_proj`).
+Si l'index source n'existe pas, cette étape est sans objet : l'index est créé par le job parsing au premier déploiement (`parsing_vector_search_indexes` pointe déjà sur `prod_proj`).
 
 ## 5. Droits (SQL, éditeur prod)
 
@@ -114,13 +116,10 @@ databricks bundle run -t qualibot-prod register_chat_prompts_prod --profile qual
 
 Le scoring `score_chat_traces_prod` reste en pause ; son premier lancement se fait à la main, en `dry_run`.
 
-## 7. Suppression des objets legacy (après validation, sur accord)
+## 7. Anciens objets
 
-```powershell
-databricks volumes delete prod_landingzone.qualibot.doc_compare --profile qualibot-prod
-databricks volumes delete prod_landingzone.qualibot.test --profile qualibot-prod
-databricks volumes delete prod_landingzone.qualibot.images --profile qualibot-prod
-databricks volumes delete prod_landingzone.qualibot.docling_models --profile qualibot-prod
-```
+Les objets de l'ancien schéma `prod_landingzone.qualibot` ne sont supprimés par aucune étape de ce runbook. Leur suppression, si elle est décidée, se fait à la main, après validation complète de la prod.
 
-Tables et index legacy de `prod_landingzone.qualibot` (à lister à l'étape 0) : `DROP TABLE IF EXISTS prod_landingzone.qualibot.<table>;` et `databricks vector-search-indexes delete-index prod_landingzone.qualibot.chunks_index --profile qualibot-prod`, uniquement après contrôle.
+## Fait
+
+_(rien de confirmé pour l'instant)_

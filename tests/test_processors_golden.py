@@ -1,6 +1,6 @@
 """Golden messages of the PDF, DOCX, PPTX and XML processors on small synthetic file pairs.
 
-tests/golden/processors.json was captured before the processors shared one template class; the LLM
+tests/golden/processors.json holds the expected output; the LLM
 messages, image pairs, warnings and metadata must stay byte-identical for every method.
 """
 

@@ -1,19 +1,9 @@
 """Chunked (map-reduce) LLM analysis for very large diffs.
 
-A single LLM call over a 100k+ char diff loses recall (changes buried in the
-middle are skipped) and can hit the max_tokens output ceiling, silently
-dropping the tail of the report. When the TEXT CHANGES body exceeds a
-threshold, we split it at section boundaries, run one focused LLM call per
-part, and merge the results server-side into the exact same SSE stream the
-frontend already consumes:
-
-- structured method: each part's JSON array is parsed server-side and the
-  objects are re-emitted as one single valid JSON array.
-- standard method: parts produce Markdown reports in document order — their
-  deltas are forwarded as-is (concatenated Markdown stays valid).
-
-Input token cost is unchanged (the diff is split, not repeated); only the
-system prompt and image blocks ride along once more per part.
+One LLM call over a 100k+ char diff loses recall and can hit the max_tokens output ceiling, silently dropping the end
+of the report. Above a threshold the TEXT CHANGES body is split at section boundaries, one focused call runs per part,
+and the results are merged server-side into the SSE stream the frontend consumes (structured: one JSON array;
+standard: Markdown parts in document order). The input cost is unchanged: the diff is split, not repeated.
 """
 
 import asyncio
@@ -29,9 +19,8 @@ logger = logging.getLogger(__name__)
 
 _TEXT_MARKER = '--- TEXT CHANGES ---'
 _VISUAL_MARKER = '--- VISUAL CHANGES ---'
-# Parts run concurrently (bounded): sequential execution would push the total SSE
-# response past the Databricks Apps gateway's hard duration limit on large documents.
-# Wall-clock becomes ~the slowest part instead of the sum of all parts.
+# Parts run concurrently (bounded): sequential parts would push the SSE response past the gateway's hard duration limit.
+# The wall clock is then about the slowest part, not the sum of all parts.
 _CHUNK_PARALLELISM = int(os.getenv('COMPARE_CHUNK_PARALLELISM', '3'))
 
 

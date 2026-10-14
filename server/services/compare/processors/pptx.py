@@ -4,10 +4,8 @@ standard:    paragraph semantic diff on slide text + focused Markdown bullet-lis
 structured:  paragraph semantic diff on slide text + strict JSON array output (for Excel export).
 comparative: section canonical diff on slide text + section-grouped output.
 
-Embedded images go through the same perceptual hashing pipeline as PDF/DOCX
-(_compute_image_diff_pairs in _diff_engines), so PPTX now gets the same
-MODIFIED / REMOVED / ADDED / ORIENTATION categorisation instead of a coarse
-"set of MD5 hashes per slide" comparison.
+Embedded images go through the same perceptual hashing as PDF/DOCX (_compute_image_diff_pairs in _diff_engines),
+so they get the same MODIFIED / REMOVED / ADDED / ORIENTATION categories.
 """
 
 import base64
@@ -129,9 +127,8 @@ def _collect_shape_images(shapes, slide_num: int, images: Dict[str, Dict[str, An
             jpeg_bytes = buf.getvalue()
 
             h_key = dhash(jpeg_bytes)
-            # Match against existing dhashes within a small Hamming budget so
-            # near-duplicates (one slide reusing another's picture with tiny
-            # re-compression) deduplicate to a single entry with multiple slides.
+            # Near-duplicate pictures (one slide reusing another's picture, re-compressed) within a small Hamming budget collapse
+            # into one entry listing several slides.
             matched = next((k for k in images if images_are_similar(k, h_key)), None)
             if matched:
                 if slide_num not in images[matched]['pages']:

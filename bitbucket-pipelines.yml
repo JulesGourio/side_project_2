@@ -153,8 +153,8 @@ definitions:
 
     # -----------------------------------------------------------------------
     # UAT-TEST — target qualibot-uat-test / profil job-runner-sa-uat (même SP
-    # que deploy-uat — a CAN_MANAGE sur l'app qualibot-uat-test, confirmé
-    # 2026-08-19). Cible jetable, isolée (own app, own Lakebase doccompare_test)
+    # que deploy-uat — a CAN_MANAGE sur l'app qualibot-uat-test).
+    # Cible jetable, isolée (own app, own Lakebase doccompare_test)
     # — pas besoin d'environnement Bitbucket dédié, réutilise "UAT".
     # -----------------------------------------------------------------------
     - step: &deploy-uat-test

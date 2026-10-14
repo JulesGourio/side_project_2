@@ -5,7 +5,7 @@ targets:
   dev:
     resources:
       jobs:
-        # ── Pre-existing DEV jobs, unchanged ────────────────────────────────
+        # ── DEV jobs without run_as ────────────────────────────────
         # No run_as: they keep running as the deploying user. Both write UAT chat data to dev_proj.qualibot (Usage Tracking dashboard).
         lakebase_import_uat_to_dev:
           name: "D_1_Qualibot_Lakebase_Import_Uat_To_Dev"
@@ -49,8 +49,8 @@ targets:
             timezone_id: "Europe/Paris"
             pause_status: UNPAUSED
 
-        # ── Same jobs as qualibot-uat, adapted to DEV ───────────────────────
-        # Export only: the UAT twin also imports chat_* into Delta tables, which would overwrite the UAT chat data landed by lakebase_import_uat_to_dev.
+        # ── DEV copy of the qualibot-uat Lakebase jobs ───────────────────────
+        # Export only: the qualibot-uat job also imports chat_* into Delta tables, which would overwrite the UAT chat data landed by lakebase_import_uat_to_dev.
         lakebase_export_dev_to_volume:
           name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
           description: "Export the DEV Lakebase tables to the dev_proj.qualibot.staging volume"

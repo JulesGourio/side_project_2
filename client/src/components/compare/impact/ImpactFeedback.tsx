@@ -4,7 +4,6 @@ import { toast } from 'sonner';
 import { LS, lsGetJson, lsSet } from '../storage';
 import type { ImpactDoc } from './types';
 
-/** What a vote is attached to. */
 export interface FeedbackTarget {
   impactRequestId: number | null;
   messageId: number | null;
@@ -83,7 +82,6 @@ export function VerdictVote({ doc }: { doc: ImpactDoc }) {
   );
 }
 
-/** A vote on the whole result, with an optional comment. */
 export function SearchFeedback() {
   const target = useContext(FeedbackContext);
   const key = `${target?.impactRequestId ?? 'none'}:`;

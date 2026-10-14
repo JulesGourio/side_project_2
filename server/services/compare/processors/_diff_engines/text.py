@@ -62,9 +62,8 @@ def extraction_warnings(old_text: str, new_text: str) -> List[str]:
     return warnings or unrelated_warnings(old_text, new_text)
 
 
-# Two revisions of one document share most of their paragraphs. Under this
-# share of identical blocks, the user most likely dropped two different
-# documents — the report would be one long list of removals and additions.
+# Two revisions of one document share most paragraphs: under this share of identical blocks, two different documents
+# were probably compared (the report would be one long list of removals and additions).
 _UNRELATED_MAX_SHARED = 0.05
 _UNRELATED_MIN_BLOCKS = 20
 
@@ -86,10 +85,8 @@ def unrelated_warnings(old_text: str, new_text: str) -> List[str]:
             'Check that they are two revisions of the same document.']
 
 
-# A table's first row is used as column labels only when it looks like a header:
-# enough columns, every cell filled, short, worded, and mostly without digits.
-# Key/value forms and cartouches (two columns, values in the first row) are left
-# positional — labelling them turns one changed value into a change on every row.
+# A table's first row is used as column labels only when it looks like a header (enough columns, every cell filled, short,
+# mostly without digits). Key/value forms and cartouches stay positional: labelling them would change one value into a change per row.
 _HEADER_MIN_COLS = 3
 _HEADER_MAX_CELL_WORDS = 6
 
@@ -175,10 +172,8 @@ def _modal_group_profile(text: str) -> List[str]:
     return sorted(groups)
 
 
-# Word-level net behind the character-distance gate below. That gate measures against the WHOLE paragraph, so a decisive
-# word in a long paragraph ("shall record" -> "shall not record") would otherwise be lost.
-# Here any added, removed or replaced word counts, except punctuation/case/hyphenation, articles, spelling variants
-# and modal swaps inside one obligation group.
+# Word-level net behind the character-distance gate: a decisive word in a long paragraph ('shall record' -> 'shall not record')
+# must still count. Punctuation, case, articles, spelling variants and modal swaps inside one obligation group do not.
 _WORD_LEVEL_CHECK = os.getenv('COMPARE_WORD_LEVEL_CHECK', 'true').lower() == 'true'
 # Unicode words (accents kept) plus the comparison operators, which carry the meaning of a limit on their own, and the
 # table cell separator ("Release | | X" vs "Release | | | X" is a column change).

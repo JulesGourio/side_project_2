@@ -27,15 +27,13 @@ logger = logging.getLogger(__name__)
 _pool: Optional[asyncpg.Pool] = None
 _refresh_task: Optional[asyncio.Task] = None
 
-# Used only when the real expiry is unknown (fallback workspace token, see _get_host_and_token); the database-
-# credential path reads the actual expire_time.
+# Used only when the real expiry is unknown (fallback workspace token, see _get_host_and_token).
 _DEFAULT_REFRESH_INTERVAL_S = 55 * 60  # 55 min — token lifetime is ~1h
 _REFRESH_SAFETY_BUFFER_S = 5 * 60  # refresh this long before actual expiry
 _MIN_REFRESH_INTERVAL_S = 60  # never refresh tighter than this
 
-# Bounds the initial TCP connect (asyncpg's default is 60s). A deployed app connects instantly; local dev may have
-# port 5432 blocked,
-# and a short timeout lets it fail fast into the existing no-history fallback.
+# Bounds the initial TCP connect (asyncpg waits 60 s by default): local dev may have port 5432 blocked, and the short
+# timeout falls back to the no-history path quickly.
 _CONNECT_TIMEOUT_S = float(os.getenv('LAKEBASE_CONNECT_TIMEOUT_S', '5'))
 
 
@@ -75,7 +73,6 @@ def _get_host_and_token(
     branch_path = f'projects/{project_id}/branches/{branch}'
     endpoint_path = f'{branch_path}/endpoints/{endpoint}'
 
-    # Get endpoint host via native SDK postgres service
     eps = list(w.postgres.list_endpoints(parent=branch_path))
     if not eps:
         raise RuntimeError(f'No endpoints found for {branch_path}')
@@ -90,7 +87,6 @@ def _get_host_and_token(
         raise RuntimeError('Could not resolve current user identity for Lakebase auth')
     logger.debug(f'Lakebase connecting as: {username}')
 
-    # Try purpose-built database credential first
     token: str | None = None
     expires_in_s: Optional[float] = None
     try:
@@ -159,10 +155,8 @@ async def _ensure_database(host: str, username: str, token: str, database: str) 
             "SELECT 1 FROM pg_database WHERE datname = $1", database
         )
         if not exists:
-            # CREATE DATABASE cannot run inside a transaction — asyncpg uses
-            # autocommit implicitly for statements outside explicit transactions.
-            # Identifier can't be parameterized ($1): escape embedded quotes so a
-            # hostile LAKEBASE_DATABASE value can't break out of the identifier.
+            # CREATE DATABASE cannot run in a transaction (asyncpg autocommits outside explicit ones), and the identifier cannot be
+            # a parameter: embedded quotes are escaped so a hostile LAKEBASE_DATABASE value cannot break out.
             safe_db = database.replace('"', '""')
             await conn.execute(f'CREATE DATABASE "{safe_db}"')
             logger.info(f'Database "{database}" created')

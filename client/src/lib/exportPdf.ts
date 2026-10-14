@@ -1,8 +1,4 @@
-/**
- * PDF exports (chatbot and compare) — rendered server-side by /api/export/pdf
- * (server/services/infra/pdf_report.py) so both share one layout and one font.
- * `kind` only sets the label shown above the title.
- */
+// Rendered server-side (server/services/infra/pdf_report/) so chat and compare share one layout and font.
 
 type PdfKind = 'chat_response' | 'chat_session' | 'change_summary' | 'document_summary';
 
@@ -27,7 +23,6 @@ interface PdfExport {
   sections: PdfSection[];
 }
 
-/** Fetch the PDF and save it; throws with the server's message on failure. */
 export async function downloadPdf(req: PdfExport): Promise<void> {
   const res = await fetch('/api/export/pdf', {
     method: 'POST',

@@ -2,12 +2,12 @@
 # MAGIC %md
 # MAGIC # PROJ IMAGE_METADATA — VISION LLM DESCRIPTION AND IMAGE PASSAGES
 # MAGIC
-# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the volume images and the tables written by the upstream tasks, not Gold (`CLAUDE.md`, naming).
+# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the volume images and the tables written by the upstream tasks, not Gold.
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Describes the `PENDING` images of `image_metadata` with a vision LLM, then injects the descriptions as image passages into the chunk tables.
 # MAGIC The phases are functions of `describe_steps.py`:
-# MAGIC 1. Load the images with status `PENDING` (and `ERROR` rows, which no write produces any more) from `image_metadata`
+# MAGIC 1. Load the images with status `PENDING` (and `ERROR` rows) from `image_metadata`
 # MAGIC 2. Call the vision LLM asynchronously (batched, with concurrency control and a rate limiter), through the endpoint chain
 # MAGIC 3. MERGE the descriptions back into `image_metadata`, chunk by chunk
 # MAGIC 4. Build the image passages and MERGE them into `chunks` / `chunks_archive`
@@ -125,7 +125,7 @@ logger.info(f"RUN_MODE={cfg.RUN_MODE} | Endpoints={' -> '.join(LLM_ENDPOINTS)} |
 # MAGIC %md
 # MAGIC # Inputs
 # MAGIC ## Images needing a description
-# MAGIC `incremental` (default, safe to re-run): `PENDING` images, plus `ERROR` rows (no write produces them any more, but a row that still carries one is described rather than skipped). An image that failed on every endpoint is left `PENDING` with no description, so the next run describes it again, until it reaches the attempt limit (`FAILED_LIMIT`). `DONE`, `SKIPPED`, `SKIPPED_DECORATIVE`, `EXTRACTION_FAILED` and `FAILED_LIMIT` stay terminal.
+# MAGIC `incremental` (default, safe to re-run): `PENDING` images, plus `ERROR` rows (described rather than skipped). An image that failed on every endpoint is left `PENDING` with no description, so the next run describes it again, until it reaches the attempt limit (`FAILED_LIMIT`). `DONE`, `SKIPPED`, `SKIPPED_DECORATIVE`, `EXTRACTION_FAILED` and `FAILED_LIMIT` stay terminal.
 # MAGIC
 # MAGIC `full` resets every status to `PENDING` first and describes everything again.
 

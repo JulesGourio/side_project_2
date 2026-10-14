@@ -2,10 +2,7 @@ import { FileText } from 'lucide-react';
 import { Flag } from '@/components/shared/Flag';
 import { versionLabel, type Source } from './message';
 
-// Mirrors doc_catalog.py's _canon(): same document, different intraqual
-// site/language suffix (GO-1316_FR / GO-1316_GB / PRLAT-529 / PRLAT-529_GB /
-// PRLAT536_FR...). Used only to group chips for display — matching/lookup
-// already happened server-side.
+// Mirrors doc_catalog.py _canon(): groups the site/language variants of one document, for display only.
 const LANG_SUFFIX_RE = /[-_. ]+(FR|EN|GB|MX|BG|CZ|BR|ES)$/i;
 
 function langCode(title: string): string | null {
@@ -17,15 +14,10 @@ function canonicalDocKey(title: string): string {
   return title.toUpperCase().replace(LANG_SUFFIX_RE, '').replace(/[^A-Z0-9]/g, '');
 }
 
-// Fixed display order — NOT a claim about which variant is "the" REF.
-// Intraqual has no reliable default language (some documents' undecorated
-// REF is the French original, others' is the English one), so the group
-// label is the shared document code (suffix stripped), not one language's
-// title — see SourceChipGroup.
+// Display order only: Intraqual has no reliable default language, so no variant is "the" REF.
 const LANG_ORDER = ['FR', 'EN', 'GB', 'ES', 'MX', 'BG', 'CZ', 'BR'];
 
-// The inline-cited variant (if any) leads the row — that replaces the old
-// numbered badge as the "which one did the model actually cite" signal.
+// The inline-cited variant leads the row: it is the one the model actually cited.
 function sortVariants(variants: Source[]): Source[] {
   return [...variants].sort((a, b) => {
     if ((a.n != null) !== (b.n != null)) return a.n != null ? -1 : 1;
@@ -50,8 +42,6 @@ function chipNumberBadge(n: number) {
   );
 }
 
-// A single, un-grouped source: the plain pill.
-// Hover text of a chip: REF — title, version, link.
 function chipTooltip(src: Source, label: string): string {
   return [src.doc_title ? `${label} — ${src.doc_title}` : label, versionLabel(src), src.url !== label ? src.url : '']
     .filter(Boolean).join('\n');
@@ -91,12 +81,7 @@ function SourceChip({ src, fallbackLabel }: { src: Source; fallbackLabel: string
   );
 }
 
-// A document with 2+ site/language variants: one chip showing the shared
-// document code (the REF with its language suffix stripped — the same code
-// for every variant, so it doesn't privilege whichever language happens to
-// be the "bare" one) plus a small flag per available language. Clicking the
-// code opens the bare/undecorated variant if there is one; each flag opens
-// its own language's document. Full REFs are in the chip's tooltip.
+// Several variants of one document: one chip with the shared code and a flag per language. Full REFs are in the tooltip.
 function SourceChipGroup({ variants }: { variants: Source[] }) {
   const bare = variants.find(v => !langCode(v.title || ''));
   const label = (variants[0]?.title || variants[0]?.url || 'Source').replace(LANG_SUFFIX_RE, '');
@@ -139,13 +124,7 @@ function SourceChipGroup({ variants }: { variants: Source[] }) {
   );
 }
 
-// Clickable source chips — each consulted document is a small pill showing its
-// REF (reference code). Sources cited inline carry a small number badge that
-// matches their [n] marker in the answer; prose-only sources re-surfaced from
-// the catalog have no number and show just the REF. Chips with a URL open it in
-// a new tab; chips without one are a plain badge (full ref on hover). Documents
-// with several intraqual site/language variants (see canonicalDocKey) collapse
-// into a single chip with per-language badges instead of one chip each.
+// One chip per consulted document; variants of the same document collapse into one (see canonicalDocKey).
 export function ChatSources({ sources }: { sources: Source[] }) {
   if (!sources.length) return null;
 

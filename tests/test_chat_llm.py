@@ -1,5 +1,5 @@
 """Chat resilience: fallback models, retries, continuation, load limit (chat/llm.py),
-Vector Search retries (chat/engine.py) and language detection helpers (translation_bridge.py)."""
+Vector Search retries (chat/engine/) and language detection helpers (translation_bridge.py)."""
 
 import asyncio
 import json

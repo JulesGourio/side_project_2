@@ -9,14 +9,9 @@ type Summaries = Record<DocSide, DocSummaryState>;
 
 const SIDE_LABEL: Record<DocSide, string> = { old: 'Original (A)', new: 'Revised (B)' };
 
-/**
- * Single-document summaries, independent of the diff. They are cached server-side on the
- * file's own hash, so re-summarizing the same file (even in another comparison) is instant
- * unless "Re-run" is used.
- */
+// Cached server-side by file hash, so re-summarizing the same file is instant unless "Re-run" is used.
 export function useDocSummaries(docs: Record<DocSide, DocFile | null>) {
   const [summaries, setSummaries] = useState<Summaries>({ old: EMPTY_SUMMARY, new: EMPTY_SUMMARY });
-  // Which summary is shown when both A and B have one: always a single full-width card.
   const [activeSide, setActiveSide] = useState<DocSide>('old');
 
   const update = (side: DocSide, next: DocSummaryState | ((prev: DocSummaryState) => DocSummaryState)) =>

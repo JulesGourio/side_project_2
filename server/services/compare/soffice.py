@@ -8,7 +8,7 @@ subprocess. That is what this module does. Discovery order:
 
 1. ``SOFFICE_PATH`` — explicit path to an existing ``soffice`` binary
    (local dev: Windows install, or any pre-provisioned binary).
-2. A previously extracted portable tree in the local extract dir (fast path
+2. A portable tree already extracted portable tree in the local extract dir (fast path
    after the first request following a restart).
 3. ``SOFFICE_ARCHIVE_VOLUME_PATH`` — UC Volume path of a portable
    LibreOffice ``.tar.gz`` (built by runbooks/scripts/soffice/) to download and
@@ -58,9 +58,7 @@ class SofficeConversionError(RuntimeError):
 
 def _extract_root() -> Path:
     base = Path(os.getenv('SOFFICE_EXTRACT_DIR', '') or (Path(tempfile.gettempdir()) / 'qualibot_soffice'))
-    # Version the extract dir by archive basename: uploading a fixed archive
-    # under a new filename guarantees a fresh extraction even if /tmp survived
-    # the app restart, where a stale extraction would otherwise be reused.
+    # Keyed on the archive basename: a fixed archive uploaded under a new name forces a fresh extraction, even if /tmp survived a restart.
     archive = os.getenv('SOFFICE_ARCHIVE_VOLUME_PATH', '').strip()
     if archive:
         stem = re.sub(r'[^A-Za-z0-9._-]', '_', archive.rsplit('/', 1)[-1]).removesuffix('.tar.gz')
@@ -195,10 +193,8 @@ def _subprocess_env(binary: Optional[str] = None) -> dict:
     env.setdefault('HOME', tempfile.gettempdir())
     env.setdefault('SAL_USE_VCLPLUGIN', 'svp')  # pure-software rendering, no X11
     if binary and os.name != 'nt':
-        # The portable tarball carries the Ubuntu system libs LibreOffice
-        # needs but slim containers lack (libXinerama & co) inside program/.
-        # $ORIGIN rpath covers the executables; LD_LIBRARY_PATH covers
-        # anything dlopen'd through a different path.
+        # The portable tarball ships the Ubuntu system libs LibreOffice needs (absent from slim containers) inside program/:
+        # $ORIGIN covers the executables, LD_LIBRARY_PATH covers anything dlopen'd through another path.
         program_dir = str(Path(binary).parent)
         env['LD_LIBRARY_PATH'] = program_dir + (
             ':' + env['LD_LIBRARY_PATH'] if env.get('LD_LIBRARY_PATH') else ''

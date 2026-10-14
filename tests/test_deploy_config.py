@@ -3,7 +3,7 @@
 A target that omits its index override silently falls back to app.yaml's default index. Evals query
 the index by name, not through the app's env var, so only this guard sees the omission.
 
-Names carry no version (chunks_index, not chunks_index_v1) and no CHAT_ENDPOINT* key is set.
+Index names carry no version suffix, and no CHAT_ENDPOINT* key is set.
 """
 
 import json

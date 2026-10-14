@@ -1,9 +1,5 @@
-// Division scope — shared type, helpers and selector for the chat.
-//
-// The user picks a division (ALL / AS / IS). The choice is sent to the backend,
-// which filters the document search on it (Vector Search filter on the
-// `division` column) and picks the division's instructions — the scope is
-// guaranteed by the filter, not by a directive in the question.
+// The backend filters the document search on the `division` column, so the scope is
+// enforced by the filter rather than by a directive in the question.
 
 export type Division = 'ALL' | 'AS' | 'IS';
 
@@ -13,16 +9,12 @@ const DIVISIONS: { value: Division; label: string; title: string }[] = [
   { value: 'IS', label: 'IS', title: 'Interconnection — search the IS / shared documents only' },
 ];
 
-// The stored question may start with a "[Division: …]" directive. Strip it when re-displaying so
-// the user sees only their original question.
+// A stored question may start with a "[Division: …]" prefix, which is not shown to the user.
 const DIVISION_PREFIX_RE = /^\[Division: (?:AS|IS)\][\s\S]*?\n\n/;
 
-/** Remove the division directive so the user sees only their question. */
 export function stripDivision(content: string): string {
   return content.replace(DIVISION_PREFIX_RE, '');
 }
-
-// --- Selector ---
 
 interface DivisionSelectorProps {
   value: Division;

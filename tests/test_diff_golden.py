@@ -1,7 +1,6 @@
 """Golden-output regression tests for the text and image diff engines.
 
-Inputs come from tests/diff_corpus.py; expected outputs were captured before the engines were
-split into a package and must stay byte-identical.
+Inputs come from tests/diff_corpus.py; the expected outputs must stay byte-identical.
 """
 
 import json

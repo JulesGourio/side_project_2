@@ -12,14 +12,12 @@ These detectors quantify the kind of rows the structured-comparison prompt is
                          -> "this document".
   * IMPERATIVE_RATIONALE: the rationale reads as a command ("Update the...",
                          "Vérifier que...") instead of an explanation of the
-                         change — a regression back to an action-style rationale (see _diff_engines.py RATIONALE
-                         section: rationale is a summary, never an
-                         instruction).
+                         change — the action style the rationale must not take (see the RATIONALE
+                         section of _diff_engines.py: a summary, never an instruction).
 
 The detectors are deliberately *conservative*: they only fire when the change
 is almost certainly noise, so a flagged row is strong evidence the prompt let
-something trivial through. Used by tests/test_prompt_noise.py and can be reused
-in the debug_prompt notebook to A/B prompt variants.
+something trivial through. Used by tests/test_prompt_noise.py.
 """
 
 from __future__ import annotations

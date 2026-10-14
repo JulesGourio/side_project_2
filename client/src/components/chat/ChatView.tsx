@@ -15,7 +15,6 @@ const CHAT_HEADER = 'Qualibot on Intraqual Documentation';
 
 const HEADER_BUTTON = 'border transition-all cursor-pointer text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]';
 
-/** Date of the latest knowledge-base refresh, shown next to the title. */
 function useDocsAsOf(): string | null {
   const [date, setDate] = useState<string | null>(null);
   useEffect(() => {

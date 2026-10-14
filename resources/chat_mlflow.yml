@@ -123,7 +123,7 @@ targets:
             timezone_id: "Europe/Paris"
             pause_status: PAUSED
 
-  # Rehearsal of the UAT switch (databricks.yml, qualibot-uat-test): experiment /Shared/qualibot/chat_turns_test
+  # Test target: experiment /Shared/qualibot/chat_turns_test
   # and prompt registry in uat_proj.qualibot, both owned by job-runner-sa-uat.
   qualibot-uat-test:
     resources:

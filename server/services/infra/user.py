@@ -26,9 +26,8 @@ _CAPS_WAREHOUSE_ID = os.getenv('CAPS_WAREHOUSE_ID', '').strip()
 _CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 
-# CAPS_BYPASS=true grants chat + compare to every visitor, skipping the group check. DEV only, set in
-# utils/deploy/target_env.json
-# (tests/test_deploy_config.py guards that it never reaches uat/uat-test/prod).
+# CAPS_BYPASS=true grants chat and compare to every visitor (DEV only, set in utils/deploy/target_env.json);
+# tests/test_deploy_config.py guards that it never reaches uat, uat-test or prod.
 _CAPS_BYPASS = os.getenv('CAPS_BYPASS', 'false').strip().lower() == 'true'
 
 
@@ -110,9 +109,8 @@ def _live_caps_via_sql(token: str) -> Optional[dict]:
     from databricks.sdk import WorkspaceClient
     chat_expr = ' OR '.join(f"is_account_group_member('{g}')" for g in _CAPS_CHAT_GROUPS)
     compare_expr = ' OR '.join(f"is_account_group_member('{g}')" for g in _CAPS_COMPARE_GROUPS)
-    # auth_type='pat' forces token-only auth — the app's own ambient OAuth
-    # env vars (DATABRICKS_CLIENT_ID/SECRET) would otherwise clash with the
-    # explicit user token ("more than one authorization method configured").
+    # auth_type='pat' forces token-only auth: the app's ambient OAuth env vars (DATABRICKS_CLIENT_ID/SECRET) would clash with
+    # the explicit user token ('more than one authorization method configured').
     w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
     resp = w.statement_execution.execute_statement(
         warehouse_id=_CAPS_WAREHOUSE_ID,

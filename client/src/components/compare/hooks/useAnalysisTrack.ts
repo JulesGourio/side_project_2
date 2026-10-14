@@ -15,9 +15,7 @@ interface SavedAnalysis {
 }
 
 interface TrackOptions {
-  /** Processor version asked of `/api/compare/analyze`. */
   version: ProcessorVersionId;
-  /** Output name used in failure toasts. */
   label: string;
   lsText: string;
   lsMessageId: string;
@@ -113,13 +111,10 @@ export function useAnalysisTrack(opts: TrackOptions) {
       });
 
       lsSet(opts.lsText, out.text);
-      // The stream closed without its end marker: the gateway cut it. What we have is a partial
-      // report — keep it on screen, but never save it as the result for this file pair (it would
-      // then be served from cache to everyone).
+      // A stream cut before its end marker leaves a partial report: keep it on screen, never cache it.
       if (!out.complete) throw new Error(STREAM_INTERRUPTED);
 
       if (out.cached) {
-        // Result from the DB cache.
         setMessageId(out.cached.messageId);
         lsSet(opts.lsMessageId, String(out.cached.messageId));
         toast.info('Result retrieved from cache');
@@ -135,9 +130,7 @@ export function useAnalysisTrack(opts: TrackOptions) {
         await autoSaveResult(sessionPath, 'analysis.md', out.text);
         opts.onSaved({ sessionPath, text: out.text, fileType: out.fileType, images });
       }
-      // A report that came with a warning (output cut at the token limit, unreadable document,
-      // truncated diff) is saved without hashes: the cache replays the text only, so the warning
-      // would be lost next time.
+      // Reports that carry a warning are saved without hashes: the cache replays only the text, so the warning would be lost.
       const id = await saveToHistory({
         oldName: oldDoc.name,
         newName: newDoc.name,

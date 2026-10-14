@@ -1,8 +1,7 @@
 """The Lakebase schema bootstrap must keep emitting exactly the same SQL, in the same order.
 
-tests/golden/lakebase_schema.json holds the whitespace-normalised statements captured before the
-module was split; there is no database in the test environment, so a recording fake connection
-stands in for the pool.
+tests/golden/lakebase_schema.json holds the whitespace-normalised statements; there is no database in the
+test environment, so a recording fake connection stands in for the pool.
 """
 
 import asyncio

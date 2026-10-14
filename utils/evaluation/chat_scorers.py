@@ -21,8 +21,7 @@ from mlflow.genai.scorers import (Guidelines, RelevanceToQuery, RetrievalGrounde
 
 FIRST_TOKEN_BUDGET_S = 10.0
 
-# Share of the turns each judge reads. 1.0 while checking that the judges work; the values to move to afterwards
-# are in TARGET_SAMPLE_RATES.
+# Share of the turns each judge reads; TARGET_SAMPLE_RATES holds the values to reach once the judges are checked.
 SAMPLE_RATES: Dict[str, float] = {
     'retrieval_groundedness': 1.0, 'numeric_fidelity': 1.0, 'honest_limits': 1.0, 'off_topic_refusal': 1.0,
     'retrieval_sufficiency': 1.0, 'relevance_to_query': 1.0, 'retrieval_relevance': 1.0,

@@ -1,11 +1,11 @@
-# Alertes SQL (Databricks SQL)
+# alerts/ — alertes SQL de suivi
 
-Six requêtes SQL, une alerte par requête. Chaque requête renvoie une colonne
-qui déclenche l'alerte quand sa condition est vraie. Les requêtes lisent les
-tables du schéma du projet (`dev_proj.qualibot` dans les fichiers ; pour
-l'UAT, remplacer `dev_proj` par `uat_proj`). Les alertes sont créées à la
-main dans Databricks : étapes dans [runbooks/uat.md](../../runbooks/uat.md)
-(section D5.8d).
+Six requêtes SQL de suivi du parsing, du chat et des jobs, à coller dans Databricks
+SQL. Chaque fichier correspond à une alerte : la requête renvoie une colonne qui
+déclenche l'alerte quand sa condition est vraie. Les fichiers ne sont exécutés par
+aucun job : ils sont lus et créés à la main.
+
+## Fichiers
 
 | Fichier | Déclenche quand (fenêtre) | Colonne et condition | Table lue |
 |---|---|---|---|
@@ -20,14 +20,19 @@ Les colonnes de contexte (`sample_refs`, `failed_jobs`, `sample_errors`,
 `top_causes`) servent au modèle de message de l'alerte : elles listent les
 documents, les jobs, les erreurs ou les causes concernés.
 
-## Fréquence et destinataires
+## Mise en place
 
-Les alertes se configurent dans Databricks (planification, entrepôt SQL
-serverless, destinataires, modèle de message). Les destinataires ne sont pas
-dans le dépôt. Pour 06 et 03, une seule notification par jour suffit ;
-sinon, un problème persistant envoie un message à chaque évaluation.
+- Les requêtes lisent les tables du schéma `dev_proj.qualibot`. Pour l'UAT,
+  remplacer `dev_proj` par `uat_proj` dans chaque fichier.
+- Une alerte se crée dans Databricks SQL à partir de chaque requête : planification,
+  entrepôt SQL serverless, destinataires et modèle de message se règlent dans
+  Databricks. Les destinataires ne sont pas dans le dépôt.
+- Pour `03` et `06`, une seule notification par jour suffit : sinon, un problème
+  persistant envoie un message à chaque évaluation.
+- Les étapes manuelles (UAT) sont dans [runbooks/uat.md](../../runbooks/uat.md),
+  section D5.8d.
 
-## Limites
+## Règles
 
 - `03`, `05` et `06` lisent les copies Delta de `chat_messages`, `errors` et
   `chat_turns`, alimentées par les jobs d'export et d'import décrits dans
@@ -38,6 +43,5 @@ sinon, un problème persistant envoie un message à chaque évaluation.
 - `01` et `02` lisent `processed_files` : elles ne voient que les documents
   parsés par la chaîne quotidienne (voir
   [`utils/parsing_pipeline/README.md`](../parsing_pipeline/README.md)).
-- Ne sont pas couverts : la fraîcheur des sources Intraqual (la tâche
-  `1_categories` échoue déjà dans ce cas, et `04` le signale) et la santé des
-  index Vector Search.
+- Non couverts : la fraîcheur des sources Intraqual (la tâche `1_categories`
+  échoue déjà dans ce cas, et `04` le signale) et la santé des index Vector Search.

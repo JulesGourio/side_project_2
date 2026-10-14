@@ -26,8 +26,7 @@ async def upsert_user(
     if not user_id:
         return
     if email:
-        # If this user_id previously had no email, fill it now: the email-keyed upsert below would otherwise conflict
-        # on user_id.
+        # A user_id known without an email gets its email now: the upsert below would otherwise conflict on user_id.
         await conn.execute(
             'UPDATE users SET email = $2, updated_at = NOW()'
             ' WHERE user_id = $1 AND email IS NULL',

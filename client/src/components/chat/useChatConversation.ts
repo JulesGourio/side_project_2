@@ -9,7 +9,6 @@ const genSessionId = () => (typeof crypto !== 'undefined' && crypto.randomUUID
   ? crypto.randomUUID()
   : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-/** The conversation on screen: messages, the streamed turn in flight, and loading / sharing a saved one. */
 export function useChatConversation(division: Division, onTurnSaved: () => void) {
   const [sessionId, setSessionId] = useState(genSessionId);
   const [messages, setMessages] = useState<Message[]>([]);

@@ -182,7 +182,7 @@ async def _stream_once(host: str, token: str, endpoint: str, messages: List[Dict
     while waiting; raises ``LlmFailure``."""
     payload: Dict[str, Any] = {'messages': messages, 'max_tokens': max_tokens,
                                'stream': True, 'stream_options': {'include_usage': True}}
-    # 'thinking' is accepted by the Claude family only; the name test keeps the analysis endpoint swappable.
+    # Only some endpoint families accept the 'thinking' parameter; the name test keeps the analysis endpoint swappable.
     if thinking_budget > 0 and 'claude' in endpoint.lower():
         payload['thinking'] = {'type': 'enabled', 'budget_tokens': thinking_budget}
     # Temperature and top_p are mutually exclusive on these endpoints: only temperature is sent.

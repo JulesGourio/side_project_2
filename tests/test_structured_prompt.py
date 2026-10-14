@@ -12,7 +12,7 @@ from server.services.compare.processors._diff_engines import SYSTEM_PROMPT_STRUC
 _FLAT = re.sub(r'\s+', ' ', SYSTEM_PROMPT_STRUCTURED).lower()
 
 
-def test_rationale_no_longer_demands_an_imperative():
+def test_rationale_does_not_demand_an_imperative():
     assert 'starting with a verb in the imperative' not in _FLAT
     assert 'say what a reader must do' not in _FLAT
     assert 'one imperative sentence on what to do' not in _FLAT

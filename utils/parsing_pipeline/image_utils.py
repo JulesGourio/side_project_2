@@ -314,7 +314,7 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
             results.append(_fallback_or_error(fb, ext_lower, timings))
             continue
 
-        # Docling doesn't support legacy binary .ppt at all — go straight to the OLE heuristic fallback.
+        # Docling does not read binary .ppt — go straight to the OLE heuristic fallback.
         if ext_lower == "ppt":
             fb = fallback_parse_ppt_legacy(bytes(content), doc_id_str, vol_base, min_ar_val, max_rep_val)
             results.append(_fallback_or_error(fb, ext_lower, timings))

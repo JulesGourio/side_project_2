@@ -12,7 +12,6 @@ const SIDES: { side: DocSide; label: string; step: number; short: string }[] = [
   { side: 'new', label: 'Document B (New)', step: 2, short: 'Document B' },
 ];
 
-/** The two drop zones, plus the per-document summaries that work as soon as one file is uploaded. */
 export function DocsPanel({ docs, busy, summaries, onFile, onInvalidFile }: {
   docs: Record<DocSide, DocFile | null>;
   busy: boolean;

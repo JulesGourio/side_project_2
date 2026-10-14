@@ -24,8 +24,8 @@ _SUPPORTED_MIME = {
     '.png': 'image/png',
     '.gif': 'image/gif',
     '.webp': 'image/webp',
-    '.bmp': 'image/jpeg',   # normalised to jpeg
-    '.tiff': 'image/jpeg',  # normalised to jpeg
+    '.bmp': 'image/jpeg',
+    '.tiff': 'image/jpeg',
     '.tif': 'image/jpeg',
 }
 

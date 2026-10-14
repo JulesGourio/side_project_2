@@ -9,7 +9,6 @@ export const ACCENT = {
 
 const BUTTON_BASE = 'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 border cursor-pointer disabled:opacity-40';
 
-/** Neutral bordered button that picks up the primary accent on hover. */
 export function OutlineButton({ className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
@@ -19,7 +18,6 @@ export function OutlineButton({ className = '', ...props }: ButtonHTMLAttributes
   );
 }
 
-/** Bordered, transparent button drawn in `accent`. */
 export function AccentButton({ accent, style, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { accent: string }) {
   return <button {...props} className={BUTTON_BASE} style={{ borderColor: accent, color: accent, background: 'transparent', ...style }} />;
 }
@@ -33,7 +31,6 @@ export function CancelButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-/** Pill-style tab switcher; the active tab is filled with `accent`. */
 export function TabSwitch<T extends string>({ tabs, active, accent, onChange }: {
   tabs: readonly (readonly [T, string])[];
   active: T;
@@ -83,7 +80,6 @@ export function DownloadButton({ accent, label, title, onClick }: { accent: stri
   );
 }
 
-/** Result card chrome: colored top bar and header (icon, title, status) with actions on the right. */
 export function CardShell({ icon: Icon, title, accent, status, actions, children }: {
   icon: ElementType;
   title: string;
@@ -113,7 +109,6 @@ export function CardShell({ icon: Icon, title, accent, status, actions, children
   );
 }
 
-/** Centered full-screen overlay with a titled panel; clicking the backdrop closes it. */
 export function ModalShell({ title, onClose, backdropClassName = '', panelStyle, headerClassName, children }: {
   title: ReactNode;
   onClose: () => void;
@@ -144,7 +139,6 @@ export function ModalShell({ title, onClose, backdropClassName = '', panelStyle,
   );
 }
 
-/** Keep a streaming scroll container pinned to the bottom, unless the user scrolled up. */
 export function useStickToBottom<T extends HTMLElement>(streaming: boolean, trigger: unknown, threshold: number) {
   const ref = useRef<T>(null);
   useEffect(() => {

@@ -6,7 +6,6 @@ export const errorMessage = (e: unknown): string => (e instanceof Error ? e.mess
 
 export const STREAM_INTERRUPTED = 'Connection lost before the report was complete. Please retry.';
 
-/** Extract complete JSON objects from a partial/streaming JSON array string. */
 export function parsePartialJsonItems(text: string): DiffItem[] {
   const items: DiffItem[] = [];
   let depth = 0;
@@ -39,7 +38,6 @@ function saveBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-/** Throws with the server's `{error}` message when the response is not OK. */
 async function ensureOk(res: Response): Promise<Response> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -67,10 +65,7 @@ export function exportChangeTableExcel(jsonText: string, base: string, fileType:
   return downloadExport('/api/compare/export-excel', form, `analysis_${base}.xlsx`, 'Excel');
 }
 
-// ---------------------------------------------------------------------------
-// Session auto-save (Unity Catalog volume) — all best-effort
-// ---------------------------------------------------------------------------
-
+// Best-effort: the analysis stays on screen whether or not these saves succeed.
 export async function autoSaveDocs(old: DocFile, nw: DocFile): Promise<string> {
   try {
     const form = new FormData();
@@ -101,7 +96,6 @@ export async function autoSaveResult(path: string, filename: string, content: st
   }
 }
 
-/** Fire-and-forget save of a derived artifact (Excel/PDF) next to the session files. */
 function autoSaveDerived(endpoint: string, label: string, fields: Record<string, string>): void {
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.append(k, v);
@@ -130,10 +124,6 @@ export function autoSavePdf(path: string, markdown: string, oldName: string, new
     new_name: newName,
   });
 }
-
-// ---------------------------------------------------------------------------
-// History
-// ---------------------------------------------------------------------------
 
 interface HistorySaveInput {
   oldName: string;
@@ -194,7 +184,6 @@ export function saveImpactToHistory(historyId: number, impactJson: string): void
   }).catch(() => { /* best-effort — the result stays on screen and in the server cache */ });
 }
 
-/** Restore the two original files of a past comparison from its volume session folder. */
 export async function loadSessionFiles(
   sessionPath: string, oldName: string, newName: string,
 ): Promise<{ old?: DocFile; new?: DocFile }> {
@@ -211,10 +200,6 @@ export async function loadSessionFiles(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Analysis stream (SSE from POST /api/compare/analyze)
-// ---------------------------------------------------------------------------
-
 interface AnalysisStreamResult {
   text: string;
   fileType: string;
@@ -222,11 +207,9 @@ interface AnalysisStreamResult {
   usage: TokenUsage;
   llmRequestId: number | null;
   firstTokenAt: number | null;
-  /** The server flagged the report as possibly incomplete. */
   warned: boolean;
-  /** Set when the server answered from its DB cache. */
   cached: { messageId: number; sessionPath: string } | null;
-  /** The `[DONE]` marker arrived; false means the gateway cut the stream. */
+  // The [DONE] marker arrived; false means the gateway cut the stream.
   complete: boolean;
 }
 

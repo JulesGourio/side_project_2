@@ -3,7 +3,7 @@
 The app (``server/services/chat/mlflow_turns.py``) never creates the experiment: run this once per
 workspace, then set ``CHAT_MLFLOW_EXPERIMENT`` for the target (``utils/deploy/target_env.json``).
 The experiment belongs to whoever runs the script: run it through the ``create_chat_experiment_<target>``
-job (``resources/chat_experiment.yml``, ``run_as`` the job service principal) so the SP owns it.
+job (``resources/chat_mlflow.yml``, ``run_as`` the job service principal) so the SP owns it.
 
 USAGE
 -----

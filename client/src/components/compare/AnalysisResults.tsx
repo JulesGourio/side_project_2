@@ -26,7 +26,6 @@ function feedbackFor(track: TrackView, suffix: string, hashes: { old: string; ne
   };
 }
 
-/** Change Summary and Change Table cards; one at a time, full width, with a tab switch when both exist. */
 export function AnalysisResults({ summary, table, items, fileType, images, oldDoc, newDoc, hashes }: {
   summary: TrackView;
   table: TrackView;

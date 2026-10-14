@@ -108,8 +108,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             if q and q.casefold() not in {x.casefold() for x in queries}:
                 queries.append(q)
 
-        # REFs named in the question first, then in the earlier turns ("résume la slide 15" after an
-        # answer about MI-14242 names no REF itself).
+        # REFs named in the question first, then in the earlier turns (a follow-up often names no REF itself).
         named: List[str] = []
         for ref in refs_named_in(question) + refs_named_in('\n'.join(m['content'] for m in conversation[:-1])):
             if ref not in named:

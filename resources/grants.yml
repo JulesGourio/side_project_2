@@ -99,8 +99,8 @@ targets:
 
 
         # One-off admin utility, manual trigger, outside the daily chain.
-        # run_as job-runner-sa-uat can grant on uat_landingzone but not on prod_landingzone.intraqual: run it as the deploying user there.
-        # It grants one specific SP. The `account users` USE CATALOG failure of `bundle deploy` needs a governance decision (CLAUDE.md).
+        # run_as job-runner-sa-uat cannot grant on the Intraqual source catalog: run it as the deploying user there.
+        # It grants one specific SP. The `account users` USE CATALOG failure of `bundle deploy` needs a governance decision.
         grant_volume_access:
           name: "Z_1_Qualibot_Grant_Volume_Access_${bundle.target}"
           description: "Grants USE CATALOG + USE SCHEMA + READ/WRITE VOLUME on a volume to a service principal. Manual trigger only."

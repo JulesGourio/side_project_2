@@ -1,4 +1,4 @@
-"""Guards for the conventions of CLAUDE.md that a reader would otherwise have to remember."""
+"""Guards for the project conventions that a reader would otherwise have to remember."""
 import ast
 import glob
 import os

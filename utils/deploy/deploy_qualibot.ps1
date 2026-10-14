@@ -5,8 +5,8 @@ param(
                                 # build, no app start/redeploy (notebooks reading the synced code)
     [switch]$Infra              # Pass -Infra to (re)deploy bundle resources via terraform
                                 # (app ACLs, UC volume bindings). Requires MANAGE on the
-                                # target catalog. Only needed when resources/permissions
-                                # change — routine code deploys do NOT need it.
+                                # target catalog. Only needed when the bundle resources
+                                # (resources/, databricks.yml) change — routine code deploys do NOT need it.
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,7 +72,7 @@ try {
         # Full bundle deploy: (re)applies app ACLs + UC volume bindings via terraform.
         # This grants the app's service principal USE CATALOG on the target catalog,
         # which REQUIRES the deploying user to have MANAGE on that catalog. Reserve
-        # for the first deploy or when resources/permissions actually change.
+        # for the first deploy or when the bundle resources actually change.
         Write-Host "      -Infra: deploying bundle resources via terraform (needs catalog MANAGE)..." -ForegroundColor Yellow
         & databricks bundle deploy --target $Target --profile $Profile
         if ($LASTEXITCODE -ne 0) { throw "databricks bundle deploy failed (exit $LASTEXITCODE)" }

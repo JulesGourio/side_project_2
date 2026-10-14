@@ -18,8 +18,7 @@ export function TopBar() {
     getAppConfig().then((cfg) => setBranding(cfg.branding));
   }, []);
 
-  // Both tabs are always shown; a feature the user isn't entitled to renders an
-  // "access not granted" panel (and the backend returns 403) rather than hiding.
+  // Tabs stay visible: an unentitled feature shows the access panel instead of hiding (the backend also returns 403).
   const tabs = ALL_TABS;
 
   const activeTab = location.pathname.startsWith('/chat') ? 'chat' : 'compare';

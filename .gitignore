@@ -12,14 +12,12 @@ build/
 client/node_modules/
 client/.vite/
 
-# Scratch export artifacts (utils/lakebase_sync/copy_dev_tables_to_uat_v2.py) —
+# Scratch export artifacts:
 # reproducible, and too large for Databricks Apps' 10MB per-file deploy limit.
 dev_to_uat_v2_export/
 utils/dev_to_uat_v2_export/
 
-# Local Intraqual scratch folders (manual copies of source documents) —
-# already uploaded to the target UC volume, not app source. Slowed/broke a
-# UAT app deploy by getting swept into the sync (2026-07-07).
+# Local Intraqual scratch folders (copies of source documents, already on the UC volume), not app source.
 intraqual_downloads_missing/
 intraqual_missing_staged/
 
@@ -36,8 +34,7 @@ intraqual_missing_staged/
 .DS_Store
 Thumbs.db
 
-# Playwright MCP session traces (browser_snapshot/console dumps) — local
-# debugging artifacts only, got swept into a UAT deploy (2026-07-07).
+# Browser automation traces (snapshots, console dumps): local debugging artifacts only.
 .playwright-mcp/
 
 files_to_compare/
@@ -72,17 +69,15 @@ test_prompt/
 
 debug/
 
-# Generated per-env vars (COMPARE_VOLUME_PATH, CHAT_ENDPOINT_*) written by
+# Generated per-target env file written by
 # deploy_qualibot.ps1 and uploaded to the workspace — not to be committed.
 target_config.env
 
 # Generated typings (IDE stubs — not handwritten)
 typings/
 
-# Translator/ : ancien prototype, feature migrée vers le repo qualibot-translate
-# (voir project_qualibot_translate_extraction.md). Dossier local non nettoyé
-# (archivage encore à faire) — on continue d'ignorer ses gros artefacts
-# générés/binaires (docx source/traduits, rapports HTML, workbench par job).
+# Translator/ : dossier local d'un autre projet ; on ignore ses artefacts générés et binaires
+# (docx source et traduits, rapports HTML, workbench par job).
 Translator/reports/
 Translator/Sample Docs/
 Translator/Translated/

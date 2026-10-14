@@ -84,7 +84,6 @@ export function docBlob(doc: DocFile): Blob {
   return new Blob([doc.bytes], { type: doc.mimeType });
 }
 
-/** Name-only stand-in shown while a history entry's files are being restored. */
 export function placeholderDoc(name: string): DocFile {
   return { name, size: 0, data: '', bytes: new Uint8Array(0) as Uint8Array<ArrayBuffer>, mimeType: mimeForName(name) };
 }

@@ -17,14 +17,14 @@
 # Every schedule stays PAUSED until explicitly promoted.
 #
 # Declared per target, not bundle-wide. dev holds the body under a YAML anchor; qualibot-uat, qualibot-uat-test
-# (rehearsal of the UAT switch: uat_proj.qualibot.*_test, doccompare_test) and qualibot-prod merge it with `<<: *parsing_pipeline_body`.
+# (tables uat_proj.qualibot.*_test, Lakebase doccompare_test) and qualibot-prod merge it with `<<: *parsing_pipeline_body`.
 
 targets:
   dev:
     resources:
       jobs:
         parsing_pipeline: &parsing_pipeline_body
-          # D_1 prefix: org job-naming convention for the shared UAT/PROD workspaces (see the databricks-job-conventions skill).
+          # D_1 prefix: org job-naming convention for the shared UAT/PROD workspaces.
           name: "D_1_Qualibot_Parsing_Pipeline_${bundle.target}"
           description: "Docling parsing (GPU) + LLM image description pipeline for Qualibot RAG"
 
@@ -49,7 +49,7 @@ targets:
 
           job_clusters:
             # No policy_id on the 3 clusters: the org's "Job Compute *" policies force SPOT_WITH_FALLBACK (spot-driver-reclaim risk
-            # on these single-node ON_DEMAND clusters) and none allows a GPU-ML spark_version. See the databricks-job-conventions skill.
+            # on these single-node ON_DEMAND clusters) and none allows a GPU-ML spark_version.
             #
             # ── Small CPU cluster for the metadata tasks (1_categories, 2_manifest) ──
             # Delta/SQL work and one dbutils.fs.ls on the volume: no GPU or workers.

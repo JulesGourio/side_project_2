@@ -4,7 +4,6 @@ import type { DocFile, DocSide } from '../types';
 
 const LS_DOC: Record<DocSide, string> = { old: LS.oldPdf, new: LS.newPdf };
 
-/** The two documents under comparison and their content hashes, mirrored to localStorage. */
 export function useCompareDocs() {
   const [docs, setDocs] = useState<Record<DocSide, DocFile | null>>(() => ({
     old: loadPdfFromStorage(LS.oldPdf),

@@ -35,10 +35,8 @@ _W_TAB, _W_CR, _W_NBH = f'{_W_NS}tab', f'{_W_NS}cr', f'{_W_NS}noBreakHyphen'
 _W_TBL, _W_SDT, _W_SDT_CONTENT = f'{_W_NS}tbl', f'{_W_NS}sdt', f'{_W_NS}sdtContent'
 _W_PSTYLE, _W_VAL, _W_ID = f'{_W_NS}pStyle', f'{_W_NS}val', f'{_W_NS}id'
 _W_FOOTNOTE = f'{_W_NS}footnote'
-# Subtrees whose text is not part of the paragraph as the reader sees it:
-# tracked deletions and the origin of a tracked move (the text now lives at its
-# destination), paragraph properties, text boxes (extracted on their own by
-# _textbox_texts) and the legacy fallback copy of a drawing.
+# Subtrees whose text is not part of the paragraph as the reader sees it: tracked deletions, the origin of a tracked move,
+# paragraph properties, text boxes (extracted separately) and the mc:Fallback copy of a drawing.
 _SKIPPED_SUBTREES = frozenset({
     f'{_W_NS}del', f'{_W_NS}moveFrom', f'{_W_NS}pPr', _W_TXBX,
     '{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback',
@@ -163,8 +161,7 @@ def _vml_shape_lines(body, seen_ids: set = None) -> List[str]:
         seen_ids.add(sid)
         p = _parse_vml_style(style)
         parts = [f'[Arrow "{sid}"']
-        # Position (margin-left / margin-top) is deliberately excluded: a pure drag that only moves an arrow is
-        # cosmetic. Size and flip stay, so add, remove,
+        # Position (margin-left / margin-top) is excluded: a pure drag is cosmetic. Size and flip stay, so add, remove,
         # resize and reversal are still detected.
         for key in ('width', 'height', 'flip'):
             if key in p:

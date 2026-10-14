@@ -27,10 +27,8 @@ logging.basicConfig(
   datefmt='%Y-%m-%d %H:%M:%S',
   handlers=[logging.StreamHandler()],
 )
-Formatter.converter = time.gmtime  # force all log timestamps to UTC
 logger = logging.getLogger(__name__)
 
-# Detect environment
 env_local_loaded = load_dotenv(dotenv_path='.env.local')
 env = os.getenv('ENV', 'development' if env_local_loaded else 'production')
 logger.info(f'Starting in {env} mode')
@@ -111,7 +109,6 @@ app.include_router(history.router, prefix=API_PREFIX, tags=['history'])
 app.include_router(feedback.router, prefix=API_PREFIX, tags=['feedback'])
 app.include_router(preview.router, prefix=API_PREFIX, tags=['preview'])
 
-# Serve Vite static build in production
 build_path = Path('.') / 'client/out'
 if build_path.exists():
   logger.info(f'Serving static files from {build_path}')

@@ -34,10 +34,8 @@ _PRICING_USD: Dict[str, Dict[str, float]] = {
 _DEFAULT_PRICING = {'input': 3.0, 'output': 15.0}
 _EUR_PER_USD = float(os.getenv('EUR_PER_USD', '0.92'))
 
-# These families reject any non-default temperature (a 0 sends a 400): GPT-5.6 (Luna/Terra/Sol, names containing
-# "gpt-5-6"), bare "gpt-5-mini"
-# (the `\b` keeps it from matching "gpt-5-4-mini", which accepts 0), the 5 generation of the Sonnet / Opus / Fable
-# family, and GPT-6 (assumed like GPT-5.6).
+# These families reject any non-default temperature (a 0 sends a 400): GPT-5.6 and GPT-6 (names matching gpt-5-6 / gpt-6),
+# bare gpt-5-mini (not gpt-5-4-mini, which accepts 0), and the 5 generation of the Sonnet / Opus / Fable family.
 _NO_TEMPERATURE_RE = re.compile(r'gpt-5-6|gpt-6|gpt-5-mini\b|claude-(?:sonnet|opus)-5|claude-fable', re.I)
 
 

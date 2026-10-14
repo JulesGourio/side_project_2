@@ -72,7 +72,7 @@ def test_every_parsing_module_imports_only_names_config_defines():
 
 
 def test_every_job_name_follows_the_launch_level_domain_convention():
-    """`<D|W|M|F|Z>_<level>_<Domain>_<Purpose>` (datab CLAUDE.md section 11); targets add a suffix."""
+    """`<D|W|M|F|Z>_<level>_<Domain>_<Purpose>` (LEAP naming convention); targets add a suffix."""
     import yaml
 
     pattern = re.compile(r"^[DWMFZ]_\d+_[A-Z][A-Za-z]*(_[A-Z][A-Za-z]*)*(_\$\{bundle\.target\})?$")

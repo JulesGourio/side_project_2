@@ -33,11 +33,9 @@ function ThinkingDots({ label }: { label: string }) {
   );
 }
 
-/** Maps each citation number to its source, so inline ⟦n⟧ markers link to the document shown in the chips below. */
 function citationsOf(message: Message): CitationMap {
   const map: CitationMap = {};
   for (const s of message.sources ?? []) {
-    // Prose-only sources (no `n`) are never numbered inline in the text.
     if (s.n != null) map[s.n] = { url: s.url, title: s.title };
   }
   return map;

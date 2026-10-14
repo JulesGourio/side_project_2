@@ -21,12 +21,8 @@ const PAGE_LABEL: Record<string, string | null> = { pptx: 'Slide', xml: 'No.', e
 const CELL_BORDER: CSSProperties = { borderBottom: '1px solid var(--color-border)' };
 const WRAP: CSSProperties = { ...CELL_BORDER, wordBreak: 'break-word' };
 
-/**
- * Visual-change rows are matched to image pairs sequentially in LLM output order.
- * Page-number matching is unreliable (the LLM may write old_page, new_page or an
- * arbitrary value); the order is the one the images were fed to the LLM in
- * (orientation, modified, removed, added).
- */
+// Visual-change rows pair with images by order, not by page number: the LLM's page values are unreliable.
+// The order is the one the images were sent in: orientation, modified, removed, added.
 function pairImages(items: DiffItem[], images: ImagePair[]): (ImagePair | null)[] {
   let next = 0;
   return items.map(item => {
@@ -56,11 +52,8 @@ export function JsonDiffTable({ items, isStreaming, accentColor, fileType, image
   imageContext: ImagePair[];
 }) {
   const [lightboxPair, setLightboxPair] = useState<ImagePair | null>(null);
-  // Low-criticality rows are genuine changes (the analysis prompt deliberately reports every
-  // trivial edit rather than risk missing a real one) but they drown out the ones that need
-  // action: hidden by default, nothing is discarded.
+  // Low-criticality rows are real changes reported on purpose; hidden by default so they do not drown out the rows that need action.
   const [hideLow, setHideLow] = useState(true);
-  // Row clicked in the impact results ("C12"): revealed, scrolled to, briefly highlighted.
   const [focusedChange, setFocusedChange] = useState<string | null>(null);
   const scrollRef = useStickToBottom<HTMLDivElement>(isStreaming, items.length, 80);
 

@@ -18,7 +18,6 @@ function Side({ label, page, b64 }: { label: string; page: number | null; b64: s
   );
 }
 
-/** Before/after view of a visual change, closed with Escape or a click outside. */
 export function ImageLightbox({ pair, onClose }: { pair: ImagePair; onClose: () => void }) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };

@@ -18,10 +18,7 @@ from ..infra.vector_search import _parse_json_array
 
 _CRIT_ORDER = {'high': 0, 'medium': 1, 'low': 2}
 
-# Phrase emitted by both analysis prompts when the documents are equivalent. The
-# prompts ask for it in the document's own language, so the French/Spanish/German
-# renderings must be recognised too — "Aucun changement significatif détecté" was
-# searched as if it were a change.
+# Equivalence phrase of the analysis prompts; their French, Spanish and German renderings must match too.
 _NO_CHANGES_RE = re.compile(
     r'no significant changes? (?:were |was )?detected'
     r'|aucune? (?:changement|modification|[ée]volution)s? (?:significati|substantiel|notable)\w*'
@@ -161,7 +158,7 @@ def _group_by_section(changes: List[Dict[str, Any]], max_queries: int, max_query
         sizes[id(group)] += len(c['text']) + 1
     if len(groups) <= max_queries:
         return groups
-    size = -(-len(groups) // max_queries)  # ceil
+    size = -(-len(groups) // max_queries)
     return [[c for g in groups[i:i + size] for c in g] for i in range(0, len(groups), size)]
 
 

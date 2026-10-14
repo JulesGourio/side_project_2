@@ -87,7 +87,7 @@ def test_off_without_experiment_or_when_missing(monkeypatch):
     mlflow_turns._write_trace(_turn(), 'chat')              # missing experiment: silent no-op
     monkeypatch.setattr(mlflow_turns, '_missing_until', {})
     monkeypatch.setattr(mlflow, 'get_experiment_by_name', lambda name: type('E', (), {'experiment_id': '42'})())
-    assert mlflow_turns._experiment_id('chat') == '42'      # created since: found without a restart
+    assert mlflow_turns._experiment_id('chat') == '42'      # created after the first lookup: found without a restart
 
 
 def test_export_never_raises(monkeypatch):
@@ -219,7 +219,7 @@ def test_registered_prompts_are_linked_to_the_trace(spans, monkeypatch):
         **_tag('system_base', 'dev_proj.qualibot.chat_system_base', 3, prompts.digest('system_base')),
         **_tag('rewrite', 'dev_proj.qualibot.chat_rewrite', 1, prompts.digest('rewrite')), 'unrelated': 'x'})
     log = _turn()
-    log.prompts = ['rewrite', 'system_as', 'system_base']           # system_as was never registered
+    log.prompts = ['rewrite', 'system_as', 'system_base']           # system_as is not registered
     mlflow_turns._write_trace(log, 'chat')
     linked = json.loads(_by_name(spans)['chat_turn'].kwargs['tags']['mlflow.linkedPrompts'])
     assert linked == [{'name': 'dev_proj.qualibot.chat_rewrite', 'version': '1'},

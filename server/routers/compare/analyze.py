@@ -170,9 +170,7 @@ async def analyze_documents(
             media_type='text/event-stream',
         )
 
-    # Hashes are computed here from the uploaded bytes (same SHA-256 hex the
-    # client sends) instead of trusting the form fields: a stale or wrong
-    # client hash would replay another file pair's cached analysis.
+    # Hashes come from the uploaded bytes, not the form fields: a stale client hash would replay another pair's cached analysis.
     old_file_hash = hashlib.sha256(old_bytes).hexdigest()
     new_file_hash = hashlib.sha256(new_bytes).hexdigest()
 
@@ -337,7 +335,6 @@ async def analyze_documents(
                     logger.warning(f'[{_req_id}] Client disconnected during LLM streaming — aborting')
                     run['status'] = 'aborted'
                     return
-                # Intercept usage and error events to track in DB
                 if chunk.startswith('data: ') and '[DONE]' not in chunk:
                     try:
                         event = json.loads(chunk[6:].strip())

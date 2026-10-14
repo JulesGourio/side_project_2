@@ -280,7 +280,7 @@ def test_judge_calls_are_cancelled_when_the_consumer_stops(monkeypatch):
         )
         assert (await stream.__anext__())['type'] == 'plan'
         waiter = asyncio.ensure_future(stream.__anext__())
-        await asyncio.sleep(0.05)       # judges are now running
+        await asyncio.sleep(0.05)       # judges still running
         waiter.cancel()                 # the client went away
         with pytest.raises(asyncio.CancelledError):
             await waiter

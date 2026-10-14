@@ -31,11 +31,9 @@ class SaveComparisonRequest(BaseModel):
     analysis_text: Optional[str] = None
     impact_text: Optional[str] = None
     volume_session_path: Optional[str] = None
-    # Processor selection
     file_type: Optional[str] = None
     processing_method: Optional[str] = None
     processor_version: Optional[str] = None
-    # Token / cost tracking
     ttft_s: Optional[float] = None
     generation_s: Optional[float] = None
     input_tokens: Optional[int] = None
@@ -43,7 +41,6 @@ class SaveComparisonRequest(BaseModel):
     thinking_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     cost_eur: Optional[float] = None
-    # Link to llm_requests audit row
     llm_request_id: Optional[int] = None
 
 
@@ -79,9 +76,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
 
     try:
         async with pool.acquire() as conn:
-            # Denormalize the model used from llm_requests (via llm_request_id)
-            # so `messages` alone shows it — no join needed to answer "which
-            # model produced this comparison".
+            # Denormalized from llm_requests, so messages alone shows the model that produced the comparison.
             endpoint_name = None
             if body.llm_request_id is not None:
                 endpoint_row = await conn.fetchrow(
@@ -90,7 +85,6 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
                 )
                 endpoint_name = endpoint_row['endpoint_name'] if endpoint_row else None
 
-            # Insert into messages (primary table)
             row = await conn.fetchrow(
                 '''
                 INSERT INTO messages
@@ -130,9 +124,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
                 endpoint_name,
             )
 
-            # Register (or update) the user in the shared `users` table.
-            # Same helper is used by the chat flow so both surfaces populate
-            # `users` consistently — see services/infra/lakebase.upsert_user.
+            # Registers the user in the shared users table (same helper as the chat flow).
             await upsert_user(
                 conn,
                 user_id=identity['user_id'],

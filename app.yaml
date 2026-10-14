@@ -19,12 +19,12 @@ env:
   # Past messages replayed to the chat endpoint each turn (the latest question is always kept); 0 = no trimming.
   - name: CHAT_MAX_HISTORY
     value: "10"
-  # Chat (server/services/chat/engine.py, tests and choices: docs/chat_tests.md): bilingual rewrite, 3 hybrid Vector Search queries,
+  # Chat (server/services/chat/engine/): bilingual rewrite, 3 hybrid Vector Search queries,
   # documents named by REF or title, answer by GPT-6 Luna. One index for every division (AS / IS = filter on `division`);
   # per-target index: utils/deploy/target_env.json.
   - name: CHAT_INDEX
     value: "dev_proj.qualibot.chunks_index"
-  # No Claude model in the chatbot: GPT-6 Luna answers and rewrites, GPT-5.6 Luna is the fallback of both.
+  # Only Luna models in the chatbot: GPT-6 Luna answers and rewrites, GPT-5.6 Luna is the fallback of both.
   - name: CHAT_LLM_ENDPOINT
     value: "databricks-gpt-6-luna"
   # Models tried in order when the answer model fails (429, 5xx, timeout, 404, empty answer), comma-separated.
@@ -37,8 +37,8 @@ env:
   - name: CHAT_REWRITE_FALLBACK_ENDPOINTS
     value: "databricks-gpt-5-6-luna"
   # "on": the first message of a conversation, in French or English, is only translated into the other language (one short call, no rewrite,
-  # nothing expanded) and searched with two queries of CHAT_PAIR_* passages. Off until measured: it lost the expansions of the bilingual rewrite
-  # (a "CEO" question no longer reached the documents saying "PDG"). Follow-ups and other languages always use the rewrite.
+  # nothing expanded) and searched with two queries of CHAT_PAIR_* passages. Off by default: it drops the acronym and synonym expansions
+  # of the bilingual rewrite. Follow-ups and other languages always use the rewrite.
   - name: CHAT_TRANSLATE_ONLY
     value: "off"
   - name: CHAT_PAIR_RERANK_TOP_K
@@ -68,17 +68,17 @@ env:
   # "true" skips the group check: every visitor gets chat + compare. DEV only, via utils/deploy/target_env.json.
   - name: CAPS_BYPASS
     value: "false"
-  # Main analysis model (Haiku 4.5 was rejected: quality too low for this pipeline).
+  # Main analysis model; smaller models lose too much quality on this pipeline.
   - name: COMPARE_ANALYSIS_ENDPOINT
     value: "databricks-claude-sonnet-4-6"
   - name: COMPARE_ANALYSIS_SYSTEM_PROMPT
     value: "You are a technical document comparison specialist.\n\nYour task: identify changes to CONTENT — numbers, requirements, specifications, normative references, procedures, scope. Ignore everything editorial.\n\nREPORT (these always matter):\n- A number, measurement, tolerance, limit, or threshold that changed\n- A normative reference (standard, spec, regulation) added, removed, or changed in revision\n- A technical requirement or procedure step added, removed, or substantively changed\n- A scope change: new applicability, new conditions, new equipment types, new roles\n- Changed safety or quality requirements, changed approval authorities\n\nDISCARD (never report these):\n- Pure formatting: extra spaces, hyphens, line breaks, capitalisation, punctuation\n- Reference code formatting when the underlying document is identical (\"NAS 410\" vs \"NAS410\" is NOT a change if the same revision is cited)\n- Modal verb substitutions throughout the document (shall/must/will/should/may — if the same requirement is present with different modal verbs, it is not a substantive change)\n- Rewording, restructuring, or synonym substitution that preserves the same technical meaning\n- Terminology rename applied uniformly across the document (e.g. NDI to NDT, inspection to examination, personnel to employees — if the same population is referred to)\n- Document cover page, metadata, revision tables, boilerplate, page numbers, TOC pagination\n\nOUTPUT: Markdown, ## per section, one bullet per real change, bold changed values. If nothing substantive changed: **No significant changes detected.**"
   # Impact search: one Vector Search query per reported change, then one LLM call per candidate document, which judges it from all its
   # retrieved passages and returns every conflicting passage with a verbatim quote (client/src/components/compare/README.md).
-  # Per-target index in utils/deploy/target_env.json; the target once built is chunks_full_index (pre-2018 archive included).
+  # Per-target index in utils/deploy/target_env.json; chunks_full_index (pre-2018 archive included) once it exists.
   - name: COMPARE_IMPACT_INDEX
     value: "dev_proj.qualibot.chunks_index"
-  # gpt-5-4-mini matched Claude Sonnet's verdicts on real UAT data and 2 trap candidates, at ~11x lower cost; gemini-3-1-flash-lite gave false positives.
+  # gemini-3-1-flash-lite was rejected for the judge: false positives.
   - name: COMPARE_IMPACT_ENDPOINT
     value: "databricks-gpt-5-6-luna"
   # Up to MAX_QUERIES changes get their own query (the lowest-criticality ones share the last); PER_QUERY_RESULTS hits each (the API caps HYBRID num_results at 200).
@@ -101,7 +101,7 @@ env:
     value: "databricks-gpt-5-6-luna"
   - name: COMPARE_SUMMARY_IMAGE_ENDPOINT
     value: "databricks-gpt-5-6-luna"
-  # 300000 chars (~65-75k tokens) leaves room in gpt-5-4-mini's context window for the system prompt and output.
+  # 300000 chars (~65-75k tokens) leaves room in the summary model's context window for the system prompt and output.
   - name: COMPARE_SUMMARY_MAX_CHARS
     value: "300000"
   - name: COMPARE_SUMMARY_MAX_TOKENS

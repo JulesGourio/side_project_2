@@ -395,7 +395,7 @@ def build_image_chunks(df_described):
 def _merge_chunks(df_chunks, table):
     """Merge on chunk_id rather than delete-all-for-IDDOC then reinsert, so untouched image chunks are not rewritten.
 
-    The columns the passages add reach the table first (they used to come with the MERGE's schema auto-merge).
+    The columns the passages add reach the table first.
     """
     if not table_exists(table):
         write_table(df_chunks, table, "append", merge_schema=True)

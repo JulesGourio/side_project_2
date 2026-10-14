@@ -1,10 +1,7 @@
 export interface Source {
   title: string;
   url?: string;
-  /**
-   * 1-based inline-citation number. Present only for sources actually cited inline (⟦n⟧ in the
-   * text); prose-only sources re-surfaced from the catalog have no number and render as a plain REF chip.
-   */
+  /** 1-based inline-citation number; set only for sources cited inline (⟦n⟧). */
   n?: number;
   // From the document catalog at answer time: Intraqual title, current revision and its date (ISO).
   doc_title?: string;

@@ -76,8 +76,7 @@ async def save_to_volume(
             _upload(f'{session_path}/impact.md', impact_text.encode('utf-8'))
 
     try:
-        # The SDK calls are blocking: on the event loop they froze every open
-        # analysis stream for the duration of two 20 MB uploads.
+        # The SDK calls block: they must not run on the event loop.
         await asyncio.to_thread(_save)
         return {'success': True, 'session_path': session_path, 'saved_files': saved_files}
     except Exception as e:

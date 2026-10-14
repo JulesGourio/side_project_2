@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC A **version** = an answer model + the index it searches: `model@label`, the label being one of
 # MAGIC `indexes` (as in `retrieval_eval`; `chat` = the app's own index). Everything else is the app's
-# MAGIC chat as deployed (`server/services/chat/engine.py`: rewrite, search, prompt, language reminder).
+# MAGIC chat as deployed (`server/services/chat/engine/`: rewrite, search, prompt, language reminder).
 # MAGIC One **reference** version is compared, question by question, with each **contender** — e.g. the
 # MAGIC chat's model against a candidate model, or the chat's index against an index built with another
 # MAGIC chunking.

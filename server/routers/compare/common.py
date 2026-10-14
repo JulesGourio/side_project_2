@@ -64,9 +64,8 @@ def _get_config() -> Dict[str, Any]:
         'impact_max_tokens':     int(os.getenv('COMPARE_IMPACT_MAX_TOKENS', '1500')),
         # Documents published before this date are badged "archive" in the UI.
         'impact_archive_before': os.getenv('COMPARE_IMPACT_ARCHIVE_BEFORE', '2018-01-01'),
-        # Single-document summary: independent of the diff, a cheap model
-        # summarizes whichever of the two uploaded files the user picks.
-        # Images need a vision-capable model, hence the separate endpoint.
+        # Single-document summary: independent of the diff, on a cheap model. Images need a vision-capable model,
+        # hence the separate endpoint.
         'summary_endpoint':       os.getenv('COMPARE_SUMMARY_ENDPOINT', 'databricks-gpt-5-6-luna'),
         'summary_image_endpoint': os.getenv('COMPARE_SUMMARY_IMAGE_ENDPOINT', 'databricks-gpt-5-6-luna'),
         'summary_max_chars':  int(os.getenv('COMPARE_SUMMARY_MAX_CHARS', '300000')),

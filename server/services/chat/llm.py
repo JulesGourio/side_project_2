@@ -1,42 +1,13 @@
-"""Chat — LLM calls that keep answering: retries, fallback models, continuation, load limits.
+"""Chat LLM calls that keep answering: retries, fallback endpoints, continuation, load limits.
 
-Used for the answer (``stream_answer``) and for the search-query rewrite (``complete``). Settings, read at call time:
+Used for the answer (stream_answer) and for the search-query rewrite and translation (complete). Settings are
+environment variables read at call time: CHAT_LLM_ENDPOINT, CHAT_LLM_FALLBACK_ENDPOINTS, CHAT_FIRST_TOKEN_TIMEOUT_S,
+CHAT_STALL_TIMEOUT_S, CHAT_LLM_DEADLINE_S, CHAT_LLM_ROUNDS, CHAT_COOLDOWN_S, CHAT_MAX_CONCURRENT_ANSWERS,
+CHAT_REASONING_MIN_TOKENS (rewrite variants: CHAT_REWRITE_*).
 
-- ``CHAT_LLM_FALLBACK_ENDPOINTS`` — comma-separated endpoints tried, in order, after
-  ``CHAT_LLM_ENDPOINT`` (default: none, the primary is only retried). In production: GPT-6 Luna, then GPT-5.6 Luna;
-- ``CHAT_REWRITE_FALLBACK_ENDPOINTS`` — same for the rewrite (default: the answer chain);
-- ``CHAT_FIRST_TOKEN_TIMEOUT_S`` (90) — no answer text after this long: the endpoint is
-  given up for the next one (a reasoning model thinks before its first word: GPT-6 Luna
-  p50 is about 7 s);
-- ``CHAT_STALL_TIMEOUT_S`` (60) — the stream stops sending text this long: given up;
-- ``CHAT_LLM_DEADLINE_S`` (240) — no new attempt starts after this long;
-- ``CHAT_LLM_ROUNDS`` (3) — passes over the endpoint chain, waiting 2 s then 8 s between
-  passes (or the endpoint's ``Retry-After``, when shorter than the deadline);
-- ``CHAT_COOLDOWN_S`` (30) — an endpoint that answered 429 / 5xx / timed out is put last
-  for every turn during this long (404: 10 minutes), so a quota burst on GPT-6 Luna sends the
-  next questions straight to the backup instead of each paying a failed call first;
-- ``CHAT_MAX_CONCURRENT_ANSWERS`` (32, 0 = no limit) — answers generated at once by this
-  app instance; the others wait their turn (keepalives sent) instead of all hitting the
-  per-minute token quota of the endpoint;
-- ``CHAT_REASONING_MIN_TOKENS`` (6000) — output ceiling floor on reasoning models (their
-  thinking counts inside it): a small answer budget would truncate GPT-6 Luna when the
-  chain falls back to it. The rewrite uses a floor of 1000.
-
-What is retried where:
-
-- before any answer text: 429, 5xx, timeouts, network errors, an empty answer, a refused
-  request (400, e.g. a parameter the model rejects) or a missing endpoint (404) move on to the
-  next endpoint; 400/401/403/404 are not retried on the same endpoint in later rounds;
-- after part of the answer was streamed (connection dropped, stream stalled, mid-stream
-  error): the next endpoint — the same one when it is the only one — is asked to continue the
-  text where it stopped, at most twice; the user sees one answer;
-- when everything failed: one ``error`` event with a plain message.
-
-The output is the event stream of `the compare analysis stream (`compare/llm.py`)` (text deltas, ``usage``,
-``warning``, ``error``, ``[DONE]``, keepalive comments) plus one ``llm`` event before
-``[DONE]``: the endpoint that answered, every attempt, the wait for a free slot
-(``queue_wait_ms``), ``truncated``, ``continuations`` and ``interrupted`` (part of the answer
-out, no endpoint could finish it) — saved in Lakebase ``chat_turns`` by the chat engine.
+A failure before any answer text moves to the next endpoint. A failure after part of the answer was streamed asks
+the next endpoint to continue the text (at most twice). The output is the event stream of compare/llm.py plus one
+``llm`` event before [DONE], saved in chat_turns by the chat engine.
 """
 
 import asyncio

@@ -26,10 +26,7 @@ export function lsGet(key: string): string | null {
   }
 }
 
-/**
- * localStorage is close to full as soon as two documents are persisted in it;
- * a failed write must never turn a finished analysis into an error.
- */
+// localStorage quota is small (two documents can fill it): a failed write must never fail an analysis.
 export function lsSet(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);

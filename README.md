@@ -1,17 +1,78 @@
 # QualiBOT
 
 Application FastAPI + React déployée sur Databricks Apps. Elle donne accès à une
-base commune de documents qualité et techniques (aéronautique). Deux
-fonctionnalités, une seule application, un seul déploiement :
+base commune de documents qualité et techniques (aéronautique) et réunit trois
+fonctions :
 
-| Onglet | Ce qu'il fait | Documentation |
+| Fonction | Ce qu'elle fait | Documentation |
 |---|---|---|
-| **Comparaison** (`/compare`) | Compare deux versions d'un document, produit un résumé ou un tableau des changements, puis cherche dans la base les autres documents que ces changements touchent | [`client/src/components/compare/README.md`](client/src/components/compare/README.md) |
-| **Chat** (`/chat`) | Assistant qui répond à partir de la base documentaire, avec des citations numérotées et un filtre par division (ALL, AS, IS) | [`client/src/components/chat/README.md`](client/src/components/chat/README.md) |
+| **Comparaison** (`/compare`) | Compare deux versions d'un document et produit un résumé ou un tableau des changements. | [`client/src/components/compare/README.md`](client/src/components/compare/README.md) |
+| **Recherche d'impact** (onglet Comparaison) | Cherche dans la base les autres documents que les changements touchent, avec les passages concernés. | [`client/src/components/compare/README.md`](client/src/components/compare/README.md) |
+| **Chat** (`/chat`) | Assistant qui répond à partir de la base documentaire, avec des citations numérotées et un filtre par division (ALL, AS, IS). | [`client/src/components/chat/README.md`](client/src/components/chat/README.md) |
 
 La base documentaire est construite chaque nuit par la chaîne de parsing
-([`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md)). Les
-deux fonctionnalités l'interrogent par le même index Vector Search.
+([`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md)). Le chat
+et la recherche d'impact l'interrogent par le même index Vector Search.
+
+## Organisation du dépôt
+
+### Application
+
+- `server/` : backend FastAPI. `app.py` est le point d'entrée et sert le frontend
+  construit ; `routers/` expose les routes sous `/api` (chat, comparaison,
+  configuration, exports, retours, santé, historique, aperçu) ; `services/`
+  contient le moteur du chat (`chat/`), les processeurs et analyses de comparaison
+  (`compare/`) et les accès partagés à Lakebase, aux droits, à Vector Search et au
+  catalogue (`infra/`) ; `prompts/chat/` contient les prompts du chat, en fichiers ;
+  `assets/fonts/` contient la police Inter des exports PDF ; `tracing.py` configure le
+  suivi MLflow des traces du chat.
+- `client/` : frontend React et TypeScript (Vite). `src/` contient les pages et les
+  composants (`chat/`, `compare/`, `layout/`, `shared/`, `lib/`) ; `out/` est le
+  build servi par le backend.
+- `start.sh` : démarrage de l'application. Il charge `target_config.env` s'il existe.
+- `app.yaml` : variables d'environnement de l'application, avec leurs valeurs par
+  défaut et leur rôle.
+
+### Déploiement et exploitation
+
+- `databricks.yml` : bundle `qualibot`, cibles `dev`, `qualibot-uat` (cible par
+  défaut), `qualibot-uat-test` et `qualibot-prod`, variables et exclusions de
+  synchronisation.
+- `resources/` : jobs et application déclarés par cible, un fichier par sujet.
+  `parsing_pipeline.job.yml` (chaîne quotidienne de parsing et d'indexation),
+  `chat_mlflow.yml` (traces et prompts du chat), `dev_copy.yml` (copie des données
+  UAT vers DEV), `grants.yml` (droits), `lakebase_sync.yml` (export et import
+  Lakebase), `app_schedules.yml` (arrêt et démarrage de l'application).
+- `utils/` : outils hors application (déploiement, parsing, évaluation, droits,
+  Lakebase, alertes). La carte du dossier est dans [`utils/README.md`](utils/README.md).
+- `runbooks/` : étapes à réaliser à la main dans Databricks. `uat.md`, `prod.md` et
+  `dev.md` ; l'index est dans [`runbooks/README.md`](runbooks/README.md).
+  `retest.md` liste ce qu'il faut relancer après un changement de chemin ou de
+  notebook. `scripts/` contient les scripts ponctuels, lancés à la main.
+- `bitbucket-pipelines.yml` : déploiement par Bitbucket (DEV, UAT, PROD).
+- `pyproject.toml` et `requirements.txt` : dépendances Python.
+- Fichiers de configuration racine : `.databricksignore` (exclusions de
+  synchronisation), `.gitignore`, `.gitattributes`, `.gitleaksignore`, `.vscode/`.
+
+### Données et tests
+
+- `tests/` : suite pytest. `golden/` et `fixtures/` contiennent les sorties attendues
+  et les réponses enregistrées ; `diff_corpus.py` et `prompt_noise.py` sont des jeux
+  de données et des détecteurs utilisés par les tests.
+- `data/` : `lid.176.ftz` (modèle fastText de détection de langue) et
+  `vendor/antiword/` (binaire antiword, pour convertir les fichiers `.doc`).
+- `leap_utils/` : copie de la bibliothèque partagée LEAP (écriture et fusion de
+  tables, contrôles qualité). Ne pas la modifier dans ce dépôt.
+
+### Documentation
+
+- `docs/` : [`lakebase_schema.md`](docs/lakebase_schema.md), colonnes du journal
+  Lakebase. C'est le seul document de référence de ce dossier.
+- `archive/` : documentation remplacée (`archive/docs/`, `archive/readmes/`).
+  Elle n'est jamais déployée.
+
+Les dossiers `runbooks/`, `docs/` et `archive/` sont exclus de la synchronisation du
+bundle (`databricks.yml`) : ils ne sont pas lus à l'exécution.
 
 ## Modèles et index
 
@@ -21,46 +82,16 @@ deux fonctionnalités l'interrogent par le même index Vector Search.
 | Comparaison : recherche d'impact | Index Vector Search | `COMPARE_IMPACT_INDEX` |
 | Comparaison : jugement de chaque document candidat | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` |
 | Comparaison : résumé d'un document (texte, image) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |
-| Chat : réécriture des requêtes et réponse | `databricks-gpt-6-luna`, secours `databricks-gpt-5-6-luna` | `CHAT_REWRITE_ENDPOINT`, `CHAT_LLM_ENDPOINT` et leurs secours |
+| Chat : réponse | `databricks-gpt-6-luna`, secours `databricks-gpt-5-6-luna` | `CHAT_LLM_ENDPOINT`, `CHAT_LLM_FALLBACK_ENDPOINTS` |
+| Chat : réécriture des requêtes | `databricks-gpt-6-luna`, secours `databricks-gpt-5-6-luna` ; sur toutes les cibles déployées, `databricks-gemini-3-1-flash-lite` | `CHAT_REWRITE_ENDPOINT`, `CHAT_REWRITE_FALLBACK_ENDPOINTS` |
 | Chat : pont de traduction (désactivé) | `databricks-gpt-5-6-luna` | `CHAT_TRANSLATE_ENDPOINT` |
 | Base : description des images (vision) | `databricks-gpt-5-6-luna` | `PARSING_LLM_ENDPOINT` |
 | Base : embeddings des passages | `databricks-qwen3-embedding-0-6b` (index géré par Databricks) | `embedding_model` (tâche `5_sync_index`) |
 
 Les valeurs exactes par cible sont dans `app.yaml` et dans
-`utils/deploy/target_env.json`. Sur les cibles DEV et `uat-test`, la réécriture
-du chat utilise `databricks-gemini-3-1-flash-lite`.
+`utils/deploy/target_env.json`.
 
-## Architecture
-
-```
-server/
-  app.py                  application FastAPI, routes sous /api, sert client/out
-  routers/                chat/, compare/, config.py, exports.py, feedback.py,
-                          health.py, history.py, preview.py
-  services/
-    chat/                 engine/ (moteur du chat), llm.py (appels au modèle),
-                          prompts.py, turn_log.py (journal d'un tour),
-                          mlflow_turns.py (traces), translation_bridge.py
-    compare/              processors/ (un par type de fichier, moteurs de diff),
-                          chunked_analysis.py, impact_queries.py, summarize.py,
-                          conversion.py, soffice.py, export_helpers.py
-    infra/                lakebase/ (connexion, schéma, journal, caches),
-                          user.py (droits), credentials.py, vector_search.py,
-                          vs_gate.py (appels Vector Search), doc_catalog.py,
-                          streaming.py, pdf_report/, error_origin.py
-  prompts/chat/           les prompts du chat, en fichiers
-  config/processors.yml   version du processeur par type de fichier
-  data/                   doc_catalog.json (repli), lid.176.ftz (langue)
-  assets/fonts/           police Inter, pour les PDF
-client/src/
-  App.tsx                 routes ; pages/ (ComparePage, ChatPage, SharedChatPage)
-  components/chat/        interface du chat
-  components/compare/     interface de la comparaison
-  components/layout/      barre supérieure
-  components/shared/      composants communs
-  lib/                    configuration, export PDF
-utils/                    outils hors application (voir utils/README.md)
-```
+## Démarrage
 
 Au démarrage, l'application ouvre la connexion à Lakebase et charge le catalogue
 des documents, rechargé toutes les 30 minutes. Si Lakebase est injoignable,
@@ -127,10 +158,28 @@ identité : aucun déploiement n'est nécessaire.
 
    Le serveur de développement écoute sur `http://localhost:3000` et transmet
    `/api` au port 8000. Ouvrir `/compare` ou `/chat`. Au démarrage, le backend
-   affiche `Starting in development mode` si `.env.local` est chargé.
+   journalise `Starting in development mode` si `.env.local` est chargé.
 
-Dépendances Python : `pip install -r requirements.txt`. Pour les tests :
-`pip install pytest pytest-asyncio`.
+Dépendances Python : `pip install -r requirements.txt`.
+
+## Tests
+
+```
+python -m pytest
+```
+
+La suite est dans `tests/` (`testpaths` dans `pyproject.toml`). Les appels à
+Databricks et aux modèles sont remplacés par des doubles ; les tests Spark sont
+ignorés si pyspark ou la JVM manquent. Chaque README de fonctionnalité indique
+les tests qui la couvrent.
+
+Le frontend se vérifie par le lint et le build :
+
+```
+cd client
+bun run lint
+bun run build
+```
 
 ## Déploiement
 
@@ -142,7 +191,10 @@ Dépendances Python : `pip install -r requirements.txt`. Pour les tests :
 | `prod` | `qualibot-prod` | `qualibot` | `qualibot-prod` | `dbc-77b87d5a-6bcb` |
 
 Les hôtes complets sont dans `databricks.yml`. Le profil CLI de la cible doit
-être authentifié : les étapes sont dans runbooks/uat.md et runbooks/dev.md.
+être authentifié. Les étapes à faire dans Databricks (authentification, premier
+déploiement, jobs à lancer ou à activer, droits) sont dans
+[runbooks/uat.md](runbooks/uat.md) pour l'UAT, [runbooks/prod.md](runbooks/prod.md)
+pour la PROD et [runbooks/dev.md](runbooks/dev.md) pour la DEV.
 
 Déploiement de l'application, à la racine du dépôt :
 
@@ -168,46 +220,27 @@ Pipeline Bitbucket (`bitbucket-pipelines.yml`) : un push sur `main` déploie
 l'UAT. Les autres cibles se déploient à la main, par les pipelines « custom ».
 PROD est déployé à la main, après l'UAT.
 
-Les étapes à faire dans Databricks (authentification, premier déploiement, jobs
-à lancer ou à activer, droits) sont dans [runbooks/uat.md](runbooks/uat.md) pour
-l'UAT et la PROD, et dans [runbooks/dev.md](runbooks/dev.md) pour la DEV.
-
 ## Ressources par environnement
 
 | Environnement | Tables (`<env>_proj.qualibot`) | Volume de l'application | Index du chat | Base Lakebase |
 |---|---|---|---|---|
 | DEV | `dev_proj.qualibot` | `dev_proj.qualibot.doc_compare` | `dev_proj.qualibot.chunks_index` | `doccompare` |
 | UAT | `uat_proj.qualibot` | `uat_proj.qualibot.doc_compare` | `uat_proj.qualibot.chunks_index` | `doccompare` |
-| UAT-TEST | `uat_proj.qualibot`, suffixe `_test` | `uat_proj.qualibot.test` | `uat_proj.qualibot.chunks_index_test` | `doccompare_test` |
+| UAT-TEST | `uat_proj.qualibot`, suffixe `_test` | `uat_proj.qualibot.doc_compare_test` | `uat_proj.qualibot.chunks_index_test` | `doccompare_test` |
 | PROD | `prod_proj.qualibot` | `prod_proj.qualibot.doc_compare` | `prod_proj.qualibot.chunks_index` | `doccompare` |
 
-Les tables Delta, les volumes et les index Vector Search sont dans le schéma `<env>_proj.qualibot`. La base Lakebase est celle du projet `qualibot`.
-La cible `uat-test` est un environnement de test isolé : elle ne touche ni aux
-données ni aux index de l'UAT.
+Les tables Delta, les volumes et les index Vector Search sont dans le schéma
+`<env>_proj.qualibot`. La base Lakebase est celle du projet `qualibot`. La cible
+`uat-test` est un environnement de test isolé : elle ne touche ni aux données ni
+aux index de l'UAT.
 
-Tables de l'application dans Lakebase : `messages`, `feedbacks`,
-`llm_requests`, `errors` (comparaison et journal commun), `impact_requests`,
+Tables de l'application dans Lakebase : `messages`, `feedbacks`, `llm_requests`,
+`errors` (comparaison et journal commun), `impact_requests`,
 `impact_document_results`, `impact_feedbacks`, `impact_cache`, `summary_cache`
 (comparaison), `chat_sessions`, `chat_messages`, `chat_feedbacks`, `chat_turns`,
 `chat_retrieved_chunks` (chat), `doc_catalog`, `knowledge_base_metadata`, `users`.
 Le schéma est créé et complété par l'application au démarrage. Le détail des
 colonnes est dans [docs/lakebase_schema.md](docs/lakebase_schema.md).
-
-## Tests
-
-```
-python -m pytest
-```
-
-La suite est dans `tests/` (`testpaths` dans `pyproject.toml`). Les tests du chat,
-de la comparaison et de la chaîne de parsing ont leur propre liste dans leur
-README. Le frontend se vérifie par la compilation TypeScript et le build :
-
-```
-cd client
-bun run build
-bun run lint
-```
 
 ## Maintenance
 
@@ -228,9 +261,6 @@ bun run lint
 | [utils/README.md](utils/README.md) | Carte de `utils/` |
 | [utils/lakebase_sync/README.md](utils/lakebase_sync/README.md) | Export, import et mise à jour du schéma de Lakebase |
 | [utils/alerts/README.md](utils/alerts/README.md) | Alertes SQL |
-| [docs/chat_tests.md](docs/chat_tests.md) | Mesures et choix de configuration du chat |
 | [docs/lakebase_schema.md](docs/lakebase_schema.md) | Colonnes du journal Lakebase |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Pistes non réalisées |
-| [runbooks/uat.md](runbooks/uat.md) | Étapes à réaliser dans Databricks (UAT, PROD) |
-| [runbooks/dev.md](runbooks/dev.md) | Étapes à réaliser dans Databricks (DEV) |
-| [RETEST_CLEANUP.md](RETEST_CLEANUP.md) | Ce qu'il faut relancer après un changement de chemins ou de notebooks |
+| [runbooks/README.md](runbooks/README.md) | Index des étapes à réaliser dans Databricks |
+| [runbooks/retest.md](runbooks/retest.md) | Ce qu'il faut relancer après un changement de chemins ou de notebooks |

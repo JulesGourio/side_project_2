@@ -56,8 +56,8 @@ def _align_duplicates(
         cost[m][j] = 0.0
     for i in range(m - 1, -1, -1):
         for j in range(k - 1, -1, -1):
-            best = cost[i][j + 1]                      # skip news[j]
-            if k - j >= m - i:                          # enough news left to skip olds[i]
+            best = cost[i][j + 1]
+            if k - j >= m - i:
                 best = min(best, cost[i + 1][j])
             best = min(best, abs(po[i] - pn[j]) + cost[i + 1][j + 1])
             cost[i][j] = best

@@ -1,10 +1,10 @@
-"""Tests for the chat engine (server/services/chat/engine.py).
+"""Tests for the chat engine (server/services/chat/engine/).
 
 Coverage:
   - CitationStreamParser: marker split across chunks, grouped markers, unknown number,
     '[' that is not a marker, no citation, incomplete marker at end of stream; equivalence
     with the whole-text parse on the 21 real golden answers (tests/fixtures/chat_raw_answers.json)
-  - search: three queries reranked 12 + raw 10 on the French rewrite, merged by rank, division filter, partial
+  - search: three queries, reranked and raw on the French rewrite, merged by rank, division filter, partial
     failures tolerated, reranker refused -> raw only, REF lookup first,
     one language per document
   - stream_chat contract: deltas without markers, sources + citations, one metadata event
@@ -496,7 +496,7 @@ def test_rewrite_prompt_names_no_company_and_forbids_filler():
     ('processus Stocker Latécoère', 'processus Stocker', 'processus Stocker'),
     ('QP-1518 documents qualité', 'QP-1518', 'QP-1518'),
     ('procédure peinture dans les documents Latécoère', 'procédure peinture', 'procédure peinture'),
-    ('organigramme Latécoère', 'organigramme Latécoère 2024', 'organigramme Latécoère'),               # the user said it
+    ('organigramme Latécoère', 'organigramme Latécoère 2024', 'organigramme Latécoère'),               # the company named by the user is kept; the year the model added is not
     ('liste des documents de qualification', 'liste des documents de qualification', 'liste des documents de qualification'),
     ('procedure in the documents about painting', 'painting', 'procedure in the documents about painting'),
     ('Latécoère', 'x', 'Latécoère'),                                                                  # never an empty query
@@ -571,7 +571,7 @@ def test_turn_log_of_a_clean_turn(monkeypatch):
     assert (first['chunk_id'], first['ref'], first['kept'], first['cited'], first['doc_number'], first['source']) == \
         ('c1', 'QP-1518', True, True, 1, 'search')
     assert {(h['q'], h['via']) for h in first['hits']} == {(q, 'rerank') for q in (0, 1, 2)} | {(1, 'raw')}
-    assert [p['prompt_rank'] for p in log.passages] == [0, 2, 1]          # c1, c3 (QP-1518) before c2 (MR-1465)
+    assert [p['prompt_rank'] for p in log.passages] == [0, 2, 1]
     assert log.passages[1]['cited'] is False and log.passages[0]['chunk_text'] == 'passage 1'
 
 

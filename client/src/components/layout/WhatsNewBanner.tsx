@@ -5,9 +5,7 @@ const TEAMS_CHANNEL_URL =
 
 type TabId = 'compare' | 'chat';
 
-// Placeholder copy — meant to be edited by hand as real news comes in. One
-// news list per tool page, newest entry first; add more objects to `news` as
-// updates roll out — the list scrolls independently of the header below.
+// Placeholder copy, edited by hand: one news list per tool page, newest entry first.
 const README_CONTENT: Record<TabId, { title: string; news: { date: string; features: string[] }[] }> = {
   compare: {
     title: "Compare — What's New",
@@ -47,9 +45,7 @@ const README_CONTENT: Record<TabId, { title: string; news: { date: string; featu
   },
 };
 
-// Small button meant to sit inline in a tool's own toolbar (e.g. next to
-// the title on the Chat page). It only toggles visibility —
-// the caller owns the open/closed state and renders <WhatsNewModal> itself.
+// Toggles visibility only: the caller owns the open state and renders <WhatsNewModal> itself.
 export function WhatsNewButton({ tabId, open, onClick }: { tabId: TabId; open: boolean; onClick: () => void }) {
   const content = README_CONTENT[tabId];
   return (
@@ -71,9 +67,7 @@ export function WhatsNewButton({ tabId, open, onClick }: { tabId: TabId; open: b
   );
 }
 
-// Popup that opens above the page. Two fixed sections (title+close, then the
-// Teams link) stay put; only the news list underneath scrolls — meant to
-// stay usable once there are many entries.
+// Only the news list scrolls: the title and the Teams link stay fixed.
 export function WhatsNewModal({ tabId, onClose }: { tabId: TabId; onClose: () => void }) {
   const content = README_CONTENT[tabId];
 

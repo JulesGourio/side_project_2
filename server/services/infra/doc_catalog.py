@@ -38,8 +38,8 @@ def _norm(ref: str) -> str:
     return ' '.join(ref.split()).upper()
 
 
-# A citation in the chat text may use a spelling that never existed in the catalog ("PRLAT529" for "PRLAT-529" /
-# "PRLAT-529_GB"); canonicalizing both sides the same way resolves it to the document's group.
+# A citation may spell a REF differently from the catalog (punctuation or suffix missing); canonicalizing both sides
+# the same way resolves it to the document's group.
 _LANG_SUFFIX_RE = re.compile(r'[-_. ]+(FR|EN|GB|MX|BG|CZ|BR|ES)$', re.IGNORECASE)
 _NON_ALNUM_RE = re.compile(r'[^A-Z0-9]')
 
@@ -56,9 +56,7 @@ def canon_ref(ref: str) -> str:
     return _canon(ref)
 
 
-# Flag emoji for each recognised site/language suffix (see _LANG_SUFFIX_RE). "EN" has
-# no dedicated country — it's a generic/international English translation rather than
-# a specific site — so it shares the GB flag as a language (not country) marker.
+# Flag emoji per recognised suffix. 'EN' is an international translation rather than a site, so it shares the GB flag.
 _SITE_FLAGS: Dict[str, str] = {
     'FR': '🇫🇷', 'EN': '🇬🇧', 'GB': '🇬🇧', 'MX': '🇲🇽',
     'BG': '🇧🇬', 'CZ': '🇨🇿', 'BR': '🇧🇷', 'ES': '🇪🇸',
@@ -66,7 +64,7 @@ _SITE_FLAGS: Dict[str, str] = {
 
 
 def site_code(ref: str) -> Optional[str]:
-    """The trailing site/language suffix of a REF (e.g. "GB" from "MI-1331-GB"),
+    """The trailing site/language suffix of a REF (e.g. "GB" from "XX-1234-GB"),
     upper-cased, or None if the REF carries no recognised suffix — most of the
     corpus has none; it marks the default/untranslated document, not a known
     language."""
@@ -139,12 +137,8 @@ class _Catalog:
             canon = e.get('base_ref') or _canon(ref)
             self.by_canon.setdefault(canon, []).append(e)
 
-        # One alternation of every REF *and* its canonical (punctuation- and
-        # suffix-stripped) form, so a bare citation like "PRLAT529" matches
-        # even when the catalog only holds "PRLAT-529_GB". Longest first so
-        # "MI-1000_FR" wins over "MI-1000" / "MI1000". Bounded by non-[\w-]
-        # lookarounds so a REF is never matched inside a larger token (e.g.
-        # "GO-1125" not matched in "GO-11250").
+        # One alternation of every REF and its canonical form, so a bare citation matches even when the catalog holds a suffixed spelling.
+        # Longest first (the most specific REF wins), bounded by lookarounds on non-word characters or hyphens.
         alts = set()
         for e in entries:
             ref = e.get('ref')
@@ -255,7 +249,7 @@ def augment_sources(content: str, sources: List[dict]) -> List[dict]:
 
     1. Relabel: any existing source whose URL carries our own ref=<REF> query
        param (or, failing that, is in the catalog) gets its title set to the
-       canonical REF (so chips read "MI-1234" instead of a raw URL).
+       canonical REF (so chips read "XX-1234" instead of a raw URL).
     2. Append: any catalog REF named in ``content`` that is not already present
        (by REF title or by URL) is added as a new ``{title, url}`` source.
     3. Link languages: every REF now present (relabeled or newly appended)
@@ -271,9 +265,7 @@ def augment_sources(content: str, sources: List[dict]) -> List[dict]:
     try:
         sources = list(sources or [])
 
-        # 1. Relabel existing chips to their REF when the URL is recognised: parse our own ref=<REF> scheme (always
-        # accurate, no catalog needed)
-        # rather than the catalog's url_to_ref (older id=... scheme).
+        # 1. Relabel existing chips to their REF: our own ref=<REF> URLs are parsed directly (always accurate, no catalog needed).
         for s in sources:
             url = s.get('url')
             if not url:

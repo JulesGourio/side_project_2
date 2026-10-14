@@ -15,9 +15,8 @@ async def _add_columns(conn, table: str, columns) -> None:
 
 
 async def ensure_schema(pool: asyncpg.Pool) -> None:
-    # DROP COLUMN is allowed for obsolete columns that nothing writes or reads.
-    # Lakebase rewrites the table internally — the table appears empty for a short time,
-    # then all data is back. Never DROP TABLE or TRUNCATE.
+    # DROP COLUMN only for obsolete columns that nothing reads or writes; never DROP TABLE or TRUNCATE.
+    # Lakebase rewrites the table, so it looks empty for a moment before the data is back.
     async with pool.acquire() as conn:
         # ── messages (primary history table) ─────────────────────────────────
         await conn.execute('''
@@ -46,7 +45,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                 app_version         TEXT
             )
         ''')
-        # Add columns introduced after initial deployment (idempotent)
+        # Columns added to existing tables (idempotent).
         await _add_columns(conn, 'messages', [
             ('file_type',         'TEXT'),
             ('processing_method', 'TEXT'),
@@ -321,12 +320,12 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                 is_active     BOOLEAN NOT NULL DEFAULT TRUE
             )
         ''')
-        # Migrations: add columns for databases created before these existed
+        # Columns added to tables created by an older schema.
         await _add_columns(conn, 'users', [
             ('workspace_id', 'TEXT'),
         ])
 
-        # Translate lives in its own app (qualibot-translate): drop the unused column.
+        # Unused column, dropped when present.
         await conn.execute(
             "ALTER TABLE users DROP COLUMN IF EXISTS can_translate"
         )
@@ -404,10 +403,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             ON chat_messages(session_id)
         ''')
 
-        # ── chat_turns (one row per chat turn: every step, its duration, what
-        #    it should have run with and what went wrong — services/chat/turn_log.py)
-        #    No FK on session_id: a turn whose messages could not be saved is
-        #    still logged. ──────────────────────────────────────────────────────
+        # ── chat_turns (one row per chat turn, see services/chat/turn_log.py) ── no FK on session_id: a turn is logged even when its messages are not saved ──
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS chat_turns (
                 id                    SERIAL PRIMARY KEY,
@@ -430,9 +426,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_turns_assistant_message_id '
                            'ON chat_turns (assistant_message_id)')
 
-        # ── chat_retrieved_chunks (every passage retrieved for a turn, with its
-        #    text: the chunks of a superseded revision are deleted from the index
-        #    tables, this keeps what the answer was really built on) ────────────
+        # ── chat_retrieved_chunks (every passage retrieved for a turn, with its text: what the answer was really built on) ──
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS chat_retrieved_chunks (
                 id          BIGSERIAL PRIMARY KEY,
@@ -446,8 +440,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_retrieved_chunks_ref ON chat_retrieved_chunks (ref)')
 
         # ── knowledge_base_metadata ───────────────────────────────────────────
-        # Single-row table (id=1) holding the "documents as of" date shown in
-        # the chat UI. Update documents_as_of manually after each KB refresh.
+        # Single-row table (id=1) holding the 'documents as of' date shown in the chat UI, updated by hand after each KB refresh.
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS knowledge_base_metadata (
                 id              INTEGER PRIMARY KEY DEFAULT 1,
@@ -463,9 +456,8 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         ''')
 
         # ── doc_catalog ───────────────────────────────────────────────────────
-        # Every document of the parsing scope (REF, title, link, in the chat index or
-        # not). Rewritten by the parsing pipeline after each daily run (task
-        # 6_update_kb_metadata); read by server/services/infra/doc_catalog.py.
+        # Every document of the parsing scope (REF, title, link, whether it is in the chat index). Rewritten by parsing task
+        # 6_update_kb_metadata after each daily run; read by services/infra/doc_catalog.py.
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS doc_catalog (
                 ref        TEXT PRIMARY KEY,
@@ -477,10 +469,8 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         ''')
-        # Current revision (Intraqual indice) and its publication date, given to the chat's answer
-        # model with each document. Whichever of the app and parsing task 6 owns the table adds them;
-        # a failure here must not stop the rest of the schema.
-        # ALTER ... IF NOT EXISTS needs table ownership even when the column is there: look first.
+        # Current revision (Intraqual indice) and publication date, given to the answer model with each document.
+        # A failure here must not stop the rest of the schema; the columns are looked up first, since ALTER needs table ownership.
         have = {r['column_name'] for r in await conn.fetch(
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'doc_catalog'")}
         missing = [(c, t) for c, t in [('revision', 'TEXT'), ('doc_date', 'DATE')] if c not in have]
@@ -530,8 +520,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await conn.execute("UPDATE users SET email = BTRIM(email) WHERE email ~ '\\s'")
         await conn.execute("UPDATE users SET email = NULL WHERE TRIM(COALESCE(email,'')) = ''")
 
-        # 2. Delete NULL-email users whose numeric ID already has an email-carrying entry (same person from two
-        # workspaces),
+        # 2. Delete NULL-email users whose numeric ID already has an email-carrying entry (same person in two workspaces),
         #    otherwise the split UPDATE below hits a UNIQUE violation on user_id.
         await conn.execute(r'''
             DELETE FROM users

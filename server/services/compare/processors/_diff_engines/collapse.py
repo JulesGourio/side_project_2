@@ -80,9 +80,8 @@ def _cancel_resegmented(
     )
 
 
-# Pagination fragments inside repeated header/footer text ('Page 2', 'PAGE: 1 of 34', 'Sheet 5/48'): masked only
-# around these keywords when grouping repeats; bare numbers are never masked (wiring rows differing by a pin number
-# stay distinct). The trailing repeat group also swallows the second number of "PAGE : ~~16/37~~ **16/38**".
+# Pagination fragments in repeated header/footer text ('Page 2', 'PAGE: 1 of 34', 'Sheet 5/48') are masked only around
+# these keywords: bare numbers such as pin numbers must stay distinct.
 _PAGINATION_RE = re.compile(
     r'\b(page|sheet|folio|feuille|list|strana|str)\s*[:.]?\s*'
     r'\d+(?:\s*(?:of|/|sur|z)\s*\d+)?'

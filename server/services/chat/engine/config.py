@@ -65,7 +65,7 @@ def raw_top_k() -> int:
 
 
 _RAW_ON_ALL = ('question', 'fr', 'en')
-_RAW_ON = 'fr'                   # raw search on the French rewrite only (rawfr: as good, 4 queries instead of 6)
+_RAW_ON = 'fr'  # raw search on the French rewrite only, to keep the number of queries down
 
 
 def raw_on() -> List[str]:

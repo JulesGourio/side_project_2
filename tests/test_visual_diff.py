@@ -4,7 +4,7 @@ warnings, and DOCX estimated page numbers for images.
 Coverage:
   - _compute_image_diff_pairs : fine-hash (16x16) second-tier identity — a
     subtly edited diagram becomes a MODIFIED pair instead of "unchanged";
-    recompression noise and legacy entries (no hash16) stay "unchanged".
+    recompression noise and entries without a hash16 stay "unchanged".
   - extraction_warnings       : scanned/empty documents flagged.
   - _extract_docx             : image positions remapped to estimated pages.
 """
@@ -63,7 +63,7 @@ def test_recompression_noise_stays_unchanged():
 
 
 def test_subtle_diagram_edit_becomes_modified_pair():
-    # Coarse hashes identical (would have been missed before) but fine hashes
+    # Coarse hashes identical but fine hashes
     # differ well past the threshold — must surface as a MODIFIED pair.
     b64 = _jpeg_b64()
     old = {_DHASH_KEY: _img(fine_hash=_FINE_BASE, b64=b64)}
@@ -73,7 +73,7 @@ def test_subtle_diagram_edit_becomes_modified_pair():
     assert removed == [] and added == []
 
 
-def test_legacy_entries_without_fine_hash_keep_old_behaviour():
+def test_entries_without_fine_hash_keep_coarse_comparison():
     old = {_DHASH_KEY: _img()}
     new = {_DHASH_KEY: _img()}
     modified, orientation, removed, added = _compute_image_diff_pairs(old, new, show_position=True)

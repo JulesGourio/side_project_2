@@ -41,9 +41,8 @@ _QUERY_CONCURRENCY = 3
 _QUERY_RETRIES = 2
 _JUDGE_CONCURRENCY = 6
 _JUDGE_RETRIES = 1
-# A reasoning judge (gpt-5-*) spends max_tokens on hidden reasoning first and can run out before writing anything on a
-# candidate with many passages
-# (finish_reason "length", empty content). The retry gets this many times the budget, capped.
+# A reasoning judge spends max_tokens on hidden reasoning and can return an empty answer (finish_reason 'length') on a
+# candidate with many passages; the retry gets a larger budget, capped.
 _JUDGE_TRUNCATION_BUDGET_FACTOR = 3
 _JUDGE_MAX_TOKENS_CAP = 8000
 
@@ -568,8 +567,7 @@ async def run_impact_search(
                     'error_type': type(last_err).__name__,
                     'judge_ms': int((time.monotonic() - started) * 1000), 'judge_attempts': attempts}
 
-    # Explicit tasks, cancelled if the consumer goes away: with bare coroutines
-    # a closed browser tab left every remaining judge call running (and billed).
+    # Explicit tasks, cancelled when the consumer goes away: bare coroutines would keep running and billing after a closed tab.
     tasks = [asyncio.create_task(_one(c)) for c in to_judge]
     try:
         for next_done in asyncio.as_completed(tasks):
