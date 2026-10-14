@@ -440,8 +440,14 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Quand les juges sont validés : baisser les échantillons (`TARGET_SAMPLE_RATES` dans `utils/evaluation/chat_scorers.py`) et activer le planning (PAUSED aujourd'hui).
 
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
-  - ancien job de notation, s'il est encore présent : UI DEV → Jobs → `D_1_Qualibot_Score_Production_Qa` → ⋮ → **Delete**. Ses tables
-    `chat_quality_scores` et `chat_quality_scoring_runs` se suppriment à la main si elles existent (SQL, éditeur DEV, `DROP TABLE IF EXISTS`) ;
+  - ancien job de notation, s'il est encore présent : UI DEV → Jobs → `D_1_Qualibot_Score_Production_Qa` → ⋮ → **Delete**. Les tables qu'il
+    alimentait ne sont plus écrites par le code ; les supprimer si elles existent (éditeur SQL DEV) :
+
+    ```sql
+    DROP TABLE IF EXISTS dev_proj.qualibot.chat_quality_scores;
+    DROP TABLE IF EXISTS dev_proj.qualibot.chat_quality_scoring_runs;
+    ```
+
   - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, sauf les tables de test `*_test`. Les tables
     d'évaluation (`eval_*`, `qualibot_eval_golden`, `synthetic_retrieval_questions`, `feedback_failure_cases`) sont les défauts des notebooks :
     ne pas les supprimer.

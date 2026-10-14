@@ -2,7 +2,7 @@
 
 Référence des tables de l'application dans Lakebase (projet `qualibot`, branche `production`). Une base par environnement : `doccompare` (UAT, DEV, PROD) et `doccompare_test` (`qualibot-uat-test`).
 
-Source de vérité : `server/services/infra/lakebase/schema.py` (création et mise à jour), `columns.py` (colonnes du journal du chat). Les tables sont créées au démarrage de l'app (`ensure_schema`) : `CREATE TABLE IF NOT EXISTS`, puis `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Aucune donnée n'est supprimée au démarrage.
+Source de vérité : `server/services/infra/lakebase/schema.py` (création et mise à jour), `columns.py` (colonnes du journal du chat). Les tables sont créées au démarrage de l'app (`ensure_schema`) : `CREATE TABLE IF NOT EXISTS`, puis `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Au démarrage, l'app retire des colonnes obsolètes et fusionne les doublons de la table `users` ; aucune table n'est supprimée.
 
 Une colonne nouvelle s'ajoute dans `schema.py` (ou dans `columns.py` pour les tables du chat). Une clé nouvelle du journal d'un tour (`TurnLog.data`) doit avoir sa colonne dans `CHAT_TURN_COLUMNS` : `tests/test_lakebase_logging.py` le vérifie. Pour une base déjà en service sans redémarrage de l'app, la même colonne se passe par `runbooks/scripts/lakebase/migrations.py`.
 
@@ -314,7 +314,7 @@ Une ligne par appel à `/compare/impact`, réussi ou non.
 | `id` | SERIAL PK | identifiant |
 | `created_at` | TIMESTAMPTZ | date |
 | `user_id`, `workspace_id` | TEXT | utilisateur |
-| `method` | TEXT NOT NULL | méthode d'extraction des changements |
+| `method` | TEXT NOT NULL | méthode de la recherche d'impact (ex. `index_llm_per_doc`) |
 | `old_file_hash`, `new_file_hash` | TEXT | empreintes |
 | `changes_chars` | INTEGER | taille de la liste des changements, en caractères |
 | `truncated` | BOOLEAN | liste des changements tronquée |

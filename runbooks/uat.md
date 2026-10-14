@@ -39,7 +39,7 @@ databricks volumes list uat_proj qualibot --profile UAT -o json | ConvertFrom-Js
 databricks vector-search-indexes list-indexes qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
 ```
 
-**0.2 — Clonage des tables (SQL, éditeur SQL du workspace UAT, un utilisateur qui lit `uat_landingzone` et crée dans `uat_proj.qualibot`)**
+**0.2 — Clonage des tables (SQL, éditeur SQL du workspace UAT, un utilisateur qui lit l'ancien schéma UAT et crée dans `uat_proj.qualibot`)**
 
 Pour chaque table listée en 0.1 (sauf les volumes), une ligne `DEEP CLONE`. Si la table sans suffixe n'existe pas, cloner la version `_v1` correspondante. Référence :
 
