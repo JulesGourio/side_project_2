@@ -1,9 +1,5 @@
-// Small, simplified flag glyphs for the intraqual document-language badges.
-// Emoji flags render inconsistently across platforms (Windows in particular
-// often falls back to bare two-letter codes instead of an actual flag glyph),
-// so these are plain inline SVGs — same look everywhere, no font dependency.
-// Not pixel-accurate (no coat of arms / stars) — recognisable at ~18px is the
-// only goal.
+// Inline SVGs rather than emoji: emoji flags render inconsistently across platforms.
+// Approximate shapes only, recognisable at ~18px.
 
 import type { ReactNode } from 'react';
 
@@ -33,7 +29,6 @@ const FLAGS: Record<string, ReactNode> = {
       <rect width="6.67" height="15" fill="#002395" />
     </Svg>
   ),
-  // EN and GB never occur on the same document — both mean "English".
   GB: (
     <Svg title="English">
       <rect width="20" height="15" fill="#012169" />
@@ -78,7 +73,7 @@ const FLAGS: Record<string, ReactNode> = {
     </Svg>
   ),
 };
-FLAGS.EN = FLAGS.GB; // "EN" and "GB" both just mean English on intraqual REFs
+FLAGS.EN = FLAGS.GB; // Intraqual uses both codes for English, never on the same document.
 
 export function Flag({ code }: { code: string }) {
   const flag = FLAGS[code];

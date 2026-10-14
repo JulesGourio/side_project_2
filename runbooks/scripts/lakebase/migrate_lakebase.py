@@ -3,8 +3,8 @@
 Runs from a workstation, not from the app or a bundle job. Connects with generate_database_credential, which gives
 the DDL rights. Run from the repo root:
 
-    python oneshot/lakebase/migrate_lakebase.py --env DEV
-    python oneshot/lakebase/migrate_lakebase.py --env UAT
+    python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV
+    python runbooks/scripts/lakebase/migrate_lakebase.py --env UAT
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ import logging
 import sys
 from pathlib import Path
 
-# Repo root is parents[2] of this file (oneshot/lakebase/): utils/ops_config.py is imported from there.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "utils"))
+# Repo root is parents[3] of this file (runbooks/scripts/lakebase/): utils/ops_config.py is imported from there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "utils"))
 from ops_config import LAKEBASE_PROJECTS, lakebase_connect
 
 from migrations import MIGRATIONS, apply_migrations  # this folder, next to this script

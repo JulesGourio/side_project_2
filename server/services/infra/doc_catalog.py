@@ -4,31 +4,23 @@ revision, so documents named in prose become clickable "Sources" chips even with
 The catalog is the Lakebase table ``doc_catalog`` (every document of the parsing scope, with title, link, ``in_chat``),
 rewritten by parsing task ``6_update_kb_metadata`` after each daily run; the app reloads it at startup and every
 ``DOC_CATALOG_REFRESH_S`` seconds (``catalog_refresher``). Until that table has rows (app started before the first
-pipeline run, local dev, tests) the bundled ``server/data/doc_catalog.json`` is used as a fallback; it is a
-static snapshot and is never refreshed. Every function degrades to a no-op when neither source is available.
+pipeline run, local dev, tests) every function degrades to a no-op: no REF is resolved and no chip is shown.
 """
 
 import asyncio
-import json
 import logging
 import os
 import re
-from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Fallback only, read while the Lakebase table has no rows.
-_DEFAULT_CATALOG = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'doc_catalog.json')
-_CATALOG_PATH = os.getenv('DOC_CATALOG_PATH', _DEFAULT_CATALOG)
 _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
 
 # The catalog loaded from Lakebase (None until the first successful load).
 _live: Optional['_Catalog'] = None
 
-# Our own intraqual_ref_url() scheme (parsing/utils.py) embeds the REF in the URL: .../identification.aspx?ref=<REF>.
-# The bundled catalog's url_to_ref map uses the portal's liredocumentdepuisrecherche?id= links and never matches
-# these URLs, so the REF is read straight from the URL.
+# The pipeline's intraqual_ref_url() embeds the REF in the URL (identification.aspx?ref=<REF>): the REF is read from there.
 _REF_IN_URL_RE = re.compile(r'[?&]ref=([^&]+)', re.IGNORECASE)
 
 
@@ -100,8 +92,7 @@ def title_for_ref(ref: str) -> str:
 
 
 def document_info(ref: str) -> Dict[str, Any]:
-    """{title, revision, doc_date (ISO)} of a REF from the catalog — the fields it has (the bundled
-    snapshot has no revision); {} when unknown."""
+    """{title, revision, doc_date (ISO)} of a REF from the catalog, only the fields it has; {} when unknown."""
     cat = _catalog()
     entry = cat.by_ref.get(_norm(ref)) if cat else None
     if not entry:
@@ -208,28 +199,8 @@ class _Catalog:
         return [e for e in group if e is not entry]
 
 
-@lru_cache(maxsize=1)
-def _file_catalog() -> Optional[_Catalog]:
-    """The bundled snapshot — only until the Lakebase catalog has been loaded."""
-    path = os.path.normpath(_CATALOG_PATH)
-    if not os.path.exists(path):
-        logger.info('doc_catalog: no catalog at %s — reference resolution disabled', path)
-        return None
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            entries = json.load(f)
-    except Exception as exc:
-        logger.warning('doc_catalog: failed to load %s: %s', path, exc)
-        return None
-    cat = _Catalog(entries if isinstance(entries, list) else [])
-    logger.warning('doc_catalog: using the bundled snapshot %s (%d refs, never refreshed) — '
-                   'the Lakebase table doc_catalog is not loaded yet', path, len(cat.by_ref))
-    return cat
-
-
 def _catalog() -> Optional[_Catalog]:
-    """The current catalog: Lakebase once loaded, else the bundled snapshot."""
-    return _live if _live is not None else _file_catalog()
+    return _live
 
 
 def set_catalog(entries: List[Dict[str, Any]]) -> None:

@@ -8,7 +8,7 @@ package_libreoffice.py) or present in the target container.
 
 One-shot, run by hand from the repo root: checks the system libraries that
 package_libreoffice.py has to bundle. Usage:
-    python oneshot/soffice/scan_needed_libs.py <extracted_tree_dir>
+    python runbooks/scripts/soffice/scan_needed_libs.py <extracted_tree_dir>
 """
 
 import struct

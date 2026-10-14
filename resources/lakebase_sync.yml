@@ -1,4 +1,4 @@
-# Lakebase export to a UC volume and import to DEV (one-off Lakebase schema migrations live in oneshot/lakebase/).
+# Lakebase export to a UC volume and import to DEV (one-off Lakebase schema migrations live in runbooks/scripts/lakebase/).
 # Declared per target: each job exists only on the targets listed below.
 
 targets:

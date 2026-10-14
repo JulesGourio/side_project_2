@@ -35,11 +35,7 @@ def main() -> None:
         raise SystemExit(f"Unknown target '{target}'. Available: {available}")
 
     lines = [f"export {name}='{value}'" for name, value in values.items()]
-    # newline="\n" forces LF regardless of OS — write_text()'s default text
-    # mode translates "\n" to the platform separator, so running this on
-    # Windows silently wrote CRLF, embedding a trailing \r in every value
-    # and breaking any URL built from one ("Invalid non-printable ASCII
-    # character in URL, '\r'").
+    # LF on every OS: text mode would write CRLF on Windows, leaving a trailing \r in each value.
     output_path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8", newline="\n")
     logger.info(f"Wrote {len(lines)} var(s) to {output_path} for target '{target}'.")
 

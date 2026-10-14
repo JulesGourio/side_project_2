@@ -41,7 +41,7 @@ _TIMEOUT_S = 20.0
 # fastText's own lid.176 language-ID model — chosen over langdetect (noisy on
 # short/technical text) for the local pre-check. Sub-millisecond per call
 # once loaded; ~0.26s one-time load cost at first use.
-_FASTTEXT_MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'lid.176.ftz')
+_FASTTEXT_MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'lid.176.ftz')
 
 # Below this, a fastText guess is treated as noise (e.g. a short REF-code-only
 # message can get labelled Polish at 12% confidence) and detection falls back

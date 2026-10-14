@@ -12,9 +12,6 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 const SyntaxHighlighterComponent =
   SyntaxHighlighter as unknown as React.ComponentType<SyntaxHighlighterProps>;
 
-/**
- * Syntax-highlighted code block with a copy button.
- */
 function CodeBlock({ language, value }: { language: string; value: string }) {
   const [copied, setCopied] = React.useState(false);
 
@@ -71,34 +68,24 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
   );
 }
 
-/**
- * Strip footnotes and source references a model may inject.
- * Handles both HTML footnotes and GFM markdown footnotes.
- */
 function stripFootnotes(text: string): string {
   let cleaned = text;
 
-  // Remove HTML footnote sections: <section class="footnotes">...</section>
   cleaned = cleaned.replace(
     /<section[^>]*class="footnotes?"[^>]*>[\s\S]*?<\/section>/gi,
     "",
   );
-  // Remove standalone HTML footnote lists: <ol> blocks that contain footnote <li>s
   cleaned = cleaned.replace(
     /<ol[^>]*class="[^"]*footnote[^"]*"[^>]*>[\s\S]*?<\/ol>/gi,
     "",
   );
-  // Remove inline HTML footnote refs: <sup>[1]</sup>, <sup>1</sup>, <sup><a ...>1</a></sup>
   cleaned = cleaned.replace(/<sup[^>]*>[\s\S]*?<\/sup>/gi, "");
-  // Remove other stray HTML tags (models sometimes emit bare tags that react-markdown can't parse)
+  // Models sometimes emit bare tags that react-markdown cannot parse.
   cleaned = cleaned.replace(/<\/?(?:section|sup|a\s+href="#fn)[^>]*>/gi, "");
 
-  // Remove GFM footnote definitions: [^1]: some text (at start of line)
   cleaned = cleaned.replace(/^\[\^\d+\]:.*$/gm, "");
-  // Remove GFM inline footnote references: [^1]
   cleaned = cleaned.replace(/\[\^\d+\]/g, "");
 
-  // Clean up excess blank lines left behind
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
 
   return cleaned.trim();
@@ -107,19 +94,8 @@ function stripFootnotes(text: string): string {
 /** Maps a 1-based citation number to the source it points to. */
 export type CitationMap = Record<number, { url?: string; title?: string }>;
 
-/**
- * Turn every mention of a cited document's reference into a clickable
- * superscript [n] link, inline in the answer.
- *
- * A flat list of consulted documents carries no character position for each citation, so instead of
- * guessing positions, we anchor each citation on the document's own reference
- * code wherever it appears in the text (the "📋 Référence : …" header and any
- * inline mentions). Each occurrence of the ref `T` for source `n` becomes
- * `T[n](cite:n)`, which the `a` renderer styles as a superscript badge.
- *
- * If the content already carries server-injected ⟦n⟧ markers (an endpoint that
- * does expose positions), those win and we don't touch the text.
- */
+// The sources list carries no character positions, so each citation is anchored on the
+// document's reference code wherever it appears; server-injected ⟦n⟧ markers take precedence.
 function linkifyCitations(text: string, citations?: CitationMap): string {
   if (!citations || /⟦\d+⟧/.test(text)) return text;
   let out = text;
@@ -127,8 +103,7 @@ function linkifyCitations(text: string, citations?: CitationMap): string {
     const title = (c.title || "").trim();
     if (!title) continue;
     const esc = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // Match the ref when it is not glued to other word characters, and not
-    // already immediately followed by a citation marker.
+    // Skip refs already followed by their citation marker, so a second pass does not link them twice.
     const re = new RegExp(`(?<![\\w-])${esc}(?![\\w-])(?!\\s*\\[\\d+\\]\\(cite:)`, "g");
     out = out.replace(re, (m) => `${m}[${nStr}](cite:${nStr})`);
   }
@@ -138,23 +113,14 @@ function linkifyCitations(text: string, citations?: CitationMap): string {
 interface MarkdownRendererProps {
   content: string;
   className?: string;
-  // When provided, inline ⟦n⟧ markers in the content are rendered as
-  // superscript [n] links to citations[n] (the Databricks-Agent style).
   citations?: CitationMap;
 }
 
-/**
- * Shared markdown renderer with themed styling.
- * Used by both the chat Message component and the Compare view.
- */
 export function MarkdownRenderer({
   content,
   className = "",
   citations,
 }: MarkdownRendererProps) {
-  // Strip the endpoint's own footnotes, anchor citations on the referenced
-  // document codes in the text, then turn both server-injected ⟦n⟧ markers and
-  // the linkified refs into `cite:n` links the `a` renderer styles as badges.
   const cleanedContent = React.useMemo(
     () =>
       linkifyCitations(stripFootnotes(content), citations)
@@ -169,11 +135,9 @@ export function MarkdownRenderer({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        // Keep our internal `cite:n` links — react-markdown's default sanitizer
-        // strips unknown protocols (so the citation badge would never render).
+        // The default sanitizer strips unknown protocols, which would drop the cite:n links.
         urlTransform={(url) => (url.startsWith("cite:") ? url : defaultUrlTransform(url))}
         components={{
-          // Headings
           h1: ({ children }) => (
             <h1
               className="text-xl font-bold text-[var(--color-text-heading)] mt-5 mb-2.5 pb-1.5 border-b border-[var(--color-border)] tracking-[-0.025em] leading-tight"
@@ -223,14 +187,12 @@ export function MarkdownRenderer({
             </h6>
           ),
 
-          // Paragraphs
           p: ({ children }) => (
             <p className="mb-2.5 leading-[1.7] text-[0.9375rem] text-[var(--color-text-primary)] tracking-[-0.005em]">
               {children}
             </p>
           ),
 
-          // Lists
           ul: ({ children }) => (
             <ul className="my-2.5 ml-5 space-y-1.5 list-disc marker:text-[var(--color-accent-primary)]">
               {children}
@@ -247,10 +209,7 @@ export function MarkdownRenderer({
             </li>
           ),
 
-          // Links
           a: ({ href, children }) => {
-            // Inline citation marker: render as a small superscript badge that
-            // links to the source (or just shows the reference if no URL).
             if (href && href.startsWith("cite:")) {
               const n = parseInt(href.slice(5), 10);
               const cite = citations?.[n];
@@ -287,7 +246,6 @@ export function MarkdownRenderer({
             );
           },
 
-          // Code
           code: ({ className, children, ...props }: any) => {
             const match = /language-(\w+)/.exec(className || "");
             const language = match ? match[1] : "";
@@ -310,7 +268,6 @@ export function MarkdownRenderer({
 
           pre: ({ children }) => <>{children}</>,
 
-          // Blockquotes
           blockquote: ({ children }) => (
             <blockquote className="my-4 pl-4 pr-3 py-2.5 border-l-4 border-[var(--color-accent-primary)] bg-[var(--color-muted)]/30 rounded-r-lg">
               <div
@@ -322,7 +279,6 @@ export function MarkdownRenderer({
             </blockquote>
           ),
 
-          // Tables
           table: ({ children }) => (
             <div className="my-4 overflow-x-auto rounded-xl border border-[var(--color-border)] shadow-md bg-[var(--color-background)]/50 backdrop-blur-sm">
               <table className="w-full border-collapse">{children}</table>
@@ -360,12 +316,10 @@ export function MarkdownRenderer({
             </td>
           ),
 
-          // Horizontal rule
           hr: () => (
             <hr className="my-6 border-t-2 border-[var(--color-border)] opacity-50" />
           ),
 
-          // Strong / Emphasis
           strong: ({ children }) => (
             <strong
               className="font-bold text-[var(--color-text-heading)]"

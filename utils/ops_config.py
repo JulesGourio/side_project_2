@@ -20,7 +20,7 @@ LAKEBASE: dict[str, dict] = {
     "UAT": {
         "profile": PROFILE_UAT,
     },
-    # Isolated database (qualibot-uat-test): same project as UAT, other database. Never "doccompare".
+    # Same Lakebase project as UAT, separate database: test runs never write to the UAT database.
     "UAT-TEST": {
         "profile": PROFILE_UAT,
     },

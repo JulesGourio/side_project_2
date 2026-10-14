@@ -154,7 +154,7 @@ env:
   - name: COMPARE_VOLUME_PATH
     value: ""
   # Exact-layout PDF preview (server/services/compare/soffice.py): UC Volume path of a portable LibreOffice tar.gz built by
-  # oneshot/soffice/package_libreoffice.py, extracted once per app process. Absent = no "Exact (PDF)" mode (docx-preview instead).
+  # runbooks/scripts/soffice/package_libreoffice.py, extracted once per app process. Absent = no "Exact (PDF)" mode (docx-preview instead).
   #   uat : /Volumes/uat_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz
   - name: SOFFICE_ARCHIVE_VOLUME_PATH
     value: ""

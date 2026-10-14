@@ -263,10 +263,10 @@ avec `TestClient`), `test_impact_queries.py` et `test_impact_judge_prompt.py`
 python -m pytest tests/test_compare_*.py tests/test_impact_*.py tests/test_diff_golden.py tests/test_processors_golden.py
 ```
 
-Hors des tests, `oneshot/compare/compare_preview.py` lance l'extraction, le diff et la
+Hors des tests, `runbooks/scripts/compare/compare_preview.py` lance l'extraction, le diff et la
 préparation des images sur une paire de fichiers locaux, sans appel au modèle, et
 affiche ce qui serait envoyé :
 
 ```
-python oneshot/compare/compare_preview.py version_a.docx version_b.docx
+python runbooks/scripts/compare/compare_preview.py version_a.docx version_b.docx
 ```

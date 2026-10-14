@@ -17,8 +17,8 @@
 # MAGIC
 # MAGIC **Run by hand** (from the repo root, CLI profile `UAT`; no bundle job runs it):
 # MAGIC ```
-# MAGIC databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/export_uat_to_staging --file oneshot/dev_copy/export_uat_to_staging.py --format SOURCE --language PYTHON --overwrite --profile UAT
-# MAGIC databricks jobs submit --json @oneshot/dev_copy/export_uat_submit.json --profile UAT
+# MAGIC databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/export_uat_to_staging --file runbooks/scripts/dev_copy/export_uat_to_staging.py --format SOURCE --language PYTHON --overwrite --profile UAT
+# MAGIC databricks jobs submit --json @runbooks/scripts/dev_copy/export_uat_submit.json --profile UAT
 # MAGIC ```
 # MAGIC
 # MAGIC **Input Tables**

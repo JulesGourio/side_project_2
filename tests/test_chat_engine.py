@@ -452,17 +452,24 @@ def test_the_bilingual_rewrite_still_runs_otherwise(monkeypatch, code, history, 
 
 
 def test_the_question_is_searched_while_the_rewrite_runs(monkeypatch):
-    async def slow_rewrite(*args, **kwargs):
-        loop = asyncio.get_running_loop()
-        done = loop.create_future()
-        loop.call_later(0.15, done.set_result, None)                   # real delay: asyncio.sleep is mocked by _run
-        await done
+    # The rewrite cannot return before the question's reranked search has been sent: the overlap is checked by
+    # ordering, so the result does not depend on the speed of the machine.
+    question_sent = asyncio.Event()
+    order = []
+
+    def answer(p):
+        if 'reranker' in p and p['query_text'] == QUESTION:
+            order.append('question')
+            question_sent.set()
+        return DEFAULT_ROWS
+
+    async def rewrite(*args, **kwargs):
+        await asyncio.wait_for(question_sent.wait(), timeout=5)
+        order.append('rewrite')
         return 'FR: qualification CND\nEN: NDT qualification', 'databricks-gpt-6-luna'
-    _, m = _run(monkeypatch, rewrite=slow_rewrite)
-    calls = m['log'].vs_calls
-    question_rerank = next(c for c in calls if c['query_index'] == 0 and c['mode'] == 'rerank')
-    others = [c for c in calls if c is not question_rerank]
-    assert question_rerank['start_ms'] < 100 <= min(c['start_ms'] for c in others)   # before the rewrite answered / after it
+
+    _, m = _run(monkeypatch, rewrite=rewrite, answer=answer)
+    assert order == ['question', 'rewrite']
     assert len(m['sent']) == 4 and m['log'].data['vs_calls_expected'] == 4            # same four calls as without the overlap
     assert sorted(p['num_results'] for p in m['sent']) == [12, 12, 12, 12]
     assert m['log'].today == '2026-10-06'

@@ -5,7 +5,7 @@ documents, déploiement, alertes, évaluation du chat et de la recherche,
 droits Unity Catalog et outils d'exploitation Lakebase. Un dossier par sujet.
 L'application elle-même est dans `server/` et `client/` (voir le
 [README racine](../README.md)). Les scripts ponctuels (migrations, copies,
-empaquetages lancés une fois) sont dans [`oneshot/`](../oneshot/README.md) et
+empaquetages lancés une fois) sont dans [`runbooks/scripts/`](../runbooks/scripts/README.md) et
 ne sont jamais déployés.
 
 ## Carte du dossier
@@ -20,7 +20,7 @@ ne sont jamais déployés.
 | [`dev_copy/`](dev_copy/) | Import du corpus copié de l'UAT dans DEV, et création de l'endpoint Vector Search | job `copy_uat_to_dev` (`resources/dev_copy.yml`) |
 | [`grants/`](grants/) | Droits Unity Catalog des identités de service (application, pipeline) et accès aux volumes | jobs de `resources/grants.yml` |
 | [`evaluation/`](evaluation/) | Évaluation du chat et de la recherche : tests de charge, comparaison de réponses, évaluation de la recherche, expérience et prompts MLflow, scores des traces, contrôle des endpoints de vision | `create_chat_experiment.py`, `register_chat_prompts.py`, `score_chat_traces.py` : jobs de `resources/chat_mlflow.yml` ; le reste à la main (voir [runbooks/dev.md](../runbooks/dev.md)) |
-| [`ops_config.py`](ops_config.py) | Réglages partagés : profils CLI, bases Lakebase par environnement, connexion (`lakebase_connect`, `lakebase_connect_with`), listes d'ordre des tables | importé par `lakebase_sync/` et `oneshot/lakebase/` |
+| [`ops_config.py`](ops_config.py) | Réglages partagés : profils CLI, bases Lakebase par environnement, connexion (`lakebase_connect`, `lakebase_connect_with`), listes d'ordre des tables | importé par `lakebase_sync/` et `runbooks/scripts/lakebase/` |
 
 ## Conventions
 

@@ -4,8 +4,8 @@
 # MAGIC
 # MAGIC One-shot notebook, run by hand in the UAT workspace as `job-runner-sa-uat`
 # MAGIC (the bundle job that ran it was removed): everything created here is owned by that SP.
-# MAGIC Not deployed: `oneshot/` is excluded from the bundle sync. To run it, import it from the repo root with
-# MAGIC `databricks workspace import <workspace path> --file oneshot/uat/setup_proj_schema.py --format SOURCE --language PYTHON --overwrite --profile job-runner-sa-uat`,
+# MAGIC Not deployed: `runbooks/scripts/` is excluded from the bundle sync. To run it, import it from the repo root with
+# MAGIC `databricks workspace import <workspace path> --file runbooks/scripts/uat/setup_proj_schema.py --format SOURCE --language PYTHON --overwrite --profile job-runner-sa-uat`,
 # MAGIC then run it from the workspace with the widgets (defaults = the `qualibot-uat-test` rehearsal).
 # MAGIC
 # MAGIC 1. Checks the identity and that the target schema exists.

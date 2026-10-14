@@ -1,19 +1,12 @@
 import { Lock } from 'lucide-react';
 
 interface AccessDeniedProps {
-  /** Feature name used to build a default message (e.g. "Chat"). */
   feature?: string;
-  /** Override the heading. */
   title?: string;
-  /** Override the body message. */
   message?: string;
 }
 
-/**
- * Shown when a user opens a feature they are not entitled to. The tab stays
- * visible (see TopBar), but the feature itself is replaced by this panel — and
- * the backend independently returns 403, so it cannot be bypassed.
- */
+// Display only: the backend returns 403 on its own, so this panel is not the access control.
 export function AccessDenied({ feature, title, message }: AccessDeniedProps) {
   const heading = title ?? `${feature} — access not granted`;
   const body =

@@ -2,25 +2,20 @@
 # MAGIC %md
 # MAGIC # Grant Volume Access
 # MAGIC
-# MAGIC One-off admin utility: grants USE CATALOG + USE SCHEMA + READ VOLUME on a
-# MAGIC single volume to a service principal. Same pattern as the `Grant_Reference_Access`
-# MAGIC job of the sps_rfq_analysis bundle (run_as a service principal that already has grant
-# MAGIC authority on the target catalog), extended to volumes.
+# MAGIC Grants USE CATALOG + USE SCHEMA + one volume permission on a single volume to a service principal.
 # MAGIC
-# MAGIC Used for: `job-runner-sa-uat` needs READ VOLUME on
-# MAGIC `prod_landingzone.intraqual.intraqual_documents` to run
-# MAGIC `utils/parsing_pipeline/create_proj_parse_manifest.py` (`dbutils.fs.ls` on that
-# MAGIC volume) under `run_as` in the qualibot-uat/-test bundle targets.
+# MAGIC Used for the `run_as` service principal of the UAT bundle targets, which must read the Intraqual
+# MAGIC source volume `prod_landingzone.intraqual.intraqual_documents` (`dbutils.fs.ls` in
+# MAGIC `utils/parsing_pipeline/create_proj_parse_manifest.py`).
 # MAGIC
-# MAGIC If `run_as` also lacks GRANT rights on the target catalog, this job fails
-# MAGIC with the same PERMISSION_DENIED the target service principal hits — a job
-# MAGIC can't manufacture a privilege `run_as` doesn't already have.
+# MAGIC The job runs as a principal that already holds GRANT rights on the target catalog: it cannot
+# MAGIC grant a privilege that its own `run_as` does not have.
 
 # COMMAND ----------
 
 dbutils.widgets.removeAll()
 dbutils.widgets.text("service_principal", "", "Service principal client id (or account) to grant")
-dbutils.widgets.text("catalog", "", "Catalog (e.g. prod_landingzone)")
+dbutils.widgets.text("catalog", "", "Catalog (e.g. prod_proj)")
 dbutils.widgets.text("schema_name", "", "Schema (e.g. intraqual)")
 dbutils.widgets.text("volume_name", "", "Volume (e.g. intraqual_documents)")
 dbutils.widgets.text("volume_permission", "READ VOLUME", "READ VOLUME or WRITE VOLUME")

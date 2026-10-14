@@ -39,11 +39,11 @@ def _reset_live():
     doc_catalog._live = saved
 
 
-def test_lakebase_rows_replace_the_bundled_snapshot():
+def test_lakebase_rows_are_the_catalog():
     loaded = asyncio.run(doc_catalog.refresh_from_lakebase(_pool([_row('ZZ-9001_FR', 'Gestion des gabarits')])))
     assert loaded == 1
     assert doc_catalog.title_for_ref('ZZ-9001_FR') == 'Gestion des gabarits'
-    assert doc_catalog.title_for_ref('MI-1000') == ''          # the bundled snapshot is not a source
+    assert doc_catalog.title_for_ref('MI-1000') == ''
     assert doc_catalog._catalog().by_canon['ZZ9001'][0]['ref'] == 'ZZ-9001_FR'   # base_ref derived by the app
 
 

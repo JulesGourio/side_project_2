@@ -150,7 +150,7 @@ databricks fs cp -r dbfs:/Volumes/dev_landingzone/qualibot/images dbfs:/Volumes/
 
 Le volume `staging` n'est pas copié (échanges transitoires).
 
-**00.3 — Export du corpus depuis UAT (workspace UAT, notebook `oneshot/dev_copy/export_uat_to_staging.py`)**
+**00.3 — Export du corpus depuis UAT (workspace UAT, notebook `runbooks/scripts/dev_copy/export_uat_to_staging.py`)**
 
 Lancer ce notebook depuis le workspace UAT (ponctuel, voir le bloc E plus bas). Son source par défaut est désormais `uat_proj.qualibot` : la copie UAT de `runbooks/uat.md` étape 0 doit être faite avant.
 
@@ -569,8 +569,8 @@ n'est pas touchée. Tables exportées : chunks, `src_chunks_as`, `src_chunks_is`
   ```powershell
   databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile UAT
   databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/export_uat_to_staging `
-    --file oneshot\dev_copy\export_uat_to_staging.py --format SOURCE --language PYTHON --overwrite --profile UAT
-  databricks jobs submit --json "@oneshot/dev_copy/export_uat_submit.json" --profile UAT
+    --file runbooks\scripts\dev_copy\export_uat_to_staging.py --format SOURCE --language PYTHON --overwrite --profile UAT
+  databricks jobs submit --json "@runbooks/scripts/dev_copy/export_uat_submit.json" --profile UAT
   ```
 
   Compute serverless, sous votre identité. Si l'écriture Delta dans le volume est refusée, relancer en Parquet : ajouter dans le JSON, sous

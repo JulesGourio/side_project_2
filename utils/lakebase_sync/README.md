@@ -7,7 +7,7 @@ Lakebase, bases par environnement) sont dans
 [`utils/ops_config.py`](../ops_config.py).
 
 Les migrations du schéma et les copies ponctuelles de tables ne sont pas ici :
-elles sont dans [`oneshot/lakebase/`](../../oneshot/README.md).
+elles sont dans [`runbooks/scripts/lakebase/`](../../runbooks/scripts/README.md).
 
 ## Fichiers
 

@@ -1,13 +1,8 @@
 import { useEffect, useState } from 'react';
 import { FileText, Loader2 } from 'lucide-react';
 
-/**
- * Exact-layout docx preview, used by the Compare tab's file preview modal:
- * POST /api/preview/pdf converts the document through the server's headless
- * LibreOffice engine and the browser's native PDF viewer renders it — true
- * page layout with zoom/search/page-nav built in. Conversions are cached
- * server-side by content hash, so re-opening the same file is instant.
- */
+// The server converts the file to PDF so the browser viewer shows the real page layout.
+// Conversions are cached by content hash on the server.
 export function ExactDocxPreview({ bytes, filename }: { bytes: ArrayBuffer | Uint8Array; filename: string }) {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

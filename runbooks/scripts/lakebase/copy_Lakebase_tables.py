@@ -5,10 +5,10 @@ directly (--direct). Each table is then created or replaced as a Delta table in 
 
 USAGE, from the repo root (in the .venv of the project, with psycopg2-binary):
     1. Default: run the UAT job `lakebase_export_uat_to_volume` first, then
-       python oneshot/lakebase/copy_Lakebase_tables.py
+       python runbooks/scripts/lakebase/copy_Lakebase_tables.py
 
     2. Direct mode (needs network access to port 5432, blocked from the corporate network):
-       python oneshot/lakebase/copy_Lakebase_tables.py --direct
+       python runbooks/scripts/lakebase/copy_Lakebase_tables.py --direct
 """
 
 import argparse
@@ -23,8 +23,8 @@ from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState, Disposition, Format
 
-# Repo root is parents[2] of this file (oneshot/lakebase/): utils/ops_config.py is imported from there.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "utils"))
+# Repo root is parents[3] of this file (runbooks/scripts/lakebase/): utils/ops_config.py is imported from there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "utils"))
 from ops_config import PROFILE_DEV, LAKEBASE, json_serializer, lakebase_connect
 
 COPY_SOURCE_ENV      = "UAT"          # Lakebase source (key in LAKEBASE)

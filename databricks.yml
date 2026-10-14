@@ -116,7 +116,6 @@ sync:
     - "client/node_modules/**"
     - "docs/**"                  # documentation only — never read at runtime
     - "runbooks/**"              # manual steps for the operator, never read at runtime
-    - "oneshot/**"               # one-time migrations, copies and cleanups, never read at runtime
     - "archive/**"               # superseded documentation, never read at runtime
     - ".git/**"
     - ".databricks/**"           # local CLI cache — contains 64MB+ terraform binaries
@@ -500,7 +499,7 @@ targets:
   # Remove this target once the evaluation is done.
   # Rehearsal of the UAT switch to the new chatbot: writes only uat_proj.qualibot.*_test (owned by job-runner-sa-uat),
   # the images_test volume, the chunks_index_test index and Lakebase doccompare_test — never anything the running
-  # qualibot app, its agents or its parsing job read. the one-shot oneshot/uat/setup_proj_schema.py deep-clones the
+  # qualibot app, its agents or its parsing job read. the one-shot runbooks/scripts/uat/setup_proj_schema.py deep-clones the
   # parsing state from uat_proj.qualibot.*_v1 (read only), so the first run re-chunks without a GPU reparse.
   qualibot-uat-test:
     workspace:

@@ -88,7 +88,6 @@ try {
             --exclude 'client/node_modules/**' `
             --exclude 'docs/**' `
             --exclude 'runbooks/**' `
-            --exclude 'oneshot/**' `
             --exclude 'archive/**' `
             --exclude 'files_to_compare/**' `
             --exclude 'debug_results/**' `
@@ -110,18 +109,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "databricks sync failed (exit $LASTEXITCODE)" }
     }
 
-    # 3. Ensure the app compute is running before deploying (dev included: its
-    # off-hours jobs exist but are PAUSED). Off-hours jobs
-    # (databricks.yml: apps_stop_nightly_uat) stop qualibot-uat-test nightly
-    # (21h Paris, never restarted by a job) and qualibot
-    # over the weekend (Fri 21h -> Mon 7h). Deploying to a stopped app fails
-    # outright ("Cannot deploy app ... as it is not in RUNNING state").
-    #
-    # qualibot-uat-test must NEVER be auto-started by a script (disposable
-    # test app - being stopped is its normal/intended state outside of an
-    # active manual test session). qualibot (uat) and prod are fine to
-    # auto-start here, since they're expected to be up during business hours
-    # anyway and a deploy shouldn't be blocked by the off-hours job's timing.
+    # 3. Deploying to a stopped app fails ("not in RUNNING state"), and the off-hours jobs
+    # (databricks.yml: apps_stop_nightly_uat) stop the apps, so the compute is checked first.
+    # qualibot-uat-test is never auto-started: it is a disposable test app, stopped outside test sessions.
     if ($SyncOnly) {
         Write-Host ""
         Write-Host "Code synced to $SourceCodePath (-SyncOnly: app not restarted, frontend not rebuilt)." -ForegroundColor Green

@@ -14,19 +14,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _PROCESSORS_YML = os.path.join(
-    os.path.dirname(__file__), '..', 'config', 'processors.yml'
+    os.path.dirname(__file__), '..', 'services', 'compare', 'processors', 'versions.yml'
 )
 
 
 @lru_cache(maxsize=1)
 def _load_processors_config() -> dict:
-    """Parse server/config/processors.yml once and cache the result."""
+    """Parse the processor version mapping once and cache the result."""
     path = os.path.normpath(_PROCESSORS_YML)
     try:
         with open(path, 'r', encoding='utf-8') as f:
             return yaml.safe_load(f) or {}
     except Exception as e:
-        logger.warning(f'Could not load processors.yml: {e}')
+        logger.warning(f'Could not load the processor versions: {e}')
         return {}
 
 
