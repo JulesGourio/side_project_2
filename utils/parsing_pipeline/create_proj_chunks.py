@@ -1,6 +1,8 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 3_PARSE — DOCUMENT PARSE AND CHUNK
+# MAGIC # PROJ CHUNKS — DOCUMENT PARSE AND CHUNK
+# MAGIC
+# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the volume files and the Bronze-derived manifest, not Gold (`CLAUDE.md`, naming).
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Parses the documents of the manifest and builds the tables the chat reads. One function per phase, in `parse_steps.py`,
@@ -172,7 +174,7 @@ logger.info(
 # MAGIC # Inputs
 # MAGIC ## Import Qualibot tables
 # MAGIC ### Parse manifest
-# MAGIC One row per in-scope document, written by `2_manifest`. Run `2_Cleanup_Volume` first if it is not up to date.
+# MAGIC One row per in-scope document, written by `2_manifest`. Run `create_proj_parse_manifest` first if it is not up to date.
 
 # COMMAND ----------
 

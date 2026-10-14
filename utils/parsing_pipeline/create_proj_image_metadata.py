@@ -1,6 +1,8 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 4_DESCRIBE_IMAGES — VISION LLM DESCRIPTION AND IMAGE PASSAGES
+# MAGIC # PROJ IMAGE_METADATA — VISION LLM DESCRIPTION AND IMAGE PASSAGES
+# MAGIC
+# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the volume images and the tables written by the upstream tasks, not Gold (`CLAUDE.md`, naming).
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Describes the `PENDING` images of `image_metadata` with a vision LLM, then injects the descriptions as image passages into the chunk tables.

@@ -62,7 +62,7 @@ targets:
               depends_on:
                 - task_key: "2_vector_search_endpoint"
               notebook_task:
-                notebook_path: ../utils/parsing_pipeline/5_Sync_Vector_Indexes.py
+                notebook_path: ../utils/parsing_pipeline/update_proj_vector_indexes.py
                 source: WORKSPACE
                 base_parameters:
                   indexes: ${var.parsing_vector_search_indexes}

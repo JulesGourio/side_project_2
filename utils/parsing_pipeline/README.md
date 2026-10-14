@@ -17,12 +17,12 @@ notebook ne fait qu'orchestrer.
 
 | Tâche | Notebook | Cluster | Rôle | Écrit |
 |---|---|---|---|---|
-| `1_categories` | `1_Build_Category_Reference.py` | CPU (`meta_cpu_cluster`) | Vérifie la fraîcheur des sources Intraqual, construit la hiérarchie des catégories et les divisions | `category_reference` |
-| `2_manifest` | `2_Cleanup_Volume.py` | CPU (`meta_cpu_cluster`) | Applique le périmètre, retire les contenus obsolètes, classe les dossiers du volume, construit la liste des documents du jour | `parse_manifest`, `processed_files`, et suppressions dans les tables de passages |
-| `3_parse` | `3_Parse_Pipeline.py` | GPU (`parse_gpu_cluster`) | Choisit un fichier par document, le parse, extrait les images, découpe en passages et écrit les tables | `_pipeline_checkpoint`, `processed_files`, `chunks`, `chunks_archive`, `chunks_archive_notices`, `image_metadata`, `parsing_run_health`, `document_change_log` |
-| `4_describe_images` | `4_Describe_Images_LLM.py` | CPU (`describe_cpu_cluster`) | Décrit les images par un modèle de vision et ajoute leurs passages | `image_metadata`, `chunks`, `chunks_archive`, `processed_files` |
-| `5_sync_index` | `5_Sync_Vector_Indexes.py` | serverless | Crée les index absents, lance leur synchronisation, reconstruit `chunks_full` si demandé | `chunks_full`, index Vector Search |
-| `6_update_kb_metadata` | `6_Update_Knowledge_Base_Metadata.py` | serverless | Reconstruit le catalogue des documents et la date de la base dans Lakebase | `doc_catalog`, `knowledge_base_metadata` (Lakebase) |
+| `1_categories` | `create_proj_category_reference.py` | CPU (`meta_cpu_cluster`) | Vérifie la fraîcheur des sources Intraqual, construit la hiérarchie des catégories et les divisions | `category_reference` |
+| `2_manifest` | `create_proj_parse_manifest.py` | CPU (`meta_cpu_cluster`) | Applique le périmètre, retire les contenus obsolètes, classe les dossiers du volume, construit la liste des documents du jour | `parse_manifest`, `processed_files`, et suppressions dans les tables de passages |
+| `3_parse` | `create_proj_chunks.py` | GPU (`parse_gpu_cluster`) | Choisit un fichier par document, le parse, extrait les images, découpe en passages et écrit les tables | `_pipeline_checkpoint`, `processed_files`, `chunks`, `chunks_archive`, `chunks_archive_notices`, `image_metadata`, `parsing_run_health`, `document_change_log` |
+| `4_describe_images` | `create_proj_image_metadata.py` | CPU (`describe_cpu_cluster`) | Décrit les images par un modèle de vision et ajoute leurs passages | `image_metadata`, `chunks`, `chunks_archive`, `processed_files` |
+| `5_sync_index` | `update_proj_vector_indexes.py` | serverless | Crée les index absents, lance leur synchronisation, reconstruit `chunks_full` si demandé | `chunks_full`, index Vector Search |
+| `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | Reconstruit le catalogue des documents et la date de la base dans Lakebase | `doc_catalog`, `knowledge_base_metadata` (Lakebase) |
 
 Chaque tâche attend la tâche qui la précède. Si `5_sync_index` échoue, le catalogue
 n'est pas mis à jour. Sans la tâche 5, les nouveaux passages ne sont jamais

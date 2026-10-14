@@ -205,7 +205,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
 
     _write_run_health_summary(df_processed_files, job_run_id, RUN_MODE)
 
-    logger.info("[NEXT] Run 4_Describe_Images_LLM to describe PENDING images.")
+    logger.info("[NEXT] Run create_proj_image_metadata to describe PENDING images.")
 
 
 def write_archive_notices(df_notices):

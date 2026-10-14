@@ -56,7 +56,7 @@ DIVISION_ARCHIVE_TABLE   = _env("PARSING_DIVISION_ARCHIVE_TABLE",   "")
 DIVISION_REFERENCE_TABLE = _env("PARSING_DIVISION_REFERENCE_TABLE",
                                 f"{CATALOG_SCHEMA}.category_reference{TABLE_SUFFIX}")
 
-# Pre-computed by 2_Cleanup_Volume — avoids querying gd_doc/gd_cat/gd_typdoc directly here.
+# Pre-computed by create_proj_parse_manifest — avoids querying gd_doc/gd_cat/gd_typdoc directly here.
 PARSE_MANIFEST_TABLE  = _env("PARSING_PARSE_MANIFEST_TABLE",
                              f"{CATALOG_SCHEMA}.parse_manifest{TABLE_SUFFIX}")
 
@@ -75,7 +75,7 @@ TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.processed_files{TABLE_SUFFIX}"
 # All divisions; the chat filters on the `division` column at query time.
 TARGET_CHUNK_TABLE     = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"
 # Chunks of documents published before DOC_DATE_CUTOFF: kept out of `chunks` (chat),
-# merged with `chunks` into `chunks_full` by 5_Sync_Vector_Indexes for the impact-search index.
+# merged with `chunks` into `chunks_full` by update_proj_vector_indexes for the impact-search index.
 TARGET_CHUNK_TABLE_ARCHIVE = f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}"
 
 TARGET_IMAGE_METADATA_TABLE  = f"{CATALOG_SCHEMA}.image_metadata{TABLE_SUFFIX}"
@@ -108,7 +108,7 @@ _dt.date.fromisoformat(DOC_DATE_CUTOFF)  # fails at import on a malformed value:
 
 # Total number of pre-cutoff documents allowed to be parsed, most recent first
 # (cumulative, not per run): 0 = none, N = the N most recent, -1 = all.
-# 2_Cleanup_Volume turns it into parse_manifest.parse_content.
+# create_proj_parse_manifest turns it into parse_manifest.parse_content.
 ARCHIVE_MAX_DOCS = int(_env("PARSING_ARCHIVE_MAX_DOCS", "0") or "0")
 
 # One metadata-only "notice" chunk per pre-cutoff document (REF, title, revision,
@@ -116,19 +116,19 @@ ARCHIVE_MAX_DOCS = int(_env("PARSING_ARCHIVE_MAX_DOCS", "0") or "0")
 # Copied into the RAG chunk tables (chatbot indexes) only when ARCHIVE_NOTICES_IN_RAG is on.
 TARGET_ARCHIVE_NOTICE_TABLE = f"{CATALOG_SCHEMA}.chunks_archive_notices{TABLE_SUFFIX}"
 ARCHIVE_NOTICES_IN_RAG = _env("PARSING_ARCHIVE_NOTICES_IN_RAG", "false").strip().lower() in ("1", "true", "yes")
-# Also hardcoded in 5_Sync_Vector_Indexes.py (serverless, no config.py) and matched
+# Also hardcoded in update_proj_vector_indexes.py (serverless, no config.py) and matched
 # by ARCHIVE_NOTICE_MARKER in server/services/infra/vector_search.py.
 ARCHIVE_NOTICE_CONTENT_TYPE = "archive_notice"
 ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
 
 # =============================================================================
 # Manual REF exclusions — reviewed by hand, add sparingly. Excluded permanently
-# as SKIPPED_REF_MANUAL by 2_Cleanup_Volume.py.
+# as SKIPPED_REF_MANUAL by create_proj_parse_manifest.py.
 # =============================================================================
 MANUAL_REF_EXCLUSIONS = set()
 
 # --- Category exclusion ---
-# Documents whose principal category (IDCAT) is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by 2_Cleanup_Volume.py.
+# Documents whose principal category (IDCAT) is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by create_proj_parse_manifest.py.
 EXCLUDED_IDCATS = {3798}  # ONE_QMS-5S
 
 # --- Empty + small file auto-exclusion ---

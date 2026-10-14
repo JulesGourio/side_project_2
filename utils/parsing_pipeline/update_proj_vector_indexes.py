@@ -1,6 +1,8 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 5_SYNC_INDEX — SYNC VECTOR SEARCH INDEXES
+# MAGIC # PROJ VECTOR_INDEXES — SYNC VECTOR SEARCH INDEXES
+# MAGIC
+# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook creates no table: it synchronises the Vector Search indexes built on `chunks` (`CLAUDE.md`, naming).
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Last link of the chain that writes the chunks: triggers a sync of the Delta Sync indexes whose source tables were just rewritten by tasks

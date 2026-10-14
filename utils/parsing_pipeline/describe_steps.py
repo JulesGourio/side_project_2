@@ -1,4 +1,4 @@
-"""Phases of the `4_describe_images` task (see `4_Describe_Images_LLM.py`).
+"""Phases of the `4_describe_images` task (see `create_proj_image_metadata.py`).
 
 Describes the PENDING images with the vision LLM, turns the descriptions into image passages of the chunk tables,
 and promotes the documents waiting for their images (EMPTY_TEXT, IMAGES_PENDING) once all of them are described.

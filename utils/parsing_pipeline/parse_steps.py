@@ -1,4 +1,4 @@
-"""Phases of the `3_parse` task that scope, select, parse and retry (see `3_Parse_Pipeline.py`).
+"""Phases of the `3_parse` task that scope, select, parse and retry (see `create_proj_chunks.py`).
 
 Each function is one named step of the notebook: scope resolution, file selection, Docling parsing, retry, and the
 documents without a parseable file. The tables are built by `build_steps.py` and written by `output_steps.py`.

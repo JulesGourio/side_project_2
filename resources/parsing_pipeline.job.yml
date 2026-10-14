@@ -152,7 +152,7 @@ targets:
               description: "Intraqual source freshness guard + build category_reference"
               job_cluster_key: meta_cpu_cluster
               notebook_task:
-                notebook_path: ../utils/parsing_pipeline/1_Build_Category_Reference.py
+                notebook_path: ../utils/parsing_pipeline/create_proj_category_reference.py
                 source: WORKSPACE
               libraries:
                 - pypi: {package: "packaging"}
@@ -163,7 +163,7 @@ targets:
                 - task_key: "1_categories"
               job_cluster_key: meta_cpu_cluster
               notebook_task:
-                notebook_path: ../utils/parsing_pipeline/2_Cleanup_Volume.py
+                notebook_path: ../utils/parsing_pipeline/create_proj_parse_manifest.py
                 source: WORKSPACE
                 base_parameters:
                   # DRY_RUN=oui is mandatory on a scheduled run: scope depends on courant/etat, which change on every revision.
@@ -179,7 +179,7 @@ targets:
                 - task_key: "2_manifest"
               job_cluster_key: parse_gpu_cluster
               notebook_task:
-                notebook_path: ../utils/parsing_pipeline/3_Parse_Pipeline.py
+                notebook_path: ../utils/parsing_pipeline/create_proj_chunks.py
                 source: WORKSPACE
                 base_parameters:
                   JOB_RUN_ID: "{{job.run_id}}"
@@ -199,7 +199,7 @@ targets:
                 - pypi: {package: "pyxlsb"}
                 - pypi: {package: "openai"}
                 - pypi: {package: "tenacity"}
-                # The opencv-headless install is the %pip cell in 3_Parse_Pipeline.py, not a cluster library.
+                # The opencv-headless install is the %pip cell in create_proj_chunks.py, not a cluster library.
 
             - task_key: "4_describe_images"
               description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
@@ -207,7 +207,7 @@ targets:
                 - task_key: "3_parse"
               job_cluster_key: describe_cpu_cluster
               notebook_task:
-                notebook_path: ../utils/parsing_pipeline/4_Describe_Images_LLM.py
+                notebook_path: ../utils/parsing_pipeline/create_proj_image_metadata.py
                 source: WORKSPACE
                 base_parameters:
                   # Tried in order after the primary PARSING_LLM_ENDPOINT; each must accept image input.
@@ -223,7 +223,7 @@ targets:
               depends_on:
                 - task_key: "4_describe_images"
               notebook_task:
-                notebook_path: ../utils/parsing_pipeline/5_Sync_Vector_Indexes.py
+                notebook_path: ../utils/parsing_pipeline/update_proj_vector_indexes.py
                 source: WORKSPACE
                 base_parameters:
                   indexes: ${var.parsing_vector_search_indexes}
@@ -242,7 +242,7 @@ targets:
               depends_on:
                 - task_key: "5_sync_index"
               notebook_task:
-                notebook_path: ../utils/parsing_pipeline/6_Update_Knowledge_Base_Metadata.py
+                notebook_path: ../utils/parsing_pipeline/create_proj_doc_catalog.py
                 source: WORKSPACE
                 base_parameters:
                   LAKEBASE_PROJECT_ID: "qualibot"

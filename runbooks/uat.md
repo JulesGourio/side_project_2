@@ -142,7 +142,7 @@ databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t qu
 
 **0.3 — Index Vector Search `uat_proj.qualibot.chunks_index`**
 
-Les index sont recréés, pas copiés. Le notebook `5_Sync_Vector_Indexes` crée l'index manquant avec le schéma voulu ; le plus sûr est de reprendre la définition de l'index actuel :
+Les index sont recréés, pas copiés. Le notebook `update_proj_vector_indexes` crée l'index manquant avec le schéma voulu ; le plus sûr est de reprendre la définition de l'index actuel :
 
 ```powershell
 databricks vector-search-indexes get-index uat_landingzone.qualibot.chunks_index --profile UAT -o json > chunks_index_def.json

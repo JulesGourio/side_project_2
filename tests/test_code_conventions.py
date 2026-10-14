@@ -53,7 +53,9 @@ def test_every_pipeline_notebook_explains_each_code_block():
                 "Quality Checks", "Outputs"]
     offenders = []
     for folder in ("parsing_pipeline",):
-        for path in sorted(glob.glob(os.path.join(ROOT, "utils", folder, "[0-9]_*.py"))):
+        notebooks = [p for pattern in ("create_proj_*.py", "update_proj_*.py")
+                     for p in glob.glob(os.path.join(ROOT, "utils", folder, pattern))]
+        for path in sorted(notebooks):
             text = open(path, encoding="utf-8").read()
             cells = text.split(sep)
             name = os.path.relpath(path, ROOT)

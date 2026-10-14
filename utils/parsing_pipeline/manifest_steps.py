@@ -1,4 +1,4 @@
-"""Phases of the `2_manifest` task (see `2_Cleanup_Volume.py`).
+"""Phases of the `2_manifest` task (see `create_proj_parse_manifest.py`).
 
 Reconciles the derived tables and the volume root with the current Qualibot scope, then builds `parse_manifest`.
 Driver side only: nothing here is shipped to the executors.
@@ -265,7 +265,7 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
         logger.info("Nothing to log into processed_files.")
         return
     if not table_exists(TARGET_PROCESSED_FILES_TABLE):
-        logger.warning(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet - run 3_Parse_Pipeline (FULL) first. "
+        logger.warning(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet - run create_proj_chunks (FULL) first. "
                        f"No write performed.")
         return
 
@@ -330,7 +330,7 @@ def build_manifest(rows_keep):
         df_hierarchy = spark.table(DIVISION_REFERENCE_TABLE).drop("division_source")
     except Exception as exc:
         raise RuntimeError(
-            f"{DIVISION_REFERENCE_TABLE} not found - run 1_Build_Category_Reference before 2_Cleanup_Volume. ({exc})"
+            f"{DIVISION_REFERENCE_TABLE} not found - run create_proj_category_reference before create_proj_parse_manifest. ({exc})"
         )
 
     df_doc_types = (

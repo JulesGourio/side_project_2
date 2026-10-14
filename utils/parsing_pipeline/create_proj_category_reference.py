@@ -1,6 +1,8 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 1_CATEGORIES — FRESHNESS GUARD AND CATEGORY REFERENCE
+# MAGIC # PROJ CATEGORY_REFERENCE — FRESHNESS GUARD AND CATEGORY REFERENCE
+# MAGIC
+# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the Bronze Intraqual tables (`gd_*_latest`) and checks their freshness (`CLAUDE.md`, naming).
 # MAGIC
 # MAGIC **Description:**
 # MAGIC First link of the daily chain. Two roles:

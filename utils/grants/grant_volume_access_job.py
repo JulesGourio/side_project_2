@@ -9,7 +9,7 @@
 # MAGIC
 # MAGIC Used for: `job-runner-sa-uat` needs READ VOLUME on
 # MAGIC `prod_landingzone.intraqual.intraqual_documents` to run
-# MAGIC `utils/parsing_pipeline/2_Cleanup_Volume.py` (`dbutils.fs.ls` on that
+# MAGIC `utils/parsing_pipeline/create_proj_parse_manifest.py` (`dbutils.fs.ls` on that
 # MAGIC volume) under `run_as` in the qualibot-uat/-test bundle targets.
 # MAGIC
 # MAGIC If `run_as` also lacks GRANT rights on the target catalog, this job fails

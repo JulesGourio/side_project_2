@@ -4,7 +4,9 @@
 # environment_version = "5"
 # ///
 # MAGIC %md
-# MAGIC # 2_MANIFEST — CLEANUP VOLUME AND PARSE MANIFEST
+# MAGIC # PROJ PARSE_MANIFEST — CLEANUP VOLUME AND PARSE MANIFEST
+# MAGIC
+# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the Bronze Intraqual tables and the volume folders, not Gold (`CLAUDE.md`, naming).
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Builds the `parse_manifest` read by task `3_parse` and reconciles the volume root with the current Qualibot scope.

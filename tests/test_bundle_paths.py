@@ -44,14 +44,14 @@ def test_parse_steps_only_imports_names_config_defines():
 
 def test_parse_notebook_only_reads_config_names_that_exist():
     config_names = _module_names("utils/parsing_pipeline/config.py")
-    used = set(re.findall(r"\bcfg\.(\w+)", _read("utils/parsing_pipeline/3_Parse_Pipeline.py")))
+    used = set(re.findall(r"\bcfg\.(\w+)", _read("utils/parsing_pipeline/create_proj_chunks.py")))
     assert used
     assert not used - config_names
 
 
 def test_parse_notebook_only_calls_parse_steps_functions_that_exist():
     defined = _module_names("utils/parsing_pipeline/parse_steps.py")
-    code = [l for l in _read("utils/parsing_pipeline/3_Parse_Pipeline.py").splitlines() if not l.startswith("# MAGIC")]
+    code = [l for l in _read("utils/parsing_pipeline/create_proj_chunks.py").splitlines() if not l.startswith("# MAGIC")]
     called = set(re.findall(r"\bparse_steps\.(\w+)", "\n".join(code)))
     assert not called - defined - {"INGESTION_RUN_ID", "JOB_RUN_ID"}
 

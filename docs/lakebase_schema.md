@@ -101,7 +101,7 @@ ils sont enregistrés avec les sources de chaque réponse (`chat_messages.source
 ## `chat_retrieved_chunks`
 
 Tous les passages retrouvés pour un tour, **avec leur texte** : le pipeline supprime les passages
-d'une révision remplacée (`2_Cleanup_Volume`), un simple `chunk_id` deviendrait illisible. Écrit
+d'une révision remplacée (`create_proj_parse_manifest`), un simple `chunk_id` deviendrait illisible. Écrit
 dans la même transaction que `chat_turns`, après l'envoi de la réponse : l'utilisateur n'attend pas
 cette écriture.
 
