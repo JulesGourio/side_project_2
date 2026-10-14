@@ -116,6 +116,7 @@ sync:
     - "client/node_modules/**"
     - "docs/**"                  # documentation only — never read at runtime
     - "runbooks/**"              # manual steps for the operator, never read at runtime
+    - "oneshot/**"               # one-time migrations, copies and cleanups, never read at runtime
     - "archive/**"               # superseded documentation, never read at runtime
     - ".git/**"
     - ".databricks/**"           # local CLI cache — contains 64MB+ terraform binaries

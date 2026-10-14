@@ -18,3 +18,4 @@ sql_data/
 debug_*.py
 runbooks/
 archive/
+oneshot/
