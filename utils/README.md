@@ -1,26 +1,26 @@
 # utils/
 
-Tout ce qui tourne en dehors de l'application web : chaîne de parsing des
-documents, déploiement, alertes, copies de données, évaluation du chat et
-outils d'administration. Un dossier par sujet. L'application elle-même est
-dans `server/` et `client/` (voir le [README racine](../README.md)).
+Scripts qui tournent en dehors de l'application web : chaîne de parsing des
+documents, déploiement, alertes, évaluation du chat et de la recherche,
+droits Unity Catalog et outils d'exploitation Lakebase. Un dossier par sujet.
+L'application elle-même est dans `server/` et `client/` (voir le
+[README racine](../README.md)). Les scripts ponctuels (migrations, copies,
+empaquetages lancés une fois) sont dans [`oneshot/`](../oneshot/README.md) et
+ne sont jamais déployés.
 
 ## Carte du dossier
 
 | Dossier ou fichier | Contenu | Lancé par |
 |---|---|---|
-| [`parsing_pipeline/`](parsing_pipeline/README.md) | Chaîne quotidienne de parsing, de découpage et d'indexation des documents (tâches `1_` à `6_`) | `resources/parsing_pipeline.job.yml` |
-| [`deploy/`](deploy/) | `deploy_qualibot.ps1` (déploiement manuel de l'application), `render_target_config_env.py` et `target_env.json` (réglages de l'application par cible), outils d'extraction Intraqual (`scrap_ids_intraqual.py`, `download_intraqual.py`, `unzip_intraqual.py`, `upload_intraqual.py`) | à la main ; `bitbucket-pipelines.yml` pour `render_target_config_env.py` |
-| [`alerts/`](alerts/README.md) | Requêtes SQL des six alertes de suivi (à créer à la main dans Databricks) | à la main |
-| [`app_mgmt/`](app_mgmt/) | `stop_start_app_job.py` : arrêt et démarrage planifiés des applications Databricks | `resources/app_schedules.yml` |
-| [`lakebase_sync/`](lakebase_sync/README.md) | Export, import, copies et mise à jour du schéma de la base Lakebase | `resources/lakebase_sync.yml`, `bitbucket-pipelines.yml` |
-| [`dev_copy/`](dev_copy/) | Copie du corpus de l'UAT vers DEV : export sur l'UAT, import dans DEV, endpoint Vector Search | `resources/dev_copy.yml` |
-| [`grants/`](grants/) | Droits Unity Catalog des identités de service (application, pipeline), accès aux volumes | `resources/grants.yml` |
-| [`uat_setup/`](uat_setup/) | `setup_proj_schema.py` : copie l'état du parsing dans le schéma du projet de la cible `qualibot-uat-test` | `resources/uat_setup.yml` |
-| [`evaluation/`](evaluation/) | Évaluation du chat et de la recherche : tests de charge, comparaison de réponses, évaluation de la recherche, expérience et prompts MLflow, scores des traces | `resources/chat_mlflow.yml`, à la main |
-| [`soffice_packaging/`](soffice_packaging/) | Construction de l'archive LibreOffice portable utilisée par l'aperçu PDF fidèle des comparaisons | à la main (archive déposée dans un volume) |
-| [`compare_preview.py`](compare_preview.py) | Rapport hors ligne d'une paire de documents à comparer (pas d'appel LLM) | `python -m utils.compare_preview` |
-| [`ops_config.py`](ops_config.py) | Réglages partagés : profils CLI, projets et bases Lakebase, connexion (`lakebase_connect*`) | importé par les scripts |
+| [`parsing_pipeline/`](parsing_pipeline/README.md) | Chaîne quotidienne de parsing, de découpage et d'indexation des documents (tâches `1_` à `6_`) | job `parsing_pipeline` (`resources/parsing_pipeline.job.yml`) |
+| [`deploy/`](deploy/) | `deploy_qualibot.ps1` : déploiement manuel du code de l'application. `render_target_config_env.py` : écrit `target_config.env` à partir de `target_env.json`. `target_env.json` : réglages de l'application par cible | `deploy_qualibot.ps1` à la main ; `render_target_config_env.py` par le pipeline Bitbucket (`bitbucket-pipelines.yml`) |
+| [`alerts/`](alerts/README.md) | Six requêtes SQL d'alertes de suivi du parsing, du chat et des jobs | à la main, dans Databricks SQL |
+| [`app_mgmt/`](app_mgmt/) | `stop_start_app_job.py` : arrêt et démarrage planifiés des applications Databricks | jobs de `resources/app_schedules.yml` |
+| [`lakebase_sync/`](lakebase_sync/README.md) | Export de la base Lakebase vers un volume, import vers DEV, export et import JSON vers PROD | jobs de `resources/lakebase_sync.yml` ; étapes « Sync prod data » de `bitbucket-pipelines.yml` |
+| [`dev_copy/`](dev_copy/) | Import du corpus copié de l'UAT dans DEV, et création de l'endpoint Vector Search | job `copy_uat_to_dev` (`resources/dev_copy.yml`) |
+| [`grants/`](grants/) | Droits Unity Catalog des identités de service (application, pipeline) et accès aux volumes | jobs de `resources/grants.yml` |
+| [`evaluation/`](evaluation/) | Évaluation du chat et de la recherche : tests de charge, comparaison de réponses, évaluation de la recherche, expérience et prompts MLflow, scores des traces, contrôle des endpoints de vision | `create_chat_experiment.py`, `register_chat_prompts.py`, `score_chat_traces.py` : jobs de `resources/chat_mlflow.yml` ; le reste à la main (voir [runbooks/dev.md](../runbooks/dev.md)) |
+| [`ops_config.py`](ops_config.py) | Réglages partagés : profils CLI, bases Lakebase par environnement, connexion (`lakebase_connect`, `lakebase_connect_with`), listes d'ordre des tables | importé par `lakebase_sync/` et `oneshot/lakebase/` |
 
 ## Conventions
 
