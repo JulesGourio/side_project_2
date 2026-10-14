@@ -91,7 +91,7 @@ def pair_raw_top_k() -> int:
 
 
 def max_search_passages() -> int:
-    """Cap on the merged search passages (REF and title lookups come on top); 0 = no cap."""
+    """Cap on the merged search passages (REF lookups come on top); 0 = no cap."""
     return max(0, _int_env('CHAT_MAX_SEARCH_PASSAGES', 0))
 
 

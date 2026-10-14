@@ -20,7 +20,7 @@ env:
   - name: CHAT_MAX_HISTORY
     value: "10"
   # Chat (server/services/chat/engine/): bilingual rewrite, 3 hybrid Vector Search queries,
-  # documents named by REF or title, answer by GPT-6 Luna. One index for every division (AS / IS = filter on `division`);
+  # documents named by REF, answer by GPT-6 Luna. One index for every division (AS / IS = filter on `division`);
   # per-target index: utils/deploy/target_env.json.
   - name: CHAT_INDEX
     value: "dev_proj.qualibot.chunks_index"
