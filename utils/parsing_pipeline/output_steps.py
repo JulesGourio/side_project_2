@@ -232,6 +232,7 @@ def write_archive_notices(df_notices):
             (F.col(f.name) if f.name in df_notices.columns else F.lit(None)).try_cast(f.dataType).alias(f.name)
             for f in spark.table(tbl).schema
         ])
+        # leap_utils merge_into cannot delete the rows of the target that the source lacks under a condition: this merge stays on DeltaTable.
         (
             DeltaTable.forName(spark, tbl).alias("t")
             .merge(df_src.alias("s"), "t.chunk_id = s.chunk_id")
