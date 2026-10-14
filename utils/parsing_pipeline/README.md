@@ -76,7 +76,8 @@ partiel.
 |---|---|
 | `SUCCESS` | Parsé, passages écrits |
 | `ERROR`, `TIMEOUT` | Échec du parsing ou dépassement de `PARSE_TIMEOUT_SECONDS` (200 s) : retenté au run suivant |
-| `EMPTY_TEXT` | Aucun texte : en attente des descriptions d'images, ou échec |
+| `EMPTY_TEXT` | Aucun texte et aucune image restant à décrire |
+| `IMAGES_PENDING` | Aucun texte, des images restent à décrire : le parsing ne le reprend pas, `4_describe_images` le fait passer en `SUCCESS` ou `SKIPPED_EMPTY_IMAGES` |
 | `SKIP_TOO_LARGE` | Au-delà du plafond de taille du format |
 | `SKIPPED_EMPTY_SMALL_FILE` | Fichier vide de moins de 50 Kio : gabarit sans contenu, exclu |
 | `SKIPPED_EMPTY_IMAGES` | Toutes les images décrites comme non informatives |
@@ -161,8 +162,9 @@ Les tables des matières, les pages de garde et les blocs répétés
 
 ## Descriptions d'images (`4_describe_images`)
 
-- Traite les images `PENDING` et `ERROR` (une erreur est reprise, car elle vient
-  souvent d'une réponse vide du modèle), dans la limite de
+- Traite les images `PENDING` (une image sans description reste `PENDING`, avec
+  `attempts` incrémenté et `last_error_kind` renseigné, et le run suivant la reprend),
+  dans la limite de
   `PARSING_LLM_BATCH_SIZE` (6 000) par exécution. Au-delà, le noyau Python du
   nœud CPU devient instable ; le reste attend le run suivant.
 - Appels au modèle `PARSING_LLM_ENDPOINT` (`databricks-gpt-5-6-luna` par défaut) :
@@ -174,7 +176,13 @@ Les tables des matières, les pages de garde et les blocs répétés
   organigramme, schéma, graphique, photo technique, texte), puis une extraction.
   Une image décorative ou déjà couverte par le texte reçoit `SKIP`.
 - Statuts : `PENDING`, `DONE`, `SKIPPED` (réponse `SKIP`), `SKIPPED_DECORATIVE`
-  (filtre géométrique), `EXTRACTION_FAILED` (fichier image absent), `ERROR`.
+  (filtre géométrique), `EXTRACTION_FAILED` (fichier image absent).
+- Chaque endpoint de la chaîne (`PARSING_LLM_ENDPOINT`, puis
+  `PARSING_LLM_FALLBACK_ENDPOINTS`) est essayé sur `PARSING_LLM_ROUNDS` passes,
+  avec des attentes entre les passes. Après `PARSING_LLM_BREAKER_FAILURES` images
+  en échec consécutives sur un endpoint, celui-ci est écarté pour le reste du run.
+- Les jetons de chaque tentative qui a répondu sont comptés, les tentatives en
+  échec à part.
 - Mode `full` : remet toutes les images en `PENDING`. Le paramètre
   `rebuild_image_chunks` reconstruit les passages d'images à partir des
   descriptions stockées, sans appel au modèle.
@@ -182,7 +190,7 @@ Les tables des matières, les pages de garde et les blocs répétés
   Seuls les descriptions d'au moins 40 caractères, sans `SKIP`, sont indexées.
 - La clé de fusion de `image_metadata` est `(IDDOC, image_id)`, celle des passages
   est `chunk_id`. Une fusion ne réécrit que les lignes qui changent.
-- Un document `EMPTY_TEXT` dont toutes les images sont décrites passe en `SUCCESS`
+- Un document `IMAGES_PENDING` dont toutes les images sont décrites passe en `SUCCESS`
   (ou en `SKIPPED_EMPTY_IMAGES` si aucune image n'est informative).
 - Le jeton du modèle est lu dans le secret `qualibot/serving_token`. Sans ce
   secret, le notebook utilise son propre jeton.
