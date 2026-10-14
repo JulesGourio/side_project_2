@@ -9,7 +9,7 @@
 # MAGIC 1. `doc_catalog` rewritten from `parse_manifest` (every document in scope: REF, title, division, link, current revision and its date) and
 # MAGIC    `chunks` (`in_chat` = the document has passages in the chat index). The app reads it every 30 min (`server/services/infra/doc_catalog.py`):
 # MAGIC    links of the REFs cited in an answer, titles in impact search, revision and date given to the answer model with each document.
-# MAGIC 2. `knowledge_base_metadata.documents_as_of` (today's date) and `updated_at` (now): the "documents as of" date shown in the chat UI toolbar
+# MAGIC 2. `catalog_metadata.documents_as_of` (today's date) and `updated_at` (now): the "documents as of" date shown in the chat UI toolbar
 # MAGIC    (`GET /config/knowledge-base-date`).
 # MAGIC
 # MAGIC **Highlighted complexities:**
@@ -26,7 +26,7 @@
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{LAKEBASE_DATABASE}.doc_catalog` (Lakebase/Postgres, full rewrite in one transaction)
-# MAGIC - `{LAKEBASE_DATABASE}.knowledge_base_metadata` (Lakebase/Postgres, id=1 single row)
+# MAGIC - `{LAKEBASE_DATABASE}.catalog_metadata` (Lakebase/Postgres, id=1 single row)
 
 # COMMAND ----------
 
@@ -231,7 +231,7 @@ def connect(database):
 # MAGIC ## Rewrite doc_catalog, then bump documents_as_of and updated_at
 # MAGIC Both tables are created by the app's startup migration (`server/services/infra/lakebase/schema.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by whichever of the app and this notebook owns the table; when neither has done it yet, the catalog is written without them and the warning names the owner.
 # MAGIC
-# MAGIC The catalog is replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `knowledge_base_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
+# MAGIC The catalog is replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `catalog_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
 
 # COMMAND ----------
 
@@ -269,7 +269,7 @@ for database in LAKEBASE_DATABASES:
                     logger.warning(f"{database}.doc_catalog: cannot add revision/doc_date as {username} "
                                    f"(table owner: {owner}): {str(exc).strip()}")
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS knowledge_base_metadata (
+                CREATE TABLE IF NOT EXISTS catalog_metadata (
                     id              INTEGER PRIMARY KEY DEFAULT 1,
                     documents_as_of DATE,
                     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -291,7 +291,7 @@ for database in LAKEBASE_DATABASES:
                 execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat) VALUES %s",
                                [r[:5] for r in catalog_rows], page_size=1000)
             cur.execute("""
-                INSERT INTO knowledge_base_metadata (id, documents_as_of, updated_at)
+                INSERT INTO catalog_metadata (id, documents_as_of, updated_at)
                 VALUES (1, CURRENT_DATE, NOW())
                 ON CONFLICT (id) DO UPDATE SET
                     documents_as_of = EXCLUDED.documents_as_of,

@@ -4,7 +4,7 @@
 WITH missing AS (
   SELECT pf.IDDOC, pf.ref, pf.titre, pf.type_document, pf.source_file_extension AS file_type, pf.parser_strategy,
          pf.chunking_strategy, pf.ingestion_timestamp
-  FROM dev_proj.qualibot.processed_files pf
+  FROM dev_proj.qualibot.parsed_documents pf
   WHERE pf.parse_status = 'SUCCESS'
     AND pf.is_in_rag = true
     AND pf.is_filtered_by_date = false

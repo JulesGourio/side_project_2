@@ -41,7 +41,7 @@ async def submit_feedback(body: FeedbackRequest, request: Request):
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 '''
-                INSERT INTO feedbacks (message_id, user_id, workspace_id, workspace_url, vote, comment)
+                INSERT INTO compare_feedbacks (message_id, user_id, workspace_id, workspace_url, vote, comment)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING id, created_at, vote
                 ''',

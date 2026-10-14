@@ -1,4 +1,4 @@
-"""Phases of the `3_parse` task that build the tables: image_metadata, processed_files and the chunks.
+"""Phases of the `3_parse` task that build the tables: image_metadata, parsed_documents and the chunks.
 
 Everything here returns lazy DataFrames from the parse checkpoint; the writes are in `output_steps.py`.
 Driver-side only: nothing here is shipped to the executors.
@@ -172,7 +172,7 @@ def _apply_date_and_rag_filters(df_processed_files):
 
     doc_date < DOC_DATE_CUTOFF: parsed, chunks routed to chunks_archive instead of
     the RAG tables (is_in_rag=False). NULL doc_date = recent. Manual exclusions come from
-    _rag_exclusions (INSERT INTO {CATALOG_SCHEMA}._rag_exclusions VALUES (IDDOC, 'reason')).
+    rag_exclusions (INSERT INTO {CATALOG_SCHEMA}.rag_exclusions VALUES (IDDOC, 'reason')).
     Returns (df_processed_files, df_exclusions_or_none, cutoff_col).
     """
     cutoff = F.lit(DOC_DATE_CUTOFF).cast("date")
@@ -242,7 +242,7 @@ def _build_chunks(df_full_pipeline, df_exclusions):
     body_key = F.sha2(F.trim(F.regexp_replace(F.lower(F.regexp_replace(F.col("c.chunk_text"), r"^\[[^\]]*\]\s*", "")),
                                               r"\s+", " ")), 256)
 
-    # chunk_content_type is kept on every row, not just image chunks; other per-document stats live only in processed_files.
+    # chunk_content_type is kept on every row, not just image chunks; other per-document stats live only in parsed_documents.
     return (
         df_for_chunking
         .withColumn("chunks", utils.build_chunks_udf(F.col("document_text")))
@@ -327,7 +327,7 @@ def _dedupe_and_limit_chunks(df_chunks):
 
 
 def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_id, revised_iddocs=frozenset()):
-    """Build processed_files (one row per parsed document) and the three
+    """Build parsed_documents (one row per parsed document) and the three
     chunk DataFrames (all divisions / AS / IS) from the checkpoint."""
     df_full_pipeline = read_checkpoint_deduped()
     # rechunk: only the documents in scope — the checkpoint also keeps superseded revisions.

@@ -5,15 +5,20 @@ logger = logging.getLogger(__name__)
 
 # ── Migrations (idempotent, in order) ─────────────────────────────────────────
 MIGRATIONS: list[tuple[str, str]] = [
+    # Renames run first: the app creates the new names on startup, so they must exist under the old ones before it starts.
+    ("compare_messages.rename", "ALTER TABLE IF EXISTS messages RENAME TO compare_messages"),
+    ("compare_feedbacks.rename", "ALTER TABLE IF EXISTS feedbacks RENAME TO compare_feedbacks"),
+    ("app_errors.rename", "ALTER TABLE IF EXISTS errors RENAME TO app_errors"),
+    ("catalog_metadata.rename", "ALTER TABLE IF EXISTS knowledge_base_metadata RENAME TO catalog_metadata"),
     # Feedback triage (Databricks dashboard): mark a feedback as handled + why.
     # Nullable/additive columns, no impact on the app.
     (
         "feedbacks.resolved",
-        "ALTER TABLE feedbacks ADD COLUMN IF NOT EXISTS resolved BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE compare_feedbacks ADD COLUMN IF NOT EXISTS resolved BOOLEAN NOT NULL DEFAULT FALSE",
     ),
     (
         "feedbacks.resolution_reason",
-        "ALTER TABLE feedbacks ADD COLUMN IF NOT EXISTS resolution_reason TEXT",
+        "ALTER TABLE compare_feedbacks ADD COLUMN IF NOT EXISTS resolution_reason TEXT",
     ),
     (
         "chat_feedbacks.resolved",

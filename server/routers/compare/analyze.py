@@ -80,7 +80,7 @@ async def _get_cached_analysis(old_hash: str, new_hash: str, processor_version: 
                 '''
                 SELECT id, analysis_text, file_type, processing_method, processor_version,
                        volume_session_path
-                FROM messages
+                FROM compare_messages
                 WHERE old_file_hash     = $1
                   AND new_file_hash     = $2
                   AND app_version       = $3

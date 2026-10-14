@@ -1,4 +1,4 @@
-"""Phases of the `3_parse` task that write the tables: processed_files, chunks, chunks_archive, image_metadata, the
+"""Phases of the `3_parse` task that write the tables: parsed_documents, chunks, chunks_archive, image_metadata, the
 run health, the change log, the archive notices, and the ghost-document guard.
 
 Driver-side only: nothing here is shipped to the executors.
@@ -95,7 +95,7 @@ def _write_run_health_summary(df_processed_files, job_run_id, run_mode):
 
 
 def log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_run_id):
-    """Append one row per NEW/REVISED document to TARGET_CHANGE_LOG_TABLE -- must run before processed_files gets rewritten below, since it reads the pre-run row for old ref/indice/doc_date."""
+    """Append one row per NEW/REVISED document to TARGET_CHANGE_LOG_TABLE -- must run before parsed_documents gets rewritten below, since it reads the pre-run row for old ref/indice/doc_date."""
     if not target_iddocs:
         return
 
@@ -144,7 +144,7 @@ def log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_ru
 
 def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
                   df_image_metadata, job_run_id, revised_iddocs=frozenset()):
-    """Write processed_files/chunks/image_metadata — overwrite on a full or
+    """Write parsed_documents/chunks/image_metadata — overwrite on a full or
     rechunk run, append (+ MERGE for image_metadata) on an incremental run."""
     spark.conf.set("spark.databricks.delta.optimizeWrite.enabled", "true")
     spark.conf.set("spark.databricks.delta.autoCompact.enabled", "true")
@@ -171,7 +171,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
             for tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE, TARGET_PROCESSED_FILES_TABLE]:
                 if table_exists(tbl):
                     spark.sql(f"DELETE FROM {tbl} WHERE IDDOC IN ({iddoc_list})")
-            logger.info(f"Cleaned old rows for {len(new_iddocs)} re-processed IDDOCs (chunks + processed_files)")
+            logger.info(f"Cleaned old rows for {len(new_iddocs)} re-processed IDDOCs (chunks + parsed_documents)")
 
         write_table(df_processed_files, TARGET_PROCESSED_FILES_TABLE, "append", merge_schema=True)
         logger.info(f"Appended to {TARGET_PROCESSED_FILES_TABLE}")

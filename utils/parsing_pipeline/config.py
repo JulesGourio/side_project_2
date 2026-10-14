@@ -70,7 +70,7 @@ ANTIWORD_BIN_RELATIVE   = "../../data/vendor/antiword/antiword_local/usr/bin/ant
 ANTIWORD_SHARE_RELATIVE = "../../data/vendor/antiword/antiword_local/usr/share/antiword"
 
 # --- Target Delta tables ---
-TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.processed_files{TABLE_SUFFIX}"
+TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.parsed_documents{TABLE_SUFFIX}"
 
 # All divisions; the chat filters on the `division` column at query time.
 TARGET_CHUNK_TABLE     = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"
@@ -83,9 +83,9 @@ TARGET_HEALTH_TABLE          = f"{CATALOG_SCHEMA}.parsing_run_health{TABLE_SUFFI
 TARGET_CHANGE_LOG_TABLE      = f"{CATALOG_SCHEMA}.document_change_log{TABLE_SUFFIX}"  # one row per NEW/REVISED document, for the monitoring dashboard
 
 # Working tables of 3_parse: the parse checkpoint, the manual RAG exclusions (IDDOC, reason) and the retry scratch table.
-CHECKPOINT_TABLE     = f"{CATALOG_SCHEMA}._pipeline_checkpoint{TABLE_SUFFIX}"
-RAG_EXCLUSION_TABLE  = f"{CATALOG_SCHEMA}._rag_exclusions{TABLE_SUFFIX}"
-RETRY_TEMP_TABLE     = f"{CATALOG_SCHEMA}._retry_temp{TABLE_SUFFIX}"
+CHECKPOINT_TABLE     = f"{CATALOG_SCHEMA}.parsing_checkpoint{TABLE_SUFFIX}"
+RAG_EXCLUSION_TABLE  = f"{CATALOG_SCHEMA}.rag_exclusions{TABLE_SUFFIX}"
+RETRY_TEMP_TABLE     = f"{CATALOG_SCHEMA}.parsing_retry_temp{TABLE_SUFFIX}"
 
 # Column groups shared by the steps: the document metadata of parse_manifest, the category hierarchy of
 # category_reference, and what a selected file is enriched with.
@@ -101,7 +101,7 @@ WORKER_MODULES = ("chunking.py", "utils.py", "format_parsers.py", "image_store.p
 
 # --- Date cutoff ---
 # Docs before this date are parsed like the others but their chunks go to
-# TARGET_CHUNK_TABLE_ARCHIVE instead of the RAG chunk tables (processed_files:
+# TARGET_CHUNK_TABLE_ARCHIVE instead of the RAG chunk tables (parsed_documents:
 # is_filtered_by_date=True, is_in_rag=False). An unknown date counts as recent.
 DOC_DATE_CUTOFF = _env("PARSING_DOC_DATE_CUTOFF", "2018-01-01")
 _dt.date.fromisoformat(DOC_DATE_CUTOFF)  # fails at import on a malformed value: the steps cast it to a date literal
@@ -114,7 +114,7 @@ ARCHIVE_MAX_DOCS = int(_env("PARSING_ARCHIVE_MAX_DOCS", "0") or "0")
 # One metadata-only "notice" chunk per pre-cutoff document (REF, title, revision,
 # date — no content), rebuilt on every run into TARGET_ARCHIVE_NOTICE_TABLE.
 # Copied into the RAG chunk tables (chatbot indexes) only when ARCHIVE_NOTICES_IN_RAG is on.
-TARGET_ARCHIVE_NOTICE_TABLE = f"{CATALOG_SCHEMA}.chunks_archive_notices{TABLE_SUFFIX}"
+TARGET_ARCHIVE_NOTICE_TABLE = f"{CATALOG_SCHEMA}.archive_notices{TABLE_SUFFIX}"
 ARCHIVE_NOTICES_IN_RAG = _env("PARSING_ARCHIVE_NOTICES_IN_RAG", "false").strip().lower() in ("1", "true", "yes")
 # Also hardcoded in update_proj_vector_indexes.py (serverless, no config.py) and matched
 # by ARCHIVE_NOTICE_MARKER in server/services/infra/vector_search.py.

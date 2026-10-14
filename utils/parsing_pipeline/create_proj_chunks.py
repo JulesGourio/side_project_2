@@ -11,7 +11,7 @@
 # MAGIC 2. **Parsing** — converts PDF, DOC(X), PPT(X), ODT, XLS(X)… to Markdown with Docling or a format fallback, saves the detected images to the volume
 # MAGIC 3. **Retry** — re-attempts the failed IDDOCs with their next-best file variant
 # MAGIC 4. **Chunking** — splits the successful parses into passages (section-aware, table-aware)
-# MAGIC 5. **Persistence** — writes `processed_files`, `chunks` / `chunks_archive` and `image_metadata`, then the run health, the change log and the archive notices
+# MAGIC 5. **Persistence** — writes `parsed_documents`, `chunks` / `chunks_archive` and `image_metadata`, then the run health, the change log and the archive notices
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC The selection, parse and retry phases all read and write the same checkpoint table, so the notebook stays strictly sequential.
@@ -22,15 +22,15 @@
 # MAGIC
 # MAGIC **Inputs Data**
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}` (task `2_manifest`), `category_reference{PARSING_TABLE_SUFFIX}` (task `1_categories`)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}._pipeline_checkpoint{PARSING_TABLE_SUFFIX}` (own checkpoint, re-read across phases)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (resume and revision detection)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsing_checkpoint{PARSING_TABLE_SUFFIX}` (own checkpoint, re-read across phases)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}` (resume and revision detection)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (keeps the rows already described across a rebuild)
 # MAGIC - `{PARSING_VOLUME_ROOT_PATH}` (volume listing and binary content)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}._pipeline_checkpoint{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}`, `chunks_archive_notices{PARSING_TABLE_SUFFIX}`
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsing_checkpoint{PARSING_TABLE_SUFFIX}`
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}`
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}`, `archive_notices{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.parsing_run_health{PARSING_TABLE_SUFFIX}` (one row per run, for the monitoring dashboard)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.document_change_log{PARSING_TABLE_SUFFIX}` (one row per NEW/REVISED document, for the monitoring dashboard)
@@ -41,7 +41,7 @@
 # MAGIC # Technical debt
 # MAGIC - The phase functions have no unit test: they need a Spark session and the Unity Catalog tables (the quality rules in `quality.py` and the chunking in `chunking.py` do).
 # MAGIC - `parse_steps` keeps run-level state (`INGESTION_RUN_ID`, `JOB_RUN_ID`) as module globals, set once by `set_job_run_id` and passed on to `build_steps` / `output_steps` as arguments.
-# MAGIC - The quality checks read the lazy DataFrames before the write, so `processed_files` and `image_metadata` are computed once more than the write needs.
+# MAGIC - The quality checks read the lazy DataFrames before the write, so `parsed_documents` and `image_metadata` are computed once more than the write needs.
 
 # COMMAND ----------
 
@@ -112,7 +112,7 @@ for _mod in cfg.WORKER_MODULES:
 
 dbutils.widgets.removeAll()
 
-dbutils.widgets.text("JOB_RUN_ID", "", "Parent job run_id (correlates with 2_manifest's processed_files rows)")
+dbutils.widgets.text("JOB_RUN_ID", "", "Parent job run_id (correlates with 2_manifest's parsed_documents rows)")
 parse_steps.set_job_run_id(dbutils.widgets.get("JOB_RUN_ID"))
 
 # COMMAND ----------
@@ -284,7 +284,7 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Tr. 5 - processed_files and chunks
+# MAGIC ## Tr. 5 - parsed_documents and chunks
 # MAGIC Pre-cutoff documents go to the archive chunks, the others to the chatbot chunks.
 
 # COMMAND ----------
@@ -311,13 +311,13 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## processed_files
+# MAGIC ## parsed_documents
 # MAGIC One row per `IDDOC` (RED): the incremental runs and the deletes of the next steps key on it. `ref` and `division` are expected on 99 % of the documents (AMBER).
 
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    quality.check_dataframe(df_processed_files, "processed_files", [
+    quality.check_dataframe(df_processed_files, "parsed_documents", [
         quality.not_null("IDDOC"),
         quality.unique("IDDOC"),
         quality.not_null("parse_status"),

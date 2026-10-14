@@ -64,8 +64,8 @@ FROM dev_proj.qualibot.chunks;
 SHOW TBLPROPERTIES dev_proj.qualibot.chunks;   -- delta.enableChangeDataFeed doit valoir true
 
 -- l'état du pipeline : s'il manque, un run complet de 3_parse reparserait tout le corpus sur GPU
-SELECT '_pipeline_checkpoint' AS t, count(*) AS n FROM dev_proj.qualibot._pipeline_checkpoint
-UNION ALL SELECT 'processed_files', count(*) FROM dev_proj.qualibot.processed_files
+SELECT 'parsing_checkpoint' AS t, count(*) AS n FROM dev_proj.qualibot.parsing_checkpoint
+UNION ALL SELECT 'parsed_documents', count(*) FROM dev_proj.qualibot.parsed_documents
 UNION ALL SELECT 'image_metadata', count(*) FROM dev_proj.qualibot.image_metadata
 UNION ALL SELECT 'parse_manifest', count(*) FROM dev_proj.qualibot.parse_manifest
 UNION ALL SELECT 'category_reference', count(*) FROM dev_proj.qualibot.category_reference;
@@ -85,7 +85,7 @@ UNION ALL SELECT 'category_reference', count(*) FROM dev_proj.qualibot.category_
 | `chunks_index` absent, `pret = False`, ou sa `source` n'est pas `dev_proj.qualibot.chunks` | transmettre la sortie : la commande de (re)création sur **votre** table est dans `runbooks/dev.md` 0.3 (pas de copie depuis l'UAT) |
 | `jetons_max` ≈ 450 et `caracteres_max` ≈ 1 600 (+ préfixe `[Source: …]`) | le chunking en base est celui du code actuel |
 | `jetons_max` vers 1 000 ou plus | `chunks` a l'ancien chunking : signaler la table qui contient le bon chunking |
-| `_pipeline_checkpoint`, `processed_files` ou `image_metadata` absentes ou vides | **ne pas lancer `3_parse` sans filtre** : utiliser seulement le test filtré `_test` de 0.5 |
+| `parsing_checkpoint`, `parsed_documents` ou `image_metadata` absentes ou vides | **ne pas lancer `3_parse` sans filtre** : utiliser seulement le test filtré `_test` de 0.5 |
 
 - [ ] 0.2 fait et lu
 
@@ -171,7 +171,7 @@ databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_im
 ```
 
 ```sql
-SELECT parse_status, count(*) FROM dev_proj.qualibot.processed_files_test GROUP BY 1;
+SELECT parse_status, count(*) FROM dev_proj.qualibot.parsed_documents_test GROUP BY 1;
 SELECT IDDOC, count(*) AS passages, max(chunk_token_count) AS jetons_max FROM dev_proj.qualibot.chunks_test GROUP BY 1;
 ```
 
@@ -183,9 +183,9 @@ databricks bundle deploy -t dev --profile DEV
 
 ```sql
 DROP TABLE IF EXISTS dev_proj.qualibot.chunks_test;
-DROP TABLE IF EXISTS dev_proj.qualibot.processed_files_test;
+DROP TABLE IF EXISTS dev_proj.qualibot.parsed_documents_test;
 DROP TABLE IF EXISTS dev_proj.qualibot.image_metadata_test;
-DROP TABLE IF EXISTS dev_proj.qualibot._pipeline_checkpoint_test;
+DROP TABLE IF EXISTS dev_proj.qualibot.parsing_checkpoint_test;
 DROP TABLE IF EXISTS dev_proj.qualibot.parse_manifest_test;
 DROP TABLE IF EXISTS dev_proj.qualibot.category_reference_test;
 ```
@@ -279,7 +279,7 @@ Les notebooks sont `create_proj_<asset>.py` et `update_proj_vector_indexes.py` d
 
 ## 7. Colonnes booléennes renommées
 
-- [ ] Bloc R de `runbooks/dev.md` : SQL de renommage de `processed_files` (`is_in_rag`, `is_filtered_by_date`, `is_chunks_truncated`) **avant** le déploiement du code ou le premier run de parsing.
+- [ ] Bloc R de `runbooks/dev.md` : SQL de renommage de `parsed_documents` (`is_in_rag`, `is_filtered_by_date`, `is_chunks_truncated`) **avant** le déploiement du code ou le premier run de parsing.
 
 ## 8. Avant le premier déploiement UAT / PROD (sur accord)
 

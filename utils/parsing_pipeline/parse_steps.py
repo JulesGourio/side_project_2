@@ -90,7 +90,7 @@ def resolve_parse_scope(df_business_meta):
 
             missing_cols = [c for c in _STALENESS_COLS if c not in df_pf.columns]
             if missing_cols:
-                logger.info(f"[REVISION] Columns missing from processed_files ({', '.join(missing_cols)}) — detection skipped this run.")
+                logger.info(f"[REVISION] Columns missing from parsed_documents ({', '.join(missing_cols)}) — detection skipped this run.")
             else:
                 df_pf_revision = (
                     df_pf.filter(F.col("parse_status") == "SUCCESS")
@@ -234,7 +234,7 @@ def snapshot_or_log_checkpoint(num_files):
 
 
 def read_checkpoint_deduped():
-    """Read _pipeline_checkpoint with exactly one row per IDDOC — dedup by
+    """Read parsing_checkpoint with exactly one row per IDDOC — dedup by
     IDDOC (not source_path), preferring SUCCESS then the most recent attempt.
     """
     w = Window.partitionBy("IDDOC").orderBy(
@@ -537,7 +537,7 @@ def retry_failed_iddocs(df_matched_full, df_content, df_business_meta):
 def mark_empty_folders(target_iddocs, df_files, df_business_meta):
     """Write SKIPPED_EMPTY_FOLDER for target IDDOCs with no parseable file on the volume.
 
-    These never go through parsing, so their rows go straight to `processed_files`.
+    These never go through parsing, so their rows go straight to `parsed_documents`.
     Returns `target_iddocs` without them, so retry / build steps skip them.
     """
     selected_iddocs = {r.IDDOC for r in df_files.select("IDDOC").distinct().collect()}

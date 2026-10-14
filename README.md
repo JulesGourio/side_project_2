@@ -238,7 +238,7 @@ Tables de l'application dans Lakebase : `messages`, `feedbacks`, `llm_requests`,
 `errors` (comparaison et journal commun), `impact_requests`,
 `impact_document_results`, `impact_feedbacks`, `impact_cache`, `summary_cache`
 (comparaison), `chat_sessions`, `chat_messages`, `chat_feedbacks`, `chat_turns`,
-`chat_retrieved_chunks` (chat), `doc_catalog`, `knowledge_base_metadata`, `users`.
+`chat_retrieved_chunks` (chat), `doc_catalog`, `catalog_metadata`, `users`.
 Le schéma est créé et complété par l'application au démarrage. Le détail des
 colonnes est dans [docs/lakebase_schema.md](docs/lakebase_schema.md).
 

@@ -6,7 +6,7 @@ PowerShell, depuis la racine du projet sur la machine de déploiement. Pour DEV 
 
 > **Branches.** Les blocs A, B et C sont sur la branche **`audit/doc-compare`**. L'étape 0 et le bloc D sont sur la branche **`feature/chat-vsi-merged-on-impact-search`**. Le zip à déployer est celui de la branche indiquée par le bloc.
 >
-> **Interdit avant le bloc D5** : cette branche ne se déploie sur `qualibot-uat` / `qualibot-uat-test` qu'au bloc D5, dans son ordre. Son code attend des tables et un index **sans suffixe** (`chunks`, `chunks_index`, `_pipeline_checkpoint`…) et n'a plus de Knowledge Assistant. Un `bundle deploy` de cette branche avant D5 ferait repartir le pipeline UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui n'existe pas encore.
+> **Interdit avant le bloc D5** : cette branche ne se déploie sur `qualibot-uat` / `qualibot-uat-test` qu'au bloc D5, dans son ordre. Son code attend des tables et un index **sans suffixe** (`chunks`, `chunks_index`, `parsing_checkpoint`…) et n'a plus de Knowledge Assistant. Un `bundle deploy` de cette branche avant D5 ferait repartir le pipeline UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui n'existe pas encore.
 > Exception : `qualibot-uat-test` sert de répétition de la bascule (tables `uat_proj.qualibot.*_test`, index `chunks_index_test`, rien dans `uat_proj.qualibot`).
 
 Nettoyage du code à rejouer : `runbooks/retest.md` (DEV d'abord).
@@ -46,8 +46,8 @@ Pour chaque table listée en 0.1 (sauf les volumes), une ligne `DEEP CLONE`. Si 
 ```sql
 CREATE SCHEMA IF NOT EXISTS uat_proj.qualibot;
 
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot._pipeline_checkpoint   DEEP CLONE uat_landingzone.qualibot._pipeline_checkpoint_v1;
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot.processed_files        DEEP CLONE uat_landingzone.qualibot.processed_files_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parsing_checkpoint   DEEP CLONE uat_landingzone.qualibot._pipeline_checkpoint_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parsed_documents        DEEP CLONE uat_landingzone.qualibot.processed_files_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.image_metadata         DEEP CLONE uat_landingzone.qualibot.image_metadata_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parse_manifest         DEEP CLONE uat_landingzone.qualibot.parse_manifest_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.category_reference     DEEP CLONE uat_landingzone.qualibot.category_reference_v1;
@@ -55,9 +55,9 @@ CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parsing_run_health     DEEP CLONE u
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.document_change_log    DEEP CLONE uat_landingzone.qualibot.document_change_log_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks                 DEEP CLONE uat_landingzone.qualibot.chunks_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_archive         DEEP CLONE uat_landingzone.qualibot.chunks_archive_v1;
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_archive_notices DEEP CLONE uat_landingzone.qualibot.chunks_archive_notices_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.archive_notices DEEP CLONE uat_landingzone.qualibot.chunks_archive_notices_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_full            DEEP CLONE uat_landingzone.qualibot.chunks_full_v1;
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot.feedback_failure_cases DEEP CLONE uat_landingzone.qualibot.feedback_failure_cases;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.eval_feedback_failures DEEP CLONE uat_landingzone.qualibot.eval_feedback_failures;
 ```
 
 Les tables chat (`chat_messages`, `chat_sessions`, `chat_feedbacks`, `chat_turns`, `chat_retrieved_chunks`, `errors`) ne se clonent pas : elles sont rechargées depuis Lakebase à l'étape 0.5.
@@ -279,7 +279,7 @@ Comportement du code, par défaut (aucun index modifié, rien de nouveau dans le
 
 - **Plafond** `parsing_archive_max_docs` = nombre TOTAL de documents d'avant 2018 autorisés à être parsés, les plus récents d'abord. `0` (défaut) = aucun ; `100` = les 100 plus récents ; `-1` = tous (~1 500, gros run GPU). Cumulatif : repasser à `0` ne supprime rien et ne reparse rien.
 - **`chunks_archive`** : chunks des vieux documents parsés. Lue par aucun index.
-- **`chunks_archive_notices`** : une fiche par vieux document (référence, titre, indice, type, date, « contenu non indexé »), parsé ou non. Réécrite à chaque run, sans GPU. Lue par aucun index.
+- **`archive_notices`** : une fiche par vieux document (référence, titre, indice, type, date, « contenu non indexé »), parsé ou non. Réécrite à chaque run, sans GPU. Lue par aucun index.
 - **`chunks_full`** : `chunks` + `chunks_archive`. Construite, mais l'index `chunks_full_index` n'est **pas** créé.
 
 Le job n'existe que sur `qualibot-uat`. `bundle deploy` seul met à jour le job et ses notebooks ; il ne redéploie pas le code de l'app (pas de `apps deploy`).
@@ -306,9 +306,9 @@ Le job n'existe que sur `qualibot-uat`. `bundle deploy` seul met à jour le job 
   FROM uat_proj.qualibot.parse_manifest GROUP BY 1, 2;
 
   -- fiches : une par vieux document, texte à relire
-  SELECT count(*) FROM uat_proj.qualibot.chunks_archive_notices;
+  SELECT count(*) FROM uat_proj.qualibot.archive_notices;
   SELECT REF, doc_date, url, chunk_text
-  FROM uat_proj.qualibot.chunks_archive_notices ORDER BY doc_date DESC LIMIT 20;
+  FROM uat_proj.qualibot.archive_notices ORDER BY doc_date DESC LIMIT 20;
 
   -- aucune fiche dans la table du chatbot (doit renvoyer 0)
   SELECT 'chunks' AS t, count(*) FROM uat_proj.qualibot.chunks WHERE chunk_content_type = 'archive_notice';
@@ -340,7 +340,7 @@ Le job n'existe que sur `qualibot-uat`. `bundle deploy` seul met à jour le job 
   WHERE doc_date < '2018-01-01' AND parse_content;
 
   -- résultat du parsing de ces 100 documents
-  SELECT parse_status, count(*) FROM uat_proj.qualibot.processed_files
+  SELECT parse_status, count(*) FROM uat_proj.qualibot.parsed_documents
   WHERE doc_date < '2018-01-01' GROUP BY parse_status;
 
   -- chunks d'archive produits
@@ -411,9 +411,9 @@ Chaque point est indépendant et demande une modification de la configuration : 
   - [ ] **D5.3. Tables d'état du pipeline : rétention de 60 jours.** Elles sont créées par l'étape 0.2 (copies de `_v1`) : vérifier avec D5.2 qu'elles existent. Une table absente de D5.2 : sauter sa ligne. Puis, pour chacune :
 
     ```sql
-    ALTER TABLE uat_proj.qualibot._pipeline_checkpoint SET TBLPROPERTIES (
+    ALTER TABLE uat_proj.qualibot.parsing_checkpoint SET TBLPROPERTIES (
       'delta.deletedFileRetentionDuration' = 'interval 60 days', 'delta.logRetentionDuration' = 'interval 60 days');
-    ALTER TABLE uat_proj.qualibot.processed_files SET TBLPROPERTIES (
+    ALTER TABLE uat_proj.qualibot.parsed_documents SET TBLPROPERTIES (
       'delta.deletedFileRetentionDuration' = 'interval 60 days', 'delta.logRetentionDuration' = 'interval 60 days');
     ALTER TABLE uat_proj.qualibot.image_metadata SET TBLPROPERTIES (
       'delta.deletedFileRetentionDuration' = 'interval 60 days', 'delta.logRetentionDuration' = 'interval 60 days');
@@ -427,14 +427,14 @@ Chaque point est indépendant et demande une modification de la configuration : 
       'delta.deletedFileRetentionDuration' = 'interval 60 days', 'delta.logRetentionDuration' = 'interval 60 days');
     ```
 
-  - [ ] **D5.4. Re-découper le corpus dans `chunks`** (aucun re-parsing GPU : les fichiers déjà parsés sont relus depuis `_pipeline_checkpoint` ; les passages d'image sont reconstruits depuis les descriptions existantes, sans appel LLM). Copier le zip de cette branche, puis :
+  - [ ] **D5.4. Re-découper le corpus dans `chunks`** (aucun re-parsing GPU : les fichiers déjà parsés sont relus depuis `parsing_checkpoint` ; les passages d'image sont reconstruits depuis les descriptions existantes, sans appel LLM). Copier le zip de cette branche, puis :
 
     ```powershell
     databricks bundle deploy -t qualibot-uat --profile UAT --var="parsing_run_mode=full"
     databricks bundle run parsing_pipeline -t qualibot-uat --profile UAT
     ```
 
-    Le run écrit `chunks`, `chunks_archive`, `processed_files`, puis crée l'index `uat_proj.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`. Sa dernière tâche remplit aussi le catalogue des documents de l'app (table Lakebase `doc_catalog` de `doccompare` : REF, titre, lien). La cible `qualibot-uat-test` (base `doccompare_test`) n'a pas de catalogue tant que cette base n'est pas ajoutée à `parsing_lakebase_database` : décision à prendre.
+    Le run écrit `chunks`, `chunks_archive`, `parsed_documents`, puis crée l'index `uat_proj.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`. Sa dernière tâche remplit aussi le catalogue des documents de l'app (table Lakebase `doc_catalog` de `doccompare` : REF, titre, lien). La cible `qualibot-uat-test` (base `doccompare_test`) n'a pas de catalogue tant que cette base n'est pas ajoutée à `parsing_lakebase_database` : décision à prendre.
 
   - [ ] **D5.5. Revenir au mode quotidien** (le planning repart, sur les nouvelles tables) :
 
@@ -496,6 +496,36 @@ Chaque point est indépendant et demande une modification de la configuration : 
   - [ ] **D5.9. Supprimer l'ancien** (quelques jours plus tard, une fois l'app validée) :
     - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de test `trace_test` aussi s'il existe encore ;
     Les objets `_v1` (tables, index, volumes) ne sont pas supprimés par ce runbook (voir étape 0.11).
+
+### R0. Renommer les tables au moment de la bascule (ne rien faire avant la décision de bascule)
+
+L'UAT actuelle lit encore les anciens noms : ces commandes ne se lancent qu'avec la bascule, dans cet ordre, comme sur DEV (`runbooks/dev.md`, bloc R0).
+
+1. Éditeur SQL UAT :
+
+```sql
+ALTER TABLE uat_proj.qualibot.processed_files RENAME TO parsed_documents;
+ALTER TABLE uat_proj.qualibot.chunks_archive_notices RENAME TO archive_notices;
+ALTER TABLE uat_proj.qualibot._pipeline_checkpoint RENAME TO parsing_checkpoint;
+ALTER TABLE uat_proj.qualibot._rag_exclusions RENAME TO rag_exclusions;
+ALTER TABLE uat_proj.qualibot.qualibot_eval_golden RENAME TO eval_golden_questions;
+ALTER TABLE uat_proj.qualibot.synthetic_retrieval_questions RENAME TO eval_synthetic_questions;
+ALTER TABLE uat_proj.qualibot.feedback_failure_cases RENAME TO eval_feedback_failures;
+ALTER TABLE uat_proj.qualibot.eval_pairwise_runs_cache RENAME TO eval_pairwise_cache;
+ALTER TABLE uat_proj.qualibot.eval_load_runs RENAME TO eval_load_chat_runs;
+ALTER TABLE uat_proj.qualibot.eval_vs_load_runs RENAME TO eval_load_vector_search_runs;
+SHOW TABLES IN uat_proj.qualibot;
+```
+
+2. Lakebase UAT, PowerShell à la racine du dépôt :
+
+```powershell
+python runbooks/scripts/lakebase/migrate_lakebase.py --env UAT
+```
+
+3. Relancer le job de droits UAT (`grant_app_access_uat_test` pour le test, puis le job de droits UAT) : sa liste de tables porte les nouveaux noms.
+
+Les tables de la rehearsal `qualibot-uat-test` (suffixe `_test`) créées avant ce changement gardent les anciens noms : relancer `runbooks/scripts/uat/setup_proj_schema.py` avec `overwrite = true` pour les recréer sous les nouveaux noms.
 
 ## Fait
 

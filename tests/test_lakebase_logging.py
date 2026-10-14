@@ -136,7 +136,7 @@ def test_store_chat_turn_writes_turn_passages_and_issues():
     (chunk_sql, chunk_rows), (error_sql, error_rows) = (c.args for c in conn.executemany.await_args_list)
     assert chunk_sql.startswith('INSERT INTO chat_retrieved_chunks') and _params(chunk_sql) == len(chunk_rows[0])
     assert chunk_rows[0][0] == 12 and chunk_rows[0][1] == log.trace_id
-    assert error_sql.strip().startswith('INSERT INTO errors') and len(error_rows) == 1   # info issue not written
+    assert error_sql.strip().startswith('INSERT INTO app_errors') and len(error_rows) == 1   # info issue not written
     assert _params(error_sql) == len(error_rows[0]) and 'warning' in error_rows[0]
 
 

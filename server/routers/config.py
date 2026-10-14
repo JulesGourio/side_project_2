@@ -73,7 +73,7 @@ async def get_knowledge_base_date():
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                'SELECT documents_as_of FROM knowledge_base_metadata WHERE id = 1'
+                'SELECT documents_as_of FROM catalog_metadata WHERE id = 1'
             )
         date_val = row['documents_as_of'] if row else None
         return {'date': date_val.isoformat() if date_val else None}

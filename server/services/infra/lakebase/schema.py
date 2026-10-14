@@ -20,7 +20,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
     async with pool.acquire() as conn:
         # ── messages (primary history table) ─────────────────────────────────
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS messages (
+            CREATE TABLE IF NOT EXISTS compare_messages (
                 id                  SERIAL PRIMARY KEY,
                 created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 user_id             TEXT,
@@ -46,7 +46,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             )
         ''')
         # Columns added to existing tables (idempotent).
-        await _add_columns(conn, 'messages', [
+        await _add_columns(conn, 'compare_messages', [
             ('file_type',         'TEXT'),
             ('processing_method', 'TEXT'),
             ('processor_version', 'TEXT'),
@@ -68,10 +68,10 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
 
         # ── feedbacks ─────────────────────────────────────────────────────────
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS feedbacks (
+            CREATE TABLE IF NOT EXISTS compare_feedbacks (
                 id              SERIAL PRIMARY KEY,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                message_id      INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                message_id      INTEGER REFERENCES compare_messages(id) ON DELETE SET NULL,
                 user_id         TEXT,
                 workspace_id    TEXT,
                 workspace_url   TEXT,
@@ -79,7 +79,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                 comment         TEXT
             )
         ''')
-        await _add_columns(conn, 'feedbacks', [
+        await _add_columns(conn, 'compare_feedbacks', [
             ('workspace_id',       'TEXT'),
             # Triage (Databricks dashboard): mark a feedback as handled + why.
             ('resolved',           'BOOLEAN NOT NULL DEFAULT FALSE'),
@@ -129,7 +129,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
 
         # ── errors (application errors persisted for monitoring) ──────────────
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS errors (
+            CREATE TABLE IF NOT EXISTS app_errors (
                 id              SERIAL PRIMARY KEY,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 user_id         TEXT,
@@ -144,7 +144,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                 llm_request_id  INTEGER
             )
         ''')
-        await _add_columns(conn, 'errors', [
+        await _add_columns(conn, 'app_errors', [
             ('llm_request_id', 'INTEGER'),
             # 'error' (the request failed) or 'warning' (it went on, degraded: a
             # step that did not run as configured — e.g. the chat's search-query
@@ -252,7 +252,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                 id                  SERIAL PRIMARY KEY,
                 created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 impact_request_id   INTEGER REFERENCES impact_requests(id) ON DELETE SET NULL,
-                message_id          INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                message_id          INTEGER REFERENCES compare_messages(id) ON DELETE SET NULL,
                 user_id             TEXT,
                 workspace_id        TEXT,
                 workspace_url       TEXT,
@@ -439,10 +439,10 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
                            'ON chat_retrieved_chunks (turn_id)')
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_retrieved_chunks_ref ON chat_retrieved_chunks (ref)')
 
-        # ── knowledge_base_metadata ───────────────────────────────────────────
+        # ── catalog_metadata ───────────────────────────────────────────
         # Single-row table (id=1) holding the 'documents as of' date shown in the chat UI, updated by hand after each KB refresh.
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS knowledge_base_metadata (
+            CREATE TABLE IF NOT EXISTS catalog_metadata (
                 id              INTEGER PRIMARY KEY DEFAULT 1,
                 documents_as_of DATE,
                 updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -450,7 +450,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             )
         ''')
         await conn.execute('''
-            INSERT INTO knowledge_base_metadata (id)
+            INSERT INTO catalog_metadata (id)
             VALUES (1)
             ON CONFLICT (id) DO NOTHING
         ''')
@@ -506,7 +506,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
 
         # 0. Drop obsolete columns (Lakebase rewrites the table — safe but transient empty state)
         for _tbl, _col in [
-            ('messages',     'duration_s'),
+            ('compare_messages', 'duration_s'),
             ('users',        'can_export'),
             ('llm_requests', 'user_id'),
             ('llm_requests', 'workspace_id'),
@@ -533,7 +533,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         ''')
 
         # 3. Split composite user_ids (numeric@workspace) into separate columns for every table
-        for table in ('users', 'messages', 'feedbacks',
+        for table in ('users', 'compare_messages', 'compare_feedbacks',
                       'chat_sessions', 'chat_messages', 'chat_feedbacks'):
             await conn.execute(f'''
                 UPDATE {table}

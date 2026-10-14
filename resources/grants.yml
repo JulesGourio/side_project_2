@@ -44,7 +44,7 @@ targets:
                   indexes: "chunks_index"
                   # The DEV SP itself (this job's run_as), on the tables a person created.
                   pipeline_service_principal: fde6ff28-739f-4a41-b61e-604a298c8478
-                  pipeline_tables: "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference,chunks"
+                  pipeline_tables: "parsing_checkpoint,parsed_documents,image_metadata,parse_manifest,category_reference,chunks"
               environment_key: default
           environments:
             - environment_key: default

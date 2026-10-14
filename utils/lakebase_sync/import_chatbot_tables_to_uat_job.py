@@ -22,7 +22,7 @@ TARGET_SCHEMA = os.getenv("TARGET_SCHEMA", "qualibot")
 # Only the chatbot tables (and errors, which holds the chat's failures) — the
 # rest are either unused in UAT or already served directly from Lakebase by the app.
 CHATBOT_TABLES = {"chat_feedbacks", "chat_messages", "chat_sessions", "chat_turns", "chat_retrieved_chunks",
-                  "errors"}
+                  "app_errors"}
 
 
 def to_dbfs_path(path: str) -> str:

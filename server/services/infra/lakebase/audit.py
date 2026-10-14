@@ -13,7 +13,7 @@ from .columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS, _
 logger = logging.getLogger(__name__)
 
 _ERROR_INSERT = '''
-    INSERT INTO errors
+    INSERT INTO app_errors
         (endpoint, error_type, error_msg, user_id, workspace_id,
          old_filename, new_filename, file_type, stack_trace, llm_request_id,
          severity, stage, http_status, upstream, trace_id, session_id, context, app_version,

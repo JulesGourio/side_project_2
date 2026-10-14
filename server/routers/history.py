@@ -87,7 +87,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
 
             row = await conn.fetchrow(
                 '''
-                INSERT INTO messages
+                INSERT INTO compare_messages
                     (user_id, workspace_id, workspace_url,
                      old_filename, new_filename, old_file_hash, new_file_hash,
                      analysis_text, impact_text, volume_session_path,
@@ -159,7 +159,7 @@ async def save_comparison_impact(comparison_id: int, body: SaveImpactRequest, re
     try:
         async with pool.acquire() as conn:
             updated = await conn.fetchval(
-                'UPDATE messages SET impact_text = $1 WHERE id = $2 AND user_id = $3 RETURNING id',
+                'UPDATE compare_messages SET impact_text = $1 WHERE id = $2 AND user_id = $3 RETURNING id',
                 body.impact_json, comparison_id, identity['user_id'],
             )
         if updated is None:
@@ -186,7 +186,7 @@ async def list_comparisons(request: Request, limit: int = 20, offset: int = 0):
             rows = await conn.fetch(
                 '''
                 SELECT id, created_at, old_filename, new_filename, volume_session_path
-                FROM messages
+                FROM compare_messages
                 WHERE user_id = $1
                 ORDER BY created_at DESC
                 LIMIT $2 OFFSET $3
@@ -196,7 +196,7 @@ async def list_comparisons(request: Request, limit: int = 20, offset: int = 0):
                 offset,
             )
             total = await conn.fetchval(
-                'SELECT COUNT(*) FROM messages WHERE user_id = $1',
+                'SELECT COUNT(*) FROM compare_messages WHERE user_id = $1',
                 user_id,
             )
         return {'comparisons': [_serialize(r) for r in rows], 'total': total, 'available': True}
@@ -218,7 +218,7 @@ async def get_comparison(comparison_id: int, request: Request):
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                'SELECT * FROM messages WHERE id = $1 AND user_id = $2',
+                'SELECT * FROM compare_messages WHERE id = $1 AND user_id = $2',
                 comparison_id,
                 user_id,
             )

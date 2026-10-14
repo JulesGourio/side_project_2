@@ -26,7 +26,7 @@ dbutils.widgets.text("target_catalog_schema", "uat_proj.qualibot")
 dbutils.widgets.text("target_suffix", "_test")
 dbutils.widgets.text("source_catalog_schema", "uat_landingzone.qualibot")
 dbutils.widgets.text("source_suffix", "_v1")
-dbutils.widgets.text("tables", "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference")
+dbutils.widgets.text("tables", "parsing_checkpoint,parsed_documents,image_metadata,parse_manifest,category_reference")
 dbutils.widgets.text("volumes", "images_test")
 dbutils.widgets.text("reader_groups", "Role-Project-LEAP-CoreAdmin,Role-Project-LEAP-CoreDev")
 dbutils.widgets.dropdown("overwrite", "false", ["false", "true"])
@@ -45,6 +45,9 @@ if not logger.handlers:
 
 def _list(name):
     return [v.strip() for v in dbutils.widgets.get(name).split(",") if v.strip()]
+
+# Names of the same tables in the source schema, where they differ from the target names.
+SOURCE_NAMES = {"parsing_checkpoint": "_pipeline_checkpoint", "parsed_documents": "processed_files"}
 
 
 target = dbutils.widgets.get("target_catalog_schema").strip()
@@ -75,7 +78,7 @@ for v in _list("volumes"):
 
 created = []
 for name in _list("tables"):
-    src = f"{source}.{name}{source_suffix}"
+    src = f"{source}.{SOURCE_NAMES.get(name, name)}{source_suffix}"
     dst = f"{target}.{name}{target_suffix}"
     if not spark.catalog.tableExists(src):
         logger.info(f"  {src}: missing in the source, skipped")

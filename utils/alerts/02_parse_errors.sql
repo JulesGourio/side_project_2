@@ -4,7 +4,7 @@
 WITH latest AS (
   SELECT IDDOC, ref, source_file_extension AS file_type, parser_strategy, parse_status, parse_time_seconds,
          ingestion_timestamp, error_trace
-  FROM dev_proj.qualibot.processed_files
+  FROM dev_proj.qualibot.parsed_documents
   WHERE ingestion_timestamp >= current_timestamp() - INTERVAL 1 DAY
   QUALIFY ROW_NUMBER() OVER (PARTITION BY IDDOC ORDER BY ingestion_timestamp DESC) = 1
 )

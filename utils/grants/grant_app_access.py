@@ -35,7 +35,7 @@ dbutils.widgets.text("indexes", "chunks_index")
 dbutils.widgets.text("proj_catalog", "dev_proj")
 dbutils.widgets.text("proj_schema", "qualibot")
 dbutils.widgets.text("pipeline_service_principal", "fde6ff28-739f-4a41-b61e-604a298c8478")
-dbutils.widgets.text("pipeline_tables", "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference,chunks")
+dbutils.widgets.text("pipeline_tables", "parsing_checkpoint,parsed_documents,image_metadata,parse_manifest,category_reference,chunks")
 
 
 def _list(name):

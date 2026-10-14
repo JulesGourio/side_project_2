@@ -30,7 +30,7 @@ notebook ne fait qu'orchestrer.
 | `manifest_steps.py` | Phases de `2_manifest` : nettoyage des contenus obsolètes, classement des dossiers, manifeste |
 | `selection.py` | Choix du meilleur fichier par IDDOC (ordre des formats) |
 | `parse_steps.py` | Phases de `3_parse` : périmètre du run, parsing par lots, reprise, relance des échecs |
-| `build_steps.py` | Construction des tables de `3_parse` : `image_metadata`, `processed_files`, passages, notices d'archive |
+| `build_steps.py` | Construction des tables de `3_parse` : `image_metadata`, `parsed_documents`, passages, notices d'archive |
 | `output_steps.py` | Écritures de `3_parse` : tables, historique du run, notices, contrôle des documents sans passage |
 | `describe_steps.py` | Phases de `4_describe_images` : appels au modèle, passages d'images, promotion des documents |
 | `llm_describe.py` | Appels asynchrones au modèle de vision : limiteur de débit, chaîne d'endpoints, disjoncteur |
@@ -76,11 +76,11 @@ python -m pytest tests/test_parsing_*.py tests/test_code_conventions.py
 | Tâche | Notebook | Cluster | Rôle | Écrit |
 |---|---|---|---|---|
 | `1_categories` | `create_proj_category_reference.py` | CPU (`meta_cpu_cluster`) | Vérifie la fraîcheur des sources Intraqual, construit la hiérarchie des catégories et les divisions | `category_reference` |
-| `2_manifest` | `create_proj_parse_manifest.py` | CPU (`meta_cpu_cluster`) | Applique le périmètre, retire les contenus obsolètes, classe les dossiers du volume, construit la liste des documents du jour | `parse_manifest`, `processed_files`, et suppressions dans les tables de passages |
-| `3_parse` | `create_proj_chunks.py` | GPU (`parse_gpu_cluster`) | Choisit un fichier par document, le parse, extrait les images, découpe en passages et écrit les tables | `_pipeline_checkpoint`, `processed_files`, `chunks`, `chunks_archive`, `chunks_archive_notices`, `image_metadata`, `parsing_run_health`, `document_change_log` |
-| `4_describe_images` | `create_proj_image_metadata.py` | CPU (`describe_cpu_cluster`) | Décrit les images par un modèle de vision et ajoute leurs passages | `image_metadata`, `chunks`, `chunks_archive`, `processed_files` |
+| `2_manifest` | `create_proj_parse_manifest.py` | CPU (`meta_cpu_cluster`) | Applique le périmètre, retire les contenus obsolètes, classe les dossiers du volume, construit la liste des documents du jour | `parse_manifest`, `parsed_documents`, et suppressions dans les tables de passages |
+| `3_parse` | `create_proj_chunks.py` | GPU (`parse_gpu_cluster`) | Choisit un fichier par document, le parse, extrait les images, découpe en passages et écrit les tables | `parsing_checkpoint`, `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health`, `document_change_log` |
+| `4_describe_images` | `create_proj_image_metadata.py` | CPU (`describe_cpu_cluster`) | Décrit les images par un modèle de vision et ajoute leurs passages | `image_metadata`, `chunks`, `chunks_archive`, `parsed_documents` |
 | `5_sync_index` | `update_proj_vector_indexes.py` | serverless | Crée les index absents, lance leur synchronisation, reconstruit `chunks_full` si demandé | `chunks_full`, index Vector Search |
-| `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | Reconstruit le catalogue des documents et la date de la base dans Lakebase | `doc_catalog`, `knowledge_base_metadata` (Lakebase) |
+| `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | Reconstruit le catalogue des documents et la date de la base dans Lakebase | `doc_catalog`, `catalog_metadata` (Lakebase) |
 
 Chaque tâche attend la tâche qui la précède. Si `5_sync_index` échoue, le catalogue
 n'est pas mis à jour. Sans la tâche 5, les nouveaux passages ne sont jamais
@@ -109,9 +109,9 @@ corpus partiel.
 - **Une révision, un IDDOC** : chaque révision d'un document a son propre IDDOC.
   Quand un IDDOC sort du périmètre (révision remplacée ou document supprimé),
   `2_manifest` supprime ses lignes dans `chunks`, `chunks_archive`,
-  `image_metadata` et `processed_files`. Quand un REF a encore plusieurs IDDOC
+  `image_metadata` et `parsed_documents`. Quand un REF a encore plusieurs IDDOC
   dans le périmètre, seule la révision la plus récente (`indice` le plus haut)
-  garde ses passages. Les lignes `processed_files` des autres restent, pour qu'elles
+  garde ses passages. Les lignes `parsed_documents` des autres restent, pour qu'elles
   ne soient pas parsées à nouveau.
 - **Suppressions** : cette étape s'exécute à chaque run. Le paramètre
   `DRY_RUN` ne protège que les fichiers du volume (ceux des dossiers hors
@@ -126,9 +126,9 @@ corpus partiel.
   (l'index du chat). `PARSING_ARCHIVE_MAX_DOCS` fixe le nombre total de ces
   documents parsés, les plus récents d'abord (0 : aucun, -1 : tous). Un
   passage-notice sans contenu par document antérieur est écrit dans
-  `chunks_archive_notices` ; il n'entre dans `chunks` que si
+  `archive_notices` ; il n'entre dans `chunks` que si
   `PARSING_ARCHIVE_NOTICES_IN_RAG` vaut `true`.
-- **Statuts de `processed_files`** (une ligne par IDDOC) :
+- **Statuts de `parsed_documents`** (une ligne par IDDOC) :
 
 | `parse_status` | Sens |
 |---|---|
@@ -280,7 +280,7 @@ Les tables des matières, les pages de garde et les blocs répétés
 Reconstruit la table `doc_catalog` de la base Lakebase indiquée par la variable
 `parsing_lakebase_database` (vide : tâche sautée), à partir de `parse_manifest` et des
 passages : REF, titre, lien, division, révision (`indice`) et date de publication.
-Met aussi à jour `knowledge_base_metadata` (date des documents affichée dans le
+Met aussi à jour `catalog_metadata` (date des documents affichée dans le
 chat). L'application relit le catalogue toutes les 30 minutes.
 
 ## Tables et volumes
@@ -290,17 +290,17 @@ Tables Delta du schéma `<env>_proj.qualibot` (`catalog_schema` des variables) :
 | Table | Rôle |
 |---|---|
 | `parse_manifest` | Documents du jour : REF, titre, révision, date, catégories, `parse_content` |
-| `processed_files` | Une ligne par IDDOC : statut, fichier retenu, parseur, erreur, `is_in_rag`, `is_filtered_by_date` |
-| `_pipeline_checkpoint` | Résultat de chaque fichier tenté ; relu par toutes les étapes de `3_parse` |
+| `parsed_documents` | Une ligne par IDDOC : statut, fichier retenu, parseur, erreur, `is_in_rag`, `is_filtered_by_date` |
+| `parsing_checkpoint` | Résultat de chaque fichier tenté ; relu par toutes les étapes de `3_parse` |
 | `chunks` | Passages du chat (texte et images), tous divisions confondues |
 | `chunks_archive` | Passages des documents antérieurs à 2018 |
-| `chunks_archive_notices` | Un passage-notice par document antérieur, sans contenu |
+| `archive_notices` | Un passage-notice par document antérieur, sans contenu |
 | `chunks_full` | `chunks` + `chunks_archive` (recherche d'impact), si construit |
 | `image_metadata` | Une ligne par image : emplacement, statut, description, jetons |
 | `category_reference` | Hiérarchie des catégories et division de chaque catégorie |
 | `parsing_run_health` | Une ligne par exécution (tableau de bord) |
 | `document_change_log` | Une ligne par document nouveau ou révisé (tableau de bord) |
-| `_rag_exclusions`, `_retry_temp` | Tables de travail |
+| `rag_exclusions`, `parsing_retry_temp` | Tables de travail |
 
 Toutes les tables reçoivent le suffixe `PARSING_TABLE_SUFFIX` (variable
 `parsing_table_suffix` : vide, sauf pour une validation où il vaut `_test`). Les
@@ -368,7 +368,7 @@ tâche sans rien écrire : les tables restent inchangées. Un contrôle
 |---|---|---|
 | `category_reference` | Non vide ; `IDDOC` non nul et unique ; `division` sur 99 % des lignes | RED ; AMBER |
 | `parse_manifest` | Non vide ; `IDDOC` non nul et unique ; `ref` et `titre` présents sur 99 % des lignes | RED ; AMBER |
-| `processed_files` | `IDDOC` non nul et unique ; `parse_status` non nul ; `ref` et `division` présents sur 99 % des lignes | RED ; AMBER |
+| `parsed_documents` | `IDDOC` non nul et unique ; `parse_status` non nul ; `ref` et `division` présents sur 99 % des lignes | RED ; AMBER |
 | `chunks`, `chunks_archive` | `chunk_id` non nul et unique sur les deux tables ; `IDDOC`, `REF` et texte présents ; `division` et `titre` sur 99 % | RED ; AMBER |
 | `image_metadata` | `(IDDOC, image_id)` non nuls et uniques ; fichier présent sur plus de 95 % des images | RED ; AMBER |
 | passages d'images (`chunks`, `chunks_archive`) | `chunk_id` non nul et unique ; `IDDOC`, `REF` et texte présents ; `division` sur 99 % | RED ; AMBER |

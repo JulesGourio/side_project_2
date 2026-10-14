@@ -25,7 +25,7 @@ Une colonne nouvelle s'ajoute dans `schema.py` (ou dans `columns.py` pour les ta
 | `impact_cache` | résultat d'impact search mis en cache | `infra/lakebase/cache.py` |
 | `summary_cache` | résumé d'un document mis en cache | `infra/lakebase/cache.py` |
 | `users` | utilisateur connu de l'app | `infra/lakebase/users.py` |
-| `knowledge_base_metadata` | date « documents à jour au » (une seule ligne, `id = 1`) | saisie à la main ; lue par `routers/config.py` |
+| `catalog_metadata` | date « documents à jour au » (une seule ligne, `id = 1`) | saisie à la main ; lue par `routers/config.py` |
 | `doc_catalog` | catalogue des documents : référence, titre, lien, révision, date | tâche `6_update_kb_metadata` du pipeline ; lue par `infra/doc_catalog.py` |
 
 **Clés de jointure du chat** :
@@ -463,7 +463,7 @@ Index : `idx_errors_created_at` (`created_at`), `idx_errors_trace_id` (`trace_id
 
 Index unique : `users_email_idx` (`email`, où il n'est pas NULL).
 
-### `knowledge_base_metadata`
+### `catalog_metadata`
 
 Une seule ligne (`id = 1`, contrainte `single_row`) : la date « documents à jour au », affichée dans l'interface.
 
@@ -513,7 +513,7 @@ FROM chat_retrieved_chunks WHERE trace_id = 'chat-…' AND kept ORDER BY prompt_
 -- Erreurs par empreinte, sur 7 jours
 SELECT fingerprint, endpoint, severity, stage, error_type, origin, COUNT(*) AS n,
        MIN(created_at) AS first_seen, MAX(created_at) AS last_seen, MAX(LEFT(error_msg, 150)) AS example
-FROM errors WHERE created_at > NOW() - INTERVAL '7 days'
+FROM app_errors WHERE created_at > NOW() - INTERVAL '7 days'
 GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY n DESC;
 ```
 

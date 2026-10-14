@@ -21,7 +21,7 @@
 # MAGIC
 # MAGIC Three phases: searches one index after the other, then all answers, then all judgments, in
 # MAGIC parallel, by batches of 20. **Every batch is saved as soon as it ends**: searches and answers
-# MAGIC in `eval_pairwise_runs_cache` (reused by any later run, whatever its `eval_id`), judgments in
+# MAGIC in `eval_pairwise_cache` (reused by any later run, whatever its `eval_id`), judgments in
 # MAGIC `eval_pairwise_runs`, one line per (question, contender). A run that crashes loses at most
 # MAGIC the batch in progress: Run all again and it resumes. Nothing already judged for the same
 # MAGIC `eval_id` is re-run.
@@ -43,7 +43,7 @@ dbutils.widgets.dropdown('translate_back', 'true', ['true', 'false'])   # as the
 dbutils.widgets.text('n_questions', '40')                               # golden first, then real DEV questions
 dbutils.widgets.text('seed', '7')
 dbutils.widgets.text('max_parallel', '4')
-dbutils.widgets.text('golden_table', 'dev_proj.qualibot.qualibot_eval_golden')
+dbutils.widgets.text('golden_table', 'dev_proj.qualibot.eval_golden_questions')
 dbutils.widgets.text('chat_table', 'dev_proj.qualibot.chat_messages')
 dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_pairwise_runs')
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')

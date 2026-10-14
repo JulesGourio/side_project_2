@@ -1,4 +1,4 @@
-"""Document statuses of processed_files (utils/parsing_pipeline/doc_status.py): a status the parse leaves open is
+"""Document statuses of parsed_documents (utils/parsing_pipeline/doc_status.py): a status the parse leaves open is
 retried by the next run or moved on by the description step, so nothing waits in a status nothing moves."""
 import os
 import sys

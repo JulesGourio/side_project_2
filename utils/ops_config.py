@@ -50,20 +50,20 @@ MIGRATE_TO_PROD_TABLES_TO_SKIP = {
 # no incoming FK from another migrated table).
 MIGRATE_TO_PROD_TABLE_ORDER = [
     "users",
-    "messages",
+    "compare_messages",
     "chat_sessions",
     "chat_messages",       # FK -> chat_sessions
     "chat_turns",          # FK -> chat_messages
     "chat_retrieved_chunks",  # FK -> chat_turns
-    "feedbacks",           # FK -> messages
+    "compare_feedbacks",   # FK -> compare_messages
     "chat_feedbacks",      # FK -> chat_messages, chat_sessions
     "impact_requests",
     "impact_document_results",  # FK -> impact_requests
-    "impact_feedbacks",         # FK -> impact_requests, messages
+    "impact_feedbacks",         # FK -> impact_requests, compare_messages
     "impact_cache",
     "summary_cache",
-    "errors",
-    "knowledge_base_metadata",
+    "app_errors",
+    "catalog_metadata",
 ]
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────

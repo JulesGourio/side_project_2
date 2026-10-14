@@ -100,13 +100,13 @@ def prune_stale_content(stale_iddocs):
         f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} "
         f"WHERE parse_status IN {_STATUSES_TO_PRUNE} AND IDDOC IN ({_id_list(stale_iddocs)})"
     )
-    logger.info(f"Pruned {len(stale_iddocs)} out-of-scope IDDOCs from chunks/image_metadata/processed_files.")
+    logger.info(f"Pruned {len(stale_iddocs)} out-of-scope IDDOCs from chunks/image_metadata/parsed_documents.")
 
 
 def prune_stale_revisions():
     """Remove the chunks of older revisions of REFs that still have several in-scope IDDOCs.
 
-    Keeps the highest `indice` per REF (highest IDDOC as tie-break). `processed_files` is left untouched on purpose:
+    Keeps the highest `indice` per REF (highest IDDOC as tie-break). `parsed_documents` is left untouched on purpose:
     deleting its row would make the old IDDOC eligible for parsing again on the next run.
     """
     if not table_exists(TARGET_CHUNK_TABLE):
@@ -139,7 +139,7 @@ def prune_stale_revisions():
     _delete_iddocs(_DERIVED_TABLES, stale_revision_iddocs)
     logger.info(
         f"Pruned {len(stale_revision_iddocs)} stale-revision IDDOC(s) across {n_dup_refs} REF(s) from chunks and "
-        f"image_metadata (processed_files rows kept to prevent a re-parse loop)."
+        f"image_metadata (parsed_documents rows kept to prevent a re-parse loop)."
     )
 
 
@@ -212,7 +212,7 @@ def remove_stale_skip_rows(rows_keep):
 
 
 def reconcile_processed_files(classified, known_iddocs, job_run_id):
-    """Record in processed_files the documents that must not be parsed.
+    """Record in parsed_documents the documents that must not be parsed.
 
     The table keeps one current row per IDDOC, so each reclassification replaces the previous status.
     """
@@ -262,7 +262,7 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
     } for iddoc in existing_iddocs - folder_iddocs - set(known_iddocs)]
 
     if not all_skipped:
-        logger.info("Nothing to log into processed_files.")
+        logger.info("Nothing to log into parsed_documents.")
         return
     if not table_exists(TARGET_PROCESSED_FILES_TABLE):
         logger.warning(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet - run create_proj_chunks (FULL) first. "
@@ -275,7 +275,7 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
             spark.sql(f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} WHERE IDDOC IN ({_id_list(reclassified)})")
         write_table(spark.createDataFrame(all_skipped), TARGET_PROCESSED_FILES_TABLE, "append", merge_schema=True)
     except Exception as exc:
-        logger.error(f"Error writing processed_files (run {run_id}): {exc}")
+        logger.error(f"Error writing parsed_documents (run {run_id}): {exc}")
         return
 
     logger.info(f"{TARGET_PROCESSED_FILES_TABLE} updated ({run_id}):")

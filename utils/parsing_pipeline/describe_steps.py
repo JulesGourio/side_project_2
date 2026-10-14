@@ -296,7 +296,7 @@ def build_image_chunks(df_described):
     df_text_chunks = df_text_all.filter(F.col("chunk_content_type") != "image")
     df_max_idx = df_text_chunks.groupBy("IDDOC").agg(F.max("chunk_index").alias("max_text_index"))
 
-    # Document metadata is not on image_metadata: it comes from processed_files, for the source prefix.
+    # Document metadata is not on image_metadata: it comes from parsed_documents, for the source prefix.
     df_pf = spark.table(TARGET_PROCESSED_FILES_TABLE)
     df_doc_meta = (
         df_pf.select("IDDOC", "doc_date",
@@ -405,7 +405,7 @@ def _merge_chunks(df_chunks, table):
 
 
 def _update_processed_files(df_values, columns):
-    """Set `columns` on the processed_files rows of the IDDOCs of `df_values` (IDDOC + columns); the others stay.
+    """Set `columns` on the parsed_documents rows of the IDDOCs of `df_values` (IDDOC + columns); the others stay.
 
     The rows are saved first: the merge source must not read the table it merges into.
     """

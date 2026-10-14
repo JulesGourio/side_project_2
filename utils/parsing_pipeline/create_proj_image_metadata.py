@@ -24,12 +24,12 @@
 # MAGIC **Inputs Data**
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}` (text passages and max chunk index per IDDOC)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (document metadata for the source prefix)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}` (document metadata for the source prefix)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (description and status columns)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}` (image passages)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (EMPTY_TEXT / IMAGES_PENDING -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all the images of a document are described)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}` (EMPTY_TEXT / IMAGES_PENDING -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all the images of a document are described)
 
 # COMMAND ----------
 

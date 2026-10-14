@@ -1,4 +1,4 @@
-"""Document statuses of processed_files, shared by the parse steps and the description step (no Spark import).
+"""Document statuses of parsed_documents, shared by the parse steps and the description step (no Spark import).
 
 3_parse leaves a document in a terminal status, which the next incremental run does not parse again. A document
 with no text but images is IMAGES_PENDING while its images are not described; 4_describe_images moves it on (SUCCESS

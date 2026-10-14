@@ -28,21 +28,21 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `2_manifest`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.category_reference{PARSING_TABLE_SUFFIX}`, `processed_files{PARSING_TABLE_SUFFIX}`
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.category_reference{PARSING_TABLE_SUFFIX}`, `parsed_documents{PARSING_TABLE_SUFFIX}`
 # MAGIC - `{PARSING_INTRAQUAL_BRONZE}.gd_doc_latest`, `gd_doc_cat_latest`, `gd_cat_latest`, `gd_typdoc_latest`
 # MAGIC - `{PARSING_VOLUME_ROOT_PATH}` volume listing
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (skip rows)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}` (skip rows)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` / `chunks_archive` / `image_metadata` (stale-IDDOC pruning only)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - Pruning, un-skip and reconciliation write to Delta tables (`chunks`, `chunks_archive`, `image_metadata`, `processed_files`) in `# Data Transformations`, before the manifest is written: a failure in a later step leaves those tables already pruned.
-# MAGIC - `reconcile_processed_files` logs a failed write to `processed_files` but does not stop the task, so the manifest can be written while the skip rows are not.
+# MAGIC - Pruning, un-skip and reconciliation write to Delta tables (`chunks`, `chunks_archive`, `image_metadata`, `parsed_documents`) in `# Data Transformations`, before the manifest is written: a failure in a later step leaves those tables already pruned.
+# MAGIC - `reconcile_processed_files` logs a failed write to `parsed_documents` but does not stop the task, so the manifest can be written while the skip rows are not.
 # MAGIC - The `V_QUALIBOT` view filters (`DIFFTOTALE`, confidentiality) are not re-applied here; the scope gate relies on the volume having been filled through that view.
 
 # COMMAND ----------
@@ -100,14 +100,14 @@ spark.conf.set("spark.databricks.remoteFiltering.blockSelfJoins", "false")
 # MAGIC ## Config Widgets
 # MAGIC `DRY_RUN` protects the **volume**: out-of-scope folders are only deleted when it is `non`. The cleanup of derived tables (stale chunks, image metadata) always runs, because it removes indexed content, not source files.
 # MAGIC
-# MAGIC `JOB_RUN_ID` is written on every `processed_files` row so `3_parse` rows and these rows can be correlated.
+# MAGIC `JOB_RUN_ID` is written on every `parsed_documents` row so `3_parse` rows and these rows can be correlated.
 
 # COMMAND ----------
 
 dbutils.widgets.removeAll()
 
 dbutils.widgets.dropdown("DRY_RUN", "oui", ["oui", "non"], "DRY_RUN — 'non' to actually delete")
-dbutils.widgets.text("JOB_RUN_ID", "", "Parent job run_id (correlates with 3_parse's processed_files rows)")
+dbutils.widgets.text("JOB_RUN_ID", "", "Parent job run_id (correlates with 3_parse's parsed_documents rows)")
 
 DRY_RUN = dbutils.widgets.get("DRY_RUN").lower() != "non"
 JOB_RUN_ID = dbutils.widgets.get("JOB_RUN_ID") or None
@@ -156,7 +156,7 @@ logger.info(f"{len(scope_iddocs)} IDDOCs in the Qualibot perimeter")
 
 # MAGIC %md
 # MAGIC ## Parsed IDDOCs that left scope
-# MAGIC Compared with `processed_files` (SUCCESS, ERROR, EMPTY_TEXT and IMAGES_PENDING only; the SKIPPED rows are reconciled in Tr. 5). They are pruned in Tr. 1.
+# MAGIC Compared with `parsed_documents` (SUCCESS, ERROR, EMPTY_TEXT and IMAGES_PENDING only; the SKIPPED rows are reconciled in Tr. 5). They are pruned in Tr. 1.
 
 # COMMAND ----------
 
@@ -234,7 +234,7 @@ logger.info(f"{len(iddoc_to_cat)} IDDOCs with a principal category")
 # MAGIC %md
 # MAGIC # Data Transformations
 # MAGIC ## Tr. 1 - Remove stale derived content
-# MAGIC A new revision gets a new IDDOC. When the old IDDOC leaves scope, its rows in `chunks`, `chunks_archive`, `image_metadata` and `processed_files` are deleted so the index stops serving it.
+# MAGIC A new revision gets a new IDDOC. When the old IDDOC leaves scope, its rows in `chunks`, `chunks_archive`, `image_metadata` and `parsed_documents` are deleted so the index stops serving it.
 
 # COMMAND ----------
 
@@ -244,7 +244,7 @@ manifest_steps.prune_stale_content(stale_iddocs)
 
 # MAGIC %md
 # MAGIC ## Tr. 2 - Remove stale revision chunks
-# MAGIC A REF can still have several in-scope IDDOCs. Only the newest revision (highest `indice`, then highest IDDOC) keeps its chunks. The `processed_files` rows stay on purpose: deleting them would make the old IDDOC eligible for parsing again.
+# MAGIC A REF can still have several in-scope IDDOCs. Only the newest revision (highest `indice`, then highest IDDOC) keeps its chunks. The `parsed_documents` rows stay on purpose: deleting them would make the old IDDOC eligible for parsing again.
 
 # COMMAND ----------
 
@@ -266,7 +266,7 @@ classified = manifest_steps.classify_root_folders(
 
 # MAGIC %md
 # MAGIC ## Tr. 4 - Remove stale permanent-skip rows
-# MAGIC A document that re-enters scope while `processed_files` still holds a permanent SKIPPED row would never be parsed again, so those rows are deleted.
+# MAGIC A document that re-enters scope while `parsed_documents` still holds a permanent SKIPPED row would never be parsed again, so those rows are deleted.
 
 # COMMAND ----------
 
@@ -275,7 +275,7 @@ manifest_steps.remove_stale_skip_rows(classified["keep"])
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Tr. 5 - Reconcile processed_files
+# MAGIC ## Tr. 5 - Reconcile parsed_documents
 # MAGIC Documents that must not be parsed get a SKIPPED row with the reason, so the monitoring dashboard can explain every exclusion. A document recorded earlier but absent from both the volume and `gd_doc` becomes SKIPPED_SOURCE_REMOVED.
 
 # COMMAND ----------

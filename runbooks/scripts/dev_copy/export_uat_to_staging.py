@@ -44,7 +44,7 @@ dbutils.widgets.text("TABLE_SUFFIX", "")
 dbutils.widgets.text(
     "TABLES",
     "chunks,"
-    "_pipeline_checkpoint,processed_files,image_metadata,parse_manifest,category_reference",
+    "parsing_checkpoint,parsed_documents,image_metadata,parse_manifest,category_reference",
 )
 dbutils.widgets.text("OUTPUT_DIR", "/Volumes/uat_proj/qualibot/staging/dev_copy")
 dbutils.widgets.dropdown("FORMAT", "delta", ["delta", "parquet"])

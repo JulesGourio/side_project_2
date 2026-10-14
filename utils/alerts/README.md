@@ -9,8 +9,8 @@ aucun job : ils sont lus et créés à la main.
 
 | Fichier | Déclenche quand (fenêtre) | Colonne et condition | Table lue |
 |---|---|---|---|
-| `01_parsed_without_chunks.sql` | Un document `SUCCESS` destiné au RAG n'a aucun passage dans `chunks` 4 h après son parsing (documents des 7 derniers jours) | `docs_without_chunks` > 0 | `processed_files`, `chunks` |
-| `02_parse_errors.sql` | La dernière tentative de parsing d'un document est `ERROR` ou `TIMEOUT` (24 h). Un document réparé par une nouvelle tentative n'est pas compté | `docs_in_error` > 0 | `processed_files` |
+| `01_parsed_without_chunks.sql` | Un document `SUCCESS` destiné au RAG n'a aucun passage dans `chunks` 4 h après son parsing (documents des 7 derniers jours) | `docs_without_chunks` > 0 | `parsed_documents`, `chunks` |
+| `02_parse_errors.sql` | La dernière tentative de parsing d'un document est `ERROR` ou `TIMEOUT` (24 h). Un document réparé par une nouvelle tentative n'est pas compté | `docs_in_error` > 0 | `parsed_documents` |
 | `03_chat_failure_rate.sql` | Sur la dernière heure, trop de réponses du chat sont en erreur ou sans source. Le seuil dépend du trafic : en dessous de 5 messages, rien ne se déclenche | `alert_triggered` = 1 | `chat_messages` |
 | `04_job_failures.sql` | Un job dont le nom contient `_Qualibot_` a échoué sur les 24 dernières heures | `failed_runs` > 0 | `system.lakeflow` |
 | `05_new_error_kinds.sql` | Une nouvelle `fingerprint` d'erreur (route, étape, type, emplacement dans le code) apparaît sur les 24 dernières heures et n'existe pas dans la table. Les avertissements (`severity` = `warning`) sont exclus | `new_error_kinds` > 0 | `errors` |
@@ -40,7 +40,7 @@ documents, les jobs, les erreurs ou les causes concernés.
   donc aussi fraîches que cette copie. Tant que la table n'existe pas (aucune
   ligne importée), la requête échoue avec « table not found ».
 - `04` exige `SELECT` sur `system.lakeflow` pour le propriétaire de l'alerte.
-- `01` et `02` lisent `processed_files` : elles ne voient que les documents
+- `01` et `02` lisent `parsed_documents` : elles ne voient que les documents
   parsés par la chaîne quotidienne (voir
   [`utils/parsing_pipeline/README.md`](../parsing_pipeline/README.md)).
 - Non couverts : la fraîcheur des sources Intraqual (la tâche `1_categories`

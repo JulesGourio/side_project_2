@@ -394,7 +394,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   GROUP BY t.id, t.trace_id ORDER BY t.id DESC LIMIT 6;
 
   SELECT created_at, endpoint, severity, stage, error_type, origin, fingerprint, user_message, LEFT(error_msg, 120) AS msg
-  FROM errors ORDER BY id DESC LIMIT 20;
+  FROM app_errors ORDER BY id DESC LIMIT 20;
   ```
 
   Attendu : une ligne par question (`ok` ou `degraded`, `aborted` si l'onglet est fermé avant la fin), une trentaine de passages par tour.
@@ -422,7 +422,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
 
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
   - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, sauf les tables de test `*_test`. Les tables
-    d'évaluation (`eval_*`, `qualibot_eval_golden`, `synthetic_retrieval_questions`, `feedback_failure_cases`) sont les défauts des notebooks :
+    d'évaluation (`eval_*`, `eval_golden_questions`, `eval_synthetic_questions`, `eval_feedback_failures`) sont les défauts des notebooks :
     ne pas les supprimer.
 
 ### T. Combien de passages garder ?
@@ -455,7 +455,7 @@ commune (`server/services/infra/vs_gate.py`, 8 requêtes en cours au plus, relan
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
 Lecture seule sur les tables UAT ; écrit uniquement dans `/Volumes/uat_proj/qualibot/staging/dev_copy/`. La cible `qualibot-uat` du bundle
-n'est pas touchée. Tables exportées : `chunks`, `_pipeline_checkpoint`, `processed_files`, `image_metadata`, `parse_manifest`,
+n'est pas touchée. Tables exportées : `chunks`, `parsing_checkpoint`, `parsed_documents`, `image_metadata`, `parse_manifest`,
 `category_reference`, plus l'archive LibreOffice. Pas de tables d'archive avant 2018.
 
 - [x] **E1. Importer le notebook dans votre dossier et lancer le run** _(2026-10-05)_
@@ -566,8 +566,8 @@ main dans l'UI est **effacé au prochain `bundle deploy`** → le développeur e
   -- (b) seulement le corpus et l'état du pipeline
   GRANT CREATE TABLE ON SCHEMA dev_proj.qualibot TO `mehdi.lamrani@databricks.com`;
   GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.chunks               TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot._pipeline_checkpoint TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.processed_files      TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.parsing_checkpoint TO `mehdi.lamrani@databricks.com`;
+  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.parsed_documents      TO `mehdi.lamrani@databricks.com`;
   GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.image_metadata       TO `mehdi.lamrani@databricks.com`;
   GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.parse_manifest       TO `mehdi.lamrani@databricks.com`;
   GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.category_reference   TO `mehdi.lamrani@databricks.com`;
@@ -630,14 +630,14 @@ Ce bloc ne touche pas aux données ; seul Q3 lance le pipeline (GPU, plusieurs h
 
   ```sql
   SELECT parse_status, COUNT(*) AS documents
-  FROM dev_proj.qualibot.processed_files
+  FROM dev_proj.qualibot.parsed_documents
   GROUP BY parse_status
   ORDER BY documents DESC;
   ```
 
   ```sql
   SELECT COUNT(*) AS parked_without_retry_image
-  FROM dev_proj.qualibot.processed_files p
+  FROM dev_proj.qualibot.parsed_documents p
   WHERE p.parse_status = 'IMAGES_PENDING'
     AND NOT EXISTS (
       SELECT 1 FROM dev_proj.qualibot.image_metadata i
@@ -685,7 +685,37 @@ Ce bloc ne touche pas aux données ; seul Q3 lance le pipeline (GPU, plusieurs h
 - Q5, `failed_limit` : 0 au premier run ; sinon la liste de la dernière requête donne les images à regarder (le `last_error_kind` dit pourquoi). Elles ne sont pas retentées : seul un run `full` les remet en attente.
 - Un document dont toutes les images sont en `FAILED_LIMIT` passe à `SKIPPED_EMPTY_IMAGES` (aucune image exploitable) ; la cause est dans `image_metadata`.
 
-### R. Renommer trois colonnes booléennes de `processed_files` (à faire)
+### R0. Renommer les tables (à faire, avant le déploiement de cette branche sur DEV)
+
+Ordre impératif : 1. SQL Delta ci-dessous, 2. migration Lakebase, 3. déploiement du code, 4. bloc R. Si le code est déployé avant les renommages, l'app crée des tables vides sous les nouveaux noms et l'historique reste sous les anciens.
+
+1. Éditeur SQL DEV, **une instruction à la fois**. Une table absente donne `TABLE_OR_VIEW_NOT_FOUND` : passer à la suivante.
+
+```sql
+ALTER TABLE dev_proj.qualibot.processed_files RENAME TO parsed_documents;
+ALTER TABLE dev_proj.qualibot.chunks_archive_notices RENAME TO archive_notices;
+ALTER TABLE dev_proj.qualibot._pipeline_checkpoint RENAME TO parsing_checkpoint;
+ALTER TABLE dev_proj.qualibot._rag_exclusions RENAME TO rag_exclusions;
+ALTER TABLE dev_proj.qualibot.qualibot_eval_golden RENAME TO eval_golden_questions;
+ALTER TABLE dev_proj.qualibot.synthetic_retrieval_questions RENAME TO eval_synthetic_questions;
+ALTER TABLE dev_proj.qualibot.feedback_failure_cases RENAME TO eval_feedback_failures;
+ALTER TABLE dev_proj.qualibot.eval_pairwise_runs_cache RENAME TO eval_pairwise_cache;
+ALTER TABLE dev_proj.qualibot.eval_load_runs RENAME TO eval_load_chat_runs;
+ALTER TABLE dev_proj.qualibot.eval_vs_load_runs RENAME TO eval_load_vector_search_runs;
+SHOW TABLES IN dev_proj.qualibot;
+```
+
+2. Lakebase DEV, PowerShell à la racine du dépôt (les renommages sont les premières migrations) :
+
+```powershell
+python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV
+```
+
+Contrôle, éditeur SQL Lakebase DEV : `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1;` doit lister `compare_messages`, `compare_feedbacks`, `app_errors`, `catalog_metadata` et pas `messages`, `feedbacks`, `errors`, `knowledge_base_metadata`.
+
+3. Relancer le job de droits DEV (`grant_app_access_dev`, runbook 0.5) : sa liste de tables porte les nouveaux noms.
+
+### R. Renommer trois colonnes booléennes de `parsed_documents` (à faire)
 
 Le code lit `is_in_rag`, `is_filtered_by_date` et `is_chunks_truncated` (préfixe `is_` pour les booléens, `CLAUDE.md`). Les tables DEV gardent les anciens noms tant que ce bloc n'est pas passé.
 
@@ -694,27 +724,27 @@ Ordre impératif : **1. SQL ci-dessous, 2. déploiement du code, 3. run de parsi
 Dans l'éditeur SQL du workspace DEV (SQL warehouse, compte du déployeur) :
 
 ```sql
-SHOW COLUMNS IN dev_proj.qualibot.processed_files;
+SHOW COLUMNS IN dev_proj.qualibot.parsed_documents;
 ```
 
 Attendu : `include_in_rag`, `filtered_by_date`, `chunks_truncated` présentes et `is_*` absentes. Si un nom `is_*` existe déjà, arrêter et le signaler.
 
 ```sql
-ALTER TABLE dev_proj.qualibot.processed_files SET TBLPROPERTIES (
+ALTER TABLE dev_proj.qualibot.parsed_documents SET TBLPROPERTIES (
   'delta.columnMapping.mode' = 'name',
   'delta.minReaderVersion' = '2',
   'delta.minWriterVersion' = '5'
 );
-ALTER TABLE dev_proj.qualibot.processed_files RENAME COLUMN include_in_rag TO is_in_rag;
-ALTER TABLE dev_proj.qualibot.processed_files RENAME COLUMN filtered_by_date TO is_filtered_by_date;
-ALTER TABLE dev_proj.qualibot.processed_files RENAME COLUMN chunks_truncated TO is_chunks_truncated;
-SHOW COLUMNS IN dev_proj.qualibot.processed_files;
+ALTER TABLE dev_proj.qualibot.parsed_documents RENAME COLUMN include_in_rag TO is_in_rag;
+ALTER TABLE dev_proj.qualibot.parsed_documents RENAME COLUMN filtered_by_date TO is_filtered_by_date;
+ALTER TABLE dev_proj.qualibot.parsed_documents RENAME COLUMN chunks_truncated TO is_chunks_truncated;
+SHOW COLUMNS IN dev_proj.qualibot.parsed_documents;
 ```
 
 Attendu après : les trois `is_*` présentes, les anciens noms absents.
 
 - Le `copy_uat_to_dev` recrée les tables depuis l'UAT, qui a encore les anciens noms : relancer ce bloc après chaque copie tant que l'UAT n'a pas été migré (`runbooks/uat.md`, à faire au moment de la bascule).
-- Même migration pour la table de test `uat_proj.qualibot.processed_files_test` (`qualibot-uat-test`), avant son run de validation : remplacer `dev_proj.qualibot.processed_files` par `uat_proj.qualibot.processed_files_test` dans les quatre instructions.
+- Même migration pour la table de test `uat_proj.qualibot.parsed_documents_test` (`qualibot-uat-test`), avant son run de validation : remplacer `dev_proj.qualibot.parsed_documents` par `uat_proj.qualibot.parsed_documents_test` dans les quatre instructions.
 - Les colonnes ne sont pas dans `chunks` ni dans l'index `chunks_index` : pas de resynchronisation d'index à prévoir.
 
 ### Plus tard — non fait, sur décision

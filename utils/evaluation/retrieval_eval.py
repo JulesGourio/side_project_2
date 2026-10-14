@@ -9,9 +9,9 @@
 # MAGIC
 # MAGIC | Source | Table | Expected documents |
 # MAGIC |---|---|---|
-# MAGIC | `golden` | `dev_proj.qualibot.qualibot_eval_golden` | `expected_retrieved_context` |
-# MAGIC | `synthetic` | `dev_proj.qualibot.synthetic_retrieval_questions` | `positive_refs` (FULL), `partial_refs` reported apart |
-# MAGIC | `feedback` | `dev_proj.qualibot.feedback_failure_cases` | `extracted_expected_ref` (user-named document) |
+# MAGIC | `golden` | `dev_proj.qualibot.eval_golden_questions` | `expected_retrieved_context` |
+# MAGIC | `synthetic` | `dev_proj.qualibot.eval_synthetic_questions` | `positive_refs` (FULL), `partial_refs` reported apart |
+# MAGIC | `feedback` | `dev_proj.qualibot.eval_feedback_failures` | `extracted_expected_ref` (user-named document) |
 # MAGIC
 # MAGIC Caveat: synthetic positives were judged among the top-K of another retriever, so they lean toward
 # MAGIC it; compare runs with each other, per source.
@@ -46,9 +46,9 @@ dbutils.widgets.text('indexes', 'chat')
 dbutils.widgets.text('sources', 'golden,synthetic,feedback')
 dbutils.widgets.dropdown('rerun_existing', 'false', ['false', 'true'])
 dbutils.widgets.text('max_parallel', '4')   # questions at once (each sends 3-5 Vector Search queries)
-dbutils.widgets.text('golden_table', 'dev_proj.qualibot.qualibot_eval_golden')
-dbutils.widgets.text('synthetic_table', 'dev_proj.qualibot.synthetic_retrieval_questions')
-dbutils.widgets.text('feedback_table', 'dev_proj.qualibot.feedback_failure_cases')
+dbutils.widgets.text('golden_table', 'dev_proj.qualibot.eval_golden_questions')
+dbutils.widgets.text('synthetic_table', 'dev_proj.qualibot.eval_synthetic_questions')
+dbutils.widgets.text('feedback_table', 'dev_proj.qualibot.eval_feedback_failures')
 dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_retrieval_runs')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
