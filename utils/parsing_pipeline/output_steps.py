@@ -7,7 +7,7 @@ from databricks.sdk.runtime import spark
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
-from tables import write_table
+from tables import add_missing_columns, write_table
 from utils import logger
 from config import (
     ARCHIVE_NOTICES_IN_RAG,
@@ -34,6 +34,7 @@ def _merge_image_metadata(df_image_metadata):
         logger.info(f"Created {TARGET_IMAGE_METADATA_TABLE} (first write)")
         return
     keep_prev = "CASE WHEN tgt.status IN ('DONE', 'SKIPPED') THEN tgt.{col} ELSE src.{col} END"
+    add_missing_columns(df_image_metadata, TARGET_IMAGE_METADATA_TABLE)
     (
         DeltaTable.forName(spark, TARGET_IMAGE_METADATA_TABLE).alias("tgt")
         .merge(df_image_metadata.alias("src"), "tgt.IDDOC = src.IDDOC AND tgt.image_id = src.image_id")
@@ -48,6 +49,7 @@ def _merge_image_metadata(df_image_metadata):
             "input_tokens": keep_prev.format(col="input_tokens"),
             "output_tokens": keep_prev.format(col="output_tokens"),
             "described_at": keep_prev.format(col="described_at"),
+            "attempts": "src.attempts", "last_error_kind": "src.last_error_kind",
             "ingestion_run_id": "src.ingestion_run_id", "ingestion_timestamp": "src.ingestion_timestamp",
         })
         .whenNotMatchedInsertAll()

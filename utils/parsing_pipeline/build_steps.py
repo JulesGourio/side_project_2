@@ -8,6 +8,7 @@ from pyspark import StorageLevel
 from pyspark.sql import Window
 from pyspark.sql import functions as F
 
+import doc_status
 import image_utils
 import utils
 from parse_steps import read_checkpoint_deduped
@@ -62,6 +63,35 @@ def with_fresh_business_metadata(df_checkpoint):
     return df.drop(*[f"_fresh_{c}" for c in BUSINESS_METADATA_COLS])
 
 
+def _with_attempt_columns(df):
+    """`attempts` and `last_error_kind` on every image row; NULL where the table does not have them yet."""
+    for name, dtype in (("attempts", "int"), ("last_error_kind", "string")):
+        if name not in df.columns:
+            df = df.withColumn(name, F.lit(None).cast(dtype))
+    return df
+
+
+def _carry_attempts(df):
+    """Keep the attempt counter and the last error kind of an image across a rebuild of its document."""
+    if not spark.catalog.tableExists(TARGET_IMAGE_METADATA_TABLE):
+        return _with_attempt_columns(df)
+    prev = spark.table(TARGET_IMAGE_METADATA_TABLE)
+    if "attempts" not in prev.columns:
+        return _with_attempt_columns(df)
+    prev = (
+        prev.select("IDDOC", "image_id", F.col("attempts").alias("_prev_attempts"),
+                    F.col("last_error_kind").alias("_prev_last_error_kind"))
+        .dropDuplicates(["IDDOC", "image_id"])
+    )
+    return (
+        df.join(prev, on=["IDDOC", "image_id"], how="left")
+        .withColumn("attempts", F.coalesce(F.col("_prev_attempts"), F.lit(0)))
+        # Only an image that is still to describe keeps the kind of its last failure.
+        .withColumn("last_error_kind", F.when(F.col("status") == "PENDING", F.col("_prev_last_error_kind")))
+        .drop("_prev_attempts", "_prev_last_error_kind")
+    )
+
+
 def build_image_metadata(target_iddocs, ingestion_run_id):
     """Explode checkpoint rows' `images` array into one row per image,
     preserving any already-DONE/SKIPPED description across a rebuild."""
@@ -70,7 +100,7 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
         # and rebuilding from it would drop their descriptions. Materialised because the same table is overwritten.
         df_kept = spark.table(TARGET_IMAGE_METADATA_TABLE).filter(F.col("IDDOC").isin(list(target_iddocs))).localCheckpoint()
         logger.info(f"Image metadata kept from {TARGET_IMAGE_METADATA_TABLE}: {df_kept.count()} rows")
-        return df_kept
+        return _with_attempt_columns(df_kept)
     df_full_pipeline = read_checkpoint_deduped()
     # rechunk: only the documents in scope — the checkpoint also keeps superseded revisions.
     if RUN_MODE in ("incremental", "rechunk"):
@@ -128,6 +158,7 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
             .drop("_prev_status", "_prev_description", "_prev_input_tokens", "_prev_output_tokens", "_prev_described_at")
         )
 
+    df_image_metadata = _carry_attempts(df_image_metadata)
     logger.info(f"Image metadata: {df_image_metadata.count()} rows")
     return df_image_metadata
 
@@ -312,9 +343,10 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
     else:
         df_full_pipeline = df_full_pipeline.withColumn("_is_revised", F.lit(False))
 
-    # images_needing_description excludes decorative images (unlike image_count) so an audit can compare expected vs actual DONE+SKIPPED counts.
+    # images_needing_description counts the images still to describe (PENDING, or ERROR from an earlier run), not the
+    # decorative ones (unlike image_count), so an audit can compare expected vs actual DONE+SKIPPED counts.
     df_images_needed = (
-        df_image_metadata.filter(F.col("status") == "PENDING")
+        df_image_metadata.filter(F.col("status").isin("PENDING", "ERROR"))
         .groupBy("IDDOC").agg(F.count("*").alias("images_needing_description"))
     )
 
@@ -328,6 +360,11 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
                 F.greatest(F.lit(1), F.floor(F.length(F.col("document_text")) / F.lit(CHARS_PER_TOKEN)).try_cast("int"))
             ).otherwise(F.lit(0)),
             "images_needing_description": F.coalesce(F.col("images_needing_description"), F.lit(0)),
+            # Text-less document with images still to describe: parked until 4_describe_images moves it on.
+            "parse_status": F.when(
+                (F.col("parse_status") == doc_status.EMPTY_TEXT) & (F.col("images_needing_description") > 0),
+                F.lit(doc_status.IMAGES_PENDING),
+            ).otherwise(F.col("parse_status")),
             "change_type": F.when(F.coalesce(F.col("_is_revised"), F.lit(False)), F.lit("REVISED")).otherwise(F.lit("NEW")),
         })
         .withColumnRenamed("parser_error", "error_trace")

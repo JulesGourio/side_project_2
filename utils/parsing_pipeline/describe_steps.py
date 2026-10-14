@@ -1,13 +1,16 @@
 """Phases of the `4_describe_images` task (see `4_Describe_Images_LLM.py`).
 
 Describes the PENDING images with the vision LLM, turns the descriptions into image passages of the chunk tables,
-and promotes the EMPTY_TEXT documents whose images are now described. Driver side only: the pandas function that
-places images runs on the executors but is defined inside `build_image_chunks`, so it is shipped by value.
+and promotes the documents waiting for their images (EMPTY_TEXT, IMAGES_PENDING) once all of them are described.
+Driver side only: the pandas function that places images runs on the executors but is defined inside
+`build_image_chunks`, so it is shipped by value.
 """
 import asyncio
 import gc
 import math
 import time
+from collections import Counter
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import nest_asyncio
@@ -15,8 +18,9 @@ from databricks.sdk.runtime import spark
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
-from llm_describe import describe_all_images, safe_requests_per_minute
-from tables import write_table
+import doc_status
+from llm_describe import EndpointBreaker, describe_all_images, one_per_image, safe_requests_per_minute
+from tables import add_missing_columns, write_table
 from utils import intraqual_ref_url, logger, token_count_udf
 from config import (
     CATALOG_SCHEMA,
@@ -25,6 +29,7 @@ from config import (
     EMBED_SOURCE_PREFIX,
     LLM_AVG_INPUT_TOKENS,
     LLM_AVG_OUTPUT_TOKENS,
+    LLM_BREAKER_FAILURES,
     LLM_CHECKPOINT_CHUNK_SIZE,
     LLM_ITPM_BUDGET,
     LLM_MAX_CONCURRENT,
@@ -45,6 +50,7 @@ from config import (
     TABLE_SUFFIX,
 )
 
+MOVED_BY_IMAGES = doc_status.MOVED_BY_IMAGES
 IMAGE_TABLE = TARGET_IMAGE_METADATA_TABLE
 _UPDATES_TABLE = f"{CATALOG_SCHEMA}._image_updates_temp{TABLE_SUFFIX}"
 
@@ -52,11 +58,12 @@ _PLACED_SCHEMA = "IDDOC long, image_id int, part_no int, anchor_chunk_index int,
 
 
 def reset_images_to_pending():
-    """Full mode: every image goes back to PENDING and is described again."""
+    """Full mode: every image goes back to PENDING, with no attempt yet, and is described again."""
     spark.sql(f"""
         UPDATE {IMAGE_TABLE}
         SET status = 'PENDING', description = NULL,
-            input_tokens = NULL, output_tokens = NULL, described_at = NULL
+            input_tokens = NULL, output_tokens = NULL, described_at = NULL,
+            attempts = 0, last_error_kind = NULL
         WHERE volume_path IS NOT NULL
     """)
     logger.info(f"[FULL] Reset all images to PENDING in {IMAGE_TABLE}")
@@ -68,7 +75,7 @@ def pending_images():
 
 
 _UPDATES_SCHEMA = ("IDDOC long, image_id int, description string, input_tokens int, output_tokens int, "
-                   "status string, described_at timestamp")
+                   "status string, described_at timestamp, attempts int, last_error_kind string")
 
 
 def _merge_chunk_results(results):
@@ -82,15 +89,18 @@ def _merge_chunk_results(results):
             int(r["IDDOC"]),
             int(r["image_id"]),
             r["description"],
-            int(r.get("input_tokens") or 0),
-            int(r.get("output_tokens") or 0),
+            int(r["input_tokens"]),
+            int(r["output_tokens"]),
             r["status"],
             None if r["status"] == "PENDING" else now,
+            int(r["attempts"]),
+            r["last_error_kind"],
         )
         for r in results
     ]
     # MERGE fails on a duplicated (IDDOC, image_id) in its source batch.
     df_updates = spark.createDataFrame(update_rows, _UPDATES_SCHEMA).dropDuplicates(["IDDOC", "image_id"])
+    add_missing_columns(df_updates, IMAGE_TABLE)
     write_table(df_updates, _UPDATES_TABLE, "overwrite", overwrite_schema=True)
     spark.sql(f"""
         MERGE INTO {IMAGE_TABLE} AS t
@@ -101,16 +111,50 @@ def _merge_chunk_results(results):
             t.input_tokens = s.input_tokens,
             t.output_tokens = s.output_tokens,
             t.status = s.status,
-            t.described_at = s.described_at
+            t.described_at = s.described_at,
+            t.attempts = s.attempts,
+            t.last_error_kind = s.last_error_kind
     """)
+
+
+@dataclass
+class _RunTally:
+    """Counts and tokens of described images: one chunk, or the whole run."""
+    images: int = 0
+    done: int = 0
+    skipped: int = 0
+    pending: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    failed_input_tokens: int = 0
+    failed_output_tokens: int = 0
+    pending_by_kind: Counter = field(default_factory=Counter)
+
+    def add(self, described):
+        for r in described:
+            self.images += 1
+            self.input_tokens += int(r["input_tokens"])
+            self.output_tokens += int(r["output_tokens"])
+            self.failed_input_tokens += int(r["failed_input_tokens"])
+            self.failed_output_tokens += int(r["failed_output_tokens"])
+            if r["status"] == "DONE":
+                self.done += 1
+            elif r["status"] == "SKIPPED":
+                self.skipped += 1
+            else:
+                self.pending += 1
+                self.pending_by_kind[r["last_error_kind"] or "unknown"] += 1
+        return self
 
 
 def describe_images(rows, ws_host, ws_token, endpoints):
     """Call the vision LLM on `rows` in checkpoint chunks, merging each chunk's results as soon as it is done.
 
     `endpoints` is the chain tried for each image. An image no endpoint described stays PENDING for the next run.
-    A mid-run failure keeps the chunks already persisted. `nest_asyncio` lets `asyncio.run` work inside a notebook.
+    One circuit breaker serves the whole run. A mid-run failure keeps the chunks already persisted.
+    `nest_asyncio` lets `asyncio.run` work inside a notebook.
     """
+    rows = one_per_image(rows)
     if not rows:
         logger.info("Nothing to describe - no PENDING or ERROR images found in image_metadata.")
         return
@@ -125,12 +169,14 @@ def describe_images(rows, ws_host, ws_token, endpoints):
     )
     logger.info(f"Rate limiter : {rpm:.0f} req/min  (ITPM<={LLM_ITPM_BUDGET:,}, OTPM<={LLM_OTPM_BUDGET:,}, "
                 f"QPH<={LLM_QPH_BUDGET:,})")
-    logger.info(f"Endpoints  : {' -> '.join(endpoints)}  ({LLM_ROUNDS} passes, waits {list(LLM_ROUND_WAITS_S)} s)")
+    logger.info(f"Endpoints  : {' -> '.join(endpoints)}  ({LLM_ROUNDS} passes, waits {list(LLM_ROUND_WAITS_S)} s, "
+                f"an endpoint skipped after {LLM_BREAKER_FAILURES} failed images in a row)")
 
+    breaker = EndpointBreaker(LLM_BREAKER_FAILURES)
     n_chunks = math.ceil(len(rows) / LLM_CHECKPOINT_CHUNK_SIZE)
     logger.info(f"{len(rows)} images -> {n_chunks} chunk(s) of up to {LLM_CHECKPOINT_CHUNK_SIZE}, persisted after each chunk")
 
-    total_done = total_failed = total_tin = total_tout = 0
+    total = _RunTally()
     for chunk_idx in range(n_chunks):
         chunk = rows[chunk_idx * LLM_CHECKPOINT_CHUNK_SIZE:(chunk_idx + 1) * LLM_CHECKPOINT_CHUNK_SIZE]
         started = time.time()
@@ -138,46 +184,42 @@ def describe_images(rows, ws_host, ws_token, endpoints):
             described = asyncio.run(describe_all_images(
                 rows=chunk, ws_host=ws_host, ws_token=ws_token, endpoints=endpoints,
                 max_tokens=LLM_MAX_TOKENS, temperature=LLM_TEMPERATURE, max_retries=LLM_MAX_RETRIES,
-                max_concurrent=LLM_MAX_CONCURRENT, requests_per_minute=rpm,
+                max_concurrent=LLM_MAX_CONCURRENT, requests_per_minute=rpm, breaker=breaker,
                 rounds=LLM_ROUNDS, round_waits_s=LLM_ROUND_WAITS_S,
             ))
         except Exception as exc:
             logger.error(f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} describe_all_images failed: {str(exc)[:300]}")
-            logger.info(f"        {total_done} ok / {total_failed} failed from prior chunks are already persisted.")
+            logger.info(f"        {total.done} described / {total.pending} left pending from prior chunks are already persisted.")
             raise
 
-        done = sum(1 for r in described if r["status"] == "DONE")
-        failed = sum(1 for r in described if r["status"] == "PENDING")
-        failure_sample = next((r["last_error"] for r in described if r["status"] == "PENDING"), "")
-        tin = sum(r.get("input_tokens", 0) for r in described)
-        tout = sum(r.get("output_tokens", 0) for r in described)
         _merge_chunk_results(described)
-
+        chunk_tally = _RunTally().add(described)
+        total.add(described)
         # Released per chunk: the single-node cluster has little memory.
         del described
         gc.collect()
 
-        total_done += done
-        total_failed += failed
-        total_tin += tin
-        total_tout += tout
-        logger.info(f"[chunk {chunk_idx + 1}/{n_chunks}] {len(chunk)} images in {time.time() - started:.1f}s | "
-                    f"ok={done} left_pending={failed} | tokens {tin:,} in / {tout:,} out | "
-                    f"cumulative: ok={total_done} left_pending={total_failed}")
-        if failed:
-            logger.warning(f"  {failed} image(s) failed on every endpoint and stay PENDING; first error: {failure_sample}")
+        logger.info(f"[chunk {chunk_idx + 1}/{n_chunks}] {chunk_tally.images} images in {time.time() - started:.1f}s | "
+                    f"done={chunk_tally.done} skipped={chunk_tally.skipped} pending={chunk_tally.pending} | "
+                    f"tokens {chunk_tally.input_tokens:,} in / {chunk_tally.output_tokens:,} out")
+        if breaker.open_endpoints:
+            logger.warning(f"  Endpoints skipped for the rest of the run: {', '.join(breaker.open_endpoints)}")
 
     spark.sql(f"DROP TABLE IF EXISTS {_UPDATES_TABLE}")
-    _log_description_summary(len(rows), total_done, total_failed, total_tin, total_tout)
+    _log_description_summary(total)
 
 
-def _log_description_summary(n_rows, total_done, total_failed, total_tin, total_tout):
-    """Log the totals of the run and the images the next run describes again."""
-    df_images = spark.table(IMAGE_TABLE)
-    remaining = df_images.filter(F.col("status").isin("PENDING", "ERROR")).count()
-    logger.info(f"Description summary: {total_done} ok / {total_failed} left pending over {n_rows} images")
-    logger.info(f"  Tokens: {total_tin:,} in / {total_tout:,} out")
-    logger.info(f"  Remaining to describe: {remaining} (PENDING or legacy ERROR, described again next run)")
+def _log_description_summary(total):
+    """Log the run: outcomes, failures by kind, tokens (failed attempts too), and what the next run describes."""
+    remaining = spark.table(IMAGE_TABLE).filter(F.col("status").isin("PENDING", "ERROR")).count()
+    logger.info(f"Description summary: {total.done} described, {total.skipped} skipped, {total.pending} left pending "
+                f"over {total.images} images")
+    if total.pending_by_kind:
+        kinds = ", ".join(f"{kind} {n}" for kind, n in total.pending_by_kind.most_common())
+        logger.info(f"  Left pending this run, by last error kind: {kinds}")
+    logger.info(f"  Tokens: {total.input_tokens:,} in / {total.output_tokens:,} out, of which failed attempts "
+                f"{total.failed_input_tokens:,} in / {total.failed_output_tokens:,} out")
+    logger.info(f"  Remaining to describe: {remaining} (PENDING, described again by the next run)")
     if remaining == 0:
         logger.info("  -> All images described.")
 
@@ -371,24 +413,26 @@ def write_image_chunks(df_image_chunks):
     logger.info(f"CDF enabled on {TARGET_CHUNK_TABLE}")
 
 
-def promote_empty_text_documents():
-    """EMPTY_TEXT documents whose images are all described become SUCCESS (or SKIPPED_EMPTY_IMAGES).
+def promote_documents_awaiting_images():
+    """Documents without text that wait for their images move on once no image of them is left to describe.
 
-    Nothing else moves an EMPTY_TEXT document to a terminal status once its images are described.
+    The statuses are EMPTY_TEXT (no image left to describe, decided in the same job run) and IMAGES_PENDING (parked by
+    3_parse). The outcome is SUCCESS, with the text assembled from the descriptions, or SKIPPED_EMPTY_IMAGES when no
+    image was usable. A document with an image still PENDING (or ERROR) stays where it is: the next run describes it.
     """
-    df_empty_text = spark.table(TARGET_PROCESSED_FILES_TABLE).filter(F.col("parse_status") == "EMPTY_TEXT").select("IDDOC")
-    n_empty_text = df_empty_text.count()
-    if n_empty_text == 0:
-        logger.info("No EMPTY_TEXT document pending promotion.")
+    df_waiting = (
+        spark.table(TARGET_PROCESSED_FILES_TABLE).filter(F.col("parse_status").isin(*MOVED_BY_IMAGES)).select("IDDOC")
+    )
+    n_waiting = df_waiting.count()
+    if n_waiting == 0:
+        logger.info("No document waiting for its images.")
         return
 
-    df_their_images = spark.table(IMAGE_TABLE).join(F.broadcast(df_empty_text), on="IDDOC", how="inner")
-    # Ready = no image left to describe. A failed image keeps its document EMPTY_TEXT until the next run describes it:
-    # a document promoted without it would never get its text. EXTRACTION_FAILED and SKIPPED_DECORATIVE are final.
+    df_their_images = spark.table(IMAGE_TABLE).join(F.broadcast(df_waiting), on="IDDOC", how="inner")
     df_not_ready = df_their_images.filter(F.col("status").isin("PENDING", "ERROR")).select("IDDOC").distinct()
-    df_ready = df_empty_text.join(F.broadcast(df_not_ready), on="IDDOC", how="left_anti")
+    df_ready = df_waiting.join(F.broadcast(df_not_ready), on="IDDOC", how="left_anti")
     if df_ready.count() == 0:
-        logger.info(f"{n_empty_text} EMPTY_TEXT document(s), none fully described yet.")
+        logger.info(f"{n_waiting} document(s) waiting for images, none fully described yet.")
         return
 
     df_assembled = (
@@ -423,9 +467,9 @@ def promote_empty_text_documents():
             })
             .execute()
         )
-        logger.info(f"Promoted {n_promoted} EMPTY_TEXT document(s) to SUCCESS (all images now described).")
+        logger.info(f"Promoted {n_promoted} document(s) to SUCCESS (all images now described).")
 
-    # Ready but every image was SKIP: terminal as well, so the document stops being rescanned every day.
+    # Ready but every image was SKIP or decorative: terminal as well, so the document is not looked at again.
     df_ready_empty = df_ready.join(df_assembled.select("IDDOC"), on="IDDOC", how="left_anti")
     n_skipped = df_ready_empty.count()
     if n_skipped > 0:
@@ -439,4 +483,4 @@ def promote_empty_text_documents():
             })
             .execute()
         )
-        logger.info(f"{n_skipped} EMPTY_TEXT document(s) had every image judged non-informative -> SKIPPED_EMPTY_IMAGES.")
+        logger.info(f"{n_skipped} document(s) had no usable image -> SKIPPED_EMPTY_IMAGES.")

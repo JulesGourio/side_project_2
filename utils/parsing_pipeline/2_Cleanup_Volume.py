@@ -150,7 +150,7 @@ logger.info(f"{len(scope_iddocs)} IDDOCs in the Qualibot perimeter")
 
 # MAGIC %md
 # MAGIC ## Parsed IDDOCs that left scope
-# MAGIC Compared with `processed_files` (SUCCESS, ERROR and EMPTY_TEXT only; the SKIPPED rows are reconciled in Tr. 5). They are pruned in Tr. 1.
+# MAGIC Compared with `processed_files` (SUCCESS, ERROR, EMPTY_TEXT and IMAGES_PENDING only; the SKIPPED rows are reconciled in Tr. 5). They are pruned in Tr. 1.
 
 # COMMAND ----------
 

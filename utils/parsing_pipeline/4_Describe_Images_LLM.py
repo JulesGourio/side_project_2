@@ -9,7 +9,7 @@
 # MAGIC 2. Call the vision LLM asynchronously (batched, with concurrency control and a rate limiter), through the endpoint chain
 # MAGIC 3. MERGE the descriptions back into `image_metadata`, chunk by chunk
 # MAGIC 4. Build the image passages and MERGE them into `chunks` / `chunks_archive`
-# MAGIC 5. Promote the `EMPTY_TEXT` documents whose images are now all described
+# MAGIC 5. Promote the documents waiting for their images (`EMPTY_TEXT`, `IMAGES_PENDING`) whose images are now all described
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC Two sequential read-then-write phases (description, then passage injection): the second phase reads `image_metadata` AFTER the
@@ -27,7 +27,7 @@
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (description and status columns)
 # MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}` (image passages)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (EMPTY_TEXT -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all the images of a document are described)
+# MAGIC - `{PARSING_CATALOG_SCHEMA}.processed_files{PARSING_TABLE_SUFFIX}` (EMPTY_TEXT / IMAGES_PENDING -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all the images of a document are described)
 
 # COMMAND ----------
 
@@ -36,7 +36,7 @@
 # MAGIC - The chunk-injection phase reads `image_metadata` and the chunk tables after the description phase has written to them, so those reads sit in `# Data Transformations` instead of `# Inputs`.
 # MAGIC - The source prefix of an image passage (`[Source: … | Image: page N, label]`) is built in `describe_steps.build_image_chunks` and, for text passages, in `utils.source_prefixed_text`: the two formats must be changed together.
 # MAGIC - The serving token comes from the secret `qualibot/serving_token` and falls back to the notebook's own API token when the secret is missing.
-# MAGIC - A document whose images all end in ERROR is promoted with whatever descriptions exist (see `promote_empty_text_documents`); there is no alert on it.
+# MAGIC - An image that keeps failing is retried by every run, with no cap on its attempts: its document waits in `IMAGES_PENDING` until the image is described (see `promote_documents_awaiting_images`).
 
 # COMMAND ----------
 
@@ -216,12 +216,12 @@ if described_count > 0:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Promote the EMPTY_TEXT documents
-# MAGIC A document with no text but images is `EMPTY_TEXT` until its images are described; this step then makes it `SUCCESS` (text assembled from the descriptions) or `SKIPPED_EMPTY_IMAGES` when every image was judged non-informative.
+# MAGIC ## Promote the documents waiting for their images
+# MAGIC A document with no text but images is `IMAGES_PENDING` (parked by 3_parse) while an image is still to describe. Once none is left, this step makes it `SUCCESS` (text assembled from the descriptions) or `SKIPPED_EMPTY_IMAGES` when no image was usable. A document with an image still `PENDING` stays parked.
 
 # COMMAND ----------
 
-describe_steps.promote_empty_text_documents()
+describe_steps.promote_documents_awaiting_images()
 
 # COMMAND ----------
 

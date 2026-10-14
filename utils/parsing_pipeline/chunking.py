@@ -58,9 +58,6 @@ _CONTENT_START_RE = re.compile(
     r"^\W{0,6}(r[ée]sum[ée]|summary|objet|purpose|but\b|domaine d.application|scope|sommaire|"
     r"table of contents|table des mati[eè]res|introduction|1\s*[.)-]?\s+[A-ZÉ])", re.IGNORECASE)
 FRONT_ZONE_CHARS = 8000          # cover blocks are only looked for at the top of the document
-NOISE_TYPES = ("toc", "front_matter", "boilerplate")
-
-
 def default_count_tokens(text: str) -> int:
     """Token estimate (3.5 characters per token) used when no tokenizer is given."""
     return max(1, int(len(text) / 3.5)) if text else 0
@@ -380,24 +377,6 @@ def chunk_markdown(text: str, *, min_tokens: int = 250, target_tokens: int = 500
     for i, c in enumerate(out):
         c["chunk_index"] = i
     return out
-
-
-def source_prefix(ref: str, titre: str, type_document: str, division: str, category: str,
-                  doc_date: Any = None) -> str:
-    """Python twin of utils.source_prefixed_text (Spark): the "[Source: …]" line embedded at
-    the top of every passage."""
-    date = doc_date.strftime("%Y-%m-%d") if hasattr(doc_date, "strftime") else (str(doc_date) if doc_date else "inconnue")
-    return (f"[Source: {ref or ''} | Title: {titre or ''} | Type: {type_document or ''} | "
-            f"Division: {division or ''} | Category: {category or ''} | Date de diffusion: {date}]\n\n")
-
-
-# --- Corpus-level noise: the same passage body in many documents ---
-def body_fingerprint(chunk_text: str) -> str:
-    """Normalised body (section line removed, case/accents/spaces folded) used to find passages
-    repeated across documents (legal mentions, standard approval blocks)."""
-    body = re.sub(r"^\[[^\]]*\]\s*", "", chunk_text or "")
-    body = unicodedata.normalize("NFKD", body).encode("ascii", "ignore").decode().lower()
-    return re.sub(r"\W+", " ", body).strip()
 
 
 # --- Language of a document ---

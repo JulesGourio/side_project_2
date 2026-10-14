@@ -16,6 +16,7 @@ from pyspark.sql import Window
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+import doc_status
 import image_utils
 import selection
 from format_parsers import strip_ooxml_bloat
@@ -43,8 +44,7 @@ INGESTION_RUN_ID = str(uuid.uuid4())
 JOB_RUN_ID = None
 
 # Any other status is retried automatically on the next incremental run.
-_TERMINAL_STATUSES = ["SUCCESS", "SKIPPED_EMPTY_SMALL_FILE", "SKIPPED_REF_MANUAL", "SKIPPED_SOURCE_REMOVED",
-                      "SKIPPED_EMPTY_IMAGES", "SKIPPED_EMPTY_FOLDER"]
+_TERMINAL_STATUSES = list(doc_status.TERMINAL_STATUSES)   # a list: pyspark isin() does not take a tuple
 # A change in any of these on the same IDDOC means a revised document (ref included: Intraqual can rename in place).
 _STALENESS_COLS = ["indice", "doc_date", "ref"]
 
@@ -421,6 +421,18 @@ def parse_pending_files(df_files, parse_fn):
     log_run_summary(df_to_parse, parse_count, time.time() - t0)
 
 
+def _images_pending_iddocs():
+    """IDDOCs parked as IMAGES_PENDING: text parsed, only images left. Their checkpoint row still says EMPTY_TEXT,
+    so the scans of failed documents skip them: they are not parsed again."""
+    if not spark.catalog.tableExists(TARGET_PROCESSED_FILES_TABLE):
+        return spark.createDataFrame([], "IDDOC long")
+    return (
+        spark.table(TARGET_PROCESSED_FILES_TABLE)
+        .filter(F.col("parse_status") == doc_status.IMAGES_PENDING)
+        .select("IDDOC").distinct()
+    )
+
+
 def show_failed_documents(df_business_meta):
     """Display documents that failed Docling parsing, before the rank-2 retry.
     Scoped to IDDOCs still in scope."""
@@ -428,6 +440,7 @@ def show_failed_documents(df_business_meta):
     df_failed_inspect = (
         df_full_pipeline
         .join(df_business_meta.select("IDDOC").distinct(), on="IDDOC", how="inner")
+        .join(_images_pending_iddocs(), on="IDDOC", how="left_anti")
         .filter(F.col("parse_status").isin("ERROR", "EMPTY_TEXT"))
         .filter(~F.col("parser_strategy").eqNullSafe("pending_llm_ocr:pdf"))  # queued for step 4, not actually failed
         .select(
@@ -456,6 +469,7 @@ def retry_failed_iddocs(df_matched_full, df_content, df_business_meta):
     failed_iddocs = [
         r.IDDOC for r in df_full_pipeline
         .join(df_business_meta.select("IDDOC").distinct(), on="IDDOC", how="inner")  # still in current scope
+        .join(_images_pending_iddocs(), on="IDDOC", how="left_anti")
         .filter(F.col("parse_status").isin("ERROR", "EMPTY_TEXT") & F.col("IDDOC").isNotNull())
         .filter(~F.col("parser_strategy").eqNullSafe("pending_llm_ocr:pdf"))  # queued for step 4, not actually failed
         .select("IDDOC").distinct().collect()
