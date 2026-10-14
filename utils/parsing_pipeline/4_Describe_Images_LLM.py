@@ -53,6 +53,7 @@ import sys
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
 sys.path.insert(0, REPO_DIR)
+sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/
 
 from pyspark.sql import functions as F
 
@@ -68,7 +69,11 @@ import config as cfg
 import describe_steps
 import llm_describe
 import quality
-from utils import configure, logger
+from utils import configure
+from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+
+setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
+logger = get_logger("describe_images")
 
 for _mod in cfg.WORKER_MODULES:
     spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))

@@ -7,10 +7,11 @@ from databricks.sdk.runtime import spark
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
-from tables import add_missing_columns, write_table
-from utils import logger
+from leap_utils.common.logger import get_logger
+from tables import add_missing_columns, merge_into, table_exists, write_table
 from config import (
     ARCHIVE_NOTICES_IN_RAG,
+    CATALOG_SCHEMA,
     ARCHIVE_NOTICE_CONTENT_TYPE,
     DOC_DATE_CUTOFF,
     RUN_MODE,
@@ -21,40 +22,37 @@ from config import (
     TARGET_HEALTH_TABLE,
     TARGET_IMAGE_METADATA_TABLE,
     TARGET_PROCESSED_FILES_TABLE,
+    TABLE_SUFFIX,
 )
+
+logger = get_logger(__name__)
+
+# Kept from the existing row when it is DONE, SKIPPED or FAILED_LIMIT: the description and what it cost.
+_IMAGE_KEEP_PREVIOUS = ("status", "description", "input_tokens", "output_tokens", "described_at")
+_IMAGE_MERGE_TEMP = f"{CATALOG_SCHEMA}._image_metadata_merge_temp{TABLE_SUFFIX}"
 
 
 def _merge_image_metadata(df_image_metadata):
-    """MERGE image_metadata instead of delete-then-append: status/description/
-    tokens only take the fresh value when the existing row isn't already
-    DONE/SKIPPED."""
-    if not spark.catalog.tableExists(TARGET_IMAGE_METADATA_TABLE):
-        # First write into an empty catalog: DeltaTable.forName() needs the table to exist before a MERGE.
+    """Merge image_metadata instead of delete-then-append: the description, its status, tokens and date only take the
+    fresh value when the existing row is not already DONE, SKIPPED or FAILED_LIMIT."""
+    if not table_exists(TARGET_IMAGE_METADATA_TABLE):
+        # First write into an empty catalog: the merge needs the table to exist.
         write_table(df_image_metadata, TARGET_IMAGE_METADATA_TABLE, "append", merge_schema=True)
         logger.info(f"Created {TARGET_IMAGE_METADATA_TABLE} (first write)")
         return
-    keep_prev = "CASE WHEN tgt.status IN ('DONE', 'SKIPPED', 'FAILED_LIMIT') THEN tgt.{col} ELSE src.{col} END"
     add_missing_columns(df_image_metadata, TARGET_IMAGE_METADATA_TABLE)
-    (
-        DeltaTable.forName(spark, TARGET_IMAGE_METADATA_TABLE).alias("tgt")
-        .merge(df_image_metadata.alias("src"), "tgt.IDDOC = src.IDDOC AND tgt.image_id = src.image_id")
-        .whenMatchedUpdate(set={
-            "source_file_name": "src.source_file_name", "ref": "src.ref", "titre": "src.titre",
-            "division": "src.division", "niveau_plus_1": "src.niveau_plus_1", "niveau_plus_2": "src.niveau_plus_2",
-            "page_no": "src.page_no", "label": "src.label", "area_ratio": "src.area_ratio",
-            "captions": "src.captions", "context_text": "src.context_text",
-            "volume_path": "src.volume_path", "image_width": "src.image_width", "image_height": "src.image_height",
-            "status": keep_prev.format(col="status"),
-            "description": keep_prev.format(col="description"),
-            "input_tokens": keep_prev.format(col="input_tokens"),
-            "output_tokens": keep_prev.format(col="output_tokens"),
-            "described_at": keep_prev.format(col="described_at"),
-            "attempts": "src.attempts", "last_error_kind": "src.last_error_kind",
-            "ingestion_run_id": "src.ingestion_run_id", "ingestion_timestamp": "src.ingestion_timestamp",
-        })
-        .whenNotMatchedInsertAll()
-        .execute()
-    )
+    previous = spark.table(TARGET_IMAGE_METADATA_TABLE).select(
+        "IDDOC", "image_id", *[F.col(c).alias(f"_prev_{c}") for c in _IMAGE_KEEP_PREVIOUS])
+    keep_previous = F.col("_prev_status").isin("DONE", "SKIPPED", "FAILED_LIMIT")
+    merged = df_image_metadata.join(previous, on=["IDDOC", "image_id"], how="left").select(*[
+        F.when(keep_previous, F.col(f"_prev_{c}")).otherwise(F.col(c)).alias(c) if c in _IMAGE_KEEP_PREVIOUS
+        else F.col(c)
+        for c in df_image_metadata.columns
+    ])
+    # The source is saved first: it reads the table it is merged into.
+    write_table(merged, _IMAGE_MERGE_TEMP, "overwrite", overwrite_schema=True)
+    merge_into(spark.table(_IMAGE_MERGE_TEMP), TARGET_IMAGE_METADATA_TABLE, ["IDDOC", "image_id"])
+    spark.sql(f"DROP TABLE IF EXISTS {_IMAGE_MERGE_TEMP}")
     logger.info(f"Merged into {TARGET_IMAGE_METADATA_TABLE}")
 
 
@@ -171,7 +169,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
         if new_iddocs:
             iddoc_list = ",".join(str(i) for i in new_iddocs)
             for tbl in [TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE, TARGET_PROCESSED_FILES_TABLE]:
-                if spark.catalog.tableExists(tbl):
+                if table_exists(tbl):
                     spark.sql(f"DELETE FROM {tbl} WHERE IDDOC IN ({iddoc_list})")
             logger.info(f"Cleaned old rows for {len(new_iddocs)} re-processed IDDOCs (chunks + processed_files)")
 
@@ -187,7 +185,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
         # Revised IDDOCs have new content, so _merge_image_metadata's keep_prev logic must not preserve their old image rows.
         if revised_iddocs:
             revised_list = ",".join(str(i) for i in revised_iddocs)
-            if spark.catalog.tableExists(TARGET_IMAGE_METADATA_TABLE):
+            if table_exists(TARGET_IMAGE_METADATA_TABLE):
                 spark.sql(f"DELETE FROM {TARGET_IMAGE_METADATA_TABLE} WHERE IDDOC IN ({revised_list})")
                 logger.info(f"Cleared stale image_metadata for {len(revised_iddocs)} revised IDDOC(s) before merge.")
 
@@ -221,7 +219,7 @@ def write_archive_notices(df_notices):
 
     is_notice = f"chunk_content_type = '{ARCHIVE_NOTICE_CONTENT_TYPE}'"
     for tbl in [TARGET_CHUNK_TABLE]:
-        if not spark.catalog.tableExists(tbl):
+        if not table_exists(tbl):
             continue
         if not ARCHIVE_NOTICES_IN_RAG:
             if spark.table(tbl).filter(is_notice).limit(1).count():

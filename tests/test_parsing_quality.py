@@ -62,7 +62,7 @@ def test_not_null_and_unique_on_an_empty_table_pass_vacuously():
 
 def test_a_red_failure_raises_after_everything_is_logged(caplog):
     checks = [quality.not_null("ref"), quality.unique("chunk_id"), quality.not_null("division", severity=AMBER)]
-    with caplog.at_level(logging.INFO, logger="parsing_pipeline.quality"):
+    with caplog.at_level(logging.INFO, logger="DATABRICKS LOGS"):
         with pytest.raises(QualityCheckError) as exc:
             quality.check_rows(ROWS, "chunks", checks)
     assert "not_null(ref)" in str(exc.value) and "division" not in str(exc.value)
@@ -73,7 +73,7 @@ def test_a_red_failure_raises_after_everything_is_logged(caplog):
 
 
 def test_an_amber_failure_only_warns(caplog):
-    with caplog.at_level(logging.INFO, logger="parsing_pipeline.quality"):
+    with caplog.at_level(logging.INFO, logger="DATABRICKS LOGS"):
         results = quality.check_rows(ROWS, "chunks", [quality.not_null("division", severity=AMBER)])
     assert not results[0].passed
     assert caplog.records[0].levelno == logging.WARNING

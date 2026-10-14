@@ -13,8 +13,8 @@ from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 import doc_status
 from categories import normalize_cols_upper
-from tables import write_table
-from utils import logger
+from tables import table_exists, write_table
+from leap_utils.common.logger import get_logger
 from config import (
     ARCHIVE_MAX_DOCS,
     DIVISION_REFERENCE_TABLE,
@@ -32,6 +32,8 @@ from config import (
 )
 
 # Root folders are named D_<IDDOC> or Dm_<IDDOC>; anything else cannot give an IDDOC.
+logger = get_logger(__name__)
+
 IDDOC_RE = re.compile(r"^[Dd]m?_(\d+)", re.IGNORECASE)
 
 _DERIVED_TABLES = (TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE, TARGET_IMAGE_METADATA_TABLE)
@@ -107,7 +109,7 @@ def prune_stale_revisions():
     Keeps the highest `indice` per REF (highest IDDOC as tie-break). `processed_files` is left untouched on purpose:
     deleting its row would make the old IDDOC eligible for parsing again on the next run.
     """
-    if not spark.catalog.tableExists(TARGET_CHUNK_TABLE):
+    if not table_exists(TARGET_CHUNK_TABLE):
         logger.warning(f"{TARGET_CHUNK_TABLE} does not exist yet - revision pruning skipped.")
         return
 
@@ -189,7 +191,7 @@ def remove_stale_skip_rows(rows_keep):
     """
     stale_skip_iddocs = set()
     try:
-        if rows_keep and spark.catalog.tableExists(TARGET_PROCESSED_FILES_TABLE):
+        if rows_keep and table_exists(TARGET_PROCESSED_FILES_TABLE):
             df_keep = spark.createDataFrame([(r["IDDOC"],) for r in rows_keep], "IDDOC long")
             stale_skip_iddocs = {
                 r.IDDOC for r in
@@ -262,7 +264,7 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
     if not all_skipped:
         logger.info("Nothing to log into processed_files.")
         return
-    if not spark.catalog.tableExists(TARGET_PROCESSED_FILES_TABLE):
+    if not table_exists(TARGET_PROCESSED_FILES_TABLE):
         logger.warning(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet - run 3_Parse_Pipeline (FULL) first. "
                        f"No write performed.")
         return

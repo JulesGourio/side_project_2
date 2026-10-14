@@ -699,8 +699,8 @@ Search) : à la main, ça reste.
 Changements à valider sur DEV (code sur la branche `claude/sharp-mayer-uqwx8x`, à déployer) :
 
 - **Documents en attente d'images** : un document sans texte mais avec des images à décrire reçoit le statut `IMAGES_PENDING` (3_parse ne le re-parse plus chaque jour). La tâche `4_describe_images` le fait passer à `SUCCESS` (ou `SKIPPED_EMPTY_IMAGES`) dès que sa dernière image est décrite.
-- **Plafond de tentatives** : une image est tentée au plus une fois par run, et au plus `PARSING_IMAGE_MAX_ATTEMPTS` (10) runs. Au 10e échec elle passe à `FAILED_LIMIT` : elle n'est plus retentée automatiquement, elle apparaît dans le résumé du run avec son `last_error_kind`. Un run en mode `full` remet le compteur à 0 et repasse les images en `PENDING`.
-- **Disjoncteur** : après 5 images d'affilée en échec sur un même modèle dans un run, ce modèle est écarté pour le reste du run. Une erreur 429 (quota) ne compte pas : le run suivant la retente.
+- **Plafond de tentatives** : une image est tentée au plus une fois par run, et au plus `PARSING_IMAGE_MAX_ATTEMPTS` (10) runs. Un run compte comme tentative quand l'image échoue pour une autre raison qu'un 429 (quota) ; un 429 ne compte jamais. Au 10e échec elle passe à `FAILED_LIMIT` : elle n'est plus retentée automatiquement, elle apparaît dans le résumé du run avec son `last_error_kind`. Un run en mode `full` remet le compteur à 0 et repasse les images en `PENDING`.
+- **Disjoncteur** : après 5 images d'affilée en échec sur un même modèle dans un run (timeout, 5xx, erreur de transport, réponse vide), ce modèle est écarté pour le reste du run. Une erreur 429 (quota) ne compte ni pour le disjoncteur ni pour le plafond : c'est une condition de quota, le run suivant la retente.
 - **Modèles** : `databricks-gpt-5-6-luna` accepte les images (modèle primaire de la description, dépôt). `databricks-gpt-6-luna` n'est pas vérifié pour les images : le script `check_vision_endpoints.py` le teste.
 
 Ce bloc ne touche pas aux données ; seul Q3 lance le pipeline (GPU, plusieurs heures selon le corpus).
@@ -783,7 +783,7 @@ Ce bloc ne touche pas aux données ; seul Q3 lance le pipeline (GPU, plusieurs h
 - Q3, logs de 4_describe_images : `Endpoints : databricks-gpt-5-6-luna -> …` (la chaîne lue depuis le job) et une ligne `Description summary :`.
 - Q4, premier requête : `IMAGES_PENDING` apparaît s'il reste des documents sans texte avec des images à décrire ; aucun `EMPTY_TEXT` ne doit rester après le run.
 - Q4, seconde requête : `parked_without_retry_image` = 0 (un document en `IMAGES_PENDING` a toujours une image `PENDING` ou `ERROR`).
-- Q5, premier requête : `PENDING` avec `last_error_kind` vide ou `rate_limit` / `timeout` / `http_5xx` / `circuit_open` selon la panne du moment ; `FAILED_LIMIT` ne doit pas apparaître avant le 10e échec.
+- Q5, premier requête : `PENDING` avec `last_error_kind` vide ou `rate_limit` / `timeout` / `http_5xx` / `circuit_open` selon la panne du moment ; `FAILED_LIMIT` ne doit pas apparaître avant le 10e run en échec hors 429.
 - Q5, `pending_past_limit` = 0.
 - Q5, `failed_limit` : 0 au premier run ; sinon la liste de la dernière requête donne les images à regarder (le `last_error_kind` dit pourquoi). Elles ne sont pas retentées : seul un run `full` les remet en attente.
 - Un document dont toutes les images sont en `FAILED_LIMIT` passe à `SKIPPED_EMPTY_IMAGES` (aucune image exploitable) ; la cause est dans `image_metadata`.

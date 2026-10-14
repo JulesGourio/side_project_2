@@ -248,14 +248,15 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
     Returns `row_data` plus description, status, the tokens spent (`input_tokens`, `output_tokens`, and the failed
     part `failed_*`), `attempts` and `last_error` / `last_error_kind`. Status DONE, or SKIPPED when the model refused.
     PENDING with no description when no endpoint answered; FAILED_LIMIT instead once the image has `max_attempts`
-    attempts. One attempt is one run in which the image was sent to an endpoint (or could not be read): an image
-    skipped only because its endpoints are open in this run is not counted.
+    attempts. An attempt is a run in which the image failed for a reason other than a quota (429), or could not be
+    read: a 429 is a property of the quota, not of the image, and an image skipped only because its endpoints are open
+    in this run is not counted either.
     """
     spend = _Spend()
-    sent = False
+    other_failure = False
 
     def result(description, status, last_error="", last_kind=None):
-        counted = status != "PENDING" or sent or last_kind != "circuit_open"
+        counted = status != "PENDING" or other_failure or last_kind == "read_error"
         attempts = int(row_data.get("attempts") or 0) + (1 if counted else 0)
         status = _settle(status, attempts, max_attempts)
         return {
@@ -301,16 +302,16 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
             if breaker.is_open(endpoint):
                 last_error, last_kind = f"{endpoint}: skipped, failing earlier in this run", "circuit_open"
                 continue
-            sent = True
             try:
                 text = await _ask_endpoint(client, endpoint, messages, semaphore, rate_limiter, max_tokens,
                                            temperature, max_retries, timeout, spend)
             except Exception as e:
                 last_kind = error_kind(e)
                 last_error = f"{endpoint}: {_error_text(e)}"
-                # A 429 is transient: the next run retries it, so it does not open the breaker.
+                # A 429 is a quota condition, not an outage: it neither opens the breaker nor counts as an attempt.
                 if last_kind != "rate_limit":
                     breaker.record(endpoint, ok=False)
+                    other_failure = True
                 continue
             breaker.record(endpoint, ok=True)
             return result(text, "SKIPPED" if is_skip_response(text) else "DONE")

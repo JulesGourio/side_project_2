@@ -12,7 +12,8 @@ import doc_status
 import image_utils
 import utils
 from parse_steps import read_checkpoint_deduped
-from utils import logger
+from leap_utils.common.logger import get_logger
+from tables import table_exists
 from config import (
     ARCHIVE_NOTICE_CONTENT_TYPE,
     ARCHIVE_NOTICE_MARKER,
@@ -34,6 +35,8 @@ from config import (
     TARGET_CHUNK_TABLE,
     TARGET_IMAGE_METADATA_TABLE,
 )
+
+logger = get_logger(__name__)
 
 _SPREADSHEET_EXTS = ("xlsx", "xls", "xlsm")
 
@@ -73,7 +76,7 @@ def _with_attempt_columns(df):
 
 def _carry_attempts(df):
     """Keep the attempt counter and the last error kind of an image across a rebuild of its document."""
-    if not spark.catalog.tableExists(TARGET_IMAGE_METADATA_TABLE):
+    if not table_exists(TARGET_IMAGE_METADATA_TABLE):
         return _with_attempt_columns(df)
     prev = spark.table(TARGET_IMAGE_METADATA_TABLE)
     if "attempts" not in prev.columns:
@@ -96,7 +99,7 @@ def _carry_attempts(df):
 def build_image_metadata(target_iddocs, ingestion_run_id):
     """Explode checkpoint rows' `images` array into one row per image,
     preserving any already-DONE/SKIPPED description across a rebuild."""
-    if RUN_MODE == "rechunk" and spark.catalog.tableExists(TARGET_IMAGE_METADATA_TABLE):
+    if RUN_MODE == "rechunk" and table_exists(TARGET_IMAGE_METADATA_TABLE):
         # Kept as is: a checkpoint copied from another environment does not list the images already described,
         # and rebuilding from it would drop their descriptions. Materialised because the same table is overwritten.
         df_kept = spark.table(TARGET_IMAGE_METADATA_TABLE).filter(F.col("IDDOC").isin(list(target_iddocs))).localCheckpoint()
@@ -137,7 +140,7 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
         )
     )
 
-    if spark.catalog.tableExists(TARGET_IMAGE_METADATA_TABLE):
+    if table_exists(TARGET_IMAGE_METADATA_TABLE):
         df_prev_described = spark.table(TARGET_IMAGE_METADATA_TABLE).filter(
             F.col("status").isin("DONE", "SKIPPED", "FAILED_LIMIT")
         ).select(
@@ -290,7 +293,7 @@ def _dedupe_and_limit_chunks(df_chunks):
     # the search can leave them out.
     # Counted with the rows already in the table on an incremental run, so a new document's copy is caught too.
     df_keys = df_chunks.select("IDDOC", "body_sha256")
-    if RUN_MODE == "incremental" and spark.catalog.tableExists(TARGET_CHUNK_TABLE) \
+    if RUN_MODE == "incremental" and table_exists(TARGET_CHUNK_TABLE) \
             and "body_sha256" in spark.table(TARGET_CHUNK_TABLE).columns:
         df_keys = df_keys.unionByName(
             spark.table(TARGET_CHUNK_TABLE).filter(F.col("body_sha256").isNotNull()).select("IDDOC", "body_sha256"))

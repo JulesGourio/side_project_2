@@ -58,6 +58,7 @@ import sys
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
 sys.path.insert(0, REPO_DIR)
+sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/
 
 from pyspark.sql import functions as F
 
@@ -72,7 +73,10 @@ from pyspark.sql import functions as F
 import categories
 import manifest_steps
 import quality
-from utils import logger
+from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+
+setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
+logger = get_logger("cleanup_volume")
 from config import (
     DOC_SCOPE_FILTER, GD_CAT_LATEST, GD_DOC_CAT_LATEST, GD_DOC_FALLBACK, GD_DOC_LATEST,
     EXCLUDED_IDCATS, VOLUME_ROOT_PATH,

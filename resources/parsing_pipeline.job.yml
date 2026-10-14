@@ -154,6 +154,8 @@ targets:
               notebook_task:
                 notebook_path: ../utils/parsing_pipeline/1_Build_Category_Reference.py
                 source: WORKSPACE
+              libraries:
+                - pypi: {package: "packaging"}
 
             - task_key: "2_manifest"
               description: "Qualibot scope -> processed_files exclusions + parse_manifest"
@@ -168,6 +170,7 @@ targets:
                   DRY_RUN: "oui"
                   JOB_RUN_ID: "{{job.run_id}}"
               libraries:
+                - pypi: {package: "packaging"}
                 - pypi: {package: "tiktoken"}
 
             - task_key: "3_parse"
@@ -181,6 +184,7 @@ targets:
                 base_parameters:
                   JOB_RUN_ID: "{{job.run_id}}"
               libraries:
+                - pypi: {package: "packaging"}
                 - pypi: {package: "numpy<2"}
                 - pypi: {package: "docling"}
                 - pypi: {package: "docling-core"}
@@ -212,6 +216,7 @@ targets:
                 - pypi: {package: "openai"}
                 - pypi: {package: "tenacity"}
                 - pypi: {package: "nest_asyncio"}
+                - pypi: {package: "packaging"}
 
             - task_key: "5_sync_index"
               description: "Sync Vector Search indexes on the rewritten chunk tables (creating one first if it doesn't exist yet)"
@@ -255,12 +260,14 @@ targets:
                 environment_version: "2"
                 dependencies:
                   - databricks-sdk>=0.118.0
+                  - packaging
             - environment_key: lakebase_env
               spec:
                 environment_version: "2"
                 dependencies:
                   - psycopg2-binary
                   - databricks-sdk>=0.118.0
+                  - packaging
 
           # Daily at night: upstream Intraqual ingestion lands during the day, and 1_categories fails explicitly if sources are older than
           # `parsing_max_source_staleness_hours`.

@@ -16,13 +16,13 @@ from typing import List
 
 import nest_asyncio
 from databricks.sdk.runtime import spark
-from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 import doc_status
+from leap_utils.common.logger import get_logger
 from llm_describe import EndpointBreaker, describe_all_images, one_per_image, safe_requests_per_minute
-from tables import add_missing_columns, write_table
-from utils import intraqual_ref_url, logger, token_count_udf
+from tables import add_missing_columns, merge_into, table_exists, write_table
+from utils import intraqual_ref_url, token_count_udf
 from config import (
     CATALOG_SCHEMA,
     CHARS_PER_TOKEN,
@@ -52,9 +52,14 @@ from config import (
     TABLE_SUFFIX,
 )
 
+logger = get_logger(__name__)
+
 MOVED_BY_IMAGES = doc_status.MOVED_BY_IMAGES
 IMAGE_TABLE = TARGET_IMAGE_METADATA_TABLE
 _UPDATES_TABLE = f"{CATALOG_SCHEMA}._image_updates_temp{TABLE_SUFFIX}"
+_PROCESSED_UPDATES_TABLE = f"{CATALOG_SCHEMA}._processed_updates_temp{TABLE_SUFFIX}"
+_UPDATED_IMAGE_COLUMNS = ("description", "input_tokens", "output_tokens", "status", "described_at", "attempts",
+                          "last_error_kind")
 
 _PLACED_SCHEMA = "IDDOC long, image_id int, part_no int, anchor_chunk_index int, section string, body string"
 
@@ -100,23 +105,19 @@ def _merge_chunk_results(results):
         )
         for r in results
     ]
-    # MERGE fails on a duplicated (IDDOC, image_id) in its source batch.
+    # A duplicated (IDDOC, image_id) in the source would fail the merge.
     df_updates = spark.createDataFrame(update_rows, _UPDATES_SCHEMA).dropDuplicates(["IDDOC", "image_id"])
     add_missing_columns(df_updates, IMAGE_TABLE)
-    write_table(df_updates, _UPDATES_TABLE, "overwrite", overwrite_schema=True)
-    spark.sql(f"""
-        MERGE INTO {IMAGE_TABLE} AS t
-        USING {_UPDATES_TABLE} AS s
-        ON t.IDDOC = s.IDDOC AND t.image_id = s.image_id
-        WHEN MATCHED THEN UPDATE SET
-            t.description = s.description,
-            t.input_tokens = s.input_tokens,
-            t.output_tokens = s.output_tokens,
-            t.status = s.status,
-            t.described_at = s.described_at,
-            t.attempts = s.attempts,
-            t.last_error_kind = s.last_error_kind
-    """)
+    # merge_into takes whole rows: the image rows of this chunk, with the new values on the updated columns.
+    target = spark.table(IMAGE_TABLE)
+    new_values = df_updates.select("IDDOC", "image_id", *[F.col(c).alias(f"_new_{c}") for c in _UPDATED_IMAGE_COLUMNS])
+    write_table(
+        target.join(new_values, on=["IDDOC", "image_id"], how="inner").select(*[
+            F.col(f"_new_{c}").alias(c) if c in _UPDATED_IMAGE_COLUMNS else F.col(c) for c in target.columns
+        ]),
+        _UPDATES_TABLE, "overwrite", overwrite_schema=True,
+    )
+    merge_into(spark.table(_UPDATES_TABLE), IMAGE_TABLE, ["IDDOC", "image_id"], do_when_notmatched=False)
 
 
 @dataclass
@@ -263,7 +264,7 @@ def described_images_without_chunk(rebuild):
         return df_described
     # Image passages of pre-cutoff documents live in chunks_archive, not chunks.
     for table in (TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE):
-        if spark.catalog.tableExists(table):
+        if table_exists(table):
             df_existing = spark.table(table).filter(F.col("chunk_content_type") == "image").select("chunk_id")
             df_described = df_described.join(F.broadcast(df_existing), on="chunk_id", how="left_anti")
     return df_described
@@ -289,7 +290,7 @@ def build_image_chunks(df_described):
 
     df_text_all = spark.table(TARGET_CHUNK_TABLE).select(
         "IDDOC", "chunk_index", "chunk_content_type", "chunk_text", "semantic_headers")
-    if spark.catalog.tableExists(TARGET_CHUNK_TABLE_ARCHIVE):
+    if table_exists(TARGET_CHUNK_TABLE_ARCHIVE):
         df_text_all = df_text_all.unionByName(spark.table(TARGET_CHUNK_TABLE_ARCHIVE).select(
             "IDDOC", "chunk_index", "chunk_content_type", "chunk_text", "semantic_headers"))
     df_text_chunks = df_text_all.filter(F.col("chunk_content_type") != "image")
@@ -392,17 +393,33 @@ def build_image_chunks(df_described):
 
 
 def _merge_chunks(df_chunks, table):
-    """MERGE on chunk_id rather than delete-all-for-IDDOC then reinsert, so untouched image chunks are not rewritten."""
-    if not spark.catalog.tableExists(table):
+    """Merge on chunk_id rather than delete-all-for-IDDOC then reinsert, so untouched image chunks are not rewritten.
+
+    The columns the passages add reach the table first (they used to come with the MERGE's schema auto-merge).
+    """
+    if not table_exists(table):
         write_table(df_chunks, table, "append", merge_schema=True)
         return
-    (
-        DeltaTable.forName(spark, table).alias("t")
-        .merge(df_chunks.alias("s"), "t.chunk_id = s.chunk_id")
-        .whenMatchedUpdateAll()
-        .whenNotMatchedInsertAll()
-        .execute()
+    add_missing_columns(df_chunks, table)
+    merge_into(df_chunks, table, ["chunk_id"], do_when_notmatchedbysource=False)
+
+
+def _update_processed_files(df_values, columns):
+    """Set `columns` on the processed_files rows of the IDDOCs of `df_values` (IDDOC + columns); the others stay.
+
+    The rows are saved first: the merge source must not read the table it merges into.
+    """
+    target = spark.table(TARGET_PROCESSED_FILES_TABLE)
+    new_values = df_values.select("IDDOC", *[F.col(c).alias(f"_new_{c}") for c in columns])
+    write_table(
+        target.join(new_values, on="IDDOC", how="inner").select(*[
+            F.col(f"_new_{c}").alias(c) if c in columns else F.col(c) for c in target.columns
+        ]),
+        _PROCESSED_UPDATES_TABLE, "overwrite", overwrite_schema=True,
     )
+    merge_into(spark.table(_PROCESSED_UPDATES_TABLE), TARGET_PROCESSED_FILES_TABLE, ["IDDOC"],
+               do_when_notmatched=False)
+    spark.sql(f"DROP TABLE IF EXISTS {_PROCESSED_UPDATES_TABLE}")
 
 
 def write_image_chunks(df_image_chunks):
@@ -471,18 +488,15 @@ def promote_documents_awaiting_images():
     )
     n_promoted = df_assembled.count()
     if n_promoted > 0:
-        (
-            DeltaTable.forName(spark, TARGET_PROCESSED_FILES_TABLE).alias("t")
-            .merge(df_assembled.alias("s"), "t.IDDOC = s.IDDOC")
-            .whenMatchedUpdate(set={
-                "document_char_count": "s.document_char_count",
-                "document_token_count": "s.document_token_count",
-                "parse_status": "'SUCCESS'",
-                "parser_strategy": "'llm_ocr:pdf'",
-                "chunking_strategy": "'image_llm_ocr'",
-                "images_needing_description": "0",
-            })
-            .execute()
+        _update_processed_files(
+            df_assembled.select("IDDOC", "document_char_count", "document_token_count").withColumns({
+                "parse_status": F.lit("SUCCESS"),
+                "parser_strategy": F.lit("llm_ocr:pdf"),
+                "chunking_strategy": F.lit("image_llm_ocr"),
+                "images_needing_description": F.lit(0),
+            }),
+            ["document_char_count", "document_token_count", "parse_status", "parser_strategy", "chunking_strategy",
+             "images_needing_description"],
         )
         logger.info(f"Promoted {n_promoted} document(s) to SUCCESS (all images now described).")
 
@@ -490,14 +504,12 @@ def promote_documents_awaiting_images():
     df_ready_empty = df_ready.join(df_assembled.select("IDDOC"), on="IDDOC", how="left_anti")
     n_skipped = df_ready_empty.count()
     if n_skipped > 0:
-        (
-            DeltaTable.forName(spark, TARGET_PROCESSED_FILES_TABLE).alias("t")
-            .merge(df_ready_empty.alias("s"), "t.IDDOC = s.IDDOC")
-            .whenMatchedUpdate(set={
-                "parse_status": "'SKIPPED_EMPTY_IMAGES'",
-                "parser_strategy": "'llm_ocr:pdf'",
-                "images_needing_description": "0",
-            })
-            .execute()
+        _update_processed_files(
+            df_ready_empty.select("IDDOC").withColumns({
+                "parse_status": F.lit("SKIPPED_EMPTY_IMAGES"),
+                "parser_strategy": F.lit("llm_ocr:pdf"),
+                "images_needing_description": F.lit(0),
+            }),
+            ["parse_status", "parser_strategy", "images_needing_description"],
         )
         logger.info(f"{n_skipped} document(s) had no usable image -> SKIPPED_EMPTY_IMAGES.")

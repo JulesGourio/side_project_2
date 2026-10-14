@@ -20,8 +20,8 @@ import doc_status
 import image_utils
 import selection
 from format_parsers import strip_ooxml_bloat
-from tables import write_table
-from utils import logger
+from tables import table_exists, write_table
+from leap_utils.common.logger import get_logger
 from config import (
     BUSINESS_METADATA_COLS,
     CATALOG_SCHEMA,
@@ -39,6 +39,8 @@ from config import (
     VOLUME_BASE_PATH,
     VOLUME_ROOT_PATH,
 )
+
+logger = get_logger(__name__)
 
 INGESTION_RUN_ID = str(uuid.uuid4())
 JOB_RUN_ID = None
@@ -251,7 +253,7 @@ def exclude_already_parsed(df_files):
     """Resume support: drop files already SUCCESS in the checkpoint, keyed on
     (source_path, document_sha256). Returns the filtered, cached df_files.
     """
-    if not spark.catalog.tableExists(CHECKPOINT_TABLE):
+    if not table_exists(CHECKPOINT_TABLE):
         logger.info("No existing checkpoint — starting from scratch.")
         return df_files
 
@@ -424,7 +426,7 @@ def parse_pending_files(df_files, parse_fn):
 def _images_pending_iddocs():
     """IDDOCs parked as IMAGES_PENDING: text parsed, only images left. Their checkpoint row still says EMPTY_TEXT,
     so the scans of failed documents skip them: they are not parsed again."""
-    if not spark.catalog.tableExists(TARGET_PROCESSED_FILES_TABLE):
+    if not table_exists(TARGET_PROCESSED_FILES_TABLE):
         return spark.createDataFrame([], "IDDOC long")
     return (
         spark.table(TARGET_PROCESSED_FILES_TABLE)

@@ -18,6 +18,10 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
+from leap_utils.common.logger import get_logger
+
+_LOGGER = get_logger(__name__)
+
 RED = "RED"
 AMBER = "AMBER"
 
@@ -143,7 +147,7 @@ def evaluate(checks: Sequence[Check], stats: Mapping[str, int]) -> List[Result]:
 
 def report(table: str, results: Sequence[Result], logger: Optional[logging.Logger] = None) -> None:
     """Log every result (AMBER failures as warnings, RED failures as errors) then raise if a RED check failed."""
-    log = logger or logging.getLogger("parsing_pipeline.quality")
+    log = logger or _LOGGER
     failed_red = []
     for r in results:
         text = f"{table}: {r.check.label} - {r.detail}"

@@ -46,6 +46,7 @@ import sys
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
 sys.path.insert(0, REPO_DIR)
+sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/
 
 from pyspark.sql import functions as F
 
@@ -60,7 +61,10 @@ from pyspark.sql import functions as F
 import categories
 import quality
 from tables import write_table
-from utils import logger
+from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+
+setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
+logger = get_logger("build_category_reference")
 from config import (
     DIVISION_ARCHIVE_TABLE, DIVISION_REFERENCE_TABLE,
     GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST, GD_TYPDOC_LATEST,

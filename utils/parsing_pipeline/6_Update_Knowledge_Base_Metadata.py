@@ -43,7 +43,14 @@
 
 # COMMAND ----------
 
-import logging
+import os
+import sys
+
+_ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+# The repository folder and its root (leap_utils/ lives there) go on sys.path: two levels above this folder.
+REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
+sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))
+sys.path.insert(0, REPO_DIR)
 
 # COMMAND ----------
 
@@ -54,6 +61,7 @@ import logging
 # COMMAND ----------
 
 import quality
+from tables import table_exists
 
 # COMMAND ----------
 
@@ -62,13 +70,10 @@ import quality
 
 # COMMAND ----------
 
-logger = logging.getLogger("parsing_pipeline.kb_metadata")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
-    logger.addHandler(_handler)
-    logger.propagate = False
+from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+
+setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
+logger = get_logger("kb_metadata")
 
 # COMMAND ----------
 
@@ -118,7 +123,7 @@ MIN_KEEP_RATIO = 0.5
 MANIFEST_TABLE = f"{CATALOG_SCHEMA}.parse_manifest{TABLE_SUFFIX}"
 CHUNKS_TABLE = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"
 for table in (MANIFEST_TABLE, CHUNKS_TABLE):
-    if not spark.catalog.tableExists(table):
+    if not table_exists(table):
         raise RuntimeError(f"{table} does not exist - run the parsing tasks first")
 
 # COMMAND ----------

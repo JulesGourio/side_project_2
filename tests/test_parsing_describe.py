@@ -312,3 +312,25 @@ def test_describe_all_images_sets_the_capped_image_aside(monkeypatch):
         rounds=1, max_attempts=10))
     assert [r["status"] for r in out] == ["FAILED_LIMIT", "PENDING"]
     assert [r["attempts"] for r in out] == [10, 3]
+
+
+def test_a_quota_error_never_reaches_the_attempt_limit():
+    client = FakeClient({"primary": [RuntimeError("429 REQUEST_LIMIT_EXCEEDED")]})
+    out = _describe(client, ["primary"], max_retries=1, row=_row(attempts=9), max_attempts=10)
+    assert out["status"] == "PENDING" and out["attempts"] == 9
+    assert out["last_error_kind"] == "rate_limit"
+
+
+def test_a_quota_error_followed_by_another_failure_in_the_run_counts():
+    client = FakeClient({"primary": [RuntimeError("429 REQUEST_LIMIT_EXCEEDED")],
+                         "fallback": [RuntimeError("500")]})
+    out = _describe(client, ["primary", "fallback"], max_retries=1, row=_row(attempts=9), max_attempts=10)
+    assert out["status"] == "FAILED_LIMIT" and out["attempts"] == 10
+    assert out["last_error_kind"] == "other"
+
+
+def test_a_quota_error_alone_leaves_the_attempt_count_unchanged():
+    client = FakeClient({"primary": [RuntimeError("429 REQUEST_LIMIT_EXCEEDED")]})
+    out = _describe(client, ["primary"], max_retries=1, row=_row(attempts=3))
+    assert out["status"] == "PENDING" and out["attempts"] == 3
+    assert out["description"] is None

@@ -40,9 +40,15 @@
 
 # COMMAND ----------
 
-import logging
 import os
+import sys
 import time
+
+_ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+# The repository folder and its root (leap_utils/ lives there) go on sys.path: two levels above this folder.
+REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
+sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))
+sys.path.insert(0, REPO_DIR)
 
 # COMMAND ----------
 
@@ -53,7 +59,7 @@ import time
 # COMMAND ----------
 
 import quality
-from tables import write_table
+from tables import add_missing_columns, merge_into, table_exists, write_table
 
 # COMMAND ----------
 
@@ -62,13 +68,10 @@ from tables import write_table
 
 # COMMAND ----------
 
-logger = logging.getLogger("parsing_pipeline.sync_index")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
-    logger.addHandler(_handler)
-    logger.propagate = False
+from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+
+setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
+logger = get_logger("sync_index")
 
 # COMMAND ----------
 
@@ -119,7 +122,7 @@ REFRESH_CHUNKS_FULL = bool(CATALOG_SCHEMA) and (BUILD_CHUNKS_FULL or FULL_INDEX 
 
 chunk_sources = [
     t for t in (f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}", f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}")
-    if REFRESH_CHUNKS_FULL and spark.catalog.tableExists(t)
+    if REFRESH_CHUNKS_FULL and table_exists(t)
 ]
 if REFRESH_CHUNKS_FULL and not chunk_sources:
     raise RuntimeError(f"chunks_full requested but neither chunks nor chunks_archive exists in {CATALOG_SCHEMA}")
@@ -174,9 +177,7 @@ if REFRESH_CHUNKS_FULL:
 # COMMAND ----------
 
 if REFRESH_CHUNKS_FULL:
-    from delta.tables import DeltaTable
-
-    if not spark.catalog.tableExists(FULL_TABLE):
+    if not table_exists(FULL_TABLE):
         write_table(df_src, FULL_TABLE, "errorifexists")
         # 60-day history, like the chunk tables: a TRIGGERED sync cannot resume once the Change Data Feed it
         # needs has aged out (VECTOR_SEARCH_SOURCE_HISTORY_OUT_OF_RETENTION).
@@ -189,19 +190,13 @@ if REFRESH_CHUNKS_FULL:
         """)
         logger.info(f"Created {FULL_TABLE} from {chunk_sources}")
     else:
-        # Columns added to the chunk tables reach chunks_full too (schema auto-merge).
-        spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+        # Columns added to the chunk tables reach chunks_full too (added before the merge).
+        add_missing_columns(df_src, FULL_TABLE)
         target_cols = set(spark.table(FULL_TABLE).columns)
-        changed = " OR ".join(f"NOT (t.`{c}` <=> s.`{c}`)" for c in df_src.columns
+        changed = " OR ".join(f"NOT (target.`{c}` <=> source.`{c}`)" for c in df_src.columns
                               if c != "chunk_id" and c in target_cols) or "true"
-        (
-            DeltaTable.forName(spark, FULL_TABLE).alias("t")
-            .merge(df_src.alias("s"), "t.chunk_id = s.chunk_id")
-            .whenMatchedUpdateAll(condition=changed)
-            .whenNotMatchedInsertAll()
-            .whenNotMatchedBySourceDelete()
-            .execute()
-        )
+        merge_into(df_src, FULL_TABLE, ["chunk_id"], matched_clause=f"({changed})",
+                   do_when_notmatchedbysource=True)
         logger.info(f"Merged {chunk_sources} into {FULL_TABLE}")
     logger.info(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
 
