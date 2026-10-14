@@ -58,7 +58,7 @@ targets:
                 spark_version: "17.3.x-scala2.13"
                 node_type_id: ${var.parsing_describe_node_type}
                 num_workers: 0
-                # See README.md#uc-not-enabled-single-user — without this, table reads fail with [UC_NOT_ENABLED].
+                # Without this, table reads fail with [UC_NOT_ENABLED].
                 data_security_mode: SINGLE_USER
                 aws_attributes:
                   availability: ON_DEMAND
@@ -87,14 +87,14 @@ targets:
                 num_workers: ${var.parsing_num_workers}
                 data_security_mode: SINGLE_USER   # already the effective state, made explicit
                 aws_attributes:
-                  # See README.md#spot-driver-reclaim — a reclaimed spot driver killed a run, pinned on-demand.
+                  # The driver is on-demand: a reclaimed spot driver aborts the run.
                   first_on_demand: 1
                   availability: SPOT_WITH_FALLBACK
                   ebs_volume_count: 1
                   ebs_volume_size: 100
                   ebs_volume_type: GENERAL_PURPOSE_SSD
                 spark_conf:
-                  # See README.md#gpu-task-executor-contention — 16 Spark tasks were fighting over 1 GPU.
+                  # One Spark task per GPU: extra tasks queue on the same GPU.
                   spark.executor.resource.gpu.amount: "1"
                   spark.task.resource.gpu.amount: "1"
                   spark.databricks.delta.optimizeWrite.enabled: "true"
@@ -111,7 +111,7 @@ targets:
                   PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
                   PARSING_ARCHIVE_NOTICES_IN_RAG: ${var.parsing_archive_notices_in_rag}
                   PARSING_USE_GPU:          "true"
-                  # See README.md#opencv-python-headless-crash — belt-and-suspenders, set before the interpreter starts.
+                  # Set before the interpreter starts.
                   USE_TF:                 "0"
                   TRANSFORMERS_NO_TF:     "1"
                   TF_CPP_MIN_LOG_LEVEL:   "3"
@@ -119,7 +119,7 @@ targets:
                   HF_HUB_OFFLINE:         "1"
                   TRANSFORMERS_OFFLINE:   "1"
                   HF_HUB_DISABLE_TELEMETRY: "1"
-                  # See README.md#pythonpath-worker-daemon-revert — do not set a static PYTHONPATH here.
+                  # Do not set a static PYTHONPATH here.
 
             # ── Small CPU cluster for LLM description (4_describe_images, I/O-bound) ──
             - job_cluster_key: describe_cpu_cluster
@@ -195,7 +195,7 @@ targets:
                 - pypi: {package: "pyxlsb"}
                 - pypi: {package: "openai"}
                 - pypi: {package: "tenacity"}
-                # See README.md#opencv-python-headless-crash — the fix is the %pip cell in 3_Parse_Pipeline.py, not a cluster library.
+                # The opencv-headless install is the %pip cell in 3_Parse_Pipeline.py, not a cluster library.
 
             - task_key: "4_describe_images"
               description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"

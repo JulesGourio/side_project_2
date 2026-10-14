@@ -1,45 +1,58 @@
 # utils/
 
-Everything that runs outside the app, one folder per concern.
+Tout ce qui tourne en dehors de l'application web : chaîne de parsing des
+documents, déploiement, alertes, copies de données, évaluation du chat et
+outils d'administration. Un dossier par sujet. L'application elle-même est
+dans `server/` et `client/` (voir le [README racine](../README.md)).
 
-| Folder / file | What | Wired in |
+## Carte du dossier
+
+| Dossier ou fichier | Contenu | Lancé par |
 |---|---|---|
-| `parsing_pipeline/` | Daily parsing chain (`1_` to `6_`), see its README | `resources/parsing_pipeline.job.yml` |
-| `deploy/` | `deploy_qualibot.ps1` (manual deploy), `render_target_config_env.py` + `target_env.json` (per-target app settings, shared by the script and the Bitbucket pipeline), Intraqual download / scrape / unzip / upload helpers, `deploy_sync_user_capabilities_uat_personal.py` (job deployed outside the bundle) | `bitbucket-pipelines.yml`, `app.yaml` |
-| `alerts/` | SQL of the Databricks SQL alerts (created by hand, see its README) | by hand |
-| `app_mgmt/` | `stop_start_app_job.py`: start / stop schedule of the Databricks Apps | `resources/app_schedules.yml` |
-| `lakebase_sync/` | Lakebase export, import and schema migrations, see its README | `resources/lakebase_sync.yml`, `bitbucket-pipelines.yml` |
-| `user_capabilities/` | `can_chat` / `can_compare` sync from group membership (job notebook + CLI twin) | `resources/user_capabilities.yml` |
-| `dev_copy/` | Copy of the UAT corpus into DEV (export on UAT, import on DEV, Vector Search endpoint) | `resources/dev_copy.yml` |
-| `grants/` | Unity Catalog grants for the app service principals | `resources/grants.yml` |
-| `uat_setup/` | `setup_proj_schema.py`: deep-clones the parsing state tables into the project schema (`uat_proj.qualibot`) and grants read access | `resources/uat_setup.yml` |
-| `evaluation/` | Chat evaluation tools, load tests, MLflow experiment / prompt registration, trace scoring; results in `docs/chat_tests.md` | `resources/chat_mlflow.yml` (the three setup / scoring notebooks) |
-| `soffice_packaging/` | Portable LibreOffice build for the exact-layout PDF preview | `app.yaml` (archive path) |
-| `compare_preview.py` | Offline DocCompare report of a document pair (no LLM call) | by hand, see `OPERATIONS.md` |
-| `ops_config.py` | Shared by the Lakebase and user-capability scripts: CLI profiles, Lakebase project settings, `lakebase_connect*`, `json_serializer`, `sync_users_from_audit` | imported |
+| [`parsing_pipeline/`](parsing_pipeline/README.md) | Chaîne quotidienne de parsing, de découpage et d'indexation des documents (tâches `1_` à `6_`) | `resources/parsing_pipeline.job.yml` |
+| [`deploy/`](deploy/) | `deploy_qualibot.ps1` (déploiement manuel de l'application), `render_target_config_env.py` et `target_env.json` (réglages de l'application par cible), outils d'extraction Intraqual (`scrap_ids_intraqual.py`, `download_intraqual.py`, `unzip_intraqual.py`, `upload_intraqual.py`) | à la main ; `bitbucket-pipelines.yml` pour `render_target_config_env.py` |
+| [`alerts/`](alerts/README.md) | Requêtes SQL des six alertes de suivi (à créer à la main dans Databricks) | à la main |
+| [`app_mgmt/`](app_mgmt/) | `stop_start_app_job.py` : arrêt et démarrage planifiés des applications Databricks | `resources/app_schedules.yml` |
+| [`lakebase_sync/`](lakebase_sync/README.md) | Export, import, copies et mise à jour du schéma de la base Lakebase | `resources/lakebase_sync.yml`, `bitbucket-pipelines.yml` |
+| [`dev_copy/`](dev_copy/) | Copie du corpus de l'UAT vers DEV : export sur l'UAT, import dans DEV, endpoint Vector Search | `resources/dev_copy.yml` |
+| [`grants/`](grants/) | Droits Unity Catalog des identités de service (application, pipeline), accès aux volumes | `resources/grants.yml` |
+| [`uat_setup/`](uat_setup/) | `setup_proj_schema.py` : copie l'état du parsing dans le schéma du projet de la cible `qualibot-uat-test` | `resources/uat_setup.yml` |
+| [`evaluation/`](evaluation/) | Évaluation du chat et de la recherche : tests de charge, comparaison de réponses, évaluation de la recherche, expérience et prompts MLflow, scores des traces | `resources/chat_mlflow.yml`, à la main |
+| [`soffice_packaging/`](soffice_packaging/) | Construction de l'archive LibreOffice portable utilisée par l'aperçu PDF fidèle des comparaisons | à la main (archive déposée dans un volume) |
+| [`compare_preview.py`](compare_preview.py) | Rapport hors ligne d'une paire de documents à comparer (pas d'appel LLM) | `python -m utils.compare_preview` |
+| [`ops_config.py`](ops_config.py) | Réglages partagés : profils CLI, projets et bases Lakebase, connexion (`lakebase_connect*`) | importé par les scripts |
 
-Notebooks that need `ops_config.py` reach it with `sys.path.insert(0, os.path.dirname(os.getcwd()))`
-(a notebook's folder is its cwd and is on `sys.path`; one level up is `utils/`).
+## Conventions
 
-Conventions: `logger` instead of `print`, `dbutils.widgets.removeAll()` before the first widget of a notebook,
-`try_cast` / `try_to_date` instead of `cast` / `to_date` on data columns.
+- Journalisation avec `logger` (module `logging`), jamais `print`. Les notebooks
+  et les scripts en ligne de commande suivent la même règle.
+- Un notebook de `utils/` reçoit ses paramètres par widgets. Il commence par
+  `dbutils.widgets.removeAll()`, puis déclare ses widgets.
+- Les notebooks importent `ops_config.py` avec
+  `sys.path.insert(0, os.path.dirname(os.getcwd()))` : le dossier du notebook
+  est dans `sys.path`, son parent est `utils/`.
+- Sur les colonnes de données, `try_cast` et `try_to_date` remplacent
+  `cast` et `to_date`, pour qu'une valeur mal formée ne fasse pas échouer
+  toute la tâche.
+- `target_env.json` est la source unique des réglages de l'application par
+  cible. Le script PowerShell et le pipeline Bitbucket les lisent tous les
+  deux : ne pas les recopier ailleurs.
 
-## Gotchas worth keeping
+## Points de vigilance
 
-- **Duplicated app off-hours jobs.** In the UAT workspace every app start / stop job may exist twice: one bundle-managed
-  and one orphan left by an earlier deploy under another bundle root (no `deployment` metadata in its settings). Both
-  can run on their own schedule. When auditing "what starts my app", list the workspace jobs and check
-  `settings.deployment`; `bundle validate` alone does not show them. An org-wide job (`D_0_Stop_Databricks_Apps`)
-  also stops every app nightly.
-- **Stop / start idempotency** (`app_mgmt/stop_start_app_job.py`): the SDK calls raise `BadRequest` when the app is
-  already in the target state (the CLI silently no-ops), so the notebook reads the app state first and skips the call.
-- **Deploying to `qualibot-uat`** goes through the Bitbucket `deploy-uat` pipeline (identity `job-runner-sa-uat`). A local
-  `bundle deploy` creates resources owned by the personal identity, which then blocks the pipeline's next run.
-  A `databricks workspace import` of a bundle notebook must target the job's `notebook_path` exactly (no `.py`
-  suffix), otherwise it silently creates a stray duplicate.
-- **`qualibot-sync-user-capabilities-uat`** is deployed by a CoreDev human with
-  `deploy/deploy_sync_user_capabilities_uat_personal.py` (outside the bundle), because the pipeline identity lacks
-  `USE SCHEMA` on `system.access`. A manual-trigger dry-run copy (`...-uat-dryrun-jules`, created with `jobs create`)
-  also lives outside the bundle state, so `bundle deploy` / `destroy` never touch it.
-- **`render_target_config_env.py`** writes `target_config.env` with `\n` line endings on purpose: CRLF from a Windows
-  deploy once put a trailing `\r` in every value and broke every URL built from them.
+- **Arrêt et démarrage des applications** (`app_mgmt/stop_start_app_job.py`) :
+  le SDK lève `BadRequest` quand l'application est déjà dans l'état demandé.
+  Le notebook lit donc d'abord l'état et passe l'appel si l'application y est
+  déjà.
+- **Fins de ligne de `target_env.json` rendu** : `render_target_config_env.py`
+  écrit `target_config.env` en fins de ligne LF. Un fichier en CRLF ajoute un
+  `\r` à chaque valeur, et toutes les URL construites à partir de ces valeurs
+  deviennent fausses.
+- **Notebook importé dans le workspace** : `databricks workspace import` doit
+  viser exactement le `notebook_path` du job (sans suffixe `.py`). Sinon, un
+  doublon apparaît sans erreur.
+- **Déploiement** : l'application se déploie avec `deploy/deploy_qualibot.ps1`
+  (ou le pipeline Bitbucket), et les jobs avec `databricks bundle deploy`. Le
+  [README racine](../README.md) décrit les cibles. Les étapes à faire dans
+  Databricks sont dans [OPERATIONS.md](../OPERATIONS.md) et
+  [operations_dev.md](../operations_dev.md).

@@ -1,388 +1,275 @@
 # Chatbot
 
-A RAG chat over the company's document base: Vector Search finds the passages, GPT-6 Luna
-answers from them only, with inline citations, division scoping (ALL / AS / IS) and a
-translation bridge for questions that are neither French nor English. Every choice below
-was measured: `docs/chat_tests.md` (configuration kept, results, what was dropped).
-The former Knowledge Assistant (Agent Bricks) was removed on 2026-10-08 (the `archive/` folder was deleted too; restorable from git commit `f545093`).
+Assistant qui répond aux questions à partir de la base documentaire de
+l'entreprise. Un index Vector Search fournit les passages pertinents ; le
+modèle de langage GPT-6 Luna répond à partir de ces passages seulement, avec
+des citations numérotées. Le chat sert trois périmètres : ALL, AS et IS (filtre
+sur la colonne `division` de l'index, un seul index pour les trois).
 
-## How it works
+Le code serveur est dans `server/services/chat/` (moteur, appel du modèle,
+journal du tour) et `server/routers/chat/` (route WebSocket, sessions,
+persistance). L'interface est dans ce dossier et dans les pages
+`client/src/pages/ChatPage.tsx` et `SharedChatPage.tsx`. Le choix de chaque
+réglage et les mesures qui le justifient sont dans
+[`docs/chat_tests.md`](../../../../docs/chat_tests.md).
 
-### End-to-end flow (`WS /api/chat/ws`)
+## Déroulement d'un tour
 
-`chat_ws` (`server/routers/chat.py`): **trim history → translation bridge → inject today's
-date → `stream_chat` → citation markers → translate back → persist the turn.**
+Une question arrive sur la route WebSocket `/api/chat/ws` avec l'historique, la
+division et l'identifiant de session. Le tour se déroule ainsi :
 
-1. **History trimming** (`_trim_history`, `CHAT_MAX_HISTORY`, default 10) — bounds prompt
-   growth; the latest question is always kept.
-2. **Translation bridge** (see below) — a question in a third language is searched and
-   answered in English, then translated back.
-3. **Date injection** (`_with_today_date`) — prepends `[Date: YYYY-MM-DD]` to the last user
-   message only, so date-relative questions resolve correctly.
-4. **The engine** (`server/services/chat/engine.py::stream_chat`):
-   - search queries: the bilingual rewrite (French + English, acronyms expanded) by GPT-6 Luna. Option `CHAT_TRANSLATE_ONLY=on` (off by default,
-     unmeasured: it loses the expansions): the first message of a conversation, in French or English, is only translated into the other
-     language (`translate_query.md`, one short call) and searched with two queries of 18 reranked + 12 raw passages (`CHAT_PAIR_*`);
-   - 3 HYBRID Vector Search queries on `CHAT_INDEX`, each = 12 reranked passages + 10 raw
-     ones, merged by rank; the division is a `filters_json` filter on the `division` column;
-   - documents named by REF in the conversation first, one language variant per document. The catalogue
-     (REF, title, link) is the Lakebase table `doc_catalog`, rewritten by the parsing pipeline
-     after each daily run and reloaded by the app every 30 min (`doc_catalog.py`);
-   - prompt = the division's own part (`server/prompts/chat/system/<div>.md`: role, scope, division-only rules) + the base shared by all divisions (`system/base.md`, answer rules included) + numbered documents + question + a line naming the answer
-     language;
-   - answer streamed by `chat/llm.stream_answer`: GPT-6 Luna, GPT-5.6 Luna as fallback,
-     retries, continuation of a cut answer, at most 32 answers at once per instance
-     (`docs/chat_robustesse_2026-10.md`);
-   - the model writes `[n]` markers; `CitationStreamParser` removes them from the stream and
-     emits their positions in a `sources` event.
-5. **Citation assembly** — markers use `⟦n⟧` (U+27E6/U+27E7, essentially never present in
-   source documents) inserted at each citation's character offset, right-to-left so earlier
-   offsets stay valid. Baked into the stored `content` so reloaded conversations show the
-   same inline citations without re-computing anything.
-6. **Persistence** — one `chat_sessions` row + two `chat_messages` rows (user + assistant)
-   per turn, including failed turns (status `'error'`), so a question and its failure reason
-   are always traceable. `endpoint_name` = `chat-all` / `chat-as` / `chat-is` (older turns of the
-   Knowledge Assistant carry `ka-…` names).
+1. **Historique** : `_trim_history` garde les `CHAT_MAX_HISTORY` derniers
+   messages (10 par défaut). La question en cours est toujours conservée.
+2. **Date** : `_with_today_date` ajoute `[Date: AAAA-MM-JJ]` en tête du dernier
+   message utilisateur, dans une copie. Le modèle peut ainsi situer les dates
+   des documents par rapport à aujourd'hui.
+3. **Requêtes de recherche** (`engine/queries.py`) :
+   - par défaut, la question est réécrite en une requête française et une
+     requête anglaise (sigles et acronymes développés quand ils sont certains),
+     par le modèle `CHAT_REWRITE_ENDPOINT`. Les noms de société et les mots de
+     type de document que la conversation n'utilise pas sont retirés de la
+     réécriture (`strip_added_noise`) ;
+   - si `CHAT_TRANSLATE_ONLY` est activé, la première question d'une
+     conversation en français ou en anglais n'est pas réécrite : elle est
+     seulement traduite dans l'autre langue. Les suites de conversation et les
+     autres langues gardent la réécriture.
+4. **Recherche** (`engine/search.py`) : la question telle quelle, puis les
+   requêtes de réécriture, sont envoyées en recherche hybride à l'index. Chaque
+   requête remonte les `CHAT_RERANK_TOP_K` premiers passages, reclassés par le
+   reranker Databricks. La requête française reçoit en plus les
+   `CHAT_RAW_TOP_K` premiers passages bruts (`CHAT_RAW_ON`). Tous les résultats
+   sont fusionnés par meilleur rang, puis coupés à `CHAT_MAX_SEARCH_PASSAGES` si
+   ce plafond est fixé (0 : pas de plafond). Chaque appel est une requête
+   Vector Search avec ses réessais (`vs_gate.py`).
+5. **Documents nommés** (`engine/retrieval.py`) : les REF cités dans la question
+   ou dans les autres tours de la conversation (6 au plus) reçoivent une recherche filtrée sur
+   leurs passages (8 passages au total). Ces passages sont classés en premier.
+6. **Une langue par document** : seuls les passages de la variante linguistique
+   la mieux classée d'un document sont gardés.
+7. **Prompt** (`engine/answer.py`) : les instructions de la division
+   (`server/prompts/chat/system/<division>.md`), la base commune
+   (`system/base.md`), les documents numérotés `[n]` avec leur révision et leur
+   date quand le catalogue les connaît, la question, puis une ligne qui nomme
+   la langue de la réponse (quand la langue de la question est sûre).
+8. **Réponse** (`chat/llm.py`) : streaming par GPT-6 Luna, GPT-5.6 Luna en
+   secours (voir plus bas). Le modèle écrit des marqueurs `[n]`.
+9. **Citations** (`engine/citations.py`) : `CitationStreamParser` retire les
+   marqueurs du flux et garde leur position. À la fin de la réponse, le contenu
+   enregistré reçoit les marqueurs `⟦n⟧` à leurs positions, et l'évènement
+   `sources` liste les documents cités dans l'ordre d'apparition.
+10. **Persistance et journal** : le tour est enregistré dans Lakebase (voir
+    [Persistance](#persistance-et-journal)), même quand il échoue ou que le
+    navigateur part en cours de réponse.
 
-### Translation bridge (`server/services/chat/translation_bridge.py`)
+## Réponse et reprises (`chat/llm.py`)
 
-Gated by `CHAT_TRANSLATE_BRIDGE_ENABLED` (`false` in `app.yaml`, `true` on every target in
-`utils/deploy/target_env.json`). When enabled:
+| Situation | Comportement |
+|---|---|
+| Erreur sans texte reçu (429, 5xx, timeout, réponse vide, requête refusée, modèle absent) | Modèle suivant de la chaîne |
+| Coupure après un début de réponse | Demande de reprise au même modèle ou au suivant, 2 fois au plus ; l'utilisateur voit une seule réponse |
+| Premier texte attendu | Dans les 90 s (`CHAT_FIRST_TOKEN_TIMEOUT_S`) |
+| Flux sans texte | Abandonné après 60 s (`CHAT_STALL_TIMEOUT_S`) |
+| Nouvelle tentative | Interdite au-delà de 240 s (`CHAT_LLM_DEADLINE_S`) |
+| Passes sur la chaîne | 3 (`CHAT_LLM_ROUNDS`), avec une attente de 2 s, 8 s puis 20 s, ou le `Retry-After` du modèle s'il est plus court |
+| Modèle en erreur 429 ou 5xx | Mis en dernier pendant 30 s (`CHAT_COOLDOWN_S`) ; 10 min pour une erreur 404 |
+| Réponses simultanées | 32 au plus par instance (`CHAT_MAX_CONCURRENT_ANSWERS`) ; les autres attendent, avec des signaux de vie |
 
-- A cheap local **fastText** language-ID pass screens the question; if
-  confidence > 65% and the language isn't French/English, an LLM call
-  (`CHAT_TRANSLATE_ENDPOINT`) confirms the language and produces an English
-  translation in one request.
-- The English translation (not the original) is what reaches the search
-  and the model — the corpus is almost entirely French/English, so retrieval on
-  a third language's raw text only matches the sparse same-language slice.
-- The final answer is translated back to the user's language in one pass
-  before streaming starts (the client shows "Thinking" until that
-  translation completes — raw English is never shown). Markdown, `REF`
-  codes, dates, and `⟦n⟧` citation markers are instructed to pass through
-  unchanged.
-- As a safeguard, even when the bridge doesn't trigger (question already
-  FR/EN), the answer's language is checked and re-translated if it doesn't
-  match the question's — guards against the model answering in the wrong
-  language mid-conversation.
-- `chat_messages.question_lang` stores the detected ISO 639-1 code (empty
-  string when the bridge is disabled or detection wasn't attempted).
+Quand tout a échoué, l'utilisateur voit un seul message, `TIRED_MESSAGE`
+(même texte côté serveur et dans `chatStream.ts`). La cause technique va dans
+la table `errors`, avec son origine dans le code.
 
-### Sharing a conversation
+La réécriture a sa propre chaîne de secours (`CHAT_REWRITE_*`). Si toutes les
+réécritures échouent, la recherche se fait avec la question seule.
 
-A conversation can be shared read-only via a link: `POST
-/api/chat/sessions/{id}/share` (owner only) sets `chat_sessions.share_token`
-(a random `secrets.token_urlsafe(20)`, generated once — re-sharing returns the
-same token rather than rotating it) and the client copies
-`/chat/shared/{token}` to the clipboard. `GET /api/chat/shared/{token}`
-(`SharedChatPage.tsx`) serves that conversation read-only to **any**
-authenticated Qualibot user who has the link — no ownership check, since a
-share link's whole point is to be handed to someone else. It is a **live**
-link: the viewer always sees the session's current messages, not a
-point-in-time snapshot, and there is deliberately no revocation/expiry.
-Feedback is hidden on the shared view — a viewer voting on a question they
-didn't ask would pollute the owner's own triage signal.
+## Langue de la réponse
 
-A viewer who wants to keep asking questions can duplicate it (`POST
-/api/chat/shared/{token}/duplicate`) into a brand-new session they own, with
-every message copied over — they never write into the original conversation.
-`ChatView.tsx` lands them straight into that new session via a `?session=`
-query param it consumes and strips on mount.
+La langue de la question est devinée localement avec fastText
+(`server/data/lid.176.ftz`, `translation_bridge._fast_lang_guess`). Si la
+devinette est sûre, le rappel de langue nomme cette langue. Sinon, le modèle
+choisit la langue de la question sans consigne nommée.
 
-This is also what closed a pre-existing ownership gap: before this feature,
-`GET`/`DELETE /api/chat/sessions/{id}` did not check `user_id` at all — any
-authenticated user who knew a `session_id` could already read or delete
-someone else's conversation. Both routes are now scoped to `WHERE id = $1 AND
-user_id = $2`.
+Le pont de traduction (`CHAT_TRANSLATE_BRIDGE_ENABLED`) traduit les questions
+écrites dans une autre langue que le français et l'anglais, puis traduit la
+réponse. Il est désactivé dans `app.yaml` : les questions sont traitées telles
+quelles.
 
-### Persistence model (Lakebase)
+## Citations et documents
 
-- **`chat_sessions`** — one row per conversation thread; `name` derived from
-  the first question (truncated); soft-deleted via `deleted`/`deleted_at`
-  (never physically removed, so conversations stay traceable for audit);
-  `share_token` set once the owner shares it (see "Sharing a conversation").
-- **`chat_messages`** — one row per turn side (`role`: `user`/`assistant`),
-  storing `content` (with citation markers baked in), `trace_id` (= the turn's
-  `chat_turns.trace_id`), `sources_json` (`[{rank, title, url, n, doc_title, revision, doc_date}]`:
-  catalog title, revision and date at answer time, shown on the chips), `status`
-  (`ok`/`error`/`aborted`, only `ok` is shown), `division`, `question_lang`.
-  Same soft-delete pattern as sessions. `tool_name`/`tool_query`/`tool_result`/
-  `reasoning_steps` belong to the former Knowledge Assistant: no longer written
-  since 2026-10-09, kept for the history of its turns.
-- **`chat_turns`** / **`chat_retrieved_chunks`** — one row per turn (every step,
-  its duration, the configuration it should have run with, the models that
-  answered, `ok`/`degraded`/`error`/`aborted` + warning codes) and one row per
-  passage retrieved for it, with its text. Filled by `services/chat/turn_log.py`;
-  failures and degraded steps also go to `errors`. Reference:
-  `docs/lakebase_schema.md`.
-- **MLflow trace per turn** — the same `TurnLog`, rebuilt as a trace after the answer is sent
-  (`services/mlflow_turns.py`, experiment `CHAT_MLFLOW_EXPERIMENT`, empty = off).
-- **`chat_feedbacks`** — thumbs up/down + optional comment per message.
-- **`knowledge_base_metadata`** — single-row table holding the "documents as
-  of" date shown in the UI toolbar; updated manually after each knowledge
-  base refresh (`GET /config/knowledge-base-date`).
+- Chaque passage commence par `[Source: REF | Title: … | …]`. Les titres affichés
+  viennent de ce préfixe.
+- Le catalogue des documents (table Lakebase `doc_catalog` : REF, titre, lien,
+  division, révision, date de publication) est reconstruit par la tâche
+  `6_update_kb_metadata` de la chaîne de parsing, puis rechargé par l'application
+  toutes les 30 minutes (`DOC_CATALOG_REFRESH_S`). Il sert à trouver les REF
+  nommés, à afficher les titres et les liens des sources, et à donner au modèle
+  la révision et la date de chaque document.
+- Tant que la table est vide (premier démarrage, tests), le fichier
+  `server/data/doc_catalog.json` sert de repli. C'est un instantané figé, sans
+  mise à jour.
+- Les documents antérieurs à 2018 ne sont pas dans l'index du chat : ils sont
+  dans la table d'archive de la chaîne de parsing (voir son README).
 
-### Frontend
+## Sessions, partage et feedback
 
-`client/src/components/chat/`: `ChatView.tsx` (layout: message list, sidebar
-toggle, Share button) on top of `useChatConversation.ts` (messages, streamed
-turn, session load, share) and `useChatSessions.ts` (history list);
-`chatStream.ts` (WebSocket stream, retries, `TIRED_MESSAGE`); `ChatSidebar.tsx`
-(past sessions + "New conversation" + division selector); `ChatMessage.tsx`
-(bubble with citation superscripts), `ChatSources.tsx` (source chips grouping
-multi-language variants of the same document), `ChatFeedback.tsx` (thumbs),
-`DownloadMenu.tsx` + `chatExport.ts` (Markdown/PDF export), `WelcomeState.tsx`,
-`message.ts` (shared types), `division.tsx`
-(`DivisionSelector`, a 3-way ALL/AS/IS toggle). The read-only shared view
-lives outside this folder, at `client/src/pages/SharedChatPage.tsx`
-(route `/chat/shared/:token`) — it reuses `ChatMessage` with
-`showFeedback={false}` and adds a "Duplicate into my conversations" button.
+Routes (`server/routers/chat/sessions.py`, `feedback`) :
 
-### Capability gating
+| Route | Rôle |
+|---|---|
+| `WS /api/chat/ws` | Un tour de chat (seul canal de réponse : le WebSocket évite le tampon du proxy des applications Databricks) |
+| `POST /api/chat/feedback` | Pouce haut ou bas, commentaire facultatif, sur un message |
+| `GET /api/chat/sessions` | Liste des conversations de l'utilisateur |
+| `GET /api/chat/sessions/{id}` | Une conversation, si elle appartient à l'utilisateur (404 sinon) |
+| `DELETE /api/chat/sessions/{id}` | Suppression logique (`deleted`, `deleted_at`) |
+| `POST /api/chat/sessions/{id}/share` | Crée le jeton de partage, ou renvoie le jeton existant |
+| `GET /api/chat/shared/{token}` | Lecture seule, pour tout utilisateur qui a le lien |
+| `POST /api/chat/shared/{token}/duplicate` | Copie la conversation partagée dans une conversation de l'utilisateur |
 
-Same pattern as Compare/Translate: `require_chat` dependency on every chat
-endpoint → `get_capabilities()` reads `users.can_chat` from Lakebase (synced
-by `utils/databricks_ops/user_capabilities/sync_user_capabilities.py`) → fails open (grants
-access) if Lakebase is unreachable or the user isn't in the table yet.
-`ChatPage.tsx` shows `AccessDenied` if `can_chat` is false, or a "coming
-soon" placeholder if `CHAT_ENABLED` is false.
+Un lien partagé est vivant : le lecteur voit les messages actuels de la
+conversation. Il n'y a pas d'expiration ni de révocation. La vue partagée
+ne permet pas de voter. Dupliquer crée une conversation neuve à
+l'utilisateur ; la conversation d'origine n'est jamais modifiée.
 
-## Known issues / quirks
+## Accès
 
-- **Fail-open capabilities**: if Lakebase is down or a user hasn't been
-  synced, chat access is granted rather than denied — intentional, to avoid
-  outages during DB issues.
+Les routes HTTP du chat exigent `require_chat` ; la route WebSocket vérifie
+la même condition et renvoie `Chat access not granted` sans ouvrir le tour.
+L'accès est vérifié en direct : l'application demande à Databricks, au nom du
+visiteur (jeton OBO) et par l'entrepôt `CAPS_WAREHOUSE_ID`, s'il appartient à un
+des groupes de compte autorisés au chat (ChatBot, CoreDev, CoreAdmin). Le résultat
+est gardé `CAPS_TTL_S` secondes (600 par défaut). Sans jeton, sans entrepôt ou si la
+vérification échoue, l'accès est refusé, et l'échec n'est pas gardé en cache.
+`CAPS_BYPASS=true` ouvre le chat à tous : ce réglage n'est activé que sur la cible
+DEV.
 
-## Knowledge base pipeline (chunking, embeddings, image descriptions)
+## Persistance et journal
 
-The document knowledge base this chat retrieves from —
-and that Compare's impact search also queries — is built offline by
-`utils/parsing_pipeline/` (numbered notebooks `00`–`06`, run on Databricks,
-not part of the live app):
+Tables Lakebase (`server/services/infra/lakebase/schema.py`, colonnes dans
+[`docs/lakebase_schema.md`](../../../../docs/lakebase_schema.md)) :
 
-- `3_Parse_Pipeline.py` parses PDF/Office documents into markdown text +
-  extracted images, then chunks and writes the `chunks`/`processed_files`/
-  `image_metadata` Delta tables that the Vector Search index syncs from.
-- **Chunking** happens inside `3_Parse_Pipeline.py` itself
-  (`utils.build_chunks_udf`) via a token-bounded markdown-structure
-  splitter (`utils/parsing_pipeline/chunking.py`: 150 / 300 / 450 tokens,
-  1,600 characters at most, 12 % overlap, tables of contents and front matter
-  marked in `chunk_content_type`).
-- `4_Describe_Images_LLM.py` sends each extracted image to the vision
-  LLM (`databricks-gpt-5-mini`, `PARSING_LLM_ENDPOINT` in
-  `utils/parsing_pipeline/config.py`) to describe tables/figures/diagrams;
-  the description is folded into the surrounding chunk text.
-  **Never pre-delete `image_metadata` by hand** — doing so has wiped existing
-  descriptions before (2026-07-03 and 2026-07-06).
-- **Embeddings**: Databricks-managed Vector Search embeddings
-  (`databricks-qwen3-embedding-0-6b`, Delta Sync index `chunks_index` on the
-  `chunks` table, created by `5_Sync_Vector_Indexes.py`) — powers retrieval for
-  both this chat and Compare's impact search.
+| Table | Contenu |
+|---|---|
+| `chat_sessions` | Une ligne par conversation : nom, jeton de partage, suppression logique |
+| `chat_messages` | Une ligne par message (`user` et `assistant`) : contenu, `sources_json` (titre, révision, date, citations), `status`, `division`, `trace_id` |
+| `chat_feedbacks` | Votes et commentaires sur les messages |
+| `chat_turns` | Une ligne par tour : chaque étape, sa durée, la configuration prévue, le modèle qui a répondu, `status` et les codes d'avertissement |
+| `chat_retrieved_chunks` | Une ligne par passage retrouvé : son texte, sa place dans le prompt, si le modèle l'a cité, et la raison de son écart (`other_language`, `over_cap`) |
+| `errors` | Une ligne par avertissement ou erreur : `stage`, `origin` (fichier, ligne, fonction), `fingerprint`, `user_message` |
+| `doc_catalog` | Catalogue des documents (voir plus haut) |
+| `knowledge_base_metadata` | Date des documents affichée dans l'interface (`GET /api/config/knowledge-base-date`) |
+| `users` | Identité des utilisateurs ayant écrit un tour de chat |
 
-## Configuration (`app.yaml`)
+`status` de `chat_turns` : `ok` (réponse, tout tourné comme prévu),
+`degraded` (réponse, mais au moins une étape a échoué ou a été dégradée :
+réécriture, recherche partielle, modèle de secours, réponse coupée), `error`
+(pas de réponse), `aborted` (le navigateur est parti en cours de réponse).
 
-| Var | Default | Purpose |
+`trace_id` (`chat-…`) relie `chat_turns`, `chat_retrieved_chunks`, `errors` et
+les deux lignes de `chat_messages` du tour.
+
+Chaque tour est aussi reconstruit en une trace MLflow dans l'expérience
+`CHAT_MLFLOW_EXPERIMENT` (vide : désactivé ; `services/chat/mlflow_turns.py`).
+Les votes deviennent une évaluation `user_vote` sur cette trace. Le scoring
+des traces est fait par des jobs, jamais pendant un tour.
+
+## Interface (`client/src/components/chat/`)
+
+| Fichier | Rôle |
+|---|---|
+| `ChatView.tsx` | Mise en page : liste des messages, barre latérale, bouton de partage, ouverture d'une conversation dupliquée (`?session=`) |
+| `useChatConversation.ts` | Messages, tour en cours, chargement d'une session, partage |
+| `useChatSessions.ts` | Liste des conversations |
+| `chatStream.ts` | Connexion WebSocket, événements `delta`, `done`, `error`, `ping`, message d'erreur `TIRED_MESSAGE` |
+| `ChatSidebar.tsx` | Conversations, « Nouvelle conversation », choix de la division |
+| `ChatInput.tsx` | Zone de saisie et bouton d'arrêt |
+| `ChatMessage.tsx` | Bulle de message, citations en exposant |
+| `ChatSources.tsx` | Pastilles des sources, les variantes linguistiques d'un même document regroupées |
+| `ChatFeedback.tsx` | Votes sur un message |
+| `DownloadMenu.tsx`, `chatExport.ts` | Export Markdown et PDF de la conversation |
+| `WelcomeState.tsx` | Écran d'accueil |
+| `division.tsx` | Sélecteur ALL / AS / IS |
+| `message.ts` | Types partagés |
+
+`ChatPage.tsx` affiche le chat quand `CHAT_ENABLED` est vrai et que
+l'utilisateur y a accès. `SharedChatPage.tsx` (route `/chat/shared/:token`)
+réutilise `ChatMessage` sans votes.
+
+## Configuration
+
+Valeurs de `app.yaml`, surchargées par cible dans `utils/deploy/target_env.json`.
+
+| Variable | Valeur dans `app.yaml` | Rôle |
 |---|---|---|
-| `CHAT_ENABLED` | `true` | Feature flag |
-| `CHAT_MLFLOW_EXPERIMENT` | `` (off; `/Shared/qualibot/chat_turns` on DEV) | MLflow experiment receiving one trace per chat turn; must exist (`utils/evaluation/create_chat_experiment.py`) |
-| `CHAT_INDEX` | `dev_landingzone.qualibot.chunks_index` | The Vector Search index (per target in `target_env.json`) |
-| `CHAT_LLM_ENDPOINT` / `CHAT_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Answer model and its fallbacks |
-| `CHAT_REWRITE_ENDPOINT` / `CHAT_REWRITE_FALLBACK_ENDPOINTS` | `databricks-gpt-6-luna` / `databricks-gpt-5-6-luna` | Rewrite model and its fallbacks |
-| `CHAT_ANSWER_MAX_TOKENS` / `CHAT_REWRITE_MAX_TOKENS` | `8000` / `2000` | Output caps (reasoning included) |
-| `CHAT_TRANSLATE_BRIDGE_ENABLED` | `false` (`true` on every target) | Enable the non-FR/EN translation bridge |
-| `CHAT_TRANSLATE_ENDPOINT` | `databricks-gpt-5-6-luna` | LLM endpoint for language detection + translation |
-| `CHAT_MAX_HISTORY` | `10` | Messages replayed per turn; `0` disables trimming |
-| `CAPS_TTL_S` | `600` | Shared with Compare/Translate — capability cache TTL (seconds) |
+| `CHAT_ENABLED` | `true` | Active le chat |
+| `CHAT_INDEX` | `dev_proj.qualibot.chunks_index` | Index interrogé (UAT : `uat_proj.qualibot.chunks_index`) |
+| `CHAT_LLM_ENDPOINT` | `databricks-gpt-6-luna` | Modèle de réponse |
+| `CHAT_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-5-6-luna` | Modèles de secours, séparés par des virgules |
+| `CHAT_REWRITE_ENDPOINT` | `databricks-gpt-6-luna` | Modèle de réécriture et de traduction des requêtes |
+| `CHAT_REWRITE_FALLBACK_ENDPOINTS` | `databricks-gpt-5-6-luna` | Secours de la réécriture |
+| `CHAT_REWRITE_REASONING_EFFORT` | `low` | Effort de raisonnement de la réécriture (vide : celui du modèle) |
+| `CHAT_REWRITE_MAX_TOKENS` / `CHAT_ANSWER_MAX_TOKENS` | `2000` / `8000` | Plafonds de sortie (le raisonnement compte dedans) |
+| `CHAT_TRANSLATE_ONLY` | `off` | Première question traduite au lieu d'être réécrite |
+| `CHAT_PAIR_RERANK_TOP_K` / `CHAT_PAIR_RAW_TOP_K` | `16` / `16` | Tailles de recherche en mode traduction |
+| `CHAT_TRANSLATE_BRIDGE_ENABLED` | `false` | Pont de traduction (langues autres que FR et EN) |
+| `CHAT_TRANSLATE_ENDPOINT` | `databricks-gpt-5-6-luna` | Modèle du pont de traduction |
+| `CHAT_MAX_HISTORY` | `10` | Messages d'historique renvoyés au modèle (0 : sans limite) |
+| `CHAT_MLFLOW_EXPERIMENT` | vide | Expérience MLflow des traces (vide : désactivé) |
+| `CAPS_TTL_S` | `600` | Durée du cache des droits d'accès |
+| `CAPS_WAREHOUSE_ID` | vide, renseigné par cible | Entrepôt SQL de la vérification des groupes |
+| `CAPS_BYPASS` | `false` | Ouvre le chat à tous (DEV seulement) |
 
-## Technical reference
+Réglages lus par le moteur sans être dans `app.yaml` (valeurs du code) :
+`CHAT_RERANK_TOP_K` (12), `CHAT_RAW_TOP_K` (12), `CHAT_RAW_ON` (`fr`),
+`CHAT_MAX_SEARCH_PASSAGES` (0), `CHAT_MAX_CONCURRENT_ANSWERS` (32),
+`CHAT_FIRST_TOKEN_TIMEOUT_S` (90), `CHAT_STALL_TIMEOUT_S` (60),
+`CHAT_LLM_DEADLINE_S` (240), `CHAT_LLM_ROUNDS` (3), `CHAT_COOLDOWN_S` (30),
+`VS_MAX_CONCURRENT_QUERIES` (8), `VS_QUERY_RETRIES` (5),
+`DOC_CATALOG_REFRESH_S` (1800).
 
-Deep-dive material for anyone modifying this feature. The sections above explain
-*why* things work the way they do; this is the exact *what* — routes, schemas,
-and internals, file:line accurate as of 2026-08-17.
+Par cible (`utils/deploy/target_env.json`) :
 
-### Route inventory (`server/routers/chat.py`)
+| Cible | Surcharges de chat |
+|---|---|
+| `dev` | `CHAT_INDEX` = `dev_proj.qualibot.chunks_index` ; réécriture sur `databricks-gemini-3-1-flash-lite` ; `CHAT_TRANSLATE_ONLY` = `on` ; `CHAT_MLFLOW_EXPERIMENT` = `/Shared/qualibot/chat_turns` ; `CAPS_BYPASS` = `true` |
+| `uat` | `CHAT_INDEX` = `uat_proj.qualibot.chunks_index` |
+| `uat-test` | `CHAT_INDEX` = `uat_proj.qualibot.chunks_index_test` ; réécriture sur `databricks-gemini-3-1-flash-lite` ; `CHAT_TRANSLATE_ONLY` = `on` ; `CHAT_MLFLOW_EXPERIMENT` = `/Shared/qualibot/chat_turns_test` |
+| `prod` | `CHAT_INDEX` = `prod_proj.qualibot.chunks_index` |
 
-| Route | Function | Auth | Notes |
-|---|---|---|---|
-| `WS /api/chat/ws` | `chat_ws` (527) | Manual capability check (WebSockets can't return an HTTP 403) | The only chat transport — a WebSocket dodges Databricks Apps' reverse-proxy response buffering, which an SSE `X-Accel-Buffering: no` header can't defeat on this platform. |
-| `POST /api/chat/feedback` | `chat_feedback` (714) | none (any authenticated user) | Inserts into `chat_feedbacks`; 400 on invalid `vote`, 503 with no DB pool. |
-| `GET /api/chat/sessions` | `list_sessions` (756) | — | Returns `{sessions, available}`; `available:false` (not an error) when Lakebase is down. |
-| `GET /api/chat/sessions/{id}` | `get_session` (801) | Scoped to `user_id` | 404 if missing **or not owned by the caller**; per-message `sources` deserialized from the `sources_json` blob column via the inner `_sources_for` helper. |
-| `DELETE /api/chat/sessions/{id}` | `delete_session` (867) | Scoped to `user_id` | **Soft-delete** — sets `deleted`/`deleted_at` on both the session and its messages, never a hard `DELETE`. 404 if not owned by the caller. |
-| `POST /api/chat/sessions/{id}/share` | `share_session` (908) | Owner only | Generates (or returns the existing) `share_token`; 404 if not owned by the caller. |
-| `GET /api/chat/shared/{token}` | `get_shared_session` (946) | none (any authenticated user with the token) | Same shape as `get_session`, but looked up by `share_token` instead of `id`/ownership — the deliberate public-within-the-app read path. |
-| `POST /api/chat/shared/{token}/duplicate` | `duplicate_shared_session` (1005) | none (any authenticated user) | Copies the shared session's messages into a brand-new session owned by the caller; returns `{session_id}`. |
+## Base documentaire
 
-WS message: `{messages, session_id?, division='ALL'}`. Pydantic request model:
-`ChatFeedbackRequest{vote, comment?, message_id?, session_id?}`.
+La réponse ne vient que de l'index `chunks_index`, alimenté par la table
+`chunks` de la chaîne de parsing (tâche `5_sync_index`, index en mode
+TRIGGERED, modèle d'embedding `databricks-qwen3-embedding-0-6b`). Le découpage,
+les descriptions d'images et la construction de l'index sont décrits dans
+[`utils/parsing_pipeline/README.md`](../../../../utils/parsing_pipeline/README.md).
 
-### Turn pipeline internals
+## Tests et évaluation
 
-`normalize_division` (`chat/engine.py`) maps anything but `AS`/`IS` to `ALL`. `_trim_history` (142) keeps the last `CHAT_MAX_HISTORY`
-messages, always preserving the latest question. `_with_today_date` (153) returns a
-**copy** of the message list with `[Date: YYYY-MM-DD]` prepended to the last user
-message only — the model never sees a stale date from history replay.
+Tests (`tests/`) : `test_chat_route.py` (un tour WebSocket, moteur simulé),
+`test_chat_engine.py` (moteur : recherche, filtres, prompt, erreurs,
+citations), `test_chat_llm.py` (secours, reprises, continuation, file
+d'attente), `test_chat.py` (sessions, partage, feedback, droits d'accès),
+`test_citation_markers.py`, `test_lakebase_logging.py` (colonnes du journal),
+`test_mlflow_turns.py`, `test_chat_scorers.py`, `test_doc_catalog.py`,
+`test_register_chat_prompts.py`, `test_prompt_noise.py`,
+`test_streaming_temperature.py`.
 
-`_apply_citation_markers` (88) inserts `⟦n⟧` at each citation's character offset
-**right-to-left**, so inserting one marker never invalidates the offsets of markers
-still queued behind it. `_number_sources` (122) numbers only the sources actually
-cited inline; prose-resurfaced sources (see `augment_sources` below) stay numberless.
-
-`_save_turn` is the single persistence choke-point: it registers chat-only users into the shared `users` table via `upsert_user`
-(so a user who only ever uses Chat still exists for capability sync), de-duplicates
-sources by title, and — critically — **persists the user's question even when the
-engine fails entirely**, with `status='error'` and the failure reason in `error_msg`.
-Nothing about a turn is ever silently dropped; a failed turn is still fully traceable.
-This is a deliberate, tested invariant (`test_save_turn_records_error_status`).
-
-### `stream_chat` (`server/services/chat/engine.py`) — the engine
-
-Events yielded (SSE-shaped strings, relayed by the router over the WebSocket):
-`: keepalive` (first byte, then while waiting), `response.output_text.delta` (answer text, `[n]`
-markers removed), `sources` (cited documents + marker positions), `metadata` (`trace_id`,
-`tool_name`, `usage`, `llm`, `llm_fallback`, `llm_attempts`), `error` (typed: `VectorSearchError`,
-`RewriteError`, `InputError`, …), `[DONE]`.
-
-**Search failures**: each Vector Search query is retried on 429 / 5xx / timeout (0.5 s, 1 s, 2 s +
-jitter, `CHAT_SEARCH_RETRIES`); one failed query out of three is tolerated, and if the reranker
-is refused the raw side still answers. A search that fails entirely ends the turn with a clear
-error — answering without documents would break the "documents only" rule.
-
-**Rewrite failures** fall back to the next model of the chain, then to the question alone.
-**Answer failures** go through `chat/llm` (fallback model, cooldowns, continuation).
-The translation bridge follows the same philosophy — fastText load failure, LLM call failure,
-non-JSON LLM response and answer-translation failure all fall back to **passing the original
-text through unchanged** rather than erroring the turn.
-
-### Lakebase schema (`server/services/infra/lakebase.py`)
-
-```sql
-CREATE TABLE chat_sessions (
-    id            TEXT PRIMARY KEY,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    user_id       TEXT,
-    workspace_id  TEXT,
-    workspace_url TEXT,
-    name          TEXT NOT NULL DEFAULT 'New conversation',
-    deleted       BOOLEAN NOT NULL DEFAULT FALSE,   -- added by migration
-    deleted_at    TIMESTAMPTZ,                       -- added by migration
-    share_token   TEXT                               -- added by migration, unique when set
-);
-
-CREATE TABLE chat_messages (
-    id              SERIAL PRIMARY KEY,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    session_id      TEXT REFERENCES chat_sessions(id) ON DELETE CASCADE,
-    user_id         TEXT,
-    workspace_id    TEXT,
-    workspace_url   TEXT,
-    role            TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-    content         TEXT NOT NULL,
-    trace_id        TEXT,             -- = chat_turns.trace_id (chat-…)
-    tool_name  TEXT, tool_query TEXT, tool_result TEXT, reasoning_steps TEXT,  -- KA only, no longer written
-    endpoint_name   TEXT,             -- engine label chat-all / chat-as / chat-is
-    sources_json    TEXT,             -- JSON: [{rank, title, url, n}], replaces a since-removed chat_sources table
-    status          TEXT NOT NULL DEFAULT 'ok',  -- 'ok' | 'error' | 'aborted'
-    error_msg       TEXT,
-    division        TEXT NOT NULL DEFAULT 'ALL',
-    question_lang   TEXT,             -- ISO 639-1; empty when the bridge is disabled/undetected
-    deleted         BOOLEAN NOT NULL DEFAULT FALSE,
-    deleted_at      TIMESTAMPTZ
-);
-CREATE INDEX chat_messages_session_idx ON chat_messages(session_id);
-
-CREATE TABLE chat_feedbacks (
-    id            SERIAL PRIMARY KEY,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    message_id    INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
-    session_id    TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
-    user_id       TEXT,   workspace_id TEXT,   workspace_url TEXT,
-    vote          TEXT NOT NULL CHECK (vote IN ('up', 'down')),
-    comment       TEXT,
-    resolved      BOOLEAN NOT NULL DEFAULT FALSE,   -- dashboard triage flag
-    resolution_reason TEXT
-);
-
-CREATE TABLE knowledge_base_metadata (
-    id              INTEGER PRIMARY KEY DEFAULT 1,
-    documents_as_of DATE,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT single_row CHECK (id = 1)
-);
+```
+python -m pytest tests/test_chat*.py tests/test_citation_markers.py tests/test_doc_catalog.py
 ```
 
-Notes: the feedback FKs are `ON DELETE SET NULL`, not `CASCADE` — a vote/comment
-survives message or session deletion, orphaned but preserved for audit.
-`chat_sources` (an earlier per-source table) was removed in favour of the single
-`sources_json` blob column — don't go looking for it.
+Évaluation (`utils/evaluation/`) : `retrieval_eval.py` (qualité de la recherche
+seule), `pairwise_answers.py` (comparaison de réponses),
+`load_test_chat.py` et `load_test_vector_search.py` (charge),
+`chat_scorers.py` et `score_chat_traces.py` (scores des traces),
+`register_chat_prompts.py` (prompts dans le registre MLflow), et
+`create_chat_experiment.py`. Les résultats et les choix de configuration sont
+dans [`docs/chat_tests.md`](../../../../docs/chat_tests.md).
 
-### Frontend (`client/src/components/chat/`)
+## Prompts
 
-- **`chatStream.ts`** / **`useChatConversation.ts`** — `streamChat(...)` opens a raw `WebSocket` to `/api/chat/ws`,
-  sends `{messages, session_id, division}` on `onopen`, and switches on
-  `parsed.type` (`'delta'` / `'done'` / `'error'`) from `onmessage`. An
-  `AbortController` wired to the Stop button closes the socket cleanly. A monotonic
-  `selectSeqRef` counter guards session loads — clicking two history entries quickly
-  can't let a slow, stale `GET /sessions/{id}` response clobber the session the user
-  actually selected last. On `onDone`, the client swaps in the **server's** final
-  content (not its own accumulated delta text), since only the server's copy carries
-  the baked-in `⟦n⟧` citation markers. Division is a per-turn WebSocket field, not a
-  session-scoped switch — changing division mid-conversation keeps the same message
-  history and only changes the division filter of the *next* turn.
-- **`ChatSources.tsx`** / **`ChatFeedback.tsx`** — source-chip grouping strips a trailing language/locale
-  suffix (`-FR`/`-EN`/`-GB`/…) from each source title to find its "canonical document
-  key", so the FR/EN/CZ variants of the same document collapse into one chip with a
-  language sub-badge row; the variant that was actually inline-cited leads that row.
-  `ChatFeedback`'s submit is fire-and-forget from the UI's perspective — the vote is
-  always shown as "submitted" even if the POST silently fails server-side, mirroring
-  the backend's own best-effort persistence philosophy.
-- **`division.tsx`** — `DivisionSelector`, a 3-way `ALL`/`AS`/`IS` toggle;
-  `stripDivision`/`DIVISION_PREFIX_RE` mirror the server's legacy `[Division: …]`
-  prefix-stripping so old stored messages still render cleanly.
-
-### Capability gating — exact logic
-
-```python
-async def require_chat(request: Request) -> None:
-    caps = await get_capabilities(request)
-    if not caps['can_chat']:
-        raise HTTPException(status_code=403, detail='Chat access not granted')
-```
-
-`get_capabilities` fails **open** (grants all three capabilities) in every failure or
-absence scenario except one: no Lakebase pool, a DB query exception, or the forwarded
-user simply not being in the `users` table yet all grant access. The **only**
-fail-closed path is the `x-forwarded-user` header being entirely absent (the request
-isn't coming through the expected auth proxy at all). Results are cached per user for
-`CAPS_TTL_S` seconds (default 600). The WS route (`chat_ws`) can't rely on
-`Depends(...)` — it calls `get_capabilities` manually inside a try/except and closes
-the socket with a JSON error frame if `can_chat` is false.
-
-### Grep-able log lines
-
-| Log line (substring) | Where | Meaning |
-|---|---|---|
-| `chat: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d` | `chat/engine.py` | One line per turn: what was searched and how much was found |
-| `chat_llm:` | `chat/llm.py` | Any answer-model incident (fallback, retry, continuation) |
-| `Capabilities: ... granting all (fail-open)` (3 variants) | `user.py` | Distinguishes *why* fail-open triggered: Lakebase down / user not synced / DB query failed |
-| `translation_bridge: ... using original text: %s` (4 variants) | `translation_bridge.py` | Any bridge failure mode falling back to untranslated passthrough |
-| `Chat DB save failed: %s` | `chat.py` (`_save_turn`) | Persistence failure, swallowed — the turn itself still completed |
-
-### Tests
-
-`tests/test_chat_route.py` (the WebSocket turn, engine mocked), `tests/test_chat_engine.py` (the engine:
-citation parser on 21 real answers, search, filters, prompt, errors), `tests/test_chat_llm.py`
-(fallbacks, retries, continuation, queue). `tests/test_chat.py` covers session CRUD (including confirming
-soft-delete, not hard delete, and that both routes 404 rather than leak/delete
-a session the caller doesn't own), feedback validation, the division/history helper
-functions, `_save_turn`'s user-registration and error-status behavior, `_trim_history`'s
-latest-question guarantee, and both `get_capabilities` fail-open triggers plus an
-end-to-end 403 check on `require_chat`. Share/duplicate coverage: token generation is
-idempotent on re-share, `share_session` 404s for a non-owner, `get_shared_session` skips
-ownership entirely, and `duplicate_shared_session` copies every message under the
-*viewer's* `user_id`, not the original owner's. No dedicated test file was found for
-`translation_bridge.py`'s LLM-calling paths — its fail-safe behavior is exercised only
-indirectly through the chat route tests that happen to run with the bridge disabled.
-
-See the root [README.md](../../../../README.md) for deploy/environment/local-testing instructions shared across all three features.
+Les prompts sont des fichiers dans `server/prompts/chat/` (`system/base.md`,
+`system/all.md`, `system/as.md`, `system/is.md`, `rewrite.md`,
+`translate_query.md`, `language_reminder*.md`), lus par `chat/prompts.py`.
+Un prompt n'est jamais une chaîne Python. Après une modification, la tâche
+d'enregistrement des prompts doit être relancée pour que les traces MLflow
+pointent sur la bonne version (voir [operations_dev.md](../../../../operations_dev.md)).

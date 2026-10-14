@@ -1,197 +1,237 @@
 # QualiBOT
 
-FastAPI + React application deployed on Databricks Apps, built around one
-shared knowledge base of aerospace quality/technical documents. Two
-features, one app, one deployment.
+Application FastAPI + React déployée sur Databricks Apps. Elle donne accès à une
+base commune de documents qualité et techniques (aéronautique). Deux
+fonctionnalités, une seule application, un seul déploiement :
 
-## Features
-
-| Tab | What it does | Docs |
+| Onglet | Ce qu'il fait | Documentation |
 |---|---|---|
-| **Compare** | Diffs two document versions, generates a change report, then searches the knowledge base for other documents that change impacts | [`client/src/components/compare/README.md`](client/src/components/compare/README.md) |
-| **Chat** | RAG conversational assistant over the document knowledge base, with division scoping (ALL/AS/IS), inline citations, and the knowledge-base build pipeline (parsing/chunking/embeddings) it retrieves from | [`client/src/components/chat/README.md`](client/src/components/chat/README.md) |
+| **Comparaison** (`/compare`) | Compare deux versions d'un document, produit un résumé ou un tableau des changements, puis cherche dans la base les autres documents que ces changements touchent | [`client/src/components/compare/README.md`](client/src/components/compare/README.md) |
+| **Chat** (`/chat`) | Assistant qui répond à partir de la base documentaire, avec des citations numérotées et un filtre par division (ALL, AS, IS) | [`client/src/components/chat/README.md`](client/src/components/chat/README.md) |
 
-Each doc above covers its feature in depth. This file covers what's shared
-across both: the LLMs involved, the app shell, and how to run/deploy
-the app.
+La base documentaire est construite chaque nuit par la chaîne de parsing
+([`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md)). Les
+deux fonctionnalités l'interrogent par le même index Vector Search.
 
-## LLMs across the app
+## Modèles et index
 
-Which model does what:
+| Étape | Modèle ou index | Réglage |
+|---|---|---|
+| Comparaison : analyse (résumé et tableau des changements) | Modèle configuré dans `app.yaml` | `COMPARE_ANALYSIS_ENDPOINT` |
+| Comparaison : recherche d'impact | Index Vector Search | `COMPARE_IMPACT_INDEX` |
+| Comparaison : jugement de chaque document candidat | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` |
+| Comparaison : résumé d'un document (texte, image) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |
+| Chat : réécriture des requêtes et réponse | `databricks-gpt-6-luna`, secours `databricks-gpt-5-6-luna` | `CHAT_REWRITE_ENDPOINT`, `CHAT_LLM_ENDPOINT` et leurs secours |
+| Chat : pont de traduction (désactivé) | `databricks-gpt-5-6-luna` | `CHAT_TRANSLATE_ENDPOINT` |
+| Base : description des images (vision) | `databricks-gpt-5-6-luna` | `PARSING_LLM_ENDPOINT` |
+| Base : embeddings des passages | `databricks-qwen3-embedding-0-6b` (index géré par Databricks) | `embedding_model` (tâche `5_sync_index`) |
 
-| Step | Model / endpoint | Configured via | Role |
-|---|---|---|---|
-| Compare — diff analysis (Change Summary / Change Table) | `databricks-claude-sonnet-4-6` | `COMPARE_ANALYSIS_ENDPOINT` | Identifies substantive content changes between two document versions |
-| Compare — impact search retrieval | Vector Search index `chunks_full_index_v1` (all documents, pre-2018 archive included; `chunks_index_v1` until it is built) | `COMPARE_IMPACT_INDEX` | One query per reported change |
-| Compare — impact search judgment | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` | One call per candidate document: verdict, reason, every conflicting passage with a verbatim quote |
-| Compare — per-document summary (text) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT` | Summarizes one uploaded document (old or new) on its own, independent of the diff |
-| Compare — per-document summary (image) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_IMAGE_ENDPOINT` | Same feature, routed to a vision model for image files |
-| Chat — conversational agent | Databricks Knowledge Assistant (`ka-*-endpoint`, one per division) | `CHAT_ENDPOINT` / `_ALL` / `_AS` / `_IS` | Owns its own retrieval + answer synthesis internally |
-| Chat — translation bridge | `databricks-gpt-5-6-luna` | `CHAT_TRANSLATE_ENDPOINT` | Detects + translates non-FR/EN questions and answers (bridge disabled by default) |
-| Knowledge base — image description | `databricks-gpt-5-mini` | `PARSING_LLM_ENDPOINT` (`utils/parsing_pipeline/config.py`) | Describes tables/figures/diagrams extracted during parsing; the description is folded into the surrounding chunk text |
-| Knowledge base — chunking | No LLM — token-bounded markdown-structure splitter | n/a | See the Chat doc's "Knowledge base pipeline" section |
-| Knowledge base — embeddings | Databricks-managed Vector Search embeddings (Delta Sync index) | index-level config, not in this repo | Powers retrieval for both Compare's impact search and Chat |
+Les valeurs exactes par cible sont dans `app.yaml` et dans
+`utils/deploy/target_env.json`. Sur les cibles DEV et `uat-test`, la réécriture
+du chat utilise `databricks-gemini-3-1-flash-lite`.
 
-The offline knowledge-base build (parsing, chunking, image description,
-`utils/parsing_pipeline/` notebooks `00`–`06`) is documented in the Chat
-doc's "Knowledge base pipeline" section, since Chat is what retrieves from
-it — Compare's impact search queries the same index but doesn't own the
-pipeline.
-
-## Shared architecture
-
-Both tabs share the same capability-gating pattern (`can_compare`/
-`can_chat` on the `users` Lakebase table, synced by
-`utils/user_capabilities/sync_user_capabilities.py`) and the
-same app shell (`client/src/App.tsx`, `TopBar.tsx`).
-
-### Server layout
+## Architecture
 
 ```
 server/
-  app.py, tracing.py
-  routers/            one file per API area (chat, compare, history, feedback, exports, preview, config, health)
+  app.py                  application FastAPI, routes sous /api, sert client/out
+  routers/                chat/, compare/, config.py, exports.py, feedback.py,
+                          health.py, history.py, preview.py
   services/
-    chat/             engine.py (the chat), llm.py (answer model calls), prompts.py (prompt files), turn_log.py, mlflow_turns.py (one MLflow trace per turn), translation_bridge.py
-    compare/          processors/ (one per file type), chunked_analysis, impact_queries, summarize, conversion, soffice, export_helpers
-    infra/            lakebase, user, vector_search, vs_gate, doc_catalog, streaming (shared LLM streaming and cost), error_origin, pdf_report (PDF exports of chat and compare)
-  prompts/chat/       every chatbot prompt as a file: system/{base,all,as,is}.md, rewrite.md, language_reminder*.md
-  config/             processors.yml (file type -> processor versions)
-  data/               doc_catalog.json (fallback), lid.176.ftz (language id model)
-  assets/fonts/       Inter (SIL OFL) for the PDF exports
+    chat/                 engine/ (moteur du chat), llm.py (appels au modèle),
+                          prompts.py, turn_log.py (journal d'un tour),
+                          mlflow_turns.py (traces), translation_bridge.py
+    compare/              processors/ (un par type de fichier, moteurs de diff),
+                          chunked_analysis.py, impact_queries.py, summarize.py,
+                          conversion.py, soffice.py, export_helpers.py
+    infra/                lakebase/ (connexion, schéma, journal, caches),
+                          user.py (droits), credentials.py, vector_search.py,
+                          vs_gate.py (appels Vector Search), doc_catalog.py,
+                          streaming.py, pdf_report/, error_origin.py
+  prompts/chat/           les prompts du chat, en fichiers
+  config/processors.yml   version du processeur par type de fichier
+  data/                   doc_catalog.json (repli), lid.176.ftz (langue)
+  assets/fonts/           police Inter, pour les PDF
+client/src/
+  App.tsx                 routes ; pages/ (ComparePage, ChatPage, SharedChatPage)
+  components/chat/        interface du chat
+  components/compare/     interface de la comparaison
+  components/layout/      barre supérieure
+  components/shared/      composants communs
+  lib/                    configuration, export PDF
+utils/                    outils hors application (voir utils/README.md)
 ```
 
-## Local development
+Au démarrage, l'application ouvre la connexion à Lakebase et charge le catalogue
+des documents, rechargé toutes les 30 minutes. Si Lakebase est injoignable,
+l'application fonctionne sans historique.
 
-Runs the FastAPI backend + Vite dev server on your machine, hitting real UAT
-endpoints (LLM, Vector Search, chat KA) under your own identity — no deploy
-needed to iterate.
+## Accès
 
-1. Create `.env.local` at the repo root (gitignored, never committed):
+L'identité du visiteur est fournie par Databricks Apps (en-tête
+`x-forwarded-user`). Les droits se vérifient en direct, sans table intermédiaire :
+l'application demande à Databricks, au nom du visiteur (jeton OBO), s'il
+appartient à l'un des groupes de compte autorisés :
 
-   ```
-   ENV=development
-   DATABRICKS_CONFIG_PROFILE=UAT
-   COMPARE_ENABLED=true
-   CHAT_ENABLED=true
-   CHAT_ENDPOINT=ka-7679a56e-endpoint
-   COMPARE_ANALYSIS_ENDPOINT=databricks-claude-sonnet-4-6
-   COMPARE_IMPACT_INDEX=uat_landingzone.qualibot.chunks_index_v1
-   COMPARE_IMPACT_ENDPOINT=databricks-gpt-5-6-luna
-   COMPARE_IMPACT_MAX_QUERIES=30
-   COMPARE_IMPACT_PER_QUERY_RESULTS=40
-   COMPARE_IMPACT_MAX_CANDIDATES=25
-   COMPARE_IMPACT_MAX_TOKENS=1500
-   COMPARE_SUMMARY_ENDPOINT=databricks-gpt-5-6-luna
-   COMPARE_SUMMARY_IMAGE_ENDPOINT=databricks-gpt-5-6-luna
-   COMPARE_SUMMARY_MAX_CHARS=300000
-   COMPARE_SUMMARY_MAX_TOKENS=800
-   COMPARE_VOLUME_PATH=
-   LAKEBASE_PROJECT_ID=qualibot
-   LAKEBASE_DATABASE=doccompare_test
-   ```
+| Fonctionnalité | Groupes autorisés |
+|---|---|
+| Comparaison | `Role-Project-LEAP-End-users-Qualibot-DocCompare`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
+| Chat | `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
 
-   (Same values as `app.yaml` — adjust the endpoint names if they change.
-   Leaving `COMPARE_VOLUME_PATH` empty disables volume save/restore — fine
-   for quick iteration, backend logs a warning and continues.
-   `LAKEBASE_DATABASE=doccompare_test` points at the disposable uat-test
-   database rather than production history — deliberate for local runs,
-   change it if you specifically need to inspect prod/uat data.)
+La vérification passe par un entrepôt SQL (`CAPS_WAREHOUSE_ID`, renseigné par
+cible dans `utils/deploy/target_env.json`). Le résultat est gardé
+`CAPS_TTL_S` secondes (600 par défaut). Sans jeton, sans entrepôt ou si la
+vérification échoue, l'accès est refusé, et l'échec n'est pas gardé en cache.
+`CAPS_BYPASS=true` ouvre les deux fonctionnalités à tous : ce réglage n'est
+activé que sur la cible DEV. En local (`ENV=development`), une requête sans en-tête
+d'identité est acceptée.
 
-   **Set `LAKEBASE_PROJECT_ID` even locally — don't leave it blank.** Whether
-   Lakebase (port 5432) is actually reachable from your machine varies: it's
-   blocked on the corporate wifi, but not necessarily on other networks (VPN,
-   home). Rather than hardcoding "local never connects" via an empty
-   `LAKEBASE_PROJECT_ID`, the connection now has a short timeout
-   (`LAKEBASE_CONNECT_TIMEOUT_S`, default 5s — see `server/services/infra/lakebase/`)
-   — so it's safe to always set real values: when the port is reachable you
-   get full history/job persistence locally for free; when it's blocked, it
-   fails fast (a few seconds at startup, not asyncpg's 60s default) into the
-   existing no-history fallback, same as leaving it blank — Compare/Chat
-   degrade to no-history and keep working either way.
+## Configuration
 
-   **`.env.local` is loaded via a relative path** (`load_dotenv(dotenv_path='.env.local')`
-   in `server/app.py`) — it silently does nothing if missing or if uvicorn isn't
-   launched from the repo root, leaving every `COMPARE_*`/`CHAT_*`
-   var empty (symptom: `"COMPARE_ANALYSIS_ENDPOINT not configured in app.yaml"`
-   even though the file exists). Check the first line uvicorn logs at startup —
-   it must read `Starting in development mode`; `Starting in production mode`
-   means `.env.local` wasn't found.
+Trois sources, dans cet ordre de priorité :
 
-2. **Unset `DATABRICKS_TOKEN`** if it's set in your shell (`echo $DATABRICKS_TOKEN` /
-   `$env:DATABRICKS_TOKEN` to check). If present, the server prefers it over your
-   CLI profile — and if it belongs to a different workspace/identity, every
-   Databricks call (Vector Search especially) fails with 403 instead of falling
-   back to `DATABRICKS_CONFIG_PROFILE=UAT`. Bash: `env -u DATABRICKS_TOKEN python -m uvicorn ...`.
-   PowerShell: `Remove-Item Env:\DATABRICKS_TOKEN` for the session, or unset it in
-   your profile.
+1. `utils/deploy/target_env.json` : surcharges par cible. Le script de
+   déploiement et le pipeline Bitbucket les écrivent dans `target_config.env`,
+   que `start.sh` charge au démarrage de l'application.
+2. `app.yaml` : valeur par défaut de chaque variable, avec un commentaire sur son
+   rôle. Les variables du chat, de la comparaison, de Lakebase et des droits y
+   sont.
+3. Le code : valeur de repli quand la variable est absente.
 
-3. Run both servers (two terminals):
+Le fichier `app.yaml` fait foi pour ce qui est déployé. Les valeurs par défaut du
+code peuvent différer, et les READMEs des fonctionnalités indiquent les deux.
+
+## Lancer en local
+
+L'application locale appelle les vrais points d'accès Databricks sous votre
+identité : aucun déploiement n'est nécessaire.
+
+1. Créer un fichier `.env.local` à la racine (ignoré par git). Y mettre
+   `ENV=development`, `DATABRICKS_CONFIG_PROFILE` (profil CLI de l'environnement
+   visé), `COMPARE_ENABLED=true`, `CHAT_ENABLED=true`, et les variables
+   `CHAT_INDEX`, `COMPARE_IMPACT_INDEX`, `LAKEBASE_PROJECT_ID`, `LAKEBASE_DATABASE`
+   avec les valeurs de la cible `uat-test` de `utils/deploy/target_env.json`.
+   `LAKEBASE_PROJECT_ID` se renseigne même en local : si le port 5432 est
+   fermé, la connexion échoue vite (`LAKEBASE_CONNECT_TIMEOUT_S`, 5 s) et
+   l'application fonctionne sans historique.
+2. Retirer `DATABRICKS_TOKEN` de l'environnement s'il est défini : il est prioritaire
+   sur le profil CLI. Sous PowerShell : `Remove-Item Env:\DATABRICKS_TOKEN`.
+3. Lancer le backend et le frontend, chacun dans son terminal :
 
    ```
    python -m uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
-   cd client 
-   npm run dev   
-   # Vite on :3000, proxies /api to :8000
+   cd client
+   bun install
+   bun run dev
    ```
 
-   Open `http://localhost:3000/compare` (or `/chat`). `client/out`
-   (the committed production build) is unaffected — the dev server serves from
-   source directly.
+   Le serveur de développement écoute sur `http://localhost:3000` et transmet
+   `/api` au port 8000. Ouvrir `/compare` ou `/chat`. Au démarrage, le backend
+   affiche `Starting in development mode` si `.env.local` est chargé.
 
-4. **Going back to a normal deploy**: nothing to revert. `.env.local` is
-   gitignored and never uploaded by `deploy_qualibot.ps1` (it writes its own
-   `target_config.env` per environment); just stop the two local servers and
-   run the deploy script as usual. If you rebuilt `client/out` for local testing,
-   the deploy script rebuilds it again anyway unless you pass `-SkipBuild`.
+Dépendances Python : `pip install -r requirements.txt`. Pour les tests :
+`pip install pytest pytest-asyncio`.
 
-## Deploying
+## Déploiement
 
-### Token refresh
+| Environnement (`-AppEnv`) | Cible Databricks | Application | Profil CLI | Workspace |
+|---|---|---|---|---|
+| `dev` | `dev` | `qualibot` | `DEV` | `dbc-c623749d-731b` |
+| `uat` | `qualibot-uat` | `qualibot` | `UAT` | `dbc-3a17bfce-9e88` |
+| `uat-test` | `qualibot-uat-test` | `qualibot-uat-test` | `UAT` | `dbc-3a17bfce-9e88` |
+| `prod` | `qualibot-prod` | `qualibot` | `qualibot-prod` | `dbc-77b87d5a-6bcb` |
 
-Run the appropriate command before deploying if your token has expired:
+Les hôtes complets sont dans `databricks.yml`. Le profil CLI de la cible doit
+être authentifié : les étapes sont dans OPERATIONS.md et operations_dev.md.
 
-```powershell
-# UAT (also used by the uat-test target — same workspace)
-databricks auth login --host https://dbc-3a17bfce-9e88.cloud.databricks.com --profile UAT
-
-# PROD  (set host once workspace is provisioned)
-databricks auth login --host <prod-host> --profile PROD
-```
-
-### Deploy
+Déploiement de l'application, à la racine du dépôt :
 
 ```powershell
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev        # DEV (copy of UAT, see operations_dev.md)
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv uat        # UAT (qualibot-uat)
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test   # UAT — disposable test app (qualibot-uat-test)
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv prod       # PROD
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv prod
 ```
 
-By default the script builds the React frontend (`bun run build`), writes the per-env `target_config.env`, uploads the source with `databricks sync`, checks the target app's compute state (auto-starting it first if needed — `uat`/`prod` only, see below), then triggers a restart with `databricks apps deploy`. Pass `-SkipBuild` to skip the frontend rebuild (Python-only changes), or `-Infra` to also run `databricks bundle deploy` (re-applies app ACLs / UC volume bindings via terraform — only needed when resources or permissions change, requires MANAGE on the target catalog).
+Le script construit le frontend (`bun run build`), écrit `target_config.env`
+à partir de `target_env.json`, synchronise le code vers le workspace, démarre
+l'application si elle est arrêtée (`uat-test` se démarre à la main), puis la
+redéploie. Options :
 
-## Environments
+- `-SkipBuild` : pas de reconstruction du frontend (changement Python seul) ;
+- `-SyncOnly` : synchronise le code sans redémarrer l'application ;
+- `-Infra` : applique aussi le bundle (`databricks bundle deploy`, ressources,
+  droits d'application et volumes). À utiliser quand les ressources ou les
+  droits changent.
 
-| Env      | Databricks target      | Profile | Workspace                                        |
-|----------|-------------------------|---------|---------------------------------------------------|
-| DEV      | `dev`                   | `DEV`   | `https://dbc-c623749d-731b.cloud.databricks.com`   |
-| UAT      | `qualibot-uat`          | `UAT`   | `https://dbc-3a17bfce-9e88.cloud.databricks.com`   |
-| UAT-TEST | `qualibot-uat-test`     | `UAT`   | `https://dbc-3a17bfce-9e88.cloud.databricks.com`   |
-| PROD     | `qualibot-prod`         | `PROD`  | TBD                                                |
+Pipeline Bitbucket (`bitbucket-pipelines.yml`) : un push sur `main` déploie
+l'UAT. Les autres cibles se déploient à la main, par les pipelines « custom ».
+PROD est déployé à la main, après l'UAT.
 
-`qualibot-uat-test` is a disposable app in the same UAT workspace, used to try changes (e.g. new KA endpoints, the chat translation bridge) without touching the real `qualibot-uat` app or its Lakebase data — see the comment above its target in `databricks.yml`.
+Les étapes à faire dans Databricks (authentification, premier déploiement, jobs
+à lancer ou à activer, droits) sont dans [OPERATIONS.md](OPERATIONS.md) pour
+l'UAT et la PROD, et dans [operations_dev.md](operations_dev.md) pour la DEV.
+
+## Ressources par environnement
+
+| Environnement | Tables (`<env>_proj.qualibot`) | Volume de l'application | Index du chat | Base Lakebase |
+|---|---|---|---|---|
+| DEV | `dev_proj.qualibot` | `dev_landingzone.qualibot.doc_compare` | `dev_proj.qualibot.chunks_index` | `doccompare` |
+| UAT | `uat_proj.qualibot` | `uat_landingzone.qualibot.doc_compare` | `uat_proj.qualibot.chunks_index` | `doccompare` |
+| UAT-TEST | `uat_proj.qualibot`, suffixe `_test` | `uat_landingzone.qualibot.test` | `uat_proj.qualibot.chunks_index_test` | `doccompare_test` |
+| PROD | `prod_proj.qualibot` | `prod_landingzone.qualibot.doc_compare` | `prod_proj.qualibot.chunks_index` | `doccompare` |
+
+Les tables Delta sont dans le schéma `<env>_proj.qualibot`. Les volumes sont dans
+`<env>_landingzone.qualibot`. La base Lakebase est celle du projet `qualibot`.
+La cible `uat-test` est un environnement de test isolé : elle ne touche ni aux
+données ni aux index de l'UAT.
+
+Tables de l'application dans Lakebase : `messages`, `feedbacks`,
+`llm_requests`, `errors` (comparaison et journal commun), `impact_requests`,
+`impact_document_results`, `impact_feedbacks`, `impact_cache`, `summary_cache`
+(comparaison), `chat_sessions`, `chat_messages`, `chat_feedbacks`, `chat_turns`,
+`chat_retrieved_chunks` (chat), `doc_catalog`, `knowledge_base_metadata`, `users`.
+Le schéma est créé et complété par l'application au démarrage. Le détail des
+colonnes est dans [docs/lakebase_schema.md](docs/lakebase_schema.md).
+
+## Tests
+
+```
+python -m pytest
+```
+
+La suite est dans `tests/` (`testpaths` dans `pyproject.toml`). Les tests du chat,
+de la comparaison et de la chaîne de parsing ont leur propre liste dans leur
+README. Le frontend se vérifie par la compilation TypeScript et le build :
+
+```
+cd client
+bun run build
+bun run lint
+```
 
 ## Maintenance
 
-### Copy Lakebase UAT tables to a local dev catalog
+- Copier les tables Lakebase de l'UAT vers DEV, à partir d'un poste :
+  [`utils/lakebase_sync/README.md`](utils/lakebase_sync/README.md).
+- Alertes SQL de suivi (chat, parsing, erreurs, jobs) :
+  [`utils/alerts/README.md`](utils/alerts/README.md).
+- Outils, conventions et carte du dossier `utils/` :
+  [`utils/README.md`](utils/README.md).
 
-The local machine can't reach Lakebase directly (port 5432 is blocked). Run the export as a Databricks job first, then pull it locally — one-time setup (`psycopg2-binary`, proxy cert flag) and the `--direct` option are documented in [`utils/lakebase_sync/README.md`](utils/lakebase_sync/README.md):
+## Documentation
 
-```powershell
-# 1. Run the deployed export job on UAT (notebook utils/lakebase_sync/export_lakebase_uat_to_volume_job.py)
-databricks bundle run lakebase_export_uat_to_volume -t qualibot-uat --profile UAT
-
-# 2. Pull the exported JSON and push it into dev_landingzone.qualibot
-python utils\lakebase_sync\copy_Lakebase_tables.py
-```
-
+| Document | Contenu |
+|---|---|
+| [client/src/components/chat/README.md](client/src/components/chat/README.md) | Chatbot : moteur, réponses, partage, journal, configuration |
+| [client/src/components/compare/README.md](client/src/components/compare/README.md) | Comparaison et recherche d'impact |
+| [utils/parsing_pipeline/README.md](utils/parsing_pipeline/README.md) | Chaîne de parsing et d'indexation |
+| [utils/README.md](utils/README.md) | Carte de `utils/` |
+| [utils/lakebase_sync/README.md](utils/lakebase_sync/README.md) | Export, import et mise à jour du schéma de Lakebase |
+| [utils/alerts/README.md](utils/alerts/README.md) | Alertes SQL |
+| [docs/chat_tests.md](docs/chat_tests.md) | Mesures et choix de configuration du chat |
+| [docs/lakebase_schema.md](docs/lakebase_schema.md) | Colonnes du journal Lakebase |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Pistes non réalisées |
+| [OPERATIONS.md](OPERATIONS.md) | Étapes à réaliser dans Databricks (UAT, PROD) |
+| [operations_dev.md](operations_dev.md) | Étapes à réaliser dans Databricks (DEV) |
+| [RETEST_CLEANUP.md](RETEST_CLEANUP.md) | Ce qu'il faut relancer après un changement de chemins ou de notebooks |

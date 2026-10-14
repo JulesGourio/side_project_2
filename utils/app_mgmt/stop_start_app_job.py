@@ -11,7 +11,7 @@
 # MAGIC whoever the job's `run_as` is set to must have CAN_MANAGE on every app
 # MAGIC named in `app_names` for that workspace.
 # MAGIC
-# MAGIC See README.md#app-stop-start-idempotency — SDK doesn't tolerate a redundant stop/start.
+# MAGIC The SDK does not tolerate a redundant stop/start.
 
 # COMMAND ----------
 
