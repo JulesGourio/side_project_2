@@ -32,7 +32,7 @@ What is retried where:
   text where it stopped, at most twice; the user sees one answer;
 - when everything failed: one ``error`` event with a plain message.
 
-The output is the event stream of ``streaming.stream_analysis`` (text deltas, ``usage``,
+The output is the event stream of `the compare analysis stream (`compare/llm.py`)` (text deltas, ``usage``,
 ``warning``, ``error``, ``[DONE]``, keepalive comments) plus one ``llm`` event before
 ``[DONE]``: the endpoint that answered, every attempt, the wait for a free slot
 (``queue_wait_ms``), ``truncated``, ``continuations`` and ``interrupted`` (part of the answer
@@ -54,7 +54,7 @@ from ..infra.streaming import _cost_eur, _parse_text_delta, supports_temperature
 logger = logging.getLogger(__name__)
 
 _KEEPALIVE_S = 15.0
-_ROUND_WAITS_S = (2.0, 8.0, 20.0)
+ROUND_WAITS_S = (2.0, 8.0, 20.0)
 _NOT_FOUND_COOLDOWN_S = 600.0
 _MAX_CONTINUATIONS = 2
 _REWRITE_REASONING_MIN_TOKENS = 1000
@@ -144,19 +144,19 @@ def effective_max_tokens(endpoint: str, max_tokens: int, floor: Optional[int] = 
 _cooling_until: Dict[str, float] = {}
 
 
-def _cool(endpoint: str, seconds: float) -> None:
+def cool(endpoint: str, seconds: float) -> None:
     if seconds > 0:
         _cooling_until[endpoint] = max(_cooling_until.get(endpoint, 0.0), time.monotonic() + seconds)
 
 
-def _cooling_left(endpoint: str) -> float:
+def cooling_left(endpoint: str) -> float:
     return max(0.0, _cooling_until.get(endpoint, 0.0) - time.monotonic())
 
 
 def order_by_health(endpoints: List[str]) -> List[str]:
     """Endpoints not cooling down first (chain order kept), then the cooling ones, soonest back first."""
-    ready = [e for e in endpoints if _cooling_left(e) <= 0]
-    cooling = sorted((e for e in endpoints if _cooling_left(e) > 0), key=_cooling_left)
+    ready = [e for e in endpoints if cooling_left(e) <= 0]
+    cooling = sorted((e for e in endpoints if cooling_left(e) > 0), key=cooling_left)
     return ready + cooling
 
 
@@ -196,29 +196,29 @@ class LlmFailure(Exception):
 
 
 # Kinds not worth another try on the same endpoint during this turn.
-_FINAL_KINDS = {'refused', 'auth', 'not_found'}
+FINAL_KINDS = {'refused', 'auth', 'not_found'}
 
 
-def _client(timeout: httpx.Timeout) -> httpx.AsyncClient:
+def http_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
     """Separate so tests can swap the transport."""
     return httpx.AsyncClient(timeout=timeout)
 
 
-def _retry_after(resp: httpx.Response) -> Optional[float]:
+def retry_after(resp: httpx.Response) -> Optional[float]:
     try:
         return float(resp.headers.get('retry-after', ''))
     except ValueError:
         return None
 
 
-def _failure_for_status(resp: httpx.Response, body: str) -> LlmFailure:
+def failure_for_status(resp: httpx.Response, body: str) -> LlmFailure:
     status = resp.status_code
     kind = ('rate_limit' if status == 429 else 'server' if status >= 500 else 'auth' if status in (401, 403)
             else 'not_found' if status == 404 else 'refused')
-    return LlmFailure(kind, body[:300], status, _retry_after(resp))
+    return LlmFailure(kind, body[:300], status, retry_after(resp))
 
 
-def _payload(endpoint: str, messages: List[Dict[str, Any]], max_tokens: int, stream: bool) -> Dict[str, Any]:
+def build_payload(endpoint: str, messages: List[Dict[str, Any]], max_tokens: int, stream: bool) -> Dict[str, Any]:
     payload: Dict[str, Any] = {'messages': messages, 'max_tokens': max_tokens}
     if stream:
         payload.update({'stream': True, 'stream_options': {'include_usage': True}})
@@ -236,13 +236,13 @@ async def stream_once(host: str, token: str, endpoint: str, messages: List[Dict[
     timeout = httpx.Timeout(max(first_token_timeout_s(), stall) + 30, connect=15.0)
     got_text, last_text_at = False, 0.0
     try:
-        async with _client(timeout) as client:
+        async with http_client(timeout) as client:
             async with client.stream('POST', f'{host}/serving-endpoints/{endpoint}/invocations',
-                                     json=_payload(endpoint, messages, max_tokens, True),
+                                     json=build_payload(endpoint, messages, max_tokens, True),
                                      headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode('utf-8', errors='replace')
-                    raise _failure_for_status(resp, body)
+                    raise failure_for_status(resp, body)
                 lines = resp.aiter_lines().__aiter__()
                 pending: Optional[asyncio.Task] = None
                 try:
@@ -307,7 +307,7 @@ def sse_event(payload: Dict[str, Any]) -> str:
     return f'data: {json.dumps(payload)}\n\n'
 
 
-def _cooldown_for(kind: str) -> float:
+def cooldown_for(kind: str) -> float:
     if kind == 'not_found':
         return _NOT_FOUND_COOLDOWN_S
     return cooldown_s() if kind in ('rate_limit', 'server', 'timeout', 'network') else 0.0
@@ -368,7 +368,7 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
 
     for round_no in range(rounds()):
         if round_no:
-            wait = _ROUND_WAITS_S[min(round_no - 1, len(_ROUND_WAITS_S) - 1)]
+            wait = ROUND_WAITS_S[min(round_no - 1, len(ROUND_WAITS_S) - 1)]
             if last is not None and last.retry_after:
                 wait = max(wait, min(last.retry_after, 30.0))
             if time.monotonic() - started + wait >= deadline_s():
@@ -420,8 +420,8 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
                                  's': round(time.monotonic() - t0, 1), 'after_chars': len(written)})
                 logger.warning('chat_llm: %s failed (%s %s, %d chars written): %s',
                                endpoint, exc.kind, exc.status or '', len(written), exc.detail[:200])
-                _cool(endpoint, _cooldown_for(exc.kind))
-                if exc.kind in _FINAL_KINDS:
+                cool(endpoint, cooldown_for(exc.kind))
+                if exc.kind in FINAL_KINDS:
                     given_up.add(endpoint)
                 if written:
                     continuations += 1
@@ -485,8 +485,8 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
                 raise last or LlmFailure('timeout', 'no time left')
             t0 = time.monotonic()
             try:
-                async with _client(httpx.Timeout(min(timeout_s, left), connect=10.0)) as client:
-                    payload = _payload(endpoint, messages,
+                async with http_client(httpx.Timeout(min(timeout_s, left), connect=10.0)) as client:
+                    payload = build_payload(endpoint, messages,
                                        effective_max_tokens(endpoint, max_tokens, _REWRITE_REASONING_MIN_TOKENS), False)
                     effort = rewrite_reasoning_effort()
                     if effort and not supports_temperature(endpoint) and endpoint not in _EFFORT_REFUSED:
@@ -500,7 +500,7 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
                         payload.pop('reasoning_effort')
                         resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code != 200:
-                    raise _failure_for_status(resp, resp.text)
+                    raise failure_for_status(resp, resp.text)
                 body = resp.json()
                 text = _message_text(body['choices'][0]['message'].get('content')).strip()
                 if not text:
@@ -521,8 +521,8 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
             attempts.append({'endpoint': endpoint, 'outcome': last.kind, 'status': last.status,
                              's': round(time.monotonic() - t0, 1)})
             logger.warning('chat_llm: %s failed for a short call (%s %s)', endpoint, last.kind, last.status or '')
-            _cool(endpoint, _cooldown_for(last.kind))
-            if last.kind in _FINAL_KINDS:
+            cool(endpoint, cooldown_for(last.kind))
+            if last.kind in FINAL_KINDS:
                 given_up.add(endpoint)
     raise last or LlmFailure('empty', 'no endpoint')
 

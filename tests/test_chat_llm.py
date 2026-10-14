@@ -17,7 +17,7 @@ MESSAGES = [{'role': 'system', 'content': 's'}, {'role': 'user', 'content': 'q'}
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
     chat_llm.reset_health()
-    monkeypatch.setattr(chat_llm, '_ROUND_WAITS_S', (0.0, 0.0, 0.0))
+    monkeypatch.setattr(chat_llm, 'ROUND_WAITS_S', (0.0, 0.0, 0.0))
     for name in ('CHAT_LLM_FALLBACK_ENDPOINTS', 'CHAT_REWRITE_FALLBACK_ENDPOINTS', 'CHAT_LLM_ROUNDS',
                  'CHAT_FIRST_TOKEN_TIMEOUT_S', 'CHAT_MAX_CONCURRENT_ANSWERS'):
         monkeypatch.delenv(name, raising=False)
@@ -39,7 +39,7 @@ def _transport(monkeypatch, routes, calls=None):
         if calls is not None:
             calls.append((endpoint, json.loads(request.content)))
         return routes[endpoint](request)
-    monkeypatch.setattr(chat_llm, '_client',
+    monkeypatch.setattr(chat_llm, 'http_client',
                         lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout))
 
 

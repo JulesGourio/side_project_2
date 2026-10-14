@@ -6,11 +6,10 @@ without running a comparison.
 """
 
 import logging
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Tuple, Union
 
-import httpx
-
-from ..infra.streaming import _cost_eur, supports_temperature
+from ..infra.streaming import _cost_eur
+from .llm import complete_chain, compare_chain, message_text
 
 logger = logging.getLogger(__name__)
 
@@ -45,27 +44,16 @@ async def _call_llm(
     system_prompt: str,
     user_content: Union[str, List[Dict[str, Any]]],
     max_tokens: int,
-) -> Dict[str, Any]:
-    """One non-streaming chat-completion call; returns the parsed JSON response."""
-    url = f'{host}/serving-endpoints/{llm_endpoint}/invocations'
-    payload: Dict[str, Any] = {
-        'messages': [
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': user_content},
-        ],
-        'max_tokens': max_tokens,
-    }
-    if supports_temperature(llm_endpoint):
-        payload['temperature'] = 0.0
-    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-
-    async with httpx.AsyncClient(timeout=_LLM_TIMEOUT_S) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
+) -> Tuple[Dict[str, Any], str]:
+    """One non-streaming call through the endpoint chain; returns (completion, endpoint that answered)."""
+    messages = [
+        {'role': 'system', 'content': system_prompt},
+        {'role': 'user', 'content': user_content},
+    ]
+    return await complete_chain(host, token, compare_chain(llm_endpoint), messages, max_tokens, _LLM_TIMEOUT_S)
 
 
-def _usage_from_completion(completion: Dict[str, Any], llm_endpoint: str) -> Dict[str, Any]:
+def _usage_from_completion(completion: Dict[str, Any], endpoint: str) -> Dict[str, Any]:
     usage = completion.get('usage') or {}
     input_tokens = usage.get('prompt_tokens', 0) or 0
     output_tokens = usage.get('completion_tokens', 0) or 0
@@ -74,7 +62,7 @@ def _usage_from_completion(completion: Dict[str, Any], llm_endpoint: str) -> Dic
         'input_tokens': input_tokens,
         'output_tokens': output_tokens,
         'total_tokens': total_tokens,
-        'cost_eur': _cost_eur(llm_endpoint, input_tokens, output_tokens),
+        'cost_eur': _cost_eur(endpoint, input_tokens, output_tokens),
     }
 
 
@@ -88,19 +76,19 @@ async def summarize_text(
 ) -> Dict[str, Any]:
     """Summarize a single document's extracted text with one LLM call.
 
-    Raises on network/HTTP failure - the caller is expected to catch and
-    report it as an error response.
+    Raises CompareLlmUnavailable when every endpoint of the chain failed - the caller reports it as an error response.
     """
     truncated = len(text) > max_chars
     text = text[:max_chars]
 
-    completion = await _call_llm(host, token, llm_endpoint, _SUMMARY_SYSTEM_PROMPT, text, max_tokens)
-    summary = (completion.get('choices', [{}])[0].get('message', {}).get('content', '') or '').strip()
+    completion, endpoint = await _call_llm(host, token, llm_endpoint, _SUMMARY_SYSTEM_PROMPT, text, max_tokens)
+    summary = message_text(completion['choices'][0]['message']).strip()
 
     return {
         'summary': summary,
         'truncated': truncated,
-        'usage': _usage_from_completion(completion, llm_endpoint),
+        'endpoint': endpoint,
+        'usage': _usage_from_completion(completion, endpoint),
     }
 
 
@@ -113,14 +101,14 @@ async def summarize_image(
 ) -> Dict[str, Any]:
     """Describe a single image with one vision LLM call.
 
-    Raises on network/HTTP failure - the caller is expected to catch and
-    report it as an error response.
+    Raises CompareLlmUnavailable when every endpoint of the chain failed - the caller reports it as an error response.
     """
-    completion = await _call_llm(host, token, llm_endpoint, _SUMMARY_IMAGE_SYSTEM_PROMPT, content_blocks, max_tokens)
-    summary = (completion.get('choices', [{}])[0].get('message', {}).get('content', '') or '').strip()
+    completion, endpoint = await _call_llm(host, token, llm_endpoint, _SUMMARY_IMAGE_SYSTEM_PROMPT, content_blocks, max_tokens)
+    summary = message_text(completion['choices'][0]['message']).strip()
 
     return {
         'summary': summary,
         'truncated': False,
-        'usage': _usage_from_completion(completion, llm_endpoint),
+        'endpoint': endpoint,
+        'usage': _usage_from_completion(completion, endpoint),
     }
