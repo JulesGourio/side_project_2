@@ -36,7 +36,7 @@
 # MAGIC - The chunk-injection phase reads `image_metadata` and the chunk tables after the description phase has written to them, so those reads sit in `# Data Transformations` instead of `# Inputs`.
 # MAGIC - The source prefix of an image passage (`[Source: … | Image: page N, label]`) is built in `describe_steps.build_image_chunks` and, for text passages, in `utils.source_prefixed_text`: the two formats must be changed together.
 # MAGIC - The serving token comes from the secret `qualibot/serving_token` and falls back to the notebook's own API token when the secret is missing.
-# MAGIC - An image that keeps failing is retried by every run, with no cap on its attempts: its document waits in `IMAGES_PENDING` until the image is described (see `promote_documents_awaiting_images`).
+# MAGIC - An image is attempted once per run, and set aside as `FAILED_LIMIT` after `PARSING_IMAGE_MAX_ATTEMPTS` (10) attempts: the run summary lists it with its last error kind. A `FAILED_LIMIT` image is not retried (a `full` run resets it). Its document is promoted without it (see `promote_documents_awaiting_images`).
 
 # COMMAND ----------
 
@@ -118,7 +118,7 @@ logger.info(f"RUN_MODE={cfg.RUN_MODE} | Endpoints={' -> '.join(LLM_ENDPOINTS)} |
 # MAGIC %md
 # MAGIC # Inputs
 # MAGIC ## Images needing a description
-# MAGIC `incremental` (default, safe to re-run): `PENDING` images, plus legacy `ERROR` rows. An image that failed on every endpoint is left `PENDING` with no description, so the next run describes it again. `DONE`, `SKIPPED` and `SKIPPED_DECORATIVE` stay terminal.
+# MAGIC `incremental` (default, safe to re-run): `PENDING` images, plus legacy `ERROR` rows. An image that failed on every endpoint is left `PENDING` with no description, so the next run describes it again, until it reaches the attempt limit (`FAILED_LIMIT`). `DONE`, `SKIPPED`, `SKIPPED_DECORATIVE`, `EXTRACTION_FAILED` and `FAILED_LIMIT` stay terminal.
 # MAGIC
 # MAGIC `full` resets every status to `PENDING` first and describes everything again.
 
@@ -217,7 +217,7 @@ if described_count > 0:
 
 # MAGIC %md
 # MAGIC ## Promote the documents waiting for their images
-# MAGIC A document with no text but images is `IMAGES_PENDING` (parked by 3_parse) while an image is still to describe. Once none is left, this step makes it `SUCCESS` (text assembled from the descriptions) or `SKIPPED_EMPTY_IMAGES` when no image was usable. A document with an image still `PENDING` stays parked.
+# MAGIC A document with no text but images is `IMAGES_PENDING` (parked by 3_parse) while an image is still to describe. Once none is left, this step makes it `SUCCESS` (text assembled from the descriptions) or `SKIPPED_EMPTY_IMAGES` when no image was usable. A document with an image still `PENDING` stays parked; a `FAILED_LIMIT` image does not hold it back.
 
 # COMMAND ----------
 

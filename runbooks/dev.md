@@ -704,6 +704,100 @@ Search) : à la main, ça reste.
   `/Workspace/Shared/.bundle/qualibot/dev`.
 - [ ] **B2. Premier essai** : Pipelines ▸ Run pipeline ▸ branche voulue ▸ `deploy-dev-jobs` (ne touche pas l'app), puis `deploy-dev` (bundle + redéploiement de l'app).
 
+### Pipeline de parsing : statuts, tentatives et modèles d'image (2026-10-14)
+
+Changements à valider sur DEV (code sur la branche `claude/sharp-mayer-uqwx8x`, à déployer) :
+
+- **Documents en attente d'images** : un document sans texte mais avec des images à décrire reçoit le statut `IMAGES_PENDING` (3_parse ne le re-parse plus chaque jour). La tâche `4_describe_images` le fait passer à `SUCCESS` (ou `SKIPPED_EMPTY_IMAGES`) dès que sa dernière image est décrite.
+- **Plafond de tentatives** : une image est tentée au plus une fois par run, et au plus `PARSING_IMAGE_MAX_ATTEMPTS` (10) runs. Au 10e échec elle passe à `FAILED_LIMIT` : elle n'est plus retentée automatiquement, elle apparaît dans le résumé du run avec son `last_error_kind`. Un run en mode `full` remet le compteur à 0 et repasse les images en `PENDING`.
+- **Disjoncteur** : après 5 images d'affilée en échec sur un même modèle dans un run, ce modèle est écarté pour le reste du run. Une erreur 429 (quota) ne compte pas : le run suivant la retente.
+- **Modèles** : `databricks-gpt-5-6-luna` accepte les images (modèle primaire de la description, dépôt). `databricks-gpt-6-luna` n'est pas vérifié pour les images : le script `check_vision_endpoints.py` le teste.
+
+Ce bloc ne touche pas aux données ; seul Q3 lance le pipeline (GPU, plusieurs heures selon le corpus).
+
+- [ ] **Q1. Vérifier les modèles de vision** (lecture seule, quelques tokens par image) — depuis la racine du dépôt :
+
+  ```powershell
+  python utils/evaluation/check_vision_endpoints.py --profile DEV --images "<chemin du dossier d'images>"
+  ```
+
+  Remplacer `<chemin du dossier d'images>` par un dossier local de png / jpg / jpeg. Le script affiche une ligne par (modèle, image) et un
+  résumé `ok / fail` par modèle. Pour n'interroger que certains modèles, ajouter `--endpoints databricks-gpt-5-6-luna,databricks-gpt-6-luna`.
+
+- [ ] **Q2. Déployer le bundle DEV** (le job de parsing reste PAUSED) :
+
+  ```powershell
+  databricks bundle deploy -t dev --profile DEV
+  ```
+
+- [ ] **Q3. Lancer le pipeline de parsing DEV** (toutes les tâches dans l'ordre : `1_categories` → `2_manifest` → `3_parse` → `4_describe_images` → `5_sync_index` → `6_update_kb_metadata`) :
+
+  ```powershell
+  databricks bundle run -t dev parsing_pipeline --profile DEV
+  ```
+
+  Dans le job `D_1_Qualibot_Parsing_Pipeline_dev`, ouvrir les logs de `3_parse` (ligne `[INCREMENTAL] … IDDOCs already terminal`) et de `4_describe_images`
+  (lignes `Endpoints :`, `Description summary :`, `Remaining to describe :`).
+
+- [ ] **Q4. Contrôler les statuts des documents** — éditeur SQL du workspace DEV (warehouse serverless), une requête à la fois :
+
+  ```sql
+  SELECT parse_status, COUNT(*) AS documents
+  FROM dev_proj.qualibot.processed_files
+  GROUP BY parse_status
+  ORDER BY documents DESC;
+  ```
+
+  ```sql
+  SELECT COUNT(*) AS parked_without_retry_image
+  FROM dev_proj.qualibot.processed_files p
+  WHERE p.parse_status = 'IMAGES_PENDING'
+    AND NOT EXISTS (
+      SELECT 1 FROM dev_proj.qualibot.image_metadata i
+      WHERE i.IDDOC = p.IDDOC AND i.status IN ('PENDING', 'ERROR')
+    );
+  ```
+
+- [ ] **Q5. Contrôler les images** — mêmes règles :
+
+  ```sql
+  SELECT status, last_error_kind, COUNT(*) AS images, MAX(attempts) AS max_attempts
+  FROM dev_proj.qualibot.image_metadata
+  GROUP BY status, last_error_kind
+  ORDER BY status, images DESC;
+  ```
+
+  ```sql
+  SELECT COUNT(*) AS failed_limit
+  FROM dev_proj.qualibot.image_metadata
+  WHERE status = 'FAILED_LIMIT';
+  ```
+
+  ```sql
+  SELECT COUNT(*) AS pending_past_limit
+  FROM dev_proj.qualibot.image_metadata
+  WHERE status = 'PENDING' AND attempts >= 10;
+  ```
+
+  ```sql
+  SELECT IDDOC, image_id, last_error_kind, attempts, volume_path
+  FROM dev_proj.qualibot.image_metadata
+  WHERE status = 'FAILED_LIMIT'
+  ORDER BY attempts DESC
+  LIMIT 50;
+  ```
+
+**Résultats attendus** (une ligne par contrôle) :
+
+- Q3, logs de 3_parse : le nombre de `IDDOCs already terminal` inclut les documents `IMAGES_PENDING` (ils ne sont pas re-parsés).
+- Q3, logs de 4_describe_images : `Endpoints : databricks-gpt-5-6-luna -> …` (la chaîne lue depuis le job) et une ligne `Description summary :`.
+- Q4, premier requête : `IMAGES_PENDING` apparaît s'il reste des documents sans texte avec des images à décrire ; aucun `EMPTY_TEXT` ne doit rester après le run.
+- Q4, seconde requête : `parked_without_retry_image` = 0 (un document en `IMAGES_PENDING` a toujours une image `PENDING` ou `ERROR`).
+- Q5, premier requête : `PENDING` avec `last_error_kind` vide ou `rate_limit` / `timeout` / `http_5xx` / `circuit_open` selon la panne du moment ; `FAILED_LIMIT` ne doit pas apparaître avant le 10e échec.
+- Q5, `pending_past_limit` = 0.
+- Q5, `failed_limit` : 0 au premier run ; sinon la liste de la dernière requête donne les images à regarder (le `last_error_kind` dit pourquoi). Elles ne sont pas retentées : seul un run `full` les remet en attente.
+- Un document dont toutes les images sont en `FAILED_LIMIT` passe à `SKIPPED_EMPTY_IMAGES` (aucune image exploitable) ; la cause est dans `image_metadata`.
+
 ### Plus tard — non fait, sur décision
 
 - Réactiver le contrôle par groupe en DEV : passer `CAPS_BYPASS` à `false` (ou retirer la clé) dans le bloc `dev` de `utils/deploy/target_env.json`, redéployer.

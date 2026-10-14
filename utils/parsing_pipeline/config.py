@@ -218,6 +218,8 @@ LLM_ROUNDS          = int(_env("PARSING_LLM_ROUNDS", "2"))
 LLM_ROUND_WAITS_S   = (5.0, 15.0, 30.0)
 # Images in a row that fail on one endpoint before it is skipped for the rest of the run.
 LLM_BREAKER_FAILURES = int(_env("PARSING_LLM_BREAKER_FAILURES", "5"))
+# Runs in which an image is attempted before it is set aside as FAILED_LIMIT (a full run resets the count).
+IMAGE_MAX_ATTEMPTS = int(_env("PARSING_IMAGE_MAX_ATTEMPTS", "10"))
 LLM_MAX_CONCURRENT  = 10   # Memory of the single-node m5d.xlarge caps the concurrency
 # Kept below the batch size that destabilizes the kernel.
 LLM_BATCH_SIZE      = int(_env("PARSING_LLM_BATCH_SIZE", "6000"))

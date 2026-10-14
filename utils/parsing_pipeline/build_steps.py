@@ -86,8 +86,9 @@ def _carry_attempts(df):
     return (
         df.join(prev, on=["IDDOC", "image_id"], how="left")
         .withColumn("attempts", F.coalesce(F.col("_prev_attempts"), F.lit(0)))
-        # Only an image that is still to describe keeps the kind of its last failure.
-        .withColumn("last_error_kind", F.when(F.col("status") == "PENDING", F.col("_prev_last_error_kind")))
+        # Only an image that is not described keeps the kind of its last failure.
+        .withColumn("last_error_kind", F.when(F.col("status").isin("PENDING", "FAILED_LIMIT"),
+                                              F.col("_prev_last_error_kind")))
         .drop("_prev_attempts", "_prev_last_error_kind")
     )
 
@@ -138,7 +139,7 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
 
     if spark.catalog.tableExists(TARGET_IMAGE_METADATA_TABLE):
         df_prev_described = spark.table(TARGET_IMAGE_METADATA_TABLE).filter(
-            F.col("status").isin("DONE", "SKIPPED")
+            F.col("status").isin("DONE", "SKIPPED", "FAILED_LIMIT")
         ).select(
             "IDDOC", "image_id",
             F.col("status").alias("_prev_status"),
@@ -346,7 +347,7 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
     # images_needing_description counts the images still to describe (PENDING, or ERROR from an earlier run), not the
     # decorative ones (unlike image_count), so an audit can compare expected vs actual DONE+SKIPPED counts.
     df_images_needed = (
-        df_image_metadata.filter(F.col("status").isin("PENDING", "ERROR"))
+        df_image_metadata.filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES))
         .groupBy("IDDOC").agg(F.count("*").alias("images_needing_description"))
     )
 

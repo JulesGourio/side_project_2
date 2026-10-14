@@ -16,5 +16,10 @@ TERMINAL_STATUSES = (
 # Statuses 4_describe_images moves on in the same job run.
 MOVED_BY_IMAGES = (EMPTY_TEXT, IMAGES_PENDING)
 
+# Image statuses (image_metadata.status). An image still to describe is retried by the next run; the others are final
+# for the description step (DONE and SKIPPED are the results, FAILED_LIMIT is reported in the run summary).
+IMAGE_RETRIED_STATUSES = ("PENDING", "ERROR")   # ERROR: rows written by a run before FAILED_LIMIT existed
+IMAGE_TERMINAL_STATUSES = ("DONE", "SKIPPED", "SKIPPED_DECORATIVE", "EXTRACTION_FAILED", "FAILED_LIMIT")
+
 # Statuses whose derived rows (chunks, image_metadata) are pruned when the document leaves scope.
 PRUNED_STATUSES = ("SUCCESS", "ERROR", EMPTY_TEXT, IMAGES_PENDING)

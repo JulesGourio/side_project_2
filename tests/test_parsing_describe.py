@@ -61,12 +61,12 @@ def _row(volume_path=__file__, **extra):
 
 
 def _describe(client, endpoints, max_retries=2, rounds=1, round_waits_s=(), timeout=5.0, row=None,
-              breaker=None):
+              breaker=None, max_attempts=None):
     async def scenario():
         limiter = _AsyncRateLimiter(rate_per_minute=6_000_000)
         return await describe_one_image(client, row or _row(), asyncio.Semaphore(4), endpoints, 100, 1.0,
                                         max_retries, limiter, breaker or EndpointBreaker(100), timeout=timeout,
-                                        rounds=rounds, round_waits_s=round_waits_s)
+                                        rounds=rounds, round_waits_s=round_waits_s, max_attempts=max_attempts)
     return asyncio.run(scenario())
 
 
@@ -234,3 +234,81 @@ def test_describe_all_images_leaves_every_undescribed_image_pending(monkeypatch)
     assert [r["status"] for r in out] == ["PENDING"] * 3
     assert all(r["description"] is None for r in out)
     assert len(client.calls) == 6   # 3 images x 2 passes x 1 attempt
+
+
+def test_an_image_that_reaches_the_cap_is_set_aside_with_its_last_error_kind():
+    client = FakeClient({"primary": [RuntimeError("500")]})
+    out = _describe(client, ["primary"], max_retries=1, row=_row(attempts=9), breaker=EndpointBreaker(100),
+                    rounds=1, max_attempts=10)
+    assert out["status"] == "FAILED_LIMIT" and out["attempts"] == 10
+    assert out["last_error_kind"] == "other" and out["description"] is None
+
+
+def test_the_cap_is_not_reached_before_the_limit():
+    client = FakeClient({"primary": [RuntimeError("500")]})
+    async def scenario():
+        limiter = _AsyncRateLimiter(rate_per_minute=6_000_000)
+        return await describe_one_image(client, _row(attempts=8), asyncio.Semaphore(4), ["primary"], 100, 1.0, 1,
+                                        limiter, EndpointBreaker(100), max_attempts=10)
+    out = asyncio.run(scenario())
+    assert out["status"] == "PENDING" and out["attempts"] == 9
+
+
+def test_the_cap_counts_runs_not_retries_inside_one_run():
+    client = FakeClient({"primary": [RuntimeError("500")]})
+
+    async def scenario():
+        limiter = _AsyncRateLimiter(rate_per_minute=6_000_000)
+        return await describe_one_image(client, _row(), asyncio.Semaphore(4), ["primary"], 100, 1.0, 5, limiter,
+                                        EndpointBreaker(100), rounds=2, max_attempts=10)
+    out = asyncio.run(scenario())
+    assert out["status"] == "PENDING" and out["attempts"] == 1
+    assert len(client.calls) == 10   # 5 retries x 2 passes, all in this run
+
+
+def test_without_a_cap_an_image_stays_pending_however_often_it_failed():
+    client = FakeClient({"primary": [RuntimeError("500")]})
+    out = _describe(client, ["primary"], max_retries=1, row=_row(attempts=50))
+    assert out["status"] == "PENDING" and out["attempts"] == 51
+
+
+def test_a_rate_limit_does_not_open_the_breaker():
+    client = FakeClient({"primary": [RuntimeError("429 REQUEST_LIMIT_EXCEEDED")]})
+    breaker = EndpointBreaker(1)
+    for _ in range(3):
+        _describe(client, ["primary"], max_retries=1, breaker=breaker)
+    assert not breaker.is_open("primary")
+    assert len(client.calls) == 3
+
+
+def test_an_image_skipped_only_by_an_open_endpoint_does_not_use_an_attempt():
+    client = FakeClient({"primary": [RuntimeError("500")]})
+    breaker = EndpointBreaker(1)
+    _describe(client, ["primary"], max_retries=1, breaker=breaker)
+    skipped = _describe(client, ["primary"], max_retries=1, breaker=breaker, row=_row(attempts=3))
+    assert skipped["last_error_kind"] == "circuit_open" and skipped["attempts"] == 3
+    assert len(client.calls) == 1
+
+
+def test_a_described_image_clears_its_error_kind_and_counts_the_attempt():
+    client = FakeClient({"primary": [_resp("A pump.")]})
+    out = _describe(client, ["primary"], row=_row(attempts=4, last_error_kind="timeout"))
+    assert out["status"] == "DONE" and out["attempts"] == 5 and out["last_error_kind"] is None
+
+
+def test_describe_all_images_sets_the_capped_image_aside(monkeypatch):
+    client = FakeClient({"primary": [RuntimeError("500")]})
+
+    async def close():
+        return None
+
+    client.close = close
+    fake_openai = types.ModuleType("openai")
+    fake_openai.AsyncOpenAI = lambda **kwargs: client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    rows = [{**_row(attempts=9), "image_id": 0}, {**_row(attempts=2), "image_id": 1}]
+    out = asyncio.run(llm_describe.describe_all_images(
+        rows, "host", "token", ["primary"], 100, 1.0, 1, 2, 6_000_000, EndpointBreaker(100),
+        rounds=1, max_attempts=10))
+    assert [r["status"] for r in out] == ["FAILED_LIMIT", "PENDING"]
+    assert [r["attempts"] for r in out] == [10, 3]

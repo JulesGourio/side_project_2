@@ -27,3 +27,11 @@ def test_the_statuses_the_parse_retries_are_not_terminal():
 def test_pruning_covers_every_status_that_has_derived_rows():
     assert {"SUCCESS", "ERROR", ds.EMPTY_TEXT, ds.IMAGES_PENDING} <= set(ds.PRUNED_STATUSES)
     assert set(ds.MOVED_BY_IMAGES) <= set(ds.PRUNED_STATUSES)
+
+
+def test_every_image_status_is_either_retried_or_final():
+    image_statuses = {"DONE", "SKIPPED", "SKIPPED_DECORATIVE", "EXTRACTION_FAILED", "FAILED_LIMIT", "PENDING", "ERROR"}
+    retried, final = set(ds.IMAGE_RETRIED_STATUSES), set(ds.IMAGE_TERMINAL_STATUSES)
+    assert not retried & final
+    assert retried | final == image_statuses
+    assert "FAILED_LIMIT" in final and "FAILED_LIMIT" not in retried

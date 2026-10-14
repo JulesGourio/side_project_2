@@ -12,6 +12,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import List
 
 import nest_asyncio
 from databricks.sdk.runtime import spark
@@ -29,6 +30,7 @@ from config import (
     EMBED_SOURCE_PREFIX,
     LLM_AVG_INPUT_TOKENS,
     LLM_AVG_OUTPUT_TOKENS,
+    IMAGE_MAX_ATTEMPTS,
     LLM_BREAKER_FAILURES,
     LLM_CHECKPOINT_CHUNK_SIZE,
     LLM_ITPM_BUDGET,
@@ -70,8 +72,8 @@ def reset_images_to_pending():
 
 
 def pending_images():
-    """Images to describe: PENDING ones, plus ERROR rows left by earlier runs (they are described again too)."""
-    return spark.table(IMAGE_TABLE).filter(F.col("status").isin("PENDING", "ERROR") & F.col("volume_path").isNotNull())
+    """Images to describe: the retried statuses (PENDING, and ERROR rows left by earlier runs). FAILED_LIMIT is not one."""
+    return spark.table(IMAGE_TABLE).filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES) & F.col("volume_path").isNotNull())
 
 
 _UPDATES_SCHEMA = ("IDDOC long, image_id int, description string, input_tokens int, output_tokens int, "
@@ -92,7 +94,7 @@ def _merge_chunk_results(results):
             int(r["input_tokens"]),
             int(r["output_tokens"]),
             r["status"],
-            None if r["status"] == "PENDING" else now,
+            now if r["status"] in ("DONE", "SKIPPED") else None,
             int(r["attempts"]),
             r["last_error_kind"],
         )
@@ -129,10 +131,13 @@ class _RunTally:
     failed_input_tokens: int = 0
     failed_output_tokens: int = 0
     pending_by_kind: Counter = field(default_factory=Counter)
+    limited: List[tuple] = field(default_factory=list)   # (IDDOC, image_id, last_error_kind, attempts) of FAILED_LIMIT
 
     def add(self, described):
         for r in described:
             self.images += 1
+            if r["status"] == "FAILED_LIMIT":
+                self.limited.append((r["IDDOC"], r["image_id"], r["last_error_kind"] or "unknown", r["attempts"]))
             self.input_tokens += int(r["input_tokens"])
             self.output_tokens += int(r["output_tokens"])
             self.failed_input_tokens += int(r["failed_input_tokens"])
@@ -141,7 +146,7 @@ class _RunTally:
                 self.done += 1
             elif r["status"] == "SKIPPED":
                 self.skipped += 1
-            else:
+            elif r["status"] == "PENDING":
                 self.pending += 1
                 self.pending_by_kind[r["last_error_kind"] or "unknown"] += 1
         return self
@@ -170,7 +175,8 @@ def describe_images(rows, ws_host, ws_token, endpoints):
     logger.info(f"Rate limiter : {rpm:.0f} req/min  (ITPM<={LLM_ITPM_BUDGET:,}, OTPM<={LLM_OTPM_BUDGET:,}, "
                 f"QPH<={LLM_QPH_BUDGET:,})")
     logger.info(f"Endpoints  : {' -> '.join(endpoints)}  ({LLM_ROUNDS} passes, waits {list(LLM_ROUND_WAITS_S)} s, "
-                f"an endpoint skipped after {LLM_BREAKER_FAILURES} failed images in a row)")
+                f"an endpoint skipped after {LLM_BREAKER_FAILURES} failed images in a row, "
+                f"an image set aside as FAILED_LIMIT after {IMAGE_MAX_ATTEMPTS} attempts)")
 
     breaker = EndpointBreaker(LLM_BREAKER_FAILURES)
     n_chunks = math.ceil(len(rows) / LLM_CHECKPOINT_CHUNK_SIZE)
@@ -185,7 +191,7 @@ def describe_images(rows, ws_host, ws_token, endpoints):
                 rows=chunk, ws_host=ws_host, ws_token=ws_token, endpoints=endpoints,
                 max_tokens=LLM_MAX_TOKENS, temperature=LLM_TEMPERATURE, max_retries=LLM_MAX_RETRIES,
                 max_concurrent=LLM_MAX_CONCURRENT, requests_per_minute=rpm, breaker=breaker,
-                rounds=LLM_ROUNDS, round_waits_s=LLM_ROUND_WAITS_S,
+                rounds=LLM_ROUNDS, round_waits_s=LLM_ROUND_WAITS_S, max_attempts=IMAGE_MAX_ATTEMPTS,
             ))
         except Exception as exc:
             logger.error(f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} describe_all_images failed: {str(exc)[:300]}")
@@ -209,19 +215,29 @@ def describe_images(rows, ws_host, ws_token, endpoints):
     _log_description_summary(total)
 
 
+_LIMIT_LINES = 50
+
+
 def _log_description_summary(total):
-    """Log the run: outcomes, failures by kind, tokens (failed attempts too), and what the next run describes."""
-    remaining = spark.table(IMAGE_TABLE).filter(F.col("status").isin("PENDING", "ERROR")).count()
-    logger.info(f"Description summary: {total.done} described, {total.skipped} skipped, {total.pending} left pending "
-                f"over {total.images} images")
+    """Log the run: outcomes, failures by kind, the images set aside this run, tokens (failed attempts too), what remains."""
+    df_images = spark.table(IMAGE_TABLE)
+    remaining = df_images.filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES)).count()
+    limit_total = df_images.filter(F.col("status") == "FAILED_LIMIT").count()
+    logger.info(f"Description summary: {total.done} described, {total.skipped} skipped, {total.pending} left pending, "
+                f"{len(total.limited)} set aside as FAILED_LIMIT over {total.images} images")
     if total.pending_by_kind:
         kinds = ", ".join(f"{kind} {n}" for kind, n in total.pending_by_kind.most_common())
         logger.info(f"  Left pending this run, by last error kind: {kinds}")
+    for iddoc, image_id, kind, attempts in total.limited[:_LIMIT_LINES]:
+        logger.warning(f"  FAILED_LIMIT: IDDOC {iddoc} image {image_id}, last error {kind}, {attempts} attempts")
+    if len(total.limited) > _LIMIT_LINES:
+        logger.warning(f"  ... {len(total.limited) - _LIMIT_LINES} more FAILED_LIMIT images this run")
     logger.info(f"  Tokens: {total.input_tokens:,} in / {total.output_tokens:,} out, of which failed attempts "
                 f"{total.failed_input_tokens:,} in / {total.failed_output_tokens:,} out")
-    logger.info(f"  Remaining to describe: {remaining} (PENDING, described again by the next run)")
+    logger.info(f"  Remaining to describe: {remaining} (PENDING, described again by the next run); "
+                f"FAILED_LIMIT in the table: {limit_total} (not retried, see image_metadata.last_error_kind)")
     if remaining == 0:
-        logger.info("  -> All images described.")
+        logger.info("  -> No image left to describe.")
 
 
 def described_images_without_chunk(rebuild):
@@ -257,7 +273,7 @@ def log_nothing_to_inject():
     """Explain why no image passage is written: every DONE image already has one."""
     df_images = spark.table(IMAGE_TABLE)
     n_done = df_images.filter((F.col("status") == "DONE") & F.col("description").isNotNull()).count()
-    n_pending = df_images.filter(F.col("status").isin("PENDING", "ERROR")).count()
+    n_pending = df_images.filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES)).count()
     logger.info("No new image chunks to inject.")
     logger.info(f"  {n_done} DONE images -> all already have chunks in {TARGET_CHUNK_TABLE}")
     if n_pending > 0:
@@ -419,6 +435,7 @@ def promote_documents_awaiting_images():
     The statuses are EMPTY_TEXT (no image left to describe, decided in the same job run) and IMAGES_PENDING (parked by
     3_parse). The outcome is SUCCESS, with the text assembled from the descriptions, or SKIPPED_EMPTY_IMAGES when no
     image was usable. A document with an image still PENDING (or ERROR) stays where it is: the next run describes it.
+    A FAILED_LIMIT image is final for its document: the document is promoted without it, the image stays reported.
     """
     df_waiting = (
         spark.table(TARGET_PROCESSED_FILES_TABLE).filter(F.col("parse_status").isin(*MOVED_BY_IMAGES)).select("IDDOC")
@@ -429,7 +446,7 @@ def promote_documents_awaiting_images():
         return
 
     df_their_images = spark.table(IMAGE_TABLE).join(F.broadcast(df_waiting), on="IDDOC", how="inner")
-    df_not_ready = df_their_images.filter(F.col("status").isin("PENDING", "ERROR")).select("IDDOC").distinct()
+    df_not_ready = df_their_images.filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES)).select("IDDOC").distinct()
     df_ready = df_waiting.join(F.broadcast(df_not_ready), on="IDDOC", how="left_anti")
     if df_ready.count() == 0:
         logger.info(f"{n_waiting} document(s) waiting for images, none fully described yet.")

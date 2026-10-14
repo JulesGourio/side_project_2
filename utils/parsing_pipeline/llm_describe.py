@@ -10,7 +10,7 @@ All tunables come from config.py.
 import asyncio
 import base64
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Set
+from typing import Dict, List, Optional, Sequence, Set
 
 from config import (
     IMAGE_DESCRIPTION_PROMPT,
@@ -232,19 +232,32 @@ async def _ask_endpoint(client, endpoint: str, messages, semaphore: asyncio.Sema
     return text
 
 
+def _settle(status: str, attempts: int, max_attempts: Optional[int]) -> str:
+    """FAILED_LIMIT once a still-PENDING image has used up its attempts (None: no limit)."""
+    if status == "PENDING" and max_attempts is not None and attempts >= max_attempts:
+        return "FAILED_LIMIT"
+    return status
+
+
 async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphore, endpoints: Sequence[str],
                              max_tokens: int, temperature: float, max_retries: int, rate_limiter: _AsyncRateLimiter,
                              breaker: EndpointBreaker, timeout: float = 90.0, rounds: int = 1,
-                             round_waits_s: Sequence[float] = ()) -> dict:
+                             round_waits_s: Sequence[float] = (), max_attempts: Optional[int] = None) -> dict:
     """Describe one image: each endpoint in turn, `rounds` passes over the chain, `round_waits_s` before each later pass.
 
     Returns `row_data` plus description, status, the tokens spent (`input_tokens`, `output_tokens`, and the failed
-    part `failed_*`), `attempts` (the counter of the image, + 1) and `last_error` / `last_error_kind` when it is PENDING.
-    Status DONE, or SKIPPED when the model refused; PENDING with no description when no endpoint answered.
+    part `failed_*`), `attempts` and `last_error` / `last_error_kind`. Status DONE, or SKIPPED when the model refused.
+    PENDING with no description when no endpoint answered; FAILED_LIMIT instead once the image has `max_attempts`
+    attempts. One attempt is one run in which the image was sent to an endpoint (or could not be read): an image
+    skipped only because its endpoints are open in this run is not counted.
     """
     spend = _Spend()
+    sent = False
 
     def result(description, status, last_error="", last_kind=None):
+        counted = status != "PENDING" or sent or last_kind != "circuit_open"
+        attempts = int(row_data.get("attempts") or 0) + (1 if counted else 0)
+        status = _settle(status, attempts, max_attempts)
         return {
             **row_data,
             "description": description,
@@ -253,9 +266,9 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
             "output_tokens": spend.output_tokens,
             "failed_input_tokens": spend.failed_input_tokens,
             "failed_output_tokens": spend.failed_output_tokens,
-            "attempts": int(row_data.get("attempts") or 0) + 1,
+            "attempts": attempts,
             "last_error": last_error,
-            "last_error_kind": last_kind if status == "PENDING" else None,
+            "last_error_kind": last_kind if status in ("PENDING", "FAILED_LIMIT") else None,
         }
 
     # A full-page transcription runs longer than a short image description: it gets its own, larger budget.
@@ -288,12 +301,16 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
             if breaker.is_open(endpoint):
                 last_error, last_kind = f"{endpoint}: skipped, failing earlier in this run", "circuit_open"
                 continue
+            sent = True
             try:
                 text = await _ask_endpoint(client, endpoint, messages, semaphore, rate_limiter, max_tokens,
                                            temperature, max_retries, timeout, spend)
             except Exception as e:
-                breaker.record(endpoint, ok=False)
-                last_error, last_kind = f"{endpoint}: {_error_text(e)}", error_kind(e)
+                last_kind = error_kind(e)
+                last_error = f"{endpoint}: {_error_text(e)}"
+                # A 429 is transient: the next run retries it, so it does not open the breaker.
+                if last_kind != "rate_limit":
+                    breaker.record(endpoint, ok=False)
                 continue
             breaker.record(endpoint, ok=True)
             return result(text, "SKIPPED" if is_skip_response(text) else "DONE")
@@ -302,8 +319,8 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
 
 async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, endpoints: Sequence[str], max_tokens: int,
                               temperature: float, max_retries: int, max_concurrent: int, requests_per_minute: float,
-                              breaker: EndpointBreaker, rounds: int = 1,
-                              round_waits_s: Sequence[float] = ()) -> List[dict]:
+                              breaker: EndpointBreaker, rounds: int = 1, round_waits_s: Sequence[float] = (),
+                              max_attempts: Optional[int] = None) -> List[dict]:
     """Describe all images concurrently, at most `max_concurrent` at a time and `requests_per_minute` on average."""
     from openai import AsyncOpenAI
 
@@ -313,7 +330,7 @@ async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, end
     try:
         results = await asyncio.gather(
             *[describe_one_image(client, r, semaphore, endpoints, max_tokens, temperature, max_retries, rate_limiter,
-                                 breaker, rounds=rounds, round_waits_s=round_waits_s)
+                                 breaker, rounds=rounds, round_waits_s=round_waits_s, max_attempts=max_attempts)
               for r in rows],
             return_exceptions=True,
         )
@@ -323,11 +340,12 @@ async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, end
         except Exception:
             pass
 
-    return [
-        {**rows[i], "description": None, "status": "PENDING", "input_tokens": 0, "output_tokens": 0,
-         "failed_input_tokens": 0, "failed_output_tokens": 0,
-         "attempts": int(rows[i].get("attempts") or 0) + 1,
-         "last_error": f"unexpected: {_error_text(res)}", "last_error_kind": "other"}
-        if isinstance(res, Exception) else res
-        for i, res in enumerate(results)
-    ]
+    out = []
+    for row, res in zip(rows, results):
+        if isinstance(res, Exception):
+            attempts = int(row.get("attempts") or 0) + 1
+            res = {**row, "description": None, "status": _settle("PENDING", attempts, max_attempts),
+                   "input_tokens": 0, "output_tokens": 0, "failed_input_tokens": 0, "failed_output_tokens": 0,
+                   "attempts": attempts, "last_error": f"unexpected: {_error_text(res)}", "last_error_kind": "other"}
+        out.append(res)
+    return out

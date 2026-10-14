@@ -33,7 +33,7 @@ def _merge_image_metadata(df_image_metadata):
         write_table(df_image_metadata, TARGET_IMAGE_METADATA_TABLE, "append", merge_schema=True)
         logger.info(f"Created {TARGET_IMAGE_METADATA_TABLE} (first write)")
         return
-    keep_prev = "CASE WHEN tgt.status IN ('DONE', 'SKIPPED') THEN tgt.{col} ELSE src.{col} END"
+    keep_prev = "CASE WHEN tgt.status IN ('DONE', 'SKIPPED', 'FAILED_LIMIT') THEN tgt.{col} ELSE src.{col} END"
     add_missing_columns(df_image_metadata, TARGET_IMAGE_METADATA_TABLE)
     (
         DeltaTable.forName(spark, TARGET_IMAGE_METADATA_TABLE).alias("tgt")
