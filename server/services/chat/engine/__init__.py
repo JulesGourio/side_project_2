@@ -9,8 +9,8 @@ What happens for each question (measures behind the configuration: ``docs/chat_t
    (acronyms expanded when certain).
 2. **Search** (``search.py``) — the queries (the question as asked + the rewrites or the translation) in HYBRID
    mode on the single passage index: for each, the top ``rerank_top_k()`` passages (12; ``pair_rerank_top_k()``,
-   18, with two queries) reranked by the Databricks reranker (reading REF, section headings and text); for the
-   French rewrite only (``raw_on()``), also the raw top ``raw_top_k()`` (10). Everything is merged by best rank,
+   16, with two queries) reranked by the Databricks reranker (reading REF, section headings and text); for the
+   French rewrite only (``raw_on()``), also the raw top ``raw_top_k()`` (12). Everything is merged by best rank,
    then cut to ``max_search_passages()`` (0 = no cap, the default). The chat's division (AS / IS) is a filter on
    the ``division`` column (ALL: no filter).
 3. **Named documents** (``retrieval.py``) — REFs named in the question or the earlier turns (MI-14242…) get

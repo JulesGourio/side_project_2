@@ -6,8 +6,9 @@ env:
     value: "true"
   - name: CHAT_ENABLED
     value: "true"
-  # Translation bridge (server/services/chat/translation_bridge.py, on per target in target_env.json): a question that is neither French nor English
-  # is translated to English before the document search, and the answer back.
+  # Translation bridge (server/services/chat/translation_bridge.py): a question that is neither French nor English translated to English
+  # before the search and the answer translated back. Off: the rewrite already searches in French and English, and the model answers
+  # directly in the question's language (language reminder).
   - name: CHAT_TRANSLATE_BRIDGE_ENABLED
     value: "false"
   - name: CHAT_TRANSLATE_ENDPOINT
@@ -41,9 +42,9 @@ env:
   - name: CHAT_TRANSLATE_ONLY
     value: "off"
   - name: CHAT_PAIR_RERANK_TOP_K
-    value: "18"
+    value: "16"
   - name: CHAT_PAIR_RAW_TOP_K
-    value: "12"
+    value: "16"
   # How much the rewrite / translation model thinks before answering (it is the main cost of that step): low, minimal, medium, high; empty = the
   # endpoint's default. An endpoint that refuses the parameter is called without it.
   - name: CHAT_REWRITE_REASONING_EFFORT

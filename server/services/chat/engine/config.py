@@ -16,10 +16,10 @@ _DEFAULT_INDEX = 'dev_landingzone.qualibot.chunks_index'
 _DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'      # no Claude model in the chatbot (2026-10-08)
 _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside it
 _DEFAULT_REWRITE_MAX_TOKENS = 2000
-_RERANK_TOP_K = 12               # reranked passages kept per query (20 measured worse, 2026-10-08)
-_RAW_TOP_K = 10                  # raw HYBRID passages per query (0 = reranked passages only)
-_PAIR_RERANK_TOP_K = 18          # two queries (the question and its translation) instead of three: as many candidates in all
-_PAIR_RAW_TOP_K = 12
+_RERANK_TOP_K = 12               # reranked passages kept per query (20 measured worse)
+_RAW_TOP_K = 12                  # raw HYBRID passages per query (0 = reranked passages only)
+_PAIR_RERANK_TOP_K = 16          # two queries (the question and its translation) + one raw: the same 48 candidates as the rewrite
+_PAIR_RAW_TOP_K = 16
 
 
 # --- Settings ---

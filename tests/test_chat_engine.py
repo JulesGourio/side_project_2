@@ -229,7 +229,7 @@ def test_three_queries_reranked_and_raw(monkeypatch):
     assert len(reranked) == 3 and all(p['num_results'] == 12 for p in reranked)
     assert reranked[0]['reranker']['parameters']['columns_to_rerank'] == ['REF', 'semantic_headers', 'chunk_text']
     assert [p['query_text'] for p in raw] == ['qualification CND']               # raw on the French rewrite only
-    assert all(p['num_results'] == 10 and p['query_type'] == 'HYBRID' for p in raw)
+    assert all(p['num_results'] == 12 and p['query_type'] == 'HYBRID' for p in raw)
     assert all('filters_json' not in p for p in m['sent'])                       # ALL: no division filter
 
 
@@ -405,8 +405,8 @@ def test_a_french_opening_question_is_only_translated_into_english(monkeypatch):
     d = m['log'].data
     assert d['rewrite_mode'] == 'translate' and (d['fr_query'], d['en_query']) == (QUESTION, 'Search for NDT qualification procedures')
     assert sorted((p['num_results'], 'reranker' in p, p['query_text']) for p in m['sent']) == [
-        (12, False, QUESTION), (18, True, QUESTION), (18, True, 'Search for NDT qualification procedures')]
-    assert d['vs_calls_expected'] == 3 and d['config']['pair_rerank_top_k'] == 18 and not m['log'].issues
+        (16, False, QUESTION), (16, True, QUESTION), (16, True, 'Search for NDT qualification procedures')]
+    assert d['vs_calls_expected'] == 3 and d['config']['pair_rerank_top_k'] == 16 and not m['log'].issues
     assert m['log'].prompts[0] == 'translate_query' and 'rewrite' not in m['log'].prompts
     assert 'rewrite' in m['log'].timings_ms
 
@@ -421,7 +421,7 @@ def test_an_english_opening_question_is_translated_into_french_and_the_raw_searc
     assert d['rewrite_mode'] == 'translate'
     assert (d['fr_query'], d['en_query']) == ('Quelles sont les exigences de qualification CND ?', 'What are the NDT qualification requirements?')
     raw = [p for p in m['sent'] if 'reranker' not in p]
-    assert [(p['query_text'], p['num_results']) for p in raw] == [('Quelles sont les exigences de qualification CND ?', 12)]
+    assert [(p['query_text'], p['num_results']) for p in raw] == [('Quelles sont les exigences de qualification CND ?', 16)]
     assert sorted(p['query_text'] for p in m['sent'] if 'reranker' in p) == sorted(
         ['What are the NDT qualification requirements?', 'Quelles sont les exigences de qualification CND ?'])
 
@@ -431,7 +431,7 @@ def test_a_failed_translation_searches_with_the_question_alone(monkeypatch):
     _, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
     d = m['log'].data
     assert d['rewrite_ok'] is False and (d['fr_query'], d['en_query']) == (QUESTION, '')
-    assert sorted((p['num_results'], 'reranker' in p) for p in m['sent']) == [(10, False), (12, True)]   # usual sizes, one query
+    assert sorted((p['num_results'], 'reranker' in p) for p in m['sent']) == [(12, False), (12, True)]   # usual sizes, one query
     assert [i['code'] for i in m['log'].issues] == ['rewrite_failed']
 
 
@@ -454,7 +454,7 @@ def test_the_bilingual_rewrite_still_runs_otherwise(monkeypatch, code, history, 
     m['rewrite'].assert_called_once()
     assert 'Using the conversation for context' in m['rewrite'].call_args.args[3][0]['content']
     assert m['log'].data['rewrite_mode'] == 'rewrite' and m['log'].prompts[0] == 'rewrite'
-    assert sorted(p['num_results'] for p in m['sent']) == [10, 12, 12, 12]      # the measured configuration
+    assert sorted(p['num_results'] for p in m['sent']) == [12, 12, 12, 12]      # the measured configuration
 
 
 def test_the_question_is_searched_while_the_rewrite_runs(monkeypatch):
@@ -470,7 +470,7 @@ def test_the_question_is_searched_while_the_rewrite_runs(monkeypatch):
     others = [c for c in calls if c is not question_rerank]
     assert question_rerank['start_ms'] < 100 <= min(c['start_ms'] for c in others)   # before the rewrite answered / after it
     assert len(m['sent']) == 4 and m['log'].data['vs_calls_expected'] == 4            # same four calls as without the overlap
-    assert sorted(p['num_results'] for p in m['sent']) == [10, 12, 12, 12]
+    assert sorted(p['num_results'] for p in m['sent']) == [12, 12, 12, 12]
     assert m['log'].today == '2026-10-06'
 
 
@@ -543,7 +543,7 @@ def test_settings_defaults(monkeypatch):
     s = engine.settings()
     assert s['index'] == 'dev_landingzone.qualibot.chunks_index' and s['llm'] == 'databricks-gpt-6-luna'
     assert s['rewrite_llm'] == 'databricks-gpt-6-luna' and s['answer_max_tokens'] == 8000
-    assert s['rerank_top_k'] == 12 and s['raw_top_k'] == 10 and s['max_search_passages'] == 0
+    assert s['rerank_top_k'] == 12 and s['raw_top_k'] == 12 and s['max_search_passages'] == 0
 
 
 # ---------------------------------------------------------------------------
