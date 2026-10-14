@@ -1,251 +1,533 @@
-# Lakebase — ce que l'app enregistre de chaque requête (schéma du 2026-10-09)
+# Lakebase — tables et colonnes
 
-Avec le Knowledge Assistant, le chat était une boîte noire : on ne gardait que la question, la
-réponse et les REF cités. Le moteur Vector Search (`server/services/chat/engine/`) fait chaque étape
-lui-même ; elles sont maintenant toutes enregistrées : requêtes de recherche, passages retrouvés
-(avec leur texte), modèles appelés, durées, et tout ce qui ne s'est pas passé comme prévu.
+Référence des tables de l'application dans Lakebase (projet `qualibot`, branche `production`). Une base par environnement : `doccompare` (UAT, DEV, PROD) et `doccompare_test` (`qualibot-uat-test`).
 
-Le schéma est créé et mis à jour par l'app à son démarrage (`_ensure_schema` dans
-`server/services/infra/lakebase/`) : aucune DDL à lancer à la main. Que des `CREATE TABLE IF NOT
-EXISTS` / `ADD COLUMN IF NOT EXISTS` : aucune donnée existante n'est touchée.
+Source de vérité : `server/services/infra/lakebase/schema.py` (création et mise à jour), `columns.py` (colonnes du journal du chat). Les tables sont créées au démarrage de l'app (`ensure_schema`) : `CREATE TABLE IF NOT EXISTS`, puis `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Aucune donnée n'est supprimée au démarrage.
 
-## Les tables du journal
+Une colonne nouvelle s'ajoute dans `schema.py` (ou dans `columns.py` pour les tables du chat). Une clé nouvelle du journal d'un tour (`TurnLog.data`) doit avoir sa colonne dans `CHAT_TURN_COLUMNS` : `tests/test_lakebase_logging.py` le vérifie. Pour une base déjà en service sans redémarrage de l'app, la même colonne se passe par `runbooks/scripts/lakebase/migrations.py`.
 
-| Table | Une ligne par | Nouveau |
+## Vue d'ensemble
+
+| Table | Une ligne par | Écrite par |
 |---|---|---|
-| `chat_turns` | tour de chat (question → réponse), réussi ou non | **oui** |
-| `chat_retrieved_chunks` | passage retrouvé pour un tour (envoyé au modèle ou écarté), avec son texte | **oui** |
-| `errors` | erreur, ou étape dégradée (`severity = 'warning'`) | colonnes ajoutées |
-| `llm_requests` | analyse `/compare/analyze` | colonnes ajoutées (statut, durées) |
-| `impact_requests` | impact search | colonnes ajoutées (statut, compteurs, durées) |
-| `impact_document_results` | document jugé dans une impact search | colonnes ajoutées (appel du juge) |
+| `chat_turns` | tour de chat (question → réponse), réussi ou non | `infra/lakebase/audit.py` (`store_chat_turn`) |
+| `chat_retrieved_chunks` | passage retrouvé pour un tour, envoyé au modèle ou écarté | `infra/lakebase/audit.py` |
+| `chat_sessions` | conversation du chat | `routers/chat/persistence.py`, `routers/chat/sessions.py` |
+| `chat_messages` | message d'une conversation | `routers/chat/persistence.py`, `routers/chat/sessions.py` |
+| `chat_feedbacks` | vote 👍 / 👎 sur un message du chat | `routers/chat/sessions.py` |
+| `errors` | erreur, ou avertissement d'une étape (`severity`) | `infra/lakebase/audit.py` |
+| `messages` | analyse de comparaison, historique | `routers/history.py` |
+| `feedbacks` | vote sur une analyse de comparaison | `routers/feedback.py` |
+| `llm_requests` | appel d'analyse `/compare/analyze` | `infra/lakebase/audit.py` |
+| `impact_requests` | impact search (`/compare/impact`) | `infra/lakebase/audit.py` |
+| `impact_document_results` | document jugé par le modèle dans une impact search | `infra/lakebase/audit.py` |
+| `impact_feedbacks` | vote sur une impact search : sur le résultat entier, ou sur le verdict d'un document | `routers/feedback.py` |
+| `impact_cache` | résultat d'impact search mis en cache | `infra/lakebase/cache.py` |
+| `summary_cache` | résumé d'un document mis en cache | `infra/lakebase/cache.py` |
+| `users` | utilisateur connu de l'app | `infra/lakebase/users.py` |
+| `knowledge_base_metadata` | date « documents à jour au » (une seule ligne, `id = 1`) | saisie à la main ; lue par `routers/config.py` |
+| `doc_catalog` | catalogue des documents : référence, titre, lien, révision, date | tâche `6_update_kb_metadata` du pipeline ; lue par `infra/doc_catalog.py` |
 
-Clé de jointure du chat : **`trace_id`** (`chat-<32 hex>`), présent dans `chat_turns`,
-`chat_retrieved_chunks`, `errors` et sur les deux lignes `chat_messages` du tour.
-`chat_turns.user_message_id` / `assistant_message_id` pointent aussi sur `chat_messages`.
+**Clés de jointure du chat** :
+- `trace_id` (`chat-` suivi de 32 caractères hexadécimaux) : présent dans `chat_turns`, `chat_retrieved_chunks`, `errors` et `chat_messages`.
+- `chat_turns.user_message_id` et `chat_turns.assistant_message_id` : `chat_messages.id` des deux messages du tour.
+- `chat_turns.mlflow_trace_id` : identifiant de la trace MLflow du tour (vide si `CHAT_MLFLOW_EXPERIMENT` est vide ou si l'envoi a échoué). Le vote 👍 / 👎 y est rattaché comme évaluation.
 
-## `chat_turns`
+## Chat
 
-**Résultat** — `status` :
+### `chat_turns`
 
-| `status` | Sens |
-|---|---|
-| `ok` | réponse donnée, tout s'est déroulé comme configuré |
-| `degraded` | réponse donnée, mais au moins une étape n'a pas tourné comme prévu (`warnings` dit laquelle) |
-| `error` | pas de réponse ; `error_stage` / `error_type` / `error_msg` disent où et pourquoi |
-| `aborted` | le navigateur est parti avant la fin (onglet fermé, nouvelle question) |
+Une ligne par tour. Les colonnes de la première table sont fixes ; les autres viennent de `CHAT_TURN_COLUMNS` (`columns.py`).
 
-Seuls les tours `ok`/`degraded` apparaissent dans l'historique de l'utilisateur (les lignes
-`chat_messages` d'un tour `error` ou `aborted` ont ce statut et sont masquées, comme avant).
+**Résultat**
 
-**`warnings`** (codes, dans l'ordre où ils sont arrivés ; le détail est dans `errors`, même
-`trace_id`) :
-
-| Code | Étape | Ce qui s'est passé |
+| Colonne | Type | Sens |
 |---|---|---|
-| `translate_in_failed` | traduction de la question | détection / traduction en échec : recherche faite avec la question d'origine |
-| `rewrite_failed` | reformulation | aucun modèle n'a reformulé : recherche avec la question seule (1 requête au lieu de 3) |
-| `rewrite_fallback` | reformulation | reformulée par le modèle de secours |
-| `vs_partial` | recherche | une partie des requêtes Vector Search a échoué (`vs_calls_ok` < `vs_calls_expected`) |
-| `rerank_refused` | recherche | l'index a refusé le reranker : recherche brute seule |
-| `ref_lookup_failed` / `title_lookup_failed` | recherche | la recherche ciblée sur les REF / titres nommés a échoué |
-| `no_passages` | recherche | aucun passage trouvé |
-| `llm_fallback` | réponse | réponse du modèle de secours (GPT-5.6 Luna) au lieu de GPT-6 Luna |
-| `llm_retried` | réponse | appels en échec (429, timeout…) avant la réponse du modèle principal |
-| `output_truncated` | réponse | limite de tokens atteinte : la fin peut manquer |
-| `answer_continued` | réponse | réponse coupée puis reprise par un modèle |
-| `answer_interrupted` | réponse | réponse coupée, aucun modèle n'a pu la finir |
-| `translate_back_failed` | traduction de la réponse | réponse laissée en anglais |
-| `persist_failed` | sauvegarde | les messages n'ont pas pu être écrits dans `chat_messages` |
-| `client_disconnected` / `send_failed` | WebSocket | le navigateur est parti (information, ne rend pas le tour `degraded`) |
+| `id` | SERIAL | clé primaire |
+| `created_at` | TIMESTAMPTZ | date du tour |
+| `trace_id` | TEXT NOT NULL, UNIQUE | identifiant du tour (`chat-…`) |
+| `user_message_id` | INTEGER | `chat_messages.id` de la question (NULL après suppression) |
+| `assistant_message_id` | INTEGER | `chat_messages.id` de la réponse (NULL après suppression) |
+| `status` | TEXT NOT NULL | `ok`, `degraded`, `error` ou `aborted` (voir ci-dessous) |
+| `error_stage` | TEXT | étape en échec |
+| `error_type` | TEXT | type de l'erreur |
+| `error_msg` | TEXT | message de l'erreur |
+| `warnings` | TEXT[] NOT NULL, défaut `{}` | codes des avertissements du tour (voir « Codes ») |
 
-**Ce qui était attendu** — `config` (JSONB) : `engine.settings()` au moment du tour — index,
-nombre de passages rerankés / bruts par requête, plafond, modèle de réponse et ses secours, modèle
-de reformulation, limites de tokens. À comparer avec ce qui s'est passé :
-`vs_calls_expected`/`vs_calls_ok`, `rerank_ok`, `rewrite_ok`/`rewrite_endpoint`,
-`answer_endpoint`/`llm_fallback`, `llm_attempts` (chaque appel : endpoint, résultat, statut HTTP,
-secondes).
+`status` : `ok` = réponse donnée, rien à signaler ; `degraded` = réponse donnée, mais au moins une étape n'a pas tourné comme configuré (`warnings` dit laquelle) ; `error` = pas de réponse ; `aborted` = le navigateur est parti avant la fin.
 
-**Question et recherche** — `question`, `question_lang`, `question_en` (question envoyée à la
-recherche quand le bridge l'a traduite), `history_messages`, `fr_query`, `en_query`, `rewrite_mode` (`translate` : message d'ouverture français ou anglais, seulement traduit dans l'autre langue ; `rewrite` : réécriture bilingue),
-`named_refs` / `titled_refs` (documents cherchés en plus, parce que nommés dans la conversation ou
-parce que leur titre correspond), `passages_retrieved` / `passages_sent` / `documents_sent`,
-`prompt_chars`, `instructions_sha` (empreinte des instructions système utilisées : change quand
-`system/*.md` change), `mlflow_trace_id` (identifiant de la trace MLflow du tour, vide si `CHAT_MLFLOW_EXPERIMENT` est vide ou si l'envoi a échoué ; sert à rattacher le vote 👍/👎 à la trace).
+**Ce qui était attendu**
 
-Le catalogue des documents (`doc_catalog`) porte aussi `revision` (l'indice Intraqual de la
-révision en cours) et `doc_date` (sa date de publication), écrits par la tâche
-`6_update_kb_metadata` : le chat les donne au modèle avec chaque document
-(« current revision B, published 2024-10-11 ») et les montre sur les pastilles de sources ;
-ils sont enregistrés avec les sources de chaque réponse (`chat_messages.sources_json` :
-`doc_title`, `revision`, `doc_date`).
+| Colonne | Type | Sens |
+|---|---|---|
+| `index_name` | TEXT | index de recherche utilisé |
+| `config` | JSONB | réglages du moteur au moment du tour (index, tailles de recherche, modèles de réponse et de secours, modèle de réécriture, limites de tokens) |
 
-**Réponse** — tokens et coût de la réponse (`input_tokens`, `output_tokens`, `thinking_tokens`,
-`cost_eur`) et de la reformulation (`rewrite_*`), `truncated`, `continuations`, `answer_chars`,
-`citations_count`, `cited_refs`, `sources_count` (pastilles affichées), `answer_translated`.
+**Question et identité**
 
-**Durées** (millisecondes) :
+| Colonne | Type | Sens |
+|---|---|---|
+| `session_id` | TEXT | conversation (pas de clé étrangère : un tour dont les messages n'ont pas pu être écrits reste journalisé) |
+| `user_id` | TEXT | utilisateur |
+| `workspace_id` | TEXT | espace de travail Databricks |
+| `app_version` | TEXT | version de l'app |
+| `division` | TEXT | périmètre demandé : `ALL`, `AS` ou `IS` |
+| `question` | TEXT | question posée |
+| `question_lang` | TEXT | langue détectée de la question |
+| `question_en` | TEXT | question envoyée à la recherche quand elle a été traduite |
+| `history_messages` | INTEGER | messages de la conversation transmis au moteur |
+
+**Réécriture de la requête**
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `fr_query` | TEXT | requête de recherche en français |
+| `en_query` | TEXT | requête de recherche en anglais |
+| `rewrite_ok` | BOOLEAN | la réécriture (ou la traduction) a réussi |
+| `rewrite_mode` | TEXT | `translate` : premier message, seulement traduit dans l'autre langue ; `rewrite` : réécriture bilingue |
+| `rewrite_endpoint` | TEXT | modèle qui a réécrit (NULL : tous les modèles ont échoué) |
+| `rewrite_attempts` | JSONB | chaque essai de réécriture ou de traduction, relances comprises |
+| `rewrite_input_tokens` | INTEGER | tokens en entrée de la réécriture |
+| `rewrite_output_tokens` | INTEGER | tokens en sortie de la réécriture |
+| `rewrite_cost_eur` | DOUBLE PRECISION | coût de la réécriture |
+
+**Recherche**
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `named_refs` | TEXT[] | références (REF) nommées dans la conversation, recherchées en plus |
+| `vs_calls_expected` | INTEGER | requêtes Vector Search prévues |
+| `vs_calls_ok` | INTEGER | requêtes Vector Search réussies |
+| `rerank_ok` | BOOLEAN | le reranker a répondu |
+| `passages_retrieved` | INTEGER | passages retrouvés (lignes de `chat_retrieved_chunks`) |
+| `passages_sent` | INTEGER | passages transmis au modèle (`kept`) |
+| `documents_sent` | INTEGER | documents distincts transmis au modèle |
+| `prompt_chars` | INTEGER | taille du prompt, en caractères |
+| `instructions_sha` | TEXT | empreinte (16 caractères) des instructions système utilisées ; change quand `server/prompts/chat/system/*.md` change |
+| `mlflow_trace_id` | TEXT | trace MLflow du tour |
+
+**Réponse**
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `answer_endpoint` | TEXT | modèle qui a répondu (NULL : aucun) |
+| `llm_fallback` | BOOLEAN | réponse du modèle de secours |
+| `llm_attempts` | JSONB | chaque appel au modèle : endpoint, résultat, statut HTTP, secondes |
+| `truncated` | BOOLEAN | limite de tokens atteinte |
+| `continuations` | INTEGER | nombre de reprises après une coupure |
+| `input_tokens` | INTEGER | tokens en entrée de la réponse |
+| `output_tokens` | INTEGER | tokens en sortie de la réponse |
+| `thinking_tokens` | INTEGER | tokens de raisonnement |
+| `cost_eur` | DOUBLE PRECISION | coût de la réponse (la réécriture est dans `rewrite_cost_eur`) |
+| `answer_chars` | INTEGER | taille de la réponse, en caractères |
+| `citations_count` | INTEGER | nombre de citations dans la réponse |
+| `cited_refs` | TEXT[] | références citées dans la réponse |
+| `sources_count` | INTEGER | pastilles de source affichées (citées ou nommées dans le texte) |
+| `answer_translated` | BOOLEAN | réponse traduite dans la langue de la question |
+| `user_message` | TEXT | message affiché à l'utilisateur en cas d'échec (NULL : rien) |
+
+**Durées** (millisecondes, INTEGER)
 
 | Colonne | Mesure |
 |---|---|
-| `total_ms` | du message reçu à la fin du tour (réponse envoyée et messages sauvegardés) |
-| `first_token_ms` | du message reçu au premier mot de la réponse — ce que l'utilisateur attend (avec le bridge, il ne voit rien avant la traduction complète) |
-| `translate_in_ms` | détection de langue + traduction de la question |
-| `retrieval_ms` | toute la recherche (= reformulation + recherche + recherches ciblées) |
-| `rewrite_ms`, `search_ms`, `ref_lookup_ms`, `title_lookup_ms` | chacune de ces étapes |
+| `total_ms` | du message reçu à la fin du tour (réponse envoyée, messages sauvegardés) |
+| `first_token_ms` | du message reçu au premier mot de la réponse : ce que l'utilisateur attend |
+| `translate_in_ms` | détection de langue et traduction de la question |
+| `retrieval_ms` | toute la recherche : réécriture, recherche et recherche des références |
+| `rewrite_ms` | réécriture |
+| `search_ms` | recherche Vector Search |
+| `ref_lookup_ms` | recherche des références nommées |
 | `queue_wait_ms` | attente d'un créneau de génération (`CHAT_MAX_CONCURRENT_ANSWERS`) |
-| `generation_ms` | génération de la réponse (après l'attente), relances comprises |
+| `generation_ms` | génération de la réponse, relances comprises |
 | `translate_back_ms` | traduction de la réponse |
 | `persist_ms` | écriture de `chat_messages` |
 
-## `chat_retrieved_chunks`
+**Codes** (`warnings`, un code par problème ; le détail est dans `errors`, même `trace_id`) :
 
-Tous les passages retrouvés pour un tour, **avec leur texte** : le pipeline supprime les passages
-d'une révision remplacée (`create_proj_parse_manifest`), un simple `chunk_id` deviendrait illisible. Écrit
-dans la même transaction que `chat_turns`, après l'envoi de la réponse : l'utilisateur n'attend pas
-cette écriture.
+| Code | Ce qui s'est passé |
+|---|---|
+| `translate_in_failed` | détection ou traduction de la question en échec : recherche faite avec la question d'origine |
+| `rewrite_failed` | aucun modèle n'a réécrit la requête : recherche avec la question seule |
+| `rewrite_fallback` | réécriture faite par le modèle de secours |
+| `vs_partial` | une partie des requêtes Vector Search a échoué (`vs_calls_ok` < `vs_calls_expected`) |
+| `rerank_refused` | l'index a refusé le reranker : recherche brute seule |
+| `no_passages` | aucun passage trouvé |
+| `llm_fallback` | réponse du modèle de secours |
+| `llm_retried` | appels en échec (429, timeout…) relancés avant la réponse |
+| `answer_continued` | réponse coupée puis reprise |
+| `answer_interrupted` | réponse coupée, aucun modèle n'a pu la finir |
+| `translate_back_failed` | traduction de la réponse en échec : réponse laissée dans la langue du modèle |
+| `persist_failed` | les messages n'ont pas pu être écrits dans `chat_messages` |
+| `client_disconnected`, `send_failed` | information sur la connexion du navigateur |
 
-- `kept` : envoyé au modèle ; sinon `drop_reason` = `other_language` (une autre langue du même
-  document a été préférée) ou `over_cap` (au-delà de `CHAT_MAX_SEARCH_PASSAGES`, 0 = pas de
-  plafond par défaut) ;
-- `position` (ordre de retrieval), `prompt_rank` (ordre dans le prompt), `doc_number` (le `[n]` du
-  document dans le prompt), `cited` (son document est cité par la réponse) ;
-- `source` : `search` (trouvé par la recherche principale) ou `ref_lookup` / `title_lookup`
-  (apporté seulement par la recherche ciblée) ;
-- `hits` (JSONB) : chaque requête qui l'a trouvé — `q` (0 = question telle quelle, 1 = FR,
-  2 = EN, `null` pour une recherche ciblée), `via` (`rerank`, `raw`, `ref_lookup`, `title_lookup`),
-  `rank`, `score` ; `best_score` ;
-- `chunk_id`, `iddoc`, `ref`, `division`, `url`, `semantic_headers`, `chunk_text`.
+### `chat_retrieved_chunks`
 
-Volume : environ 30 à 40 lignes et 50 Ko par tour, soit environ 50 Mo pour 1 000 tours. Tout est
-gardé (pas de purge).
+Une ligne par passage retrouvé pour un tour, avec son texte. Les passages d'une révision remplacée sont supprimés de la table d'index : cette table garde ce sur quoi la réponse a été construite.
 
-## `errors` — colonnes ajoutées
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | BIGSERIAL | clé primaire |
+| `created_at` | TIMESTAMPTZ | date d'écriture |
+| `turn_id` | INTEGER NOT NULL | `chat_turns.id` (suppression en cascade) |
+| `trace_id` | TEXT | `trace_id` du tour |
+| `position` | INTEGER | ordre de récupération (fusion par meilleur rang) |
+| `kept` | BOOLEAN NOT NULL, défaut `TRUE` | passage transmis au modèle |
+| `drop_reason` | TEXT | si écarté : `other_language` (une autre langue du même document a été préférée) ou `over_cap` (au-delà de `CHAT_MAX_SEARCH_PASSAGES`) |
+| `prompt_rank` | INTEGER | ordre dans le prompt (passages transmis seulement) |
+| `doc_number` | INTEGER | numéro `[n]` du document dans le prompt |
+| `cited` | BOOLEAN | le document est cité par la réponse |
+| `source` | TEXT | `search` (trouvé par la recherche) ou `ref_lookup` (apporté par la recherche des références) |
+| `hits` | JSONB | chaque requête qui a trouvé le passage : `q`, `via`, `rank`, `score` |
+| `best_score` | DOUBLE PRECISION | meilleur score |
+| `chunk_id` | TEXT | identifiant du passage dans l'index |
+| `iddoc` | TEXT | identifiant Intraqual de la révision du document |
+| `ref` | TEXT | référence du document |
+| `division` | TEXT | division du document |
+| `url` | TEXT | lien du document |
+| `semantic_headers` | TEXT | en-têtes sémantiques du passage |
+| `chunk_text` | TEXT | texte du passage |
 
-`severity` (`error` ou `warning` ; les lignes existantes valent `error`), `stage`, `http_status`,
-`upstream` (index Vector Search ou endpoint de modèle appelé), `trace_id`, `session_id`,
-`context` (JSONB : attendu vs obtenu — chaîne de modèles prévue et essais, requêtes envoyées /
-échouées, code du warning…), `app_version`. La pile d'appels reste dans `stack_trace`.
+Index : `idx_chat_retrieved_chunks_turn_id` (`turn_id`), `idx_chat_retrieved_chunks_ref` (`ref`).
 
-Pour savoir **d'où vient** une erreur :
+### `chat_sessions`
 
-- `origin` : l'endroit exact du code, `chemin:ligne in fonction`. Pour une exception, c'est la
-  dernière ligne de la pile qui est dans ce dépôt (là où l'erreur a été levée ou reçue, pas une
-  ligne de librairie) ; sinon, le code qui a signalé le problème.
-- `fingerprint` : 12 caractères qui regroupent la même erreur d'une requête à l'autre (même
-  route, même étape, même type, même `origin`, numéro de ligne ignoré). Une valeur jamais vue
-  avant = un nouveau problème (alerte `utils/alerts/05_new_error_kinds.sql`).
-- `user_message` : ce que l'utilisateur a vu. Dans le chat, c'est toujours le même texte
-  (« Qualibot is a bit tired right now. Please wait a moment and try again. »), envoyé seulement
-  quand toutes les relances ont échoué ; `NULL` = rien n'a été montré (la requête a continué).
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | TEXT PK | identifiant de la conversation |
+| `created_at`, `updated_at` | TIMESTAMPTZ | dates |
+| `user_id`, `workspace_id`, `workspace_url` | TEXT | propriétaire |
+| `name` | TEXT NOT NULL, défaut `New conversation` | titre |
+| `deleted` | BOOLEAN NOT NULL, défaut `FALSE` | suppression logique : les lignes ne sont jamais effacées physiquement |
+| `deleted_at` | TIMESTAMPTZ | date de la suppression logique |
+| `share_token` | TEXT | jeton de partage en lecture seule (NULL : non partagée) |
 
-Aucun message technique n'est envoyé au navigateur du chat : la cause n'est que dans `errors`,
-`chat_turns.error_*` et `chat_messages.error_msg`.
+Index unique : `chat_sessions_share_token_idx` (`share_token`, où il n'est pas NULL).
 
-Côté chat, les lignes `errors` sont écrites avec le tour (une par warning ou erreur). Côté
-Compare : `/compare/analyze` renseigne `stage` (`build` = extraction des fichiers, `llm`,
-`stream`) ; `/compare/impact` écrit un `warning` pour une recherche partielle
-(`VectorSearchPartial`) et pour chaque appel du juge en échec, et `stage` = `search` / `judge`
-pour un échec complet.
+### `chat_messages`
 
-## Compare et impact search — colonnes ajoutées
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant du message |
+| `created_at` | TIMESTAMPTZ | date |
+| `session_id` | TEXT | `chat_sessions.id` (suppression en cascade) |
+| `user_id`, `workspace_id`, `workspace_url` | TEXT | auteur |
+| `role` | TEXT NOT NULL | `user` ou `assistant` |
+| `content` | TEXT NOT NULL | texte du message |
+| `trace_id` | TEXT | `trace_id` du tour (`chat_turns`) |
+| `endpoint_name` | TEXT | libellé du moteur : `chat-all`, `chat-as` ou `chat-is` (NULL sur les copies d'une conversation partagée). Le modèle qui a répondu est `chat_turns.answer_endpoint` |
+| `sources_json` | TEXT | sources affichées avec la réponse (référence, titre, révision, date) |
+| `deleted`, `deleted_at` | BOOLEAN, TIMESTAMPTZ | suppression logique |
+| `status` | TEXT NOT NULL, défaut `ok` | `ok` ou `error` ; les tours en échec sont gardés, avec la raison |
+| `error_msg` | TEXT | raison de l'échec |
+| `division` | TEXT NOT NULL, défaut `ALL` | périmètre de la question : `ALL`, `AS` ou `IS` |
+| `question_lang` | TEXT | langue de la question, telle que détectée par la traduction |
 
-- `llm_requests` (une analyse) : `status` (`ok` / `error` / `aborted`), `queue_wait_ms` (attente
-  d'un créneau d'analyse), `build_ms` (extraction + prompt), `first_token_ms`, `generation_ms`,
-  `total_ms`, `chunked_parts` (nombre de parties en map-reduce, 0 = un seul appel).
-- `impact_requests` : `status` (`ok` / `error` / `aborted`), `app_version`, `index_name`,
-  `queries_used`, `queries_failed`, `candidates`, `not_judged`, `judge_failed`, `extract_ms`,
-  `search_ms`, `judge_ms` (`duration_s` reste le total). Une recherche interrompue par le
-  navigateur est maintenant enregistrée (`aborted`).
-- `impact_document_results` : `status`, `judge_ms`, `judge_attempts`, `input_tokens`,
-  `output_tokens` (en fin de ligne, la partie lisible par le métier reste en tête).
+Index : `chat_messages_session_idx` (`session_id`).
 
-## Champs obsolètes
+### `chat_feedbacks`
 
-`chat_messages.tool_name`, `tool_query`, `tool_result`, `reasoning_steps` : propres au Knowledge
-Assistant, **plus écrits depuis le 2026-10-09**, gardés pour l'historique des tours KA (à supprimer
-plus tard, après un export). `chat_messages.trace_id` est toujours écrit (= `chat_turns.trace_id`).
-`chat_messages.endpoint_name` est gardé : c'est le libellé du moteur (`chat-all` / `chat-as` /
-`chat-is`) et les notebooks de notation filtrent dessus (`NULL` = copie d'une conversation
-partagée) ; le modèle réel est `chat_turns.answer_endpoint`.
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `message_id` | INTEGER | `chat_messages.id` (NULL après suppression) |
+| `session_id` | TEXT | `chat_sessions.id` (NULL après suppression) |
+| `user_id`, `workspace_id`, `workspace_url` | TEXT | auteur du vote |
+| `vote` | TEXT NOT NULL | `up` ou `down` |
+| `comment` | TEXT | commentaire facultatif |
+| `resolved` | BOOLEAN NOT NULL, défaut `FALSE` | vote traité (tableau de bord) |
+| `resolution_reason` | TEXT | raison du traitement |
 
-## Requêtes utiles
+## Recherche de comparaison et historique
+
+### `messages`
+
+Une ligne par analyse de comparaison, pour l'historique.
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `user_id`, `workspace_id`, `workspace_url` | TEXT | utilisateur |
+| `old_filename`, `new_filename` | TEXT NOT NULL | noms des fichiers comparés |
+| `old_file_hash`, `new_file_hash` | TEXT | empreintes des fichiers |
+| `analysis_text` | TEXT | résultat de l'analyse |
+| `impact_text` | TEXT | résultat de l'impact search rattaché à la comparaison |
+| `volume_session_path` | TEXT | chemin des fichiers sur le volume de la session |
+| `file_type` | TEXT | type de fichier |
+| `processing_method` | TEXT | méthode d'extraction |
+| `processor_version` | TEXT | version du processeur |
+| `ttft_s`, `generation_s` | DOUBLE PRECISION | secondes avant le premier mot, et de génération |
+| `input_tokens`, `output_tokens`, `thinking_tokens`, `total_tokens` | INTEGER | tokens |
+| `cost_eur` | DOUBLE PRECISION | coût |
+| `app_version` | TEXT | version de l'app |
+| `llm_request_id` | INTEGER | `llm_requests.id` de l'analyse |
+| `endpoint_name` | TEXT | modèle utilisé (copie de `llm_requests.endpoint_name`) |
+
+### `feedbacks`
+
+Votes sur une analyse de comparaison.
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `message_id` | INTEGER | `messages.id` (NULL après suppression) |
+| `user_id`, `workspace_id`, `workspace_url` | TEXT | auteur |
+| `vote` | TEXT NOT NULL | `up` ou `down` |
+| `comment` | TEXT | commentaire |
+| `resolved` | BOOLEAN NOT NULL, défaut `FALSE` | vote traité |
+| `resolution_reason` | TEXT | raison du traitement |
+
+### `llm_requests`
+
+Une ligne par analyse `/compare/analyze`.
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `old_file_hash`, `new_file_hash` | TEXT | empreintes |
+| `file_type` | TEXT | type de fichier |
+| `endpoint_name` | TEXT | modèle |
+| `messages_json` | TEXT | messages envoyés au modèle |
+| `input_tokens`, `output_tokens`, `thinking_tokens`, `total_tokens` | INTEGER | tokens |
+| `cost_eur` | DOUBLE PRECISION | coût |
+| `http_status` | INTEGER | statut HTTP de l'appel |
+| `error_type`, `error_msg` | TEXT | erreur éventuelle |
+| `status` | TEXT | `ok`, `error` ou `aborted` (le navigateur est parti avant la fin) |
+| `queue_wait_ms` | INTEGER | attente d'un créneau d'analyse |
+| `build_ms` | INTEGER | extraction des fichiers et prompt |
+| `first_token_ms` | INTEGER | de l'appel au premier mot |
+| `generation_ms` | INTEGER | de l'appel à la fin |
+| `total_ms` | INTEGER | durée totale |
+| `chunked_parts` | INTEGER | nombre de parties (découpage en plusieurs appels ; 0 : un seul appel) |
+
+## Impact search
+
+### `impact_requests`
+
+Une ligne par appel à `/compare/impact`, réussi ou non.
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `user_id`, `workspace_id` | TEXT | utilisateur |
+| `method` | TEXT NOT NULL | méthode d'extraction des changements |
+| `old_file_hash`, `new_file_hash` | TEXT | empreintes |
+| `changes_chars` | INTEGER | taille de la liste des changements, en caractères |
+| `truncated` | BOOLEAN | liste des changements tronquée |
+| `chunks_returned` | INTEGER | passages retournés par la recherche |
+| `num_documents` | INTEGER | documents trouvés |
+| `duration_s` | DOUBLE PRECISION | durée totale, en secondes |
+| `endpoint_name` | TEXT | modèle du juge |
+| `input_tokens`, `output_tokens`, `total_tokens` | INTEGER | tokens |
+| `cost_eur` | DOUBLE PRECISION | coût |
+| `http_status` | INTEGER | statut HTTP |
+| `error_type`, `error_msg` | TEXT | erreur éventuelle |
+| `status` | TEXT | `ok`, `error` ou `aborted` |
+| `app_version` | TEXT | version de l'app |
+| `index_name` | TEXT | index de recherche |
+| `queries_used` | INTEGER | requêtes Vector Search (une par changement) |
+| `queries_failed` | INTEGER | requêtes en échec |
+| `candidates` | INTEGER | documents envoyés au juge |
+| `not_judged` | INTEGER | documents trouvés, au-delà de `impact_max_candidates` (non jugés) |
+| `judge_failed` | INTEGER | appels du juge en échec après relances |
+| `extract_ms` | INTEGER | liste des changements → requêtes |
+| `search_ms` | INTEGER | recherche |
+| `judge_ms` | INTEGER | tous les appels du juge (en parallèle) |
+
+### `impact_document_results`
+
+Une ligne par document jugé par le modèle.
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `request_id` | INTEGER NOT NULL | `impact_requests.id` (suppression en cascade) |
+| `ref` | TEXT | référence du document |
+| `division` | TEXT | division |
+| `url` | TEXT | lien |
+| `impacted` | BOOLEAN | le document est impacté |
+| `confidence` | TEXT | confiance du verdict |
+| `section` | TEXT | section concernée |
+| `reason` | TEXT | justification |
+| `other_documents_json` | TEXT | autres documents cités par le verdict |
+| `status` | TEXT | `impacted`, `check` (à vérifier), `not_impacted` ou `error` |
+| `judge_ms` | INTEGER | durée de l'appel du juge |
+| `judge_attempts` | INTEGER | essais de l'appel |
+| `input_tokens`, `output_tokens` | INTEGER | tokens de l'appel |
+
+Index : `idx_impact_document_results_request_id` (`request_id`).
+
+### `impact_feedbacks`
+
+Votes sur une impact search : sur le résultat entier (`ref` NULL, commentaire facultatif) ou sur le verdict d'un document.
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `impact_request_id` | INTEGER | `impact_requests.id` (NULL après suppression) |
+| `message_id` | INTEGER | `messages.id` de la comparaison (NULL après suppression) |
+| `user_id`, `workspace_id`, `workspace_url` | TEXT | auteur |
+| `old_file_hash`, `new_file_hash` | TEXT | empreintes des fichiers |
+| `ref` | TEXT | document voté (NULL : vote sur le résultat entier) |
+| `verdict_shown` | TEXT | verdict affiché au moment du vote |
+| `vote` | TEXT NOT NULL | `up` ou `down` |
+| `comment` | TEXT | commentaire |
+| `resolved` | BOOLEAN NOT NULL, défaut `FALSE` | vote traité |
+| `resolution_reason` | TEXT | raison du traitement |
+
+Index : `idx_impact_feedbacks_request_id` (`impact_request_id`).
+
+### `impact_cache`
+
+Résultat d'une impact search, réutilisé pour les mêmes fichiers (« Re-run » l'ignore).
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `old_file_hash`, `new_file_hash` | TEXT NOT NULL | empreintes des deux fichiers |
+| `app_version` | TEXT NOT NULL | version de l'app |
+| `result_json` | TEXT NOT NULL | résultat complet |
+
+Index : `idx_impact_cache_hashes` (`old_file_hash`, `new_file_hash`, `app_version`).
+
+### `summary_cache`
+
+Résumé d'un document, réutilisé pour le même fichier.
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `file_hash` | TEXT NOT NULL | empreinte du document |
+| `app_version` | TEXT NOT NULL | version de l'app |
+| `result_json` | TEXT NOT NULL | résumé |
+| `endpoint_name` | TEXT | modèle qui a produit le résumé |
+
+Index : `idx_summary_cache_hash` (`file_hash`, `app_version`).
+
+## Journal des erreurs
+
+### `errors`
+
+Une ligne par erreur ou avertissement. Les avertissements d'un tour de chat sont écrits avec le tour (une ligne par code de `warnings`).
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at` | TIMESTAMPTZ | date |
+| `user_id`, `workspace_id` | TEXT | utilisateur |
+| `endpoint` | TEXT | route de l'app (ex. `/api/chat/ws`) |
+| `error_type` | TEXT | type de l'erreur |
+| `error_msg` | TEXT | message de l'erreur |
+| `old_filename`, `new_filename`, `file_type` | TEXT | fichiers concernés (comparaison) |
+| `stack_trace` | TEXT | pile d'appels (4 000 caractères au plus) |
+| `llm_request_id` | INTEGER | `llm_requests.id` concerné |
+| `severity` | TEXT NOT NULL, défaut `error` | `error` (la requête a échoué) ou `warning` (elle a continué, dégradée) |
+| `stage` | TEXT | étape en échec. Chat : `translate_in`, `rewrite`, `search`, `ref_lookup`, `llm`, `translate_back`, `persist`, `ws`. Comparaison : `build`, `llm`, `stream` (analyse) ; `search`, `judge` (impact) |
+| `http_status` | INTEGER | statut HTTP |
+| `upstream` | TEXT | index Vector Search ou endpoint de modèle appelé |
+| `trace_id` | TEXT | `trace_id` du tour de chat |
+| `session_id` | TEXT | conversation |
+| `context` | JSONB | attendu et obtenu : chaîne de modèles prévue, essais, requêtes envoyées ou échouées, code de l'avertissement |
+| `app_version` | TEXT | version de l'app |
+| `origin` | TEXT | endroit du code, `chemin:ligne in fonction` (la dernière ligne de la pile dans ce dépôt, sinon le code qui a signalé l'erreur) |
+| `fingerprint` | TEXT | 12 caractères qui regroupent la même erreur d'une requête à l'autre (même route, étape, type et `origin`, numéro de ligne ignoré) |
+| `user_message` | TEXT | ce que l'utilisateur a vu ; NULL : rien n'a été montré |
+
+`user_message` dans le chat : toujours le même texte, envoyé seulement quand toutes les relances ont échoué. Aucun message technique n'est envoyé au navigateur du chat : la cause n'est que dans `errors`, `chat_turns.error_*` et `chat_messages.error_msg`.
+
+Index : `idx_errors_created_at` (`created_at`), `idx_errors_trace_id` (`trace_id`), `idx_errors_fingerprint` (`fingerprint`).
+
+## Divers
+
+### `users`
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | SERIAL PK | identifiant |
+| `created_at`, `updated_at` | TIMESTAMPTZ | dates |
+| `user_id` | TEXT UNIQUE NOT NULL | identifiant Databricks de l'utilisateur |
+| `workspace_id` | TEXT | espace de travail |
+| `email` | TEXT | e-mail (sans espaces ; unique quand il n'est pas NULL) |
+| `display_name` | TEXT | nom affiché |
+| `workspace_url` | TEXT | adresse de l'espace de travail |
+| `role` | TEXT NOT NULL, défaut `user` | rôle |
+| `is_active` | BOOLEAN NOT NULL, défaut `TRUE` | compte actif |
+
+Index unique : `users_email_idx` (`email`, où il n'est pas NULL).
+
+### `knowledge_base_metadata`
+
+Une seule ligne (`id = 1`, contrainte `single_row`) : la date « documents à jour au », affichée dans l'interface.
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `id` | INTEGER PK, défaut `1` | toujours `1` |
+| `documents_as_of` | DATE | date affichée |
+| `updated_at` | TIMESTAMPTZ | dernière mise à jour |
+
+### `doc_catalog`
+
+Catalogue des documents du périmètre de recherche. Réécrit par la tâche `6_update_kb_metadata` du pipeline après chaque run quotidien (`utils/parsing_pipeline/create_proj_doc_catalog.py`) ; lu par l'app (rechargement toutes les 30 min).
+
+| Colonne | Type | Sens |
+|---|---|---|
+| `ref` | TEXT PK | référence du document |
+| `base_ref` | TEXT | référence de base ; NULL : calculée par l'app (`doc_catalog._canon`) |
+| `title` | TEXT | titre |
+| `url` | TEXT | lien |
+| `division` | TEXT | division |
+| `in_chat` | BOOLEAN NOT NULL, défaut `TRUE` | document présent dans l'index du chat |
+| `updated_at` | TIMESTAMPTZ NOT NULL | dernière écriture |
+| `revision` | TEXT | révision en cours (indice Intraqual) |
+| `doc_date` | DATE | date de publication de la révision |
+
+Les colonnes `revision` et `doc_date` sont ajoutées par l'app si elle est propriétaire de la table ; sinon par la tâche 6 du pipeline. L'app les donne au modèle avec chaque document et les affiche sur les pastilles de source.
+
+## Requêtes de contrôle
+
+Exemples de contrôle des tables, pour l'éditeur SQL Lakebase de la base concernée :
 
 ```sql
--- Tours des 7 derniers jours par résultat, et durées médiane / p90
+-- Tours de la semaine par statut, durées médianes
 SELECT status, COUNT(*),
        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_ms)       AS total_p50,
-       PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY total_ms)       AS total_p90,
        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY first_token_ms) AS first_token_p50
 FROM chat_turns WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY status;
 
--- Ce qui dégrade les tours
+-- Avertissements les plus fréquents
 SELECT w AS warning, COUNT(*) FROM chat_turns, UNNEST(warnings) AS w
 WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY w ORDER BY 2 DESC;
-
--- Où part le temps (moyenne par étape)
-SELECT AVG(translate_in_ms), AVG(rewrite_ms), AVG(search_ms), AVG(ref_lookup_ms), AVG(title_lookup_ms),
-       AVG(queue_wait_ms), AVG(generation_ms), AVG(translate_back_ms), AVG(persist_ms), AVG(total_ms)
-FROM chat_turns WHERE status IN ('ok', 'degraded') AND created_at > NOW() - INTERVAL '7 days';
 
 -- Un tour en détail : ses passages, dans l'ordre du prompt
 SELECT prompt_rank, doc_number, ref, cited, source, best_score, LEFT(chunk_text, 120)
 FROM chat_retrieved_chunks WHERE trace_id = 'chat-…' AND kept ORDER BY prompt_rank;
 
--- Documents souvent envoyés au modèle mais jamais cités
-SELECT ref, COUNT(*) AS sent, SUM(CASE WHEN cited THEN 1 ELSE 0 END) AS cited
-FROM chat_retrieved_chunks WHERE kept GROUP BY ref HAVING SUM(CASE WHEN cited THEN 1 ELSE 0 END) = 0
-ORDER BY sent DESC LIMIT 30;
-
--- Erreurs et warnings, toutes fonctions confondues, regroupés par sorte d'erreur
+-- Erreurs par empreinte, sur 7 jours
 SELECT fingerprint, endpoint, severity, stage, error_type, origin, COUNT(*) AS n,
        MIN(created_at) AS first_seen, MAX(created_at) AS last_seen, MAX(LEFT(error_msg, 150)) AS example
 FROM errors WHERE created_at > NOW() - INTERVAL '7 days'
 GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY n DESC;
-
--- Une erreur de chat avec tout son contexte (question, étapes, ce que l'utilisateur a vu)
-SELECT e.created_at, e.stage, e.error_type, e.origin, e.error_msg, e.user_message, e.context,
-       t.question, t.status, t.warnings, t.total_ms
-FROM errors e LEFT JOIN chat_turns t ON t.trace_id = e.trace_id
-WHERE e.endpoint = '/api/chat/ws' ORDER BY e.id DESC LIMIT 20;
-
--- Votes négatifs avec ce qui s'est passé pendant le tour
-SELECT f.created_at, f.comment, t.status, t.warnings, t.answer_endpoint, t.total_ms, t.fr_query
-FROM chat_feedbacks f JOIN chat_turns t ON t.assistant_message_id = f.message_id
-WHERE f.vote = 'down' ORDER BY f.created_at DESC;
 ```
 
-## Trace MLflow de chaque tour
+## Index
 
-Le même `TurnLog` alimente aussi une trace MLflow par tour (`server/services/chat/mlflow_turns.py`,
-expérience `CHAT_MLFLOW_EXPERIMENT`, vide = éteint). Correspondance : tag `chat_trace_id` = `chat_turns.trace_id` ;
-spans `retrieval` / `rewrite` / `search` / `ref_lookup` / `answer` / `queue_wait` / `call_n` /
-`translate_in` / `translate_back` / `persist` = les colonnes `<étape>_ms` (et `llm_attempts` pour `call_n`) ;
-sortie du span `retrieval` = les passages `kept` de `chat_retrieved_chunks`, dans l'ordre du prompt ;
-tokens et coût sur `rewrite` et `answer` ; `status` et `warnings` en tags ; `issues` (sans trace de pile)
-en attribut de la racine. La session MLflow est `session_id`, l'utilisateur est haché. Les tags lus par les scorers gratuits
-(`passages_sent`, `cited_count`, `first_token_ms`, `cost_eur`, `question_lang_guess`, `answer_lang_guess`…) et les versions de
-prompts liées (lues dans les tags `chat_prompt.<clé>` de l'expérience, écrits par `register_chat_prompts`) y sont aussi. Le span `retrieval` résume les documents transmis ; `passages_sent` (RETRIEVER) garde le texte complet ; chaque appel Vector Search est un span sous `search` (requête, rerank ou brut, résultats, durée). Rien n'est lu depuis Lakebase : un champ de plus dans la trace s'ajoute d'abord
-dans le `TurnLog`.
-
-## Notation de la qualité
-
-Les tours sont notés **depuis les traces MLflow**, pas depuis Lakebase (`utils/evaluation/score_chat_traces.py`, job
-`D_2_Qualibot_Score_Chat_Traces_<cible>`, par lots, jamais pendant un tour) : scorers gratuits sur tous les tours, juges LLM sur un
-échantillon, résultats dans `dev_proj.qualibot.chat_trace_scores` (clé `chat_trace_id` = `chat_turns.trace_id`). Le vote 👍/👎 est une
-évaluation `user_vote` sur la trace (`chat_turns.mlflow_trace_id` fait le lien). La tâche d'import du job d'export UAT
-(`import_chatbot_tables_to_uat_job.py`) charge `chat_turns`, `chat_retrieved_chunks` et `errors` dans `uat_proj.qualibot`
-(tableaux de bord, alertes `utils/alerts/05` et `06`).
-
-## Vérifié
-
-- Tests : `tests/test_lakebase_logging.py` (chaque clé écrite par le moteur est bien une colonne,
-  forme des INSERT, audits impact / analyse), `tests/test_chat_engine.py` (journal d'un tour : propre,
-  recherche partielle, reranker refusé, reformulation en échec, recherche en panne, modèle de
-  secours, plafond), `tests/test_chat_route.py` (tour enregistré une fois, en erreur, interrompu).
-- Sur un PostgreSQL 16 local : schéma d'avant ce changement créé, puis le nouveau appliqué deux fois
-  (montée de version + idempotence), puis écriture et relecture d'un tour, de ses passages, de ses
-  erreurs, d'une analyse et d'une impact search.
-
-Pas instrumenté : `/compare/summarize` (sa durée est dans `summary_cache.result_json`), les
-impact searches servies depuis le cache (aucune ligne `impact_requests`, comme avant).
+| Table | Index |
+|---|---|
+| `chat_turns` | `idx_chat_turns_created_at` (`created_at`), `idx_chat_turns_session_id` (`session_id`), `idx_chat_turns_assistant_message_id` (`assistant_message_id`) |
+| `chat_retrieved_chunks` | `idx_chat_retrieved_chunks_turn_id` (`turn_id`), `idx_chat_retrieved_chunks_ref` (`ref`) |
+| `chat_sessions` | `chat_sessions_share_token_idx` (`share_token`, unique, où il n'est pas NULL) |
+| `chat_messages` | `chat_messages_session_idx` (`session_id`) |
+| `errors` | `idx_errors_created_at`, `idx_errors_trace_id`, `idx_errors_fingerprint` |
+| `impact_document_results` | `idx_impact_document_results_request_id` (`request_id`) |
+| `impact_feedbacks` | `idx_impact_feedbacks_request_id` (`impact_request_id`) |
+| `impact_cache` | `idx_impact_cache_hashes` (`old_file_hash`, `new_file_hash`, `app_version`) |
+| `summary_cache` | `idx_summary_cache_hash` (`file_hash`, `app_version`) |
+| `users` | `users_email_idx` (`email`, unique, où il n'est pas NULL) |
