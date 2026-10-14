@@ -523,7 +523,7 @@ targets:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
     variables:
       app_name: "qualibot-uat-test"
-      app_volume_name: doc_compare
+      app_volume_name: doc_compare_test
       app_proj_catalog: uat_proj
       app_proj_schema: qualibot
       parsing_node_type: "r6idn.4xlarge"

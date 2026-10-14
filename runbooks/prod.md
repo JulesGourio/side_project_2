@@ -93,13 +93,26 @@ GRANT SELECT ON TABLE prod_proj.qualibot.chunks_index TO `<APP_SP>`;
 
 Les droits sur les volumes (`READ VOLUME`, `WRITE VOLUME`) sont à donner sur `prod_proj.qualibot.doc_compare` et `prod_proj.qualibot.images` si le bundle ne les pose pas. Aucun job de droits n'existe pour prod : ces lignes sont à lancer à la main.
 
+Modèles de chat, `CAN_QUERY` pour l'app prod (même liste que DEV ; `<APP_SP>` = client ID de l'app prod) :
+
+```powershell
+python -c "from databricks.sdk import WorkspaceClient; from databricks.sdk.service.serving import ServingEndpointAccessControlRequest as A, ServingEndpointPermissionLevel as L; w = WorkspaceClient(profile='qualibot-prod'); [w.serving_endpoints.update_permissions(w.serving_endpoints.get(n).id, access_control_list=[A(service_principal_name='<APP_SP>', permission_level=L.CAN_QUERY)]) for n in ['databricks-claude-sonnet-4-6','databricks-gpt-5-6-luna','databricks-gpt-6-luna','databricks-gemini-3-1-flash-lite']]; print('CAN_QUERY ok')"
+```
+
 ## 6. Déploiement (sur accord explicite uniquement)
 
 ```powershell
 databricks bundle deploy -t qualibot-prod --profile qualibot-prod
 ```
 
-Après déploiement : vérifier le chat et la comparaison sur l'URL de l'app prod, puis les logs de l'app (absence de `live group check failed`).
+Après déploiement : jobs MLflow de la cible, puis vérification du chat et de la comparaison sur l'URL de l'app prod, et des logs de l'app (absence de `live group check failed`).
+
+```powershell
+databricks bundle run -t qualibot-prod create_chat_experiment_prod --profile qualibot-prod
+databricks bundle run -t qualibot-prod register_chat_prompts_prod --profile qualibot-prod
+```
+
+Le scoring `score_chat_traces_prod` reste en pause ; son premier lancement se fait à la main, en `dry_run`.
 
 ## 7. Suppression des objets legacy (après validation, sur accord)
 

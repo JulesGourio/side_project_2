@@ -194,3 +194,223 @@ targets:
                 environment_version: "2"
                 dependencies:
                   - mlflow[databricks]>=3.4
+
+  qualibot-uat:
+    resources:
+      jobs:
+        create_chat_experiment_uat:
+          name: "Z_2_Qualibot_Create_Chat_Experiment_${bundle.target}"
+          description: "Create /Shared/qualibot/chat_turns owned by the job SP; the app SP can edit it. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          tasks:
+            - task_key: create_chat_experiment
+              spark_python_task:
+                python_file: ../utils/evaluation/create_chat_experiment.py
+                source: WORKSPACE
+                parameters:
+                  - "--app"
+                  - "qualibot"
+                  - "--experiment"
+                  - "/Shared/qualibot/chat_turns"
+                  - "--managers"
+                  - "Role-Project-LEAP-CoreAdmin,Role-Project-LEAP-CoreDev"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]>=3.1
+                  - databricks-sdk>=0.118.0
+
+        register_chat_prompts_uat:
+          name: "Z_3_Qualibot_Register_Chat_Prompts_${bundle.target}"
+          description: "Register the chat prompt files in the project schema (MLflow prompt registry, alias deployed). Run after every deploy that touches server/prompts/chat/. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          tasks:
+            - task_key: register_chat_prompts
+              spark_python_task:
+                python_file: ../utils/evaluation/register_chat_prompts.py
+                source: WORKSPACE
+                parameters:
+                  - "--schema"
+                  - "${var.app_proj_catalog}.${var.app_proj_schema}"
+                  - "--experiment"
+                  - "/Shared/qualibot/chat_turns"
+                  - "--app-root"
+                  - "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]>=3.4
+
+        score_chat_traces_uat:
+          name: "D_2_Qualibot_Score_Chat_Traces_${bundle.target}"
+          description: "Score the live chat traces (free scorers on every turn, LLM judges on a sample, throttled). dry_run=true only prints the plan and the token estimate: set it to false to judge."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"
+              level: CAN_MANAGE
+          parameters:
+            - name: dry_run
+              default: "true"
+          tasks:
+            - task_key: score_chat_traces
+              notebook_task:
+                notebook_path: ../utils/evaluation/score_chat_traces.py
+                source: WORKSPACE
+                base_parameters:
+                  dry_run: "{{job.parameters.dry_run}}"
+                  app_code_path: "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+                  experiment: "/Shared/qualibot/chat_turns"
+                  results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]>=3.4
+          schedule:
+            quartz_cron_expression: "0 30 2 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: PAUSED
+
+  qualibot-prod:
+    resources:
+      jobs:
+        create_chat_experiment_prod:
+          name: "Z_2_Qualibot_Create_Chat_Experiment_${bundle.target}"
+          description: "Create /Shared/qualibot/chat_turns owned by the job SP; the app SP can edit it. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          tasks:
+            - task_key: create_chat_experiment
+              spark_python_task:
+                python_file: ../utils/evaluation/create_chat_experiment.py
+                source: WORKSPACE
+                parameters:
+                  - "--app"
+                  - "qualibot"
+                  - "--experiment"
+                  - "/Shared/qualibot/chat_turns"
+                  - "--managers"
+                  - "Role-Project-LEAP-CoreAdmin,Role-Project-LEAP-CoreDev"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]>=3.1
+                  - databricks-sdk>=0.118.0
+
+        register_chat_prompts_prod:
+          name: "Z_3_Qualibot_Register_Chat_Prompts_${bundle.target}"
+          description: "Register the chat prompt files in the project schema (MLflow prompt registry, alias deployed). Run after every deploy that touches server/prompts/chat/. Manual trigger only."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+          tasks:
+            - task_key: register_chat_prompts
+              spark_python_task:
+                python_file: ../utils/evaluation/register_chat_prompts.py
+                source: WORKSPACE
+                parameters:
+                  - "--schema"
+                  - "${var.app_proj_catalog}.${var.app_proj_schema}"
+                  - "--experiment"
+                  - "/Shared/qualibot/chat_turns"
+                  - "--app-root"
+                  - "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]>=3.4
+
+        score_chat_traces_prod:
+          name: "D_2_Qualibot_Score_Chat_Traces_${bundle.target}"
+          description: "Score the live chat traces (free scorers on every turn, LLM judges on a sample, throttled). dry_run=true only prints the plan and the token estimate: set it to false to judge."
+          max_concurrent_runs: 1
+          tags:
+            project: Qualibot
+          run_as:
+            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "b82d3b5a-b633-4738-8dde-68bb2142cb02"
+              level: CAN_MANAGE
+          parameters:
+            - name: dry_run
+              default: "true"
+          tasks:
+            - task_key: score_chat_traces
+              notebook_task:
+                notebook_path: ../utils/evaluation/score_chat_traces.py
+                source: WORKSPACE
+                base_parameters:
+                  dry_run: "{{job.parameters.dry_run}}"
+                  app_code_path: "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+                  experiment: "/Shared/qualibot/chat_turns"
+                  results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - mlflow[databricks]>=3.4
+          schedule:
+            quartz_cron_expression: "0 30 2 * * ?"
+            timezone_id: "Europe/Paris"
+            pause_status: PAUSED

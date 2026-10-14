@@ -86,7 +86,37 @@ SELECT 'chunks' AS t, (SELECT count(*) FROM uat_landingzone.qualibot.chunks_v1) 
 
 **0.2b — Volumes : créer dans `uat_proj` et copier les données (PowerShell, profil `UAT`)**
 
-Point ouvert, à trancher avant cette étape : `qualibot-uat-test` utilise déjà `uat_proj.qualibot` (volumes `doc_compare` et `test`). Tant que ce conflit de noms n'est pas réglé (suffixe `_test` sur les volumes du test, à décider), ne pas lancer cette étape : elle écrirait dans les volumes du test.
+**0.2a — Volumes du test (`qualibot-uat-test`), suffixe `_test` (PowerShell, profil `UAT`)**
+
+La cible `qualibot-uat-test` partage le schéma `uat_proj.qualibot` avec l'UAT. Ses volumes portent donc le suffixe `_test` : `doc_compare_test`, `test_test`, `images_test`. Avant 0.2b, il faut libérer les noms `doc_compare` et `test` si le test les occupe encore.
+
+```powershell
+databricks volumes list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+```
+
+Si `uat_proj.qualibot.doc_compare` ou `uat_proj.qualibot.test` existent, ce sont les volumes du test. Les supprimer seulement sur ton accord (données de test) :
+
+```powershell
+databricks volumes delete uat_proj.qualibot.doc_compare --profile UAT
+databricks volumes delete uat_proj.qualibot.test --profile UAT
+```
+
+Créer les volumes du test et, si tu veux, reprendre les documents de test de l'UAT :
+
+```powershell
+databricks volumes create uat_proj qualibot doc_compare_test MANAGED --profile UAT
+databricks volumes create uat_proj qualibot test_test MANAGED --profile UAT
+databricks volumes create uat_proj qualibot images_test MANAGED --profile UAT
+databricks fs cp -r dbfs:/Volumes/uat_landingzone/qualibot/test dbfs:/Volumes/uat_proj/qualibot/test_test --profile UAT
+```
+
+Puis déployer la cible de test (libre, elle est jetable) pour que l'app lise les nouveaux chemins :
+
+```powershell
+databricks bundle deploy -t qualibot-uat-test --profile UAT
+```
+
+Les volumes de l'UAT (`doc_compare`, `test`, `images`, `docling_models`) ne portent pas de suffixe : aucun conflit avec la cible de test.
 
 ```powershell
 databricks volumes create uat_proj qualibot docling_models MANAGED --profile UAT
@@ -142,6 +172,14 @@ GRANT USE CATALOG ON CATALOG uat_proj TO `<PIPELINE_SP>`;
 GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA uat_proj.qualibot TO `<PIPELINE_SP>`;
 ```
 
+**0.4b — Modèles de chat : `CAN_QUERY` pour l'app UAT (PowerShell, profil `UAT`)**
+
+Même liste de modèles que le job de droits DEV. Remplacer `<APP_SP>` par le client ID de l'app (étape 0.4) :
+
+```powershell
+python -c "from databricks.sdk import WorkspaceClient; from databricks.sdk.service.serving import ServingEndpointAccessControlRequest as A, ServingEndpointPermissionLevel as L; w = WorkspaceClient(profile='UAT'); [w.serving_endpoints.update_permissions(w.serving_endpoints.get(n).id, access_control_list=[A(service_principal_name='<APP_SP>', permission_level=L.CAN_QUERY)]) for n in ['databricks-claude-sonnet-4-6','databricks-gpt-5-6-luna','databricks-gpt-6-luna','databricks-gemini-3-1-flash-lite']]; print('CAN_QUERY ok')"
+```
+
 **0.5 — Tables chat depuis Lakebase (run ponctuel)**
 
 ```powershell
@@ -167,6 +205,15 @@ Le déploiement UAT n'est jamais lancé sans ton accord (`CLAUDE.md`). Une fois 
 ```powershell
 databricks bundle deploy -t qualibot-uat --profile UAT
 ```
+
+Puis, une fois le déploiement fait, les jobs MLflow de la cible (expérience `/Shared/qualibot/chat_turns` et registre des prompts) :
+
+```powershell
+databricks bundle run -t qualibot-uat create_chat_experiment_uat --profile UAT
+databricks bundle run -t qualibot-uat register_chat_prompts_uat --profile UAT
+```
+
+Le job de scoring `score_chat_traces_uat` reste en pause ; son premier lancement se fait à la main, en `dry_run` (estimation seulement).
 
 Puis l'app pointe sur `uat_proj.qualibot.chunks_index` (`utils/deploy/target_env.json`). Vérifier le chat et la comparaison d'impact sur l'URL de l'app.
 

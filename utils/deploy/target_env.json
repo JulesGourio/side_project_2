@@ -16,12 +16,15 @@
     "CHAT_INDEX": "uat_proj.qualibot.chunks_index",
     "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/uat_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
     "COMPARE_IMPACT_INDEX": "uat_proj.qualibot.chunks_index",
-    "CAPS_WAREHOUSE_ID": "5890912c31867b77"
+    "CAPS_WAREHOUSE_ID": "5890912c31867b77",
+    "CHAT_MLFLOW_EXPERIMENT": "/Shared/qualibot/chat_turns",
+    "CHAT_REWRITE_ENDPOINT": "databricks-gemini-3-1-flash-lite",
+    "CHAT_TRANSLATE_ONLY": "on"
   },
   "uat-test": {
-    "COMPARE_VOLUME_PATH": "/Volumes/uat_proj/qualibot/test",
+    "COMPARE_VOLUME_PATH": "/Volumes/uat_proj/qualibot/doc_compare_test",
     "CHAT_INDEX": "uat_proj.qualibot.chunks_index_test",
-    "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/uat_proj/qualibot/test/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
+    "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/uat_proj/qualibot/test_test/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
     "LAKEBASE_DATABASE": "doccompare_test",
     "COMPARE_ANALYSIS_ENDPOINT": "databricks-gpt-5-6-luna",
     "COMPARE_IMPACT_INDEX": "uat_proj.qualibot.chunks_index_test",
@@ -34,6 +37,9 @@
     "COMPARE_VOLUME_PATH": "/Volumes/prod_proj/qualibot/doc_compare",
     "CHAT_INDEX": "prod_proj.qualibot.chunks_index",
     "COMPARE_IMPACT_INDEX": "prod_proj.qualibot.chunks_index",
-    "CAPS_WAREHOUSE_ID": "03054ddc44b7f902"
+    "CAPS_WAREHOUSE_ID": "03054ddc44b7f902",
+    "CHAT_MLFLOW_EXPERIMENT": "/Shared/qualibot/chat_turns",
+    "CHAT_REWRITE_ENDPOINT": "databricks-gemini-3-1-flash-lite",
+    "CHAT_TRANSLATE_ONLY": "on"
   }
 }
