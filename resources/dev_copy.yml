@@ -7,7 +7,7 @@ targets:
       jobs:
 
         # ── UAT copy ─────────────────────────────────────────────────────────
-        # Manual trigger. Loads the snapshot written by export_uat_to_staging.py, then creates and syncs the Vector Search index:
+        # Manual trigger. Loads the snapshot written by oneshot/dev_copy/export_uat_to_staging.py, then creates and syncs the Vector Search index:
         # the corpus is queryable without a parsing run, and parsing_pipeline resumes incrementally from the copied checkpoint.
         copy_uat_to_dev:
           name: "Z_1_Qualibot_Copy_Uat_To_Dev"

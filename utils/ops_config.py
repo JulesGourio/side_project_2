@@ -13,9 +13,6 @@ PROFILE_DEV  = "DEV"
 PROFILE_UAT  = "UAT"
 PROFILE_PROD = "qualibot-prod"
 
-# ── SQL Warehouse (UAT — access to system.access.audit) ───────────────────────
-WAREHOUSE_ID = "13eff4a6095513cb"
-
 # ── Lakebase environments ──────────────────────────────────────────────────────
 # Host and user are resolved at connect time (lakebase_connect_with); the token must come from the workspace of the
 # targeted Lakebase, hence one CLI profile per env.
@@ -35,19 +32,7 @@ LAKEBASE: dict[str, dict] = {
     },
 }
 
-# ── copy_Lakebase_tables: source → destination ──────────────────────────────
-COPY_SOURCE_ENV      = "UAT"          # Lakebase source (key in LAKEBASE)
-COPY_TARGET_PROFILE  = PROFILE_DEV   # Destination Databricks workspace
-COPY_TARGET_CATALOG  = "dev_proj"
-COPY_TARGET_SCHEMA   = "qualibot"
-COPY_STAGING_CATALOG = "uat_proj"
-COPY_STAGING_SCHEMA  = "qualibot"
-COPY_STAGING_VOLUME  = "staging"
-COPY_TABLES_TO_SKIP  = {
-    "llm_requests",      # too large, not useful for analysis
-}
-
-# ── Lakebase: project config (for migrate_lakebase.py) ────────────────────────
+# ── Lakebase: project config (read by lakebase_connect) ──────────────────────
 # generate_database_credential needs the Lakebase project_id (name shown in the Databricks UI), not a URI.
 LAKEBASE_PROJECTS: dict[str, dict] = {
     "UAT": {"project_id": "qualibot",  "branch": "production", "endpoint": "primary", "database": "doccompare"},

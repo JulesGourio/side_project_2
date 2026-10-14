@@ -6,7 +6,9 @@ subtracts what the tree itself provides and the glibc-family libs any Linux
 container has. What remains must be bundled (see _SYSLIB_PACKAGES in
 package_libreoffice.py) or present in the target container.
 
-Usage: python scan_needed_libs.py <extracted_tree_dir>
+One-shot, run by hand from the repo root: checks the system libraries that
+package_libreoffice.py has to bundle. Usage:
+    python oneshot/soffice/scan_needed_libs.py <extracted_tree_dir>
 """
 
 import struct

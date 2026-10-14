@@ -1,10 +1,10 @@
-"""Apply the idempotent Lakebase schema migrations (migrations.py) from a workstation.
+"""Apply the idempotent Lakebase schema changes of migrations.py to one Lakebase database. One-shot, run by hand.
 
-Independent of the app deployment: connects with generate_database_credential for full DDL rights.
-Run it after every new column or table is added to migrations.py.
+Runs from a workstation, not from the app or a bundle job. Connects with generate_database_credential, which gives
+the DDL rights. Run from the repo root:
 
-    python utils/lakebase_sync/migrate_lakebase.py --env DEV
-    python utils/lakebase_sync/migrate_lakebase.py --env UAT
+    python oneshot/lakebase/migrate_lakebase.py --env DEV
+    python oneshot/lakebase/migrate_lakebase.py --env UAT
 """
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/: ops_config
+# Repo root is parents[2] of this file (oneshot/lakebase/): utils/ops_config.py is imported from there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "utils"))
 from ops_config import LAKEBASE_PROJECTS, lakebase_connect
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # this directory: migrations
-from migrations import MIGRATIONS, apply_migrations
+from migrations import MIGRATIONS, apply_migrations  # this folder, next to this script
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("migrate_lakebase")

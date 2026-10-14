@@ -13,8 +13,11 @@ Steps (all pure Python, runs fine on Windows):
   3. merge their ./opt/libreoffice<ver>/ trees into one directory
   4. re-tar with normalized exec permissions (Windows drops them otherwise)
 
+One-shot, run by hand from the repo root to build the LibreOffice archive of the "Exact (PDF)" preview. Needs
+network access to the Ubuntu jammy archive (system libraries); the TDF bundle is downloaded beforehand by hand.
+
 Usage:
-  python utils/soffice_packaging/package_libreoffice.py <downloaded.tar.gz> <output.tar.gz>
+  python oneshot/soffice/package_libreoffice.py <downloaded.tar.gz> <output.tar.gz>
 
 Then upload to the UC Volume and point the app at it:
   databricks fs cp <output.tar.gz> dbfs:/Volumes/<catalog>/<schema>/<volume>/libreoffice/libreoffice-linux-x64.tar.gz
@@ -47,7 +50,7 @@ _SYSLIB_PACKAGES = [
     # NSS crypto stack — soffice.bin links libnss3/libssl3 (the NSS one, not
     # OpenSSL) directly; TDF does not bundle it.
     'libnss3', 'libnspr4', 'libsqlite3-0',
-    # Full transitive closure from utils/soffice_packaging/scan_needed_libs.py
+    # Full transitive closure from oneshot/soffice/scan_needed_libs.py
     # (pure-Python DT_NEEDED scan of the tree), minus GUI-plugin-only deps
     # (Qt5/KF5/GTK3/GStreamer — never loaded with SAL_USE_VCLPLUGIN=svp):
     'libssl3', 'libcrypt1', 'libbsd0', 'libmd0', 'libx11-xcb1', 'libffi8',

@@ -11,7 +11,7 @@ subprocess. That is what this module does. Discovery order:
 2. A previously extracted portable tree in the local extract dir (fast path
    after the first request following a restart).
 3. ``SOFFICE_ARCHIVE_VOLUME_PATH`` — UC Volume path of a portable
-   LibreOffice ``.tar.gz`` (see utils/soffice_packaging/) to download and
+   LibreOffice ``.tar.gz`` (built by oneshot/soffice/) to download and
    extract once per process lifetime.
 4. Well-known system locations (PATH, Program Files) — local dev fallback.
 

@@ -1,12 +1,12 @@
-"""Offline DocCompare preprocessing report — no LLM call, no token spend.
+"""Offline DocCompare preprocessing report: no LLM call, no token spend. One-shot, run by hand from the repo root.
 
 Runs the full extraction → diff → image-pairing → chunking pipeline on a local
-document pair and prints what WOULD be sent to the model. Use it to validate
-engine changes on real documents before deploying:
+document pair and logs what WOULD be sent to the model. Used to check engine
+changes on real documents before deploying:
 
-    python -m utils.compare_preview old.docx new.docx
-    python -m utils.compare_preview old.pdf new.pdf --method structured --dump-diff diff.txt
-    python -m utils.compare_preview old.docx new.docx --threshold 0.45   # override the similarity threshold
+    python oneshot/compare/compare_preview.py old.docx new.docx
+    python oneshot/compare/compare_preview.py old.pdf new.pdf --method structured --dump-diff diff.txt
+    python oneshot/compare/compare_preview.py old.docx new.docx --threshold 0.45   # override the similarity threshold
 """
 
 import argparse
@@ -17,7 +17,8 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Repo root is parents[2] of this file (oneshot/compare/): the server/ package is imported from there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def _diff_stats(diff_text: str) -> str:

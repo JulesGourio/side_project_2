@@ -1,4 +1,11 @@
 # Databricks notebook source
+"""Notebook version of migrate_lakebase.py: applies migrations.py to a Lakebase database from a workspace job. One-shot.
+
+Not deployed (oneshot/ is excluded from the bundle sync) and no bundle job runs it any more. To run it by hand: import
+this file into the workspace with `databricks workspace import <path> --file oneshot/lakebase/migrate_lakebase_job.py
+--format SOURCE --language PYTHON --overwrite --profile <profile>`, then run it with the widgets. The default
+database is doccompare_test; the real doccompare database of UAT is refused.
+"""
 import logging
 import os
 import sys
@@ -19,9 +26,9 @@ LAKEBASE_BRANCH = dbutils.widgets.get("LAKEBASE_BRANCH")
 LAKEBASE_ENDPOINT = dbutils.widgets.get("LAKEBASE_ENDPOINT")
 LAKEBASE_DATABASE = dbutils.widgets.get("LAKEBASE_DATABASE")
 
-# The notebook's directory is on sys.path (migrations) and is the cwd: one level up is utils/ (ops_config).
-sys.path.insert(0, os.path.dirname(os.getcwd()))
-from migrations import MIGRATIONS, apply_migrations
+# The cwd is this folder (oneshot/lakebase/): the repo root is two levels up, utils/ holds ops_config.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.getcwd())), "utils"))
+from migrations import MIGRATIONS, apply_migrations  # this folder
 from ops_config import lakebase_connect_with
 
 logger = logging.getLogger("migrate_lakebase_job")

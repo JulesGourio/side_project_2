@@ -1,12 +1,14 @@
-"""Copy the Lakebase tables of UAT into Delta tables of the DEV catalog.
+"""Copy the Lakebase tables of UAT into Delta tables of dev_proj.qualibot. One-shot, run by hand, never deployed.
 
-USAGE:
-    1. (Default) Run the UAT job `lakebase_export_uat_to_volume` first (it writes JSON Lines files to the UAT
-       staging volume), then:
-       python utils/lakebase_sync/copy_Lakebase_tables.py
+Reads the JSON Lines files written by the UAT job lakebase_export_uat_to_volume (default), or reads Lakebase
+directly (--direct). Each table is then created or replaced as a Delta table in the DEV catalog.
+
+USAGE, from the repo root (in the .venv of the project, with psycopg2-binary):
+    1. Default: run the UAT job `lakebase_export_uat_to_volume` first, then
+       python oneshot/lakebase/copy_Lakebase_tables.py
 
     2. Direct mode (needs network access to port 5432, blocked from the corporate network):
-       python utils/lakebase_sync/copy_Lakebase_tables.py --direct
+       python oneshot/lakebase/copy_Lakebase_tables.py --direct
 """
 
 import argparse
@@ -21,21 +23,21 @@ from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState, Disposition, Format
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # utils/ — shared config.py
-from ops_config import (
-    json_serializer,
-    lakebase_connect,
-    COPY_SOURCE_ENV,
-    COPY_TARGET_PROFILE,
-    COPY_TARGET_CATALOG,
-    COPY_TARGET_SCHEMA,
-    COPY_STAGING_CATALOG,
-    COPY_STAGING_SCHEMA,
-    COPY_STAGING_VOLUME,
-    COPY_TABLES_TO_SKIP,
-    LAKEBASE,
-    WAREHOUSE_ID,
-)
+# Repo root is parents[2] of this file (oneshot/lakebase/): utils/ops_config.py is imported from there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "utils"))
+from ops_config import PROFILE_DEV, LAKEBASE, json_serializer, lakebase_connect
+
+COPY_SOURCE_ENV      = "UAT"          # Lakebase source (key in LAKEBASE)
+COPY_TARGET_PROFILE  = PROFILE_DEV    # Destination Databricks workspace
+COPY_TARGET_CATALOG  = "dev_proj"
+COPY_TARGET_SCHEMA   = "qualibot"
+COPY_STAGING_CATALOG = "uat_proj"
+COPY_STAGING_SCHEMA  = "qualibot"
+COPY_STAGING_VOLUME  = "staging"
+COPY_TABLES_TO_SKIP  = {
+    "llm_requests",      # too large, not useful for analysis
+}
+WAREHOUSE_ID = "13eff4a6095513cb"  # SQL Warehouse used for the CREATE TABLE statements
 
 STAGING_VOLUME_DBFS = f"dbfs:/Volumes/{COPY_STAGING_CATALOG}/{COPY_STAGING_SCHEMA}/{COPY_STAGING_VOLUME}"
 STAGING_VOLUME_SQL  = f"/Volumes/{COPY_STAGING_CATALOG}/{COPY_STAGING_SCHEMA}/{COPY_STAGING_VOLUME}"
