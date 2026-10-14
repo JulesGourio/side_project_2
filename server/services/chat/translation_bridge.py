@@ -38,7 +38,7 @@ TRANSLATE_FALLBACK_ENDPOINTS = [e.strip() for e in os.getenv('CHAT_TRANSLATE_FAL
 _TIMEOUT_S = 20.0
 
 # fastText's lid.176 model: langdetect is noisy on short or technical text.
-_FASTTEXT_MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'lid.176.ftz')
+_FASTTEXT_MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'vendor', 'fasttext', 'lid.176.ftz')
 
 # Below this confidence a fastText guess is noise: the LLM decides.
 _FASTTEXT_CONFIDENCE_THRESHOLD = 0.65

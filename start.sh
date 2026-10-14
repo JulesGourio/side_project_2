@@ -17,9 +17,9 @@ if ! command -v antiword &>/dev/null; then
     T=$(mktemp -d)
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-    # 1. Use bundled .deb if present (fastest, no network) — vendored under data/vendor/antiword/
-    if ls "$SCRIPT_DIR"/data/vendor/antiword/antiword*.deb &>/dev/null; then
-        cp "$SCRIPT_DIR"/data/vendor/antiword/antiword*.deb "$T/antiword.deb"
+    # 1. Use the vendored .deb if present (fastest, no network) — vendor/antiword/
+    if ls "$SCRIPT_DIR"/vendor/antiword/antiword*.deb &>/dev/null; then
+        cp "$SCRIPT_DIR"/vendor/antiword/antiword*.deb "$T/antiword.deb"
     fi
 
     # 2. Try apt-get download (no root, uses pre-populated apt cache)

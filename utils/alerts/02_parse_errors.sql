@@ -1,4 +1,4 @@
--- Documents whose LATEST parse attempt ended in ERROR or TIMEOUT during the last 24 h
+-- Documents whose LATEST parse attempt failed during the last 24 h: parse_status ERROR (a timeout is an ERROR with parser_strategy 'timeout').
 -- (a document that failed then succeeded on a retry does not count).
 -- Alert condition: docs_in_error > 0.
 WITH latest AS (
@@ -10,7 +10,7 @@ WITH latest AS (
 )
 SELECT
   COUNT_IF(parse_status IN ('ERROR', 'TIMEOUT')) AS docs_in_error,
-  COUNT_IF(parse_status = 'TIMEOUT') AS docs_in_timeout,
+  COUNT_IF(parser_strategy = 'timeout') AS docs_in_timeout,
   COUNT(*) AS docs_attempted,
   ARRAY_JOIN(SLICE(COLLECT_LIST(CASE WHEN parse_status IN ('ERROR', 'TIMEOUT') THEN ref END), 1, 10), ', ') AS sample_refs
 FROM latest

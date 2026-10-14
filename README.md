@@ -66,8 +66,8 @@ server/
 
 - `tests/`: pytest suite. `golden/` and `fixtures/` hold expected outputs and recorded
   model answers; `diff_corpus.py` and `prompt_noise.py` are test data and detectors used by the tests.
-- `data/`: `lid.176.ftz` (fastText language-identification model) and `vendor/antiword/`
-  (the antiword package and its data, used to convert `.doc` files).
+- `vendor/antiword/`: the antiword binary, its character tables and the Debian package used by `start.sh`
+  (converts `.doc` files). `vendor/fasttext/lid.176.ftz`: the fastText language-identification model.
 - `leap_utils/`: copy of the shared LEAP library (table writes and merges, quality checks).
   Do not edit it in this repository.
 
