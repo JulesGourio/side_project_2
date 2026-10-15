@@ -3,8 +3,7 @@
 Bundle resource files of the Databricks bundle `qualibot`: the jobs of each target, one file per concern. The root
 `databricks.yml` includes `resources/*.yml`, and every job is declared under `targets:` of the file that defines it.
 
-Parent: [root README](../README.md). The tasks run the notebooks and scripts of [`utils/`](../utils/README.md); the
-steps to deploy and run them are in [`runbooks/README.md`](../runbooks/README.md).
+Parent: [root README](../README.md). The tasks run the notebooks and scripts of [`utils/`](../utils/README.md).
 
 ## Files
 

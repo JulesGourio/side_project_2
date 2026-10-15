@@ -7,9 +7,7 @@ a command-line tool, or notebooks that someone runs by hand.
 
 Parent: [`utils/`](../README.md). The MLflow trace of a chat turn is written by
 [`server/services/chat/mlflow_turns.py`](../../server/services/chat/mlflow_turns.py). The jobs are in
-[`resources/chat_mlflow.yml`](../../resources/chat_mlflow.yml). The runs of the evaluations are described in
-[`runbooks/dev.md`](../../runbooks/dev.md).
-
+[`resources/chat_mlflow.yml`](../../resources/chat_mlflow.yml).
 ## Files
 
 | File | What it does | How it runs |

@@ -278,6 +278,5 @@ Quality checks (`quality.py`): a RED failure stops the task before anything is w
 
 ## Links
 
-- [`runbooks/README.md`](../../runbooks/README.md): the manual steps of each environment.
 - [`resources/parsing_pipeline.job.yml`](../../resources/parsing_pipeline.job.yml): the job, its clusters and its parameters.
 - [`utils/README.md`](../README.md): the other scripts of `utils/`.

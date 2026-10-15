@@ -1,7 +1,6 @@
 # compare
 
-One-shot script, run by hand and never deployed: nothing in the app or in a bundle job imports or runs it. It is an offline report on a pair of local documents: the comparison pipeline (extraction, diff, image pairing, chunking) runs on them and the result is logged, with no model call. Use it to check engine changes on real documents before a deployment. See the index in [`runbooks/README.md`](../../README.md).
-
+One-shot script, run by hand and never deployed: nothing in the app or in a bundle job imports or runs it. It is an offline report on a pair of local documents: the comparison pipeline (extraction, diff, image pairing, chunking) runs on them and the result is logged, with no model call. Use it to check engine changes on real documents before a deployment.
 ## Files
 
 | File | Kind | What it does |

@@ -1,7 +1,6 @@
 # dev_copy
 
-One-shot scripts, run by hand and never deployed: nothing in the app or in a bundle job imports or runs them. This folder copies the chunk tables and the parsing state of `uat_proj.qualibot` into a staging volume, from which the DEV environment is loaded. The index is then built on the DEV side, so the DEV parsing pipeline does not need a full run. See the index in [`runbooks/README.md`](../../README.md).
-
+One-shot scripts, run by hand and never deployed: nothing in the app or in a bundle job imports or runs them. This folder copies the chunk tables and the parsing state of `uat_proj.qualibot` into a staging volume, from which the DEV environment is loaded. The index is then built on the DEV side, so the DEV parsing pipeline does not need a full run.
 ## Files
 
 | File | Kind | What it does |

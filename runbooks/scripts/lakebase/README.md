@@ -1,7 +1,6 @@
 # lakebase
 
-One-shot scripts, run by hand and never deployed: nothing in the app or in a bundle job imports or runs them. They copy the Lakebase tables of UAT into the DEV catalog and apply the schema changes of `migrations.py` to one Lakebase database. See the index in [`runbooks/README.md`](../../README.md).
-
+One-shot scripts, run by hand and never deployed: nothing in the app or in a bundle job imports or runs them. They copy the Lakebase tables of UAT into the DEV catalog and apply the schema changes of `migrations.py` to one Lakebase database.
 ## Files
 
 | File | Kind | What it does |

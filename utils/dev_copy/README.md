@@ -4,9 +4,7 @@ Loads the UAT snapshot into the project schema of the DEV target and prepares it
 Three notebooks run as the tasks of the job `Z_1_Qualibot_Copy_Uat_To_Dev`, defined in
 [`resources/dev_copy.yml`](../../resources/dev_copy.yml) for the `dev` target only.
 
-Parent: [`utils/`](../README.md). The snapshot is written by
-[`runbooks/scripts/dev_copy/export_uat_to_staging.py`](../../runbooks/scripts/dev_copy/export_uat_to_staging.py) in the UAT
-workspace. The steps to run the job are in [`runbooks/dev.md`](../../runbooks/dev.md).
+Parent: [`utils/`](../README.md). The snapshot is written by the one-shot notebook `export_uat_to_staging.py` in the UAT workspace, run by hand.
 
 ## Files
 

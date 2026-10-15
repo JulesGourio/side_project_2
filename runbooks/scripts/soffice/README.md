@@ -1,7 +1,6 @@
 # soffice
 
-One-shot scripts, run by hand and never deployed: nothing in the app or in a bundle job imports or runs them. They build the portable LibreOffice archive used by the "Exact (PDF)" preview, and check which shared libraries a LibreOffice tree needs. See the index in [`runbooks/README.md`](../../README.md).
-
+One-shot scripts, run by hand and never deployed: nothing in the app or in a bundle job imports or runs them. They build the portable LibreOffice archive used by the "Exact (PDF)" preview, and check which shared libraries a LibreOffice tree needs.
 ## Files
 
 | File | Kind | What it does |

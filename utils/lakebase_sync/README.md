@@ -5,8 +5,7 @@ load it elsewhere: Delta tables of DEV and of UAT, and the Lakebase database of 
 with the other folders (CLI profiles, Lakebase projects, databases per environment, table order) are in
 [`ops_config.py`](../ops_config.py).
 
-One-shot migrations and one-off table copies are in `runbooks/scripts/`; the manual steps are indexed in
-[`runbooks/README.md`](../../runbooks/README.md).
+One-shot migrations and one-off table copies are run by hand and never deployed.
 
 ## Files
 

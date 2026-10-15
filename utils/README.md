@@ -5,8 +5,6 @@ application, the chat alerts, the chat and search evaluation, the Unity Catalog 
 start and stop of the applications. One folder per concern.
 
 The application is in [`server/`](../server/) and [`client/`](../client/); see the [root README](../README.md).
-One-shot scripts (migrations, copies, packaging) are in `runbooks/scripts/`, and the manual steps per environment
-are in [`runbooks/README.md`](../runbooks/README.md).
 
 ## Files
 
@@ -20,7 +18,7 @@ are in [`runbooks/README.md`](../runbooks/README.md).
 | [`dev_copy/`](dev_copy/) | Import of the UAT snapshot into DEV, creation of the Vector Search endpoint | Tasks of the job `copy_uat_to_dev` (`resources/dev_copy.yml`) |
 | [`grants/`](grants/) | Unity Catalog grants of the service principals of the application and of the pipeline, and volume access | Tasks of the jobs in `resources/grants.yml` |
 | [`evaluation/`](evaluation/) | Chat and search evaluation: load tests, answer comparison, retrieval evaluation, MLflow experiment and prompts, trace scoring, vision endpoint check | Jobs in `resources/chat_mlflow.yml` (`create_chat_experiment.py`, `register_chat_prompts.py`, `score_chat_traces.py`); the others by hand |
-| [`ops_config.py`](ops_config.py) | Shared settings: CLI profiles, Lakebase projects per environment, connection helpers, table order of the PROD copy | Imported by `lakebase_sync/` and by the scripts of `runbooks/scripts/` |
+| [`ops_config.py`](ops_config.py) | Shared settings: CLI profiles, Lakebase projects per environment, connection helpers, table order of the PROD copy | Imported by `lakebase_sync/` and by the one-shot scripts |
 
 ## How each script runs
 

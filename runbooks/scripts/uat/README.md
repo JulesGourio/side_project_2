@@ -1,7 +1,6 @@
 # uat
 
-One-shot notebook, run by hand and never deployed: nothing in the app or in a bundle job imports or runs it. It creates the project schema of the `qualibot-uat-test` target: the volume `images_test` and the parsing state tables `*_test`, deep-cloned from the source schema, then grants read access. See the index in [`runbooks/README.md`](../../README.md).
-
+One-shot notebook, run by hand and never deployed: nothing in the app or in a bundle job imports or runs it. It creates the project schema of the `qualibot-uat-test` target: the volume `images_test` and the parsing state tables `*_test`, deep-cloned from the source schema, then grants read access.
 ## Files
 
 | File | Kind | What it does |

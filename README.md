@@ -51,10 +51,6 @@ server/
 - `utils/`: tools that run outside the app, one folder per concern (deployment, parsing
   pipeline, evaluation, grants, Lakebase sync, alerts, app management, DEV copy). Map in
   [utils/README.md](utils/README.md).
-- `runbooks/`: steps to perform by hand in Databricks, written in French: `README.md`
-  (index), `dev.md`, `uat.md`, `prod.md`, and `retest.md` (what to run again after a path
-  or notebook change). `runbooks/scripts/` holds the one-shot scripts (migrations, copies,
-  packaging): they are run by hand and never deployed.
 - `bitbucket-pipelines.yml`: CI pipeline that deploys the bundle and the app. See [Deployment](#deployment).
 - `pyproject.toml`: Python project, dependencies and pytest settings. `requirements.txt`:
   flat list of runtime packages.
@@ -74,7 +70,7 @@ server/
 
 - `archive/`: superseded documentation (`docs/`, `readmes/`). Never deployed.
 
-`runbooks/` and `archive/` are excluded from the bundle sync in `databricks.yml`:
+`archive/` is excluded from the bundle sync in `databricks.yml`:
 nothing reads them at run time.
 
 ## Models and indexes
@@ -183,9 +179,6 @@ bun run build
 | `prod` | `qualibot-prod` | `qualibot` | `qualibot-prod` | `dbc-77b87d5a-6bcb` |
 
 The full host names are in `databricks.yml`. The CLI profile of the target must be authenticated.
-The steps to perform in Databricks (authentication, first deployment, jobs to run or enable,
-grants) are in [runbooks/README.md](runbooks/README.md), with one runbook per environment
-(`runbooks/dev.md`, `runbooks/uat.md`, `runbooks/prod.md`).
 
 The application is deployed from the repository root with `utils/deploy/deploy_qualibot.ps1`:
 
@@ -238,5 +231,3 @@ and completes this schema at startup. Column reference: [server/services/infra/l
 | [utils/lakebase_sync/README.md](utils/lakebase_sync/README.md) | Lakebase export, import and schema maintenance |
 | [utils/alerts/README.md](utils/alerts/README.md) | SQL alert queries |
 | [server/services/infra/lakebase/schema.md](server/services/infra/lakebase/schema.md) | Column reference of the Lakebase tables |
-| [runbooks/README.md](runbooks/README.md) | Index of the steps to perform in Databricks |
-| [runbooks/retest.md](runbooks/retest.md) | What to run again after a path or notebook change |

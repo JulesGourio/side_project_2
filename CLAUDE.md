@@ -68,3 +68,4 @@ These rules are for whoever changes the code. They do not belong in the READMEs 
 - Deployment: the application is deployed with `utils/deploy/deploy_qualibot.ps1` (or the Bitbucket pipeline), the jobs with `databricks bundle deploy`. The root README describes the targets.
 - Job format: every job sets `queue`, `email_notifications` on `on_failure` with `${var.notification_email}`, `notification_settings.no_alert_for_canceled_runs`, and the tags `activity-type` (`${var.job_activity_tag}`), `job-purpose` and `project-name`. The template is `datab/templates/bundle_data_asset/`.
 - `CAN_QUERY` is never granted on serving endpoints: every workspace user already queries them (`CLAUDE.md`, Databricks section).
+- READMEs never mention `runbooks/` (no link, no index, no sentence pointing to the steps): the folder is temporary in this repository. Inside `runbooks/` itself, the usage commands keep the script paths, and `runbooks/README.md` is that folder's own index.

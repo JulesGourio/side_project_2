@@ -2,8 +2,7 @@
 
 Deploys the application code to a Databricks App, and writes the per-target settings the app reads at startup.
 
-Parent: [`utils/`](../README.md). The root [README](../../README.md) describes the targets. The steps of each environment
-are in [`runbooks/README.md`](../../runbooks/README.md).
+Parent: [`utils/`](../README.md). The root [README](../../README.md) describes the targets.
 
 ## Files
 
@@ -33,8 +32,8 @@ python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [output_
 
 1. Builds the frontend with `bun` (skipped by `-SkipBuild` and `-SyncOnly`).
 2. Renders `target_config.env` from `target_env.json`. Then either runs `databricks bundle deploy` (`-Infra`), or uploads
-   the repository with `databricks sync`, minus the paths listed in the script (among them `runbooks/`,
-   `archive/`, the client sources and the notebooks `*.ipynb`).
+   the repository with `databricks sync`, minus the paths listed in the script (among them `archive/`,
+   the client sources and the notebooks `*.ipynb`).
 3. Reads the compute state of the app. `ACTIVE` or `STARTING` needs no action. Any other state makes the script start the
    app, except `qualibot-uat-test`, for which the script stops with an error.
 4. Runs `databricks apps deploy` with the source path `/Workspace/Shared/.bundle/qualibot/<target>/files`. For `prod` the
