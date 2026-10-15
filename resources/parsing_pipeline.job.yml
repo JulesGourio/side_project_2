@@ -56,20 +56,20 @@ targets:
               level: CAN_MANAGE
 
           job_clusters:
-            # No policy_id on the 3 clusters: the org's "Job Compute *" policies force SPOT_WITH_FALLBACK, which can reclaim the driver
-            # of these single-node ON_DEMAND clusters, and none allows a GPU-ML spark_version.
+            # The two CPU clusters take the CORE Job Compute S policy: single node, and its first_on_demand = 1 keeps the driver
+            # on demand, so the policy's SPOT_WITH_FALLBACK does not reclaim it. The GPU cluster has no policy (no GPU-ML version in the allowlist).
             #
             # ── Small CPU cluster for the metadata tasks (1_categories, 2_manifest) ──
             # Delta/SQL work and one dbutils.fs.ls on the volume: no GPU or workers.
             - job_cluster_key: meta_cpu_cluster
               new_cluster:
-                spark_version: "17.3.x-scala2.13"
+                policy_id: ${var.job_cluster_policy_id_S}
+                apply_policy_default_values: true
+                spark_version: "auto:latest-lts"
                 node_type_id: ${var.parsing_describe_node_type}
                 num_workers: 0
                 # Without this, table reads fail with [UC_NOT_ENABLED].
                 data_security_mode: SINGLE_USER
-                aws_attributes:
-                  availability: ON_DEMAND
                 spark_conf:
                   spark.databricks.cluster.profile: singleNode
                   spark.master: "local[*]"
@@ -132,13 +132,12 @@ targets:
             # ── Small CPU cluster for LLM description (4_describe_images, I/O-bound) ──
             - job_cluster_key: describe_cpu_cluster
               new_cluster:
-                spark_version: "17.3.x-scala2.13"
+                policy_id: ${var.job_cluster_policy_id_S}
+                apply_policy_default_values: true
+                spark_version: "auto:latest-lts"
                 node_type_id: ${var.parsing_describe_node_type}
                 num_workers: 0
                 data_security_mode: SINGLE_USER   # already the effective state, made explicit
-                aws_attributes:
-                  # Single-node cluster: the driver IS the only node, so it must not be spot.
-                  availability: ON_DEMAND
                 spark_conf:
                   spark.databricks.cluster.profile: singleNode
                   spark.master: "local[*]"

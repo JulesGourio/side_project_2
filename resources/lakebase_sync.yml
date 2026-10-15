@@ -38,12 +38,12 @@ targets:
                 notebook_path: ../utils/lakebase_sync/import_lakebase_uat_volume_to_dev_job.py
                 source: WORKSPACE
               new_cluster:
-                spark_version: "17.3.x-scala2.13"
+                policy_id: ${var.job_cluster_policy_id_S}
+                apply_policy_default_values: true
+                spark_version: "auto:latest-lts"
                 data_security_mode: SINGLE_USER   # without it the cluster has no Unity Catalog
                 node_type_id: "m5d.xlarge"
                 num_workers: 0
-                aws_attributes:
-                  availability: ON_DEMAND
                 spark_conf:
                   spark.databricks.cluster.profile: singleNode
                   spark.master: "local[*]"

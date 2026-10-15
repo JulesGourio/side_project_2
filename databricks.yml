@@ -97,6 +97,9 @@ variables:
   parsing_schedule_pause:
     description: "PAUSED: the daily parsing job does not run on its schedule. UNPAUSED: it runs every day at parsing_schedule_cron."
     default: "PAUSED"
+  job_cluster_policy_id_S:
+    description: "CORE Job Compute S policy: single node, first node (the driver) on demand"
+    default: "001E30C26BD479FE"
   job_activity_tag:
     description: "activity-type tag of every job and of its clusters, {env}-job (the cluster policies require it)"
     default: "dev-job"
@@ -328,6 +331,8 @@ targets:
       parsing_schedule_pause: "PAUSED"
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "dev-job"
+      notification_email: "jules.gourio.external@latecoere.aero"
+      job_cluster_policy_id_S: "001E30C26BD479FE"
       # The pre-2018 archive is not built on DEV.
       parsing_archive_max_docs: "0"
       parsing_archive_notices_in_rag: "false"
@@ -490,6 +495,8 @@ targets:
       # (LAKEBASE_DATABASE in app.yaml / target_config.env) — never doccompare_test.
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "uat-job"
+      job_cluster_policy_id_S: "000E7559CADE5290"
+      notification_email: "jules.gourio.external@latecoere.aero"
 
   # Disposable test target: evaluates the chat without touching the real qualibot-uat app or its Lakebase data (own terraform state).
   # It does not declare postgres_projects/schemas/volumes (they exist, and this identity cannot grant on them).
@@ -505,6 +512,8 @@ targets:
     variables:
       app_name: "qualibot-uat-test"
       job_activity_tag: "uat-job"
+      job_cluster_policy_id_S: "000E7559CADE5290"
+      notification_email: "jules.gourio.external@latecoere.aero"
       app_proj_catalog: uat_proj
       app_proj_schema: qualibot
       # One GPU worker: only documents new since the copied state are parsed, the rest is re-chunked.
@@ -663,6 +672,7 @@ targets:
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       job_activity_tag: "prod-job"
+      job_cluster_policy_id_S: "001C199A8D85FE35"
       parsing_offline_models_path: "/Volumes/prod_proj/qualibot/docling_models"
       # Same Lakebase database the deployed qualibot-prod app reads and writes (LAKEBASE_DATABASE in app.yaml).
       parsing_lakebase_database: "doccompare"
