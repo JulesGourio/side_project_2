@@ -16,6 +16,25 @@ databricks vector-search-indexes list-indexes qualibot --profile qualibot-prod -
 
 Attendu : `prod_proj` existe ou non. Si l'ancien schéma `prod_landingzone.qualibot` contient des tables, des volumes ou un index, les étapes 2, 3 et 4 s'appliquent (copie) ; sinon elles sont sans objet.
 
+## 0.1 Politique de cluster « S » de PROD (lecture seule, à faire une fois)
+
+L'identifiant `001C199A8D85FE35` mis dans `databricks.yml` (cible `qualibot-prod`, variable `job_cluster_policy_id_S`) n'existe pas sur ce workspace : `Can't find a cluster policy with id`. Lister les politiques du workspace prod pour trouver la bonne, puis me donner son identifiant :
+
+```powershell
+databricks auth profiles
+databricks cluster-policies list --profile qualibot-prod -o json | ConvertFrom-Json | ForEach-Object { "$($_.policy_id)  $($_.name)" }
+```
+
+`databricks auth profiles` doit afficher, pour `qualibot-prod`, l'hôte `https://dbc-77b87d5a-6bcb.cloud.databricks.com`. Si ce n'est pas le cas, le profil pointe sur un autre workspace : le corriger avant de lister.
+
+Quand l'identifiant est connu, vérifier sa définition (même forme que la politique S de DEV : nœud unique, `first_on_demand`, `auto:latest-lts`, `activity-type` fixé à `prod-job`) :
+
+```powershell
+databricks cluster-policies get <policy_id> --profile qualibot-prod
+```
+
+Remplacer `<policy_id>` par l'identifiant trouvé. Aucune commande de déploiement ici.
+
 ## 1. Catalogue et schéma `prod_proj` (admin metastore, seulement si absent)
 
 Si `prod_proj` n'existe pas, un admin le crée (SQL, éditeur du workspace prod) :
