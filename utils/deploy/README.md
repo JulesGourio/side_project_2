@@ -57,5 +57,5 @@ rewrite endpoint, the MLflow experiment, `CHAT_TRANSLATE_ONLY`, and `CAPS_BYPASS
   project schema of that environment. Index names carry no version suffix. No `CHAT_ENDPOINT*` key is set.
 - `CAPS_BYPASS` turns off the group check for every visitor, so it is `true` on `dev` only.
 - `render_target_config_env.py` writes LF. A CRLF line ending would add a `\r` to every value.
-- Deploying `uat` or `prod` needs an explicit approval, as stated in [`CLAUDE.md`](../../CLAUDE.md).
+- Deploying `uat` or `prod` needs an explicit approval.
 - The guards of `target_env.json` are in `tests/test_deploy_config.py` (see [`tests/README.md`](../../tests/README.md)).

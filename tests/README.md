@@ -3,7 +3,7 @@
 Automated tests of the server, of the job code under `utils/`, and of the bundle and configuration files. The tests need no
 Databricks workspace and no model endpoint: calls are replaced by fakes, and the expected outputs are stored in this folder.
 
-Parent: [root README](../README.md). The conventions the guards enforce are in [`CLAUDE.md`](../CLAUDE.md).
+Parent: [root README](../README.md).
 
 ## How the suite runs
 

@@ -176,7 +176,7 @@ Attendu : toutes les tables de 0.2 et les tables chat présentes, `status.ready`
 
 **0.7 — Déploiement (seulement au bloc D5, après accord explicite)**
 
-Ce déploiement fait partie du bloc D5 : il ne se lance pas avant D5 (voir l'avertissement en tête de fichier), et jamais sans accord explicite (règle de `CLAUDE.md`). Une fois accordé :
+Ce déploiement fait partie du bloc D5 : il ne se lance pas avant D5 (voir l'avertissement en tête de fichier), et jamais sans accord explicite. Une fois accordé :
 
 ```powershell
 databricks bundle deploy -t qualibot-uat --profile UAT

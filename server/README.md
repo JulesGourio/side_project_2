@@ -4,7 +4,7 @@ The FastAPI backend of QualiBOT. It serves the `/api` routes, runs the chatbot a
 built frontend from `client/out`. The package holds code, the prompt texts, one YAML file and the PDF font. It holds no
 data: documents, the catalog and the saved comparisons live in Lakebase and in the Vector Search index.
 
-Project overview: [root README](../README.md). Manual steps and deployment: [runbooks/README.md](../runbooks/README.md) and [CLAUDE.md](../CLAUDE.md).
+Project overview: [root README](../README.md). Manual steps and deployment: [runbooks/README.md](../runbooks/README.md).
 
 ## Files
 

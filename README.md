@@ -59,8 +59,7 @@ server/
 - `pyproject.toml`: Python project, dependencies and pytest settings. `requirements.txt`:
   flat list of runtime packages.
 - Root files: `.databricksignore` (sync exclusions for the workspace), `.gitignore`,
-  `.gitattributes`, `.gitleaksignore` (secret-scan exceptions), `.vscode/` (editor tasks),
-  `CLAUDE.md` (working rules for this repository).
+  `.gitattributes`, `.gitleaksignore` (secret-scan exceptions), `.vscode/` (editor tasks).
 
 ### Tests and data
 
@@ -186,7 +185,7 @@ bun run build
 The full host names are in `databricks.yml`. The CLI profile of the target must be authenticated.
 The steps to perform in Databricks (authentication, first deployment, jobs to run or enable,
 grants) are in [runbooks/README.md](runbooks/README.md), with one runbook per environment
-(`runbooks/dev.md`, `runbooks/uat.md`, `runbooks/prod.md`). The working rules are in `CLAUDE.md`.
+(`runbooks/dev.md`, `runbooks/uat.md`, `runbooks/prod.md`).
 
 The application is deployed from the repository root with `utils/deploy/deploy_qualibot.ps1`:
 

@@ -717,7 +717,7 @@ Contrôle, éditeur SQL Lakebase DEV : `SELECT table_name FROM information_schem
 
 ### R. Renommer trois colonnes booléennes de `parsed_documents` (à faire)
 
-Le code lit `is_in_rag`, `is_filtered_by_date` et `is_chunks_truncated` (préfixe `is_` pour les booléens, `CLAUDE.md`). Les tables DEV gardent les anciens noms tant que ce bloc n'est pas passé.
+Le code lit `is_in_rag`, `is_filtered_by_date` et `is_chunks_truncated` (préfixe `is_` pour les booléens). Les tables DEV gardent les anciens noms tant que ce bloc n'est pas passé.
 
 Ordre impératif : **1. SQL ci-dessous, 2. déploiement du code, 3. run de parsing ou de `copy_uat_to_dev`**. Si le code arrive avant le SQL, la tâche `2_manifest` ajoute les nouvelles colonnes à côté des anciennes (`merge_schema`) et les lignes se retrouvent avec deux colonnes pour une même information.
 

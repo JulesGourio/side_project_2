@@ -31,8 +31,7 @@ uses the prompts is in [services/chat/engine](../services/chat/engine/README.md)
 - The only placeholder is `{language}`, in `translate_query.md` and `language_reminder_named.md`. The code fills it: a
   replacement in `translate_query`, a `format` call for the reminder. Any other brace in these files would break a call.
 - A prompt is edited in its file only. A trace links a registered prompt version only when the file's hash equals the
-  registered hash. After an edit, the registration job runs again (`utils/evaluation/register_chat_prompts.py`, see
-  [CLAUDE.md](../../CLAUDE.md)).
+  registered hash. After an edit, the registration job runs again (`utils/evaluation/register_chat_prompts.py`).
 - The compare prompts are not in this folder. The default analysis prompt is a constant of `routers/compare/common.py`,
   overridden by `COMPARE_ANALYSIS_SYSTEM_PROMPT`. The summary prompts are in `services/compare/summarize.py`, the diff
   prompts in `services/compare/processors/_diff_engines/prompts.py`, and the impact judge prompt in

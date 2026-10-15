@@ -17,7 +17,7 @@ from server.services.compare.summarize import summarize_text
 from server.services.infra import vector_search
 from server.services.infra.vector_search import _judge, run_impact_search
 
-CLAUDE = 'databricks-claude-sonnet-4-6'
+SONNET = 'databricks-claude-sonnet-4-6'
 HOST = 'https://example.test'
 
 
@@ -102,7 +102,7 @@ def _events(chunks):
 # --- The chain ---
 
 @pytest.mark.parametrize('primary, expected', [
-    (CLAUDE, [CLAUDE, GPT_5_6_LUNA]),
+    (SONNET, [SONNET, GPT_5_6_LUNA]),
     (GPT_6_LUNA, [GPT_6_LUNA, GPT_5_6_LUNA]),
     (GPT_5_6_LUNA, [GPT_5_6_LUNA, GPT_6_LUNA]),
 ])
@@ -112,7 +112,7 @@ def test_default_chain_ends_with_the_other_luna_model(primary, expected):
 
 def test_configured_fallbacks_replace_the_default(monkeypatch):
     monkeypatch.setenv('COMPARE_LLM_FALLBACK_ENDPOINTS', 'x-model, y-model')
-    assert compare_chain(CLAUDE) == [CLAUDE, 'x-model', 'y-model']
+    assert compare_chain(SONNET) == [SONNET, 'x-model', 'y-model']
 
 
 # --- Non-streamed calls ---
@@ -217,21 +217,21 @@ def test_judge_that_every_endpoint_fails_is_a_user_message_with_the_cause(monkey
 # --- Streamed analysis ---
 
 def test_analysis_falls_back_and_streams_the_answer(monkeypatch):
-    service = FakeService({CLAUDE: _status(429), GPT_5_6_LUNA: _sse('Hello ', 'world.')}, monkeypatch)
-    events = _events(_run(_collect(stream_analysis(HOST, 't', CLAUDE, [{'role': 'user', 'content': 'q'}],
+    service = FakeService({SONNET: _status(429), GPT_5_6_LUNA: _sse('Hello ', 'world.')}, monkeypatch)
+    events = _events(_run(_collect(stream_analysis(HOST, 't', SONNET, [{'role': 'user', 'content': 'q'}],
                                                     100, 4000, 0.0))))
     deltas = [e['delta'] for e in events if e['type'] == 'response.output_text.delta']
     assert deltas == ['Hello ', 'world.']
     assert not [e for e in events if e['type'] == 'error']
     assert [e['type'] for e in events if e['type'] == 'usage']
-    claude_payload, fallback_payload = service.calls[0][1], service.calls[1][1]
-    assert 'thinking' in claude_payload and 'temperature' in claude_payload
+    sonnet_payload, fallback_payload = service.calls[0][1], service.calls[1][1]
+    assert 'thinking' in sonnet_payload and 'temperature' in sonnet_payload
     assert 'thinking' not in fallback_payload and 'temperature' not in fallback_payload
 
 
 def test_analysis_that_every_endpoint_fails_sends_the_user_message(monkeypatch):
-    service = FakeService({CLAUDE: _status(503), GPT_5_6_LUNA: _status(503)}, monkeypatch)
-    chunks = _run(_collect(stream_analysis(HOST, 't', CLAUDE, [], 100, 0, 0.0)))
+    service = FakeService({SONNET: _status(503), GPT_5_6_LUNA: _status(503)}, monkeypatch)
+    chunks = _run(_collect(stream_analysis(HOST, 't', SONNET, [], 100, 0, 0.0)))
     events = _events(chunks)
     assert chunks[-1] == 'data: [DONE]\n\n'
     assert not [e for e in events if e['type'] == 'response.output_text.delta']
@@ -242,8 +242,8 @@ def test_analysis_that_every_endpoint_fails_sends_the_user_message(monkeypatch):
 
 
 def test_a_cut_analysis_continues_on_the_fallback(monkeypatch):
-    service = FakeService({CLAUDE: _sse('Part one. ', error=True), GPT_5_6_LUNA: _sse('two.')}, monkeypatch)
-    events = _events(_run(_collect(stream_analysis(HOST, 't', CLAUDE, [{'role': 'user', 'content': 'q'}],
+    service = FakeService({SONNET: _sse('Part one. ', error=True), GPT_5_6_LUNA: _sse('two.')}, monkeypatch)
+    events = _events(_run(_collect(stream_analysis(HOST, 't', SONNET, [{'role': 'user', 'content': 'q'}],
                                                     100, 0, 0.0))))
     deltas = [e['delta'] for e in events if e['type'] == 'response.output_text.delta']
     assert deltas == ['Part one. ', 'two.']
@@ -261,16 +261,16 @@ def test_error_event_detail_is_dropped_before_the_browser(monkeypatch):
 
 
 def test_analysis_info_names_the_endpoint_that_answered(monkeypatch):
-    FakeService({CLAUDE: _status(429), GPT_5_6_LUNA: _sse('ok.')}, monkeypatch)
+    FakeService({SONNET: _status(429), GPT_5_6_LUNA: _sse('ok.')}, monkeypatch)
     info = {}
-    _run(_collect(stream_analysis(HOST, 't', CLAUDE, [], 100, 0, 0.0, info=info)))
+    _run(_collect(stream_analysis(HOST, 't', SONNET, [], 100, 0, 0.0, info=info)))
     assert info == {'endpoint': GPT_5_6_LUNA}
 
 
 def test_analysis_info_is_unset_when_nothing_answered(monkeypatch):
-    FakeService({CLAUDE: _status(503), GPT_5_6_LUNA: _status(503)}, monkeypatch)
+    FakeService({SONNET: _status(503), GPT_5_6_LUNA: _status(503)}, monkeypatch)
     info = {}
-    _run(_collect(stream_analysis(HOST, 't', CLAUDE, [], 100, 0, 0.0, info=info)))
+    _run(_collect(stream_analysis(HOST, 't', SONNET, [], 100, 0, 0.0, info=info)))
     assert info == {}
 
 

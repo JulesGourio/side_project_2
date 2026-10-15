@@ -4,8 +4,7 @@ Unity Catalog grants that the jobs of the bundle run: the privileges of the app'
 the project schema, the volumes and the indexes, and one volume privilege for one principal. The notebooks grant only;
 they never revoke.
 
-Parent: [`utils/`](../README.md). The jobs are defined in [`resources/grants.yml`](../../resources/grants.yml). The grant
-rules of the project are in [`CLAUDE.md`](../../CLAUDE.md) (Databricks section).
+Parent: [`utils/`](../README.md). The jobs are defined in [`resources/grants.yml`](../../resources/grants.yml).
 
 ## Files
 
