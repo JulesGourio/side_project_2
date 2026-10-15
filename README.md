@@ -63,7 +63,7 @@ server/
   model answers; `diff_corpus.py` and `prompt_noise.py` are test data and detectors used by the tests.
 - `third_party/antiword/`: the antiword binary, its character tables and the Debian package used by `start.sh`
   (converts `.doc` files). `third_party/fasttext/lid.176.ftz`: the fastText language-identification model.
-- `leap_utils/`: copy of the shared LEAP library (table writes and merges, quality checks).
+- `leap_utils/`: copy of the shared library (table writes and merges, quality checks).
   Do not edit it in this repository.
 
 ### Documentation

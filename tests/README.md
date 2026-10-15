@@ -43,7 +43,7 @@ No test writes a file of `golden/` or `fixtures/`. A changed expected output is 
 - `test_bundle_paths.py`: every `notebook_path` and `python_file` of the bundle exists; every job name follows the
   naming convention; the parsing modules import only names that `config.py` defines.
 - `test_code_conventions.py`: no `print()`, no `# DBTITLE`, no commented-out import or print under `server/`, `utils/`
-  and `scripts/`; each `create_proj_*` and `update_proj_*` notebook has the seven LEAP sections, and a markdown cell
+  and `scripts/`; each `create_proj_*` and `update_proj_*` notebook has the seven sections, and a markdown cell
   before each code cell.
 - `test_deploy_config.py`: each live target sets its two index keys, on its own environment's schema; index names carry
   no version suffix; no `CHAT_ENDPOINT*` key; `CAPS_BYPASS` is `true` on `dev` only.

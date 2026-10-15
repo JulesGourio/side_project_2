@@ -47,7 +47,7 @@ def test_no_commented_out_imports_or_prints():
 
 
 def test_every_pipeline_notebook_explains_each_code_block():
-    """LEAP layout: a markdown cell with the why comes before each code cell, all sections are present."""
+    """Notebook layout: a markdown cell with the why comes before each code cell, all sections are present."""
     sep = "\n\n# COMMAND ----------\n\n"
     sections = ["Technical debt", "Configuration", "Inputs", "Data Preparation", "Data Transformations",
                 "Quality Checks", "Outputs"]
