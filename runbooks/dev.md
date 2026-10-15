@@ -143,9 +143,23 @@ vérifier l'endpoint puis de redéployer l'app DEV.
 **00.0 — Qui déploie et qui possède (à lire avant 00.2)**
 
 > **Ne lancer aucun pipeline DEV tant que l'état n'est pas copié.** La racine du bundle DEV passe de `/Workspace/Shared/.bundle/qualibot/dev`
-> à `/Workspace/.bundle/qualibot/dev` (comme PROD). Sans copie de l'état (`state/`) vers la nouvelle racine, le bundle croit que rien n'est déployé :
-> il recrée les jobs (doublons) et échoue sur le schéma et les volumes. Étapes : (1) lister l'ancien `state/`, (2) le copier, (3) donner au SP
-> `CAN_MANAGE` sur le nouveau dossier, (4) `bundle plan -t dev --profile DEV` sans `create` sur les jobs ni `delete` sur les schémas.
+> à `/Workspace/.bundle/qualibot/dev` (comme PROD). Sans copie de `state/` vers la nouvelle racine, le bundle croit que rien n'est déployé :
+> il recrée les jobs (doublons) et échoue sur le schéma et les volumes. Ordre (PowerShell, profil `DEV`) :
+>
+> ```powershell
+> databricks workspace export-dir /Workspace/Shared/.bundle/qualibot/dev/state "$env:TEMP\qualibot-dev-state" --profile DEV
+> databricks workspace import-dir "$env:TEMP\qualibot-dev-state" /Workspace/.bundle/qualibot/dev/state --overwrite --profile DEV
+> databricks workspace get-status /Workspace/.bundle/qualibot/dev --profile DEV
+> ```
+>
+> Puis donner au SP DEV `CAN_MANAGE` sur le dossier (remplacer `<object_id>` par la valeur `object_id` de la commande précédente) :
+>
+> ```powershell
+> databricks permissions update directories <object_id> --profile DEV --json '{"access_control_list":[{"service_principal_name":"fde6ff28-739f-4a41-b61e-604a298c8478","permission_level":"CAN_MANAGE"}]}'
+> ```
+>
+> Enfin, après `git pull` : `databricks bundle plan -t dev --profile DEV`, sans `create` sur les jobs ni `delete` sur les schémas et volumes.
+
 
 - Le déploiement DEV passe par le pipeline Bitbucket (`deploy-dev-jobs` pour les jobs et le bundle, `deploy-dev` pour l'app), qui agit sous le SP DEV. Le token est dans l'environnement `Development` (B1), créé par un admin du workspace DEV : le développeur ne crée pas de token.
 - Le déploiement local (`databricks bundle deploy -t dev --profile DEV`) reste possible en secours. Tout objet créé par une commande locale appartient à l'identité du développeur (propriétaire), même si le bundle le déclare.
