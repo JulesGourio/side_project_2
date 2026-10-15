@@ -142,6 +142,11 @@ vérifier l'endpoint puis de redéployer l'app DEV.
 
 **00.0 — Qui déploie et qui possède (à lire avant 00.2)**
 
+> **Ne lancer aucun pipeline DEV tant que l'état n'est pas copié.** La racine du bundle DEV passe de `/Workspace/Shared/.bundle/qualibot/dev`
+> à `/Workspace/.bundle/qualibot/dev` (comme PROD). Sans copie de l'état (`state/`) vers la nouvelle racine, le bundle croit que rien n'est déployé :
+> il recrée les jobs (doublons) et échoue sur le schéma et les volumes. Étapes : (1) lister l'ancien `state/`, (2) le copier, (3) donner au SP
+> `CAN_MANAGE` sur le nouveau dossier, (4) `bundle plan -t dev --profile DEV` sans `create` sur les jobs ni `delete` sur les schémas.
+
 - Le déploiement DEV passe par le pipeline Bitbucket (`deploy-dev-jobs` pour les jobs et le bundle, `deploy-dev` pour l'app), qui agit sous le SP DEV. Le token est dans l'environnement `Development` (B1), créé par un admin du workspace DEV : le développeur ne crée pas de token.
 - Le déploiement local (`databricks bundle deploy -t dev --profile DEV`) reste possible en secours. Tout objet créé par une commande locale appartient à l'identité du développeur (propriétaire), même si le bundle le déclare.
 - Ordre du premier passage : (1) `deploy-dev-jobs` (bundle : jobs et volumes), (2) clone SQL R0 des tables, (3) migration Lakebase, (4) bloc R (colonnes booléennes), (5) `deploy-dev` (app), (6) index `chunks_index` (0.3), puis le reste de la liste.

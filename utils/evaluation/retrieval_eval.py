@@ -25,7 +25,7 @@
 # COMMAND ----------
 
 dbutils.widgets.removeAll()
-dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
+dbutils.widgets.text('app_code_path', '/Workspace/.bundle/qualibot/dev/files')
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 
 # COMMAND ----------

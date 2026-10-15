@@ -91,7 +91,7 @@ targets:
                   - "--experiment"
                   - "/Shared/qualibot/chat_turns"
                   - "--app-root"
-                  - "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+                  - "${workspace.root_path}/files"
               environment_key: default
           environments:
             - environment_key: default
@@ -138,7 +138,7 @@ targets:
                 base_parameters:
                   dry_run: "{{job.parameters.dry_run}}"
                   min_date: "2026-10-12"
-                  app_code_path: "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+                  app_code_path: "${workspace.root_path}/files"
                   experiment: "/Shared/qualibot/chat_turns"
                   results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
               environment_key: default
@@ -236,7 +236,7 @@ targets:
                   - "--experiment"
                   - "/Shared/qualibot/chat_turns_test"
                   - "--app-root"
-                  - "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+                  - "${workspace.root_path}/files"
               environment_key: default
           environments:
             - environment_key: default
@@ -326,7 +326,7 @@ targets:
                   - "--experiment"
                   - "/Shared/qualibot/chat_turns"
                   - "--app-root"
-                  - "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+                  - "${workspace.root_path}/files"
               environment_key: default
           environments:
             - environment_key: default
@@ -371,7 +371,7 @@ targets:
                 base_parameters:
                   dry_run: "{{job.parameters.dry_run}}"
                   min_date: "2026-10-12"
-                  app_code_path: "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+                  app_code_path: "${workspace.root_path}/files"
                   experiment: "/Shared/qualibot/chat_turns"
                   results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
               environment_key: default
@@ -467,7 +467,7 @@ targets:
                   - "--experiment"
                   - "/Shared/qualibot/chat_turns"
                   - "--app-root"
-                  - "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+                  - "${workspace.root_path}/files"
               environment_key: default
           environments:
             - environment_key: default
@@ -512,7 +512,7 @@ targets:
                 base_parameters:
                   dry_run: "{{job.parameters.dry_run}}"
                   min_date: "2026-10-12"
-                  app_code_path: "/Workspace/Shared/.bundle/${bundle.name}/${bundle.target}/files"
+                  app_code_path: "${workspace.root_path}/files"
                   experiment: "/Shared/qualibot/chat_turns"
                   results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
               environment_key: default

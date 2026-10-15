@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger('score_chat_traces')
 
 dbutils.widgets.removeAll()
-dbutils.widgets.text('app_code_path', '/Workspace/Shared/.bundle/qualibot/dev/files')
+dbutils.widgets.text('app_code_path', '/Workspace/.bundle/qualibot/dev/files')
 dbutils.widgets.text('experiment', '/Shared/qualibot/chat_turns')
 dbutils.widgets.text('days', '7')
 dbutils.widgets.text('min_date', '', 'Earliest trace kept, YYYY-MM-DD (empty = no bound)')
