@@ -9,9 +9,19 @@ targets:
         # No run_as: they keep running as the deploying user. Both write UAT chat data to dev_proj.qualibot (Usage Tracking dashboard).
         lakebase_import_uat_to_dev:
           name: "D_1_Qualibot_Lakebase_Import_Uat_To_Dev"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Import the UAT staging volume export into DEV Delta tables"
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
@@ -53,9 +63,19 @@ targets:
         # Export only: the qualibot-uat job also imports chat_* into Delta tables, which would overwrite the UAT chat data landed by lakebase_import_uat_to_dev.
         lakebase_export_dev_to_volume:
           name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Export the DEV Lakebase tables to the dev_proj.qualibot.staging volume"
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
@@ -101,9 +121,19 @@ targets:
       jobs:
         lakebase_export_uat_to_volume:
           name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Export Lakebase UAT tables to a Unity Catalog staging volume"
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           # Without it, run_as=job-runner-sa-uat makes the SP sole owner and humans lose View/Manage Run rights at deploy.
           permissions:

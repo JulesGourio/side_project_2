@@ -10,9 +10,19 @@ targets:
         # and the DEV SP itself SELECT + MODIFY on `pipeline_tables`. LLM endpoints are never granted: every workspace user can already query them.
         grant_app_access_dev:
           name: "Z_1_Qualibot_Grant_App_Access_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Grant the DEV qualibot app SP its volumes and index, and the DEV job SP the pipeline tables. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
@@ -58,9 +68,19 @@ targets:
         # index in uat_proj.qualibot. Runs as job-runner-sa-uat, owner of uat_proj.qualibot.
         grant_app_access_uat_test:
           name: "Z_1_Qualibot_Grant_App_Access_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Grant the qualibot-uat-test app SP its index in uat_proj.qualibot. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
@@ -101,9 +121,19 @@ targets:
         # It grants one specific SP. The `account users` USE CATALOG failure of `bundle deploy` needs a governance decision.
         grant_volume_access:
           name: "Z_1_Qualibot_Grant_Volume_Access_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Grants USE CATALOG + USE SCHEMA + READ/WRITE VOLUME on a volume to a service principal. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39

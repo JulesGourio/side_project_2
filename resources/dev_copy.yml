@@ -11,9 +11,19 @@ targets:
         # the corpus is queryable without a parsing run, and parsing_pipeline resumes incrementally from the copied checkpoint.
         copy_uat_to_dev:
           name: "Z_1_Qualibot_Copy_Uat_To_Dev"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Load the UAT corpus snapshot (chunks + parsing state) into dev_proj.qualibot and build the Vector Search indexes. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           # Runs as the deploying user: the DEV SP has no READ VOLUME on uat_proj.qualibot.staging.
           # Explicit, because dropping run_as leaves the previous SP in place on redeploy.

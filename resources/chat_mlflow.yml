@@ -7,9 +7,19 @@ targets:
       jobs:
         create_chat_experiment_dev:
           name: "Z_2_Qualibot_Create_Chat_Experiment_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Create /Shared/qualibot/chat_turns owned by the DEV job SP; the DEV app SP can edit it. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
@@ -45,9 +55,19 @@ targets:
 
         register_chat_prompts_dev:
           name: "Z_3_Qualibot_Register_Chat_Prompts_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Register the chat prompt files in dev_proj.qualibot (MLflow prompt registry, alias deployed). Run after every deploy that touches server/prompts/chat/. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
@@ -82,9 +102,19 @@ targets:
 
         score_chat_traces_dev:
           name: "D_2_Qualibot_Score_Chat_Traces_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Score the live chat traces (free scorers on every turn, LLM judges on a sample, throttled). dry_run=true only prints the plan and the token estimate: set it to false to judge."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
@@ -130,9 +160,19 @@ targets:
       jobs:
         create_chat_experiment_uat_test:
           name: "Z_2_Qualibot_Create_Chat_Experiment_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Create /Shared/qualibot/chat_turns_test owned by job-runner-sa-uat; the qualibot-uat-test app SP can edit it. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
@@ -164,9 +204,19 @@ targets:
 
         register_chat_prompts_uat_test:
           name: "Z_3_Qualibot_Register_Chat_Prompts_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Register the chat prompt files in uat_proj.qualibot (MLflow prompt registry, alias deployed). Run after every deploy that touches server/prompts/chat/. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
@@ -200,9 +250,19 @@ targets:
       jobs:
         create_chat_experiment_uat:
           name: "Z_2_Qualibot_Create_Chat_Experiment_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Create /Shared/qualibot/chat_turns owned by the job SP; the app SP can edit it. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
@@ -234,9 +294,19 @@ targets:
 
         register_chat_prompts_uat:
           name: "Z_3_Qualibot_Register_Chat_Prompts_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Register the chat prompt files in the project schema (MLflow prompt registry, alias deployed). Run after every deploy that touches server/prompts/chat/. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
@@ -267,9 +337,19 @@ targets:
 
         score_chat_traces_uat:
           name: "D_2_Qualibot_Score_Chat_Traces_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Score the live chat traces (free scorers on every turn, LLM judges on a sample, throttled). dry_run=true only prints the plan and the token estimate: set it to false to judge."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
@@ -311,9 +391,19 @@ targets:
       jobs:
         create_chat_experiment_prod:
           name: "Z_2_Qualibot_Create_Chat_Experiment_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Create /Shared/qualibot/chat_turns owned by the job SP; the app SP can edit it. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02
@@ -345,9 +435,19 @@ targets:
 
         register_chat_prompts_prod:
           name: "Z_3_Qualibot_Register_Chat_Prompts_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Register the chat prompt files in the project schema (MLflow prompt registry, alias deployed). Run after every deploy that touches server/prompts/chat/. Manual trigger only."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02
@@ -378,9 +478,19 @@ targets:
 
         score_chat_traces_prod:
           name: "D_2_Qualibot_Score_Chat_Traces_${bundle.target}"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Score the live chat traces (free scorers on every turn, LLM judges on a sample, throttled). dry_run=true only prints the plan and the token estimate: set it to false to judge."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           run_as:
             service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02

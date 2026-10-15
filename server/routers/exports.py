@@ -42,7 +42,7 @@ def _upload(remote_path: str, data: bytes) -> None:
 
 # --- /compare/export-excel — convert structured JSON analysis to Excel download ---
 
-@router.post('/compare/export-excel')
+@router.post('/compare/export-excel', dependencies=[Depends(require_compare)])
 async def export_excel(
     json_text: str = Form(...),
     filename: str = Form('comparison'),
@@ -78,7 +78,7 @@ async def export_excel(
     )
 
 
-@router.post('/compare/impact/export-excel')
+@router.post('/compare/impact/export-excel', dependencies=[Depends(require_compare)])
 async def export_impact_excel(result_json: str = Form(...), filename: str = Form('impact')):
     """Impact search result (as shown in the UI) → Excel action list, one row per conflicting passage."""
     try:
@@ -127,7 +127,7 @@ def _pdf_filename(name: str, default: str) -> str:
     return safe if safe.lower().endswith('.pdf') else f'{safe}.pdf'
 
 
-@router.post('/export/pdf')
+@router.post('/export/pdf', dependencies=[Depends(require_compare)])
 async def export_pdf(req: PdfExportRequest):
     """Render one or more Markdown sections (with optional question and sources) as a PDF download."""
     if req.kind not in KIND_LABELS:

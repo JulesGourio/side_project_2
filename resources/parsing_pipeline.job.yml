@@ -32,14 +32,22 @@ targets:
           max_concurrent_runs: 3
 
           # DEV service principal. qualibot-uat and qualibot-prod override run_as below.
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
 
           tags:
             project: Qualibot
-            activity-type: ${var.parsing_job_activity_tag}
+            activity-type: ${var.job_activity_tag}
             ingestion-system: intraqual_ingestion
-            job-purpose: documents-parsing
+            job-purpose: project
+            project-name: qualibot
 
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
@@ -281,6 +289,19 @@ targets:
       jobs:
         parsing_pipeline:
           <<: *parsing_pipeline_body
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
+          tags:
+            project: Qualibot
+            activity-type: ${var.job_activity_tag}
+            ingestion-system: intraqual_ingestion
+            job-purpose: project
+            project-name: qualibot
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
 
@@ -289,6 +310,13 @@ targets:
       jobs:
         parsing_pipeline:
           <<: *parsing_pipeline_body
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39  # job-runner-sa-uat
 
@@ -298,5 +326,18 @@ targets:
         parsing_pipeline:
           <<: *parsing_pipeline_body
           # run_as job-runner-sa-prod (b82d3b5a-b633-4738-8dde-68bb2142cb02)
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
+          tags:
+            project: Qualibot
+            activity-type: ${var.job_activity_tag}
+            ingestion-system: intraqual_ingestion
+            job-purpose: project
+            project-name: qualibot
           run_as:
             service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02

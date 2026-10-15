@@ -11,9 +11,19 @@ targets:
         # with it and stays PAUSED (a Monday auto-start is not wanted on the test copy).
         apps_stop_nightly_dev:
           name: "D_1_Qualibot_Apps_Stop_Nightly_Dev"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Stop the DEV qualibot app every night at 21h."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
@@ -48,9 +58,19 @@ targets:
 
         qualibot_stop_weekend_dev:
           name: "W_1_Qualibot_Stop_Weekend_Dev"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Stop the DEV qualibot app for the weekend."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
@@ -85,9 +105,19 @@ targets:
 
         qualibot_start_weekend_dev:
           name: "W_1_Qualibot_Start_Weekend_Dev"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Restart the DEV qualibot app on Monday morning."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
@@ -128,9 +158,19 @@ targets:
         # Only qualibot has a start job (weekend pair below); qualibot-uat-test has its own nightly stop (further down).
         qualibot_stop_weekend_uat:
           name: "W_1_Qualibot_Stop_Weekend_Uat"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Stop qualibot for the weekend (no nightly schedule for this app)."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
@@ -161,9 +201,19 @@ targets:
 
         qualibot_start_weekend_uat:
           name: "W_1_Qualibot_Start_Weekend_Uat"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Restart qualibot on Monday morning."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"
@@ -199,9 +249,19 @@ targets:
         # The test app is stopped every night and never restarted by a job: start it by hand when needed.
         apps_stop_nightly_uat_test:
           name: "D_1_Qualibot_Apps_Stop_Nightly_Uat_Test"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
           description: "Stop qualibot-uat-test every night at 21h. Never restarted by a job — start it manually when needed."
           max_concurrent_runs: 1
           tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
             project: Qualibot
           permissions:
             - group_name: "Role-Project-LEAP-CoreAdmin"

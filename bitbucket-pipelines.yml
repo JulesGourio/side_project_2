@@ -271,14 +271,15 @@ pipelines:
       - step: *export-from-uat
       - step: *import-to-prod
 
-  # Runs on every push to main: steps run in order, and a failing step stops the rest
-  # (PROD does not start if UAT failed).
-  branches:
-    main:
-      # Automatic: deploys UAT on every push to main.
-      - step: *deploy-uat
-      # Manual: available once UAT is green; it is the gate between UAT and PROD. A manual step
-      # cannot come first in a pipeline, hence the automatic UAT step before it.
-      - step:
-          <<: *deploy-prod
-          trigger: manual
+  # Disabled: a push to main does nothing for now. Re-enable (uncomment) when the main-branch deploy is decided.
+#   # Runs on every push to main: steps run in order, and a failing step stops the rest
+#   # (PROD does not start if UAT failed).
+#   branches:
+#     main:
+#       # Automatic: deploys UAT on every push to main.
+#       - step: *deploy-uat
+#       # Manual: available once UAT is green; it is the gate between UAT and PROD. A manual step
+#       # cannot come first in a pipeline, hence the automatic UAT step before it.
+#       - step:
+#           <<: *deploy-prod
+#           trigger: manual
