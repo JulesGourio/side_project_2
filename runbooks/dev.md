@@ -175,14 +175,32 @@ databricks volumes list dev_landingzone qualibot --profile DEV -o json | Convert
 > sans `delete` ni `recreate` sur le schéma et les volumes.
 >
 > Constat du 2026-10-15 (`bundle summary -t dev`) : `qualibot_schema` et les volumes `qualibot_doc_compare`, `qualibot_images`, `qualibot_staging`,
-> `qualibot_test` pointent sur `dev_landingzone.qualibot`. Détacher ces cinq ressources de l'état (ne supprime rien dans Databricks) :
+> `qualibot_test` pointent sur `dev_landingzone.qualibot`. Détacher ces ressources de l'état (ne supprime rien dans Databricks). Le premier essai a
+> échoué (`no such resource: qualibot_schema`, la clé n'existe pas dans `databricks.yml`) et a laissé un verrou de déploiement au nom du développeur
+> (`--force-lock`, à utiliser seulement si aucun autre déploiement n'est en cours).
+>
+> 1. Les quatre volumes (la clé est dans `databricks.yml`) :
 >
 > ```powershell
-> databricks bundle deployment unbind qualibot_schema -t dev --profile DEV
-> databricks bundle deployment unbind qualibot_doc_compare -t dev --profile DEV
-> databricks bundle deployment unbind qualibot_images -t dev --profile DEV
-> databricks bundle deployment unbind qualibot_staging -t dev --profile DEV
-> databricks bundle deployment unbind qualibot_test -t dev --profile DEV
+> databricks bundle deployment unbind qualibot_doc_compare -t dev --profile DEV --force-lock
+> databricks bundle deployment unbind qualibot_images -t dev --profile DEV --force-lock
+> databricks bundle deployment unbind qualibot_staging -t dev --profile DEV --force-lock
+> databricks bundle deployment unbind qualibot_test -t dev --profile DEV --force-lock
+> ```
+>
+> 2. Le schéma : temporairement, ajouter sous `targets: dev: resources: schemas:` (à côté de `qualibot_proj_schema`) :
+>
+> ```yaml
+> qualibot_schema:
+>   catalog_name: dev_landingzone
+>   name: qualibot
+> ```
+>
+> puis `databricks bundle deployment unbind qualibot_schema -t dev --profile DEV --force-lock`, puis retirer ce bloc temporaire.
+>
+> 3. Contrôle :
+>
+> ```powershell
 > databricks bundle plan -t dev --profile DEV
 > ```
 >
