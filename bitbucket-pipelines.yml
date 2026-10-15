@@ -3,7 +3,7 @@
 # Deploys the Databricks Asset Bundle to DEV, UAT and PROD.
 #
 # Each step writes ~/.databrickscfg from the secured DATABRICKS_TOKEN variable of its
-# Bitbucket deployment environment (Development, UAT, Production). DATABRICKS_HOST is
+# Bitbucket deployment environment (dev, uat, production). DATABRICKS_HOST is
 # optional: each step carries the default host of its workspace.
 #
 # Custom pipelines are triggered by hand. A push to main runs the UAT deployment, then
@@ -20,7 +20,7 @@ definitions:
     # -----------------------------------------------------------------------
     - step: &deploy-dev
         name: Deploy bundle to DEV (dev)
-        deployment: development
+        deployment: dev
         clone:
           depth: 1
         script:
@@ -29,7 +29,7 @@ definitions:
           - databricks version
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
-              echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'Development')." >&2
+              echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'dev')." >&2
               exit 1
             fi
           - |
@@ -51,7 +51,7 @@ definitions:
     # -----------------------------------------------------------------------
     - step: &deploy-dev-jobs
         name: Deploy jobs and notebooks to DEV, app untouched (dev)
-        deployment: development
+        deployment: dev
         clone:
           depth: 1
         script:
@@ -60,7 +60,7 @@ definitions:
           - databricks version
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
-              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'Development')." >&2
+              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'dev')." >&2
               exit 1
             fi
           - |
