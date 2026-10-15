@@ -24,6 +24,9 @@ class _RecordingConn:
         self.statements.append(' '.join(query.split()))
         return []
 
+    async def fetchval(self, query, *args):
+        return False
+
 
 class _RecordingPool:
     def __init__(self):

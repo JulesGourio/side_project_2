@@ -14,6 +14,37 @@ async def _add_columns(conn, table: str, columns) -> None:
         await conn.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}')
 
 
+# Renamed tables, copied in dependency order (a feedback points to its message). The legacy tables are kept.
+LEGACY_TABLE_COPIES = (
+    ('messages', 'compare_messages'),
+    ('feedbacks', 'compare_feedbacks'),
+    ('errors', 'app_errors'),
+)
+
+
+async def _carry_over_legacy_rows(conn) -> None:
+    """Copy the rows of the renamed tables into the new ones. Runs only into an empty new table: the copied ids then
+    cannot collide with ids the app has already handed out."""
+    for legacy, current in LEGACY_TABLE_COPIES:
+        if not await conn.fetchval('SELECT to_regclass($1) IS NOT NULL', legacy):
+            continue
+        if await conn.fetchval(f'SELECT EXISTS (SELECT 1 FROM {current})'):
+            continue
+        legacy_cols = {r['column_name'] for r in await conn.fetch(
+            'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1',
+            legacy)}
+        current_cols = [r['column_name'] for r in await conn.fetch(
+            'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 '
+            'ORDER BY ordinal_position', current)]
+        cols = ', '.join(c for c in current_cols if c in legacy_cols)
+        copied = await conn.execute(f'INSERT INTO {current} ({cols}) SELECT {cols} FROM {legacy}')
+        if 'id' in current_cols:
+            await conn.execute(
+                f"SELECT setval(pg_get_serial_sequence('{current}', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) "
+                f'FROM {current}')
+        logger.info('Copied legacy rows %s -> %s (%s)', legacy, current, copied)
+
+
 async def ensure_schema(pool: asyncpg.Pool) -> None:
     # DROP COLUMN only for columns that nothing reads or writes; never DROP TABLE or TRUNCATE.
     # Lakebase rewrites the table, so it looks empty for a moment before the data is back.
@@ -502,6 +533,8 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
 
 
         # ── Data migrations (idempotent — WHERE only matches rows in the composite format) ──
+
+        await _carry_over_legacy_rows(conn)
 
         # 0. Drop unused columns (Lakebase rewrites the table: briefly empty).
         for _tbl, _col in [
