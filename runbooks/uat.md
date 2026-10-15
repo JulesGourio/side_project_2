@@ -209,6 +209,12 @@ Puis supprimer celles dont le nom finit par `_test` (la boucle ne touche qu'à c
 foreach ($t in (databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.name -like '*_test' } | ForEach-Object { $_.name })) { databricks tables delete "uat_proj.qualibot.$t" --profile UAT }
 ```
 
+Les tables préfixées `trace_test_` ne finissent pas par `_test` : la boucle ci-dessus ne les touche pas. Les supprimer seulement après vérification de leur contenu :
+
+```powershell
+foreach ($t in (databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.name -like 'trace_test_*' } | ForEach-Object { $_.name })) { databricks tables delete "uat_proj.qualibot.$t" --profile UAT }
+```
+
 3. Volumes de test (le volume `uat_proj.qualibot.test` n'est pas un volume de test, il reste). Vérifier d'abord lesquels existent :
 
 ```powershell
@@ -226,7 +232,7 @@ databricks volumes delete uat_proj.qualibot.images_test --profile UAT
 Si `images_test` renvoie « User does not have MANAGE », son propriétaire n'est pas l'utilisateur UAT courant. Voir le propriétaire, puis demander à ce propriétaire, ou à un administrateur UAT, de le supprimer :
 
 ```powershell
-databricks volumes get uat_proj.qualibot.images_test --profile UAT -o json | ConvertFrom-Json | Select-Object owner, volume_type, full_name
+databricks volumes read uat_proj.qualibot.images_test --profile UAT -o json | ConvertFrom-Json | Select-Object owner, volume_type, full_name
 ```
 
 4. Index de test :
