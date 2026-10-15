@@ -108,7 +108,10 @@ configure(
     VOLUME_BASE_PATH=cfg.VOLUME_BASE_PATH, USE_TIKTOKEN=cfg.USE_TIKTOKEN, CHARS_PER_TOKEN=cfg.CHARS_PER_TOKEN,
 )
 
-WS_TOKEN = dbutils.secrets.get(scope="qualibot", key="serving_token")
+try:
+    WS_TOKEN = dbutils.secrets.get(scope="qualibot", key="serving_token")
+except Exception:
+    WS_TOKEN = _ctx.apiToken().get()
 WS_HOST = spark.conf.get("spark.databricks.workspaceUrl")
 
 LLM_ENDPOINTS = llm_describe.endpoint_chain(cfg.LLM_MODEL_ENDPOINT, LLM_FALLBACK_ENDPOINTS)
