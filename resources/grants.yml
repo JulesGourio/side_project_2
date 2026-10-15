@@ -111,7 +111,7 @@ targets:
             - name: service_principal
               default: "3e5cd4e5-f765-4760-b974-ee7715258b39"
             - name: catalog
-              default: "prod_proj"
+              default: "prod_landingzone"
             - name: schema_name
               default: "intraqual"
             - name: volume_name

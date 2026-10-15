@@ -22,7 +22,7 @@ Both notebooks take their values from the job parameters, which `resources/grant
   Every statement runs. The failures are collected, and the notebook raises an error that lists them.
 - When `pipeline_service_principal` is empty, no statement goes to the pipeline's principal. The `qualibot-uat-test`
   job sets it empty.
-- The grants are idempotent: an existing grant is not an error, and no grant is removed.
+- The grants are idempotent: an existing grant is not an error, and no grant is revoked.
 - `grant_volume_access_job.py` checks `volume_permission` (READ VOLUME or WRITE VOLUME) and raises an error when a
   statement fails. The error says that the run identity lacks GRANT rights on the schema.
 - The identity that runs a grant job must hold GRANT rights on the catalog. The notebooks do not elevate it.
