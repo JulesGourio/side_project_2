@@ -79,8 +79,11 @@ def test_every_job_name_follows_the_launch_level_domain_convention():
     offenders = []
     for yml in ["databricks.yml", *sorted(glob.glob("resources/*.yml", root_dir=ROOT))]:
         doc = yaml.safe_load(_read(yml).lstrip("﻿"))
+        for key, job in ((doc.get("resources") or {}).get("jobs") or {}).items():
+            if not pattern.match(job["name"]):
+                offenders.append(f"{yml} {key}: {job['name']}")
         for target, body in (doc.get("targets") or {}).items():
             for key, job in ((body.get("resources") or {}).get("jobs") or {}).items():
-                if not pattern.match(job["name"]):
+                if "name" in job and not pattern.match(job["name"]):
                     offenders.append(f"{yml} {target}.{key}: {job['name']}")
     assert not offenders, offenders

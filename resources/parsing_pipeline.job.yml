@@ -5,7 +5,7 @@
 #   3_parse                  : Docling parsing and chunking                                  -> GPU (g4dn)
 #   4_describe_images        : vision LLM image description                                  -> small CPU (bound by the rate limiter)
 #   5_sync_index             : Vector Search index sync                                      -> serverless
-#   6_update_kb_metadata     : Lakebase doc_catalog and catalog_metadata              -> serverless, once the index sync succeeded
+#   6_update_kb_metadata     : Lakebase doc_catalog and catalog_metadata                     -> serverless, once the index sync succeeded
 #
 # The metadata tasks have their own cluster so it does not stay up through the whole GPU parse.
 # Without 5_sync_index, new chunks are never queryable (Delta Sync indexes are TRIGGERED).
@@ -16,306 +16,283 @@
 #
 # Every schedule stays PAUSED until explicitly promoted.
 #
-# Declared per target, not bundle-wide. dev holds the body under a YAML anchor; qualibot-uat, qualibot-uat-test
-# (tables uat_proj.qualibot.*_test, Lakebase doccompare_test) and qualibot-prod merge it with `<<: *parsing_pipeline_body`.
+# The job is declared once at the root. The targets at the end only override run_as: the DEV service principal
+# is the default, and the UAT and PROD targets run as their own service principal.
+
+resources:
+  jobs:
+    parsing_pipeline:
+      # D_1 prefix: org job-naming convention for the shared UAT/PROD workspaces.
+      name: "D_1_Qualibot_Parsing_Pipeline_${bundle.target}"
+      description: "Docling parsing (GPU) + LLM image description pipeline for Qualibot RAG"
+
+      # The default of 1 queues a partial run of 3_parse behind one of 4_describe_images although their clusters and incremental scopes are disjoint.
+      max_concurrent_runs: 3
+
+      # DEV service principal by default; the targets at the end of this file override it.
+      queue:
+        enabled: true
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      notification_settings:
+        no_alert_for_canceled_runs: true
+      run_as:
+        service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+
+      tags:
+        project: Qualibot
+        activity-type: ${var.job_activity_tag}
+        ingestion-system: intraqual_ingestion
+        job-purpose: project
+        project-name: qualibot
+
+      permissions:
+        - group_name: "Role-Project-LEAP-CoreAdmin"
+          level: CAN_MANAGE
+        - group_name: "Role-Project-LEAP-CoreDev"
+          level: CAN_MANAGE
+
+      job_clusters:
+        # The two CPU clusters take the CORE Job Compute S policy: single node, and its first_on_demand = 1 keeps the driver
+        # on demand, so the policy's SPOT_WITH_FALLBACK does not reclaim it. The GPU cluster has no policy (no GPU-ML version in the allowlist).
+        #
+        # ── Small CPU cluster for the metadata tasks (1_categories, 2_manifest) ──
+        # Delta/SQL work and one dbutils.fs.ls on the volume: no GPU or workers.
+        - job_cluster_key: meta_cpu_cluster
+          new_cluster:
+            policy_id: ${var.job_cluster_policy_id_S}
+            apply_policy_default_values: true
+            spark_version: "auto:latest-lts"
+            node_type_id: ${var.parsing_describe_node_type}
+            num_workers: 0
+            # Without this, table reads fail with [UC_NOT_ENABLED].
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*]"
+            custom_tags:
+              ResourceClass: SingleNode
+            spark_env_vars:
+              PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
+              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
+              PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
+              PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
+              PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
+              PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
+              PARSING_MAX_SOURCE_STALENESS_HOURS: ${var.parsing_max_source_staleness_hours}
+              PARSING_ARCHIVE_MAX_DOCS: ${var.parsing_archive_max_docs}
+              PARSING_USE_GPU:          "false"
+
+        # ── GPU cluster for Docling parsing (3_parse) ─────────────────────────
+        - job_cluster_key: parse_gpu_cluster
+          new_cluster:
+            spark_version: "17.3.x-gpu-ml-scala2.13"
+            node_type_id: ${var.parsing_gpu_node_type}
+            num_workers: ${var.parsing_num_workers}
+            data_security_mode: SINGLE_USER   # already the effective state, made explicit
+            aws_attributes:
+              # The driver is on-demand: a reclaimed spot driver aborts the run.
+              first_on_demand: 1
+              availability: SPOT_WITH_FALLBACK
+              ebs_volume_count: 1
+              ebs_volume_size: 100
+              ebs_volume_type: GENERAL_PURPOSE_SSD
+            spark_conf:
+              # One Spark task per GPU: extra tasks queue on the same GPU.
+              spark.executor.resource.gpu.amount: "1"
+              spark.task.resource.gpu.amount: "1"
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.databricks.delta.autoCompact.enabled: "true"
+            spark_env_vars:
+              PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
+              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
+              PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
+              PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
+              PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
+              PARSING_RUN_MODE:         ${var.parsing_run_mode}
+              PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
+              PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
+              PARSING_ARCHIVE_NOTICES_IN_RAG: ${var.parsing_archive_notices_in_rag}
+              PARSING_USE_GPU:          "true"
+              # Set before the interpreter starts.
+              USE_TF:                 "0"
+              TRANSFORMERS_NO_TF:     "1"
+              TF_CPP_MIN_LOG_LEVEL:   "3"
+              CUDA_MODULE_LOADING:    "LAZY"
+              HF_HUB_OFFLINE:         "1"
+              TRANSFORMERS_OFFLINE:   "1"
+              HF_HUB_DISABLE_TELEMETRY: "1"
+              # Do not set a static PYTHONPATH here.
+
+        # ── Small CPU cluster for LLM description (4_describe_images, I/O-bound) ──
+        - job_cluster_key: describe_cpu_cluster
+          new_cluster:
+            policy_id: ${var.job_cluster_policy_id_S}
+            apply_policy_default_values: true
+            spark_version: "auto:latest-lts"
+            node_type_id: ${var.parsing_describe_node_type}
+            num_workers: 0
+            data_security_mode: SINGLE_USER   # already the effective state, made explicit
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*]"
+            custom_tags:
+              ResourceClass: SingleNode
+            spark_env_vars:
+              PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
+              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
+              PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
+              PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
+              PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
+              PARSING_RUN_MODE:         ${var.parsing_run_mode}
+              PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
+              PARSING_USE_GPU:          "false"
+
+      tasks:
+        - task_key: "1_categories"
+          description: "Intraqual source freshness guard + build category_reference"
+          job_cluster_key: meta_cpu_cluster
+          notebook_task:
+            notebook_path: ../utils/parsing_pipeline/create_proj_category_reference.py
+            source: WORKSPACE
+          libraries:
+            - pypi: {package: "packaging"}
+
+        - task_key: "2_manifest"
+          description: "Qualibot scope -> parsed_documents exclusions + parse_manifest"
+          depends_on:
+            - task_key: "1_categories"
+          job_cluster_key: meta_cpu_cluster
+          notebook_task:
+            notebook_path: ../utils/parsing_pipeline/create_proj_parse_manifest.py
+            source: WORKSPACE
+            base_parameters:
+              # DRY_RUN=oui is mandatory on a scheduled run: scope depends on courant/etat, which change on every revision.
+              DRY_RUN: "oui"
+              JOB_RUN_ID: "{{job.run_id}}"
+          libraries:
+            - pypi: {package: "packaging"}
+            - pypi: {package: "tiktoken"}
+
+        - task_key: "3_parse"
+          description: "Docling parsing, chunking, image extraction (GPU)"
+          depends_on:
+            - task_key: "2_manifest"
+          job_cluster_key: parse_gpu_cluster
+          notebook_task:
+            notebook_path: ../utils/parsing_pipeline/create_proj_chunks.py
+            source: WORKSPACE
+            base_parameters:
+              JOB_RUN_ID: "{{job.run_id}}"
+          libraries:
+            - pypi: {package: "packaging"}
+            - pypi: {package: "numpy<2"}
+            - pypi: {package: "docling"}
+            - pypi: {package: "docling-core"}
+            - pypi: {package: "langchain-text-splitters"}
+            - pypi: {package: "tiktoken"}
+            - pypi: {package: "striprtf"}
+            - pypi: {package: "odfpy"}
+            - pypi: {package: "xlrd"}
+            - pypi: {package: "openpyxl"}
+            - pypi: {package: "lxml"}
+            - pypi: {package: "olefile"}
+            - pypi: {package: "pyxlsb"}
+            - pypi: {package: "openai"}
+            - pypi: {package: "tenacity"}
+            # The opencv-headless install is the %pip cell in create_proj_chunks.py, not a cluster library.
+
+        - task_key: "4_describe_images"
+          description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
+          depends_on:
+            - task_key: "3_parse"
+          job_cluster_key: describe_cpu_cluster
+          notebook_task:
+            notebook_path: ../utils/parsing_pipeline/create_proj_image_metadata.py
+            source: WORKSPACE
+            base_parameters:
+              # Tried in order after the primary PARSING_LLM_ENDPOINT; each must accept image input.
+              llm_fallback_endpoints: "databricks-gpt-5-6-luna"
+          libraries:
+            - pypi: {package: "openai"}
+            - pypi: {package: "tenacity"}
+            - pypi: {package: "nest_asyncio"}
+            - pypi: {package: "packaging"}
+
+        - task_key: "5_sync_index"
+          description: "Sync Vector Search indexes on the rewritten chunk tables (creating one first if it doesn't exist yet)"
+          depends_on:
+            - task_key: "4_describe_images"
+          notebook_task:
+            notebook_path: ../utils/parsing_pipeline/update_proj_vector_indexes.py
+            source: WORKSPACE
+            base_parameters:
+              indexes: ${var.parsing_vector_search_indexes}
+              wait_minutes: "45"
+              # Only used if one of `indexes` doesn't exist yet and needs creating.
+              vector_search_endpoint: "qualibot"
+              embedding_model: "databricks-qwen3-embedding-0-6b"
+              catalog_schema: ${var.app_proj_catalog}.${var.app_proj_schema}
+              table_suffix: ${var.parsing_table_suffix}
+              build_chunks_full: ${var.parsing_build_chunks_full}
+          # Serverless: SDK calls, plus a MERGE into chunks_full when build_chunks_full is on or chunks_full_index is listed.
+          environment_key: default
+
+        - task_key: "6_update_kb_metadata"
+          description: "Rewrite the document catalog and bump catalog_metadata (Lakebase) now the chain succeeded end to end"
+          depends_on:
+            - task_key: "5_sync_index"
+          notebook_task:
+            notebook_path: ../utils/parsing_pipeline/create_proj_doc_catalog.py
+            source: WORKSPACE
+            base_parameters:
+              LAKEBASE_PROJECT_ID: "qualibot"
+              LAKEBASE_BRANCH: "production"
+              LAKEBASE_ENDPOINT: "primary"
+              LAKEBASE_DATABASE: ${var.parsing_lakebase_database}
+              CATALOG_SCHEMA: ${var.app_proj_catalog}.${var.app_proj_schema}
+              TABLE_SUFFIX: ${var.parsing_table_suffix}
+          # Serverless: classic job compute cannot reach the Lakebase private endpoint. Separate environment from "default" (psycopg2 is only needed here).
+          environment_key: lakebase_env
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+            dependencies:
+              - databricks-sdk>=0.118.0
+              - packaging
+        - environment_key: lakebase_env
+          spec:
+            environment_version: "2"
+            dependencies:
+              - psycopg2-binary
+              - databricks-sdk>=0.118.0
+              - packaging
+
+      # Daily at night: upstream Intraqual ingestion lands during the day, and 1_categories fails explicitly if sources are older than
+      # `parsing_max_source_staleness_hours`.
+      schedule:
+        quartz_cron_expression: ${var.parsing_schedule_cron}
+        timezone_id: "Europe/Paris"
+        pause_status: ${var.parsing_schedule_pause}
 
 targets:
-  dev:
-    resources:
-      jobs:
-        parsing_pipeline: &parsing_pipeline_body
-          # D_1 prefix: org job-naming convention for the shared UAT/PROD workspaces.
-          name: "D_1_Qualibot_Parsing_Pipeline_${bundle.target}"
-          description: "Docling parsing (GPU) + LLM image description pipeline for Qualibot RAG"
-
-          # The default of 1 queues a partial run of 3_parse behind one of 4_describe_images although their clusters and incremental scopes are disjoint.
-          max_concurrent_runs: 3
-
-          # DEV service principal. qualibot-uat and qualibot-prod override run_as below.
-          queue:
-            enabled: true
-          email_notifications:
-            on_failure:
-              - ${var.notification_email}
-          notification_settings:
-            no_alert_for_canceled_runs: true
-          run_as:
-            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
-
-          tags:
-            project: Qualibot
-            activity-type: ${var.job_activity_tag}
-            ingestion-system: intraqual_ingestion
-            job-purpose: project
-            project-name: qualibot
-
-          permissions:
-            - group_name: "Role-Project-LEAP-CoreAdmin"
-              level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-CoreDev"
-              level: CAN_MANAGE
-
-          job_clusters:
-            # The two CPU clusters take the CORE Job Compute S policy: single node, and its first_on_demand = 1 keeps the driver
-            # on demand, so the policy's SPOT_WITH_FALLBACK does not reclaim it. The GPU cluster has no policy (no GPU-ML version in the allowlist).
-            #
-            # ── Small CPU cluster for the metadata tasks (1_categories, 2_manifest) ──
-            # Delta/SQL work and one dbutils.fs.ls on the volume: no GPU or workers.
-            - job_cluster_key: meta_cpu_cluster
-              new_cluster:
-                policy_id: ${var.job_cluster_policy_id_S}
-                apply_policy_default_values: true
-                spark_version: "auto:latest-lts"
-                node_type_id: ${var.parsing_describe_node_type}
-                num_workers: 0
-                # Without this, table reads fail with [UC_NOT_ENABLED].
-                data_security_mode: SINGLE_USER
-                spark_conf:
-                  spark.databricks.cluster.profile: singleNode
-                  spark.master: "local[*]"
-                custom_tags:
-                  ResourceClass: SingleNode
-                spark_env_vars:
-                  PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
-                  PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
-                  PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
-                  PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
-                  PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
-                  PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
-                  PARSING_MAX_SOURCE_STALENESS_HOURS: ${var.parsing_max_source_staleness_hours}
-                  PARSING_ARCHIVE_MAX_DOCS: ${var.parsing_archive_max_docs}
-                  PARSING_USE_GPU:          "false"
-
-            # ── GPU cluster for Docling parsing (3_parse) ─────────────────────────
-            - job_cluster_key: parse_gpu_cluster
-              new_cluster:
-                spark_version: "17.3.x-gpu-ml-scala2.13"
-                node_type_id: ${var.parsing_gpu_node_type}
-                num_workers: ${var.parsing_num_workers}
-                data_security_mode: SINGLE_USER   # already the effective state, made explicit
-                aws_attributes:
-                  # The driver is on-demand: a reclaimed spot driver aborts the run.
-                  first_on_demand: 1
-                  availability: SPOT_WITH_FALLBACK
-                  ebs_volume_count: 1
-                  ebs_volume_size: 100
-                  ebs_volume_type: GENERAL_PURPOSE_SSD
-                spark_conf:
-                  # One Spark task per GPU: extra tasks queue on the same GPU.
-                  spark.executor.resource.gpu.amount: "1"
-                  spark.task.resource.gpu.amount: "1"
-                  spark.databricks.delta.optimizeWrite.enabled: "true"
-                  spark.databricks.delta.autoCompact.enabled: "true"
-                spark_env_vars:
-                  PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
-                  PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
-                  PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
-                  PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
-                  PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
-                  PARSING_RUN_MODE:         ${var.parsing_run_mode}
-                  PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
-                  PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
-                  PARSING_ARCHIVE_NOTICES_IN_RAG: ${var.parsing_archive_notices_in_rag}
-                  PARSING_USE_GPU:          "true"
-                  # Set before the interpreter starts.
-                  USE_TF:                 "0"
-                  TRANSFORMERS_NO_TF:     "1"
-                  TF_CPP_MIN_LOG_LEVEL:   "3"
-                  CUDA_MODULE_LOADING:    "LAZY"
-                  HF_HUB_OFFLINE:         "1"
-                  TRANSFORMERS_OFFLINE:   "1"
-                  HF_HUB_DISABLE_TELEMETRY: "1"
-                  # Do not set a static PYTHONPATH here.
-
-            # ── Small CPU cluster for LLM description (4_describe_images, I/O-bound) ──
-            - job_cluster_key: describe_cpu_cluster
-              new_cluster:
-                policy_id: ${var.job_cluster_policy_id_S}
-                apply_policy_default_values: true
-                spark_version: "auto:latest-lts"
-                node_type_id: ${var.parsing_describe_node_type}
-                num_workers: 0
-                data_security_mode: SINGLE_USER   # already the effective state, made explicit
-                spark_conf:
-                  spark.databricks.cluster.profile: singleNode
-                  spark.master: "local[*]"
-                custom_tags:
-                  ResourceClass: SingleNode
-                spark_env_vars:
-                  PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
-                  PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
-                  PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
-                  PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-                  PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
-                  PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
-                  PARSING_RUN_MODE:         ${var.parsing_run_mode}
-                  PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
-                  PARSING_USE_GPU:          "false"
-
-          tasks:
-            - task_key: "1_categories"
-              description: "Intraqual source freshness guard + build category_reference"
-              job_cluster_key: meta_cpu_cluster
-              notebook_task:
-                notebook_path: ../utils/parsing_pipeline/create_proj_category_reference.py
-                source: WORKSPACE
-              libraries:
-                - pypi: {package: "packaging"}
-
-            - task_key: "2_manifest"
-              description: "Qualibot scope -> parsed_documents exclusions + parse_manifest"
-              depends_on:
-                - task_key: "1_categories"
-              job_cluster_key: meta_cpu_cluster
-              notebook_task:
-                notebook_path: ../utils/parsing_pipeline/create_proj_parse_manifest.py
-                source: WORKSPACE
-                base_parameters:
-                  # DRY_RUN=oui is mandatory on a scheduled run: scope depends on courant/etat, which change on every revision.
-                  DRY_RUN: "oui"
-                  JOB_RUN_ID: "{{job.run_id}}"
-              libraries:
-                - pypi: {package: "packaging"}
-                - pypi: {package: "tiktoken"}
-
-            - task_key: "3_parse"
-              description: "Docling parsing, chunking, image extraction (GPU)"
-              depends_on:
-                - task_key: "2_manifest"
-              job_cluster_key: parse_gpu_cluster
-              notebook_task:
-                notebook_path: ../utils/parsing_pipeline/create_proj_chunks.py
-                source: WORKSPACE
-                base_parameters:
-                  JOB_RUN_ID: "{{job.run_id}}"
-              libraries:
-                - pypi: {package: "packaging"}
-                - pypi: {package: "numpy<2"}
-                - pypi: {package: "docling"}
-                - pypi: {package: "docling-core"}
-                - pypi: {package: "langchain-text-splitters"}
-                - pypi: {package: "tiktoken"}
-                - pypi: {package: "striprtf"}
-                - pypi: {package: "odfpy"}
-                - pypi: {package: "xlrd"}
-                - pypi: {package: "openpyxl"}
-                - pypi: {package: "lxml"}
-                - pypi: {package: "olefile"}
-                - pypi: {package: "pyxlsb"}
-                - pypi: {package: "openai"}
-                - pypi: {package: "tenacity"}
-                # The opencv-headless install is the %pip cell in create_proj_chunks.py, not a cluster library.
-
-            - task_key: "4_describe_images"
-              description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
-              depends_on:
-                - task_key: "3_parse"
-              job_cluster_key: describe_cpu_cluster
-              notebook_task:
-                notebook_path: ../utils/parsing_pipeline/create_proj_image_metadata.py
-                source: WORKSPACE
-                base_parameters:
-                  # Tried in order after the primary PARSING_LLM_ENDPOINT; each must accept image input.
-                  llm_fallback_endpoints: "databricks-gpt-5-6-luna"
-              libraries:
-                - pypi: {package: "openai"}
-                - pypi: {package: "tenacity"}
-                - pypi: {package: "nest_asyncio"}
-                - pypi: {package: "packaging"}
-
-            - task_key: "5_sync_index"
-              description: "Sync Vector Search indexes on the rewritten chunk tables (creating one first if it doesn't exist yet)"
-              depends_on:
-                - task_key: "4_describe_images"
-              notebook_task:
-                notebook_path: ../utils/parsing_pipeline/update_proj_vector_indexes.py
-                source: WORKSPACE
-                base_parameters:
-                  indexes: ${var.parsing_vector_search_indexes}
-                  wait_minutes: "45"
-                  # Only used if one of `indexes` doesn't exist yet and needs creating.
-                  vector_search_endpoint: "qualibot"
-                  embedding_model: "databricks-qwen3-embedding-0-6b"
-                  catalog_schema: ${var.app_proj_catalog}.${var.app_proj_schema}
-                  table_suffix: ${var.parsing_table_suffix}
-                  build_chunks_full: ${var.parsing_build_chunks_full}
-              # Serverless: SDK calls, plus a MERGE into chunks_full when build_chunks_full is on or chunks_full_index is listed.
-              environment_key: default
-
-            - task_key: "6_update_kb_metadata"
-              description: "Rewrite the document catalog and bump catalog_metadata (Lakebase) now the chain succeeded end to end"
-              depends_on:
-                - task_key: "5_sync_index"
-              notebook_task:
-                notebook_path: ../utils/parsing_pipeline/create_proj_doc_catalog.py
-                source: WORKSPACE
-                base_parameters:
-                  LAKEBASE_PROJECT_ID: "qualibot"
-                  LAKEBASE_BRANCH: "production"
-                  LAKEBASE_ENDPOINT: "primary"
-                  LAKEBASE_DATABASE: ${var.parsing_lakebase_database}
-                  CATALOG_SCHEMA: ${var.app_proj_catalog}.${var.app_proj_schema}
-                  TABLE_SUFFIX: ${var.parsing_table_suffix}
-              # Serverless: classic job compute cannot reach the Lakebase private endpoint. Separate environment from "default" (psycopg2 is only needed here).
-              environment_key: lakebase_env
-
-          environments:
-            - environment_key: default
-              spec:
-                environment_version: "2"
-                dependencies:
-                  - databricks-sdk>=0.118.0
-                  - packaging
-            - environment_key: lakebase_env
-              spec:
-                environment_version: "2"
-                dependencies:
-                  - psycopg2-binary
-                  - databricks-sdk>=0.118.0
-                  - packaging
-
-          # Daily at night: upstream Intraqual ingestion lands during the day, and 1_categories fails explicitly if sources are older than
-          # `parsing_max_source_staleness_hours`.
-          schedule:
-            quartz_cron_expression: ${var.parsing_schedule_cron}
-            timezone_id: "Europe/Paris"
-            pause_status: ${var.parsing_schedule_pause}
-
   qualibot-uat:
     resources:
       jobs:
         parsing_pipeline:
-          <<: *parsing_pipeline_body
-          queue:
-            enabled: true
-          email_notifications:
-            on_failure:
-              - ${var.notification_email}
-          notification_settings:
-            no_alert_for_canceled_runs: true
-          tags:
-            project: Qualibot
-            activity-type: ${var.job_activity_tag}
-            ingestion-system: intraqual_ingestion
-            job-purpose: project
-            project-name: qualibot
           run_as:
-            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39  # job-runner-sa-uat
 
   qualibot-uat-test:
     resources:
       jobs:
         parsing_pipeline:
-          <<: *parsing_pipeline_body
-          queue:
-            enabled: true
-          email_notifications:
-            on_failure:
-              - ${var.notification_email}
-          notification_settings:
-            no_alert_for_canceled_runs: true
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39  # job-runner-sa-uat
 
@@ -323,20 +300,5 @@ targets:
     resources:
       jobs:
         parsing_pipeline:
-          <<: *parsing_pipeline_body
-          # run_as job-runner-sa-prod (b82d3b5a-b633-4738-8dde-68bb2142cb02)
-          queue:
-            enabled: true
-          email_notifications:
-            on_failure:
-              - ${var.notification_email}
-          notification_settings:
-            no_alert_for_canceled_runs: true
-          tags:
-            project: Qualibot
-            activity-type: ${var.job_activity_tag}
-            ingestion-system: intraqual_ingestion
-            job-purpose: project
-            project-name: qualibot
           run_as:
-            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02
+            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02  # job-runner-sa-prod
