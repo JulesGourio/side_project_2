@@ -168,6 +168,12 @@ databricks volumes list dev_landingzone qualibot --profile DEV -o json | Convert
 
 **00.2 — Déployer le bundle DEV (crée le schéma, les volumes, l'app et les jobs)**
 
+> **Ne pas déployer tant que le plan n'est pas expliqué** (plan du 2026-10-15) : `delete schemas.qualibot_schema` et `recreate volumes.*` (4).
+> L'état du bundle garde des ressources d'avant le refactor. Un `bundle deploy` supprimerait l'ancien schéma et recréerait les volumes :
+> les données de `dev_landingzone.qualibot` seraient perdues. Étapes avant tout déploiement : le clone R0 (tables) et la copie des volumes
+> doivent être faites ; l'état doit être détaché (`bundle deployment unbind`, qui ne supprime rien à distance) ou corrigé, puis un nouveau `bundle plan`
+> sans `delete` ni `recreate` sur le schéma et les volumes.
+
 ```powershell
 databricks bundle deploy -t dev --profile DEV
 ```
