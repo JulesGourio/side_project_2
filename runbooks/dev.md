@@ -611,7 +611,7 @@ chunks remplacée (UI Vector Search) et relancer : `3_sync_indexes` le recrée. 
 
 ### B. Bitbucket — pipelines DEV
 
-- [ ] **B1. Créer l'environnement de déploiement « Development »** (Repository settings ▸ Deployments) avec la variable sécurisée `DATABRICKS_TOKEN` =
+- [ ] **B1. Créer l'environnement de déploiement `development`** (Repository settings ▸ Deployments). Le nom doit être **exactement** `development`, en minuscules, comme `deployment:` dans `bitbucket-pipelines.yml` : sinon Bitbucket répond « environment 'development' in your bitbucket-pipelines.yml doesn't match any environment defined in your settings ». Variable sécurisée `DATABRICKS_TOKEN` =
   PAT du SP DEV `fde6ff28-…` (optionnel : `DATABRICKS_HOST`, défaut `https://dbc-c623749d-731b.cloud.databricks.com`). Créer le PAT (admin du workspace DEV) :
 
   ```powershell
