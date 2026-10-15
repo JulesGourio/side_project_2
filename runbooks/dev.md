@@ -128,6 +128,14 @@ databricks volumes list dev_proj qualibot --profile DEV -o json | ConvertFrom-Js
 databricks vector-search-indexes list-indexes qualibot --profile DEV -o json | ConvertFrom-Json | ForEach-Object { $_.name }
 ```
 
+**00.1b — Anciens emplacements (PowerShell, profil `DEV`)** : un schéma `dev_landingzone.qualibot` encore présent doit être vidé après la copie
+des volumes (00.2b) ; une erreur `SCHEMA_DOES_NOT_EXIST` veut dire qu'il n'y en a plus, les blocs 00.2a et 00.2b sont alors sans objet.
+
+```powershell
+databricks schemas list dev_landingzone --profile DEV -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks volumes list dev_landingzone qualibot --profile DEV -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+```
+
 **00.2 — Déployer le bundle DEV (crée le schéma, les volumes, l'app et les jobs)**
 
 ```powershell
@@ -137,13 +145,15 @@ databricks bundle deploy -t dev --profile DEV
 Le job `copy_uat_to_dev` et l'app pointent alors sur `dev_proj.qualibot.chunks_index`, qui n'existe pas encore : c'est attendu, le job
 le crée (00.4). Les volumes `doc_compare`, `test`, `images` et `staging` sont créés à ce déploiement.
 
-**00.2a — Volume `docling_models` (DEV)** : pas une ressource du bundle en DEV.
+**00.2a — Volume `docling_models` (DEV)** : pas une ressource du bundle en DEV. Sauter ce bloc si `dev_proj.qualibot.docling_models` figure déjà dans
+l'inventaire 00.1.
 
 ```powershell
 databricks volumes create dev_proj qualibot docling_models MANAGED --profile DEV
 ```
 
-**00.2b — Copie des volumes depuis l'ancien emplacement DEV (PowerShell, profil `DEV`)**
+**00.2b — Copie des volumes depuis l'ancien emplacement DEV (PowerShell, profil `DEV`)** : seulement si `dev_landingzone.qualibot` existe (00.1b)
+et si les volumes de destination sont vides.
 
 ```powershell
 databricks fs cp -r dbfs:/Volumes/dev_landingzone/qualibot/docling_models dbfs:/Volumes/dev_proj/qualibot/docling_models --profile DEV
@@ -746,6 +756,26 @@ Attendu après : les trois `is_*` présentes, les anciens noms absents.
 - Le `copy_uat_to_dev` recrée les tables depuis l'UAT, qui a encore les anciens noms : relancer ce bloc après chaque copie tant que l'UAT n'a pas été migré (`runbooks/uat.md`, à faire au moment de la bascule).
 - Même migration pour la table de test `uat_proj.qualibot.parsed_documents_test` (`qualibot-uat-test`), avant son run de validation : remplacer `dev_proj.qualibot.parsed_documents` par `uat_proj.qualibot.parsed_documents_test` dans les quatre instructions.
 - Les colonnes ne sont pas dans `chunks` ni dans l'index `chunks_index` : pas de resynchronisation d'index à prévoir.
+
+### R2. Valider les tables après le déploiement (à faire après R et le déploiement de 0.10)
+
+Le manifeste (`2_manifest`) lit et écrit `parsed_documents` avec les nouveaux noms de colonnes. Ce run ne lance ni GPU ni description d'images
+(il écrit les lignes de `parsed_documents` et supprime les lignes périmées, comme sur l'UAT) :
+
+```powershell
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
+```
+
+Attendu : la tâche réussit, sans erreur de colonne inconnue. Puis, éditeur SQL DEV :
+
+```sql
+SELECT is_in_rag, is_filtered_by_date, COUNT(*) AS documents
+FROM dev_proj.qualibot.parsed_documents
+GROUP BY is_in_rag, is_filtered_by_date
+ORDER BY documents DESC;
+```
+
+Attendu : des lignes avec `is_in_rag` et `is_filtered_by_date` renseignés, et aucun `is_*` dupliqué (`SHOW COLUMNS IN dev_proj.qualibot.parsed_documents;`).
 
 ### Plus tard — non fait, sur décision
 
