@@ -203,16 +203,24 @@ Cette commande supprime l'app `qualibot-uat-test`, son job de parsing, ses jobs 
 databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
 ```
 
-Puis supprimer celles dont le nom finit par `_test` (la boucle ne touche qu'à ce filtre, et ne fait rien si la liste est vide) :
+Puis supprimer ces tables, dont la liste est écrite nom par nom (pas de filtre par motif) :
 
 ```powershell
-foreach ($t in (databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.name -like '*_test' } | ForEach-Object { $_.name })) { databricks tables delete "uat_proj.qualibot.$t" --profile UAT }
+$tables = @("_pipeline_checkpoint_test", "category_reference_test", "chunks_archive_notices_test", "chunks_archive_test", "chunks_index_test", "chunks_test", "document_change_log_test", "image_metadata_test", "parse_manifest_test", "parsing_run_health_test", "processed_files_test")
+foreach ($t in $tables) { databricks tables delete "uat_proj.qualibot.$t" --profile UAT }
+```
+
+Si une suppression renvoie « User does not have MANAGE », la table appartient à un autre principal. Voir le propriétaire, puis le demander au propriétaire ou à un administrateur UAT :
+
+```powershell
+databricks tables get uat_proj.qualibot.chunks_test --profile UAT -o json | ConvertFrom-Json | Select-Object owner, full_name
 ```
 
 Les tables préfixées `trace_test_` ne finissent pas par `_test` : la boucle ci-dessus ne les touche pas. Les supprimer seulement après vérification de leur contenu :
 
 ```powershell
-foreach ($t in (databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.name -like 'trace_test_*' } | ForEach-Object { $_.name })) { databricks tables delete "uat_proj.qualibot.$t" --profile UAT }
+$traceTables = @("trace_test_otel_annotations", "trace_test_otel_logs", "trace_test_otel_metrics", "trace_test_otel_spans", "trace_test_trace_metadata", "trace_test_trace_unified")
+foreach ($t in $traceTables) { databricks tables delete "uat_proj.qualibot.$t" --profile UAT }
 ```
 
 3. Volumes de test (le volume `uat_proj.qualibot.test` n'est pas un volume de test, il reste). Vérifier d'abord lesquels existent :
