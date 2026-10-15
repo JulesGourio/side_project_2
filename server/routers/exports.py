@@ -11,7 +11,7 @@ import logging
 import re
 
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,7 @@ from ..services.compare.export_helpers import (
     _parse_json_response,
 )
 from ..services.infra.lakebase import store_error
+from ..services.infra.user import require_compare
 from ..services.infra.pdf_report import (
     KIND_LABELS,
     Section,
@@ -156,7 +157,7 @@ async def export_pdf(req: PdfExportRequest):
 
 # --- /compare/save-result ---
 
-@router.post('/compare/save-result')
+@router.post('/compare/save-result', dependencies=[Depends(require_compare)])
 async def save_result_to_session(
     session_path: str = Form(...),
     filename: str = Form(...),
@@ -187,7 +188,7 @@ async def save_result_to_session(
 
 # --- /compare/save-excel  /compare/save-pdf — auto-save formatted exports to volume ---
 
-@router.post('/compare/save-excel')
+@router.post('/compare/save-excel', dependencies=[Depends(require_compare)])
 async def save_excel_to_session(
     session_path: str = Form(...),
     json_text: str = Form(...),
@@ -240,7 +241,7 @@ async def save_excel_to_session(
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
-@router.post('/compare/save-pdf')
+@router.post('/compare/save-pdf', dependencies=[Depends(require_compare)])
 async def save_pdf_to_session(
     session_path: str = Form(...),
     markdown_text: str = Form(None),   # optional — server generates PDF from markdown

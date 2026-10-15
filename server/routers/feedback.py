@@ -3,12 +3,12 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..services.infra.lakebase import get_pool
-from ..services.infra.user import get_user_identity, get_workspace_url
+from ..services.infra.user import get_user_identity, get_workspace_url, require_compare
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,7 +20,7 @@ class FeedbackRequest(BaseModel):
     message_id: Optional[int] = None
 
 
-@router.post('/feedback')
+@router.post('/feedback', dependencies=[Depends(require_compare)])
 async def submit_feedback(body: FeedbackRequest, request: Request):
     if body.vote not in ('up', 'down'):
         return JSONResponse({'error': 'vote must be "up" or "down"'}, status_code=422)
@@ -70,7 +70,7 @@ class ImpactFeedbackRequest(BaseModel):
     verdict_shown: Optional[str] = None
 
 
-@router.post('/compare/impact/feedback')
+@router.post('/compare/impact/feedback', dependencies=[Depends(require_compare)])
 async def submit_impact_feedback(body: ImpactFeedbackRequest, request: Request):
     if body.vote not in ('up', 'down'):
         return JSONResponse({'error': 'vote must be "up" or "down"'}, status_code=422)

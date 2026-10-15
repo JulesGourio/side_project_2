@@ -502,3 +502,9 @@ def test_saved_sources_keep_the_revision_shown():
     assert _stored_sources(raw) == [{'title': 'QP-1518', 'url': 'u', 'n': 1, 'revision': 'D', 'doc_date': '2024-10-11'},
                                     {'title': 'MR-1', 'url': None, 'n': None}]
     assert _stored_sources(None) == [] and _stored_sources('not json') == []
+
+
+def test_access_check_fails_closed_when_env_is_unset(monkeypatch):
+    from server.services.infra import user
+    monkeypatch.delenv('ENV', raising=False)
+    assert user._is_dev() is False

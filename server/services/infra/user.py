@@ -32,7 +32,7 @@ _CAPS_BYPASS = os.getenv('CAPS_BYPASS', 'false').strip().lower() == 'true'
 
 
 def _is_dev() -> bool:
-    return os.getenv('ENV', 'development') == 'development'
+    return os.getenv('ENV', 'production') == 'development'
 
 
 def _is_real_email(value: str) -> bool:
