@@ -203,7 +203,7 @@ Cette commande supprime l'app `qualibot-uat-test`, son job de parsing, ses jobs 
 databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
 ```
 
-Les tables de test appartiennent au service principal du job UAT (`job-runner-sa-uat`), donc un utilisateur ne peut pas les supprimer. Les étapes 2, 3 et 5 sont faites par un job one-shot qui tourne sous ce service principal (`run_as`). Il ne déploie rien : c'est une soumission unique, depuis la racine du projet, avec le profil `UAT`.
+Les tables de test appartiennent au service principal du job UAT (`job-runner-sa-uat`), donc un utilisateur ne peut pas les supprimer. Les étapes 2 et 3 sont faites par un job one-shot qui tourne sous ce service principal (`run_as`). Il ne déploie rien : c'est une soumission unique, depuis la racine du projet, avec le profil `UAT`.
 
 Importer le notebook (son chemin doit correspondre exactement à `notebook_path` de `drop_uat_test_submit.json`) :
 
@@ -211,7 +211,7 @@ Importer le notebook (son chemin doit correspondre exactement à `notebook_path`
 databricks workspace import /Workspace/Shared/qualibot_uat_cleanup/drop_uat_test_objects --file runbooks/scripts/uat_cleanup/drop_uat_test_objects.py --format SOURCE --language PYTHON --overwrite --profile UAT
 ```
 
-Lancer la suppression (tables, volumes et experiment listés dans le notebook, rien d'autre) :
+Lancer la suppression (tables et volumes listés dans le notebook, rien d'autre) :
 
 ```powershell
 databricks jobs submit --json "@runbooks/scripts/uat_cleanup/drop_uat_test_submit.json" --profile UAT

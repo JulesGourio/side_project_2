@@ -1,5 +1,5 @@
 # Databricks notebook source
-# One-shot cleanup of the uat-test artefacts in uat_proj.qualibot. Submitted as the UAT job service principal, which owns them.
+# One-shot cleanup of the uat-test tables and volumes in uat_proj.qualibot. Submitted as the UAT job service principal, which owns them. The MLflow experiment is deleted by hand (runbook UAT 0.9 step 5): mlflow is not in the default environment.
 # The names are written out one by one: no pattern match, so nothing else in the schema can be dropped.
 
 import logging
@@ -21,7 +21,6 @@ TABLES = [
     "processed_files_test",
 ]
 VOLUMES = ["doc_compare_test", "test_test", "images_test"]
-EXPERIMENT = "/Shared/qualibot/chat_turns_test"
 
 for name in TABLES + VOLUMES:
     assert name.endswith("_test"), name
@@ -45,20 +44,6 @@ for volume in VOLUMES:
     except Exception as error:
         failures.append(full_name)
         logger.error("volume not dropped: %s: %s", full_name, error)
-
-import mlflow
-
-client = mlflow.MlflowClient()
-try:
-    experiment = client.get_experiment_by_name(EXPERIMENT)
-    if experiment is None:
-        logger.info("experiment absent: %s", EXPERIMENT)
-    else:
-        client.delete_experiment(experiment.experiment_id)
-        logger.info("experiment deleted: %s", EXPERIMENT)
-except Exception as error:
-    failures.append(EXPERIMENT)
-    logger.error("experiment not deleted: %s: %s", EXPERIMENT, error)
 
 if failures:
     raise RuntimeError(f"objects not dropped: {failures}")
