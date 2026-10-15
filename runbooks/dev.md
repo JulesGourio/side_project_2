@@ -701,27 +701,66 @@ Ce bloc ne touche pas aux données ; seul Q3 lance le pipeline (GPU, plusieurs h
 - Q5, `failed_limit` : 0 au premier run ; sinon la liste de la dernière requête donne les images à regarder (le `last_error_kind` dit pourquoi). Elles ne sont pas retentées : seul un run `full` les remet en attente.
 - Un document dont toutes les images sont en `FAILED_LIMIT` passe à `SKIPPED_EMPTY_IMAGES` (aucune image exploitable) ; la cause est dans `image_metadata`.
 
-### R0. Renommer les tables (à faire, avant le déploiement de cette branche sur DEV)
+### R0. Copier l'ancien schéma dans `dev_proj.qualibot` sous les nouveaux noms (à faire, avant le déploiement de l'app)
 
-Ordre impératif : 1. SQL Delta ci-dessous, 2. migration Lakebase, 3. déploiement du code, 4. bloc R. Si le code est déployé avant les renommages, l'app crée des tables vides sous les nouveaux noms et l'historique reste sous les anciens.
+Constat du 2026-10-15 : le corpus, l'index et le chat DEV sont dans `dev_landingzone.qualibot` (ancien emplacement), `dev_proj.qualibot` ne
+contient que 8 tables d'évaluation. On ne renomme donc pas : on **clone** chaque table vers `dev_proj.qualibot` sous son nom cible. Clone profond :
+l'ancienne table reste intacte, `IF NOT EXISTS` ne remplace rien, relancer le bloc est sans risque.
 
-1. Éditeur SQL DEV, **une instruction à la fois**. Une table absente donne `TABLE_OR_VIEW_NOT_FOUND` : passer à la suivante.
+Ordre impératif : 1. clone SQL ci-dessous, 2. volumes (00.2a et 00.2b), 3. migration Lakebase, 4. bloc R, 5. déploiement de l'app (0.10).
+Si l'app est déployée avant la copie, elle lit `dev_proj.qualibot` vide.
+
+**Clone SQL** : éditeur SQL DEV, un bloc à la fois (chaque ligne est une instruction).
 
 ```sql
-ALTER TABLE dev_proj.qualibot.processed_files RENAME TO parsed_documents;
-ALTER TABLE dev_proj.qualibot.chunks_archive_notices RENAME TO archive_notices;
-ALTER TABLE dev_proj.qualibot._pipeline_checkpoint RENAME TO parsing_checkpoint;
-ALTER TABLE dev_proj.qualibot._rag_exclusions RENAME TO rag_exclusions;
-ALTER TABLE dev_proj.qualibot.qualibot_eval_golden RENAME TO eval_golden_questions;
-ALTER TABLE dev_proj.qualibot.synthetic_retrieval_questions RENAME TO eval_synthetic_questions;
-ALTER TABLE dev_proj.qualibot.feedback_failure_cases RENAME TO eval_feedback_failures;
-ALTER TABLE dev_proj.qualibot.eval_pairwise_runs_cache RENAME TO eval_pairwise_cache;
-ALTER TABLE dev_proj.qualibot.eval_load_runs RENAME TO eval_load_chat_runs;
-ALTER TABLE dev_proj.qualibot.eval_vs_load_runs RENAME TO eval_load_vector_search_runs;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.chunks DEEP CLONE dev_landingzone.qualibot.chunks;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.parsed_documents DEEP CLONE dev_landingzone.qualibot.processed_files;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.parsing_checkpoint DEEP CLONE dev_landingzone.qualibot._pipeline_checkpoint;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.image_metadata DEEP CLONE dev_landingzone.qualibot.image_metadata;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.parse_manifest DEEP CLONE dev_landingzone.qualibot.parse_manifest;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.category_reference DEEP CLONE dev_landingzone.qualibot.category_reference;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.compare_messages DEEP CLONE dev_landingzone.qualibot.messages;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.compare_feedbacks DEEP CLONE dev_landingzone.qualibot.feedbacks;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.app_errors DEEP CLONE dev_landingzone.qualibot.errors;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.catalog_metadata DEEP CLONE dev_landingzone.qualibot.knowledge_base_metadata;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.chat_feedbacks DEEP CLONE dev_landingzone.qualibot.chat_feedbacks;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.chat_messages DEEP CLONE dev_landingzone.qualibot.chat_messages;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.chat_sessions DEEP CLONE dev_landingzone.qualibot.chat_sessions;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.chat_quality_scores DEEP CLONE dev_landingzone.qualibot.chat_quality_scores;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.chat_quality_scoring_runs DEEP CLONE dev_landingzone.qualibot.chat_quality_scoring_runs;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.users DEEP CLONE dev_landingzone.qualibot.users;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.llm_requests DEEP CLONE dev_landingzone.qualibot.llm_requests;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.impact_requests DEEP CLONE dev_landingzone.qualibot.impact_requests;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.impact_document_results DEEP CLONE dev_landingzone.qualibot.impact_document_results;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.impact_cache DEEP CLONE dev_landingzone.qualibot.impact_cache;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.summary_cache DEEP CLONE dev_landingzone.qualibot.summary_cache;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.dnt_rules DEEP CLONE dev_landingzone.qualibot.dnt_rules;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.glossary_terms DEEP CLONE dev_landingzone.qualibot.glossary_terms;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_golden_questions DEEP CLONE dev_landingzone.qualibot.qualibot_eval_golden;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_synthetic_questions DEEP CLONE dev_landingzone.qualibot.synthetic_retrieval_questions;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_feedback_failures DEEP CLONE dev_landingzone.qualibot.feedback_failure_cases;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_golden_runs DEEP CLONE dev_landingzone.qualibot.eval_golden_runs;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_retrieval_runs DEEP CLONE dev_landingzone.qualibot.eval_retrieval_runs;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_runs DEEP CLONE dev_landingzone.qualibot.eval_pairwise_runs;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_pairwise_cache DEEP CLONE dev_landingzone.qualibot.eval_pairwise_runs_cache;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_load_chat_runs DEEP CLONE dev_landingzone.qualibot.eval_load_runs;
+CREATE TABLE IF NOT EXISTS dev_proj.qualibot.eval_load_vector_search_runs DEEP CLONE dev_landingzone.qualibot.eval_vs_load_runs;
+ALTER TABLE dev_proj.qualibot.chunks SET TBLPROPERTIES (
+  'delta.enableChangeDataFeed' = true,
+  'delta.deletedFileRetentionDuration' = 'interval 60 days',
+  'delta.logRetentionDuration' = 'interval 60 days'
+);
+SELECT 'source' AS side, COUNT(*) AS chunks FROM dev_landingzone.qualibot.chunks
+UNION ALL
+SELECT 'clone', COUNT(*) FROM dev_proj.qualibot.chunks;
 SHOW TABLES IN dev_proj.qualibot;
 ```
 
-2. Lakebase DEV, PowerShell à la racine du dépôt (les renommages sont les premières migrations) :
+Attendu : `source` et `clone` ont le même nombre de chunks (131 625 au 2026-10-15, celui de l'index), et `SHOW TABLES` liste les nouveaux noms
+(les anciens restent dans `dev_landingzone.qualibot`, rien n'est supprimé ici). Les tables `chat_quality_*`, `dnt_rules`, `glossary_terms`,
+`summary_cache`, `eval_golden_runs` sont copiées sans être utilisées par le code : à trier au nettoyage (0.15).
+
+**Migration Lakebase DEV** (PowerShell à la racine du dépôt ; les renommages sont les premières migrations, à faire avant le déploiement de l'app) :
 
 ```powershell
 python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV
@@ -729,7 +768,7 @@ python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV
 
 Contrôle, éditeur SQL Lakebase DEV : `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1;` doit lister `compare_messages`, `compare_feedbacks`, `app_errors`, `catalog_metadata` et pas `messages`, `feedbacks`, `errors`, `knowledge_base_metadata`.
 
-3. Relancer le job de droits DEV (`grant_app_access_dev`, runbook 0.5) : sa liste de tables porte les nouveaux noms.
+**Droits** : le job `grant_app_access_dev` (0.5) se relance après la création des volumes et de l'index, pas avant.
 
 ### R. Renommer trois colonnes booléennes de `parsed_documents` (à faire)
 
