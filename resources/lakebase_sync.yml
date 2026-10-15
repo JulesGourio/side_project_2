@@ -40,7 +40,7 @@ targets:
               new_cluster:
                 policy_id: ${var.job_cluster_policy_id_S}
                 apply_policy_default_values: true
-                spark_version: "auto:latest-lts"
+                spark_version: "16.4.x-scala2.13"
                 data_security_mode: SINGLE_USER   # without it the cluster has no Unity Catalog
                 node_type_id: "m5d.xlarge"
                 num_workers: 0

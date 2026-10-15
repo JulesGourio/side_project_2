@@ -63,7 +63,7 @@ resources:
           new_cluster:
             policy_id: ${var.job_cluster_policy_id_S}
             apply_policy_default_values: true
-            spark_version: "auto:latest-lts"
+            spark_version: "16.4.x-scala2.13"
             node_type_id: ${var.parsing_describe_node_type}
             num_workers: 0
             # Without this, table reads fail with [UC_NOT_ENABLED].
@@ -132,7 +132,7 @@ resources:
           new_cluster:
             policy_id: ${var.job_cluster_policy_id_S}
             apply_policy_default_values: true
-            spark_version: "auto:latest-lts"
+            spark_version: "16.4.x-scala2.13"
             node_type_id: ${var.parsing_describe_node_type}
             num_workers: 0
             data_security_mode: SINGLE_USER   # already the effective state, made explicit
