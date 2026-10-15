@@ -173,6 +173,20 @@ databricks volumes list dev_landingzone qualibot --profile DEV -o json | Convert
 > les données de `dev_landingzone.qualibot` seraient perdues. Étapes avant tout déploiement : le clone R0 (tables) et la copie des volumes
 > doivent être faites ; l'état doit être détaché (`bundle deployment unbind`, qui ne supprime rien à distance) ou corrigé, puis un nouveau `bundle plan`
 > sans `delete` ni `recreate` sur le schéma et les volumes.
+>
+> Constat du 2026-10-15 (`bundle summary -t dev`) : `qualibot_schema` et les volumes `qualibot_doc_compare`, `qualibot_images`, `qualibot_staging`,
+> `qualibot_test` pointent sur `dev_landingzone.qualibot`. Détacher ces cinq ressources de l'état (ne supprime rien dans Databricks) :
+>
+> ```powershell
+> databricks bundle deployment unbind qualibot_schema -t dev --profile DEV
+> databricks bundle deployment unbind qualibot_doc_compare -t dev --profile DEV
+> databricks bundle deployment unbind qualibot_images -t dev --profile DEV
+> databricks bundle deployment unbind qualibot_staging -t dev --profile DEV
+> databricks bundle deployment unbind qualibot_test -t dev --profile DEV
+> databricks bundle plan -t dev --profile DEV
+> ```
+>
+> Attendu au plan : aucun `delete` sur `dev_landingzone`, les volumes en `create` dans `dev_proj.qualibot`. Seul `delete jobs.migrate_lakebase_dev` est attendu (job retiré du code).
 
 ```powershell
 databricks bundle deploy -t dev --profile DEV
