@@ -398,6 +398,13 @@ Chaque point est indépendant et demande une modification de la configuration : 
 
   Retour arrière : repasser à `false`, `bundle deploy` + un run retirent les fiches.
 
+  Historique de comparaison (à faire avant le premier démarrage de la nouvelle app) : les tables `messages`, `feedbacks` et `errors` (Lakebase `doccompare`) contiennent l'historique des utilisateurs. Le démarrage de la nouvelle app copie leurs lignes dans `compare_messages`, `compare_feedbacks` et `app_errors`, **uniquement si ces tables sont vides** : vérifier d'abord, éditeur SQL Lakebase UAT (base `doccompare`) :
+
+  ```sql
+  SELECT (SELECT COUNT(*) FROM compare_messages) AS new_messages, (SELECT COUNT(*) FROM messages) AS legacy_messages;
+  ```
+
+  Attendu : `new_messages` = 0. Après le démarrage, dans les logs de l'app (`databricks apps logs qualibot --profile UAT`) : `Copied legacy rows messages -> compare_messages`. Les anciennes tables ne sont pas supprimées. La table `knowledge_base_metadata` n'est pas recopiée : la date du corpus se remet à jour avec la tâche `6_update_kb_metadata`.
 - [ ] **D5. Passer l'UAT sur le chatbot retenu** : un seul chatbot (plus de Knowledge Assistant), un seul index `chunks_index` avec filtre de division, le découpage retenu (150 / 300 / 450 tokens), plus aucun nom versionné. Mesures et configuration retenue : `archive/docs/chat_tests.md` (partie 1) ; tester d'abord en DEV (`runbooks/dev.md`, bloc 0). **Avec accord seulement** : c'est la vraie app. Les objets `_v1` restent en place jusqu'à D5.9 : l'app actuelle continue de tourner pendant D5.1 à D5.5, et le retour arrière reste possible.
 
   - [ ] **D5.1. Mettre en pause le planning du pipeline UAT** (UI UAT → Jobs → le job de parsing `qualibot` → *Pause*), pour qu'aucun run ne parte pendant les copies.
