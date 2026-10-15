@@ -203,18 +203,21 @@ Cette commande supprime l'app `qualibot-uat-test`, son job de parsing, ses jobs 
 databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
 ```
 
-Puis supprimer ces tables, dont la liste est écrite nom par nom (pas de filtre par motif) :
+Les tables de test appartiennent au service principal du job UAT (`job-runner-sa-uat`), donc un utilisateur ne peut pas les supprimer. Les étapes 2, 3 et 5 sont faites par un job one-shot qui tourne sous ce service principal (`run_as`). Il ne déploie rien : c'est une soumission unique, depuis la racine du projet, avec le profil `UAT`.
+
+Importer le notebook (son chemin doit correspondre exactement à `notebook_path` de `drop_uat_test_submit.json`) :
 
 ```powershell
-$tables = @("_pipeline_checkpoint_test", "category_reference_test", "chunks_archive_notices_test", "chunks_archive_test", "chunks_index_test", "chunks_test", "document_change_log_test", "image_metadata_test", "parse_manifest_test", "parsing_run_health_test", "processed_files_test")
-foreach ($t in $tables) { databricks tables delete "uat_proj.qualibot.$t" --profile UAT }
+databricks workspace import /Workspace/Shared/qualibot_uat_cleanup/drop_uat_test_objects --file runbooks/scripts/uat_cleanup/drop_uat_test_objects.py --format SOURCE --language PYTHON --overwrite --profile UAT
 ```
 
-Si une suppression renvoie « User does not have MANAGE », la table appartient à un autre principal. Voir le propriétaire, puis le demander au propriétaire ou à un administrateur UAT :
+Lancer la suppression (tables, volumes et experiment listés dans le notebook, rien d'autre) :
 
 ```powershell
-databricks tables get uat_proj.qualibot.chunks_test --profile UAT -o json | ConvertFrom-Json | Select-Object owner, full_name
+databricks jobs submit --json "@runbooks/scripts/uat_cleanup/drop_uat_test_submit.json" --profile UAT
 ```
+
+La commande affiche l'identifiant du run : le suivre dans l'interface Jobs. Le run échoue si un objet n'a pas pu être supprimé, et le message indique lequel.
 
 Les tables préfixées `trace_test_` ne finissent pas par `_test` : la boucle ci-dessus ne les touche pas. Les supprimer seulement après vérification de leur contenu :
 
