@@ -458,7 +458,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
     .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
     ```
 
-  - [ ] **D5.8. Tester** comme `runbooks/dev.md` 0.13 (ALL / AS / IS, langue, hors sujet, lien, impact search). Vérifier aussi le journal Lakebase des tours (`chat_turns`, `chat_retrieved_chunks`, colonnes ajoutées à `errors` : créées par l'app à son démarrage, rien à faire à la main) avec les requêtes de `runbooks/dev.md` 0.13, dans l'éditeur SQL Lakebase de l'UAT (base `doccompare` ; `doccompare_test` pour `qualibot-uat-test`). Référence : `docs/lakebase_schema.md`. Retour arrière : redéployer le zip précédent ; les objets `_v1` restent intacts jusqu'à D5.9.
+  - [ ] **D5.8. Tester** comme `runbooks/dev.md` 0.13 (ALL / AS / IS, langue, hors sujet, lien, impact search). Vérifier aussi le journal Lakebase des tours (`chat_turns`, `chat_retrieved_chunks`, colonnes ajoutées à `errors` : créées par l'app à son démarrage, rien à faire à la main) avec les requêtes de `runbooks/dev.md` 0.13, dans l'éditeur SQL Lakebase de l'UAT (base `doccompare` ; `doccompare_test` pour `qualibot-uat-test`). Référence : `server/services/infra/lakebase/schema.md`. Retour arrière : redéployer le zip précédent ; les objets `_v1` restent intacts jusqu'à D5.9.
 
   - [ ] **D5.8b. Exporter le journal pour la notation** : lancer une fois le job d'export Lakebase (`D_1_Qualibot_Lakebase_Export_To_Volume_qualibot-uat`) ; il écrit toutes les tables, dont `chat_turns` et `chat_retrieved_chunks`, dans le volume de staging, et sa 2e tâche les charge aussi dans `uat_proj.qualibot` (avec `errors`) :
 

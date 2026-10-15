@@ -120,4 +120,4 @@ contains the `⟦n⟧` citation markers.
 | `POST /api/export/pdf` | PDF export |
 
 The matching database tables are described in
-[`docs/lakebase_schema.md`](../../../../docs/lakebase_schema.md).
+[`server/services/infra/lakebase/schema.md`](../../../../server/services/infra/lakebase/schema.md).

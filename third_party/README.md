@@ -1,4 +1,4 @@
-# vendor
+# third_party
 
 Third-party files that the code reads from the repository tree: the antiword program that converts `.doc` files to text,
 its character tables and Debian package, and the fastText model that identifies the language of a text.
@@ -18,9 +18,9 @@ The repository root is described in the [root README](../README.md). None of the
 
 - **The app** calls `antiword` by its name on the `PATH` (`server/services/compare/conversion.py`). `start.sh` installs
   the program into `$HOME/.local/bin` and copies the tables of the `.deb` into `$HOME/.antiword` (the `ANTIWORD_DATA`
-  variable). It never reads `vendor/antiword/bin/` or `vendor/antiword/share/`.
+  variable). It never reads `third_party/antiword/bin/` or `third_party/antiword/share/`.
 - **The parsing pipeline** sets `ANTIWORD_BIN` and `ANTIWORD_SHARE_DIR` from `utils/parsing_pipeline/config.py`
-  (`../../vendor/antiword/bin/antiword` and `../../vendor/antiword/share`, relative to the notebook's folder). The
+  (`../../third_party/antiword/bin/antiword` and `../../third_party/antiword/share`, relative to the notebook's folder). The
   conversion runs `antiword -m UTF-8.txt -w 0 <file>` with `ANTIWORDHOME` set to the `share/` folder, and makes the
   binary executable when it is not. See [`utils/parsing_pipeline/README.md`](../utils/parsing_pipeline/README.md).
 - **The fastText model** is loaded on the first language guess (`lru_cache` on `_fasttext_model()`) through the
@@ -32,8 +32,8 @@ The repository root is described in the [root README](../README.md). None of the
 
 - The `.deb` and the `bin/antiword` executable are in the repository as binaries: `.gitattributes` marks them `binary`,
   so Git never converts their line endings.
-- When `start.sh` finds no `.deb` in `vendor/antiword/`, it tries `apt-get download antiword`, then the Ubuntu and Debian
+- When `start.sh` finds no `.deb` in `third_party/antiword/`, it tries `apt-get download antiword`, then the Ubuntu and Debian
   package URLs written in `start.sh`.
 - The `sync` section of `databricks.yml`, `.databricksignore` and `utils/deploy/deploy_qualibot.ps1` do not exclude
-  `vendor/`: these files are uploaded with the code.
+  `third_party/`: these files are uploaded with the code.
 - The files are replaced by hand. The readers above expect these names and paths.

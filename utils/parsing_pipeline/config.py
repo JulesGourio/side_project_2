@@ -65,9 +65,9 @@ VOLUME_ROOT_PATH      = _require_env("PARSING_VOLUME_ROOT_PATH")
 VOLUME_BASE_PATH      = _require_env("PARSING_VOLUME_BASE_PATH")
 OFFLINE_MODELS_DIR    = _require_env("PARSING_OFFLINE_MODELS")
 
-# Relative to REPO_DIR (utils/parsing_pipeline/, two levels below the repo root that vendors antiword).
-ANTIWORD_BIN_RELATIVE   = "../../vendor/antiword/bin/antiword"
-ANTIWORD_SHARE_RELATIVE = "../../vendor/antiword/share"
+# Relative to REPO_DIR (utils/parsing_pipeline/, two levels below the repo root that holds third_party/).
+ANTIWORD_BIN_RELATIVE   = "../../third_party/antiword/bin/antiword"
+ANTIWORD_SHARE_RELATIVE = "../../third_party/antiword/share"
 
 # --- Target Delta tables ---
 TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.parsed_documents{TABLE_SUFFIX}"

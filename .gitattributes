@@ -9,4 +9,4 @@
 *.ico   binary
 
 # antiword executable (no extension) — must not have line endings converted
-vendor/antiword/bin/antiword binary
+third_party/antiword/bin/antiword binary

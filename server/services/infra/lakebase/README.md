@@ -19,7 +19,7 @@ Parent: [infra](../README.md).
 The tables are `compare_messages`, `compare_feedbacks`, `llm_requests`, `app_errors`, `impact_requests`,
 `impact_document_results`, `impact_feedbacks`, `impact_cache`, `summary_cache`, `users`, `chat_sessions`, `chat_messages`,
 `chat_feedbacks`, `chat_turns`, `chat_retrieved_chunks`, `catalog_metadata` and `doc_catalog`. The schema is described in
-[docs/lakebase_schema.md](../../../../docs/lakebase_schema.md).
+[schema.md](schema.md).
 
 ## Rules
 
@@ -36,4 +36,4 @@ The tables are `compare_messages`, `compare_feedbacks`, `llm_requests`, `app_err
 ## See also
 
 - [infra](../README.md): the other shared services.
-- [docs/lakebase_schema.md](../../../../docs/lakebase_schema.md): the tables and their columns.
+- [schema.md](schema.md): the tables and their columns.

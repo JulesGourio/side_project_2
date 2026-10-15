@@ -66,17 +66,16 @@ server/
 
 - `tests/`: pytest suite. `golden/` and `fixtures/` hold expected outputs and recorded
   model answers; `diff_corpus.py` and `prompt_noise.py` are test data and detectors used by the tests.
-- `vendor/antiword/`: the antiword binary, its character tables and the Debian package used by `start.sh`
-  (converts `.doc` files). `vendor/fasttext/lid.176.ftz`: the fastText language-identification model.
+- `third_party/antiword/`: the antiword binary, its character tables and the Debian package used by `start.sh`
+  (converts `.doc` files). `third_party/fasttext/lid.176.ftz`: the fastText language-identification model.
 - `leap_utils/`: copy of the shared LEAP library (table writes and merges, quality checks).
   Do not edit it in this repository.
 
 ### Documentation
 
-- `docs/`: [lakebase_schema.md](docs/lakebase_schema.md), the columns of the Lakebase tables.
 - `archive/`: superseded documentation (`docs/`, `readmes/`). Never deployed.
 
-`runbooks/`, `docs/` and `archive/` are excluded from the bundle sync in `databricks.yml`:
+`runbooks/` and `archive/` are excluded from the bundle sync in `databricks.yml`:
 nothing reads them at run time.
 
 ## Models and indexes
@@ -227,7 +226,7 @@ The application's Lakebase tables are `compare_messages`, `compare_feedbacks`, `
 `app_errors`, `impact_requests`, `impact_document_results`, `impact_feedbacks`, `impact_cache`,
 `summary_cache`, `chat_sessions`, `chat_messages`, `chat_feedbacks`, `chat_turns`,
 `chat_retrieved_chunks`, `doc_catalog`, `catalog_metadata` and `users`. The application creates
-and completes this schema at startup. Column reference: [docs/lakebase_schema.md](docs/lakebase_schema.md).
+and completes this schema at startup. Column reference: [server/services/infra/lakebase/schema.md](server/services/infra/lakebase/schema.md).
 
 ## Documentation
 
@@ -239,6 +238,6 @@ and completes this schema at startup. Column reference: [docs/lakebase_schema.md
 | [utils/README.md](utils/README.md) | Map of `utils/` |
 | [utils/lakebase_sync/README.md](utils/lakebase_sync/README.md) | Lakebase export, import and schema maintenance |
 | [utils/alerts/README.md](utils/alerts/README.md) | SQL alert queries |
-| [docs/lakebase_schema.md](docs/lakebase_schema.md) | Column reference of the Lakebase tables |
+| [server/services/infra/lakebase/schema.md](server/services/infra/lakebase/schema.md) | Column reference of the Lakebase tables |
 | [runbooks/README.md](runbooks/README.md) | Index of the steps to perform in Databricks |
 | [runbooks/retest.md](runbooks/retest.md) | What to run again after a path or notebook change |

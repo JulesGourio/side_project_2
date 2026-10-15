@@ -333,7 +333,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   ```
 
   Logs de l'app au démarrage : `Lakebase schema ready`. Une erreur juste avant doit être notée (ligne et message) et transmise au
-  développeur. Les colonnes du chat sont décrites dans `docs/lakebase_schema.md`.
+  développeur. Les colonnes du chat sont décrites dans `server/services/infra/lakebase/schema.md`.
 
 - [ ] **0.11 Catalogue des documents avec les révisions** — la tâche 6 seule (rien n'est parsé), puis redémarrage de l'app (sinon l'app recharge
   le catalogue au plus tard 30 min après) :
