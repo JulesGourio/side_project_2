@@ -612,7 +612,7 @@ chunks remplacée (UI Vector Search) et relancer : `3_sync_indexes` le recrée. 
 ### B. Bitbucket — pipelines DEV
 
 - [x] **B1. Environnement Bitbucket `dev`** _(constaté le 2026-10-15 : déjà présent, type Test, nom `dev`)_. Variables présentes : `DATABRICKS_HOST` (workspace DEV) et `DATABRICKS_TOKEN` (secret). Le pipeline référence les environnements par leur nom : `deployment: dev`, `uat`, `production`. Vérifier que le token de `dev` est bien celui du SP DEV `fde6ff28-…` (un admin le remplace sinon, sans toucher au reste).
-  PAT du SP DEV `fde6ff28-…` (optionnel : `DATABRICKS_HOST`, défaut `https://dbc-c623749d-731b.cloud.databricks.com`). Créer le PAT (admin du workspace DEV) :
+  Si le token doit être remplacé (admin du workspace DEV uniquement ; `DATABRICKS_HOST` est optionnel, défaut `https://dbc-c623749d-731b.cloud.databricks.com`) :
 
   ```powershell
   databricks token-management create-obo-token fde6ff28-739f-4a41-b61e-604a298c8478 --lifetime-seconds 7776000 --comment "bitbucket qualibot dev" --profile DEV
