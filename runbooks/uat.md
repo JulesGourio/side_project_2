@@ -197,24 +197,36 @@ databricks bundle destroy -t qualibot-uat-test --profile UAT --auto-approve
 
 Cette commande supprime l'app `qualibot-uat-test`, son job de parsing, ses jobs de droits, d'arrêt de nuit et de notation.
 
-2. Tables `_test` (les tables sans suffixe ne sont pas listées) :
+2. Tables `_test` (les tables sans suffixe ne sont pas listées). Lister d'abord toutes les tables du schéma :
 
 ```powershell
-databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.name -like '*_test' } | ForEach-Object { $_.full_name }
+databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
 ```
 
-Pour chaque nom affiché :
+Puis supprimer celles dont le nom finit par `_test` (la boucle ne touche qu'à ce filtre, et ne fait rien si la liste est vide) :
 
 ```powershell
-databricks tables delete <nom_complet> --profile UAT
+foreach ($t in (databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.name -like '*_test' } | ForEach-Object { $_.name })) { databricks tables delete "uat_proj.qualibot.$t" --profile UAT }
 ```
 
-3. Volumes de test (le volume `uat_proj.qualibot.test` n'est pas un volume de test, il reste) :
+3. Volumes de test (le volume `uat_proj.qualibot.test` n'est pas un volume de test, il reste). Vérifier d'abord lesquels existent :
+
+```powershell
+databricks volumes list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
+```
+
+Supprimer ceux qui sont listés (un volume absent renvoie « does not exist » : rien à faire) :
 
 ```powershell
 databricks volumes delete uat_proj.qualibot.doc_compare_test --profile UAT
 databricks volumes delete uat_proj.qualibot.test_test --profile UAT
 databricks volumes delete uat_proj.qualibot.images_test --profile UAT
+```
+
+Si `images_test` renvoie « User does not have MANAGE », son propriétaire n'est pas l'utilisateur UAT courant. Voir le propriétaire, puis demander à ce propriétaire, ou à un administrateur UAT, de le supprimer :
+
+```powershell
+databricks volumes get uat_proj.qualibot.images_test --profile UAT -o json | ConvertFrom-Json | Select-Object owner, volume_type, full_name
 ```
 
 4. Index de test :
@@ -226,9 +238,12 @@ databricks vector-search-indexes delete-index uat_proj.qualibot.chunks_index_tes
 5. Experiment MLflow de test :
 
 ```powershell
-databricks experiments get-by-name /Shared/qualibot/chat_turns_test --profile UAT -o json
-databricks experiments delete-experiment <experiment_id> --profile UAT
+$exp = databricks experiments get-by-name /Shared/qualibot/chat_turns_test --profile UAT -o json | ConvertFrom-Json
+$exp.experiment.experiment_id
+databricks experiments delete-experiment $exp.experiment.experiment_id --profile UAT
 ```
+
+La première ligne affiche l'identifiant lu depuis le serveur ; la troisième le supprime.
 
 6. Base Lakebase `doccompare_test` (éditeur SQL Lakebase, projet `qualibot`, branche `production`, connecté à la base `doccompare`) :
 
