@@ -280,6 +280,12 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: staging
           volume_type: MANAGED
+        # TEMPORARY, to detach qualibot_test from the DEV state (unbind needs the key in the config). Remove after the unbind run.
+        qualibot_test:
+          catalog_name: ${var.pipeline_write_env}_proj
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
+          name: test
+          volume_type: MANAGED
       apps:
         doc-compare:
           # Mirrors the live ACL of the DEV app, without `users` CAN_MANAGE, plus the developer and the DEV job SP.
