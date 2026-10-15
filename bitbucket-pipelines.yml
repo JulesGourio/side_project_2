@@ -137,6 +137,36 @@ definitions:
           - databricks bundle plan -t dev -p job-runner-sa-dev
 
     # -----------------------------------------------------------------------
+    # DEV, one-off: detach the test volume from the bundle state. Nothing is deleted
+    # in Databricks; the volume and its files stay. Run plan-dev afterwards.
+    # -----------------------------------------------------------------------
+    - step: &unbind-dev-test-volume
+        name: Detach qualibot_test from the DEV bundle state (dev)
+        deployment: dev
+        clone:
+          depth: 1
+        script:
+          - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
+          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - databricks version
+          - |
+            if [ -z "$DATABRICKS_TOKEN" ]; then
+              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'dev')." >&2
+              exit 1
+            fi
+          - |
+            cat > "$HOME/.databrickscfg" <<EOF
+            [job-runner-sa-dev]
+            host  = ${DATABRICKS_HOST:-https://dbc-c623749d-731b.cloud.databricks.com}
+            token = ${DATABRICKS_TOKEN}
+            EOF
+          - chmod 600 "$HOME/.databrickscfg"
+          - databricks current-user me -p job-runner-sa-dev
+          - python3 utils/deploy/render_target_config_env.py dev
+          - databricks bundle validate -t dev -p job-runner-sa-dev
+          - databricks bundle deployment unbind qualibot_test -t dev -p job-runner-sa-dev
+
+    # -----------------------------------------------------------------------
     # UAT: target qualibot-uat, profile job-runner-sa-uat.
     # -----------------------------------------------------------------------
     - step: &deploy-uat
@@ -292,6 +322,8 @@ pipelines:
       - step: *migrate-dev-state
     plan-dev:
       - step: *plan-dev
+    unbind-dev-test-volume:
+      - step: *unbind-dev-test-volume
     deploy-uat:
       - step: *deploy-uat
     deploy-uat-jobs:
