@@ -22,11 +22,9 @@ def _require_env(key):
     return val
 
 
-# --- Catalog / Schema / Paths ---
-CATALOG_SCHEMA        = _require_env("PARSING_CATALOG_SCHEMA")
-
-# Appended to every table the pipeline writes — PARSING_TABLE_SUFFIX=_test isolates a whole validation run.
-TABLE_SUFFIX = _env("PARSING_TABLE_SUFFIX", "")
+# --- Environment, schema, paths ---
+# dev, uat or prod: the tables are written to <PIPELINE_WRITE_ENV>_proj.qualibot.<table>.
+PIPELINE_WRITE_ENV = _require_env("PIPELINE_WRITE_ENV")
 
 INTRAQUAL_BRONZE_CATALOG_SCHEMA = _require_env("PARSING_INTRAQUAL_BRONZE")
 _B = INTRAQUAL_BRONZE_CATALOG_SCHEMA
@@ -54,11 +52,11 @@ DOC_SCOPE_FILTER = _env(
 GD_DOC_FALLBACK          = _env("PARSING_GD_DOC_FALLBACK",          "")
 DIVISION_ARCHIVE_TABLE   = _env("PARSING_DIVISION_ARCHIVE_TABLE",   "")
 DIVISION_REFERENCE_TABLE = _env("PARSING_DIVISION_REFERENCE_TABLE",
-                                f"{CATALOG_SCHEMA}.category_reference{TABLE_SUFFIX}")
+                                f"{PIPELINE_WRITE_ENV}_proj.qualibot.category_reference")
 
 # Pre-computed by create_proj_parse_manifest — avoids querying gd_doc/gd_cat/gd_typdoc directly here.
 PARSE_MANIFEST_TABLE  = _env("PARSING_PARSE_MANIFEST_TABLE",
-                             f"{CATALOG_SCHEMA}.parse_manifest{TABLE_SUFFIX}")
+                             f"{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest")
 
 # Volumes
 VOLUME_ROOT_PATH      = _require_env("PARSING_VOLUME_ROOT_PATH")
@@ -70,22 +68,22 @@ ANTIWORD_BIN_RELATIVE   = "../../third_party/antiword/bin/antiword"
 ANTIWORD_SHARE_RELATIVE = "../../third_party/antiword/share"
 
 # --- Target Delta tables ---
-TARGET_PROCESSED_FILES_TABLE = f"{CATALOG_SCHEMA}.parsed_documents{TABLE_SUFFIX}"
+TARGET_PROCESSED_FILES_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsed_documents"
 
 # All divisions; the chat filters on the `division` column at query time.
-TARGET_CHUNK_TABLE     = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"
+TARGET_CHUNK_TABLE     = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks"
 # Chunks of documents published before DOC_DATE_CUTOFF: kept out of `chunks` (chat),
 # merged with `chunks` into `chunks_full` by update_proj_vector_indexes for the impact-search index.
-TARGET_CHUNK_TABLE_ARCHIVE = f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}"
+TARGET_CHUNK_TABLE_ARCHIVE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_archive"
 
-TARGET_IMAGE_METADATA_TABLE  = f"{CATALOG_SCHEMA}.image_metadata{TABLE_SUFFIX}"
-TARGET_HEALTH_TABLE          = f"{CATALOG_SCHEMA}.parsing_run_health{TABLE_SUFFIX}"  # one row per pipeline run, for the monitoring dashboard
-TARGET_CHANGE_LOG_TABLE      = f"{CATALOG_SCHEMA}.document_change_log{TABLE_SUFFIX}"  # one row per NEW/REVISED document, for the monitoring dashboard
+TARGET_IMAGE_METADATA_TABLE  = f"{PIPELINE_WRITE_ENV}_proj.qualibot.image_metadata"
+TARGET_HEALTH_TABLE          = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_run_health"  # one row per pipeline run, for the monitoring dashboard
+TARGET_CHANGE_LOG_TABLE      = f"{PIPELINE_WRITE_ENV}_proj.qualibot.document_change_log"  # one row per NEW/REVISED document, for the monitoring dashboard
 
 # Working tables of 3_parse: the parse checkpoint, the manual RAG exclusions (IDDOC, reason) and the retry scratch table.
-CHECKPOINT_TABLE     = f"{CATALOG_SCHEMA}.parsing_checkpoint{TABLE_SUFFIX}"
-RAG_EXCLUSION_TABLE  = f"{CATALOG_SCHEMA}.rag_exclusions{TABLE_SUFFIX}"
-RETRY_TEMP_TABLE     = f"{CATALOG_SCHEMA}.parsing_retry_temp{TABLE_SUFFIX}"
+CHECKPOINT_TABLE     = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_checkpoint"
+RAG_EXCLUSION_TABLE  = f"{PIPELINE_WRITE_ENV}_proj.qualibot.rag_exclusions"
+RETRY_TEMP_TABLE     = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_retry_temp"
 
 # Column groups shared by the steps: the document metadata of parse_manifest, the category hierarchy of
 # category_reference, and what a selected file is enriched with.
@@ -114,9 +112,9 @@ ARCHIVE_MAX_DOCS = int(_env("PARSING_ARCHIVE_MAX_DOCS", "0") or "0")
 # One metadata-only "notice" chunk per pre-cutoff document (REF, title, revision,
 # date — no content), rebuilt on every run into TARGET_ARCHIVE_NOTICE_TABLE.
 # Copied into the RAG chunk tables (chatbot indexes) only when ARCHIVE_NOTICES_IN_RAG is on.
-TARGET_ARCHIVE_NOTICE_TABLE = f"{CATALOG_SCHEMA}.archive_notices{TABLE_SUFFIX}"
+TARGET_ARCHIVE_NOTICE_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.archive_notices"
 ARCHIVE_NOTICES_IN_RAG = _env("PARSING_ARCHIVE_NOTICES_IN_RAG", "false").strip().lower() in ("1", "true", "yes")
-# Also hardcoded in update_proj_vector_indexes.py (serverless, no config.py) and matched
+# Also hardcoded in update_proj_vector_indexes.py (which does not import config.py) and matched
 # by ARCHIVE_NOTICE_MARKER in server/services/infra/vector_search.py.
 ARCHIVE_NOTICE_CONTENT_TYPE = "archive_notice"
 ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"

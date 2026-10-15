@@ -13,7 +13,7 @@ from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 import doc_status
 from categories import normalize_cols_upper
-from tables import table_exists, write_table
+from tables import ensure_primary_key, table_exists, write_table
 from leap_utils.common.logger import get_logger
 from config import (
     ARCHIVE_MAX_DOCS,
@@ -176,7 +176,7 @@ def classify_root_folders(root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre
             rows["keep"].append(known)
 
     logger.info(f"KEEP   : {len(rows['keep']):>5}")
-    logger.info(f"DELETE : {len(rows['delete']):>5}  (out of scope - deleted only if DRY_RUN=non)")
+    logger.info(f"DELETE : {len(rows['delete']):>5}  (out of scope - deleted only if dry_run=false)")
     logger.info(f"ORPHAN : {len(rows['orphan']):>5}  (unknown IDDOC - kept, excluded from parsing)")
     logger.info(f"SKIP   : {len(rows['skip']):>5}  (non-conforming names - untouched)")
     logger.info(f"MANUAL : {len(rows['manual']):>5}  (REF in MANUAL_REF_EXCLUSIONS)")
@@ -276,7 +276,7 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
         write_table(spark.createDataFrame(all_skipped), TARGET_PROCESSED_FILES_TABLE, "append", merge_schema=True)
     except Exception as exc:
         logger.error(f"Error writing parsed_documents (run {run_id}): {exc}")
-        return
+        raise
 
     logger.info(f"{TARGET_PROCESSED_FILES_TABLE} updated ({run_id}):")
     for status in ("SKIPPED_REF_OUT_OF_SCOPE", "SKIPPED_IDDOC_NOT_FOUND", "SKIPPED_REF_MANUAL",
@@ -378,6 +378,7 @@ def build_manifest(rows_keep):
 def write_manifest(df_manifest):
     """Overwrite parse_manifest and log how many pre-cutoff documents may be parsed."""
     write_table(df_manifest, PARSE_MANIFEST_TABLE, "overwrite", overwrite_schema=True)
+    ensure_primary_key(PARSE_MANIFEST_TABLE, ["IDDOC"])
     df_written = spark.table(PARSE_MANIFEST_TABLE)
     is_archive = archive_condition()
     logger.info(f"parse_manifest written: {df_written.count()} IDDOCs in scope ({PARSE_MANIFEST_TABLE})")
@@ -391,7 +392,7 @@ def delete_out_of_scope_folders(rows_delete, dry_run):
     """Remove the out-of-scope root folders from the volume; a dry run only counts them."""
     if dry_run:
         logger.info(f"[DRY RUN] {len(rows_delete)} items would be deleted.")
-        logger.info("  -> Set the DRY_RUN widget to 'non' to actually delete.")
+        logger.info("  -> Set the dry_run widget to false to actually delete.")
         return
     if not rows_delete:
         logger.info("Nothing to delete.")

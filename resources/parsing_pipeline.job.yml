@@ -4,7 +4,7 @@
 #   1_categories, 2_manifest : freshness guard, category_reference, scope and parse_manifest -> small CPU (shared by both)
 #   3_parse                  : Docling parsing and chunking                                  -> GPU (g4dn)
 #   4_describe_images        : vision LLM image description                                  -> small CPU (bound by the rate limiter)
-#   5_sync_index             : Vector Search index sync                                      -> serverless
+#   5_sync_index             : Vector Search index sync                                      -> small CPU (GX on chunks_full)
 #   6_update_kb_metadata     : Lakebase doc_catalog and catalog_metadata                     -> serverless, once the index sync succeeded
 #
 # The metadata tasks have their own cluster so it does not stay up through the whole GPU parse.
@@ -23,7 +23,7 @@ resources:
   jobs:
     parsing_pipeline:
       # D_1 prefix: org job-naming convention for the shared UAT/PROD workspaces.
-      name: "D_1_Qualibot_Parsing_Pipeline_${bundle.target}"
+      name: "D_1_Qualibot_Parsing_Pipeline"
       description: "Docling parsing (GPU) + LLM image description pipeline for Qualibot RAG"
 
       # The default of 1 queues a partial run of 3_parse behind one of 4_describe_images although their clusters and incremental scopes are disjoint.
@@ -74,13 +74,12 @@ resources:
             custom_tags:
               ResourceClass: SingleNode
             spark_env_vars:
-              PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
+              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
               PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-              PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
+              PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
-              PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
               PARSING_MAX_SOURCE_STALENESS_HOURS: ${var.parsing_max_source_staleness_hours}
               PARSING_ARCHIVE_MAX_DOCS: ${var.parsing_archive_max_docs}
               PARSING_USE_GPU:          "false"
@@ -106,15 +105,14 @@ resources:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.databricks.delta.autoCompact.enabled: "true"
             spark_env_vars:
-              PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
+              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
               PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-              PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
+              PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
               PARSING_RUN_MODE:         ${var.parsing_run_mode}
               PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
-              PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
               PARSING_ARCHIVE_NOTICES_IN_RAG: ${var.parsing_archive_notices_in_rag}
               PARSING_USE_GPU:          "true"
               # Set before the interpreter starts.
@@ -142,14 +140,13 @@ resources:
             custom_tags:
               ResourceClass: SingleNode
             spark_env_vars:
-              PARSING_CATALOG_SCHEMA:   ${var.app_proj_catalog}.${var.app_proj_schema}
+              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
               PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-              PARSING_VOLUME_BASE_PATH: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/${var.parsing_images_volume}
+              PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
               PARSING_RUN_MODE:         ${var.parsing_run_mode}
-              PARSING_TABLE_SUFFIX:     ${var.parsing_table_suffix}
               PARSING_USE_GPU:          "false"
 
       tasks:
@@ -171,9 +168,9 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_parse_manifest.py
             source: WORKSPACE
             base_parameters:
-              # DRY_RUN=oui is mandatory on a scheduled run: scope depends on courant/etat, which change on every revision.
-              DRY_RUN: "oui"
-              JOB_RUN_ID: "{{job.run_id}}"
+              # dry_run=true is mandatory on a scheduled run: scope depends on courant/etat, which change on every revision.
+              dry_run: "true"
+              job_run_id: "{{job.run_id}}"
           libraries:
             - pypi: {package: "packaging"}
             - pypi: {package: "tiktoken"}
@@ -187,7 +184,7 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_chunks.py
             source: WORKSPACE
             base_parameters:
-              JOB_RUN_ID: "{{job.run_id}}"
+              job_run_id: "{{job.run_id}}"
           libraries:
             - pypi: {package: "packaging"}
             - pypi: {package: "numpy<2"}
@@ -227,20 +224,21 @@ resources:
           description: "Sync Vector Search indexes on the rewritten chunk tables (creating one first if it doesn't exist yet)"
           depends_on:
             - task_key: "4_describe_images"
+          job_cluster_key: meta_cpu_cluster
           notebook_task:
             notebook_path: ../utils/parsing_pipeline/update_proj_vector_indexes.py
             source: WORKSPACE
             base_parameters:
+              pipeline_write_env: ${var.pipeline_write_env}
               indexes: ${var.parsing_vector_search_indexes}
               wait_minutes: "45"
               # Only used if one of `indexes` doesn't exist yet and needs creating.
               vector_search_endpoint: "qualibot"
               embedding_model: "databricks-qwen3-embedding-0-6b"
-              catalog_schema: ${var.app_proj_catalog}.${var.app_proj_schema}
-              table_suffix: ${var.parsing_table_suffix}
               build_chunks_full: ${var.parsing_build_chunks_full}
-          # Serverless: SDK calls, plus a MERGE into chunks_full when build_chunks_full is on or chunks_full_index is listed.
-          environment_key: default
+          # Classic CPU cluster, not serverless: Great Expectations (the quality checks of chunks_full) is installed there only.
+          libraries:
+            - pypi: {package: "databricks-sdk>=0.118.0"}
 
         - task_key: "6_update_kb_metadata"
           description: "Rewrite the document catalog and bump catalog_metadata (Lakebase) now the chain succeeded end to end"
@@ -250,22 +248,15 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_doc_catalog.py
             source: WORKSPACE
             base_parameters:
-              LAKEBASE_PROJECT_ID: "qualibot"
-              LAKEBASE_BRANCH: "production"
-              LAKEBASE_ENDPOINT: "primary"
-              LAKEBASE_DATABASE: ${var.parsing_lakebase_database}
-              CATALOG_SCHEMA: ${var.app_proj_catalog}.${var.app_proj_schema}
-              TABLE_SUFFIX: ${var.parsing_table_suffix}
+              pipeline_write_env: ${var.pipeline_write_env}
+              lakebase_project_id: "qualibot"
+              lakebase_branch: "production"
+              lakebase_endpoint: "primary"
+              lakebase_database: ${var.parsing_lakebase_database}
           # Serverless: classic job compute cannot reach the Lakebase private endpoint. Separate environment from "default" (psycopg2 is only needed here).
           environment_key: lakebase_env
 
       environments:
-        - environment_key: default
-          spec:
-            environment_version: "2"
-            dependencies:
-              - databricks-sdk>=0.118.0
-              - packaging
         - environment_key: lakebase_env
           spec:
             environment_version: "2"
@@ -278,7 +269,7 @@ resources:
       # `parsing_max_source_staleness_hours`.
       schedule:
         quartz_cron_expression: ${var.parsing_schedule_cron}
-        timezone_id: "Europe/Paris"
+        timezone_id: "Europe/Brussels"
         pause_status: ${var.parsing_schedule_pause}
 
 targets:
@@ -286,7 +277,7 @@ targets:
     resources:
       jobs:
         parsing_pipeline:
-          name: "D_1_Qualibot_Parsing_Pipeline_${bundle.target}"
+          name: "D_1_Qualibot_Parsing_Pipeline"
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39  # job-runner-sa-uat
 
@@ -294,6 +285,6 @@ targets:
     resources:
       jobs:
         parsing_pipeline:
-          name: "D_1_Qualibot_Parsing_Pipeline_${bundle.target}"
+          name: "D_1_Qualibot_Parsing_Pipeline"
           run_as:
             service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02  # job-runner-sa-prod

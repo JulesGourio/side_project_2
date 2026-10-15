@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # PROJ VECTOR_INDEXES — SYNC VECTOR SEARCH INDEXES
+# MAGIC # PROJ VECTOR_INDEXES
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Last link of the chain that writes the chunks: triggers a sync of the Delta Sync indexes whose source tables were just rewritten by tasks
@@ -17,20 +17,19 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `5_sync_index`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{catalog_schema}.chunks{table_suffix}` and `chunks_archive{table_suffix}` — only to refresh `chunks_full`
-# MAGIC - The Vector Search indexes named by `indexes` (or `PARSING_VECTOR_SEARCH_INDEXES`): comma-separated, empty = nothing to do
+# MAGIC - `{pipeline_write_env}_proj.qualibot.chunks` and `chunks_archive` — only to refresh `chunks_full`
+# MAGIC - The Vector Search indexes named by `indexes`: comma-separated, empty = nothing to do
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{catalog_schema}.chunks_full{table_suffix}` — only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`
-# MAGIC - The synced indexes; `vector_search_endpoint`, `embedding_model`, `catalog_schema` and `table_suffix` are only read to create an index
+# MAGIC - `{pipeline_write_env}_proj.qualibot.chunks_full` — only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`
+# MAGIC - The synced indexes; `vector_search_endpoint` and `embedding_model` are only read to create an index
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - `KNOWN_SOURCE_TABLE` repeats the table naming of `config.py` (`{catalog_schema}.chunks{table_suffix}`) because this serverless task does not import `config.py`; the same goes for the `archive_notice` content type filtered out of `chunks_full`.
+# MAGIC - The `archive_notice` content type is filtered out of `chunks_full` here and in `config.py` (`ARCHIVE_NOTICE_CONTENT_TYPE`): change both together.
 # MAGIC - Only `chunks_index` and `chunks_full_index` are created automatically; any other index listed in `indexes` is synced but never created, since its source table is unknown.
-# MAGIC - The wait loop polls every 30 s with a fixed timeout (`wait_minutes`): a sync that outlasts it is reported as still running, not as an error.
 
 # COMMAND ----------
 
@@ -68,16 +67,14 @@ from tables import add_missing_columns, merge_into, table_exists, write_table
 
 # COMMAND ----------
 
-from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+from leap_utils.common import logger as log_utils
 
-setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
-logger = get_logger("sync_index")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Config Widgets
-# MAGIC This task is serverless: it has no `PARSING_*` environment variables and cannot import `config.py`, so everything comes from the job parameters. `indexes` falls back on `PARSING_VECTOR_SEARCH_INDEXES` when it is empty.
+# MAGIC This task runs on the classic CPU cluster of the chain and does not import `config.py`, so everything comes from the job parameters. `indexes` falls back on `PARSING_VECTOR_SEARCH_INDEXES` when it is empty.
 # MAGIC
 # MAGIC The endpoint, embedding model, catalog and suffix are only read when an index has to be created.
 
@@ -85,22 +82,23 @@ logger = get_logger("sync_index")
 
 dbutils.widgets.removeAll()
 
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+LOG_LEVEL = dbutils.widgets.get("log_level")
+logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
+
+dbutils.widgets.text("pipeline_write_env", "dev", "Environment the tables are written to: dev, uat or prod")
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
 dbutils.widgets.text("indexes", "", "Vector Search indexes (comma-separated)")
 dbutils.widgets.text("wait_minutes", "45", "Max wait for sync completion (minutes, 0 = don't wait)")
 # Only used to auto-create a missing index (this task has no PARSING_* env vars).
 dbutils.widgets.text("vector_search_endpoint", "qualibot", "Vector Search endpoint (for index creation)")
 dbutils.widgets.text("embedding_model", "databricks-qwen3-embedding-0-6b", "Embedding model endpoint (for index creation)")
-dbutils.widgets.text("catalog_schema", "", "catalog.schema of the chunk tables (for index creation)")
-dbutils.widgets.text("table_suffix", "", "Suffix shared by the chunk tables and their indexes (for index creation)")
 dbutils.widgets.text("build_chunks_full", "false", "Refresh chunks_full (chunks + chunks_archive) even without its index")
 
-_raw = dbutils.widgets.get("indexes").strip() or os.environ.get("PARSING_VECTOR_SEARCH_INDEXES", "")
-INDEXES = [n.strip() for n in _raw.split(",") if n.strip()]
+INDEXES = [n.strip() for n in dbutils.widgets.get("indexes").split(",") if n.strip()]
 WAIT_MINUTES = int(dbutils.widgets.get("wait_minutes") or "0")
 VECTOR_SEARCH_ENDPOINT = dbutils.widgets.get("vector_search_endpoint")
 EMBEDDING_MODEL = dbutils.widgets.get("embedding_model")
-CATALOG_SCHEMA = dbutils.widgets.get("catalog_schema")
-TABLE_SUFFIX = dbutils.widgets.get("table_suffix")
 BUILD_CHUNKS_FULL = dbutils.widgets.get("build_chunks_full").strip().lower() in ("1", "true", "yes")
 
 logger.info(f"{len(INDEXES)} index(es) to sync:")
@@ -116,16 +114,16 @@ for n in INDEXES:
 
 # COMMAND ----------
 
-FULL_INDEX = f"{CATALOG_SCHEMA}.chunks_full_index{TABLE_SUFFIX}"
-FULL_TABLE = f"{CATALOG_SCHEMA}.chunks_full{TABLE_SUFFIX}"
-REFRESH_CHUNKS_FULL = bool(CATALOG_SCHEMA) and (BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES)
+FULL_INDEX = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_full_index"
+FULL_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_full"
+REFRESH_CHUNKS_FULL = BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES
 
 chunk_sources = [
-    t for t in (f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}", f"{CATALOG_SCHEMA}.chunks_archive{TABLE_SUFFIX}")
+    t for t in (f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks", f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_archive")
     if REFRESH_CHUNKS_FULL and table_exists(t)
 ]
 if REFRESH_CHUNKS_FULL and not chunk_sources:
-    raise RuntimeError(f"chunks_full requested but neither chunks nor chunks_archive exists in {CATALOG_SCHEMA}")
+    raise RuntimeError(f"chunks_full requested but neither chunks nor chunks_archive exists in {PIPELINE_WRITE_ENV}_proj.qualibot")
 
 # COMMAND ----------
 
@@ -223,12 +221,10 @@ from databricks.sdk.service.vectorsearch import (
 
 # Only these index/source pairs are auto-created; any other index in `indexes` is synced but never created (its source
 # table is unknown).
-# Same naming as config.py's TARGET_CHUNK_TABLE ({catalog_schema}.{name}{table_suffix}), rebuilt from widgets because
-# this task does not import config.py.
 KNOWN_SOURCE_TABLE = {
-    f"{CATALOG_SCHEMA}.chunks_index{TABLE_SUFFIX}": f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}",
+    f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_index": f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks",
     FULL_INDEX: FULL_TABLE,
-} if CATALOG_SCHEMA else {}
+}
 
 w = WorkspaceClient()
 

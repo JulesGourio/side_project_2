@@ -9,7 +9,7 @@ targets:
         # Manual trigger. Grants the DEV app SP what it uses (catalog and schema usage, volumes, index),
         # and the DEV SP itself SELECT + MODIFY on `pipeline_tables`. LLM endpoints are never granted: every workspace user can already query them.
         grant_app_access_dev:
-          name: "Z_1_Qualibot_Grant_App_Access_${bundle.target}"
+          name: "Z_1_Qualibot_Grant_App_Access"
           queue:
             enabled: true
           email_notifications:
@@ -45,10 +45,10 @@ targets:
                 source: WORKSPACE
                 base_parameters:
                   app_service_principal: "{{job.parameters.app_service_principal}}"
-                  catalog: ${var.app_proj_catalog}
-                  schema_name: ${var.app_proj_schema}
-                  proj_catalog: ${var.app_proj_catalog}
-                  proj_schema: ${var.app_proj_schema}
+                  catalog: ${var.pipeline_write_env}_proj
+                  schema_name: qualibot
+                  proj_catalog: ${var.pipeline_write_env}_proj
+                  proj_schema: qualibot
                   volumes: "doc_compare,test"
                   indexes: "chunks_index"
                   # The DEV SP itself (this job's run_as), on the tables a person created.

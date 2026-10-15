@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # PROJ CHUNKS — DOCUMENT PARSE AND CHUNK
+# MAGIC # PROJ CHUNKS
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Parses the documents of the manifest and builds the tables the chat reads. One function per phase, in `parse_steps.py`,
@@ -19,26 +19,25 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `3_parse`, GPU cluster)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}` (task `2_manifest`), `category_reference{PARSING_TABLE_SUFFIX}` (task `1_categories`)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsing_checkpoint{PARSING_TABLE_SUFFIX}` (own checkpoint, re-read across phases)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}` (resume and revision detection)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (keeps the rows already described across a rebuild)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parse_manifest` (task `2_manifest`), `category_reference` (task `1_categories`)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsing_checkpoint` (own checkpoint, re-read across phases)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents` (resume and revision detection)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.image_metadata` (keeps the rows already described across a rebuild)
 # MAGIC - `{PARSING_VOLUME_ROOT_PATH}` (volume listing and binary content)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsing_checkpoint{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}`, `archive_notices{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsing_run_health{PARSING_TABLE_SUFFIX}` (one row per run, for the monitoring dashboard)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.document_change_log{PARSING_TABLE_SUFFIX}` (one row per NEW/REVISED document, for the monitoring dashboard)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsing_checkpoint`
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents`
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.chunks`, `chunks_archive`, `archive_notices`
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.image_metadata`
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsing_run_health` (one row per run, for the monitoring dashboard)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.document_change_log` (one row per NEW/REVISED document, for the monitoring dashboard)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - The phase functions have no unit test: they need a Spark session and the Unity Catalog tables (the quality rules in `quality.py` and the chunking in `chunking.py` do).
-# MAGIC - `parse_steps` keeps run-level state (`INGESTION_RUN_ID`, `JOB_RUN_ID`) as module globals, set once by `set_job_run_id` and passed on to `build_steps` / `output_steps` as arguments.
+# MAGIC - `parse_steps` keeps the run-level state (`INGESTION_RUN_ID`, `JOB_RUN_ID`) as module globals, set once by `set_job_run_id`.
 # MAGIC - The quality checks read the lazy DataFrames before the write, so `parsed_documents` and `image_metadata` are computed once more than the write needs.
 
 # COMMAND ----------
@@ -91,10 +90,8 @@ import parse_checks
 import parse_steps
 import quality
 from utils import configure, broadcast_config, write_worker_config
-from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+from leap_utils.common import logger as log_utils
 
-setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
-logger = get_logger("parse_pipeline")
 
 for _mod in cfg.WORKER_MODULES:
     spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
@@ -110,8 +107,12 @@ for _mod in cfg.WORKER_MODULES:
 
 dbutils.widgets.removeAll()
 
-dbutils.widgets.text("JOB_RUN_ID", "", "Parent job run_id (correlates with 2_manifest's parsed_documents rows)")
-parse_steps.set_job_run_id(dbutils.widgets.get("JOB_RUN_ID"))
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+LOG_LEVEL = dbutils.widgets.get("log_level")
+logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
+
+dbutils.widgets.text("job_run_id", "", "Parent job run_id (correlates with 2_manifest's parsed_documents rows)")
+parse_steps.set_job_run_id(dbutils.widgets.get("job_run_id"))
 
 # COMMAND ----------
 

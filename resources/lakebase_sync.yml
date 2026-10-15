@@ -56,13 +56,13 @@ targets:
                   TABLES_TO_SKIP: "llm_requests"
           schedule:
             quartz_cron_expression: "0 30 2,14 * * ?"
-            timezone_id: "Europe/Paris"
+            timezone_id: "Europe/Brussels"
             pause_status: UNPAUSED
 
         # ── DEV copy of the qualibot-uat Lakebase jobs ───────────────────────
         # Export only: the qualibot-uat job also imports chat_* into Delta tables, which would overwrite the UAT chat data landed by lakebase_import_uat_to_dev.
         lakebase_export_dev_to_volume:
-          name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
+          name: "D_1_Qualibot_Lakebase_Export_To_Volume"
           queue:
             enabled: true
           email_notifications:
@@ -99,8 +99,8 @@ targets:
                   LAKEBASE_BRANCH: "production"
                   LAKEBASE_ENDPOINT: "primary"
                   LAKEBASE_DATABASE: "doccompare"
-                  OUTPUT_VOLUME_CATALOG: ${var.app_proj_catalog}
-                  OUTPUT_VOLUME_SCHEMA: ${var.app_proj_schema}
+                  OUTPUT_VOLUME_CATALOG: ${var.pipeline_write_env}_proj
+                  OUTPUT_VOLUME_SCHEMA: qualibot
                   OUTPUT_VOLUME_NAME: "staging"
                   TABLES_TO_SKIP: "llm_requests"
               environment_key: default
@@ -113,14 +113,14 @@ targets:
                   - databricks-sdk>=0.118.0
           schedule:
             quartz_cron_expression: "0 0 2,14 * * ?"
-            timezone_id: "Europe/Paris"
+            timezone_id: "Europe/Brussels"
             pause_status: PAUSED
 
   qualibot-uat:
     resources:
       jobs:
         lakebase_export_uat_to_volume:
-          name: "D_1_Qualibot_Lakebase_Export_To_Volume_${bundle.target}"
+          name: "D_1_Qualibot_Lakebase_Export_To_Volume"
           queue:
             enabled: true
           email_notifications:
@@ -177,5 +177,5 @@ targets:
                   - databricks-sdk>=0.118.0
           schedule:
             quartz_cron_expression: "0 0 2,14 * * ?"
-            timezone_id: "Europe/Paris"
+            timezone_id: "Europe/Brussels"
             pause_status: UNPAUSED

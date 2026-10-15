@@ -3,7 +3,7 @@
 Daily chain that turns the documents of the Intraqual document management system into indexed passages.
 The chatbot and the impact search read these passages.
 
-The chain is the job `D_1_Qualibot_Parsing_Pipeline_<target>`, defined in
+The chain is the job `D_1_Qualibot_Parsing_Pipeline`, defined in
 [`resources/parsing_pipeline.job.yml`](../../resources/parsing_pipeline.job.yml). It runs six tasks in order.
 Each notebook is a task; the modules next to them hold the logic. The notebooks follow the section layout
 `Technical debt`, `Configuration`, `Inputs`, `Data Preparation`, `Data Transformations`, `Quality Checks`, `Outputs`.
@@ -51,7 +51,7 @@ and the image description in `llm_describe.py`.
 | `2_manifest` | `create_proj_parse_manifest.py` | single-node CPU | `parse_manifest`, `parsed_documents` (skip rows), pruning in the passage and image tables |
 | `3_parse` | `create_proj_chunks.py` | GPU | `parsing_checkpoint`, `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health`, `document_change_log` |
 | `4_describe_images` | `create_proj_image_metadata.py` | CPU | `image_metadata`, image passages in `chunks` and `chunks_archive`, `parsed_documents` |
-| `5_sync_index` | `update_proj_vector_indexes.py` | serverless | `chunks_full`, Vector Search indexes |
+| `5_sync_index` | `update_proj_vector_indexes.py` | classic CPU (`meta_cpu_cluster`, GX on `chunks_full`) | `chunks_full`, Vector Search indexes |
 | `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata` (Lakebase) |
 
 Each task depends on the previous one. `3_parse` pins `opencv-python-headless==4.12.0.88` in a `%pip` cell: it
@@ -68,7 +68,7 @@ The job sets the environment variables read by `config.py`. The main ones, with 
 |---|---|---|
 | `PARSING_RUN_MODE` | `incremental` | `incremental`, `full` (reparse everything, the checkpoint is cloned first) or `rechunk` (rebuild the tables from the checkpoint, no volume scan, no parsing) |
 | `PARSING_PARSE_FILTER` | empty | Comma-separated IDDOCs: restricts the run to them |
-| `PARSING_TABLE_SUFFIX` | empty | Suffix of every table written and of the indexes (`_test` for a validation run) |
+| `PIPELINE_WRITE_ENV` | job variable `pipeline_write_env` | `dev`, `uat` or `prod`: the tables are written to `<env>_proj.qualibot` |
 | `PARSING_MAX_SOURCE_STALENESS_HOURS` | `36` | Freshness guard of `1_categories`; `0` disables it |
 | `PARSING_DOC_DATE_CUTOFF` | `2018-01-01` | Date below which a document is archived |
 | `PARSING_ARCHIVE_MAX_DOCS` | `0` | Number of archived documents parsed, most recent first; `-1` for all |
@@ -95,7 +95,7 @@ listed at the top of `config.py`.
   of statuses `SUCCESS`, `ERROR`, `EMPTY_TEXT` and `IMAGES_PENDING`. When several in-scope IDDOCs share a REF,
   only the newest revision (highest `indice`, then highest IDDOC) keeps its passages. The `parsed_documents`
   rows of the other IDDOCs stay, so they are not parsed again.
-- **Pruning and `DRY_RUN`**: the pruning of derived rows runs on every run. The widget `DRY_RUN` (default `oui`)
+- **Pruning and `DRY_RUN`**: the pruning of derived rows runs on every run. The widget `dry_run` (default `true`)
   protects the volume only: out-of-scope folders are deleted when it is `non`.
 - **Volume folders** are classified by `2_manifest`: `KEEP` (parsed), `DELETE` (out of scope), `ORPHAN` (IDDOC
   unknown in `gd_doc`, kept on the volume, not parsed), `SKIP` (name not `D_<IDDOC>` or `Dm_<IDDOC>`), `MANUAL`,
@@ -227,7 +227,7 @@ listed at the top of `config.py`.
 
 ## Document catalog (`6_update_kb_metadata`)
 
-- Writes to the Lakebase databases named by the widget `LAKEBASE_DATABASE` (comma-separated). An empty value skips
+- Writes to the Lakebase databases named by the widget `lakebase_database` (comma-separated). An empty value skips
   the task. The task runs serverless, because the Lakebase endpoint is a private endpoint that classic compute
   cannot reach.
 - `doc_catalog` is rebuilt in one transaction from `parse_manifest`: REF, title, Intraqual link (built from the
@@ -241,7 +241,7 @@ listed at the top of `config.py`.
 
 ## Tables, volumes and checks
 
-Tables (schema `PARSING_CATALOG_SCHEMA`, suffix `PARSING_TABLE_SUFFIX`):
+Tables (schema `<env>_proj.qualibot`, the same names in every environment):
 
 | Table | Content |
 |---|---|
@@ -261,7 +261,7 @@ Volumes: the Intraqual documents (`PARSING_VOLUME_ROOT_PATH`, read, one folder p
 `Dm_<IDDOC>`; `2_manifest` may delete out-of-scope folders), the images (`PARSING_VOLUME_BASE_PATH`) and the
 offline models (`PARSING_OFFLINE_MODELS`).
 
-Quality checks (`quality.py`): a RED failure stops the task before anything is written. An AMBER failure is logged.
+Quality checks (`quality.py`, Great Expectations through `leap_utils`): a RED failure stops the task before anything is written. An AMBER failure is logged. `6_update_kb_metadata` runs on serverless, where GX is not available: its checks run in Python (`check_rows`).
 
 | Table | Checks |
 |---|---|

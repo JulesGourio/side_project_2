@@ -48,11 +48,10 @@ targets:
                 notebook_path: ../utils/dev_copy/import_staging_to_dev_job.py
                 source: WORKSPACE
                 base_parameters:
-                  SOURCE_DIR: "/Volumes/uat_proj/qualibot/staging/dev_copy"
-                  TARGET_CATALOG_SCHEMA: ${var.app_proj_catalog}.${var.app_proj_schema}
-                  TABLE_SUFFIX: ${var.parsing_table_suffix}
-                  OVERWRITE: "{{job.parameters.overwrite}}"
-                  SOFFICE_TARGET_DIR: /Volumes/${var.app_proj_catalog}/${var.app_proj_schema}/doc_compare/libreoffice
+                  source_dir: "/Volumes/uat_proj/qualibot/staging/dev_copy"
+                  pipeline_write_env: ${var.pipeline_write_env}
+                  overwrite: "{{job.parameters.overwrite}}"
+                  soffice_target_dir: /Volumes/${var.pipeline_write_env}_proj/qualibot/doc_compare/libreoffice
               # Serverless: starts in seconds.
               environment_key: default
             - task_key: "2_vector_search_endpoint"
@@ -79,8 +78,6 @@ targets:
                   wait_minutes: "120"
                   vector_search_endpoint: "qualibot"
                   embedding_model: "databricks-qwen3-embedding-0-6b"
-                  catalog_schema: ${var.app_proj_catalog}.${var.app_proj_schema}
-                  table_suffix: ${var.parsing_table_suffix}
                   build_chunks_full: "false"
               environment_key: default
           environments:

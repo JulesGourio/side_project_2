@@ -14,7 +14,7 @@ Branche : **`feature/chat-vsi-merged-on-impact-search`**. Pas de PR ; le zip à 
 | Cible bundle | `dev` (en miroir de `qualibot-uat`) |
 | App | `qualibot`, SP de l'app `8e411164-a7e8-46ff-8013-8c56af2c3656` |
 | Schéma | `dev_proj.qualibot` : tables, volumes et index du pipeline et de l'app, tables d'évaluation, registre des prompts |
-| Suffixe tables / index | aucun (`_test` seulement pendant une validation de parsing, voir `retest.md`) |
+| Suffixe tables / index | aucun |
 | Identité des jobs (`run_as`) | SP DEV `job-runner-sa-dev`, `fde6ff28-739f-4a41-b61e-604a298c8478` |
 | Lakebase | projet `qualibot`, branche `production`, base `doccompare` (l'app crée ses tables) |
 | Corpus | copie UAT → DEV via le volume `uat_proj.qualibot.staging` : chunks et état du pipeline. **Aucun run complet du parsing** |
@@ -46,17 +46,17 @@ Jobs du bundle `dev` :
 
 | Job | Déclenchement |
 |---|---|
-| `Z_1_Qualibot_Copy_Uat_To_Dev` (`copy_uat_to_dev`) | manuel |
-| `Z_1_Qualibot_Grant_App_Access_dev` (`grant_app_access_dev`) | manuel |
-| `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` (`lakebase_import_uat_to_dev`) | actif |
-| `D_1_Qualibot_Lakebase_Export_To_Volume_dev` (`lakebase_export_dev_to_volume`) | PAUSED |
-| `D_1_Qualibot_Parsing_Pipeline_dev` (`parsing_pipeline`) | PAUSED |
-| `Z_2_Qualibot_Create_Chat_Experiment_dev` (`create_chat_experiment_dev`) | manuel |
-| `Z_3_Qualibot_Register_Chat_Prompts_dev` (`register_chat_prompts_dev`) | manuel |
-| `D_2_Qualibot_Score_Chat_Traces_dev` (`score_chat_traces_dev`) | PAUSED |
-| `D_1_Qualibot_Apps_Stop_Nightly_Dev` (`apps_stop_nightly_dev`) | PAUSED |
-| `W_1_Qualibot_Stop_Weekend_Dev` (`qualibot_stop_weekend_dev`) | PAUSED |
-| `W_1_Qualibot_Start_Weekend_Dev` (`qualibot_start_weekend_dev`) | PAUSED |
+| `Z_1_Qualibot_Copy_Uat_To` (`copy_uat_to_dev`) | manuel |
+| `Z_1_Qualibot_Grant_App_Access` (`grant_app_access_dev`) | manuel |
+| `D_1_Qualibot_Lakebase_Import_Uat_To` (`lakebase_import_uat_to_dev`) | actif |
+| `D_1_Qualibot_Lakebase_Export_To_Volume` (`lakebase_export_dev_to_volume`) | PAUSED |
+| `D_1_Qualibot_Parsing_Pipeline` (`parsing_pipeline`) | PAUSED |
+| `Z_2_Qualibot_Create_Chat_Experiment` (`create_chat_experiment_dev`) | manuel |
+| `Z_3_Qualibot_Register_Chat_Prompts` (`register_chat_prompts_dev`) | manuel |
+| `D_2_Qualibot_Score_Chat_Traces` (`score_chat_traces_dev`) | PAUSED |
+| `D_1_Qualibot_Apps_Stop_Nightly` (`apps_stop_nightly_dev`) | PAUSED |
+| `W_1_Qualibot_Stop_Weekend` (`qualibot_stop_weekend_dev`) | PAUSED |
+| `W_1_Qualibot_Start_Weekend` (`qualibot_start_weekend_dev`) | PAUSED |
 
 ## Prérequis
 
@@ -506,7 +506,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   databricks bundle run score_chat_traces_dev -t dev --profile DEV
   ```
 
-  UI → Jobs → `D_2_Qualibot_Score_Chat_Traces_dev` → dernier run : par juge, le nombre de traces lues et `estimated input tokens`. Transmettre
+  UI → Jobs → `D_2_Qualibot_Score_Chat_Traces` → dernier run : par juge, le nombre de traces lues et `estimated input tokens`. Transmettre
   ces lignes. Puis, hors des heures d'usage du chat (le juge partage les quotas de tokens de l'endpoint Luna), le run réel (plafonds :
   `max_input_tokens` = 2 000 000, 2 appels en parallèle, 2 appels par seconde, reprises sur 429) :
 
@@ -518,7 +518,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Quand les juges sont validés : baisser les échantillons (`TARGET_SAMPLE_RATES` dans `utils/evaluation/chat_scorers.py`) et activer le planning (PAUSED aujourd'hui).
 
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
-  - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, sauf les tables de test `*_test`. Les tables
+  - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, Les tables
     d'évaluation (`eval_*`, `eval_golden_questions`, `eval_synthetic_questions`, `eval_feedback_failures`) sont les défauts des notebooks :
     ne pas les supprimer.
 
@@ -599,8 +599,8 @@ Crée l'app `qualibot`, le projet Lakebase `qualibot` (base `doccompare`), le sc
   refusée → CREATE SCHEMA sur `dev_proj` ; création du projet Lakebase refusée → droit de création Lakebase. Aucun volume n'est rattaché à
   l'app DEV (rattacher un volume exige MANAGE sur le catalog) : les droits de son SP passent par le job de droits (0.5).
 
-- [ ] **I3. Plannings** : `D_1_Qualibot_Parsing_Pipeline_dev`, `D_1_Qualibot_Lakebase_Export_To_Volume_dev`, `D_1_Qualibot_Apps_Stop_Nightly_Dev`,
-  `W_1_Qualibot_Stop_Weekend_Dev`, `W_1_Qualibot_Start_Weekend_Dev` = PAUSED (UI Jobs DEV, filtre `qualibot`) ; `D_1_Qualibot_Lakebase_Import_Uat_To_Dev` reste actif.
+- [ ] **I3. Plannings** : `D_1_Qualibot_Parsing_Pipeline`, `D_1_Qualibot_Lakebase_Export_To_Volume`, `D_1_Qualibot_Apps_Stop_Nightly`,
+  `W_1_Qualibot_Stop_Weekend`, `W_1_Qualibot_Start_Weekend` = PAUSED (UI Jobs DEV, filtre `qualibot`) ; `D_1_Qualibot_Lakebase_Import_Uat_To` reste actif.
 - [ ] **I5. Logs de l'app** (`databricks apps logs qualibot --profile DEV`) : `Database "doccompare" created` (1er démarrage seulement),
   `Lakebase schema ready`, `Lakebase ready` ; pas de `history feature disabled`. Un développeur hors groupes d'utilisateurs ouvre l'app :
   Compare et Chat visibles, pas d'« Access denied » (`CAPS_BYPASS`). Compare : deux révisions → Change Summary, Change Table, exports Excel et PDF ;
@@ -608,7 +608,7 @@ Crée l'app `qualibot`, le projet Lakebase `qualibot` (base `doccompare`), le sc
 
 ### C. Copie du corpus + index Vector Search (job DEV)
 
-Job `Z_1_Qualibot_Copy_Uat_To_Dev`, déclenchement manuel, serverless, sous **votre** identité (il faut READ VOLUME sur `uat_proj.qualibot.staging` ;
+Job `Z_1_Qualibot_Copy_Uat_To`, déclenchement manuel, serverless, sous **votre** identité (il faut READ VOLUME sur `uat_proj.qualibot.staging` ;
 le SP DEV ne lit pas ce volume) : `1_import_tables` (snapshot → tables `dev_proj.qualibot.*`, rétention 60 jours, Change Data Feed sur les tables de
 chunks, archive LibreOffice → volume `doc_compare`) → `2_vector_search_endpoint` (crée l'endpoint `qualibot` s'il manque) → `3_sync_indexes` (crée les index
 déclarés et les synchronise — embedding de tout le corpus, peut être long). **Le pipeline de parsing n'est pas lancé.**
@@ -685,7 +685,7 @@ main dans l'UI est **effacé au prochain `bundle deploy`** → le développeur e
 
 - [ ] **M5. Pour qu'il puisse déployer lui-même** (`bundle deploy -t dev`) : rôle « Service principal: User » sur `job-runner-sa-dev` ; accès au repo
   Bitbucket ; le dossier du bundle `/Workspace/Shared/.bundle/qualibot/dev` est déjà accessible à tous.
-- [ ] **M6. Job de parsing `D_1_Qualibot_Parsing_Pipeline_dev`** : sa définition est partagée avec UAT/PROD, le développeur n'y est pas déclaré. Un droit ajouté
+- [ ] **M6. Job de parsing `D_1_Qualibot_Parsing_Pipeline`** : sa définition est partagée avec UAT/PROD, le développeur n'y est pas déclaré. Un droit ajouté
   à la main tient jusqu'au prochain `bundle deploy`. Solution durable : l'ajouter au groupe `Role-Project-LEAP-CoreDev` (CAN_MANAGE partout) — action d'un admin.
 
 ### Q. Pipeline de parsing : statuts, tentatives et modèles d'image
@@ -720,7 +720,7 @@ Ce bloc ne touche pas aux données ; seul Q3 lance le pipeline (GPU, plusieurs h
   databricks bundle run -t dev parsing_pipeline --profile DEV
   ```
 
-  Dans le job `D_1_Qualibot_Parsing_Pipeline_dev`, ouvrir les logs de `3_parse` (ligne `[INCREMENTAL] … IDDOCs already terminal`) et de `4_describe_images`
+  Dans le job `D_1_Qualibot_Parsing_Pipeline`, ouvrir les logs de `3_parse` (ligne `[INCREMENTAL] … IDDOCs already terminal`) et de `4_describe_images`
   (lignes `Endpoints  : …`, `Description summary:`, `Remaining to describe:`).
 
 - [ ] **Q4. Contrôler les statuts des documents** — éditeur SQL du workspace DEV (warehouse serverless), une requête à la fois :

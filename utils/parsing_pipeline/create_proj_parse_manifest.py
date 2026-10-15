@@ -4,7 +4,7 @@
 # environment_version = "5"
 # ///
 # MAGIC %md
-# MAGIC # PROJ PARSE_MANIFEST — CLEANUP VOLUME AND PARSE MANIFEST
+# MAGIC # PROJ PARSE_MANIFEST
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Builds the `parse_manifest` read by task `3_parse` and reconciles the volume root with the current Qualibot scope.
@@ -19,28 +19,27 @@
 # MAGIC   `ARCHIVE_MAX_DOCS` most recent get `parse_content=True`; `3_parse` routes those to `chunks_archive` (impact search only).
 # MAGIC
 # MAGIC **Highlighted complexities:**
-# MAGIC Physical deletion of out-of-scope folders only happens when `DRY_RUN` is `non`. The cleanup of derived tables (stale chunks, image metadata)
+# MAGIC Physical deletion of out-of-scope folders only happens when `dry_run` is `false`. The cleanup of derived tables (stale chunks, image metadata)
 # MAGIC always runs, because it only removes indexed content, not source files.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `2_manifest`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.category_reference{PARSING_TABLE_SUFFIX}`, `parsed_documents{PARSING_TABLE_SUFFIX}`
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.category_reference`, `parsed_documents`
 # MAGIC - `{PARSING_INTRAQUAL_BRONZE}.gd_doc_latest`, `gd_doc_cat_latest`, `gd_cat_latest`, `gd_typdoc_latest`
 # MAGIC - `{PARSING_VOLUME_ROOT_PATH}` volume listing
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parse_manifest{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}` (skip rows)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}` / `chunks_archive` / `image_metadata` (stale-IDDOC pruning only)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parse_manifest`
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents` (skip rows)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.chunks` / `chunks_archive` / `image_metadata` (stale-IDDOC pruning only)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - Pruning, un-skip and reconciliation write to Delta tables (`chunks`, `chunks_archive`, `image_metadata`, `parsed_documents`) in `# Data Transformations`, before the manifest is written: a failure in a later step leaves those tables already pruned.
-# MAGIC - `reconcile_processed_files` logs a failed write to `parsed_documents` but does not stop the task, so the manifest can be written while the skip rows are not.
+# MAGIC - Pruning, un-skip and reconciliation write to Delta tables in `# Data Transformations`, before the manifest is written: a failure in a later step leaves those tables already pruned.
 # MAGIC - The `V_QUALIBOT` view filters (`DIFFTOTALE`, confidentiality) are not re-applied here; the scope gate relies on the volume having been filled through that view.
 
 # COMMAND ----------
@@ -73,10 +72,8 @@ from pyspark.sql import functions as F
 import categories
 import manifest_steps
 import quality
-from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+from leap_utils.common import logger as log_utils
 
-setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
-logger = get_logger("cleanup_volume")
 from config import (
     DOC_SCOPE_FILTER, GD_CAT_LATEST, GD_DOC_CAT_LATEST, GD_DOC_FALLBACK, GD_DOC_LATEST,
     EXCLUDED_IDCATS, VOLUME_ROOT_PATH,
@@ -96,21 +93,25 @@ spark.conf.set("spark.databricks.remoteFiltering.blockSelfJoins", "false")
 
 # MAGIC %md
 # MAGIC ## Config Widgets
-# MAGIC `DRY_RUN` protects the **volume**: out-of-scope folders are only deleted when it is `non`. The cleanup of derived tables (stale chunks, image metadata) always runs, because it removes indexed content, not source files.
+# MAGIC `dry_run` protects the **volume**: out-of-scope folders are only deleted when it is `false`. The cleanup of derived tables (stale chunks, image metadata) always runs, because it removes indexed content, not source files.
 # MAGIC
-# MAGIC `JOB_RUN_ID` is written on every `parsed_documents` row so `3_parse` rows and these rows can be correlated.
+# MAGIC `job_run_id` is written on every `parsed_documents` row so `3_parse` rows and these rows can be correlated.
 
 # COMMAND ----------
 
 dbutils.widgets.removeAll()
 
-dbutils.widgets.dropdown("DRY_RUN", "oui", ["oui", "non"], "DRY_RUN — 'non' to actually delete")
-dbutils.widgets.text("JOB_RUN_ID", "", "Parent job run_id (correlates with 3_parse's parsed_documents rows)")
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+LOG_LEVEL = dbutils.widgets.get("log_level")
+logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-DRY_RUN = dbutils.widgets.get("DRY_RUN").lower() != "non"
-JOB_RUN_ID = dbutils.widgets.get("JOB_RUN_ID") or None
+dbutils.widgets.dropdown("dry_run", "true", ["true", "false"], "dry_run: false to actually delete the out-of-scope folders")
+dbutils.widgets.text("job_run_id", "", "Parent job run_id (correlates with 3_parse's parsed_documents rows)")
 
-logger.info(f"Mode: {'DRY RUN (nothing will be deleted)' if DRY_RUN else 'ACTUAL DELETION'} | volume={VOLUME_ROOT_PATH}")
+dry_run = dbutils.widgets.get("dry_run").lower() == "true"
+JOB_RUN_ID = dbutils.widgets.get("job_run_id") or None
+
+logger.info(f"Mode: {'DRY RUN (nothing will be deleted)' if dry_run else 'ACTUAL DELETION'} | volume={VOLUME_ROOT_PATH}")
 logger.info(f"Scope: {DOC_SCOPE_FILTER} | excluded categories: {sorted(EXCLUDED_IDCATS)}")
 
 # COMMAND ----------
@@ -342,9 +343,9 @@ manifest_steps.write_manifest(df_manifest)
 
 # MAGIC %md
 # MAGIC ## Delete out-of-scope folders
-# MAGIC Only when `DRY_RUN` is `non`.
+# MAGIC Only when `dry_run` is `false`.
 
 # COMMAND ----------
 
-manifest_steps.delete_out_of_scope_folders(classified["delete"], DRY_RUN)
+manifest_steps.delete_out_of_scope_folders(classified["delete"], dry_run)
 

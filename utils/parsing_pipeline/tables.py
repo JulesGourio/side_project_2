@@ -2,9 +2,11 @@
 
 `leap_utils.config` starts a Spark session when it is imported, so leap_utils is imported inside the functions: the
 modules that only need the helpers, and the unit tests, do not start Spark. The source of a merge carries the columns
-of the target: `align_to_table` fills the columns the source lacks with NULL (leap's merge_into requires the same
+of the target: `align_to_table` fills the columns the source lacks with NULL (the merge_into of leap_utils requires the same
 column sets), `add_missing_columns` adds the columns the source has and the table lacks.
 """
+
+from typing import Sequence
 
 
 def write_table(df, table: str, mode: str = "append", *, merge_schema: bool = False,
@@ -64,3 +66,24 @@ def merge_into(df, table: str, keys, *, do_when_matched: bool = True, matched_cl
         do_when_matched=do_when_matched, matched_clause=matched_clause,
         do_when_notmatched=do_when_notmatched, do_when_notmatchedbysource=do_when_notmatchedbysource,
     )
+
+
+def ensure_primary_key(table: str, columns: Sequence[str]) -> None:
+    """Declare `columns` the primary key of the Delta table `table`, when it has none.
+
+    Each column is set NOT NULL first, as the constraint requires. An overwrite with overwriteSchema drops the key:
+    call this after every overwrite.
+    """
+    from pyspark.sql import SparkSession
+    from leap_utils.data_asset import table_utils
+
+    catalog, schema, name = table.split(".")
+    declared = SparkSession.getActiveSession().sql(
+        f"SELECT count(*) AS n FROM {catalog}.information_schema.table_constraints "
+        f"WHERE table_schema = '{schema}' AND table_name = '{name}' AND constraint_type = 'PRIMARY KEY'"
+    ).first()["n"]
+    if declared:
+        return
+    for column in columns:
+        table_utils.set_table_column_not_null(table_path=table, column=column)
+    table_utils.add_table_primary_key(table_path=table, pk_name=f"proj_{name}_PK", columns=",".join(columns))

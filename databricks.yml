@@ -11,12 +11,9 @@ variables:
   app_name:
     default: "qualibot"
     description: "Unique name for the Databricks App"
-  app_proj_catalog:
-    description: "Catalog of every table of the app and of the pipeline, plus UC experiments, traces and eval assets"
-    default: dev_proj
-  app_proj_schema:
-    description: "Schema of the tables, inside app_proj_catalog"
-    default: qualibot
+  pipeline_write_env:
+    description: "Environment the app and the pipeline write to: dev, uat or prod. Tables live in <pipeline_write_env>_proj.qualibot."
+    default: dev
 
   # --- Parsing pipeline ---
   parsing_gpu_node_type:
@@ -35,11 +32,8 @@ variables:
     description: "Comma-separated IDDOC list to restrict a run to (empty = no filter, normal mode). Override via --var for a one-off targeted test run."
     default: ""
   parsing_images_volume:
-    description: "Volume (in app_proj_catalog.app_proj_schema) the parsing pipeline extracts images to"
+    description: "Volume of <pipeline_write_env>_proj.qualibot the parsing pipeline extracts images to"
     default: "images"
-  parsing_table_suffix:
-    description: "Suffix appended to every WRITE target table (checkpoint, chunks, image_metadata, parsed_documents, audit, retry/rag temp tables). Empty = real tables. Override via --var (e.g. '_test') for a one-off validation run that never touches production tables."
-    default: ""
   intraqual_bronze_catalog_schema:
     description: >-
       catalog.schema of the Intraqual bronze materialized views (gd_*_latest) —
@@ -92,7 +86,7 @@ variables:
       run's documents_as_of/updated_at. Empty = skip.
     default: ""
   parsing_schedule_cron:
-    description: "Quartz cron for the daily parsing run (Europe/Paris)"
+    description: "Quartz cron for the daily parsing run (Europe/Brussels)"
     default: "0 0 4 * * ?"
   parsing_schedule_pause:
     description: "PAUSED: the daily parsing job does not run on its schedule. UNPAUSED: it runs every day at parsing_schedule_cron."
@@ -267,27 +261,27 @@ targets:
       # The volumes of dev_proj.qualibot are created by the first deploy; their data is loaded by the copy job (resources/dev_copy.yml).
       schemas:
         qualibot_proj_schema:
-          catalog_name: ${var.app_proj_catalog}
-          name: ${var.app_proj_schema}
+          catalog_name: ${var.pipeline_write_env}_proj
+          name: qualibot
       volumes:
         qualibot_doc_compare:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
         qualibot_test:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
         qualibot_images:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
         # Lakebase export of the DEV app (lakebase_export_dev_to_volume below).
         qualibot_staging:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: staging
           volume_type: MANAGED
@@ -314,8 +308,7 @@ targets:
           # The SP gets its grants from the grant_app_access_dev job below.
     variables:
       app_name: "qualibot"
-      app_proj_catalog: dev_proj
-      app_proj_schema: qualibot
+      pipeline_write_env: dev
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Same prod sources as UAT.
@@ -324,7 +317,6 @@ targets:
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
       parsing_offline_models_path: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
       # Real tables, no suffix. One index serves the chat (division filter) and impact search.
-      parsing_table_suffix: ""
       parsing_vector_search_indexes: "dev_proj.qualibot.chunks_index"
       # PAUSED on purpose — unpause only on explicit decision.
       parsing_schedule_pause: "PAUSED"
@@ -422,22 +414,22 @@ targets:
           replace_existing: true
       schemas:
         qualibot_proj_schema:
-          catalog_name: ${var.app_proj_catalog}
-          name: ${var.app_proj_schema}
+          catalog_name: ${var.pipeline_write_env}_proj
+          name: qualibot
       volumes:
         qualibot_doc_compare:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
         qualibot_test:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
         # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy; the data copy steps are in runbooks/uat.md.
         qualibot_images:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
@@ -474,8 +466,7 @@ targets:
                 permission: WRITE_VOLUME
     variables:
       app_name: "qualibot"
-      app_proj_catalog: uat_proj
-      app_proj_schema: qualibot
+      pipeline_write_env: uat
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_bronze through the shared metastore.
@@ -485,7 +476,6 @@ targets:
       parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
       # Real tables, no suffix. Without the parsing state in these tables the daily run reparses the whole
       # corpus on GPU (runbooks/uat.md). One index serves the chat and impact search.
-      parsing_table_suffix: ""
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
       # chunks_full is built, but chunks_full_index is not in parsing_vector_search_indexes, so it is neither created nor synced.
       parsing_build_chunks_full: "true"
@@ -574,27 +564,27 @@ targets:
           replace_existing: true
       schemas:
         qualibot_proj_schema:
-          catalog_name: ${var.app_proj_catalog}
-          name: ${var.app_proj_schema}
+          catalog_name: ${var.pipeline_write_env}_proj
+          name: qualibot
       volumes:
         qualibot_doc_compare:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
         qualibot_docling_models:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: docling_models
           volume_type: MANAGED
         qualibot_test:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: test
           volume_type: MANAGED
         # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy on prod_proj.
         qualibot_images:
-          catalog_name: ${var.app_proj_catalog}
+          catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
@@ -613,8 +603,7 @@ targets:
                 permission: WRITE_VOLUME
     variables:
       app_name: "qualibot"
-      app_proj_catalog: prod_proj
-      app_proj_schema: qualibot
+      pipeline_write_env: prod
       parsing_num_workers: "8"
       parsing_run_mode: "incremental"
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"

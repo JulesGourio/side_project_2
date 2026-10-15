@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # PROJ CATEGORY_REFERENCE — FRESHNESS GUARD AND CATEGORY REFERENCE
+# MAGIC # PROJ CATEGORY_REFERENCE
 # MAGIC
 # MAGIC **Description:**
 # MAGIC First link of the daily chain. Two roles:
@@ -22,14 +22,13 @@
 # MAGIC - `{PARSING_DIVISION_ARCHIVE_TABLE}` (same function, disabled by default: empty)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.category_reference{PARSING_TABLE_SUFFIX}`
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.category_reference`
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - The tables behind `category_reference` (`gd_doc_cat_latest`, `gd_cat_latest`, the optional division archive) are read inside `categories.build_division_reference`, not in `# Inputs`: this notebook cannot show them or check them on its own.
-# MAGIC - The guard does not cover `DIVISION_ARCHIVE_TABLE` (disabled by default): enabling it means adding it to `REQUIRED_SOURCES`.
+# MAGIC - The tables behind `category_reference` are read in `categories.build_division_reference`, not in `# Inputs`: this notebook cannot show or check them on its own.
 
 # COMMAND ----------
 
@@ -60,11 +59,9 @@ from pyspark.sql import functions as F
 
 import categories
 import quality
-from tables import write_table
-from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+from tables import ensure_primary_key, write_table
+from leap_utils.common import logger as log_utils
 
-setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
-logger = get_logger("build_category_reference")
 from config import (
     DIVISION_ARCHIVE_TABLE, DIVISION_REFERENCE_TABLE,
     GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST, GD_TYPDOC_LATEST,
@@ -80,6 +77,10 @@ from config import (
 # COMMAND ----------
 
 dbutils.widgets.removeAll()
+
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+LOG_LEVEL = dbutils.widgets.get("log_level")
+logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
 # COMMAND ----------
 
@@ -202,4 +203,5 @@ quality.check_dataframe(df_reference, "category_reference", [
 # COMMAND ----------
 
 write_table(df_reference, DIVISION_REFERENCE_TABLE, "overwrite", overwrite_schema=True)
+ensure_primary_key(DIVISION_REFERENCE_TABLE, ["IDDOC"])
 logger.info(f"Saved: {DIVISION_REFERENCE_TABLE}")

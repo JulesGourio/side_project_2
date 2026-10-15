@@ -6,7 +6,7 @@ targets:
     resources:
       jobs:
         create_chat_experiment_dev:
-          name: "Z_2_Qualibot_Create_Chat_Experiment_${bundle.target}"
+          name: "Z_2_Qualibot_Create_Chat_Experiment"
           queue:
             enabled: true
           email_notifications:
@@ -54,7 +54,7 @@ targets:
                   - databricks-sdk>=0.118.0
 
         register_chat_prompts_dev:
-          name: "Z_3_Qualibot_Register_Chat_Prompts_${bundle.target}"
+          name: "Z_3_Qualibot_Register_Chat_Prompts"
           queue:
             enabled: true
           email_notifications:
@@ -87,7 +87,7 @@ targets:
                 source: WORKSPACE
                 parameters:
                   - "--schema"
-                  - "${var.app_proj_catalog}.${var.app_proj_schema}"
+                  - "${var.pipeline_write_env}_proj.qualibot"
                   - "--experiment"
                   - "/Shared/qualibot/chat_turns"
                   - "--app-root"
@@ -101,7 +101,7 @@ targets:
                   - mlflow[databricks]>=3.4
 
         score_chat_traces_dev:
-          name: "D_2_Qualibot_Score_Chat_Traces_${bundle.target}"
+          name: "D_2_Qualibot_Score_Chat_Traces"
           queue:
             enabled: true
           email_notifications:
@@ -140,7 +140,7 @@ targets:
                   min_date: "2026-10-12"
                   app_code_path: "${workspace.root_path}/files"
                   experiment: "/Shared/qualibot/chat_turns"
-                  results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
+                  results_table: "${var.pipeline_write_env}_proj.qualibot.chat_trace_scores"
               environment_key: default
           environments:
             - environment_key: default
@@ -150,14 +150,14 @@ targets:
                   - mlflow[databricks]>=3.4
           schedule:
             quartz_cron_expression: "0 30 2 * * ?"
-            timezone_id: "Europe/Paris"
+            timezone_id: "Europe/Brussels"
             pause_status: PAUSED
 
   qualibot-uat:
     resources:
       jobs:
         create_chat_experiment_uat:
-          name: "Z_2_Qualibot_Create_Chat_Experiment_${bundle.target}"
+          name: "Z_2_Qualibot_Create_Chat_Experiment"
           queue:
             enabled: true
           email_notifications:
@@ -201,7 +201,7 @@ targets:
                   - databricks-sdk>=0.118.0
 
         register_chat_prompts_uat:
-          name: "Z_3_Qualibot_Register_Chat_Prompts_${bundle.target}"
+          name: "Z_3_Qualibot_Register_Chat_Prompts"
           queue:
             enabled: true
           email_notifications:
@@ -230,7 +230,7 @@ targets:
                 source: WORKSPACE
                 parameters:
                   - "--schema"
-                  - "${var.app_proj_catalog}.${var.app_proj_schema}"
+                  - "${var.pipeline_write_env}_proj.qualibot"
                   - "--experiment"
                   - "/Shared/qualibot/chat_turns"
                   - "--app-root"
@@ -244,7 +244,7 @@ targets:
                   - mlflow[databricks]>=3.4
 
         score_chat_traces_uat:
-          name: "D_2_Qualibot_Score_Chat_Traces_${bundle.target}"
+          name: "D_2_Qualibot_Score_Chat_Traces"
           queue:
             enabled: true
           email_notifications:
@@ -281,7 +281,7 @@ targets:
                   min_date: "2026-10-12"
                   app_code_path: "${workspace.root_path}/files"
                   experiment: "/Shared/qualibot/chat_turns"
-                  results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
+                  results_table: "${var.pipeline_write_env}_proj.qualibot.chat_trace_scores"
               environment_key: default
           environments:
             - environment_key: default
@@ -291,14 +291,14 @@ targets:
                   - mlflow[databricks]>=3.4
           schedule:
             quartz_cron_expression: "0 30 2 * * ?"
-            timezone_id: "Europe/Paris"
+            timezone_id: "Europe/Brussels"
             pause_status: PAUSED
 
   qualibot-prod:
     resources:
       jobs:
         create_chat_experiment_prod:
-          name: "Z_2_Qualibot_Create_Chat_Experiment_${bundle.target}"
+          name: "Z_2_Qualibot_Create_Chat_Experiment"
           queue:
             enabled: true
           email_notifications:
@@ -342,7 +342,7 @@ targets:
                   - databricks-sdk>=0.118.0
 
         register_chat_prompts_prod:
-          name: "Z_3_Qualibot_Register_Chat_Prompts_${bundle.target}"
+          name: "Z_3_Qualibot_Register_Chat_Prompts"
           queue:
             enabled: true
           email_notifications:
@@ -371,7 +371,7 @@ targets:
                 source: WORKSPACE
                 parameters:
                   - "--schema"
-                  - "${var.app_proj_catalog}.${var.app_proj_schema}"
+                  - "${var.pipeline_write_env}_proj.qualibot"
                   - "--experiment"
                   - "/Shared/qualibot/chat_turns"
                   - "--app-root"
@@ -385,7 +385,7 @@ targets:
                   - mlflow[databricks]>=3.4
 
         score_chat_traces_prod:
-          name: "D_2_Qualibot_Score_Chat_Traces_${bundle.target}"
+          name: "D_2_Qualibot_Score_Chat_Traces"
           queue:
             enabled: true
           email_notifications:
@@ -422,7 +422,7 @@ targets:
                   min_date: "2026-10-12"
                   app_code_path: "${workspace.root_path}/files"
                   experiment: "/Shared/qualibot/chat_turns"
-                  results_table: "${var.app_proj_catalog}.${var.app_proj_schema}.chat_trace_scores"
+                  results_table: "${var.pipeline_write_env}_proj.qualibot.chat_trace_scores"
               environment_key: default
           environments:
             - environment_key: default
@@ -432,5 +432,5 @@ targets:
                   - mlflow[databricks]>=3.4
           schedule:
             quartz_cron_expression: "0 30 2 * * ?"
-            timezone_id: "Europe/Paris"
+            timezone_id: "Europe/Brussels"
             pause_status: PAUSED

@@ -85,7 +85,7 @@ UNION ALL SELECT 'category_reference', count(*) FROM dev_proj.qualibot.category_
 | `chunks_index` absent, `pret = False`, ou sa `source` n'est pas `dev_proj.qualibot.chunks` | transmettre la sortie : la commande de (re)création sur **votre** table est dans `runbooks/dev.md` 0.3 (pas de copie depuis l'UAT) |
 | `jetons_max` ≈ 450 et `caracteres_max` ≈ 1 600 (+ préfixe `[Source: …]`) | le chunking en base est celui du code actuel |
 | `jetons_max` vers 1 000 ou plus | `chunks` a l'ancien chunking : signaler la table qui contient le bon chunking |
-| `parsing_checkpoint`, `parsed_documents` ou `image_metadata` absentes ou vides | **ne pas lancer `3_parse` sans filtre** : utiliser seulement le test filtré `_test` de 0.5 |
+| `parsing_checkpoint`, `parsed_documents` ou `image_metadata` absentes ou vides | **ne pas lancer `3_parse` sans filtre** : le test filtré n'existe plus, ne pas lancer `3_parse` sur des tables vides |
 
 - [ ] 0.2 fait et lu
 
@@ -149,51 +149,7 @@ databricks bundle run parsing_pipeline -t dev --profile DEV --only 6_update_kb_m
 
 Attendu (tables à jour) : `3_parse` journalise `[SCOPE] ... to scan=0` et `[GHOST GUARD] All SUCCESS docs have chunks - OK.` ; `5_sync_index` affiche `sync triggered` ; `6_update_kb_metadata` affiche `doc_catalog N -> N documents`.
 
-Test de parsing réel, **sans toucher aux tables de DEV** (suffixe `_test`). Choisir 2 ou 3 IDDOC, de préférence des documents qui ont des images (c'est ce qui exerce le placement des images de `4_describe_images`) :
-
-```sql
-SELECT m.IDDOC, m.ref, count(i.image_id) AS images
-FROM dev_proj.qualibot.parse_manifest m
-LEFT JOIN dev_proj.qualibot.image_metadata i ON i.IDDOC = m.IDDOC
-WHERE m.parse_content
-GROUP BY m.IDDOC, m.ref
-HAVING count(i.image_id) BETWEEN 1 AND 15
-ORDER BY images DESC LIMIT 3;
-```
-
-```powershell
-$ids = "<IDDOC1>,<IDDOC2>"
-databricks bundle deploy -t dev --profile DEV --var="parsing_table_suffix=_test" --var="parsing_parse_filter=$ids" --var="parsing_run_mode=full"
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 3_parse
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_images
-```
-
-```sql
-SELECT parse_status, count(*) FROM dev_proj.qualibot.parsed_documents_test GROUP BY 1;
-SELECT IDDOC, count(*) AS passages, max(chunk_token_count) AS jetons_max FROM dev_proj.qualibot.chunks_test GROUP BY 1;
-```
-
-Attendu : `SUCCESS` pour les IDDOC choisis, des passages avec `jetons_max` ≈ 450. Puis **remettre la configuration normale et nettoyer** :
-
-```powershell
-databricks bundle deploy -t dev --profile DEV
-```
-
-```sql
-DROP TABLE IF EXISTS dev_proj.qualibot.chunks_test;
-DROP TABLE IF EXISTS dev_proj.qualibot.parsed_documents_test;
-DROP TABLE IF EXISTS dev_proj.qualibot.image_metadata_test;
-DROP TABLE IF EXISTS dev_proj.qualibot.parsing_checkpoint_test;
-DROP TABLE IF EXISTS dev_proj.qualibot.parse_manifest_test;
-DROP TABLE IF EXISTS dev_proj.qualibot.category_reference_test;
-```
-
-Si `SHOW TABLES IN dev_proj.qualibot LIKE '*_test'` en montre d'autres, les supprimer aussi.
-
-- [ ] 0.5 `1_categories` à `6_update_kb_metadata` lancés un par un, sans erreur
-- [ ] 0.5 test filtré `_test` : `SUCCESS` pour les IDDOC, `jetons_max` ≈ 450, tables `_test` supprimées
+Le suffixe de tables `_test` n'existe plus : il n'y a pas de test de parsing filtré. Les tests de parsing se font sur les tables de DEV, dans la copie complète.
 
 ### 0.6 Déployer l'app
 
@@ -243,7 +199,7 @@ Les notebooks sont `create_proj_<asset>.py` et `update_proj_vector_indexes.py` d
 - [ ] `--only 4_describe_images` sur des tables à jour : `Nothing to describe`, `No new image chunks to inject`, ou la promotion des documents en attente.
 - [ ] Statuts `IMAGES_PENDING`, plafond de tentatives, disjoncteur : `runbooks/dev.md` Q3 à Q5 (requêtes de contrôle).
 - [ ] Modèles de vision : `runbooks/dev.md` Q1 (`utils/evaluation/check_vision_endpoints.py`).
-- [ ] `5_sync_index` et `6_update_kb_metadata` sont serverless : vérifier qu'ils n'importent que la bibliothèque standard pour le logger.
+- [ ] `6_update_kb_metadata` est serverless (pas de GX) : vérifier qu'il n'importe que la bibliothèque standard pour le logger.
 - [ ] `--only 5_sync_index` puis `--only 6_update_kb_metadata` : `sync triggered`, `doc_catalog N -> N documents`.
 
 ## 3. Client
@@ -285,7 +241,7 @@ Les notebooks sont `create_proj_<asset>.py` et `update_proj_vector_indexes.py` d
 
 Au prochain `bundle deploy -t qualibot-uat`, Databricks supprime les jobs qui ne sont plus déclarés (jobs de l'ancien assistant et de la notation associée, job de migration de test, job de setup de schéma, job de synchronisation des droits). Ne pas déployer l'UAT pour cela seul.
 
-- [ ] Le job de parsing est renommé de `D_1_qualibot-parsing-pipeline-<cible>` en `D_1_Qualibot_Parsing_Pipeline_<cible>` (comme les jobs d'arrêt, de reprise et d'export). Vérifier qu'aucun tableau de bord, alerte SQL ou règle de notification ne repère un job par son ancien nom.
+- [ ] Le job de parsing s'appelle `D_1_Qualibot_Parsing_Pipeline` (sans suffixe de cible) : après le déploiement, `databricks jobs list --profile DEV -o json | ConvertFrom-Json | Where-Object { $_.settings.name -like '*Qualibot*' } | ForEach-Object { $_.settings.name }` ne montre aucun nom qui finit par `_dev`, `_uat` ou `_prod`.
 - [ ] Le job `qualibot-sync-user-capabilities-uat` (hors bundle) se supprime : `runbooks/uat.md` étape 0.8.
 - [ ] Les alertes SQL (`utils/alerts/`) se créent à la main : `runbooks/uat.md` D5.8d.
-- [ ] Plannings des jobs d'arrêt et de reprise de l'app : fuseau `Europe/Paris` (`resources/app_schedules.yml`), à conserver.
+- [ ] Plannings des jobs d'arrêt et de reprise de l'app : fuseau `Europe/Brussels` (`resources/app_schedules.yml`), à conserver.

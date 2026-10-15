@@ -23,8 +23,8 @@ from format_parsers import strip_ooxml_bloat
 from tables import table_exists, write_table
 from leap_utils.common.logger import get_logger
 from config import (
+    PIPELINE_WRITE_ENV,
     BUSINESS_METADATA_COLS,
-    CATALOG_SCHEMA,
     CHECKPOINT_BATCH_SIZE,
     CHECKPOINT_TABLE,
     EMPTY_SMALL_FILE_SIZE_BYTES,
@@ -210,7 +210,7 @@ def snapshot_or_log_checkpoint(num_files):
     time-travel restore."""
     if RUN_MODE == "full" and num_files > 0:
         snap_ts = datetime.now().strftime("%Y%m%d_%H%M")
-        snap_table = f"{CATALOG_SCHEMA}._pipeline_checkpoint_{snap_ts}"
+        snap_table = f"{PIPELINE_WRITE_ENV}_proj.qualibot._pipeline_checkpoint_{snap_ts}"
         try:
             spark.table(CHECKPOINT_TABLE)
             spark.sql(f"CREATE TABLE IF NOT EXISTS {snap_table} SHALLOW CLONE {CHECKPOINT_TABLE}")

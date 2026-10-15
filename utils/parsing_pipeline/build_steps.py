@@ -172,7 +172,7 @@ def _apply_date_and_rag_filters(df_processed_files):
 
     doc_date < DOC_DATE_CUTOFF: parsed, chunks routed to chunks_archive instead of
     the RAG tables (is_in_rag=False). NULL doc_date = recent. Manual exclusions come from
-    rag_exclusions (INSERT INTO {CATALOG_SCHEMA}.rag_exclusions VALUES (IDDOC, 'reason')).
+    rag_exclusions (INSERT INTO {PIPELINE_WRITE_ENV}_proj.qualibot.rag_exclusions VALUES (IDDOC, 'reason')).
     Returns (df_processed_files, df_exclusions_or_none, cutoff_col).
     """
     cutoff = F.lit(DOC_DATE_CUTOFF).cast("date")

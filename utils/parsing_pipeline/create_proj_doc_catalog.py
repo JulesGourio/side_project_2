@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # PROJ DOC_CATALOG — DOCUMENT CATALOG AND KNOWLEDGE BASE DATE (LAKEBASE)
+# MAGIC # PROJ DOC_CATALOG
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Last link of the daily chain. Two writes to Lakebase:
@@ -12,28 +12,26 @@
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC Lakebase is a Postgres endpoint, not Unity Catalog: unreachable from classic job compute over its private endpoint, so this task has no
-# MAGIC cluster spec on purpose (serverless `environment_key`), like `5_sync_index`. It depends on `5_sync_index`, not on `4_describe_images`:
+# MAGIC cluster spec on purpose (serverless `environment_key`). It depends on `5_sync_index`, not on `4_describe_images`:
 # MAGIC the date should only advance once the chunks are actually queryable, not just written to Delta.
-# MAGIC `LAKEBASE_DATABASE` may list several databases, comma-separated (the app's and a test app's); empty = skip.
+# MAGIC `lakebase_database` may list several databases, comma-separated; empty = skip.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `6_update_kb_metadata`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{CATALOG_SCHEMA}.parse_manifest{TABLE_SUFFIX}`, `{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}`
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest`, `{PIPELINE_WRITE_ENV}_proj.qualibot.chunks`
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{LAKEBASE_DATABASE}.doc_catalog` (Lakebase/Postgres, full rewrite in one transaction)
-# MAGIC - `{LAKEBASE_DATABASE}.catalog_metadata` (Lakebase/Postgres, id=1 single row)
+# MAGIC - `{lakebase_database}.doc_catalog` (Lakebase/Postgres, full rewrite in one transaction)
+# MAGIC - `{lakebase_database}.catalog_metadata` (Lakebase/Postgres, id=1 single row)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - The REF link is built here and in `utils.intraqual_ref_url` (the `url` column of the chunks); `tests/test_doc_catalog.py` keeps the two equal, but the Intraqual host is written in both.
-# MAGIC - The catalog groups on `trim(ref)` while `in_chat` joins the chunks on the untrimmed `ref`: a REF with surrounding spaces in the manifest would be reported as not in the chat index.
-# MAGIC - With several target databases the rewrite is one transaction per database, not one across all of them: a failure on the second leaves the first already updated.
-# MAGIC - The shrink guard (`MIN_KEEP_RATIO`) needs the current row count of the target, so it runs in `# Outputs` rather than in `# Quality Checks`.
+# MAGIC - The Intraqual host of the REF link is written here and in `utils.intraqual_ref_url`: change both together.
+# MAGIC - With several target databases the rewrite is one transaction per database, not one across all of them.
 
 # COMMAND ----------
 
@@ -70,42 +68,39 @@ from tables import table_exists
 
 # COMMAND ----------
 
-from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+from leap_utils.common import logger as log_utils
 
-setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
-logger = get_logger("kb_metadata")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Config Widgets
-# MAGIC This task is serverless, like `5_sync_index`: no `PARSING_*` environment variables, so the Lakebase target and the parsing tables come from the job parameters. `LAKEBASE_DATABASE` may list several databases, comma-separated (the app's and a test app's); empty means nothing to do.
+# MAGIC This task is serverless: no `PIPELINE_WRITE_ENV` environment variable, so the Lakebase target and the write environment come from the job parameters. `lakebase_database` may list several databases, comma-separated; empty means nothing to do.
 
 # COMMAND ----------
 
 dbutils.widgets.removeAll()
 
-dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
-dbutils.widgets.text("LAKEBASE_BRANCH", "production")
-dbutils.widgets.text("LAKEBASE_ENDPOINT", "primary")
-dbutils.widgets.text("LAKEBASE_DATABASE", "")
-dbutils.widgets.text("CATALOG_SCHEMA", "")
-dbutils.widgets.text("TABLE_SUFFIX", "")
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+LOG_LEVEL = dbutils.widgets.get("log_level")
+logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-LAKEBASE_PROJECT_ID = dbutils.widgets.get("LAKEBASE_PROJECT_ID")
-LAKEBASE_BRANCH = dbutils.widgets.get("LAKEBASE_BRANCH")
-LAKEBASE_ENDPOINT = dbutils.widgets.get("LAKEBASE_ENDPOINT")
-LAKEBASE_DATABASES = [d.strip() for d in dbutils.widgets.get("LAKEBASE_DATABASE").split(",") if d.strip()]
-CATALOG_SCHEMA = dbutils.widgets.get("CATALOG_SCHEMA").strip()
-TABLE_SUFFIX = dbutils.widgets.get("TABLE_SUFFIX").strip()
+dbutils.widgets.text("pipeline_write_env", "dev")
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+dbutils.widgets.text("lakebase_project_id", "qualibot")
+LAKEBASE_PROJECT_ID = dbutils.widgets.get("lakebase_project_id")
+dbutils.widgets.text("lakebase_branch", "production")
+LAKEBASE_BRANCH = dbutils.widgets.get("lakebase_branch")
+dbutils.widgets.text("lakebase_endpoint", "primary")
+LAKEBASE_ENDPOINT = dbutils.widgets.get("lakebase_endpoint")
+dbutils.widgets.text("lakebase_database", "")
+LAKEBASE_DATABASES = [d.strip() for d in dbutils.widgets.get("lakebase_database").split(",") if d.strip()]
 
 if not LAKEBASE_DATABASES:
-    logger.info("No LAKEBASE_DATABASE param — nothing to do.")
+    logger.info("No lakebase_database parameter: nothing to do.")
     dbutils.notebook.exit("no_lakebase_database")
-if not CATALOG_SCHEMA:
-    raise ValueError("CATALOG_SCHEMA is required (the parsing tables: parse_manifest, chunks)")
 
-logger.info(f"Target: {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASES}, source {CATALOG_SCHEMA}.*{TABLE_SUFFIX}")
+logger.info(f"Target: {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASES}, source {PIPELINE_WRITE_ENV}_proj.qualibot")
 
 # COMMAND ----------
 
@@ -120,8 +115,8 @@ INTRAQUAL_REF_URL_BASE = "https://intraqual.lat.corp/intraqual_prod/identificati
 # Never let a broken upstream run empty the app's catalog.
 MIN_KEEP_RATIO = 0.5
 
-MANIFEST_TABLE = f"{CATALOG_SCHEMA}.parse_manifest{TABLE_SUFFIX}"
-CHUNKS_TABLE = f"{CATALOG_SCHEMA}.chunks{TABLE_SUFFIX}"
+MANIFEST_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest"
+CHUNKS_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks"
 for table in (MANIFEST_TABLE, CHUNKS_TABLE):
     if not table_exists(table):
         raise RuntimeError(f"{table} does not exist - run the parsing tasks first")
@@ -148,7 +143,7 @@ catalog_rows = [
                max(c.REF IS NOT NULL) AS in_chat,
                max_by(m.indice, m.IDDOC) AS revision, max_by(m.doc_date, m.IDDOC) AS doc_date
         FROM {MANIFEST_TABLE} m
-        LEFT JOIN (SELECT DISTINCT REF FROM {CHUNKS_TABLE}) c ON c.REF = m.ref
+        LEFT JOIN (SELECT DISTINCT trim(REF) AS REF FROM {CHUNKS_TABLE}) c ON c.REF = trim(m.ref)
         WHERE m.ref IS NOT NULL AND trim(m.ref) <> ''
         GROUP BY trim(m.ref)
     """).collect()

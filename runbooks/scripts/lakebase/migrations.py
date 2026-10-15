@@ -1,4 +1,4 @@
-"""Lakebase schema migrations, shared by migrate_lakebase.py (CLI) and migrate_lakebase_job.py (notebook)."""
+"""Lakebase schema migrations, shared by migrate_lakebase.py (CLI)."""
 import logging
 
 logger = logging.getLogger(__name__)

@@ -19,8 +19,8 @@ databricks jobs submit --json @runbooks/scripts/dev_copy/export_uat_submit.json 
 
 ## Inputs
 
-- Widgets (defaults): `SOURCE_CATALOG_SCHEMA` = `uat_proj.qualibot`, `TABLE_SUFFIX` = empty, `TABLES` = `chunks,parsing_checkpoint,parsed_documents,image_metadata,parse_manifest,category_reference`, `OUTPUT_DIR` = `/Volumes/uat_proj/qualibot/staging/dev_copy`, `FORMAT` = `delta` (or `parquet`), `SOFFICE_ARCHIVE` = `/Volumes/uat_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz`.
-- Tables `<SOURCE_CATALOG_SCHEMA>.<table><TABLE_SUFFIX>` for each name in `TABLES`. They are only read.
+- Source: the tables of `uat_proj.qualibot` (fixed in the notebook). Widgets: `TABLES` = `chunks,parsing_checkpoint,parsed_documents,image_metadata,parse_manifest,category_reference`, `OUTPUT_DIR` = `/Volumes/uat_proj/qualibot/staging/dev_copy`, `FORMAT` = `delta` (or `parquet`), `SOFFICE_ARCHIVE` = `/Volumes/uat_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz`.
+- Tables `uat_proj.qualibot.<table>` for each name in `TABLES`. They are only read.
 - The LibreOffice archive named by `SOFFICE_ARCHIVE`.
 
 ## Outputs

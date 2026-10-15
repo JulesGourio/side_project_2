@@ -55,7 +55,7 @@ Détail dans `docs/compare_audit_2026-10.md`.
 
 ## Divers
 
-- [ ] Repo `leap-dbx-repository` (hors de ce dépôt) : le dossier `dev_qualibot` monté dans le workspace (clone bare, filtre blobless)
+- [ ] Repo de référence des notebooks (hors de ce dépôt) : le dossier `dev_qualibot` monté dans le workspace (clone bare, filtre blobless)
   affiche des milliers de fichiers « supprimés » via `git status` ; un `git reset --hard` dessus a échoué à mi-chemin. Contournement :
   un clone local propre et un Repo Databricks séparé (`dev_qualibot_clean`). **Ne pas retenter d'opération git en masse sur l'ancien
   dossier** (ni `git add -A`, ni `reset --hard`, ni merge complet) ; à reclôner proprement un jour.

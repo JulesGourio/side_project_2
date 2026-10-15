@@ -8,10 +8,10 @@ from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 from leap_utils.common.logger import get_logger
-from tables import add_missing_columns, merge_into, table_exists, write_table
+from tables import add_missing_columns, ensure_primary_key, merge_into, table_exists, write_table
 from config import (
+    PIPELINE_WRITE_ENV,
     ARCHIVE_NOTICES_IN_RAG,
-    CATALOG_SCHEMA,
     ARCHIVE_NOTICE_CONTENT_TYPE,
     DOC_DATE_CUTOFF,
     RUN_MODE,
@@ -22,14 +22,13 @@ from config import (
     TARGET_HEALTH_TABLE,
     TARGET_IMAGE_METADATA_TABLE,
     TARGET_PROCESSED_FILES_TABLE,
-    TABLE_SUFFIX,
 )
 
 logger = get_logger(__name__)
 
 # Kept from the existing row when it is DONE, SKIPPED or FAILED_LIMIT: the description and what it cost.
 _IMAGE_KEEP_PREVIOUS = ("status", "description", "input_tokens", "output_tokens", "described_at")
-_IMAGE_MERGE_TEMP = f"{CATALOG_SCHEMA}._image_metadata_merge_temp{TABLE_SUFFIX}"
+_IMAGE_MERGE_TEMP = f"{PIPELINE_WRITE_ENV}_proj.qualibot._image_metadata_merge_temp"
 
 
 def _merge_image_metadata(df_image_metadata):
@@ -154,12 +153,14 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
         logger.info(f"Wrote {TARGET_PROCESSED_FILES_TABLE}")
 
         write_table(df_chunks_all, TARGET_CHUNK_TABLE, "overwrite", overwrite_schema=True)
+        ensure_primary_key(TARGET_CHUNK_TABLE, ["chunk_id"])
         logger.info(f"Wrote {TARGET_CHUNK_TABLE} (ALL)")
 
         write_table(df_chunks_archive, TARGET_CHUNK_TABLE_ARCHIVE, "overwrite", overwrite_schema=True)
         logger.info(f"Wrote {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
 
         write_table(df_image_metadata, TARGET_IMAGE_METADATA_TABLE, "overwrite", overwrite_schema=True)
+        ensure_primary_key(TARGET_IMAGE_METADATA_TABLE, ["IDDOC", "image_id"])
         logger.info(f"Wrote {TARGET_IMAGE_METADATA_TABLE}")
 
         logger.info("[FULL] All tables overwritten.")

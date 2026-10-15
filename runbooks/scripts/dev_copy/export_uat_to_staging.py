@@ -22,7 +22,7 @@
 # MAGIC ```
 # MAGIC
 # MAGIC **Input Tables**
-# MAGIC - `{SOURCE_CATALOG_SCHEMA}.<table>{TABLE_SUFFIX}` for each table of `TABLES`
+# MAGIC - `{SOURCE_SCHEMA}.<table>` for each table of `TABLES`
 # MAGIC - `{SOFFICE_ARCHIVE}` (LibreOffice archive used by the "Exact (PDF)" preview)
 # MAGIC
 # MAGIC **Outputs**
@@ -37,8 +37,6 @@ import os
 from datetime import datetime, timezone
 
 dbutils.widgets.removeAll()
-dbutils.widgets.text("SOURCE_CATALOG_SCHEMA", "uat_proj.qualibot")
-dbutils.widgets.text("TABLE_SUFFIX", "")
 # Chunk table (source of the Vector Search index) and parsing pipeline state
 # (so the first DEV run is incremental). Archive tables are left out on purpose.
 dbutils.widgets.text(
@@ -53,8 +51,7 @@ dbutils.widgets.text(
     "/Volumes/uat_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
 )
 
-SOURCE_CATALOG_SCHEMA = dbutils.widgets.get("SOURCE_CATALOG_SCHEMA").strip()
-TABLE_SUFFIX = dbutils.widgets.get("TABLE_SUFFIX").strip()
+SOURCE_SCHEMA = "uat_proj.qualibot"
 TABLES = [t.strip() for t in dbutils.widgets.get("TABLES").split(",") if t.strip()]
 OUTPUT_DIR = dbutils.widgets.get("OUTPUT_DIR").rstrip("/")
 FORMAT = dbutils.widgets.get("FORMAT")
@@ -74,7 +71,7 @@ if not logger.handlers:
     logger.propagate = False
 
 
-logger.info(f"{SOURCE_CATALOG_SCHEMA}.*{TABLE_SUFFIX} -> {OUTPUT_DIR} ({FORMAT})")
+logger.info(f"{SOURCE_SCHEMA}.* -> {OUTPUT_DIR} ({FORMAT})")
 
 # COMMAND ----------
 
@@ -85,15 +82,14 @@ logger.info(f"{SOURCE_CATALOG_SCHEMA}.*{TABLE_SUFFIX} -> {OUTPUT_DIR} ({FORMAT})
 
 manifest = {
     "exported_at": datetime.now(timezone.utc).isoformat(),
-    "source_catalog_schema": SOURCE_CATALOG_SCHEMA,
-    "table_suffix": TABLE_SUFFIX,
+    "source_schema": SOURCE_SCHEMA,
     "format": FORMAT,
     "tables": {},
 }
 
 missing = []
 for table in TABLES:
-    source = f"{SOURCE_CATALOG_SCHEMA}.{table}{TABLE_SUFFIX}"
+    source = f"{SOURCE_SCHEMA}.{table}"
     if not spark.catalog.tableExists(source):
         logger.info(f"  {source}: not found — skipped")
         missing.append(source)
@@ -108,7 +104,7 @@ for table in TABLES:
 # The chunk table is what the index is built from — never export without it.
 for required in ("chunks",):
     if required in TABLES and required not in manifest["tables"]:
-        raise RuntimeError(f"{SOURCE_CATALOG_SCHEMA}.{required}{TABLE_SUFFIX} is missing — nothing to build the DEV index from")
+        raise RuntimeError(f"{SOURCE_SCHEMA}.{required} is missing — nothing to build the DEV index from")
 
 # COMMAND ----------
 

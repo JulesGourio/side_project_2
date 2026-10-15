@@ -10,7 +10,7 @@ Parent: [`utils/`](../README.md). The snapshot is written by the one-shot notebo
 
 | File | What it does | Runs as |
 |---|---|---|
-| `import_staging_to_dev_job.py` | Reads `manifest.json` from the staging volume and recreates each table as `<TARGET_CATALOG_SCHEMA>.<table><TABLE_SUFFIX>`. Copies the LibreOffice archive of the snapshot | Task `1_import_tables` (notebook) |
+| `import_staging_to_dev_job.py` | Reads `manifest.json` from the staging volume and recreates each table as `<pipeline_write_env>_proj.qualibot.<table>`. Copies the LibreOffice archive of the snapshot | Task `1_import_tables` (notebook) |
 | `ensure_vector_search_endpoint.py` | Creates the STANDARD Vector Search endpoint when it is missing and waits until it is ONLINE | Task `2_vector_search_endpoint` (notebook) |
 | `../parsing_pipeline/update_proj_vector_indexes.py` | Creates or syncs the indexes of `parsing_vector_search_indexes` (the shared parsing-pipeline notebook) | Task `3_sync_indexes`, with `build_chunks_full` set to `false` |
 

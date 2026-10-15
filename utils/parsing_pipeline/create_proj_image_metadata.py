@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # PROJ IMAGE_METADATA — VISION LLM DESCRIPTION AND IMAGE PASSAGES
+# MAGIC # PROJ IMAGE_METADATA
 # MAGIC
 # MAGIC **Description:**
 # MAGIC Describes the `PENDING` images of `image_metadata` with a vision LLM, then injects the descriptions as image passages into the chunk tables.
@@ -20,23 +20,21 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `4_describe_images`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}`
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}` (text passages and max chunk index per IDDOC)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}` (document metadata for the source prefix)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.image_metadata`
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.chunks`, `chunks_archive` (text passages and max chunk index per IDDOC)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents` (document metadata for the source prefix)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.image_metadata{PARSING_TABLE_SUFFIX}` (description and status columns)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.chunks{PARSING_TABLE_SUFFIX}`, `chunks_archive{PARSING_TABLE_SUFFIX}` (image passages)
-# MAGIC - `{PARSING_CATALOG_SCHEMA}.parsed_documents{PARSING_TABLE_SUFFIX}` (EMPTY_TEXT / IMAGES_PENDING -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all the images of a document are described)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.image_metadata` (description and status columns)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.chunks`, `chunks_archive` (image passages)
+# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents` (EMPTY_TEXT / IMAGES_PENDING -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all the images of a document are described)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - The chunk-injection phase reads `image_metadata` and the chunk tables after the description phase has written to them, so those reads sit in `# Data Transformations` instead of `# Inputs`.
-# MAGIC - The source prefix of an image passage (`[Source: … | Image: page N, label]`) is built in `describe_steps.build_image_chunks` and, for text passages, in `utils.source_prefixed_text`: the two formats must be changed together.
-# MAGIC - The serving token comes from the secret `qualibot/serving_token` and falls back to the notebook's own API token when the secret is missing.
-# MAGIC - An image is attempted once per run, and set aside as `FAILED_LIMIT` after `PARSING_IMAGE_MAX_ATTEMPTS` (10) attempts: the run summary lists it with its last error kind. A `FAILED_LIMIT` image is not retried (a `full` run resets it). Its document is promoted without it (see `promote_documents_awaiting_images`).
+# MAGIC - The chunk-injection phase reads `image_metadata` and the chunk tables after the description phase has written to them, so those reads sit in `# Data Transformations`.
+# MAGIC - The source prefix of an image passage (`[Source: … | Image: page N, label]`) is built in `describe_steps.build_image_chunks` and, for text passages, in `utils.source_prefixed_text`: change both together.
 
 # COMMAND ----------
 
@@ -70,10 +68,8 @@ import describe_steps
 import llm_describe
 import quality
 from utils import configure
-from leap_utils.common.logger import LOGGER_MAPPING, get_logger, setup_applevel_logger
+from leap_utils.common import logger as log_utils
 
-setup_applevel_logger(log_level=LOGGER_MAPPING["info"]).propagate = False
-logger = get_logger("describe_images")
 
 for _mod in cfg.WORKER_MODULES:
     spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
@@ -90,6 +86,10 @@ for _mod in cfg.WORKER_MODULES:
 
 dbutils.widgets.removeAll()
 
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+LOG_LEVEL = dbutils.widgets.get("log_level")
+logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
+
 dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])
 REBUILD_IMAGE_CHUNKS = dbutils.widgets.get("rebuild_image_chunks") == "true"
 
@@ -100,7 +100,7 @@ LLM_FALLBACK_ENDPOINTS = dbutils.widgets.get("llm_fallback_endpoints")
 
 # MAGIC %md
 # MAGIC ## Config Workers and authentication
-# MAGIC `configure` gives `token_count_udf` its settings on the executors. The LLM is called with the workspace host and a token: the secret when it exists, the notebook's own token otherwise.
+# MAGIC `configure` gives `token_count_udf` its settings on the executors. The LLM is called with the workspace host and the token of the secret `qualibot/serving_token`.
 
 # COMMAND ----------
 
@@ -108,10 +108,7 @@ configure(
     VOLUME_BASE_PATH=cfg.VOLUME_BASE_PATH, USE_TIKTOKEN=cfg.USE_TIKTOKEN, CHARS_PER_TOKEN=cfg.CHARS_PER_TOKEN,
 )
 
-try:
-    WS_TOKEN = dbutils.secrets.get(scope="qualibot", key="serving_token")
-except Exception:
-    WS_TOKEN = _ctx.apiToken().get()
+WS_TOKEN = dbutils.secrets.get(scope="qualibot", key="serving_token")
 WS_HOST = spark.conf.get("spark.databricks.workspaceUrl")
 
 LLM_ENDPOINTS = llm_describe.endpoint_chain(cfg.LLM_MODEL_ENDPOINT, LLM_FALLBACK_ENDPOINTS)

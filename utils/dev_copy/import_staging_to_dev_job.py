@@ -6,23 +6,23 @@
 # MAGIC First task of the DEV job `Z_1_Qualibot_Copy_Uat_To_Dev` (`databricks.yml`,
 # MAGIC target `dev`). Reads the snapshot written by `runbooks/scripts/dev_copy/export_uat_to_staging.py`
 # MAGIC (UAT workspace) from the staging volume and recreates each table as
-# MAGIC `{TARGET_CATALOG_SCHEMA}.<table>{TABLE_SUFFIX}`, with the same table
+# MAGIC `{pipeline_write_env}_proj.qualibot.<table>`, with the same table
 # MAGIC properties as the UAT tables: 60-day retention everywhere (see
 # MAGIC `utils/parsing_pipeline/README.md`) and Change Data Feed on `chunks` (required by a Delta Sync
 # MAGIC Vector Search index). The next tasks of the job create the endpoint and
 # MAGIC the index — no run of the parsing pipeline needed.
 # MAGIC
 # MAGIC **Highlighted complexities:**
-# MAGIC An existing target table is left alone unless `OVERWRITE=true`:
+# MAGIC An existing target table is left alone unless `overwrite=true`:
 # MAGIC replacing a chunk table under a live index breaks its incremental sync
 # MAGIC (`DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE`).
 # MAGIC
 # MAGIC **Input**
-# MAGIC - `{SOURCE_DIR}/manifest.json`, `{SOURCE_DIR}/tables/<table>`, `{SOURCE_DIR}/libreoffice/*.tar.gz`
+# MAGIC - `{source_dir}/manifest.json`, `{source_dir}/tables/<table>`, `{source_dir}/libreoffice/*.tar.gz`
 # MAGIC
 # MAGIC **Output Tables**
-# MAGIC - `{TARGET_CATALOG_SCHEMA}.<table>{TABLE_SUFFIX}` for each table of the manifest
-# MAGIC - `{SOFFICE_TARGET_DIR}/<archive>.tar.gz`
+# MAGIC - `{pipeline_write_env}_proj.qualibot.<table>` for each table of the manifest
+# MAGIC - `{soffice_target_dir}/<archive>.tar.gz`
 
 # COMMAND ----------
 
@@ -30,17 +30,15 @@ import json
 import os
 
 dbutils.widgets.removeAll()
-dbutils.widgets.text("SOURCE_DIR", "/Volumes/uat_proj/qualibot/staging/dev_copy")
-dbutils.widgets.text("TARGET_CATALOG_SCHEMA", "dev_proj.qualibot")
-dbutils.widgets.text("TABLE_SUFFIX", "")
-dbutils.widgets.dropdown("OVERWRITE", "false", ["false", "true"])
-dbutils.widgets.text("SOFFICE_TARGET_DIR", "/Volumes/dev_proj/qualibot/doc_compare/libreoffice")
+dbutils.widgets.text("source_dir", "/Volumes/uat_proj/qualibot/staging/dev_copy")
+dbutils.widgets.text("pipeline_write_env", "dev")
+dbutils.widgets.dropdown("overwrite", "false", ["false", "true"])
+dbutils.widgets.text("soffice_target_dir", "/Volumes/dev_proj/qualibot/doc_compare/libreoffice")
 
-SOURCE_DIR = dbutils.widgets.get("SOURCE_DIR").rstrip("/")
-TARGET_CATALOG_SCHEMA = dbutils.widgets.get("TARGET_CATALOG_SCHEMA").strip()
-TABLE_SUFFIX = dbutils.widgets.get("TABLE_SUFFIX").strip()
-OVERWRITE = dbutils.widgets.get("OVERWRITE") == "true"
-SOFFICE_TARGET_DIR = dbutils.widgets.get("SOFFICE_TARGET_DIR").rstrip("/")
+SOURCE_DIR = dbutils.widgets.get("source_dir").rstrip("/")
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+OVERWRITE = dbutils.widgets.get("overwrite") == "true"
+SOFFICE_TARGET_DIR = dbutils.widgets.get("soffice_target_dir").rstrip("/")
 
 CHUNK_TABLES = {"chunks"}
 RETENTION = "interval 60 days"
@@ -57,8 +55,8 @@ if not logger.handlers:
 
 manifest = json.loads(dbutils.fs.head(f"dbfs:{SOURCE_DIR}/manifest.json", 1024 * 1024))
 FORMAT = manifest["format"]
-logger.info(f"Snapshot of {manifest['source_catalog_schema']}.*{manifest['table_suffix']} "
-      f"exported {manifest['exported_at']} ({FORMAT}) -> {TARGET_CATALOG_SCHEMA}.*{TABLE_SUFFIX}")
+logger.info(f"Snapshot of {manifest['source_schema']}.* "
+      f"exported {manifest['exported_at']} ({FORMAT}) -> {PIPELINE_WRITE_ENV}_proj.qualibot.*")
 
 # COMMAND ----------
 
@@ -70,9 +68,9 @@ logger.info(f"Snapshot of {manifest['source_catalog_schema']}.*{manifest['table_
 skipped, loaded = [], []
 
 for table, info in manifest["tables"].items():
-    target = f"{TARGET_CATALOG_SCHEMA}.{table}{TABLE_SUFFIX}"
+    target = f"{PIPELINE_WRITE_ENV}_proj.qualibot.{table}"
     if spark.catalog.tableExists(target) and not OVERWRITE:
-        logger.info(f"  {target}: already exists — left as is (OVERWRITE=false)")
+        logger.info(f"  {target}: already exists — left as is (overwrite=false)")
         skipped.append(target)
         continue
 
@@ -109,4 +107,4 @@ if archive:
 
 logger.info(f"{len(loaded)} table(s) loaded, {len(skipped)} left as is.")
 if skipped and OVERWRITE is False:
-    logger.info("Re-run with OVERWRITE=true to replace them (then delete + recreate any index on a replaced chunk table).")
+    logger.info("Re-run with overwrite=true to replace them (then delete + recreate any index on a replaced chunk table).")

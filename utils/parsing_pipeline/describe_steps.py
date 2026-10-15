@@ -24,7 +24,7 @@ from llm_describe import EndpointBreaker, describe_all_images, one_per_image, sa
 from tables import add_missing_columns, merge_into, table_exists, write_table
 from utils import intraqual_ref_url, token_count_udf
 from config import (
-    CATALOG_SCHEMA,
+    PIPELINE_WRITE_ENV,
     CHARS_PER_TOKEN,
     DOC_DATE_CUTOFF,
     EMBED_SOURCE_PREFIX,
@@ -49,15 +49,14 @@ from config import (
     TARGET_CHUNK_TABLE_ARCHIVE,
     TARGET_IMAGE_METADATA_TABLE,
     TARGET_PROCESSED_FILES_TABLE,
-    TABLE_SUFFIX,
 )
 
 logger = get_logger(__name__)
 
 MOVED_BY_IMAGES = doc_status.MOVED_BY_IMAGES
 IMAGE_TABLE = TARGET_IMAGE_METADATA_TABLE
-_UPDATES_TABLE = f"{CATALOG_SCHEMA}._image_updates_temp{TABLE_SUFFIX}"
-_PROCESSED_UPDATES_TABLE = f"{CATALOG_SCHEMA}._processed_updates_temp{TABLE_SUFFIX}"
+_UPDATES_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot._image_updates_temp"
+_PROCESSED_UPDATES_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot._processed_updates_temp"
 _UPDATED_IMAGE_COLUMNS = ("description", "input_tokens", "output_tokens", "status", "described_at", "attempts",
                           "last_error_kind")
 
