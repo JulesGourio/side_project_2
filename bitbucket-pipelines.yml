@@ -76,6 +76,67 @@ definitions:
           - databricks bundle deploy   -t dev -p job-runner-sa-dev
 
     # -----------------------------------------------------------------------
+    # DEV, one-off: copy the bundle state from the old root (/Workspace/Shared/.bundle/qualibot/dev)
+    # to the new one (/Workspace/.bundle/qualibot/dev). Run as the DEV SP. No --overwrite: a second run
+    # refuses to replace the state of a deployment already made from the new root.
+    # -----------------------------------------------------------------------
+    - step: &migrate-dev-state
+        name: One-off, copy DEV bundle state to /Workspace/.bundle (dev)
+        deployment: dev
+        clone:
+          depth: 1
+        script:
+          - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
+          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - databricks version
+          - |
+            if [ -z "$DATABRICKS_TOKEN" ]; then
+              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'dev')." >&2
+              exit 1
+            fi
+          - |
+            cat > "$HOME/.databrickscfg" <<EOF
+            [job-runner-sa-dev]
+            host  = ${DATABRICKS_HOST:-https://dbc-c623749d-731b.cloud.databricks.com}
+            token = ${DATABRICKS_TOKEN}
+            EOF
+          - chmod 600 "$HOME/.databrickscfg"
+          - databricks current-user me -p job-runner-sa-dev
+          - databricks workspace export-dir /Workspace/Shared/.bundle/qualibot/dev/state staging/dev-state -p job-runner-sa-dev
+          - databricks workspace import-dir staging/dev-state /Workspace/.bundle/qualibot/dev/state -p job-runner-sa-dev
+          - databricks workspace list /Workspace/.bundle/qualibot/dev/state -p job-runner-sa-dev
+
+    # -----------------------------------------------------------------------
+    # DEV, read-only: bundle plan against the new root. Expected: no create on the jobs,
+    # no delete on the schemas or volumes. Nothing is deployed.
+    # -----------------------------------------------------------------------
+    - step: &plan-dev
+        name: Plan DEV bundle (read-only, dev)
+        deployment: dev
+        clone:
+          depth: 1
+        script:
+          - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
+          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - databricks version
+          - |
+            if [ -z "$DATABRICKS_TOKEN" ]; then
+              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'dev')." >&2
+              exit 1
+            fi
+          - |
+            cat > "$HOME/.databrickscfg" <<EOF
+            [job-runner-sa-dev]
+            host  = ${DATABRICKS_HOST:-https://dbc-c623749d-731b.cloud.databricks.com}
+            token = ${DATABRICKS_TOKEN}
+            EOF
+          - chmod 600 "$HOME/.databrickscfg"
+          - databricks current-user me -p job-runner-sa-dev
+          - python3 utils/deploy/render_target_config_env.py dev
+          - databricks bundle validate -t dev -p job-runner-sa-dev
+          - databricks bundle plan -t dev -p job-runner-sa-dev
+
+    # -----------------------------------------------------------------------
     # UAT: target qualibot-uat, profile job-runner-sa-uat.
     # -----------------------------------------------------------------------
     - step: &deploy-uat
@@ -259,6 +320,10 @@ pipelines:
       - step: *deploy-dev
     deploy-dev-jobs:
       - step: *deploy-dev-jobs
+    migrate-dev-state:
+      - step: *migrate-dev-state
+    plan-dev:
+      - step: *plan-dev
     deploy-uat:
       - step: *deploy-uat
     deploy-uat-jobs:

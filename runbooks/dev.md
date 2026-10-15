@@ -142,23 +142,16 @@ vérifier l'endpoint puis de redéployer l'app DEV.
 
 **00.0 — Qui déploie et qui possède (à lire avant 00.2)**
 
-> **Ne lancer aucun pipeline DEV tant que l'état n'est pas copié.** La racine du bundle DEV passe de `/Workspace/Shared/.bundle/qualibot/dev`
-> à `/Workspace/.bundle/qualibot/dev` (comme PROD). Sans copie de `state/` vers la nouvelle racine, le bundle croit que rien n'est déployé :
-> il recrée les jobs (doublons) et échoue sur le schéma et les volumes. Ordre (PowerShell, profil `DEV`) :
+> **Ne lancer aucun pipeline `deploy-dev*` tant que l'état n'est pas copié.** La racine du bundle DEV passe de
+> `/Workspace/Shared/.bundle/qualibot/dev` à `/Workspace/.bundle/qualibot/dev` (comme PROD). Sans copie de `state/`, le bundle croit que rien
+> n'est déployé : il recrée les jobs (doublons) et échoue sur le schéma et les volumes. Ordre, tout par pipeline Bitbucket (le SP DEV agit) :
 >
-> ```powershell
-> databricks workspace export-dir /Workspace/Shared/.bundle/qualibot/dev/state "$env:TEMP\qualibot-dev-state" --profile DEV
-> databricks workspace import-dir "$env:TEMP\qualibot-dev-state" /Workspace/.bundle/qualibot/dev/state --overwrite --profile DEV
-> databricks workspace get-status /Workspace/.bundle/qualibot/dev --profile DEV
-> ```
+> 1. `migrate-dev-state` (Pipelines ▸ Run pipeline ▸ branche `claude/sharp-mayer-uqwx8x` ▸ `migrate-dev-state`), une seule fois. Il copie
+>    `state/` d'un dossier à l'autre, sans écraser : un second lancement échoue, c'est voulu.
+> 2. `plan-dev` (lecture seule). Attendu : aucun `create` sur les jobs, aucun `delete` sur les schémas ou volumes.
+> 3. Seulement ensuite : `deploy-dev-jobs`, puis `deploy-dev`.
 >
-> Puis donner au SP DEV `CAN_MANAGE` sur le dossier (remplacer `<object_id>` par la valeur `object_id` de la commande précédente) :
->
-> ```powershell
-> databricks permissions update directories <object_id> --profile DEV --json '{"access_control_list":[{"service_principal_name":"fde6ff28-739f-4a41-b61e-604a298c8478","permission_level":"CAN_MANAGE"}]}'
-> ```
->
-> Enfin, après `git pull` : `databricks bundle plan -t dev --profile DEV`, sans `create` sur les jobs ni `delete` sur les schémas et volumes.
+> Si `migrate-dev-state` échoue sur les droits, le SP n'a pas `CAN_MANAGE` sur `/Workspace/.bundle` : un admin le lui donne, puis on relance.
 
 
 - Le déploiement DEV passe par le pipeline Bitbucket (`deploy-dev-jobs` pour les jobs et le bundle, `deploy-dev` pour l'app), qui agit sous le SP DEV. Le token est dans l'environnement `Development` (B1), créé par un admin du workspace DEV : le développeur ne crée pas de token.
