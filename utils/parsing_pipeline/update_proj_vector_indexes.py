@@ -2,8 +2,6 @@
 # MAGIC %md
 # MAGIC # PROJ VECTOR_INDEXES — SYNC VECTOR SEARCH INDEXES
 # MAGIC
-# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook creates no table: it synchronises the Vector Search indexes built on `chunks`.
-# MAGIC
 # MAGIC **Description:**
 # MAGIC Last link of the chain that writes the chunks: triggers a sync of the Delta Sync indexes whose source tables were just rewritten by tasks
 # MAGIC `3_parse` and `4_describe_images`. An index of `indexes` that does not exist yet is created, not just synced.

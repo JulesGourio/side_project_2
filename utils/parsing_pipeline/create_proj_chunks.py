@@ -2,8 +2,6 @@
 # MAGIC %md
 # MAGIC # PROJ CHUNKS — DOCUMENT PARSE AND CHUNK
 # MAGIC
-# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the volume files and the Bronze-derived manifest, not Gold.
-# MAGIC
 # MAGIC **Description:**
 # MAGIC Parses the documents of the manifest and builds the tables the chat reads. One function per phase, in `parse_steps.py`,
 # MAGIC `build_steps.py` and `output_steps.py`:

@@ -2,8 +2,6 @@
 # MAGIC %md
 # MAGIC # PROJ DOC_CATALOG — DOCUMENT CATALOG AND KNOWLEDGE BASE DATE (LAKEBASE)
 # MAGIC
-# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the Delta tables `parse_manifest` and `chunks` and writes Lakebase, not Gold.
-# MAGIC
 # MAGIC **Description:**
 # MAGIC Last link of the daily chain. Two writes to Lakebase:
 # MAGIC 1. `doc_catalog` rewritten from `parse_manifest` (every document in scope: REF, title, division, link, current revision and its date) and

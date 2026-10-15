@@ -1,6 +1,6 @@
 """quality.py — small, dependency-free data quality checks for the tables of the parsing pipeline.
 
-Same two levels as the LEAP notebooks, without Great Expectations:
+Two levels, no Great Expectations:
   RED   the check is violated: the task fails, nothing is written;
   AMBER the check is violated: a warning is logged, the task goes on.
 

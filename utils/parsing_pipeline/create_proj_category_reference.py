@@ -2,8 +2,6 @@
 # MAGIC %md
 # MAGIC # PROJ CATEGORY_REFERENCE — FRESHNESS GUARD AND CATEGORY REFERENCE
 # MAGIC
-# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the Bronze Intraqual tables (`gd_*_latest`) and checks their freshness.
-# MAGIC
 # MAGIC **Description:**
 # MAGIC First link of the daily chain. Two roles:
 # MAGIC 1. **Freshness guard** — checks that the Intraqual source tables were refreshed by the `intraqual_ingestion` job within

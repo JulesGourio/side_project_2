@@ -2,8 +2,6 @@
 # MAGIC %md
 # MAGIC # PROJ IMAGE_METADATA — VISION LLM DESCRIPTION AND IMAGE PASSAGES
 # MAGIC
-# MAGIC **Layer note:** the `proj` name follows the LEAP convention, but this notebook reads the volume images and the tables written by the upstream tasks, not Gold.
-# MAGIC
 # MAGIC **Description:**
 # MAGIC Describes the `PENDING` images of `image_metadata` with a vision LLM, then injects the descriptions as image passages into the chunk tables.
 # MAGIC The phases are functions of `describe_steps.py`:
