@@ -15,11 +15,11 @@ from tables import write_table
 def _saved(monkeypatch, **kwargs):
     """What write_table asks leap_utils to save: (table, mode, options). leap_utils itself needs a Spark session."""
     calls = []
-    leap_data_asset = types.ModuleType("leap_utils.data_asset")
+    data_asset_pkg = types.ModuleType("leap_utils.data_asset")
     table_utils = types.ModuleType("leap_utils.data_asset.table_utils")
     table_utils.save_table = lambda table, df, mode, **options: calls.append((table, mode, options))
-    leap_data_asset.table_utils = table_utils
-    monkeypatch.setitem(sys.modules, "leap_utils.data_asset", leap_data_asset)
+    data_asset_pkg.table_utils = table_utils
+    monkeypatch.setitem(sys.modules, "leap_utils.data_asset", data_asset_pkg)
     monkeypatch.setitem(sys.modules, "leap_utils.data_asset.table_utils", table_utils)
     write_table(object(), "cat.sch.t", **kwargs)
     assert len(calls) == 1
@@ -75,11 +75,11 @@ def test_add_missing_columns_saves_an_empty_frame_with_only_the_missing_columns(
     from tables import add_missing_columns
 
     saved = []
-    leap_data_asset = types.ModuleType("leap_utils.data_asset")
+    data_asset_pkg = types.ModuleType("leap_utils.data_asset")
     table_utils = types.ModuleType("leap_utils.data_asset.table_utils")
     table_utils.save_table = lambda table, df, mode, **options: saved.append((table, df, mode, options))
-    leap_data_asset.table_utils = table_utils
-    monkeypatch.setitem(sys.modules, "leap_utils.data_asset", leap_data_asset)
+    data_asset_pkg.table_utils = table_utils
+    monkeypatch.setitem(sys.modules, "leap_utils.data_asset", data_asset_pkg)
     monkeypatch.setitem(sys.modules, "leap_utils.data_asset.table_utils", table_utils)
 
     class Frame:

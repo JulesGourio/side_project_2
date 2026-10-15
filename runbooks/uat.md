@@ -182,7 +182,7 @@ ALTER TABLE users DROP COLUMN IF EXISTS can_chat, DROP COLUMN IF EXISTS can_comp
 
 Les droits sont vérifiés à chaque requête par l'app (`is_account_group_member()` avec le token du visiteur). Après le déploiement, vérifier dans les logs de l'app l'absence de `live group check failed`.
 
-**0.9 — Suppression de la cible de test `qualibot-uat-test` (tout doit disparaître)**
+**0.9 — Suppression de la cible de test `qualibot-uat-test` (tout doit disparaître) — fait, confirmé le 2026-10-15**
 
 Il n'y a plus de cible de test : la bascule se fait directement sur `qualibot-uat`. Le `bundle destroy` a besoin du code qui déclare la cible : il se lance donc depuis le commit `6384ff0`, le dernier qui la contient. Le dossier de travail ne la contient plus. Le zip `qualibot-destroy.zip` contient `databricks.yml` et `resources/` tels qu'ils étaient au commit `6384ff0` : c'est tout ce qu'il faut pour le destroy.
 
@@ -431,7 +431,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
 
 - [ ] **D1. Parser le reste des vieux documents** : monter le plafond (`parsing_archive_max_docs` à `500`, puis `-1`), même procédure que B4.
 
-- [ ] **D2. Créer l'index complet pour l'impact search** (après D5) : ajouter `uat_proj.qualibot.chunks_full_index` à `parsing_vector_search_indexes` ; `bundle deploy` + un run le créent. Une fois l'index `ONLINE`, basculer `COMPARE_IMPACT_INDEX` (uat + uat-test) dans `utils/deploy/target_env.json`, puis :
+- [ ] **D2. Créer l'index complet pour l'impact search** (après D5) : ajouter `uat_proj.qualibot.chunks_full_index` à `parsing_vector_search_indexes` ; `bundle deploy` + un run le créent. Une fois l'index `ONLINE`, basculer `COMPARE_IMPACT_INDEX` (uat) dans `utils/deploy/target_env.json`, puis :
 
   ```powershell
   .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
@@ -495,7 +495,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
     databricks bundle run parsing_pipeline -t qualibot-uat --profile UAT
     ```
 
-    Le run écrit `chunks`, `chunks_archive`, `parsed_documents`, puis crée l'index `uat_proj.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`. Sa dernière tâche remplit aussi le catalogue des documents de l'app (table Lakebase `doc_catalog` de `doccompare` : REF, titre, lien). La cible `qualibot-uat-test` (base `doccompare_test`) n'a pas de catalogue tant que cette base n'est pas ajoutée à `parsing_lakebase_database` : décision à prendre.
+    Le run écrit `chunks`, `chunks_archive`, `parsed_documents`, puis crée l'index `uat_proj.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`. Sa dernière tâche remplit aussi le catalogue des documents de l'app (table Lakebase `doc_catalog` de `doccompare` : REF, titre, lien).
 
   - [ ] **D5.5. Revenir au mode quotidien** (le planning repart, sur les nouvelles tables) :
 
@@ -519,7 +519,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
     .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
     ```
 
-  - [ ] **D5.8. Tester** comme `runbooks/dev.md` 0.13 (ALL / AS / IS, langue, hors sujet, lien, impact search). Vérifier aussi le journal Lakebase des tours (`chat_turns`, `chat_retrieved_chunks`, colonnes ajoutées à `errors` : créées par l'app à son démarrage, rien à faire à la main) avec les requêtes de `runbooks/dev.md` 0.13, dans l'éditeur SQL Lakebase de l'UAT (base `doccompare` ; `doccompare_test` pour `qualibot-uat-test`). Référence : `server/services/infra/lakebase/schema.md`. Retour arrière : redéployer le zip précédent ; les objets `_v1` restent intacts jusqu'à D5.9.
+  - [ ] **D5.8. Tester** comme `runbooks/dev.md` 0.13 (ALL / AS / IS, langue, hors sujet, lien, impact search). Vérifier aussi le journal Lakebase des tours (`chat_turns`, `chat_retrieved_chunks`, colonnes ajoutées à `errors` : créées par l'app à son démarrage, rien à faire à la main) avec les requêtes de `runbooks/dev.md` 0.13, dans l'éditeur SQL Lakebase de l'UAT (base `doccompare`). Référence : `server/services/infra/lakebase/schema.md`. Retour arrière : redéployer le zip précédent ; les objets `_v1` restent intacts jusqu'à D5.9.
 
   - [ ] **D5.8b. Exporter le journal pour la notation** : lancer une fois le job d'export Lakebase (`D_1_Qualibot_Lakebase_Export_To_Volume`) ; il écrit toutes les tables, dont `chat_turns` et `chat_retrieved_chunks`, dans le volume de staging, et sa 2e tâche les charge aussi dans `uat_proj.qualibot` (avec `errors`) :
 
