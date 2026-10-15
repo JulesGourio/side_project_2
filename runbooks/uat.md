@@ -1,4 +1,4 @@
-# Opérations manuelles — UAT et `qualibot-uat-test`
+# Opérations manuelles — UAT
 
 Chaque étape à faire à la main (machine de déploiement ou UI Databricks) est listée ici, prête à copier-coller, dans l'ordre. Une étape faite est cochée et datée une fois confirmée ; ce qui n'est pas coché n'est pas confirmé.
 
@@ -6,8 +6,7 @@ PowerShell, depuis la racine du projet sur la machine de déploiement. Pour DEV 
 
 > **Branches.** Les blocs A, B et C sont sur la branche **`audit/doc-compare`**. L'étape 0 et le bloc D sont sur la branche **`feature/chat-vsi-merged-on-impact-search`**. Le zip à déployer est celui de la branche indiquée par le bloc.
 >
-> **Interdit avant le bloc D5** : cette branche ne se déploie sur `qualibot-uat` / `qualibot-uat-test` qu'au bloc D5, dans son ordre. Son code attend des tables et un index **sans suffixe** (`chunks`, `chunks_index`, `parsing_checkpoint`…) et n'a plus de Knowledge Assistant. Un `bundle deploy` de cette branche avant D5 ferait repartir le pipeline UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui n'existe pas encore.
-> Exception : `qualibot-uat-test` sert de répétition de la bascule (tables `uat_proj.qualibot.*_test`, index `chunks_index_test`, rien dans `uat_proj.qualibot`).
+> **Interdit avant le bloc D5** : cette branche ne se déploie sur `qualibot-uat` qu'au bloc D5, dans son ordre. Son code attend des tables et un index **sans suffixe** (`chunks`, `chunks_index`, `parsing_checkpoint`…) et n'a plus de Knowledge Assistant. Un `bundle deploy` de cette branche avant D5 ferait repartir le pipeline UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui n'existe pas encore.
 
 Nettoyage du code à rejouer : `runbooks/retest.md` (DEV d'abord).
 
@@ -15,8 +14,8 @@ Nettoyage du code à rejouer : `runbooks/retest.md` (DEV d'abord).
 
 | Bloc | Quoi | Cible | Touche le chatbot ? |
 |---|---|---|---|
-| 0 | Migration des tables et volumes vers `uat_proj.qualibot` | `uat_proj`, `qualibot-uat-test` | non |
-| A | Valider l'app (impact search v2 + audit comparaison) | `qualibot-uat-test` | non |
+| 0 | Migration des tables et volumes vers `uat_proj.qualibot` | `uat_proj`, `qualibot-uat` | non |
+| A | Valider l'app (impact search v2 + audit comparaison) sur `qualibot-uat` | `qualibot-uat` | non |
 | B | Pipeline : phase de test « documents d'avant 2018 » | `qualibot-uat` (job seul) | non |
 | C | Mettre l'app en service sur `qualibot-uat` | `qualibot-uat` | non |
 | D | Activations après validation (index complet, fiches, bascule du chatbot) | `qualibot-uat` | **oui** pour D3 à D5 |
@@ -27,7 +26,7 @@ A et B sont indépendants et peuvent se faire dans n'importe quel ordre. D ne se
 
 ### 0. Migration vers `uat_proj.qualibot`
 
-L'app et le pipeline vivent dans `uat_proj.qualibot`. Les volumes de l'UAT ne portent pas de suffixe ; ceux de `qualibot-uat-test` ont le suffixe `_test`. Les tables `*_v1` et les volumes de l'ancien emplacement ne servent qu'à la copie unique de cette étape. Rien ne touche à l'app tant que le déploiement n'a pas été accordé (0.7).
+L'app et le pipeline vivent dans `uat_proj.qualibot`. Les tables `*_v1` et les volumes de l'ancien emplacement ne servent qu'à la copie unique de cette étape. Rien ne touche à l'app tant que le déploiement n'a pas été accordé (0.7).
 
 **0.1 — Inventaire (PowerShell, profil `UAT`)**
 
@@ -66,36 +65,6 @@ Contrôle après clonage (doit donner les mêmes nombres que la source, à la da
 
 ```sql
 SELECT 'chunks' AS t, (SELECT count(*) FROM uat_landingzone.qualibot.chunks_v1) AS source, (SELECT count(*) FROM uat_proj.qualibot.chunks) AS copie;
-```
-
-**0.2a — Volumes du test `qualibot-uat-test` (suffixe `_test`, PowerShell, profil `UAT`)**
-
-La cible de test partage le schéma `uat_proj.qualibot` : ses volumes sont `doc_compare_test`, `test_test`, `images_test`. Avant de les créer, libérer les noms `doc_compare` et `test` s'ils sont encore pris par le test :
-
-```powershell
-databricks volumes list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
-```
-
-Si `uat_proj.qualibot.doc_compare` ou `uat_proj.qualibot.test` existent, ce sont les volumes du test. Les supprimer seulement sur accord (données de test) :
-
-```powershell
-databricks volumes delete uat_proj.qualibot.doc_compare --profile UAT
-databricks volumes delete uat_proj.qualibot.test --profile UAT
-```
-
-Créer les volumes du test et, si voulu, reprendre les documents de test de l'UAT :
-
-```powershell
-databricks volumes create uat_proj qualibot doc_compare_test MANAGED --profile UAT
-databricks volumes create uat_proj qualibot test_test MANAGED --profile UAT
-databricks volumes create uat_proj qualibot images_test MANAGED --profile UAT
-databricks fs cp -r dbfs:/Volumes/uat_landingzone/qualibot/test dbfs:/Volumes/uat_proj/qualibot/test_test --profile UAT
-```
-
-Puis déployer la cible de test (libre, elle est jetable) pour que l'app lise les nouveaux chemins :
-
-```powershell
-databricks bundle deploy -t qualibot-uat-test --profile UAT
 ```
 
 **0.2b — Volumes de l'UAT (PowerShell, profil `UAT`)**
@@ -211,11 +180,70 @@ ALTER TABLE users DROP COLUMN IF EXISTS can_chat, DROP COLUMN IF EXISTS can_comp
 
 Les droits sont vérifiés à chaque requête par l'app (`is_account_group_member()` avec le token du visiteur). Après le déploiement, vérifier dans les logs de l'app l'absence de `live group check failed`.
 
-**0.9 — Déploiement du test (libre, cible jetable)**
+**0.9 — Suppression de la cible de test `qualibot-uat-test` (tout doit disparaître)**
+
+Il n'y a plus de cible de test : la bascule se fait directement sur `qualibot-uat`. Le `bundle destroy` a besoin du code qui déclare la cible : il se lance donc depuis le commit `be51044`, le dernier qui la contient.
+
+1. Code de la cible (PowerShell, à la racine du projet) :
 
 ```powershell
-databricks bundle deploy -t qualibot-uat-test --profile UAT
+git worktree add ..\qualibot-before-uat-test-removal be51044
+cd ..\qualibot-before-uat-test-removal
+databricks bundle destroy -t qualibot-uat-test --profile UAT --auto-approve
+cd ..\side_project_2
 ```
+
+Cette commande supprime l'app `qualibot-uat-test`, son job de parsing, ses jobs de droits, d'arrêt de nuit et de notation.
+
+2. Tables `_test` (les tables sans suffixe ne sont pas listées) :
+
+```powershell
+databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.name -like '*_test' } | ForEach-Object { $_.full_name }
+```
+
+Pour chaque nom affiché :
+
+```powershell
+databricks tables delete <nom_complet> --profile UAT
+```
+
+3. Volumes de test (le volume `uat_proj.qualibot.test` n'est pas un volume de test, il reste) :
+
+```powershell
+databricks volumes delete uat_proj.qualibot.doc_compare_test --profile UAT
+databricks volumes delete uat_proj.qualibot.test_test --profile UAT
+databricks volumes delete uat_proj.qualibot.images_test --profile UAT
+```
+
+4. Index de test :
+
+```powershell
+databricks vector-search-indexes delete-index uat_proj.qualibot.chunks_index_test --profile UAT
+```
+
+5. Experiment MLflow de test :
+
+```powershell
+databricks experiments get-by-name /Shared/qualibot/chat_turns_test --profile UAT -o json
+databricks experiments delete-experiment <experiment_id> --profile UAT
+```
+
+6. Base Lakebase `doccompare_test` (éditeur SQL Lakebase, projet `qualibot`, branche `production`, connecté à la base `doccompare`) :
+
+```sql
+DROP DATABASE IF EXISTS doccompare_test;
+```
+
+Si la commande est refusée, supprimer la base depuis l'interface Lakebase.
+
+7. Contrôle final :
+
+```powershell
+databricks apps list --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.name -like '*uat-test*' } | ForEach-Object { $_.name }
+databricks vector-search-indexes list-indexes qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
+```
+
+Attendu : aucune app dont le nom contient `uat-test`, et aucun index `chunks_index_test`.
 
 **0.10 — Nettoyage de `dev_lab`**
 
@@ -236,17 +264,9 @@ DROP SCHEMA IF EXISTS dev_lab.lab_jules CASCADE;
 
 Les tables `*_v1`, les index `*_v1` et les volumes de l'ancien emplacement ne sont supprimés par aucune étape de ce runbook : ils restent la source de la copie de l'étape 0. Leur suppression, si elle est décidée, se fait à la main, après validation complète du chat, de la comparaison d'impact, du parsing et du tableau de bord d'usage.
 
-### A. Valider l'app sur `qualibot-uat-test` (branche `audit/doc-compare`)
+### A. Valider l'app sur `qualibot-uat` (branche `audit/doc-compare`)
 
-App seule, pas de `-Infra` : aucune table, aucun index, aucun droit à créer. `deploy_qualibot.ps1` ne démarre jamais cette app : la démarrer d'abord.
-
-- [ ] **A1. Déployer**
-
-  ```powershell
-  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
-  databricks apps start qualibot-uat-test --profile UAT
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
-  ```
+Pas de cible de test : les contrôles ci-dessous se font sur `qualibot-uat` juste après le déploiement de C1 (C1 remplace cette étape de déploiement).
 
 - [ ] **A2. Impact search v2** : comparer deux fichiers, puis « Judge Impacted Docs » — les documents arrivent un par un, « Show passages » montre la phrase surlignée, la vue « By change » et « Export Excel » fonctionnent ; « Cancel » pendant la recherche l'arrête.
 
@@ -264,7 +284,7 @@ App seule, pas de `-Infra` : aucune table, aucun index, aucun droit à créer. `
   - 👍 / 👎 à droite de chaque document, et « Was this impact search helpful? » en bas de la carte : après un vote, une ligne apparaît (la table est créée au démarrage de l'app) :
 
     ```sql
-    -- base Lakebase doccompare_test (uat-test) ou doccompare (uat)
+    -- base Lakebase doccompare
     SELECT created_at, ref, verdict_shown, vote, comment, impact_request_id
     FROM impact_feedbacks ORDER BY created_at DESC LIMIT 10;
     ```
@@ -381,7 +401,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
 
   ```powershell
   .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
-  .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
   ```
 
   En cas d'erreur 403 sur l'index :
@@ -449,7 +469,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
     databricks bundle deploy -t qualibot-uat --profile UAT
     ```
 
-  - [ ] **D5.6. Droits du SP de l'app UAT** (`qualibot`, et celui de `qualibot-uat-test`) :
+  - [ ] **D5.6. Droits du SP de l'app UAT** (`qualibot`) :
     - `SELECT` sur l'index :
 
       ```sql
@@ -462,7 +482,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
 
     ```powershell
     .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
-    .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat-test
+    .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
     ```
 
   - [ ] **D5.8. Tester** comme `runbooks/dev.md` 0.13 (ALL / AS / IS, langue, hors sujet, lien, impact search). Vérifier aussi le journal Lakebase des tours (`chat_turns`, `chat_retrieved_chunks`, colonnes ajoutées à `errors` : créées par l'app à son démarrage, rien à faire à la main) avec les requêtes de `runbooks/dev.md` 0.13, dans l'éditeur SQL Lakebase de l'UAT (base `doccompare` ; `doccompare_test` pour `qualibot-uat-test`). Référence : `server/services/infra/lakebase/schema.md`. Retour arrière : redéployer le zip précédent ; les objets `_v1` restent intacts jusqu'à D5.9.
@@ -516,7 +536,7 @@ Avant ce déploiement, vérifier que l'endpoint existe sur UAT (Attendu : `"name
   databricks serving-endpoints get databricks-claude-sonnet-5-5 --profile UAT
   ```
 
-  Une erreur `not found` : ne pas déployer, me le dire. `qualibot-uat-test` garde `databricks-gpt-5-6-luna` (`utils/deploy/target_env.json`).
+  Une erreur `not found` : ne pas déployer, me le dire.
 
 ### R0. Renommer les tables au moment de la bascule (ne rien faire avant la décision de bascule)
 
@@ -544,9 +564,7 @@ SHOW TABLES IN uat_proj.qualibot;
 python runbooks/scripts/lakebase/migrate_lakebase.py --env UAT
 ```
 
-3. Relancer le job de droits UAT (`grant_app_access_uat_test` pour le test, puis le job de droits UAT) : sa liste de tables porte les nouveaux noms.
-
-Les tables de la rehearsal `qualibot-uat-test` (suffixe `_test`) créées avant ce changement gardent les anciens noms : relancer `runbooks/scripts/uat/setup_proj_schema.py` avec `overwrite = true` pour les recréer sous les nouveaux noms.
+3. Relancer le job de droits UAT : sa liste de tables porte les nouveaux noms.
 
 ## Fait
 

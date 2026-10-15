@@ -19,7 +19,7 @@ _VERSIONED = re.compile(r'chunks\w*_v\d')
 
 # Targets that are real apps and MUST set their own Vector Search indexes
 # rather than rely on app.yaml's default (the DEV index).
-_LIVE_TARGETS = ('dev', 'uat', 'uat-test', 'prod')
+_LIVE_TARGETS = ('dev', 'uat', 'prod')
 
 
 def _load_target_env() -> dict:
@@ -38,8 +38,7 @@ def test_live_targets_set_their_indexes():
         for key in _INDEX_KEYS:
             value = config[target].get(key)
             assert value, f'{target!r} has no {key} override — it would silently fall back to app.yaml\'s default'
-            env = 'uat' if target == 'uat-test' else target
-            assert value.startswith((f'{env}_landingzone.', f'{env}_proj.')), f'{target}.{key} = {value!r} points at another workspace'
+            assert value.startswith((f'{target}_landingzone.', f'{target}_proj.')), f'{target}.{key} = {value!r} points at another workspace'
 
 
 def test_no_versioned_index_names():

@@ -15,11 +15,10 @@ $Targets = @{
     dev        = @{ Target = 'dev';               AppName = 'qualibot';           Profile = 'DEV' }
     uat        = @{ Target = 'qualibot-uat';      AppName = 'qualibot';           Profile = 'UAT' }
     prod       = @{ Target = 'qualibot-prod';     AppName = 'qualibot';           Profile = 'qualibot-prod' }
-    'uat-test' = @{ Target = 'qualibot-uat-test'; AppName = 'qualibot-uat-test';  Profile = 'UAT' }
 }
 
 if (-not $Targets.ContainsKey($AppEnv)) {
-    Write-Host "Unknown environment '$AppEnv'. Use: dev | uat | prod | uat-test" -ForegroundColor Red
+    Write-Host "Unknown environment '$AppEnv'. Use: dev | uat | prod" -ForegroundColor Red
     exit 1
 }
 
@@ -98,7 +97,6 @@ try {
 
     # 3. A deploy to a stopped app fails ("not in RUNNING state"); the nightly jobs of databricks.yml
     # stop the apps, so the compute state is checked first.
-    # qualibot-uat-test is never auto-started: it is a disposable test app.
     if ($SyncOnly) {
         Write-Host ""
         Write-Host "Code synced to $SourceCodePath (-SyncOnly: app not restarted, frontend not rebuilt)." -ForegroundColor Green
@@ -111,8 +109,6 @@ try {
     $computeState = $appInfo.compute_status.state
     if ($computeState -in @('ACTIVE', 'STARTING')) {
         Write-Host "      $AppName compute is $computeState - no action needed." -ForegroundColor DarkGray
-    } elseif ($AppEnv -eq 'uat-test') {
-        throw "$AppName compute is $computeState. This app is never auto-started by a script - start it manually first: databricks apps start $AppName --profile $Profile"
     } else {
         Write-Host "      $AppName compute is $computeState - starting it (waits until active)..." -ForegroundColor Yellow
         & databricks apps start $AppName --profile $Profile

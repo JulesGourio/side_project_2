@@ -491,61 +491,10 @@ targets:
       parsing_build_chunks_full: "true"
       parsing_schedule_pause: "PAUSED"
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
-      # (LAKEBASE_DATABASE in app.yaml / target_config.env) — never doccompare_test.
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "uat-job"
       job_cluster_policy_id_S: "000E7559CADE5290"
       notification_email: "jules.gourio.external@latecoere.aero"
-
-  # Disposable test target: evaluates the chat without touching the real qualibot-uat app or its Lakebase data (own terraform state).
-  # It does not declare postgres_projects/schemas/volumes (they exist, and this identity cannot grant on them).
-  # The compare volumes are granted by the grant_app_access_uat_test job, not bound in the bundle.
-  # Test copy of the UAT chatbot: writes only uat_proj.qualibot.*_test (owned by job-runner-sa-uat),
-  # the images_test volume, the chunks_index_test index and Lakebase doccompare_test — never anything the
-  # running qualibot app or its parsing job read. runbooks/scripts/uat/setup_proj_schema.py copies the
-  # parsing state in (read only), so the first run re-chunks without a GPU reparse.
-  qualibot-uat-test:
-    workspace:
-      host: https://dbc-3a17bfce-9e88.cloud.databricks.com
-      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
-    variables:
-      app_name: "qualibot-uat-test"
-      job_activity_tag: "uat-job"
-      job_cluster_policy_id_S: "000E7559CADE5290"
-      notification_email: "jules.gourio.external@latecoere.aero"
-      app_proj_catalog: uat_proj
-      app_proj_schema: qualibot
-      # One GPU worker: only documents new since the copied state are parsed, the rest is re-chunked.
-      parsing_num_workers: "1"
-      parsing_run_mode: "incremental"
-      parsing_table_suffix: "_test"
-      parsing_images_volume: "images_test"
-      parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index_test"
-      parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
-      parsing_lakebase_database: "doccompare_test"
-      parsing_build_chunks_full: "false"
-      parsing_archive_max_docs: "0"
-      parsing_schedule_pause: "PAUSED"
-      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
-      intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
-    resources:
-      apps:
-        doc-compare:
-          # Declared explicitly: this block is the full desired state of the app's ACL. Without it a deploy
-          # would fall back to the groups of the base definition and drop job-runner-sa-uat.
-          permissions:
-            - group_name: "Role-Project-LEAP-CoreAdmin"
-              level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-CoreDev"
-              level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
-              level: CAN_USE
-            - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
-              level: CAN_USE
-            - user_name: "jules.gourio.external@latecoere.aero"
-              level: CAN_MANAGE
-            - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat (nightly stop job)
-              level: CAN_MANAGE
 
   qualibot-prod:
     mode: production

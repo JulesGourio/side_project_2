@@ -19,10 +19,6 @@ LAKEBASE: dict[str, dict] = {
     "UAT": {
         "profile": PROFILE_UAT,
     },
-    # Same Lakebase project as UAT, separate database: test runs never write to the UAT database.
-    "UAT-TEST": {
-        "profile": PROFILE_UAT,
-    },
     "DEV": {
         "profile": PROFILE_DEV,
     },
@@ -35,7 +31,6 @@ LAKEBASE: dict[str, dict] = {
 # generate_database_credential needs the Lakebase project_id (name shown in the Databricks UI), not a URI.
 LAKEBASE_PROJECTS: dict[str, dict] = {
     "UAT": {"project_id": "qualibot",  "branch": "production", "endpoint": "primary", "database": "doccompare"},
-    "UAT-TEST": {"project_id": "qualibot", "branch": "production", "endpoint": "primary", "database": "doccompare_test"},
     "DEV": {"project_id": "qualibot",  "branch": "production", "endpoint": "primary", "database": "doccompare"},
     "PROD": {"project_id": "qualibot", "branch": "production", "endpoint": "primary", "database": "doccompare"},
 }

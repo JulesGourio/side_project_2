@@ -15,8 +15,8 @@ Parent: [`utils/`](../README.md). The root [README](../../README.md) describes t
 Command forms, from the repository root:
 
 ```
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv <dev|uat|prod|uat-test> [-SkipBuild] [-SyncOnly] [-Infra]
-python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [output_path]
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv <dev|uat|prod> [-SkipBuild] [-SyncOnly] [-Infra]
+python utils/deploy/render_target_config_env.py <dev|uat|prod> [output_path]
 ```
 
 ## Targets of the script
@@ -26,7 +26,6 @@ python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [output_
 | `dev` | `dev` | `qualibot` | `DEV` |
 | `uat` (default) | `qualibot-uat` | `qualibot` | `UAT` |
 | `prod` | `qualibot-prod` | `qualibot` | `qualibot-prod` |
-| `uat-test` | `qualibot-uat-test` | `qualibot-uat-test` | `UAT` |
 
 ## What the script does
 
@@ -35,7 +34,7 @@ python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [output_
    the repository with `databricks sync`, minus the paths listed in the script (among them `archive/`,
    the client sources and the notebooks `*.ipynb`).
 3. Reads the compute state of the app. `ACTIVE` or `STARTING` needs no action. Any other state makes the script start the
-   app, except `qualibot-uat-test`, for which the script stops with an error.
+   app.
 4. Runs `databricks apps deploy` with the source path `/Workspace/Shared/.bundle/qualibot/<target>/files`. For `prod` the
    root is `/Workspace/.bundle`.
 
@@ -52,7 +51,7 @@ rewrite endpoint, the MLflow experiment, `CHAT_TRANSLATE_ONLY`, and `CAPS_BYPASS
 ## Rules
 
 - A key that a target does not set keeps the value of `app.yaml`.
-- The index keys `CHAT_INDEX` and `COMPARE_IMPACT_INDEX` are set for `dev`, `uat`, `uat-test` and `prod`, and point at the
+- The index keys `CHAT_INDEX` and `COMPARE_IMPACT_INDEX` are set for `dev`, `uat` and `prod`, and point at the
   project schema of that environment. Index names carry no version suffix. No `CHAT_ENDPOINT*` key is set.
 - `CAPS_BYPASS` turns off the group check for every visitor, so it is `true` on `dev` only.
 - `render_target_config_env.py` writes LF. A CRLF line ending would add a `\r` to every value.

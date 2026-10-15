@@ -198,38 +198,6 @@ definitions:
           - databricks bundle deploy   -t qualibot-uat -p job-runner-sa-uat
 
     # -----------------------------------------------------------------------
-    # UAT-TEST: target qualibot-uat-test, profile job-runner-sa-uat (same SP as deploy-uat,
-    # which holds CAN_MANAGE on the app qualibot-uat-test). Disposable, isolated target
-    # (own app, own Lakebase database doccompare_test); uses the UAT deployment environment.
-    # -----------------------------------------------------------------------
-    - step: &deploy-uat-test
-        name: Deploy bundle to UAT-TEST (qualibot-uat-test)
-        deployment: uat
-        clone:
-          depth: 1
-        script:
-          - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
-          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          - databricks version
-          - |
-            if [ -z "$DATABRICKS_TOKEN" ]; then
-              echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'UAT')." >&2
-              exit 1
-            fi
-          - |
-            cat > "$HOME/.databrickscfg" <<EOF
-            [job-runner-sa-uat]
-            host  = ${DATABRICKS_HOST:-https://dbc-3a17bfce-9e88.cloud.databricks.com}
-            token = ${DATABRICKS_TOKEN}
-            EOF
-          - chmod 600 "$HOME/.databrickscfg"
-          - databricks current-user me -p job-runner-sa-uat
-          - python3 utils/deploy/render_target_config_env.py uat-test
-          - databricks bundle validate -t qualibot-uat-test -p job-runner-sa-uat
-          - databricks bundle deploy   -t qualibot-uat-test -p job-runner-sa-uat
-          - databricks bundle run doc-compare -t qualibot-uat-test -p job-runner-sa-uat
-
-    # -----------------------------------------------------------------------
     # PROD: target qualibot-prod, profile job-runner-sa-prod.
     # -----------------------------------------------------------------------
     - step: &deploy-prod
@@ -328,8 +296,6 @@ pipelines:
       - step: *deploy-uat
     deploy-uat-jobs:
       - step: *deploy-uat-jobs
-    deploy-uat-test:
-      - step: *deploy-uat-test
     deploy-prod:
       - step: *deploy-prod
     sync-prod-data:

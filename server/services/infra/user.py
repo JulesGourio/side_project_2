@@ -27,7 +27,7 @@ _CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Proje
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 
 # DEV only: CAPS_BYPASS=true grants chat and compare to every visitor.
-# tests/test_deploy_config.py guards that it never reaches uat, uat-test or prod.
+# tests/test_deploy_config.py guards that it never reaches uat or prod.
 _CAPS_BYPASS = os.getenv('CAPS_BYPASS', 'false').strip().lower() == 'true'
 
 

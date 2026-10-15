@@ -155,7 +155,7 @@ targets:
 
         # ── App off-hours (UAT) ─────────────────────────────────────────────
         # Generic notebook utils/app_mgmt/stop_start_app_job.py; run_as job-runner-sa-uat holds CAN_MANAGE on the app (declared in databricks.yml).
-        # Only qualibot has a start job (weekend pair below); qualibot-uat-test has its own nightly stop (further down).
+        # Only qualibot has a start job (weekend pair below).
         qualibot_stop_weekend_uat:
           name: "W_1_Qualibot_Stop_Weekend_Uat"
           queue:
@@ -239,53 +239,5 @@ targets:
                   - databricks-sdk>=0.118.0
           schedule:
             quartz_cron_expression: "0 0 7 ? * MON"
-            timezone_id: "Europe/Paris"
-            pause_status: UNPAUSED
-
-  qualibot-uat-test:
-    resources:
-      jobs:
-
-        # The test app is stopped every night and never restarted by a job: start it by hand when needed.
-        apps_stop_nightly_uat_test:
-          name: "D_1_Qualibot_Apps_Stop_Nightly_Uat_Test"
-          queue:
-            enabled: true
-          email_notifications:
-            on_failure:
-              - ${var.notification_email}
-          notification_settings:
-            no_alert_for_canceled_runs: true
-          description: "Stop qualibot-uat-test every night at 21h. Never restarted by a job — start it manually when needed."
-          max_concurrent_runs: 1
-          tags:
-            activity-type: ${var.job_activity_tag}
-            job-purpose: platform
-            project-name: qualibot
-            project: Qualibot
-          permissions:
-            - group_name: "Role-Project-LEAP-CoreAdmin"
-              level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-CoreDev"
-              level: CAN_MANAGE
-          run_as:
-            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39
-          tasks:
-            - task_key: stop_apps
-              notebook_task:
-                notebook_path: ../utils/app_mgmt/stop_start_app_job.py
-                source: WORKSPACE
-                base_parameters:
-                  action: "stop"
-                  app_names: ${var.app_name}
-              environment_key: default
-          environments:
-            - environment_key: default
-              spec:
-                environment_version: "2"
-                dependencies:
-                  - databricks-sdk>=0.118.0
-          schedule:
-            quartz_cron_expression: "0 0 21 * * ?"
             timezone_id: "Europe/Paris"
             pause_status: UNPAUSED

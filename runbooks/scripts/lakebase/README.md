@@ -7,7 +7,6 @@ One-shot scripts, run by hand and never deployed: nothing in the app or in a bun
 |---|---|---|
 | `copy_Lakebase_tables.py` | CLI | Creates or replaces one Delta table of `dev_proj.qualibot` per UAT Lakebase table. Skips `llm_requests` |
 | `migrate_lakebase.py` | CLI | Applies `MIGRATIONS` to the Lakebase database of the environment given by `--env` |
-| `migrate_lakebase_job.py` | Databricks notebook (import it into the workspace) | The same migration, run from a workspace notebook; parameters are widgets |
 | `migrations.py` | Python module | Ordered list `MIGRATIONS` and `apply_migrations(conn)`. Imported by the two migration scripts, no command |
 
 ## How to run (from the repository root)
@@ -19,22 +18,13 @@ python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV
 python runbooks/scripts/lakebase/migrate_lakebase.py --env UAT
 ```
 
-`--env` takes `DEV`, `UAT`, `UAT-TEST` or `PROD` (default `DEV`); each connects with its CLI profile and database:
+`--env` takes `DEV`, `UAT` or `PROD` (default `DEV`); each connects with its CLI profile and database:
 
 | `--env` | CLI profile | Database |
 |---|---|---|
 | `DEV` | `DEV` | `doccompare` |
 | `UAT` | `UAT` | `doccompare` |
-| `UAT-TEST` | `UAT` | `doccompare_test` |
 | `PROD` | `qualibot-prod` | `doccompare` |
-
-To run the migration from the workspace, import the notebook, then run it with its widgets (defaults below):
-
-```
-databricks workspace import <path> --file runbooks/scripts/lakebase/migrate_lakebase_job.py --format SOURCE --language PYTHON --overwrite --profile <profile>
-```
-
-Widgets (defaults): `LAKEBASE_PROJECT_ID` = `qualibot`, `LAKEBASE_BRANCH` = `production`, `LAKEBASE_ENDPOINT` = `primary`, `LAKEBASE_DATABASE` = `doccompare_test`. The value `doccompare` is refused on the UAT workspace host.
 
 ## Inputs and outputs
 

@@ -77,7 +77,7 @@ nothing reads them at run time.
 
 | Step | Model or index | Setting |
 |---|---|---|
-| Comparison: analysis (summary and table of changes) | `databricks-claude-sonnet-5-5` (default; `databricks-gpt-5-6-luna` on UAT-TEST) | `COMPARE_ANALYSIS_ENDPOINT` |
+| Comparison: analysis (summary and table of changes) | `databricks-claude-sonnet-5-5` (default) | `COMPARE_ANALYSIS_ENDPOINT` |
 | Comparison: impact search | Vector Search index | `COMPARE_IMPACT_INDEX` |
 | Comparison: judgement of each candidate document | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` |
 | Comparison: single-document summary (text and images) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |
@@ -131,7 +131,7 @@ Local runs call the real Databricks endpoints under your own identity; no deploy
    - `DATABRICKS_CONFIG_PROFILE`: the CLI profile of the environment you test against
    - `COMPARE_ENABLED=true` and `CHAT_ENABLED=true`
    - `CHAT_INDEX`, `COMPARE_IMPACT_INDEX` and `LAKEBASE_DATABASE`: the values of the
-     `qualibot-uat-test` target in `utils/deploy/target_env.json`
+     `dev` target in `utils/deploy/target_env.json`
    - `LAKEBASE_PROJECT_ID=qualibot`
 
    `LAKEBASE_PROJECT_ID` is needed even locally. If port 5432 is closed, the connection fails
@@ -175,7 +175,6 @@ bun run build
 |---|---|---|---|---|
 | `dev` | `dev` | `qualibot` | `DEV` | `dbc-c623749d-731b` |
 | `uat` | `qualibot-uat` | `qualibot` | `UAT` | `dbc-3a17bfce-9e88` |
-| `uat-test` | `qualibot-uat-test` | `qualibot-uat-test` | `UAT` | `dbc-3a17bfce-9e88` |
 | `prod` | `qualibot-prod` | `qualibot` | `qualibot-prod` | `dbc-77b87d5a-6bcb` |
 
 The full host names are in `databricks.yml`. The CLI profile of the target must be authenticated.
@@ -192,8 +191,7 @@ The script:
 2. renders `target_config.env` from `utils/deploy/target_env.json`, then uploads the code to the
    workspace (with `-Infra`, it runs `databricks bundle deploy` instead, for resources, app
    permissions and volume bindings; this needs MANAGE on the catalog);
-3. checks the compute state of the app and starts it when it is stopped (the `uat-test` app is
-   never started by the script);
+3. checks the compute state of the app and starts it when it is stopped;
 4. deploys the app from the uploaded code.
 
 Options: `-SkipBuild` skips the frontend build; `-SyncOnly` uploads the code only, without
@@ -208,11 +206,9 @@ are triggered by hand. A push to `main` deploys UAT, and PROD is a manual step a
 |---|---|---|---|---|
 | DEV | `dev_proj.qualibot` | `dev_proj.qualibot.doc_compare` | `dev_proj.qualibot.chunks_index` | `doccompare` |
 | UAT | `uat_proj.qualibot` | `uat_proj.qualibot.doc_compare` | `uat_proj.qualibot.chunks_index` | `doccompare` |
-| UAT-TEST | `uat_proj.qualibot`, `_test` suffix | `uat_proj.qualibot.doc_compare_test` | `uat_proj.qualibot.chunks_index_test` | `doccompare_test` |
 | PROD | `prod_proj.qualibot` | `prod_proj.qualibot.doc_compare` | `prod_proj.qualibot.chunks_index` | `doccompare` |
 
-Delta tables, volumes and Vector Search indexes live in the schema `<env>_proj.qualibot`. The
-`uat-test` target is an isolated test environment: it touches neither the data nor the indexes of UAT.
+Delta tables, volumes and Vector Search indexes live in the schema `<env>_proj.qualibot`, with the same names in every environment.
 
 The application's Lakebase tables are `compare_messages`, `compare_feedbacks`, `llm_requests`,
 `app_errors`, `impact_requests`, `impact_document_results`, `impact_feedbacks`, `impact_cache`,

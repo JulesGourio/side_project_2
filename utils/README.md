@@ -28,7 +28,7 @@ parameters from the job (`base_parameters` or the widgets). They do not run from
 Command-line scripts run from the repository root:
 
 ```
-python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [output_path]
+python utils/deploy/render_target_config_env.py <dev|uat|prod> [output_path]
 python utils/lakebase_sync/export_lakebase_to_json.py --profile <cli-profile> [--database doccompare] [--out-dir staging/lakebase]
 python utils/lakebase_sync/import_lakebase_from_json.py --profile <cli-profile> [--database doccompare] [--in-dir staging/lakebase]
 python utils/evaluation/check_vision_endpoints.py --profile <cli-profile> --images <folder> [--endpoints <a,b>] [--question <text>] [--timeout 120]
@@ -45,7 +45,7 @@ python utils/evaluation/register_chat_prompts.py --profile <cli-profile> --schem
 PowerShell, from the repository root:
 
 ```
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv <dev|uat|prod|uat-test> [-SkipBuild] [-SyncOnly] [-Infra]
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv <dev|uat|prod> [-SkipBuild] [-SyncOnly] [-Infra]
 ```
 
 `-AppEnv` defaults to `uat`. `-SkipBuild` skips the frontend build, `-SyncOnly` only uploads the code, and
@@ -53,11 +53,10 @@ PowerShell, from the repository root:
 
 ## Settings
 
-- `target_env.json` holds the application settings per target (`dev`, `uat`, `uat-test`, `prod`). A key that a target
+- `target_env.json` holds the application settings per target (`dev`, `uat`, `prod`). A key that a target
   does not set keeps its value from `app.yaml`. `render_target_config_env.py` turns one target into `target_config.env`.
 - `ops_config.py` holds the Databricks CLI profiles, the Lakebase project (`qualibot`, branch `production`,
-  endpoint `primary`) and the database of each environment. The `uat-test` environment uses its own database
-  `doccompare_test`.
+  endpoint `primary`) and the database of each environment.
 
 ## Rules
 

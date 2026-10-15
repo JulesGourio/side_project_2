@@ -223,7 +223,7 @@ La sortie de 0.2 (PowerShell et SQL), puis l'erreur de chaque pas qui échoue, o
 ## 1. Contrôles de code et de configuration
 
 - [ ] `python -m pytest -q` (depuis la racine du dépôt)
-- [ ] `databricks bundle validate -t dev --profile DEV`, puis `databricks bundle validate -t qualibot-uat-test --profile UAT`, puis `databricks bundle validate -t qualibot-prod --profile qualibot-prod` : aucun chemin de notebook introuvable, aucune variable inconnue
+- [ ] `databricks bundle validate -t dev --profile DEV`, puis `databricks bundle validate -t qualibot-prod --profile qualibot-prod` : aucun chemin de notebook introuvable, aucune variable inconnue
 - [ ] `databricks bundle plan -t dev --profile DEV` avant le déploiement : aucune ressource en `delete` ni `recreate` (les clés de ressources ne changent pas)
 - [ ] `python runbooks/scripts/compare/compare_preview.py <a.docx> <b.docx>` une fois : les imports de `runbooks/scripts/` sont bons
 - [ ] Après `bundle deploy -t dev` : les noms des jobs suivent `<D|W|Z>_<niveau>_<Domaine>_<Rôle>` :

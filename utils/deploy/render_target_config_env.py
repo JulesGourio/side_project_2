@@ -1,7 +1,7 @@
 """Render target_config.env from utils/deploy/target_env.json for one target.
 
 USAGE:
-    python utils/deploy/render_target_config_env.py <dev|uat|uat-test|prod> [output_path]
+    python utils/deploy/render_target_config_env.py <dev|uat|prod> [output_path]
 
 Writes the per-target app env overrides of target_env.json as shell exports.
 """
@@ -22,7 +22,7 @@ logger = logging.getLogger("render_target_config_env")
 
 def main() -> None:
     if len(sys.argv) < 2:
-        raise SystemExit(f"Usage: {sys.argv[0]} <dev|uat|uat-test|prod> [output_path]")
+        raise SystemExit(f"Usage: {sys.argv[0]} <dev|uat|prod> [output_path]")
     target = sys.argv[1]
     output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("target_config.env")
 

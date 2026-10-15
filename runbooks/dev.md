@@ -1,6 +1,6 @@
 # Opérations manuelles — DEV
 
-Ce fichier couvre **uniquement** l'environnement DEV (copie de l'UAT). Pour l'UAT, `qualibot-uat-test` et la PROD, voir `runbooks/uat.md` et `runbooks/prod.md`.
+Ce fichier couvre **uniquement** l'environnement DEV (copie de l'UAT). Pour l'UAT et la PROD, voir `runbooks/uat.md` et `runbooks/prod.md`.
 
 Chaque étape à faire à la main est listée ici, prête à copier-coller, dans l'ordre. Une étape est cochée et datée une fois confirmée ; ce qui n'est pas coché n'est pas confirmé.
 
@@ -880,7 +880,6 @@ SHOW COLUMNS IN dev_proj.qualibot.parsed_documents;
 Attendu après : les trois `is_*` présentes, les anciens noms absents.
 
 - Le `copy_uat_to_dev` recrée les tables depuis l'UAT, qui a encore les anciens noms : relancer ce bloc après chaque copie tant que l'UAT n'a pas été migré (`runbooks/uat.md`, à faire au moment de la bascule).
-- Même migration pour la table de test `uat_proj.qualibot.parsed_documents_test` (`qualibot-uat-test`), avant son run de validation : remplacer `dev_proj.qualibot.parsed_documents` par `uat_proj.qualibot.parsed_documents_test` dans les quatre instructions.
 - Les colonnes ne sont pas dans `chunks` ni dans l'index `chunks_index` : pas de resynchronisation d'index à prévoir.
 
 ### R2. Valider les tables après le déploiement (à faire après R et le déploiement de 0.10)
@@ -910,7 +909,7 @@ Attendu : des lignes avec `is_in_rag` et `is_filtered_by_date` renseignés, et a
 - Activer les plannings DEV (parsing quotidien, export Lakebase, stop/start de l'app) : passer les plannings `PAUSED` à `UNPAUSED` (`parsing_schedule_pause` dans `databricks.yml`, `pause_status` dans `resources/*.yml`), puis redéployer.
 - Si le pipeline de parsing DEV est réactivé (sous le SP DEV) : vérifier que le SP peut synchroniser les index et utiliser l'endpoint `qualibot` créés sous votre identité (CAN_MANAGE sur l'endpoint au besoin).
 - Copier aussi les images du volume `uat_proj.qualibot.images` (seulement si un run de parsing DEV doit retravailler des images déjà extraites).
-- Ne pas toucher ici à `qualibot-uat`, `qualibot-uat-test` ou `prod` : voir `runbooks/uat.md` (dont le bloc D, qui déploie la branche du chatbot en UAT) et `runbooks/prod.md`. Il faut d'abord que le DEV soit validé.
+- Ne pas toucher ici à `qualibot-uat` ou `prod` : voir `runbooks/uat.md` (dont le bloc D, qui déploie la branche du chatbot en UAT) et `runbooks/prod.md`. Il faut d'abord que le DEV soit validé.
 
 ## Fait
 

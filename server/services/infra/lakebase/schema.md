@@ -1,6 +1,6 @@
 # Lakebase: tables and columns
 
-Reference of the application's tables in Lakebase (project `qualibot`, branch `production`). One database per environment: `doccompare` (UAT, DEV, PROD) and `doccompare_test` (`qualibot-uat-test`).
+Reference of the application's tables in Lakebase (project `qualibot`, branch `production`). One database per environment: `doccompare` (UAT, DEV, PROD).
 
 Source of truth: `server/services/infra/lakebase/schema.py` (creation and changes) and `columns.py` (columns of the chat turn log). The app creates the tables at startup (`ensure_schema`) with `CREATE TABLE IF NOT EXISTS`, then `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. At startup it also drops the obsolete columns and merges duplicate rows of `users`; it never drops a table.
 

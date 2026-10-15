@@ -48,7 +48,6 @@ The environments known by `ops_config.py`:
 | Environment | CLI profile | Database | Note |
 |---|---|---|---|
 | `UAT` | `UAT` | `doccompare` | Database of the UAT application |
-| `UAT-TEST` | `UAT` | `doccompare_test` | Disposable database of the `qualibot-uat-test` target |
 | `DEV` | `DEV` | `doccompare` | Database of the DEV application |
 | `PROD` | `qualibot-prod` | `doccompare` | Database of the PROD application |
 
@@ -63,4 +62,3 @@ All four use the Lakebase project `qualibot`, branch `production`, endpoint `pri
 - The import writes the `id` values as they are and sets each table's `id` sequence to the maximum imported value.
   Without it, the next insert of the application would reuse an imported id.
 - The JSON files hold user data (questions, answers, identifiers). They stay in the staging folders and volumes.
-- The target `qualibot-uat-test` has its own database (`doccompare_test`). A test run never writes to `doccompare`.

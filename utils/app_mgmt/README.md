@@ -20,7 +20,6 @@ Parent: [`utils/`](../README.md). The jobs are defined in [`resources/app_schedu
 | `W_1_Qualibot_Start_Weekend_Dev` | `dev` | start | `${var.app_name}` |
 | `W_1_Qualibot_Stop_Weekend_Uat` | `qualibot-uat` | stop | `qualibot` |
 | `W_1_Qualibot_Start_Weekend_Uat` | `qualibot-uat` | start | `qualibot` |
-| `D_1_Qualibot_Apps_Stop_Nightly_Uat_Test` | `qualibot-uat-test` | stop | `${var.app_name}` |
 
 The jobs run in the workspace of their target, under the identity set in their `run_as`. The `dev` jobs and the UAT jobs
 have different identities, and the identity needs CAN_MANAGE on each app it stops or starts.
@@ -37,5 +36,4 @@ have different identities, and the identity needs CAN_MANAGE on each app it stop
   The SDK would reject that call.
 - Every app is processed even when an earlier one fails. At the end, the notebook raises an error that names the apps
   that failed.
-- The deploy script of [`utils/deploy/`](../deploy/README.md) starts a stopped app itself. For `qualibot-uat-test` it
-  stops with an error instead, so that app is started by hand.
+- The deploy script of [`utils/deploy/`](../deploy/README.md) starts a stopped app itself.
