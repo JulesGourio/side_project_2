@@ -340,7 +340,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   spécification que l'UAT, la création lance la première synchronisation :
 
   ```powershell
-  $json = '{"name": "dev_proj.qualibot.chunks_index", "endpoint_name": "qualibot", "primary_key": "chunk_id", "index_type": "DELTA_SYNC", "delta_sync_index_spec": {"source_table": "dev_proj.qualibot.chunks", "pipeline_type": "TRIGGERED", "embedding_source_columns": [{"name": "chunk_text", "embedding_model_endpoint_name": "databricks-qwen3-embedding-0-6b"}]}}'
+  $json = '{"name": "dev_proj.qualibot.chunks_index", "endpoint_name": "qualibot", "primary_key": "chunk_id", "index_type": "DELTA_SYNC", "index_subtype": "HYBRID", "delta_sync_index_spec": {"source_table": "dev_proj.qualibot.chunks", "pipeline_type": "TRIGGERED", "embedding_source_columns": [{"name": "chunk_text", "embedding_model_endpoint_name": "databricks-qwen3-embedding-0-6b"}]}}'
   [IO.File]::WriteAllText("$PWD\chunks_index.json", $json)
   databricks vector-search-indexes create-index --json "@chunks_index.json" --profile DEV
   Remove-Item chunks_index.json
