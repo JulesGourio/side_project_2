@@ -128,6 +128,12 @@ databricks volumes list dev_proj qualibot --profile DEV -o json | ConvertFrom-Js
 databricks vector-search-indexes list-indexes qualibot --profile DEV -o json | ConvertFrom-Json | ForEach-Object { $_.name }
 ```
 
+**État constaté (inventaire du 2026-10-15, profil `DEV`)** :
+
+- `dev_proj.qualibot` ne contient que 8 tables d'évaluation, toutes avec les anciens noms sauf `eval_retrieval_runs` : `eval_load_runs`, `eval_pairwise_runs`, `eval_pairwise_runs_cache`, `eval_vs_load_runs`, `feedback_failure_cases`, `qualibot_eval_golden`, `synthetic_retrieval_questions`. Aucun volume, aucune table de corpus ni de chat.
+- Le corpus et l'index sont encore dans l'ancien emplacement : index `dev_landingzone.qualibot.chunks_index`.
+- `dev_lab.lab_jules` contient les anciennes tables de qualibot (`chunks`, `processed_files`, `messages`, `users`…) **et** des tables sans rapport avec qualibot (`rfq_*`, `bom_*`, `dp_spares_*`, `uc093_*`…). Le bloc 00.8 supprime tout le schéma : ne pas le lancer sans tri préalable.
+
 **00.1b — Anciens emplacements (PowerShell, profil `DEV`)** : un schéma `dev_landingzone.qualibot` encore présent doit être vidé après la copie
 des volumes (00.2b) ; une erreur `SCHEMA_DOES_NOT_EXIST` veut dire qu'il n'y en a plus, les blocs 00.2a et 00.2b sont alors sans objet.
 
