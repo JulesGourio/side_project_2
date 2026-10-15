@@ -497,6 +497,20 @@ Chaque point est indépendant et demande une modification de la configuration : 
     - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de test `trace_test` aussi s'il existe encore ;
     Les objets `_v1` (tables, index, volumes) ne sont pas supprimés par ce runbook (voir étape 0.11).
 
+### E. Sonnet 5.5 pour l'analyse de comparaison (à faire avec le déploiement de `qualibot-uat`, pas avant)
+
+Le modèle d'analyse des changements passe de `databricks-claude-sonnet-4-6` à `databricks-claude-sonnet-5-5` (`app.yaml`). Il n'y a rien à
+accorder (voir `utils/grants/README.md`) : le changement arrive avec le prochain déploiement de `qualibot-uat`, donc après la décision D5.
+Avant ce déploiement, vérifier que l'endpoint existe sur UAT (Attendu : `"name": "databricks-claude-sonnet-5-5"`) :
+
+- [ ] **E1. Endpoint présent** :
+
+  ```powershell
+  databricks serving-endpoints get databricks-claude-sonnet-5-5 --profile UAT
+  ```
+
+  Une erreur `not found` : ne pas déployer, me le dire. `qualibot-uat-test` garde `databricks-gpt-5-6-luna` (`utils/deploy/target_env.json`).
+
 ### R0. Renommer les tables au moment de la bascule (ne rien faire avant la décision de bascule)
 
 L'UAT actuelle lit encore les anciens noms : ces commandes ne se lancent qu'avec la bascule, dans cet ordre, comme sur DEV (`runbooks/dev.md`, bloc R0).

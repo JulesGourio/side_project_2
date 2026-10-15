@@ -114,6 +114,30 @@ Jobs du bundle `dev` :
 
 PowerShell, depuis la racine du projet, sur la machine de déploiement.
 
+### S5. Sonnet 5.5 pour l'analyse de comparaison (2026-10-15, à faire)
+
+Le modèle d'analyse des changements (Change Summary / Change Table) passe de `databricks-claude-sonnet-4-6` à `databricks-claude-sonnet-5-5`
+(`app.yaml`). Pas de droit à donner : les endpoints ne sont pas accordés par les jobs de droits (`utils/grants/README.md`). Il suffit de
+vérifier l'endpoint puis de redéployer l'app DEV.
+
+- [ ] **S5.1 Endpoint présent** :
+
+  ```powershell
+  databricks serving-endpoints get databricks-claude-sonnet-5-5 --profile DEV
+  ```
+
+  Attendu : un objet JSON avec `"name": "databricks-claude-sonnet-5-5"`. Une erreur `not found` : ne pas continuer, me le dire.
+- [ ] **S5.2 Redéployer l'app DEV** :
+
+  ```powershell
+  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  databricks bundle deploy -t dev --profile DEV
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+- [ ] **S5.3 Test** : lancer une comparaison de deux documents dans l'app DEV. Attendu : le Change Summary se remplit sans erreur, et les
+  logs de l'app contiennent `Streaming analysis from databricks-claude-sonnet-5-5`.
+
 ### 00. Volumes, corpus et tables (DEV, détail des commandes)
 
 Tout objet qualibot (tables, volumes, index) vit dans `dev_proj.qualibot`. Les volumes sont créés par le déploiement (00.2), sauf

@@ -21,6 +21,9 @@ def test_gpt_5_6_family_does_not_support_temperature():
     assert supports_temperature('databricks-gpt-5-6-terra') is False
 
 
+def test_claude_5_generation_does_not_support_temperature():
+    assert supports_temperature('databricks-claude-sonnet-5-5') is False
+
+
 def test_other_endpoints_support_temperature():
-    assert supports_temperature('databricks-claude-sonnet-4-6') is True
     assert supports_temperature('databricks-gemini-3-1-flash-lite') is True

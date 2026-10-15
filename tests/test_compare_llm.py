@@ -17,7 +17,7 @@ from server.services.compare.summarize import summarize_text
 from server.services.infra import vector_search
 from server.services.infra.vector_search import _judge, run_impact_search
 
-SONNET = 'databricks-claude-sonnet-4-6'
+SONNET = 'databricks-claude-sonnet-5-5'
 HOST = 'https://example.test'
 
 
@@ -225,7 +225,8 @@ def test_analysis_falls_back_and_streams_the_answer(monkeypatch):
     assert not [e for e in events if e['type'] == 'error']
     assert [e['type'] for e in events if e['type'] == 'usage']
     sonnet_payload, fallback_payload = service.calls[0][1], service.calls[1][1]
-    assert 'thinking' in sonnet_payload and 'temperature' in sonnet_payload
+    # Claude 5 rejects a temperature: the primary gets thinking only.
+    assert 'thinking' in sonnet_payload and 'temperature' not in sonnet_payload
     assert 'thinking' not in fallback_payload and 'temperature' not in fallback_payload
 
 

@@ -81,7 +81,7 @@ nothing reads them at run time.
 
 | Step | Model or index | Setting |
 |---|---|---|
-| Comparison: analysis (summary and table of changes) | `databricks-claude-sonnet-4-6` (default; `databricks-gpt-5-6-luna` on UAT-TEST) | `COMPARE_ANALYSIS_ENDPOINT` |
+| Comparison: analysis (summary and table of changes) | `databricks-claude-sonnet-5-5` (default; `databricks-gpt-5-6-luna` on UAT-TEST) | `COMPARE_ANALYSIS_ENDPOINT` |
 | Comparison: impact search | Vector Search index | `COMPARE_IMPACT_INDEX` |
 | Comparison: judgement of each candidate document | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` |
 | Comparison: single-document summary (text and images) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |

@@ -79,9 +79,9 @@ def test_rate_limited_primary_falls_back_and_cools_down(monkeypatch):
 
 def test_reasoning_fallback_gets_a_larger_ceiling_and_no_temperature(monkeypatch):
     calls = []
-    _transport(monkeypatch, {'databricks-claude-sonnet-4-6': lambda r: httpx.Response(503, text='busy'),
+    _transport(monkeypatch, {'databricks-gemini-3-1-flash-lite': lambda r: httpx.Response(503, text='busy'),
                              BACKUP: lambda r: httpx.Response(200, text=_sse('ok'))}, calls)
-    _events(['databricks-claude-sonnet-4-6', BACKUP], max_tokens=2000)
+    _events(['databricks-gemini-3-1-flash-lite', BACKUP], max_tokens=2000)
     assert calls[0][1]['max_tokens'] == 2000 and calls[0][1]['temperature'] == 0.0
     assert calls[-1][1]['max_tokens'] == 6000 and 'temperature' not in calls[-1][1]
 
@@ -184,10 +184,10 @@ def test_concurrency_limit_queues_answers(monkeypatch):
 def test_chains(monkeypatch):
     monkeypatch.setenv('CHAT_LLM_FALLBACK_ENDPOINTS', f'{BACKUP}, {PRIMARY}')
     assert chat_llm.answer_chain(PRIMARY) == [PRIMARY, BACKUP]
-    assert chat_llm.rewrite_chain('databricks-claude-sonnet-4-6', PRIMARY) == [
-        'databricks-claude-sonnet-4-6', PRIMARY, BACKUP]
+    assert chat_llm.rewrite_chain('databricks-gemini-3-1-flash-lite', PRIMARY) == [
+        'databricks-gemini-3-1-flash-lite', PRIMARY, BACKUP]
     monkeypatch.setenv('CHAT_REWRITE_FALLBACK_ENDPOINTS', BACKUP)
-    assert chat_llm.rewrite_chain('databricks-claude-sonnet-4-6', PRIMARY) == ['databricks-claude-sonnet-4-6', BACKUP]
+    assert chat_llm.rewrite_chain('databricks-gemini-3-1-flash-lite', PRIMARY) == ['databricks-gemini-3-1-flash-lite', BACKUP]
 
 
 def test_rewrite_falls_back_when_the_first_model_returns_nothing(monkeypatch):
