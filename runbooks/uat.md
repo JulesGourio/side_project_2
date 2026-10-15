@@ -184,16 +184,15 @@ Les droits sont vérifiés à chaque requête par l'app (`is_account_group_membe
 
 **0.9 — Suppression de la cible de test `qualibot-uat-test` (tout doit disparaître)**
 
-Il n'y a plus de cible de test : la bascule se fait directement sur `qualibot-uat`. Le `bundle destroy` a besoin du code qui déclare la cible : il se lance donc depuis le commit `6384ff0`, le dernier qui la contient. Le dossier de travail (le zip du code déjà déployé) ne la contient plus : il faut une copie du dépôt à ce commit, et pas le dossier courant.
+Il n'y a plus de cible de test : la bascule se fait directement sur `qualibot-uat`. Le `bundle destroy` a besoin du code qui déclare la cible : il se lance donc depuis le commit `6384ff0`, le dernier qui la contient. Le dossier de travail ne la contient plus. Le zip `qualibot-destroy.zip` contient `databricks.yml` et `resources/` tels qu'ils étaient au commit `6384ff0` : c'est tout ce qu'il faut pour le destroy.
 
 1. Code de la cible (PowerShell, à la racine du projet) :
 
 ```powershell
-git clone --branch claude/sharp-mayer-uqwx8x https://github.com/JulesGourio/side_project_2 ..\qualibot-before-uat-test-removal
-git -C ..\qualibot-before-uat-test-removal checkout 6384ff0
-cd ..\qualibot-before-uat-test-removal
+Expand-Archive -Path "C:\Users\L0041770\Downloads\qualibot-destroy.zip" -DestinationPath "C:\Users\L0041770\Desktop\qualibot-destroy" -Force
+cd "C:\Users\L0041770\Desktop\qualibot-destroy"
+databricks bundle validate -t qualibot-uat-test --profile UAT
 databricks bundle destroy -t qualibot-uat-test --profile UAT --auto-approve
-cd <dossier du projet>
 ```
 
 Cette commande supprime l'app `qualibot-uat-test`, son job de parsing, ses jobs de droits, d'arrêt de nuit et de notation.
