@@ -184,12 +184,12 @@ Les droits sont vérifiés à chaque requête par l'app (`is_account_group_membe
 
 **0.9 — Suppression de la cible de test `qualibot-uat-test` (tout doit disparaître)**
 
-Il n'y a plus de cible de test : la bascule se fait directement sur `qualibot-uat`. Le `bundle destroy` a besoin du code qui déclare la cible : il se lance donc depuis le commit `be51044`, le dernier qui la contient.
+Il n'y a plus de cible de test : la bascule se fait directement sur `qualibot-uat`. Le `bundle destroy` a besoin du code qui déclare la cible : il se lance donc depuis le commit `cad7081^` (le parent du commit qui supprime la cible, `6384ff0`), le dernier qui la contient.
 
 1. Code de la cible (PowerShell, à la racine du projet) :
 
 ```powershell
-git worktree add ..\qualibot-before-uat-test-removal be51044
+git worktree add ..\qualibot-before-uat-test-removal 6384ff0
 cd ..\qualibot-before-uat-test-removal
 databricks bundle destroy -t qualibot-uat-test --profile UAT --auto-approve
 cd ..\side_project_2
