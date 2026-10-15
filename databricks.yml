@@ -269,11 +269,6 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
-        qualibot_test:
-          catalog_name: ${var.pipeline_write_env}_proj
-          schema_name: ${resources.schemas.qualibot_proj_schema.name}
-          name: test
-          volume_type: MANAGED
         qualibot_images:
           catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
@@ -422,11 +417,6 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
-        qualibot_test:
-          catalog_name: ${var.pipeline_write_env}_proj
-          schema_name: ${resources.schemas.qualibot_proj_schema.name}
-          name: test
-          volume_type: MANAGED
         # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy; the data copy steps are in runbooks/uat.md.
         qualibot_images:
           catalog_name: ${var.pipeline_write_env}_proj
@@ -458,11 +448,6 @@ targets:
               uc_securable:
                 securable_type: VOLUME
                 securable_full_name: uat_proj.qualibot.doc_compare
-                permission: WRITE_VOLUME
-            - name: test-volume
-              uc_securable:
-                securable_type: VOLUME
-                securable_full_name: uat_proj.qualibot.test
                 permission: WRITE_VOLUME
     variables:
       app_name: "qualibot"
@@ -577,11 +562,6 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: docling_models
           volume_type: MANAGED
-        qualibot_test:
-          catalog_name: ${var.pipeline_write_env}_proj
-          schema_name: ${resources.schemas.qualibot_proj_schema.name}
-          name: test
-          volume_type: MANAGED
         # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy on prod_proj.
         qualibot_images:
           catalog_name: ${var.pipeline_write_env}_proj
@@ -595,11 +575,6 @@ targets:
               uc_securable:
                 securable_type: VOLUME
                 securable_full_name: prod_proj.qualibot.doc_compare
-                permission: WRITE_VOLUME
-            - name: test-volume
-              uc_securable:
-                securable_type: VOLUME
-                securable_full_name: prod_proj.qualibot.test
                 permission: WRITE_VOLUME
     variables:
       app_name: "qualibot"

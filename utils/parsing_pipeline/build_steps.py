@@ -70,7 +70,7 @@ def _with_attempt_columns(df):
     """`attempts` and `last_error_kind` on every image row; NULL where the table does not have them yet."""
     for name, dtype in (("attempts", "int"), ("last_error_kind", "string")):
         if name not in df.columns:
-            df = df.withColumn(name, F.lit(None).cast(dtype))
+            df = df.withColumn(name, F.lit(None).try_cast(dtype))
     return df
 
 
@@ -131,10 +131,10 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
             image_utils.image_status_col(
                 F.col("img.volume_path"), F.col("img.image_width"), F.col("img.image_height")
             ).alias("status"),
-            F.lit(None).cast("string").alias("description"),
-            F.lit(None).cast("integer").alias("input_tokens"),
-            F.lit(None).cast("integer").alias("output_tokens"),
-            F.lit(None).cast("timestamp").alias("described_at"),
+            F.lit(None).try_cast("string").alias("description"),
+            F.lit(None).try_cast("integer").alias("input_tokens"),
+            F.lit(None).try_cast("integer").alias("output_tokens"),
+            F.lit(None).try_cast("timestamp").alias("described_at"),
             F.lit(ingestion_run_id).alias("ingestion_run_id"),
             F.current_timestamp().alias("ingestion_timestamp"),
         )
@@ -175,7 +175,7 @@ def _apply_date_and_rag_filters(df_processed_files):
     rag_exclusions (INSERT INTO {PIPELINE_WRITE_ENV}_proj.qualibot.rag_exclusions VALUES (IDDOC, 'reason')).
     Returns (df_processed_files, df_exclusions_or_none, cutoff_col).
     """
-    cutoff = F.lit(DOC_DATE_CUTOFF).cast("date")
+    cutoff = F.lit(DOC_DATE_CUTOFF).try_cast("date")
     df_processed_files = df_processed_files.withColumn(
         "is_filtered_by_date",
         F.when(
@@ -426,7 +426,7 @@ def build_archive_notices(df_business_meta):
     A pre-cutoff document whose REF also exists on a recent document is skipped:
     the chatbot already knows that REF through real chunks.
     """
-    cutoff = F.lit(DOC_DATE_CUTOFF).cast("date")
+    cutoff = F.lit(DOC_DATE_CUTOFF).try_cast("date")
     is_archive = F.col("doc_date").isNotNull() & (F.col("doc_date") < cutoff)
     df_recent_refs = (
         df_business_meta.filter(~is_archive & F.col("ref").isNotNull())

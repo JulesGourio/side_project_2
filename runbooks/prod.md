@@ -55,7 +55,7 @@ Le volume `staging` n'est pas copié. Le bundle déclare `doc_compare`, `test`, 
 
 ```powershell
 databricks bundle deployment bind qualibot_doc_compare prod_proj.qualibot.doc_compare -t qualibot-prod --profile qualibot-prod
-databricks bundle deployment bind qualibot_test prod_proj.qualibot.test -t qualibot-prod --profile qualibot-prod
+databricks bundle deployment unbind qualibot_test -t qualibot-prod --profile qualibot-prod
 databricks bundle deployment bind qualibot_images prod_proj.qualibot.images -t qualibot-prod --profile qualibot-prod
 databricks bundle deployment bind qualibot_docling_models prod_proj.qualibot.docling_models -t qualibot-prod --profile qualibot-prod
 ```

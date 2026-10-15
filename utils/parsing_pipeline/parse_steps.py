@@ -339,9 +339,9 @@ def write_skipped_too_large(df_skipped, skipped_count):
         .withColumn("parser_error",
             F.concat(F.lit("TOO_LARGE:"), F.round(F.col("source_file_size_bytes") / 1024 / 1024, 1).try_cast("string"), F.lit("MB")))
         .withColumn("parser_strategy", F.lit("skipped"))
-        .withColumn("parse_time_seconds", F.lit(0.0).cast("float"))
-        .withColumn("images", F.array().cast("array<struct<image_id:int,page_no:int,label:string,area_ratio:float,captions:array<string>,context_text:string,volume_path:string,image_width:int,image_height:int>>"))
-        .withColumn("timings", F.lit(None).cast("map<string,float>"))
+        .withColumn("parse_time_seconds", F.lit(0.0).try_cast("float"))
+        .withColumn("images", F.array().try_cast("array<struct<image_id:int,page_no:int,label:string,area_ratio:float,captions:array<string>,context_text:string,volume_path:string,image_width:int,image_height:int>>"))
+        .withColumn("timings", F.lit(None).try_cast("map<string,float>"))
         .withColumn("image_count", F.lit(0))
         .withColumn("parse_status", F.lit("SKIP_TOO_LARGE"))
     )

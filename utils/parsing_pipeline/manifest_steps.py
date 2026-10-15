@@ -286,14 +286,14 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
 
 def archive_condition():
     """Pre-cutoff documents: parsed within the ARCHIVE_MAX_DOCS budget and routed to chunks_archive."""
-    return F.col("doc_date").isNotNull() & (F.col("doc_date") < F.lit(DOC_DATE_CUTOFF).cast("date"))
+    return F.col("doc_date").isNotNull() & (F.col("doc_date") < F.lit(DOC_DATE_CUTOFF).try_cast("date"))
 
 
 def _doc_date_column(table):
     """Document date column of an Intraqual table (`dtdiff`, or `DATEDIFF` when the table uses that name), NULL when absent."""
     cols = {c.lower() for c in spark.read.table(table).columns}
     source = "dtdiff" if "dtdiff" in cols else "DATEDIFF" if "datediff" in cols else None
-    return F.col(source).try_cast("date") if source else F.lit(None).cast("date")
+    return F.col(source).try_cast("date") if source else F.lit(None).try_cast("date")
 
 
 def build_manifest(rows_keep):
@@ -324,7 +324,7 @@ def build_manifest(rows_keep):
             .dropDuplicates(["IDDOC"])
         )
     else:
-        df_dates_fallback = df_dates.select("IDDOC").limit(0).withColumn("doc_date_fb", F.lit(None).cast("date"))
+        df_dates_fallback = df_dates.select("IDDOC").limit(0).withColumn("doc_date_fb", F.lit(None).try_cast("date"))
 
     try:
         df_hierarchy = spark.table(DIVISION_REFERENCE_TABLE).drop("division_source")
@@ -357,7 +357,7 @@ def build_manifest(rows_keep):
         .join(F.broadcast(df_hierarchy), on="IDDOC", how="left")
         .join(F.broadcast(df_iddoc_type), on="IDDOC", how="left")
         .withColumn("langue", F.lit("fr-FR"))
-        .withColumn("auteur", F.lit(None).cast(StringType()))
+        .withColumn("auteur", F.lit(None).try_cast(StringType()))
     )
 
     # Pre-cutoff documents stay in the manifest (3_parse builds their notice chunk from it); only the

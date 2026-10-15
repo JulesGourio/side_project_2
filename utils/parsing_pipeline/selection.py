@@ -148,7 +148,7 @@ def select_best_files(df_matched_full, df_business_meta):
     # The string columns and doc_date exist even when the manifest lacks them.
     for c in ENRICHMENT_COLS:
         if c not in df_sel.columns:
-            df_sel = df_sel.withColumn(c, F.lit(None).cast("date" if c == "doc_date" else "string"))
+            df_sel = df_sel.withColumn(c, F.lit(None).try_cast("date" if c == "doc_date" else "string"))
     return df_sel
 
 

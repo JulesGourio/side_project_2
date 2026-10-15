@@ -91,7 +91,7 @@ Le volume `staging` n'est pas copié (échanges transitoires). Les trois volumes
 
 ```powershell
 databricks bundle deployment bind qualibot_doc_compare uat_proj.qualibot.doc_compare -t qualibot-uat --profile UAT
-databricks bundle deployment bind qualibot_test uat_proj.qualibot.test -t qualibot-uat --profile UAT
+databricks bundle deployment unbind qualibot_test -t qualibot-uat --profile UAT
 databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t qualibot-uat --profile UAT
 ```
 

@@ -112,6 +112,17 @@ Jobs du bundle `dev` :
 
 ## À faire
 
+### Volume de test retiré du bundle (2026-10-15, à faire avant le prochain déploiement DEV)
+
+Le volume `test` (`dev_proj.qualibot.test`) n'est plus déclaré dans le bundle. Sans cette étape, le prochain `bundle deploy` le supprimerait avec ses fichiers. Le détacher de l'état (ne supprime rien dans Databricks), puis déployer :
+
+```powershell
+databricks bundle deployment unbind qualibot_test -t dev --profile DEV
+databricks bundle deploy -t dev --profile DEV
+```
+
+Si `unbind` répond qu'il n'y a pas de ressource `qualibot_test`, la ressource n'est déjà plus dans l'état : passer directement au `bundle deploy`.
+
 PowerShell, depuis la racine du projet, sur la machine de déploiement.
 
 ### S5. Sonnet 5.5 pour l'analyse de comparaison (2026-10-15, à faire)

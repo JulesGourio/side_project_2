@@ -299,7 +299,7 @@ def build_image_chunks(df_described):
     df_pf = spark.table(TARGET_PROCESSED_FILES_TABLE)
     df_doc_meta = (
         df_pf.select("IDDOC", "doc_date",
-                     *[F.col(c) if c in df_pf.columns else F.lit(None).cast("string").alias(c)
+                     *[F.col(c) if c in df_pf.columns else F.lit(None).try_cast("string").alias(c)
                        for c in ("type_document", "indice", "langue")])
         .withColumn("indice", F.col("indice").try_cast("string"))
         .dropDuplicates(["IDDOC"])
@@ -428,7 +428,7 @@ def write_image_chunks(df_image_chunks):
 
     # Cached because the left_anti join that built df_described would return 0 rows once the first MERGE ran.
     df_cached = df_image_chunks.cache()
-    is_recent = F.col("doc_date").isNull() | (F.col("doc_date") >= F.lit(DOC_DATE_CUTOFF).cast("date"))
+    is_recent = F.col("doc_date").isNull() | (F.col("doc_date") >= F.lit(DOC_DATE_CUTOFF).try_cast("date"))
 
     df_archive = df_cached.filter(~is_recent)
     n_archive = df_archive.count()
