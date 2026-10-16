@@ -67,8 +67,8 @@ import sys
 
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
+sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
 sys.path.insert(0, REPO_DIR)
-sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/
 
 from pyspark.sql import functions as F
 
