@@ -411,17 +411,7 @@ targets:
         qualibot_proj_schema:
           catalog_name: ${var.pipeline_write_env}_proj
           name: qualibot
-        # TEMPORARY: lets the unbind find the former schema in the bundle state. Remove after the state fix.
-        qualibot_schema:
-          catalog_name: uat_landingzone
-          name: qualibot
       volumes:
-        # TEMPORARY: same reason, former test volume. Remove after the state fix.
-        qualibot_test:
-          catalog_name: uat_landingzone
-          schema_name: qualibot
-          name: test
-          volume_type: MANAGED
         qualibot_doc_compare:
           catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
