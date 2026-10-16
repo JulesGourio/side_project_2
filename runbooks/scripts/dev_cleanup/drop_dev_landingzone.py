@@ -35,10 +35,12 @@ for endpoint in client.vector_search_endpoints.list_endpoints():
         if found.name.startswith(SCHEMA + ".") and found.name not in INDEXES:
             INDEXES.append(found.name)
 
+hidden = []
 for row in spark.sql(
     f"SELECT table_name, table_type FROM dev_landingzone.information_schema.tables WHERE table_schema = 'qualibot'"
 ).collect():
     logger.info("information_schema: %s (%s)", row["table_name"], row["table_type"])
+    hidden.append(row["table_name"])
 
 for index in INDEXES:
     assert index.startswith(SCHEMA + "."), index
@@ -50,6 +52,18 @@ for table in tables:
     rows = spark.table(full).count() if table not in {i.split('.')[-1] for i in INDEXES} else "index"
     logger.info("table %s (%s rows)", full, rows)
     run(f"table {full}", (lambda: None) if DRY_RUN else (lambda f=full: spark.sql(f"DROP TABLE IF EXISTS {f}")))
+
+def drop_leftover(full):
+    try:
+        spark.sql(f"DROP TABLE IF EXISTS {full}")
+    except Exception:
+        spark.sql(f"DROP VIEW IF EXISTS {full}")
+
+
+# Internal objects of a deleted index (event log, online view) that SHOW TABLES does not list.
+for name in hidden:
+    full = f"{SCHEMA}.`{name}`"
+    run(f"leftover {full}", (lambda: None) if DRY_RUN else (lambda f=full: drop_leftover(f)))
 
 volumes = [r["volume_name"] for r in spark.sql(f"SHOW VOLUMES IN {SCHEMA}").collect()]
 for volume in volumes:
