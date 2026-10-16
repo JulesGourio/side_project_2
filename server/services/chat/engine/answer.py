@@ -36,20 +36,23 @@ def with_language_reminder(messages: List[Dict[str, str]], language: Optional[st
     return out
 
 
-def revision_note(ref: str) -> str:
-    """' (current revision B, published YYYY-MM-DD)' from the catalog, '' when it has neither: the
-    passages themselves never carry the revision, and every document of the index is the current one."""
+def revision_note(ref: str, division: Optional[str] = None) -> str:
+    """' "Title" (current revision B, published YYYY-MM-DD; division AS)' from the catalog and the index row,
+    with only the parts it has: the passages themselves never carry them, and every document of the index is the
+    current one."""
     info = document_info(ref)
     parts = ([f"current revision {info['revision']}"] if info.get('revision') else []) + \
-            ([f"published {info['doc_date']}"] if info.get('doc_date') else [])
-    return f" ({', '.join(parts)})" if parts else ''
+            ([f"published {info['doc_date']}"] if info.get('doc_date') else []) + \
+            ([f"division {division}"] if division else [])
+    title = f' "{info["title"]}"' if info.get('title') else ''
+    return f"{title} ({', '.join(parts)})" if parts else title
 
 
 def build_prompt(division: str, conversation: List[Dict[str, str]], documents: List[Tuple[str, Dict[str, Any]]],
                  answer_language: Optional[str] = None) -> List[Dict[str, str]]:
     """System instructions, then the conversation; the last turn carries the numbered documents
     before the question and the language reminder after it."""
-    context = '\n\n'.join(f'[{i}] Document {ref}{revision_note(ref)}\n' + '\n\n'.join(d['passages'])
+    context = '\n\n'.join(f'[{i}] Document {ref}{revision_note(ref, d.get("division"))}\n' + '\n\n'.join(d['passages'])
                           for i, (ref, d) in enumerate(documents, 1))
     turns = [dict(m) for m in conversation]
     turns[-1]['content'] = f'Documents:\n\n{context}\n\n---\n\n{turns[-1]["content"]}'

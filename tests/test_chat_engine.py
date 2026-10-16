@@ -347,7 +347,7 @@ def test_prompt_rules_and_language(monkeypatch):
     assert '# Answering rules' in system and '# How to cite (mandatory)' in system and 'quote it exactly' in system
     assert m['prompt'][-1]['content'].endswith('write your whole answer in Spanish, the language of the question above '
                                                '(not the language of the documents).')
-    assert '[1] Document QP-1518\npassage 1\n\npassage 2' in m['prompt'][-1]['content']
+    assert '[1] Document QP-1518 (division AS)\npassage 1\n\npassage 2' in m['prompt'][-1]['content']
     assert m['chain'][0] == 'databricks-gpt-6-luna'
 
 
@@ -631,13 +631,14 @@ def test_prompt_gives_the_catalog_revision_of_each_document(monkeypatch):
     monkeypatch.setattr(engine.answer, 'document_info', lambda ref: info.get(ref, {}))
     _, m = _run(monkeypatch)
     user_turn = m['prompt'][-1]['content']
-    assert '[1] Document QP-1518 (current revision D, published 2024-10-11)\npassage 1' in user_turn
-    assert '[2] Document MR-1465\n' in user_turn                         # unknown to the catalog: nothing added
+    assert '[1] Document QP-1518 "NDT qualification" (current revision D, published 2024-10-11, division AS)\npassage 1' in user_turn
+    assert '[2] Document MR-1465 (division AS)\n' in user_turn          # unknown to the catalog: only the division
 
 
-def test_instructions_never_ask_for_an_unknown_version_or_a_source_list():
+def test_instructions_ask_for_the_sources_table_without_unknown_versions():
     for division in ('ALL', 'AS', 'IS'):
         text = engine.load_instructions(division)
         assert 'list every document you referenced' not in text
-        assert 'never write that a version or status is unknown' in text
-        assert 'Do not end your answer with a list of the documents' in text
+        assert 'never write that it is unknown' in text
+        assert 'REF | Title | Version | Status | Division' in text
+        assert 'Do not end your answer with a list of the documents' not in text

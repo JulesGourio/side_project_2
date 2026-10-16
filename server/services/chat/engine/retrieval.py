@@ -56,7 +56,7 @@ def group_documents(rows: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any
     """Passages grouped by document (REF), in order of first appearance."""
     docs: Dict[str, Dict[str, Any]] = {}
     for row in rows:
-        docs.setdefault(row['REF'], {'url': row['url'], 'passages': []})['passages'].append(row['chunk_text'])
+        docs.setdefault(row['REF'], {'url': row['url'], 'division': row.get('division'), 'passages': []})['passages'].append(row['chunk_text'])
     return list(docs.items())
 
 
