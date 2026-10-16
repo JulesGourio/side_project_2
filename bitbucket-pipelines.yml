@@ -167,6 +167,36 @@ definitions:
           - databricks bundle deployment unbind qualibot_test -t dev -p job-runner-sa-dev
 
     # -----------------------------------------------------------------------
+    # DEV, one-off: first parsing check. Runs only the first two tasks (dry_run stays true by default):
+    # GX checks and primary keys on category_reference and parse_manifest. No GPU task.
+    # -----------------------------------------------------------------------
+    - step: &parsing-check-dev
+        name: Parsing check DEV (1_categories, 2_manifest, dev)
+        deployment: dev
+        clone:
+          depth: 1
+        script:
+          - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
+          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - databricks version
+          - |
+            if [ -z "$DATABRICKS_TOKEN" ]; then
+              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'dev')." >&2
+              exit 1
+            fi
+          - |
+            cat > "$HOME/.databrickscfg" <<EOF
+            [job-runner-sa-dev]
+            host  = ${DATABRICKS_HOST:-https://dbc-c623749d-731b.cloud.databricks.com}
+            token = ${DATABRICKS_TOKEN}
+            EOF
+          - chmod 600 "$HOME/.databrickscfg"
+          - databricks current-user me -p job-runner-sa-dev
+          - python3 utils/deploy/render_target_config_env.py dev
+          - databricks bundle validate -t dev -p job-runner-sa-dev
+          - databricks bundle run parsing_pipeline -t dev -p job-runner-sa-dev --only 1_categories,2_manifest
+
+    # -----------------------------------------------------------------------
     # UAT: target qualibot-uat, profile job-runner-sa-uat.
     # -----------------------------------------------------------------------
     - step: &deploy-uat
@@ -324,6 +354,8 @@ pipelines:
       - step: *plan-dev
     unbind-dev-test-volume:
       - step: *unbind-dev-test-volume
+    parsing-check-dev:
+      - step: *parsing-check-dev
     deploy-uat:
       - step: *deploy-uat
     deploy-uat-jobs:
