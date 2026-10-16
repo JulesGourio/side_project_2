@@ -106,7 +106,7 @@ databricks apps get qualibot --profile UAT
 
 - [ ] **J2. Mode `full` pour le rechunk** : fait dans `databricks.yml` (commit `5656c33`, ligne 456, cible `qualibot-uat`).
 
-- [ ] **J3. Déploiement des jobs UAT** : copier le git dans `latec-compare`, puis Bitbucket, pipeline `deploy-uat-jobs`. Attendu : vert.
+- [ ] **J3. Déploiement des jobs UAT** (seulement si J0 est conforme) : copier le git dans `latec-compare`, puis Bitbucket, pipeline `deploy-uat-jobs`. Attendu : vert.
 
 - [ ] **J4. L'ancienne app tourne toujours** (PowerShell) :
 
