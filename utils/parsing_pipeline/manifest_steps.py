@@ -4,6 +4,7 @@ Reconciles the derived tables and the volume root with the current Qualibot scop
 Driver side only: nothing here is shipped to the executors.
 """
 import re
+from collections import Counter
 from datetime import datetime
 
 from databricks.sdk.runtime import dbutils, spark
@@ -301,6 +302,16 @@ def build_manifest(rows_keep):
 
     `indice` is the revision key `3_parse` compares across runs.
     """
+    # A document can sit in both a D_<IDDOC> and a Dm_<IDDOC> folder: the manifest keeps one row per IDDOC.
+    by_iddoc = {}
+    for r in sorted(rows_keep, key=lambda r: not r["name"].startswith("D_")):
+        by_iddoc.setdefault(r["IDDOC"], r)
+    if len(by_iddoc) < len(rows_keep):
+        seen = Counter(r["IDDOC"] for r in rows_keep)
+        both = sorted(r["name"] for r in rows_keep if seen[r["IDDOC"]] > 1)
+        logger.warning(f"{len(rows_keep) - len(by_iddoc)} IDDOC(s) found in two root folders, the D_ folder is kept: {both}")
+        rows_keep = list(by_iddoc.values())
+
     df_keep = spark.createDataFrame(
         [(r["IDDOC"], r["ref"], r["titre"], r["categorie"]) for r in rows_keep],
         schema=StructType([
@@ -308,12 +319,6 @@ def build_manifest(rows_keep):
             StructField("titre", StringType()), StructField("categorie", StringType()),
         ]),
     )
-
-    # A document can sit in both a D_<IDDOC> and a Dm_<IDDOC> folder: the manifest keeps one row per IDDOC.
-    n_duplicates = len(rows_keep) - len({r["IDDOC"] for r in rows_keep})
-    if n_duplicates:
-        logger.warning(f"{n_duplicates} IDDOC(s) found in two root folders (D_ and Dm_): one manifest row each.")
-        df_keep = df_keep.dropDuplicates(["IDDOC"])
 
     df_dates = (
         spark.read.table(GD_DOC_LATEST)
