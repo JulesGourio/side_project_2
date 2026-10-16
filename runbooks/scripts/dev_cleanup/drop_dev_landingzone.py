@@ -29,6 +29,17 @@ def run(label, action):
         logger.error("failed: %s: %s", label, error)
 
 
+for endpoint in client.vector_search_endpoints.list_endpoints():
+    for found in client.vector_search_indexes.list_indexes(endpoint_name=endpoint.name):
+        logger.info("index seen: %s (endpoint %s)", found.name, endpoint.name)
+        if found.name.startswith(SCHEMA + ".") and found.name not in INDEXES:
+            INDEXES.append(found.name)
+
+for row in spark.sql(
+    f"SELECT table_name, table_type FROM dev_landingzone.information_schema.tables WHERE table_schema = 'qualibot'"
+).collect():
+    logger.info("information_schema: %s (%s)", row["table_name"], row["table_type"])
+
 for index in INDEXES:
     assert index.startswith(SCHEMA + "."), index
     run(f"index {index}", (lambda i=index: None) if DRY_RUN else (lambda i=index: client.vector_search_indexes.delete_index(i)))
