@@ -942,6 +942,7 @@ Attendu : des lignes avec `is_in_rag` et `is_filtered_by_date` renseignés, et a
 
 ## Fait
 
+- Migration DEV : plan sans suppression (2026-10-16), app redéployée, historique DocCompare visible avec les documents (chemins corrigés à la copie et à chaque démarrage, confirmé 2026-10-16). Restent : point 7 (endpoint Sonnet, index) et le premier run du pipeline de parsing.
 - P1, P2, P4 : profil CLI, SP DEV, groupes visibles (2026-10-05).
 - E1 : export du corpus UAT (2026-10-05).
 - I1b, I2 : prévisualisation et déploiement de l'infrastructure DEV (2026-10-05).
