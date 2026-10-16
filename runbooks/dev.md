@@ -6,6 +6,24 @@ Chaque étape à faire à la main est listée ici, prête à copier-coller, dans
 
 Branche : **`feature/chat-vsi-merged-on-impact-search`**. Pas de PR ; le zip à déployer est celui de cette branche.
 
+## Précautions (à lire avant toute suppression)
+
+- **Aucune suppression** (`DROP`, `DELETE`, `TRUNCATE`, suppression de table, de volume ou d'index) sans trois choses : le comptage avant et après, une sauvegarde vérifiée, et ton accord écrit dans cette fiche.
+- **Deux objets portent le même nom sans être le même.** Delta `dev_proj.qualibot.compare_messages` est la copie de l'UAT (228 lignes). Lakebase `compare_messages` est la table de l'app, vide tant que la nouvelle version n'a pas démarré. L'app lit la Lakebase.
+- **La Lakebase appartient au service principal de l'app.** Tu ne peux pas y écrire à la main. La copie de l'historique (`messages` → `compare_messages`, `feedbacks` → `compare_feedbacks`, `errors` → `app_errors`) se fait au premier démarrage de la nouvelle version, et seulement si la table cible est vide.
+- **Les anciennes tables Lakebase** (`messages`, `feedbacks`, `errors`, `knowledge_base_metadata`) restent jusqu'à validation complète de l'historique et du chat.
+- **Le volume `test`** (`dev_proj.qualibot.test`) reste dans l'état du bundle sans clé dans la configuration. Il se détache (`unbind`), il ne se supprime pas.
+- **Risque connu** : `server/services/infra/lakebase/schema.py` supprime des lignes de `users` (doublons) et des colonnes à chaque démarrage de l'app. Ne pas démarrer une nouvelle version sur une base réelle avant d'avoir tranché.
+
+### Ordre de nettoyage DEV (après validation, accord écrit à chaque étape)
+
+1. Valider : historique visible dans l'app DEV, chat et comparaison OK, index `ONLINE`.
+2. Détacher le volume `test` (procédure du pipeline `unbind-dev-test-volume`), puis `plan-dev` sans `delete`.
+3. Supprimer les doublons à anciens noms dans `dev_proj.qualibot` : `eval_load_runs`, `eval_pairwise_runs_cache`, `eval_vs_load_runs`, `feedback_failure_cases`, `qualibot_eval_golden`, `synthetic_retrieval_questions`.
+4. Supprimer les tables copiées sans lecture par le code : `chat_quality_scores`, `chat_quality_scoring_runs`, `dnt_rules`, `glossary_terms`, `eval_golden_runs`.
+5. Lister `dev_landingzone.qualibot` (tables, volumes, index), puis supprimer objet par objet, la liste en main.
+6. `dev_lab` (00.8), après `SHOW TABLES`.
+
 ## Paramètres DEV
 
 | Sujet | Valeur |

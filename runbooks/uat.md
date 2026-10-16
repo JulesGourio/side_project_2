@@ -600,6 +600,41 @@ python runbooks/scripts/lakebase/migrate_lakebase.py --env UAT
 
 3. Relancer le job de droits UAT : sa liste de tables porte les nouveaux noms.
 
+### 0.12 — Précautions et nettoyage (à lire avant D5)
+
+Rien dans cette étape ne supprime de données. Les suppressions viennent après validation complète, sur accord écrit.
+
+**Ce que fait le démarrage de la nouvelle version** (`server/services/infra/lakebase/schema.py`) : la copie de l'historique (`messages` → `compare_messages`, `feedbacks` → `compare_feedbacks`, `errors` → `app_errors`) n'a lieu que si la table cible est vide. Le même code supprime aussi des lignes de `users` (doublons) et des colonnes à chaque démarrage. Cette partie doit être tranchée avant D5.
+
+**U1 — Comptage (éditeur SQL Lakebase, base `doccompare`, projet `qualibot`, branche `production`)** :
+
+```sql
+SELECT 'messages' AS legacy, (SELECT COUNT(*) FROM messages) AS legacy_rows, 'compare_messages' AS current_table, (SELECT COUNT(*) FROM compare_messages) AS current_rows
+UNION ALL SELECT 'feedbacks', (SELECT COUNT(*) FROM feedbacks), 'compare_feedbacks', (SELECT COUNT(*) FROM compare_feedbacks)
+UNION ALL SELECT 'errors', (SELECT COUNT(*) FROM errors), 'app_errors', (SELECT COUNT(*) FROM app_errors)
+UNION ALL SELECT 'users', (SELECT COUNT(*) FROM users), 'users', (SELECT COUNT(*) FROM users);
+```
+
+**U2 — Inventaire Delta (PowerShell, profil `UAT`)** :
+
+```powershell
+databricks tables list uat_landingzone qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks volumes list uat_landingzone qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks vector-search-indexes list-indexes qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.name }
+```
+
+**U3 — Après le premier démarrage de la nouvelle version (D5 seulement, accord écrit)** : relancer U1. Attendu : `compare_messages` = `messages`, `compare_feedbacks` = `feedbacks`, `app_errors` >= `errors`. Ensuite, vérifier dans l'app que l'historique DocCompare des utilisateurs est visible.
+
+**U4 — Suppressions (après validation complète et accord écrit, à ne pas lancer avant)** : les anciennes tables Lakebase, puis les tables `_v1` et l'ancien schéma, objet par objet, à partir de la liste de U2.
+
+```sql
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS feedbacks;
+DROP TABLE IF EXISTS errors;
+DROP TABLE IF EXISTS knowledge_base_metadata;
+```
+
 ## Fait
 
 _(rien de confirmé pour l'instant)_
