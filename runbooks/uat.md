@@ -42,7 +42,7 @@ databricks vector-search-indexes list-indexes qualibot --profile UAT -o json | C
 
 **0.2 — Clonage des tables (SQL, éditeur SQL du workspace UAT, un utilisateur qui lit l'ancien schéma UAT et crée dans `uat_proj.qualibot`)**
 
-Pour chaque table listée en 0.1 (sauf les volumes), une ligne `DEEP CLONE`. Si la table sans suffixe n'existe pas, cloner la version `_v1` correspondante. Référence :
+Pour chaque table listée en 0.1 (sauf les volumes), une ligne `DEEP CLONE`. Si la table sans suffixe n'existe pas, cloner la version `_v1` correspondante. Inventaire du 2026-10-16 : `chunks_archive_v1`, `chunks_archive_notices_v1` et `chunks_full_v1` n'existent pas dans `uat_landingzone` : rien à cloner, le pipeline les crée au premier run. `eval_feedback_failures` s'appelle `feedback_failure_cases` dans la source : cloner depuis ce nom, ligne ci-dessous. Référence :
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS uat_proj.qualibot;
@@ -54,11 +54,8 @@ CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parse_manifest         DEEP CLONE u
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.category_reference     DEEP CLONE uat_landingzone.qualibot.category_reference_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.parsing_run_health     DEEP CLONE uat_landingzone.qualibot.parsing_run_health_v1;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.document_change_log    DEEP CLONE uat_landingzone.qualibot.document_change_log_v1;
+CREATE TABLE IF NOT EXISTS uat_proj.qualibot.eval_feedback_failures DEEP CLONE uat_landingzone.qualibot.feedback_failure_cases;
 CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks                 DEEP CLONE uat_landingzone.qualibot.chunks_v1;
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_archive         DEEP CLONE uat_landingzone.qualibot.chunks_archive_v1;
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot.archive_notices DEEP CLONE uat_landingzone.qualibot.chunks_archive_notices_v1;
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot.chunks_full            DEEP CLONE uat_landingzone.qualibot.chunks_full_v1;
-CREATE TABLE IF NOT EXISTS uat_proj.qualibot.eval_feedback_failures DEEP CLONE uat_landingzone.qualibot.eval_feedback_failures;
 ```
 
 Les tables chat (`chat_messages`, `chat_sessions`, `chat_feedbacks`, `chat_turns`, `chat_retrieved_chunks`, `app_errors`) ne se clonent pas : elles sont rechargées depuis Lakebase à l'étape 0.5.
@@ -90,7 +87,7 @@ databricks fs cp -r dbfs:/Volumes/uat_landingzone/qualibot/images dbfs:/Volumes/
 Le volume `staging` n'est pas copié (échanges transitoires). Les trois volumes déclarés dans le bundle pour `qualibot-uat` (`doc_compare`, `test`, `images`) doivent être liés au bundle avant le déploiement, sinon celui-ci essaie de les recréer :
 
 ```powershell
-databricks bundle deployment bind qualibot_doc_compare uat_proj.qualibot.doc_compare -t qualibot-uat --profile UAT
+databricks bundle deployment bind qualibot_doc_compare uat_proj.qualibot.doc_compare -t qualibot-uat --profile UAT   # à lancer par le SP (même règle que DEV : pipeline Bitbucket), pas avec le profil personnel
 databricks bundle deployment unbind qualibot_test -t qualibot-uat --profile UAT
 databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t qualibot-uat --profile UAT
 ```
@@ -606,13 +603,13 @@ Rien dans cette étape ne supprime de données. Les suppressions viennent après
 
 **Ce que fait le démarrage de la nouvelle version** (`server/services/infra/lakebase/schema.py`) : la copie de l'historique (`messages` → `compare_messages`, `feedbacks` → `compare_feedbacks`, `errors` → `app_errors`) n'a lieu que si la table cible est vide. Le même code supprime aussi des lignes de `users` (doublons) et des colonnes à chaque démarrage. Cette partie doit être tranchée avant D5.
 
-**U1 — Comptage (éditeur SQL Lakebase, base `doccompare`, projet `qualibot`, branche `production`)** :
+**U1 — Comptage des anciennes tables (éditeur SQL Lakebase, base `doccompare`, projet `qualibot`, branche `production`). Avant D5, seules les anciennes tables existent.** :
 
 ```sql
-SELECT 'messages' AS legacy, (SELECT COUNT(*) FROM messages) AS legacy_rows, 'compare_messages' AS current_table, (SELECT COUNT(*) FROM compare_messages) AS current_rows
-UNION ALL SELECT 'feedbacks', (SELECT COUNT(*) FROM feedbacks), 'compare_feedbacks', (SELECT COUNT(*) FROM compare_feedbacks)
-UNION ALL SELECT 'errors', (SELECT COUNT(*) FROM errors), 'app_errors', (SELECT COUNT(*) FROM app_errors)
-UNION ALL SELECT 'users', (SELECT COUNT(*) FROM users), 'users', (SELECT COUNT(*) FROM users);
+SELECT 'messages' AS t, COUNT(*) AS n FROM messages
+UNION ALL SELECT 'feedbacks', COUNT(*) FROM feedbacks
+UNION ALL SELECT 'errors', COUNT(*) FROM errors
+UNION ALL SELECT 'users', COUNT(*) FROM users;
 ```
 
 **U2 — Inventaire Delta (PowerShell, profil `UAT`)** :
