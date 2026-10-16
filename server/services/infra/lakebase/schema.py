@@ -46,13 +46,19 @@ async def _carry_over_legacy_rows(conn) -> None:
             await conn.execute(
                 f"SELECT setval(pg_get_serial_sequence('{current}', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) "
                 f'FROM {current}')
-        if 'volume_session_path' in current_cols and os.getenv('COMPARE_VOLUME_PATH'):
-            # The copied rows point at the volume of the environment they came from: move them under this one.
-            await conn.execute(
-                f"UPDATE {current} SET volume_session_path = regexp_replace(volume_session_path, $1, $2) "
-                'WHERE volume_session_path ~ $1',
-                LEGACY_VOLUME_PATTERN, os.environ['COMPARE_VOLUME_PATH'].rstrip('/'))
         logger.info('Copied legacy rows %s -> %s (%s)', legacy, current, copied)
+
+
+async def _move_legacy_volume_paths(conn) -> None:
+    """Rows copied from another environment point at its documents volume: move them under COMPARE_VOLUME_PATH.
+    Runs at every start, so rows copied by an earlier start are fixed too; it only touches the old paths."""
+    volume_root = os.getenv('COMPARE_VOLUME_PATH', '').rstrip('/')
+    if not volume_root:
+        return
+    await conn.execute(
+        "UPDATE compare_messages SET volume_session_path = regexp_replace(volume_session_path, $1, $2) "
+        'WHERE volume_session_path ~ $1',
+        LEGACY_VOLUME_PATTERN, volume_root)
 
 
 async def ensure_schema(pool: asyncpg.Pool) -> None:
@@ -545,6 +551,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         # ── Data migrations (idempotent — WHERE only matches rows in the composite format) ──
 
         await _carry_over_legacy_rows(conn)
+        await _move_legacy_volume_paths(conn)
 
         # 0. Drop unused columns (Lakebase rewrites the table: briefly empty).
         for _tbl, _col in [
