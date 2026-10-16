@@ -166,6 +166,41 @@ definitions:
           - databricks bundle plan -t qualibot-uat -p job-runner-sa-uat
 
     # -----------------------------------------------------------------------
+    # UAT, one-off: detach the bundle state from the former uat_landingzone objects (nothing is deleted in Databricks)
+    # and bind it to the uat_proj volumes. Run plan-uat afterwards.
+    # -----------------------------------------------------------------------
+    - step: &uat-state-fix
+        name: Detach the UAT bundle state from uat_landingzone (uat)
+        deployment: uat
+        clone:
+          depth: 1
+        script:
+          - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
+          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - databricks version
+          - |
+            if [ -z "$DATABRICKS_TOKEN" ]; then
+              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'uat')." >&2
+              exit 1
+            fi
+          - |
+            cat > "$HOME/.databrickscfg" <<EOF
+            [job-runner-sa-uat]
+            host  = ${DATABRICKS_HOST:-https://dbc-3a17bfce-9e88.cloud.databricks.com}
+            token = ${DATABRICKS_TOKEN}
+            EOF
+          - chmod 600 "$HOME/.databrickscfg"
+          - databricks current-user me -p job-runner-sa-uat
+          - python3 utils/deploy/render_target_config_env.py uat
+          - databricks bundle validate -t qualibot-uat -p job-runner-sa-uat
+          - databricks bundle deployment unbind qualibot_schema -t qualibot-uat -p job-runner-sa-uat
+          - databricks bundle deployment unbind qualibot_test -t qualibot-uat -p job-runner-sa-uat
+          - databricks bundle deployment unbind qualibot_doc_compare -t qualibot-uat -p job-runner-sa-uat
+          - databricks bundle deployment unbind qualibot_images -t qualibot-uat -p job-runner-sa-uat
+          - databricks bundle deployment bind qualibot_doc_compare uat_proj.qualibot.doc_compare -t qualibot-uat -p job-runner-sa-uat --auto-approve
+          - databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t qualibot-uat -p job-runner-sa-uat --auto-approve
+
+    # -----------------------------------------------------------------------
     # DEV, one-off: detach the test volume from the bundle state. Nothing is deleted
     # in Databricks; the volume and its files stay. Run plan-dev afterwards.
     # -----------------------------------------------------------------------
@@ -353,6 +388,8 @@ pipelines:
       - step: *plan-dev
     plan-uat:
       - step: *plan-uat
+    uat-state-fix:
+      - step: *uat-state-fix
     unbind-dev-test-volume:
       - step: *unbind-dev-test-volume
     deploy-uat:
