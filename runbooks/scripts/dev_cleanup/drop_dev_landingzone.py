@@ -1,15 +1,15 @@
 # Databricks notebook source
 # One-shot: removes the former DEV schema dev_landingzone.qualibot (index, tables, volumes, then the schema).
-# Submitted as the DEV job service principal. Only that schema is ever touched; dry_run lists without dropping.
+# Only that schema is ever touched: the catalog and its other schemas stay as they are.
 
 import logging
 
 logger = logging.getLogger("drop_dev_landingzone")
 logging.basicConfig(level=logging.INFO)
 
-dbutils.widgets.removeAll()
-dbutils.widgets.dropdown("dry_run", "true", ["true", "false"])
-DRY_RUN = dbutils.widgets.get("dry_run") == "true"
+# First run: keep the next line (lists only). Second run: comment it and uncomment the line below it (drops).
+DRY_RUN = True
+# DRY_RUN = False
 
 SCHEMA = "dev_landingzone.qualibot"
 INDEXES = [f"{SCHEMA}.chunks_index"]
