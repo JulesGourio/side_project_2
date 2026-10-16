@@ -62,7 +62,7 @@ async def _move_legacy_volume_paths(conn) -> None:
 
 
 async def ensure_schema(pool: asyncpg.Pool) -> None:
-    # DROP COLUMN only for columns that nothing reads or writes; never DROP TABLE or TRUNCATE.
+    # Additive only: no DROP, DELETE or TRUNCATE at start-up.
     # Lakebase rewrites the table, so it looks empty for a moment before the data is back.
     async with pool.acquire() as conn:
         # ── messages (primary history table) ─────────────────────────────────
@@ -372,10 +372,6 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             ('workspace_id', 'TEXT'),
         ])
 
-        await conn.execute(
-            "ALTER TABLE users DROP COLUMN IF EXISTS can_translate"
-        )
-
         # (deduplication and unique index applied after data migrations below)
 
         # ── chat_sessions ─────────────────────────────────────────────────────
@@ -553,60 +549,32 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await _carry_over_legacy_rows(conn)
         await _move_legacy_volume_paths(conn)
 
-        # 0. Drop unused columns (Lakebase rewrites the table: briefly empty).
-        for _tbl, _col in [
-            ('compare_messages', 'duration_s'),
-            ('users',        'can_export'),
-            ('llm_requests', 'user_id'),
-            ('llm_requests', 'workspace_id'),
-        ]:
-            try:
-                await conn.execute(f'ALTER TABLE {_tbl} DROP COLUMN IF EXISTS {_col}')
-            except Exception as e:
-                logger.debug('Could not drop %s.%s: %s', _tbl, _col, e)
-
         # 1. Trim trailing whitespace and line breaks from emails.
         await conn.execute("UPDATE users SET email = BTRIM(email) WHERE email ~ '\\s'")
         await conn.execute("UPDATE users SET email = NULL WHERE TRIM(COALESCE(email,'')) = ''")
 
-        # 2. Delete NULL-email users whose numeric ID already has an email-carrying entry (same person in two workspaces),
-        #    otherwise the split UPDATE below hits a UNIQUE violation on user_id.
-        await conn.execute(r'''
-            DELETE FROM users
-            WHERE email IS NULL
-              AND user_id ~ '^\d+@\d+$'
-              AND SPLIT_PART(user_id, '@', 1) IN (
-                  SELECT SPLIT_PART(user_id, '@', 1) FROM users
-                  WHERE email IS NOT NULL AND user_id ~ '^\d+@\d+$'
-              )
-        ''')
-
         # 3. Split composite user_ids (numeric@workspace) into separate columns for every table
         for table in ('users', 'compare_messages', 'compare_feedbacks',
                       'chat_sessions', 'chat_messages', 'chat_feedbacks'):
-            await conn.execute(f'''
-                UPDATE {table}
-                SET workspace_id = SPLIT_PART(user_id, '@', 2),
-                    user_id      = SPLIT_PART(user_id, '@', 1)
-                WHERE user_id ~ '^\\d+@\\d+$'
+            try:
+                await conn.execute(f'''
+                    UPDATE {table}
+                    SET workspace_id = SPLIT_PART(user_id, '@', 2),
+                        user_id      = SPLIT_PART(user_id, '@', 1)
+                    WHERE user_id ~ '^\\d+@\\d+$'
+                ''')
+            except asyncpg.PostgresError as e:
+                logger.warning('Composite user ids of %s not split: %s', table, e)
+
+        # Partial unique index on email so the same real-world user is never duplicated across workspaces.
+        # No row is deleted to get there: with duplicates left, the index is skipped and a warning says so.
+        try:
+            await conn.execute('''
+                CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx
+                ON users(email)
+                WHERE email IS NOT NULL
             ''')
-
-        # ── Deduplication + unique index (run after data cleanup) ─────────────
-        # Keep the most recently updated row per email, delete older duplicates.
-        await conn.execute('''
-            DELETE FROM users a
-            USING users b
-            WHERE a.email IS NOT NULL
-              AND a.email = b.email
-              AND a.updated_at < b.updated_at
-        ''')
-
-        # Partial unique index on email so the same real-world user is never
-        # duplicated across workspaces.
-        await conn.execute('''
-            CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx
-            ON users(email)
-            WHERE email IS NOT NULL
-        ''')
+        except asyncpg.PostgresError as e:
+            logger.warning('users_email_idx not created: %s', e)
 
     logger.info('Lakebase schema ready')
