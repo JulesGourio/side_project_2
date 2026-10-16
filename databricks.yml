@@ -453,7 +453,7 @@ targets:
       app_name: "qualibot"
       pipeline_write_env: uat
       parsing_num_workers: "4"
-      parsing_run_mode: "incremental"
+      parsing_run_mode: "full"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_bronze through the shared metastore.
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
