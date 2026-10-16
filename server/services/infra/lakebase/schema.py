@@ -1,6 +1,7 @@
 """Idempotent creation and migration of the Lakebase tables, run at every app start."""
 
 import logging
+import os
 
 import asyncpg
 
@@ -13,6 +14,9 @@ async def _add_columns(conn, table: str, columns) -> None:
     for col, typedef in columns:
         await conn.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}')
 
+
+# Session folders of the former documents volume: <env>_landingzone/qualibot/doc_compare.
+LEGACY_VOLUME_PATTERN = r'^/Volumes/[^/]+_landingzone/qualibot/doc_compare'
 
 # Renamed tables, copied in dependency order (a feedback points to its message). The legacy tables are kept.
 LEGACY_TABLE_COPIES = (
@@ -42,6 +46,12 @@ async def _carry_over_legacy_rows(conn) -> None:
             await conn.execute(
                 f"SELECT setval(pg_get_serial_sequence('{current}', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) "
                 f'FROM {current}')
+        if 'volume_session_path' in current_cols and os.getenv('COMPARE_VOLUME_PATH'):
+            # The copied rows point at the volume of the environment they came from: move them under this one.
+            await conn.execute(
+                f"UPDATE {current} SET volume_session_path = regexp_replace(volume_session_path, $1, $2) "
+                'WHERE volume_session_path ~ $1',
+                LEGACY_VOLUME_PATTERN, os.environ['COMPARE_VOLUME_PATH'].rstrip('/'))
         logger.info('Copied legacy rows %s -> %s (%s)', legacy, current, copied)
 
 
