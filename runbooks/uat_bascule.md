@@ -110,7 +110,7 @@ databricks apps get qualibot --profile UAT
 
 - [ ] **J1. Pause du planning du job de parsing UAT** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Pause* sur le planning.
 
-- [ ] **J2. Mode `full` pour le rechunk** : fait dans `databricks.yml` (commit `5656c33`, ligne 456, cible `qualibot-uat`).
+- [ ] **J2. Mode du rechunk** : `rechunk` = aucun parsing, `chunks` reconstruits depuis le checkpoint, `image_metadata` conservée telle quelle ; `full` = scanne tous les documents, parse ceux dont le fichier a changé, reconstruit toutes les tables depuis le checkpoint, et copie le checkpoint dans `_pipeline_checkpoint_<horodatage>`. Le run UAT du 2026-10-16 a été lancé en `full` (ligne 456 de `databricks.yml`, cible `qualibot-uat`).
 
 - [ ] **J3. Déploiement des jobs UAT** (seulement si J0b est conforme) : copier le git dans `latec-compare`, puis Bitbucket, pipeline `deploy-uat-jobs`. Attendu : vert.
 
