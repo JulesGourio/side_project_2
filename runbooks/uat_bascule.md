@@ -136,6 +136,8 @@ Attendu : `ONLINE`. Peut prendre environ une heure.
 
 - [ ] **J8. Reprise du planning** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Resume*.
 
+- [ ] **Prompt du chat (sources en tableau, réponses plus complètes)** : après le déploiement de l'app, lancer le job `register_chat_prompts` de la cible, pour lier la nouvelle version du prompt.
+
 ## Phase S — bascule de l'app (accord écrit requis, moment calme recommandé)
 
 - [ ] **S0. Accord écrit pour la bascule** : ____________.

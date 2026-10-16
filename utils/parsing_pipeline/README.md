@@ -74,7 +74,7 @@ The job sets the environment variables read by `config.py`. The main ones, with 
 | `PARSING_ARCHIVE_MAX_DOCS` | `0` | Number of archived documents parsed, most recent first; `-1` for all |
 | `PARSING_ARCHIVE_NOTICES_IN_RAG` | `false` | Copies the archive notices into `chunks` |
 | `PARSING_VECTOR_SEARCH_INDEXES` | empty | Indexes synced by `5_sync_index` (widget `indexes` takes precedence) |
-| `PARSING_LLM_ENDPOINT` | `databricks-gpt-5-6-luna` | Vision model of `4_describe_images` |
+| `PARSING_LLM_ENDPOINT` | `databricks-gpt-6-luna` | Vision model of `4_describe_images` |
 | `PARSING_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-5-6-luna` | Comma-separated endpoints tried after the primary |
 | `PARSING_LLM_BATCH_SIZE` | `6000` | Images described per run |
 | `PARSING_IMAGE_MAX_ATTEMPTS` | `10` | Attempts before an image is set aside as `FAILED_LIMIT` |

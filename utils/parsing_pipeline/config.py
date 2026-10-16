@@ -202,11 +202,11 @@ CHUNK_OVERLAP_RATIO = float(_env("PARSING_CHUNK_OVERLAP_RATIO", "0.12"))
 BOILERPLATE_MIN_DOCS = int(_env("PARSING_BOILERPLATE_MIN_DOCS", "20"))
 
 # --- LLM settings (vision model for image description) ---
-LLM_MODEL_ENDPOINT  = _env("PARSING_LLM_ENDPOINT", "databricks-gpt-5-6-luna")
+LLM_MODEL_ENDPOINT  = _env("PARSING_LLM_ENDPOINT", "databricks-gpt-6-luna")
 LLM_MAX_TOKENS      = 5000    # GPT-5 reasoning tokens need headroom beyond the visible output
 LLM_TEMPERATURE     = 1.0   # gpt-5 family: temperature=1 only
 LLM_MAX_RETRIES     = 5    # per endpoint and per pass
-# Tried in order after the primary, comma-separated. GPT-6 Luna stays out of the default: its image input is not verified.
+# Tried in order after the primary, comma-separated. An endpoint that rejects images is skipped after a few failures in a row.
 LLM_FALLBACK_ENDPOINTS = _env("PARSING_LLM_FALLBACK_ENDPOINTS", "databricks-gpt-5-6-luna")
 # Passes over the endpoint chain; the waits are slept before the second and the following passes.
 LLM_ROUNDS          = int(_env("PARSING_LLM_ROUNDS", "2"))
