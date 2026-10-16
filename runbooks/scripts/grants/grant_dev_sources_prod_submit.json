@@ -1,0 +1,12 @@
+{
+  "run_name": "qualibot-grant-dev-sources-prod",
+  "tasks": [
+    {
+      "task_key": "grant_dev_sources",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/qualibot_grants/grant_dev_sources",
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}
