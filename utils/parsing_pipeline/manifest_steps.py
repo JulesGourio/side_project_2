@@ -309,6 +309,12 @@ def build_manifest(rows_keep):
         ]),
     )
 
+    # A document can sit in both a D_<IDDOC> and a Dm_<IDDOC> folder: the manifest keeps one row per IDDOC.
+    n_duplicates = len(rows_keep) - len({r["IDDOC"] for r in rows_keep})
+    if n_duplicates:
+        logger.warning(f"{n_duplicates} IDDOC(s) found in two root folders (D_ and Dm_): one manifest row each.")
+        df_keep = df_keep.dropDuplicates(["IDDOC"])
+
     df_dates = (
         spark.read.table(GD_DOC_LATEST)
         .select(F.col("IDDOC"), _doc_date_column(GD_DOC_LATEST).alias("doc_date"),
