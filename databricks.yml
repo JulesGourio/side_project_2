@@ -26,11 +26,14 @@ variables:
     description: "Number of GPU workers for the parse cluster"
     default: "2"
   parsing_run_mode:
-    description: "Parsing run mode: 'incremental' (new docs only), 'full' (rebuild all, reparses files whose path or hash is not in the checkpoint) or 'rechunk' (chunks rebuilt from the checkpoint, no parsing)"
+    description: "Parsing run mode: 'incremental' (new docs only), 'full' (rebuild all, parses only the files whose IDDOC and content hash are not in the checkpoint) or 'rechunk' (chunks rebuilt from the checkpoint, no parsing)"
     default: "incremental"
   parsing_parse_filter:
     description: "Comma-separated IDDOC list to restrict a run to (empty = no filter, normal mode). Override via --var for a one-off targeted test run."
     default: ""
+  parsing_max_parse_files:
+    description: "Most files one 3_parse run may send to the GPU parse; above it the task stops before parsing. 0 = no ceiling, only for a deliberate full re-parse."
+    default: "500"
   parsing_images_volume:
     description: "Volume of <pipeline_write_env>_proj.qualibot the parsing pipeline extracts images to"
     default: "images"

@@ -134,8 +134,12 @@ EMPTY_SMALL_FILE_SIZE_BYTES = int(_env("PARSING_EMPTY_SMALL_FILE_SIZE_BYTES", "5
 
 # --- Run mode ---
 RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full" | "rechunk"
-# "rechunk": rebuild chunks and image_metadata from the checkpoint as it is, without scanning the volume or parsing
-# (a checkpoint copied from another environment does not match its file paths, so "full" would reparse everything).
+# "full": scan every in-scope document, parse only the files whose (IDDOC, content hash) has no reusable checkpoint
+# row, then rebuild every table from the checkpoint. "rechunk": the same rebuild, without scanning or parsing.
+
+# Ceiling on the files one run may parse: above it, 3_parse stops before the GPU parse. 0 = no ceiling (a deliberate
+# full re-parse). A daily run parses tens of files; thousands mean the checkpoint was not recognised.
+MAX_PARSE_FILES = int(_env("PARSING_MAX_PARSE_FILES", "").strip() or "500")
 
 # =============================================================================
 # Scope filter (None = all IDDOCs, list = specific)

@@ -30,6 +30,7 @@ from config import (
     EMPTY_SMALL_FILE_SIZE_BYTES,
     ENABLE_TIMING_TEST,
     ENRICHMENT_COLS,
+    MAX_PARSE_FILES,
     MAX_REPEAT,
     MIN_AREA_RATIO,
     PARSE_FILTER,
@@ -47,6 +48,8 @@ JOB_RUN_ID = None
 
 # Any other status is retried automatically on the next incremental run.
 _TERMINAL_STATUSES = list(doc_status.TERMINAL_STATUSES)   # a list: pyspark isin() does not take a tuple
+# Checkpoint statuses that the same bytes would give again: the file is not re-parsed (ERROR / EMPTY_TEXT are).
+_REUSABLE_STATUSES = ["SUCCESS", "SKIPPED_EMPTY_SMALL_FILE", "SKIP_TOO_LARGE"]
 # A change in any of these on the same IDDOC means a revised document (ref included: Intraqual can rename in place).
 _STALENESS_COLS = ["indice", "doc_date", "ref"]
 
@@ -245,33 +248,51 @@ def read_checkpoint_deduped():
     )
 
 
+def _reusable_checkpoint_rows():
+    """Checkpoint rows whose result a new parse of the same bytes would only repeat: SUCCESS, the deterministic skips,
+    and the scanned PDFs already queued for LLM-OCR (a re-parse would delete their rendered pages)."""
+    return spark.table(CHECKPOINT_TABLE).filter(
+        F.col("parse_status").isin(_REUSABLE_STATUSES)
+        | F.col("parser_strategy").eqNullSafe("pending_llm_ocr:pdf")
+    )
+
+
 def exclude_already_parsed(df_files):
-    """Resume support: drop files already SUCCESS in the checkpoint, keyed on
-    (source_path, document_sha256). Returns the filtered, cached df_files.
+    """Resume support: drop the files whose IDDOC already has a reusable checkpoint row for the same bytes.
+
+    Keyed on (IDDOC, document_sha256), not on the path: a checkpoint copied from another environment, or a file
+    moved between the D_ and Dm_ folders, keeps its content but not its path. Returns the filtered, cached df_files.
     """
     if not table_exists(CHECKPOINT_TABLE):
-        logger.info("No existing checkpoint — starting from scratch.")
+        logger.info("[RESUME] No existing checkpoint — every selected file will be parsed.")
         return df_files
 
-    df_existing_ckpt = spark.table(CHECKPOINT_TABLE)
-    existing_count = df_existing_ckpt.count()
-    if existing_count == 0:
-        return df_files
-
-    already_done = (
-        df_existing_ckpt
-        .filter(F.col("parse_status") == "SUCCESS")
-        .select("source_path", "document_sha256").distinct()
-    )
+    df_reusable = _reusable_checkpoint_rows().select("IDDOC", "document_sha256").distinct()
     before = df_files.count()
-    df_files = df_files.join(already_done, on=["source_path", "document_sha256"], how="left_anti").cache()
+    df_files = df_files.join(df_reusable, on=["IDDOC", "document_sha256"], how="left_anti").cache()
     after = df_files.count()
-    logger.info(f"[RESUME] {existing_count} checkpoint rows "
-                f"({already_done.count()} terminal on (source_path, document_sha256), SUCCESS). "
-                f"Remaining to parse: {after} (of {before} total)")
-    if after == 0:
-        logger.info("All files are already parsed (successfully) in the checkpoint.")
+
+    # Why the remaining files are parsed: an IDDOC never seen, or seen with other bytes (or only in error).
+    known_iddocs = spark.table(CHECKPOINT_TABLE).select("IDDOC").distinct()
+    n_known = df_files.join(known_iddocs, on="IDDOC", how="left_semi").count()
+    logger.info(f"[RESUME] {before - after} of {before} selected files reused from the checkpoint | to parse: {after} "
+                f"({after - n_known} IDDOC(s) absent from the checkpoint, {n_known} present with other bytes or in error)")
     return df_files
+
+
+def enforce_parse_budget(num_files):
+    """Stop the task before any GPU parse when more files are pending than `MAX_PARSE_FILES` allows.
+
+    A daily run parses tens of files; thousands mean the checkpoint was not recognised (wrong table, copy missing),
+    which costs a day of GPU. A real full re-parse is run on purpose with `parsing_max_parse_files=0`.
+    """
+    if MAX_PARSE_FILES and num_files > MAX_PARSE_FILES:
+        raise RuntimeError(
+            f"[BUDGET] {num_files} files to parse, above parsing_max_parse_files={MAX_PARSE_FILES}. Nothing was parsed. "
+            f"Check the [RESUME] line above and that {CHECKPOINT_TABLE} holds the previous parses; to re-parse on "
+            f"purpose, deploy with --var=\"parsing_max_parse_files=0\" (or a higher ceiling) and run again."
+        )
+    logger.info(f"[BUDGET] {num_files} file(s) to parse (ceiling {MAX_PARSE_FILES or 'none'})")
 
 
 def cleanup_stale_image_folders(df_files):
@@ -432,9 +453,11 @@ def _images_pending_iddocs():
 
 
 def show_failed_documents(df_business_meta):
-    """Display documents that failed Docling parsing, before the rank-2 retry.
-    Scoped to IDDOCs still in scope."""
-    df_full_pipeline = read_checkpoint_deduped()
+    """Display the documents this run failed to parse, before the rank-2 retry.
+
+    Only this run's rows: older failures of a copied checkpoint (written by an older parser) are not this run's result.
+    """
+    df_full_pipeline = read_checkpoint_deduped().filter(F.col("ingestion_run_id") == INGESTION_RUN_ID)
     df_failed_inspect = (
         df_full_pipeline
         .join(df_business_meta.select("IDDOC").distinct(), on="IDDOC", how="inner")

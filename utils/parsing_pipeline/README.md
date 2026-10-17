@@ -51,7 +51,7 @@ and the image description in `llm_describe.py`.
 | `2_manifest` | `create_proj_parse_manifest.py` | single-node CPU | `parse_manifest`, `parsed_documents` (skip rows), pruning in the passage and image tables |
 | `3_parse` | `create_proj_chunks.py` | GPU | `parsing_checkpoint`, `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health`, `document_change_log` |
 | `4_describe_images` | `create_proj_image_metadata.py` | CPU | `image_metadata`, image passages in `chunks` and `chunks_archive`, `parsed_documents` |
-| `5_sync_index` | `update_proj_vector_indexes.py` | classic CPU (`meta_cpu_cluster`, GX on `chunks_full`) | `chunks_full`, Vector Search indexes |
+| `5_sync_index` | `update_proj_vector_indexes.py` | classic CPU (`meta_cpu_cluster`) | `chunks_full`, Vector Search indexes |
 | `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata` (Lakebase) |
 
 Each task depends on the previous one. `3_parse` pins `opencv-python-headless==4.12.0.88` in a `%pip` cell: it
@@ -261,7 +261,7 @@ Volumes: the Intraqual documents (`PARSING_VOLUME_ROOT_PATH`, read, one folder p
 `Dm_<IDDOC>`; `2_manifest` may delete out-of-scope folders), the images (`PARSING_VOLUME_BASE_PATH`) and the
 offline models (`PARSING_OFFLINE_MODELS`).
 
-Quality checks (`quality.py`, Great Expectations through `leap_utils`): a RED failure stops the task before anything is written. An AMBER failure is logged. `6_update_kb_metadata` runs on serverless, where GX is not available: its checks run in Python (`check_rows`).
+Quality checks (`quality.py`): a RED failure stops the task before anything is written. An AMBER failure is logged. Every counter of a table comes from one Spark aggregation (`check_dataframe`); `6_update_kb_metadata` runs on serverless without Spark, its checks run in Python (`check_rows`). No Great Expectations: it was not installed on the GPU cluster, and on 2026-10-16 a UAT `3_parse` failed on `ModuleNotFoundError: great_expectations` after 20 h of parsing.
 
 | Table | Checks |
 |---|---|

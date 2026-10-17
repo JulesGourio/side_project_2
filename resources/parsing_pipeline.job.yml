@@ -4,7 +4,7 @@
 #   1_categories, 2_manifest : freshness guard, category_reference, scope and parse_manifest -> small CPU (shared by both)
 #   3_parse                  : Docling parsing and chunking                                  -> GPU (g4dn)
 #   4_describe_images        : vision LLM image description                                  -> small CPU (bound by the rate limiter)
-#   5_sync_index             : Vector Search index sync                                      -> small CPU (GX on chunks_full)
+#   5_sync_index             : Vector Search index sync                                      -> small CPU
 #   6_update_kb_metadata     : Lakebase doc_catalog and catalog_metadata                     -> serverless, once the index sync succeeded
 #
 # The metadata tasks have their own cluster so it does not stay up through the whole GPU parse.
@@ -113,6 +113,7 @@ resources:
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
               PARSING_RUN_MODE:         ${var.parsing_run_mode}
               PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
+              PARSING_MAX_PARSE_FILES:  ${var.parsing_max_parse_files}
               PARSING_ARCHIVE_NOTICES_IN_RAG: ${var.parsing_archive_notices_in_rag}
               PARSING_USE_GPU:          "true"
               # Set before the interpreter starts.
@@ -236,7 +237,7 @@ resources:
               vector_search_endpoint: "qualibot"
               embedding_model: "databricks-qwen3-embedding-0-6b"
               build_chunks_full: ${var.parsing_build_chunks_full}
-          # Classic CPU cluster, not serverless: Great Expectations (the quality checks of chunks_full) is installed there only.
+          # Classic CPU cluster, not serverless: the quality checks of chunks_full need a Spark session.
           libraries:
             - pypi: {package: "databricks-sdk>=0.118.0"}
 

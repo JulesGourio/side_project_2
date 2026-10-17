@@ -110,7 +110,7 @@ databricks apps get qualibot --profile UAT
 
 - [ ] **J1. Pause du planning du job de parsing UAT** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Pause* sur le planning.
 
-- [ ] **J2. Mode du rechunk** : `rechunk` = aucun parsing, `chunks` reconstruits depuis le checkpoint, `image_metadata` conservée telle quelle ; `full` = scanne tous les documents, parse ceux dont le fichier a changé, reconstruit toutes les tables depuis le checkpoint, et copie le checkpoint dans `_pipeline_checkpoint_<horodatage>`. Le run UAT du 2026-10-16 a été lancé en `full` (ligne 456 de `databricks.yml`, cible `qualibot-uat`).
+- [ ] **J2. Mode du rechunk** : `rechunk` = aucun parsing, `chunks` reconstruits depuis le checkpoint, `image_metadata` conservée telle quelle ; `full` = scanne tous les documents, parse ceux dont l'IDDOC n'a pas de ligne réutilisable pour les mêmes octets (au plus `parsing_max_parse_files`, 500 par défaut, sinon arrêt avant le parsing), reconstruit toutes les tables depuis le checkpoint, et copie le checkpoint dans `_pipeline_checkpoint_<horodatage>`. Le run UAT du 2026-10-16 a été lancé en `full` (ligne 456 de `databricks.yml`, cible `qualibot-uat`).
 
 - [ ] **J3. Déploiement des jobs UAT** (seulement si J0b est conforme) : copier le git dans `latec-compare`, puis Bitbucket, pipeline `deploy-uat-jobs`. Attendu : vert.
 
@@ -123,6 +123,24 @@ databricks apps get qualibot --profile UAT
 Attendu : même état qu'en P7.
 
 - [ ] **J5. Rechunk** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Run now*, paramètres par défaut (`dry_run = true`). Attendre la fin.
+
+- [ ] **J5b. Reprise après le run du 2026-10-16** (run `87f03f9a-b60f-40a7-a336-63561356d22a` : 20 h de parsing GPU de tout le corpus, puis échec `ModuleNotFoundError: great_expectations` dans les contrôles qualité de `3_parse`, rien écrit dans `chunks`). Le parsing est dans `parsing_checkpoint`, il n'est pas refait. Corrigé le 2026-10-17 : contrôles qualité en Spark (plus de GX), reprise sur (IDDOC, hash du contenu) au lieu du chemin, arrêt avant tout parsing au-delà de `parsing_max_parse_files` (500) fichiers.
+  1. Diagnostic (éditeur SQL UAT, lecture seule) : pourquoi les lignes copiées de `_pipeline_checkpoint_v1` n'ont pas été reconnues.
+
+     ```sql
+     WITH n AS (SELECT IDDOC, source_path, document_sha256 FROM uat_proj.qualibot.parsing_checkpoint
+                WHERE ingestion_run_id = '87f03f9a-b60f-40a7-a336-63561356d22a'),
+          o AS (SELECT IDDOC, source_path, document_sha256 FROM uat_proj.qualibot.parsing_checkpoint
+                WHERE ingestion_run_id IS DISTINCT FROM '87f03f9a-b60f-40a7-a336-63561356d22a' AND parse_status = 'SUCCESS')
+     SELECT count(DISTINCT n.IDDOC) AS parses_du_run,
+            count(DISTINCT CASE WHEN o.IDDOC IS NOT NULL THEN n.IDDOC END) AS iddoc_deja_dans_v1,
+            count(DISTINCT CASE WHEN o.document_sha256 = n.document_sha256 THEN n.IDDOC END) AS memes_octets,
+            count(DISTINCT CASE WHEN o.source_path = n.source_path THEN n.IDDOC END) AS meme_chemin,
+            max(n.source_path) AS exemple_chemin_nouveau, max(o.source_path) AS exemple_chemin_v1
+     FROM n LEFT JOIN o ON n.IDDOC = o.IDDOC;
+     ```
+  2. Copier le git dans `latec-compare`, puis Bitbucket, pipeline `deploy-uat-jobs` (la cible reste en `full`).
+  3. UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Run now*. Attendu dans le log de `3_parse` : `[RESUME] ~4 900 of ~4 950 selected files reused`, `[BUDGET]` à quelques dizaines de fichiers, la tâche ne fait plus que le scan, le parsing de ces quelques fichiers et la reconstruction des tables. Si `[BUDGET]` arrête la tâche : rien n'est parsé, envoyer la ligne `[RESUME]`.
 
 - [ ] **J6. Index `chunks_index` ONLINE** (PowerShell) :
 

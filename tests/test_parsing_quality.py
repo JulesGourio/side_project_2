@@ -105,6 +105,14 @@ def spark():
     session.stop()
 
 
+def test_spark_counters_equal_the_python_ones(spark):
+    rows = ROWS + [ROWS[0], {"chunk_id": None, "IDDOC": None, "division": "AS", "ref": "QR-2"}]
+    checks = [quality.non_empty(), quality.not_null("division", mostly=0.5), quality.unique("chunk_id"),
+              quality.unique("IDDOC", "ref")]
+    df = spark.createDataFrame(rows, "chunk_id string, IDDOC long, division string, ref string")
+    assert quality.spark_stats(df, checks) == quality.stats_from_rows(rows, checks)
+
+
 def test_check_dataframe_raises_on_a_red_duplicate(spark):
     df = spark.createDataFrame(ROWS + [ROWS[0]], "chunk_id string, IDDOC long, division string, ref string")
     with pytest.raises(Exception, match="unique|RED"):

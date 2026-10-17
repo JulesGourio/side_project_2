@@ -238,7 +238,10 @@ parse_steps.snapshot_or_log_checkpoint(num_files)
 
 # MAGIC %md
 # MAGIC ## Tr. 2 - Parse with Docling
-# MAGIC Files already `SUCCESS` in the checkpoint (same path and hash) are skipped, then each batch is parsed and checkpointed.
+# MAGIC A file whose IDDOC already has a reusable checkpoint row for the same bytes is not parsed again (the path does not
+# MAGIC matter: a copied checkpoint keeps the content, not always the path). Above `parsing_max_parse_files` pending files
+# MAGIC the task stops here, before any GPU parse: thousands of pending files mean the checkpoint was not recognised.
+# MAGIC Then each batch is parsed and checkpointed.
 
 # COMMAND ----------
 
@@ -247,6 +250,7 @@ parse_fn = parse_steps.make_parse_fn(CLUSTER_PARALLELISM)
 if num_files > 0:
     df_files = parse_steps.exclude_already_parsed(df_files)
     num_files = df_files.count()
+    parse_steps.enforce_parse_budget(num_files)
     if num_files > 0:
         parse_steps.cleanup_stale_image_folders(df_files)
         parse_steps.parse_pending_files(df_files, parse_fn)
