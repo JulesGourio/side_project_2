@@ -149,7 +149,8 @@ PARSE_FILTER = [int(x) for x in _env("PARSING_PARSE_FILTER", "").split(",") if x
 
 # --- Feature flags ---
 ENABLE_RETRY       = True
-ENABLE_TIMING_TEST = False  # gates per-step timing instrumentation in the parse UDF (utils.py/image_utils.py)
+# Per-step durations of each file in the checkpoint `timings` column: a few perf_counter calls, read to find where a slow run spent its hours.
+ENABLE_TIMING_TEST = True
 
 # --- Resilience -- batch checkpointing & per-file timeout ---
 CHECKPOINT_BATCH_SIZE   = 100   # Write to Delta every N files (crash-safe)

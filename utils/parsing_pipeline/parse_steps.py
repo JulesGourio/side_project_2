@@ -48,8 +48,9 @@ JOB_RUN_ID = None
 
 # Any other status is retried automatically on the next incremental run.
 _TERMINAL_STATUSES = list(doc_status.TERMINAL_STATUSES)   # a list: pyspark isin() does not take a tuple
-# Checkpoint statuses that the same bytes would give again: the file is not re-parsed (ERROR / EMPTY_TEXT are).
-_REUSABLE_STATUSES = ["SUCCESS", "SKIPPED_EMPTY_SMALL_FILE", "SKIP_TOO_LARGE"]
+# Checkpoint statuses that the same bytes would give again: the file is not re-parsed. ERROR / EMPTY_TEXT are retried;
+# so is SKIP_TOO_LARGE, which costs no parse (the size gate re-skips it) and must follow a raised ceiling.
+_REUSABLE_STATUSES = ["SUCCESS", "SKIPPED_EMPTY_SMALL_FILE"]
 # A change in any of these on the same IDDOC means a revised document (ref included: Intraqual can rename in place).
 _STALENESS_COLS = ["indice", "doc_date", "ref"]
 

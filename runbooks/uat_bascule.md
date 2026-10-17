@@ -139,6 +139,19 @@ Attendu : même état qu'en P7.
             max(n.source_path) AS exemple_chemin_nouveau, max(o.source_path) AS exemple_chemin_v1
      FROM n LEFT JOIN o ON n.IDDOC = o.IDDOC;
      ```
+     Résultat du 2026-10-17 : 2 339 / 2 318 / 2 273 / 0.
+  1b. Où sont passées les 20 h (éditeur SQL UAT, lecture seule), pour choisir les optimisations :
+
+     ```sql
+     SELECT source_file_extension, parser_strategy, count(*) AS fichiers,
+            round(sum(parse_time_seconds) / 3600, 1) AS heures_parse,
+            round(percentile(parse_time_seconds, 0.5), 1) AS p50_s, round(percentile(parse_time_seconds, 0.95), 1) AS p95_s,
+            round(max(parse_time_seconds), 0) AS max_s, sum(image_count) AS images,
+            round(avg(source_file_size_bytes) / 1048576, 1) AS taille_moy_mo
+     FROM uat_proj.qualibot.parsing_checkpoint
+     WHERE ingestion_run_id = '87f03f9a-b60f-40a7-a336-63561356d22a'
+     GROUP BY 1, 2 ORDER BY heures_parse DESC;
+     ```
   2. Copier le git dans `latec-compare`, puis Bitbucket, pipeline `deploy-uat-jobs` (la cible reste en `full`).
   3. UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Run now*. Attendu dans le log de `3_parse` : `[RESUME] ~4 900 of ~4 950 selected files reused`, `[BUDGET]` à quelques dizaines de fichiers, la tâche ne fait plus que le scan, le parsing de ces quelques fichiers et la reconstruction des tables. Si `[BUDGET]` arrête la tâche : rien n'est parsé, envoyer la ligne `[RESUME]`.
 

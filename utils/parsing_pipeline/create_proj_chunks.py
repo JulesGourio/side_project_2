@@ -162,6 +162,19 @@ except Exception as exc:
     logger.warning(f"Could not read defaultParallelism ({exc}) - falling back to 8")
     CLUSTER_PARALLELISM = 8
 
+from importlib import metadata as _metadata
+
+
+def _version(package):
+    try:
+        return _metadata.version(package)
+    except _metadata.PackageNotFoundError:
+        return "absent"
+
+
+# docling is not pinned in the job: the installed versions are what to pin once a run is validated.
+logger.info("Packages | " + " | ".join(
+    f"{p}={_version(p)}" for p in ("docling", "docling-core", "docling-ibm-models", "torch", "great_expectations")))
 logger.info(
     f"Run {parse_steps.INGESTION_RUN_ID} | mode={cfg.RUN_MODE} | shared_cluster={IS_SHARED_CLUSTER} | "
     f"parallelism={CLUSTER_PARALLELISM} | GPU={cfg.USE_GPU} | table_mode={cfg.TABLE_STRUCTURE_MODE} | "

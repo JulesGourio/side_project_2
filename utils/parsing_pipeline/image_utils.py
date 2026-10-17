@@ -234,7 +234,8 @@ def image_status_col(volume_path, width, height):
 
 _TIMING_KEYS = ("docling_import_seconds", "docling_load_seconds", "tmp_file_write_seconds",
                 "docling_convert_seconds", "markdown_export_seconds",
-                "ocr_fallback_seconds", "image_hashing_seconds", "context_extraction_seconds", "volume_write_seconds")
+                "ocr_fallback_seconds", "image_hashing_seconds", "context_extraction_seconds", "volume_write_seconds",
+                "pdf_page_render_seconds", "total_seconds")
 
 
 class _ParseTimeout:
@@ -305,6 +306,7 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
         min_ar_val = float(min_ar) if min_ar is not None else _cfg("MIN_AREA_RATIO", fallback=0.03)
         max_rep_val = int(max_rep) if max_rep is not None else _cfg("MAX_REPEAT", fallback=3)
         timings = {k: 0.0 for k in _TIMING_KEYS} if enable_timing else {}
+        t_doc = time.perf_counter()
         ext_lower = str(ext).lower().strip(".")
 
         # Over the Docling-safe size threshold: skip Docling entirely, go straight to the zip/XML fallback.
@@ -370,12 +372,17 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
         # Gated on "not images": a page render duplicates whatever a real extracted image already
         # shows, so only fall back here when Docling found no embedded images to begin with.
         if ext_lower == "pdf" and not images and len((res.get("text") or "").strip()) < LLM_OCR_TEXT_THRESHOLD:
+            t_render = time.perf_counter()
             page_images = render_pdf_pages_for_llm_ocr(bytes(content), doc_id_str, vol_base, LLM_OCR_MAX_PAGES)
+            if enable_timing:
+                timings["pdf_page_render_seconds"] = float(time.perf_counter() - t_render)
             if page_images:
                 images = images + page_images
                 res["parser_strategy"] = "pending_llm_ocr:pdf"
                 res["parser_error"] = None
 
+        if enable_timing:
+            timings["total_seconds"] = float(time.perf_counter() - t_doc)
         res["images"] = images
         res["timings"] = timings
         results.append(res)
