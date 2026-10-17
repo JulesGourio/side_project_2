@@ -30,12 +30,15 @@ from config import (
     EMPTY_SMALL_FILE_SIZE_BYTES,
     ENABLE_TIMING_TEST,
     ENRICHMENT_COLS,
+    GPU_MIN_PDFS,
+    GPU_QUEUE_TABLE,
     MAX_PARSE_FILES,
     MAX_REPEAT,
     MIN_AREA_RATIO,
     PARSE_FILTER,
     RETRY_TEMP_TABLE,
     RUN_MODE,
+    RUN_SCOPE_TABLE,
     TARGET_PROCESSED_FILES_TABLE,
     VOLUME_BASE_PATH,
     VOLUME_ROOT_PATH,
@@ -296,6 +299,139 @@ def enforce_parse_budget(num_files):
     logger.info(f"[BUDGET] {num_files} file(s) to parse (ceiling {MAX_PARSE_FILES or 'none'})")
 
 
+def setup_workers(repo_dir):
+    """Ship the parsing modules and settings to the executors; returns the number of parallel tasks.
+
+    `addPyFile` reaches executors that join late too (`sys.path` only covers the driver). On a single-user cluster the
+    settings are broadcast; on a shared one the workers read the JSON copy written on the volume.
+    """
+    import config as cfg
+    from utils import broadcast_config, configure, write_worker_config
+
+    for module in cfg.WORKER_MODULES:
+        spark.sparkContext.addPyFile(os.path.join(repo_dir, module))
+    spark.conf.set("spark.sql.files.maxPartitionBytes", "134217728")
+    spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
+    spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "1")
+
+    configure(
+        OFFLINE_MODELS_DIR=cfg.OFFLINE_MODELS_DIR, VOLUME_BASE_PATH=cfg.VOLUME_BASE_PATH,
+        ANTIWORD_BIN=f"{repo_dir}/{cfg.ANTIWORD_BIN_RELATIVE}",
+        ANTIWORD_SHARE_DIR=f"{repo_dir}/{cfg.ANTIWORD_SHARE_RELATIVE}",
+        WORKER_CONFIG_JSON=os.path.join(cfg.VOLUME_BASE_PATH, "_parsing_config.json"),
+        USE_GPU=cfg.USE_GPU, DO_OCR=cfg.DO_OCR, GPU_OCR_FALLBACK=cfg.GPU_OCR_FALLBACK,
+        TABLE_STRUCTURE_MODE=cfg.TABLE_STRUCTURE_MODE, GENERATE_PICTURE_IMAGES=cfg.GENERATE_PICTURE_IMAGES,
+        IMAGE_SCALE=cfg.IMAGE_SCALE, MIN_AREA_RATIO=cfg.MIN_AREA_RATIO, MAX_REPEAT=cfg.MAX_REPEAT,
+        USE_TIKTOKEN=cfg.USE_TIKTOKEN, CHARS_PER_TOKEN=cfg.CHARS_PER_TOKEN,
+        MIN_CHUNK_TOKENS=cfg.MIN_CHUNK_TOKENS, TARGET_CHUNK_TOKENS=cfg.TARGET_CHUNK_TOKENS,
+        MAX_CHUNK_TOKENS=cfg.MAX_CHUNK_TOKENS, MAX_CHUNK_CHARS=cfg.MAX_CHUNK_CHARS,
+        CHUNK_OVERLAP_RATIO=cfg.CHUNK_OVERLAP_RATIO,
+    )
+    try:
+        _ = spark.sparkContext
+        broadcast_config(spark)
+    except Exception:
+        logger.warning("broadcast_config skipped (shared cluster) - workers read the JSON copy on the volume")
+    write_worker_config(spark)
+
+    try:
+        parallelism = int(spark.sparkContext.defaultParallelism)
+        if parallelism < 1:
+            raise ValueError(f"defaultParallelism={parallelism}")
+    except Exception as exc:
+        logger.warning(f"Could not read defaultParallelism ({exc}) - falling back to 4")
+        parallelism = 4
+
+    from importlib import metadata
+
+    def _version(package):
+        try:
+            return metadata.version(package)
+        except metadata.PackageNotFoundError:
+            return "absent"
+
+    # docling is not pinned in the job: these are the versions to pin once a run is validated.
+    logger.info("Packages | " + " | ".join(
+        f"{p}={_version(p)}" for p in ("docling", "docling-core", "docling-ibm-models", "torch", "great_expectations")))
+    logger.info(f"Run {INGESTION_RUN_ID} | mode={RUN_MODE} | parallelism={parallelism} | GPU={cfg.USE_GPU} | "
+                f"table_mode={cfg.TABLE_STRUCTURE_MODE} | filter={PARSE_FILTER}")
+    return parallelism
+
+
+def split_for_gpu(df_files):
+    """(df_cpu, df_gpu, n_gpu): the PDFs go to the GPU task only when more than `GPU_MIN_PDFS` are left.
+
+    Docling uses its GPU models (layout, tables) on PDFs only. A daily run has a handful of PDFs: parsed here on CPU,
+    the GPU cluster is never started.
+    """
+    is_pdf = F.col("source_file_extension") == "pdf"
+    n_pdf = df_files.filter(is_pdf).count()
+    if n_pdf <= GPU_MIN_PDFS:
+        logger.info(f"[ROUTE] {n_pdf} PDF(s) <= {GPU_MIN_PDFS}: everything parsed on CPU, no GPU task")
+        return df_files, None, 0
+    logger.info(f"[ROUTE] {n_pdf} PDF(s) > {GPU_MIN_PDFS}: the PDFs go to the GPU task, the other formats stay on CPU")
+    return df_files.filter(~is_pdf).cache(), df_files.filter(is_pdf), n_pdf
+
+
+def build_run_scope(target_iddocs, revised_iddocs):
+    """One row per IDDOC in scope this run, with the run ids: what 3c_chunks rebuilds and how the run is correlated."""
+    rows = [(int(i), i in revised_iddocs) for i in sorted(target_iddocs)]
+    return (
+        spark.createDataFrame(rows, "IDDOC long, is_revised boolean")
+        .withColumns({
+            "ingestion_run_id": F.lit(INGESTION_RUN_ID),
+            "job_run_id": F.lit(JOB_RUN_ID).try_cast("string"),
+            "run_mode": F.lit(RUN_MODE),
+            "written_at": F.current_timestamp(),
+        })
+    )
+
+
+def read_run_scope():
+    """(target_iddocs, revised_iddocs) written by 3_parse for this run; adopts its ingestion run id.
+
+    Refuses the scope of another job run: 3c_chunks would rebuild the wrong documents.
+    """
+    global INGESTION_RUN_ID
+    rows = spark.table(RUN_SCOPE_TABLE).collect()
+    if not rows:
+        logger.info("[SCOPE] No IDDOC in scope this run")
+        return set(), set()
+    scope_job_run = rows[0]["job_run_id"]
+    if JOB_RUN_ID and scope_job_run and scope_job_run != JOB_RUN_ID:
+        raise RuntimeError(f"{RUN_SCOPE_TABLE} was written by job run {scope_job_run}, not by this run {JOB_RUN_ID}")
+    INGESTION_RUN_ID = rows[0]["ingestion_run_id"]
+    target_iddocs = {r["IDDOC"] for r in rows}
+    revised_iddocs = {r["IDDOC"] for r in rows if r["is_revised"]}
+    logger.info(f"[SCOPE] {len(target_iddocs)} IDDOC(s) in scope ({len(revised_iddocs)} revised), "
+                f"run {INGESTION_RUN_ID}, job run {scope_job_run}")
+    return target_iddocs, revised_iddocs
+
+
+def read_gpu_queue():
+    """The PDFs 3_parse left for the GPU task, their bytes read again from the volume (same hash only)."""
+    df_queue = spark.table(GPU_QUEUE_TABLE).filter(F.col("ingestion_run_id") == INGESTION_RUN_ID)
+    paths = [r.source_path for r in df_queue.select("source_path").collect()]
+    if not paths:
+        return None
+    df_content = (spark.read.format("binaryFile").load(paths)
+                  .select(F.col("path").alias("source_path"), "content"))
+    df_files = (df_queue.join(df_content, on="source_path", how="inner")
+                .filter(F.sha2(F.col("content"), 256) == F.col("document_sha256")).cache())
+    found = df_files.count()
+    if found < len(paths):
+        logger.warning(f"[GPU QUEUE] {len(paths) - found} file(s) changed or vanished since 3_parse: left for the next run")
+    logger.info(f"[GPU QUEUE] {found} PDF(s) to parse")
+    return df_files
+
+
+def files_parsed_this_run():
+    """Number of checkpoint rows written by this run (3_parse and the GPU task share the ingestion run id)."""
+    if not table_exists(CHECKPOINT_TABLE):
+        return 0
+    return spark.table(CHECKPOINT_TABLE).filter(F.col("ingestion_run_id") == INGESTION_RUN_ID).count()
+
+
 def cleanup_stale_image_folders(df_files):
     """Delete image folders for every IDDOC about to be (re)parsed, so a
     retry/rebuild never mixes old and new extracted images. Must run AFTER
@@ -484,9 +620,12 @@ def show_failed_documents(df_business_meta):
 
 
 
-def retry_failed_iddocs(df_matched_full, df_content, df_business_meta):
+def retry_failed_iddocs(df_business_meta):
     """Re-attempt every failed IDDOC with its rank-2 candidate file (if any),
-    then replace the failed checkpoint rows with the successful retries."""
+    then replace the failed checkpoint rows with the successful retries.
+
+    Runs after both parse tasks (CPU and GPU): only the folders of the failed IDDOCs are scanned again.
+    """
     df_full_pipeline = read_checkpoint_deduped()
     failed_iddocs = [
         r.IDDOC for r in df_full_pipeline
@@ -500,6 +639,7 @@ def retry_failed_iddocs(df_matched_full, df_content, df_business_meta):
     if not failed_iddocs:
         logger.info("Nothing to retry.")
         return
+    _, df_matched_full, df_content = select_files_for_target_iddocs(set(failed_iddocs), df_business_meta)
 
     # .ppt stays a rank-2 candidate: image_fallbacks.fallback_parse_ppt_ole parses it.
     df_alt = (

@@ -4,6 +4,8 @@ import glob
 import os
 import re
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PARSING = os.path.join(ROOT, "utils", "parsing_pipeline")
 
@@ -42,17 +44,25 @@ def test_parse_steps_only_imports_names_config_defines():
     assert not [n for n in imported if n not in config_names]
 
 
-def test_parse_notebook_only_reads_config_names_that_exist():
+PARSE_NOTEBOOKS = ["utils/parsing_pipeline/create_proj_parsing_checkpoint.py",
+                   "utils/parsing_pipeline/create_proj_parsing_checkpoint_gpu.py",
+                   "utils/parsing_pipeline/create_proj_chunks.py"]
+
+
+@pytest.mark.parametrize("notebook", PARSE_NOTEBOOKS)
+def test_parse_notebooks_only_read_config_names_that_exist(notebook):
     config_names = _module_names("utils/parsing_pipeline/config.py")
-    used = set(re.findall(r"\bcfg\.(\w+)", _read("utils/parsing_pipeline/create_proj_chunks.py")))
+    used = set(re.findall(r"\bcfg\.(\w+)", _read(notebook)))
     assert used
     assert not used - config_names
 
 
-def test_parse_notebook_only_calls_parse_steps_functions_that_exist():
+@pytest.mark.parametrize("notebook", PARSE_NOTEBOOKS)
+def test_parse_notebooks_only_call_parse_steps_functions_that_exist(notebook):
     defined = _module_names("utils/parsing_pipeline/parse_steps.py")
-    code = [l for l in _read("utils/parsing_pipeline/create_proj_chunks.py").splitlines() if not l.startswith("# MAGIC")]
+    code = [l for l in _read(notebook).splitlines() if not l.startswith("# MAGIC")]
     called = set(re.findall(r"\bparse_steps\.(\w+)", "\n".join(code)))
+    assert called
     assert not called - defined - {"INGESTION_RUN_ID", "JOB_RUN_ID"}
 
 
@@ -87,3 +97,22 @@ def test_every_job_name_follows_the_launch_level_domain_convention():
                 if "name" in job and not pattern.match(job["name"]):
                     offenders.append(f"{yml} {target}.{key}: {job['name']}")
     assert not offenders, offenders
+
+
+def test_the_gpu_cluster_starts_only_through_the_pdf_condition():
+    import yaml
+
+    job = yaml.safe_load(_read("resources/parsing_pipeline.job.yml"))["resources"]["jobs"]["parsing_pipeline"]
+    tasks = {t["task_key"]: t for t in job["tasks"]}
+    gpu_tasks = [k for k, t in tasks.items() if t.get("job_cluster_key") == "parse_gpu_cluster"]
+    assert gpu_tasks == ["3b_parse_pdf"]
+    assert tasks["3b_parse_pdf"]["depends_on"] == [{"task_key": "3b_needs_gpu", "outcome": "true"}]
+
+    condition = tasks["3b_needs_gpu"]["condition_task"]
+    key = re.fullmatch(r"\{\{tasks\.3_parse\.values\.(\w+)\}\}", condition["left"]).group(1)
+    assert f'taskValues.set(key="{key}"' in _read("utils/parsing_pipeline/create_proj_parsing_checkpoint.py")
+
+    # A skipped GPU task must not skip the chunk build.
+    assert tasks["3c_chunks"]["run_if"] == "NONE_FAILED"
+    assert {d["task_key"] for d in tasks["3c_chunks"]["depends_on"]} == {"3b_needs_gpu", "3b_parse_pdf"}
+    assert tasks["4_describe_images"]["depends_on"] == [{"task_key": "3c_chunks"}]

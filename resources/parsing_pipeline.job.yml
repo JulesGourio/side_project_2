@@ -2,7 +2,10 @@
 #
 # Daily chain, each phase on the cluster that suits it:
 #   1_categories, 2_manifest : freshness guard, category_reference, scope and parse_manifest -> small CPU (shared by both)
-#   3_parse                  : Docling parsing and chunking                                  -> GPU (g4dn)
+#   3_parse                  : scope, selection, resume, parse of every non-PDF format (and of a few PDFs)  -> CPU (S policy)
+#   3b_needs_gpu             : condition: more than parsing_gpu_min_pdfs PDFs left for the GPU
+#   3b_parse_pdf             : Docling on the queued PDFs (layout and table models)          -> GPU (g4dn), only when needed
+#   3c_chunks                : retry, chunking, quality checks, table writes                 -> CPU (the cluster of 3_parse)
 #   4_describe_images        : vision LLM image description                                  -> small CPU (bound by the rate limiter)
 #   5_sync_index             : Vector Search index sync                                      -> small CPU (GX on chunks_full)
 #   6_update_kb_metadata     : Lakebase doc_catalog and catalog_metadata                     -> serverless, once the index sync succeeded
@@ -10,7 +13,8 @@
 # The metadata tasks have their own cluster so it does not stay up through the whole GPU parse.
 # Without 5_sync_index, new chunks are never queryable (Delta Sync indexes are TRIGGERED).
 #
-# Variables (databricks.yml, per target): parsing_gpu_node_type, parsing_describe_node_type, parsing_num_workers,
+# Variables (databricks.yml, per target): parsing_gpu_node_type, parsing_describe_node_type, parsing_parse_cpu_node_type,
+# parsing_num_workers, parsing_gpu_min_pdfs, parsing_max_parse_files,
 # parsing_vector_search_indexes, parsing_schedule_cron, parsing_schedule_pause, parsing_lakebase_database.
 # PARSING_* env vars (spark_env_vars below) carry catalog, volumes and run mode.
 #
@@ -26,8 +30,8 @@ resources:
       name: "D_1_Qualibot_Parsing_Pipeline"
       description: "Docling parsing (GPU) + LLM image description pipeline for Qualibot RAG"
 
-      # The default of 1 queues a partial run of 3_parse behind one of 4_describe_images although their clusters and incremental scopes are disjoint.
-      max_concurrent_runs: 3
+      # One run at a time: the parse tasks hand over through parsing_run_scope and parsing_gpu_queue, rewritten by each run.
+      max_concurrent_runs: 1
 
       # DEV service principal by default; the targets at the end of this file override it.
       queue:
@@ -84,7 +88,45 @@ resources:
               PARSING_ARCHIVE_MAX_DOCS: ${var.parsing_archive_max_docs}
               PARSING_USE_GPU:          "false"
 
-        # ── GPU cluster for Docling parsing (3_parse) ─────────────────────────
+        # ── CPU cluster for the parse and the chunk build (3_parse, 3c_chunks) ──
+        # Docling on CPU for docx / pptx / html (no GPU model) and for the few PDFs of a daily run; the S policy allows
+        # standard LTS runtimes only, so Docling and torch come from pip.
+        - job_cluster_key: parse_cpu_cluster
+          new_cluster:
+            policy_id: ${var.job_cluster_policy_id_S}
+            apply_policy_default_values: true
+            spark_version: "16.4.x-scala2.13"
+            node_type_id: ${var.parsing_parse_cpu_node_type}
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: "local[*]"
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.databricks.delta.autoCompact.enabled: "true"
+            custom_tags:
+              ResourceClass: SingleNode
+            spark_env_vars:
+              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
+              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
+              PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
+              PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
+              PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
+              PARSING_RUN_MODE:         ${var.parsing_run_mode}
+              PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
+              PARSING_MAX_PARSE_FILES:  ${var.parsing_max_parse_files}
+              PARSING_GPU_MIN_PDFS:     ${var.parsing_gpu_min_pdfs}
+              PARSING_ARCHIVE_NOTICES_IN_RAG: ${var.parsing_archive_notices_in_rag}
+              PARSING_USE_GPU:          "false"
+              USE_TF:                 "0"
+              TRANSFORMERS_NO_TF:     "1"
+              TF_CPP_MIN_LOG_LEVEL:   "3"
+              HF_HUB_OFFLINE:         "1"
+              TRANSFORMERS_OFFLINE:   "1"
+              HF_HUB_DISABLE_TELEMETRY: "1"
+
+        # ── GPU cluster for Docling on many PDFs (3b_parse_pdf, only when needed) ──
         - job_cluster_key: parse_gpu_cluster
           new_cluster:
             spark_version: "17.3.x-gpu-ml-scala2.13"
@@ -177,10 +219,80 @@ resources:
             - pypi: {package: "tiktoken"}
 
         - task_key: "3_parse"
-          description: "Docling parsing, chunking, image extraction (GPU)"
+          description: "Scope, selection, resume, parse of the non-PDF formats and of a few PDFs (CPU)"
           depends_on:
             - task_key: "2_manifest"
+          job_cluster_key: parse_cpu_cluster
+          notebook_task:
+            notebook_path: ../utils/parsing_pipeline/create_proj_parsing_checkpoint.py
+            source: WORKSPACE
+            base_parameters:
+              job_run_id: "{{job.run_id}}"
+          # Great Expectations comes with the S policy. The opencv-headless install is the %pip cell of the notebooks.
+          libraries:
+            - pypi: {package: "packaging"}
+            - pypi: {package: "numpy<2"}
+            - pypi: {package: "docling"}
+            - pypi: {package: "docling-core"}
+            - pypi: {package: "langchain-text-splitters"}
+            - pypi: {package: "tiktoken"}
+            - pypi: {package: "striprtf"}
+            - pypi: {package: "odfpy"}
+            - pypi: {package: "xlrd"}
+            - pypi: {package: "openpyxl"}
+            - pypi: {package: "lxml"}
+            - pypi: {package: "olefile"}
+            - pypi: {package: "pyxlsb"}
+            - pypi: {package: "openai"}
+            - pypi: {package: "tenacity"}
+
+        # The GPU cluster starts only when 3_parse left more than parsing_gpu_min_pdfs PDFs for it.
+        - task_key: "3b_needs_gpu"
+          depends_on:
+            - task_key: "3_parse"
+          condition_task:
+            op: GREATER_THAN
+            left: "{{tasks.3_parse.values.pdfs_for_gpu}}"
+            right: "0"
+
+        - task_key: "3b_parse_pdf"
+          description: "Docling on the PDFs queued by 3_parse (GPU, only when needed)"
+          depends_on:
+            - task_key: "3b_needs_gpu"
+              outcome: "true"
           job_cluster_key: parse_gpu_cluster
+          notebook_task:
+            notebook_path: ../utils/parsing_pipeline/create_proj_parsing_checkpoint_gpu.py
+            source: WORKSPACE
+            base_parameters:
+              job_run_id: "{{job.run_id}}"
+          libraries:
+            - pypi: {package: "packaging"}
+            - pypi: {package: "numpy<2"}
+            - pypi: {package: "docling"}
+            - pypi: {package: "docling-core"}
+            - pypi: {package: "langchain-text-splitters"}
+            - pypi: {package: "tiktoken"}
+            - pypi: {package: "striprtf"}
+            - pypi: {package: "odfpy"}
+            - pypi: {package: "xlrd"}
+            - pypi: {package: "openpyxl"}
+            - pypi: {package: "lxml"}
+            - pypi: {package: "olefile"}
+            - pypi: {package: "pyxlsb"}
+            - pypi: {package: "openai"}
+            - pypi: {package: "tenacity"}
+            # The GPU cluster has no policy, hence no Great Expectations from it: same 0.18 line as the S policy.
+            - pypi: {package: "great_expectations==0.18.22"}
+
+        # Runs whether or not the GPU task ran (NONE_FAILED: a skipped GPU task is not a failure).
+        - task_key: "3c_chunks"
+          description: "Retry, chunking, quality checks and table writes from the parse checkpoint (CPU)"
+          depends_on:
+            - task_key: "3b_needs_gpu"
+            - task_key: "3b_parse_pdf"
+          run_if: NONE_FAILED
+          job_cluster_key: parse_cpu_cluster
           notebook_task:
             notebook_path: ../utils/parsing_pipeline/create_proj_chunks.py
             source: WORKSPACE
@@ -202,15 +314,11 @@ resources:
             - pypi: {package: "pyxlsb"}
             - pypi: {package: "openai"}
             - pypi: {package: "tenacity"}
-            # The CPU clusters get Great Expectations from the S policy; the GPU cluster has no policy. 0.18.x still has the
-            # SparkDFDataset API of leap_utils and resolves with docling and numpy<2.
-            - pypi: {package: "great_expectations==0.18.22"}
-            # The opencv-headless install is the %pip cell in create_proj_chunks.py, not a cluster library.
 
         - task_key: "4_describe_images"
           description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
           depends_on:
-            - task_key: "3_parse"
+            - task_key: "3c_chunks"
           job_cluster_key: describe_cpu_cluster
           notebook_task:
             notebook_path: ../utils/parsing_pipeline/create_proj_image_metadata.py

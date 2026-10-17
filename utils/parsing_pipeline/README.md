@@ -49,13 +49,21 @@ and the image description in `llm_describe.py`.
 |---|---|---|---|
 | `1_categories` | `create_proj_category_reference.py` | single-node CPU | `category_reference` |
 | `2_manifest` | `create_proj_parse_manifest.py` | single-node CPU | `parse_manifest`, `parsed_documents` (skip rows), pruning in the passage and image tables |
-| `3_parse` | `create_proj_chunks.py` | GPU | `parsing_checkpoint`, `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health`, `document_change_log` |
+| `3_parse` | `create_proj_parsing_checkpoint.py` | single-node CPU (S policy, `parse_cpu_cluster`) | `parsing_checkpoint` (non-PDF formats, and the PDFs when at most `parsing_gpu_min_pdfs`), `parsing_run_scope`, `parsing_gpu_queue`, `document_change_log`, task value `pdfs_for_gpu` |
+| `3b_needs_gpu` | condition `pdfs_for_gpu > 0` | none | — |
+| `3b_parse_pdf` | `create_proj_parsing_checkpoint_gpu.py` | GPU, only when the condition is true | `parsing_checkpoint` (the queued PDFs) |
+| `3c_chunks` | `create_proj_chunks.py` | the CPU cluster of `3_parse` (`run_if: NONE_FAILED`) | `parsing_checkpoint` (retries), `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health` |
 | `4_describe_images` | `create_proj_image_metadata.py` | CPU | `image_metadata`, image passages in `chunks` and `chunks_archive`, `parsed_documents` |
 | `5_sync_index` | `update_proj_vector_indexes.py` | classic CPU (`meta_cpu_cluster`, GX on `chunks_full`) | `chunks_full`, Vector Search indexes |
 | `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata` (Lakebase) |
 
-Each task depends on the previous one. `3_parse` pins `opencv-python-headless==4.12.0.88` in a `%pip` cell: it
-replaces the OpenCV build that Docling pulls in, which fails on the GPU runtime.
+Each task depends on the previous one. Only PDFs use Docling's GPU models (layout, tables): docx, pptx and html go
+through Docling's simple pipeline, and doc / xls / ppt / rtf / odt through format parsers, all on CPU. A daily run
+(0 to a few new PDFs) parses everything in `3_parse` and never starts the GPU cluster; a rebuild with more than
+`parsing_gpu_min_pdfs` (30) PDFs hands them to `3b_parse_pdf`. The parse tasks hand over through `parsing_run_scope`
+(the IDDOCs of the run, refused by `3c_chunks` if another job run wrote it) and `parsing_gpu_queue`, so the job runs
+one run at a time. The parse notebooks pin `opencv-python-headless==4.12.0.88` in a `%pip` cell: it replaces the
+OpenCV build that Docling pulls in, which fails on the GPU runtime and without a display library.
 
 The notebooks that join the `gd_*_latest` views set `spark.databricks.remoteFiltering.blockSelfJoins` to `false`
 (`create_proj_parse_manifest.py`, `categories.build_category_hierarchy`).

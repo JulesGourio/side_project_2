@@ -245,3 +245,10 @@ Au prochain `bundle deploy -t qualibot-uat`, Databricks supprime les jobs qui ne
 - [ ] Le job `qualibot-sync-user-capabilities-uat` (hors bundle) se supprime : `runbooks/uat.md` étape 0.8.
 - [ ] Les alertes SQL (`utils/alerts/`) se créent à la main : `runbooks/uat.md` D5.8d.
 - [ ] Plannings des jobs d'arrêt et de reprise de l'app : fuseau `Europe/Brussels` (`resources/app_schedules.yml`), à conserver.
+
+## 2026-10-17 — parsing découpé en 3_parse (CPU) / 3b_parse_pdf (GPU) / 3c_chunks (CPU)
+
+Notebooks : `create_proj_parsing_checkpoint.py` (nouveau, `3_parse`), `create_proj_parsing_checkpoint_gpu.py` (nouveau,
+`3b_parse_pdf`), `create_proj_chunks.py` (devient `3c_chunks`). Nouvelles tables : `parsing_run_scope`, `parsing_gpu_queue`.
+À relancer : un run complet du job de parsing ; vérifier dans le log de `3_parse` les lignes `Packages`, `[RESUME]`,
+`[BUDGET]`, `[ROUTE]`, puis que `3b_parse_pdf` est « Excluded » et `3c_chunks` réussi.

@@ -31,6 +31,12 @@ variables:
   parsing_parse_filter:
     description: "Comma-separated IDDOC list to restrict a run to (empty = no filter, normal mode). Override via --var for a one-off targeted test run."
     default: ""
+  parsing_gpu_min_pdfs:
+    description: "Above this many PDFs left to parse, 3_parse hands them to the GPU task; at or below, they are parsed on CPU and the GPU cluster does not start."
+    default: "30"
+  parsing_parse_cpu_node_type:
+    description: "Node of the CPU parse cluster (3_parse, 3c_chunks); the S policy allows *.xlarge only. r6id.xlarge = 4 vCPU, 32 GB, for four Docling processes."
+    default: "r6id.xlarge"
   parsing_max_parse_files:
     description: "Most files one 3_parse run may send to the GPU parse; above it the task stops before parsing. 0 = no ceiling, only for a deliberate full re-parse."
     default: "500"

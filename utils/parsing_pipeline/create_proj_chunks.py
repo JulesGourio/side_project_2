@@ -3,41 +3,36 @@
 # MAGIC # PROJ CHUNKS
 # MAGIC
 # MAGIC **Description:**
-# MAGIC Parses the documents of the manifest and builds the tables the chat reads. One function per phase, in `parse_steps.py`,
-# MAGIC `build_steps.py` and `output_steps.py`:
-# MAGIC 1. **File selection** — scans the volume folders of the target IDDOCs and keeps the best candidate file per IDDOC
-# MAGIC 2. **Parsing** — converts PDF, DOC(X), PPT(X), ODT, XLS(X)… to Markdown with Docling or a format fallback, saves the detected images to the volume
-# MAGIC 3. **Retry** — re-attempts the failed IDDOCs with their next-best file variant
-# MAGIC 4. **Chunking** — splits the successful parses into passages (section-aware, table-aware)
-# MAGIC 5. **Persistence** — writes `parsed_documents`, `chunks` / `chunks_archive` and `image_metadata`, then the run health, the change log and the archive notices
+# MAGIC Builds the tables the chat reads from the parse checkpoint, once both parse tasks are done (`3_parse` on CPU and,
+# MAGIC when needed, `3b_parse_pdf` on GPU). One function per phase, in `parse_steps.py`, `build_steps.py` and `output_steps.py`:
+# MAGIC 1. **Retry** — re-attempts the IDDOCs that failed with their next-best file variant (only their folders are scanned again)
+# MAGIC 2. **Chunking** — splits the successful parses into passages (section-aware, table-aware)
+# MAGIC 3. **Persistence** — writes `parsed_documents`, `chunks` / `chunks_archive` and `image_metadata`, then the run health and the archive notices
 # MAGIC
 # MAGIC **Highlighted complexities:**
-# MAGIC The selection, parse and retry phases all read and write the same checkpoint table, so the notebook stays strictly sequential.
-# MAGIC The Docling parse runs on the executors (GPU): the modules listed in `config.WORKER_MODULES` are shipped to them.
+# MAGIC The IDDOCs to rebuild come from `parsing_run_scope`, written by `3_parse` for this job run (refused if another run wrote it).
 # MAGIC
 # MAGIC **Intended Pipeline**
-# MAGIC - Qualibot Parsing Pipeline — Daily (task `3_parse`, GPU cluster)
+# MAGIC - Qualibot Parsing Pipeline — Daily (task `3c_chunks`, CPU cluster)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parse_manifest` (task `2_manifest`), `category_reference` (task `1_categories`)
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsing_checkpoint` (own checkpoint, re-read across phases)
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents` (resume and revision detection)
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.image_metadata` (keeps the rows already described across a rebuild)
-# MAGIC - `{PARSING_VOLUME_ROOT_PATH}` (volume listing and binary content)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_run_scope` (task `3_parse`)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest` (task `2_manifest`), `category_reference` (task `1_categories`)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_checkpoint` (tasks `3_parse` and `3b_parse_pdf`)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.image_metadata` (keeps the rows already described across a rebuild)
+# MAGIC - `{PARSING_VOLUME_ROOT_PATH}` (the folders of the failed IDDOCs, for the retry)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsing_checkpoint`
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents`
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.chunks`, `chunks_archive`, `archive_notices`
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.image_metadata`
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsing_run_health` (one row per run, for the monitoring dashboard)
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.document_change_log` (one row per NEW/REVISED document, for the monitoring dashboard)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsed_documents`
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.chunks`, `chunks_archive`, `archive_notices`
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.image_metadata`
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_run_health` (one row per run, for the monitoring dashboard)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - `parse_steps` keeps the run-level state (`INGESTION_RUN_ID`, `JOB_RUN_ID`) as module globals, set once by `set_job_run_id`.
+# MAGIC - `parse_steps` keeps the run-level state (`INGESTION_RUN_ID`, `JOB_RUN_ID`) as module globals.
 # MAGIC - The quality checks read the lazy DataFrames before the write, so `parsed_documents` and `image_metadata` are computed once more than the write needs.
 
 # COMMAND ----------
@@ -49,7 +44,7 @@
 
 # MAGIC %md
 # MAGIC ## Config Standard Package Imports
-# MAGIC The pinned `opencv-python-headless` replaces the build Docling pulls in, which fails on the GPU runtime.
+# MAGIC The retry can parse with Docling: the pinned `opencv-python-headless` replaces the build Docling pulls in.
 
 # COMMAND ----------
 
@@ -58,7 +53,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC The repository folder goes on `sys.path` for the driver.
+# MAGIC The repository folder goes on `sys.path` for the driver, ahead of the repository root (`leap_utils`).
 
 # COMMAND ----------
 
@@ -67,19 +62,14 @@ import sys
 
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
-sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
+sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))
 sys.path.insert(0, REPO_DIR)
-
-from pyspark.sql import functions as F
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Project Imports
-# MAGIC
-# MAGIC `config` holds every parameter (tables, volumes, chunking, Docling); `parse_steps`, `build_steps` and `output_steps` the phases below;
-# MAGIC `utils.configure` and the two worker helpers ship the settings to the executors. `addPyFile` ships the modules to every
-# MAGIC executor, late-joining ones included (`sys.path` only covers the driver).
+# MAGIC ## Config Function Imports
+# MAGIC `quality.require_gx()` fails here, before any work, on a cluster without Great Expectations.
 
 # COMMAND ----------
 
@@ -89,20 +79,14 @@ import output_steps
 import parse_checks
 import parse_steps
 import quality
-quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
-from utils import configure, broadcast_config, write_worker_config
+quality.require_gx()
 from leap_utils.common import logger as log_utils
-
-
-for _mod in cfg.WORKER_MODULES:
-    spark.sparkContext.addPyFile(os.path.join(REPO_DIR, _mod))
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Config Widgets
-# MAGIC
-# MAGIC The parent job run id is written on every row so `2_manifest` rows and these rows can be correlated.
+# MAGIC The parent job run id must match the one `3_parse` wrote in the run scope.
 
 # COMMAND ----------
 
@@ -110,83 +94,33 @@ dbutils.widgets.removeAll()
 
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
 LOG_LEVEL = dbutils.widgets.get("log_level")
-logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
-
-dbutils.widgets.text("job_run_id", "", "Parent job run_id (correlates with 2_manifest's parsed_documents rows)")
+dbutils.widgets.text("job_run_id", "", "Parent job run_id")
 parse_steps.set_job_run_id(dbutils.widgets.get("job_run_id"))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Spark and workers
-# MAGIC Docling needs the model, GPU and chunking settings on every executor. `broadcast_config` does it on a single-user cluster;
-# MAGIC on a shared cluster the workers read the same settings from a JSON file on the volume.
+# MAGIC ## Config logger
 
 # COMMAND ----------
 
-try:
-    _ = spark.sparkContext
-    IS_SHARED_CLUSTER = False
-except Exception:
-    IS_SHARED_CLUSTER = True
+logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-spark.conf.set("spark.sql.files.maxPartitionBytes", "134217728")
-spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
-spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "1")
+# COMMAND ----------
 
-configure(
-    OFFLINE_MODELS_DIR=cfg.OFFLINE_MODELS_DIR, VOLUME_BASE_PATH=cfg.VOLUME_BASE_PATH,
-    ANTIWORD_BIN=f"{REPO_DIR}/{cfg.ANTIWORD_BIN_RELATIVE}",
-    ANTIWORD_SHARE_DIR=f"{REPO_DIR}/{cfg.ANTIWORD_SHARE_RELATIVE}",
-    WORKER_CONFIG_JSON=os.path.join(cfg.VOLUME_BASE_PATH, "_parsing_config.json"),
-    USE_GPU=cfg.USE_GPU, DO_OCR=cfg.DO_OCR, GPU_OCR_FALLBACK=cfg.GPU_OCR_FALLBACK,
-    TABLE_STRUCTURE_MODE=cfg.TABLE_STRUCTURE_MODE, GENERATE_PICTURE_IMAGES=cfg.GENERATE_PICTURE_IMAGES,
-    IMAGE_SCALE=cfg.IMAGE_SCALE, MIN_AREA_RATIO=cfg.MIN_AREA_RATIO, MAX_REPEAT=cfg.MAX_REPEAT,
-    USE_TIKTOKEN=cfg.USE_TIKTOKEN, CHARS_PER_TOKEN=cfg.CHARS_PER_TOKEN,
-    MIN_CHUNK_TOKENS=cfg.MIN_CHUNK_TOKENS, TARGET_CHUNK_TOKENS=cfg.TARGET_CHUNK_TOKENS,
-    MAX_CHUNK_TOKENS=cfg.MAX_CHUNK_TOKENS, MAX_CHUNK_CHARS=cfg.MAX_CHUNK_CHARS,
-    CHUNK_OVERLAP_RATIO=cfg.CHUNK_OVERLAP_RATIO,
-)
+# MAGIC %md
+# MAGIC ## Config Spark and workers
+# MAGIC The retry parses on the executors: they get the parsing modules and settings.
 
-if IS_SHARED_CLUSTER:
-    logger.warning("broadcast_config skipped (shared cluster) - workers read the JSON fallback from the volume")
-else:
-    broadcast_config(spark)
-write_worker_config(spark)
+# COMMAND ----------
 
-try:
-    CLUSTER_PARALLELISM = int(spark.sparkContext.defaultParallelism)
-    if CLUSTER_PARALLELISM <= 1:
-        raise ValueError(f"defaultParallelism={CLUSTER_PARALLELISM} looks wrong")
-except Exception as exc:
-    logger.warning(f"Could not read defaultParallelism ({exc}) - falling back to 8")
-    CLUSTER_PARALLELISM = 8
-
-from importlib import metadata as _metadata
-
-
-def _version(package):
-    try:
-        return _metadata.version(package)
-    except _metadata.PackageNotFoundError:
-        return "absent"
-
-
-# docling is not pinned in the job: the installed versions are what to pin once a run is validated.
-logger.info("Packages | " + " | ".join(
-    f"{p}={_version(p)}" for p in ("docling", "docling-core", "docling-ibm-models", "torch", "great_expectations")))
-logger.info(
-    f"Run {parse_steps.INGESTION_RUN_ID} | mode={cfg.RUN_MODE} | shared_cluster={IS_SHARED_CLUSTER} | "
-    f"parallelism={CLUSTER_PARALLELISM} | GPU={cfg.USE_GPU} | table_mode={cfg.TABLE_STRUCTURE_MODE} | "
-    f"filter={cfg.PARSE_FILTER}"
-)
+parse_steps.setup_workers(REPO_DIR)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Inputs
-# MAGIC ## Import Qualibot tables
-# MAGIC ### Parse manifest
+# MAGIC ## Parse manifest
 # MAGIC One row per in-scope document, written by `2_manifest`.
 
 # COMMAND ----------
@@ -196,102 +130,35 @@ df_business_meta = spark.read.table(cfg.PARSE_MANIFEST_TABLE).cache()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Data Preparation
-# MAGIC ## Prep1 - Scope of the run
-# MAGIC Incremental mode skips the IDDOCs already in a terminal status, except those whose `indice`, `doc_date` or `ref` changed
-# MAGIC since their last parse: Intraqual gives every revision a new IDDOC, but a rename can happen in place.
+# MAGIC ## Run scope
+# MAGIC The IDDOCs `3_parse` put in scope for this run, and its ingestion run id (shared by the rows of both parse tasks).
 
 # COMMAND ----------
 
-target_iddocs, revised_iddocs = parse_steps.resolve_parse_scope(df_business_meta)
-if cfg.RUN_MODE != "rechunk":  # a rebuild changes no document: nothing to log as NEW or REVISED
-    output_steps.log_document_changes(df_business_meta, target_iddocs, revised_iddocs, parse_steps.JOB_RUN_ID)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Prep2 - File selection
-# MAGIC Scans only the target IDDOCs' folders on the volume, ranks every candidate file per IDDOC and keeps the best one.
-# MAGIC The runners-up stay available for the retry phase. `rechunk` reads no file: it only rebuilds from the checkpoint.
-
-# COMMAND ----------
-
-RECHUNK_ONLY = cfg.RUN_MODE == "rechunk"
-if RECHUNK_ONLY:
-    df_files = df_matched_full = df_content = None
-else:
-    df_files, df_matched_full, df_content = parse_steps.select_files_for_target_iddocs(target_iddocs, df_business_meta)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Prep3 - Documents without a parseable file
-# MAGIC A target IDDOC whose folder holds nothing parseable is recorded as `SKIPPED_EMPTY_FOLDER` and leaves the run.
-
-# COMMAND ----------
-
-if target_iddocs and not RECHUNK_ONLY:
-    target_iddocs = parse_steps.mark_empty_folders(target_iddocs, df_files, df_business_meta)
+target_iddocs, revised_iddocs = parse_steps.read_run_scope()
 HAS_TARGET_IDDOCS = len(target_iddocs) > 0
 
-num_files = 0 if RECHUNK_ONLY else df_files.count()
-logger.info(f"[SELECT] {num_files} files selected for parsing")
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Data Preparation
+# MAGIC ## Prep1 - Retry failed documents with their next-best file
+# MAGIC Only when this run parsed something (`ENABLE_RETRY`): the folders of the failed IDDOCs are scanned again.
+
+# COMMAND ----------
+
+if parse_steps.files_parsed_this_run() == 0:
+    logger.info("Nothing was parsed this run - no failed document to retry.")
+elif cfg.ENABLE_RETRY:
+    parse_steps.retry_failed_iddocs(df_business_meta)
+else:
+    logger.info("Retry disabled.")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Data Transformations
-# MAGIC ## Tr. 1 - Checkpoint snapshot
-# MAGIC A full run shallow-clones the live checkpoint before overwriting it; an incremental run only logs the Delta version to restore.
-
-# COMMAND ----------
-
-parse_steps.snapshot_or_log_checkpoint(num_files)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Tr. 2 - Parse with Docling
-# MAGIC A file whose IDDOC already has a reusable checkpoint row for the same bytes is not parsed again (the path does not
-# MAGIC matter: a copied checkpoint keeps the content, not always the path). Above `parsing_max_parse_files` pending files
-# MAGIC the task stops here, before any GPU parse: thousands of pending files mean the checkpoint was not recognised.
-# MAGIC Then each batch is parsed and checkpointed.
-
-# COMMAND ----------
-
-parse_fn = parse_steps.make_parse_fn(CLUSTER_PARALLELISM)
-
-if num_files > 0:
-    df_files = parse_steps.exclude_already_parsed(df_files)
-    num_files = df_files.count()
-    parse_steps.enforce_parse_budget(num_files)
-    if num_files > 0:
-        parse_steps.cleanup_stale_image_folders(df_files)
-        parse_steps.parse_pending_files(df_files, parse_fn)
-        parse_steps.show_failed_documents(df_business_meta)
-else:
-    logger.info("Nothing to parse - all documents are already processed.")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Tr. 3 - Retry failed documents with their next-best file
-# MAGIC Controlled by `ENABLE_RETRY`. Without it, the checkpoint is read as is.
-
-# COMMAND ----------
-
-if num_files == 0:
-    logger.info("Nothing was parsed - no failed document to retry.")
-elif cfg.ENABLE_RETRY:
-    parse_steps.retry_failed_iddocs(df_matched_full, df_content, df_business_meta)
-else:
-    n_in_error = parse_steps.read_checkpoint_deduped().filter(F.col("parse_status") != "SUCCESS").count()
-    logger.info(f"Retry disabled. {n_in_error} documents still in error.")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Tr. 4 - image_metadata from the checkpoint
+# MAGIC ## Tr. 1 - image_metadata from the checkpoint
 
 # COMMAND ----------
 
@@ -301,7 +168,7 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Tr. 5 - parsed_documents and chunks
+# MAGIC ## Tr. 2 - parsed_documents and chunks
 # MAGIC Pre-cutoff documents go to the archive chunks, the others to the chatbot chunks.
 
 # COMMAND ----------

@@ -30,12 +30,24 @@ Suivi pour Claude : constats, plan par phases, requêtes demandées et leurs ré
 
 ## Plan
 
-- [ ] Phase 0 — mesures : composition du corpus, rythme des nouveaux documents, devenir des images.
-- [ ] Phase 1 — GPU seulement pour les PDF : tâche CPU (sélection, hash, reprise, formats non PDF, docx/pptx Docling CPU) ;
-      tâche GPU lancée seulement s'il reste des PDF (condition sur une valeur de tâche) ; découpage, contrôles GX et écritures
-      sur CPU après.
+- [x] Phase 0 — mesures : composition du corpus, rythme des nouveaux documents, devenir des images (2026-10-17).
+- [ ] Phase 1 — GPU seulement pour les PDF (code poussé le 2026-10-17, à valider par un run UAT) : `3_parse` sur CPU
+      (policy S, 16.4 standard, `r6id.xlarge`, Docling et torch par pip), PDF sur CPU jusqu'à 30, au-delà file
+      `parsing_gpu_queue` et condition `3b_needs_gpu` -> `3b_parse_pdf` (GPU) ; `3c_chunks` (CPU) : retry, découpage, GX,
+      écritures. Passage de relais : `parsing_run_scope`. `max_concurrent_runs: 1`. Points à surveiller au premier run :
+      installation pip de Docling/torch sur 16.4, durée et mémoire de `3c_chunks` sur 4 vCPU / 32 Go (le policy S interdit
+      plus que `*.xlarge`).
 - [ ] Phase 2 — rendement du GPU sur les PDF : threads, 2 documents par GPU, partitions / réutilisation des workers,
       sauvegarde des images (PNG sans optimize, écritures en parallèle).
-- [ ] Phase 3 — qualité : .doc / .ppt via LibreOffice vers docx / pptx puis Docling (tableaux, images), images décoratives
+- [ ] Phase 3 — qualité : descriptions d'images rattachées par (IDDOC, image_id) — un re-parsing qui change l'ordre ou le
+      nombre d'images attache une description à la mauvaise image : clé à passer sur le hash de l'image ; .doc / .ppt via LibreOffice vers docx / pptx puis Docling (tableaux, images), images décoratives
       non sauvegardées, versions Docling figées.
 - [ ] Phase 4 — code : fusion des petits modules (`doc_status`, `parse_checks`, `image_store`, `tables`), `utils.py` renommé.
+
+## Policy S (UAT, `000E7559CADE5290`, lue le 2026-10-17)
+
+`spark_version` : `auto:latest-lts`, `auto:prev-lts`, `16.4.x-scala2.13`, `16.4.x-scala2.12` (aucun runtime ML) ;
+`node_type_id` : `.*\.xlarge` ; `num_workers` max 0 ; SPOT_WITH_FALLBACK, `first_on_demand` >= 1 ; bibliothèques :
+`great-expectations~=0.18.0`, `databricks-sdk>=0.20.0`, `fsspec~=2024.0`, `msal~=1.0`, `s3fs~=2024.0`,
+`com.crealytics:spark-excel_2.12:3.5.0_0.20.3`, `xlrd~=2.0.0`, `openpyxl~=3.1.0`.
+`system.lakeflow` / `system.billing` : pas de `USE SCHEMA` pour l'utilisateur (coût non mesurable par lui).

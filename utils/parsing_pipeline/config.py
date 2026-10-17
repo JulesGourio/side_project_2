@@ -84,6 +84,14 @@ TARGET_CHANGE_LOG_TABLE      = f"{PIPELINE_WRITE_ENV}_proj.qualibot.document_cha
 CHECKPOINT_TABLE     = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_checkpoint"
 RAG_EXCLUSION_TABLE  = f"{PIPELINE_WRITE_ENV}_proj.qualibot.rag_exclusions"
 RETRY_TEMP_TABLE     = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_retry_temp"
+# Hand-over between the parse tasks of one run (overwritten by 3_parse): the IDDOCs in scope (3c_chunks rebuilds
+# them), and the PDFs left for the GPU task.
+RUN_SCOPE_TABLE      = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_run_scope"
+GPU_QUEUE_TABLE      = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_gpu_queue"
+
+# Above this many PDFs left to parse, 3_parse hands them to the GPU task; at or below, it parses them on CPU and the
+# GPU cluster never starts. Only PDFs use Docling's GPU models (layout, tables): docx / pptx / html do not.
+GPU_MIN_PDFS = int(_env("PARSING_GPU_MIN_PDFS", "").strip() or "30")
 
 # Column groups shared by the steps: the document metadata of parse_manifest, the category hierarchy of
 # category_reference, and what a selected file is enriched with.
