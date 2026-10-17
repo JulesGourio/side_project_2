@@ -112,7 +112,12 @@ def test_the_gpu_cluster_starts_only_through_the_pdf_condition():
     key = re.fullmatch(r"\{\{tasks\.3_parse\.values\.(\w+)\}\}", condition["left"]).group(1)
     assert f'taskValues.set(key="{key}"' in _read("utils/parsing_pipeline/create_proj_parsing_checkpoint.py")
 
-    # A skipped GPU task must not skip the chunk build.
-    assert tasks["3c_chunks"]["run_if"] == "NONE_FAILED"
-    assert {d["task_key"] for d in tasks["3c_chunks"]["depends_on"]} == {"3b_needs_gpu", "3b_parse_pdf"}
+    # The chunk build joins both branches; a dependency on a condition must name its outcome (Jobs API).
+    assert tasks["3c_chunks"]["run_if"] == "AT_LEAST_ONE_SUCCESS"
+    assert tasks["3c_chunks"]["depends_on"] == [{"task_key": "3b_needs_gpu", "outcome": "false"},
+                                                {"task_key": "3b_parse_pdf"}]
+    for task in tasks.values():
+        for dep in task.get("depends_on", []):
+            if "condition_task" in tasks[dep["task_key"]]:
+                assert dep.get("outcome") in ("true", "false"), (task["task_key"], dep)
     assert tasks["4_describe_images"]["depends_on"] == [{"task_key": "3c_chunks"}]

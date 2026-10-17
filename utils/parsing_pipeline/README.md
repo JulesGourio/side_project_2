@@ -52,7 +52,7 @@ and the image description in `llm_describe.py`.
 | `3_parse` | `create_proj_parsing_checkpoint.py` | single-node CPU (S policy, `parse_cpu_cluster`) | `parsing_checkpoint` (non-PDF formats, and the PDFs when at most `parsing_gpu_min_pdfs`), `parsing_run_scope`, `parsing_gpu_queue`, `document_change_log`, task value `pdfs_for_gpu` |
 | `3b_needs_gpu` | condition `pdfs_for_gpu > 0` | none | — |
 | `3b_parse_pdf` | `create_proj_parsing_checkpoint_gpu.py` | GPU, only when the condition is true | `parsing_checkpoint` (the queued PDFs) |
-| `3c_chunks` | `create_proj_chunks.py` | the CPU cluster of `3_parse` (`run_if: NONE_FAILED`) | `parsing_checkpoint` (retries), `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health` |
+| `3c_chunks` | `create_proj_chunks.py` | the CPU cluster of `3_parse` (after the `false` branch of the condition or `3b_parse_pdf`, `run_if: AT_LEAST_ONE_SUCCESS`) | `parsing_checkpoint` (retries), `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health` |
 | `4_describe_images` | `create_proj_image_metadata.py` | CPU | `image_metadata`, image passages in `chunks` and `chunks_archive`, `parsed_documents` |
 | `5_sync_index` | `update_proj_vector_indexes.py` | classic CPU (`meta_cpu_cluster`, GX on `chunks_full`) | `chunks_full`, Vector Search indexes |
 | `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata` (Lakebase) |
