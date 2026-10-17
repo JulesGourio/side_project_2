@@ -74,26 +74,44 @@ def _with_attempt_columns(df):
     return df
 
 
-def _carry_attempts(df):
-    """Keep the attempt counter and the last error kind of an image across a rebuild of its document."""
+def same_image_condition():
+    """True when the previous row of (IDDOC, image_id) describes the image now at that id.
+
+    The ids are positions in the parse output: a re-parse that changes the number or the order of the images moves
+    them. A description is kept when the document was not parsed again after it was written, or when the image at
+    that id has the same page and the same size.
+    """
+    parsed_before = F.col("_prev_described_at").isNotNull() & (F.col("_prev_described_at") >= F.col("_parsed_at"))
+    same_shape = (
+        F.col("image_width").isNotNull() & F.col("image_height").isNotNull()
+        & F.col("image_width").eqNullSafe(F.col("_prev_image_width"))
+        & F.col("image_height").eqNullSafe(F.col("_prev_image_height"))
+        & F.col("page_no").eqNullSafe(F.col("_prev_page_no"))
+    )
+    return F.coalesce(parsed_before | same_shape, F.lit(False))
+
+
+def _carry_previous_image_rows(df):
+    """Keep the description, the attempt counter and the last error of each image that is still the same image."""
     if not table_exists(TARGET_IMAGE_METADATA_TABLE):
-        return _with_attempt_columns(df)
-    prev = spark.table(TARGET_IMAGE_METADATA_TABLE)
-    if "attempts" not in prev.columns:
-        return _with_attempt_columns(df)
-    prev = (
-        prev.select("IDDOC", "image_id", F.col("attempts").alias("_prev_attempts"),
-                    F.col("last_error_kind").alias("_prev_last_error_kind"))
-        .dropDuplicates(["IDDOC", "image_id"])
-    )
-    return (
-        df.join(prev, on=["IDDOC", "image_id"], how="left")
-        .withColumn("attempts", F.coalesce(F.col("_prev_attempts"), F.lit(0)))
+        return _with_attempt_columns(df.drop("_parsed_at")).withColumn("attempts", F.lit(0))
+    prev = _with_attempt_columns(spark.table(TARGET_IMAGE_METADATA_TABLE))
+    carried = ("status", "description", "input_tokens", "output_tokens", "described_at", "attempts", "last_error_kind",
+               "page_no", "image_width", "image_height")
+    prev = prev.select("IDDOC", "image_id", *[F.col(c).alias(f"_prev_{c}") for c in carried]).dropDuplicates(
+        ["IDDOC", "image_id"])
+    df = _with_attempt_columns(df).join(prev, on=["IDDOC", "image_id"], how="left").withColumn("_same", same_image_condition())
+    kept_status = F.col("_same") & F.col("_prev_status").isin("DONE", "SKIPPED", "FAILED_LIMIT")
+    df = df.withColumn("status", F.when(kept_status, F.col("_prev_status")).otherwise(F.col("status")))
+    for c in ("description", "input_tokens", "output_tokens", "described_at"):
+        df = df.withColumn(c, F.when(kept_status, F.col(f"_prev_{c}")).otherwise(F.col(c)))
+    df = (
+        df.withColumn("attempts", F.when(F.col("_same"), F.coalesce(F.col("_prev_attempts"), F.lit(0))).otherwise(F.lit(0)))
         # Only an image that is not described keeps the kind of its last failure.
-        .withColumn("last_error_kind", F.when(F.col("status").isin("PENDING", "FAILED_LIMIT"),
+        .withColumn("last_error_kind", F.when(F.col("_same") & F.col("status").isin("PENDING", "FAILED_LIMIT"),
                                               F.col("_prev_last_error_kind")))
-        .drop("_prev_attempts", "_prev_last_error_kind")
     )
+    return df.drop("_same", "_parsed_at", *[f"_prev_{c}" for c in carried])
 
 
 def build_image_metadata(target_iddocs, ingestion_run_id):
@@ -115,7 +133,7 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
     df_image_metadata = (
         df_full_pipeline.filter(F.col("image_count") > 0)
         .select("IDDOC", "ref", "titre", "division", "niveau_plus_1", "niveau_plus_2", "source_file_name",
-                F.posexplode("images").alias("img_pos", "img"))
+                F.col("ingestion_timestamp").alias("_parsed_at"), F.posexplode("images").alias("img_pos", "img"))
         .select(
             "IDDOC", "source_file_name", "ref", "titre",
             "division", "niveau_plus_1", "niveau_plus_2",
@@ -137,32 +155,11 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
             F.lit(None).try_cast("timestamp").alias("described_at"),
             F.lit(ingestion_run_id).alias("ingestion_run_id"),
             F.current_timestamp().alias("ingestion_timestamp"),
+            "_parsed_at",
         )
     )
 
-    if table_exists(TARGET_IMAGE_METADATA_TABLE):
-        df_prev_described = spark.table(TARGET_IMAGE_METADATA_TABLE).filter(
-            F.col("status").isin("DONE", "SKIPPED", "FAILED_LIMIT")
-        ).select(
-            "IDDOC", "image_id",
-            F.col("status").alias("_prev_status"),
-            F.col("description").alias("_prev_description"),
-            F.col("input_tokens").alias("_prev_input_tokens"),
-            F.col("output_tokens").alias("_prev_output_tokens"),
-            F.col("described_at").alias("_prev_described_at"),
-        ).dropDuplicates(["IDDOC", "image_id"])
-        df_image_metadata = (
-            df_image_metadata
-            .join(F.broadcast(df_prev_described), on=["IDDOC", "image_id"], how="left")
-            .withColumn("status", F.coalesce(F.col("_prev_status"), F.col("status")))
-            .withColumn("description", F.coalesce(F.col("_prev_description"), F.col("description")))
-            .withColumn("input_tokens", F.coalesce(F.col("_prev_input_tokens"), F.col("input_tokens")))
-            .withColumn("output_tokens", F.coalesce(F.col("_prev_output_tokens"), F.col("output_tokens")))
-            .withColumn("described_at", F.coalesce(F.col("_prev_described_at"), F.col("described_at")))
-            .drop("_prev_status", "_prev_description", "_prev_input_tokens", "_prev_output_tokens", "_prev_described_at")
-        )
-
-    df_image_metadata = _carry_attempts(df_image_metadata)
+    df_image_metadata = _carry_previous_image_rows(df_image_metadata)
     logger.info(f"Image metadata: {df_image_metadata.count()} rows")
     return df_image_metadata
 

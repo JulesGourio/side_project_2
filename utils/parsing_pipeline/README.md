@@ -192,6 +192,12 @@ listed at the top of `config.py`.
 
 ## Image descriptions (`4_describe_images`)
 
+- A rebuild (`3c_chunks`) keeps the description of an `(IDDOC, image_id)` only when it still describes the image now
+  at that id: the document was not parsed again after the description was written, or the image has the same page and
+  size. The ids are positions in the parse output, and a re-parse that changes the number or order of the images
+  moves them (965 of 2,314 documents re-parsed on UAT on 2026-10-16 changed their image count); any other image goes
+  back to `PENDING` and is described again.
+
 - The images with status `PENDING` or `ERROR` are described, at most `PARSING_LLM_BATCH_SIZE` per run. The
   others wait for the next run.
 - Each image goes through the endpoint chain: the primary endpoint, then the fallbacks. Each endpoint is tried
