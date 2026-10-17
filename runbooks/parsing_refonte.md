@@ -16,6 +16,18 @@ Suivi pour Claude : constats, plan par phases, requêtes demandées et leurs ré
 - `patch_worker_env` fixe `OMP_NUM_THREADS=2` et Docling `num_threads=4` sur des nœuds de 16 vCPU (une tâche par nœud).
 - Images : ~28 000 sauvegardées (PNG `optimize=True` + fsync, une par une).
 
+## Mesures phase 0 (2026-10-17)
+
+- Corpus (dernière ligne par IDDOC du manifest) : ~5 540 documents. PDF 1 449 (26 %, dont 24 en LLM-OCR), docx 3 086
+  (Docling 1 441, fallback XML 1 638), pptx 324, xlsx/xlsm/xls/xlsb 457, doc 153, html 59, ppt 8 (5 encore `unsupported:ppt`
+  de l'ancien parseur). Images : 60 700 dont 10 783 de PDF.
+- Rythme : 17 à 79 nouveaux documents par semaine, 1 à 24 PDF par semaine, PDF 1 à 4 jours par semaine (120 jours).
+- Images : DONE 38 679 (807 caractères en moyenne, 11,0 M tokens de sortie), SKIPPED 6 180, SKIPPED_DECORATIVE 4 499
+  (sauvegardées pour rien, ~9 %), EXTRACTION_FAILED 12.
+- Conséquence : un run quotidien a 0 à quelques PDF ; Docling PDF sur CPU suffit pour ce volume, le GPU ne sert qu'aux
+  reconstructions complètes (> ~30 PDF).
+- `uat_proj.qualibot.chunks_index` n'existe pas : le run du 16/10 s'est arrêté à GX dans `3_parse`, avant `5_sync_index`.
+
 ## Plan
 
 - [ ] Phase 0 — mesures : composition du corpus, rythme des nouveaux documents, devenir des images.
