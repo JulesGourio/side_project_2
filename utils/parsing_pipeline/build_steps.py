@@ -160,8 +160,32 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
     )
 
     df_image_metadata = _carry_previous_image_rows(df_image_metadata)
+    df_image_metadata = _with_rows_of_unlisted_documents(df_image_metadata, df_full_pipeline)
+    # Materialised: the same table is read above and overwritten (or merged into) by the write.
+    df_image_metadata = df_image_metadata.localCheckpoint()
     logger.info(f"Image metadata: {df_image_metadata.count()} rows")
     return df_image_metadata
+
+
+def _with_rows_of_unlisted_documents(df_image_metadata, df_full_pipeline):
+    """Add, unchanged, the image_metadata rows of the documents whose checkpoint row counts images but lists none.
+
+    A checkpoint copied from an older pipeline keeps `image_count` but not the `images` array: rebuilding from it would
+    drop every image (and description) of those documents.
+    """
+    if not table_exists(TARGET_IMAGE_METADATA_TABLE):
+        return df_image_metadata
+    df_unlisted = df_full_pipeline.filter(
+        (F.col("image_count") > 0) & (F.coalesce(F.size("images"), F.lit(0)) <= 0)).select("IDDOC").distinct()
+    df_previous = _with_attempt_columns(spark.table(TARGET_IMAGE_METADATA_TABLE))
+    df_kept = df_previous.join(df_unlisted, on="IDDOC", how="left_semi").select(*[
+        (F.col(c) if c in df_previous.columns else F.lit(None)).try_cast(df_image_metadata.schema[c].dataType).alias(c)
+        for c in df_image_metadata.columns
+    ])
+    n_docs = df_unlisted.count()
+    if n_docs:
+        logger.info(f"[IMAGES] {n_docs} document(s) without an image list in the checkpoint: their image_metadata rows are kept as is")
+    return df_image_metadata.unionByName(df_kept)
 
 
 def _apply_date_and_rag_filters(df_processed_files):

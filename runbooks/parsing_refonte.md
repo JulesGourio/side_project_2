@@ -51,3 +51,12 @@ Suivi pour Claude : constats, plan par phases, requêtes demandées et leurs ré
 `great-expectations~=0.18.0`, `databricks-sdk>=0.20.0`, `fsspec~=2024.0`, `msal~=1.0`, `s3fs~=2024.0`,
 `com.crealytics:spark-excel_2.12:3.5.0_0.20.3`, `xlrd~=2.0.0`, `openpyxl~=3.1.0`.
 `system.lakeflow` / `system.billing` : pas de `USE SCHEMA` pour l'utilisateur (coût non mesurable par lui).
+
+## Images (2026-10-17, avant le run de la phase 1)
+
+- Lignes v1 du checkpoint des 2 318 documents re-parsés : `images` vide (0 image listée, `image_count` seul rempli),
+  516 lignes du dossier `Dm_`. Images re-parsées : 27 974 ; descriptions v1 au même numéro : 8 069 même image
+  (page + taille), 10 450 autre image (auraient été mal rattachées), 8 166 sans ligne v1.
+- Corrigé : description gardée seulement pour la même image ; documents dont le checkpoint ne liste pas les images :
+  lignes `image_metadata` gardées telles quelles ; la fusion incrémentale ne réapplique plus l'ancienne description.
+- `4_describe_images` ne remet plus tout en PENDING en mode `full` : `parsing_redescribe_all_images` (false par défaut).

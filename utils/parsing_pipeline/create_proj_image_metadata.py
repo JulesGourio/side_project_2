@@ -126,11 +126,12 @@ logger.info(f"RUN_MODE={cfg.RUN_MODE} | Endpoints={' -> '.join(LLM_ENDPOINTS)} |
 # MAGIC ## Images needing a description
 # MAGIC `incremental` (default, safe to re-run): `PENDING` images, plus `ERROR` rows (described rather than skipped). An image that failed on every endpoint is left `PENDING` with no description, so the next run describes it again, until it reaches the attempt limit (`FAILED_LIMIT`). `DONE`, `SKIPPED`, `SKIPPED_DECORATIVE`, `EXTRACTION_FAILED` and `FAILED_LIMIT` stay terminal.
 # MAGIC
-# MAGIC `full` resets every status to `PENDING` first and describes everything again.
+# MAGIC `parsing_redescribe_all_images=true` resets every status to `PENDING` first and describes everything again (a prompt or
+# MAGIC model change). The parsing run mode does not: a `full` parse keeps every description of an image that did not change.
 
 # COMMAND ----------
 
-if cfg.RUN_MODE == "full":
+if cfg.REDESCRIBE_ALL_IMAGES:
     describe_steps.reset_images_to_pending()
 
 df_pending = describe_steps.pending_images()

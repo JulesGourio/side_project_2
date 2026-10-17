@@ -190,6 +190,7 @@ resources:
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
               PARSING_RUN_MODE:         ${var.parsing_run_mode}
+              PARSING_REDESCRIBE_ALL_IMAGES: ${var.parsing_redescribe_all_images}
               PARSING_USE_GPU:          "false"
 
       tasks:

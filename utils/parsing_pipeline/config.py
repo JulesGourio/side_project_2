@@ -215,6 +215,8 @@ CHUNK_OVERLAP_RATIO = float(_env("PARSING_CHUNK_OVERLAP_RATIO", "0.12"))
 BOILERPLATE_MIN_DOCS = int(_env("PARSING_BOILERPLATE_MIN_DOCS", "20"))
 
 # --- LLM settings (vision model for image description) ---
+# Describe every image again (a prompt or model change), whatever the parsing run mode: tens of thousands of LLM calls.
+REDESCRIBE_ALL_IMAGES = _env("PARSING_REDESCRIBE_ALL_IMAGES", "false").strip().lower() in ("1", "true", "yes")
 LLM_MODEL_ENDPOINT  = _env("PARSING_LLM_ENDPOINT", "databricks-gpt-6-luna")
 LLM_MAX_TOKENS      = 5000    # GPT-5 reasoning tokens need headroom beyond the visible output
 LLM_TEMPERATURE     = 1.0   # gpt-5 family: temperature=1 only

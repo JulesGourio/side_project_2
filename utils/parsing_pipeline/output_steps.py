@@ -27,29 +27,23 @@ from config import (
 logger = get_logger(__name__)
 
 # Kept from the existing row when it is DONE, SKIPPED or FAILED_LIMIT: the description and what it cost.
-_IMAGE_KEEP_PREVIOUS = ("status", "description", "input_tokens", "output_tokens", "described_at")
 _IMAGE_MERGE_TEMP = f"{PIPELINE_WRITE_ENV}_proj.qualibot._image_metadata_merge_temp"
 
 
 def _merge_image_metadata(df_image_metadata):
-    """Merge image_metadata instead of delete-then-append: the description, its status, tokens and date only take the
-    fresh value when the existing row is not already DONE, SKIPPED or FAILED_LIMIT."""
+    """Merge image_metadata instead of delete-then-append.
+
+    The rows arrive with the descriptions `build_steps.build_image_metadata` decided to keep (same image only): the
+    merge takes them as they are, a previous description must not come back on an image that moved.
+    """
     if not table_exists(TARGET_IMAGE_METADATA_TABLE):
         # First write into an empty catalog: the merge needs the table to exist.
         write_table(df_image_metadata, TARGET_IMAGE_METADATA_TABLE, "append", merge_schema=True)
         logger.info(f"Created {TARGET_IMAGE_METADATA_TABLE} (first write)")
         return
     add_missing_columns(df_image_metadata, TARGET_IMAGE_METADATA_TABLE)
-    previous = spark.table(TARGET_IMAGE_METADATA_TABLE).select(
-        "IDDOC", "image_id", *[F.col(c).alias(f"_prev_{c}") for c in _IMAGE_KEEP_PREVIOUS])
-    keep_previous = F.col("_prev_status").isin("DONE", "SKIPPED", "FAILED_LIMIT")
-    merged = df_image_metadata.join(previous, on=["IDDOC", "image_id"], how="left").select(*[
-        F.when(keep_previous, F.col(f"_prev_{c}")).otherwise(F.col(c)).alias(c) if c in _IMAGE_KEEP_PREVIOUS
-        else F.col(c)
-        for c in df_image_metadata.columns
-    ])
-    # The source is saved first: it reads the table it is merged into.
-    write_table(merged, _IMAGE_MERGE_TEMP, "overwrite", overwrite_schema=True)
+    # The source is saved first: it was built from the table it is merged into.
+    write_table(df_image_metadata, _IMAGE_MERGE_TEMP, "overwrite", overwrite_schema=True)
     merge_into(spark.table(_IMAGE_MERGE_TEMP), TARGET_IMAGE_METADATA_TABLE, ["IDDOC", "image_id"])
     spark.sql(f"DROP TABLE IF EXISTS {_IMAGE_MERGE_TEMP}")
     logger.info(f"Merged into {TARGET_IMAGE_METADATA_TABLE}")

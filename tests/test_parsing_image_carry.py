@@ -87,3 +87,17 @@ def test_a_new_image_starts_pending_with_no_attempt(build_steps, spark, monkeypa
     out = _run(build_steps, spark, monkeypatch, [],
                [(5, 0, 1, 800, 600, "PENDING", None, None, None, None, T_REPARSED)])
     assert out[5].status == "PENDING" and out[5].attempts == 0
+
+
+def test_documents_whose_checkpoint_lists_no_image_keep_their_rows(build_steps, spark, monkeypatch):
+    prev = spark.createDataFrame(
+        [(7, 0, "DONE", "kept as is", 10, 5, T_DESCRIBED, 1, None, 1, 800, 600),
+         (8, 0, "DONE", "same image, re-parsed", 10, 5, T_DESCRIBED, 1, None, 1, 800, 600)], PREV_SCHEMA)
+    monkeypatch.setattr(build_steps, "table_exists", lambda table: True)
+    monkeypatch.setattr(build_steps, "spark", types.SimpleNamespace(table=lambda table: prev))
+    checkpoint = spark.createDataFrame(
+        [(7, 3, []), (8, 1, [(0,)])], "IDDOC long, image_count int, images array<struct<image_id:int>>")
+    new_rows = build_steps._carry_previous_image_rows(spark.createDataFrame(
+        [(8, 0, 1, 800, 600, "PENDING", None, None, None, None, T_REPARSED)], NEW_SCHEMA))
+    out = build_steps._with_rows_of_unlisted_documents(new_rows, checkpoint).collect()
+    assert sorted((r.IDDOC, r.description) for r in out) == [(7, "kept as is"), (8, "same image, re-parsed")]
