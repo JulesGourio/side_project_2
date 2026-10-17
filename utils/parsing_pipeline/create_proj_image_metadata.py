@@ -67,6 +67,7 @@ import config as cfg
 import describe_steps
 import llm_describe
 import quality
+quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from utils import configure
 from leap_utils.common import logger as log_utils
 

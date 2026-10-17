@@ -58,6 +58,7 @@ sys.path.insert(0, REPO_DIR)
 # COMMAND ----------
 
 import quality
+quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from tables import add_missing_columns, merge_into, table_exists, write_table
 
 # COMMAND ----------

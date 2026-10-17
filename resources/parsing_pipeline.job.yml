@@ -4,7 +4,7 @@
 #   1_categories, 2_manifest : freshness guard, category_reference, scope and parse_manifest -> small CPU (shared by both)
 #   3_parse                  : Docling parsing and chunking                                  -> GPU (g4dn)
 #   4_describe_images        : vision LLM image description                                  -> small CPU (bound by the rate limiter)
-#   5_sync_index             : Vector Search index sync                                      -> small CPU
+#   5_sync_index             : Vector Search index sync                                      -> small CPU (GX on chunks_full)
 #   6_update_kb_metadata     : Lakebase doc_catalog and catalog_metadata                     -> serverless, once the index sync succeeded
 #
 # The metadata tasks have their own cluster so it does not stay up through the whole GPU parse.
@@ -202,6 +202,9 @@ resources:
             - pypi: {package: "pyxlsb"}
             - pypi: {package: "openai"}
             - pypi: {package: "tenacity"}
+            # The CPU clusters get Great Expectations from the S policy; the GPU cluster has no policy. 0.18.x still has the
+            # SparkDFDataset API of leap_utils and resolves with docling and numpy<2.
+            - pypi: {package: "great_expectations==0.18.22"}
             # The opencv-headless install is the %pip cell in create_proj_chunks.py, not a cluster library.
 
         - task_key: "4_describe_images"
@@ -237,7 +240,7 @@ resources:
               vector_search_endpoint: "qualibot"
               embedding_model: "databricks-qwen3-embedding-0-6b"
               build_chunks_full: ${var.parsing_build_chunks_full}
-          # Classic CPU cluster, not serverless: the quality checks of chunks_full need a Spark session.
+          # Classic CPU cluster, not serverless: Great Expectations (the quality checks of chunks_full) comes with its S policy.
           libraries:
             - pypi: {package: "databricks-sdk>=0.118.0"}
 

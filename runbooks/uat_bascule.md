@@ -124,7 +124,7 @@ Attendu : même état qu'en P7.
 
 - [ ] **J5. Rechunk** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Run now*, paramètres par défaut (`dry_run = true`). Attendre la fin.
 
-- [ ] **J5b. Reprise après le run du 2026-10-16** (run `87f03f9a-b60f-40a7-a336-63561356d22a` : 20 h de parsing GPU de tout le corpus, puis échec `ModuleNotFoundError: great_expectations` dans les contrôles qualité de `3_parse`, rien écrit dans `chunks`). Le parsing est dans `parsing_checkpoint`, il n'est pas refait. Corrigé le 2026-10-17 : contrôles qualité en Spark (plus de GX), reprise sur (IDDOC, hash du contenu) au lieu du chemin, arrêt avant tout parsing au-delà de `parsing_max_parse_files` (500) fichiers.
+- [ ] **J5b. Reprise après le run du 2026-10-16** (run `87f03f9a-b60f-40a7-a336-63561356d22a` : 20 h de parsing GPU de tout le corpus, puis échec `ModuleNotFoundError: great_expectations` dans les contrôles qualité de `3_parse`, rien écrit dans `chunks`). Le parsing est dans `parsing_checkpoint`, il n'est pas refait. Diagnostic du 2026-10-17 : 2 339 fichiers re-parsés, dont 2 273 aux mêmes octets qu'en v1 mais 0 au même chemin (dossier `D_` choisi au lieu de `Dm_`). Corrigé le 2026-10-17 : GX installé sur la tâche `3_parse` et importé dès la première cellule, reprise sur (IDDOC, hash du contenu) au lieu du chemin, arrêt avant tout parsing au-delà de `parsing_max_parse_files` (500) fichiers.
   1. Diagnostic (éditeur SQL UAT, lecture seule) : pourquoi les lignes copiées de `_pipeline_checkpoint_v1` n'ont pas été reconnues.
 
      ```sql

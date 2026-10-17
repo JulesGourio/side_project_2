@@ -72,6 +72,7 @@ from pyspark.sql import functions as F
 import categories
 import manifest_steps
 import quality
+quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from leap_utils.common import logger as log_utils
 
 from config import (

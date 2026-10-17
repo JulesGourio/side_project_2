@@ -105,18 +105,33 @@ def spark():
     session.stop()
 
 
-def test_spark_counters_equal_the_python_ones(spark):
-    rows = ROWS + [ROWS[0], {"chunk_id": None, "IDDOC": None, "division": "AS", "ref": "QR-2"}]
-    checks = [quality.non_empty(), quality.not_null("division", mostly=0.5), quality.unique("chunk_id"),
-              quality.unique("IDDOC", "ref")]
-    df = spark.createDataFrame(rows, "chunk_id string, IDDOC long, division string, ref string")
-    assert quality.spark_stats(df, checks) == quality.stats_from_rows(rows, checks)
+@pytest.fixture
+def gx(monkeypatch):
+    """Great Expectations through leap_utils, outside Databricks: its event logging imports `dbutils` at import time."""
+    pytest.importorskip("great_expectations")
+    import types
+    monkeypatch.setitem(sys.modules, "databricks.sdk.runtime", types.SimpleNamespace(dbutils=None, spark=None))
+    try:
+        import delta.exceptions  # noqa: F401
+    except ImportError:  # only the Databricks runtime ships it
+        monkeypatch.setitem(sys.modules, "delta.exceptions", types.SimpleNamespace(
+            ConcurrentAppendException=type("ConcurrentAppendException", (Exception,), {}),
+            MetadataChangedException=type("MetadataChangedException", (Exception,), {})))
+    quality.require_gx()
 
 
-def test_check_dataframe_raises_on_a_red_duplicate(spark):
+def test_check_dataframe_raises_on_a_red_duplicate(spark, gx):
     df = spark.createDataFrame(ROWS + [ROWS[0]], "chunk_id string, IDDOC long, division string, ref string")
     with pytest.raises(Exception, match="unique|RED"):
         quality.check_dataframe(df, "chunks", [quality.unique("chunk_id")])
+
+
+def test_check_dataframe_passes_clean_data_and_only_warns_on_amber(spark, gx):
+    df = spark.createDataFrame(ROWS, "chunk_id string, IDDOC long, division string, ref string")
+    quality.check_dataframe(df, "chunks", [
+        quality.non_empty(), quality.not_null("chunk_id"), quality.unique("chunk_id"), quality.unique("IDDOC", "chunk_id"),
+        quality.not_null("division", mostly=0.6, severity=AMBER), quality.not_null("ref", severity=AMBER),
+    ])
 
 
 def test_try_cast_returns_null_instead_of_raising_on_a_bad_value(spark):

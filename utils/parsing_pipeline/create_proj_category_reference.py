@@ -59,6 +59,7 @@ from pyspark.sql import functions as F
 
 import categories
 import quality
+quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from tables import ensure_primary_key, write_table
 from leap_utils.common import logger as log_utils
 

@@ -89,6 +89,7 @@ import output_steps
 import parse_checks
 import parse_steps
 import quality
+quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from utils import configure, broadcast_config, write_worker_config
 from leap_utils.common import logger as log_utils
 

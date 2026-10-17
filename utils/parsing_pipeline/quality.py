@@ -2,9 +2,10 @@
 
 Two levels, RED (the task stops, nothing is written) and AMBER (a warning is logged, the task goes on).
 
-- `check_dataframe` computes every counter of a table in one Spark aggregation. It is called in the grouped
-  `# Quality Checks` section of a notebook, on the DataFrame that is written.
-- `check_rows` runs the same checks over Python rows, for the serverless task that has no Spark cluster.
+- `check_dataframe` runs the checks with Great Expectations, through `leap_utils` (`gx_validation`). It is called in the
+  grouped `# Quality Checks` section of a notebook, on the DataFrame that is written. `require_gx` imports GX in the
+  first cells of the notebook, so a cluster without it fails before any work.
+- `check_rows` runs the same checks over Python rows, for the serverless task that has no Spark cluster (no GX there).
 
     quality.check_dataframe(df_chunks, "chunks", [
         quality.not_null("chunk_id"), quality.unique("chunk_id"),
@@ -138,37 +139,43 @@ def report(table: str, results: Sequence[Result], logger: Optional[logging.Logge
         raise QualityCheckError(f"{len(failed_red)} RED quality check(s) failed on {table}:\n  " + "\n  ".join(failed_red))
 
 
-def spark_stats(df, checks: Sequence[Check]) -> Dict[str, int]:
-    """The counters of `required_stats` for a DataFrame, from a single aggregation (one Spark action)."""
-    from pyspark.sql import functions as F
-
-    exprs = []
-    for name, (kind, cols) in required_stats(checks).items():
-        if kind == "rows":
-            expr = F.count(F.lit(1))
-        elif kind == "non_null":
-            expr = F.count(F.col(cols[0]))
-        elif kind == "all_non_null":
-            cond = F.col(cols[0]).isNotNull()
-            for c in cols[1:]:
-                cond = cond & F.col(c).isNotNull()
-            expr = F.count(F.when(cond, F.lit(1)))
-        else:
-            expr = F.count_distinct(*[F.col(c) for c in cols])   # skips rows with a null key, like all_non_null
-        exprs.append(expr.alias(name))
-    row = df.agg(*exprs).first()
-    return {name: int(row[name]) for name in required_stats(checks)}
+def require_gx() -> None:
+    """Import Great Expectations now: a notebook calls it in its first cells, so a cluster without GX fails in a
+    minute instead of after the parse, at the quality checks."""
+    from great_expectations.dataset import SparkDFDataset  # noqa: F401
+    from leap_utils.common.validation import gx_validation  # noqa: F401
 
 
-def check_dataframe(df, table: str, checks: Sequence[Check], logger: Optional[logging.Logger] = None) -> List[Result]:
-    """Run the checks on a DataFrame and report; raises `QualityCheckError` on a RED failure, before the caller writes.
+def check_dataframe(df, table: str, checks: Sequence[Check], logger: Optional[logging.Logger] = None) -> None:
+    """Run the checks on a DataFrame with Great Expectations (leap_utils) and log them.
 
-    Plain Spark, no Great Expectations: it is missing from the GPU cluster of `3_parse`, where the checks run only
-    after hours of parsing, and one aggregation gives the same counters.
+    The RED checks run first: a failure stops the task before the table is written by the caller.
     """
-    results = evaluate(checks, spark_stats(df, checks))
-    report(table, results, logger)
-    return results
+    from great_expectations.dataset import SparkDFDataset
+    from leap_utils.common.validation import gx_validation
+
+    (logger or _LOGGER).info(f"{table}: {len(checks)} quality check(s) with Great Expectations")
+    gx_df = SparkDFDataset(df, persist=False)
+    for level in (RED, AMBER):
+        expectations = [_gx_expectation(gx_df, c) for c in checks if c.severity == level]
+        if expectations:
+            gx_validation.validate_and_log_gx_results(
+                quality_check_results=expectations,
+                validation_level=level,
+                info_message=f"{table}: quality checks passed ({level})",
+                error_message=f"{table}: a {level} quality check failed",
+                table_name=table,
+            )
+
+
+def _gx_expectation(gx_df, check: Check):
+    if check.kind == "non_empty":
+        return gx_df.expect_table_row_count_to_be_between(min_value=1)
+    if check.kind == "not_null":
+        return gx_df.expect_column_values_to_not_be_null(check.columns[0], mostly=check.mostly)
+    if len(check.columns) == 1:
+        return gx_df.expect_column_values_to_be_unique(check.columns[0])
+    return gx_df.expect_compound_columns_to_be_unique(list(check.columns))
 
 
 def check_rows(rows: Sequence[Mapping], table: str, checks: Sequence[Check],
