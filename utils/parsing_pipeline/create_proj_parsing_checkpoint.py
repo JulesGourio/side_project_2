@@ -47,11 +47,31 @@
 
 # MAGIC %md
 # MAGIC ## Config Standard Package Imports
+# MAGIC Docling and its parsers are installed in the notebook's own environment, not as cluster libraries: on the standard
+# MAGIC runtime (the S policy allows no ML runtime) the torch stack installed on the cluster stops the Python REPL from
+# MAGIC starting. `xlrd`, `openpyxl` and Great Expectations come with the S policy.
+
+# COMMAND ----------
+
+%pip install -q "numpy<2" docling docling-core langchain-text-splitters tiktoken striprtf odfpy lxml olefile pyxlsb openai tenacity
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC The pinned `opencv-python-headless` replaces the build Docling pulls in, which fails without a display library.
 
 # COMMAND ----------
 
 %pip install -q --force-reinstall --no-deps opencv-python-headless==4.12.0.88
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Python restarts so the packages just installed replace the runtime's copies before any import.
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 

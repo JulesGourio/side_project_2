@@ -60,3 +60,12 @@ Suivi pour Claude : constats, plan par phases, requêtes demandées et leurs ré
 - Corrigé : description gardée seulement pour la même image ; documents dont le checkpoint ne liste pas les images :
   lignes `image_metadata` gardées telles quelles ; la fusion incrémentale ne réapplique plus l'ancienne description.
 - `4_describe_images` ne remet plus tout en PENDING en mode `full` : `parsing_redescribe_all_images` (false par défaut).
+
+## Déploiement phase 1 (2026-10-17)
+
+- 1er deploy refusé : dépendance de `3c_chunks` sur la condition sans `outcome` -> branche `false` + `3b_parse_pdf`,
+  `run_if: AT_LEAST_ONE_SUCCESS`.
+- 1er run : `3_parse` « Failure starting repl » sur la première cellule (`%pip opencv`) : Docling + torch en bibliothèques
+  de cluster sur le runtime 16.4 standard cassent le démarrage du REPL. Passés en `%pip` dans les notebooks CPU
+  (`create_proj_parsing_checkpoint.py`, `create_proj_chunks.py`) + `restartPython` ; plus de bibliothèque de cluster sur
+  `3_parse` / `3c_chunks`. Le GPU (runtime ML) garde ses bibliothèques de tâche.

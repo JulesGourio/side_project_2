@@ -229,23 +229,7 @@ resources:
             source: WORKSPACE
             base_parameters:
               job_run_id: "{{job.run_id}}"
-          # Great Expectations comes with the S policy. The opencv-headless install is the %pip cell of the notebooks.
-          libraries:
-            - pypi: {package: "packaging"}
-            - pypi: {package: "numpy<2"}
-            - pypi: {package: "docling"}
-            - pypi: {package: "docling-core"}
-            - pypi: {package: "langchain-text-splitters"}
-            - pypi: {package: "tiktoken"}
-            - pypi: {package: "striprtf"}
-            - pypi: {package: "odfpy"}
-            - pypi: {package: "xlrd"}
-            - pypi: {package: "openpyxl"}
-            - pypi: {package: "lxml"}
-            - pypi: {package: "olefile"}
-            - pypi: {package: "pyxlsb"}
-            - pypi: {package: "openai"}
-            - pypi: {package: "tenacity"}
+          # No cluster library: Docling and its parsers are installed by the %pip cells of the notebook (S policy, standard runtime).
 
         # The GPU cluster starts only when 3_parse left more than parsing_gpu_min_pdfs PDFs for it.
         - task_key: "3b_needs_gpu"
@@ -300,22 +284,7 @@ resources:
             source: WORKSPACE
             base_parameters:
               job_run_id: "{{job.run_id}}"
-          libraries:
-            - pypi: {package: "packaging"}
-            - pypi: {package: "numpy<2"}
-            - pypi: {package: "docling"}
-            - pypi: {package: "docling-core"}
-            - pypi: {package: "langchain-text-splitters"}
-            - pypi: {package: "tiktoken"}
-            - pypi: {package: "striprtf"}
-            - pypi: {package: "odfpy"}
-            - pypi: {package: "xlrd"}
-            - pypi: {package: "openpyxl"}
-            - pypi: {package: "lxml"}
-            - pypi: {package: "olefile"}
-            - pypi: {package: "pyxlsb"}
-            - pypi: {package: "openai"}
-            - pypi: {package: "tenacity"}
+          # No cluster library: Docling and its parsers are installed by the %pip cells of the notebook (S policy, standard runtime).
 
         - task_key: "4_describe_images"
           description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
