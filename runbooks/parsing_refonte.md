@@ -79,3 +79,4 @@ Suivi pour Claude : constats, plan par phases, requêtes demandées et leurs ré
   `update_proj_vector_indexes` (l'index UAT `chunks_index` n'existe pas encore : sera créé avec). Pour DEV : index à
   embeddings fournis (`embedding_vector_column`) depuis une copie de `chunks_index_embeddings`, et l'app doit alors envoyer
   `query_vector` (appel de l'endpoint d'embedding) en plus de `query_text` — à faire après validation UAT.
+- Cause probable trouvée : `opencv-python-headless==4.12.0.88` exige numpy >= 2, les notebooks CPU installent numpy < 2 (runtime 16.4) et `--no-deps` ne le voit pas -> 4.11.0.86 sur les tâches CPU (antérieure à 4.13, qui plante sur l'OpenSSL du runtime). GPU inchangé (4.12, validé).

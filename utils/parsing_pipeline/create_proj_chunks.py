@@ -56,10 +56,11 @@
 
 # MAGIC %md
 # MAGIC The pinned `opencv-python-headless` replaces the build Docling pulls in, which fails without a display library.
+# MAGIC 4.11, not 4.12: 4.12 is built for numpy 2, and the standard runtime keeps numpy 1 (`--no-deps` would not catch it).
 
 # COMMAND ----------
 
-%pip install -q --force-reinstall --no-deps opencv-python-headless==4.12.0.88
+%pip install -q --force-reinstall --no-deps opencv-python-headless==4.11.0.86
 
 # COMMAND ----------
 

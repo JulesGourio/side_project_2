@@ -62,7 +62,7 @@ through Docling's simple pipeline, and doc / xls / ppt / rtf / odt through forma
 (0 to a few new PDFs) parses everything in `3_parse` and never starts the GPU cluster; a rebuild with more than
 `parsing_gpu_min_pdfs` (30) PDFs hands them to `3b_parse_pdf`. The parse tasks hand over through `parsing_run_scope`
 (the IDDOCs of the run, refused by `3c_chunks` if another job run wrote it) and `parsing_gpu_queue`, so the job runs
-one run at a time. The parse notebooks pin `opencv-python-headless==4.12.0.88` in a `%pip` cell: it replaces the
+one run at a time. The parse notebooks pin an `opencv-python-headless` older than 4.13 (4.13 aborts on the runtime's OpenSSL) in a `%pip` cell: 4.11.0.86 on the CPU tasks (the standard runtime keeps numpy 1; 4.12 needs numpy 2), 4.12.0.88 on the GPU task. It replaces the
 OpenCV build that Docling pulls in, which fails on the GPU runtime and without a display library.
 
 The notebooks that join the `gd_*_latest` views set `spark.databricks.remoteFiltering.blockSelfJoins` to `false`
