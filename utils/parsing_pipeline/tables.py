@@ -24,15 +24,14 @@ def write_table(df, table: str, mode: str = "append", *, merge_schema: bool = Fa
 def add_missing_columns(df, table: str) -> None:
     """Add to the existing Delta table `table` the columns of `df` it lacks; nothing when it has them all.
 
-    An empty DataFrame saved with schema merge: the only write that adds a column to a table that exists.
+    An `ALTER TABLE ... ADD COLUMNS`, not an empty write: a write that lacks a NOT NULL column (a primary key) is
+    refused by Delta even with no row.
     """
-    from leap_utils.data_asset import table_utils
-
     existing = set(df.sparkSession.table(table).columns)
-    missing = [c for c in df.columns if c not in existing]
+    missing = [f for f in df.schema.fields if f.name not in existing]
     if missing:
-        table_utils.save_table(table, df.select(*missing).limit(0), "append", overwrite_schema=False,
-                               merge_schema=True)
+        columns = ", ".join(f"`{f.name}` {f.dataType.simpleString()}" for f in missing)
+        df.sparkSession.sql(f"ALTER TABLE {table} ADD COLUMNS ({columns})")
 
 
 def table_exists(table: str) -> bool:

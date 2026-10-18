@@ -71,43 +71,26 @@ def test_a_cast_only_types_a_literal_and_dates_are_not_parsed_with_to_date():
     assert not offenders, offenders
 
 
-def test_add_missing_columns_saves_an_empty_frame_with_only_the_missing_columns(monkeypatch):
+def test_add_missing_columns_alters_the_table_instead_of_writing_an_empty_frame():
+    """An empty write lacking a NOT NULL column (the primary key) is refused by Delta: the columns are added by DDL."""
     from tables import add_missing_columns
 
-    saved = []
-    data_asset_pkg = types.ModuleType("leap_utils.data_asset")
-    table_utils = types.ModuleType("leap_utils.data_asset.table_utils")
-    table_utils.save_table = lambda table, df, mode, **options: saved.append((table, df, mode, options))
-    data_asset_pkg.table_utils = table_utils
-    monkeypatch.setitem(sys.modules, "leap_utils.data_asset", data_asset_pkg)
-    monkeypatch.setitem(sys.modules, "leap_utils.data_asset.table_utils", table_utils)
+    statements = []
 
-    class Frame:
-        columns = ["IDDOC", "image_id", "attempts", "last_error_kind"]
-        sparkSession = types.SimpleNamespace(table=lambda t: types.SimpleNamespace(columns=["IDDOC", "image_id"]))
+    def frame(names_and_types):
+        fields = [types.SimpleNamespace(name=n, dataType=types.SimpleNamespace(simpleString=lambda t=t: t))
+                  for n, t in names_and_types]
+        session = types.SimpleNamespace(table=lambda t: types.SimpleNamespace(columns=["chunk_id", "IDDOC"]),
+                                        sql=statements.append)
+        return types.SimpleNamespace(schema=types.SimpleNamespace(fields=fields), sparkSession=session)
 
-        def select(self, *cols):
-            self.selected = cols
-            return self
+    add_missing_columns(frame([("chunk_id", "string"), ("image_id", "int"), ("captions", "array<string>")]),
+                        "cat.sch.chunks")
+    assert statements == ["ALTER TABLE cat.sch.chunks ADD COLUMNS (`image_id` int, `captions` array<string>)"]
 
-        def limit(self, n):
-            self.limited = n
-            return self
-
-    df = Frame()
-    add_missing_columns(df, "cat.sch.image_metadata")
-    table, written, mode, options = saved[0]
-    assert (table, mode) == ("cat.sch.image_metadata", "append")
-    assert written.selected == ("attempts", "last_error_kind") and written.limited == 0
-    assert options == {"overwrite_schema": False, "merge_schema": True}
-
-    class Complete:
-        columns = ["IDDOC"]
-        sparkSession = types.SimpleNamespace(table=lambda t: types.SimpleNamespace(columns=["IDDOC", "image_id"]))
-
-    saved.clear()
-    add_missing_columns(Complete(), "cat.sch.t")
-    assert saved == []   # the table has every column: nothing is saved
+    statements.clear()
+    add_missing_columns(frame([("chunk_id", "string")]), "cat.sch.chunks")
+    assert statements == []   # the table has every column: nothing is altered
 
 
 def test_an_update_only_merge_passes_leap_utils_and_never_inserts(monkeypatch):
