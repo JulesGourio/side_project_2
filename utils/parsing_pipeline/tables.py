@@ -61,8 +61,14 @@ def merge_into(df, table: str, keys, *, do_when_matched: bool = True, matched_cl
     """
     from leap_utils.data_asset import table_utils
 
+    source = align_to_table(df, table)
+    if do_when_matched and not do_when_notmatched and not do_when_notmatchedbysource and not matched_clause:
+        # Update only. leap_utils refuses a MERGE whose only clause is a plain WHEN MATCHED; with the source reduced to
+        # the keys the table already has, the INSERT clause it accepts never fires and the result is the same.
+        source = source.join(df.sparkSession.table(table).select(*keys), on=list(keys), how="left_semi")
+        do_when_notmatched = True
     table_utils.merge_into(
-        align_to_table(df, table), table, list(keys),
+        source, table, list(keys),
         do_when_matched=do_when_matched, matched_clause=matched_clause,
         do_when_notmatched=do_when_notmatched, do_when_notmatchedbysource=do_when_notmatchedbysource,
     )

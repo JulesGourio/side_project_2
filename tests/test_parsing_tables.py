@@ -108,3 +108,41 @@ def test_add_missing_columns_saves_an_empty_frame_with_only_the_missing_columns(
     saved.clear()
     add_missing_columns(Complete(), "cat.sch.t")
     assert saved == []   # the table has every column: nothing is saved
+
+
+def test_an_update_only_merge_passes_leap_utils_and_never_inserts(monkeypatch):
+    """leap_utils refuses a MERGE whose only clause is a plain WHEN MATCHED: the source is cut to the existing keys."""
+    import shutil
+    import pytest
+
+    pytest.importorskip("pyspark")
+    if shutil.which("java") is None:
+        pytest.skip("no JVM")
+    from pyspark.sql import SparkSession
+    from tables import merge_into
+
+    spark = (SparkSession.builder.master("local[1]").appName("test_update_only_merge")
+             .config("spark.ui.enabled", "false").config("spark.driver.bindAddress", "127.0.0.1").getOrCreate())
+    spark.createDataFrame([(1, 0, "old"), (1, 1, "old")], "IDDOC long, image_id int, description string") \
+        .createOrReplaceTempView("image_metadata")
+    source = spark.createDataFrame([(1, 0, "new"), (9, 0, "not in the table")],
+                                   "IDDOC long, image_id int, description string")
+
+    calls = []
+
+    def fake_merge_into(df, table, keys, *, do_when_matched, matched_clause, do_when_notmatched,
+                        do_when_notmatchedbysource):
+        # The check of leap_utils.common.merge_into.merge_into_spark.
+        if not (matched_clause or do_when_notmatched or do_when_notmatchedbysource):
+            raise ValueError("MERGE INTO must have at least one MERGE clause")
+        calls.append((sorted((r.IDDOC, r.image_id, r.description) for r in df.collect()), do_when_notmatched))
+
+    data_asset_pkg = types.ModuleType("leap_utils.data_asset")
+    table_utils = types.ModuleType("leap_utils.data_asset.table_utils")
+    table_utils.merge_into = fake_merge_into
+    data_asset_pkg.table_utils = table_utils
+    monkeypatch.setitem(sys.modules, "leap_utils.data_asset", data_asset_pkg)
+    monkeypatch.setitem(sys.modules, "leap_utils.data_asset.table_utils", table_utils)
+
+    merge_into(source, "image_metadata", ["IDDOC", "image_id"], do_when_notmatched=False)
+    assert calls == [([(1, 0, "new")], True)]

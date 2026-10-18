@@ -236,16 +236,22 @@ def snapshot_or_log_checkpoint(num_files):
             logger.info("[CHECKPOINT] No existing checkpoint yet.")
 
 
-def read_checkpoint_deduped():
+def read_checkpoint_deduped(columns=None):
     """Read parsing_checkpoint with exactly one row per IDDOC — dedup by
     IDDOC (not source_path), preferring SUCCESS then the most recent attempt.
+
+    `columns`: only these (plus the dedup keys), so a caller that needs a few columns does not sort every document text.
     """
     w = Window.partitionBy("IDDOC").orderBy(
         F.when(F.col("parse_status") == "SUCCESS", 0).otherwise(1),
         F.desc("ingestion_timestamp"),
     )
+    df = spark.table(CHECKPOINT_TABLE)
+    if columns:
+        keys = ["IDDOC", "parse_status", "ingestion_timestamp"]
+        df = df.select(*keys, *[c for c in columns if c not in keys])
     return (
-        spark.table(CHECKPOINT_TABLE)
+        df
         .withColumn("_rn", F.row_number().over(w))
         .filter(F.col("_rn") == 1)
         .drop("_rn")
@@ -561,9 +567,12 @@ def run_docling_batches(df_to_parse, parse_count, parse_fn):
 def log_run_summary(df_to_parse, parse_count, elapsed):
     """Log OK/SKIP/ERR counts scoped to exactly the files parsed THIS run
     (source_path, document_sha256) — not the whole checkpoint."""
-    df_this_run = read_checkpoint_deduped().join(
-        df_to_parse.select("source_path", "document_sha256"),
-        on=["source_path", "document_sha256"], how="inner",
+    df_this_run = (
+        spark.table(CHECKPOINT_TABLE)
+        .filter(F.col("ingestion_run_id") == INGESTION_RUN_ID)
+        .select("source_path", "document_sha256", "parse_status")
+        .join(df_to_parse.select("source_path", "document_sha256"), on=["source_path", "document_sha256"], how="inner")
+        .dropDuplicates(["source_path", "document_sha256"])
     )
     run_errors = df_this_run.filter(~F.col("parse_status").isin("SUCCESS", "SKIP_TOO_LARGE")).count()
     run_skips = df_this_run.filter(F.col("parse_status") == "SKIP_TOO_LARGE").count()
@@ -616,7 +625,9 @@ def show_failed_documents(df_business_meta):
 
     Only this run's rows: older failures of a copied checkpoint (written by an older parser) are not this run's result.
     """
-    df_full_pipeline = read_checkpoint_deduped().filter(F.col("ingestion_run_id") == INGESTION_RUN_ID)
+    df_full_pipeline = read_checkpoint_deduped(
+        ["ingestion_run_id", "source_file_name", "source_file_extension", "parser_strategy", "parser_error",
+         "source_file_size_bytes"]).filter(F.col("ingestion_run_id") == INGESTION_RUN_ID)
     df_failed_inspect = (
         df_full_pipeline
         .join(df_business_meta.select("IDDOC").distinct(), on="IDDOC", how="inner")
@@ -648,7 +659,7 @@ def retry_failed_iddocs(df_business_meta):
 
     Runs after both parse tasks (CPU and GPU): only the folders of the failed IDDOCs are scanned again.
     """
-    df_full_pipeline = read_checkpoint_deduped()
+    df_full_pipeline = read_checkpoint_deduped(["parser_strategy"])
     failed_iddocs = [
         r.IDDOC for r in df_full_pipeline
         .join(df_business_meta.select("IDDOC").distinct(), on="IDDOC", how="inner")  # still in current scope
