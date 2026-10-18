@@ -23,7 +23,7 @@
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{pipeline_write_env}_proj.qualibot.chunks_full` — only when `build_chunks_full` is on or `chunks_full_index` is in `indexes`
 # MAGIC - The synced indexes; `vector_search_endpoint` and `embedding_model` are only read to create an index
-# MAGIC - `<index>_embeddings` (e.g. `chunks_index_embeddings`): the embeddings the index computed, written back by Databricks for an index created by this notebook
+# MAGIC - `<index>_writeback_table` (e.g. `chunks_index_writeback_table`, the only name the API accepts): the embeddings the index computed, written back by Databricks for an index created by this notebook
 
 # COMMAND ----------
 
@@ -245,8 +245,8 @@ def _create_index(name, source_table):
                 EmbeddingSourceColumn(name="chunk_text", embedding_model_endpoint_name=EMBEDDING_MODEL)
             ],
             # The embeddings the index computes are written back to a Delta table: another environment can copy them
-            # instead of embedding the whole corpus again.
-            embedding_writeback_table=f"{name}_embeddings",
+            # instead of embedding the whole corpus again. The API accepts only this name.
+            embedding_writeback_table=f"{name}_writeback_table",
         ),
     )
     # A brand-new index must clear PROVISIONING before it can accept a sync
