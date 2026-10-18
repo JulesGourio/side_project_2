@@ -69,3 +69,13 @@ Suivi pour Claude : constats, plan par phases, requêtes demandées et leurs ré
   de cluster sur le runtime 16.4 standard cassent le démarrage du REPL. Passés en `%pip` dans les notebooks CPU
   (`create_proj_parsing_checkpoint.py`, `create_proj_chunks.py`) + `restartPython` ; plus de bibliothèque de cluster sur
   `3_parse` / `3c_chunks`. Le GPU (runtime ML) garde ses bibliothèques de tâche.
+
+## Run phase 1, 2e essai (2026-10-18)
+
+- `3_parse` : exception dans `parse_and_extract_images_udf` ligne 337 (`parse_with_docling`) : l'import de Docling sur les
+  workers (seul appel hors `try`). Ajouté : `parse_steps.check_docling_on_workers()` dans `setup_workers` (import sur un
+  exécuteur avant tout scan, traceback complet dans l'erreur). Cause exacte à lire au prochain run.
+- Embeddings réutilisables : `embedding_writeback_table=<index>_embeddings` à la création d'un index par
+  `update_proj_vector_indexes` (l'index UAT `chunks_index` n'existe pas encore : sera créé avec). Pour DEV : index à
+  embeddings fournis (`embedding_vector_column`) depuis une copie de `chunks_index_embeddings`, et l'app doit alors envoyer
+  `query_vector` (appel de l'endpoint d'embedding) en plus de `query_text` — à faire après validation UAT.

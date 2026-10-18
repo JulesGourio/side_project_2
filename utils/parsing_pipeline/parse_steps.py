@@ -333,6 +333,7 @@ def setup_workers(repo_dir):
     except Exception:
         logger.warning("broadcast_config skipped (shared cluster) - workers read the JSON copy on the volume")
     write_worker_config(spark)
+    check_docling_on_workers()
 
     try:
         parallelism = int(spark.sparkContext.defaultParallelism)
@@ -356,6 +357,27 @@ def setup_workers(repo_dir):
     logger.info(f"Run {INGESTION_RUN_ID} | mode={RUN_MODE} | parallelism={parallelism} | GPU={cfg.USE_GPU} | "
                 f"table_mode={cfg.TABLE_STRUCTURE_MODE} | filter={PARSE_FILTER}")
     return parallelism
+
+
+def check_docling_on_workers():
+    """Import Docling once on an executor before any parse, and stop the task with the worker's own traceback if it fails.
+
+    Inside the parse UDF the same failure surfaces only as a Python worker crash, after the scan and the hashing.
+    """
+    def probe(_):
+        import traceback
+        try:
+            import format_parsers
+            format_parsers._get_docling()
+            import numpy
+            return [("ok", f"numpy={numpy.__version__}")]
+        except BaseException:
+            return [("error", traceback.format_exc()[-4000:])]
+
+    status, detail = spark.sparkContext.parallelize([0], 1).mapPartitions(probe).collect()[0]
+    if status != "ok":
+        raise RuntimeError(f"Docling cannot be imported on the executors:\n{detail}")
+    logger.info(f"[WORKERS] Docling imports on the executors ({detail})")
 
 
 def split_for_gpu(df_files):
