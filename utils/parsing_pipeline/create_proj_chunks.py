@@ -46,11 +46,13 @@
 # MAGIC ## Config Standard Package Imports
 # MAGIC Docling and its parsers are installed in the notebook's own environment, not as cluster libraries: on the standard
 # MAGIC runtime (the S policy allows no ML runtime) the torch stack installed on the cluster stops the Python REPL from
-# MAGIC starting. `xlrd`, `openpyxl` and Great Expectations come with the S policy.
+# MAGIC starting. `xlrd`, `openpyxl` and Great Expectations come with the S policy. pydantic and pandas are pinned so they
+# MAGIC land in this environment too: the runtime's pydantic is too old for this Docling (it fails at import on the
+# MAGIC executors), and pandas stays below 3 for the runtime's Spark. Docling versions tested together on Python 3.12.
 
 # COMMAND ----------
 
-%pip install -q "numpy<2" docling docling-core langchain-text-splitters tiktoken striprtf odfpy lxml olefile pyxlsb openai tenacity
+%pip install -q "numpy<2" "pandas>=2.1.4,<3" "pydantic>=2.10.3,<3" docling==2.140.0 docling-core==2.102.0 langchain-text-splitters tiktoken striprtf odfpy lxml olefile pyxlsb openai tenacity
 
 # COMMAND ----------
 

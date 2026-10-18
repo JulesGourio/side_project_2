@@ -254,8 +254,10 @@ resources:
           libraries:
             - pypi: {package: "packaging"}
             - pypi: {package: "numpy<2"}
-            - pypi: {package: "docling"}
-            - pypi: {package: "docling-core"}
+            # Same Docling as the CPU tasks; pydantic >= 2.10.3 is what this Docling imports with.
+            - pypi: {package: "docling==2.140.0"}
+            - pypi: {package: "docling-core==2.102.0"}
+            - pypi: {package: "pydantic>=2.10.3,<3"}
             - pypi: {package: "langchain-text-splitters"}
             - pypi: {package: "tiktoken"}
             - pypi: {package: "striprtf"}

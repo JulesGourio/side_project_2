@@ -351,7 +351,7 @@ def setup_workers(repo_dir):
         except metadata.PackageNotFoundError:
             return "absent"
 
-    # docling is not pinned in the job: these are the versions to pin once a run is validated.
+    # The versions actually loaded, next to the pins of the %pip cells and of the GPU task.
     logger.info("Packages | " + " | ".join(
         f"{p}={_version(p)}" for p in ("docling", "docling-core", "docling-ibm-models", "torch", "great_expectations")))
     logger.info(f"Run {INGESTION_RUN_ID} | mode={RUN_MODE} | parallelism={parallelism} | GPU={cfg.USE_GPU} | "
