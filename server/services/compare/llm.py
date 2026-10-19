@@ -34,6 +34,7 @@ GPT_6_LUNA = 'databricks-gpt-6-luna'
 GPT_5_6_LUNA = 'databricks-gpt-5-6-luna'
 TIRED_MESSAGE = chat_llm.TIRED_MESSAGE
 LlmFailure = chat_llm.LlmFailure
+THINKING_EFFORT = os.getenv('COMPARE_THINKING_EFFORT', 'medium')
 _KEEPALIVE_S = 15.0
 _MAX_CONTINUATIONS = 2
 CONTINUE_PROMPT = ('Your previous answer was cut off by a technical problem. Continue it exactly where it stops: '
@@ -176,15 +177,37 @@ async def complete_chain(host: str, token: str, endpoints: List[str], messages: 
 
 # --- Streamed analysis ---
 
+def wants_thinking(endpoint: str, thinking_budget: int) -> bool:
+    """Only the Claude endpoints take the thinking parameters; the name test keeps the analysis endpoint swappable."""
+    return thinking_budget > 0 and 'claude' in endpoint.lower()
+
+
 async def _stream_once(host: str, token: str, endpoint: str, messages: List[Dict[str, Any]], max_tokens: int,
                        thinking_budget: int, temperature: float) -> AsyncGenerator[Tuple[str, Any], None]:
     """One streamed call. Yields ('text', str), ('usage', dict), ('truncated', None) and ('keepalive', None)
-    while waiting; raises ``LlmFailure``."""
+    while waiting; raises ``LlmFailure``. A Claude endpoint that refuses the thinking parameters (400) is called
+    again without them, so a model change on its side never takes the primary out of the chain."""
+    thinking = wants_thinking(endpoint, thinking_budget)
+    try:
+        async for item in _stream_request(host, token, endpoint, messages, max_tokens, thinking, temperature):
+            yield item
+        return
+    except LlmFailure as exc:
+        if not (thinking and exc.kind == 'refused' and exc.status == 400):
+            raise
+        logger.warning('compare_llm: %s refused the thinking parameters (%s), sent without', endpoint, exc.detail[:120])
+    async for item in _stream_request(host, token, endpoint, messages, max_tokens, False, temperature):
+        yield item
+
+
+async def _stream_request(host: str, token: str, endpoint: str, messages: List[Dict[str, Any]], max_tokens: int,
+                          thinking: bool, temperature: float) -> AsyncGenerator[Tuple[str, Any], None]:
     payload: Dict[str, Any] = {'messages': messages, 'max_tokens': max_tokens,
                                'stream': True, 'stream_options': {'include_usage': True}}
-    # Only some endpoint families accept the 'thinking' parameter; the name test keeps the analysis endpoint swappable.
-    if thinking_budget > 0 and 'claude' in endpoint.lower():
-        payload['thinking'] = {'type': 'enabled', 'budget_tokens': thinking_budget}
+    # The current Claude models take adaptive thinking steered by an effort level; a token budget is refused.
+    if thinking:
+        payload['thinking'] = {'type': 'adaptive'}
+        payload['output_config'] = {'effort': THINKING_EFFORT}
     # Temperature and top_p are mutually exclusive on these endpoints: only temperature is sent.
     if supports_temperature(endpoint):
         payload['temperature'] = temperature

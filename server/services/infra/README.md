@@ -22,9 +22,11 @@ Parent: [services](../README.md).
 
 ## Rules
 
-- Access fails closed. A missing token, a missing `CAPS_WAREHOUSE_ID` or a failing check gives no capability, and a
-  failure is not cached. The check is `is_account_group_member()`, run with the visitor's token, so no table holds the
-  groups. The group names are the constants of `user.py`.
+- A check that shows no allowed group denies. A check that cannot be made (no token, SCIM and the warehouse both
+  failing) grants everything and is not cached: the Databricks app permission already decides who reaches the app. The
+  groups come from SCIM `Me` with the visitor's token (no warehouse permission needed); `is_account_group_member()` on
+  `CAPS_WAREHOUSE_ID` is only the second opinion when SCIM fails or shows no allowed group. No table holds the groups.
+  The group names are the constants of `user.py`.
 - `CAPS_BYPASS=true` grants both capabilities to every visitor. `tests/test_deploy_config.py` keeps it off outside DEV.
 - When `ENV` is unset, `_is_dev()` is true. A request without an `x-forwarded-user` header then gets both capabilities,
   and `get_user_identity` returns the workspace identity instead of none.

@@ -116,8 +116,12 @@ env:
     value: "30"
   - name: COMPARE_MAX_TOKENS
     value: "16000"
+  # Above 0, a Claude analysis endpoint thinks (adaptive thinking); 0 turns it off. The current Claude models refuse a token budget,
+  # so the amount of thinking is COMPARE_THINKING_EFFORT (low | medium | high).
   - name: COMPARE_THINKING_BUDGET
     value: "4000"
+  - name: COMPARE_THINKING_EFFORT
+    value: "medium"
   - name: COMPARE_TEMPERATURE
     value: "0.0"
   # Map-reduce for very large documents: a diff body above the threshold is split at section boundaries into chunks of at most CHUNK_SIZE chars,

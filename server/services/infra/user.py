@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Optional, TypedDict
+from typing import Optional, Tuple, TypedDict
 
 from fastapi import HTTPException, Request
 
@@ -21,7 +21,8 @@ _dev_user_cache: Optional[str] = None
 _CAPS_TTL_S = int(os.getenv('CAPS_TTL_S', '600'))
 _caps_cache: dict[str, tuple[float, dict]] = {}
 
-# Group check: is_account_group_member() run on behalf of the visitor, the only source of capabilities.
+# Group check on behalf of the visitor, the only source of capabilities: the visitor's own groups from SCIM, then
+# is_account_group_member() on this warehouse when SCIM fails or shows no group (the visitor then needs CAN_USE on it).
 _CAPS_WAREHOUSE_ID = os.getenv('CAPS_WAREHOUSE_ID', '').strip()
 _CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
@@ -99,7 +100,6 @@ async def get_user_identity(request: Request) -> UserIdentity:
 
 
 _OPEN_CAPS = {'can_chat': True, 'can_compare': True, 'groups': []}
-_CLOSED_CAPS = {'can_chat': False, 'can_compare': False, 'groups': []}
 
 
 def _live_caps_via_sql(token: str) -> Optional[dict]:
@@ -123,13 +123,44 @@ def _live_caps_via_sql(token: str) -> Optional[dict]:
     return {'can_chat': row[0] == 'true', 'can_compare': row[1] == 'true', 'groups': []}
 
 
+def _live_caps_via_scim(token: str) -> dict:
+    """The visitor's groups from SCIM /Me with their own token: no warehouse permission and no SQL scope needed."""
+    from databricks.sdk import WorkspaceClient
+    w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
+    names = {g.display for g in (w.current_user.me().groups or []) if g.display}
+    return {'can_chat': bool(names & _CAPS_CHAT_GROUPS), 'can_compare': bool(names & _CAPS_COMPARE_GROUPS), 'groups': []}
+
+
+def _resolve_caps(token: str) -> Tuple[dict, str]:
+    """(capabilities, source). SCIM first; the warehouse check only when SCIM fails or grants nothing, and a
+    warehouse is set. Raises when no source could answer."""
+    scim: Optional[dict] = None
+    try:
+        scim = _live_caps_via_scim(token)
+    except Exception as e:
+        if not _CAPS_WAREHOUSE_ID:
+            raise
+        logger.warning('Capabilities: SCIM group lookup failed (%s) — trying the warehouse', e)
+    if scim and (scim['can_chat'] or scim['can_compare']):
+        return scim, 'SCIM'
+    if _CAPS_WAREHOUSE_ID:
+        try:
+            return _live_caps_via_sql(token), 'SQL'
+        except Exception as e:
+            if scim is None:
+                raise
+            logger.warning('Capabilities: SCIM shows no allowed group and the warehouse check failed (%s)', e)
+    return scim, 'SCIM'
+
+
 async def get_capabilities(request: Request) -> dict:
     """Resolve {can_chat, can_compare, groups} for the current user.
 
-    The visitor's own on-behalf-of token runs is_account_group_member(), so the
-    answer is live and no job or table holds a copy of the groups. Fail-closed:
-    a missing token, a missing warehouse or a failing check grants nothing, and
-    a failure is not cached.
+    The visitor's own on-behalf-of token reads their groups, so the answer is live
+    and no job or table holds a copy of them. A check that shows no allowed group
+    denies. A check that cannot be made (no token, every source failing) grants
+    everything and is not cached: the Databricks app permission already decides who
+    reaches the app, the groups only narrow it.
 
     CAPS_BYPASS=true short-circuits and grants everything (DEV only).
     """
@@ -147,17 +178,17 @@ async def get_capabilities(request: Request) -> dict:
         return hit[1]
 
     obo_token = request.headers.get('x-forwarded-access-token', '').strip()
-    if not obo_token or not _CAPS_WAREHOUSE_ID:
-        logger.error('Capabilities %s: no on-behalf-of token or CAPS_WAREHOUSE_ID — access denied', key)
-        return dict(_CLOSED_CAPS)
+    if not obo_token:
+        logger.warning('Capabilities %s: no on-behalf-of token — granting all (fail-open)', key)
+        return dict(_OPEN_CAPS)
 
     try:
-        caps = await asyncio.to_thread(_live_caps_via_sql, obo_token)
+        caps, source = await asyncio.to_thread(_resolve_caps, obo_token)
     except Exception as e:
-        logger.error('Capabilities %s: live group check failed (%s) — access denied', key, e)
-        return dict(_CLOSED_CAPS)
+        logger.warning('Capabilities %s: live group check failed (%s) — granting all (fail-open)', key, e)
+        return dict(_OPEN_CAPS)
 
-    logger.info('Capabilities %s: can_chat=%s can_compare=%s', key, caps['can_chat'], caps['can_compare'])
+    logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s)', key, caps['can_chat'], caps['can_compare'], source)
     _caps_cache[key] = (now + _CAPS_TTL_S, caps)
     return caps
 

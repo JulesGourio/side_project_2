@@ -438,49 +438,102 @@ def test_trim_history_bounds_prompt_and_keeps_latest_question():
 
 # --- Feature access control (capabilities + 403 guards) ---
 
-def test_get_capabilities_uses_the_live_group_check():
-    """Capabilities come from is_account_group_member() on the visitor's own token."""
-    import asyncio
+def _caps_request(token='obo-token'):
     from types import SimpleNamespace
+    headers = {'x-forwarded-user': 'visitor@example.com'}
+    if token:
+        headers['x-forwarded-access-token'] = token
+    return SimpleNamespace(headers=headers)
+
+
+def test_get_capabilities_reads_the_visitors_groups_without_a_warehouse():
+    """The groups come from SCIM on the visitor's own token; no warehouse is needed."""
+    import asyncio
 
     from server.services.infra import user as user_mod
 
-    req = SimpleNamespace(headers={'x-forwarded-user': 'visitor@example.com',
-                                   'x-forwarded-access-token': 'obo-token'})
     user_mod._caps_cache.clear()
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'), \
-         patch.object(user_mod, '_live_caps_via_sql',
-                      return_value={'can_chat': True, 'can_compare': False, 'groups': []}) as live:
-        caps = asyncio.run(user_mod.get_capabilities(req))
+    scim = {'can_chat': True, 'can_compare': False, 'groups': []}
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''), \
+         patch.object(user_mod, '_live_caps_via_scim', return_value=scim) as live:
+        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
     assert caps['can_chat'] is True and caps['can_compare'] is False
     live.assert_called_once_with('obo-token')
     user_mod._caps_cache.clear()
 
 
-def test_get_capabilities_fails_closed():
-    """No token, no warehouse or a failing check grants nothing, and a failure is not cached."""
-    import asyncio
+def test_scim_groups_are_matched_by_name():
     from types import SimpleNamespace
 
     from server.services.infra import user as user_mod
 
+    groups = [SimpleNamespace(display='Role-Project-LEAP-End-users-Qualibot-ChatBot'), SimpleNamespace(display='other')]
+    me = SimpleNamespace(groups=groups)
+    client = SimpleNamespace(current_user=SimpleNamespace(me=lambda: me))
+    with patch('databricks.sdk.WorkspaceClient', return_value=client), \
+         patch.object(user_mod, 'get_workspace_url', return_value='https://h'):
+        caps = user_mod._live_caps_via_scim('obo-token')
+    assert caps['can_chat'] is True and caps['can_compare'] is False
+
+
+def test_get_capabilities_asks_the_warehouse_when_scim_shows_no_group():
+    """A visitor SCIM does not show in an allowed group (group not assigned to the workspace) gets a second opinion."""
+    import asyncio
+
+    from server.services.infra import user as user_mod
+
     user_mod._caps_cache.clear()
-    with_token = SimpleNamespace(headers={'x-forwarded-user': 'visitor@example.com',
-                                          'x-forwarded-access-token': 'obo-token'})
-    without_token = SimpleNamespace(headers={'x-forwarded-user': 'visitor@example.com'})
+    none = {'can_chat': False, 'can_compare': False, 'groups': []}
+    sql = {'can_chat': True, 'can_compare': True, 'groups': []}
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'), \
+         patch.object(user_mod, '_live_caps_via_scim', return_value=none), \
+         patch.object(user_mod, '_live_caps_via_sql', return_value=sql):
+        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
+    assert caps['can_chat'] is True and caps['can_compare'] is True
+    user_mod._caps_cache.clear()
 
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'):
-        caps = asyncio.run(user_mod.get_capabilities(without_token))
-    assert not (caps['can_chat'] or caps['can_compare'])
 
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''):
-        caps = asyncio.run(user_mod.get_capabilities(with_token))
+def test_get_capabilities_denies_when_the_check_shows_no_allowed_group():
+    import asyncio
+
+    from server.services.infra import user as user_mod
+
+    user_mod._caps_cache.clear()
+    none = {'can_chat': False, 'can_compare': False, 'groups': []}
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''), patch.object(user_mod, '_live_caps_via_scim', return_value=none):
+        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
     assert not (caps['can_chat'] or caps['can_compare'])
+    assert 'visitor@example.com' in user_mod._caps_cache
+    user_mod._caps_cache.clear()
+
+    # A warehouse that fails does not overturn a SCIM answer that was obtained.
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'), patch.object(user_mod, '_live_caps_via_scim', return_value=none), \
+         patch.object(user_mod, '_live_caps_via_sql', side_effect=RuntimeError('warehouse down')):
+        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
+    assert not (caps['can_chat'] or caps['can_compare'])
+    user_mod._caps_cache.clear()
+
+
+def test_get_capabilities_grants_all_when_the_check_cannot_be_made():
+    """No token or every source failing grants everything (the app permission already filters), and is not cached."""
+    import asyncio
+
+    from server.services.infra import user as user_mod
+
+    user_mod._caps_cache.clear()
+    caps = asyncio.run(user_mod.get_capabilities(_caps_request(token='')))
+    assert caps['can_chat'] and caps['can_compare']
+
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''), \
+         patch.object(user_mod, '_live_caps_via_scim', side_effect=RuntimeError('unauthorized')):
+        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
+    assert caps['can_chat'] and caps['can_compare']
 
     with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'), \
+         patch.object(user_mod, '_live_caps_via_scim', side_effect=RuntimeError('unauthorized')), \
          patch.object(user_mod, '_live_caps_via_sql', side_effect=RuntimeError('warehouse down')):
-        caps = asyncio.run(user_mod.get_capabilities(with_token))
-    assert not (caps['can_chat'] or caps['can_compare'])
+        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
+    assert caps['can_chat'] and caps['can_compare']
     assert 'visitor@example.com' not in user_mod._caps_cache
 
     user_mod._caps_cache.clear()

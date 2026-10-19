@@ -228,6 +228,21 @@ def test_analysis_falls_back_and_streams_the_answer(monkeypatch):
     # Claude 5 rejects a temperature: the primary gets thinking only.
     assert 'thinking' in sonnet_payload and 'temperature' not in sonnet_payload
     assert 'thinking' not in fallback_payload and 'temperature' not in fallback_payload
+    # Claude 5 takes adaptive thinking with an effort level, never a token budget.
+    assert sonnet_payload['thinking'] == {'type': 'adaptive'}
+    assert sonnet_payload['output_config'] == {'effort': compare_llm.THINKING_EFFORT}
+
+
+def test_claude_that_refuses_thinking_is_called_again_without_it(monkeypatch):
+    answers = iter([httpx.Response(400, text='"thinking.type.enabled" is not supported for this model'),
+                    _sse('Hello.')(None)])
+    service = FakeService({SONNET: lambda payload: next(answers), GPT_5_6_LUNA: _status(503)}, monkeypatch)
+    events = _events(_run(_collect(stream_analysis(HOST, 't', SONNET, [{'role': 'user', 'content': 'q'}],
+                                                    100, 4000, 0.0))))
+    assert [e['delta'] for e in events if e['type'] == 'response.output_text.delta'] == ['Hello.']
+    assert service.endpoints() == [SONNET, SONNET]
+    assert 'thinking' in service.calls[0][1] and 'output_config' in service.calls[0][1]
+    assert 'thinking' not in service.calls[1][1] and 'output_config' not in service.calls[1][1]
 
 
 def test_analysis_that_every_endpoint_fails_sends_the_user_message(monkeypatch):
