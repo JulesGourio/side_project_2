@@ -426,7 +426,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   databricks bundle run create_chat_experiment_dev -t dev --profile DEV
   ```
 
-  Attendu : `experiment /Shared/qualibot/chat_turns created (id …)` puis `app qualibot (service principal …) can edit the experiment`.
+  Attendu : `experiment <chemin> created (id …)` puis `app qualibot (service principal …) can edit the experiment`.
   Si une expérience du même nom existe déjà à votre nom (essai manuel), la supprimer d'abord dans l'UI (Experiments → ⋮ → Delete).
 
 - [ ] **0.9 Prompts dans le registre** — enregistre aussi chaque version en tag `chat_prompt.<clé>` de l'expérience (qui doit exister : 0.8) ;
@@ -496,7 +496,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   par la liste **Sources** `[1] REF — titre — Version … — lien`), PDF du chat (**Response — PDF**, **Full session — PDF**) et du compare
   (**Download PDF** du Change Summary et du résumé d'un document). « Judge Impacted Docs » dans Compare sur deux révisions connues. La question
   NDT (« quels documents parlent des exigences de qualification CND ? ») : pas de « version not stated », pastilles `REF · B`, titre et « Version B
-  (jj/mm/aaaa) » au survol ; un fil d'hier affiche « Yesterday ». Puis (1 min après) l'expérience : DEV → **Experiments** → `/Shared/qualibot/chat_turns`
+  (jj/mm/aaaa) » au survol ; un fil d'hier affiche « Yesterday ». Puis (1 min après) l'expérience : DEV → **Experiments** → l'expérience du chat (`chat_mlflow_experiment`)
   → **Traces** : une trace par question, l'arbre `chat_turn → retrieval → answer`, les passages dans la sortie de `retrieval`, 4 prompts liés,
   `user_vote` sur les deux réponses votées. Éditeur SQL Lakebase (base `doccompare`) :
 

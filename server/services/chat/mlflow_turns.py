@@ -71,7 +71,10 @@ def _experiment_id(name: str) -> Optional[str]:
         if time.monotonic() < _missing_until.get(name, 0.0):
             return None
     import mlflow
-    if os.getenv('DATABRICKS_WAREHOUSE_ID'):             # only read by a Unity Catalog trace location
+    warehouse = os.getenv('CHAT_MLFLOW_WAREHOUSE_ID', '').strip()      # read by the Unity Catalog trace tables
+    if warehouse:
+        os.environ['MLFLOW_TRACING_SQL_WAREHOUSE_ID'] = warehouse
+    elif os.getenv('DATABRICKS_WAREHOUSE_ID'):
         os.environ.setdefault('MLFLOW_TRACING_SQL_WAREHOUSE_ID', os.environ['DATABRICKS_WAREHOUSE_ID'])
     try:
         found = mlflow.get_experiment_by_name(name)

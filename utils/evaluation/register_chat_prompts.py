@@ -10,7 +10,7 @@ The experiment must exist (``create_chat_experiment``). Runs as the job ``regist
 
 USAGE
 -----
-    python utils/evaluation/register_chat_prompts.py --profile DEV --schema dev_proj.qualibot --experiment /Shared/qualibot/chat_turns
+    python utils/evaluation/register_chat_prompts.py --profile DEV --schema dev_proj.qualibot --experiment <chat_mlflow_experiment of databricks.yml>
 
 Inside a job the script runs through ``exec`` (no ``__file__``), so the job passes ``--app-root``.
 
@@ -66,7 +66,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--profile', default='', help='Databricks CLI profile; empty inside a job')
     parser.add_argument('--schema', required=True, help='catalog.schema of the prompt registry (dev_proj.qualibot)')
-    parser.add_argument('--experiment', default='/Shared/qualibot/chat_turns', help='chat experiment that receives the version tags')
+    parser.add_argument('--experiment', required=True, help='chat experiment that receives the version tags')
     parser.add_argument('--app-root', default='', help='folder holding `server/` (default: two levels above this file)')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')

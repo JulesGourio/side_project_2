@@ -447,24 +447,57 @@ Attendu dans la tâche d'import : `Tables to load: [...]`, une ligne par table n
 
 Retour arrière : redéployer (`deploy-uat`) la branche précédente. Les tables `_v1`, les index `_v1` et les agents restent intacts jusqu'à D1 et D2, et le démarrage de la nouvelle version n'a fait que des ajouts dans Lakebase.
 
-- [ ] **Q13. Traces MLflow du chat après un déplacement de l'expérience.** L'app retrouve l'expérience par son **chemin** (`CHAT_MLFLOW_EXPERIMENT`, `utils/deploy/target_env.json`). Déplacer l'expérience dans l'espace de travail change son chemin sans changer son identifiant : l'app cherche l'ancien chemin, ne le trouve plus, et n'enregistre plus rien. Les jobs lisent le même chemin dans la variable `chat_mlflow_experiment` de `databricks.yml`. Un test (`tests/test_deploy_config.py`) refuse un écart entre les deux. Diagnostic :
+- [ ] **Q13. Traces MLflow du chat dans Unity Catalog.** Les traces ne sont plus dans l'espace de travail mais dans des tables Delta du schéma `<env>_proj.qualibot_traces` (schéma à part : l'app y reçoit `MODIFY`, ce qu'on ne veut pas sur `qualibot`, où sont le corpus et le pipeline). L'expérience (un simple conteneur) est créée par le job `create_chat_experiment_<cible>` dans le dossier personnel du compte de service du job : `/Users/3e5cd4e5-f765-4760-b974-ee7715258b39/qualibot/chat_turns` en UAT, un chemin neuf, donc une expérience neuve ; l'ancienne (et ses traces) n'est plus lue. L'app retrouve l'expérience par son **chemin** : `CHAT_MLFLOW_EXPERIMENT` (`utils/deploy/target_env.json`) et la variable `chat_mlflow_experiment` (`databricks.yml`) portent la même valeur (test `tests/test_deploy_config.py`). L'entrepôt SQL `CHAT_MLFLOW_WAREHOUSE_ID` lit les tables de traces. MLflow `>= 3.11.1` est requis (app et jobs).
 
-```powershell
-databricks apps logs qualibot --profile UAT --tail-lines 1000 --search "mlflow_turns"
+  1. **Schéma et droits** (éditeur SQL UAT, une personne qui a `MANAGE` ou `ALL PRIVILEGES` sur `uat_proj`, comme CoreAdmin ; sinon passer par un job sous `job-runner-sa-uat`, comme `runbooks/scripts/grants/`) :
+
+```sql
+CREATE SCHEMA IF NOT EXISTS uat_proj.qualibot_traces;
+GRANT ALL PRIVILEGES ON SCHEMA uat_proj.qualibot_traces TO `3e5cd4e5-f765-4760-b974-ee7715258b39`;
+GRANT USE SCHEMA, MODIFY, SELECT ON SCHEMA uat_proj.qualibot_traces TO `ed8abb86-e0db-423b-8f35-5cda58e89b80`;
 ```
 
-Deux messages possibles : `experiment <chemin> does not exist, chat traces are off` (le chemin configuré n'existe plus : ce qui suit), ou `trace … not written: … PermissionDenied` (le chemin est bon, l'app n'a plus le droit d'écrire : dernière étape). Pour réparer, avec le nouveau chemin de l'expérience (UI : Experiments, ouvrir l'expérience, copier son chemin) :
+  Le premier compte est le SP des jobs (il crée les tables de traces), le second le SP de l'app. Les deux comptes de service doivent aussi pouvoir utiliser l'entrepôt `5890912c31867b77` (`CAN_USE`, déjà donné au groupe `leap-qualibot-service-accounts`) :
 
-1. Remplacer le chemin à **deux** endroits, du même texte : la valeur `CHAT_MLFLOW_EXPERIMENT` de la cible dans `utils/deploy/target_env.json` et la variable `chat_mlflow_experiment` de `databricks.yml` (sous `variables:` de la cible si le chemin diffère par environnement). Commit, push.
-2. Bitbucket, `deploy-uat` (l'app relit son environnement).
-3. Réappliquer les droits sur l'expérience déplacée : le job est idempotent (une expérience existante est laissée telle quelle, ses droits sont réappliqués : CAN_EDIT à l'app, CAN_MANAGE à CoreAdmin et CoreDev) :
+```powershell
+databricks warehouses get-permissions 5890912c31867b77 --profile UAT -o json
+```
+
+  2. **Déployer l'app** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, `deploy-uat` (nouveau chemin, nouvel entrepôt, MLflow 3.11.1 à l'installation).
+  3. **Créer l'expérience, puis lier les prompts** (la création réapplique les droits : `CAN_EDIT` à l'app, `CAN_MANAGE` à CoreAdmin et CoreDev) :
 
 ```powershell
 databricks bundle run -t qualibot-uat create_chat_experiment_uat --profile UAT
 databricks bundle run -t qualibot-uat register_chat_prompts_uat --profile UAT
 ```
 
-4. Vérifier : poser une question dans le chat, attendre une minute, puis relancer la recherche `mlflow_turns` : plus de `does not exist`, et dans l'UI Experiments le nombre de traces augmente.
+  Attendu dans le journal du premier job : `experiment /Users/3e5cd4e5-…/qualibot/chat_turns created (id …), traces in uat_proj.qualibot_traces`. Si l'expérience existe déjà au même chemin, elle est laissée telle quelle et **n'est pas** convertie : changer le chemin ou la supprimer d'abord.
+  4. **Vérifier** : poser une question dans le chat, attendre une minute, puis :
+
+```powershell
+databricks apps logs qualibot --profile UAT --tail-lines 1000 --search "mlflow_turns"
+```
+
+```sql
+SHOW TABLES IN uat_proj.qualibot_traces;
+```
+
+  Les tables de traces doivent apparaître et se remplir ; la recherche `mlflow_turns` ne doit montrer ni `does not exist` ni `not written`. Mettre ensuite un pouce haut ou bas sur une réponse : la ligne `vote … not logged` ne doit pas apparaître. Points non vérifiés ici, à surveiller dans cet ordre (envoyer la ligne de journal en cas d'échec) : l'écriture des traces par l'app, le vote, puis `score_chat_traces_uat` en `dry_run`, qui doit retrouver les traces par l'identifiant de l'expérience.
+
+  5. **DEV** (même procédure, profil `DEV`) : SP des jobs `fde6ff28-739f-4a41-b61e-604a298c8478`, SP de l'app `8e411164-a7e8-46ff-8013-8c56af2c3656`, schéma `dev_proj.qualibot_traces`, entrepôt `13eff4a6095513cb`, chemin `/Users/fde6ff28-739f-4a41-b61e-604a298c8478/qualibot/chat_turns` :
+
+```sql
+CREATE SCHEMA IF NOT EXISTS dev_proj.qualibot_traces;
+GRANT ALL PRIVILEGES ON SCHEMA dev_proj.qualibot_traces TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+GRANT USE SCHEMA, MODIFY, SELECT ON SCHEMA dev_proj.qualibot_traces TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+```
+
+```powershell
+databricks bundle run -t dev create_chat_experiment_dev --profile DEV
+databricks bundle run -t dev register_chat_prompts_dev --profile DEV
+```
+
+  (`deploy-dev` avant, comme en UAT.) PROD : même chose le moment venu, avec le SP des jobs `b82d3b5a-b633-4738-8dde-68bb2142cb02`, l'entrepôt `03054ddc44b7f902` et le SP de l'app PROD.
 
 Les alertes (S10) restent en pause et le nettoyage (D1, D2) attend un accord écrit.
 

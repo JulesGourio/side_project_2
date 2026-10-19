@@ -45,7 +45,8 @@ logger = logging.getLogger('score_chat_traces')
 
 dbutils.widgets.removeAll()
 dbutils.widgets.text('app_code_path', '/Workspace/.bundle/qualibot/dev/files')
-dbutils.widgets.text('experiment', '/Shared/qualibot/chat_turns')
+dbutils.widgets.text('experiment', '')
+dbutils.widgets.text('warehouse_id', '', 'SQL warehouse that reads the Unity Catalog trace tables')
 dbutils.widgets.text('days', '7')
 dbutils.widgets.text('min_date', '', 'Earliest trace kept, YYYY-MM-DD (empty = no bound)')
 dbutils.widgets.text('limit', '200')
@@ -61,6 +62,9 @@ dbutils.widgets.text('results_table', 'dev_proj.qualibot.chat_trace_scores')
 
 APP = dbutils.widgets.get('app_code_path').strip().rstrip('/')
 EXPERIMENT = dbutils.widgets.get('experiment').strip()
+if not EXPERIMENT:
+    raise ValueError('The experiment parameter is required')
+WAREHOUSE_ID = dbutils.widgets.get('warehouse_id').strip()
 DAYS = max(1, int(dbutils.widgets.get('days') or 7))
 MIN_DATE = dbutils.widgets.get('min_date').strip()
 LIMIT = max(1, int(dbutils.widgets.get('limit') or 200))
@@ -90,8 +94,13 @@ logger.info('experiment %s, last %d days, at most %d traces, judge %s, rates %s,
 
 # COMMAND ----------
 
+import os
+
 import mlflow
 from mlflow.entities import AssessmentSourceType
+
+if WAREHOUSE_ID:
+    os.environ['MLFLOW_TRACING_SQL_WAREHOUSE_ID'] = WAREHOUSE_ID
 
 mlflow.set_tracking_uri('databricks')
 experiment = mlflow.get_experiment_by_name(EXPERIMENT)

@@ -30,7 +30,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--profile', default='', help='Databricks CLI profile (DEV, UAT…); empty inside a job')
     parser.add_argument('--app', default='qualibot', help='Databricks app that writes the traces')
-    parser.add_argument('--experiment', default='/Shared/qualibot/chat_turns')
+    parser.add_argument('--experiment', required=True, help='workspace path (chat_mlflow_experiment in databricks.yml)')
     parser.add_argument('--uc-schema', default='', help='catalog.schema for Unity Catalog trace tables (optional)')
     parser.add_argument('--warehouse-id', default='', help='SQL warehouse, required with --uc-schema')
     parser.add_argument('--managers', default='', help='comma-separated groups given CAN_MANAGE (they cannot own it)')

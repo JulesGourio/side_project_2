@@ -58,6 +58,9 @@ env:
   # Empty = off. The experiment must exist (utils/evaluation/create_chat_experiment.py); per-target value in utils/deploy/target_env.json.
   - name: CHAT_MLFLOW_EXPERIMENT
     value: ""
+  # SQL warehouse of the experiment's Unity Catalog trace tables (MLFLOW_TRACING_SQL_WAREHOUSE_ID); per-target value in utils/deploy/target_env.json.
+  - name: CHAT_MLFLOW_WAREHOUSE_ID
+    value: ""
   # How long can_chat / can_compare stay cached per user.
   - name: CAPS_TTL_S
     value: "600"

@@ -150,7 +150,7 @@ Ce déploiement fait partie du bloc D5 : il ne se lance pas avant D5 (voir l'ave
 databricks bundle deploy -t qualibot-uat --profile UAT
 ```
 
-Puis, une fois le déploiement fait, les jobs MLflow de la cible (expérience `/Shared/qualibot/chat_turns` et registre des prompts) :
+Puis, une fois le déploiement fait, les jobs MLflow de la cible (expérience des traces du chat, en tables Unity Catalog, et registre des prompts : `runbooks/uat_bascule.md` Q13) :
 
 ```powershell
 databricks bundle run -t qualibot-uat create_chat_experiment_uat --profile UAT

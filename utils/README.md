@@ -31,8 +31,8 @@ python utils/deploy/render_target_config_env.py <dev|uat|prod> [output_path]
 python utils/lakebase_sync/export_lakebase_to_json.py --profile <cli-profile> [--database doccompare] [--out-dir staging/lakebase]
 python utils/lakebase_sync/import_lakebase_from_json.py --profile <cli-profile> [--database doccompare] [--in-dir staging/lakebase]
 python utils/evaluation/check_vision_endpoints.py --profile <cli-profile> --images <folder> [--endpoints <a,b>] [--question <text>] [--timeout 120]
-python utils/evaluation/create_chat_experiment.py --profile <cli-profile> --app qualibot [--experiment /Shared/qualibot/chat_turns] [--uc-schema <catalog.schema> --warehouse-id <id>] [--managers <group,group>]
-python utils/evaluation/register_chat_prompts.py --profile <cli-profile> --schema <catalog.schema> [--experiment /Shared/qualibot/chat_turns] [--app-root <folder>]
+python utils/evaluation/create_chat_experiment.py --profile <cli-profile> --app qualibot --experiment <path> [--uc-schema <catalog.schema> --warehouse-id <id>] [--managers <group,group>]
+python utils/evaluation/register_chat_prompts.py --profile <cli-profile> --schema <catalog.schema> --experiment <path> [--app-root <folder>]
 ```
 
 - `render_target_config_env.py` writes `target_config.env` (default path) with one `export` line per setting.
