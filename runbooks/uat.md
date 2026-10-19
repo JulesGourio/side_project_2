@@ -26,11 +26,15 @@ A et B sont indépendants et peuvent se faire dans n'importe quel ordre. D ne se
 
 ### 0. Migration vers `uat_proj.qualibot`
 
+Statut au 19/10/2026 : code et runbook alignés sur `uat_proj.qualibot`. Fait : inventaire, clones, volumes, droits. En cours : index `chunks_index` (reconstruction E2). À faire : copie de sécurité (0.2c), contrôle (0.6), puis déploiement (0.7) une fois l'index prêt et sur accord explicite.
+
 Les noms des jobs n'ont plus de suffixe de cible (`D_1_Qualibot_Parsing_Pipeline`, et non plus `..._qualibot-uat`). Le premier `bundle deploy` de `qualibot-uat` renomme les jobs existants en place (même identifiant, même planning) : pas de doublon.
 
 L'app et le pipeline vivent dans `uat_proj.qualibot`. Les tables `*_v1` et les volumes de l'ancien emplacement ne servent qu'à la copie unique de cette étape. Rien ne touche à l'app tant que le déploiement n'a pas été accordé (0.7).
 
 **0.1 — Inventaire (PowerShell, profil `UAT`)**
+
+Statut : `[x] (19/10/2026)` inventaire lu : tables, volumes et index de `uat_proj.qualibot` présents.
 
 ```powershell
 databricks tables list uat_landingzone qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
@@ -41,6 +45,8 @@ databricks vector-search-indexes list-indexes qualibot --profile UAT -o json | C
 ```
 
 **0.2 — Clonage des tables (SQL, éditeur SQL du workspace UAT, un utilisateur qui lit l'ancien schéma UAT et crée dans `uat_proj.qualibot`)**
+
+Statut : `[x] (19/10/2026)` clones présents dans `uat_proj.qualibot` (checkpoint, parsed_documents, image_metadata, parse_manifest, category_reference, parsing_run_health, document_change_log, eval_feedback_failures, chunks).
 
 Pour chaque table listée en 0.1 (sauf les volumes), une ligne `DEEP CLONE`. Si la table sans suffixe n'existe pas, cloner la version `_v1` correspondante. Inventaire du 2026-10-16 : `chunks_archive_v1`, `chunks_archive_notices_v1` et `chunks_full_v1` n'existent pas dans `uat_landingzone` : rien à cloner, le pipeline les crée au premier run. `eval_feedback_failures` s'appelle `feedback_failure_cases` dans la source : cloner depuis ce nom, ligne ci-dessous. Référence :
 
@@ -68,6 +74,8 @@ SELECT 'chunks' AS t, (SELECT count(*) FROM uat_landingzone.qualibot.chunks_v1) 
 
 **0.2b — Volumes de l'UAT (PowerShell, profil `UAT`)**
 
+Statut : `[x] (19/10/2026)` `doc_compare`, `images`, `docling_models`, `staging` présents dans `uat_proj.qualibot`. `test` non copié : plus aucun code ni aucun bundle ne l'utilise.
+
 Les volumes de l'UAT (`doc_compare`, `test`, `images`, `docling_models`) ne portent pas de suffixe : aucun conflit avec la cible de test.
 
 ```powershell
@@ -92,7 +100,19 @@ databricks bundle deployment unbind qualibot_test -t qualibot-uat --profile UAT
 databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t qualibot-uat --profile UAT
 ```
 
+**0.2c — Copie de sécurité des tables chat (job one-shot sous le SP UAT, rien n'est supprimé)**
+
+Statut : `[ ]` à faire avant le premier export (0.5). Les tables chat de `uat_proj` seront réécrites par l'export : la copie `*_avant_20261019` est la sortie de secours.
+
+```powershell
+databricks workspace mkdirs /Workspace/Shared/qualibot_oneshot --profile UAT
+databricks workspace import /Workspace/Shared/qualibot_oneshot/backup_uat_chat_tables --file runbooks/scripts/uat_backup/backup_uat_chat_tables.py --format SOURCE --language PYTHON --overwrite --profile UAT
+databricks jobs submit --json @runbooks/scripts/uat_backup/backup_uat_chat_tables_submit.json --profile UAT
+```
+
 **0.3 — Index Vector Search `uat_proj.qualibot.chunks_index`**
+
+Statut : `[ ]` en cours : `uat_proj.qualibot.chunks_index` est en reconstruction (étape E2 de ce fichier, problème signalé le 19/10/2026). Le déploiement attend `status.ready` à `true`.
 
 Les index sont recréés, pas copiés. Le notebook `update_proj_vector_indexes` crée l'index manquant avec le schéma voulu ; le plus sûr est de reprendre la définition de l'index actuel :
 
@@ -113,9 +133,13 @@ Même opération pour `chunks_full_index` si voulu (absent du déploiement aujou
 
 **0.4 — Droits (job one-shot sous le SP UAT, jamais dans l'éditeur SQL)**
 
+Statut : `[x] (19/10/2026)` droits confirmés par l'utilisateur.
+
 Constat du 2026-10-19 : le job `grant_uat_app` (`runbooks/scripts/grants/`) n'accorde que l'app (`USE CATALOG`, `USE SCHEMA`, index optionnel). Il manque au SP des jobs (`job-runner-sa-uat`, `3e5cd4e5-f765-4760-b974-ee7715258b39`) ce qui sert à l'export Lakebase et au pipeline sur `uat_proj.qualibot` : `USE SCHEMA`, `CREATE TABLE`, `SELECT`, `MODIFY`, `CREATE VOLUME`, `READ VOLUME`, `WRITE VOLUME`. Le volume `staging` est créé par l'export lui-même : sans `CREATE VOLUME`, l'export échoue. À ajouter au notebook de droits (même principe : soumis sous le SP UAT). Aucun GRANT n'est donné à coller dans l'éditeur SQL.
 
 **0.5 — Tables chat depuis Lakebase (run ponctuel)**
+
+Statut : `[ ]` à faire après le déploiement (0.7). Le planning d'export `qualibot-uat` est `UNPAUSED` (décision du 19/10/2026).
 
 ```powershell
 databricks bundle run -t qualibot-uat lakebase_export --profile UAT
@@ -134,6 +158,8 @@ databricks vector-search-indexes get-index uat_proj.qualibot.chunks_index --prof
 Attendu : toutes les tables de 0.2 et les tables chat présentes, `status.ready` à `true` pour l'index.
 
 **0.7 — Déploiement (seulement au bloc D5, après accord explicite)**
+
+Statut : `[ ]` en attente : index `ready` (0.3) et accord explicite de l'utilisateur.
 
 Ce déploiement fait partie du bloc D5 : il ne se lance pas avant D5 (voir l'avertissement en tête de fichier), et jamais sans accord explicite. Une fois accordé :
 
