@@ -909,10 +909,11 @@ Attendu : des lignes avec `is_in_rag` et `is_filtered_by_date` renseignés, et a
 Les 4 copies UAT portant les noms des tables Lakebase DEV sont renommées `uat_<nom>` (rien supprimé). Puis le Lakebase DEV est exporté et chargé dans `dev_proj.qualibot` (tables de chat, `compare_messages`, `compare_feedbacks`, `app_errors`, `catalog_metadata` ; `users`, `doc_catalog`, `impact_*`, `llm_requests`, `summary_cache` exclus en DEV).
 
 - [ ] **L.1 Déployer les jobs DEV** : Pipelines ▸ Run pipeline ▸ branche `claude/sharp-mayer-uqwx8x` ▸ `deploy-dev-jobs`.
-- [ ] **L.2 Renommer les copies UAT** (job manuel, s'exécute sous le SP DEV) :
+- [ ] **L.2 Renommer les copies UAT** (notebook one-shot, s'exécute sous le SP DEV) :
 
   ```powershell
-  databricks bundle run -t dev rename_dev_uat_copies --profile DEV
+  databricks workspace import /Workspace/Shared/qualibot_oneshot/rename_dev_uat_copies --file runbooks/scripts/dev_cleanup/rename_dev_uat_copies.py --format SOURCE --language PYTHON --overwrite --profile DEV
+  databricks jobs submit --json @runbooks/scripts/dev_cleanup/rename_dev_uat_copies_submit.json --profile DEV
   ```
 
   ```sql

@@ -1,6 +1,6 @@
 # Databricks notebook source
 # Renames the UAT copies that hold the names of DEV Lakebase tables, so the export of the DEV Lakebase can load its own
-# tables under those names. The copies are kept (renamed with a uat_ prefix): nothing is dropped. Manual job, run once.
+# tables under those names. The copies are kept (renamed with a uat_ prefix): nothing is dropped. One-shot, run once.
 import logging
 
 logger = logging.getLogger("rename_dev_uat_copies_job")
