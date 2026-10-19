@@ -305,6 +305,85 @@ Attendu : `ONLINE`. Peut prendre environ une heure.
 
 - [ ] **Prompt du chat (sources en tableau, réponses plus complètes)** : après le déploiement de l'app, lancer le job `register_chat_prompts` de la cible, pour lier la nouvelle version du prompt.
 
+## Situation du 2026-10-19 — l'app UAT tourne déjà sur le nouveau code
+
+`deploy-uat-jobs` copie les fichiers du bundle dans le workspace, et `source_code_path` de l'app est ce dossier : au premier redémarrage de l'app (arrêt/démarrage planifié, plantage), elle exécute le nouveau code avec le `app.yaml` rendu pour l'UAT. Le chat interroge donc `uat_proj.qualibot.chunks_index`, la comparaison écrit dans `/Volumes/uat_proj/qualibot/doc_compare`. Ce que ce déploiement n'a **pas** appliqué : le bloc `apps.doc-compare` du bundle (ressource volume, ACL), l'expérience MLflow et les prompts, le catalogue de documents. Le but est de rendre l'état cohérent avec `deploy-uat`, sans refaire la phase P. Le code de `server/services/infra/lakebase/schema.py` ne fait que des ajouts au démarrage (pas de DROP, DELETE ni TRUNCATE) : rien n'a été supprimé dans Lakebase par ce démarrage.
+
+Dans l'ordre. Profil CLI `UAT` (`uat-test` sur certaines machines : même workspace).
+
+- [ ] **Q1. État de l'app** (PowerShell) : noter `app_status`, `service_principal_client_id` (attendu `ed8abb86-e0db-423b-8f35-5cda58e89b80`) et l'ACL.
+
+```powershell
+databricks apps get qualibot --profile UAT -o json
+databricks apps get-permissions qualibot --profile UAT -o json
+```
+
+- [ ] **Q2. Index et droits** (PowerShell, puis éditeur SQL UAT). Attendu : `ready` à `true`, et l'application ID du SP de l'app dans chacun des deux `SHOW GRANTS`.
+
+```powershell
+databricks vector-search-indexes get-index uat_proj.qualibot.chunks_index --profile UAT -o json | ConvertFrom-Json | Select-Object name, status
+```
+
+```sql
+SHOW GRANTS ON TABLE uat_proj.qualibot.chunks_index;
+SHOW GRANTS ON VOLUME uat_proj.qualibot.doc_compare;
+```
+
+- [ ] **Q3. Le SP de l'app manque dans un des deux `SHOW GRANTS`** : le grant se lance en SP UAT (une personne n'a pas ce droit sur `uat_proj`). Sinon passer à Q4.
+
+```powershell
+databricks workspace mkdirs /Workspace/Shared/qualibot_grants --profile UAT
+databricks workspace import /Workspace/Shared/qualibot_grants/grant_uat_app --file runbooks/scripts/grants/grant_uat_app.py --language PYTHON --format SOURCE --overwrite --profile UAT
+databricks jobs submit --json "@runbooks/scripts/grants/grant_uat_app_index_submit.json" --profile UAT
+```
+
+Le volume est donné à l'étape Q6 par le déploiement (ressource `doc-compare-volume`).
+
+- [ ] **Q4. Volume de la comparaison copié** (PowerShell) : le contenu doit être identique des deux côtés (P4). Si `uat_proj` est vide ou en retard, refaire la copie de P4 avant Q6.
+
+```powershell
+databricks fs ls dbfs:/Volumes/uat_landingzone/qualibot/doc_compare --profile UAT
+databricks fs ls dbfs:/Volumes/uat_proj/qualibot/doc_compare --profile UAT
+```
+
+- [ ] **Q5. Plan du déploiement** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur l'app, le schéma, les volumes ou le projet Lakebase. Dans `apps.doc-compare`, la ressource `doc-compare-volume` passe de `uat_landingzone.qualibot.doc_compare` à `uat_proj.qualibot.doc_compare` et `test-volume` disparaît : c'est voulu. Comparer l'ACL de Q1 avec la liste du bloc `qualibot-uat` de `databricks.yml` (CoreAdmin et CoreDev `CAN_MANAGE`, les groupes ChatBot et DocCompare `CAN_USE`, trois utilisateurs, le SP `job-runner-sa-uat`) : tout accès actuel absent de la liste serait retiré.
+
+- [ ] **Q6. Déploiement de l'app** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `deploy-uat`. Il déploie, puis redémarre l'app.
+
+- [ ] **Q7. Journal de démarrage** (PowerShell). Attendus : `Copied legacy rows messages -> compare_messages` et `Copied legacy rows errors -> app_errors` (première fois seulement), des lignes `Capabilities …: can_chat=True … (SCIM)`, aucune ligne `refused 400`.
+
+```powershell
+databricks apps logs qualibot --profile UAT --tail-lines 1000 --search "Capabilities"
+databricks apps logs qualibot --profile UAT --tail-lines 1000 --search "compare_llm"
+databricks apps logs qualibot --profile UAT --tail-lines 1000 --search "ERROR"
+```
+
+- [ ] **Q8. Expérience MLflow et prompts du chat** (PowerShell, une fois le déploiement fait) :
+
+```powershell
+databricks bundle run -t qualibot-uat create_chat_experiment_uat --profile UAT
+databricks bundle run -t qualibot-uat register_chat_prompts_uat --profile UAT
+```
+
+`score_chat_traces_uat` reste en pause ; son premier lancement se fait à la main, en `dry_run`.
+
+- [ ] **Q9. Lakebase, base `doccompare`** (éditeur SQL Lakebase). Attendu : `old_paths` = 0 et `legacy` = `current`.
+
+```sql
+SELECT COUNT(*) AS old_paths FROM compare_messages WHERE volume_session_path LIKE '%_landingzone%';
+SELECT (SELECT COUNT(*) FROM messages) AS legacy, (SELECT COUNT(*) FROM compare_messages) AS current;
+```
+
+- [ ] **Q10. Tests manuels** sur l'URL de l'app : chat ALL, AS, IS ; une question en anglais ; une question hors sujet ; un lien de source ; une recherche d'impact ; une comparaison avec export ; ouvrir une ancienne comparaison de l'historique (elle lit le volume `uat_proj`).
+
+- [ ] **Q11. Rechunk et catalogue des documents** : la cible est en `rechunk` (J2) : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Run now* (J5). Il purge les révisions remplacées, reconstruit `chunks`, resynchronise `chunks_index` (environ 1 h, le chat reste servi par l'index en cours) et remplit `doc_catalog` en dernière tâche. Ensuite : requêtes 5 et 3 de J0e (zéro IDDOC hors manifeste), J6 (index `ONLINE`), J7 (retour à `incremental`, `deploy-uat-jobs`), J8 (reprise du planning), puis redémarrer l'app : UI UAT, Apps, `qualibot`, *Stop*, puis *Start*.
+
+- [ ] **Q12. Export du journal de notation** (S8) : UI UAT, Workflows, `D_1_Qualibot_Lakebase_Export_To_Volume`, *Run now*.
+
+Retour arrière : redéployer (`deploy-uat`) la branche précédente. Les tables `_v1`, les index `_v1` et les agents restent intacts jusqu'à D1 et D2, et le démarrage de la nouvelle version n'a fait que des ajouts dans Lakebase.
+
+Les alertes (S10) restent en pause et le nettoyage (D1, D2) attend un accord écrit.
+
 ## Phase S — bascule de l'app (accord écrit requis, moment calme recommandé)
 
 - [ ] **S0. Accord écrit pour la bascule** : ____________.

@@ -461,17 +461,11 @@ targets:
               level: CAN_USE
             - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat
               level: CAN_MANAGE
-          # TEMPORARY: same two volumes as the running app (uat_landingzone). Replace by uat_proj.qualibot.doc_compare at the switch (S4).
           resources:
             - name: doc-compare-volume
               uc_securable:
                 securable_type: VOLUME
-                securable_full_name: uat_landingzone.qualibot.doc_compare
-                permission: WRITE_VOLUME
-            - name: test-volume
-              uc_securable:
-                securable_type: VOLUME
-                securable_full_name: uat_landingzone.qualibot.test
+                securable_full_name: uat_proj.qualibot.doc_compare
                 permission: WRITE_VOLUME
     variables:
       app_name: "qualibot"
