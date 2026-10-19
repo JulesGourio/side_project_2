@@ -108,6 +108,51 @@ databricks apps get qualibot --profile UAT
 
 - [ ] **J0a. Détacher l'état du bundle UAT de `uat_landingzone`** (sans rien supprimer dans Databricks, après M0) : copier le git dans `latec-compare`, puis Bitbucket, pipeline `uat-state-fix`. Il détache `qualibot_schema`, `qualibot_test`, `qualibot_doc_compare`, `qualibot_images`, puis rattache `qualibot_doc_compare` et `qualibot_images` aux volumes `uat_proj` créés en P4. Attendu : vert.
 
+- [ ] **J0d. Couverture de `uat_proj.qualibot.chunks` par rapport à `uat_landingzone.qualibot.chunks_v1`** (SQL UAT, lecture seule). Attendu : tout à 0, sauf écarts expliqués par des écritures de l'ancienne app après le clone (voir la dernière requête).
+
+```sql
+-- 1. Totaux et doublons de clé
+SELECT 'v1' AS src, COUNT(*) AS chunks, COUNT(DISTINCT chunk_id) AS distinct_chunk_ids, COUNT(DISTINCT IDDOC) AS docs
+FROM uat_landingzone.qualibot.chunks_v1
+UNION ALL
+SELECT 'copie', COUNT(*), COUNT(DISTINCT chunk_id), COUNT(DISTINCT IDDOC)
+FROM uat_proj.qualibot.chunks;
+
+-- 2. Chunks présents d'un seul côté
+SELECT 'absents de la copie' AS issue, COUNT(*) AS n
+FROM (SELECT chunk_id FROM uat_landingzone.qualibot.chunks_v1 EXCEPT SELECT chunk_id FROM uat_proj.qualibot.chunks)
+UNION ALL
+SELECT 'absents de v1', COUNT(*)
+FROM (SELECT chunk_id FROM uat_proj.qualibot.chunks EXCEPT SELECT chunk_id FROM uat_landingzone.qualibot.chunks_v1);
+
+-- 3. Documents présents d'un seul côté, ou avec un nombre de chunks différent
+WITH src AS (SELECT IDDOC, COUNT(*) AS n_v1 FROM uat_landingzone.qualibot.chunks_v1 GROUP BY IDDOC),
+     cpy AS (SELECT IDDOC, COUNT(*) AS n_copie FROM uat_proj.qualibot.chunks GROUP BY IDDOC)
+SELECT COALESCE(s.IDDOC, c.IDDOC) AS IDDOC, s.n_v1, c.n_copie,
+       CASE WHEN c.IDDOC IS NULL THEN 'absent de la copie'
+            WHEN s.IDDOC IS NULL THEN 'absent de v1'
+            ELSE 'nombre différent' END AS issue
+FROM src s
+FULL OUTER JOIN cpy c ON s.IDDOC = c.IDDOC
+WHERE s.IDDOC IS NULL OR c.IDDOC IS NULL OR s.n_v1 <> c.n_copie
+ORDER BY issue, IDDOC;
+
+-- 4. Schéma : colonnes absentes ou de type différent
+WITH a AS (SELECT column_name, data_type FROM uat_landingzone.information_schema.columns
+           WHERE table_schema = 'qualibot' AND table_name = 'chunks_v1'),
+     b AS (SELECT column_name, data_type FROM uat_proj.information_schema.columns
+           WHERE table_schema = 'qualibot' AND table_name = 'chunks')
+SELECT COALESCE(a.column_name, b.column_name) AS column_name, a.data_type AS type_v1, b.data_type AS type_copie
+FROM a FULL OUTER JOIN b ON a.column_name = b.column_name
+WHERE a.column_name IS NULL OR b.column_name IS NULL OR a.data_type <> b.data_type;
+
+-- 5. Dernière écriture de chaque table (si v1 a bougé après le clone, les écarts sont attendus)
+DESCRIBE HISTORY uat_landingzone.qualibot.chunks_v1 LIMIT 1;
+DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 1;
+```
+
+Si une requête renvoie `PERMISSION_DENIED`, elle doit passer par le SP UAT (même mécanisme que `runbooks/scripts/grants/`), pas par le compte personnel.
+
 - [ ] **J0b. Plan lecture seule UAT** : Bitbucket, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur le schéma, les volumes ou l'app. Les `create` de nouveaux jobs sont normaux. Les `delete` de jobs (`apps_stop_nightly_uat`, `quality_scoring`, `score_production_qa_uat`, `sync_mlflow_scorer_assessments_uat`, `traces_migration`) sont à valider un par un dans l'UI avant J3.
 
 - [ ] **J0c. Retirer les déclarations temporaires** `qualibot_schema` et `qualibot_test` de `databricks.yml` (cible `qualibot-uat`), commit et push. Les ressources de l'app (`doc-compare-volume` et `test-volume` vers `uat_landingzone`) restent temporaires jusqu'à S4.
