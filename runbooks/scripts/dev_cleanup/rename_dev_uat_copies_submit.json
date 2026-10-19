@@ -1,0 +1,15 @@
+{
+  "run_name": "qualibot-rename-dev-uat-copies",
+  "run_as": {
+    "service_principal_name": "fde6ff28-739f-4a41-b61e-604a298c8478"
+  },
+  "tasks": [
+    {
+      "task_key": "rename_dev_uat_copies",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/qualibot_oneshot/rename_dev_uat_copies",
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}

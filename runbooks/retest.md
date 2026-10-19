@@ -265,3 +265,8 @@ Notebooks : aucun changement de logique, seuls leurs imports changent (`quality`
 
 - [ ] `5_sync_index` en SUCCESS après un run `rechunk`, et `DESCRIBE HISTORY <env>_proj.qualibot.chunks` montre un `WRITE` en `Overwrite`, pas un `CREATE OR REPLACE TABLE AS SELECT`.
 - [ ] Le message de l'index ne contient plus `latest pipeline update failed`.
+
+## 2026-10-19 — Lakebase DEV dans dev_proj.qualibot
+- Notebook one-shot `runbooks/scripts/dev_cleanup/rename_dev_uat_copies.py` (hors bundle, soumis sous le SP DEV) : renomme les 4 copies UAT en `uat_<nom>`. Une fois.
+- DEV : `lakebase_import_to_delta` = `true`, `lakebase_tables_to_skip` (liste dans `databricks.yml`). L'export charge les autres tables dans `dev_proj.qualibot`.
+- À relancer : `runbooks/dev.md` bloc L (L.1 à L.4). Puis `pytest tests/test_lakebase_sync_config.py tests/test_deploy_config.py tests/test_bundle_paths.py`.

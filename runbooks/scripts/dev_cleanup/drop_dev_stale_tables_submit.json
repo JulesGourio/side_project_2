@@ -1,0 +1,15 @@
+{
+  "run_name": "qualibot-drop-dev-stale-tables",
+  "run_as": {
+    "service_principal_name": "fde6ff28-739f-4a41-b61e-604a298c8478"
+  },
+  "tasks": [
+    {
+      "task_key": "drop_dev_stale_tables",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/qualibot_oneshot/drop_dev_stale_tables",
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}

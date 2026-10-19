@@ -48,7 +48,7 @@ resources:
               OUTPUT_VOLUME_CATALOG: ${var.pipeline_write_env}_proj
               OUTPUT_VOLUME_SCHEMA: "qualibot"
               OUTPUT_VOLUME_NAME: "staging"
-              TABLES_TO_SKIP: ""
+              TABLES_TO_SKIP: ${var.lakebase_tables_to_skip}
           environment_key: default
         - task_key: import_lakebase_tables_to_delta
           description: "Load every exported table as a Delta table of the same name in <env>_proj.qualibot"
