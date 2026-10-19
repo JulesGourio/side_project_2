@@ -488,6 +488,8 @@ targets:
       job_activity_tag: "uat-job"
       lakebase_export_schedule_pause: "UNPAUSED"
       lakebase_import_to_delta: "true"
+      # Legacy Lakebase names of the app before the 2026-10-14 refactor: their copies in uat_proj would be stale.
+      lakebase_tables_to_skip: "messages,feedbacks,errors,knowledge_base_metadata"
       job_cluster_policy_id_S: "000E7559CADE5290"
       notification_email: "jules.gourio.external@latecoere.aero"
 
