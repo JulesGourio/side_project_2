@@ -2,13 +2,13 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-
-from .. import llm as chat_llm, prompts
-from ..turn_log import TurnLog
-from .config import (
-    llm_endpoint, rewrite_endpoint, rewrite_max_tokens, rewrite_timeout_s, translate_max_tokens,
+from server.services.chat import llm as chat_llm, prompts
+from server.services.chat import translation_bridge
+from server.services.chat.turn_log import TurnLog
+from server.services.chat.engine.config import (
+    NOISE_PHRASES, llm_endpoint, rewrite_endpoint, rewrite_max_tokens, rewrite_timeout_s, translate_max_tokens,
     translate_only_enabled,
 )
 
@@ -19,13 +19,12 @@ _TRANSLATE_NAMES = {'fr': 'French', 'en': 'English'}
 REWRITE_PROMPT = prompts.read('rewrite')
 
 
-def opening_language(conversation: List[Dict[str, str]], question: str) -> Optional[str]:
+def opening_language(conversation: List[Dict[str, str]], question: str) -> str | None:
     """'fr' or 'en' when ``question`` opens the conversation and is confidently in that language (the translation
     path applies), else None: follow-ups, other or unsure languages keep the bilingual rewrite."""
     if not translate_only_enabled() or len(conversation) > 1:
         return None
-    from ..translation_bridge import _fast_lang_guess
-    code = _fast_lang_guess(question)
+    code = translation_bridge.fast_lang_guess(question)
     return code if code in _TRANSLATE_NAMES else None
 
 
@@ -44,22 +43,10 @@ def split_bilingual(text: str) -> Tuple[str, str]:
     return fr, en
 
 
-# Context words the rewrite model appends to a query: noise for the search. Dropped unless the
-# conversation itself says them.
-_COMPANY = r'lat[eé]co[eè]re'
-_NOISE_PHRASES = [re.compile(p, re.IGNORECASE) for p in (
-    rf"(?:dans|pour|sur)\s+(?:les\s+)?documents?\s+(?:qualit[eé]\s+)?(?:de\s+|d['’])?(?:la\s+soci[eé]t[eé]\s+)?{_COMPANY}",
-    rf"(?:in|for|from)\s+(?:the\s+)?{_COMPANY}(?:['’]s)?\s+(?:quality\s+)?documents?",
-    r"(?:dans|in)\s+(?:les\s+|the\s+)?(?:documents?\s+qualit[eé]|quality\s+documents?)\b",
-    r"\bdocuments?\s+qualit[eé]\b|\bquality\s+documents?\b",
-    rf"\b{_COMPANY}\b",
-)]
-
-
 def strip_added_noise(query: str, conversation_text: str) -> str:
     """``query`` without company / document-type filler the conversation never used."""
     out = query
-    for pattern in _NOISE_PHRASES:
+    for pattern in NOISE_PHRASES:
         if not pattern.search(conversation_text):
             out = pattern.sub(' ', out)
     out = re.sub(r'\s+', ' ', out).strip(' ,;:-')
@@ -67,7 +54,7 @@ def strip_added_noise(query: str, conversation_text: str) -> str:
 
 
 async def translate_query(host: str, token: str, question: str, target: str,
-                          log: Optional[TurnLog] = None) -> str:
+                          log: TurnLog | None = None) -> str:
     """``question`` translated into ``target`` ('fr' or 'en'); raises when every model failed after its retries."""
     log = log if log is not None else TurnLog()
     system = prompts.read('translate_query').replace('{language}', _TRANSLATE_NAMES[target])
@@ -96,7 +83,7 @@ async def translate_query(host: str, token: str, question: str, target: str,
 
 
 async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, str]],
-                          log: Optional[TurnLog] = None) -> Tuple[str, str]:
+                          log: TurnLog | None = None) -> Tuple[str, str]:
     """(French query, English query) for the last question; raises when every rewrite model failed after its retries."""
     log = log if log is not None else TurnLog()
     transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)

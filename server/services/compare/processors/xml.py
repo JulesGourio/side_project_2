@@ -9,7 +9,7 @@ import logging
 import xml.etree.ElementTree as ET
 from typing import List
 
-from .text_diff import TextDiffProcessor
+from server.services.compare.processors.text_diff import TextDiffProcessor
 
 logger = logging.getLogger(__name__)
 

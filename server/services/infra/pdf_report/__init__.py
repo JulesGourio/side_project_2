@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from .common import KIND_LABELS, MARGIN_X, PAGE_W, RULE, Section, Source
-from .markdown import clean_text, parse_inline, plain_text, tokenize
-from .render import _cover, _new_pdf, _Writer
+from server.services.infra.pdf_report.common import KIND_LABELS, MARGIN_X, PAGE_W, RULE, Section, Source
+from server.services.infra.pdf_report.markdown import clean_text, parse_inline, plain_text, tokenize
+from server.services.infra.pdf_report.render import _cover, _new_pdf, _Writer
 
 __all__ = [
     'KIND_LABELS',

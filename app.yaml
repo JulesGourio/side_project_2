@@ -12,13 +12,14 @@ env:
   - name: CHAT_TRANSLATE_BRIDGE_ENABLED
     value: "false"
   - name: CHAT_TRANSLATE_ENDPOINT
-    value: "databricks-gpt-5-6-luna"
+    value: "databricks-gpt-6-luna"
   # Tried when CHAT_TRANSLATE_ENDPOINT fails (translation_bridge.py), comma-separated.
   - name: CHAT_TRANSLATE_FALLBACK_ENDPOINTS
-    value: "databricks-gpt-6-luna"
-  # Past messages replayed to the chat endpoint each turn (the latest question is always kept); 0 = no trimming.
-  - name: CHAT_MAX_HISTORY
-    value: "10"
+    value: "databricks-gpt-5-6-luna"
+  # Token budget of the past messages replayed to the chat endpoint each turn (the latest question is always kept);
+  # 0 = no trimming.
+  - name: CHAT_MAX_HISTORY_TOKENS
+    value: "8000"
   # Chat (server/services/chat/engine/): bilingual rewrite, 3 hybrid Vector Search queries,
   # documents named by REF, answer by GPT-6 Luna. One index for every division (AS / IS = filter on `division`);
   # per-target index: utils/deploy/target_env.json.

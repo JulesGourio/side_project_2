@@ -4,9 +4,9 @@ import difflib
 import os
 import re
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from .collapse import (
+from server.services.compare.processors._diff_engines.collapse import (
     _BOILERPLATE_MIN_PAGES,
     _cancel_resegmented,
     _collapse_page_repeats,
@@ -14,7 +14,7 @@ from .collapse import (
     _dedup_repeated_headers,
     _is_pagination_only,
 )
-from .relocation import (
+from server.services.compare.processors._diff_engines.relocation import (
     _STRIKETHROUGH_RE,
     _align_duplicates,
     _drop_merged_cells,
@@ -22,7 +22,7 @@ from .relocation import (
     _position_index,
     _tag_relocated,
 )
-from .text import SECTION_RE, inline_word_diff, is_substantive, is_substantive_keep_modals, strip_tag
+from server.services.compare.processors._diff_engines.text import SECTION_RE, inline_word_diff, is_substantive, is_substantive_keep_modals, strip_tag
 
 # Word similarity above which two unmatched paragraphs pair as one MODIFIED entry (below: REMOVED + ADDED).
 _PAIR_RATIO_THRESHOLD = float(os.getenv('COMPARE_PAIR_RATIO_THRESHOLD', '0.55'))
@@ -44,7 +44,7 @@ def _clean(s: str) -> str:
     return re.sub(r'\s+', ' ', s).strip().lower()
 
 
-def _parse_blocks(text: str, page_label: Optional[str]) -> List[Dict[str, Any]]:
+def _parse_blocks(text: str, page_label: str | None) -> List[Dict[str, Any]]:
     lines = text.splitlines()
     bare_lines = [strip_tag(b) for b in lines]
     # Mask a trailing page fraction ("... V09 4/39") before counting repeats: a footer stamp embedding its page
@@ -180,7 +180,7 @@ def _sort_for_display(results: List[Dict[str, Any]], old_items: List[Dict[str, A
     return results
 
 
-def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[str] = None) -> Tuple[str, int]:
+def paragraph_semantic_diff(old_text: str, new_text: str, page_label: str | None = None) -> Tuple[str, int]:
     """Primary paragraph-level semantic alignment engine.
 
     '(Continued)' page splits are merged, exact matches dropped, near matches (word ratio > 0.55, 3+ words) become
@@ -240,7 +240,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         if ln < 3:
             continue
         n_count = Counter(n_words)
-        sm: Optional[difflib.SequenceMatcher] = None
+        sm: difflib.SequenceMatcher | None = None
         for i, o_words in enumerate(old_words_cache):
             lo = len(o_words)
             if lo < 3:
@@ -300,7 +300,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     # ── Second-chance pairing: table rows sharing the same row key ──────────
     # DOCX table rows are emitted as 'RowLabel: col: val | …'. A heavily rewritten row is still the same row evolving:
     # pair leftovers with the same row label and section instead of reporting REMOVED + ADDED.
-    def _row_key(txt: str) -> Optional[str]:
+    def _row_key(txt: str) -> str | None:
         head, sep, _ = txt.partition(':')
         if not sep:
             return None
@@ -331,7 +331,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     # ── Third-chance pairing: same text behind a different leading number ───
     # '3. INSPECTION' -> '4. INSPECTION' is too short for the similarity pass. Paired, it shows only the number change;
     # a real value change ('2.5 mm max' -> '3.5 mm max') must never be hidden.
-    def _numbered_key(txt: str) -> Optional[str]:
+    def _numbered_key(txt: str) -> str | None:
         head, _, rest = txt.strip().partition(' ')
         rest = _clean(rest)
         if not rest or not any(ch.isdigit() for ch in head) or not any(ch.isalpha() for ch in rest):

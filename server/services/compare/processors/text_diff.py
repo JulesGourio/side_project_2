@@ -11,7 +11,7 @@ comparative: section canonical diff + section-grouped output.
 import logging
 from typing import Any, Dict, List, Tuple
 
-from ._diff_engines import (
+from server.services.compare.processors._diff_engines import (
     SYSTEM_PROMPT_STANDARD,
     SYSTEM_PROMPT_STRUCTURED,
     extraction_warnings,
@@ -21,7 +21,7 @@ from ._diff_engines import (
     section_canonical_diff,
     truncate_diff,
 )
-from .base import BaseProcessor, ProcessMetadata, ProcessResult
+from server.services.compare.processors.base import BaseProcessor, ProcessMetadata, ProcessResult
 
 logger = logging.getLogger(__name__)
 

@@ -158,7 +158,8 @@ from server.services.chat.translation_bridge import translate_question_to_en
 # loop (asyncio.run in a thread): one client per call.
 import httpx as _httpx
 from server.services.chat import translation_bridge as _tb
-_tb._get_http_client = lambda: _httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
+from server.services.chat.config import TRANSLATE_TIMEOUT_S
+_tb._get_http_client = lambda: _httpx.AsyncClient(timeout=TRANSLATE_TIMEOUT_S)
 
 w = WorkspaceClient()
 HOST = w.config.host.rstrip('/')

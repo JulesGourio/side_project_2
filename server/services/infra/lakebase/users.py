@@ -1,15 +1,13 @@
 """Registration of identities in the shared `users` table."""
 
-from typing import Optional
-
 
 async def upsert_user(
     conn,
     *,
     user_id: str,
-    workspace_id: Optional[str] = None,
-    email: Optional[str] = None,
-    workspace_url: Optional[str] = None,
+    workspace_id: str | None = None,
+    email: str | None = None,
+    workspace_url: str | None = None,
 ) -> None:
     """Register (or update) an identity in the shared `users` table.
 

@@ -420,20 +420,28 @@ def test_save_turn_failure_is_a_persist_issue_of_the_turn():
     assert log.codes == ['persist_failed'] and 'connection lost' in log.issues[0]['message']
 
 
-def test_trim_history_bounds_prompt_and_keeps_latest_question():
-    from server.routers.chat import _trim_history, CHAT_MAX_HISTORY
+def test_trim_history_bounds_prompt_and_keeps_latest_question(monkeypatch):
+    from server.routers.chat import _trim_history, helpers
 
-    # 13 alternating messages, last one is the user's newest question
+    monkeypatch.setattr(helpers, 'CHAT_MAX_HISTORY_TOKENS', 100)
+    # 13 alternating messages of ~26 tokens each (100 characters), the last one is the user's newest question
     msgs = [
-        {'role': 'user' if i % 2 == 0 else 'assistant', 'content': str(i)}
+        {'role': 'user' if i % 2 == 0 else 'assistant', 'content': f'{i:02d}' + 'x' * 98}
         for i in range(13)
     ]
     trimmed = _trim_history(msgs)
-    assert len(trimmed) <= CHAT_MAX_HISTORY
+    assert 0 < len(trimmed) < len(msgs)
+    assert sum(helpers._estimate_tokens(m) for m in trimmed) <= 100
     assert trimmed[-1] == msgs[-1]          # newest question never dropped
     assert trimmed[0]['role'] == 'user'     # window never opens on an assistant turn
     # A short conversation is returned unchanged
     assert _trim_history(msgs[:3]) == msgs[:3]
+    # The newest question is kept even when alone it exceeds the budget
+    long_question = [{'role': 'user', 'content': 'y' * 4000}]
+    assert _trim_history(msgs[:2] + long_question) == long_question
+    # 0 = no trimming
+    monkeypatch.setattr(helpers, 'CHAT_MAX_HISTORY_TOKENS', 0)
+    assert _trim_history(msgs) == msgs
 
 
 # --- Feature access control (capabilities + 403 guards) ---

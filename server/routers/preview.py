@@ -11,8 +11,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image as PILImage
 from pptx import Presentation
 
-from ..services.compare.conversion import doc_to_text, docx_to_html_body, pptx_to_slide_images
-from ..services.compare.soffice import SofficeUnavailable, convert_docx_to_pdf
+from server.services.compare.conversion import doc_to_text, docx_to_html_body, pptx_to_slide_images
+from server.services.compare.soffice import SofficeUnavailable, convert_docx_to_pdf
 
 router = APIRouter()
 
@@ -25,6 +25,11 @@ except ImportError:
 
 @router.post('/preview', response_class=HTMLResponse)
 async def preview_document(file: UploadFile = File(...)) -> HTMLResponse:
+    """An HTML preview of an office document.
+
+    :param file: the document to preview (docx, doc, pptx, ppt, xlsx, xls).
+    :return: the HTML page, or a 400 when the file type has no preview.
+    """
     content = await file.read()
     mime = file.content_type or ''
     name = file.filename or ''
@@ -50,7 +55,10 @@ async def preview_document_pdf(file: UploadFile = File(...)) -> Response:
     """Exact-layout preview: convert an office document (docx/doc/pptx/xlsx)
     to PDF through headless LibreOffice (server/services/compare/soffice.py). Returns
     raw PDF bytes, or 501 when no engine is provisioned so the client can fall
-    back to the HTML/docx-preview rendering."""
+    back to the HTML/docx-preview rendering.
+
+    :param file: the office document to convert.
+    """
     content = await file.read()
     name = file.filename or 'document.docx'
     suffix = '.' + name.rsplit('.', 1)[-1].lower() if '.' in name else '.docx'
@@ -64,10 +72,21 @@ async def preview_document_pdf(file: UploadFile = File(...)) -> Response:
 
 
 def _preview_docx(content: bytes) -> HTMLResponse:
+    """HTML preview of a .docx.
+
+    :param content: the .docx bytes.
+    :return: the page.
+    """
     return HTMLResponse(_wrap(docx_to_html_body(content)))
 
 
 def _preview_doc(content: bytes, filename: str) -> HTMLResponse:
+    """HTML preview of a .doc: converted as OOXML when it is one, else as extracted text.
+
+    :param content: the .doc bytes.
+    :param filename: file name, for the text extraction fallback.
+    :return: the page.
+    """
     # Some .doc files are actually valid OOXML — try mammoth first
     result = mammoth.convert_to_html(io.BytesIO(content))
     if result.value and len(result.value.strip()) > 20:
@@ -82,6 +101,12 @@ def _preview_doc(content: bytes, filename: str) -> HTMLResponse:
 
 
 def _preview_pptx(content: bytes, filename: str) -> HTMLResponse:
+    """HTML preview of a presentation: rendered slide images when LibreOffice is available, else positioned text.
+
+    :param content: the .pptx/.ppt bytes.
+    :param filename: file name, for the slide rendering.
+    :return: the page.
+    """
     # Try LibreOffice headless PNG rendering first (pixel-perfect)
     slide_pngs = pptx_to_slide_images(content, filename)
     if slide_pngs:
@@ -140,7 +165,13 @@ def _preview_pptx(content: bytes, filename: str) -> HTMLResponse:
 
 
 def _pptx_collect(shapes, slide_w: int, slide_h: int, out: list) -> None:
-    """Recursively collect positioned HTML elements from a slide's shapes."""
+    """Recursively collect positioned HTML elements from a slide's shapes.
+
+    :param shapes: the shapes of a slide or group.
+    :param slide_w: slide width, in EMU.
+    :param slide_h: slide height, in EMU.
+    :param out: list receiving ``(top, html)`` for each positioned element.
+    """
     for shape in shapes:
         try:
             left  = (getattr(shape, 'left',   0) or 0)
@@ -229,6 +260,11 @@ def _pptx_collect(shapes, slide_w: int, slide_h: int, out: list) -> None:
 
 
 def _preview_excel(content: bytes) -> HTMLResponse:
+    """HTML preview of a workbook, one table per sheet.
+
+    :param content: the .xlsx/.xls bytes.
+    :return: the page.
+    """
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception as e:
@@ -257,6 +293,12 @@ def _preview_excel(content: bytes) -> HTMLResponse:
 
 
 def _normalise_image(img_bytes: bytes, max_px: int = 960) -> bytes:
+    """An image as RGB JPEG (quality 85), shrunk when its longest side exceeds ``max_px``.
+
+    :param img_bytes: the image bytes.
+    :param max_px: longest side allowed, in pixels.
+    :return: the JPEG bytes.
+    """
     img = PILImage.open(io.BytesIO(img_bytes)).convert('RGB')
     w, h = img.size
     scale = min(1.0, max_px / max(w, h, 1))
@@ -268,6 +310,11 @@ def _normalise_image(img_bytes: bytes, max_px: int = 960) -> bytes:
 
 
 def _esc(text: str) -> str:
+    """HTML-escape ``&``, ``<`` and ``>``.
+
+    :param text: text to show in HTML.
+    :return: the escaped text.
+    """
     return (
         text.replace('&', '&amp;')
             .replace('<', '&lt;')
@@ -276,6 +323,12 @@ def _esc(text: str) -> str:
 
 
 def _wrap(body: str, extra_css: str = '') -> str:
+    """The full HTML page around a preview body.
+
+    :param body: HTML of the page body.
+    :param extra_css: CSS appended to the base style.
+    :return: the page.
+    """
     return f"""<!DOCTYPE html>
 <html>
 <head>

@@ -17,7 +17,7 @@ import asyncio
 import logging
 import os
 import random
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import httpx
 
@@ -41,7 +41,7 @@ def query_retries() -> int:
         return 5
 
 
-def _semaphore() -> Optional[asyncio.Semaphore]:
+def _semaphore() -> asyncio.Semaphore | None:
     """One semaphore per event loop: a semaphore cannot gate calls running on another loop."""
     limit = max_concurrent_queries()
     if limit <= 0:
@@ -54,7 +54,7 @@ def _semaphore() -> Optional[asyncio.Semaphore]:
     return current[1]
 
 
-def _pause(attempt: int, resp: Optional[httpx.Response]) -> float:
+def _pause(attempt: int, resp: httpx.Response | None) -> float:
     """0.5 s, 1 s, 2 s, 4 s, 8 s… (+ up to 50 % jitter), or the server's Retry-After (≤ 10 s)."""
     if resp is not None:
         try:
@@ -66,7 +66,7 @@ def _pause(attempt: int, resp: Optional[httpx.Response]) -> float:
 
 
 async def post(host: str, token: str, index: str, payload: Dict[str, Any], timeout_s: float,
-               retries: Optional[int] = None) -> httpx.Response:
+               retries: int | None = None) -> httpx.Response:
     """POST one query to ``index``, through the gate, retried on 429 / 5xx / timeout / network
     error. Returns the last response (the caller checks its status); raises the last network
     error when every attempt failed without a response."""
@@ -74,7 +74,7 @@ async def post(host: str, token: str, index: str, payload: Dict[str, Any], timeo
     url = f'{host}/api/2.0/vector-search/indexes/{index}/query'
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
     for attempt in range(attempts + 1):
-        resp: Optional[httpx.Response] = None
+        resp: httpx.Response | None = None
         sem = _semaphore()
         try:
             if sem is not None:

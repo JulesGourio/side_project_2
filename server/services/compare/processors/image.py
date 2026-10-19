@@ -13,8 +13,8 @@ import io
 import logging
 from typing import Any, Dict, List
 
-from .base import BaseProcessor, ProcessMetadata, ProcessResult
-from ._diff_engines import SYSTEM_PROMPT_STANDARD, SYSTEM_PROMPT_STRUCTURED
+from server.services.compare.processors.base import BaseProcessor, ProcessMetadata, ProcessResult
+from server.services.compare.processors._diff_engines import SYSTEM_PROMPT_STANDARD, SYSTEM_PROMPT_STRUCTURED
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ class ImageProcessor(BaseProcessor):
             messages.append({'role': 'system', 'content': sp})
         messages.append({'role': 'user', 'content': content_blocks})
 
-        from ._diff_engines import _thumbnail_b64
+        from server.services.compare.processors._diff_engines import _thumbnail_b64
         return ProcessResult(
             messages=messages,
             metadata=ProcessMetadata(file_type='image', method=self.method, old_name=old_name, new_name=new_name),

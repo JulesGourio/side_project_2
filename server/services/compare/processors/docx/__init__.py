@@ -7,8 +7,8 @@ comparative: section canonical diff + section-grouped output.
 
 from typing import Any, Dict
 
-from ..text_diff import TextDiffProcessor
-from .extract import _extract_doc, _extract_docx
+from server.services.compare.processors.text_diff import TextDiffProcessor
+from server.services.compare.processors.docx.extract import _extract_doc, _extract_docx
 
 __all__ = ['DocxProcessor', '_extract_doc', '_extract_docx']
 

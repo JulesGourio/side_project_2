@@ -7,7 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .common import _FONT_FILES, FONT_DIR
+from server.services.infra.pdf_report.common import _FONT_FILES, FONT_DIR
 
 # Glyphs Inter lacks that LLMs like to emit → closest glyph it has.
 _GLYPH_FALLBACK = {

@@ -5,29 +5,29 @@ import logging
 import os
 import traceback
 import uuid
-from typing import Optional, Tuple
+from typing import Tuple
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ...services.chat import mlflow_turns
-from ...services.chat.engine import normalize_division, stream_chat
-from ...services.chat.llm import TIRED_MESSAGE
-from ...services.chat.translation_bridge import (
-    ENABLED as TRANSLATE_BRIDGE_ENABLED,
+from server.services.chat import mlflow_turns
+from server.services.chat.engine import normalize_division, stream_chat
+from server.services.chat.llm import TIRED_MESSAGE
+from server.services.chat.config import TRANSLATE_BRIDGE_ENABLED
+from server.services.chat.translation_bridge import (
     answer_language as answer_language_for,
     translate_answer_back,
     translate_question_to_en,
 )
-from ...services.chat.turn_log import INFO, TurnLog
-from ...services.infra.credentials import get_credentials
-from ...services.infra.doc_catalog import augment_sources, with_document_info
-from ...services.infra.lakebase import get_pool, store_chat_turn, store_error
-from ...services.infra.user import get_capabilities, get_workspace_url
-from .helpers import (
+from server.services.chat.turn_log import INFO, TurnLog
+from server.services.infra.credentials import get_credentials
+from server.services.infra.doc_catalog import augment_sources, with_document_info
+from server.services.infra.lakebase import get_pool, store_chat_turn, store_error
+from server.services.infra.user import get_capabilities, get_workspace_url
+from server.routers.chat.helpers import (
     _apply_citation_markers, _identity_or_anonymous, _number_sources,
     _trim_history, _with_today_date,
 )
-from .persistence import _save_turn
+from server.routers.chat.persistence import _save_turn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -37,11 +37,15 @@ CHAT_ENABLED = os.getenv('CHAT_ENABLED', 'true').lower() == 'true'
 
 
 @router.websocket('/chat/ws')
-async def chat_ws(websocket: WebSocket):
+async def chat_ws(websocket: WebSocket) -> None:
     """One chat turn over a WebSocket (avoids Databricks Apps proxy buffering), answered by
     the Vector Search engine (``stream_chat``); then citation markers, catalog sources,
     translation back and persistence. Every turn that reached the engine — answered, failed or
-    left by the browser — is logged in chat_turns (+ chat_retrieved_chunks, errors) when the turn ends."""
+    left by the browser — is logged in chat_turns (+ chat_retrieved_chunks, errors) when the turn ends.
+
+    :param websocket: the browser's socket. It sends one JSON message ``{'messages', 'session_id', 'division'}`` and receives
+        ``delta``, ``status``, ``ping``, ``done`` or ``error`` events.
+    """
     await websocket.accept()
     route = '/api/chat/ws'
 
@@ -99,7 +103,7 @@ async def chat_ws(websocket: WebSocket):
     collected_citations: list = []
     error_text = ''
     translate_ctx = None
-    saved: Tuple[Optional[int], Optional[int]] = (None, None)
+    saved: Tuple[int | None, int | None] = (None, None)
     answer_stream = None
     outcome = 'error'                            # 'ok' once the answer is saved; 'aborted' if the browser left
 
@@ -108,10 +112,14 @@ async def chat_ws(websocket: WebSocket):
         log.data['user_message'] = TIRED_MESSAGE
         await websocket.send_json({'type': 'error', 'error': TIRED_MESSAGE})
 
-    async def _persist(status: str, content: str) -> Optional[int]:
+    async def _persist(status: str, content: str) -> int | None:
         """Persist the turn's messages (ok, error or aborted) and return the
         assistant message id. The question is saved even on failure, so it
-        stays traceable. Best-effort."""
+        stays traceable. Best-effort.
+
+        :param status: ``ok``, ``error`` or ``aborted``.
+        :param content: the answer text saved with the assistant message.
+        """
         nonlocal saved
         pool = get_pool()
         if not (pool and user_content):
@@ -215,10 +223,8 @@ async def chat_ws(websocket: WebSocket):
             if t == 'response.output_text.delta':
                 delta = parsed.get('delta', '')
                 accumulated.append(delta)
-                if translate_ctx and translate_ctx.needs_translation:
-                    # Raw English never reaches the client: 'Thinking' stays until the full answer is translated and sent in 'done'.
-                    pass
-                else:
+                # Raw English never reaches the client: 'Thinking' stays until the full answer is translated and sent in 'done'.
+                if not (translate_ctx and translate_ctx.needs_translation):
                     await websocket.send_json({'type': 'delta', 'delta': delta})
             elif t == 'status':
                 await websocket.send_json({'type': 'status', 'status': parsed.get('status', '')})

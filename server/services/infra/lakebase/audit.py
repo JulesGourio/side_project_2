@@ -4,11 +4,11 @@ import asyncio
 import json
 import logging
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from .. import error_origin
-from . import connection
-from .columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS, _db_value, _placeholders
+from server.services.infra import error_origin
+from server.services.infra.lakebase import connection
+from server.services.infra.lakebase.columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS, _db_value, _placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +34,14 @@ def _error_row(
     new_filename: str = '',
     file_type: str = '',
     stack_trace: str = '',
-    llm_request_id: Optional[int] = None,
+    llm_request_id: int | None = None,
     severity: str = 'error',
     stage: str = '',
-    http_status: Optional[int] = None,
+    http_status: int | None = None,
     upstream: str = '',
     trace_id: str = '',
     session_id: str = '',
-    context: Optional[Dict[str, Any]] = None,
+    context: Dict[str, Any] | None = None,
     origin: str = '',
     user_message: str = '',
 ) -> tuple:
@@ -73,7 +73,7 @@ def _error_row(
     )
 
 
-def store_error(*, exc: Optional[BaseException] = None, **kwargs: Any) -> Optional[asyncio.Task]:
+def store_error(*, exc: BaseException | None = None, **kwargs: Any) -> asyncio.Task | None:
     """Persist an application error to the errors table, in the background (never raises).
     Arguments: those of ``_error_row`` (all optional, keyword only); ``exc`` adds its stack trace.
     Called synchronously so the origin can be read from the caller's frame when there is no
@@ -104,9 +104,9 @@ async def store_chat_turn(
     log: Any,
     *,
     endpoint: str = '',
-    user_message_id: Optional[int] = None,
-    assistant_message_id: Optional[int] = None,
-) -> Optional[int]:
+    user_message_id: int | None = None,
+    assistant_message_id: int | None = None,
+) -> int | None:
     """Write one chat turn (a finished ``turn_log.TurnLog``): its chat_turns row, its
     chat_retrieved_chunks rows and one errors row per warning/error issue — in one
     transaction. Best-effort, never raises; returns the chat_turns id."""
@@ -163,7 +163,7 @@ async def store_llm_request(
     file_type: str = '',
     endpoint_name: str = '',
     messages_json: str = '',
-) -> Optional[int]:
+) -> int | None:
     """Insert an LLM request audit record; returns the inserted id (or None on failure)."""
     pool = connection.get_pool()
     if not pool:
@@ -190,7 +190,7 @@ async def store_llm_request(
 
 
 async def update_llm_request_usage(
-    llm_request_id: Optional[int],
+    llm_request_id: int | None,
     *,
     input_tokens: int = 0,
     output_tokens: int = 0,
@@ -242,15 +242,15 @@ async def update_llm_request_usage(
 
 
 async def update_llm_request_run(
-    llm_request_id: Optional[int],
+    llm_request_id: int | None,
     *,
     status: str,
-    queue_wait_ms: Optional[int] = None,
-    build_ms: Optional[int] = None,
-    first_token_ms: Optional[int] = None,
-    generation_ms: Optional[int] = None,
-    total_ms: Optional[int] = None,
-    chunked_parts: Optional[int] = None,
+    queue_wait_ms: int | None = None,
+    build_ms: int | None = None,
+    first_token_ms: int | None = None,
+    generation_ms: int | None = None,
+    total_ms: int | None = None,
+    chunked_parts: int | None = None,
 ) -> None:
     """Record the outcome and step durations of an /compare/analyze stream on its
     llm_requests row (best-effort, never raises)."""
@@ -296,15 +296,15 @@ async def store_impact_request(
     documents: List[Dict[str, Any]] | None = None,
     status: str = '',
     index_name: str = '',
-    queries_used: Optional[int] = None,
-    queries_failed: Optional[int] = None,
-    candidates: Optional[int] = None,
-    not_judged: Optional[int] = None,
-    judge_failed: Optional[int] = None,
-    extract_ms: Optional[int] = None,
-    search_ms: Optional[int] = None,
-    judge_ms: Optional[int] = None,
-) -> Optional[int]:
+    queries_used: int | None = None,
+    queries_failed: int | None = None,
+    candidates: int | None = None,
+    not_judged: int | None = None,
+    judge_failed: int | None = None,
+    extract_ms: int | None = None,
+    search_ms: int | None = None,
+    judge_ms: int | None = None,
+) -> int | None:
     """Log one /compare/impact call — success or failure (best-effort, never raises).
 
     Returns the impact_requests id (None if the row could not be written) so

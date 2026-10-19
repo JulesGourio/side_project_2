@@ -10,7 +10,7 @@ import os
 import re
 import sys
 import traceback
-from typing import Optional
+
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 _TB_LINE_RE = re.compile(r'File "([^"]+)", line (\d+), in (\S+)')
@@ -25,7 +25,7 @@ def _fmt(path: str, line: int, func: str) -> str:
     return f'{os.path.relpath(os.path.abspath(path), _ROOT)}:{line} in {func}'
 
 
-def from_exception(exc: Optional[BaseException]) -> str:
+def from_exception(exc: BaseException | None) -> str:
     """Deepest frame of ``exc`` (or of its cause) that is in this repository; '' when none."""
     while exc is not None:
         frames = [f for f in traceback.extract_tb(exc.__traceback__) if _ours(f.filename)]
@@ -50,7 +50,7 @@ def caller(depth: int = 1) -> str:
     return _fmt(frame.f_code.co_filename, frame.f_lineno, frame.f_code.co_name)
 
 
-def fingerprint(*parts: Optional[str]) -> str:
+def fingerprint(*parts: str | None) -> str:
     """Short stable key of an error kind (line numbers left out: a code change keeps the group)."""
     clean = [re.sub(r':\d+ in ', ' in ', p or '') for p in parts]
     return hashlib.sha1('|'.join(clean).encode('utf-8')).hexdigest()[:12]

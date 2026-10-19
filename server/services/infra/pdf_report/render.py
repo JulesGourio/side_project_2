@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .common import (
+from server.services.infra.pdf_report.common import (
     _FONT_FILES,
     ACCENT,
     ACCENT_DARK,
@@ -26,7 +26,7 @@ from .common import (
     ZEBRA,
     Source,
 )
-from .markdown import Span, parse_inline, plain_text, tokenize
+from server.services.infra.pdf_report.markdown import Span, parse_inline, plain_text, tokenize
 
 def _style(bold: bool, italic: bool) -> str:
     return ('B' if bold else '') + ('I' if italic else '')

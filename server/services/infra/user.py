@@ -4,20 +4,20 @@ import asyncio
 import logging
 import os
 import time
-from typing import Optional, Tuple, TypedDict
+from typing import Tuple, TypedDict
 
 from fastapi import HTTPException, Request
 
 
 class UserIdentity(TypedDict):
     user_id: str                 # Numeric part only — e.g. "78655966095635"
-    workspace_id: Optional[str]  # Workspace code (part after '@') — e.g. "2865348338307293"
-    email: Optional[str]         # Real email if x-forwarded-user is one, otherwise None
+    workspace_id: str | None  # Workspace code (part after '@') — e.g. "2865348338307293"
+    email: str | None         # Real email if x-forwarded-user is one, otherwise None
 
 
 logger = logging.getLogger(__name__)
 
-_dev_user_cache: Optional[str] = None
+_dev_user_cache: str | None = None
 _CAPS_TTL_S = int(os.getenv('CAPS_TTL_S', '600'))
 _caps_cache: dict[str, tuple[float, dict]] = {}
 
@@ -95,14 +95,14 @@ async def get_user_identity(request: Request) -> UserIdentity:
 
     parts = forwarded.split('@', 1)
     clean_uid = parts[0]
-    workspace_id: Optional[str] = parts[1] if len(parts) > 1 else None
+    workspace_id: str | None = parts[1] if len(parts) > 1 else None
     return UserIdentity(user_id=clean_uid, workspace_id=workspace_id, email=None)
 
 
 _OPEN_CAPS = {'can_chat': True, 'can_compare': True, 'groups': []}
 
 
-def _live_caps_via_sql(token: str) -> Optional[dict]:
+def _live_caps_via_sql(token: str) -> dict | None:
     """is_account_group_member() on behalf of the requesting user. None = not usable, caller should fall back."""
     if not _CAPS_WAREHOUSE_ID:
         return None
@@ -134,7 +134,7 @@ def _live_caps_via_scim(token: str) -> dict:
 def _resolve_caps(token: str) -> Tuple[dict, str]:
     """(capabilities, source). SCIM first; the warehouse check only when SCIM fails or grants nothing, and a
     warehouse is set. Raises when no source could answer."""
-    scim: Optional[dict] = None
+    scim: dict | None = None
     try:
         scim = _live_caps_via_scim(token)
     except Exception as e:

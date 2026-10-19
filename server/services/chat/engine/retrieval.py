@@ -2,14 +2,13 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-
-from ...infra.doc_catalog import _catalog, canon_ref
-from ..turn_log import TurnLog
-from .queries import opening_language, rewrite_queries, translate_query
-from .search import _merge_by_rank, fetch_documents, search, start_question_search
-from .config import (
+from server.services.infra.doc_catalog import _catalog, canon_ref
+from server.services.chat.turn_log import TurnLog
+from server.services.chat.engine.queries import opening_language, rewrite_queries, translate_query
+from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search, start_question_search
+from server.services.chat.engine.config import (
     division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on,
 )
 
@@ -76,7 +75,7 @@ def _passage(row: Dict[str, Any], position: int, drop_reason: str = '') -> Dict[
 
 
 async def retrieve_for_turn(host: str, token: str, division: str, conversation: List[Dict[str, str]],
-                            log: Optional[TurnLog] = None) -> Dict[str, Any]:
+                            log: TurnLog | None = None) -> Dict[str, Any]:
     """The passages handed to the LLM for the last user turn of ``conversation`` (already
     cleaned by ``_clean_history``). Raises ``ChatVsiError`` when the search fails. Also used
     alone by the retrieval evaluation (no answer generated). ``log`` (created when absent, returned

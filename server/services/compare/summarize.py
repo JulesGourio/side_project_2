@@ -8,8 +8,8 @@ without running a comparison.
 import logging
 from typing import Any, Dict, List, Tuple, Union
 
-from ..infra.streaming import _cost_eur
-from .llm import complete_chain, compare_chain, message_text
+from server.services.infra.streaming import _cost_eur
+from server.services.compare.llm import complete_chain, compare_chain, message_text
 
 logger = logging.getLogger(__name__)
 

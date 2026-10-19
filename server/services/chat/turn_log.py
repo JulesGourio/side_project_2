@@ -20,9 +20,9 @@ import time
 import traceback
 import uuid
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List
 
-from ..infra import error_origin
+from server.services.infra import error_origin
 
 # Issues that are not failures of the app: kept in chat_turns.warnings, not written to errors.
 INFO = 'info'
@@ -33,7 +33,7 @@ ERROR = 'error'
 _TITLE_RE = re.compile(r'Title:\s*(.*?)\s*\|')
 
 
-def passage_title(chunk_text: Optional[str]) -> str:
+def passage_title(chunk_text: str | None) -> str:
     """Document title from the ``[Source: REF | Title: … |`` prefix every passage starts with."""
     found = _TITLE_RE.search((chunk_text or '')[:400])
     return found.group(1) if found else ''
@@ -46,7 +46,7 @@ def new_trace_id() -> str:
 class TurnLog:
     """Everything recorded about one chat turn (see module doc)."""
 
-    def __init__(self, trace_id: Optional[str] = None):
+    def __init__(self, trace_id: str | None = None):
         self.trace_id = trace_id or new_trace_id()
         self.started = time.monotonic()
         self.started_at_ns = time.time_ns()
@@ -83,15 +83,15 @@ class TurnLog:
     # ── what went wrong ─────────────────────────────────────────────────────
     def issue(self, code: str, stage: str, message: str = '', *, severity: str = WARNING,
               error_type: str = '', http_status: int = 0, upstream: str = '',
-              context: Optional[Dict[str, Any]] = None, exc: Optional[BaseException] = None) -> None:
+              context: Dict[str, Any] | None = None, exc: BaseException | None = None) -> None:
         """Something did not run as configured. ``code`` is a short stable label (warnings column);
         ``exc``, when there is one, gives the origin (where it was raised) and the stack trace."""
         self._add(code, stage, message, severity, error_type, http_status, upstream, context, exc,
                   error_origin.from_exception(exc) or error_origin.caller(1))
 
     def fail(self, stage: str, error_type: str, message: str, *, http_status: int = 0, upstream: str = '',
-             stack_trace: str = '', context: Optional[Dict[str, Any]] = None,
-             exc: Optional[BaseException] = None) -> None:
+             stack_trace: str = '', context: Dict[str, Any] | None = None,
+             exc: BaseException | None = None) -> None:
         """The turn produced no answer. The first failure is the one reported."""
         if not self.error:
             self.error = {'stage': stage, 'type': error_type, 'message': (message or '')[:2000]}

@@ -5,17 +5,16 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Tuple
 
-
-from .. import llm as chat_llm, prompts
-from ..llm import sse_event
-from ...infra.doc_catalog import document_info
-from ..turn_log import TurnLog
-from .citations import CitationStreamParser
-from .retrieval import _clean_history, group_documents, retrieve_for_turn
-from .search import ChatVsiError
-from .config import answer_max_tokens, index_name, llm_endpoint, load_instructions, normalize_division, settings
+from server.services.chat import llm as chat_llm, prompts
+from server.services.chat.llm import sse_event
+from server.services.infra.doc_catalog import document_info
+from server.services.chat.turn_log import TurnLog
+from server.services.chat.engine.citations import CitationStreamParser
+from server.services.chat.engine.retrieval import _clean_history, group_documents, retrieve_for_turn
+from server.services.chat.engine.search import ChatVsiError
+from server.services.chat.engine.config import answer_max_tokens, index_name, llm_endpoint, load_instructions, normalize_division, settings
 
 _STATUS_AFTER_S = 15.0         # a search or rewrite slower than this shows 'still searching'
 
@@ -28,7 +27,7 @@ NAMED_LANGUAGE_REMINDER = prompts.read('language_reminder_named')
 
 # --- Prompt and answer ---
 
-def with_language_reminder(messages: List[Dict[str, str]], language: Optional[str] = None) -> List[Dict[str, str]]:
+def with_language_reminder(messages: List[Dict[str, str]], language: str | None = None) -> List[Dict[str, str]]:
     """``messages`` with the language reminder after the last user turn (a copy)."""
     line = NAMED_LANGUAGE_REMINDER.format(language=language) if language else LANGUAGE_REMINDER
     out = [dict(m) for m in messages]
@@ -36,7 +35,7 @@ def with_language_reminder(messages: List[Dict[str, str]], language: Optional[st
     return out
 
 
-def revision_note(ref: str, division: Optional[str] = None) -> str:
+def revision_note(ref: str, division: str | None = None) -> str:
     """' "Title" (current revision B, published YYYY-MM-DD; division AS)' from the catalog and the index row,
     with only the parts it has: the passages themselves never carry them, and every document of the index is the
     current one."""
@@ -49,7 +48,7 @@ def revision_note(ref: str, division: Optional[str] = None) -> str:
 
 
 def build_prompt(division: str, conversation: List[Dict[str, str]], documents: List[Tuple[str, Dict[str, Any]]],
-                 answer_language: Optional[str] = None) -> List[Dict[str, str]]:
+                 answer_language: str | None = None) -> List[Dict[str, str]]:
     """System instructions, then the conversation; the last turn carries the numbered documents
     before the question and the language reminder after it."""
     context = '\n\n'.join(f'[{i}] Document {ref}{revision_note(ref, d.get("division"))}\n' + '\n\n'.join(d['passages'])
@@ -111,8 +110,8 @@ def _record_answer(log: TurnLog, chain: List[str], llm: Dict[str, Any], usage: D
 
 
 async def stream_chat(host: str, token: str, division: str, messages: List[Dict[str, str]],
-                          answer_language: Optional[str] = None,
-                          log: Optional[TurnLog] = None) -> AsyncGenerator[str, None]:
+                          answer_language: str | None = None,
+                          log: TurnLog | None = None) -> AsyncGenerator[str, None]:
     """Answer the last user turn of ``messages`` (trimmed history, last turn prefixed with
     ``[Date: …]``, translated to English by the bridge when needed). ``answer_language`` (e.g.
     "French", from the chat route) is named in the language reminder. ``log`` (the turn's ``TurnLog``,

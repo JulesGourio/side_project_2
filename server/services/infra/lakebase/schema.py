@@ -5,7 +5,7 @@ import os
 
 import asyncpg
 
-from .columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS
+from server.services.infra.lakebase.columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS
 
 logger = logging.getLogger(__name__)
 

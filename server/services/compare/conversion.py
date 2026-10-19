@@ -12,7 +12,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Optional
 
 import mammoth
 import olefile
@@ -20,8 +19,8 @@ import olefile
 logger = logging.getLogger(__name__)
 
 # Cache availability checks so we only shell-out once per process lifetime.
-_antiword_checked: Optional[bool] = None
-_lo_cmd: Optional[str] = None
+_antiword_checked: bool | None = None
+_lo_cmd: str | None = None
 _lo_checked: bool = False
 
 
@@ -38,7 +37,7 @@ def _antiword_available() -> bool:
     return _antiword_checked
 
 
-def _libreoffice_cmd() -> Optional[str]:
+def _libreoffice_cmd() -> str | None:
     global _lo_cmd, _lo_checked
     if not _lo_checked:
         _lo_checked = True
@@ -51,7 +50,7 @@ def _libreoffice_cmd() -> Optional[str]:
         if not _lo_cmd:
             # No system install: use the portable LibreOffice tree that soffice.py provisions from a UC Volume.
             # That is what makes PPTX slide rendering work on Databricks Apps.
-            from .soffice import SofficeUnavailable, find_soffice
+            from server.services.compare.soffice import SofficeUnavailable, find_soffice
             try:
                 _lo_cmd = find_soffice()
                 logger.info('LibreOffice found via portable tree: %s', _lo_cmd)
@@ -62,7 +61,7 @@ def _libreoffice_cmd() -> Optional[str]:
 
 # --- .doc → text via antiword ---
 
-def doc_to_text(doc_bytes: bytes, filename: str = 'document.doc') -> Optional[str]:
+def doc_to_text(doc_bytes: bytes, filename: str = 'document.doc') -> str | None:
     """Extract plain text from a binary .doc file.
 
     Tries antiword first (best quality), then olefile-based stream extraction
@@ -83,7 +82,7 @@ def doc_to_text(doc_bytes: bytes, filename: str = 'document.doc') -> Optional[st
     return None
 
 
-def _antiword_extract(doc_bytes: bytes, filename: str) -> Optional[str]:
+def _antiword_extract(doc_bytes: bytes, filename: str) -> str | None:
     """Call antiword subprocess to extract text."""
     with tempfile.NamedTemporaryFile(suffix='.doc', delete=False) as tmp:
         tmp.write(doc_bytes)
@@ -115,7 +114,7 @@ def _antiword_extract(doc_bytes: bytes, filename: str) -> Optional[str]:
     return None
 
 
-def _olefile_extract(doc_bytes: bytes, filename: str) -> Optional[str]:
+def _olefile_extract(doc_bytes: bytes, filename: str) -> str | None:
     """Pure-Python .doc text extraction via olefile.
 
     Opens the OLE2 compound document and reads text only from the

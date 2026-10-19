@@ -13,8 +13,8 @@ import io
 import logging
 from typing import Any, Dict, List, Tuple
 
-from .text_diff import TextDiffProcessor
-from ._diff_engines import (
+from server.services.compare.processors.text_diff import TextDiffProcessor
+from server.services.compare.processors._diff_engines import (
     dhash,
     hash16,
     images_are_similar,

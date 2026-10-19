@@ -32,7 +32,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,9 @@ _CONVERT_TIMEOUT_S = int(os.getenv('SOFFICE_CONVERT_TIMEOUT_S', '180'))
 _convert_semaphore = threading.Semaphore(int(os.getenv('SOFFICE_MAX_CONCURRENT', '2')))
 
 _discovery_lock = threading.Lock()
-_discovered_path: Optional[str] = None
-_discovery_error: Optional[str] = None
-_engine_version: Optional[str] = None
+_discovered_path: str | None = None
+_discovery_error: str | None = None
+_engine_version: str | None = None
 
 
 class SofficeUnavailable(RuntimeError):
@@ -72,7 +72,7 @@ def _cache_dir() -> Path:
     return d
 
 
-def _find_binary_in_tree(root: Path) -> Optional[Path]:
+def _find_binary_in_tree(root: Path) -> Path | None:
     """Locate program/soffice inside an extracted portable tree."""
     for candidate in root.glob('**/program/soffice'):
         if candidate.is_file():
@@ -161,7 +161,7 @@ def _well_known_paths() -> list:
     return [p for p in paths if p.is_file()]
 
 
-def _probe_version(binary: str) -> Optional[str]:
+def _probe_version(binary: str) -> str | None:
     """Run `soffice --headless --version`. Also serves as the executability
     check — a present-but-unrunnable binary (noexec mount, missing shared
     libs) fails here with a useful message instead of at first conversion.
@@ -187,7 +187,7 @@ def _probe_version(binary: str) -> Optional[str]:
         raise SofficeUnavailable(f'{binary} not runnable: {e}')
 
 
-def _subprocess_env(binary: Optional[str] = None) -> dict:
+def _subprocess_env(binary: str | None = None) -> dict:
     env = dict(os.environ)
     # Headless-friendly defaults; harmless when already set.
     env.setdefault('HOME', tempfile.gettempdir())

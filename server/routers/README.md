@@ -23,7 +23,8 @@ Parent: [server](../README.md).
 ## How the routers fit together
 
 - The routers call `services/`. They import from each other only for shared settings: `history.py` and `exports.py`
-  import `APP_VERSION`, `_get_config`, `_is_within_volume` and `_sanitize_filename` from `compare/common.py`. The chat
+  import `APP_VERSION` and `get_config` from `compare/config.py`, and `_is_within_volume` and `_sanitize_filename` from
+  `compare/common.py`. The chat
   routes import nothing from the compare routes.
 - Three transports: `/compare/analyze` streams server-sent events, `/compare/impact` streams NDJSON lines, and a chat
   turn is a WebSocket (`/chat/ws`), which avoids the buffering of the Databricks Apps proxy.

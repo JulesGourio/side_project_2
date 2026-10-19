@@ -11,7 +11,7 @@ loads are in [prompts](../../../prompts/README.md).
 | Module | Content |
 |---|---|
 | `__init__.py` | The public names of the package (`stream_chat`, `retrieve_for_turn`, `settings`, ...) |
-| `config.py` | Settings read from the `CHAT_*` environment at call time. The division filter (`ALL`, `AS`, `IS`). `settings()`, recorded on each turn. The system instructions (`load_instructions`, cached) |
+| `config.py` | Settings read from the `CHAT_*` environment at call time. The division filter (`ALL`, `AS`, `IS`). `settings()`, recorded on each turn. The system instructions (`division_prompt`, `load_instructions`, cached). The patterns that strip company and document-type words from a rewrite (`NOISE_PHRASES`) |
 | `queries.py` | Translation of an opening message (`translate_query`), the bilingual rewrite (`rewrite_queries`), `split_bilingual`, `strip_added_noise`, `opening_language` |
 | `search.py` | The Vector Search calls of a turn: reranked and raw HYBRID queries, merge by best rank, lookups filtered by REF, and the early search of the question (`start_question_search`) |
 | `retrieval.py` | `retrieve_for_turn`: everything before the answer. Named documents, one language per document, the passage records |

@@ -17,70 +17,38 @@ Off unless CHAT_TRANSLATE_BRIDGE_ENABLED is true.
 
 import json
 import logging
-import os
 import re
 from functools import lru_cache
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import httpx
 
-from ..infra.streaming import supports_temperature
+from server.services.infra.streaming import supports_temperature
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+
+from server.services.chat.config import (
+    CODE_BLOCK_RE, FASTTEXT_CONFIDENCE_THRESHOLD, FASTTEXT_MODEL_PATH, LANGUAGE_NAMES, LETTERS_RE,
+    MISMATCH_CONFIDENCE_THRESHOLD, NO_TRANSLATION_NEEDED, NOISE_RE, QUOTED_RE, TRANSLATE_ENDPOINT,
+    TRANSLATE_FALLBACK_ENDPOINTS, TRANSLATE_TIMEOUT_S,
+)
 
 logger = logging.getLogger(__name__)
 
-ENABLED = os.getenv('CHAT_TRANSLATE_BRIDGE_ENABLED', 'false').lower() == 'true'
-TRANSLATE_ENDPOINT = os.getenv('CHAT_TRANSLATE_ENDPOINT', 'databricks-gpt-5-6-luna')
-# Tried in order when TRANSLATE_ENDPOINT fails (429 included): the chatbot runs on GPT-6 Luna + GPT-5.6 Luna, each the
-# other's backup. Empty value = no fallback.
-TRANSLATE_FALLBACK_ENDPOINTS = [e.strip() for e in os.getenv('CHAT_TRANSLATE_FALLBACK_ENDPOINTS',
-                                                             'databricks-gpt-6-luna').split(',') if e.strip()]
-_TIMEOUT_S = 20.0
-
-# fastText's lid.176 model: langdetect is noisy on short or technical text.
-_FASTTEXT_MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'third_party', 'fasttext', 'lid.176.ftz')
-
-# Below this confidence a fastText guess is noise: the LLM decides.
-_FASTTEXT_CONFIDENCE_THRESHOLD = 0.65
-
-# Skip the LLM round trip entirely for the two languages the corpus and the
-# answer prompt's language rule already handle natively.
-_NO_TRANSLATION_NEEDED = {'fr', 'en'}
-
-# An answer is only declared "in the wrong language" above this confidence: a false alarm
-# sends a correct answer through a translation it didn't need.
-_MISMATCH_CONFIDENCE_THRESHOLD = 0.8
-
-# English names of the languages met in Latécoère's sites (FR, CZ, BG, MX, BR) and a few
-# neighbours — named in the answer-language reminder (chat/engine/answer.py).
-LANGUAGE_NAMES = {'fr': 'French', 'en': 'English', 'es': 'Spanish', 'cs': 'Czech', 'bg': 'Bulgarian',
-                  'pt': 'Portuguese', 'de': 'German', 'it': 'Italian', 'pl': 'Polish', 'ro': 'Romanian',
-                  'sk': 'Slovak', 'nl': 'Dutch', 'ru': 'Russian', 'uk': 'Ukrainian'}
-
-# What says nothing about the language and misleads fastText: document codes (REF-like tokens), anything with a digit,
-# URLs, e-mails, citation markers, code.
-_CODE_BLOCK_RE = re.compile(r'```.*?```', re.S)
-_NOISE_RE = re.compile(r'https?://\S+|\S+@\S+|⟦\d+⟧|\[\d+\]|`[^`]*`|\b\S*\d\S*\b|\b[A-Z]{2,}(?:[-_/][A-Z0-9]+)+\b')
-# In an answer: quoted passages (the instructions quote documents in their own language),
-# blockquotes and table rows (document titles, values) are not the answer's language.
-_QUOTED_RE = re.compile(r'«[^»]*»|“[^”]*”|"[^"\n]{12,}"')
-_LETTERS_RE = re.compile(r'[^\W\d_]{2,}')
-
 
 def clean_for_language(text: str, answer: bool = False) -> str:
-    """``text`` without what misleads language detection (see _NOISE_RE / _QUOTED_RE)."""
-    text = _CODE_BLOCK_RE.sub(' ', text or '')
+    """``text`` without what misleads language detection (see NOISE_RE / QUOTED_RE)."""
+    text = CODE_BLOCK_RE.sub(' ', text or '')
     if answer:
         text = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith(('>', '|')))
-        text = _QUOTED_RE.sub(' ', text)
-    return ' '.join(_NOISE_RE.sub(' ', text).split())
+        text = QUOTED_RE.sub(' ', text)
+    return ' '.join(NOISE_RE.sub(' ', text).split())
 
 
 @lru_cache(maxsize=1)
 def _fasttext_model():
     import fasttext
     fasttext.FastText.eprint = lambda *_a, **_kw: None  # silence the noisy stderr warning
-    return fasttext.load_model(_FASTTEXT_MODEL_PATH)
+    return fasttext.load_model(FASTTEXT_MODEL_PATH)
 
 
 class TranslationContext:
@@ -100,7 +68,7 @@ class TranslationContext:
         self.answer_error = ''
 
 
-def _fast_lang_guess(text: str) -> Optional[str]:
+def fast_lang_guess(text: str) -> str | None:
     """Cheap local language guess (no network call). Returns an ISO 639-1
     code, or None if detection isn't confident enough to trust (in which
     case the caller falls back to the LLM's own detection).
@@ -111,7 +79,7 @@ def _fast_lang_guess(text: str) -> Optional[str]:
     binding call it wraps works fine.
     """
     cleaned = clean_for_language(text)
-    if len(_LETTERS_RE.findall(cleaned)) < 2:      # a bare REF code, "OK", an acronym
+    if len(LETTERS_RE.findall(cleaned)) < 2:      # a bare REF code, "OK", an acronym
         return None
     single_line = cleaned + '\n'
     try:
@@ -123,7 +91,7 @@ def _fast_lang_guess(text: str) -> Optional[str]:
     if not predictions:
         return None
     prob, label = predictions[0]
-    if prob < _FASTTEXT_CONFIDENCE_THRESHOLD:
+    if prob < FASTTEXT_CONFIDENCE_THRESHOLD:
         # A short or technical message can get a confident-looking top label at a low real probability: below the threshold the LLM decides.
         logger.debug('translation_bridge: fasttext confidence too low (%.2f) for %r', prob, label)
         return None
@@ -135,12 +103,12 @@ def _answer_language_mismatch(answer: str, expected_lang: str) -> bool:
     the question asked for. Guards the fr/en case, which normally skips the LLM bridge and trusts the
     answer prompt's language rule, because the model still answers in the wrong one of the two sometimes."""
     detected = _fast_lang_guess_with_prob(clean_for_language(answer, answer=True))
-    return detected is not None and detected[1] >= _MISMATCH_CONFIDENCE_THRESHOLD and detected[0] != expected_lang
+    return detected is not None and detected[1] >= MISMATCH_CONFIDENCE_THRESHOLD and detected[0] != expected_lang
 
 
-def _fast_lang_guess_with_prob(text: str) -> Optional[tuple]:
+def _fast_lang_guess_with_prob(text: str) -> tuple | None:
     """(code, probability) of fastText's top label on already-cleaned text, or None."""
-    if len(_LETTERS_RE.findall(text)) < 5:
+    if len(LETTERS_RE.findall(text)) < 5:
         return None
     try:
         predictions = _fasttext_model().f.predict(' '.join(text.split()) + '\n', 1, 0.0, 'strict')
@@ -153,7 +121,7 @@ def _fast_lang_guess_with_prob(text: str) -> Optional[tuple]:
     return label.replace('__label__', ''), prob
 
 
-def answer_language(ctx: Optional['TranslationContext'], question: str) -> Optional[str]:
+def answer_language(ctx: 'TranslationContext | None', question: str) -> str | None:
     """English name of the language the answer must be written in, or None if unsure.
 
     With the bridge: English when the question was translated (the answer is translated
@@ -162,11 +130,11 @@ def answer_language(ctx: Optional['TranslationContext'], question: str) -> Optio
         if ctx.needs_translation:
             return 'English'
         return LANGUAGE_NAMES.get(ctx.lang_code)
-    code = _fast_lang_guess(question)
+    code = fast_lang_guess(question)
     return LANGUAGE_NAMES.get(code) if code else None
 
 
-_http_client: Optional[httpx.AsyncClient] = None
+_http_client: httpx.AsyncClient | None = None
 
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -174,7 +142,7 @@ def _get_http_client() -> httpx.AsyncClient:
     request would pay TCP+TLS setup on every single chat turn."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=_TIMEOUT_S)
+        _http_client = httpx.AsyncClient(timeout=TRANSLATE_TIMEOUT_S)
     return _http_client
 
 
@@ -197,7 +165,7 @@ def _is_retryable(exc: BaseException) -> bool:
 
 async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: int) -> str:
     """TRANSLATE_ENDPOINT, then each of TRANSLATE_FALLBACK_ENDPOINTS; raises the last error."""
-    last: Optional[Exception] = None
+    last: Exception | None = None
     for endpoint in dict.fromkeys([TRANSLATE_ENDPOINT] + TRANSLATE_FALLBACK_ENDPOINTS):
         try:
             text = await _call_endpoint(endpoint, system, user, host, token, max_tokens)
@@ -252,8 +220,8 @@ _DETECT_TRANSLATE_SYSTEM = (
 async def translate_question_to_en(question: str, host: str, token: str) -> tuple[str, TranslationContext]:
     """Return (english_question, context). No-ops (and no network call) when
     the question is already French/English by the fast local check."""
-    guess = _fast_lang_guess(question)
-    if guess in _NO_TRANSLATION_NEEDED:
+    guess = fast_lang_guess(question)
+    if guess in NO_TRANSLATION_NEEDED:
         return question, TranslationContext(guess, guess, needs_translation=False)
 
     try:
@@ -274,7 +242,7 @@ async def translate_question_to_en(question: str, host: str, token: str) -> tupl
                                             error=f'non-JSON detection reply: {exc}')
 
     lang_code = (det.get('lang_code') or '').lower()
-    if lang_code in _NO_TRANSLATION_NEEDED:
+    if lang_code in NO_TRANSLATION_NEEDED:
         return question, TranslationContext(lang_code, det.get('lang_name', lang_code), needs_translation=False)
     en_text = det.get('en_translation') or question
     return en_text, TranslationContext(lang_code or 'unknown', det.get('lang_name', 'the original language'), needs_translation=True)
@@ -289,7 +257,7 @@ async def translate_answer_back(answer: str, ctx: TranslationContext, host: str,
         return answer
     if not ctx.needs_translation:
         # Only the confident fr/en case gets the mismatch check: an 'unknown' lang_code leaves nothing to compare against.
-        if ctx.lang_code not in _NO_TRANSLATION_NEEDED or not _answer_language_mismatch(answer, ctx.lang_code):
+        if ctx.lang_code not in NO_TRANSLATION_NEEDED or not _answer_language_mismatch(answer, ctx.lang_code):
             return answer
     system = (
         f'Translate the following text into {ctx.lang_name} ({ctx.lang_code}). '

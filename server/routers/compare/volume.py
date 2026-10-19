@@ -13,24 +13,31 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
-from ...services.infra.user import require_compare
-from .common import (
-    _get_config, _is_within_volume, _sanitize_filename, _validate_file,
-)
+from server.services.infra.user import require_compare
+from server.routers.compare.config import get_config
+from server.routers.compare.common import _is_within_volume, _sanitize_filename, _validate_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post('/compare/save', dependencies=[Depends(require_compare)])
+@router.post('/compare/save', dependencies=[Depends(require_compare)], response_model=None)
 async def save_to_volume(
     old_file: UploadFile = File(...),
     new_file: UploadFile = File(...),
     analysis_text: str = Form(''),
     impact_text: str = Form(''),
-):
+) -> dict | JSONResponse:
+    """Save both documents and the results of a comparison in a new session folder of the volume.
+
+    :param old_file: the previous revision.
+    :param new_file: the new revision.
+    :param analysis_text: the analysis shown to the user, saved next to the files.
+    :param impact_text: the impact search result, saved next to the files.
+    :return: ``{'success', 'session_path', 'saved_files'}``, or an error response (400 invalid request or volume not configured, 500 on a failed upload).
+    """
     try:
-        cfg = _get_config()
+        cfg = get_config()
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
 
@@ -55,14 +62,23 @@ async def save_to_volume(
     def _save() -> None:
         w = WorkspaceClient()
 
-        def _ensure_dir(path: str):
+        def _ensure_dir(path: str) -> None:
+            """Create a folder of the volume if it does not exist.
+
+            :param path: folder to create on the volume; an existing folder is not an error.
+            """
             try:
                 w.files.create_directory(path)
             except Exception as e:
                 if 'already exists' not in str(e).lower():
                     raise
 
-        def _upload(path: str, data: bytes):
+        def _upload(path: str, data: bytes) -> None:
+            """Upload one file to the volume and remember its path in ``saved_files``.
+
+            :param path: destination on the volume.
+            :param data: file content.
+            """
             w.files.upload(path, io.BytesIO(data), overwrite=True)
             saved_files.append(path)
 
@@ -86,12 +102,16 @@ async def save_to_volume(
 
 # --- /compare/load — restore files from a saved volume session ---
 
-@router.get('/compare/load', dependencies=[Depends(require_compare)])
-async def load_session_files(session_path: str, old_filename: str = '', new_filename: str = ''):
+@router.get('/compare/load', dependencies=[Depends(require_compare)], response_model=None)
+async def load_session_files(session_path: str, old_filename: str = '', new_filename: str = '') -> dict | JSONResponse:
     """Retrieve the two documents stored in a volume session back as base64.
 
     Called when the user loads a history entry so the files are restored
     in the UI and can be previewed or re-analyzed.
+
+    :param session_path: folder of the saved session; it must be inside the volume.
+    :param old_filename: original name of the previous revision, to find its file.
+    :param new_filename: original name of the new revision.
     """
 
     # session_path comes from the DB (trusted) — security check only when volume_path is configured
@@ -108,6 +128,12 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
         logger.info(f'load: COMPARE_VOLUME_PATH not set, attempting load from trusted DB path {session_path!r}')
 
     def _read_file(w, path: str) -> bytes:
+        """The content of one file of the volume.
+
+        :param w: a ``WorkspaceClient``.
+        :param path: full path of the file on the volume.
+        :return: the file bytes.
+        """
         resp = w.files.download(path)
         c = resp.contents
         return c.read() if hasattr(c, 'read') else bytes(c)

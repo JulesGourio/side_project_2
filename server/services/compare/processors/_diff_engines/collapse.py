@@ -3,9 +3,9 @@
 import os
 import re
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
-from .text import _DIFF_ENTRY_RE
+from server.services.compare.processors._diff_engines.text import _DIFF_ENTRY_RE
 
 # A change whose identical text recurs on at least this many distinct pages is title-block/boilerplate (revision
 # stamp, classification field, footer): one real change rendered once per page by the PDF extraction.
@@ -112,7 +112,7 @@ def _is_pagination_only(content: str) -> bool:
     return bool(_PAGE_FRACTION_SUB_RE.search(m.group(3))) and not _ANY_MARKUP_RE.search(stripped)
 
 
-def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: Optional[str]) -> Tuple[List[Dict[str, Any]], int]:
+def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: str | None) -> Tuple[List[Dict[str, Any]], int]:
     """Collapse per-page repeats of the SAME change into one entry that keeps the first occurrence's position and
     says how many pages repeat it. Untagged entries are never collapsed. Pagination fragments are masked so
     'Issue A6 Page N' repeats group across pages, and dot-leader TOC rows group per kind.
@@ -128,7 +128,7 @@ def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: Optional[s
         return kind, _PAGINATION_RE.sub(r'\1 #', _MARKUP_RE.sub('', text))
 
     groups: Dict[Tuple[str, str], List[Tuple[int, Dict[str, Any], str]]] = defaultdict(list)
-    parsed: List[Optional[Tuple[str, int, str]]] = []
+    parsed: List[Tuple[str, int, str] | None] = []
     for r in results:
         m = _DIFF_ENTRY_RE.match(r['content'])
         pm = re.search(r'(\d+)', m.group(2) or '') if m else None

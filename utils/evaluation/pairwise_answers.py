@@ -144,6 +144,7 @@ for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
 from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _strip_division, _trim_history, _with_today_date  # app code
 from server.services.chat import engine, llm as chat_llm
 from server.services.chat import translation_bridge as _tb
+from server.services.chat.config import TRANSLATE_TIMEOUT_S
 from server.services.infra.streaming import _cost_eur
 
 assert hasattr(engine, 'retrieve_for_turn'), (
@@ -151,7 +152,7 @@ assert hasattr(engine, 'retrieve_for_turn'), (
     'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
 
 # One translation client per event loop (each question runs in its own loop).
-_tb._get_http_client = lambda: httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
+_tb._get_http_client = lambda: httpx.AsyncClient(timeout=TRANSLATE_TIMEOUT_S)
 
 w = WorkspaceClient()
 HOST = w.config.host.rstrip('/')

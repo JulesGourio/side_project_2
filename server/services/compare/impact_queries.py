@@ -14,7 +14,7 @@ whole blob at once dilutes the signal and matches nothing precisely.
 import re
 from typing import Any, Dict, List
 
-from ..infra.vector_search import _parse_json_array
+from server.services.infra.vector_search import _parse_json_array
 
 _CRIT_ORDER = {'high': 0, 'medium': 1, 'low': 2}
 

@@ -15,41 +15,52 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from ..services.compare.export_helpers import (
+from server.services.compare.export_helpers import (
     _build_excel_bytes,
     _build_impact_excel_bytes,
     _parse_json_response,
 )
-from ..services.infra.lakebase import store_error
-from ..services.infra.user import require_compare
-from ..services.infra.pdf_report import (
+from server.services.infra.lakebase import store_error
+from server.services.infra.user import require_compare
+from server.services.infra.pdf_report import (
     KIND_LABELS,
     Section,
     Source,
     build_markdown_pdf,
     build_report_pdf,
 )
-from .compare.common import _get_config, _is_within_volume, _sanitize_filename
+from server.routers.compare.config import get_config
+from server.routers.compare.common import _is_within_volume, _sanitize_filename
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 def _upload(remote_path: str, data: bytes) -> None:
-    """Blocking SDK upload — always called through asyncio.to_thread."""
+    """Blocking SDK upload — always called through asyncio.to_thread.
+
+    :param remote_path: destination on the volume.
+    :param data: file content.
+    """
     WorkspaceClient().files.upload(remote_path, io.BytesIO(data), overwrite=True)
 
 
 # --- /compare/export-excel — convert structured JSON analysis to Excel download ---
 
-@router.post('/compare/export-excel', dependencies=[Depends(require_compare)])
+@router.post('/compare/export-excel', dependencies=[Depends(require_compare)], response_model=None)
 async def export_excel(
     json_text: str = Form(...),
     filename: str = Form('comparison'),
     file_type: str = Form(''),
     image_pairs_json: str = Form(''),
-):
-    """Generate a colour-coded Excel workbook from a structured JSON analysis and return it for download."""
+) -> Response:
+    """Generate a colour-coded Excel workbook from a structured JSON analysis and return it for download.
+
+    :param json_text: the structured JSON analysis returned by the model.
+    :param filename: download name, without extension.
+    :param file_type: type of the compared files, passed to the workbook builder.
+    :param image_pairs_json: JSON of the image pairs to embed, '' for none.
+    """
     rows = _parse_json_response(json_text)
     if rows is None:
         return JSONResponse({'error': 'Could not parse JSON from analysis text'}, status_code=400)
@@ -78,9 +89,13 @@ async def export_excel(
     )
 
 
-@router.post('/compare/impact/export-excel', dependencies=[Depends(require_compare)])
-async def export_impact_excel(result_json: str = Form(...), filename: str = Form('impact')):
-    """Impact search result (as shown in the UI) → Excel action list, one row per conflicting passage."""
+@router.post('/compare/impact/export-excel', dependencies=[Depends(require_compare)], response_model=None)
+async def export_impact_excel(result_json: str = Form(...), filename: str = Form('impact')) -> Response:
+    """Impact search result (as shown in the UI) → Excel action list, one row per conflicting passage.
+
+    :param result_json: the impact search result as shown in the UI, serialised to JSON.
+    :param filename: download name, without extension.
+    """
     try:
         result = json.loads(result_json)
     except json.JSONDecodeError as e:
@@ -123,13 +138,22 @@ class PdfExportRequest(BaseModel):
 
 
 def _pdf_filename(name: str, default: str) -> str:
+    """A safe download name ending in ``.pdf``.
+
+    :param name: the name asked by the client.
+    :param default: name used when nothing usable is left.
+    :return: the file name.
+    """
     safe = re.sub(r'[^A-Za-z0-9._-]+', '_', name).strip('._') or default
     return safe if safe.lower().endswith('.pdf') else f'{safe}.pdf'
 
 
-@router.post('/export/pdf', dependencies=[Depends(require_compare)])
-async def export_pdf(req: PdfExportRequest):
-    """Render one or more Markdown sections (with optional question and sources) as a PDF download."""
+@router.post('/export/pdf', dependencies=[Depends(require_compare)], response_model=None)
+async def export_pdf(req: PdfExportRequest) -> Response:
+    """Render one or more Markdown sections (with optional question and sources) as a PDF download.
+
+    :param req: the kind of report, its title, metadata and Markdown sections.
+    """
     if req.kind not in KIND_LABELS:
         return JSONResponse({'error': f'Unknown kind {req.kind!r}'}, status_code=400)
     if not any(s.markdown.strip() for s in req.sections):
@@ -157,14 +181,21 @@ async def export_pdf(req: PdfExportRequest):
 
 # --- /compare/save-result ---
 
-@router.post('/compare/save-result', dependencies=[Depends(require_compare)])
+@router.post('/compare/save-result', dependencies=[Depends(require_compare)], response_model=None)
 async def save_result_to_session(
     session_path: str = Form(...),
     filename: str = Form(...),
     content: str = Form(...),
-):
+) -> dict | JSONResponse:
+    """Save a text result in the session folder of the volume.
+
+    :param session_path: folder of the saved session; it must be inside the volume.
+    :param filename: name of the file to write.
+    :param content: text to write.
+    :return: ``{'success': True, 'path'}``, or an error response (400 invalid request or volume not configured, 500 on a failed upload).
+    """
     try:
-        cfg = _get_config()
+        cfg = get_config()
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
 
@@ -188,17 +219,25 @@ async def save_result_to_session(
 
 # --- /compare/save-excel  /compare/save-pdf — auto-save formatted exports to volume ---
 
-@router.post('/compare/save-excel', dependencies=[Depends(require_compare)])
+@router.post('/compare/save-excel', dependencies=[Depends(require_compare)], response_model=None)
 async def save_excel_to_session(
     session_path: str = Form(...),
     json_text: str = Form(...),
     file_type: str = Form(''),
     filename: str = Form('analysis'),
     image_pairs_json: str = Form(''),
-):
-    """Generate Excel from a structured JSON analysis and save it to the session volume directory."""
+) -> dict | JSONResponse:
+    """Generate Excel from a structured JSON analysis and save it to the session volume directory.
+
+    :param session_path: folder of the saved session; it must be inside the volume.
+    :param json_text: the structured JSON analysis returned by the model.
+    :param file_type: type of the compared files.
+    :param filename: name of the workbook, without extension.
+    :param image_pairs_json: JSON of the image pairs to embed, '' for none.
+    :return: ``{'success': True, 'path'}``, or an error response (400 invalid request or volume not configured, 500 on a failed upload).
+    """
     try:
-        cfg = _get_config()
+        cfg = get_config()
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
 
@@ -241,7 +280,7 @@ async def save_excel_to_session(
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
-@router.post('/compare/save-pdf', dependencies=[Depends(require_compare)])
+@router.post('/compare/save-pdf', dependencies=[Depends(require_compare)], response_model=None)
 async def save_pdf_to_session(
     session_path: str = Form(...),
     markdown_text: str = Form(None),   # optional — server generates PDF from markdown
@@ -250,10 +289,20 @@ async def save_pdf_to_session(
     title: str = Form('Change summary'),
     old_name: str = Form(''),
     new_name: str = Form(''),
-):
-    """Save a PDF to volume. Can accept EITHER an uploaded client PDF, OR generate one server-side from markdown."""
+) -> dict | JSONResponse:
+    """Save a PDF to volume. Can accept EITHER an uploaded client PDF, OR generate one server-side from markdown.
+
+    :param session_path: folder of the saved session; it must be inside the volume.
+    :param markdown_text: Markdown to render as the PDF, when no PDF is uploaded.
+    :param pdf_file: a PDF rendered by the browser, saved as is.
+    :param filename: name of the file, without extension.
+    :param title: title of a PDF rendered from Markdown.
+    :param old_name: name of the previous revision, printed in the header.
+    :param new_name: name of the new revision, printed in the header.
+    :return: ``{'success': True, 'path'}``, or an error response (400 invalid request or volume not configured, 500 on a failed upload).
+    """
     try:
-        cfg = _get_config()
+        cfg = get_config()
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
 

@@ -21,12 +21,12 @@ import json
 import logging
 import os
 import time
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, List, Tuple
 
 import httpx
 
-from ..chat import llm as chat_llm
-from ..infra.streaming import DEFAULT_CONNECT_TIMEOUT_S, DEFAULT_TIMEOUT_S, _cost_eur, _parse_text_delta, supports_temperature
+from server.services.chat import llm as chat_llm
+from server.services.infra.streaming import DEFAULT_CONNECT_TIMEOUT_S, DEFAULT_TIMEOUT_S, _cost_eur, _parse_text_delta, supports_temperature
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ def message_text(message: Dict[str, Any]) -> str:
     return content
 
 
-def _round_wait(round_no: int, last: Optional[LlmFailure]) -> float:
+def _round_wait(round_no: int, last: LlmFailure | None) -> float:
     waits = chat_llm.ROUND_WAITS_S
     wait = waits[min(round_no - 1, len(waits) - 1)]
     if last is not None and last.retry_after:
@@ -140,14 +140,14 @@ async def _post(host: str, token: str, endpoint: str, messages: List[Dict[str, A
 
 async def complete_chain(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
                          max_tokens: int, timeout_s: float,
-                         accept: Optional[Callable[[Dict[str, Any]], Any]] = None) -> Tuple[Any, str]:
+                         accept: Callable[[Dict[str, Any]], Any] | None = None) -> Tuple[Any, str]:
     """``(value, endpoint)`` of the first endpoint of the chain whose completion ``accept`` takes (it returns the
     value to use, or raises ``LlmFailure`` to move on; anything else propagates). Raises
     ``CompareLlmUnavailable`` when no attempt succeeded within the rounds and the deadline."""
     chain = _dedup(endpoints)
     started = time.monotonic()
     given_up: set = set()
-    last: Optional[LlmFailure] = None
+    last: LlmFailure | None = None
     for round_no in range(rounds()):
         if round_no:
             wait = _round_wait(round_no, last)
@@ -288,7 +288,7 @@ async def _stream_request(host: str, token: str, endpoint: str, messages: List[D
 
 async def stream_analysis(host: str, token: str, endpoint: str, messages: List[Dict[str, Any]], max_tokens: int,
                           thinking_budget: int, temperature: float,
-                          info: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+                          info: Dict[str, Any] | None = None) -> AsyncGenerator[str, None]:
     """SSE of the analysis of the first endpoint of the chain that answers: text deltas, a ``warning`` when the
     output hit max_tokens, one ``usage`` event, then ``[DONE]``; keepalive comments while waiting. When every
     attempt failed: one ``error`` event with ``TIRED_MESSAGE`` (``detail`` = the cause, dropped by the router).
@@ -302,7 +302,7 @@ async def stream_analysis(host: str, token: str, endpoint: str, messages: List[D
     answered = False
     usage_seen = False
     usage = {'input_tokens': 0, 'output_tokens': 0, 'thinking_tokens': 0, 'cost_eur': 0.0}
-    last: Optional[LlmFailure] = None
+    last: LlmFailure | None = None
 
     for round_no in range(rounds()):
         if round_no:

@@ -15,17 +15,16 @@ import asyncio
 import logging
 import os
 import time
-from typing import Optional
 
 import asyncpg
 from databricks.sdk import WorkspaceClient
 
-from .schema import ensure_schema
+from server.services.infra.lakebase.schema import ensure_schema
 
 logger = logging.getLogger(__name__)
 
-_pool: Optional[asyncpg.Pool] = None
-_refresh_task: Optional[asyncio.Task] = None
+_pool: asyncpg.Pool | None = None
+_refresh_task: asyncio.Task | None = None
 
 # Used only when the real expiry is unknown (fallback workspace token, see _get_host_and_token).
 _DEFAULT_REFRESH_INTERVAL_S = 55 * 60  # 55 min — token lifetime is ~1h
@@ -52,7 +51,7 @@ def _cfg() -> dict:
 
 def _get_host_and_token(
     project_id: str, branch: str, endpoint: str
-) -> tuple[str, str, str, Optional[float]]:
+) -> tuple[str, str, str, float | None]:
     """Fetch host and OAuth token from Databricks SDK (sync, run in thread).
 
     Lakebase OAuth auth uses the literal username "token"; the identity is
@@ -88,7 +87,7 @@ def _get_host_and_token(
     logger.debug(f'Lakebase connecting as: {username}')
 
     token: str | None = None
-    expires_in_s: Optional[float] = None
+    expires_in_s: float | None = None
     try:
         cred = w.postgres.generate_database_credential(endpoint=endpoint_path)
         token = cred.token or None
@@ -116,7 +115,7 @@ def _get_host_and_token(
     return host, username, token, expires_in_s
 
 
-def _next_refresh_delay(expires_in_s: Optional[float]) -> float:
+def _next_refresh_delay(expires_in_s: float | None) -> float:
     """Delay before the next credential refresh, based on real expiry when known."""
     if expires_in_s is None:
         return _DEFAULT_REFRESH_INTERVAL_S
@@ -235,5 +234,5 @@ async def shutdown_lakebase() -> None:
     logger.info('Lakebase shut down')
 
 
-def get_pool() -> Optional[asyncpg.Pool]:
+def get_pool() -> asyncpg.Pool | None:
     return _pool

@@ -9,13 +9,13 @@ from typing import Any, Dict, List, Tuple
 from docx import Document
 from PIL import Image as PILImage
 
-from .._diff_engines import _IMG_JPEG_QUALITY, dhash, hash16, images_are_similar, looks_like_table_header
-from ...conversion import doc_to_text
-from .ooxml import (
+from server.services.compare.processors._diff_engines import _IMG_JPEG_QUALITY, dhash, hash16, images_are_similar, looks_like_table_header
+from server.services.compare.conversion import doc_to_text
+from server.services.compare.processors.docx.ooxml import (
     _footnote_lines, _is_toc_paragraph, _iter_block_items, _paragraph_text, _row_cells, _textbox_texts,
     _vml_shape_lines,
 )
-from .pages import _IMG_WEIGHT, _assign_pages, _count_breaks_split, _lrpb_is_stale
+from server.services.compare.processors.docx.pages import _IMG_WEIGHT, _assign_pages, _count_breaks_split, _lrpb_is_stale
 
 logger = logging.getLogger(__name__)
 

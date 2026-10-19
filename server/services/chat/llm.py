@@ -16,11 +16,11 @@ import logging
 import os
 import random
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Tuple
 
 import httpx
 
-from ..infra.streaming import _cost_eur, _parse_text_delta, supports_temperature
+from server.services.infra.streaming import _cost_eur, _parse_text_delta, supports_temperature
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def rewrite_reasoning_effort() -> str:
     return os.getenv('CHAT_REWRITE_REASONING_EFFORT', 'low').strip().lower()
 
 
-def effective_max_tokens(endpoint: str, max_tokens: int, floor: Optional[int] = None) -> int:
+def effective_max_tokens(endpoint: str, max_tokens: int, floor: int | None = None) -> int:
     """``max_tokens``, raised to the reasoning floor on models that think inside it."""
     if supports_temperature(endpoint):
         return max_tokens
@@ -139,7 +139,7 @@ def reset_health() -> None:
 _semaphores: Dict[int, Tuple[int, asyncio.Semaphore]] = {}
 
 
-def _semaphore() -> Optional[asyncio.Semaphore]:
+def _semaphore() -> asyncio.Semaphore | None:
     """One semaphore per event loop: a semaphore cannot gate calls running on another loop."""
     limit = max_concurrent_answers()
     if limit <= 0:
@@ -158,7 +158,7 @@ class LlmFailure(Exception):
     """One attempt failed. ``kind``: rate_limit, server, timeout, network, refused, auth,
     not_found, empty, stream_error."""
 
-    def __init__(self, kind: str, detail: str = '', status: int = 0, retry_after: Optional[float] = None):
+    def __init__(self, kind: str, detail: str = '', status: int = 0, retry_after: float | None = None):
         super().__init__(f'{kind} {status or ""} {detail}'.strip())
         self.kind = kind
         self.detail = detail
@@ -175,7 +175,7 @@ def http_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout)
 
 
-def retry_after(resp: httpx.Response) -> Optional[float]:
+def retry_after(resp: httpx.Response) -> float | None:
     try:
         return float(resp.headers.get('retry-after', ''))
     except ValueError:
@@ -215,7 +215,7 @@ async def stream_once(host: str, token: str, endpoint: str, messages: List[Dict[
                     body = (await resp.aread()).decode('utf-8', errors='replace')
                     raise failure_for_status(resp, body)
                 lines = resp.aiter_lines().__aiter__()
-                pending: Optional[asyncio.Task] = None
+                pending: asyncio.Task | None = None
                 try:
                     while True:
                         if pending is None:
@@ -335,7 +335,7 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
     usage = {'input_tokens': 0, 'output_tokens': 0, 'thinking_tokens': 0, 'cost_eur': 0.0}
     answered_by = None
     truncated = False
-    last: Optional[LlmFailure] = None
+    last: LlmFailure | None = None
 
     for round_no in range(rounds()):
         if round_no:
@@ -437,14 +437,14 @@ def _message_text(content: Any) -> str:
 
 async def complete(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
                    max_tokens: int, timeout_s: float = 30.0,
-                   info: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+                   info: Dict[str, Any] | None = None) -> Tuple[str, str]:
     """(text, endpoint) of the first endpoint that returns non-empty text; two passes over the
     chain, ``timeout_s`` per call and 2 x ``timeout_s`` in all. Raises the last ``LlmFailure``
     when none does. ``info``, when given, receives ``attempts`` (every call: endpoint, outcome,
     status, seconds) and the ``usage`` of the call that answered."""
     info = {} if info is None else info
     attempts = info.setdefault('attempts', [])
-    last: Optional[LlmFailure] = None
+    last: LlmFailure | None = None
     given_up: set = set()
     deadline = time.monotonic() + 2 * timeout_s
     for round_no in range(2):
@@ -505,11 +505,11 @@ PATIENT_WAITS_S = (2.0, 8.0)
 
 async def complete_patiently(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
                              max_tokens: int, timeout_s: float = 30.0,
-                             info: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+                             info: Dict[str, Any] | None = None) -> Tuple[str, str]:
     """``complete`` again after each of PATIENT_WAITS_S while every endpoint fails; the last failure is raised
     once the waits are spent. ``info`` accumulates the attempts of every try."""
     info = {} if info is None else info
-    last: Optional[Exception] = None
+    last: Exception | None = None
     for wait in (0.0,) + PATIENT_WAITS_S:
         if wait:
             await asyncio.sleep(wait + random.random())

@@ -6,7 +6,7 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, List, Set, Tuple
 
-from .text import _DIFF_ENTRY_RE, canonicalize_keep_modals
+from server.services.compare.processors._diff_engines.text import _DIFF_ENTRY_RE, canonicalize_keep_modals
 
 _RELOCATION_MIN_WORDS = 6
 # Shorter blocks skip the relocation check, so a short block still present VERBATIM in the other revision is treated as

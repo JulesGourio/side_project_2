@@ -2,10 +2,10 @@
 
 from fastapi import APIRouter
 
-from ...services.chat.translation_bridge import ENABLED as TRANSLATE_BRIDGE_ENABLED
-from . import sessions, ws
-from .helpers import (
-    CHAT_MAX_HISTORY,
+from server.services.chat.config import TRANSLATE_BRIDGE_ENABLED
+from server.routers.chat import sessions, ws
+from server.routers.chat.helpers import (
+    CHAT_MAX_HISTORY_TOKENS,
     _apply_citation_markers,
     _detect_division,
     _stored_sources,
@@ -20,7 +20,7 @@ router.include_router(sessions.router)
 
 # Imported by utils/evaluation to reproduce what a chat turn feeds the engine.
 __all__ = [
-    'CHAT_MAX_HISTORY',
+    'CHAT_MAX_HISTORY_TOKENS',
     'TRANSLATE_BRIDGE_ENABLED',
     '_apply_citation_markers',
     '_detect_division',

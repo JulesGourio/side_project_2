@@ -15,13 +15,13 @@ import json
 import logging
 import re
 import time
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Tuple
 
-from ..compare.llm import CompareLlmUnavailable, LlmFailure, TIRED_MESSAGE, compare_chain, complete_chain
-from ..compare.llm import message_text as _message_text
-from . import vs_gate
-from .doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
-from .streaming import _cost_eur
+from server.services.compare.llm import CompareLlmUnavailable, LlmFailure, TIRED_MESSAGE, compare_chain, complete_chain
+from server.services.compare.llm import message_text as _message_text
+from server.services.infra import vs_gate
+from server.services.infra.doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
+from server.services.infra.streaming import _cost_eur
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ def _parse_json_object(text: str) -> Dict[str, Any] | None:
     return None
 
 
-def _find_quote(text: str, quote: str) -> Optional[List[int]]:
+def _find_quote(text: str, quote: str) -> List[int] | None:
     """[start, end] of the quote in text, tolerant to whitespace/case drift; None if absent."""
     words = (quote or '').strip().strip('"«»“”').split()
     if not words:
@@ -495,7 +495,7 @@ async def run_impact_search(
     max_tokens: int,
     archive_before: str,
     exclude_names: List[str],
-    info: Optional[Dict[str, Any]] = None,
+    info: Dict[str, Any] | None = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Yield 'plan' → one 'document' per judged candidate (as each finishes) → 'done'.
 

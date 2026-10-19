@@ -17,6 +17,7 @@ The application is in [`server/`](../server/) and [`client/`](../client/); see t
 | [`dev_copy/`](dev_copy/) | Import of the UAT snapshot into DEV, creation of the Vector Search endpoint | Tasks of the job `copy_uat_to_dev` (`resources/dev_copy.yml`) |
 | [`grants/`](grants/) | Unity Catalog grants of the service principals of the application and of the pipeline, and volume access | Tasks of the jobs in `resources/grants.yml` |
 | [`evaluation/`](evaluation/) | Chat and search evaluation: load tests, answer comparison, retrieval evaluation, MLflow experiment and prompts, trace scoring, vision endpoint check | Jobs in `resources/chat_mlflow.yml` (`create_chat_experiment.py`, `register_chat_prompts.py`, `score_chat_traces.py`); the others by hand |
+| [`code_quality/`](code_quality/) | `check_docstrings.py`: lists the functions with an undocumented `:param` or no return annotation | By hand, from the repository root |
 | [`ops_config.py`](ops_config.py) | Shared settings: CLI profiles, Lakebase projects per environment, connection helpers, table order of the PROD copy | Imported by `lakebase_sync/` and by the one-shot scripts |
 
 ## How each script runs

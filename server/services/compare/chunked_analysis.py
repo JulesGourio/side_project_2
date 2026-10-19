@@ -11,9 +11,9 @@ import json
 import logging
 import os
 import re
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List
 
-from .llm import stream_analysis
+from server.services.compare.llm import stream_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ def split_messages_for_chunking(
     messages: List[Dict[str, Any]],
     threshold_chars: int,
     chunk_chars: int,
-) -> Optional[List[List[Dict[str, Any]]]]:
+) -> List[List[Dict[str, Any]]] | None:
     """Split a processor-built message list into per-part message lists.
 
     Returns None when the diff is small enough for a single call (the normal
@@ -164,12 +164,12 @@ async def _run_part(
     host: str, token: str, endpoint_name: str,
     part_messages: List[Dict[str, Any]],
     max_tokens: int, thinking_budget: int, temperature: float,
-    info: Optional[Dict[str, Any]] = None,
+    info: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Consume one stream_analysis call fully; return its buffered outcome."""
     text = ''
     usage: Dict[str, Any] = {}
-    error_chunk: Optional[str] = None
+    error_chunk: str | None = None
     passthrough: List[str] = []  # warning events etc.
 
     async for chunk in stream_analysis(
@@ -207,7 +207,7 @@ async def stream_analysis_chunked(
     thinking_budget: int,
     temperature: float,
     structured: bool,
-    info: Optional[Dict[str, Any]] = None,
+    info: Dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Run the per-part LLM calls concurrently (bounded) and merge them into a
     single SSE stream, emitting parts in document order as they complete.

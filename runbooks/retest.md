@@ -270,3 +270,18 @@ Notebooks : aucun changement de logique, seuls leurs imports changent (`quality`
 - Notebook one-shot `runbooks/scripts/dev_cleanup/rename_dev_uat_copies.py` (hors bundle, soumis sous le SP DEV) : renomme les 4 copies UAT en `uat_<nom>`. Une fois.
 - DEV : `lakebase_import_to_delta` = `true`, `lakebase_tables_to_skip` (liste dans `databricks.yml`). L'export charge les autres tables dans `dev_proj.qualibot`.
 - À relancer : `runbooks/dev.md` bloc L (L.1 à L.4). Puis `pytest tests/test_lakebase_sync_config.py tests/test_deploy_config.py tests/test_bundle_paths.py`.
+
+## 2026-10-19 — revue de la PR Bitbucket 2 (commentaires de Yann Depledt)
+
+Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md`. Changements qui touchent le déploiement :
+
+- `app.yaml` : `CHAT_MAX_HISTORY` (10 messages) devient `CHAT_MAX_HISTORY_TOKENS` (8000 jetons estimés) ; `CHAT_TRANSLATE_ENDPOINT` passe à `databricks-gpt-6-luna` (repli `databricks-gpt-5-6-luna`). Aucune valeur dans `target_env.json`.
+- Prompts : `system/as.md` et `system/is.md` sont remplacés par `system/division.md` (gabarit) et `system/as_reference_ordering.md`. Les clés `system_as` et `system_is` disparaissent, `system_division` et `system_as_references` apparaissent.
+- Routes : `vote` n'accepte plus que `up` ou `down` (422 de FastAPI à la place du 422 maison) ; `PUT /history/{id}/impact` reçoit toujours `{"impact_json": "…"}`.
+
+- [ ] Déployer l'app DEV (pipeline Bitbucket `deploy-dev`, branche `claude/sharp-mayer-uqwx8x`).
+- [ ] `databricks bundle run register_chat_prompts_dev -t dev --profile DEV` : une ligne `registered version … alias deployed` pour `chat_system_division` et `chat_system_as_references`.
+- [ ] Chat DEV : une question en division AS et une en division IS ; les deux répondent, et une liste de références AS est ordonnée QP puis MI.
+- [ ] Chat DEV : une conversation de plus de 8000 jetons (collage d'un long texte) répond sans erreur ; la dernière question est conservée.
+- [ ] Comparaison DEV : un PDF contre un PDF jusqu'à la fin de l'analyse, puis la recherche d'impact, puis l'ouverture de l'entrée dans l'historique (l'impact enregistré se recharge).
+- [ ] Vote pouce haut / bas dans le chat et dans la comparaison : enregistré.

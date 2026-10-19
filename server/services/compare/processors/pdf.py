@@ -13,10 +13,10 @@ import io
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from .text_diff import TextDiffProcessor
-from ._diff_engines import (
+from server.services.compare.processors.text_diff import TextDiffProcessor
+from server.services.compare.processors._diff_engines import (
     _IMG_MAX_DIM,
     _IMG_JPEG_QUALITY,
     dhash,
@@ -77,7 +77,7 @@ _TABLE_BAND_MAX_ROWS = 3
 _TABLE_LABELS = os.getenv('COMPARE_PDF_TABLE_LABELS', 'true').lower() == 'true'
 
 
-def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[Any]:
+def _table_rows_for_page(page, state: Dict[str, Any] | None = None) -> List[Any]:
     """[(y, 'cell | cell | cell', bbox), ...] for every real table on the page.
 
     `state` carries the last header to the next page, so a table continuing without repeating its header keeps its
@@ -115,7 +115,7 @@ def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[A
         norm = [r + [''] * (n_cols - len(r)) for r in norm]
         used = [c for c in range(n_cols) if any(r[c] for r in norm)]
 
-        header: Optional[List[str]] = None
+        header: List[str] | None = None
         header_row = -1
         if _TABLE_LABELS and norm:
             if looks_like_table_header(norm[0]):

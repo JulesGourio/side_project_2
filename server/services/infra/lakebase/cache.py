@@ -2,13 +2,12 @@
 
 import json
 import logging
-from typing import Optional
 
-from . import connection
+from server.services.infra.lakebase import connection
 
 logger = logging.getLogger(__name__)
 
-async def get_cached_impact_result(old_file_hash: str, new_file_hash: str, app_version: str) -> Optional[dict]:
+async def get_cached_impact_result(old_file_hash: str, new_file_hash: str, app_version: str) -> dict | None:
     """Return the most recent cached /compare/impact result for this file pair, or None."""
     if not old_file_hash or not new_file_hash:
         return None
@@ -52,7 +51,7 @@ async def store_impact_cache(old_file_hash: str, new_file_hash: str, app_version
         logger.debug('store_impact_cache failed: %s', e)
 
 
-async def get_cached_summary(file_hash: str, app_version: str) -> Optional[dict]:
+async def get_cached_summary(file_hash: str, app_version: str) -> dict | None:
     """Return the most recent cached /compare/summarize result for this file, or None."""
     if not file_hash:
         return None

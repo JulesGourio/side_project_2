@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Tuple
 
-from .ooxml import _W_BR, _W_LRPB, _W_TYPE
+from server.services.compare.processors.docx.ooxml import _W_BR, _W_LRPB, _W_TYPE
 
 # --- Page-number estimation ---
 # No rendering engine: pages are estimated from the page-break markers plus a content-flow estimate.

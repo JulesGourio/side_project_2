@@ -11,20 +11,20 @@ import asyncio
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
 _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
 
 # The catalog loaded from Lakebase (None until the first successful load).
-_live: Optional['_Catalog'] = None
+_live: '_Catalog | None' = None
 
 # The pipeline's intraqual_ref_url() embeds the REF in the URL (identification.aspx?ref=<REF>): the REF is read from there.
 _REF_IN_URL_RE = re.compile(r'[?&]ref=([^&]+)', re.IGNORECASE)
 
 
-def _ref_from_url(url: str) -> Optional[str]:
+def _ref_from_url(url: str) -> str | None:
     """Pull the REF back out of one of our own ref=<REF> URLs, or None."""
     m = _REF_IN_URL_RE.search(url or '')
     if not m:
@@ -63,7 +63,7 @@ _SITE_FLAGS: Dict[str, str] = {
 }
 
 
-def site_code(ref: str) -> Optional[str]:
+def site_code(ref: str) -> str | None:
     """The trailing site/language suffix of a REF (e.g. "GB" from "XX-1234-GB"),
     upper-cased, or None if the REF carries no recognised suffix — most of the
     corpus has none; it marks the default/untranslated document, not a known
@@ -147,7 +147,7 @@ class _Catalog:
             alts.add(ref)
             alts.add(e.get('base_ref') or _canon(ref))
         refs = sorted(alts, key=len, reverse=True)
-        self.pattern: Optional[re.Pattern] = None
+        self.pattern: re.Pattern | None = None
         if refs:
             alt = '|'.join(re.escape(r) for r in refs)
             try:
@@ -193,7 +193,7 @@ class _Catalog:
         return [e for e in group if e is not entry]
 
 
-def _catalog() -> Optional[_Catalog]:
+def _catalog() -> _Catalog | None:
     return _live
 
 

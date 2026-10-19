@@ -4,14 +4,14 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import httpx
 
-from ...infra import vs_gate
-from ...infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
-from ..turn_log import TurnLog, passage_title
-from .config import raw_top_k, rerank_top_k
+from server.services.infra import vs_gate
+from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
+from server.services.chat.turn_log import TurnLog, passage_title
+from server.services.chat.engine.config import raw_top_k, rerank_top_k
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ async def _query(host: str, token: str, index: str, query_text: str, k: int, fil
     return _rows(resp)
 
 
-def _tag(rows: List[Dict[str, Any]], q: Optional[int], via: str) -> List[Dict[str, Any]]:
+def _tag(rows: List[Dict[str, Any]], q: int | None, via: str) -> List[Dict[str, Any]]:
     """Records on each row which query found it (``q``: index in the turn's queries, None for a
     lookup), how (``via``: rerank / raw / ref_lookup), at which rank, with which
     score — kept in chat_retrieved_chunks.hits."""
@@ -111,7 +111,7 @@ def _status_of(exc: BaseException) -> int:
 
 
 async def _recorded_query(host: str, token: str, index: str, filters: Dict[str, Any], log: TurnLog,
-                          i: Optional[int], q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
+                          i: int | None, q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
     """One Vector Search call, recorded on the turn (query, mode, size, start, duration, outcome, hits)."""
     entry = {'query_index': i, 'query': q[:300], 'mode': 'rerank' if rerank else 'raw', 'k': k,
              'start_ms': log.elapsed_ms()}
@@ -138,9 +138,9 @@ def start_question_search(host: str, token: str, index: str, filters: Dict[str, 
 
 
 async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any],
-                 raw_queries: Optional[List[str]] = None, log: Optional[TurnLog] = None,
-                 rerank_k: Optional[int] = None, raw_k: Optional[int] = None,
-                 first: Optional['asyncio.Task[List[Dict[str, Any]]]'] = None) -> List[Dict[str, Any]]:
+                 raw_queries: List[str] | None = None, log: TurnLog | None = None,
+                 rerank_k: int | None = None, raw_k: int | None = None,
+                 first: 'asyncio.Task[List[Dict[str, Any]]] | None' = None) -> List[Dict[str, Any]]:
     """Reranked top k for every query + raw top k for ``raw_queries`` (default: every query),
     merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
@@ -152,7 +152,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
     raw_k = raw_top_k() if raw_k is None else raw_k
     rerank_ok = True
 
-    async def call(i: Optional[int], q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
+    async def call(i: int | None, q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
         return await _recorded_query(host, token, index, filters, log, i, q, k, rerank)
 
     async def reranked(i: int, q: str) -> List[Dict[str, Any]]:
@@ -200,7 +200,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
 
 async def fetch_documents(host: str, token: str, index: str, query: str, refs: List[str], k: int,
                           filters: Dict[str, Any], via: str = 'ref_lookup',
-                          log: Optional[TurnLog] = None) -> List[Dict[str, Any]]:
+                          log: TurnLog | None = None) -> List[Dict[str, Any]]:
     """HYBRID search restricted to the given REFs (``via``: ref_lookup).
     Failures are logged, never raised."""
     try:

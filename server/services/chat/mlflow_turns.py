@@ -33,26 +33,24 @@ import os
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from . import prompts
-from ..infra.doc_catalog import document_info
-from .turn_log import passage_title
+from server.services.chat import prompts
+from server.services.chat.config import (
+    MLFLOW_EXPORT_TIMEOUT_S, MLFLOW_MAX_DOC_CHARS, MLFLOW_MAX_ISSUE_CHARS, MLFLOW_PROMPT_EMPTY_TTL_S,
+    MLFLOW_PROMPT_TAG, MLFLOW_PROMPT_TTL_S, MLFLOW_RETRY_MISSING_S,
+)
+from server.services.chat import translation_bridge
+from server.services.infra.doc_catalog import document_info
+from server.services.chat.turn_log import passage_title
 
 logger = logging.getLogger(__name__)
 
 _NS_PER_MS = 1_000_000
-_MAX_DOC_CHARS = 20_000          # passage text kept per document in the retriever span output
-_MAX_ISSUE_CHARS = 500
 _lock = threading.Lock()
-_experiment: Dict[str, Optional[str]] = {}       # experiment name -> id, once found
+_experiment: Dict[str, str | None] = {}       # experiment name -> id, once found
 _missing_until: Dict[str, float] = {}           # experiment name -> when to look again
-_RETRY_MISSING_S = 60
 _prompt_cache: Dict[str, Any] = {}              # experiment id -> (fetched at, chat_prompt.* tags)
-_PROMPT_TAG = 'chat_prompt.'
-_PROMPT_EMPTY_TTL_S = 30                  # nothing registered yet: look again soon
-_PROMPT_TTL_S = 600
-_EXPORT_TIMEOUT_S = 10
 
 
 def experiment_name() -> str:
@@ -69,7 +67,7 @@ def enabled() -> bool:
     return bool(experiment_id_setting() or experiment_name())
 
 
-def _experiment_id(name: str) -> Optional[str]:
+def _experiment_id(name: str) -> str | None:
     """Id of the experiment ``name``, looked up once it exists.
 
     Never created here: the ``create_chat_experiment`` job creates it, as the job service principal.
@@ -98,7 +96,7 @@ def _experiment_id(name: str) -> Optional[str]:
         if found:
             _experiment[name] = found.experiment_id
             return found.experiment_id
-        _missing_until[name] = time.monotonic() + _RETRY_MISSING_S
+        _missing_until[name] = time.monotonic() + MLFLOW_RETRY_MISSING_S
     logger.warning('mlflow_turns: experiment %s does not exist, chat traces are off until it is created', name)
     return None
 
@@ -109,7 +107,7 @@ async def export_turn(log: Any) -> None:
     if not enabled() or not log.status:
         return
     try:
-        trace_id = await asyncio.wait_for(asyncio.to_thread(_write_trace, log, name), timeout=_EXPORT_TIMEOUT_S)
+        trace_id = await asyncio.wait_for(asyncio.to_thread(_write_trace, log, name), timeout=MLFLOW_EXPORT_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 — telemetry must not disturb the chat
         logger.warning('mlflow_turns: trace of %s not written: %s', log.trace_id, exc)
         return
@@ -117,13 +115,12 @@ async def export_turn(log: Any) -> None:
         log.data['mlflow_trace_id'] = trace_id
 
 
-def _language_guess(text: Optional[str]) -> str:
+def _language_guess(text: str | None) -> str:
     """Two-letter code of the language of ``text`` (local fastText model), '' when unsure or unavailable."""
     if not text:
         return ''
     try:
-        from .translation_bridge import _fast_lang_guess
-        return _fast_lang_guess(text[:2000]) or ''
+        return translation_bridge.fast_lang_guess(text[:2000]) or ''
     except Exception:  # noqa: BLE001 — a tag, not worth a failed trace
         return ''
 
@@ -135,10 +132,20 @@ def _hash(value: str) -> str:
 _DATE_RE = re.compile(r'Date de diffusion:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|inconnue)')
 
 
-def _passage_date(chunk_text: Optional[str]) -> str:
+def _passage_date(chunk_text: str | None) -> str:
     """Diffusion date from the passage's ``[Source: …]`` prefix (what the answer model reads)."""
     found = _DATE_RE.search((chunk_text or '')[:600])
     return found.group(1) if found else ''
+
+
+def _vs_call_label(call: Dict[str, Any]) -> str:
+    """Label of a Vector Search call span: ``q1 rerank``, ``q2 raw``… (``q-`` when it belongs to no query).
+
+    :param call: one entry of ``TurnLog.vs_calls`` (``query_index`` may be None, ``mode`` is always set).
+    :return: the label.
+    """
+    index = call.get('query_index')
+    return f"q{index + 1 if index is not None else '-'} {call['mode']}"
 
 
 def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -169,7 +176,7 @@ def _hit_label(hit: Dict[str, Any]) -> str:
 
 def _document(passage: Dict[str, Any]) -> Any:
     from mlflow.entities import Document
-    return Document(page_content=(passage.get('chunk_text') or '')[:_MAX_DOC_CHARS],
+    return Document(page_content=(passage.get('chunk_text') or '')[:MLFLOW_MAX_DOC_CHARS],
                     metadata={'doc_uri': passage.get('url') or passage.get('ref') or '', 'ref': passage.get('ref'),
                               'doc_number': passage.get('doc_number'), 'cited': bool(passage.get('cited')),
                               'source': passage.get('source'), 'score': passage.get('best_score'),
@@ -177,14 +184,14 @@ def _document(passage: Dict[str, Any]) -> Any:
 
 
 def _prompt_tags(experiment_id: str) -> Dict[str, str]:
-    """The experiment's ``chat_prompt.<key>`` tags, refreshed every ``_PROMPT_TTL_S``."""
+    """The experiment's ``chat_prompt.<key>`` tags, refreshed every ``MLFLOW_PROMPT_TTL_S``."""
     cached = _prompt_cache.get(experiment_id)
-    if cached and time.monotonic() - cached[0] < (_PROMPT_TTL_S if cached[1] else _PROMPT_EMPTY_TTL_S):
+    if cached and time.monotonic() - cached[0] < (MLFLOW_PROMPT_TTL_S if cached[1] else MLFLOW_PROMPT_EMPTY_TTL_S):
         return cached[1]
     tags: Dict[str, str] = {}
     try:
         import mlflow
-        tags = {k: v for k, v in (mlflow.get_experiment(experiment_id).tags or {}).items() if k.startswith(_PROMPT_TAG)}
+        tags = {k: v for k, v in (mlflow.get_experiment(experiment_id).tags or {}).items() if k.startswith(MLFLOW_PROMPT_TAG)}
     except Exception as exc:  # noqa: BLE001 — retried after the TTL
         logger.warning('mlflow_turns: experiment tags unreadable: %s', exc)
     _prompt_cache[experiment_id] = (time.monotonic(), tags)
@@ -197,7 +204,7 @@ def _linked_prompts(experiment_id: str, keys: List[str]) -> str:
     tags, linked = _prompt_tags(experiment_id), []
     for key in keys:
         try:
-            entry = json.loads(tags.get(_PROMPT_TAG + key) or '')
+            entry = json.loads(tags.get(MLFLOW_PROMPT_TAG + key) or '')
         except ValueError:
             continue
         if entry.get('sha') == prompts.digest(key):
@@ -222,7 +229,7 @@ def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = 
         logger.warning('mlflow_turns: vote on %s not logged: %s', mlflow_trace_id, exc)
 
 
-def _write_trace(log: Any, name: str) -> Optional[str]:
+def _write_trace(log: Any, name: str) -> str | None:
     import mlflow
     from mlflow.entities import SpanType
     from mlflow.tracing.constant import SpanAttributeKey
@@ -239,8 +246,8 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
         return t0 + int(ms) * _NS_PER_MS
 
     def child(parent: Any, step: str, span_type: str, start_ms: int, duration_ms: int, *,
-              inputs: Any = None, outputs: Any = None, attributes: Optional[Dict[str, Any]] = None,
-              status: Optional[str] = None, label: Optional[str] = None) -> Any:
+              inputs: Any = None, outputs: Any = None, attributes: Dict[str, Any] | None = None,
+              status: str | None = None, label: str | None = None) -> Any:
         span = mlflow.start_span_no_context(label or step, span_type=span_type, parent_span=parent, inputs=inputs,
                                             start_time_ns=at(start_ms))
         span.end(outputs=outputs, attributes={k: v for k, v in (attributes or {}).items() if v is not None},
@@ -248,7 +255,7 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
         return span
 
     issues = [{'code': i['code'], 'stage': i['stage'], 'severity': i['severity'],
-               'message': (i['message'] or '')[:_MAX_ISSUE_CHARS], 'at_ms': i['at_ms']} for i in log.issues]
+               'message': (i['message'] or '')[:MLFLOW_MAX_ISSUE_CHARS], 'at_ms': i['at_ms']} for i in log.issues]
     tags = {
         'chat_trace_id': log.trace_id, 'division': str(data.get('division') or ''), 'status': log.status,
         'question_lang': str(data.get('question_lang') or ''), 'answer_endpoint': str(data.get('answer_endpoint') or ''),
@@ -286,13 +293,15 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
                     'search_queries': data.get('rewrite_mode') or 'rewrite'},
             start_time_ns=at(start))
         if 'rewrite' in timings:
-            child(retrieval, 'translate' if data.get('rewrite_mode') == 'translate' else 'rewrite', SpanType.LLM,
-                  starts.get('rewrite', start), timings['rewrite'],
-                  inputs={'question': data.get('question')}, outputs={'fr': data.get('fr_query'), 'en': data.get('en_query')},
-                  status='OK' if data.get('rewrite_ok') is not False else 'ERROR',
+            rewrite_name = 'translate' if data.get('rewrite_mode') == 'translate' else 'rewrite'
+            rewrite_status = 'ERROR' if data.get('rewrite_ok') is False else 'OK'
+            rewrite_usage = _usage(data.get('rewrite_input_tokens'), data.get('rewrite_output_tokens'))
+            child(retrieval, rewrite_name, SpanType.LLM, starts.get('rewrite', start), timings['rewrite'],
+                  inputs={'question': data.get('question')},
+                  outputs={'fr': data.get('fr_query'), 'en': data.get('en_query')},
+                  status=rewrite_status,
                   attributes={SpanAttributeKey.MODEL: data.get('rewrite_endpoint'),
-                              SpanAttributeKey.CHAT_USAGE: _usage(data.get('rewrite_input_tokens'),
-                                                                  data.get('rewrite_output_tokens')),
+                              SpanAttributeKey.CHAT_USAGE: rewrite_usage,
                               'cost_eur': data.get('rewrite_cost_eur')})
         if 'search' in timings:
             search = mlflow.start_span_no_context(
@@ -300,7 +309,7 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
                 inputs={'queries': {'question': data.get('question'), 'fr': data.get('fr_query'), 'en': data.get('en_query')},
                         'index': data.get('index_name')})
             for call in log.vs_calls:
-                label = f"q{(call.get('query_index') or 0) + 1 if call.get('query_index') is not None else '-'} {call['mode']}"
+                label = _vs_call_label(call)
                 child(search, 'vector_search', SpanType.RETRIEVER, call['start_ms'], call.get('ms') or 0, label=label,
                       inputs={'query': call['query'], 'mode': call['mode'], 'num_results': call['k']},
                       outputs={'results': call.get('results'), 'error': call.get('error'),
@@ -363,7 +372,7 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
     return root.trace_id
 
 
-def _usage(input_tokens: Optional[int], output_tokens: Optional[int]) -> Optional[Dict[str, int]]:
+def _usage(input_tokens: int | None, output_tokens: int | None) -> Dict[str, int] | None:
     if input_tokens is None and output_tokens is None:
         return None
     i, o = int(input_tokens or 0), int(output_tokens or 0)

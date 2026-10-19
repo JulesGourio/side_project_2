@@ -11,10 +11,10 @@ comparative: external system prompt from app config.
 import difflib
 import io
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from .base import BaseProcessor, ProcessMetadata, ProcessResult
-from ._diff_engines import SYSTEM_PROMPT_STANDARD, SYSTEM_PROMPT_STRUCTURED, truncate_diff
+from server.services.compare.processors.base import BaseProcessor, ProcessMetadata, ProcessResult
+from server.services.compare.processors._diff_engines import SYSTEM_PROMPT_STANDARD, SYSTEM_PROMPT_STRUCTURED, truncate_diff
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ _VOLATILE_COL_THRESHOLD = 0.50  # columns changing in >50% of matched rows are a
 
 def _build_diff_keyed(
     old_lines: List[str], new_lines: List[str], old_name: str, new_name: str
-) -> Optional[str]:
+) -> str | None:
     """Key-based diff: match rows by first column, then compare column by column.
 
     Better than line-level unified_diff for tabular data where:
@@ -107,7 +107,7 @@ def _build_diff_keyed(
 
         headers = old_header.split('\t') if old_header else []
 
-        def _parse_rows(rows: List[str]) -> Optional[Dict[str, List[str]]]:
+        def _parse_rows(rows: List[str]) -> Dict[str, List[str]] | None:
             d: Dict[str, List[str]] = {}
             empty = 0
             for row in rows:
