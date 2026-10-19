@@ -34,7 +34,7 @@ logger = logging.getLogger("ensure_schema_as_owner")
 # Owned by the app (written by it) or by the parsing job: not this person's to alter.
 NOT_MINE = ("compare_messages", "compare_feedbacks", "catalog_metadata", "doc_catalog")
 # The table a DDL statement acts on (group 1).
-DDL_TARGET = re.compile(r"^(?:ALTER TABLE|CREATE TABLE IF NOT EXISTS|CREATE INDEX IF NOT EXISTS \w+ ON) (\w+)")
+DDL_TARGET = re.compile(r"^(?:ALTER\s+TABLE|CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS|CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+\w+\s+ON)\s+(\w+)")
 
 
 class _Recorder:
@@ -42,7 +42,8 @@ class _Recorder:
         self.statements: list[str] = []
 
     async def execute(self, query, *args):
-        self.statements.append(" ".join(query.split()))
+        # Line breaks kept: a "--" comment inside a statement ends at its line, not at the end of the statement.
+        self.statements.append(query.strip())
 
     async def fetch(self, query, *args):
         return []
