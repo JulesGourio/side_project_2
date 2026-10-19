@@ -153,6 +153,51 @@ DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 1;
 
 Si une requête renvoie `PERMISSION_DENIED`, elle doit passer par le SP UAT (même mécanisme que `runbooks/scripts/grants/`), pas par le compte personnel.
 
+- [ ] **J0e. Écarts de `uat_proj.qualibot.chunks` (analyse du 2026-10-19)**. La copie n'est plus un clone de v1 : le 18/10, la reprise du run du 16/10 a reconstruit la table (106 012 lignes) puis `4_describe_images` y a fusionné 40 200 passages d'images (MERGE sur `chunk_id` + colonne `anchor_chunk_index`). Constats : 305 REF avec plus d'IDDOC que v1 ; 184 REF avec des passages identiques sous plusieurs IDDOC (3 607 groupes, 3 726 copies en trop) ; 104 documents avec moins de chunks (1 618 chunks nets), dont 19 tronqués ; 1 REF seulement dans v1. Diagnostic (SQL UAT, lecture seule) :
+
+```sql
+-- 5. Chunks de la copie : dans le manifeste ou non, par type
+SELECT CASE WHEN m.IDDOC IS NULL THEN 'IDDOC hors manifeste' ELSE 'IDDOC dans le manifeste' END AS categorie,
+       c.chunk_content_type, COUNT(DISTINCT c.IDDOC) AS iddocs, COUNT(*) AS chunks
+FROM uat_proj.qualibot.chunks c
+LEFT JOIN (SELECT DISTINCT IDDOC FROM uat_proj.qualibot.parse_manifest) m ON c.IDDOC = m.IDDOC
+GROUP BY 1, 2 ORDER BY 1, chunks DESC;
+
+-- 6. Chunks d'un seul côté, par type
+SELECT 'absents de la copie' AS sens, v.chunk_content_type, COUNT(*) AS chunks
+FROM uat_landingzone.qualibot.chunks_v1 v LEFT ANTI JOIN uat_proj.qualibot.chunks c ON v.chunk_id = c.chunk_id
+GROUP BY v.chunk_content_type
+UNION ALL
+SELECT 'absents de v1', c.chunk_content_type, COUNT(*)
+FROM uat_proj.qualibot.chunks c LEFT ANTI JOIN uat_landingzone.qualibot.chunks_v1 v ON c.chunk_id = v.chunk_id
+GROUP BY c.chunk_content_type
+ORDER BY 1, 3 DESC;
+
+-- 7. Images de documents hors manifeste
+SELECT COUNT(DISTINCT i.IDDOC) AS iddocs_hors_manifeste, COUNT(*) AS images_hors_manifeste
+FROM uat_proj.qualibot.image_metadata i
+LEFT ANTI JOIN (SELECT DISTINCT IDDOC FROM uat_proj.qualibot.parse_manifest) m ON i.IDDOC = m.IDDOC;
+
+-- 8. Passages en double, par type
+SELECT c.chunk_content_type, COUNT(DISTINCT c.ref) AS refs, COUNT(*) AS passages
+FROM uat_proj.qualibot.chunks c
+JOIN (SELECT ref, body_sha256 FROM uat_proj.qualibot.chunks
+      WHERE body_sha256 IS NOT NULL GROUP BY ref, body_sha256 HAVING COUNT(DISTINCT IDDOC) > 1) d
+  ON c.ref = d.ref AND c.body_sha256 = d.body_sha256
+GROUP BY c.chunk_content_type ORDER BY passages DESC;
+
+-- 9. Documents avec moins de chunks que dans v1 (stratégie de parsing)
+WITH v AS (SELECT IDDOC, ANY_VALUE(ref) AS ref, COUNT(*) AS n_v1 FROM uat_landingzone.qualibot.chunks_v1 GROUP BY IDDOC),
+     c AS (SELECT IDDOC, COUNT(*) AS n_copie FROM uat_proj.qualibot.chunks GROUP BY IDDOC)
+SELECT v.IDDOC, v.ref, v.n_v1, c.n_copie, v.n_v1 - c.n_copie AS perdus, pd.parse_status, pd.parser_strategy
+FROM v JOIN c ON v.IDDOC = c.IDDOC
+LEFT JOIN uat_proj.qualibot.parsed_documents pd ON pd.IDDOC = v.IDDOC
+WHERE c.n_copie < v.n_v1
+ORDER BY perdus DESC LIMIT 50;
+```
+
+Aucune suppression avant lecture des résultats ; une correction éventuelle passe par un job SP, puis une resynchronisation de `chunks_index`.
+
 - [ ] **J0b. Plan lecture seule UAT** : Bitbucket, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur le schéma, les volumes ou l'app. Les `create` de nouveaux jobs sont normaux. Les `delete` de jobs (`apps_stop_nightly_uat`, `quality_scoring`, `score_production_qa_uat`, `sync_mlflow_scorer_assessments_uat`, `traces_migration`) sont à valider un par un dans l'UI avant J3.
 
 - [ ] **J0c. Retirer les déclarations temporaires** `qualibot_schema` et `qualibot_test` de `databricks.yml` (cible `qualibot-uat`), commit et push. Les ressources de l'app (`doc-compare-volume` et `test-volume` vers `uat_landingzone`) restent temporaires jusqu'à S4.
