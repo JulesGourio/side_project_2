@@ -26,27 +26,43 @@ LEGACY_TABLE_COPIES = (
 )
 
 
+# Column of a renamed table that points to the id of another one: the copy is only safe when every such id is there.
+LEGACY_PARENT = {'compare_feedbacks': ('message_id', 'compare_messages')}
+
+
 async def _carry_over_legacy_rows(conn) -> None:
     """Copy the rows of the renamed tables into the new ones. Runs only into an empty new table: the copied ids then
-    cannot collide with ids the app has already handed out."""
+    cannot collide with ids the app has already handed out. A copy that cannot be made is logged and the schema goes on;
+    the legacy tables are kept either way."""
     for legacy, current in LEGACY_TABLE_COPIES:
         if not await conn.fetchval('SELECT to_regclass($1) IS NOT NULL', legacy):
             continue
         if await conn.fetchval(f'SELECT EXISTS (SELECT 1 FROM {current})'):
             continue
-        legacy_cols = {r['column_name'] for r in await conn.fetch(
-            'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1',
-            legacy)}
-        current_cols = [r['column_name'] for r in await conn.fetch(
-            'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 '
-            'ORDER BY ordinal_position', current)]
-        cols = ', '.join(c for c in current_cols if c in legacy_cols)
-        copied = await conn.execute(f'INSERT INTO {current} ({cols}) SELECT {cols} FROM {legacy}')
-        if 'id' in current_cols:
-            await conn.execute(
-                f"SELECT setval(pg_get_serial_sequence('{current}', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) "
-                f'FROM {current}')
-        logger.info('Copied legacy rows %s -> %s (%s)', legacy, current, copied)
+        try:
+            parent = LEGACY_PARENT.get(current)
+            if parent and await conn.fetchval(
+                    f'SELECT EXISTS (SELECT 1 FROM {legacy} f WHERE f.{parent[0]} IS NOT NULL '
+                    f'AND NOT EXISTS (SELECT 1 FROM {parent[1]} m WHERE m.id = f.{parent[0]}))'):
+                logger.warning('Legacy rows %s -> %s not copied: some point to a %s row that is not there '
+                               '(the legacy history was not copied into it, ids would match other rows)',
+                               legacy, current, parent[1])
+                continue
+            legacy_cols = {r['column_name'] for r in await conn.fetch(
+                'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() '
+                'AND table_name = $1', legacy)}
+            current_cols = [r['column_name'] for r in await conn.fetch(
+                'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() '
+                'AND table_name = $1 ORDER BY ordinal_position', current)]
+            cols = ', '.join(c for c in current_cols if c in legacy_cols)
+            copied = await conn.execute(f'INSERT INTO {current} ({cols}) SELECT {cols} FROM {legacy}')
+            if 'id' in current_cols:
+                await conn.execute(
+                    f"SELECT setval(pg_get_serial_sequence('{current}', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) "
+                    f'FROM {current}')
+            logger.info('Copied legacy rows %s -> %s (%s)', legacy, current, copied)
+        except asyncpg.PostgresError as e:
+            logger.warning('Legacy rows %s -> %s not copied: %s', legacy, current, e)
 
 
 async def _move_legacy_volume_paths(conn) -> None:
