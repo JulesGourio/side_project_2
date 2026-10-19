@@ -103,10 +103,10 @@ targets:
                   OUTPUT_VOLUME_CATALOG: "uat_proj"
                   OUTPUT_VOLUME_SCHEMA: "qualibot"
                   OUTPUT_VOLUME_NAME: "staging"
-                  TABLES_TO_SKIP: "llm_requests"
+                  TABLES_TO_SKIP: ""
               environment_key: default
             - task_key: import_chatbot_tables_to_uat
-              description: "Load chatbot JSON exports (chat_feedbacks, chat_messages, chat_sessions) as Delta tables in uat_proj.qualibot"
+              description: "Load every Lakebase JSON export (chat, compare, impact search, users, caches, errors, request logs) as Delta tables in uat_proj.qualibot"
               depends_on:
                 - task_key: export_lakebase_uat_to_volume
               notebook_task:
