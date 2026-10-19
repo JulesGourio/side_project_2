@@ -30,8 +30,6 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"
               level: CAN_MANAGE
-            - user_name: "mehdi.lamrani@databricks.com"
-              level: CAN_MANAGE
           tasks:
             - task_key: create_chat_experiment
               spark_python_task:
@@ -78,8 +76,6 @@ targets:
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"
               level: CAN_MANAGE
-            - user_name: "mehdi.lamrani@databricks.com"
-              level: CAN_MANAGE
           tasks:
             - task_key: register_chat_prompts
               spark_python_task:
@@ -124,8 +120,6 @@ targets:
             - group_name: "Role-Project-LEAP-CoreDev"
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"
-              level: CAN_MANAGE
-            - user_name: "mehdi.lamrani@databricks.com"
               level: CAN_MANAGE
           parameters:
             - name: dry_run

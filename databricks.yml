@@ -201,8 +201,6 @@ targets:
             # The deploying human must stay in this list: it is the full desired state, and a creator left out loses Can Manage on its own project.
             - user_name: "jules.gourio.external@latecoere.aero"
               level: CAN_MANAGE
-            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
-              level: CAN_MANAGE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-DocCompare"
               level: CAN_USE
             - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
@@ -245,19 +243,6 @@ targets:
           postgres_role: "fde6ff28-739f-4a41-b61e-604a298c8478"
           attributes:
             createdb: false
-            createrole: false
-            bypassrls: false
-          membership_roles:
-            - DATABRICKS_SUPERUSER
-          replace_existing: true
-        # Direct SQL access to the DEV doccompare database for the developer.
-        mehdi:
-          role_id: "mehdi-lamrani"
-          parent: "projects/${resources.postgres_projects.qualibot-history.project_id}/branches/production"
-          identity_type: USER
-          postgres_role: "mehdi.lamrani@databricks.com"
-          attributes:
-            createdb: true
             createrole: false
             bypassrls: false
           membership_roles:
@@ -310,9 +295,6 @@ targets:
             - group_name: "Role-Project-LEAP-End-users-Qualibot-ChatBot"
               level: CAN_USE
             - user_name: "jules.gourio.external@latecoere.aero"
-              level: CAN_MANAGE
-            # Developer on the DEV copy; must be a user of the DEV workspace.
-            - user_name: "mehdi.lamrani@databricks.com"
               level: CAN_MANAGE
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP (stop/start jobs)
               level: CAN_MANAGE

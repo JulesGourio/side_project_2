@@ -118,13 +118,11 @@ Jobs du bundle `dev` :
 
 - [x] **P4. Groupes de compte visibles en DEV** _(2026-10-05)_ : `Role-Project-LEAP-CoreAdmin`, `Role-Project-LEAP-CoreDev`,
   `Role-Project-LEAP-End-users-Qualibot-DocCompare`, `Role-Project-LEAP-End-users-Qualibot-ChatBot`,
-  `leap-qualibot-service-accounts`, utilisateur `mehdi.lamrani@databricks.com` (sinon le `bundle deploy` échoue sur la permission
-  correspondante) :
+  `leap-qualibot-service-accounts` (sinon le `bundle deploy` échoue sur la permission correspondante) :
 
   ```powershell
   databricks groups list --profile DEV --filter "displayName sw 'Role-Project-LEAP'"
   databricks groups list --profile DEV --filter "displayName eq 'leap-qualibot-service-accounts'"
-  databricks users list --profile DEV --filter "userName eq 'mehdi.lamrani@databricks.com'"
   ```
 
 ## À faire
@@ -655,59 +653,42 @@ chunks remplacée (UI Vector Search) et relancer : `3_sync_indexes` le recrée. 
   `/Workspace/Shared/.bundle/qualibot/dev`.
 - [ ] **B2. Premier essai** : Pipelines ▸ Run pipeline ▸ branche voulue ▸ `deploy-dev-jobs` (ne touche pas l'app), puis `deploy-dev` (bundle + redéploiement de l'app).
 
-### M. Accès développeur supplémentaire (`mehdi.lamrani@databricks.com`)
+### M. Retrait de l'accès développeur `mehdi.lamrani@databricks.com`
 
-Objets **gérés par le bundle** (app, projet Lakebase, rôles Postgres, jobs DEV) : la liste de permissions est l'état complet, un droit ajouté à la
-main dans l'UI est **effacé au prochain `bundle deploy`** → le développeur est déclaré dans `databricks.yml` et `resources/*.yml`. Objets **hors bundle**
-(Unity Catalog, endpoint Vector Search) : à la main, ça reste.
+Le développeur n'est plus déclaré dans `databricks.yml` ni dans `resources/*.yml` (app, projet Lakebase, rôle Postgres `mehdi-lamrani`, jobs DEV). Les objets **gérés par le bundle** perdent son accès au prochain `bundle deploy` : la liste des permissions est l'état complet. Les objets **hors bundle** (Unity Catalog, endpoint Vector Search, accès au dépôt) gardent ses droits tant qu'ils ne sont pas retirés à la main, dans l'ordre ci-dessous.
 
-- [ ] **M1. Bundle** : app CAN_MANAGE, projet Lakebase CAN_MANAGE, rôle Postgres `mehdi-lamrani` (SUPERUSER sur la base `doccompare`), CAN_MANAGE sur les jobs DEV :
+- [ ] **M1. Bundle** : l'app, le projet Lakebase et les jobs DEV perdent le développeur, le rôle Postgres `mehdi-lamrani` est supprimé :
 
   ```powershell
-  databricks bundle plan -t dev --profile DEV     # permissions en update, create postgres_roles.mehdi, 0 to delete
+  databricks bundle plan -t dev --profile DEV     # permissions en update, delete postgres_roles.mehdi, aucun autre delete
   databricks bundle deploy -t dev --profile DEV
   ```
 
-- [ ] **M2. Unity Catalog — catalogs, volumes, index** (USE CATALOG demande des droits que vous n'avez pas : on passe par le job de droits, sous le SP DEV) :
+  Si le plan annonce un autre `delete`, ne pas déployer. Si la suppression du rôle échoue parce qu'il possède des objets, éditeur SQL Lakebase (base `doccompare`, branche `production`) : `REASSIGN OWNED BY "mehdi.lamrani@databricks.com" TO "fde6ff28-739f-4a41-b61e-604a298c8478"; DROP OWNED BY "mehdi.lamrani@databricks.com";` puis relancer le déploiement.
 
-  ```powershell
-  databricks bundle run grant_app_access_dev -t dev --profile DEV --params app_service_principal=mehdi.lamrani@databricks.com
-  ```
-
-- [ ] **M3. Unity Catalog — tables** (éditeur SQL DEV ; owner de `dev_proj.qualibot`). **Attention** :
-  `dev_proj.qualibot` contient aussi la copie des conversations UAT réelles (`chat_messages`, `chat_sessions`, `users`, `feedbacks`…). Choisir :
+- [ ] **M2. Unity Catalog** (éditeur SQL DEV, propriétaire de `dev_proj` ou `leap-core-service_accounts-dev`). Lister d'abord ce qui lui reste :
 
   ```sql
-  -- (a) tout le schema, données de chat UAT comprises
-  GRANT ALL PRIVILEGES ON SCHEMA dev_proj.qualibot TO `mehdi.lamrani@databricks.com`;
-
-  -- (b) seulement le corpus et l'état du pipeline
-  GRANT CREATE TABLE ON SCHEMA dev_proj.qualibot TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.chunks               TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.parsing_checkpoint TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.parsed_documents      TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.image_metadata       TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.parse_manifest       TO `mehdi.lamrani@databricks.com`;
-  GRANT SELECT, MODIFY ON TABLE dev_proj.qualibot.category_reference   TO `mehdi.lamrani@databricks.com`;
-
-  -- schema projet
-  GRANT ALL PRIVILEGES ON SCHEMA dev_proj.qualibot TO `mehdi.lamrani@databricks.com`;
+  SELECT 'catalog' AS niveau, catalog_name AS objet, privilege_type FROM dev_proj.information_schema.catalog_privileges WHERE grantee = 'mehdi.lamrani@databricks.com'
+  UNION ALL SELECT 'schema', schema_name, privilege_type FROM dev_proj.information_schema.schema_privileges WHERE grantee = 'mehdi.lamrani@databricks.com'
+  UNION ALL SELECT 'table', table_name, privilege_type FROM dev_proj.information_schema.table_privileges WHERE grantee = 'mehdi.lamrani@databricks.com'
+  UNION ALL SELECT 'volume', volume_name, privilege_type FROM dev_proj.information_schema.volume_privileges WHERE grantee = 'mehdi.lamrani@databricks.com';
   ```
 
-  Pour `dev_proj`, USE CATALOG : propriétaire `leap-core-service_accounts-dev` (demander, ou étendre le job de M2).
+  Puis retirer, en une fois pour le schéma (les droits de table et de volume sont retirés avec lui) :
 
-- [ ] **M4. Endpoint Vector Search `qualibot`** — UI : Compute ▸ Vector Search ▸ `qualibot` ▸ Permissions ▸ le développeur « Can manage ». Ou :
-
-  ```powershell
-  $ep = (databricks vector-search-endpoints get-endpoint qualibot --profile DEV -o json | ConvertFrom-Json).id
-  databricks permissions update vector-search-endpoints $ep --profile DEV `
-    --json '{\"access_control_list\":[{\"user_name\":\"mehdi.lamrani@databricks.com\",\"permission_level\":\"CAN_MANAGE\"}]}'
+  ```sql
+  REVOKE ALL PRIVILEGES ON SCHEMA dev_proj.qualibot FROM `mehdi.lamrani@databricks.com`;
+  REVOKE ALL PRIVILEGES ON CATALOG dev_proj FROM `mehdi.lamrani@databricks.com`;
   ```
 
-- [ ] **M5. Pour qu'il puisse déployer lui-même** (`bundle deploy -t dev`) : rôle « Service principal: User » sur `job-runner-sa-dev` ; accès au repo
-  Bitbucket ; le dossier du bundle `/Workspace/Shared/.bundle/qualibot/dev` est déjà accessible à tous.
-- [ ] **M6. Job de parsing `D_1_Qualibot_Parsing_Pipeline`** : sa définition est partagée avec UAT/PROD, le développeur n'y est pas déclaré. Un droit ajouté
-  à la main tient jusqu'au prochain `bundle deploy`. Solution durable : l'ajouter au groupe `Role-Project-LEAP-CoreDev` (CAN_MANAGE partout) — action d'un admin.
+  Si la requête de liste montre encore un droit direct sur une table, un volume ou un index (`chunks_index`), `REVOKE ALL PRIVILEGES ON TABLE|VOLUME dev_proj.qualibot.<objet> FROM `mehdi.lamrani@databricks.com`;`. Relancer la requête de liste : elle ne doit rien renvoyer.
+
+- [ ] **M3. Endpoint Vector Search `qualibot`** — UI DEV : Compute ▸ Vector Search ▸ `qualibot` ▸ Permissions ▸ retirer le développeur.
+
+- [ ] **M4. Accès au dépôt et au déploiement** : retirer son accès au dépôt Bitbucket et le rôle « Service principal: User » sur `job-runner-sa-dev` (action d'un administrateur).
+
+- [ ] **M5. Job de parsing `D_1_Qualibot_Parsing_Pipeline`** : un droit qu'il aurait reçu à la main sur ce job disparaît au prochain `bundle deploy` (`deploy-dev` ou `deploy-dev-jobs`).
 
 ### Q. Pipeline de parsing : statuts, tentatives et modèles d'image
 
