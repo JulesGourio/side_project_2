@@ -1,17 +1,13 @@
-"""Fetch the comments of a Bitbucket Cloud pull request into a JSON + Markdown file.
+"""Fetch the comments of the Bitbucket Cloud pull request of the current branch.
 
-Usage (PowerShell, from the repository root):
-    $env:BB_USER  = "<bitbucket username or email>"
-    $env:BB_TOKEN = "<app password / API token with Pull requests: Read>"
-    python runbooks/scripts/bitbucket_pr/fetch_pr_comments.py `
-        --workspace <workspace> --repo <repo_slug> --pr <id> `
-        --pr-commit <hash the PR was cut from> --out runbooks/pr_review/comments
-
-Only comments not seen by a previous run are written (state in <out>/seen.json);
-pass --all to ignore it. Inline comments get the line they point to in the
-current checkout (--pr-commit .. HEAD diff), since the PR is older than HEAD.
+Usage (PowerShell, from the repository root): python runbooks/scripts/bitbucket_pr/fetch_pr_comments.py
+Workspace and repo come from the `origin` remote, the PR from the current branch
+(else the latest open PR); username and token are asked once per run, never stored.
+Only comments not seen by a previous run are written (<out>/seen.json); --all ignores it.
+Inline comments get the line they point to in the current checkout (PR_COMMIT..HEAD diff).
 """
 import argparse
+import getpass
 import json
 import logging
 import os
@@ -21,6 +17,8 @@ from pathlib import Path
 
 import requests
 
+PR_COMMIT = "14296499a19baf710dc6c10d74bdd71204176b2d"
+OUT = "runbooks/pr_review/comments"
 logger = logging.getLogger("fetch_pr_comments")
 API = "https://api.bitbucket.org/2.0/repositories/{ws}/{repo}/pullrequests/{pr}"
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -61,17 +59,27 @@ def current_line(line, hs):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workspace", required=True)
-    ap.add_argument("--repo", required=True)
-    ap.add_argument("--pr", required=True, type=int)
-    ap.add_argument("--pr-commit", required=True)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--pr", type=int)
+    ap.add_argument("--pr-commit", default=PR_COMMIT)
+    ap.add_argument("--out", default=OUT)
     ap.add_argument("--all", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    auth = (os.environ["BB_USER"], os.environ["BB_TOKEN"])
-    base = API.format(ws=args.workspace, repo=args.repo, pr=args.pr)
+    git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, check=True).stdout.strip()
+    remote = re.search(r"bitbucket\.org[:/]([^/]+)/([^/]+?)(?:\.git)?$", git("remote", "get-url", "origin"))
+    ws, repo = remote[1], remote[2]
+    auth = (os.environ.get("BB_USER") or input("Bitbucket user: "),
+            os.environ.get("BB_TOKEN") or getpass.getpass("Bitbucket app password/token: "))
+    prs = f"https://api.bitbucket.org/2.0/repositories/{ws}/{repo}/pullrequests"
+    pr = args.pr
+    if not pr:
+        branch = git("branch", "--show-current")
+        found = list(get_all(f'{prs}?state=OPEN&q=source.branch.name="{branch}"', auth)) or list(get_all(prs + "?state=OPEN", auth))
+        pr = found[0]["id"]
+        logger.info("PR %s (%s)", pr, found[0]["title"])
+    args.workspace, args.repo, args.pr = ws, repo, pr
+    base = API.format(ws=ws, repo=repo, pr=pr)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     seen_file = out / "seen.json"

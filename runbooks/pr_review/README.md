@@ -1,7 +1,7 @@
 # Bitbucket PR review log
 
 One section per PR comment (id from Bitbucket), newest at the bottom. Filled by Claude each time comments are handed over.
-PR cut from commit: `<hash>` (about 15 h before the branch head at hand-over, 2026-10-19; head then `5a31e59`).
+PR cut from commit: `14296499a19baf710dc6c10d74bdd71204176b2d`.
 
 Template:
 
