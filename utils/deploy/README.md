@@ -36,8 +36,8 @@ python utils/deploy/render_target_config_env.py <dev|uat|prod> [output_path]
    the client sources and the notebooks `*.ipynb`).
 3. Reads the compute state of the app. `ACTIVE` or `STARTING` needs no action. Any other state makes the script start the
    app.
-4. Runs `databricks apps deploy` with the source path `/Workspace/Shared/.bundle/qualibot/<target>/files`. For `prod` the
-   root is `/Workspace/.bundle`.
+4. Runs `databricks apps deploy` with the source path `/Workspace/.bundle/qualibot/<target>/files`. The bundle root is
+   `/Workspace/.bundle` for every target: nothing of a bundle lives under `/Workspace/Shared`.
 
 `-SyncOnly` ends after the upload. It skips the state check and the app deployment. `-Infra` needs MANAGE on the catalog.
 

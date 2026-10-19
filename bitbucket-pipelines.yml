@@ -72,6 +72,22 @@ definitions:
           - databricks workspace list /Workspace/.bundle/qualibot/dev/state -p job-runner-sa-dev
 
     # -----------------------------------------------------------------------
+    # UAT, one-off: copy the bundle state from the old root (/Workspace/Shared/.bundle/qualibot/qualibot-uat)
+    # to the new one (/Workspace/.bundle/qualibot/qualibot-uat). Run as the UAT SP, before uat-state-fix,
+    # which works on the state of the new root. No --overwrite: a second run refuses to replace the copy.
+    # -----------------------------------------------------------------------
+    - step: &migrate-uat-state
+        name: One-off, copy UAT bundle state to /Workspace/.bundle (uat)
+        deployment: uat
+        clone:
+          depth: 1
+        script:
+          - bash utils/deploy/bitbucket_deploy.sh uat setup
+          - databricks workspace export-dir /Workspace/Shared/.bundle/qualibot/qualibot-uat/state staging/uat-state -p job-runner-sa-uat
+          - databricks workspace import-dir staging/uat-state /Workspace/.bundle/qualibot/qualibot-uat/state -p job-runner-sa-uat
+          - databricks workspace list /Workspace/.bundle/qualibot/qualibot-uat/state -p job-runner-sa-uat
+
+    # -----------------------------------------------------------------------
     # DEV, read-only: bundle plan against the new root. Expected: no create on the jobs,
     # no delete on the schemas or volumes. Nothing is deployed.
     # -----------------------------------------------------------------------
@@ -302,6 +318,8 @@ pipelines:
       - step: *deploy-dev-jobs
     migrate-dev-state:
       - step: *migrate-dev-state
+    migrate-uat-state:
+      - step: *migrate-uat-state
     plan-dev:
       - step: *plan-dev
     plan-uat:

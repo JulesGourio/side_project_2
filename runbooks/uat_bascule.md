@@ -102,7 +102,11 @@ databricks apps get qualibot --profile UAT
 
 ## Phase J — jobs (ancienne app intacte)
 
-- [ ] **J0a. Détacher l'état du bundle UAT de `uat_landingzone`** (sans rien supprimer dans Databricks) : copier le git dans `latec-compare`, puis Bitbucket, pipeline `uat-state-fix`. Il détache `qualibot_schema`, `qualibot_test`, `qualibot_doc_compare`, `qualibot_images`, puis rattache `qualibot_doc_compare` et `qualibot_images` aux volumes `uat_proj` créés en P4. Attendu : vert.
+- [ ] **M0. Copier l'état du bundle UAT hors de `/Workspace/Shared`** (aucun déploiement, l'état seulement) : Bitbucket, pipeline `migrate-uat-state` (SP `job-runner-sa-uat`). Il copie `/Workspace/Shared/.bundle/qualibot/qualibot-uat/state` vers `/Workspace/.bundle/qualibot/qualibot-uat/state`, sans écraser. Un second lancement échoue, c'est voulu. Doit passer **avant** J0a : `uat-state-fix` et `plan-uat` lisent l'état de la nouvelle racine. Si le SP n'a pas les droits sur `/Workspace/.bundle` : un admin lui donne `CAN_MANAGE` (commande dans le chat), puis on relance.
+
+- [ ] **M1. Retirer l'ancien dossier de bundle UAT** (après M0, J0a, J0b, J3 et deploy-uat verts, et sur confirmation) : `/Workspace/Shared/.bundle/qualibot/qualibot-uat`. Rien ne doit rester sous `/Workspace/Shared/.bundle`, comme pour DEV et PROD.
+
+- [ ] **J0a. Détacher l'état du bundle UAT de `uat_landingzone`** (sans rien supprimer dans Databricks, après M0) : copier le git dans `latec-compare`, puis Bitbucket, pipeline `uat-state-fix`. Il détache `qualibot_schema`, `qualibot_test`, `qualibot_doc_compare`, `qualibot_images`, puis rattache `qualibot_doc_compare` et `qualibot_images` aux volumes `uat_proj` créés en P4. Attendu : vert.
 
 - [ ] **J0b. Plan lecture seule UAT** : Bitbucket, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur le schéma, les volumes ou l'app. Les `create` de nouveaux jobs sont normaux. Les `delete` de jobs (`apps_stop_nightly_uat`, `quality_scoring`, `score_production_qa_uat`, `sync_mlflow_scorer_assessments_uat`, `traces_migration`) sont à valider un par un dans l'UI avant J3.
 

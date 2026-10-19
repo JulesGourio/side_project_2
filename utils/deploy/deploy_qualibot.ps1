@@ -56,8 +56,8 @@ try {
     & python utils/deploy/render_target_config_env.py $AppEnv target_config.env
     if ($LASTEXITCODE -ne 0) { throw "render_target_config_env.py failed (exit $LASTEXITCODE)" }
 
-    # DEV and PROD bundles live outside /Workspace/Shared: Databricks warns when a bundle root there is writable by all users.
-    $BundleRoot = if ($AppEnv -in @('dev', 'prod')) { '/Workspace/.bundle' } else { '/Workspace/Shared/.bundle' }
+    # Bundles live outside /Workspace/Shared: Databricks warns when a bundle root there is writable by all users.
+    $BundleRoot = '/Workspace/.bundle'
     $SourceCodePath = "$BundleRoot/qualibot/$Target/files"
 
     if ($Infra) {
