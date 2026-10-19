@@ -1,10 +1,10 @@
 """Copy the Lakebase tables of UAT into Delta tables of dev_proj.qualibot. One-shot, run by hand, never deployed.
 
-Reads the JSON Lines files written by the UAT job lakebase_export_uat_to_volume (default), or reads Lakebase
+Reads the JSON Lines files written by the UAT job lakebase_export (default), or reads Lakebase
 directly (--direct). Each table is then created or replaced as a Delta table in the DEV catalog.
 
 USAGE, from the repo root (in the .venv of the project, with psycopg2-binary):
-    1. Default: run the UAT job `lakebase_export_uat_to_volume` first, then
+    1. Default: run the UAT job `lakebase_export` first, then
        python runbooks/scripts/lakebase/copy_Lakebase_tables.py
 
     2. Direct mode (needs network access to port 5432, blocked from the corporate network):
@@ -42,7 +42,7 @@ WAREHOUSE_ID = "13eff4a6095513cb"  # SQL Warehouse used for the CREATE TABLE sta
 STAGING_VOLUME_DBFS = f"dbfs:/Volumes/{COPY_STAGING_CATALOG}/{COPY_STAGING_SCHEMA}/{COPY_STAGING_VOLUME}"
 STAGING_VOLUME_SQL  = f"/Volumes/{COPY_STAGING_CATALOG}/{COPY_STAGING_SCHEMA}/{COPY_STAGING_VOLUME}"
 
-# Volume filled by the UAT job lakebase_export_uat_to_volume (utils/lakebase_sync/export_lakebase_uat_to_volume_job.py).
+# Volume filled by the UAT job lakebase_export (utils/lakebase_sync/export_lakebase_to_volume_job.py).
 UAT_SOURCE_PROFILE          = LAKEBASE[COPY_SOURCE_ENV]["profile"]
 LAKEBASE_EXPORT_VOLUME_DBFS = "dbfs:/Volumes/uat_proj/qualibot/staging/lakebase_export"
 
@@ -185,7 +185,7 @@ def main():
     ap.add_argument(
         "--direct", action="store_true",
         help="Direct psycopg2 connection to Lakebase (needs access to port 5432, blocked from the corporate "
-             "network). By default, fetches the JSON exported by the UAT job lakebase_export_uat_to_volume.",
+             "network). By default, fetches the JSON exported by the UAT job lakebase_export.",
     )
     args = ap.parse_args()
 
@@ -221,7 +221,7 @@ def main():
         files = list_uat_export_files()
         if not files:
             logger.info(f"Aucun fichier trouvé sur {LAKEBASE_EXPORT_VOLUME_DBFS}.\n"
-                "Run the UAT job lakebase_export_uat_to_volume first.")
+                "Run the UAT job lakebase_export first.")
             return
 
         logger.info(f"{len(files)} fichier(s) trouvé(s) : {files}\n")

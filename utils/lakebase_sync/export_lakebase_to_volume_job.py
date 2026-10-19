@@ -14,10 +14,10 @@ dbutils.widgets.text("LAKEBASE_PROJECT_ID", "qualibot")
 dbutils.widgets.text("LAKEBASE_BRANCH", "production")
 dbutils.widgets.text("LAKEBASE_ENDPOINT", "primary")
 dbutils.widgets.text("LAKEBASE_DATABASE", "doccompare")
-dbutils.widgets.text("OUTPUT_VOLUME_CATALOG", "uat_proj")
+dbutils.widgets.text("OUTPUT_VOLUME_CATALOG", "")
 dbutils.widgets.text("OUTPUT_VOLUME_SCHEMA", "qualibot")
 dbutils.widgets.text("OUTPUT_VOLUME_NAME", "staging")
-dbutils.widgets.text("TABLES_TO_SKIP", "llm_requests")
+dbutils.widgets.text("TABLES_TO_SKIP", "")
 
 LAKEBASE_PROJECT_ID = dbutils.widgets.get("LAKEBASE_PROJECT_ID")
 LAKEBASE_BRANCH = dbutils.widgets.get("LAKEBASE_BRANCH")
@@ -26,6 +26,8 @@ LAKEBASE_DATABASE = dbutils.widgets.get("LAKEBASE_DATABASE")
 OUTPUT_VOLUME_CATALOG = dbutils.widgets.get("OUTPUT_VOLUME_CATALOG")
 OUTPUT_VOLUME_SCHEMA = dbutils.widgets.get("OUTPUT_VOLUME_SCHEMA")
 OUTPUT_VOLUME_NAME = dbutils.widgets.get("OUTPUT_VOLUME_NAME")
+if not OUTPUT_VOLUME_CATALOG:
+    raise ValueError("The OUTPUT_VOLUME_CATALOG parameter is required")
 TABLES_TO_SKIP = {
     table.strip()
     for table in dbutils.widgets.get("TABLES_TO_SKIP").split(",")
@@ -47,7 +49,7 @@ conn = lakebase_connect_with(
     WorkspaceClient(), LAKEBASE_PROJECT_ID, LAKEBASE_BRANCH, LAKEBASE_ENDPOINT, LAKEBASE_DATABASE
 )
 
-logger = logging.getLogger("export_lakebase_uat_to_volume_job")
+logger = logging.getLogger("export_lakebase_to_volume_job")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     _handler = logging.StreamHandler()

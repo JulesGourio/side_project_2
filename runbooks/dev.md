@@ -66,7 +66,7 @@ Jobs du bundle `dev` :
 |---|---|
 | `Z_1_Qualibot_Copy_Uat_To` (`copy_uat_to_dev`) | manuel |
 | `Z_1_Qualibot_Grant_App_Access` (`grant_app_access_dev`) | manuel |
-| `D_1_Qualibot_Lakebase_Export_To_Volume` (`lakebase_export_dev_to_volume`) | PAUSED |
+| `D_1_Qualibot_Lakebase_Export_To_Volume` (`lakebase_export`) | PAUSED |
 | `D_1_Qualibot_Parsing_Pipeline` (`parsing_pipeline`) | PAUSED |
 | `Z_2_Qualibot_Create_Chat_Experiment` (`create_chat_experiment_dev`) | manuel |
 | `Z_3_Qualibot_Register_Chat_Prompts` (`register_chat_prompts_dev`) | manuel |

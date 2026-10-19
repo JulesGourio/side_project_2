@@ -1,22 +1,31 @@
 # Databricks notebook source
-# Loads every JSON export of the UAT staging volume (one file per Lakebase table: chat, compare, impact search, users,
-# caches, errors, request logs) into a Delta table of the same name in uat_proj.qualibot. Runs as a second task in the
-# lakebase_export_uat_to_volume job, right after the export task that produces the JSON files. The notebook keeps its
-# first name, from when it loaded the chat tables only.
+# Loads every JSON export of the staging volume of the environment (one file per Lakebase table: chat, compare, impact
+# search, users, caches, errors, request logs) into a Delta table of the same name in <CATALOG>.<SCHEMA>. Runs as the
+# second task of the lakebase_export job, right after the export task that produces the JSON files; the same notebook
+# serves dev, uat and prod through the job parameters.
 #
-# Consumers: the "Qualibot Usage Tracking" Lakeview dashboard (UAT workspace), the SQL alerts and the chat scoring
-# (chat_messages, chat_sessions, chat_feedbacks, chat_turns, chat_retrieved_chunks, app_errors), and anyone querying the
-# history of the app in SQL.
-import os
+# Consumers: the "Qualibot Usage Tracking" Lakeview dashboard, the SQL alerts and the chat scoring (chat_messages,
+# chat_sessions, chat_feedbacks, chat_turns, chat_retrieved_chunks, app_errors), and anyone querying the history of the
+# app in SQL.
+import logging
 from pathlib import PurePosixPath
 
+# Parameters come through widgets: serverless tasks have no spark_env_vars.
+dbutils.widgets.removeAll()
+dbutils.widgets.text("CATALOG", "")
+dbutils.widgets.text("SCHEMA", "qualibot")
+dbutils.widgets.text("VOLUME_NAME", "staging")
+# "false" turns the import off for an environment whose schema already holds Delta copies of another environment's tables.
+dbutils.widgets.text("ENABLED", "true")
 
-SOURCE_EXPORT_DIR = os.getenv(
-    "SOURCE_EXPORT_DIR",
-    "/Volumes/uat_proj/qualibot/staging/lakebase_export",
-)
-TARGET_CATALOG = os.getenv("TARGET_CATALOG", "uat_proj")
-TARGET_SCHEMA = os.getenv("TARGET_SCHEMA", "qualibot")
+if dbutils.widgets.get("ENABLED").strip().lower() != "true":
+    dbutils.notebook.exit("Import to Delta is off for this target (ENABLED is not true)")
+
+TARGET_CATALOG = dbutils.widgets.get("CATALOG").strip()
+if not TARGET_CATALOG:
+    raise ValueError("The CATALOG parameter is required")
+TARGET_SCHEMA = dbutils.widgets.get("SCHEMA").strip()
+SOURCE_EXPORT_DIR = f"/Volumes/{TARGET_CATALOG}/{TARGET_SCHEMA}/{dbutils.widgets.get('VOLUME_NAME').strip()}/lakebase_export"
 # Tables this job loaded before it loaded them all: they exist without the marker property below.
 FIRST_LOADED_TABLES = {"chat_feedbacks", "chat_messages", "chat_sessions", "chat_turns", "chat_retrieved_chunks",
                        "app_errors"}
@@ -46,9 +55,7 @@ source_files = iter_export_files(SOURCE_EXPORT_DIR)
 if not source_files:
     raise RuntimeError(f"No JSON file found in {SOURCE_EXPORT_DIR}")
 
-import logging
-
-logger = logging.getLogger("import_chatbot_tables_to_uat_job")
+logger = logging.getLogger("import_lakebase_tables_to_delta_job")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     _handler = logging.StreamHandler()

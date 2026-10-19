@@ -127,7 +127,7 @@ GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA uat_proj.qualibot TO `<
 **0.5 — Tables chat depuis Lakebase (run ponctuel)**
 
 ```powershell
-databricks bundle run -t qualibot-uat lakebase_export_uat_to_volume --profile UAT
+databricks bundle run -t qualibot-uat lakebase_export --profile UAT
 ```
 
 Ce job exporte Lakebase vers le volume, puis recharge `chat_*` et `app_errors` dans `uat_proj.qualibot`.
@@ -521,7 +521,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
   - [ ] **D5.8b. Exporter le journal pour la notation** : lancer une fois le job d'export Lakebase (`D_1_Qualibot_Lakebase_Export_To_Volume`) ; il écrit toutes les tables, dont `chat_turns` et `chat_retrieved_chunks`, dans le volume de staging, et sa 2e tâche les charge aussi dans `uat_proj.qualibot` (avec `errors`) :
 
     ```powershell
-    databricks bundle run lakebase_export_uat_to_volume -t qualibot-uat --profile UAT
+    databricks bundle run lakebase_export -t qualibot-uat --profile UAT
     ```
 
     ```sql

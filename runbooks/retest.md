@@ -110,7 +110,7 @@ databricks bundle run grant_app_access_dev -t dev --profile DEV
 python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV
 
 # 3. export de la base Lakebase DEV vers le volume staging
-databricks bundle run lakebase_export_dev_to_volume -t dev --profile DEV
+databricks bundle run lakebase_export -t dev --profile DEV
 
 # 4. notation : estimation seulement, aucun juge appelé
 databricks bundle run score_chat_traces_dev -t dev --profile DEV
@@ -126,7 +126,7 @@ Si un job échoue, l'erreur est dans l'UI Jobs DEV, onglet **Runs**, cellule en 
 
 - [ ] 0.4 étape 1 (`grant_app_access_dev`) : une ligne `OK:` par droit
 - [ ] 0.4 étape 2 (`migrate_lakebase.py --env DEV`)
-- [ ] 0.4 étape 3 (`lakebase_export_dev_to_volume`)
+- [ ] 0.4 étape 3 (`lakebase_export`)
 - [ ] 0.4 étape 5 (`score_chat_traces_dev`, estimation) : lignes par juge lues
 - [ ] 0.4 étape 6 (arrêt et démarrage de l'app : `STOPPED` puis `ACTIVE`)
 

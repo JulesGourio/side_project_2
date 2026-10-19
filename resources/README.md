@@ -14,7 +14,7 @@ Parent: [root README](../README.md). The tasks run the notebooks and scripts of 
 | `chat_mlflow.yml` | `Z_2_Qualibot_Create_Chat_Experiment` (`create_chat_experiment.py`), `Z_3_Qualibot_Register_Chat_Prompts` (`register_chat_prompts.py`), `D_2_Qualibot_Score_Chat_Traces` (`score_chat_traces.py`, paused) | `dev`, `qualibot-uat`, `qualibot-prod` | `pipeline_write_env`, `bundle.name`, `bundle.target` |
 | `dev_copy.yml` | `Z_1_Qualibot_Copy_Uat_To_Dev`, three tasks: table import, Vector Search endpoint, index sync | `dev` | `pipeline_write_env`, `parsing_vector_search_indexes`; job parameter `overwrite` |
 | `grants.yml` | `Z_1_Qualibot_Grant_App_Access` (`grant_app_access.py`) and `Z_1_Qualibot_Grant_Volume_Access` (`grant_volume_access_job.py`) | `dev` | `pipeline_write_env`, `bundle.target` |
-| `lakebase_sync.yml` | Lakebase export to a volume, `D_1_Qualibot_Lakebase_Export_To_Volume` (DEV and UAT); a chatbot-table import task after the export on UAT | `dev`, `qualibot-uat` | `pipeline_write_env`, `bundle.target` |
+| `lakebase_sync.yml` | Lakebase export to the staging volume, then load of every exported table as Delta tables, `D_1_Qualibot_Lakebase_Export_To_Volume`: one job for every target | `dev`, `qualibot-uat`, `qualibot-prod` | `pipeline_write_env`, `lakebase_export_schedule_pause`, `lakebase_import_to_delta` |
 | `parsing_pipeline.job.yml` | `D_1_Qualibot_Parsing_Pipeline`, six tasks `1_categories` to `6_update_kb_metadata` (see [`utils/parsing_pipeline/README.md`](../utils/parsing_pipeline/README.md)) | `dev`, `qualibot-uat`, `qualibot-prod` | `pipeline_write_env`, the `intraqual_*` and `parsing_*` variables, `bundle.target` |
 
 The apps are declared in `databricks.yml`, not here. Every variable read here is declared in the `variables:` section
@@ -27,8 +27,7 @@ Times are in `Europe/Brussels` (the schedules of the apps and of the pipeline); 
 | Job name | Resource key | Target | Trigger |
 |---|---|---|---|
 | `D_1_Qualibot_Parsing_Pipeline` | `parsing_pipeline` | `dev`, `qualibot-uat`, `qualibot-prod` | `dev`: `parsing_schedule_cron` (04:00), `PAUSED`; UAT and PROD: manual |
-| `D_1_Qualibot_Lakebase_Export_To_Volume` | `lakebase_export_dev_to_volume` | `dev` | 02:00 and 14:00, `PAUSED` |
-| `D_1_Qualibot_Lakebase_Export_To_Volume` | `lakebase_export_uat_to_volume` | `qualibot-uat` | 02:00 and 14:00, `UNPAUSED` |
+| `D_1_Qualibot_Lakebase_Export_To_Volume` | `lakebase_export` | `dev`, `qualibot-uat`, `qualibot-prod` | 02:00 and 14:00 (`lakebase_export_schedule_pause`): `PAUSED` on `dev` and `qualibot-prod`, `UNPAUSED` on `qualibot-uat`. The Delta load (`lakebase_import_to_delta`) is off on `dev` |
 | `Z_1_Qualibot_Copy_Uat_To_Dev` | `copy_uat_to_dev` | `dev` | manual |
 | `Z_1_Qualibot_Grant_App_Access` | `grant_app_access_dev` | `dev` | manual |
 | `Z_2_Qualibot_Create_Chat_Experiment` | `create_chat_experiment_<target>` | `dev`, `qualibot-uat`, `qualibot-prod` | manual |

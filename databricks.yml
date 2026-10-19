@@ -114,6 +114,12 @@ variables:
   job_activity_tag:
     description: "activity-type tag of every job and of its clusters, {env}-job (the cluster policies require it)"
     default: "dev-job"
+  lakebase_export_schedule_pause:
+    description: "PAUSED: the Lakebase export job (D_1_Qualibot_Lakebase_Export_To_Volume) does not run on its schedule. UNPAUSED: it runs at 02:00 and 14:00 (Europe/Brussels)."
+    default: "PAUSED"
+  lakebase_import_to_delta:
+    description: "true: the export job also loads every exported table as a Delta table of <pipeline_write_env>_proj.qualibot. false on DEV, whose schema holds Delta copies of the UAT tables."
+    default: "false"
   notification_email:
     description: "Recipient of the failure notifications of every job"
     default: "LEAP_Databricks_Alert@latecoere.aero"
@@ -276,7 +282,7 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
-        # Lakebase export of the DEV app (lakebase_export_dev_to_volume below).
+        # Lakebase export of the DEV app (lakebase_export, resources/lakebase_sync.yml).
         qualibot_staging:
           catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
@@ -469,6 +475,8 @@ targets:
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "uat-job"
+      lakebase_export_schedule_pause: "UNPAUSED"
+      lakebase_import_to_delta: "true"
       job_cluster_policy_id_S: "000E7559CADE5290"
       notification_email: "jules.gourio.external@latecoere.aero"
 
@@ -586,6 +594,9 @@ targets:
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       job_activity_tag: "prod-job"
+      # PAUSED until promoted on explicit decision.
+      lakebase_export_schedule_pause: "PAUSED"
+      lakebase_import_to_delta: "true"
       job_cluster_policy_id_S: "001C199A8D85FE35"
       parsing_offline_models_path: "/Volumes/prod_proj/qualibot/docling_models"
       # Same Lakebase database the deployed qualibot-prod app reads and writes (LAKEBASE_DATABASE in app.yaml).

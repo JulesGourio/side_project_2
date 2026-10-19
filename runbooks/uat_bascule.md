@@ -405,7 +405,13 @@ SELECT (SELECT COUNT(*) FROM messages) AS legacy, (SELECT COUNT(*) FROM compare_
 
 - [ ] **Q11. Rechunk et catalogue des documents** : la cible est en `rechunk` (J2) : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Run now* (J5). Il purge les révisions remplacées, reconstruit `chunks`, resynchronise `chunks_index` (environ 1 h, le chat reste servi par l'index en cours) et remplit `doc_catalog` en dernière tâche. Ensuite : requêtes 5 et 3 de J0e (zéro IDDOC hors manifeste), J6 (index `ONLINE`), J7 (retour à `incremental`, `deploy-uat-jobs`), J8 (reprise du planning), puis redémarrer l'app : UI UAT, Apps, `qualibot`, *Stop*, puis *Start*.
 
-- [ ] **Q12. Export du journal de notation** (S8) : UI UAT, Workflows, `D_1_Qualibot_Lakebase_Export_To_Volume`, *Run now*.
+- [ ] **Q12. Export du journal de notation** (S8) : UI UAT, Workflows, `D_1_Qualibot_Lakebase_Export_To_Volume`, *Run now*. Le job est le même sur DEV, UAT et PROD (clé `lakebase_export`, tâches `export_lakebase_to_volume` et `import_lakebase_tables_to_delta`) et charge maintenant toutes les tables en Delta. Son ancienne clé `lakebase_export_uat_to_volume` disparaît : le plan de `deploy-uat-jobs` annonce un `delete` de cet ancien job et un `create` du nouveau (même nom affiché, nouvel identifiant, planning identique `UNPAUSED`). C'est voulu. Après le déploiement, lancer :
+
+```powershell
+databricks bundle run lakebase_export -t qualibot-uat --profile UAT
+```
+
+Attendu dans la tâche d'import : `Tables to load: [...]`, une ligne par table non vide, et aucune ligne `left untouched`.
 
 Retour arrière : redéployer (`deploy-uat`) la branche précédente. Les tables `_v1`, les index `_v1` et les agents restent intacts jusqu'à D1 et D2, et le démarrage de la nouvelle version n'a fait que des ajouts dans Lakebase.
 
