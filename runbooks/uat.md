@@ -620,6 +620,69 @@ DROP TABLE IF EXISTS errors;
 DROP TABLE IF EXISTS knowledge_base_metadata;
 ```
 
+**E1 — Enquête REF QM-1041 : document encore remonté alors que absent d'Intraqual (SQL, à lancer sur `uat_proj`, compte utilisateur, lecture seule ; à lancer en premier : la requête 1 de Lakebase, une fois le trace id connu)**
+
+Requête 1 (Lakebase de l'environnement, éditeur SQL) : passages renvoyés pour QM-1041 (remplacer `<trace_id>` ou garder le filtre par REF) :
+
+```sql
+SELECT t.created_at, t.trace_id, r.source, r.kept, r.drop_reason, r.iddoc, r.chunk_id, r.best_score
+FROM chat_retrieved_chunks r
+JOIN chat_turns t ON t.id = r.turn_id
+WHERE r.ref = 'QM-1041'
+ORDER BY t.created_at DESC
+LIMIT 50;
+```
+
+Requête 2 (Databricks SQL, `uat_proj`) : l'IDDOC et l'état du document dans le pipeline :
+
+```sql
+SELECT 'chunks' AS src, IDDOC, REF, count(*) AS n FROM uat_proj.qualibot.chunks WHERE REF = 'QM-1041' GROUP BY IDDOC, REF
+UNION ALL
+SELECT 'chunks_archive', IDDOC, REF, count(*) FROM uat_proj.qualibot.chunks_archive WHERE REF = 'QM-1041' GROUP BY IDDOC, REF;
+
+SELECT * FROM uat_proj.qualibot.parsed_documents WHERE IDDOC IN (
+  SELECT DISTINCT IDDOC FROM uat_proj.qualibot.chunks WHERE REF = 'QM-1041'
+);
+```
+
+Requête 3 (Databricks SQL, `prod_bronze`) : le document est-il encore dans la source, sous quel IDDOC, courant ou non :
+
+```sql
+SELECT IDDOC, REF, indice, courant, etat, nonvisible, difftotale
+FROM prod_bronze.intraqual.gd_doc_latest
+WHERE REF = 'QM-1041'
+ORDER BY indice DESC;
+```
+
+Requête 4 (Databricks SQL, `uat_proj`) : le dernier passage du pipeline a-t-il bien supprimé les anciens IDDOC, et quand l'index a-t-il été synchronisé pour la dernière fois :
+
+```sql
+DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 15;
+DESCRIBE HISTORY uat_proj.qualibot.parsed_documents LIMIT 15;
+```
+
+Requête 5 (Databricks SQL, `uat_proj`) : ce que l'index renvoie réellement pour QM-1041 (fonction `vector_search`, à comparer avec la table `chunks`) :
+
+```sql
+SELECT chunk_id, REF, IDDOC, left(chunk_text, 120) AS extrait, score
+FROM vector_search(
+  index => 'uat_proj.qualibot.chunks_index',
+  query_text => 'QM-1041',
+  num_results => 50
+)
+WHERE REF = 'QM-1041';
+```
+
+Si la requête 5 renvoie des lignes et la requête 2 aucune ligne, l'index n'a pas été resynchronisé après la suppression.
+
+Requête 6 (Lakebase) : le titre et la date affichés pour cette référence (la source de la fiche, pas de la recherche) :
+
+```sql
+SELECT ref, title, revision, doc_date FROM doc_catalog WHERE ref = 'QM-1041';
+```
+
+**Lecture des résultats** : (a) requête 3 = aucune ligne → le document a bien quitté la source ; (b) requête 2 contient des lignes en `SUCCESS`/`ERROR`/`EMPTY_TEXT`/`IMAGES_PENDING` → la purge ne l'a pas touché, à corriger ; (c) requête 2 contient des lignes avec un autre `parse_status` (SKIPPED_…) → la purge ne couvre pas ce statut ; (d) requête 5 renvoie QM-1041 et requête 2 n'en a pas → index non resynchronisé (ou run échoué après la purge, la synchronisation n'est pas arrivée) ; (e) requête 1 contient `source = ref_lookup` → la référence est nommée dans la question ou dans un message précédent, et la recherche par référence la reprend directement de l'index, sans contrôle de périmètre.
+
 ## Fait
 
 _(rien de confirmé pour l'instant)_
