@@ -34,7 +34,7 @@
 # MAGIC %md
 # MAGIC # Technical debt
 # MAGIC - The chunk-injection phase reads `image_metadata` and the chunk tables after the description phase has written to them, so those reads sit in `# Data Transformations`.
-# MAGIC - The source prefix of an image passage (`[Source: … | Image: page N, label]`) is built in `describe_steps.build_image_chunks` and, for text passages, in `utils.source_prefixed_text`: change both together.
+# MAGIC - The source prefix of an image passage (`[Source: … | Image: page N, label]`) is built in `describe_steps.build_image_chunks` and, for text passages, in `worker.source_prefixed_text`: change both together.
 
 # COMMAND ----------
 
@@ -66,9 +66,9 @@ from pyspark.sql import functions as F
 import config as cfg
 import describe_steps
 import llm_describe
-import quality
-quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
-from utils import configure
+import tables
+tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
+from worker import configure
 from leap_utils.common import logger as log_utils
 
 
@@ -199,13 +199,13 @@ else:
 # COMMAND ----------
 
 if described_count > 0:
-    quality.check_dataframe(df_image_chunks, "image chunks", [
-        quality.not_null("chunk_id"),
-        quality.unique("chunk_id"),
-        quality.not_null("IDDOC"),
-        quality.not_null("REF"),
-        quality.not_null("chunk_text"),
-        quality.not_null("division", mostly=0.99, severity=quality.AMBER),
+    tables.check_dataframe(df_image_chunks, "image chunks", [
+        tables.not_null("chunk_id"),
+        tables.unique("chunk_id"),
+        tables.not_null("IDDOC"),
+        tables.not_null("REF"),
+        tables.not_null("chunk_text"),
+        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
     ], logger)
 
 # COMMAND ----------

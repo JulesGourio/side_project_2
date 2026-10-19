@@ -95,15 +95,15 @@ sys.path.insert(0, REPO_DIR)
 
 # MAGIC %md
 # MAGIC ## Config Function Imports
-# MAGIC `quality.require_gx()` fails here, before any work, on a cluster without Great Expectations.
+# MAGIC `tables.require_gx()` fails here, before any work, on a cluster without Great Expectations.
 
 # COMMAND ----------
 
 import config as cfg
 import output_steps
 import parse_steps
-import quality
-quality.require_gx()
+import tables
+tables.require_gx()
 from tables import table_exists, write_table
 from leap_utils.common import logger as log_utils
 
@@ -249,15 +249,15 @@ if df_cpu is not None and df_cpu.count() > 0:
 # COMMAND ----------
 
 df_scope = parse_steps.build_run_scope(target_iddocs, revised_iddocs)
-quality.check_dataframe(df_scope, "parsing_run_scope", [
-    quality.not_null("IDDOC"), quality.unique("IDDOC"), quality.not_null("ingestion_run_id"),
+tables.check_dataframe(df_scope, "parsing_run_scope", [
+    tables.not_null("IDDOC"), tables.unique("IDDOC"), tables.not_null("ingestion_run_id"),
 ], logger)
 
 df_queue = df_gpu.drop("content") if df_gpu is not None else None
 if df_queue is not None:
-    quality.check_dataframe(df_queue, "parsing_gpu_queue", [
-        quality.not_null("source_path"), quality.unique("source_path"),
-        quality.not_null("IDDOC"), quality.not_null("document_sha256"),
+    tables.check_dataframe(df_queue, "parsing_gpu_queue", [
+        tables.not_null("source_path"), tables.unique("source_path"),
+        tables.not_null("IDDOC"), tables.not_null("document_sha256"),
     ], logger)
 
 # COMMAND ----------

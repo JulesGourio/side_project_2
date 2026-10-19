@@ -9,7 +9,7 @@ PARSING = os.path.join(ROOT, "utils", "parsing_pipeline")
 
 CHECK = """
 import sys
-import tables, llm_describe, quality, doc_status, chunking
+import tables, llm_describe, chunking, config
 loaded = [m for m in sys.modules if m == 'leap_utils.config' or m == 'leap_utils.data_asset.table_utils'
           or m.startswith('pyspark')]
 print(','.join(loaded))

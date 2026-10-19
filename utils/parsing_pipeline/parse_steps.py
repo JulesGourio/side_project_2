@@ -16,7 +16,6 @@ from pyspark.sql import Window
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-import doc_status
 import image_utils
 import selection
 from format_parsers import strip_ooxml_bloat
@@ -42,6 +41,8 @@ from config import (
     TARGET_PROCESSED_FILES_TABLE,
     VOLUME_BASE_PATH,
     VOLUME_ROOT_PATH,
+    IMAGES_PENDING,
+    TERMINAL_STATUSES,
 )
 
 logger = get_logger(__name__)
@@ -50,7 +51,7 @@ INGESTION_RUN_ID = str(uuid.uuid4())
 JOB_RUN_ID = None
 
 # Any other status is retried automatically on the next incremental run.
-_TERMINAL_STATUSES = list(doc_status.TERMINAL_STATUSES)   # a list: pyspark isin() does not take a tuple
+_TERMINAL_STATUSES = list(TERMINAL_STATUSES)   # a list: pyspark isin() does not take a tuple
 # Checkpoint statuses that the same bytes would give again: the file is not re-parsed. ERROR / EMPTY_TEXT are retried;
 # so is SKIP_TOO_LARGE, which costs no parse (the size gate re-skips it) and must follow a raised ceiling.
 _REUSABLE_STATUSES = ["SUCCESS", "SKIPPED_EMPTY_SMALL_FILE"]
@@ -615,7 +616,7 @@ def _images_pending_iddocs():
         return spark.createDataFrame([], "IDDOC long")
     return (
         spark.table(TARGET_PROCESSED_FILES_TABLE)
-        .filter(F.col("parse_status") == doc_status.IMAGES_PENDING)
+        .filter(F.col("parse_status") == IMAGES_PENDING)
         .select("IDDOC").distinct()
     )
 

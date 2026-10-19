@@ -18,7 +18,7 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 | `create_proj_image_metadata.py` | Task `4_describe_images`: image descriptions by a vision model, image passages |
 | `update_proj_vector_indexes.py` | Task `5_sync_index`: creates missing indexes, triggers their sync, refreshes `chunks_full` |
 | `create_proj_doc_catalog.py` | Task `6_update_kb_metadata`: document catalog and knowledge-base date in Lakebase |
-| `config.py` | Parameters (`PARSING_*` environment variables with their defaults), thresholds, model prompts |
+| `config.py` | Parameters (`PARSING_*` environment variables with their defaults), thresholds, model prompts, document and image statuses |
 | `categories.py` | Category hierarchy, division of each document, scope gate (Spark) |
 | `manifest_steps.py` | Phases of `2_manifest` |
 | `selection.py` | Choice of the best file per IDDOC (format priorities) |
@@ -29,18 +29,14 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 | `llm_describe.py` | Asynchronous vision calls: rate limiter, endpoint chain, circuit breaker |
 | `format_parsers.py` | Bytes to text, one parser per format (Docling and the fallback parsers) |
 | `image_utils.py` | Parsing UDF of `3_parse`: Docling or fallback, image extraction, volume save |
-| `image_fallbacks.py` | Text and images of the files Docling does not read: DOCX and PPTX (XML), binary PPT (OLE), scanned PDF pages |
-| `image_store.py` | Writes one image to the volume, with a path check |
+| `image_fallbacks.py` | Text and images of the files Docling does not read: DOCX and PPTX (XML), binary PPT (OLE), scanned PDF pages; writes of the images to the volume (path check) |
 | `chunking.py` | Splits a Markdown document into passages (sections, tables, provenance prefix) |
-| `doc_status.py` | Statuses of documents and images shared by the tasks |
-| `quality.py` | RED and AMBER quality checks on the tables |
-| `parse_checks.py` | Consistency of the REF of the passages with `parse_manifest` (AMBER) |
-| `tables.py` | The only Delta write layer (`save_table`, `merge_into`, from `leap_utils`) |
-| `utils.py` | Runtime shared by the driver and the workers: configuration, token counting, Spark helpers |
+| `tables.py` | The only Delta write layer (`save_table`, `merge_into`, from `leap_utils`), and the quality checks of the tables: RED and AMBER levels, Great Expectations, REF consistency of the passages with `parse_manifest` (AMBER) |
+| `worker.py` | Runtime shared by the driver and the workers: configuration broadcast, token counting, chunking UDFs |
 
-The modules listed in `config.WORKER_MODULES` (`chunking`, `utils`, `format_parsers`, `image_store`, `image_fallbacks`, `image_utils`, `config`) are shipped to the Spark workers; the others run on the driver.
+The modules listed in `config.WORKER_MODULES` (`chunking`, `worker`, `format_parsers`, `image_fallbacks`, `image_utils`, `config`) are shipped to the Spark workers; the others run on the driver.
 
-Unit tests in `tests/` cover `chunking.py`, `quality.py`, `doc_status.py`, `tables.py`, `selection.py`
+Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config.py`, `selection.py`
 and the image description in `llm_describe.py`.
 
 ## Tasks
@@ -275,7 +271,7 @@ Volumes: the Intraqual documents (`PARSING_VOLUME_ROOT_PATH`, read, one folder p
 `Dm_<IDDOC>`; `2_manifest` may delete out-of-scope folders), the images (`PARSING_VOLUME_BASE_PATH`) and the
 offline models (`PARSING_OFFLINE_MODELS`).
 
-Quality checks (`quality.py`, Great Expectations through `leap_utils`): a RED failure stops the task before anything is written. An AMBER failure is logged. `6_update_kb_metadata` runs on serverless, where GX is not available: its checks run in Python (`check_rows`). The CPU clusters get GX from their S policy; the GPU cluster of `3_parse` has no policy and declares `great_expectations==0.18.22` as a task library. Every notebook calls `quality.require_gx()` in its import cell: on 2026-10-16 a UAT `3_parse` without GX failed on `ModuleNotFoundError: great_expectations` at its quality checks, after 20 h of parsing.
+Quality checks (`tables.py`, Great Expectations through `leap_utils`): a RED failure stops the task before anything is written. An AMBER failure is logged. `6_update_kb_metadata` runs on serverless, where GX is not available: its checks run in Python (`check_rows`). The CPU clusters get GX from their S policy; the GPU cluster of `3_parse` has no policy and declares `great_expectations==0.18.22` as a task library. Every notebook calls `quality.require_gx()` in its import cell: on 2026-10-16 a UAT `3_parse` without GX failed on `ModuleNotFoundError: great_expectations` at its quality checks, after 20 h of parsing.
 
 | Table | Checks |
 |---|---|
@@ -288,7 +284,7 @@ Quality checks (`quality.py`, Great Expectations through `leap_utils`): a RED fa
 | `doc_catalog` | Not empty; `ref` not null and unique (RED); `title` and `division` on 99 % (AMBER) |
 | `chunks_full` | Not empty; `chunk_id` not null and unique; `chunk_text` not null (RED) |
 
-`parse_checks.py` compares the REF of each passage with `parse_manifest` and logs the mismatches (AMBER).
+`tables.check_ref_mapping` compares the REF of each passage with `parse_manifest` and logs the mismatches (AMBER).
 
 ## Links
 

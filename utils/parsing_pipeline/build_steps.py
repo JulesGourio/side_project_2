@@ -8,9 +8,8 @@ from pyspark import StorageLevel
 from pyspark.sql import Window
 from pyspark.sql import functions as F
 
-import doc_status
 import image_utils
-import utils
+import worker
 from parse_steps import read_checkpoint_deduped
 from leap_utils.common.logger import get_logger
 from tables import table_exists
@@ -34,6 +33,9 @@ from config import (
     RUN_MODE,
     TARGET_CHUNK_TABLE,
     TARGET_IMAGE_METADATA_TABLE,
+    EMPTY_TEXT,
+    IMAGES_PENDING,
+    IMAGE_RETRIED_STATUSES,
 )
 
 logger = get_logger(__name__)
@@ -258,7 +260,7 @@ def _build_chunks(df_full_pipeline, df_exclusions):
         )
         logger.info("[CLEAN] Removed '<!-- formula-not-decoded -->' artefacts from document_text")
 
-    df_for_chunking = df_for_chunking.withColumn("url", utils.intraqual_ref_url(F.col("ref")))
+    df_for_chunking = df_for_chunking.withColumn("url", worker.intraqual_ref_url(F.col("ref")))
     # Normalised body (section line, case, spaces folded): finds the same passage in many documents.
     body_key = F.sha2(F.trim(F.regexp_replace(F.lower(F.regexp_replace(F.col("c.chunk_text"), r"^\[[^\]]*\]\s*", "")),
                                               r"\s+", " ")), 256)
@@ -266,9 +268,9 @@ def _build_chunks(df_full_pipeline, df_exclusions):
     # chunk_content_type is kept on every row, not just image chunks; other per-document stats live only in parsed_documents.
     return (
         df_for_chunking
-        .withColumn("chunks", utils.build_chunks_udf(F.col("document_text")))
+        .withColumn("chunks", worker.build_chunks_udf(F.col("document_text")))
         .withColumn("c", F.explode(F.col("chunks")))
-        .withColumn("_chunk_text_full", utils.source_prefixed_text(
+        .withColumn("_chunk_text_full", worker.source_prefixed_text(
             F.col("c.chunk_text"), F.col("ref"), F.col("titre"),
             F.col("division"), F.col("niveau_plus_1"), doc_date_col=F.col("doc_date"),
             include_prefix=EMBED_SOURCE_PREFIX, type_col=F.col("type_document"),
@@ -357,7 +359,7 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
     df_full_pipeline = with_fresh_business_metadata(df_full_pipeline)
     # Real language (REF suffix, else the text): the manifest's langue is always fr-FR.
     df_full_pipeline = df_full_pipeline.withColumn(
-        "langue", utils.language_udf(F.col("document_text"), F.col("ref")))
+        "langue", worker.language_udf(F.col("document_text"), F.col("ref")))
 
     # NEW = first time this IDDOC reaches a terminal status; REVISED = a _STALENESS_COLS change since its last SUCCESS.
     if revised_iddocs:
@@ -371,7 +373,7 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
     # images_needing_description counts the images still to describe (PENDING, or ERROR from an earlier run), not the
     # decorative ones (unlike image_count), so an audit can compare expected vs actual DONE+SKIPPED counts.
     df_images_needed = (
-        df_image_metadata.filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES))
+        df_image_metadata.filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES))
         .groupBy("IDDOC").agg(F.count("*").alias("images_needing_description"))
     )
 
@@ -387,8 +389,8 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
             "images_needing_description": F.coalesce(F.col("images_needing_description"), F.lit(0)),
             # Text-less document with images still to describe: parked until 4_describe_images moves it on.
             "parse_status": F.when(
-                (F.col("parse_status") == doc_status.EMPTY_TEXT) & (F.col("images_needing_description") > 0),
-                F.lit(doc_status.IMAGES_PENDING),
+                (F.col("parse_status") == EMPTY_TEXT) & (F.col("images_needing_description") > 0),
+                F.lit(IMAGES_PENDING),
             ).otherwise(F.col("parse_status")),
             "change_type": F.when(F.coalesce(F.col("_is_revised"), F.lit(False)), F.lit("REVISED")).otherwise(F.lit("NEW")),
         })
@@ -478,7 +480,7 @@ def build_archive_notices(df_business_meta):
         df_business_meta.filter(is_archive & F.col("ref").isNotNull())
         .dropDuplicates(["IDDOC"])
         .join(df_recent_refs, on="ref", how="left_anti")
-        .withColumn("chunk_text", utils.source_prefixed_text(
+        .withColumn("chunk_text", worker.source_prefixed_text(
             body, F.col("ref"), F.col("titre"), F.col("division"), F.col("niveau_plus_1"),
             doc_date_col=F.col("doc_date"), include_prefix=EMBED_SOURCE_PREFIX,
         ))
@@ -490,11 +492,11 @@ def build_archive_notices(df_business_meta):
             F.concat(F.col("IDDOC").try_cast("string"), F.lit("-000000")).alias("chunk_id"),
             F.lit(-1).alias("chunk_index"),
             "chunk_text",
-            utils.token_count_udf(F.col("chunk_text")).alias("chunk_token_count"),
+            worker.token_count_udf(F.col("chunk_text")).alias("chunk_token_count"),
             F.lit(ARCHIVE_NOTICE_CONTENT_TYPE).alias("chunk_content_type"),
             F.lit("{}").alias("semantic_headers"),
             F.sha2(F.col("chunk_text"), 256).alias("chunk_sha256"),
-            utils.intraqual_ref_url(F.col("ref")).alias("url"),
+            worker.intraqual_ref_url(F.col("ref")).alias("url"),
             "doc_date",
         )
     )

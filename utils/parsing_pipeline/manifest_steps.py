@@ -12,7 +12,6 @@ from pyspark.sql import Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 
-import doc_status
 from categories import normalize_cols_upper
 from tables import ensure_primary_key, table_exists, write_table
 from leap_utils.common.logger import get_logger
@@ -30,6 +29,7 @@ from config import (
     TARGET_CHUNK_TABLE_ARCHIVE,
     TARGET_IMAGE_METADATA_TABLE,
     TARGET_PROCESSED_FILES_TABLE,
+    PRUNED_STATUSES,
 )
 
 # Root folders are named D_<IDDOC> or Dm_<IDDOC>; anything else cannot give an IDDOC.
@@ -38,7 +38,7 @@ logger = get_logger(__name__)
 IDDOC_RE = re.compile(r"^[Dd]m?_(\d+)", re.IGNORECASE)
 
 _DERIVED_TABLES = (TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE, TARGET_IMAGE_METADATA_TABLE)
-_STATUSES_TO_PRUNE = doc_status.PRUNED_STATUSES
+_STATUSES_TO_PRUNE = PRUNED_STATUSES
 # A row with one of these statuses blocks the IDDOC from being parsed, so it must go when the IDDOC re-enters scope.
 _PERMANENT_SKIP_STATUSES = (
     "SKIPPED_REF_OUT_OF_SCOPE", "SKIPPED_IDDOC_NOT_FOUND", "SKIPPED_REF_MANUAL",

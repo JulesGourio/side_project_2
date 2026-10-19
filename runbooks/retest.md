@@ -248,3 +248,13 @@ Notebooks : `create_proj_parsing_checkpoint.py` (nouveau, `3_parse`), `create_pr
 `3b_parse_pdf`), `create_proj_chunks.py` (devient `3c_chunks`). Nouvelles tables : `parsing_run_scope`, `parsing_gpu_queue`.
 À relancer : un run complet du job de parsing ; vérifier dans le log de `3_parse` les lignes `Packages`, `[RESUME]`,
 `[BUDGET]`, `[ROUTE]`, puis que `3b_parse_pdf` est « Excluded » et `3c_chunks` réussi.
+
+## 2026-10-19 — parsing : modules fusionnés (19 → 15), `utils.py` devient `worker.py`
+
+Notebooks : aucun changement de logique, seuls leurs imports changent (`quality` → `tables`, `utils` → `worker`, `doc_status` → `config`). `config.WORKER_MODULES` ne contient plus `image_store.py` et `utils.py` : il est lu par `3_parse` et `4_describe_images` (`addPyFile`).
+
+- [ ] Déployer les jobs et notebooks sur DEV (pipeline Bitbucket `deploy-dev-jobs`, app non touchée).
+- [ ] `databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories` : les imports de `tables` et de `config` passent, les contrôles GX de `1_categories` tournent.
+- [ ] `databricks bundle run parsing_pipeline -t dev --profile DEV --only 3_parse` (run incrémental) : le job se termine sans `ModuleNotFoundError` ni `No module named 'worker'` sur les exécuteurs.
+- [ ] `databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_images` : `worker.py` et `image_fallbacks.py` sont envoyés, la description des images tourne.
+

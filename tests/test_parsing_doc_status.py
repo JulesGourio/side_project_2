@@ -1,4 +1,4 @@
-"""Document statuses of parsed_documents (utils/parsing_pipeline/doc_status.py): a status the parse leaves open is
+"""Document statuses of parsed_documents (utils/parsing_pipeline/config.py): a status the parse leaves open is
 retried by the next run or moved on by the description step, so nothing waits in a status nothing moves."""
 import os
 import sys
@@ -6,7 +6,12 @@ import sys
 PARSING = os.path.join(os.path.dirname(__file__), "..", "utils", "parsing_pipeline")
 sys.path.insert(0, PARSING)
 
-import doc_status as ds
+for key, value in {"PIPELINE_WRITE_ENV": "dev", "PARSING_INTRAQUAL_BRONZE": "bronze.sch",
+                   "PARSING_VOLUME_ROOT_PATH": "/Volumes/c/s/root", "PARSING_VOLUME_BASE_PATH": "/Volumes/c/s/img",
+                   "PARSING_OFFLINE_MODELS": "/models"}.items():
+    os.environ.setdefault(key, value)
+
+import config as ds
 
 
 def test_images_pending_is_done_for_the_parse_and_moved_by_the_description_step():

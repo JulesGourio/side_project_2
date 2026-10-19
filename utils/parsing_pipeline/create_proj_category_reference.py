@@ -58,8 +58,8 @@ from pyspark.sql import functions as F
 # COMMAND ----------
 
 import categories
-import quality
-quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
+import tables
+tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from tables import ensure_primary_key, write_table
 from leap_utils.common import logger as log_utils
 
@@ -187,11 +187,11 @@ else:
 
 # COMMAND ----------
 
-quality.check_dataframe(df_reference, "category_reference", [
-    quality.non_empty(),
-    quality.not_null("IDDOC"),
-    quality.unique("IDDOC"),
-    quality.not_null("division", mostly=0.99, severity=quality.AMBER),
+tables.check_dataframe(df_reference, "category_reference", [
+    tables.non_empty(),
+    tables.not_null("IDDOC"),
+    tables.unique("IDDOC"),
+    tables.not_null("division", mostly=0.99, severity=tables.AMBER),
 ], logger)
 
 # COMMAND ----------

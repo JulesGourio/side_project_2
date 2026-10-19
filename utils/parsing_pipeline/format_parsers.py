@@ -1,7 +1,7 @@
 """format_parsers.py — raw bytes to text, one parser per file format (Docling and the fallbacks for older binary formats).
 
 Runs on the executors: the Docling modules are imported on first use and the converters cached per worker process.
-Settings come from `utils._cfg` (restored on the worker by `utils.ensure_config`).
+Settings come from `worker._cfg` (restored on the worker by `worker.ensure_config`).
 """
 
 import io
@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 import chunking  # shipped with addPyFile, like this module
-from utils import _cfg, logger, normalize_text
+from worker import _cfg, logger, normalize_text
 
 TEXTLIKE_EXTENSIONS = {"csv", "json", "tsv"}
 

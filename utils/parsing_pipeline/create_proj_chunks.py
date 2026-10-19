@@ -92,17 +92,16 @@ sys.path.insert(0, REPO_DIR)
 
 # MAGIC %md
 # MAGIC ## Config Function Imports
-# MAGIC `quality.require_gx()` fails here, before any work, on a cluster without Great Expectations.
+# MAGIC `tables.require_gx()` fails here, before any work, on a cluster without Great Expectations.
 
 # COMMAND ----------
 
 import config as cfg
 import build_steps
 import output_steps
-import parse_checks
 import parse_steps
-import quality
-quality.require_gx()
+import tables
+tables.require_gx()
 from leap_utils.common import logger as log_utils
 
 # COMMAND ----------
@@ -213,7 +212,7 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    parse_checks.check_ref_mapping(spark, df_chunks_all, logger)
+    tables.check_ref_mapping(spark, df_chunks_all, logger)
 
 # COMMAND ----------
 
@@ -224,12 +223,12 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    quality.check_dataframe(df_processed_files, "parsed_documents", [
-        quality.not_null("IDDOC"),
-        quality.unique("IDDOC"),
-        quality.not_null("parse_status"),
-        quality.not_null("ref", mostly=0.99, severity=quality.AMBER),
-        quality.not_null("division", mostly=0.99, severity=quality.AMBER),
+    tables.check_dataframe(df_processed_files, "parsed_documents", [
+        tables.not_null("IDDOC"),
+        tables.unique("IDDOC"),
+        tables.not_null("parse_status"),
+        tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
+        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
     ], logger)
 
 # COMMAND ----------
@@ -241,14 +240,14 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    quality.check_dataframe(df_chunks_all.unionByName(df_chunks_archive), "chunks", [
-        quality.not_null("chunk_id"),
-        quality.unique("chunk_id"),
-        quality.not_null("IDDOC"),
-        quality.not_null("REF"),
-        quality.not_null("chunk_text"),
-        quality.not_null("division", mostly=0.99, severity=quality.AMBER),
-        quality.not_null("titre", mostly=0.99, severity=quality.AMBER),
+    tables.check_dataframe(df_chunks_all.unionByName(df_chunks_archive), "chunks", [
+        tables.not_null("chunk_id"),
+        tables.unique("chunk_id"),
+        tables.not_null("IDDOC"),
+        tables.not_null("REF"),
+        tables.not_null("chunk_text"),
+        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
+        tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
     ], logger)
 
 # COMMAND ----------
@@ -260,11 +259,11 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    quality.check_dataframe(df_image_metadata, "image_metadata", [
-        quality.not_null("IDDOC"),
-        quality.not_null("image_id"),
-        quality.unique("IDDOC", "image_id"),
-        quality.not_null("volume_path", mostly=0.95, severity=quality.AMBER),
+    tables.check_dataframe(df_image_metadata, "image_metadata", [
+        tables.not_null("IDDOC"),
+        tables.not_null("image_id"),
+        tables.unique("IDDOC", "image_id"),
+        tables.not_null("volume_path", mostly=0.95, severity=tables.AMBER),
     ], logger)
 
 # COMMAND ----------

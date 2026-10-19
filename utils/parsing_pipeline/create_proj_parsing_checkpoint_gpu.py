@@ -65,14 +65,14 @@ from pyspark.sql import functions as F
 
 # MAGIC %md
 # MAGIC ## Config Function Imports
-# MAGIC `quality.require_gx()` fails here, before the GPU parse, on a cluster without Great Expectations.
+# MAGIC `tables.require_gx()` fails here, before the GPU parse, on a cluster without Great Expectations.
 
 # COMMAND ----------
 
 import config as cfg
 import parse_steps
-import quality
-quality.require_gx()
+import tables
+tables.require_gx()
 from leap_utils.common import logger as log_utils
 
 # COMMAND ----------
@@ -158,8 +158,8 @@ else:
 
 df_written = spark.table(cfg.CHECKPOINT_TABLE).filter(
     (F.col("ingestion_run_id") == parse_steps.INGESTION_RUN_ID) & (F.col("source_file_extension") == "pdf"))
-quality.check_dataframe(df_written, "parsing_checkpoint (GPU PDFs)", [
-    quality.not_null("IDDOC"), quality.not_null("document_sha256"), quality.not_null("parse_status"),
+tables.check_dataframe(df_written, "parsing_checkpoint (GPU PDFs)", [
+    tables.not_null("IDDOC"), tables.not_null("document_sha256"), tables.not_null("parse_status"),
 ], logger)
 
 # COMMAND ----------

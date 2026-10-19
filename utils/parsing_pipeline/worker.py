@@ -1,4 +1,4 @@
-"""utils.py — runtime shared by the driver and the executors: logger, worker configuration, token counting, and the
+"""worker.py — runtime shared by the driver and the executors: logger, worker configuration, token counting, and the
 Spark helpers (chunk text, REF url, pandas UDFs).
 
 `configure()` runs on the driver; the workers restore CONFIG with `ensure_config()` (broadcast, then spark.conf JSON,
@@ -73,7 +73,7 @@ CONFIG: Dict[str, Any] = {}
 def configure(**kwargs) -> None:
     """Set run configuration from the notebook. Call on the driver before parsing."""
     CONFIG.update(kwargs)
-    logger.info("utils.configure() called with %d keys", len(kwargs))
+    logger.info("worker.configure() called with %d keys", len(kwargs))
 
 
 _CONFIG_BROADCAST = None

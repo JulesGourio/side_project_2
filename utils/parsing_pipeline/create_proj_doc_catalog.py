@@ -30,7 +30,7 @@
 
 # MAGIC %md
 # MAGIC # Technical debt
-# MAGIC - The Intraqual host of the REF link is written here and in `utils.intraqual_ref_url`: change both together.
+# MAGIC - The Intraqual host of the REF link is written here and in `worker.intraqual_ref_url`: change both together.
 # MAGIC - With several target databases the rewrite is one transaction per database, not one across all of them.
 
 # COMMAND ----------
@@ -58,7 +58,7 @@ sys.path.insert(0, REPO_DIR)
 
 # COMMAND ----------
 
-import quality
+import tables
 from tables import table_exists
 
 # COMMAND ----------
@@ -160,15 +160,15 @@ logger.info(f"{len(catalog_rows)} documents in scope, {n_in_chat} with passages 
 
 # COMMAND ----------
 
-quality.check_rows(
+tables.check_rows(
     [{"ref": r[0], "title": r[1], "division": r[3]} for r in catalog_rows],
     f"doc_catalog (from {MANIFEST_TABLE})",
     [
-        quality.non_empty(),
-        quality.not_null("ref"),
-        quality.unique("ref"),
-        quality.not_null("title", mostly=0.99, severity=quality.AMBER),
-        quality.not_null("division", mostly=0.99, severity=quality.AMBER),
+        tables.non_empty(),
+        tables.not_null("ref"),
+        tables.unique("ref"),
+        tables.not_null("title", mostly=0.99, severity=tables.AMBER),
+        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
     ],
     logger,
 )

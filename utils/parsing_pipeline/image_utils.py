@@ -1,7 +1,7 @@
 """image_utils.py — the parsing UDF of `3_parse`: Docling (or a format fallback) parse, image extraction, volume save.
 
 Worker-side. One Spark task = one document: parse, extract the pictures of the Docling document, save them to the
-volume (`image_store`), and fall back to `image_fallbacks` when Docling cannot read the file or finds no image.
+volume (`save_image_to_volume`, `image_fallbacks`), and fall back to `image_fallbacks` when Docling cannot read the file or finds no image.
 The LLM description lives in `llm_describe.py` (driver side).
 """
 
@@ -22,9 +22,9 @@ from config import IMG_SKIP_MAX_DIM, IMG_SKIP_MIN_SIDE, LLM_OCR_MAX_PAGES, LLM_O
 from format_parsers import parse_with_docling, parse_xls, parse_xlsx_openpyxl, patch_worker_env
 from image_fallbacks import (
     fallback_parse_docx, fallback_parse_pptx, fallback_parse_ppt_ole, render_pdf_pages_for_llm_ocr,
+    image_record, image_target_path, save_image_to_volume,
 )
-from image_store import image_record, image_target_path, save_image_to_volume
-from utils import _cfg, count_tokens, ensure_config
+from worker import _cfg, count_tokens, ensure_config
 
 logger = logging.getLogger(__name__)
 

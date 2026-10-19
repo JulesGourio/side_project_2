@@ -102,7 +102,7 @@ ENRICHMENT_COLS = ["ref", "titre", "type_document", "categorie", "langue", "aute
                    "division", "doc_date"] + [f"niveau_plus_{n}" for n in range(1, 7)]
 
 # Modules the executors import (pandas UDFs); shipped with addPyFile by 3_parse and 4_describe_images.
-WORKER_MODULES = ("chunking.py", "utils.py", "format_parsers.py", "image_store.py", "image_fallbacks.py",
+WORKER_MODULES = ("chunking.py", "worker.py", "format_parsers.py", "image_fallbacks.py",
                   "image_utils.py", "config.py")
 
 # --- Date cutoff ---
@@ -312,3 +312,26 @@ Answer in the document's language (French if the context is French), with no pre
 Critical: transcribe any stamp, watermark, hand-written annotation, or overlay text VERBATIM and call it out explicitly on its own line prefixed "STAMP/WATERMARK:" — these often carry status information (e.g. cancelled, superseded, draft, do not use) that is not in the body text and must never be silently dropped.
 
 Never answer SKIP: even a page containing only a stamp or a mostly-blank form still carries real information and must be transcribed."""
+
+
+# --- Document and image statuses (parsed_documents, image_metadata) ---
+# 3_parse leaves a document in a terminal status, which the next incremental run does not parse again. A document
+# with no text but images is IMAGES_PENDING until its images are described: 4_describe_images moves it on.
+IMAGES_PENDING = "IMAGES_PENDING"
+EMPTY_TEXT = "EMPTY_TEXT"
+
+TERMINAL_STATUSES = (
+    "SUCCESS", "SKIPPED_EMPTY_SMALL_FILE", "SKIPPED_REF_MANUAL", "SKIPPED_SOURCE_REMOVED",
+    "SKIPPED_EMPTY_IMAGES", "SKIPPED_EMPTY_FOLDER", IMAGES_PENDING,
+)
+
+# Statuses 4_describe_images moves on in the same job run.
+MOVED_BY_IMAGES = (EMPTY_TEXT, IMAGES_PENDING)
+
+# Image statuses (image_metadata.status). An image still to describe is retried by the next run; the others are final
+# for the description step (DONE and SKIPPED are the results, FAILED_LIMIT is reported in the run summary).
+IMAGE_RETRIED_STATUSES = ("PENDING", "ERROR")   # rows left with ERROR are retried too
+IMAGE_TERMINAL_STATUSES = ("DONE", "SKIPPED", "SKIPPED_DECORATIVE", "EXTRACTION_FAILED", "FAILED_LIMIT")
+
+# Statuses whose derived rows (chunks, image_metadata) are pruned when the document leaves scope.
+PRUNED_STATUSES = ("SUCCESS", "ERROR", EMPTY_TEXT, IMAGES_PENDING)

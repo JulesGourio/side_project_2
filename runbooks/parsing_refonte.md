@@ -42,7 +42,10 @@ Suivi pour Claude : constats, plan par phases, requêtes demandées et leurs ré
 - [ ] Phase 3 — qualité : descriptions d'images rattachées par (IDDOC, image_id) — un re-parsing qui change l'ordre ou le
       nombre d'images attache une description à la mauvaise image : clé à passer sur le hash de l'image ; .doc / .ppt via LibreOffice vers docx / pptx puis Docling (tableaux, images), images décoratives
       non sauvegardées, versions Docling figées.
-- [ ] Phase 4 — code : fusion des petits modules (`doc_status`, `parse_checks`, `image_store`, `tables`), `utils.py` renommé.
+- [x] Phase 4 — code (2026-10-19) : 19 modules → 15. `doc_status` → `config.py` (statuts), `quality` + `parse_checks` → `tables.py`
+      (le module des écritures absorbe les contrôles, son nom est celui que le code utilise partout), `image_store` → `image_fallbacks.py`,
+      `utils.py` → `worker.py`. `selection.py` et `llm_describe.py` restent séparés : fusionnés dans `parse_steps.py` / `describe_steps.py`,
+      leurs tests perdraient le fonctionnement hors Databricks (`databricks.sdk.runtime`) et le test sans Spark de `llm_describe`.
 
 ## Policy S (UAT, `000E7559CADE5290`, lue le 2026-10-17)
 

@@ -18,11 +18,10 @@ import nest_asyncio
 from databricks.sdk.runtime import spark
 from pyspark.sql import functions as F
 
-import doc_status
 from leap_utils.common.logger import get_logger
 from llm_describe import EndpointBreaker, describe_all_images, one_per_image, safe_requests_per_minute
 from tables import add_missing_columns, merge_into, table_exists, write_table
-from utils import intraqual_ref_url, token_count_udf
+from worker import intraqual_ref_url, token_count_udf
 from config import (
     PIPELINE_WRITE_ENV,
     CHARS_PER_TOKEN,
@@ -49,11 +48,12 @@ from config import (
     TARGET_CHUNK_TABLE_ARCHIVE,
     TARGET_IMAGE_METADATA_TABLE,
     TARGET_PROCESSED_FILES_TABLE,
+    IMAGE_RETRIED_STATUSES,
+    MOVED_BY_IMAGES,
 )
 
 logger = get_logger(__name__)
 
-MOVED_BY_IMAGES = doc_status.MOVED_BY_IMAGES
 IMAGE_TABLE = TARGET_IMAGE_METADATA_TABLE
 _UPDATES_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot._image_updates_temp"
 _PROCESSED_UPDATES_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot._processed_updates_temp"
@@ -77,7 +77,7 @@ def reset_images_to_pending():
 
 def pending_images():
     """Images to describe: the retried statuses (PENDING, and ERROR rows left by earlier runs). FAILED_LIMIT is not one."""
-    return spark.table(IMAGE_TABLE).filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES) & F.col("volume_path").isNotNull())
+    return spark.table(IMAGE_TABLE).filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES) & F.col("volume_path").isNotNull())
 
 
 _UPDATES_SCHEMA = ("IDDOC long, image_id int, description string, input_tokens int, output_tokens int, "
@@ -221,7 +221,7 @@ _LIMIT_LINES = 50
 def _log_description_summary(total):
     """Log the run: outcomes, failures by kind, the images set aside this run, tokens (failed attempts too), what remains."""
     df_images = spark.table(IMAGE_TABLE)
-    remaining = df_images.filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES)).count()
+    remaining = df_images.filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES)).count()
     limit_total = df_images.filter(F.col("status") == "FAILED_LIMIT").count()
     logger.info(f"Description summary: {total.done} described, {total.skipped} skipped, {total.pending} left pending, "
                 f"{len(total.limited)} set aside as FAILED_LIMIT over {total.images} images")
@@ -273,7 +273,7 @@ def log_nothing_to_inject():
     """Explain why no image passage is written: every DONE image already has one."""
     df_images = spark.table(IMAGE_TABLE)
     n_done = df_images.filter((F.col("status") == "DONE") & F.col("description").isNotNull()).count()
-    n_pending = df_images.filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES)).count()
+    n_pending = df_images.filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES)).count()
     logger.info("No new image chunks to inject.")
     logger.info(f"  {n_done} DONE images -> all already have chunks in {TARGET_CHUNK_TABLE}")
     if n_pending > 0:
@@ -349,7 +349,7 @@ def build_image_chunks(df_described):
         .withColumns({
             "max_text_index": F.coalesce(F.col("max_text_index"), F.lit(-1)),
             "chunk_index": F.coalesce(F.col("max_text_index"), F.lit(-1)) + F.lit(1) + F.col("image_id"),
-            # Same prefix as utils.source_prefixed_text(), plus an "Image: page N, label" field.
+            # Same prefix as worker.source_prefixed_text(), plus an "Image: page N, label" field.
             "chunk_text": (F.concat(
                 F.lit("[Source: "), F.coalesce(F.col("ref"), F.lit("")),
                 F.lit(" | Title: "), F.coalesce(F.col("titre"), F.lit("")),
@@ -462,7 +462,7 @@ def promote_documents_awaiting_images():
         return
 
     df_their_images = spark.table(IMAGE_TABLE).join(F.broadcast(df_waiting), on="IDDOC", how="inner")
-    df_not_ready = df_their_images.filter(F.col("status").isin(*doc_status.IMAGE_RETRIED_STATUSES)).select("IDDOC").distinct()
+    df_not_ready = df_their_images.filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES)).select("IDDOC").distinct()
     df_ready = df_waiting.join(F.broadcast(df_not_ready), on="IDDOC", how="left_anti")
     if df_ready.count() == 0:
         logger.info(f"{n_waiting} document(s) waiting for images, none fully described yet.")

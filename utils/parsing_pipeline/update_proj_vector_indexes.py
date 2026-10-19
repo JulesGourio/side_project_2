@@ -58,8 +58,8 @@ sys.path.insert(0, REPO_DIR)
 
 # COMMAND ----------
 
-import quality
-quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
+import tables
+tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from tables import add_missing_columns, merge_into, table_exists, write_table
 
 # COMMAND ----------
@@ -160,11 +160,11 @@ if REFRESH_CHUNKS_FULL:
 # COMMAND ----------
 
 if REFRESH_CHUNKS_FULL:
-    quality.check_dataframe(df_src, "chunks_full", [
-        quality.non_empty(),
-        quality.not_null("chunk_id"),
-        quality.unique("chunk_id"),
-        quality.not_null("chunk_text"),
+    tables.check_dataframe(df_src, "chunks_full", [
+        tables.non_empty(),
+        tables.not_null("chunk_id"),
+        tables.unique("chunk_id"),
+        tables.not_null("chunk_text"),
     ], logger)
 
 # COMMAND ----------

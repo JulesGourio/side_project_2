@@ -55,7 +55,7 @@ def test_empty_or_unreadable_table_keeps_the_current_catalog(pool):
 
 
 def test_pipeline_link_matches_the_chunks_url():
-    utils_src = open(os.path.join(ROOT, 'utils', 'parsing_pipeline', 'utils.py'), encoding='utf-8').read()
+    utils_src = open(os.path.join(ROOT, 'utils', 'parsing_pipeline', 'worker.py'), encoding='utf-8').read()
     task_src = open(os.path.join(ROOT, 'utils', 'parsing_pipeline', 'create_proj_doc_catalog.py'),
                     encoding='utf-8').read()
     in_utils = re.search(r'_INTRAQUAL_REF_URL_BASE = "([^"]+)"', utils_src).group(1)

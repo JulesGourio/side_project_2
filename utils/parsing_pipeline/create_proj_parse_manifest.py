@@ -71,8 +71,8 @@ from pyspark.sql import functions as F
 
 import categories
 import manifest_steps
-import quality
-quality.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
+import tables
+tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from leap_utils.common import logger as log_utils
 
 from config import (
@@ -321,12 +321,12 @@ for r in classified["skip"]:
 
 # COMMAND ----------
 
-quality.check_dataframe(df_manifest, "parse_manifest", [
-    quality.non_empty(),
-    quality.not_null("IDDOC"),
-    quality.unique("IDDOC"),
-    quality.not_null("ref", mostly=0.99, severity=quality.AMBER),
-    quality.not_null("titre", mostly=0.99, severity=quality.AMBER),
+tables.check_dataframe(df_manifest, "parse_manifest", [
+    tables.non_empty(),
+    tables.not_null("IDDOC"),
+    tables.unique("IDDOC"),
+    tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
+    tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
 ], logger)
 
 # COMMAND ----------

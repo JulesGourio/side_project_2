@@ -1,7 +1,7 @@
 """chunking.py — splits a parsed document (markdown) into indexable passages.
 
 Pure Python, no Spark/Docling import: unit-tested in tests/test_parsing_chunking.py and used
-by utils.chunk_document (pipeline).
+by worker.chunk_document (pipeline).
 
 Rules:
 - the markdown is cut on headings of level 1–3 into sections; a passage never spans two
