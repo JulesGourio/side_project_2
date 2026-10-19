@@ -375,6 +375,38 @@ SELECT column_name FROM information_schema.columns WHERE table_name = 'llm_reque
 SELECT to_regclass('public.chat_turns') IS NOT NULL AS chat_turns, to_regclass('public.app_errors') IS NOT NULL AS app_errors;
 ```
 
+- [ ] **Q5c. Historique des comparaisons** (éditeur SQL Lakebase, base `doccompare`). Constat du 2026-10-19 : `messages` (ancienne table, conservée) a 229 lignes (id jusqu'à 281), `compare_messages` en a 1 (id 1, créée depuis la bascule). L'app ne copie l'ancien historique que dans une table vide : les 229 comparaisons ne sont pas visibles dans l'application. Les anciens retours (`feedbacks`) et les anciennes erreurs (`errors`) sont copiés par l'app au démarrage suivant, une fois leurs messages présents. Contrôle des liens vers `compare_messages` et de la ligne actuelle (lecture seule) :
+
+```sql
+SELECT conrelid::regclass AS table_liee, conname FROM pg_constraint WHERE contype = 'f' AND confrelid = 'compare_messages'::regclass;
+SELECT id, created_at, user_id, old_filename, new_filename FROM compare_messages ORDER BY id;
+SELECT COUNT(*) AS legacy_avec_id_1 FROM messages WHERE id = 1;
+```
+
+Fusion en une seule transaction (le bloc `DO` est atomique : à la première erreur rien n'est appliqué). Les lignes actuelles passent derrière les anciens identifiants, puis tout l'ancien historique est copié avec ses identifiants d'origine :
+
+```sql
+DO $$
+DECLARE cols text;
+BEGIN
+  SELECT string_agg(quote_ident(c.column_name), ', ' ORDER BY c.ordinal_position) INTO cols
+  FROM information_schema.columns c
+  JOIN information_schema.columns l ON l.table_schema = c.table_schema AND l.table_name = 'messages' AND l.column_name = c.column_name
+  WHERE c.table_schema = current_schema() AND c.table_name = 'compare_messages';
+  UPDATE compare_messages SET id = id + (SELECT MAX(id) FROM messages);
+  EXECUTE format('INSERT INTO compare_messages (%s) SELECT %s FROM messages', cols, cols);
+  PERFORM setval(pg_get_serial_sequence('compare_messages', 'id'), (SELECT MAX(id) FROM compare_messages));
+END $$;
+```
+
+Attendu : `compare_messages` à 230 lignes. Si PostgreSQL répond `permission denied for table compare_messages`, ou refuse la mise à jour à cause d'un lien listé par la première requête, rien n'a changé : envoyer le message. Contrôle :
+
+```sql
+SELECT COUNT(*) AS lignes, MIN(id) AS id_min, MAX(id) AS id_max FROM compare_messages;
+```
+
+Le démarrage suivant de l'app (Q6, ou *Stop* puis *Start*) copie alors `feedbacks` dans `compare_feedbacks` et `errors` dans `app_errors`, et remplace dans `compare_messages` les chemins `uat_landingzone` par `uat_proj`. Vérifier : `SELECT COUNT(*) FROM compare_messages WHERE volume_session_path LIKE '%_landingzone%';` doit renvoyer 0.
+
 - [ ] **Q6. Déploiement de l'app** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `deploy-uat`. Il déploie, puis redémarre l'app. Attendu dans `bundle plan` : `update apps.doc-compare` (ressource volume `uat_proj`) et `update postgres_projects.qualibot-history.permissions`, aucun `delete`. Avant : comparer l'ACL actuelle du projet Lakebase (UI, projet `qualibot`, Permissions) avec les six entrées du bloc `qualibot-history` de `databricks.yml` ; tout accès absent de cette liste serait retiré.
 
 - [ ] **Q7. Journal de démarrage** (PowerShell). Attendus : `Copied legacy rows messages -> compare_messages` et `Copied legacy rows errors -> app_errors` (première fois seulement), des lignes `Capabilities …: can_chat=True … (SCIM)`, aucune ligne `refused 400`.
