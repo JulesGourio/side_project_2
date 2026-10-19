@@ -62,40 +62,69 @@ def test_every_index_targets_a_table_the_schema_creates():
 
 
 class _LegacyConn:
-    """The legacy tables exist, the new ones are empty; `orphans` says whether a legacy feedback points to a missing message."""
+    """The legacy tables exist. `used_ids`: new tables where a legacy id is already taken. `orphans`: a legacy feedback
+    points to a message that is not there. `nothing_missing`: new tables that already hold every legacy row."""
 
-    def __init__(self, orphans):
+    def __init__(self, used_ids=(), orphans=False, nothing_missing=()):
+        self.used_ids = set(used_ids)
         self.orphans = orphans
-        self.inserts = []
+        self.nothing_missing = set(nothing_missing)
+        self.inserts = {}
 
     async def fetchval(self, query, *args):
         if 'to_regclass' in query:
             return True
-        if 'SELECT EXISTS (SELECT 1 FROM compare_' in query or 'SELECT EXISTS (SELECT 1 FROM app_errors' in query:
-            return False
-        if 'NOT EXISTS (SELECT 1 FROM compare_messages' in query:
+        if 'f.message_id IS NOT NULL' in query:
             return self.orphans
+        if ' JOIN ' in query:
+            return any(f'JOIN {table} c' in query for table in self.used_ids)
+        for table in ('compare_messages', 'compare_feedbacks', 'app_errors'):
+            if f'NOT EXISTS (SELECT 1 FROM {table} c' in query:
+                return table not in self.inserts and table not in self.nothing_missing
         return None
 
     async def fetch(self, query, *args):
-        return [{'column_name': 'id'}]
+        return [{'column_name': 'id'}, {'column_name': 'message_id'}]
 
     async def execute(self, query, *args):
         if query.startswith('INSERT INTO'):
-            self.inserts.append(query.split()[2])
+            self.inserts[query.split()[2]] = query
         return 'INSERT 0 1'
 
 
-def test_legacy_feedbacks_are_not_copied_when_their_messages_are_missing():
+def _carry_over(conn):
     from server.services.infra.lakebase.schema import _carry_over_legacy_rows
-    conn = _LegacyConn(orphans=True)
     asyncio.run(_carry_over_legacy_rows(conn))
-    assert 'compare_feedbacks' not in conn.inserts
-    assert 'compare_messages' in conn.inserts and 'app_errors' in conn.inserts
+    return conn
 
 
-def test_legacy_feedbacks_are_copied_when_every_message_is_there():
-    from server.services.infra.lakebase.schema import _carry_over_legacy_rows
-    conn = _LegacyConn(orphans=False)
-    asyncio.run(_carry_over_legacy_rows(conn))
-    assert 'compare_feedbacks' in conn.inserts
+def test_legacy_rows_are_copied_into_tables_that_already_hold_rows():
+    conn = _carry_over(_LegacyConn())
+    assert set(conn.inserts) == {'compare_messages', 'compare_feedbacks', 'app_errors'}
+    assert all('WHERE NOT EXISTS (SELECT 1 FROM' in query for query in conn.inserts.values())
+
+
+def test_a_feedback_loses_the_message_deleted_before_the_rename():
+    conn = _carry_over(_LegacyConn(orphans=True))
+    assert 'CASE WHEN EXISTS (SELECT 1 FROM compare_messages p WHERE p.id = l.message_id)' in conn.inserts['compare_feedbacks']
+
+
+def test_nothing_is_copied_when_a_legacy_id_is_already_used():
+    conn = _carry_over(_LegacyConn(used_ids={'compare_messages', 'compare_feedbacks', 'app_errors'}))
+    assert conn.inserts == {}
+
+
+def test_feedbacks_wait_for_their_messages_when_some_point_to_a_missing_one():
+    conn = _carry_over(_LegacyConn(used_ids={'compare_messages'}, orphans=True))
+    assert 'compare_messages' not in conn.inserts and 'compare_feedbacks' not in conn.inserts
+    assert 'app_errors' in conn.inserts
+
+
+def test_feedbacks_are_copied_as_they_are_when_every_message_they_point_to_is_there():
+    conn = _carry_over(_LegacyConn(used_ids={'compare_messages'}, orphans=False))
+    assert 'compare_feedbacks' in conn.inserts and 'CASE WHEN' not in conn.inserts['compare_feedbacks']
+
+
+def test_a_second_start_copies_nothing():
+    conn = _carry_over(_LegacyConn(nothing_missing={'compare_messages', 'compare_feedbacks', 'app_errors'}))
+    assert conn.inserts == {}

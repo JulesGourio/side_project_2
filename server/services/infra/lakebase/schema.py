@@ -26,27 +26,28 @@ LEGACY_TABLE_COPIES = (
 )
 
 
-# Column of a renamed table that points to the id of another one: the copy is only safe when every such id is there.
-LEGACY_PARENT = {'compare_feedbacks': ('message_id', 'compare_messages')}
+# Column of a renamed table that points to a row of another one: (column, legacy parent, new parent).
+LEGACY_PARENT = {'compare_feedbacks': ('message_id', 'messages', 'compare_messages')}
 
 
 async def _carry_over_legacy_rows(conn) -> None:
-    """Copy the rows of the renamed tables into the new ones. Runs only into an empty new table: the copied ids then
-    cannot collide with ids the app has already handed out. A copy that cannot be made is logged and the schema goes on;
-    the legacy tables are kept either way."""
+    """Copy the rows of the renamed tables into the new ones, ids kept so that a feedback still points to its message.
+    Only the legacy rows whose id is missing from the new table are copied, so a rerun adds nothing and the new table
+    may already hold rows of its own. Nothing is copied when a legacy id is already used there: the row would take the
+    place of another one's history. Once every message is copied, a feedback whose message was deleted before the
+    rename is copied without it. A copy that cannot be made is logged and the schema goes on; the legacy tables are
+    kept either way."""
     for legacy, current in LEGACY_TABLE_COPIES:
         if not await conn.fetchval('SELECT to_regclass($1) IS NOT NULL', legacy):
             continue
-        if await conn.fetchval(f'SELECT EXISTS (SELECT 1 FROM {current})'):
-            continue
         try:
-            parent = LEGACY_PARENT.get(current)
-            if parent and await conn.fetchval(
-                    f'SELECT EXISTS (SELECT 1 FROM {legacy} f WHERE f.{parent[0]} IS NOT NULL '
-                    f'AND NOT EXISTS (SELECT 1 FROM {parent[1]} m WHERE m.id = f.{parent[0]}))'):
-                logger.warning('Legacy rows %s -> %s not copied: some point to a %s row that is not there '
-                               '(the legacy history was not copied into it, ids would match other rows)',
-                               legacy, current, parent[1])
+            if not await conn.fetchval(
+                    f'SELECT EXISTS (SELECT 1 FROM {legacy} l '
+                    f'WHERE NOT EXISTS (SELECT 1 FROM {current} c WHERE c.id = l.id))'):
+                continue
+            if await conn.fetchval(f'SELECT EXISTS (SELECT 1 FROM {legacy} l JOIN {current} c ON c.id = l.id)'):
+                logger.warning('Legacy rows %s -> %s not copied: some ids are already used in %s '
+                               '(the copy would replace the history of other rows)', legacy, current, current)
                 continue
             legacy_cols = {r['column_name'] for r in await conn.fetch(
                 'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() '
@@ -54,8 +55,27 @@ async def _carry_over_legacy_rows(conn) -> None:
             current_cols = [r['column_name'] for r in await conn.fetch(
                 'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() '
                 'AND table_name = $1 ORDER BY ordinal_position', current)]
-            cols = ', '.join(c for c in current_cols if c in legacy_cols)
-            copied = await conn.execute(f'INSERT INTO {current} ({cols}) SELECT {cols} FROM {legacy}')
+            cols = [c for c in current_cols if c in legacy_cols]
+            values = [f'l.{c}' for c in cols]
+            parent = LEGACY_PARENT.get(current)
+            if parent:
+                column, legacy_parent, current_parent = parent
+                parent_complete = not await conn.fetchval(
+                    f'SELECT EXISTS (SELECT 1 FROM {legacy_parent} l '
+                    f'WHERE NOT EXISTS (SELECT 1 FROM {current_parent} c WHERE c.id = l.id))')
+                if parent_complete:
+                    values = [f'CASE WHEN EXISTS (SELECT 1 FROM {current_parent} p WHERE p.id = l.{column}) '
+                              f'THEN l.{column} END' if c == column else v for c, v in zip(cols, values)]
+                elif await conn.fetchval(
+                        f'SELECT EXISTS (SELECT 1 FROM {legacy} f WHERE f.{column} IS NOT NULL '
+                        f'AND NOT EXISTS (SELECT 1 FROM {current_parent} m WHERE m.id = f.{column}))'):
+                    logger.warning('Legacy rows %s -> %s not copied: some point to a %s row that is not there '
+                                   '(the legacy history was not copied into it, ids would match other rows)',
+                                   legacy, current, current_parent)
+                    continue
+            copied = await conn.execute(
+                f'INSERT INTO {current} ({", ".join(cols)}) SELECT {", ".join(values)} FROM {legacy} l '
+                f'WHERE NOT EXISTS (SELECT 1 FROM {current} c WHERE c.id = l.id)')
             if 'id' in current_cols:
                 await conn.execute(
                     f"SELECT setval(pg_get_serial_sequence('{current}', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) "

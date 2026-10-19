@@ -533,14 +533,19 @@ databricks apps logs qualibot --profile UAT
 
 Attendu : `Copied legacy rows messages -> compare_messages` et `Copied legacy rows errors -> app_errors`, sans erreur.
 
-- [ ] **S6. Lakebase, base `doccompare`** (éditeur SQL Lakebase) :
+- [ ] **S6. Lakebase, base `doccompare`** (éditeur SQL Lakebase, après le premier démarrage de l'app avec le code qui copie les anciennes lignes ligne à ligne) :
 
 ```sql
 SELECT COUNT(*) AS old_paths FROM compare_messages WHERE volume_session_path LIKE '%_landingzone%';
-SELECT (SELECT COUNT(*) FROM messages) AS legacy, (SELECT COUNT(*) FROM compare_messages) AS current;
+SELECT (SELECT COUNT(*) FROM messages) AS messages_legacy,
+       (SELECT COUNT(*) FROM compare_messages) AS compare_messages,
+       (SELECT COUNT(*) FROM feedbacks) AS feedbacks_legacy,
+       (SELECT COUNT(*) FROM compare_feedbacks) AS compare_feedbacks,
+       (SELECT COUNT(*) FROM messages m WHERE NOT EXISTS (SELECT 1 FROM compare_messages c WHERE c.id = m.id)) AS messages_non_copies,
+       (SELECT COUNT(*) FROM feedbacks f WHERE f.message_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = f.message_id)) AS feedbacks_orphelins_legacy;
 ```
 
-Attendu : `old_paths` = 0, `legacy` = `current`.
+Attendu : `old_paths` = 0, `messages_non_copies` = 0, `compare_messages` supérieur ou égal à `messages_legacy` (les lignes créées par la nouvelle app s'y ajoutent), `compare_feedbacks` égal à `feedbacks_legacy`. Constat du 2026-10-19 avant ce correctif : `messages_legacy` 229, `compare_messages` 1, `feedbacks_legacy` 15, `compare_feedbacks` 0, `messages_non_copies` 229, aucun orphelin : la copie n'avait jamais eu lieu, parce que `compare_messages` n'était plus vide. Le démarrage de l'app déployée (instantané du 18/10) échouait à chaque fois sur la clé étrangère de `compare_feedbacks` et sautait la fin des migrations, dont l'index unique sur `users.email`.
 
 - [ ] **S7. Tests manuels de l'app** : ALL, AS, IS ; une question en anglais ; une question hors sujet ; un lien ; une recherche d'impact ; une comparaison avec export ; l'historique DocCompare.
 
