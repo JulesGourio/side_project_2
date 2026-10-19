@@ -212,12 +212,11 @@ definitions:
           - databricks bundle deployment unbind qualibot_test -t dev -p job-runner-sa-dev
 
     # -----------------------------------------------------------------------
-    # UAT, one-off: record the objects that already exist (schema, volumes, app, Lakebase project) in the bundle
-    # state of the new root, so the next deploy updates them instead of creating them. State only: nothing changes
-    # in Databricks. Every bind is tried; the step fails at the end if one of them failed. Run plan-uat afterwards.
+    # UAT, one-off: record the existing Lakebase project in the bundle state of the new root (the schema, the volumes
+    # and the app are already bound). State only: nothing changes in Databricks. Run plan-uat afterwards.
     # -----------------------------------------------------------------------
-    - step: &bind-uat-resources
-        name: Bind the existing UAT objects to the bundle state (uat)
+    - step: &bind-uat-lakebase
+        name: Bind the existing UAT Lakebase project to the bundle state (uat)
         deployment: uat
         clone:
           depth: 1
@@ -225,13 +224,7 @@ definitions:
           - bash utils/deploy/bitbucket_deploy.sh uat setup
           - python3 utils/deploy/render_target_config_env.py uat
           - databricks bundle validate -t qualibot-uat -p job-runner-sa-uat
-          - |
-            failed=0
-            for spec in "qualibot_proj_schema uat_proj.qualibot" "qualibot_doc_compare uat_proj.qualibot.doc_compare" "qualibot_images uat_proj.qualibot.images" "doc-compare qualibot" "qualibot-history qualibot"; do
-              set -- $spec
-              databricks bundle deployment bind "$1" "$2" -t qualibot-uat -p job-runner-sa-uat --auto-approve || { echo "BIND FAILED: $1 -> $2" >&2; failed=1; }
-            done
-            exit $failed
+          - databricks bundle deployment bind qualibot-history projects/qualibot -t qualibot-uat -p job-runner-sa-uat --auto-approve
 
     # -----------------------------------------------------------------------
     # UAT: target qualibot-uat, profile job-runner-sa-uat.
@@ -348,8 +341,8 @@ pipelines:
       - step: *plan-uat
     uat-state-fix:
       - step: *uat-state-fix
-    bind-uat-resources:
-      - step: *bind-uat-resources
+    bind-uat-lakebase:
+      - step: *bind-uat-lakebase
     unbind-dev-test-volume:
       - step: *unbind-dev-test-volume
     deploy-uat:
