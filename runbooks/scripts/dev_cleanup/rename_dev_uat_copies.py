@@ -22,7 +22,7 @@ for table in TABLES:
         continue
     if spark.catalog.tableExists(f"{SCHEMA}.{target}"):
         raise RuntimeError(f"{SCHEMA}.{target} already exists, {source} not renamed")
-    spark.sql(f"ALTER TABLE {source} RENAME TO {target}")
+    spark.sql(f"ALTER TABLE {source} RENAME TO {SCHEMA}.{target}")
     logger.info(f"  {source} -> {SCHEMA}.{target}")
 
 logger.info("Done")
