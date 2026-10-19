@@ -307,7 +307,7 @@ Attendu : `ONLINE`. Peut prendre environ une heure.
 
 ## Situation du 2026-10-19 — l'app UAT tourne déjà sur le nouveau code
 
-`deploy-uat-jobs` copie les fichiers du bundle dans le workspace, et `source_code_path` de l'app est ce dossier : au premier redémarrage de l'app (arrêt/démarrage planifié, plantage), elle exécute le nouveau code avec le `app.yaml` rendu pour l'UAT. Le chat interroge donc `uat_proj.qualibot.chunks_index`, la comparaison écrit dans `/Volumes/uat_proj/qualibot/doc_compare`. Ce que ce déploiement n'a **pas** appliqué : le bloc `apps.doc-compare` du bundle (ressource volume, ACL), l'expérience MLflow et les prompts, le catalogue de documents. Le but est de rendre l'état cohérent avec `deploy-uat`, sans refaire la phase P. Le code de `server/services/infra/lakebase/schema.py` ne fait que des ajouts au démarrage (pas de DROP, DELETE ni TRUNCATE) : rien n'a été supprimé dans Lakebase par ce démarrage.
+L'app UAT a été déployée le 2026-10-18 à 17:11 (déploiement `SNAPSHOT` créé par `job-runner-sa-uat`) : elle exécute le code de ce jour, pas les commits suivants. Le chat interroge `uat_proj.qualibot.chunks_index`, la comparaison écrit dans `/Volumes/uat_proj/qualibot/doc_compare`. Ce qui n'est pas cohérent : le bloc `apps.doc-compare` du bundle (la ressource volume pointe encore `uat_landingzone`, donc `READ VOLUME` manque sur `uat_proj` et `/api/compare/save` répond 500), la création du schéma Lakebase (`must be owner of table llm_requests` à chaque démarrage, voir Q5b), l'expérience MLflow et les prompts, le catalogue de documents. Le but est de rendre l'état cohérent avec `deploy-uat`, sans refaire la phase P. Le code de `server/services/infra/lakebase/schema.py` ne fait que des ajouts au démarrage (pas de DROP, DELETE ni TRUNCATE).
 
 Dans l'ordre. Profil CLI `UAT` (`uat-test` sur certaines machines : même workspace).
 
@@ -348,7 +348,30 @@ databricks fs ls dbfs:/Volumes/uat_proj/qualibot/doc_compare --profile UAT
 
 - [ ] **Q5. Plan du déploiement** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur l'app, le schéma, les volumes ou le projet Lakebase. Dans `apps.doc-compare`, la ressource `doc-compare-volume` passe de `uat_landingzone.qualibot.doc_compare` à `uat_proj.qualibot.doc_compare` et `test-volume` disparaît : c'est voulu. Comparer l'ACL de Q1 avec la liste du bloc `qualibot-uat` de `databricks.yml` (CoreAdmin et CoreDev `CAN_MANAGE`, les groupes ChatBot et DocCompare `CAN_USE`, trois utilisateurs, le SP `job-runner-sa-uat`) : tout accès actuel absent de la liste serait retiré.
 
-- [ ] **Q6. Déploiement de l'app** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `deploy-uat`. Il déploie, puis redémarre l'app.
+- [ ] **Q5b. Propriété des tables Lakebase** (éditeur SQL Lakebase, base `doccompare`, projet `qualibot`, branche `production`). Au démarrage l'app ajoute les tables et colonnes manquantes sous son propre rôle ; l'erreur `Lakebase schema ensure failed … must be owner of table llm_requests` (journal du 2026-10-18) arrête la création à `llm_requests` : les tables du chat (`chat_turns`, `chat_retrieved_chunks`…), celles de l'impact search et les colonnes ajoutées à `errors` ne sont pas créées. Il faut donner la propriété des tables au rôle de l'app.
+
+```sql
+SELECT tableowner, COUNT(*) AS tables, string_agg(tablename, ', ' ORDER BY tablename) AS noms
+FROM pg_tables WHERE schemaname = 'public' GROUP BY tableowner;
+```
+
+Les tables dont le propriétaire n'est pas `ed8abb86-e0db-423b-8f35-5cda58e89b80` passent au rôle de l'app (les séquences `SERIAL` suivent leur table) :
+
+```sql
+DO $$
+DECLARE t record;
+BEGIN
+  FOR t IN SELECT tablename FROM pg_tables
+           WHERE schemaname = 'public' AND tableowner <> 'ed8abb86-e0db-423b-8f35-5cda58e89b80'
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I OWNER TO %I', t.tablename, 'ed8abb86-e0db-423b-8f35-5cda58e89b80');
+  END LOOP;
+END $$;
+```
+
+Si PostgreSQL répond `must be member of role`, d'abord `GRANT "ed8abb86-e0db-423b-8f35-5cda58e89b80" TO CURRENT_USER;` puis relancer le bloc. Contrôle : la première requête ne doit plus montrer que le rôle de l'app. L'app crée les tables manquantes au démarrage de Q6.
+
+- [ ] **Q6. Déploiement de l'app** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `deploy-uat`. Il déploie, puis redémarre l'app. Attendu dans `bundle plan` : `update apps.doc-compare` (ressource volume `uat_proj`) et `update postgres_projects.qualibot-history.permissions`, aucun `delete`. Avant : comparer l'ACL actuelle du projet Lakebase (UI, projet `qualibot`, Permissions) avec les six entrées du bloc `qualibot-history` de `databricks.yml` ; tout accès absent de cette liste serait retiré.
 
 - [ ] **Q7. Journal de démarrage** (PowerShell). Attendus : `Copied legacy rows messages -> compare_messages` et `Copied legacy rows errors -> app_errors` (première fois seulement), des lignes `Capabilities …: can_chat=True … (SCIM)`, aucune ligne `refused 400`.
 
