@@ -17,11 +17,31 @@ from pathlib import Path
 
 import requests
 
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 PR_COMMIT = "14296499a19baf710dc6c10d74bdd71204176b2d"
 OUT = "runbooks/pr_review/comments"
 logger = logging.getLogger("fetch_pr_comments")
 API = "https://api.bitbucket.org/2.0/repositories/{ws}/{repo}/pullrequests/{pr}"
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def user_var(name):
+    """Process variable, else the Windows user variable set by setx (not yet in this shell)."""
+    if os.environ.get(name):
+        return os.environ[name]
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            return winreg.QueryValueEx(key, name)[0]
+    except (ImportError, OSError):
+        return None
 
 
 def get_all(url, auth):
@@ -69,8 +89,8 @@ def main():
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, check=True).stdout.strip()
     remote = re.search(r"bitbucket\.org[:/]([^/]+)/([^/]+?)(?:\.git)?$", git("remote", "get-url", "origin"))
     ws, repo = remote[1], remote[2]
-    auth = (os.environ.get("BB_USER") or input("Bitbucket user: "),
-            os.environ.get("BB_TOKEN") or getpass.getpass("Bitbucket app password/token: "))
+    auth = (user_var("BB_USER") or input("Bitbucket user: "),
+            user_var("BB_TOKEN") or getpass.getpass("Bitbucket app password/token: "))
     prs = f"https://api.bitbucket.org/2.0/repositories/{ws}/{repo}/pullrequests"
     pr = args.pr
     if not pr:
