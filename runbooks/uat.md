@@ -658,7 +658,7 @@ Requête 5 (Databricks SQL, `uat_proj`) : ce que l'index renvoie réellement pou
 SELECT chunk_id, REF, IDDOC, left(chunk_text, 120) AS extrait, score
 FROM vector_search(
   index => 'uat_proj.qualibot.chunks_index',
-  query_text => 'QM-1041',
+  query => 'Design Organisation Manual DOM QM-1041',
   num_results => 50
 )
 WHERE REF = 'QM-1041';
@@ -673,6 +673,84 @@ SELECT ref, title, revision, doc_date FROM doc_catalog WHERE ref = 'QM-1041';
 ```
 
 **Lecture des résultats** : (a) requête 3 = aucune ligne → le document a bien quitté la source ; (b) requête 2 contient des lignes en `SUCCESS`/`ERROR`/`EMPTY_TEXT`/`IMAGES_PENDING` → la purge ne l'a pas touché, à corriger ; (c) requête 2 contient des lignes avec un autre `parse_status` (SKIPPED_…) → la purge ne couvre pas ce statut ; (d) requête 5 renvoie QM-1041 et requête 2 n'en a pas → index non resynchronisé (ou run échoué après la purge, la synchronisation n'est pas arrivée) ; (e) requête 1 contient `source = ref_lookup` → la référence est nommée dans la question ou dans un message précédent, et la recherche par référence la reprend directement de l'index, sans contrôle de périmètre.
+
+**Constat E1 (2026-10-19)** : QM-1041 (IDDOC 20605) est `nonvisible = 1` dans `gd_doc_latest`, donc hors périmètre, et absent de `chunks`. L'index le sert encore : sa synchronisation échoue depuis le 2026-10-19 14:20 UTC avec `DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE` (versions 11 à 19 de `chunks`). Cause : `3c_chunks` écrase `chunks` avec `overwriteSchema` puis remet la clé en NOT NULL (`CREATE OR REPLACE` v14 + `CHANGE COLUMN` v15), `4_describe_images` ajoute `anchor_chunk_index` (v17) ; le change data feed ne traverse pas ce changement. `5_sync_index` restait en SUCCESS parce que l'attente ne regardait que `detailed_state`.
+
+**E2 — Corriger le code puis reconstruire `chunks_index` (UAT)** : dans cet ordre. Le code corrigé (`overwrite_rows` dans `tables.py`, écrasement sans changement de schéma ; attente de `update_proj_vector_indexes.py` qui échoue sur `update failed`) doit être déployé AVANT toute nouvelle exécution du pipeline, sinon le prochain écrasement casse le nouvel index.
+
+1. Copier la nouvelle version du dépôt dans `latec-compare`, puis commit et push (PowerShell) :
+
+```powershell
+cd C:\Users\L0041770\Desktop\GenAI\Qualibot\latec-compare
+git status
+git add -A
+git commit -m "Chunks: the overwrite keeps the schema (Delta Sync index); the index task fails on a failed update"
+git push
+```
+
+2. Bitbucket → Pipelines → Run pipeline → branche poussée → pipeline personnalisé `deploy-uat-jobs` (« Deploy jobs and notebooks to UAT, app untouched »). Attendre qu'il soit vert.
+
+3. Importer le notebook de reconstruction (PowerShell, profil `UAT`) :
+
+```powershell
+databricks workspace mkdirs /Workspace/Shared/qualibot_uat_index --profile UAT
+databricks workspace import /Workspace/Shared/qualibot_uat_index/rebuild_chunks_index --file runbooks/scripts/uat_index/rebuild_chunks_index.py --format SOURCE --language PYTHON --overwrite --profile UAT
+```
+
+4. Lancer la reconstruction, exécutée par le compte de service UAT (la recherche du chat est coupée jusqu'à la fin) :
+
+```powershell
+databricks jobs submit --json "@runbooks/scripts/uat_index/rebuild_chunks_index_submit.json" --no-wait --profile UAT
+```
+
+Noter le `run_id` affiché. Suivre l'état (remplacer `<RUN_ID>`), jusqu'à `TERMINATED` :
+
+```powershell
+databricks jobs get-run <RUN_ID> --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.state }
+```
+
+Si `result_state` n'est pas `SUCCESS`, lire l'erreur :
+
+```powershell
+$run = databricks jobs get-run <RUN_ID> --profile UAT -o json | ConvertFrom-Json
+databricks jobs get-run-output $run.tasks[0].run_id --profile UAT -o json | ConvertFrom-Json | Select-Object error, error_trace | Format-List
+```
+
+5. Vérifier l'index (PowerShell, profil `UAT`), attendu : `indexed_row_count` égal au nombre de lignes de `chunks`, et aucun message d'échec :
+
+```powershell
+databricks vector-search-indexes get-index uat_proj.qualibot.chunks_index --profile UAT -o json
+```
+
+6. Vérifier dans Databricks SQL (`uat_proj`), attendu : 0 ligne pour les deux requêtes de QM-1041 ; le nombre de la première = `indexed_row_count` du point 5 :
+
+```sql
+SELECT count(*) AS chunks_rows FROM uat_proj.qualibot.chunks;
+
+SELECT chunk_id, REF, IDDOC
+FROM vector_search(
+  index => 'uat_proj.qualibot.chunks_index',
+  query => 'Design Organisation Manual DOM QM-1041',
+  num_results => 50
+)
+WHERE IDDOC = 20605;
+```
+
+7. Poser dans le chat de l'application UAT la question qui avait fait remonter QM-1041 : la source QM-1041 ne doit plus apparaître.
+
+8. Test du correctif de code : lancer le pipeline complet (le mode `rechunk` du job écrase `chunks`, c'est le cas qui avait cassé la synchronisation), environ 2 h :
+
+```powershell
+databricks jobs run-now 762813135325407 --profile UAT
+```
+
+Attendu : `5_sync_index` en SUCCESS et, dans Databricks SQL, une ligne `WRITE` avec `operationParameters` `Overwrite` (pas `CREATE OR REPLACE TABLE AS SELECT`) pour `chunks` à la date du run :
+
+```sql
+DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 10;
+```
+
+À marquer fait (daté) dans « Fait » une fois confirmé.
 
 ## Fait
 

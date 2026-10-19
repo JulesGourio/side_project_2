@@ -311,15 +311,18 @@ if failed:
 
 # MAGIC %md
 # MAGIC ## Wait for the syncs to finish
-# MAGIC Waits for each index to leave a syncing state so the job reflects the real outcome; a failed or offline index raises immediately instead of waiting out the timeout. `wait_minutes = 0` triggers and returns.
+# MAGIC Waits for each index to leave a syncing state so the job reflects the real outcome; a failed or offline index raises immediately instead of waiting out the timeout, and an index that stays on a failed update (it keeps serving its last good rows) raises after a few polls. `wait_minutes = 0` triggers and returns.
 
 # COMMAND ----------
+
+FAILED_POLLS_BEFORE_ERROR = 3
 
 if WAIT_MINUTES <= 0:
     logger.info("Wait disabled — syncs triggered, state not verified.")
 else:
     deadline = time.time() + WAIT_MINUTES * 60
     pending = set(INDEXES)
+    failed_polls = {name: 0 for name in INDEXES}
     while pending and time.time() < deadline:
         time.sleep(30)
         for name in sorted(pending):
@@ -331,6 +334,14 @@ else:
                 msg = getattr(st, "message", None) or "no further detail from the SDK"
                 raise RuntimeError(f"{name}: sync failed (state={state}) — {msg}")
             if st and st.ready and "PROVISIONING" not in state and "SYNC" not in state:
+                # A failed sync leaves the index ready on its last good state: only its message says so. The previous
+                # run's message lasts until the new update starts, hence several polls before raising.
+                message = getattr(st, "message", None) or ""
+                if "update failed" in message.lower():
+                    failed_polls[name] += 1
+                    if failed_polls[name] >= FAILED_POLLS_BEFORE_ERROR:
+                        raise RuntimeError(f"{name}: sync failed, the index still serves its previous rows — {message}")
+                    continue
                 logger.info(f"{name}: done — indexed_rows {before[name]} -> {st.indexed_row_count}")
                 pending.discard(name)
     if pending:
