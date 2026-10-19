@@ -927,7 +927,14 @@ Les 4 copies UAT portant les noms des tables Lakebase DEV sont renommées `uat_<
   databricks bundle run -t dev lakebase_export --profile DEV
   ```
 
-- [ ] **L.4 Contrôle** :
+- [ ] **L.4 Supprimer les anciennes tables de `dev_proj.qualibot`** (notebook one-shot, SP DEV ; `impact_*` restent) :
+
+  ```powershell
+  databricks workspace import /Workspace/Shared/qualibot_oneshot/drop_dev_stale_tables --file runbooks/scripts/dev_cleanup/drop_dev_stale_tables.py --format SOURCE --language PYTHON --overwrite --profile DEV
+  databricks jobs submit --json @runbooks/scripts/dev_cleanup/drop_dev_stale_tables_submit.json --profile DEV
+  ```
+
+- [ ] **L.5 Contrôle** :
 
   ```sql
   SHOW TABLES IN dev_proj.qualibot;
