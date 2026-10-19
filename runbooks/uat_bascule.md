@@ -228,6 +228,20 @@ FROM uat_proj.qualibot.parsing_checkpoint WHERE IDDOC IN (25372, 19226, 21324, 2
 
 - [ ] **J0b'. Si `plan-uat` annonce des `create` pour des objets qui existent déjà** (2026-10-19 : `apps.doc-compare`, `postgres_projects.qualibot-history`, `schemas.qualibot_proj_schema`, `volumes.qualibot_doc_compare`, `volumes.qualibot_images`) : l'état de la nouvelle racine ne les connaît pas. Ne pas déployer. Le schéma, les deux volumes et l'app ont été rattachés le 2026-10-19 (pipeline `bind-uat-resources`, depuis retiré). Reste le projet Lakebase : pipeline `bind-uat-lakebase` (SP UAT, identifiant `projects/qualibot`, état seulement). Puis `plan-uat`. Les `permissions` de l'app et du projet restent annoncées en `create` : elles remplacent l'ACL existant par celle de `databricks.yml`. Avant le déploiement, comparer l'ACL réel de l'app (`databricks apps get-permissions qualibot --profile UAT`) à la liste déclarée. Ne pas relancer `uat-state-fix`.
 
+- [ ] **J0b''. Jobs UAT en double (constaté le 2026-10-19)**. Jeu A : racine `/Workspace/Shared`, créé les 03/09 et 16/10, historique des runs. Jeu B : racine `/Workspace/.bundle`, créé le 19/10 à 09:10 UTC par un déploiement sur la nouvelle racine avant que son état existe ; c'est celui que suit l'état. À utiliser : le jeu B. Job de parsing B : `762813135325407` (mode à vérifier et *Run now* sur celui-là, pas sur `1090642136386557`).
+
+| Job | Jeu A (à retirer) | Jeu B (à garder) |
+|---|---|---|
+| `D_1_Qualibot_Parsing_Pipeline` | `1090642136386557` | `762813135325407` |
+| `D_1_Qualibot_Lakebase_Export_To_Volume` | `779339891964836` | `290867940964606` |
+| `D_2_Qualibot_Score_Chat_Traces` | `687448690184801` | `161560065917637` |
+| `W_1_Qualibot_Start_Weekend_Uat` | `342815175501077` | `854972118459514` |
+| `W_1_Qualibot_Stop_Weekend_Uat` | `783022027143685` | `236940839371957` |
+| `Z_2_Qualibot_Create_Chat_Experiment` | `824967477595237` | `990105543498681` |
+| `Z_3_Qualibot_Register_Chat_Prompts` | `931830613336591` | `36091234966600` |
+
+Tout de suite : mettre en pause les plannings du jeu A encore `UNPAUSED` (export Lakebase, démarrage et arrêt du week-end). Après la réparation des chunks et sur accord écrit : supprimer les sept jobs du jeu A (`databricks jobs delete <id> --profile UAT`), puis seulement M1. Hors bundle, à décider : `qualibot-sync-user-capabilities-uat` (`851363031959777`, planning actif), probablement obsolète depuis que l'accès se vérifie par appartenance de groupe.
+
 - [ ] **J0c. Retirer les déclarations temporaires** `qualibot_schema` et `qualibot_test` de `databricks.yml` (cible `qualibot-uat`), commit et push. Les ressources de l'app (`doc-compare-volume` et `test-volume` vers `uat_landingzone`) restent temporaires jusqu'à S4.
 
 - [ ] **J1. Pause du planning du job de parsing UAT** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Pause* sur le planning.
