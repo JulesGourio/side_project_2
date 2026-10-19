@@ -447,6 +447,25 @@ Attendu dans la tâche d'import : `Tables to load: [...]`, une ligne par table n
 
 Retour arrière : redéployer (`deploy-uat`) la branche précédente. Les tables `_v1`, les index `_v1` et les agents restent intacts jusqu'à D1 et D2, et le démarrage de la nouvelle version n'a fait que des ajouts dans Lakebase.
 
+- [ ] **Q13. Traces MLflow du chat après un déplacement de l'expérience.** L'app retrouve l'expérience par son **chemin** (`CHAT_MLFLOW_EXPERIMENT`, `utils/deploy/target_env.json`). Déplacer l'expérience dans l'espace de travail change son chemin sans changer son identifiant : l'app cherche l'ancien chemin, ne le trouve plus, et n'enregistre plus rien. Les jobs lisent le même chemin dans la variable `chat_mlflow_experiment` de `databricks.yml`. Un test (`tests/test_deploy_config.py`) refuse un écart entre les deux. Diagnostic :
+
+```powershell
+databricks apps logs qualibot --profile UAT --tail-lines 1000 --search "mlflow_turns"
+```
+
+Deux messages possibles : `experiment <chemin> does not exist, chat traces are off` (le chemin configuré n'existe plus : ce qui suit), ou `trace … not written: … PermissionDenied` (le chemin est bon, l'app n'a plus le droit d'écrire : dernière étape). Pour réparer, avec le nouveau chemin de l'expérience (UI : Experiments, ouvrir l'expérience, copier son chemin) :
+
+1. Remplacer le chemin à **deux** endroits, du même texte : la valeur `CHAT_MLFLOW_EXPERIMENT` de la cible dans `utils/deploy/target_env.json` et la variable `chat_mlflow_experiment` de `databricks.yml` (sous `variables:` de la cible si le chemin diffère par environnement). Commit, push.
+2. Bitbucket, `deploy-uat` (l'app relit son environnement).
+3. Réappliquer les droits sur l'expérience déplacée : le job est idempotent (une expérience existante est laissée telle quelle, ses droits sont réappliqués : CAN_EDIT à l'app, CAN_MANAGE à CoreAdmin et CoreDev) :
+
+```powershell
+databricks bundle run -t qualibot-uat create_chat_experiment_uat --profile UAT
+databricks bundle run -t qualibot-uat register_chat_prompts_uat --profile UAT
+```
+
+4. Vérifier : poser une question dans le chat, attendre une minute, puis relancer la recherche `mlflow_turns` : plus de `does not exist`, et dans l'UI Experiments le nombre de traces augmente.
+
 Les alertes (S10) restent en pause et le nettoyage (D1, D2) attend un accord écrit.
 
 ## Phase S — bascule de l'app (accord écrit requis, moment calme recommandé)

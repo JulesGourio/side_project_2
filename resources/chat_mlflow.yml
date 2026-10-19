@@ -14,7 +14,7 @@ targets:
               - ${var.notification_email}
           notification_settings:
             no_alert_for_canceled_runs: true
-          description: "Create /Shared/qualibot/chat_turns owned by the DEV job SP; the DEV app SP can edit it. Manual trigger only."
+          description: "Create the chat experiment (variable chat_mlflow_experiment) owned by the DEV job SP; the DEV app SP can edit it. Manual trigger only."
           max_concurrent_runs: 1
           tags:
             activity-type: ${var.job_activity_tag}
@@ -39,7 +39,7 @@ targets:
                   - "--app"
                   - "qualibot"
                   - "--experiment"
-                  - "/Shared/qualibot/chat_turns"
+                  - ${var.chat_mlflow_experiment}
                   - "--managers"
                   - "Role-Project-LEAP-CoreAdmin,Role-Project-LEAP-CoreDev"
               environment_key: default
@@ -85,7 +85,7 @@ targets:
                   - "--schema"
                   - "${var.pipeline_write_env}_proj.qualibot"
                   - "--experiment"
-                  - "/Shared/qualibot/chat_turns"
+                  - ${var.chat_mlflow_experiment}
                   - "--app-root"
                   - "${workspace.root_path}/files"
               environment_key: default
@@ -133,7 +133,7 @@ targets:
                   dry_run: "{{job.parameters.dry_run}}"
                   min_date: "2026-10-12"
                   app_code_path: "${workspace.root_path}/files"
-                  experiment: "/Shared/qualibot/chat_turns"
+                  experiment: ${var.chat_mlflow_experiment}
                   results_table: "${var.pipeline_write_env}_proj.qualibot.chat_trace_scores"
               environment_key: default
           environments:
@@ -159,7 +159,7 @@ targets:
               - ${var.notification_email}
           notification_settings:
             no_alert_for_canceled_runs: true
-          description: "Create /Shared/qualibot/chat_turns owned by the job SP; the app SP can edit it. Manual trigger only."
+          description: "Create the chat experiment (variable chat_mlflow_experiment) owned by the job SP; the app SP can edit it. Manual trigger only."
           max_concurrent_runs: 1
           tags:
             activity-type: ${var.job_activity_tag}
@@ -182,7 +182,7 @@ targets:
                   - "--app"
                   - "qualibot"
                   - "--experiment"
-                  - "/Shared/qualibot/chat_turns"
+                  - ${var.chat_mlflow_experiment}
                   - "--managers"
                   - "Role-Project-LEAP-CoreAdmin,Role-Project-LEAP-CoreDev"
               environment_key: default
@@ -226,7 +226,7 @@ targets:
                   - "--schema"
                   - "${var.pipeline_write_env}_proj.qualibot"
                   - "--experiment"
-                  - "/Shared/qualibot/chat_turns"
+                  - ${var.chat_mlflow_experiment}
                   - "--app-root"
                   - "${workspace.root_path}/files"
               environment_key: default
@@ -274,7 +274,7 @@ targets:
                   dry_run: "{{job.parameters.dry_run}}"
                   min_date: "2026-10-12"
                   app_code_path: "${workspace.root_path}/files"
-                  experiment: "/Shared/qualibot/chat_turns"
+                  experiment: ${var.chat_mlflow_experiment}
                   results_table: "${var.pipeline_write_env}_proj.qualibot.chat_trace_scores"
               environment_key: default
           environments:
@@ -300,7 +300,7 @@ targets:
               - ${var.notification_email}
           notification_settings:
             no_alert_for_canceled_runs: true
-          description: "Create /Shared/qualibot/chat_turns owned by the job SP; the app SP can edit it. Manual trigger only."
+          description: "Create the chat experiment (variable chat_mlflow_experiment) owned by the job SP; the app SP can edit it. Manual trigger only."
           max_concurrent_runs: 1
           tags:
             activity-type: ${var.job_activity_tag}
@@ -323,7 +323,7 @@ targets:
                   - "--app"
                   - "qualibot"
                   - "--experiment"
-                  - "/Shared/qualibot/chat_turns"
+                  - ${var.chat_mlflow_experiment}
                   - "--managers"
                   - "Role-Project-LEAP-CoreAdmin,Role-Project-LEAP-CoreDev"
               environment_key: default
@@ -367,7 +367,7 @@ targets:
                   - "--schema"
                   - "${var.pipeline_write_env}_proj.qualibot"
                   - "--experiment"
-                  - "/Shared/qualibot/chat_turns"
+                  - ${var.chat_mlflow_experiment}
                   - "--app-root"
                   - "${workspace.root_path}/files"
               environment_key: default
@@ -415,7 +415,7 @@ targets:
                   dry_run: "{{job.parameters.dry_run}}"
                   min_date: "2026-10-12"
                   app_code_path: "${workspace.root_path}/files"
-                  experiment: "/Shared/qualibot/chat_turns"
+                  experiment: ${var.chat_mlflow_experiment}
                   results_table: "${var.pipeline_write_env}_proj.qualibot.chat_trace_scores"
               environment_key: default
           environments:

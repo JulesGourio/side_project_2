@@ -114,6 +114,12 @@ variables:
   job_activity_tag:
     description: "activity-type tag of every job and of its clusters, {env}-job (the cluster policies require it)"
     default: "dev-job"
+  chat_mlflow_experiment:
+    description: >-
+      Workspace path of the MLflow experiment that receives one trace per chat turn. Read by the chat jobs of resources/chat_mlflow.yml;
+      the app reads CHAT_MLFLOW_EXPERIMENT in utils/deploy/target_env.json, which must hold the same value (tests/test_deploy_config.py).
+      Moving the experiment in the workspace changes this path: update both.
+    default: "/Shared/qualibot/chat_turns"
   lakebase_export_schedule_pause:
     description: "PAUSED: the Lakebase export job (D_1_Qualibot_Lakebase_Export_To_Volume) does not run on its schedule. UNPAUSED: it runs at 02:00 and 14:00 (Europe/Brussels)."
     default: "PAUSED"

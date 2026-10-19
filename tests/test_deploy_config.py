@@ -72,3 +72,21 @@ def test_caps_bypass_only_on_dev():
     with open(APP_YAML_PATH, encoding='utf-8') as f:
         app_yaml_text = f.read()
     assert 'name: CAPS_BYPASS\n    value: "false"' in app_yaml_text, 'app.yaml must default CAPS_BYPASS to "false"'
+
+
+# The chat experiment path is read by the chat jobs (variable of databricks.yml) and by the app (target_env.json): a move of
+# the experiment that updates only one of them silently stops the traces.
+BUNDLE_PATH = os.path.join(HERE, '..', 'databricks.yml')
+_BUNDLE_TARGETS = {'dev': 'dev', 'uat': 'qualibot-uat', 'prod': 'qualibot-prod'}
+
+
+def test_chat_experiment_path_is_the_same_for_the_jobs_and_the_app():
+    import yaml
+    with open(BUNDLE_PATH, encoding='utf-8') as f:
+        bundle = yaml.safe_load(f)
+    default = bundle['variables']['chat_mlflow_experiment']['default']
+    config = _load_target_env()
+    for env, target in _BUNDLE_TARGETS.items():
+        jobs = (bundle['targets'][target].get('variables') or {}).get('chat_mlflow_experiment', default)
+        assert config[env].get('CHAT_MLFLOW_EXPERIMENT') == jobs, (
+            f'{env}: the app reads {config[env].get("CHAT_MLFLOW_EXPERIMENT")!r}, the jobs use {jobs!r}')
