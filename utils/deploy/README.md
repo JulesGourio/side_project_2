@@ -9,7 +9,8 @@ Parent: [`utils/`](../README.md). The root [README](../../README.md) describes t
 | File | What it does | Runs as |
 |---|---|---|
 | `deploy_qualibot.ps1` | Builds the frontend, renders `target_config.env`, uploads the code (or deploys the bundle with `-Infra`), starts the app when it is stopped, and deploys it | PowerShell, from the repository root |
-| `render_target_config_env.py` | Writes the settings of one target as `export NAME='value'` lines | CLI, also run by `bitbucket-pipelines.yml` for each target |
+| `bitbucket_deploy.sh` | One Bitbucket step: writes the profile of an environment from its `DATABRICKS_TOKEN`, then validates and deploys the bundle (`app` also restarts the app, `jobs` does not, `setup` only writes the profile). The table of environments (bundle target, profile, default host) is in the script | Bitbucket, `bash utils/deploy/bitbucket_deploy.sh <dev\|uat\|prod> <app\|jobs\|setup>` |
+| `render_target_config_env.py` | Writes the settings of one target as `export NAME='value'` lines | CLI, run by `bitbucket_deploy.sh` and by hand |
 | `target_env.json` | The app's settings per target, the only source of these values | Read by both files above |
 
 Command forms, from the repository root:

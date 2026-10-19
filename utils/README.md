@@ -11,7 +11,7 @@ The application is in [`server/`](../server/) and [`client/`](../client/); see t
 | Folder or file | Content | Runs as |
 |---|---|---|
 | [`parsing_pipeline/`](parsing_pipeline/README.md) | Daily chain of parsing, passage splitting and indexing (tasks `1_categories` to `6_update_kb_metadata`) | Tasks of the job `parsing_pipeline` (`resources/parsing_pipeline.job.yml`) |
-| [`deploy/`](deploy/) | `deploy_qualibot.ps1`: deploys the application code. `render_target_config_env.py`: writes `target_config.env` from `target_env.json`. `target_env.json`: application settings per target | `deploy_qualibot.ps1` from PowerShell; `render_target_config_env.py` from the Bitbucket pipeline (`bitbucket-pipelines.yml`) |
+| [`deploy/`](deploy/) | `deploy_qualibot.ps1`: deploys the application code. `bitbucket_deploy.sh`: one Bitbucket step (profile, bundle deploy). `render_target_config_env.py`: writes `target_config.env` from `target_env.json`. `target_env.json`: application settings per target | `deploy_qualibot.ps1` from PowerShell; `bitbucket_deploy.sh` from the Bitbucket pipeline (`bitbucket-pipelines.yml`), which runs `render_target_config_env.py` |
 | [`alerts/`](alerts/README.md) | Six SQL queries of alerts on the parsing, the chat and the jobs | Pasted as the query of a Databricks SQL alert; no job runs them |
 | [`app_mgmt/`](app_mgmt/) | `stop_start_app_job.py`: stop and start of the Databricks Apps on a schedule | Tasks of the jobs in `resources/app_schedules.yml` |
 | [`lakebase_sync/`](lakebase_sync/README.md) | Export of the Lakebase database to a volume, import into DEV, JSON export and import for PROD | Tasks of the jobs in `resources/lakebase_sync.yml`; CLI steps of `bitbucket-pipelines.yml` |
