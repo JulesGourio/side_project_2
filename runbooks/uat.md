@@ -111,18 +111,9 @@ Si la CLI refuse le format (`create-index` attend un corps différent de `get-in
 
 Même opération pour `chunks_full_index` si voulu (absent du déploiement aujourd'hui, voir `databricks.yml`).
 
-**0.4 — Droits (SQL, éditeur SQL du workspace UAT)**
+**0.4 — Droits (job one-shot sous le SP UAT, jamais dans l'éditeur SQL)**
 
-Remplacer `<APP_SP>` par le client ID de l'app : `databricks apps get qualibot --profile UAT -o json` (champ `service_principal_client_id`). Remplacer `<PIPELINE_SP>` par `3e5cd4e5-f765-4760-b974-ee7715258b39` (job-runner-sa-uat).
-
-```sql
-GRANT USE CATALOG ON CATALOG uat_proj TO `<APP_SP>`;
-GRANT USE SCHEMA ON SCHEMA uat_proj.qualibot TO `<APP_SP>`;
-GRANT SELECT ON TABLE uat_proj.qualibot.chunks_index TO `<APP_SP>`;
-
-GRANT USE CATALOG ON CATALOG uat_proj TO `<PIPELINE_SP>`;
-GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA uat_proj.qualibot TO `<PIPELINE_SP>`;
-```
+Constat du 2026-10-19 : le job `grant_uat_app` (`runbooks/scripts/grants/`) n'accorde que l'app (`USE CATALOG`, `USE SCHEMA`, index optionnel). Il manque au SP des jobs (`job-runner-sa-uat`, `3e5cd4e5-f765-4760-b974-ee7715258b39`) ce qui sert à l'export Lakebase et au pipeline sur `uat_proj.qualibot` : `USE SCHEMA`, `CREATE TABLE`, `SELECT`, `MODIFY`, `CREATE VOLUME`, `READ VOLUME`, `WRITE VOLUME`. Le volume `staging` est créé par l'export lui-même : sans `CREATE VOLUME`, l'export échoue. À ajouter au notebook de droits (même principe : soumis sous le SP UAT). Aucun GRANT n'est donné à coller dans l'éditeur SQL.
 
 **0.5 — Tables chat depuis Lakebase (run ponctuel)**
 
