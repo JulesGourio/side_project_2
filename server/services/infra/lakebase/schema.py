@@ -61,10 +61,29 @@ async def _move_legacy_volume_paths(conn) -> None:
         LEGACY_VOLUME_PATTERN, volume_root)
 
 
+class _OwnerTolerantConn:
+    """Connection whose statements may fail on a table owned by another role (42501, 'must be owner'): the failure is
+    logged and the next statement runs, so one such table does not stop the creation of the tables after it."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.skipped: list = []
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    async def execute(self, query, *args):
+        try:
+            return await self._conn.execute(query, *args)
+        except asyncpg.InsufficientPrivilegeError as e:
+            self.skipped.append((str(e), ' '.join(query.split())[:100]))
+
+
 async def ensure_schema(pool: asyncpg.Pool) -> None:
     # Additive only: no DROP, DELETE or TRUNCATE at start-up.
     # Lakebase rewrites the table, so it looks empty for a moment before the data is back.
-    async with pool.acquire() as conn:
+    async with pool.acquire() as raw_conn:
+        conn = _OwnerTolerantConn(raw_conn)
         # ── messages (primary history table) ─────────────────────────────────
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS compare_messages (
@@ -576,5 +595,10 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             ''')
         except asyncpg.PostgresError as e:
             logger.warning('users_email_idx not created: %s', e)
+
+        if conn.skipped:
+            logger.warning('Lakebase schema: %d statement(s) skipped, the app does not own their table (first: %s: %s) — '
+                           'run runbooks/scripts/lakebase/ensure_schema_as_owner.py as the owner', len(conn.skipped),
+                           conn.skipped[0][0], conn.skipped[0][1])
 
     logger.info('Lakebase schema ready')

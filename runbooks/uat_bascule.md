@@ -348,28 +348,30 @@ databricks fs ls dbfs:/Volumes/uat_proj/qualibot/doc_compare --profile UAT
 
 - [ ] **Q5. Plan du déploiement** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur l'app, le schéma, les volumes ou le projet Lakebase. Dans `apps.doc-compare`, la ressource `doc-compare-volume` passe de `uat_landingzone.qualibot.doc_compare` à `uat_proj.qualibot.doc_compare` et `test-volume` disparaît : c'est voulu. Comparer l'ACL de Q1 avec la liste du bloc `qualibot-uat` de `databricks.yml` (CoreAdmin et CoreDev `CAN_MANAGE`, les groupes ChatBot et DocCompare `CAN_USE`, trois utilisateurs, le SP `job-runner-sa-uat`) : tout accès actuel absent de la liste serait retiré.
 
-- [ ] **Q5b. Propriété des tables Lakebase** (éditeur SQL Lakebase, base `doccompare`, projet `qualibot`, branche `production`). Au démarrage l'app ajoute les tables et colonnes manquantes sous son propre rôle ; l'erreur `Lakebase schema ensure failed … must be owner of table llm_requests` (journal du 2026-10-18) arrête la création à `llm_requests` : les tables du chat (`chat_turns`, `chat_retrieved_chunks`…), celles de l'impact search et les colonnes ajoutées à `errors` ne sont pas créées. Il faut donner la propriété des tables au rôle de l'app.
+- [ ] **Q5b. Propriété des tables Lakebase** (base `doccompare`, projet `qualibot`, branche `production`). Au démarrage l'app ajoute les tables et colonnes manquantes sous son propre rôle, et ne peut pas modifier une table qui appartient à un autre rôle : `Lakebase schema ensure failed … must be owner of table llm_requests` (journal du 2026-10-18 et du 2026-10-19). Les tables sont réparties entre trois propriétaires (le SP du job pour `catalog_metadata` et `doc_catalog`, l'app pour `compare_messages` et `compare_feedbacks`, la personne qui les a créées pour les 13 autres) et aucun de ces rôles ne peut en prendre un autre (`GRANT` refusé : `permission denied to grant role`). Le code ignore désormais une instruction refusée pour cette raison et continue (un seul avertissement par démarrage). Les 13 tables de la personne ne peuvent être modifiées que par elle : elle applique une fois le DDL manquant (ajouts seulement, aucun DROP, DELETE ni TRUNCATE, aucune ligne touchée). Les tables créées ainsi lui appartiennent, l'app les lit et les écrit déjà comme les 13 autres.
 
-```sql
-SELECT tableowner, COUNT(*) AS tables, string_agg(tablename, ', ' ORDER BY tablename) AS noms
-FROM pg_tables WHERE schemaname = 'public' GROUP BY tableowner;
+  Depuis la racine du dépôt, en PowerShell, sous l'identité du propriétaire (`jules.gourio.external@latecoere.aero`) :
+
+```powershell
+$env:DATABRICKS_CONFIG_PROFILE = "UAT"
+$env:LAKEBASE_PROJECT_ID = "qualibot"
+$env:LAKEBASE_DATABASE = "doccompare"
+$env:COMPARE_VOLUME_PATH = "/Volumes/uat_proj/qualibot/doc_compare"
+python runbooks/scripts/lakebase/ensure_schema_as_owner.py
 ```
 
-Les tables dont le propriétaire n'est pas `ed8abb86-e0db-423b-8f35-5cda58e89b80` passent au rôle de l'app (les séquences `SERIAL` suivent leur table) :
+  Attendu : `Connecting to doccompare as jules.gourio.external@latecoere.aero`, puis `Lakebase schema ready` et, au plus, un avertissement `statement(s) skipped` pour `compare_messages` / `compare_feedbacks` (normal : ils appartiennent à l'app). Si le port 5432 est bloqué depuis le poste, générer le DDL puis le coller dans l'éditeur SQL Lakebase (même identité) :
 
-```sql
-DO $$
-DECLARE t record;
-BEGIN
-  FOR t IN SELECT tablename FROM pg_tables
-           WHERE schemaname = 'public' AND tableowner <> 'ed8abb86-e0db-423b-8f35-5cda58e89b80'
-  LOOP
-    EXECUTE format('ALTER TABLE public.%I OWNER TO %I', t.tablename, 'ed8abb86-e0db-423b-8f35-5cda58e89b80');
-  END LOOP;
-END $$;
+```powershell
+python runbooks/scripts/lakebase/ensure_schema_as_owner.py --print
 ```
 
-Si PostgreSQL répond `must be member of role`, d'abord `GRANT "ed8abb86-e0db-423b-8f35-5cda58e89b80" TO CURRENT_USER;` puis relancer le bloc. Contrôle : la première requête ne doit plus montrer que le rôle de l'app. L'app crée les tables manquantes au démarrage de Q6.
+  `ensure_schema.sql` est écrit dans le dossier courant. Contrôle (éditeur SQL Lakebase) :
+
+```sql
+SELECT column_name FROM information_schema.columns WHERE table_name = 'llm_requests' AND column_name IN ('status', 'total_ms');
+SELECT to_regclass('public.chat_turns') IS NOT NULL AS chat_turns, to_regclass('public.app_errors') IS NOT NULL AS app_errors;
+```
 
 - [ ] **Q6. Déploiement de l'app** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `deploy-uat`. Il déploie, puis redémarre l'app. Attendu dans `bundle plan` : `update apps.doc-compare` (ressource volume `uat_proj`) et `update postgres_projects.qualibot-history.permissions`, aucun `delete`. Avant : comparer l'ACL actuelle du projet Lakebase (UI, projet `qualibot`, Permissions) avec les six entrées du bloc `qualibot-history` de `databricks.yml` ; tout accès absent de cette liste serait retiré.
 
