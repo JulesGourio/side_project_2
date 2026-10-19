@@ -226,6 +226,8 @@ FROM uat_proj.qualibot.parsing_checkpoint WHERE IDDOC IN (25372, 19226, 21324, 2
 
 - [ ] **J0b. Plan lecture seule UAT** : Bitbucket, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur le schéma, les volumes ou l'app. Les `create` de nouveaux jobs sont normaux. Les `delete` de jobs (`apps_stop_nightly_uat`, `quality_scoring`, `score_production_qa_uat`, `sync_mlflow_scorer_assessments_uat`, `traces_migration`) sont à valider un par un dans l'UI avant J3.
 
+- [ ] **J0b'. Si `plan-uat` annonce des `create` pour des objets qui existent déjà** (2026-10-19 : `apps.doc-compare`, `postgres_projects.qualibot-history`, `schemas.qualibot_proj_schema`, `volumes.qualibot_doc_compare`, `volumes.qualibot_images`) : l'état de la nouvelle racine ne les connaît pas. Ne pas déployer. Bitbucket, pipeline `bind-uat-resources` (SP UAT, état seulement, rien ne change dans Databricks) : il rattache le schéma, les deux volumes, l'app et le projet Lakebase. Puis `plan-uat` : ces objets passent en `update` ou disparaissent du plan. Ne pas relancer `uat-state-fix` : il détache des ressources absentes de l'état et échoue.
+
 - [ ] **J0c. Retirer les déclarations temporaires** `qualibot_schema` et `qualibot_test` de `databricks.yml` (cible `qualibot-uat`), commit et push. Les ressources de l'app (`doc-compare-volume` et `test-volume` vers `uat_landingzone`) restent temporaires jusqu'à S4.
 
 - [ ] **J1. Pause du planning du job de parsing UAT** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Pause* sur le planning.
