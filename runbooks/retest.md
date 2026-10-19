@@ -258,3 +258,8 @@ Notebooks : aucun changement de logique, seuls leurs imports changent (`quality`
 - [ ] `databricks bundle run parsing_pipeline -t dev --profile DEV --only 3_parse` (run incrémental) : le job se termine sans `ModuleNotFoundError` ni `No module named 'worker'` sur les exécuteurs.
 - [ ] `databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_images` : `worker.py` et `image_fallbacks.py` sont envoyés, la description des images tourne.
 
+
+## 2026-10-19 — Lakebase DEV dans dev_proj.qualibot
+- Nouveau job manuel `Z_1_Qualibot_Rename_Dev_Uat_Copies` (cible `dev`, `utils/lakebase_sync/rename_dev_uat_copies_job.py`) : renomme les 4 copies UAT en `uat_<nom>`. Une fois, puis le retirer de `resources/lakebase_sync.yml`.
+- DEV : `lakebase_import_to_delta` = `true`, `lakebase_tables_to_skip` (liste dans `databricks.yml`). L'export charge les autres tables dans `dev_proj.qualibot`.
+- À relancer : `runbooks/dev.md` bloc L (L.1 à L.4). Puis `pytest tests/test_lakebase_sync_config.py tests/test_deploy_config.py tests/test_bundle_paths.py`.

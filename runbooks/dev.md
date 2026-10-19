@@ -904,6 +904,44 @@ ORDER BY documents DESC;
 
 Attendu : des lignes avec `is_in_rag` et `is_filtered_by_date` renseignés, et aucun `is_*` dupliqué (`SHOW COLUMNS IN dev_proj.qualibot.parsed_documents;`).
 
+### L. Lakebase DEV dans `dev_proj.qualibot` (2026-10-19)
+
+Les 4 copies UAT portant les noms des tables Lakebase DEV sont renommées `uat_<nom>` (rien supprimé). Puis le Lakebase DEV est exporté et chargé dans `dev_proj.qualibot` (tables de chat, `compare_messages`, `compare_feedbacks`, `app_errors`, `catalog_metadata` ; `users`, `doc_catalog`, `impact_*`, `llm_requests`, `summary_cache` exclus en DEV).
+
+- [ ] **L.1 Déployer les jobs DEV** : Pipelines ▸ Run pipeline ▸ branche `claude/sharp-mayer-uqwx8x` ▸ `deploy-dev-jobs`.
+- [ ] **L.2 Renommer les copies UAT** (job manuel, s'exécute sous le SP DEV) :
+
+  ```powershell
+  databricks bundle run -t dev rename_dev_uat_copies --profile DEV
+  ```
+
+  ```sql
+  SHOW TABLES IN dev_proj.qualibot;
+  ```
+
+  Attendu : `uat_compare_messages`, `uat_compare_feedbacks`, `uat_app_errors`, `uat_catalog_metadata` présentes.
+- [ ] **L.3 Exporter et charger le Lakebase DEV** (s'exécute sous le SP DEV) :
+
+  ```powershell
+  databricks bundle run -t dev lakebase_export --profile DEV
+  ```
+
+- [ ] **L.4 Contrôle** :
+
+  ```sql
+  SHOW TABLES IN dev_proj.qualibot;
+  ```
+
+  ```sql
+  SELECT COUNT(*) AS compare_messages_rows FROM dev_proj.qualibot.compare_messages;
+  ```
+
+  ```sql
+  SELECT COUNT(*) AS uat_compare_messages_rows FROM dev_proj.qualibot.uat_compare_messages;
+  ```
+
+  Attendu : `compare_messages` contient les lignes du Lakebase DEV ; `uat_compare_messages` garde les 228 lignes UAT.
+
 ### Plus tard — non fait, sur décision
 
 - Traces MLflow en tables Delta Unity Catalog : adapté à un gros volume, requêtable en SQL ; exige MLflow ≥ 3.11.1 dans l'app et un entrepôt SQL ; non modifiable ensuite pour cette expérience ; non testé.

@@ -48,7 +48,7 @@ resources:
               OUTPUT_VOLUME_CATALOG: ${var.pipeline_write_env}_proj
               OUTPUT_VOLUME_SCHEMA: "qualibot"
               OUTPUT_VOLUME_NAME: "staging"
-              TABLES_TO_SKIP: ""
+              TABLES_TO_SKIP: ${var.lakebase_tables_to_skip}
           environment_key: default
         - task_key: import_lakebase_tables_to_delta
           description: "Load every exported table as a Delta table of the same name in <env>_proj.qualibot"
@@ -76,6 +76,38 @@ resources:
         pause_status: ${var.lakebase_export_schedule_pause}
 
 targets:
+  dev:
+    resources:
+      jobs:
+        # Manual, run once as the DEV job SP: renames the UAT copies that hold DEV Lakebase table names.
+        rename_dev_uat_copies:
+          name: "Z_1_Qualibot_Rename_Dev_Uat_Copies"
+          description: "Rename the UAT copies compare_messages, compare_feedbacks, app_errors, catalog_metadata in dev_proj.qualibot to uat_<name>. Manual trigger only."
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
+          max_concurrent_runs: 1
+          tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
+            project: Qualibot
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+          tasks:
+            - task_key: rename_dev_uat_copies
+              notebook_task:
+                notebook_path: ../utils/lakebase_sync/rename_dev_uat_copies_job.py
+                source: WORKSPACE
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
   qualibot-uat:
     resources:
       jobs:
