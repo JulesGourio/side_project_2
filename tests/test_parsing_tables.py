@@ -93,6 +93,53 @@ def test_add_missing_columns_alters_the_table_instead_of_writing_an_empty_frame(
     assert statements == []   # the table has every column: nothing is altered
 
 
+def test_overwrite_rows_keeps_the_schema_of_an_existing_table(monkeypatch):
+    """A Delta Sync index reads the table by Change Data Feed: replacing its schema breaks every later sync."""
+    import tables
+
+    events = []
+
+    class Writer:
+        def mode(self, mode):
+            events.append(("mode", mode))
+            return self
+
+        def insertInto(self, table):
+            events.append(("insertInto", table))
+
+    monkeypatch.setattr(tables, "table_exists", lambda table: True)
+    monkeypatch.setattr(tables, "add_missing_columns", lambda df, table: events.append(("add_columns", table)))
+    monkeypatch.setattr(tables, "align_to_table", lambda df, table: types.SimpleNamespace(write=Writer()))
+    monkeypatch.setattr(tables, "write_table", lambda *args, **kwargs: events.append(("write_table",)))
+
+    tables.overwrite_rows(object(), "cat.sch.chunks")
+    assert events == [("add_columns", "cat.sch.chunks"), ("mode", "overwrite"), ("insertInto", "cat.sch.chunks")]
+
+
+def test_overwrite_rows_creates_a_missing_table_with_its_schema(monkeypatch):
+    import tables
+
+    calls = []
+    monkeypatch.setattr(tables, "table_exists", lambda table: False)
+    monkeypatch.setattr(tables, "write_table", lambda df, table, mode, **kwargs: calls.append((table, mode, kwargs)))
+
+    tables.overwrite_rows(object(), "cat.sch.chunks")
+    assert calls == [("cat.sch.chunks", "overwrite", {"overwrite_schema": True})]
+
+
+def test_the_chunks_table_is_never_overwritten_with_a_new_schema():
+    """chunks feeds the Vector Search index (Change Data Feed): its overwrite goes through overwrite_rows."""
+    offenders = []
+    for name, tree in _trees():
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Call) and getattr(n.func, "id", "") == "write_table" and n.args
+                    and isinstance(n.args[1] if len(n.args) > 1 else None, ast.Name)
+                    and n.args[1].id == "TARGET_CHUNK_TABLE"
+                    and any(isinstance(a, ast.Constant) and a.value == "overwrite" for a in n.args[2:])):
+                offenders.append(f"{name}:{n.lineno}")
+    assert not offenders, offenders
+
+
 def test_an_update_only_merge_passes_leap_utils_and_never_inserts(monkeypatch):
     """leap_utils refuses a MERGE whose only clause is a plain WHEN MATCHED: the source is cut to the existing keys."""
     import shutil

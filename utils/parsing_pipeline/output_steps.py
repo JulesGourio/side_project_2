@@ -8,7 +8,7 @@ from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 from leap_utils.common.logger import get_logger
-from tables import add_missing_columns, ensure_primary_key, merge_into, table_exists, write_table
+from tables import add_missing_columns, ensure_primary_key, merge_into, overwrite_rows, table_exists, write_table
 from config import (
     PIPELINE_WRITE_ENV,
     ARCHIVE_NOTICES_IN_RAG,
@@ -146,7 +146,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
         write_table(df_processed_files, TARGET_PROCESSED_FILES_TABLE, "overwrite", overwrite_schema=True)
         logger.info(f"Wrote {TARGET_PROCESSED_FILES_TABLE}")
 
-        write_table(df_chunks_all, TARGET_CHUNK_TABLE, "overwrite", overwrite_schema=True)
+        overwrite_rows(df_chunks_all, TARGET_CHUNK_TABLE)
         ensure_primary_key(TARGET_CHUNK_TABLE, ["chunk_id"])
         logger.info(f"Wrote {TARGET_CHUNK_TABLE} (ALL)")
 

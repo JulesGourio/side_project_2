@@ -258,3 +258,10 @@ Notebooks : aucun changement de logique, seuls leurs imports changent (`quality`
 - [ ] `databricks bundle run parsing_pipeline -t dev --profile DEV --only 3_parse` (run incrémental) : le job se termine sans `ModuleNotFoundError` ni `No module named 'worker'` sur les exécuteurs.
 - [ ] `databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_images` : `worker.py` et `image_fallbacks.py` sont envoyés, la description des images tourne.
 
+
+## Chunks écrasé sans changer le schéma (2026-10-19)
+
+À rejouer sur chaque cible dont `chunks` alimente un index Vector Search (UAT d'abord : `runbooks/uat.md` E2, étapes 1 à 8). Sur DEV, après le déploiement des jobs, relancer `D_1_Qualibot_Parsing_Pipeline_DEV` en mode `rechunk`.
+
+- [ ] `5_sync_index` en SUCCESS après un run `rechunk`, et `DESCRIBE HISTORY <env>_proj.qualibot.chunks` montre un `WRITE` en `Overwrite`, pas un `CREATE OR REPLACE TABLE AS SELECT`.
+- [ ] Le message de l'index ne contient plus `latest pipeline update failed`.

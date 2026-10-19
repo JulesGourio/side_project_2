@@ -72,6 +72,21 @@ def align_to_table(df, table: str):
     ])
 
 
+def overwrite_rows(df, table: str) -> None:
+    """Replace every row of `table`, keeping its schema, its primary key and its properties.
+
+    For a table a Delta Sync index reads through its Change Data Feed: an overwrite that replaces the schema, then a
+    NOT NULL on the key, is a schema change the feed cannot cross, and every later sync fails. The table is created
+    (schema replaced) only when it does not exist; `ensure_primary_key` follows the call.
+    """
+    if not table_exists(table):
+        write_table(df, table, "overwrite", overwrite_schema=True)
+        return
+    add_missing_columns(df, table)
+    # INSERT OVERWRITE: saveAsTable(overwrite) would replace the table (CREATE OR REPLACE) and drop its key.
+    align_to_table(df, table).write.mode("overwrite").insertInto(table)
+
+
 def merge_into(df, table: str, keys, *, do_when_matched: bool = True, matched_clause=None,
                do_when_notmatched: bool = True, do_when_notmatchedbysource: bool = False) -> None:
     """MERGE `df` into `table` on `keys` (leap_utils merge_into), the source aligned on the table's columns.
