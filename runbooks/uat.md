@@ -780,4 +780,4 @@ DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 10;
 
 ## Fait
 
-_(rien de confirmé pour l'instant)_
+- 2026-10-19 — E2, étapes 3 à 7 : `chunks_index` reconstruit par le compte de service (nouveau pipeline `c10bcd69-bfbc-4625-b94a-ebc7a81858b9`, « Index creation succeeded »), `indexed_row_count` = 137187 = lignes de `chunks`, QM-1041 n'apparaît plus dans les sources du chat. Restent : étapes 1 et 2 (déploiement du code corrigé, à confirmer) et 8 (run complet, test du correctif).
