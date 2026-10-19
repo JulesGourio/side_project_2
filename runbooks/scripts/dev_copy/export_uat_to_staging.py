@@ -8,7 +8,7 @@
 # MAGIC `qualibot-uat` target is left untouched. Writes a snapshot of the chunk
 # MAGIC tables and of the parsing pipeline state to
 # MAGIC `uat_proj.qualibot.staging`, the volume the DEV workspace can
-# MAGIC already read (`lakebase_import_uat_to_dev` reads it the same way). The DEV
+# MAGIC already read. The DEV
 # MAGIC side (`import_staging_to_dev_job.py`) then recreates the tables in
 # MAGIC `dev_proj.qualibot` and builds the Vector Search indexes, so the
 # MAGIC DEV parsing pipeline never needs a full (GPU) run.

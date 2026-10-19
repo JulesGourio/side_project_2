@@ -1,66 +1,11 @@
-# Lakebase export to a UC volume and import to DEV (one-off Lakebase schema migrations live in runbooks/scripts/lakebase/).
+# Lakebase exports to a UC volume (DEV, UAT) and the UAT chatbot-table import. One-off Lakebase schema migrations live in runbooks/scripts/lakebase/.
 # Declared per target: each job exists only on the targets listed below.
 
 targets:
   dev:
     resources:
       jobs:
-        # ── DEV jobs without run_as ────────────────────────────────
-        # No run_as: they keep running as the deploying user. Both write UAT chat data to dev_proj.qualibot (Usage Tracking dashboard).
-        lakebase_import_uat_to_dev:
-          name: "D_1_Qualibot_Lakebase_Import_Uat_To_Dev"
-          queue:
-            enabled: true
-          email_notifications:
-            on_failure:
-              - ${var.notification_email}
-          notification_settings:
-            no_alert_for_canceled_runs: true
-          description: "Import the UAT staging volume export into DEV Delta tables"
-          max_concurrent_runs: 1
-          tags:
-            activity-type: ${var.job_activity_tag}
-            job-purpose: platform
-            project-name: qualibot
-            project: Qualibot
-          permissions:
-            - group_name: "Role-Project-LEAP-CoreAdmin"
-              level: CAN_MANAGE
-            - group_name: "Role-Project-LEAP-CoreDev"
-              level: CAN_MANAGE
-            - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP: the deploy runs as this SP, which updates jobs created by a person
-              level: CAN_MANAGE
-            - user_name: "mehdi.lamrani@databricks.com"  # developer on the DEV copy
-              level: CAN_MANAGE
-          tasks:
-            - task_key: import_lakebase_uat_volume
-              notebook_task:
-                notebook_path: ../utils/lakebase_sync/import_lakebase_uat_volume_to_dev_job.py
-                source: WORKSPACE
-              new_cluster:
-                policy_id: ${var.job_cluster_policy_id_S}
-                apply_policy_default_values: true
-                spark_version: "16.4.x-scala2.13"
-                data_security_mode: SINGLE_USER   # without it the cluster has no Unity Catalog
-                node_type_id: "m5d.xlarge"
-                num_workers: 0
-                spark_conf:
-                  spark.databricks.cluster.profile: singleNode
-                  spark.master: "local[*]"
-                custom_tags:
-                  ResourceClass: SingleNode
-                spark_env_vars:
-                  SOURCE_EXPORT_DIR: "/Volumes/uat_proj/qualibot/staging/lakebase_export"
-                  TARGET_CATALOG: "dev_proj"
-                  TARGET_SCHEMA: "qualibot"
-                  TABLES_TO_SKIP: "llm_requests"
-          schedule:
-            quartz_cron_expression: "0 30 2,14 * * ?"
-            timezone_id: "Europe/Brussels"
-            pause_status: UNPAUSED
-
-        # ── DEV copy of the qualibot-uat Lakebase jobs ───────────────────────
-        # Export only: the qualibot-uat job also imports chat_* into Delta tables, which would overwrite the UAT chat data landed by lakebase_import_uat_to_dev.
+        # ── DEV Lakebase export to the staging volume ───────────────────────
         lakebase_export_dev_to_volume:
           name: "D_1_Qualibot_Lakebase_Export_To_Volume"
           queue:

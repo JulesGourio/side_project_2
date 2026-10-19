@@ -40,7 +40,7 @@ Branche : **`feature/chat-vsi-merged-on-impact-search`**. Pas de PR ; le zip à 
 | Vector Search | endpoint `qualibot`, embeddings `databricks-qwen3-embedding-0-6b` |
 | Contrôle par groupe (can_chat / can_compare) | désactivé en DEV seulement (`CAPS_BYPASS=true`, `utils/deploy/target_env.json`) |
 | Accès à l'app | groupes de l'UAT, plus les utilisateurs déclarés dans le bundle (`databricks.yml`, `resources/*.yml`), plus le SP DEV |
-| Plannings | tous en PAUSED, sauf `lakebase_import_uat_to_dev` |
+| Plannings | tous en PAUSED |
 | Bitbucket | pipelines manuelles `deploy-dev` / `deploy-dev-jobs`, environnement de déploiement **Development** |
 | LibreOffice (aperçu PDF exact) | archive copiée depuis l'UAT par le job de copie |
 | Modèles Docling | `/Volumes/dev_proj/qualibot/docling_models/docling_models` |
@@ -66,7 +66,6 @@ Jobs du bundle `dev` :
 |---|---|
 | `Z_1_Qualibot_Copy_Uat_To` (`copy_uat_to_dev`) | manuel |
 | `Z_1_Qualibot_Grant_App_Access` (`grant_app_access_dev`) | manuel |
-| `D_1_Qualibot_Lakebase_Import_Uat_To` (`lakebase_import_uat_to_dev`) | actif |
 | `D_1_Qualibot_Lakebase_Export_To_Volume` (`lakebase_export_dev_to_volume`) | PAUSED |
 | `D_1_Qualibot_Parsing_Pipeline` (`parsing_pipeline`) | PAUSED |
 | `Z_2_Qualibot_Create_Chat_Experiment` (`create_chat_experiment_dev`) | manuel |
@@ -300,13 +299,7 @@ databricks bundle run -t dev grant_app_access_dev --profile DEV
 
 Accorde les volumes, l'index et les tables de `dev_proj.qualibot` au SP de l'app et au SP des jobs.
 
-**00.6 — Tables chat pour le tableau de bord d'usage**
-
-```powershell
-databricks bundle run -t dev lakebase_import_uat_to_dev --profile DEV
-```
-
-Recharge `compare_messages`, `compare_feedbacks`, `users`, `chat_*`… dans `dev_proj.qualibot` depuis le volume de staging.
+**00.6 — Tableau de bord d'usage** : retiré. DEV ne reçoit plus les données d'usage de l'UAT (aucun import UAT → DEV). Rien à lancer.
 
 **00.7 — Contrôle**
 
@@ -385,8 +378,7 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   databricks bundle deploy -t dev --profile DEV
   ```
 
-  Les plannings restent en pause. Contrôle (UI DEV → Jobs & Pipelines, filtre `Qualibot`) : aucun planning actif en dehors de
-  `lakebase_import_uat_to_dev`. Pour prévisualiser sans rien modifier : `databricks bundle validate -t dev --profile DEV` puis
+  Les plannings restent en pause. Contrôle (UI DEV → Jobs & Pipelines, filtre `Qualibot`) : aucun planning actif. Pour prévisualiser sans rien modifier : `databricks bundle validate -t dev --profile DEV` puis
   `databricks bundle plan -t dev --profile DEV` (chaque ressource doit être `create` ou `update`, rien en `delete` / `recreate` sans accord).
 
 - [ ] **0.5 Droits** — le job donne au SP de l'app et au SP des jobs ce qu'ils utilisent (volumes, index, `dev_proj.qualibot`). Les endpoints LLM ne sont jamais accordés : tout utilisateur du workspace peut déjà les interroger.

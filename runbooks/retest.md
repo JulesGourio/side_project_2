@@ -112,13 +112,10 @@ python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV
 # 3. export de la base Lakebase DEV vers le volume staging
 databricks bundle run lakebase_export_dev_to_volume -t dev --profile DEV
 
-# 4. import des tables de chat de l'UAT dans dev_proj.qualibot (chat_*, compare_feedbacks...); n'écrit pas dans chunks
-databricks bundle run lakebase_import_uat_to_dev -t dev --profile DEV
-
-# 5. notation : estimation seulement, aucun juge appelé
+# 4. notation : estimation seulement, aucun juge appelé
 databricks bundle run score_chat_traces_dev -t dev --profile DEV
 
-# 6. arrêt puis démarrage de l'app (le job d'arrêt de nuit et celui de reprise du week-end)
+# 5. arrêt puis démarrage de l'app (le job d'arrêt de nuit et celui de reprise du week-end)
 databricks bundle run apps_stop_nightly_dev -t dev --profile DEV
 (databricks apps get qualibot --profile DEV -o json | ConvertFrom-Json).compute_status.state     # attendu : STOPPED
 databricks bundle run qualibot_start_weekend_dev -t dev --profile DEV
@@ -130,7 +127,6 @@ Si un job échoue, l'erreur est dans l'UI Jobs DEV, onglet **Runs**, cellule en 
 - [ ] 0.4 étape 1 (`grant_app_access_dev`) : une ligne `OK:` par droit
 - [ ] 0.4 étape 2 (`migrate_lakebase.py --env DEV`)
 - [ ] 0.4 étape 3 (`lakebase_export_dev_to_volume`)
-- [ ] 0.4 étape 4 (`lakebase_import_uat_to_dev`)
 - [ ] 0.4 étape 5 (`score_chat_traces_dev`, estimation) : lignes par juge lues
 - [ ] 0.4 étape 6 (arrêt et démarrage de l'app : `STOPPED` puis `ACTIVE`)
 

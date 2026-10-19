@@ -13,7 +13,6 @@ One-shot migrations and one-off table copies are run by hand and never deployed.
 |---|---|---|
 | `export_lakebase_uat_to_volume_job.py` | Notebook: one table becomes one JSON Lines file in the staging volume. Parameters: project, branch, endpoint, database, output volume, tables to skip | Task `export_lakebase_uat_to_volume` of `lakebase_export_uat_to_volume` (target `qualibot-uat`); task `export_lakebase_dev_to_volume` of `lakebase_export_dev_to_volume` (target `dev`) |
 | `import_chatbot_tables_to_uat_job.py` | Notebook: loads the chat tables (`chat_feedbacks`, `chat_messages`, `chat_sessions`, `chat_turns`, `chat_retrieved_chunks`, `app_errors`) from the staging folder into Delta tables of UAT | Task `import_chatbot_tables_to_uat` of `lakebase_export_uat_to_volume`, after the export |
-| `import_lakebase_uat_volume_to_dev_job.py` | Notebook: loads the staging folder into Delta tables of DEV | Task `import_lakebase_uat_volume` of `lakebase_import_uat_to_dev` (target `dev`) |
 | `export_lakebase_to_json.py` | CLI: exports every table of a database to JSON Lines | Bitbucket step "Sync prod data (1/2)" |
 | `import_lakebase_from_json.py` | CLI: imports these files into a database | Bitbucket step "Sync prod data (2/2)" |
 
