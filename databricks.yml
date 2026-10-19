@@ -11,6 +11,11 @@ variables:
   app_name:
     default: "qualibot"
     description: "Unique name for the Databricks App"
+  alerts_warehouse_id:
+    description: "SQL warehouse that runs the Databricks SQL alerts of resources/alerts.yml (one per target)."
+  alerts_pause_status:
+    description: "PAUSED: the alerts are deployed but do not run. UNPAUSED: they run on their schedule."
+    default: "PAUSED"
   pipeline_write_env:
     description: "Environment the app and the pipeline write to: dev, uat or prod. Tables live in <pipeline_write_env>_proj.qualibot."
     default: dev
@@ -316,6 +321,7 @@ targets:
     variables:
       app_name: "qualibot"
       pipeline_write_env: dev
+      alerts_warehouse_id: "13eff4a6095513cb"
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Same prod sources as UAT.
@@ -470,6 +476,7 @@ targets:
     variables:
       app_name: "qualibot"
       pipeline_write_env: uat
+      alerts_warehouse_id: "5890912c31867b77"
       parsing_num_workers: "4"
       parsing_run_mode: "full"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_bronze through the shared metastore.
@@ -597,6 +604,7 @@ targets:
     variables:
       app_name: "qualibot"
       pipeline_write_env: prod
+      alerts_warehouse_id: "03054ddc44b7f902"
       parsing_num_workers: "8"
       parsing_run_mode: "incremental"
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"

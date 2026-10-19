@@ -222,7 +222,7 @@ SELECT COUNT(*) FROM uat_proj.qualibot.chat_retrieved_chunks;
 
 - [ ] **S9. Catalogue des révisions** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Run now* (mode quotidien). Puis redémarrer l'app : UI UAT, Apps, `qualibot`, *Stop*, puis *Start*.
 
-- [ ] **S10. Alertes SQL** (UI UAT, SQL Editor) : les six requêtes de `utils/alerts/`, avec `dev_proj` remplacé par `uat_proj`, une par une. Le tableau nom, condition et planning est dans `utils/alerts/README.md`.
+- [ ] **S10. Alertes SQL** : déployées avec les jobs (J3), en pause. Activation (`alerts_pause_status` à `UNPAUSED`, cible `qualibot-uat`) sur décision écrite.
 
 ## Phase D — nettoyage (plusieurs jours après la validation, accord écrit)
 

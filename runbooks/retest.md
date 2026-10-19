@@ -239,7 +239,7 @@ Au prochain `bundle deploy -t qualibot-uat`, Databricks supprime les jobs qui ne
 
 - [ ] Le job de parsing s'appelle `D_1_Qualibot_Parsing_Pipeline` (sans suffixe de cible) : après le déploiement, `databricks jobs list --profile DEV -o json | ConvertFrom-Json | Where-Object { $_.settings.name -like '*Qualibot*' } | ForEach-Object { $_.settings.name }` ne montre aucun nom qui finit par `_dev`, `_uat` ou `_prod`.
 - [ ] Le job `qualibot-sync-user-capabilities-uat` (hors bundle) se supprime : `runbooks/uat.md` étape 0.8.
-- [ ] Les alertes SQL (`utils/alerts/`) se créent à la main : `runbooks/uat.md` D5.8d.
+- [ ] Les alertes SQL viennent du bundle (`resources/alerts.yml`), en pause : voir `runbooks/uat.md` D5.8d.
 - [ ] Plannings des jobs d'arrêt et de reprise de l'app : fuseau `Europe/Brussels` (`resources/app_schedules.yml`), à conserver.
 
 ## 2026-10-17 — parsing découpé en 3_parse (CPU) / 3b_parse_pdf (GPU) / 3c_chunks (CPU)

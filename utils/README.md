@@ -1,7 +1,7 @@
 # utils
 
 Scripts and jobs that run outside the web application: the document parsing pipeline, the manual deployment of the
-application, the chat alerts, the chat and search evaluation, the Unity Catalog grants, the Lakebase copies, and the
+application, the chat and search evaluation, the Unity Catalog grants, the Lakebase copies, and the
 start and stop of the applications. One folder per concern.
 
 The application is in [`server/`](../server/) and [`client/`](../client/); see the [root README](../README.md).
@@ -12,9 +12,8 @@ The application is in [`server/`](../server/) and [`client/`](../client/); see t
 |---|---|---|
 | [`parsing_pipeline/`](parsing_pipeline/README.md) | Daily chain of parsing, passage splitting and indexing (tasks `1_categories` to `6_update_kb_metadata`) | Tasks of the job `parsing_pipeline` (`resources/parsing_pipeline.job.yml`) |
 | [`deploy/`](deploy/) | `deploy_qualibot.ps1`: deploys the application code. `bitbucket_deploy.sh`: one Bitbucket step (profile, bundle deploy). `render_target_config_env.py`: writes `target_config.env` from `target_env.json`. `target_env.json`: application settings per target | `deploy_qualibot.ps1` from PowerShell; `bitbucket_deploy.sh` from the Bitbucket pipeline (`bitbucket-pipelines.yml`), which runs `render_target_config_env.py` |
-| [`alerts/`](alerts/README.md) | Six SQL queries of alerts on the parsing, the chat and the jobs | Pasted as the query of a Databricks SQL alert; no job runs them |
 | [`app_mgmt/`](app_mgmt/) | `stop_start_app_job.py`: stop and start of the Databricks Apps on a schedule | Tasks of the jobs in `resources/app_schedules.yml` |
-| [`lakebase_sync/`](lakebase_sync/README.md) | Export of the Lakebase database to a volume, import into DEV, JSON export and import for PROD | Tasks of the jobs in `resources/lakebase_sync.yml`; CLI steps of `bitbucket-pipelines.yml` |
+| [`lakebase_sync/`](lakebase_sync/README.md) | Export of the Lakebase database to a volume (DEV, UAT), UAT chatbot-table import, JSON export and import for PROD | Tasks of the jobs in `resources/lakebase_sync.yml`; CLI steps of `bitbucket-pipelines.yml` |
 | [`dev_copy/`](dev_copy/) | Import of the UAT snapshot into DEV, creation of the Vector Search endpoint | Tasks of the job `copy_uat_to_dev` (`resources/dev_copy.yml`) |
 | [`grants/`](grants/) | Unity Catalog grants of the service principals of the application and of the pipeline, and volume access | Tasks of the jobs in `resources/grants.yml` |
 | [`evaluation/`](evaluation/) | Chat and search evaluation: load tests, answer comparison, retrieval evaluation, MLflow experiment and prompts, trace scoring, vision endpoint check | Jobs in `resources/chat_mlflow.yml` (`create_chat_experiment.py`, `register_chat_prompts.py`, `score_chat_traces.py`); the others by hand |

@@ -1,0 +1,254 @@
+# Databricks SQL alerts, deployed to every target. The queries read <pipeline_write_env>_proj.qualibot, so each
+# target's alerts watch its own tables. Deployed PAUSED: alerts_pause_status (databricks.yml) switches them on.
+
+resources:
+  alerts:
+    parsed_without_chunks:
+      display_name: "Qualibot - documents sans passages"
+      warehouse_id: ${var.alerts_warehouse_id}
+      query_text: |
+        -- Documents parsed with SUCCESS and meant for the RAG, but with no chunk in `chunks` after a 4 h grace period
+        -- (the index sync runs after the parse; a document stuck here is invisible to the chatbot).
+        -- Alert condition: docs_without_chunks > 0.
+        WITH missing AS (
+          SELECT pf.IDDOC, pf.ref, pf.titre, pf.type_document, pf.source_file_extension AS file_type, pf.parser_strategy,
+                 pf.chunking_strategy, pf.ingestion_timestamp
+          FROM ${var.pipeline_write_env}_proj.qualibot.parsed_documents pf
+          WHERE pf.parse_status = 'SUCCESS'
+            AND pf.is_in_rag = true
+            AND pf.is_filtered_by_date = false
+            AND pf.ingestion_timestamp >= current_date() - INTERVAL 7 DAY
+            AND pf.ingestion_timestamp < current_timestamp() - INTERVAL 4 HOUR
+            AND NOT EXISTS (SELECT 1 FROM ${var.pipeline_write_env}_proj.qualibot.chunks c WHERE c.IDDOC = pf.IDDOC)
+        )
+        SELECT
+          COUNT(*) AS docs_without_chunks,
+          ARRAY_JOIN(SLICE(COLLECT_LIST(CONCAT(ref, ' (', file_type, ')')), 1, 10), ', ') AS sample_refs
+        FROM missing
+      evaluation:
+        comparison_operator: GREATER_THAN
+        source:
+          name: docs_without_chunks
+        threshold:
+          value:
+            double_value: 0
+        notification:
+          notify_on_ok: false
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: ${var.notification_email}
+      schedule:
+        quartz_cron_schedule: "0 0 9 * * ?"
+        timezone_id: Europe/Paris
+        pause_status: ${var.alerts_pause_status}
+
+    parse_errors:
+      display_name: "Qualibot - erreurs de parsing"
+      warehouse_id: ${var.alerts_warehouse_id}
+      query_text: |
+        -- Documents whose LATEST parse attempt failed during the last 24 h: parse_status ERROR (a timeout is an ERROR with parser_strategy 'timeout').
+        -- (a document that failed then succeeded on a retry does not count).
+        -- Alert condition: docs_in_error > 0.
+        WITH latest AS (
+          SELECT IDDOC, ref, source_file_extension AS file_type, parser_strategy, parse_status, parse_time_seconds,
+                 ingestion_timestamp, error_trace
+          FROM ${var.pipeline_write_env}_proj.qualibot.parsed_documents
+          WHERE ingestion_timestamp >= current_timestamp() - INTERVAL 1 DAY
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY IDDOC ORDER BY ingestion_timestamp DESC) = 1
+        )
+        SELECT
+          COUNT_IF(parse_status IN ('ERROR', 'TIMEOUT')) AS docs_in_error,
+          COUNT_IF(parser_strategy = 'timeout') AS docs_in_timeout,
+          COUNT(*) AS docs_attempted,
+          ARRAY_JOIN(SLICE(COLLECT_LIST(CASE WHEN parse_status IN ('ERROR', 'TIMEOUT') THEN ref END), 1, 10), ', ') AS sample_refs
+        FROM latest
+      evaluation:
+        comparison_operator: GREATER_THAN
+        source:
+          name: docs_in_error
+        threshold:
+          value:
+            double_value: 0
+        notification:
+          notify_on_ok: false
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: ${var.notification_email}
+      schedule:
+        quartz_cron_schedule: "0 0 9 * * ?"
+        timezone_id: Europe/Paris
+        pause_status: ${var.alerts_pause_status}
+
+    chat_failure_rate:
+      display_name: "Qualibot - échecs du chat"
+      warehouse_id: ${var.alerts_warehouse_id}
+      query_text: |
+        -- Chatbot, last hour: HTTP errors (status = 'error') and answers without any source (sources_json IS NULL).
+        -- Thresholds depend on the traffic: at low volume one failure is a large percentage.
+        -- Alert condition: alert_triggered = 1.
+        -- Reads the Delta copy of chat_messages (`lakebase_export_*` + import jobs): the alert is only as fresh as that copy.
+        -- Turns the browser left before the end (status = 'aborted') are neither failures nor answers: left out.
+        -- Per-step detail of each turn (degraded steps, durations): chat_turns.
+        WITH stats AS (
+          SELECT
+            COUNT(*) AS total_messages,
+            COUNT_IF(status = 'error') AS http_errors,
+            COUNT_IF(status = 'ok' AND sources_json IS NULL) AS zero_doc_responses,
+            ROUND(COUNT_IF(status = 'error') * 100.0 / NULLIF(COUNT(*), 0), 1) AS http_error_rate_pct,
+            ROUND(COUNT_IF(status = 'ok' AND sources_json IS NULL) * 100.0 / NULLIF(COUNT(*), 0), 1) AS zero_doc_rate_pct
+          FROM ${var.pipeline_write_env}_proj.qualibot.chat_messages
+          WHERE role = 'assistant' AND status != 'aborted'
+            AND TRY_CAST(created_at AS TIMESTAMP) >= current_timestamp() - INTERVAL 1 HOUR
+        )
+        SELECT
+          total_messages, http_errors, zero_doc_responses, http_error_rate_pct, zero_doc_rate_pct,
+          CASE
+            WHEN total_messages < 5 THEN 0
+            WHEN total_messages <= 10 AND (http_error_rate_pct >= 15 OR zero_doc_rate_pct >= 50) THEN 1
+            WHEN total_messages <= 25 AND (http_error_rate_pct >= 10 OR zero_doc_rate_pct >= 40) THEN 1
+            WHEN total_messages > 25 AND (http_error_rate_pct >= 5 OR zero_doc_rate_pct >= 25) THEN 1
+            ELSE 0
+          END AS alert_triggered
+        FROM stats
+      evaluation:
+        comparison_operator: EQUAL
+        source:
+          name: alert_triggered
+        threshold:
+          value:
+            double_value: 1
+        notification:
+          notify_on_ok: false
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: ${var.notification_email}
+      schedule:
+        quartz_cron_schedule: "0 0 * * * ?"
+        timezone_id: Europe/Paris
+        pause_status: ${var.alerts_pause_status}
+
+    job_failures:
+      display_name: "Qualibot - jobs en échec"
+      warehouse_id: ${var.alerts_warehouse_id}
+      query_text: |
+        -- Qualibot jobs (name contains `_Qualibot_`) whose last 24 h run did not succeed.
+        -- Needs SELECT on system.lakeflow (metastore admin grants it). Alert condition: failed_runs > 0.
+        WITH qualibot_jobs AS (
+          SELECT job_id, name
+          FROM system.lakeflow.jobs
+          WHERE name LIKE '%\\_Qualibot\\_%'
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY change_time DESC) = 1
+        ),
+        runs AS (
+          SELECT t.job_id, j.name, t.run_id, t.result_state, t.period_end_time
+          FROM system.lakeflow.job_run_timeline t
+          JOIN qualibot_jobs j USING (job_id)
+          WHERE t.period_end_time >= current_timestamp() - INTERVAL 1 DAY
+            AND t.result_state IS NOT NULL
+        )
+        SELECT
+          COUNT_IF(result_state NOT IN ('SUCCEEDED', 'CANCELED')) AS failed_runs,
+          ARRAY_JOIN(SLICE(COLLECT_SET(CASE WHEN result_state NOT IN ('SUCCEEDED', 'CANCELED') THEN name END), 1, 10), ', ') AS failed_jobs
+        FROM runs
+      evaluation:
+        comparison_operator: GREATER_THAN
+        source:
+          name: failed_runs
+        threshold:
+          value:
+            double_value: 0
+        notification:
+          notify_on_ok: false
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: ${var.notification_email}
+      schedule:
+        quartz_cron_schedule: "0 0 8 * * ?"
+        timezone_id: Europe/Paris
+        pause_status: ${var.alerts_pause_status}
+
+    new_error_kinds:
+      display_name: "Qualibot - nouvelles erreurs"
+      warehouse_id: ${var.alerts_warehouse_id}
+      query_text: |
+        -- Error kinds (app_errors.fingerprint: same route + step + type + place in the code) seen in the last 24 h
+        -- and never before: a new bug or a new failing dependency, not the usual noise. Warnings left out.
+        -- Alert condition: new_error_kinds > 0. The custom template can list {{sample_errors}}.
+        -- Reads the Delta copy of app_errors (`lakebase_export_*` + import jobs): only as fresh as that copy.
+        WITH kinds AS (
+          SELECT fingerprint,
+                 MIN(TRY_CAST(created_at AS TIMESTAMP)) AS first_seen,
+                 COUNT(*) AS occurrences,
+                 MAX_BY(CONCAT(COALESCE(endpoint, ''), ' | ', COALESCE(stage, ''), ' | ', COALESCE(error_type, ''), ' | ',
+                               COALESCE(origin, ''), ' | ', LEFT(COALESCE(error_msg, ''), 120)),
+                        TRY_CAST(created_at AS TIMESTAMP)) AS sample
+          FROM ${var.pipeline_write_env}_proj.qualibot.app_errors
+          WHERE fingerprint IS NOT NULL AND COALESCE(severity, 'error') = 'error'
+          GROUP BY fingerprint
+        )
+        SELECT
+          COUNT(*) AS new_error_kinds,
+          SUM(occurrences) AS occurrences,
+          CONCAT_WS(' || ', SLICE(COLLECT_LIST(sample), 1, 5)) AS sample_errors
+        FROM kinds
+        WHERE first_seen >= current_timestamp() - INTERVAL 1 DAY
+      evaluation:
+        comparison_operator: GREATER_THAN
+        source:
+          name: new_error_kinds
+        threshold:
+          value:
+            double_value: 0
+        notification:
+          notify_on_ok: false
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: ${var.notification_email}
+      schedule:
+        quartz_cron_schedule: "0 0 3 * * ?"
+        timezone_id: Europe/Paris
+        pause_status: ${var.alerts_pause_status}
+
+    chat_degraded_turns:
+      display_name: "Qualibot - tours dégradés"
+      warehouse_id: ${var.alerts_warehouse_id}
+      query_text: |
+        -- Chatbot, last 24 h: share of answered turns that did not run as configured (chat_turns.status = 'degraded':
+        -- rewrite failed, part of the Vector Search queries failed, fallback model, cut answer…) and the most frequent cause.
+        -- Alert condition: alert_triggered = 1. Aborted turns (browser left) are left out.
+        -- Reads the Delta copy of chat_turns (`lakebase_export_*` + import jobs): only as fresh as that copy.
+        WITH turns AS (
+          SELECT status, warnings
+          FROM ${var.pipeline_write_env}_proj.qualibot.chat_turns
+          WHERE status IN ('ok', 'degraded', 'error')
+            AND TRY_CAST(created_at AS TIMESTAMP) >= current_timestamp() - INTERVAL 1 DAY
+        ),
+        causes AS (
+          SELECT w AS warning, COUNT(*) AS n FROM turns LATERAL VIEW EXPLODE(warnings) t AS w
+          WHERE status = 'degraded' GROUP BY w
+        )
+        SELECT
+          COUNT(*) AS turns,
+          COUNT_IF(status = 'degraded') AS degraded,
+          COUNT_IF(status = 'error') AS failed,
+          ROUND(COUNT_IF(status = 'degraded') * 100.0 / NULLIF(COUNT(*), 0), 1) AS degraded_pct,
+          (SELECT CONCAT_WS(', ', COLLECT_LIST(CONCAT(warning, ' (', n, ')'))) FROM (SELECT * FROM causes ORDER BY n DESC LIMIT 3))
+            AS top_causes,
+          CASE WHEN COUNT(*) >= 10 AND COUNT_IF(status = 'degraded') * 100.0 / COUNT(*) >= 20 THEN 1 ELSE 0 END AS alert_triggered
+        FROM turns
+      evaluation:
+        comparison_operator: EQUAL
+        source:
+          name: alert_triggered
+        threshold:
+          value:
+            double_value: 1
+        notification:
+          notify_on_ok: false
+          retrigger_seconds: 86400
+          subscriptions:
+            - user_email: ${var.notification_email}
+      schedule:
+        quartz_cron_schedule: "0 0 3 * * ?"
+        timezone_id: Europe/Paris
+        pause_status: ${var.alerts_pause_status}

@@ -225,5 +225,5 @@ and completes this schema at startup. Column reference: [server/services/infra/l
 | [utils/parsing_pipeline/README.md](utils/parsing_pipeline/README.md) | Parsing and indexing pipeline |
 | [utils/README.md](utils/README.md) | Map of `utils/` |
 | [utils/lakebase_sync/README.md](utils/lakebase_sync/README.md) | Lakebase export, import and schema maintenance |
-| [utils/alerts/README.md](utils/alerts/README.md) | SQL alert queries |
+| [resources/alerts.yml](resources/alerts.yml) | Databricks SQL alerts, deployed by the bundle to every target |
 | [server/services/infra/lakebase/schema.md](server/services/infra/lakebase/schema.md) | Column reference of the Lakebase tables |

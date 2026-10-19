@@ -538,19 +538,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
 
     Puis redémarrer l'app UAT (Apps → `qualibot` → Stop / Start), ou attendre 30 min. Vérifier comme `runbooks/dev.md` 0.11 et 0.13.
 
-  - [ ] **D5.8d. Alertes SQL** (workspace UAT, après D5.8b : les tables Delta `chat_turns` et `app_errors` doivent exister). Fichiers `utils/alerts/01` à `06`, mode d'emploi dans `utils/alerts/README.md`. Pour chacun : SQL Editor → coller la requête en remplaçant `dev_proj` par `uat_proj` → **Save** sous `Qualibot - <but>` (warehouse serverless) → **Create alert** :
-
-    | Fichier | Nom | Condition | Planning (Europe/Paris) |
-    |---|---|---|---|
-    | `01_parsed_without_chunks.sql` | Qualibot - documents sans passages | `docs_without_chunks` > 0 | tous les jours, après le job de parsing |
-    | `02_parse_errors.sql` | Qualibot - erreurs de parsing | `docs_in_error` > 0 | tous les jours, après le job de parsing |
-    | `03_chat_failure_rate.sql` | Qualibot - échecs du chat | `alert_triggered` = 1 | toutes les heures |
-    | `04_job_failures.sql` | Qualibot - jobs en échec | `failed_runs` > 0 | tous les jours |
-    | `05_new_error_kinds.sql` | Qualibot - nouvelles erreurs | `new_error_kinds` > 0 | tous les jours, 03:00 (après l'export de 02:00) |
-    | `06_chat_degraded_turns.sql` | Qualibot - tours dégradés | `alert_triggered` = 1 | tous les jours, 03:00 |
-
-    Notification : votre e-mail ; *Notify again* au plus une fois par jour. 04 demande `USE SCHEMA` + `SELECT` sur `system.lakeflow` (admin du metastore). Les copies Delta lues par 03, 05 et 06 sont rafraîchies par le job d'export à 02:00 et 14:00 : ces alertes ont jusqu'à 12 h de retard.
-
+  - [ ] **D5.8d. Alertes SQL** (déployées par le bundle avec `deploy-uat-jobs`, en pause : rien à créer à la main). Vérifier que six alertes `Qualibot - …` existent : `databricks bundle summary -t qualibot-uat --profile UAT`. Activer : `alerts_pause_status` à `UNPAUSED` pour `qualibot-uat` dans `databricks.yml`, puis `deploy-uat-jobs`, après décision écrite. `job_failures` demande SELECT sur `system.lakeflow` pour le SP UAT (admin du metastore).
   - [ ] **D5.9. Supprimer l'ancien** (quelques jours plus tard, une fois l'app validée) :
     - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de test `trace_test` aussi s'il existe encore ;
     Les objets `_v1` (tables, index, volumes) ne sont pas supprimés par ce runbook (voir étape 0.11).

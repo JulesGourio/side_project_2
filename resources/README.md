@@ -9,6 +9,7 @@ Parent: [root README](../README.md). The tasks run the notebooks and scripts of 
 
 | File | Jobs defined | Targets | Target variables read |
 |---|---|---|---|
+| `alerts.yml` | Six Databricks SQL alerts on the parsing, the chat and the jobs (`parsed_without_chunks`, `parse_errors`, `chat_failure_rate`, `job_failures`, `new_error_kinds`, `chat_degraded_turns`), deployed PAUSED | every target | `pipeline_write_env`, `alerts_warehouse_id`, `alerts_pause_status`, `notification_email` |
 | `app_schedules.yml` | Jobs that stop and start the apps (`utils/app_mgmt/stop_start_app_job.py`): `D_1_Qualibot_Apps_Stop_Nightly_*`, `W_1_Qualibot_Stop_Weekend_*`, `W_1_Qualibot_Start_Weekend_*` | `dev`, `qualibot-uat` | `app_name` |
 | `chat_mlflow.yml` | `Z_2_Qualibot_Create_Chat_Experiment` (`create_chat_experiment.py`), `Z_3_Qualibot_Register_Chat_Prompts` (`register_chat_prompts.py`), `D_2_Qualibot_Score_Chat_Traces` (`score_chat_traces.py`, paused) | `dev`, `qualibot-uat`, `qualibot-prod` | `pipeline_write_env`, `bundle.name`, `bundle.target` |
 | `dev_copy.yml` | `Z_1_Qualibot_Copy_Uat_To_Dev`, three tasks: table import, Vector Search endpoint, index sync | `dev` | `pipeline_write_env`, `parsing_vector_search_indexes`; job parameter `overwrite` |
@@ -48,6 +49,7 @@ The job names carry no target suffix: a target gets its own workspace or its own
 - Job parameters (`{{job.parameters.*}}`) are declared per job: `dry_run` (default `true`) on the scoring jobs,
   `overwrite` (default `false`) on the DEV copy, `app_service_principal` on the app grant job, and `service_principal`,
   `catalog`, `schema_name`, `volume_name`, `volume_permission` on the volume grant job.
+- The alerts read `<pipeline_write_env>_proj.qualibot` on the warehouse of their target. `alerts_pause_status` (default `PAUSED`) switches them on per target. `job_failures` needs SELECT on `system.lakeflow`, granted by a metastore admin. `chat_failure_rate`, `new_error_kinds` and `chat_degraded_turns` read Delta copies of the chatbot tables, which only the UAT export fills: on DEV they report a missing table.
 - The scoring jobs are `PAUSED`. The parsing job's schedule takes its pause state from `parsing_schedule_pause`.
 - `run_as` is set per job. Most jobs run as a service principal. `Z_1_Qualibot_Copy_Uat_To_Dev` names a user.
 - Tests of the bundle files and of the job names: [`tests/README.md`](../tests/README.md).
