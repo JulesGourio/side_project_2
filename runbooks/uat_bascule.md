@@ -454,10 +454,11 @@ Retour arrière : redéployer (`deploy-uat`) la branche précédente. Les tables
 ```sql
 CREATE SCHEMA IF NOT EXISTS uat_proj.qualibot_traces;
 GRANT ALL PRIVILEGES ON SCHEMA uat_proj.qualibot_traces TO `3e5cd4e5-f765-4760-b974-ee7715258b39`;
+GRANT MODIFY, SELECT ON SCHEMA uat_proj.qualibot_traces TO `3e5cd4e5-f765-4760-b974-ee7715258b39`;
 GRANT USE SCHEMA, MODIFY, SELECT ON SCHEMA uat_proj.qualibot_traces TO `ed8abb86-e0db-423b-8f35-5cda58e89b80`;
 ```
 
-  Le premier compte est le SP des jobs (il crée les tables de traces), le second le SP de l'app. Les deux comptes de service doivent aussi pouvoir utiliser l'entrepôt `5890912c31867b77` (`CAN_USE`, déjà donné au groupe `leap-qualibot-service-accounts`) :
+  Le premier compte est le SP des jobs (il crée les tables de traces ; `MODIFY` et `SELECT` sont à donner explicitement, `ALL PRIVILEGES` ne suffit pas pour ces tables), le second le SP de l'app. Les deux comptes de service doivent aussi pouvoir utiliser l'entrepôt `5890912c31867b77` (`CAN_USE`, déjà donné au groupe `leap-qualibot-service-accounts`) :
 
 ```powershell
 databricks warehouses get-permissions 5890912c31867b77 --profile UAT -o json
@@ -489,6 +490,7 @@ SHOW TABLES IN uat_proj.qualibot_traces;
 ```sql
 CREATE SCHEMA IF NOT EXISTS dev_proj.qualibot_traces;
 GRANT ALL PRIVILEGES ON SCHEMA dev_proj.qualibot_traces TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+GRANT MODIFY, SELECT ON SCHEMA dev_proj.qualibot_traces TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
 GRANT USE SCHEMA, MODIFY, SELECT ON SCHEMA dev_proj.qualibot_traces TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
 ```
 
