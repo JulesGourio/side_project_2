@@ -257,3 +257,13 @@ def test_the_answer_span_shows_today_and_the_documents_read(spans):
     mlflow_turns._write_trace(log, 'chat')
     inputs = _by_name(spans)['answer'].kwargs['inputs']
     assert inputs['today'] == '2026-10-12' and inputs['documents'] == ['A-1', 'B-2']
+
+
+def test_experiment_id_setting_is_used_without_any_lookup(monkeypatch):
+    import mlflow
+    monkeypatch.setenv('CHAT_MLFLOW_EXPERIMENT_ID', '123')
+    monkeypatch.delenv('CHAT_MLFLOW_EXPERIMENT', raising=False)
+    monkeypatch.setattr(mlflow_turns, '_experiment', {})
+    monkeypatch.setattr(mlflow, 'get_experiment_by_name', lambda name: (_ for _ in ()).throw(AssertionError('looked up by name')))
+    assert mlflow_turns.enabled()
+    assert mlflow_turns._experiment_id('') == '123'

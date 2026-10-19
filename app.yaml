@@ -58,6 +58,10 @@ env:
   # Empty = off. The experiment must exist (utils/evaluation/create_chat_experiment.py); per-target value in utils/deploy/target_env.json.
   - name: CHAT_MLFLOW_EXPERIMENT
     value: ""
+  # Id of that experiment (printed by the create_chat_experiment job). When set it wins over the path above: an id does not change if the
+  # experiment is moved or renamed. Per-target value in utils/deploy/target_env.json.
+  - name: CHAT_MLFLOW_EXPERIMENT_ID
+    value: ""
   # SQL warehouse of the experiment's Unity Catalog trace tables (MLFLOW_TRACING_SQL_WAREHOUSE_ID); per-target value in utils/deploy/target_env.json.
   - name: CHAT_MLFLOW_WAREHOUSE_ID
     value: ""

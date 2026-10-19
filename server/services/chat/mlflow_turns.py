@@ -4,7 +4,7 @@ The chat route calls ``export_turn`` once the answer is sent, just before the tu
 (the MLflow trace id is stored in ``chat_turns.mlflow_trace_id``). The trace is rebuilt from the turn's
 ``TurnLog`` (``turn_log.py``): the same steps, durations, passages and issues as in ``chat_turns``, at
 their real start offsets, so nothing is measured twice; the user has already got the answer. Off unless
-``CHAT_MLFLOW_EXPERIMENT`` names an existing experiment; a failure is logged and never reaches the chat.
+``CHAT_MLFLOW_EXPERIMENT_ID`` or ``CHAT_MLFLOW_EXPERIMENT`` (its workspace path) names an existing experiment; a failure is logged and never reaches the chat.
 Traces upload in MLflow's own background queue, so the call is local and short.
 
     chat_turn                       the question → the answer shown (tags: division, status, warnings…)
@@ -59,6 +59,16 @@ def experiment_name() -> str:
     return os.getenv('CHAT_MLFLOW_EXPERIMENT', '').strip()
 
 
+def experiment_id_setting() -> str:
+    """``CHAT_MLFLOW_EXPERIMENT_ID``: when set, the experiment is addressed by id, so moving or renaming it, or a change of the
+    identity that created it, never cuts the traces."""
+    return os.getenv('CHAT_MLFLOW_EXPERIMENT_ID', '').strip()
+
+
+def enabled() -> bool:
+    return bool(experiment_id_setting() or experiment_name())
+
+
 def _experiment_id(name: str) -> Optional[str]:
     """Id of the experiment ``name``, looked up once it exists.
 
@@ -76,6 +86,9 @@ def _experiment_id(name: str) -> Optional[str]:
         os.environ['MLFLOW_TRACING_SQL_WAREHOUSE_ID'] = warehouse
     elif os.getenv('DATABRICKS_WAREHOUSE_ID'):
         os.environ.setdefault('MLFLOW_TRACING_SQL_WAREHOUSE_ID', os.environ['DATABRICKS_WAREHOUSE_ID'])
+    fixed = experiment_id_setting()
+    if fixed:
+        return fixed
     try:
         found = mlflow.get_experiment_by_name(name)
     except Exception as exc:  # noqa: BLE001 — retried on the next turn
@@ -93,7 +106,7 @@ def _experiment_id(name: str) -> Optional[str]:
 async def export_turn(log: Any) -> None:
     """Writes the finished turn ``log`` as a trace and records its id in ``log.data`` (never raises)."""
     name = experiment_name()
-    if not name or not log.status:
+    if not enabled() or not log.status:
         return
     try:
         trace_id = await asyncio.wait_for(asyncio.to_thread(_write_trace, log, name), timeout=_EXPORT_TIMEOUT_S)
@@ -196,7 +209,7 @@ def _linked_prompts(experiment_id: str, keys: List[str]) -> str:
 
 def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = '') -> None:
     """Attaches the user's thumbs up / down to the turn's trace (blocking; run it in a thread, never raises)."""
-    if not (experiment_name() and mlflow_trace_id):
+    if not (enabled() and mlflow_trace_id):
         return
     try:
         import mlflow

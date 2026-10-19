@@ -116,10 +116,10 @@ variables:
     default: "dev-job"
   chat_mlflow_experiment:
     description: >-
-      Workspace path of the MLflow experiment that receives one trace per chat turn (the traces are stored in the Unity Catalog schema <pipeline_write_env>_proj.qualibot_traces). It sits in the home folder of the job service principal, which creates it. Read by the chat jobs of resources/chat_mlflow.yml;
+      Workspace path of the MLflow experiment that receives one trace per chat turn (the traces are stored in the Unity Catalog schema <pipeline_write_env>_proj.qualibot_traces). It sits in the shared folder /Shared/Experiment, not in the home folder of a person or a service principal. Read by the chat jobs of resources/chat_mlflow.yml;
       the app reads CHAT_MLFLOW_EXPERIMENT in utils/deploy/target_env.json, which must hold the same value (tests/test_deploy_config.py).
       Moving the experiment in the workspace changes this path: update both.
-    default: "/Users/fde6ff28-739f-4a41-b61e-604a298c8478/qualibot/chat_turns"
+    default: "/Shared/Experiment/qualibot_chat_turns"
   lakebase_export_schedule_pause:
     description: "PAUSED: the Lakebase export job (D_1_Qualibot_Lakebase_Export_To_Volume) does not run on its schedule. UNPAUSED: it runs at 02:00 and 14:00 (Europe/Brussels)."
     default: "PAUSED"
@@ -482,7 +482,6 @@ targets:
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "uat-job"
       lakebase_export_schedule_pause: "UNPAUSED"
-      chat_mlflow_experiment: "/Users/3e5cd4e5-f765-4760-b974-ee7715258b39/qualibot/chat_turns"
       lakebase_import_to_delta: "true"
       job_cluster_policy_id_S: "000E7559CADE5290"
       notification_email: "jules.gourio.external@latecoere.aero"
@@ -603,7 +602,6 @@ targets:
       job_activity_tag: "prod-job"
       # PAUSED until promoted on explicit decision.
       lakebase_export_schedule_pause: "PAUSED"
-      chat_mlflow_experiment: "/Users/b82d3b5a-b633-4738-8dde-68bb2142cb02/qualibot/chat_turns"
       lakebase_import_to_delta: "true"
       job_cluster_policy_id_S: "001C199A8D85FE35"
       parsing_offline_models_path: "/Volumes/prod_proj/qualibot/docling_models"

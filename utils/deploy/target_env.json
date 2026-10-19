@@ -7,7 +7,7 @@
     "COMPARE_IMPACT_INDEX": "dev_proj.qualibot.chunks_index",
     "CAPS_WAREHOUSE_ID": "",
     "CAPS_BYPASS": "true",
-    "CHAT_MLFLOW_EXPERIMENT": "/Users/fde6ff28-739f-4a41-b61e-604a298c8478/qualibot/chat_turns",
+    "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_turns",
     "CHAT_REWRITE_ENDPOINT": "databricks-gemini-3-1-flash-lite",
     "CHAT_TRANSLATE_ONLY": "on",
     "CHAT_MLFLOW_WAREHOUSE_ID": "13eff4a6095513cb"
@@ -18,7 +18,7 @@
     "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/uat_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
     "COMPARE_IMPACT_INDEX": "uat_proj.qualibot.chunks_index",
     "CAPS_WAREHOUSE_ID": "5890912c31867b77",
-    "CHAT_MLFLOW_EXPERIMENT": "/Users/3e5cd4e5-f765-4760-b974-ee7715258b39/qualibot/chat_turns",
+    "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_turns",
     "CHAT_REWRITE_ENDPOINT": "databricks-gemini-3-1-flash-lite",
     "CHAT_TRANSLATE_ONLY": "on",
     "CHAT_MLFLOW_WAREHOUSE_ID": "5890912c31867b77"
@@ -28,7 +28,7 @@
     "CHAT_INDEX": "prod_proj.qualibot.chunks_index",
     "COMPARE_IMPACT_INDEX": "prod_proj.qualibot.chunks_index",
     "CAPS_WAREHOUSE_ID": "03054ddc44b7f902",
-    "CHAT_MLFLOW_EXPERIMENT": "/Users/b82d3b5a-b633-4738-8dde-68bb2142cb02/qualibot/chat_turns",
+    "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_turns",
     "CHAT_REWRITE_ENDPOINT": "databricks-gemini-3-1-flash-lite",
     "CHAT_TRANSLATE_ONLY": "on",
     "CHAT_MLFLOW_WAREHOUSE_ID": "03054ddc44b7f902"
