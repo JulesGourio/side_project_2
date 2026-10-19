@@ -198,6 +198,32 @@ ORDER BY perdus DESC LIMIT 50;
 
 Aucune suppression avant lecture des résultats ; une correction éventuelle passe par un job SP, puis une resynchronisation de `chunks_index`.
 
+Résultat (2026-10-19) : 315 IDDOC hors manifeste portent des chunks (10 885 chunks, surtout du texte) et 41 IDDOC hors manifeste ont des lignes dans `image_metadata`. Cause : en mode `full`, `build_processed_files_and_chunks` et `build_image_metadata` ne filtrent pas sur le périmètre (le filtre n'existe que pour `incremental` et `rechunk`), donc la reconstruction reprend tout le checkpoint, révisions remplacées comprises. Correction : `parsing_run_mode: "rechunk"` pour `qualibot-uat` (purge des IDDOC sortis du périmètre à `2_manifest`, puis reconstruction filtrée), `deploy-uat-jobs`, run de `D_1_Qualibot_Parsing_Pipeline` (J5). Après le run, rejouer les requêtes 5 et 3 : zéro IDDOC hors manifeste. Puis J7 : retour à `incremental`.
+
+```sql
+-- 10. Documents avec moins de chunks, avec appartenance au manifeste
+WITH v AS (SELECT IDDOC, ANY_VALUE(ref) AS ref, COUNT(*) AS n_v1 FROM uat_landingzone.qualibot.chunks_v1 GROUP BY IDDOC),
+     c AS (SELECT IDDOC, COUNT(*) AS n_copie FROM uat_proj.qualibot.chunks GROUP BY IDDOC)
+SELECT v.IDDOC, v.ref, v.n_v1, c.n_copie, v.n_v1 - c.n_copie AS perdus,
+       m.IDDOC IS NOT NULL AS dans_manifeste, pd.parser_strategy
+FROM v JOIN c ON v.IDDOC = c.IDDOC
+LEFT JOIN (SELECT DISTINCT IDDOC FROM uat_proj.qualibot.parse_manifest) m ON m.IDDOC = v.IDDOC
+LEFT JOIN uat_proj.qualibot.parsed_documents pd ON pd.IDDOC = v.IDDOC
+WHERE c.n_copie < v.n_v1
+ORDER BY dans_manifeste DESC, perdus DESC LIMIT 50;
+
+-- 11. Un document qui a perdu des chunks : contenu v1 contre copie, et texte du checkpoint
+SELECT 'v1' AS src, chunk_content_type, COUNT(*) AS chunks, SUM(LENGTH(chunk_text)) AS caracteres
+FROM uat_landingzone.qualibot.chunks_v1 WHERE IDDOC = 25372 GROUP BY chunk_content_type
+UNION ALL
+SELECT 'copie', chunk_content_type, COUNT(*), SUM(LENGTH(chunk_text))
+FROM uat_proj.qualibot.chunks WHERE IDDOC = 25372 GROUP BY chunk_content_type
+ORDER BY 1, 2;
+
+SELECT IDDOC, parser_strategy, parse_status, LENGTH(document_text) AS caracteres, image_count
+FROM uat_proj.qualibot.parsing_checkpoint WHERE IDDOC IN (25372, 19226, 21324, 25767);
+```
+
 - [ ] **J0b. Plan lecture seule UAT** : Bitbucket, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur le schéma, les volumes ou l'app. Les `create` de nouveaux jobs sont normaux. Les `delete` de jobs (`apps_stop_nightly_uat`, `quality_scoring`, `score_production_qa_uat`, `sync_mlflow_scorer_assessments_uat`, `traces_migration`) sont à valider un par un dans l'UI avant J3.
 
 - [ ] **J0c. Retirer les déclarations temporaires** `qualibot_schema` et `qualibot_test` de `databricks.yml` (cible `qualibot-uat`), commit et push. Les ressources de l'app (`doc-compare-volume` et `test-volume` vers `uat_landingzone`) restent temporaires jusqu'à S4.
