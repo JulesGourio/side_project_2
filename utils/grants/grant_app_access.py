@@ -36,7 +36,12 @@ dbutils.widgets.text("pipeline_service_principal", "fde6ff28-739f-4a41-b61e-604a
 dbutils.widgets.text("pipeline_tables", "parsing_checkpoint,parsed_documents,image_metadata,parse_manifest,category_reference,chunks")
 
 
-def _list(name):
+def _list(name) -> list[str]:
+    """Values of a comma-separated widget, stripped, without empty items.
+
+    :param name: Widget name.
+    :return: list of the non-empty values.
+    """
     return [v.strip() for v in dbutils.widgets.get(name).split(",") if v.strip()]
 
 

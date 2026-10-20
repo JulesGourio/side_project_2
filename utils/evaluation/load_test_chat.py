@@ -50,6 +50,7 @@ dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_load_chat_runs')
 import os, re, shlex, sys, json, time, random, asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from typing import Any
 
 import yaml
 from databricks.sdk import WorkspaceClient
@@ -71,8 +72,12 @@ def token() -> str:
     return w.config.authenticate()['Authorization'].split(' ', 1)[1]
 
 
-def run_async(coro):
-    """asyncio.run in its own thread: the notebook may already have an event loop."""
+def run_async(coro) -> Any:
+    """asyncio.run in its own thread: the notebook may already have an event loop.
+
+    :param coro: Coroutine to run to completion.
+    :return: result of the coroutine.
+    """
     with ThreadPoolExecutor(max_workers=1) as ex:
         return ex.submit(asyncio.run, coro).result()
 
@@ -113,7 +118,14 @@ APP_URL = (w.apps.get(dbutils.widgets.get('app_name').strip()).url or '').rstrip
 WS_URL = re.sub(r'^http', 'ws', APP_URL) + '/api/chat/ws'
 
 
-async def ask_app(q, session_id):
+async def ask_app(q, session_id) -> dict[str, Any]:
+    """Ask one question through the app WebSocket and time it.
+
+    :param q: Question: dict with ``content`` and ``division``.
+    :param session_id: Session id under which the app stores the question.
+    :return: outcome with ``status``, ``ttft_s``, ``total_s`` and ``answer_chars`` and ``n_sources`` when ok, or
+        ``error``.
+    """
     t0 = time.monotonic()
     first = None
     async with websockets.connect(WS_URL, additional_headers={'Authorization': f'Bearer {token()}'},
@@ -134,7 +146,7 @@ async def ask_app(q, session_id):
 ENGINE = {}
 
 
-def load_engine():
+def load_engine() -> None:
     """The app's code and configuration in this notebook (app.yaml, then target_config.env)."""
     with open(f'{APP}/app.yaml', encoding='utf-8-sig') as f:
         for item in (yaml.safe_load(f) or {}).get('env') or []:
@@ -158,7 +170,13 @@ def load_engine():
                   trim=_trim_history, date=_with_today_date)
 
 
-async def ask_engine(q, session_id):
+async def ask_engine(q, session_id) -> dict[str, Any]:
+    """Ask one question through the app engine run in this notebook and time it.
+
+    :param q: Question: dict with ``content`` and ``division``.
+    :param session_id: Not used by the engine path; kept so both modes share one signature.
+    :return: outcome in the same shape as ``ask_app``.
+    """
     e, tok = ENGINE, token()
     t0 = time.monotonic()
     first, text = None, []
@@ -183,7 +201,14 @@ async def ask_engine(q, session_id):
     return {'status': 'ok', 'ttft_s': first, 'total_s': time.monotonic() - t0, 'answer_chars': len(''.join(text))}
 
 
-async def ask(mode, q, session_id):
+async def ask(mode, q, session_id) -> dict[str, Any]:
+    """Run one question in the given mode, bounded by TIMEOUT_S.
+
+    :param mode: ``app`` or ``engine``.
+    :param q: Question: dict with ``content`` and ``division``.
+    :param session_id: Session id for the question.
+    :return: outcome dict; a timeout or an exception is returned as an outcome, never raised.
+    """
     try:
         coro = ask_app(q, session_id) if mode == 'app' else ask_engine(q, session_id)
         return await asyncio.wait_for(coro, TIMEOUT_S)
@@ -216,10 +241,19 @@ started_at timestamp, ttft_s double, total_s double, status string, error string
 _next = iter(range(10**9))
 
 
-async def step(level):
+async def step(level) -> tuple[list[dict[str, Any]], float]:
+    """Run one step: ``level`` workers each ask ROUNDS questions in turn.
+
+    :param level: Number of questions in progress at once.
+    :return: rows of the step and its wall time in seconds.
+    """
     rows = []
 
-    async def worker(wid):
+    async def worker(wid) -> None:
+        """Ask ROUNDS questions one after the other and append each outcome to ``rows``.
+
+        :param wid: Index of the worker within the step.
+        """
         for seq in range(ROUNDS):
             q = QUESTIONS[next(_next) % len(QUESTIONS)]
             started = datetime.now(timezone.utc)

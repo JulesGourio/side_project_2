@@ -38,7 +38,7 @@
 
 # MAGIC %md
 # MAGIC ## Config Standard Package Imports
-# MAGIC The pinned `opencv-python-headless` replaces the build Docling pulls in, which crashes on the GPU runtime.
+# MAGIC The pinned `opencv-python-headless` replaces the build Docling pulls in, which fails without a display library.
 
 # COMMAND ----------
 

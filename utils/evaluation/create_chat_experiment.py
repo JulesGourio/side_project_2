@@ -30,8 +30,16 @@ from databricks.sdk.service.ml import ExperimentAccessControlRequest, Experiment
 logger = logging.getLogger('create_chat_experiment')
 
 
-def _run_grant(w: WorkspaceClient, warehouse_id: str, privileges: str, full_name: str, principal: str):
-    """Runs one GRANT; returns the error message, or None when it succeeded."""
+def _run_grant(w: WorkspaceClient, warehouse_id: str, privileges: str, full_name: str, principal: str) -> str | None:
+    """Runs one GRANT; returns the error message, or None when it succeeded.
+
+    :param w: Workspace client of the job service principal.
+    :param warehouse_id: SQL warehouse that runs the statement.
+    :param privileges: Privileges to grant, such as ``MODIFY, SELECT``.
+    :param full_name: Backticked three-level name of the table or view.
+    :param principal: Application id of the principal to grant.
+    :return: error message, or None when the grant succeeded.
+    """
     statement = f'GRANT {privileges} ON TABLE {full_name} TO `{principal}`'
     result = w.statement_execution.execute_statement(statement=statement, warehouse_id=warehouse_id, wait_timeout='30s')
     if result.status.state.value == 'SUCCEEDED':
@@ -40,9 +48,16 @@ def _run_grant(w: WorkspaceClient, warehouse_id: str, privileges: str, full_name
 
 
 def grant_app_on_trace_tables(w: WorkspaceClient, uc_schema: str, experiment_id: str, principal: str, warehouse_id: str) -> None:
-    """MODIFY and SELECT for the app on the tables of the experiment (``<experiment id>_*``) and nothing else. MLflow also creates
-    views there: MODIFY does not apply to a view, which gets SELECT only. Run by the job service principal, which owns what MLflow
-    created. Idempotent."""
+    """MODIFY and SELECT for the app on the tables of the experiment (``<experiment id>_*``) and nothing else.
+    MLflow also creates views there: MODIFY does not apply to a view, which gets SELECT only. Run by the job service
+    principal, which owns what MLflow created. Idempotent.
+
+    :param w: Workspace client of the job service principal.
+    :param uc_schema: Unity Catalog schema, ``catalog.schema``, that holds the trace tables.
+    :param experiment_id: Id of the experiment; its trace tables are named ``<experiment id>_*``.
+    :param principal: Application id of the app service principal to grant.
+    :param warehouse_id: SQL warehouse that runs the GRANT statements.
+    """
     catalog, schema = uc_schema.split('.', 1)
     names = sorted(t.name for t in w.tables.list(catalog_name=catalog, schema_name=schema) if t.name.startswith(f'{experiment_id}_'))
     if not names:

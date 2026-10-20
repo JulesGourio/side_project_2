@@ -5,8 +5,8 @@ Overwrites existing rows: DELETE then INSERT per table, all in one
 transaction (a failure midway rolls back to the target's exact prior state).
 Authenticates with the CLI profile (--profile) of the target workspace.
 
-Prerequisite: the target app must have started at least once, so that its schema setup
-(server/services/infra/lakebase/schema.py) has created the tables.
+Prerequisite: the tables exist on the target, created by the app's schema setup
+(server/services/infra/lakebase/schema.py).
 
 USAGE:
     python import_lakebase_from_json.py --profile job-runner-sa-prod --in-dir staging/lakebase
@@ -18,6 +18,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import psycopg2.extras
 from databricks.sdk import WorkspaceClient
@@ -30,11 +31,22 @@ BRANCH = "production"
 ENDPOINT = "primary"
 
 
-def connect(profile: str, database: str):
+def connect(profile: str, database: str) -> Any:
+    """Open a connection to the target Lakebase database.
+
+    :param profile: Databricks CLI profile of the target workspace.
+    :param database: Name of the database to connect to.
+    :return: open psycopg2 connection.
+    """
     return lakebase_connect_with(WorkspaceClient(profile=profile), PROJECT_ID, BRANCH, ENDPOINT, database)
 
 
 def ordered_files(in_dir: Path) -> list[Path]:
+    """JSON exports of a folder, parents before children as in MIGRATE_TO_PROD_TABLE_ORDER.
+
+    :param in_dir: Folder holding one JSON file per table.
+    :return: files in import order; the tables not listed in the order come last, by name.
+    """
     available = {p.stem: p for p in in_dir.glob("*.json")}
     ordered = [available.pop(t) for t in MIGRATE_TO_PROD_TABLE_ORDER if t in available]
     return ordered + [available[k] for k in sorted(available)]

@@ -16,6 +16,7 @@ import pandas as pd
 
 import chunking  # shipped with addPyFile, like this module
 
+from pyspark.sql import Column
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql.functions import pandas_udf
@@ -71,7 +72,10 @@ CONFIG: Dict[str, Any] = {}
 
 
 def configure(**kwargs) -> None:
-    """Set run configuration from the notebook. Call on the driver before parsing."""
+    """Set run configuration from the notebook. Call on the driver before parsing.
+
+    :param kwargs: Configuration keys and values, as the notebook sets them.
+    """
     CONFIG.update(kwargs)
     logger.info("worker.configure() called with %d keys", len(kwargs))
 
@@ -80,7 +84,10 @@ _CONFIG_BROADCAST = None
 
 
 def broadcast_config(spark_session) -> None:
-    """Broadcast CONFIG to all workers. Call once on the driver after configure()."""
+    """Broadcast CONFIG to all workers. Call once on the driver after configure().
+
+    :param spark_session: Active Spark session.
+    """
     global _CONFIG_BROADCAST
     _CONFIG_BROADCAST = spark_session.sparkContext.broadcast(dict(CONFIG))
     logger.info("CONFIG broadcast (%d keys)", len(CONFIG))
@@ -88,7 +95,10 @@ def broadcast_config(spark_session) -> None:
 
 def write_worker_config(spark_session) -> str:
     """Persist CONFIG to a JSON file on the volume and to spark.conf, for the workers of shared clusters.
-    Returns the JSON path written."""
+    Returns the JSON path written.
+
+    :param spark_session: Active Spark session; its ``spark.conf`` receives the JSON as well.
+    """
     path = _cfg("WORKER_CONFIG_JSON", fallback=os.path.join(_cfg("VOLUME_BASE_PATH"), "_parsing_config.json"))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -130,8 +140,12 @@ def ensure_config() -> None:
         pass  # _cfg() falls back to _DEFAULTS
 
 
-def _cfg(key: str, fallback=None):
-    """Read a config value: CONFIG → _DEFAULTS → fallback → error."""
+def _cfg(key: str, fallback=None) -> Any:
+    """Read a config value: CONFIG → _DEFAULTS → fallback → error.
+
+    :param key: Configuration key.
+    :param fallback: Value returned when neither CONFIG nor _DEFAULTS holds the key; None means no fallback.
+    """
     if key in CONFIG:
         return CONFIG[key]
     if key in _DEFAULTS and _DEFAULTS[key] is not None:
@@ -145,7 +159,10 @@ def _cfg(key: str, fallback=None):
 
 # --- Text helpers ---
 def normalize_text(text: str) -> str:
-    """Unify line endings, drop NUL characters, collapse runs of spaces/tabs and of blank lines."""
+    """Unify line endings, drop NUL characters, collapse runs of spaces/tabs and of blank lines.
+
+    :param text: Raw text; an empty value gives an empty string.
+    """
     if not text:
         return ""
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
@@ -153,7 +170,7 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def get_tiktoken_encoder():
+def get_tiktoken_encoder() -> Any:
     """The tiktoken encoder, built once per process (cl100k_base unless configured)."""
     global _TIKTOKEN_ENCODER
     if _TIKTOKEN_ENCODER is None:
@@ -163,7 +180,10 @@ def get_tiktoken_encoder():
 
 
 def count_tokens(text: str) -> int:
-    """Token count via tiktoken (USE_TIKTOKEN=True) or a chars/token estimate."""
+    """Token count via tiktoken (USE_TIKTOKEN=True) or a chars/token estimate.
+
+    :param text: Text to measure; an empty text gives 0.
+    """
     if not text:
         return 0
     if _cfg("USE_TIKTOKEN", fallback=False):
@@ -189,8 +209,12 @@ CHUNK_SCHEMA = T.ArrayType(T.StructType([
 _INTRAQUAL_REF_URL_BASE = "https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref="
 
 
-def intraqual_ref_url(ref_col):
-    """Document URL built directly from REF, no lookup table needed."""
+def intraqual_ref_url(ref_col) -> Column:
+    """Document URL built directly from REF, no lookup table needed.
+
+    :param ref_col: Column of REF values.
+    :return: column with the Intraqual URL of each REF, null when REF is null.
+    """
     return F.when(
         ref_col.isNotNull(),
         F.concat(F.lit(_INTRAQUAL_REF_URL_BASE), F.regexp_replace(ref_col, " ", "%20")),
@@ -198,9 +222,20 @@ def intraqual_ref_url(ref_col):
 
 
 def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_col,
-                          doc_date_col=None, include_prefix=True, type_col=None):
+                          doc_date_col=None, include_prefix=True, type_col=None) -> Column:
     """chunk_text with an optional "[Source: ...]" provenance prefix (include_prefix).
-    type_col (gd_typdoc label, e.g. "05 - Procédure - QP") adds a "Type:" field."""
+    type_col (gd_typdoc label, e.g. "05 - Procédure - QP") adds a "Type:" field.
+
+    :param body_col: Column with the passage body.
+    :param ref_col: Column of REF values.
+    :param titre_col: Column of document titles.
+    :param division_col: Column of divisions.
+    :param category_col: Column of categories.
+    :param doc_date_col: Column of publication dates, or None to omit the date.
+    :param include_prefix: False returns the body column unchanged.
+    :param type_col: Column of document type labels, or None to omit the type.
+    :return: column with the prefix followed by the body.
+    """
     if not include_prefix:
         return body_col
     date_part = (
@@ -221,7 +256,10 @@ def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_co
 
 
 def chunk_document(text: str) -> List[Dict[str, Any]]:
-    """Passages of an already-parsed markdown document (``chunking.chunk_markdown``)."""
+    """Passages of an already-parsed markdown document (``chunking.chunk_markdown``).
+
+    :param text: Markdown text of the parsed document.
+    """
     text = normalize_text(text)
     if not text:
         return []
@@ -240,7 +278,11 @@ def chunk_document(text: str) -> List[Dict[str, Any]]:
 # --- PySpark pandas UDFs ---
 @pandas_udf(CHUNK_SCHEMA)
 def build_chunks_udf(text_series: pd.Series) -> pd.Series:
-    """Chunk already-parsed markdown text (chunking.chunk_markdown)."""
+    """Chunk already-parsed markdown text (chunking.chunk_markdown).
+
+    :param text_series: Column of markdown texts, one per row.
+    :return: chunk structs per row.
+    """
     ensure_config()
     return pd.Series([
         chunk_document(str(t)) if t else [] for t in text_series
@@ -249,14 +291,23 @@ def build_chunks_udf(text_series: pd.Series) -> pd.Series:
 
 @pandas_udf(T.StringType())
 def language_udf(text_series: pd.Series, ref_series: pd.Series) -> pd.Series:
-    """Document language (chunking.detect_language): REF suffix, else stop words."""
+    """Document language (chunking.detect_language): REF suffix, else stop words.
+
+    :param text_series: Column of document texts.
+    :param ref_series: Column of REF values.
+    :return: language code per row.
+    """
     return pd.Series([chunking.detect_language(str(t or ""), str(r or ""))
                       for t, r in zip(text_series, ref_series)])
 
 
 @pandas_udf(T.IntegerType())
 def token_count_udf(text_series: pd.Series) -> pd.Series:
-    """Pandas UDF: token count of each text (0 when empty), with the settings restored on the worker."""
+    """Pandas UDF: token count of each text (0 when empty), with the settings restored on the worker.
+
+    :param text_series: Column of texts, one per row.
+    :return: token count per row.
+    """
     ensure_config()
     return text_series.apply(
         lambda x: count_tokens(str(x)) if pd.notna(x) and str(x).strip() else 0

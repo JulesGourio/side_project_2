@@ -10,9 +10,10 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from typing import Callable
 
 from databricks.sdk.runtime import dbutils, display, spark
-from pyspark.sql import Window
+from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
@@ -66,18 +67,23 @@ _MAX_SIZE_PDF = 35 * 1024 * 1024       # large scanned PDFs must reach the LLM-O
 _MAX_SIZE_OTHER = 100 * 1024 * 1024    # antiword/openpyxl: no page-rasterization OOM risk
 
 
-def set_job_run_id(job_run_id):
-    """Correlate this run's rows with the parent job run (`2_manifest` writes the same id)."""
+def set_job_run_id(job_run_id) -> None:
+    """Correlate this run's rows with the parent job run (`2_manifest` writes the same id).
+
+    :param job_run_id: Id of the parent Databricks job run; None or empty when unknown.
+    """
     global JOB_RUN_ID
     JOB_RUN_ID = job_run_id or None
 
 
-def resolve_parse_scope(df_business_meta):
+def resolve_parse_scope(df_business_meta) -> tuple[set, set]:
     """Resolve which IDDOCs need parsing this run.
 
     Full mode: everything in the manifest. Incremental mode: manifest minus
     already-terminal IDDOCs, plus any of those flagged as revised since their
-    last parse. Returns (target_iddocs, has_target_iddocs).
+    last parse. Returns (target_iddocs, revised_iddocs).
+
+    :param df_business_meta: Business metadata of the manifest, with ``IDDOC`` and ``parse_content``.
     """
     # parse_content=False: pre-cutoff document beyond ARCHIVE_MAX_DOCS (notice chunk only).
     df_parseable = (df_business_meta.filter(F.col("parse_content"))
@@ -135,12 +141,15 @@ def resolve_parse_scope(df_business_meta):
     return target_iddocs, revised_iddocs
 
 
-def select_files_for_target_iddocs(target_iddocs, df_business_meta):
+def select_files_for_target_iddocs(target_iddocs, df_business_meta) -> tuple[DataFrame, DataFrame, DataFrame]:
     """Scan only the target IDDOCs' folders, rank every candidate file per
     IDDOC, and pick the winner.
 
     Returns (df_files, df_matched_full, df_content) — df_matched_full/df_content
     are kept for the retry phase (rank-2 candidates), df_files feeds parsing.
+
+    :param target_iddocs: IDDOCs whose folders are scanned.
+    :param df_business_meta: Business metadata of the manifest, with the enrichment columns.
     """
     if target_iddocs:
         root_dbfs = VOLUME_ROOT_PATH.replace("/Volumes/", "dbfs:/Volumes/")
@@ -166,8 +175,12 @@ def select_files_for_target_iddocs(target_iddocs, df_business_meta):
     return df_files, df_matched_full, df_content
 
 
-def _with_parse_result(df, xml_only_col):
-    """Run the parsing UDF on `content` and unpack its result into the checkpoint columns (content dropped)."""
+def _with_parse_result(df, xml_only_col) -> DataFrame:
+    """Run the parsing UDF on `content` and unpack its result into the checkpoint columns (content dropped).
+
+    :param df: Files with ``content`` and ``source_file_extension`` columns.
+    :param xml_only_col: Column that routes a file to the XML fallback only, or a literal False.
+    """
     return (
         df.withColumn("result", image_utils.parse_and_extract_images_udf(
             F.col("content"), F.col("source_file_extension"), F.col("IDDOC").try_cast("string"),
@@ -186,14 +199,23 @@ def _with_parse_result(df, xml_only_col):
     )
 
 
-def make_parse_fn(cluster_parallelism):
+def make_parse_fn(cluster_parallelism) -> Callable[[DataFrame, int], DataFrame]:
     """Build the per-batch parse function, closing over cluster_parallelism.
 
     One partition per file, capped at cluster parallelism: the GPU slots (one task per GPU) are fed from a
     fine-grained queue instead of waiting on a few coarse partitions that each bundle many files. Python workers
     are reused across tasks, so Docling is still imported once per worker.
+
+    :param cluster_parallelism: Number of tasks the cluster runs in parallel.
+    :return: parse function taking a batch of files and its size.
     """
-    def parse(df, file_count):
+    def parse(df, file_count) -> DataFrame:
+        """Parse one batch of files and set the parse status of each.
+
+        :param df: Batch of files, with ``content`` and the file metadata.
+        :param file_count: Number of files in the batch.
+        :return: batch with the parse columns and ``parse_status``.
+        """
         partitions = max(1, min(file_count, cluster_parallelism))
         has_xml_fallback_col = "_xml_fallback_only" in df.columns
         xml_fallback_col = F.col("_xml_fallback_only") if has_xml_fallback_col else F.lit(False)
@@ -212,10 +234,13 @@ def make_parse_fn(cluster_parallelism):
     return parse
 
 
-def snapshot_or_log_checkpoint(num_files):
+def snapshot_or_log_checkpoint(num_files) -> None:
     """Full run: shallow-clone the live checkpoint before it's overwritten.
     Incremental run: just log the current Delta version for manual
-    time-travel restore."""
+    time-travel restore.
+
+    :param num_files: Number of files this run parses.
+    """
     if RUN_MODE == "full" and num_files > 0:
         snap_ts = datetime.now().strftime("%Y%m%d_%H%M")
         snap_table = f"{PIPELINE_WRITE_ENV}_proj.qualibot._pipeline_checkpoint_{snap_ts}"
@@ -237,11 +262,13 @@ def snapshot_or_log_checkpoint(num_files):
             logger.info("[CHECKPOINT] No existing checkpoint yet.")
 
 
-def read_checkpoint_deduped(columns=None):
+def read_checkpoint_deduped(columns=None) -> DataFrame:
     """Read parsing_checkpoint with exactly one row per IDDOC — dedup by
     IDDOC (not source_path), preferring SUCCESS then the most recent attempt.
 
     `columns`: only these (plus the dedup keys), so a caller that needs a few columns does not sort every document text.
+
+    :param columns: Columns to read besides the dedup keys, or None for all of them.
     """
     w = Window.partitionBy("IDDOC").orderBy(
         F.when(F.col("parse_status") == "SUCCESS", 0).otherwise(1),
@@ -259,7 +286,7 @@ def read_checkpoint_deduped(columns=None):
     )
 
 
-def _reusable_checkpoint_rows():
+def _reusable_checkpoint_rows() -> DataFrame:
     """Checkpoint rows whose result a new parse of the same bytes would only repeat: SUCCESS, the deterministic skips,
     and the scanned PDFs already queued for LLM-OCR (a re-parse would delete their rendered pages)."""
     return spark.table(CHECKPOINT_TABLE).filter(
@@ -268,11 +295,13 @@ def _reusable_checkpoint_rows():
     )
 
 
-def exclude_already_parsed(df_files):
+def exclude_already_parsed(df_files) -> DataFrame:
     """Resume support: drop the files whose IDDOC already has a reusable checkpoint row for the same bytes.
 
     Keyed on (IDDOC, document_sha256), not on the path: a checkpoint copied from another environment, or a file
     moved between the D_ and Dm_ folders, keeps its content but not its path. Returns the filtered, cached df_files.
+
+    :param df_files: Selected files, from ``select_files_for_target_iddocs``.
     """
     if not table_exists(CHECKPOINT_TABLE):
         logger.info("[RESUME] No existing checkpoint — every selected file will be parsed.")
@@ -291,11 +320,13 @@ def exclude_already_parsed(df_files):
     return df_files
 
 
-def enforce_parse_budget(num_files):
+def enforce_parse_budget(num_files) -> None:
     """Stop the task before any GPU parse when more files are pending than `MAX_PARSE_FILES` allows.
 
     A daily run parses tens of files; thousands mean the checkpoint was not recognised (wrong table, copy missing),
-    which costs a day of GPU. A real full re-parse is run on purpose with `parsing_max_parse_files=0`.
+    which costs a day of GPU. A full re-parse on purpose sets the ceiling to 0 (parsing_max_parse_files).
+
+    :param num_files: Number of files pending parse.
     """
     if MAX_PARSE_FILES and num_files > MAX_PARSE_FILES:
         raise RuntimeError(
@@ -306,11 +337,13 @@ def enforce_parse_budget(num_files):
     logger.info(f"[BUDGET] {num_files} file(s) to parse (ceiling {MAX_PARSE_FILES or 'none'})")
 
 
-def setup_workers(repo_dir):
+def setup_workers(repo_dir) -> int:
     """Ship the parsing modules and settings to the executors; returns the number of parallel tasks.
 
     `addPyFile` reaches executors that join late too (`sys.path` only covers the driver). On a single-user cluster the
     settings are broadcast; on a shared one the workers read the JSON copy written on the volume.
+
+    :param repo_dir: Folder of the parsing modules, shipped to the executors.
     """
     import config as cfg
     from utils import broadcast_config, configure, write_worker_config
@@ -352,7 +385,12 @@ def setup_workers(repo_dir):
 
     from importlib import metadata
 
-    def _version(package):
+    def _version(package) -> str:
+        """Installed version of a package.
+
+        :param package: Name of the package.
+        :return: the version, or ``absent`` when the package is not installed.
+        """
         try:
             return metadata.version(package)
         except metadata.PackageNotFoundError:
@@ -366,12 +404,17 @@ def setup_workers(repo_dir):
     return parallelism
 
 
-def check_docling_on_workers():
+def check_docling_on_workers() -> None:
     """Import Docling once on an executor before any parse, and stop the task with the worker's own traceback if it fails.
 
     Inside the parse UDF the same failure surfaces only as a Python worker crash, after the scan and the hashing.
     """
-    def probe(_):
+    def probe(_) -> list[tuple[str, str]]:
+        """Import Docling on the executor that runs this partition.
+
+        :param _: Unused partition index.
+        :return: one ``(status, detail)`` pair: the numpy version, or the traceback.
+        """
         import traceback
         try:
             import format_parsers
@@ -387,11 +430,13 @@ def check_docling_on_workers():
     logger.info(f"[WORKERS] Docling imports on the executors ({detail})")
 
 
-def split_for_gpu(df_files):
+def split_for_gpu(df_files) -> tuple[DataFrame, DataFrame | None, int]:
     """(df_cpu, df_gpu, n_gpu): the PDFs go to the GPU task only when more than `GPU_MIN_PDFS` are left.
 
     Docling uses its GPU models (layout, tables) on PDFs only. A daily run has a handful of PDFs: parsed here on CPU,
     the GPU cluster is never started.
+
+    :param df_files: Selected files, after the size gate.
     """
     is_pdf = F.col("source_file_extension") == "pdf"
     n_pdf = df_files.filter(is_pdf).count()
@@ -402,8 +447,13 @@ def split_for_gpu(df_files):
     return df_files.filter(~is_pdf).cache(), df_files.filter(is_pdf), n_pdf
 
 
-def build_run_scope(target_iddocs, revised_iddocs):
-    """One row per IDDOC in scope this run, with the run ids: what 3c_chunks rebuilds and how the run is correlated."""
+def build_run_scope(target_iddocs, revised_iddocs) -> DataFrame:
+    """One row per IDDOC in scope this run, with the run ids: what 3c_chunks rebuilds and how the run is correlated.
+
+    :param target_iddocs: IDDOCs in scope this run.
+    :param revised_iddocs: IDDOCs in scope that were revised.
+    :return: one row per IDDOC, with the run ids and the run mode.
+    """
     rows = [(int(i), i in revised_iddocs) for i in sorted(target_iddocs)]
     return (
         spark.createDataFrame(rows, "IDDOC long, is_revised boolean")
@@ -416,7 +466,7 @@ def build_run_scope(target_iddocs, revised_iddocs):
     )
 
 
-def read_run_scope():
+def read_run_scope() -> tuple[set, set]:
     """(target_iddocs, revised_iddocs) written by 3_parse for this run; adopts its ingestion run id.
 
     Refuses the scope of another job run: 3c_chunks would rebuild the wrong documents.
@@ -437,8 +487,11 @@ def read_run_scope():
     return target_iddocs, revised_iddocs
 
 
-def read_gpu_queue():
-    """The PDFs 3_parse left for the GPU task, their bytes read again from the volume (same hash only)."""
+def read_gpu_queue() -> DataFrame | None:
+    """The PDFs 3_parse left for the GPU task, their bytes read again from the volume (same hash only).
+
+    :return: PDF files to parse, or None when the queue is empty.
+    """
     df_queue = spark.table(GPU_QUEUE_TABLE).filter(F.col("ingestion_run_id") == INGESTION_RUN_ID)
     paths = [r.source_path for r in df_queue.select("source_path").collect()]
     if not paths:
@@ -454,24 +507,31 @@ def read_gpu_queue():
     return df_files
 
 
-def files_parsed_this_run():
+def files_parsed_this_run() -> int:
     """Number of checkpoint rows written by this run (3_parse and the GPU task share the ingestion run id)."""
     if not table_exists(CHECKPOINT_TABLE):
         return 0
     return spark.table(CHECKPOINT_TABLE).filter(F.col("ingestion_run_id") == INGESTION_RUN_ID).count()
 
 
-def cleanup_stale_image_folders(df_files):
+def cleanup_stale_image_folders(df_files) -> None:
     """Delete image folders for every IDDOC about to be (re)parsed, so a
-    retry/rebuild never mixes old and new extracted images. Must run AFTER
-    the resume-exclusion join above.
+    retry/rebuild never mixes old and new extracted images. Must run after the resume exclusion
+    (exclude_already_parsed).
+
+    :param df_files: Files about to be parsed.
     """
     iddocs_to_parse = [
         r.IDDOC for r in df_files.select("IDDOC")
         .filter(F.col("IDDOC").isNotNull()).distinct().collect()
     ]
 
-    def _rm_folder(iddoc):
+    def _rm_folder(iddoc) -> bool:
+        """Remove the image folder of one IDDOC, if it exists.
+
+        :param iddoc: IDDOC whose image folder is removed.
+        :return: True when a folder was removed.
+        """
         folder = os.path.join(VOLUME_BASE_PATH, str(iddoc))
         if os.path.isdir(folder):
             shutil.rmtree(folder)
@@ -483,11 +543,14 @@ def cleanup_stale_image_folders(df_files):
     logger.info(f"Cleaned {removed}/{len(iddocs_to_parse)} existing image folders")
 
 
-def apply_oom_size_gate(df_files):
+def apply_oom_size_gate(df_files) -> tuple[DataFrame, DataFrame]:
     """Split df_files into (df_to_parse, df_skipped) using per-format OOM
     ceilings. OOXML files above the Docling-safe size but within the
     fallback ceiling are flagged _xml_fallback_only (routed straight to the
     zip/XML fallback, no Docling).
+
+    :param df_files: Selected files, with their content.
+    :return: files to parse, and files too large for every parser.
     """
     strip_ooxml_bloat_udf = F.udf(strip_ooxml_bloat, T.BinaryType())
 
@@ -517,8 +580,12 @@ def apply_oom_size_gate(df_files):
     return df_to_parse, df_skipped
 
 
-def write_skipped_too_large(df_skipped, skipped_count):
-    """Persist oversized files directly as SKIP_TOO_LARGE, no parse attempt."""
+def write_skipped_too_large(df_skipped, skipped_count) -> None:
+    """Persist oversized files directly as SKIP_TOO_LARGE, no parse attempt.
+
+    :param df_skipped: Files over the size ceiling.
+    :param skipped_count: Number of files over the size ceiling.
+    """
     logger.warning(f"{skipped_count} files excluded (beyond even the XML fallback ceiling).")
     df_skipped_result = (
         df_skipped.drop("content")
@@ -536,9 +603,14 @@ def write_skipped_too_large(df_skipped, skipped_count):
     logger.info(f"{skipped_count} files marked SKIP_TOO_LARGE in the checkpoint.")
 
 
-def run_docling_batches(df_to_parse, parse_count, parse_fn):
+def run_docling_batches(df_to_parse, parse_count, parse_fn) -> None:
     """Parse df_to_parse, checkpointing every CHECKPOINT_BATCH_SIZE files so
-    progress survives a crash. A single small batch is written directly."""
+    progress survives a crash. A single small batch is written directly.
+
+    :param df_to_parse: Files to parse.
+    :param parse_count: Number of files to parse.
+    :param parse_fn: Parse function, as built by ``make_parse_fn``.
+    """
     if parse_count <= CHECKPOINT_BATCH_SIZE:
         logger.info(f"Direct parsing ({parse_count} files, no batching needed)...")
         df_parsed = parse_fn(df_to_parse, parse_count)
@@ -565,9 +637,14 @@ def run_docling_batches(df_to_parse, parse_count, parse_fn):
         logger.info(f"Batch {batch_idx + 1}/{num_batches} saved in {time.time() - bt0:.1f}s")
 
 
-def log_run_summary(df_to_parse, parse_count, elapsed):
+def log_run_summary(df_to_parse, parse_count, elapsed) -> None:
     """Log OK/SKIP/ERR counts scoped to exactly the files parsed THIS run
-    (source_path, document_sha256) — not the whole checkpoint."""
+    (source_path, document_sha256) — not the whole checkpoint.
+
+    :param df_to_parse: Files parsed this run.
+    :param parse_count: Number of files parsed this run.
+    :param elapsed: Duration of the parse in seconds.
+    """
     df_this_run = (
         spark.table(CHECKPOINT_TABLE)
         .filter(F.col("ingestion_run_id") == INGESTION_RUN_ID)
@@ -584,9 +661,13 @@ def log_run_summary(df_to_parse, parse_count, elapsed):
                 f"SKIP_TOO_LARGE: {run_skips} | ERR: {run_errors}")
 
 
-def parse_pending_files(df_files, parse_fn):
+def parse_pending_files(df_files, parse_fn) -> None:
     """Full "parse everything pending" phase: OOM gate, direct/batched
-    Docling parsing, run summary. df_files must already be resume-excluded."""
+    Docling parsing, run summary. df_files must already be resume-excluded.
+
+    :param df_files: Selected files, already without the reusable checkpoint rows.
+    :param parse_fn: Parse function, as built by ``make_parse_fn``.
+    """
     df_to_parse, df_skipped = apply_oom_size_gate(df_files)
     skipped_count = df_skipped.count()
     fallback_only_count = df_to_parse.filter(F.col("_xml_fallback_only")).count()
@@ -609,9 +690,12 @@ def parse_pending_files(df_files, parse_fn):
     log_run_summary(df_to_parse, parse_count, time.time() - t0)
 
 
-def _images_pending_iddocs():
+def _images_pending_iddocs() -> DataFrame:
     """IDDOCs parked as IMAGES_PENDING: text parsed, only images left. Their checkpoint row still says EMPTY_TEXT,
-    so the scans of failed documents skip them: they are not parsed again."""
+    so the scans of failed documents skip them: they are not parsed again.
+
+    :return: IDDOC column of the documents waiting for their images.
+    """
     if not table_exists(TARGET_PROCESSED_FILES_TABLE):
         return spark.createDataFrame([], "IDDOC long")
     return (
@@ -621,10 +705,12 @@ def _images_pending_iddocs():
     )
 
 
-def show_failed_documents(df_business_meta):
+def show_failed_documents(df_business_meta) -> None:
     """Display the documents this run failed to parse, before the rank-2 retry.
 
-    Only this run's rows: older failures of a copied checkpoint (written by an older parser) are not this run's result.
+    Only this run's rows count: a checkpoint can hold failures written by an earlier parser.
+
+    :param df_business_meta: Business metadata of the manifest, with an ``IDDOC`` column.
     """
     df_full_pipeline = read_checkpoint_deduped(
         ["ingestion_run_id", "source_file_name", "source_file_extension", "parser_strategy", "parser_error",
@@ -654,11 +740,13 @@ def show_failed_documents(df_business_meta):
 
 
 
-def retry_failed_iddocs(df_business_meta):
+def retry_failed_iddocs(df_business_meta) -> None:
     """Re-attempt every failed IDDOC with its rank-2 candidate file (if any),
     then replace the failed checkpoint rows with the successful retries.
 
     Runs after both parse tasks (CPU and GPU): only the folders of the failed IDDOCs are scanned again.
+
+    :param df_business_meta: Business metadata of the manifest, with an ``IDDOC`` column.
     """
     df_full_pipeline = read_checkpoint_deduped(["parser_strategy"])
     failed_iddocs = [
@@ -728,11 +816,15 @@ def retry_failed_iddocs(df_business_meta):
     spark.sql(f"DROP TABLE IF EXISTS {RETRY_TEMP_TABLE}")
 
 
-def mark_empty_folders(target_iddocs, df_files, df_business_meta):
+def mark_empty_folders(target_iddocs, df_files, df_business_meta) -> set:
     """Write SKIPPED_EMPTY_FOLDER for target IDDOCs with no parseable file on the volume.
 
     These never go through parsing, so their rows go straight to `parsed_documents`.
     Returns `target_iddocs` without them, so retry / build steps skip them.
+
+    :param target_iddocs: IDDOCs to parse this run.
+    :param df_files: Selected files, with an ``IDDOC`` column.
+    :param df_business_meta: Business metadata of the manifest.
     """
     selected_iddocs = {r.IDDOC for r in df_files.select("IDDOC").distinct().collect()}
     empty_folder_iddocs = target_iddocs - selected_iddocs

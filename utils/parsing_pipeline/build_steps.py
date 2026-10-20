@@ -5,7 +5,7 @@ Driver-side only: nothing here is shipped to the executors.
 """
 from databricks.sdk.runtime import spark
 from pyspark import StorageLevel
-from pyspark.sql import Window
+from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 
 import image_utils
@@ -43,11 +43,13 @@ logger = get_logger(__name__)
 _SPREADSHEET_EXTS = ("xlsx", "xls", "xlsm")
 
 
-def with_fresh_business_metadata(df_checkpoint):
+def with_fresh_business_metadata(df_checkpoint) -> DataFrame:
     """Replace checkpoint's business-metadata columns with fresh values,
     falling back to the checkpoint's own value when an IDDOC isn't in scope.
     division/niveau_plus_* come from DIVISION_REFERENCE_TABLE, not
     parse_manifest, which goes stale.
+
+    :param df_checkpoint: Parse checkpoint rows, one per IDDOC.
     """
     df_manifest = spark.table(PARSE_MANIFEST_TABLE).select(
         F.col("IDDOC"), *[F.col(c).alias(f"_fresh_{c}") for c in MANIFEST_METADATA_COLS]
@@ -68,20 +70,25 @@ def with_fresh_business_metadata(df_checkpoint):
     return df.drop(*[f"_fresh_{c}" for c in BUSINESS_METADATA_COLS])
 
 
-def _with_attempt_columns(df):
-    """`attempts` and `last_error_kind` on every image row; NULL where the table does not have them yet."""
+def _with_attempt_columns(df) -> DataFrame:
+    """`attempts` and `last_error_kind` on every image row; NULL where the table does not have them yet.
+
+    :param df: Image rows.
+    """
     for name, dtype in (("attempts", "int"), ("last_error_kind", "string")):
         if name not in df.columns:
             df = df.withColumn(name, F.lit(None).try_cast(dtype))
     return df
 
 
-def same_image_condition():
+def same_image_condition() -> Column:
     """True when the previous row of (IDDOC, image_id) describes the image now at that id.
 
     The ids are positions in the parse output: a re-parse that changes the number or the order of the images moves
     them. A description is kept when the document was not parsed again after it was written, or when the image at
     that id has the same page and the same size.
+
+    :return: true where the previous description still applies to the image.
     """
     parsed_before = F.col("_prev_described_at").isNotNull() & (F.col("_prev_described_at") >= F.col("_parsed_at"))
     same_shape = (
@@ -93,8 +100,11 @@ def same_image_condition():
     return F.coalesce(parsed_before | same_shape, F.lit(False))
 
 
-def _carry_previous_image_rows(df):
-    """Keep the description, the attempt counter and the last error of each image that is still the same image."""
+def _carry_previous_image_rows(df) -> DataFrame:
+    """Keep the description, the attempt counter and the last error of each image that is still the same image.
+
+    :param df: Image rows of the current parse.
+    """
     if not table_exists(TARGET_IMAGE_METADATA_TABLE):
         return _with_attempt_columns(df.drop("_parsed_at")).withColumn("attempts", F.lit(0))
     prev = _with_attempt_columns(spark.table(TARGET_IMAGE_METADATA_TABLE))
@@ -116,9 +126,13 @@ def _carry_previous_image_rows(df):
     return df.drop("_same", "_parsed_at", *[f"_prev_{c}" for c in carried])
 
 
-def build_image_metadata(target_iddocs, ingestion_run_id):
+def build_image_metadata(target_iddocs, ingestion_run_id) -> DataFrame:
     """Explode checkpoint rows' `images` array into one row per image,
-    preserving any already-DONE/SKIPPED description across a rebuild."""
+    preserving any already-DONE/SKIPPED description across a rebuild.
+
+    :param target_iddocs: IDDOCs in scope this run.
+    :param ingestion_run_id: Id of the ingestion run, stored on every image row.
+    """
     if RUN_MODE == "rechunk" and table_exists(TARGET_IMAGE_METADATA_TABLE):
         # Kept as is: a checkpoint copied from another environment does not list the images already described,
         # and rebuilding from it would drop their descriptions. Materialised because the same table is overwritten.
@@ -169,11 +183,14 @@ def build_image_metadata(target_iddocs, ingestion_run_id):
     return df_image_metadata
 
 
-def _with_rows_of_unlisted_documents(df_image_metadata, df_full_pipeline):
+def _with_rows_of_unlisted_documents(df_image_metadata, df_full_pipeline) -> DataFrame:
     """Add, unchanged, the image_metadata rows of the documents whose checkpoint row counts images but lists none.
 
     A checkpoint copied from an older pipeline keeps `image_count` but not the `images` array: rebuilding from it would
     drop every image (and description) of those documents.
+
+    :param df_image_metadata: Image rows built from the checkpoint.
+    :param df_full_pipeline: Checkpoint rows of this run, with the business metadata.
     """
     if not table_exists(TARGET_IMAGE_METADATA_TABLE):
         return df_image_metadata
@@ -190,13 +207,15 @@ def _with_rows_of_unlisted_documents(df_image_metadata, df_full_pipeline):
     return df_image_metadata.unionByName(df_kept)
 
 
-def _apply_date_and_rag_filters(df_processed_files):
+def _apply_date_and_rag_filters(df_processed_files) -> tuple[DataFrame, DataFrame | None, Column]:
     """Flag is_filtered_by_date and is_in_rag on df_processed_files.
 
     doc_date < DOC_DATE_CUTOFF: parsed, chunks routed to chunks_archive instead of
     the RAG tables (is_in_rag=False). NULL doc_date = recent. Manual exclusions come from
-    rag_exclusions (INSERT INTO {PIPELINE_WRITE_ENV}_proj.qualibot.rag_exclusions VALUES (IDDOC, 'reason')).
+    the ``RAG_EXCLUSION_TABLE`` table.
     Returns (df_processed_files, df_exclusions_or_none, cutoff_col).
+
+    :param df_processed_files: Document rows of this run.
     """
     cutoff = F.lit(DOC_DATE_CUTOFF).try_cast("date")
     df_processed_files = df_processed_files.withColumn(
@@ -236,9 +255,13 @@ def _apply_date_and_rag_filters(df_processed_files):
     return df_processed_files, df_exclusions, cutoff
 
 
-def _build_chunks(df_full_pipeline, df_exclusions):
+def _build_chunks(df_full_pipeline, df_exclusions) -> DataFrame:
     """Filter to chunkable rows (SUCCESS, not manually excluded — any date),
-    clean known artefacts, then explode into chunk rows."""
+    clean known artefacts, then explode into chunk rows.
+
+    :param df_full_pipeline: Checkpoint rows of this run.
+    :param df_exclusions: IDDOCs excluded from chunking, or None when there is no exclusion table.
+    """
     if df_exclusions is not None:
         excluded_iddocs = [r.IDDOC for r in df_exclusions.collect()]
         df_for_chunking = df_full_pipeline.filter(
@@ -298,9 +321,12 @@ def _build_chunks(df_full_pipeline, df_exclusions):
     )
 
 
-def _dedupe_and_limit_chunks(df_chunks):
+def _dedupe_and_limit_chunks(df_chunks) -> DataFrame:
     """Drop intra-IDDOC duplicate chunks (same text hash), then cap the
-    number of chunks kept per oversized spreadsheet."""
+    number of chunks kept per oversized spreadsheet.
+
+    :param df_chunks: Chunk rows.
+    """
     if DEDUPLICATE_CHUNKS:
         w = Window.partitionBy("IDDOC", F.sha2(F.col("chunk_text"), 256)).orderBy("chunk_index")
         before_count = df_chunks.count()
@@ -349,9 +375,16 @@ def _dedupe_and_limit_chunks(df_chunks):
     return df_chunks.drop("source_file_extension")  # chunk_index stays: 4_describe_images numbers the image passages after it
 
 
-def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_id, revised_iddocs=frozenset()):
-    """Build parsed_documents (one row per parsed document) and the three
-    chunk DataFrames (all divisions / AS / IS) from the checkpoint."""
+def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_id,
+                                     revised_iddocs=frozenset()) -> tuple[DataFrame, DataFrame, DataFrame]:
+    """Build parsed_documents (one row per parsed document) and the two
+    chunk DataFrames (chat tables and archive) from the checkpoint.
+
+    :param target_iddocs: IDDOCs in scope this run.
+    :param df_image_metadata: Image rows of this run.
+    :param job_run_id: Id of the Databricks job run.
+    :param revised_iddocs: IDDOCs whose revision changed.
+    """
     df_full_pipeline = read_checkpoint_deduped()
     # rechunk: only the documents in scope — the checkpoint also keeps superseded revisions.
     if RUN_MODE in ("incremental", "rechunk"):
@@ -442,12 +475,14 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
     return df_processed_files, df_chunks_all, df_chunks_archive
 
 
-def build_archive_notices(df_business_meta):
+def build_archive_notices(df_business_meta) -> DataFrame:
     """One metadata-only chunk per pre-cutoff document: REF, title, revision,
     type, date and a "content not indexed" statement — never the content itself.
 
     A pre-cutoff document whose REF also exists on a recent document is skipped:
     the chatbot already knows that REF through real chunks.
+
+    :param df_business_meta: Business metadata of the documents, with an ``IDDOC`` column.
     """
     cutoff = F.lit(DOC_DATE_CUTOFF).try_cast("date")
     is_archive = F.col("doc_date").isNotNull() & (F.col("doc_date") < cutoff)
@@ -456,7 +491,13 @@ def build_archive_notices(df_business_meta):
         .select("ref").distinct()
     )
 
-    def _line(label, col):
+    def _line(label, col) -> Column:
+        """One ``label : value`` line of the archive notice.
+
+        :param label: Label of the line.
+        :param col: Column with the value.
+        :return: the line, with "inconnu" when the value is missing.
+        """
         return F.concat(F.lit(f"{label} : "), F.coalesce(col.try_cast("string"), F.lit("inconnu")))
 
     body = F.concat_ws(

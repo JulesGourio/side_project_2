@@ -13,7 +13,7 @@ import posixpath
 import re
 import time
 import zipfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from config import IMAGE_FORMAT, IMAGE_JPEG_QUALITY, IMAGE_MAX_DIMENSION, IMAGE_RESAMPLING
 
@@ -38,6 +38,11 @@ def save_image_to_volume(pil_img, volume_path: str, volume_base_path: str) -> tu
     The resolved target must stay under volume_base_path (path-traversal guard).
     Uses IMAGE_MAX_DIMENSION, IMAGE_RESAMPLING, IMAGE_FORMAT, IMAGE_JPEG_QUALITY from config.
     Supports PNG (lossless) and JPEG formats.
+
+    :param pil_img: Image to save.
+    :param volume_path: Target path; its extension is replaced by the configured format.
+    :param volume_base_path: Root folder of the volumes; the target must lie under it.
+    :return: path written, then width and height in pixels.
     """
     from PIL import Image
 
@@ -79,14 +84,31 @@ def save_image_to_volume(pil_img, volume_path: str, volume_base_path: str) -> tu
 
 
 def image_target_path(volume_base_path: str, doc_id, image_id: int, kind: str = "IMG") -> str:
-    """Volume path of an image before the extension is settled by `save_image_to_volume`."""
+    """Volume path of an image before the extension is settled by `save_image_to_volume`.
+
+    :param volume_base_path: Root folder of the volumes.
+    :param doc_id: Id of the document.
+    :param image_id: Index of the image in its document.
+    :param kind: Kind in the file name: ``IMG`` for a picture, ``PAGE`` for a page render.
+    """
     return os.path.join(volume_base_path, str(doc_id), f"{doc_id}_{kind}_{image_id:03d}.jpg")
 
 
-def image_record(image_id: int, page_no: Optional[int], label: str, area_ratio: Optional[float], captions: list,
-                 context_text: str, volume_path: Optional[str], width: Optional[int],
-                 height: Optional[int]) -> Dict[str, Any]:
-    """One entry of the `images` array of a parsed document (`image_utils.IMAGE_METADATA_SCHEMA`)."""
+def image_record(image_id: int, page_no: int | None, label: str, area_ratio: float | None, captions: list,
+                 context_text: str, volume_path: str | None, width: int | None,
+                 height: int | None) -> Dict[str, Any]:
+    """One entry of the `images` array of a parsed document (`image_utils.IMAGE_METADATA_SCHEMA`).
+
+    :param image_id: Index of the image in its document.
+    :param page_no: Page number, or None when unknown.
+    :param label: Kind of image, as labelled by the parser.
+    :param area_ratio: Share of the page the image covers, or None.
+    :param captions: Captions of the image.
+    :param context_text: Text around the image.
+    :param volume_path: Path on the volume, or None when not saved.
+    :param width: Width in pixels, or None.
+    :param height: Height in pixels, or None.
+    """
     return {
         "image_id": image_id, "page_no": page_no, "label": label,
         "area_ratio": round(area_ratio, 4) if area_ratio is not None else None,
@@ -97,7 +119,16 @@ def image_record(image_id: int, page_no: Optional[int], label: str, area_ratio: 
 
 def _save_candidate_images(candidates: List[dict], repeating: set, doc_id: str, volume_base_path: str,
                            min_area_ratio: float, log_prefix: str) -> List[Dict[str, Any]]:
-    """Filter repeating / too-small candidates, save the rest to the volume and build their image_metadata entries."""
+    """Filter repeating / too-small candidates, save the rest to the volume and build their image_metadata entries.
+
+    :param candidates: Images found in the document: dicts with ``md5``, ``pil_img``, ``area_ratio``, and optionally
+        ``page_no`` and ``context_text``.
+    :param repeating: MD5 values of the images that repeat too often.
+    :param doc_id: Id of the document, used in the image paths.
+    :param volume_base_path: Root folder of the volumes.
+    :param min_area_ratio: Smallest image, as a share of its reference area.
+    :param log_prefix: Prefix of the log messages.
+    """
     images: List[Dict[str, Any]] = []
     for cand in candidates:
         if cand["md5"] in repeating or cand["area_ratio"] < min_area_ratio:
@@ -114,8 +145,15 @@ def _save_candidate_images(candidates: List[dict], repeating: set, doc_id: str, 
     return images
 
 
-def _read_media(zf, prefix: str, ref_area: int, log_prefix: str):
-    """(occurrences per md5, decoded images by zip member) for every file of the zip under `prefix`."""
+def _read_media(zf, prefix: str, ref_area: int, log_prefix: str) -> tuple[dict[str, int], dict[str, dict]]:
+    """(occurrences per md5, decoded images by zip member) for every file of the zip under `prefix`.
+
+    :param zf: Open zip archive.
+    :param prefix: Folder inside the archive, such as ``word/media/``.
+    :param ref_area: Reference area in pixels, to express the image size as a share.
+    :param log_prefix: Prefix of the log messages.
+    :return: occurrences per MD5, and the decoded images by member name.
+    """
     from PIL import Image
 
     hash_count: Dict[str, int] = {}
@@ -135,8 +173,21 @@ def _read_media(zf, prefix: str, ref_area: int, log_prefix: str):
 
 
 def _images_of_occurrences(zf, occurrences: List[dict], prefix: str, ref_area: int, doc_id: str,
-                           volume_base_path: str, min_area_ratio: float, max_repeat: int, log_prefix: str):
-    """Images of the media referenced by `occurrences` ({media_file, page_no, context_text}), repeated ones dropped."""
+                           volume_base_path: str, min_area_ratio: float, max_repeat: int,
+                           log_prefix: str) -> list[dict[str, Any]]:
+    """Images of the media referenced by `occurrences` ({media_file, page_no, context_text}), repeated ones dropped.
+
+    :param zf: Open zip archive.
+    :param occurrences: References of the images: dicts with ``media_file``, ``page_no`` and ``context_text``.
+    :param prefix: Folder inside the archive, such as ``word/media/``.
+    :param ref_area: Reference area in pixels, to express the image size as a share.
+    :param doc_id: Id of the document, used in the image paths.
+    :param volume_base_path: Root folder of the volumes.
+    :param min_area_ratio: Smallest image, as a share of its reference area.
+    :param max_repeat: Largest number of occurrences of one image that is kept.
+    :param log_prefix: Prefix of the log messages.
+    :return: image records of the kept images.
+    """
     hash_count, media_info = _read_media(zf, prefix, ref_area, log_prefix)
     repeating = {h for h, c in hash_count.items() if c > max_repeat}
     candidates = [{**media_info[occ["media_file"]], "page_no": occ["page_no"], "context_text": occ.get("context_text", "")}
@@ -144,14 +195,26 @@ def _images_of_occurrences(zf, occurrences: List[dict], prefix: str, ref_area: i
     return _save_candidate_images(candidates, repeating, doc_id, volume_base_path, min_area_ratio, log_prefix)
 
 
-def _blip_embed_ids(tree):
-    """Relationship ids of the pictures (a:blip) of an XML tree."""
+def _blip_embed_ids(tree) -> list[str | None]:
+    """Relationship ids of the pictures (a:blip) of an XML tree.
+
+    :param tree: Parsed XML part of an Office document.
+    :return: relationship id of each picture, None when absent.
+    """
     return [blip.get(f"{{{_NS_R}}}embed") for blip in tree.iter(f"{{{_NS_A}}}blip")]
 
 
 def fallback_parse_docx(content_bytes: bytes, doc_id: str, volume_base_path: str,
-                        min_area_ratio: float, max_repeat: int) -> Optional[Dict[str, Any]]:
-    """DOCX that Docling cannot parse: text and images read straight from the zip and its XML."""
+                        min_area_ratio: float, max_repeat: int) -> Dict[str, Any] | None:
+    """DOCX that Docling cannot parse: text and images read straight from the zip and its XML.
+
+    :param content_bytes: Bytes of the DOCX file.
+    :param doc_id: Id of the document, used in the image paths.
+    :param volume_base_path: Root folder of the volumes.
+    :param min_area_ratio: Smallest image, as a share of an A4 page.
+    :param max_repeat: Largest number of occurrences of one image that is kept.
+    :return: text, parser strategy, time and images; None when the file is not a readable DOCX.
+    """
     from lxml import etree
 
     try:
@@ -232,8 +295,16 @@ def fallback_parse_docx(content_bytes: bytes, doc_id: str, volume_base_path: str
 
 
 def fallback_parse_pptx(content_bytes: bytes, doc_id: str, volume_base_path: str,
-                        min_area_ratio: float, max_repeat: int) -> Optional[Dict[str, Any]]:
-    """PPTX that Docling cannot parse: text and images read straight from the zip and its XML."""
+                        min_area_ratio: float, max_repeat: int) -> Dict[str, Any] | None:
+    """PPTX that Docling cannot parse: text and images read straight from the zip and its XML.
+
+    :param content_bytes: Bytes of the PPTX file.
+    :param doc_id: Id of the document, used in the image paths.
+    :param volume_base_path: Root folder of the volumes.
+    :param min_area_ratio: Smallest image, as a share of a widescreen slide.
+    :param max_repeat: Largest number of occurrences of one image that is kept.
+    :return: text, parser strategy, time and images; None when the file is not a readable PPTX.
+    """
     from lxml import etree
 
     try:
@@ -285,7 +356,10 @@ _OLE_MIN_TEXT_RUN_CHARS = 4
 
 
 def _extract_ole_text_runs(buf: bytes) -> List[str]:
-    """Printable UTF-16LE text runs of a binary OLE stream (.ppt text), at least _OLE_MIN_TEXT_RUN_CHARS long."""
+    """Printable UTF-16LE text runs of a binary OLE stream (.ppt text), at least _OLE_MIN_TEXT_RUN_CHARS long.
+
+    :param buf: Bytes of an OLE stream.
+    """
     runs: List[str] = []
     n = len(buf)
     i = 0
@@ -313,7 +387,11 @@ def _extract_ole_text_runs(buf: bytes) -> List[str]:
 
 
 def _carve_images_from_bytes(buf: bytes) -> List[bytes]:
-    """JPEG and PNG images cut out of a binary buffer by their start and end signatures."""
+    """JPEG and PNG images cut out of a binary buffer by their start and end signatures.
+
+    :param buf: Bytes to search.
+    :return: bytes of each JPEG or PNG image found.
+    """
     chunks: List[bytes] = []
     n = len(buf)
     i = 0
@@ -336,8 +414,15 @@ def _carve_images_from_bytes(buf: bytes) -> List[bytes]:
 
 
 def fallback_parse_ppt_ole(content_bytes: bytes, doc_id: str, volume_base_path: str,
-                              min_area_ratio: float, max_repeat: int) -> Optional[Dict[str, Any]]:
-    """Binary .ppt: text runs and carved images read from the OLE container, since Docling does not handle the format."""
+                              min_area_ratio: float, max_repeat: int) -> Dict[str, Any] | None:
+    """Binary .ppt: text runs and carved images read from the OLE container, since Docling does not handle the format.
+
+    :param content_bytes: Bytes of the PPT file.
+    :param doc_id: Id of the document, used in the image paths.
+    :param volume_base_path: Root folder of the volumes.
+    :param min_area_ratio: Smallest image, as a share of its reference area.
+    :param max_repeat: Largest number of occurrences of one image that is kept.
+    """
     from PIL import Image
 
     t0 = time.time()
@@ -348,7 +433,12 @@ def fallback_parse_ppt_ole(content_bytes: bytes, doc_id: str, volume_base_path: 
         logger.warning("PPT (OLE) fallback: not a readable OLE container for doc_id=%s: %s", doc_id, str(e)[:200])
         return None
 
-    def _find_stream(name: str):
+    def _find_stream(name: str) -> list[str] | None:
+        """Entry of the OLE stream whose last name is ``name``.
+
+        :param name: Name of the stream, case-insensitive.
+        :return: the stream path as a list of names, or None when absent.
+        """
         for entry in ole.listdir(streams=True, storages=False):
             if entry and entry[-1].lower() == name.lower():
                 return entry
@@ -391,7 +481,13 @@ def fallback_parse_ppt_ole(content_bytes: bytes, doc_id: str, volume_base_path: 
 def render_pdf_pages_for_llm_ocr(content_bytes: bytes, doc_id: str, volume_base_path: str,
                                  max_pages: int) -> List[Dict[str, Any]]:
     """Render the first `max_pages` pages of a PDF to images for LLM-based OCR, the last resort when Docling still
-    yields near-empty text."""
+    yields near-empty text.
+
+    :param content_bytes: Bytes of the PDF file.
+    :param doc_id: Id of the document, used in the image paths.
+    :param volume_base_path: Root folder of the volumes.
+    :param max_pages: Number of pages rendered, from the first one.
+    """
     try:
         import pypdfium2 as pdfium
     except Exception as e:

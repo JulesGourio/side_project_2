@@ -54,7 +54,7 @@ sys.path.insert(0, REPO_DIR)
 
 # MAGIC %md
 # MAGIC ## Config Project Imports
-# MAGIC `quality` and `tables` live next to this notebook; Databricks puts the notebook folder on `sys.path`, and neither module needs the `PARSING_*` environment variables this serverless task does not have.
+# MAGIC `tables` lives next to this notebook; Databricks puts the notebook folder on `sys.path`, and neither module needs the `PARSING_*` environment variables, which this task does not receive.
 
 # COMMAND ----------
 
@@ -231,7 +231,12 @@ KNOWN_SOURCE_TABLE = {
 w = WorkspaceClient()
 
 
-def _create_index(name, source_table):
+def _create_index(name, source_table) -> None:
+    """Create a Delta Sync index on a source table and wait until it leaves PROVISIONING.
+
+    :param name: Full name of the index, ``catalog.schema.name``.
+    :param source_table: Full name of the table the index is built from.
+    """
     logger.info(f"{name}: not found -- creating (endpoint={VECTOR_SEARCH_ENDPOINT}, source={source_table})...")
     w.vector_search_indexes.create_index(
         name=name,

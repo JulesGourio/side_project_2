@@ -21,9 +21,12 @@ Quality checks, two levels: RED (the task stops, nothing is written) and AMBER (
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Sequence, Tuple
 
 from leap_utils.common.logger import get_logger
+
+if TYPE_CHECKING:
+    from pyspark.sql import DataFrame
 
 _LOGGER = get_logger(__name__)
 
@@ -35,6 +38,12 @@ def write_table(df, table: str, mode: str = "append", *, merge_schema: bool = Fa
 
     mode: "append", "overwrite" or "errorifexists". merge_schema: add the columns `df` has and the table lacks (append).
     overwrite_schema: replace the table schema (overwrite).
+
+    :param df: Spark DataFrame.
+    :param table: Full table name, ``catalog.schema.name``.
+    :param mode: ``append``, ``overwrite`` or ``errorifexists``.
+    :param merge_schema: Add the columns that ``df`` has and the table lacks (append).
+    :param overwrite_schema: Replace the table schema (overwrite).
     """
     from leap_utils.data_asset import table_utils
 
@@ -46,6 +55,9 @@ def add_missing_columns(df, table: str) -> None:
 
     An `ALTER TABLE ... ADD COLUMNS`, not an empty write: a write that lacks a NOT NULL column (a primary key) is
     refused by Delta even with no row.
+
+    :param df: Spark DataFrame whose columns the table must have.
+    :param table: Full table name, ``catalog.schema.name``.
     """
     existing = set(df.sparkSession.table(table).columns)
     missing = [f for f in df.schema.fields if f.name not in existing]
@@ -55,14 +67,22 @@ def add_missing_columns(df, table: str) -> None:
 
 
 def table_exists(table: str) -> bool:
-    """True when `table` (catalog.schema.name) exists as a table, not a view (leap_utils)."""
+    """True when `table` (catalog.schema.name) exists as a table, not a view (leap_utils).
+
+    :param table: Full table name, ``catalog.schema.name``.
+    """
     from leap_utils.data_asset import table_utils
 
     return bool(table_utils.UnityCatalogCheckTableExists(table))
 
 
-def align_to_table(df, table: str):
-    """`df` with the columns of `table`, in its order: NULL (cast to the table's type) where `df` has none."""
+def align_to_table(df, table: str) -> "DataFrame":
+    """`df` with the columns of `table`, in its order: NULL (cast to the table's type) where `df` has none.
+
+    :param df: Spark DataFrame.
+    :param table: Full table name, ``catalog.schema.name``.
+    :return: DataFrame with the columns of the table, in its order.
+    """
     from pyspark.sql import functions as F
 
     target = df.sparkSession.table(table)
@@ -78,6 +98,9 @@ def overwrite_rows(df, table: str) -> None:
     For a table a Delta Sync index reads through its Change Data Feed: an overwrite that replaces the schema, then a
     NOT NULL on the key, is a schema change the feed cannot cross, and every later sync fails. The table is created
     (schema replaced) only when it does not exist; `ensure_primary_key` follows the call.
+
+    :param df: Spark DataFrame.
+    :param table: Full table name, ``catalog.schema.name``.
     """
     if not table_exists(table):
         write_table(df, table, "overwrite", overwrite_schema=True)
@@ -92,6 +115,14 @@ def merge_into(df, table: str, keys, *, do_when_matched: bool = True, matched_cl
     """MERGE `df` into `table` on `keys` (leap_utils merge_into), the source aligned on the table's columns.
 
     `df` must be a source that does not read `table` itself: a derived source is saved to a temporary table first.
+
+    :param df: Spark DataFrame.
+    :param table: Full table name, ``catalog.schema.name``.
+    :param keys: Columns that match a source row to a target row.
+    :param do_when_matched: Update the matched rows.
+    :param matched_clause: Custom WHEN MATCHED clause, or None for the default.
+    :param do_when_notmatched: Insert the rows that match nothing.
+    :param do_when_notmatchedbysource: Delete the target rows that the source does not have.
     """
     from leap_utils.data_asset import table_utils
 
@@ -113,6 +144,9 @@ def ensure_primary_key(table: str, columns: Sequence[str]) -> None:
 
     Each column is set NOT NULL first, as the constraint requires. An overwrite with overwriteSchema drops the key:
     call this after every overwrite.
+
+    :param table: Full table name, ``catalog.schema.name``.
+    :param columns: Columns of the primary key.
     """
     from pyspark.sql import SparkSession
     from leap_utils.data_asset import table_utils
@@ -160,22 +194,39 @@ class Result:
 
 
 def not_null(column: str, *, mostly: float = 1.0, severity: str = RED) -> Check:
-    """No null in `column`, or at least `mostly` (0-1) of the rows non-null."""
+    """No null in `column`, or at least `mostly` (0-1) of the rows non-null.
+
+    :param column: Column that must be populated.
+    :param mostly: Minimum share of non-null rows, between 0 and 1.
+    :param severity: ``RED`` stops the task, ``AMBER`` logs a warning.
+    """
     return Check("not_null", (column,), severity, mostly)
 
 
 def unique(*columns: str, severity: str = RED) -> Check:
-    """No duplicate among the rows where all `columns` are non-null (single or compound key)."""
+    """No duplicate among the rows where all `columns` are non-null (single or compound key).
+
+    :param columns: Columns of the key, one or several.
+    :param severity: ``RED`` stops the task, ``AMBER`` logs a warning.
+    """
     return Check("unique", tuple(columns), severity)
 
 
 def non_empty(severity: str = RED) -> Check:
-    """At least one row."""
+    """At least one row.
+
+    :param severity: ``RED`` stops the task, ``AMBER`` logs a warning.
+    """
     return Check("non_empty", (), severity)
 
 
 # --- Counters (what a table has to be asked) ---
 def _key(prefix: str, columns: Sequence[str]) -> str:
+    """Name of a counter, ``prefix:col1,col2``.
+
+    :param prefix: Kind of counter.
+    :param columns: Columns the counter is about.
+    """
     return f"{prefix}:{','.join(columns)}"
 
 
@@ -184,6 +235,8 @@ def required_stats(checks: Sequence[Check]) -> Dict[str, Tuple[str, Tuple[str, .
 
     non_null:<cols>   rows where the column is non-null; all_non_null:<cols> rows where every column is non-null;
     distinct:<cols>   distinct value combinations among those rows.
+
+    :param checks: Checks to run.
     """
     stats: Dict[str, Tuple[str, Tuple[str, ...]]] = {ROWS: ("rows", ())}
     for c in checks:
@@ -198,7 +251,11 @@ def required_stats(checks: Sequence[Check]) -> Dict[str, Tuple[str, Tuple[str, .
 
 
 def stats_from_rows(rows: Sequence[Mapping], checks: Sequence[Check]) -> Dict[str, int]:
-    """The counters of `required_stats`, computed in Python over a list of dict-like rows."""
+    """The counters of `required_stats`, computed in Python over a list of dict-like rows.
+
+    :param rows: Dict-like rows.
+    :param checks: Checks to run.
+    """
     out = {ROWS: len(rows)}
     for name, (kind, cols) in required_stats(checks).items():
         if kind == "non_null":
@@ -212,7 +269,11 @@ def stats_from_rows(rows: Sequence[Mapping], checks: Sequence[Check]) -> Dict[st
 
 # --- Evaluation (pure) ---
 def evaluate(checks: Sequence[Check], stats: Mapping[str, int]) -> List[Result]:
-    """One Result per check, from counters produced by `stats_from_rows` or `spark_stats`."""
+    """One Result per check, from counters produced by `stats_from_rows`.
+
+    :param checks: Checks to run.
+    :param stats: Counters by name, as returned by ``stats_from_rows``.
+    """
     rows = stats[ROWS]
     results = []
     for c in checks:
@@ -231,8 +292,13 @@ def evaluate(checks: Sequence[Check], stats: Mapping[str, int]) -> List[Result]:
     return results
 
 
-def report(table: str, results: Sequence[Result], logger: Optional[logging.Logger] = None) -> None:
-    """Log every result (AMBER failures as warnings, RED failures as errors) then raise if a RED check failed."""
+def report(table: str, results: Sequence[Result], logger: logging.Logger | None = None) -> None:
+    """Log every result (AMBER failures as warnings, RED failures as errors) then raise if a RED check failed.
+
+    :param table: Table name, used in the messages.
+    :param results: Results to log.
+    :param logger: Logger for the messages; the module logger when None.
+    """
     log = logger or _LOGGER
     failed_red = []
     for r in results:
@@ -255,10 +321,15 @@ def require_gx() -> None:
     from leap_utils.common.validation import gx_validation  # noqa: F401
 
 
-def check_dataframe(df, table: str, checks: Sequence[Check], logger: Optional[logging.Logger] = None) -> None:
+def check_dataframe(df, table: str, checks: Sequence[Check], logger: logging.Logger | None = None) -> None:
     """Run the checks on a DataFrame with Great Expectations (leap_utils) and log them.
 
     The RED checks run first: a failure stops the task before the table is written by the caller.
+
+    :param df: Spark DataFrame to check, the one the caller writes.
+    :param table: Full table name, used in the messages.
+    :param checks: Checks to run.
+    :param logger: Logger for the messages; the module logger when None.
     """
     from great_expectations.dataset import SparkDFDataset
     from leap_utils.common.validation import gx_validation
@@ -277,7 +348,13 @@ def check_dataframe(df, table: str, checks: Sequence[Check], logger: Optional[lo
             )
 
 
-def _gx_expectation(gx_df, check: Check):
+def _gx_expectation(gx_df, check: Check) -> Any:
+    """Great Expectations expectation that matches one check.
+
+    :param gx_df: SparkDFDataset wrapping the checked DataFrame.
+    :param check: Check to express.
+    :return: result of the expectation.
+    """
     if check.kind == "non_empty":
         return gx_df.expect_table_row_count_to_be_between(min_value=1)
     if check.kind == "not_null":
@@ -288,8 +365,14 @@ def _gx_expectation(gx_df, check: Check):
 
 
 def check_rows(rows: Sequence[Mapping], table: str, checks: Sequence[Check],
-               logger: Optional[logging.Logger] = None) -> List[Result]:
-    """Run the checks on a list of dict-like rows (no Spark) and report; raises on a RED failure."""
+               logger: logging.Logger | None = None) -> List[Result]:
+    """Run the checks on a list of dict-like rows (no Spark) and report; raises on a RED failure.
+
+    :param rows: Dict-like rows to check.
+    :param table: Table name, used in the messages.
+    :param checks: Checks to run.
+    :param logger: Logger for the messages; the module logger when None.
+    """
     results = evaluate(checks, stats_from_rows(rows, checks))
     report(table, results, logger)
     return results
@@ -303,6 +386,10 @@ def check_ref_mapping(spark, df_chunks, logger: logging.Logger) -> List[Result]:
     Counts the IDDOCs whose chunks show: a REF different from the manifest's, no manifest row at all (orphan, ghost
     data in the index), a `[Source: X]` prefix in chunk_text different from the REF column, or a REF with leading or
     trailing spaces. When a count is not zero, a few examples are logged.
+
+    :param spark: Active Spark session.
+    :param df_chunks: Chunks DataFrame with the ``IDDOC``, ``REF`` and ``chunk_text`` columns.
+    :param logger: Logger for the warnings.
     """
     from pyspark.sql import functions as F
     from config import PARSE_MANIFEST_TABLE
