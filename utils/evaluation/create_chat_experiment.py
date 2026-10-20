@@ -21,6 +21,7 @@ import os
 
 import mlflow
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 from databricks.sdk.service.ml import ExperimentAccessControlRequest, ExperimentPermissionLevel
 
 logger = logging.getLogger('create_chat_experiment')
@@ -43,6 +44,16 @@ def main() -> None:
     if parent:
         w.workspace.mkdirs(parent)                       # create_experiment does not create the folder
     existing = mlflow.get_experiment_by_name(args.experiment)
+    if existing is not None and existing.lifecycle_stage == 'deleted':
+        raise SystemExit(f'Experiment {args.experiment} is in the trash and its name stays reserved: empty it from the workspace '
+                         'trash, or change chat_mlflow_experiment (databricks.yml) and CHAT_MLFLOW_EXPERIMENT (target_env.json).')
+    if args.uc_schema and not existing:
+        # Checked first: a failed link soft-deletes the new experiment and its name stays reserved.
+        try:
+            w.schemas.get(args.uc_schema)
+        except NotFound as exc:
+            raise SystemExit(f'Schema {args.uc_schema} does not exist: create it and grant the job service principal and the app '
+                             f'service principal first (runbooks/uat_bascule.md Q13). No experiment was created.') from exc
     if existing:
         experiment_id = existing.experiment_id
         logger.info('experiment %s already exists (id %s), left as is', args.experiment, experiment_id)
