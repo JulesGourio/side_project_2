@@ -6,7 +6,7 @@ Statut : `[ ]` à faire ; `[x] (jj/mm/aaaa)` fait et confirmé à la date indiqu
 
 **Règles** :
 - `bundle deploy` ne gère que l'app, le projet Lakebase, les schémas, les volumes, les rôles et les jobs. Il ne touche **ni aux tables ni aux index Vector Search**.
-- Avant de relancer `copy_uat_to_dev` (`runbooks/dev.md`, bloc C) : vérifier que les tables UAT ont le chunking du code (section 0.2). Sinon la copie remplace le chunking de DEV.
+- Avant de relancer la copie `copy_uat_to_dev` (`runbooks/dev.md`, bloc C) : vérifier que les tables UAT ont le chunking du code (section 0.2). Sinon la copie remplace le chunking de DEV.
 
 ## 0. Procédure de test sur DEV
 
@@ -104,7 +104,9 @@ databricks bundle summary -t dev --profile DEV
 
 ```powershell
 # 1. droits du SP de l'app et du SP des jobs (dont chunks_index); une ligne OK: par droit
-databricks bundle run grant_app_access_dev -t dev --profile DEV
+databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_grants --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_grants/grant_app_access --file runbooks/scripts/grants/grant_app_access.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json @runbooks/scripts/grants/grant_app_access_dev_submit.json --profile DEV
 
 # 2. migrations du schéma Lakebase (idempotentes), depuis le poste
 python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV

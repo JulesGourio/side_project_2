@@ -64,8 +64,8 @@ Jobs du bundle `dev` :
 
 | Job | Déclenchement |
 |---|---|
-| `Z_1_Qualibot_Copy_Uat_To` (`copy_uat_to_dev`) | manuel |
-| `Z_1_Qualibot_Grant_App_Access` (`grant_app_access_dev`) | manuel |
+| `copy_uat_to_dev` (`runbooks/scripts/dev_copy/copy_uat_to_dev_submit.json`) | manuel |
+| `grant_app_access_dev` (`runbooks/scripts/grants/grant_app_access_dev_submit.json`) | manuel |
 | `D_1_Qualibot_Lakebase_Export_To_Volume` (`lakebase_export`) | PAUSED |
 | `D_1_Qualibot_Parsing_Pipeline` (`parsing_pipeline`) | PAUSED |
 | `Z_2_Qualibot_Create_Chat_Experiment` (`create_chat_experiment_dev`) | manuel |
@@ -143,7 +143,7 @@ PowerShell, depuis la racine du projet, sur la machine de déploiement.
 ### S5. Sonnet 5.5 pour l'analyse de comparaison (2026-10-15, à faire)
 
 Le modèle d'analyse des changements (Change Summary / Change Table) passe de `databricks-claude-sonnet-4-6` à `databricks-claude-sonnet-5-5`
-(`app.yaml`). Pas de droit à donner : les endpoints ne sont pas accordés par les jobs de droits (`utils/grants/README.md`). Il suffit de
+(`app.yaml`). Pas de droit à donner : les endpoints ne sont pas accordés par les jobs de droits (`runbooks/scripts/grants/README.md`). Il suffit de
 vérifier l'endpoint puis de redéployer l'app DEV.
 
 - [ ] **S5.1 Endpoint présent** :
@@ -255,7 +255,7 @@ databricks volumes list dev_landingzone qualibot --profile DEV -o json | Convert
 databricks bundle deploy -t dev --profile DEV
 ```
 
-Le job `copy_uat_to_dev` et l'app pointent alors sur `dev_proj.qualibot.chunks_index`, qui n'existe pas encore : c'est attendu, le job
+La copie `copy_uat_to_dev` (one-shot) et l'app pointent alors sur `dev_proj.qualibot.chunks_index`, qui n'existe pas encore : c'est attendu, le job
 le crée (00.4). Les volumes `doc_compare`, `test`, `images` et `staging` sont créés à ce déploiement.
 
 **00.2a — Volume `docling_models` (DEV)** : pas une ressource du bundle en DEV. Sauter ce bloc si `dev_proj.qualibot.docling_models` figure déjà dans
@@ -283,7 +283,10 @@ Le volume `staging` n'est pas copié (échanges transitoires).
 **00.4 — Import et index (job DEV)**
 
 ```powershell
-databricks bundle run -t dev copy_uat_to_dev --profile DEV
+databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/import_staging_to_dev_job --file runbooks/scripts/dev_copy/import_staging_to_dev_job.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/ensure_vector_search_endpoint --file runbooks/scripts/dev_copy/ensure_vector_search_endpoint.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json @runbooks/scripts/dev_copy/copy_uat_to_dev_submit.json --profile DEV
 ```
 
 Le job charge les tables dans `dev_proj.qualibot`, crée `dev_proj.qualibot.chunks_index` s'il n'existe pas et le synchronise (tâche
@@ -292,7 +295,9 @@ Le job charge les tables dans `dev_proj.qualibot`, crée `dev_proj.qualibot.chun
 **00.5 — Droits (job DEV)**
 
 ```powershell
-databricks bundle run -t dev grant_app_access_dev --profile DEV
+databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_grants --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_grants/grant_app_access --file runbooks/scripts/grants/grant_app_access.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json @runbooks/scripts/grants/grant_app_access_dev_submit.json --profile DEV
 ```
 
 Accorde les volumes, l'index et les tables de `dev_proj.qualibot` au SP de l'app et au SP des jobs.
@@ -382,11 +387,13 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
 - [ ] **0.5 Droits** — le job donne au SP de l'app et au SP des jobs ce qu'ils utilisent (volumes, index, `dev_proj.qualibot`). Les endpoints LLM ne sont jamais accordés : tout utilisateur du workspace peut déjà les interroger.
 
   ```powershell
-  databricks bundle run grant_app_access_dev -t dev --profile DEV
+  databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_grants --profile DEV
+  databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_grants/grant_app_access --file runbooks/scripts/grants/grant_app_access.py --format SOURCE --language PYTHON --overwrite --profile DEV
+  databricks jobs submit --json @runbooks/scripts/grants/grant_app_access_dev_submit.json --profile DEV
   ```
 
   Attendu : une ligne `OK:` par droit, aucune `FAILED`. Pour changer ce qui est accordé : les listes `volumes` et `indexes` du job
-  `grant_app_access_dev` dans `resources/grants.yml` (`base_parameters`). Une ligne `FAILED` sur `dev_proj` : exécuter à la main
+  `grant_app_access_dev` dans `runbooks/scripts/grants/grant_app_access_dev_submit.json` (`base_parameters`). Une ligne `FAILED` sur `dev_proj` : exécuter à la main
   (éditeur SQL DEV, compte qui peut donner ces droits) puis relancer le job :
 
   ```sql
@@ -633,10 +640,13 @@ chunks, archive LibreOffice → volume `doc_compare`) → `2_vector_search_endpo
 déclarés et les synchronise — embedding de tout le corpus, peut être long). **Le pipeline de parsing n'est pas lancé.**
 
 ```powershell
-databricks bundle run copy_uat_to_dev -t dev --profile DEV
+databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/import_staging_to_dev_job --file runbooks/scripts/dev_copy/import_staging_to_dev_job.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/ensure_vector_search_endpoint --file runbooks/scripts/dev_copy/ensure_vector_search_endpoint.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json @runbooks/scripts/dev_copy/copy_uat_to_dev_submit.json --profile DEV
 ```
 
-Une table déjà présente n'est pas écrasée (message « left as is »). Pour forcer : `--params overwrite=true`, puis supprimer l'index de chaque table de
+Une table déjà présente n'est pas écrasée (message « left as is »). Pour forcer : `"overwrite": "true"` dans `runbooks/scripts/dev_copy/copy_uat_to_dev_submit.json` (tâche `1_import_tables`), puis supprimer l'index de chaque table de
 chunks remplacée (UI Vector Search) et relancer : `3_sync_indexes` le recrée. Si le job s'arrête avant la fin de l'embedding (« Still running after
 120 min »), ce n'est pas une erreur : la synchronisation continue côté serveur.
 
@@ -851,7 +861,7 @@ python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV
 
 Contrôle, éditeur SQL Lakebase DEV : `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1;` doit lister `compare_messages`, `compare_feedbacks`, `app_errors`, `catalog_metadata` et pas `messages`, `feedbacks`, `errors`, `knowledge_base_metadata`.
 
-**Droits** : le job `grant_app_access_dev` (0.5) se relance après la création des volumes et de l'index, pas avant.
+**Droits** : la commande de droits `grant_app_access_dev` (0.5) se relance après la création des volumes et de l'index, pas avant.
 
 ### R. Renommer trois colonnes booléennes de `parsed_documents` (à faire)
 
@@ -881,7 +891,7 @@ SHOW COLUMNS IN dev_proj.qualibot.parsed_documents;
 
 Attendu après : les trois `is_*` présentes, les anciens noms absents.
 
-- Le `copy_uat_to_dev` recrée les tables depuis l'UAT, qui a encore les anciens noms : relancer ce bloc après chaque copie tant que l'UAT n'a pas été migré (`runbooks/uat.md`, à faire au moment de la bascule).
+- La copie `copy_uat_to_dev` recrée les tables depuis l'UAT, qui a encore les anciens noms : relancer ce bloc après chaque copie tant que l'UAT n'a pas été migré (`runbooks/uat.md`, à faire au moment de la bascule).
 - Les colonnes ne sont pas dans `chunks` ni dans l'index `chunks_index` : pas de resynchronisation d'index à prévoir.
 
 ### R2. Valider les tables après le déploiement (à faire après R et le déploiement de 0.10)

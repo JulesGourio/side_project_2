@@ -2,12 +2,11 @@
 # MAGIC %md
 # MAGIC # DEV copy — grant the app's and the pipeline's service principals what they use
 # MAGIC
-# MAGIC Job `Z_1_Qualibot_Grant_App_Access_dev` (`databricks.yml`, target `dev`), run as
+# MAGIC One-shot, run by hand with `runbooks/scripts/grants/grant_app_access_dev_submit.json`, as
 # MAGIC the DEV job SP, which holds grant rights on the target catalogs. Idempotent:
 # MAGIC re-running it never removes anything, an existing grant is a no-op.
 # MAGIC
-# MAGIC The lists below are the job's parameters (`databricks.yml` → `grant_app_access_dev` →
-# MAGIC `base_parameters`). Comma-separated names, no catalog/schema prefix.
+# MAGIC The lists below are the `base_parameters` of the submit file. Comma-separated names, no catalog/schema prefix.
 # MAGIC
 # MAGIC | List | Schema | Grant | Used by |
 # MAGIC |---|---|---|---|

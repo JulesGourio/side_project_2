@@ -3,7 +3,7 @@
 # MAGIC # DEV copy — make sure the Vector Search endpoint exists
 # MAGIC
 # MAGIC **Description:**
-# MAGIC Second task of the DEV job `Z_1_Qualibot_Copy_Uat_To_Dev`. Creates the
+# MAGIC Second task of `runbooks/scripts/dev_copy/copy_uat_to_dev_submit.json`. Creates the
 # MAGIC Vector Search endpoint (STANDARD) if it doesn't exist yet and waits until
 # MAGIC it is ONLINE, so the next task (`update_proj_vector_indexes.py`, reused as is
 # MAGIC from the parsing pipeline) can create the `chunks_index` on it.

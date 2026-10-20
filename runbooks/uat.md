@@ -563,7 +563,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
 ### E. Sonnet 5.5 pour l'analyse de comparaison (à faire avec le déploiement de `uat`, pas avant)
 
 Le modèle d'analyse des changements passe de `databricks-claude-sonnet-4-6` à `databricks-claude-sonnet-5-5` (`app.yaml`). Il n'y a rien à
-accorder (voir `utils/grants/README.md`) : le changement arrive avec le prochain déploiement de `uat`, donc après la décision D5.
+accorder (voir `runbooks/scripts/grants/README.md`) : le changement arrive avec le prochain déploiement de `uat`, donc après la décision D5.
 Avant ce déploiement, vérifier que l'endpoint existe sur UAT (Attendu : `"name": "databricks-claude-sonnet-5-5"`) :
 
 - [ ] **E1. Endpoint présent** :

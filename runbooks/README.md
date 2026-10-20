@@ -40,8 +40,15 @@ Run every command from the repository root. Command-line Python scripts import `
 
 | File | What it does | How to run it |
 |---|---|---|
+| [`scripts/code_quality/check_docstrings.py`](scripts/code_quality/check_docstrings.py) | CLI. Lists the functions with an undocumented `:param` or no return annotation | `python runbooks/scripts/code_quality/check_docstrings.py server utils` (must report `0 problem(s)`) |
 | [`scripts/dev_copy/export_uat_to_staging.py`](scripts/dev_copy/export_uat_to_staging.py) | Notebook, UAT workspace. Copies the `chunks` table and the parsing state of `uat_proj.qualibot` to the volume `staging/dev_copy`, with the LibreOffice archive. Read-only on the UAT tables. Starts the copy of the corpus into DEV. | See "Notebook commands" below |
 | [`scripts/dev_copy/export_uat_submit.json`](scripts/dev_copy/export_uat_submit.json) | Body of the `jobs submit` command that runs the notebook above | `databricks jobs submit --json @runbooks/scripts/dev_copy/export_uat_submit.json --profile UAT` |
+| [`scripts/dev_copy/import_staging_to_dev_job.py`](scripts/dev_copy/import_staging_to_dev_job.py) | Notebook, DEV workspace. Recreates the tables of the snapshot as `dev_proj.qualibot.<table>` | See "Notebook commands" below |
+| [`scripts/dev_copy/ensure_vector_search_endpoint.py`](scripts/dev_copy/ensure_vector_search_endpoint.py) | Notebook, DEV workspace. Creates the Vector Search endpoint `qualibot` if missing, waits until ONLINE | See "Notebook commands" below |
+| [`scripts/dev_copy/copy_uat_to_dev_submit.json`](scripts/dev_copy/copy_uat_to_dev_submit.json) | Body of the `jobs submit` that runs the three DEV steps in order (import, endpoint, index sync) | `databricks jobs submit --json @runbooks/scripts/dev_copy/copy_uat_to_dev_submit.json --profile DEV` |
+| [`scripts/grants/grant_app_access.py`](scripts/grants/grant_app_access.py) | Notebook, DEV workspace. Grants the DEV app and pipeline service principals what they use (see `scripts/grants/README.md`) | See "Notebook commands" below |
+| [`scripts/grants/grant_app_access_dev_submit.json`](scripts/grants/grant_app_access_dev_submit.json) | Body of the `jobs submit` that runs the grant notebook as the DEV job SP | `databricks jobs submit --json @runbooks/scripts/grants/grant_app_access_dev_submit.json --profile DEV` |
+| [`scripts/grants/grant_volume_access_job.py`](scripts/grants/grant_volume_access_job.py) | Notebook. Grants one volume privilege to one principal. Not run by any job today | Import and submit as the other notebooks, with its widgets |
 | [`scripts/lakebase/copy_Lakebase_tables.py`](scripts/lakebase/copy_Lakebase_tables.py) | CLI. Creates or replaces, in `dev_proj.qualibot`, one Delta table per table of the UAT Lakebase database, from the export on the volume (or read directly from Lakebase with `--direct`, which needs port 5432) | After the job `lakebase_export` has run: `python runbooks/scripts/lakebase/copy_Lakebase_tables.py`; direct: `python runbooks/scripts/lakebase/copy_Lakebase_tables.py --direct` |
 | [`scripts/lakebase/migrate_lakebase.py`](scripts/lakebase/migrate_lakebase.py) | CLI. Applies the changes of `migrations.py` to one Lakebase database. `--env` takes `DEV`, `UAT` or `PROD` (default `DEV`) | `python runbooks/scripts/lakebase/migrate_lakebase.py --env DEV` |
 | [`scripts/lakebase/migrations.py`](scripts/lakebase/migrations.py) | Ordered, idempotent list of schema changes (table renames, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, `DROP TABLE IF EXISTS`) and the function `apply_migrations` | Module imported by the two migration scripts: no command |
@@ -59,6 +66,23 @@ Notebooks do not run from a workstation. Import each one into the workspace at t
 databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile UAT
 databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/export_uat_to_staging --file runbooks/scripts/dev_copy/export_uat_to_staging.py --format SOURCE --language PYTHON --overwrite --profile UAT
 databricks jobs submit --json @runbooks/scripts/dev_copy/export_uat_submit.json --profile UAT
+```
+
+**Grants on DEV** (profile `DEV`, from the repository root). Run it after the volumes and the index exist:
+
+```powershell
+databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_grants --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_grants/grant_app_access --file runbooks/scripts/grants/grant_app_access.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json @runbooks/scripts/grants/grant_app_access_dev_submit.json --profile DEV
+```
+
+**Copy UAT to DEV, the DEV side** (profile `DEV`). Run it after `export_uat_to_staging` has written the snapshot. The DEV bundle must be deployed first:
+
+```powershell
+databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/import_staging_to_dev_job --file runbooks/scripts/dev_copy/import_staging_to_dev_job.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/ensure_vector_search_endpoint --file runbooks/scripts/dev_copy/ensure_vector_search_endpoint.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json @runbooks/scripts/dev_copy/copy_uat_to_dev_submit.json --profile DEV
 ```
 
 ### Rules for the scripts

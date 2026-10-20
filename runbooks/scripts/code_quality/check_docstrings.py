@@ -2,7 +2,7 @@
 return annotation.
 
 Usage, from the repository root:
-    python utils/code_quality/check_docstrings.py [path ...] [--strict]
+    python runbooks/scripts/code_quality/check_docstrings.py [path ...] [--strict]
 
 Without a path it checks ``server/``. ``--strict`` exits with 1 when anything is listed, so the check can gate a pipeline
 once the backlog is cleared.

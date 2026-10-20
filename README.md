@@ -45,11 +45,10 @@ server/
 - `databricks.yml`: Databricks Asset Bundle `qualibot`: variables, sync exclusions and targets.
 - `resources/`: jobs and the app, declared per target, one file per concern:
   `parsing_pipeline.job.yml` (daily parsing and indexing chain), `chat_mlflow.yml`
-  (chat traces and prompt registry), `dev_copy.yml` (copy of UAT data into DEV),
-  `grants.yml` (access grants), `lakebase_sync.yml` (Lakebase export and import),
+  (chat traces and prompt registry), `lakebase_sync.yml` (Lakebase export and import),
   `app_schedules.yml` (stop and start of the apps).
 - `utils/`: tools that run outside the app, one folder per concern (deployment, parsing
-  pipeline, evaluation, grants, Lakebase sync, alerts, app management, DEV copy). Map in
+  pipeline, evaluation, Lakebase sync, alerts, app management). Map in
   [utils/README.md](utils/README.md).
 - `bitbucket-pipelines.yml`: CI pipeline that deploys the bundle and the app. See [Deployment](#deployment).
 - `pyproject.toml`: Python project, dependencies and pytest settings. `requirements.txt`:

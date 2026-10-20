@@ -3,8 +3,7 @@
 # MAGIC # DEV copy (2/2) — load the UAT snapshot into `dev_proj.qualibot`
 # MAGIC
 # MAGIC **Description:**
-# MAGIC First task of the DEV job `Z_1_Qualibot_Copy_Uat_To_Dev` (`databricks.yml`,
-# MAGIC target `dev`). Reads the snapshot of the UAT tables written to the staging volume
+# MAGIC First task of `runbooks/scripts/dev_copy/copy_uat_to_dev_submit.json` (DEV workspace). Reads the snapshot of the UAT tables written to the staging volume
 # MAGIC (UAT workspace) and recreates each table as
 # MAGIC `{pipeline_write_env}_proj.qualibot.<table>`, with the same table
 # MAGIC properties as the UAT tables: 60-day retention everywhere (see

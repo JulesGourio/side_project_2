@@ -7,7 +7,7 @@ nouveau lot. Récupération : `python debug\fetch_comment_pr.py` (copie de `runb
   concernés n'ont pas changé depuis, sauf mention contraire, mais plusieurs numéros de ligne ne tombent pas pile sur le code
   visé : chaque commentaire a été rattaché au code par son sens.
 - Relecteur : Yann Depledt. Jules Gourio a laissé un commentaire à lui-même (#885301989).
-- Vérification de chaque lot : `pytest tests` (résultat en bas du lot), `utils/code_quality/check_docstrings.py server/routers`,
+- Vérification de chaque lot : `pytest tests` (résultat en bas du lot), `runbooks/scripts/code_quality/check_docstrings.py server/routers`,
   et un essai des routes touchées avec le client de test FastAPI.
 
 ## Lot 1 — commentaires exportés le 2026-10-19 (41 commentaires)
@@ -83,7 +83,7 @@ style soit le même partout. Un script a fait la conversion ; le code compile, l
 **#885148302 — `persistence.py` L19 — « Doc function! »** — Fait. Docstring de `_upsert_session` avec ses paramètres.
 
 **#885148691 — `persistence.py` L47 — « missing sphynx params ! A check dans toute la base de code »** — Fait (lot 1 pour `server/routers/`, 2026-10-20 pour `server/services/`).
-Docstrings Sphinx (`:param`, `:return:`) sur toutes les fonctions de `server/` : `utils/code_quality/check_docstrings.py` ne signale
+Docstrings Sphinx (`:param`, `:return:`) sur toutes les fonctions de `server/` : `runbooks/scripts/code_quality/check_docstrings.py` ne signale
 plus aucun `:param` manquant. La passe sur `server/services/` (51 fichiers, ~460 fonctions) a été écrite par un agent Haiku 5.5
 (effort moyen), puis contrôlée : l'arbre syntaxique de chaque fichier est identique à celui d'avant une fois les docstrings
 retirées (aucune ligne de code modifiée), les tests donnent le même résultat. Les descriptions les moins sûres sont à relire en

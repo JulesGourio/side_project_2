@@ -1,0 +1,26 @@
+{
+  "run_name": "qualibot-grant-app-access-dev",
+  "run_as": {
+    "service_principal_name": "fde6ff28-739f-4a41-b61e-604a298c8478"
+  },
+  "tasks": [
+    {
+      "task_key": "grant_app_access",
+      "notebook_task": {
+        "notebook_path": "/Users/jules.gourio.external@latecoere.aero/qualibot_grants/grant_app_access",
+        "source": "WORKSPACE",
+        "base_parameters": {
+          "app_service_principal": "8e411164-a7e8-46ff-8013-8c56af2c3656",
+          "catalog": "dev_proj",
+          "schema_name": "qualibot",
+          "volumes": "doc_compare,test",
+          "indexes": "chunks_index",
+          "proj_catalog": "dev_proj",
+          "proj_schema": "qualibot",
+          "pipeline_service_principal": "fde6ff28-739f-4a41-b61e-604a298c8478",
+          "pipeline_tables": "parsing_checkpoint,parsed_documents,image_metadata,parse_manifest,category_reference,chunks"
+        }
+      }
+    }
+  ]
+}
