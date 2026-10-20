@@ -66,13 +66,6 @@ server/
 - `leap_utils/`: copy of the shared library (table writes and merges, quality checks).
   Do not edit it in this repository.
 
-### Documentation
-
-- `archive/`: superseded documentation (`docs/`, `readmes/`). Never deployed.
-
-`archive/` is excluded from the bundle sync in `databricks.yml`:
-nothing reads them at run time.
-
 ## Models and indexes
 
 | Step | Model or index | Setting |
