@@ -28,7 +28,12 @@ _CHUNK_PARALLELISM = int(os.getenv('COMPARE_CHUNK_PARALLELISM', '3'))
 
 def _split_body(body: str, chunk_chars: int) -> List[str]:
     """Split the diff body into parts <= chunk_chars, preferring '\\n## ' section
-    boundaries; oversized single sections are hard-split at line boundaries."""
+    boundaries; oversized single sections are hard-split at line boundaries.
+
+    :param body: diff body text, the TEXT CHANGES part
+    :param chunk_chars: maximum length of a part, in characters
+    :return: the parts, stripped of their surrounding newlines, empty ones dropped
+    """
     sections = re.split(r'(?=\n## )', body)
 
     pieces: List[str] = []
@@ -75,6 +80,11 @@ def split_messages_for_chunking(
 
     Returns None when the diff is small enough for a single call (the normal
     case) or when the message shape isn't the standard-processor layout.
+
+    :param messages: message list built by the processor
+    :param threshold_chars: length of the diff body above which it is split
+    :param chunk_chars: maximum length of the body of one part
+    :return: one message list per part, or None when no split is needed
     """
     user_idx = next((i for i, m in enumerate(messages) if m.get('role') == 'user'), None)
     if user_idx is None:
@@ -122,7 +132,11 @@ def split_messages_for_chunking(
 # --- JSON object extraction (string/escape-aware brace scanner) ---
 
 def extract_json_objects(text: str) -> List[Dict[str, Any]]:
-    """Extract every complete top-level JSON object from free-form text."""
+    """Extract every complete top-level JSON object from free-form text.
+
+    :param text: free text that may contain JSON objects
+    :return: the top-level objects that parse, in order of appearance
+    """
     objs: List[Dict[str, Any]] = []
     depth = 0
     start = -1
@@ -166,7 +180,18 @@ async def _run_part(
     max_tokens: int, thinking_budget: int, temperature: float,
     info: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    """Consume one stream_analysis call fully; return its buffered outcome."""
+    """Consume one stream_analysis call fully; return its buffered outcome.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoint_name: serving endpoint name
+    :param part_messages: messages of this part
+    :param max_tokens: output budget
+    :param thinking_budget: reasoning token budget
+    :param temperature: sampling temperature
+    :param info: dict that receives the endpoint used, None to skip
+    :return: dict with the text of the part, its usage event, the error event if any, and the other events in order
+    """
     text = ''
     usage: Dict[str, Any] = {}
     error_chunk: str | None = None
@@ -217,6 +242,17 @@ async def stream_analysis_chunked(
     are emitted while waiting so the gateway never sees an idle connection.
     ``info['endpoint']``, when given, lists the endpoints that answered the parts,
     comma-joined in document order without repeats (set even when the stream stops early).
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoint_name: serving endpoint name
+    :param message_parts: one message list per part, from ``split_messages_for_chunking``
+    :param max_tokens: output budget of each part
+    :param thinking_budget: reasoning token budget of each part
+    :param temperature: sampling temperature
+    :param structured: True when the output is one JSON array
+    :param info: dict that receives ``endpoint`` when given, None to skip
+    :return: the SSE lines of the merged analysis
     """
     total_usage = {'input_tokens': 0, 'output_tokens': 0, 'thinking_tokens': 0,
                    'total_tokens': 0, 'cost_eur': 0.0}
@@ -226,9 +262,20 @@ async def stream_analysis_chunked(
     part_infos: List[Dict[str, Any]] = [{} for _ in message_parts]
 
     def _delta_event(text: str) -> str:
+        """One SSE text delta event.
+
+        :param text: text to send
+        :return: the ``data:`` line
+        """
         return f'data: {json.dumps({"type": "response.output_text.delta", "delta": text})}\n\n'
 
     async def _guarded(idx: int, msgs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Runs the call of one part once a slot is free.
+
+        :param idx: index of the part, from 0
+        :param msgs: messages of the part
+        :return: the buffered outcome of ``_run_part``
+        """
         async with sem:
             logger.info('Chunked analysis: part %d/%d start', idx + 1, n)
             return await _run_part(host, token, endpoint_name, msgs,

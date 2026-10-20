@@ -45,7 +45,16 @@ async def _call_llm(
     user_content: Union[str, List[Dict[str, Any]]],
     max_tokens: int,
 ) -> Tuple[Dict[str, Any], str]:
-    """One non-streaming call through the endpoint chain; returns (completion, endpoint that answered)."""
+    """One non-streaming call through the endpoint chain; returns (completion, endpoint that answered).
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param llm_endpoint: primary model endpoint
+    :param system_prompt: system prompt
+    :param user_content: text, or content blocks, of the user message
+    :param max_tokens: output budget
+    :return: ``(completion, endpoint)``
+    """
     messages = [
         {'role': 'system', 'content': system_prompt},
         {'role': 'user', 'content': user_content},
@@ -54,6 +63,12 @@ async def _call_llm(
 
 
 def _usage_from_completion(completion: Dict[str, Any], endpoint: str) -> Dict[str, Any]:
+    """Token counts and cost of one completion, from its usage block.
+
+    :param completion: completion returned by the endpoint
+    :param endpoint: endpoint that produced it, for the cost
+    :return: the token counts, total and cost in euros
+    """
     usage = completion.get('usage') or {}
     input_tokens = usage.get('prompt_tokens', 0) or 0
     output_tokens = usage.get('completion_tokens', 0) or 0
@@ -77,6 +92,14 @@ async def summarize_text(
     """Summarize a single document's extracted text with one LLM call.
 
     Raises CompareLlmUnavailable when every endpoint of the chain failed - the caller reports it as an error response.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param llm_endpoint: primary model endpoint
+    :param text: text extracted from the document
+    :param max_chars: longest text sent to the model; the rest is cut
+    :param max_tokens: output budget
+    :return: dict with ``summary``, ``truncated``, ``endpoint`` and ``usage``
     """
     truncated = len(text) > max_chars
     text = text[:max_chars]
@@ -102,6 +125,13 @@ async def summarize_image(
     """Describe a single image with one vision LLM call.
 
     Raises CompareLlmUnavailable when every endpoint of the chain failed - the caller reports it as an error response.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param llm_endpoint: primary model endpoint
+    :param content_blocks: user content blocks, the image among them
+    :param max_tokens: output budget
+    :return: dict with ``summary``, ``truncated``, ``endpoint`` and ``usage``
     """
     completion, endpoint = await _call_llm(host, token, llm_endpoint, _SUMMARY_IMAGE_SYSTEM_PROMPT, content_blocks, max_tokens)
     summary = message_text(completion['choices'][0]['message']).strip()

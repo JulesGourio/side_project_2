@@ -42,6 +42,11 @@ NOISE_PHRASES = [re.compile(p, re.IGNORECASE) for p in (
 # --- Settings ---
 
 def normalize_division(division: str | None) -> str:
+    """Upper-cased division, or ``ALL`` for any unknown value.
+
+    :param division: division from the request, any case; None means ``ALL``
+    :return: one of ``ALL``, ``AS`` or ``IS``
+    """
     d = (division or 'ALL').upper()
     return d if d in _DIVISIONS else 'ALL'
 
@@ -59,6 +64,12 @@ def rewrite_endpoint() -> str:
 
 
 def _int_env(name: str, default: int) -> int:
+    """An integer from the environment, or ``default``.
+
+    :param name: environment variable name
+    :param default: value used when the variable is unset, empty or not an integer
+    :return: the parsed value
+    """
     try:
         return int(os.getenv(name, str(default)) or default)
     except ValueError:
@@ -117,7 +128,11 @@ def rewrite_timeout_s() -> float:
 
 
 def division_filter(division: str) -> Dict[str, Any]:
-    """Vector Search filter of the chat's division (ALL: none)."""
+    """Vector Search filter of the chat's division (ALL: none).
+
+    :param division: division code, any case (normalised here)
+    :return: ``{}`` for ``ALL``, else ``{"division": [code]}``
+    """
     d = normalize_division(division)
     return {} if d == 'ALL' else {'division': [d]}
 
@@ -149,12 +164,20 @@ def division_prompt(division: str) -> str:
 
 
 def prompt_parts(division: str) -> Dict[str, str]:
-    """The files the system instructions are made of: ``division_<div>`` then ``base``."""
+    """The files the system instructions are made of: ``division_<div>`` then ``base``.
+
+    :param division: division code, any case (normalised here)
+    :return: the prompt texts by file key: the division part and the base part
+    """
     div = normalize_division(division)
     return {f'division_{div.lower()}': division_prompt(div), 'base': prompts.read('system_base')}
 
 
 @lru_cache(maxsize=None)
 def load_instructions(division: str) -> str:
-    """System instructions: the division's part, then the base shared by all."""
+    """System instructions: the division's part, then the base shared by all.
+
+    :param division: normalised division code: ``ALL``, ``AS`` or ``IS``
+    :return: the system instructions as one string
+    """
     return '\n\n'.join(prompt_parts(division).values())

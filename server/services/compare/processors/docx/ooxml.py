@@ -54,10 +54,17 @@ def _paragraph_text(p_elem) -> str:
     inline content control (w:sdt), a simple field (w:fldSimple) or a smart tag
     was silently missing, so an edit made with track changes on (the normal
     way a revision is prepared) was invisible to the comparison.
+
+    :param p_elem: ``w:p`` element
+    :return: the text as displayed with tracked changes accepted, whitespace collapsed
     """
     out: List[str] = []
 
     def _walk(el) -> None:
+        """Appends the text of an element and of its descendants, skipping the subtrees of ``_SKIPPED_SUBTREES``.
+
+        :param el: element to read
+        """
         for child in el:
             tag = child.tag
             if tag in _SKIPPED_SUBTREES:
@@ -76,6 +83,11 @@ def _paragraph_text(p_elem) -> str:
 
 
 def _is_toc_paragraph(p_elem) -> bool:
+    """Whether a paragraph uses a table-of-contents style.
+
+    :param p_elem: ``w:p`` element
+    :return: True for a TOC paragraph
+    """
     style = p_elem.find(f'{_W_NS}pPr/{_W_PSTYLE}')
     return style is not None and bool(_TOC_STYLE_RE.match(style.get(_W_VAL, '')))
 
@@ -83,7 +95,11 @@ def _is_toc_paragraph(p_elem) -> bool:
 def _iter_block_items(parent):
     """Yield the w:p / w:tbl elements of a body, descending into block-level
     content controls (w:sdt) — cover pages, form sections and locked clauses
-    live there, so they must not be skipped."""
+    live there, so they must not be skipped.
+
+    :param parent: element whose block children are read: the body or a content control
+    :return: the ``w:p`` and ``w:tbl`` elements, in document order
+    """
     for child in parent:
         if child.tag in (_W_P, _W_TBL):
             yield child
@@ -94,7 +110,11 @@ def _iter_block_items(parent):
 
 
 def _footnote_lines(doc) -> List[str]:
-    """'Footnote N: text' for each real footnote (separators have id <= 0)."""
+    """'Footnote N: text' for each real footnote (separators have id <= 0).
+
+    :param doc: python-docx ``Document``
+    :return: the footnote lines, empty when there are none or the footnotes cannot be read
+    """
     lines: List[str] = []
     try:
         from lxml import etree
@@ -120,6 +140,11 @@ def _footnote_lines(doc) -> List[str]:
 
 
 def _parse_vml_style(style_str: str) -> Dict[str, str]:
+    """The properties of a VML ``style`` attribute, as a dict.
+
+    :param style_str: the style attribute, as ``key: value`` pairs separated by semicolons
+    :return: property names mapped to their values
+    """
     props: Dict[str, str] = {}
     for part in style_str.split(';'):
         part = part.strip()
@@ -139,6 +164,10 @@ def _vml_shape_lines(body, seen_ids: set = None) -> List[str]:
     `seen_ids` may be passed by the caller to share dedup state across repeated
     per-paragraph calls (so shapes interleave at their real document position
     instead of all at the end).
+
+    :param body: element holding the VML shapes
+    :param seen_ids: shape ids already emitted, shared by the calls of one document; None for a new set
+    :return: the lines of the arrows and connectors
     """
     lines: List[str] = []
     if seen_ids is None:
@@ -194,6 +223,9 @@ def _textbox_texts(element) -> List[str]:
     mc:AlternateContent blocks can hold the same w:txbxContent in both
     mc:Choice and mc:Fallback. Deduplicating by content avoids double entries
     regardless of which branch actually carries the text in a given document.
+
+    :param element: element holding the text boxes
+    :return: the distinct text lines of the text boxes
     """
     lines = []
     seen: set = set()
@@ -213,6 +245,9 @@ def _row_cells(row) -> List[Tuple[int, str]]:
     place in the numbering, so no label shifts to a neighbouring column.
     A merged cell spans several grid columns but is one w:tc — it is reported
     once, at its first column. Nested tables and text boxes are included.
+
+    :param row: python-docx table row
+    :return: ``(column index, text)`` for each non-empty cell
     """
     seen_tc: set = set()
     result: List[Tuple[int, str]] = []
@@ -229,6 +264,12 @@ def _row_cells(row) -> List[Tuple[int, str]]:
 
 
 def _in_textbox(p_elem, stop) -> bool:
+    """Whether a paragraph lies inside a text box that is nested below ``stop``.
+
+    :param p_elem: ``w:p`` element
+    :param stop: element at which the search ends
+    :return: True when a text box is found on the way
+    """
     node = p_elem.getparent()
     while node is not None and node is not stop:
         if node.tag == _W_TXBX:

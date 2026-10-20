@@ -36,17 +36,37 @@ class TextDiffProcessor(BaseProcessor):
     warn_comparative = True
 
     def __init__(self, method: str = 'standard') -> None:
+        """Stores the method: standard, structured or comparative.
+
+        :param method: ``standard``, ``structured`` or ``comparative``
+        """
         self.method = method
 
     def extract(self, old_bytes: bytes, old_name: str, new_bytes: bytes,
                 new_name: str) -> Tuple[str, str, Images, Images]:
-        """(old text, new text, old images, new images); the images are {} for a processor without images."""
+        """(old text, new text, old images, new images); the images are {} for a processor without images.
+
+        :param old_bytes: content of the old file
+        :param old_name: file name of the old file, its extension selects the processing
+        :param new_bytes: content of the new file
+        :param new_name: file name of the new file
+        """
         raise NotImplementedError
 
     def paragraph_notes(self, filtered: int) -> str:
+        """The note that opens the paragraph diff in the message.
+
+        :param filtered: number of trivial entries the diff filtered out
+        :return: the note
+        """
         raise NotImplementedError
 
     def comparative_notes(self, filtered: int) -> str:
+        """The note that opens the section diff in the message.
+
+        :param filtered: number of trivial entries the diff filtered out
+        :return: the note
+        """
         raise NotImplementedError
 
     def build_messages(
@@ -57,6 +77,15 @@ class TextDiffProcessor(BaseProcessor):
         new_name: str,
         system_prompt: str = '',
     ) -> ProcessResult:
+        """Message list of this file pair for the method of the processor.
+
+        :param old_bytes: content of the old file
+        :param old_name: file name of the old file
+        :param new_bytes: content of the new file
+        :param new_name: file name of the new file
+        :param system_prompt: system prompt of the comparative method; the other methods use their own
+        :return: the messages with their metadata and the image pairs
+        """
         if self.method == 'comparative':
             return self._diff(old_bytes, old_name, new_bytes, new_name, system_prompt, 'comparative')
         if self.method == 'structured':
@@ -65,6 +94,16 @@ class TextDiffProcessor(BaseProcessor):
 
     def _diff(self, old_bytes: bytes, old_name: str, new_bytes: bytes, new_name: str, system_prompt: str,
               method_name: str) -> ProcessResult:
+        """Extracts both files, diffs their text and images, and builds the LLM messages.
+
+        :param old_bytes: content of the old file
+        :param old_name: file name of the old file
+        :param new_bytes: content of the new file
+        :param new_name: file name of the new file
+        :param system_prompt: system prompt put before the diff
+        :param method_name: ``standard``, ``structured`` or ``comparative``
+        :return: the messages with their metadata and the image pairs
+        """
         comparative = method_name == 'comparative'
         logger.info('%s [%s]: %s — %s → %s', type(self).__name__, method_name,
                     'section canonical diff' if comparative else 'paragraph semantic diff', old_name, new_name)

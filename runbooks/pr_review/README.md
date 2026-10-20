@@ -82,13 +82,15 @@ style soit le même partout. Un script a fait la conversion ; le code compile, l
 
 **#885148302 — `persistence.py` L19 — « Doc function! »** — Fait. Docstring de `_upsert_session` avec ses paramètres.
 
-**#885148691 — `persistence.py` L47 — « missing sphynx params ! A check dans toute la base de code »** — Fait pour `server/routers/`,
-reste à faire ailleurs.
-Docstrings Sphinx (`:param`, `:return:`) pour `_save_turn` et toutes les fonctions de `server/routers/` (chat, compare, exports,
-feedback, history, preview, config, health). Le script `utils/code_quality/check_docstrings.py` liste ce qui manque : 0 dans
-`server/routers/`, environ 460 dans `server/services/`. **Décision à prendre** : j'ai limité le lot aux routes ; le reste (une
-passe de plusieurs centaines de fonctions) est à planifier. Attention : `CLAUDE.md` demande des commentaires courts et pas de
-paraphrase du code ; des docstrings Sphinx complètes vont plus loin que cette règle, à trancher avec le relecteur.
+**#885148691 — `persistence.py` L47 — « missing sphynx params ! A check dans toute la base de code »** — Fait (lot 1 pour `server/routers/`, 2026-10-20 pour `server/services/`).
+Docstrings Sphinx (`:param`, `:return:`) sur toutes les fonctions de `server/` : `utils/code_quality/check_docstrings.py` ne signale
+plus aucun `:param` manquant. La passe sur `server/services/` (51 fichiers, ~460 fonctions) a été écrite par un agent Haiku 5.5
+(effort moyen), puis contrôlée : l'arbre syntaxique de chaque fichier est identique à celui d'avant une fois les docstrings
+retirées (aucune ligne de code modifiée), les tests donnent le même résultat. Les descriptions les moins sûres sont à relire en
+priorité : `engine/answer.py` `revision_note`, `compare/export_helpers.py` `_build_excel_bytes`, `_diff_engines/relocation.py`
+(`_drop_present_verbatim`, `_align_duplicates`), `infra/error_origin.py` `caller`, `_diff_engines/images.py`
+`_compute_image_diff_pairs`, `_diff_engines/engines.py` `_order_key`, `infra/vector_search.py` `run_impact_search`.
+Reste ouvert : `CLAUDE.md` demande des commentaires courts, ce qui va à l'encontre de ces docstrings (décision du propriétaire).
 
 **#885148761 — `persistence.py` L30 — « type »** — Fait. `pool: asyncpg.Pool`, `conn: asyncpg.Connection`, `sources: List[dict] | None`
 (`persistence.py` et `sessions._turn_trace_id`).
@@ -199,5 +201,5 @@ fichier ni aucune référence `export_lakebase_uat*`. Rien à changer.
 
 1. ~~Passer la comparaison et le parsing sur GPT-6 Luna~~ : décidé le 2026-10-20, fait (#885059913).
 2. Le retrait des règles de langue de `base.md` demande une mesure sur DEV (#885138148).
-3. Docstrings Sphinx sur les ~460 fonctions de `server/services/` : en attente de décision (explication donnée dans le chat le 2026-10-20) (#885148691).
+3. `CLAUDE.md` (commentaires courts) contredit les docstrings Sphinx, désormais sur tout `server/` : à aligner si Yann maintient sa demande (#885148691).
 4. `turn_log.py` : garder les niveaux de gravité dans le module du journal ? (#885272670)

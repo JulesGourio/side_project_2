@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 
 
 async def _add_columns(conn, table: str, columns) -> None:
+    """Adds the columns the table does not have yet; the existing ones are left as they are.
+
+    :param conn: database connection
+    :param table: table name
+    :param columns: ``(name, SQL type)`` pairs
+    """
     for col, typedef in columns:
         await conn.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}')
 
@@ -36,7 +42,10 @@ async def _carry_over_legacy_rows(conn) -> None:
     may already hold rows of its own. Nothing is copied when a legacy id is already used there: the row would take the
     place of another one's history. Once every message is copied, a feedback whose message was deleted before the
     rename is copied without it. A copy that cannot be made is logged and the schema goes on; the legacy tables are
-    kept either way."""
+    kept either way.
+
+    :param conn: database connection
+    """
     for legacy, current in LEGACY_TABLE_COPIES:
         if not await conn.fetchval('SELECT to_regclass($1) IS NOT NULL', legacy):
             continue
@@ -87,7 +96,10 @@ async def _carry_over_legacy_rows(conn) -> None:
 
 async def _move_legacy_volume_paths(conn) -> None:
     """Rows copied from another environment point at its documents volume: move them under COMPARE_VOLUME_PATH.
-    Runs at every start, so rows copied by an earlier start are fixed too; it only touches the old paths."""
+    Runs at every start, so rows copied by an earlier start are fixed too; it only touches the old paths.
+
+    :param conn: database connection
+    """
     volume_root = os.getenv('COMPARE_VOLUME_PATH', '').rstrip('/')
     if not volume_root:
         return
@@ -102,13 +114,28 @@ class _OwnerTolerantConn:
     logged and the next statement runs, so one such table does not stop the creation of the tables after it."""
 
     def __init__(self, conn):
+        """Wraps ``conn`` and records the statements skipped for lack of privilege.
+
+        :param conn: database connection to wrap
+        """
         self._conn = conn
         self.skipped: list = []
 
     def __getattr__(self, name):
+        """Forwards every other attribute to the wrapped connection.
+
+        :param name: attribute name
+        :return: the attribute of the wrapped connection
+        """
         return getattr(self._conn, name)
 
     async def execute(self, query, *args):
+        """Runs a statement; a privilege error is recorded in ``skipped`` and does not stop the caller.
+
+        :param query: SQL statement
+        :param args: parameters of the statement
+        :return: the result of the statement, None when it was skipped
+        """
         try:
             return await self._conn.execute(query, *args)
         except asyncpg.InsufficientPrivilegeError as e:
@@ -118,6 +145,10 @@ class _OwnerTolerantConn:
 async def ensure_schema(pool: asyncpg.Pool) -> None:
     # Additive only: no DROP, DELETE or TRUNCATE at start-up.
     # Lakebase rewrites the table, so it looks empty for a moment before the data is back.
+    """Creates the tables of the app, or migrates them; additive only, run at every start.
+
+    :param pool: connection pool of the database
+    """
     async with pool.acquire() as raw_conn:
         conn = _OwnerTolerantConn(raw_conn)
         # ── messages (primary history table) ─────────────────────────────────

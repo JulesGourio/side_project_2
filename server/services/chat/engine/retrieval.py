@@ -24,16 +24,29 @@ _STORED_MARKER_RE = re.compile(r'⟦\d+⟧')
 # --- Conversation helpers ---
 
 def _clean_history(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """Copy of the conversation without the ``⟦n⟧`` markers stored in earlier answers."""
+    """Copy of the conversation without the ``⟦n⟧`` markers stored in earlier answers.
+
+    :param messages: chat messages, each with ``role`` and ``content``
+    :return: copies with ``role`` and ``content``, markers removed
+    """
     return [{'role': m['role'], 'content': _STORED_MARKER_RE.sub('', m.get('content') or '')} for m in messages]
 
 
 def _without_date(text: str) -> str:
+    """The text without its leading ``[Date: YYYY-MM-DD]`` line.
+
+    :param text: last user turn, possibly prefixed by its date line
+    :return: the text without that prefix
+    """
     return _DATE_PREFIX_RE.sub('', text, count=1)
 
 
 def refs_named_in(text: str) -> List[str]:
-    """Catalog REFs the text names, with their language variants (at most _REF_LOOKUP_MAX)."""
+    """Catalog REFs the text names, with their language variants (at most _REF_LOOKUP_MAX).
+
+    :param text: a question or an earlier turn
+    :return: the REFs in order of appearance, language variants included
+    """
     cat = _catalog()
     if not cat or not text:
         return []
@@ -46,13 +59,21 @@ def refs_named_in(text: str) -> List[str]:
 
 
 def one_language_per_document(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Only the passages of the best-ranked language variant of each document."""
+    """Only the passages of the best-ranked language variant of each document.
+
+    :param rows: passages in rank order
+    :return: the passages of the first-ranked language variant of each document
+    """
     chosen: Dict[str, str] = {}
     return [row for row in rows if chosen.setdefault(canon_ref(row['REF']), row['REF']) == row['REF']]
 
 
 def group_documents(rows: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
-    """Passages grouped by document (REF), in order of first appearance."""
+    """Passages grouped by document (REF), in order of first appearance.
+
+    :param rows: passages with ``REF``, ``url``, ``division`` and ``chunk_text``
+    :return: list of ``(REF, {url, division, passages})`` pairs
+    """
     docs: Dict[str, Dict[str, Any]] = {}
     for row in rows:
         docs.setdefault(row['REF'], {'url': row['url'], 'division': row.get('division'), 'passages': []})['passages'].append(row['chunk_text'])
@@ -61,7 +82,13 @@ def group_documents(rows: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any
 
 def _passage(row: Dict[str, Any], position: int, drop_reason: str = '') -> Dict[str, Any]:
     """One chat_retrieved_chunks record (doc_number, prompt_rank and cited are set once the prompt
-    and the answer exist)."""
+    and the answer exist).
+
+    :param row: search row, with its ``_hits``
+    :param position: index of the passage in retrieval order
+    :param drop_reason: why the passage is not sent (``other_language`` or ``over_cap``); empty when kept
+    :return: the chat_retrieved_chunks record
+    """
     hits = row.get('_hits') or []
     scores = [h['score'] for h in hits if isinstance(h.get('score'), (int, float))]
     vias = {h['via'] for h in hits}
@@ -80,7 +107,15 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
     cleaned by ``_clean_history``). Raises ``ChatVsiError`` when the search fails. Also used
     alone by the retrieval evaluation (no answer generated). ``log`` (created when absent, returned
     as ``found['log']``) receives the step durations, the queries, every passage retrieved — kept
-    or set aside — and what did not run as configured."""
+    or set aside — and what did not run as configured.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param division: normalised division code
+    :param conversation: cleaned conversation, its last item the question
+    :param log: turn log to fill, created when None
+    :return: dict with the question, the two queries, the passages sent, the REFs named, the index and the log
+    """
     log = log if log is not None else TurnLog()
     with log.timed('retrieval'):
         index = index_name()

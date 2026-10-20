@@ -36,7 +36,12 @@ logger = logging.getLogger(__name__)
 
 
 def clean_for_language(text: str, answer: bool = False) -> str:
-    """``text`` without what misleads language detection (see NOISE_RE / QUOTED_RE)."""
+    """``text`` without what misleads language detection (see NOISE_RE / QUOTED_RE).
+
+    :param text: text to clean, None allowed
+    :param answer: True for a model answer, which also loses its quoted and table lines
+    :return: the cleaned text, words separated by single spaces
+    """
     text = CODE_BLOCK_RE.sub(' ', text or '')
     if answer:
         text = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith(('>', '|')))
@@ -57,6 +62,13 @@ class TranslationContext:
     __slots__ = ('lang_code', 'lang_name', 'needs_translation', 'error', 'answer_translated', 'answer_error')
 
     def __init__(self, lang_code: str, lang_name: str, needs_translation: bool, error: str = ''):
+        """Starts the context of one question.
+
+        :param lang_code: ISO 639-1 code of the question's language, or ``unknown``
+        :param lang_name: name of that language in English, used in the translation prompt
+        :param needs_translation: True when the question was translated to English
+        :param error: why the question step fell back to the original text, empty when it did not
+        """
         self.lang_code = lang_code
         self.lang_name = lang_name
         self.needs_translation = needs_translation
@@ -77,6 +89,9 @@ def fast_lang_guess(text: str) -> str | None:
     Python wrapper — that wrapper's final `np.array(probs, copy=False)`
     raises under NumPy>=2.0, while the underlying
     binding call it wraps works fine.
+
+    :param text: question text
+    :return: the ISO 639-1 code, or None when detection is not confident enough
     """
     cleaned = clean_for_language(text)
     if len(LETTERS_RE.findall(cleaned)) < 2:      # a bare REF code, "OK", an acronym
@@ -101,13 +116,22 @@ def fast_lang_guess(text: str) -> str | None:
 def _answer_language_mismatch(answer: str, expected_lang: str) -> bool:
     """True if the answer confidently looks like a different language than
     the question asked for. Guards the fr/en case, which normally skips the LLM bridge and trusts the
-    answer prompt's language rule, because the model still answers in the wrong one of the two sometimes."""
+    answer prompt's language rule, because the model still answers in the wrong one of the two sometimes.
+
+    :param answer: model answer text
+    :param expected_lang: ISO 639-1 code the answer should be in
+    :return: True when the answer confidently looks like another language
+    """
     detected = _fast_lang_guess_with_prob(clean_for_language(answer, answer=True))
     return detected is not None and detected[1] >= MISMATCH_CONFIDENCE_THRESHOLD and detected[0] != expected_lang
 
 
 def _fast_lang_guess_with_prob(text: str) -> tuple | None:
-    """(code, probability) of fastText's top label on already-cleaned text, or None."""
+    """(code, probability) of fastText's top label on already-cleaned text, or None.
+
+    :param text: cleaned text
+    :return: ``(code, probability)`` of the top label, or None
+    """
     if len(LETTERS_RE.findall(text)) < 5:
         return None
     try:
@@ -125,7 +149,12 @@ def answer_language(ctx: 'TranslationContext | None', question: str) -> str | No
     """English name of the language the answer must be written in, or None if unsure.
 
     With the bridge: English when the question was translated (the answer is translated
-    back after), else the detected French/English. Without it: the local guess."""
+    back after), else the detected French/English. Without it: the local guess.
+
+    :param ctx: context of the question, None when the bridge did not run
+    :param question: question text, used when there is no context
+    :return: the English name of the answer language, or None when unsure
+    """
     if ctx is not None:
         if ctx.needs_translation:
             return 'English'
@@ -158,13 +187,26 @@ async def shutdown_http_client() -> None:
 def _is_retryable(exc: BaseException) -> bool:
     # 429 / 5xx / network hiccups are worth a retry; other 4xx (bad auth, bad
     # payload) will just fail again — retrying those only adds latency.
+    """Whether a failed call is worth another try: a 429, a 5xx or a network error.
+
+    :param exc: exception of the failed call
+    :return: True for a retryable failure
+    """
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code >= 500 or exc.response.status_code == 429
     return isinstance(exc, httpx.TransportError)
 
 
 async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: int) -> str:
-    """TRANSLATE_ENDPOINT, then each of TRANSLATE_FALLBACK_ENDPOINTS; raises the last error."""
+    """TRANSLATE_ENDPOINT, then each of TRANSLATE_FALLBACK_ENDPOINTS; raises the last error.
+
+    :param system: system prompt
+    :param user: user message
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param max_tokens: output budget
+    :return: the text of the first endpoint that answers
+    """
     last: Exception | None = None
     for endpoint in dict.fromkeys([TRANSLATE_ENDPOINT] + TRANSLATE_FALLBACK_ENDPOINTS):
         try:
@@ -186,6 +228,16 @@ async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: i
     reraise=True,
 )
 async def _call_endpoint(endpoint: str, system: str, user: str, host: str, token: str, max_tokens: int) -> str:
+    """One call to a serving endpoint, retried on 429, 5xx and network errors.
+
+    :param endpoint: serving endpoint name
+    :param system: system prompt
+    :param user: user message
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param max_tokens: output budget
+    :return: the text of the reply
+    """
     url = f'{host}/serving-endpoints/{endpoint}/invocations'
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
     payload: Dict[str, Any] = {
@@ -219,7 +271,13 @@ _DETECT_TRANSLATE_SYSTEM = (
 
 async def translate_question_to_en(question: str, host: str, token: str) -> tuple[str, TranslationContext]:
     """Return (english_question, context). No-ops (and no network call) when
-    the question is already French/English by the fast local check."""
+    the question is already French/English by the fast local check.
+
+    :param question: question in any language
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :return: ``(english_question, context)``; the question itself when no translation was needed
+    """
     guess = fast_lang_guess(question)
     if guess in NO_TRANSLATION_NEEDED:
         return question, TranslationContext(guess, guess, needs_translation=False)
@@ -252,7 +310,14 @@ async def translate_answer_back(answer: str, ctx: TranslationContext, host: str,
     """Translate the answer back to the question's language. No-op when
     the question didn't need bridging AND the answer isn't a confident
     language mismatch — see _answer_language_mismatch for why the fr/en case
-    still needs a check rather than being trusted outright."""
+    still needs a check rather than being trusted outright.
+
+    :param answer: answer text, in English
+    :param ctx: context returned by ``translate_question_to_en``
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :return: the answer in the question's language, or the original text when it was not translated
+    """
     if not answer.strip():
         return answer
     if not ctx.needs_translation:

@@ -37,7 +37,11 @@ def _is_dev() -> bool:
 
 
 def _is_real_email(value: str) -> bool:
-    """True if value looks like a real email (not a numeric Databricks workspace-scoped ID)."""
+    """True if value looks like a real email (not a numeric Databricks workspace-scoped ID).
+
+    :param value: string to test, usually the ``x-forwarded-user`` header
+    :return: True when it is an email and not a numeric workspace-scoped id
+    """
     if '@' not in value:
         return False
     local, _, domain = value.partition('@')
@@ -68,6 +72,9 @@ async def get_current_user(request: Request) -> str:
     1. x-forwarded-user — real email → use directly
     2. x-forwarded-user — numeric Databricks ID → return the numeric part
     3. WorkspaceClient.current_user.me() — local development only
+
+    :param request: incoming request, read for its headers
+    :return: the email, or the numeric user id
     """
     forwarded = request.headers.get('x-forwarded-user', '').strip()
     if forwarded and _is_real_email(forwarded):
@@ -80,7 +87,11 @@ async def get_current_user(request: Request) -> str:
 
 
 async def get_user_identity(request: Request) -> UserIdentity:
-    """Return the split user_id, workspace_id, and email from the request headers."""
+    """Return the split user_id, workspace_id, and email from the request headers.
+
+    :param request: incoming request, read for its headers
+    :return: the user id, the workspace id and the email, parsed from the headers
+    """
     forwarded = request.headers.get('x-forwarded-user', '').strip()
 
     if not forwarded:
@@ -103,7 +114,11 @@ _OPEN_CAPS = {'can_chat': True, 'can_compare': True, 'groups': []}
 
 
 def _live_caps_via_sql(token: str) -> dict | None:
-    """is_account_group_member() on behalf of the requesting user. None = not usable, caller should fall back."""
+    """is_account_group_member() on behalf of the requesting user. None = not usable, caller should fall back.
+
+    :param token: access token of the visitor
+    :return: the capabilities, or None when the warehouse check is not configured
+    """
     if not _CAPS_WAREHOUSE_ID:
         return None
     from databricks.sdk import WorkspaceClient
@@ -124,7 +139,11 @@ def _live_caps_via_sql(token: str) -> dict | None:
 
 
 def _live_caps_via_scim(token: str) -> dict:
-    """The visitor's groups from SCIM /Me with their own token: no warehouse permission and no SQL scope needed."""
+    """The visitor's groups from SCIM /Me with their own token: no warehouse permission and no SQL scope needed.
+
+    :param token: access token of the visitor
+    :return: the capabilities from the visitor's groups
+    """
     from databricks.sdk import WorkspaceClient
     w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
     names = {g.display for g in (w.current_user.me().groups or []) if g.display}
@@ -133,7 +152,11 @@ def _live_caps_via_scim(token: str) -> dict:
 
 def _resolve_caps(token: str) -> Tuple[dict, str]:
     """(capabilities, source). SCIM first; the warehouse check only when SCIM fails or grants nothing, and a
-    warehouse is set. Raises when no source could answer."""
+    warehouse is set. Raises when no source could answer.
+
+    :param token: access token of the visitor
+    :return: ``(capabilities, source)``, the source being ``SCIM`` or ``SQL``
+    """
     scim: dict | None = None
     try:
         scim = _live_caps_via_scim(token)
@@ -163,6 +186,9 @@ async def get_capabilities(request: Request) -> dict:
     reaches the app, the groups only narrow it.
 
     CAPS_BYPASS=true short-circuits and grants everything (DEV only).
+
+    :param request: incoming request, read for its headers
+    :return: ``{can_chat, can_compare, groups}`` for the current user
     """
     if _CAPS_BYPASS:
         return dict(_OPEN_CAPS)
@@ -194,14 +220,20 @@ async def get_capabilities(request: Request) -> dict:
 
 
 async def require_chat(request: Request) -> None:
-    """FastAPI dependency: 403 unless the user may use the chatbot."""
+    """FastAPI dependency: 403 unless the user may use the chatbot.
+
+    :param request: incoming request
+    """
     caps = await get_capabilities(request)
     if not caps['can_chat']:
         raise HTTPException(status_code=403, detail='Chat access not granted')
 
 
 async def require_compare(request: Request) -> None:
-    """FastAPI dependency: 403 unless the user may use document comparison."""
+    """FastAPI dependency: 403 unless the user may use document comparison.
+
+    :param request: incoming request
+    """
     caps = await get_capabilities(request)
     if not caps['can_compare']:
         raise HTTPException(status_code=403, detail='Document comparison access not granted')

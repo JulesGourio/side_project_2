@@ -35,6 +35,12 @@ def _align_duplicates(
     """Pair equal-text blocks order-preservingly, minimising position drift.
 
     Returns (unmatched_olds, unmatched_new_idxs).
+
+    :param olds: old blocks with the same text, in order
+    :param news: new blocks with the same text, in order
+    :param n_old: number of blocks in the old document, to scale the positions
+    :param n_new: number of blocks in the new document, to scale the positions
+    :return: ``(unmatched old blocks, indexes of the unmatched new blocks)``
     """
     m, k = len(olds), len(news)
     if m == 1 and k == 1:
@@ -82,7 +88,12 @@ def _align_duplicates(
 
 
 def _position_index(items: List[Dict[str, Any]], n_total: int) -> Dict[str, List[float]]:
-    """Short block text -> fractional positions where it occurs in that document."""
+    """Short block text -> fractional positions where it occurs in that document.
+
+    :param items: blocks of one document
+    :param n_total: number of blocks of the document, to scale the positions
+    :return: short block text -> the positions where it occurs, from 0 to 1
+    """
     index: Dict[str, List[float]] = defaultdict(list)
     for item in items:
         clean = item['clean']
@@ -104,6 +115,14 @@ def _drop_present_verbatim(
     Gated on a surplus test so a genuine addition of text that already existed elsewhere is kept. Occurrences are
     counted as SUBSTRINGS of the whole document: in the artifacts this net targets, the text survived merged into a
     neighbouring block, which a block-level count would read as a surplus.
+
+    :param leftovers: unmatched blocks of one side
+    :param n_own: number of blocks on that side, to scale the positions
+    :param other_index: positions of the short texts on the other side, from ``_position_index``
+    :param own_joined: all the blocks of that side, newline-joined
+    :param other_joined: all the blocks of the other side, newline-joined
+    :param already_reported: strikethrough texts already shown in MODIFIED entries
+    :return: ``(kept leftovers, number of leftovers dropped)``
     """
     kept: List[Dict[str, Any]] = []
     dropped = 0
@@ -164,6 +183,14 @@ def _drop_merged_cells(
 
     Deliberately narrow: same relative position and a much longer container; without the length ratio it would
     swallow a label next to a longer sibling that merely starts with it ('TO PATCH' vs 'TO PATCH DC12_14+').
+
+    :param leftovers: unmatched blocks of one side
+    :param n_own: number of blocks on that side, to scale the positions
+    :param other_items: blocks of the other side
+    :param n_other: number of blocks on the other side, to scale the positions
+    :param own_joined: all the blocks of that side, newline-joined
+    :param other_joined: all the blocks of the other side, newline-joined
+    :return: ``(kept leftovers, number of leftovers dropped)``
     """
     kept: List[Dict[str, Any]] = []
     dropped = 0
@@ -204,6 +231,10 @@ class _RelocationIndex:
     """
 
     def __init__(self, new_text: str) -> None:
+        """Indexes the new document once: its canonical words and the runs of 8 words.
+
+        :param new_text: text of the new document, indexed once
+        """
         words = canonicalize_keep_modals(new_text).split()
         self._matcher = difflib.SequenceMatcher(None, autojunk=False)
         self._matcher.set_seq2(words)
@@ -212,7 +243,11 @@ class _RelocationIndex:
 
     def signal(self, text: str) -> Tuple[float, int]:
         """(coverage, longest_run_words): the fraction of `text`'s words matched in order anywhere in the new document,
-        and its longest contiguous match. Word-level LCS, so one inserted word does not split a long match."""
+        and its longest contiguous match. Word-level LCS, so one inserted word does not split a long match.
+
+        :param text: text to look up in the new document
+        :return: ``(coverage, longest_run_words)``
+        """
         words = canonicalize_keep_modals(text).split()
         n = len(words)
         if n < _RELOCATION_MIN_WORDS:
@@ -223,6 +258,11 @@ class _RelocationIndex:
 
     def is_relocated(self, text: str) -> bool:
         # Cheap pre-check: without a long enough contiguous run in the new document, skip the costly alignment.
+        """Whether a removed text still exists in the new document, moved elsewhere.
+
+        :param text: removed text
+        :return: True when the text is relocated rather than eliminated
+        """
         words = canonicalize_keep_modals(text).split()
         run = _RELOCATION_MIN_RUN_WORDS
         if not any(tuple(words[k:k + run]) in self._runs for k in range(len(words) - run + 1)):
@@ -236,6 +276,10 @@ def _tag_relocated(results: List[Dict[str, Any]], new_text: str) -> int:
     RELOCATED, and a struck-through span of a MODIFIED entry gets an inline note (the entry itself stays whole).
 
     Returns the number of entries/spans annotated.
+
+    :param results: diff entries, rewritten in place
+    :param new_text: text of the new document
+    :return: the number of entries and spans annotated
     """
     index = _RelocationIndex(new_text)
     tagged = 0
@@ -257,6 +301,11 @@ def _tag_relocated(results: List[Dict[str, Any]], new_text: str) -> int:
 
         elif m.group(1) == 'MODIFIED':
             def _annotate(span_match: 're.Match') -> str:
+                """Annotates a struck-through span whose text still exists in the new document.
+
+                :param span_match: match of a ``~~struck~~`` span
+                :return: the span with its note, or the match unchanged
+                """
                 nonlocal tagged
                 span = span_match.group(1)
                 if index.is_relocated(span):

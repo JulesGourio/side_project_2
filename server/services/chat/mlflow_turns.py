@@ -72,6 +72,9 @@ def _experiment_id(name: str) -> str | None:
 
     Never created here: the ``create_chat_experiment`` job creates it, as the job service principal.
     A missing one is looked up again after a minute.
+
+    :param name: experiment name or workspace path
+    :return: the experiment id, None while the experiment is missing or cannot be reached
     """
     with _lock:
         if _experiment.get(name):
@@ -102,7 +105,10 @@ def _experiment_id(name: str) -> str | None:
 
 
 async def export_turn(log: Any) -> None:
-    """Writes the finished turn ``log`` as a trace and records its id in ``log.data`` (never raises)."""
+    """Writes the finished turn ``log`` as a trace and records its id in ``log.data`` (never raises).
+
+    :param log: finished TurnLog of the turn
+    """
     name = experiment_name()
     if not enabled() or not log.status:
         return
@@ -116,7 +122,11 @@ async def export_turn(log: Any) -> None:
 
 
 def _language_guess(text: str | None) -> str:
-    """Two-letter code of the language of ``text`` (local fastText model), '' when unsure or unavailable."""
+    """Two-letter code of the language of ``text`` (local fastText model), '' when unsure or unavailable.
+
+    :param text: text to guess the language of, None allowed
+    :return: the two-letter code, or an empty string when unsure
+    """
     if not text:
         return ''
     try:
@@ -126,6 +136,11 @@ def _language_guess(text: str | None) -> str:
 
 
 def _hash(value: str) -> str:
+    """Short SHA-256 of ``value``, so that identifiers stay out of the traces.
+
+    :param value: text to hash
+    :return: 12 hexadecimal characters
+    """
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
 
 
@@ -133,7 +148,11 @@ _DATE_RE = re.compile(r'Date de diffusion:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|inconnu
 
 
 def _passage_date(chunk_text: str | None) -> str:
-    """Diffusion date from the passage's ``[Source: …]`` prefix (what the answer model reads)."""
+    """Diffusion date from the passage's ``[Source: …]`` prefix (what the answer model reads).
+
+    :param chunk_text: passage text, None allowed
+    :return: the date as ``YYYY-MM-DD``, ``inconnue`` when the source says so, or an empty string
+    """
     found = _DATE_RE.search((chunk_text or '')[:600])
     return found.group(1) if found else ''
 
@@ -149,7 +168,11 @@ def _vs_call_label(call: Dict[str, Any]) -> str:
 
 
 def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """The documents handed to the model, in prompt order: n, REF, title, diffusion date, revision, passages, best score, cited."""
+    """The documents handed to the model, in prompt order: n, REF, title, diffusion date, revision, passages, best score, cited.
+
+    :param sent: kept passages, in prompt order
+    :return: one dict per document, in prompt order
+    """
     docs: Dict[str, Dict[str, Any]] = {}
     for p in sent:
         d = docs.setdefault(p.get('ref') or '', {'n': p.get('doc_number'), 'ref': p.get('ref'), 'title': passage_title(p.get('chunk_text')),
@@ -168,13 +191,22 @@ def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _hit_label(hit: Dict[str, Any]) -> str:
-    """'q1 rerank #3 (0.83)': which query found the passage, how, at which rank, with which score."""
+    """'q1 rerank #3 (0.83)': which query found the passage, how, at which rank, with which score.
+
+    :param hit: one hit of a passage: query index, way found, rank and score
+    :return: the label
+    """
     q = 'ref' if hit.get('q') is None else f"q{hit['q'] + 1}"
     score = hit.get('score')
     return f"{q} {hit.get('via')} #{(hit.get('rank') or 0) + 1}" + (f' ({score:.3f})' if isinstance(score, (int, float)) else '')
 
 
 def _document(passage: Dict[str, Any]) -> Any:
+    """The passage as an MLflow document, its text cut to MLFLOW_MAX_DOC_CHARS.
+
+    :param passage: passage record of the turn log
+    :return: the MLflow document
+    """
     from mlflow.entities import Document
     return Document(page_content=(passage.get('chunk_text') or '')[:MLFLOW_MAX_DOC_CHARS],
                     metadata={'doc_uri': passage.get('url') or passage.get('ref') or '', 'ref': passage.get('ref'),
@@ -184,7 +216,11 @@ def _document(passage: Dict[str, Any]) -> Any:
 
 
 def _prompt_tags(experiment_id: str) -> Dict[str, str]:
-    """The experiment's ``chat_prompt.<key>`` tags, refreshed every ``MLFLOW_PROMPT_TTL_S``."""
+    """The experiment's ``chat_prompt.<key>`` tags, refreshed every ``MLFLOW_PROMPT_TTL_S``.
+
+    :param experiment_id: id of the experiment
+    :return: the tags by name, refreshed after MLFLOW_PROMPT_TTL_S
+    """
     cached = _prompt_cache.get(experiment_id)
     if cached and time.monotonic() - cached[0] < (MLFLOW_PROMPT_TTL_S if cached[1] else MLFLOW_PROMPT_EMPTY_TTL_S):
         return cached[1]
@@ -200,7 +236,12 @@ def _prompt_tags(experiment_id: str) -> Dict[str, str]:
 
 def _linked_prompts(experiment_id: str, keys: List[str]) -> str:
     """JSON for the ``mlflow.linkedPrompts`` trace tag: the registered version of each prompt ``keys`` the turn used,
-    when its recorded hash is the file's (a prompt edited since the last registration is not linked)."""
+    when its recorded hash is the file's (a prompt edited since the last registration is not linked).
+
+    :param experiment_id: id of the experiment
+    :param keys: prompt keys the turn used
+    :return: the JSON of the linked prompts, empty when none is linked
+    """
     tags, linked = _prompt_tags(experiment_id), []
     for key in keys:
         try:
@@ -215,7 +256,13 @@ def _linked_prompts(experiment_id: str, keys: List[str]) -> str:
 
 
 def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = '') -> None:
-    """Attaches the user's thumbs up / down to the turn's trace (blocking; run it in a thread, never raises)."""
+    """Attaches the user's thumbs up / down to the turn's trace (blocking; run it in a thread, never raises).
+
+    :param mlflow_trace_id: trace of the turn
+    :param vote: ``up`` or ``down``
+    :param comment: comment of the user, cut to 2000 characters, optional
+    :param user_id: id of the user, hashed before it is stored
+    """
     if not (enabled() and mlflow_trace_id):
         return
     try:
@@ -230,6 +277,12 @@ def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = 
 
 
 def _write_trace(log: Any, name: str) -> str | None:
+    """Writes the finished turn as one MLflow trace.
+
+    :param log: finished TurnLog of the turn
+    :param name: experiment name, from CHAT_MLFLOW_EXPERIMENT
+    :return: the trace id, None when the experiment is not found
+    """
     import mlflow
     from mlflow.entities import SpanType
     from mlflow.tracing.constant import SpanAttributeKey
@@ -243,11 +296,30 @@ def _write_trace(log: Any, name: str) -> str | None:
     failed = log.status == 'error'
 
     def at(ms: int) -> int:
+        """Absolute time in nanoseconds of an offset from the start of the turn.
+
+        :param ms: offset from the start of the turn, in milliseconds
+        :return: the time in nanoseconds
+        """
         return t0 + int(ms) * _NS_PER_MS
 
     def child(parent: Any, step: str, span_type: str, start_ms: int, duration_ms: int, *,
               inputs: Any = None, outputs: Any = None, attributes: Dict[str, Any] | None = None,
               status: str | None = None, label: str | None = None) -> Any:
+        """Adds a span that has already finished under ``parent``.
+
+        :param parent: parent span
+        :param step: span name, used when no label is given
+        :param span_type: MLflow span type, e.g. ``SpanType.RETRIEVER``
+        :param start_ms: offset of the span start from the start of the turn, in milliseconds
+        :param duration_ms: length of the span, in milliseconds
+        :param inputs: span inputs, None for none
+        :param outputs: span outputs, None for none
+        :param attributes: span attributes; the None values are left out
+        :param status: span status such as ``OK`` or ``ERROR``, None for the default
+        :param label: span name replacing ``step``, None to use ``step``
+        :return: the span
+        """
         span = mlflow.start_span_no_context(label or step, span_type=span_type, parent_span=parent, inputs=inputs,
                                             start_time_ns=at(start_ms))
         span.end(outputs=outputs, attributes={k: v for k, v in (attributes or {}).items() if v is not None},
@@ -373,6 +445,12 @@ def _write_trace(log: Any, name: str) -> str | None:
 
 
 def _usage(input_tokens: int | None, output_tokens: int | None) -> Dict[str, int] | None:
+    """Token usage of a span, None when no count is known.
+
+    :param input_tokens: input tokens, None when unknown
+    :param output_tokens: output tokens, None when unknown
+    :return: the input, output and total token counts, or None
+    """
     if input_tokens is None and output_tokens is None:
         return None
     i, o = int(input_tokens or 0), int(output_tokens or 0)

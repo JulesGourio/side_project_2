@@ -25,6 +25,10 @@ class CitationStreamParser:
     """
 
     def __init__(self, documents: List[Tuple[str, Dict[str, Any]]]):
+        """Keeps the documents that the answer's ``[n]`` markers number.
+
+        :param documents: (REF, document) pairs in prompt order: marker ``n`` cites ``documents[n - 1]``
+        """
         self._documents = documents
         self._pending = ''
         self._emitted = 0
@@ -33,6 +37,11 @@ class CitationStreamParser:
         self.citations: List[Dict[str, int]] = []
 
     def feed(self, chunk: str) -> str:
+        """Returns the part of the streamed text that is safe to show now.
+
+        :param chunk: next piece of the streamed answer text
+        :return: the clean text that is safe to show now
+        """
         text = self._pending + chunk
         partial = _PARTIAL_MARKER_RE.search(text)
         cut = partial.start() if partial else len(text)
@@ -50,6 +59,11 @@ class CitationStreamParser:
         return self._consume(text)
 
     def _consume(self, text: str) -> str:
+        """Strips the complete markers of ``text`` and records their citations.
+
+        :param text: streamed text with no incomplete marker at its end
+        :return: the text without its markers
+        """
         out, pos = [], 0
         for m in _MARKER_RE.finditer(text):
             out.append(text[pos:m.start()])
@@ -69,7 +83,12 @@ class CitationStreamParser:
 
 
 def parse_citations(raw: str, documents: List[Tuple[str, Dict[str, Any]]]) -> Tuple[str, List[dict], List[dict]]:
-    """Whole-text parse (reference for the streaming parser, used by the tests)."""
+    """Whole-text parse (reference for the streaming parser, used by the tests).
+
+    :param raw: the whole answer text
+    :param documents: (REF, document) pairs in prompt order
+    :return: the clean text, the sources in order of first citation, and the citations with their positions
+    """
     sources, citations, n_of, clean, pos = [], [], {}, '', 0
     for m in _MARKER_RE.finditer(raw):
         clean += raw[pos:m.start()]

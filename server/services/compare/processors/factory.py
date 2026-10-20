@@ -56,11 +56,20 @@ _ENV_KEYS = {
 
 
 def get_extension(filename: str) -> str:
+    """The lowercase extension of a file name, with its dot; empty when it has none.
+
+    :param filename: file name
+    :return: the extension, such as ``.pdf``
+    """
     return ('.' + filename.rsplit('.', 1)[-1].lower()) if '.' in filename else ''
 
 
 def file_type_of(filename: str) -> str | None:
-    """'pdf' / 'docx' / … for a supported file name, else None."""
+    """'pdf' / 'docx' / … for a supported file name, else None.
+
+    :param filename: file name
+    :return: the file type, or None when the extension is not supported
+    """
     return EXTENSION_MAP.get(get_extension(filename))
 
 
@@ -69,6 +78,9 @@ def diff_truncation_warnings(messages: List[Dict[str, Any]]) -> List[str]:
 
     Without it the report silently stops partway through the document: the truncation
     note reaches only the model.
+
+    :param messages: messages sent to the model
+    :return: the warning list, empty when the diff was not cut
     """
     for msg in messages:
         content = msg.get('content')
@@ -91,6 +103,10 @@ def get_processor(filename: str, method_override: str | None = None) -> BaseProc
         method_override: If provided, use this method instead of the env-var default.
                          Valid values: 'standard', 'structured', 'comparative'.
                          Unknown values fall back to 'standard'.
+
+    :param filename: name of the file to process
+    :param method_override: method to use instead of the environment default; None or blank keeps the default
+    :return: the processor, or None when the file type is not supported
     """
     ext = get_extension(filename)
     file_type = EXTENSION_MAP.get(ext)
@@ -122,6 +138,10 @@ def extract_document_text(filename: str, file_bytes: bytes) -> str:
     just without pairing it against a second document. Raises ValueError for
     unsupported extensions and image files (no text representation — see
     prepare_image_content for the vision-model path used for those instead).
+
+    :param filename: name of the file
+    :param file_bytes: content of the file
+    :return: the plain text of the document
     """
     ext = get_extension(filename)
     file_type = EXTENSION_MAP.get(ext)
@@ -157,6 +177,10 @@ def prepare_image_content(filename: str, file_bytes: bytes) -> List[Dict[str, An
     vision LLM call — same normalisation ImageProcessor already applies to
     each side before a visual diff (resize/JPEG-recompress oversized or
     unsupported formats), just for one image instead of a pair.
+
+    :param filename: name of the image
+    :param file_bytes: content of the image
+    :return: one image content block for the vision model
     """
     from server.services.compare.processors.image import _normalise_image
     ext = get_extension(filename) or '.jpg'

@@ -28,7 +28,12 @@ NAMED_LANGUAGE_REMINDER = prompts.read('language_reminder_named')
 # --- Prompt and answer ---
 
 def with_language_reminder(messages: List[Dict[str, str]], language: str | None = None) -> List[Dict[str, str]]:
-    """``messages`` with the language reminder after the last user turn (a copy)."""
+    """``messages`` with the language reminder after the last user turn (a copy).
+
+    :param messages: the conversation, oldest first; its last item is the user turn
+    :param language: name of the answer language (e.g. ``French``), or None for the generic reminder
+    :return: a new list of message dicts, the input is not modified
+    """
     line = NAMED_LANGUAGE_REMINDER.format(language=language) if language else LANGUAGE_REMINDER
     out = [dict(m) for m in messages]
     out[-1]['content'] = f'{out[-1]["content"]}\n\n{line}'
@@ -38,7 +43,13 @@ def with_language_reminder(messages: List[Dict[str, str]], language: str | None 
 def revision_note(ref: str, division: str | None = None) -> str:
     """' "Title" (current revision B, published YYYY-MM-DD; division AS)' from the catalog and the index row,
     with only the parts it has: the passages themselves never carry them, and every document of the index is the
-    current one."""
+    current one.
+
+    :param ref: REF of the document, as in the search rows
+    :param division: division code of the document (``AS`` or ``IS``), or None when unknown
+    :return: the note starting with a space: the quoted title, then the known parts in parentheses; empty when the
+        catalog knows nothing
+    """
     info = document_info(ref)
     parts = ([f"current revision {info['revision']}"] if info.get('revision') else []) + \
             ([f"published {info['doc_date']}"] if info.get('doc_date') else []) + \
@@ -50,7 +61,14 @@ def revision_note(ref: str, division: str | None = None) -> str:
 def build_prompt(division: str, conversation: List[Dict[str, str]], documents: List[Tuple[str, Dict[str, Any]]],
                  answer_language: str | None = None) -> List[Dict[str, str]]:
     """System instructions, then the conversation; the last turn carries the numbered documents
-    before the question and the language reminder after it."""
+    before the question and the language reminder after it.
+
+    :param division: normalised division code: ``ALL``, ``AS`` or ``IS``
+    :param conversation: cleaned conversation whose last item is the user question
+    :param documents: passages grouped by document, as returned by ``group_documents``
+    :param answer_language: name of the language the answer must use, or None
+    :return: the messages for the answer model: system instructions, then the conversation
+    """
     context = '\n\n'.join(f'[{i}] Document {ref}{revision_note(ref, d.get("division"))}\n' + '\n\n'.join(d['passages'])
                           for i, (ref, d) in enumerate(documents, 1))
     turns = [dict(m) for m in conversation]
@@ -60,13 +78,26 @@ def build_prompt(division: str, conversation: List[Dict[str, str]], documents: L
 
 
 def _error_events(message: str, error_type: str, http_status: int = 0) -> List[str]:
+    """The SSE events that report a failed answer and end the stream.
+
+    :param message: text shown to the user
+    :param error_type: name of the error, sent in the event
+    :param http_status: HTTP status of the failed upstream call, 0 when there is none
+    :return: the error event followed by the end-of-stream marker
+    """
     return [sse_event({'type': 'error', 'error': message, 'error_type': error_type, 'http_status': http_status}),
             'data: [DONE]\n\n']
 
 
 def _record_prompt(log: TurnLog, division: str, documents: List[Tuple[str, Dict[str, Any]]],
                    prompt: List[Dict[str, str]]) -> None:
-    """Prompt facts on the turn, and each kept passage's place in the prompt."""
+    """Prompt facts on the turn, and each kept passage's place in the prompt.
+
+    :param log: turn log to fill
+    :param division: normalised division code, used to fingerprint the instructions
+    :param documents: documents sent to the model, in their numbering order
+    :param prompt: messages sent to the model, used for the prompt size
+    """
     number = {ref: n for n, (ref, _) in enumerate(documents, 1)}
     kept = [p for p in log.passages if p['kept']]
     for rank, p in enumerate(sorted(kept, key=lambda p: (number.get(p['ref'], 0), p['position']))):
@@ -80,7 +111,16 @@ def _record_prompt(log: TurnLog, division: str, documents: List[Tuple[str, Dict[
 
 def _record_answer(log: TurnLog, chain: List[str], llm: Dict[str, Any], usage: Dict[str, Any],
                    parser: CitationStreamParser) -> None:
-    """What the answer model did, and which documents the answer cites."""
+    """What the answer model did, and which documents the answer cites.
+
+    :param log: turn log to fill
+    :param chain: answer endpoints in order, primary first
+    :param llm: facts of the answer call from its ``llm`` event: endpoint used, fallback, attempts, queue wait,
+        truncation, continuations, interruption
+    :param usage: token counts and cost of the answer (``input_tokens``, ``output_tokens``, ``thinking_tokens``,
+        ``cost_eur``)
+    :param parser: citation parser of the answer, after its last chunk
+    """
     cited = [s['title'] for s in parser.sources]
     for p in log.passages:
         p['cited'] = p['kept'] and p['ref'] in cited
@@ -115,7 +155,16 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
     """Answer the last user turn of ``messages`` (trimmed history, last turn prefixed with
     ``[Date: …]``, translated to English by the bridge when needed). ``answer_language`` (e.g.
     "French", from the chat route) is named in the language reminder. ``log`` (the turn's ``TurnLog``,
-    from the chat route) receives every step; its ``trace_id`` is the one in the ``metadata`` event."""
+    from the chat route) receives every step; its ``trace_id`` is the one in the ``metadata`` event.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token used for the model and Vector Search calls
+    :param division: division of the chat, any case (normalised here)
+    :param messages: chat history ending with the user question
+    :param answer_language: name of the answer language (e.g. ``French``), or None
+    :param log: turn log to fill, created when None
+    :return: the SSE lines of the answer: status, text deltas, sources, metadata and the end-of-stream marker
+    """
     yield ': keepalive\n\n'                      # first byte out, before the slow steps
     log = log if log is not None else TurnLog()
     trace_id = log.trace_id

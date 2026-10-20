@@ -21,7 +21,12 @@ REWRITE_PROMPT = prompts.read('rewrite')
 
 def opening_language(conversation: List[Dict[str, str]], question: str) -> str | None:
     """'fr' or 'en' when ``question`` opens the conversation and is confidently in that language (the translation
-    path applies), else None: follow-ups, other or unsure languages keep the bilingual rewrite."""
+    path applies), else None: follow-ups, other or unsure languages keep the bilingual rewrite.
+
+    :param conversation: cleaned conversation, its last item the question
+    :param question: the user question, without its date line
+    :return: ``'fr'`` or ``'en'``, or None
+    """
     if not translate_only_enabled() or len(conversation) > 1:
         return None
     code = translation_bridge.fast_lang_guess(question)
@@ -30,7 +35,11 @@ def opening_language(conversation: List[Dict[str, str]], question: str) -> str |
 
 def split_bilingual(text: str) -> Tuple[str, str]:
     """(French query, English query) from the rewrite; a reply without the ``FR:``/``EN:``
-    labels is taken as the French query."""
+    labels is taken as the French query.
+
+    :param text: reply of the rewrite model
+    :return: the French and the English query, an empty string for a missing one
+    """
     fr, en = '', ''
     for line in (text or '').splitlines():
         head, _, rest = line.strip().partition(':')
@@ -44,7 +53,12 @@ def split_bilingual(text: str) -> Tuple[str, str]:
 
 
 def strip_added_noise(query: str, conversation_text: str) -> str:
-    """``query`` without company / document-type filler the conversation never used."""
+    """``query`` without company / document-type filler the conversation never used.
+
+    :param query: rewritten query to clean
+    :param conversation_text: text of the conversation; a filler kept when the conversation also says it
+    :return: the query without filler, or the query unchanged when nothing is left
+    """
     out = query
     for pattern in NOISE_PHRASES:
         if not pattern.search(conversation_text):
@@ -55,7 +69,15 @@ def strip_added_noise(query: str, conversation_text: str) -> str:
 
 async def translate_query(host: str, token: str, question: str, target: str,
                           log: TurnLog | None = None) -> str:
-    """``question`` translated into ``target`` ('fr' or 'en'); raises when every model failed after its retries."""
+    """``question`` translated into ``target`` ('fr' or 'en'); raises when every model failed after its retries.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param question: question to translate
+    :param target: language to translate into: ``fr`` or ``en``
+    :param log: turn log to fill, created when None
+    :return: the translation, whitespace collapsed and surrounding quotes removed
+    """
     log = log if log is not None else TurnLog()
     system = prompts.read('translate_query').replace('{language}', _TRANSLATE_NAMES[target])
     chain = chat_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
@@ -84,7 +106,14 @@ async def translate_query(host: str, token: str, question: str, target: str,
 
 async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, str]],
                           log: TurnLog | None = None) -> Tuple[str, str]:
-    """(French query, English query) for the last question; raises when every rewrite model failed after its retries."""
+    """(French query, English query) for the last question; raises when every rewrite model failed after its retries.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param conversation: cleaned conversation, its last item the question
+    :param log: turn log to fill, created when None
+    :return: the French and the English search queries, filler removed
+    """
     log = log if log is not None else TurnLog()
     transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)
     messages = [{'role': 'system', 'content': REWRITE_PROMPT}, {'role': 'user', 'content': transcript}]

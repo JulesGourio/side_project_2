@@ -23,7 +23,12 @@ _MAX_IMAGE_BLOCKS = 95          # the model API accepts at most 100 images/docum
 
 def dhash(img_bytes: bytes, size: int = _DHASH_SIZE) -> str:
     """64-bit difference hash. Resistant to slight compression/resize artifacts.
-    Falls back to MD5 hex if PIL is unavailable."""
+    Falls back to MD5 hex if PIL is unavailable.
+
+    :param img_bytes: image file bytes, in any format PIL reads
+    :param size: grid side: the hash has ``size * size`` bits
+    :return: the bit string, or the MD5 hex of the bytes when PIL fails
+    """
     try:
         from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(img_bytes)).convert('L')
@@ -42,7 +47,12 @@ def dhash(img_bytes: bytes, size: int = _DHASH_SIZE) -> str:
 
 def ahash(img_bytes: bytes, size: int = _DHASH_SIZE) -> str:
     """64-bit average hash. Insensitive to small shifts; sensitive to content changes.
-    Used as a second gate alongside dhash for DOCX image pairing."""
+    Used as a second gate alongside dhash for DOCX image pairing.
+
+    :param img_bytes: image file bytes, in any format PIL reads
+    :param size: grid side: the hash has ``size * size`` bits
+    :return: the bit string, or the MD5 hex of the bytes when PIL fails
+    """
     try:
         from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(img_bytes)).convert('L')
@@ -55,10 +65,22 @@ def ahash(img_bytes: bytes, size: int = _DHASH_SIZE) -> str:
 
 
 def hamming(a: str, b: str) -> int:
+    """Number of positions where two hash strings differ; the shorter one bounds the count.
+
+    :param a: first hash string
+    :param b: second hash string
+    :return: the number of differing positions
+    """
     return sum(x != y for x, y in zip(a, b))
 
 
 def images_are_similar(h1: str, h2: str) -> bool:
+    """Whether two dhash strings are visually identical.
+
+    :param h1: dhash of the first image
+    :param h2: dhash of the second image
+    :return: True when the hashes differ by at most ``_DHASH_THRESHOLD`` bits; different lengths match only when equal
+    """
     if len(h1) != len(h2):
         return h1 == h2
     return hamming(h1, h2) <= _DHASH_THRESHOLD
@@ -66,7 +88,11 @@ def images_are_similar(h1: str, h2: str) -> bool:
 
 def hash16(img_bytes: bytes) -> str:
     """256-bit fine-grained difference hash (16x16) for the second-tier
-    identity check. Falls back to MD5 hex like dhash()."""
+    identity check. Falls back to MD5 hex like dhash().
+
+    :param img_bytes: image file bytes
+    :return: the 256-bit hash string of the 16x16 grid
+    """
     return dhash(img_bytes, size=_DHASH16_SIZE)
 
 
@@ -75,6 +101,10 @@ def _fine_hashes_match(meta1: Dict[str, Any], meta2: Dict[str, Any]) -> bool:
 
     Missing hashes (cached extractions without them, PIL fallback) keep the
     coarse-only behaviour.
+
+    :param meta1: image record of the old side; may hold a ``hash16``
+    :param meta2: image record of the new side; may hold a ``hash16``
+    :return: True when the 16x16 hashes agree, or when one side has none
     """
     f1 = meta1.get('hash16')
     f2 = meta2.get('hash16')
@@ -86,7 +116,12 @@ def _fine_hashes_match(meta1: Dict[str, Any], meta2: Dict[str, Any]) -> bool:
 
 
 def _thumbnail_b64(b64_str: str, max_px: int = 320) -> str:
-    """Resize a base64 JPEG to max_px on its longest side and return new base64."""
+    """Resize a base64 JPEG to max_px on its longest side and return new base64.
+
+    :param b64_str: base64 image
+    :param max_px: length of the longest side after the resize, in pixels
+    :return: the base64 JPEG thumbnail, or the input unchanged when it cannot be decoded
+    """
     try:
         from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(base64.b64decode(b64_str))).convert('RGB')
@@ -106,8 +141,22 @@ def _compute_image_diff_pairs(
     """Core pairing logic shared by image_diff_blocks_dual and image_diff_pairs.
 
     Returns (modified_pairs, orientation_pairs, remaining_removed, remaining_added).
+
+    :param old_imgs: images of the old document, keyed by hash; each record has ``b64``, ``pages`` and the transform
+    :param new_imgs: images of the new document, keyed by hash
+    :param show_position: True pairs images by page proximity (PDF, PPTX, DOCX); False by visual similarity only
+    :return: ``(modified_pairs, orientation_pairs, remaining_removed, remaining_added)``, the pairs as ``(old hash, new
+        hash)``
     """
     def _same_content(h1: str, imgs1: Dict, h2: str, imgs2: Dict) -> bool:
+        """Whether an old and a new image are the same picture: both hashes and the flip transform agree.
+
+        :param h1: hash of the old image
+        :param imgs1: images of the old side
+        :param h2: hash of the new image
+        :param imgs2: images of the new side
+        :return: True when the two images are the same
+        """
         if not images_are_similar(h1, h2):
             return False
         if not _fine_hashes_match(imgs1[h1], imgs2[h2]):
@@ -250,6 +299,11 @@ def image_diff_blocks_dual(
       (best hamming match, no position constraint).
 
     Returns MODIFIED (OLD→NEW side-by-side), then REMOVED, then ADDED blocks.
+
+    :param old_imgs: images of the old document, keyed by hash
+    :param new_imgs: images of the new document, keyed by hash
+    :param show_position: True pairs images by page proximity (PDF, PPTX, DOCX); False by visual similarity only
+    :return: the content blocks for the model: MODIFIED pairs, then REMOVED, then ADDED images
     """
     modified_pairs, orientation_pairs, removed, added = _compute_image_diff_pairs(
         old_imgs, new_imgs, show_position,
@@ -336,6 +390,11 @@ def image_diff_pairs(
 
     Each entry: {status, old_page, new_page, old_b64, new_b64, index}
     Images are thumbnailed to ≤320 px to keep SSE payload small.
+
+    :param old_imgs: images of the old document, keyed by hash
+    :param new_imgs: images of the new document, keyed by hash
+    :param show_position: True pairs images by page proximity (PDF, PPTX, DOCX); False by visual similarity only
+    :return: one dict per image pair: ``status``, ``old_page``, ``new_page``, ``old_b64``, ``new_b64``, ``index``
     """
     modified_pairs, orientation_pairs, removed, added = _compute_image_diff_pairs(
         old_imgs, new_imgs, show_position,

@@ -27,7 +27,11 @@ _IMG_JPEG_QUALITY = 80
 
 
 def _shapes_text(shapes) -> List[str]:
-    """Recursively extract text from shapes, including tables and groups."""
+    """Recursively extract text from shapes, including tables and groups.
+
+    :param shapes: shapes of a slide or of a group
+    :return: the text lines: paragraphs, table rows joined by ``|``, and ``[Chart]`` lines
+    """
     texts: List[str] = []
     for shape in shapes:
         try:
@@ -99,6 +103,10 @@ def _collect_shape_images(shapes, slide_num: int, images: Dict[str, Dict[str, An
     Builds the same dict shape used by DOCX/PDF processors:
         { dhash_str: { 'b64': str, 'pages': [slide_nums] } }
     so the shared pairing engine in _diff_engines can be applied consistently.
+
+    :param shapes: shapes of a slide or of a group
+    :param slide_num: number of the slide, from 1
+    :param images: dict filled in place, keyed by perceptual hash
     """
     from PIL import Image as PILImage
     for shape in shapes:
@@ -146,6 +154,9 @@ def _extract_pptx(pptx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
     Each text line is tagged with a trailing [Slide N] tag so the diff engine
     can track which slide a change originates from. Images are returned in the
     same shape used by DOCX/PDF (see _collect_shape_images).
+
+    :param pptx_bytes: content of the .pptx file
+    :return: ``(slide text lines, images keyed by hash)``
     """
     from pptx import Presentation
     prs = Presentation(io.BytesIO(pptx_bytes))
@@ -167,14 +178,32 @@ class PptxProcessor(TextDiffProcessor):
     warn_comparative = False
 
     def extract(self, old_bytes, old_name, new_bytes, new_name):
+        """Slide text and images of the two presentations.
+
+        :param old_bytes: content of the old presentation
+        :param old_name: file name of the old presentation
+        :param new_bytes: content of the new presentation
+        :param new_name: file name of the new presentation
+        :return: ``(old text, new text, old images, new images)``
+        """
         old_slides, old_imgs = _extract_pptx(old_bytes)
         new_slides, new_imgs = _extract_pptx(new_bytes)
         return '\n'.join(old_slides), '\n'.join(new_slides), old_imgs, new_imgs
 
     def paragraph_notes(self, filtered):
+        """The note that opens the paragraph diff of a presentation.
+
+        :param filtered: number of trivial entries the diff filtered out
+        :return: the note
+        """
         return (f'Global paragraph alignment across slides: {filtered} trivial lines filtered.\n'
                 'Similar text blocks shown as MODIFIED with ~~removed~~ and **added** words inline.\n'
                 'Each block tagged with its source slide.')
 
     def comparative_notes(self, filtered):
+        """The note that opens the section diff of a presentation.
+
+        :param filtered: number of trivial entries the diff filtered out
+        :return: the note
+        """
         return f'Section canonical diff across slides: {filtered} trivial pairs filtered.'

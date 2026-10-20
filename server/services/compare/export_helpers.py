@@ -16,7 +16,11 @@ logger = logging.getLogger(__name__)
 # --- JSON parsing ---
 
 def _parse_json_response(text: str):
-    """Robust JSON array parser — three fallback strategies."""
+    """Robust JSON array parser — three fallback strategies.
+
+    :param text: model reply that holds a JSON array
+    :return: the list, or None when no JSON array can be read
+    """
     stripped = text.strip()
     try:
         data = json.loads(stripped)
@@ -48,7 +52,14 @@ def _parse_json_response(text: str):
 # --- Image helpers ---
 
 def _make_composite_image(old_b64: str | None, new_b64: str | None, width: int = 200, height: int = 80):
-    """Return a BytesIO of a side-by-side OLD|NEW JPEG thumbnail, or None on failure."""
+    """Return a BytesIO of a side-by-side OLD|NEW JPEG thumbnail, or None on failure.
+
+    :param old_b64: base64 image of the old page, None when there is none
+    :param new_b64: base64 image of the new page, None when there is none
+    :param width: width of the thumbnail, in pixels
+    :param height: height of the thumbnail, in pixels
+    :return: a BytesIO of the JPEG thumbnail, or None on failure
+    """
     try:
         from PIL import Image as PILImage, ImageDraw
         composite = PILImage.new('RGB', (width, height), color=(255, 255, 255))
@@ -75,7 +86,13 @@ def _make_composite_image(old_b64: str | None, new_b64: str | None, width: int =
 # --- Excel export ---
 
 def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> bytes:
-    """Generate a colour-coded Excel workbook from a list of diff items. ft = file type."""
+    """Generate a colour-coded Excel workbook from a list of diff items. ft = file type.
+
+    :param rows: diff items: dicts with section, page, type, criticality, before, after and rationale
+    :param ft: file type: ``pdf``, ``docx``, ``pptx``, ``xml``, or anything else for a plain layout
+    :param image_pairs: old and new images of the changed visuals (old_b64, new_b64, old_page, new_page), None for none
+    :return: the bytes of the .xlsx workbook
+    """
     import openpyxl
     from openpyxl.comments import Comment
     from openpyxl.drawing.image import Image as XLImage
@@ -132,11 +149,20 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
     }
 
     def _is_visual_row(item: dict) -> bool:
+        """Whether the row is about an image, figure or chart, judged from its type.
+
+        :param item: diff item, its ``type`` is read
+        :return: True for a visual row
+        """
         t = str(item.get('type', '') or '').lower()
         return any(kw in t for kw in _IMAGE_KEYWORDS)
 
     def _row_page_int(item: dict):
-        """First page number in the cell — used for image-pair matching (old page)."""
+        """First page number in the cell — used for image-pair matching (old page).
+
+        :param item: diff item
+        :return: the first page number of the row, None when there is none
+        """
         raw = str(item.get('page', '') or '') if _page_key else ''
         m = re.search(r'\d+', raw)
         return int(m.group()) if m else None
@@ -144,7 +170,11 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
     def _row_page_new_int(item: dict):
         """Last page number in the cell — the NEW-document page for "old→new" entries.
         The report describes the new document, so rows are ordered by where the
-        reader finds them there."""
+        reader finds them there.
+
+        :param item: diff item
+        :return: the last page number of the row, the one in the new document; None when there is none
+        """
         raw = str(item.get('page', '') or '') if _page_key else ''
         nums = re.findall(r'\d+', raw)
         return int(nums[-1]) if nums else None
@@ -153,7 +183,11 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
         """Parse a dotted section number ("6.3.1" -> (6, 3, 1)) for stable
         secondary ordering. Returns None for named/unnumbered sections
         (TABLE OF CONTENTS, APPENDIX A, ...) so they sort after numbered ones
-        on the same page."""
+        on the same page.
+
+        :param item: diff item, its ``section`` is read
+        :return: the section numbers as a tuple, None for a named or unnumbered section
+        """
         sec = str(item.get('section', '') or '')
         m = re.match(r'\s*(\d+(?:\.\d+)+)', sec)
         return tuple(int(x) for x in m.group(1).split('.')) if m else None
@@ -161,6 +195,11 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
     _BIG = 10 ** 9
 
     def _page_sort_key(item):
+        """Sort key of a row: new-document page first, then numbered section; unpaged rows go last.
+
+        :param item: diff item
+        :return: the tuple used by ``sorted``
+        """
         if not isinstance(item, dict) or not _page_key:
             return (1, _BIG, 1, ())
         p = _row_page_new_int(item)
@@ -282,7 +321,11 @@ _IMPACT_STATUS_FILL = {'impacted': 'D5E8D4', 'check': 'FFF2CC', 'error': 'F8CECC
 
 def _build_impact_excel_bytes(result: dict) -> bytes:
     """Impact search result → workbook: one row per conflicting passage (the action list),
-    plus one row per judged document and the change list."""
+    plus one row per judged document and the change list.
+
+    :param result: impact search result: ``changes`` and ``documents``, each document with its passages
+    :return: the bytes of the .xlsx workbook
+    """
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -291,6 +334,13 @@ def _build_impact_excel_bytes(result: dict) -> bytes:
     wrap = Alignment(wrap_text=True, vertical='top')
 
     def _sheet(ws, headers, widths, rows):
+        """Fills a worksheet: bold header, column widths, one row per (values, status), coloured by status.
+
+        :param ws: openpyxl worksheet to fill
+        :param headers: column titles
+        :param widths: column widths, in characters
+        :param rows: ``(values, status)`` pairs; the status colours the row when it has a fill
+        """
         ws.append(headers)
         for cell in ws[1]:
             cell.font = Font(bold=True)
@@ -306,6 +356,11 @@ def _build_impact_excel_bytes(result: dict) -> bytes:
         ws.freeze_panes = 'A2'
 
     def _change_detail(ids):
+        """The text of the changes with these ids, one per line.
+
+        :param ids: change ids, e.g. ``C1``
+        :return: the lines joined by newlines
+        """
         return '\n'.join(f"{i}: {changes[i].get('text', '')}" for i in ids if i in changes)
 
     wb = openpyxl.Workbook()

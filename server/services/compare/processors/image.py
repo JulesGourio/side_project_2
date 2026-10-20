@@ -34,7 +34,12 @@ _IMG_JPEG_QUALITY = 85
 
 
 def _normalise_image(img_bytes: bytes, ext: str) -> tuple[bytes, str]:
-    """Return (jpeg_bytes, 'image/jpeg') or original bytes + correct MIME."""
+    """Return (jpeg_bytes, 'image/jpeg') or original bytes + correct MIME.
+
+    :param img_bytes: image file bytes
+    :param ext: file extension with its dot, e.g. ``.png``
+    :return: the image bytes and their MIME type
+    """
     from PIL import Image
     mime = _SUPPORTED_MIME.get(ext.lower(), 'image/jpeg')
     if ext.lower() in ('.bmp', '.tiff', '.tif') or mime not in ('image/jpeg', 'image/png', 'image/gif', 'image/webp'):
@@ -52,6 +57,10 @@ def _normalise_image(img_bytes: bytes, ext: str) -> tuple[bytes, str]:
 class ImageProcessor(BaseProcessor):
 
     def __init__(self, method: str = 'standard') -> None:
+        """Stores the method: ``standard``, ``structured`` or ``comparative``.
+
+        :param method: method of the comparison
+        """
         self.method = method
 
     def build_messages(
@@ -62,6 +71,15 @@ class ImageProcessor(BaseProcessor):
         new_name: str,
         system_prompt: str = '',
     ) -> ProcessResult:
+        """Message list of a visual comparison: both images, under the system prompt of the method.
+
+        :param old_bytes: content of the old image
+        :param old_name: file name of the old image
+        :param new_bytes: content of the new image
+        :param new_name: file name of the new image
+        :param system_prompt: system prompt of the comparative method; the other methods use their own
+        :return: the messages with their metadata
+        """
         if self.method == 'structured':
             sp = SYSTEM_PROMPT_STRUCTURED
         elif self.method == 'comparative':

@@ -26,7 +26,11 @@ def _font_charset() -> frozenset[int]:
 
 
 def clean_text(text: str) -> str:
-    """NFC-normalise, map missing glyphs, drop what no font here can render (emoji…)."""
+    """NFC-normalise, map missing glyphs, drop what no font here can render (emoji…).
+
+    :param text: text to clean, None allowed
+    :return: the text, normalised and limited to the glyphs the font draws
+    """
     charset = _font_charset()
     out = []
     for ch in unicodedata.normalize('NFC', text or ''):
@@ -72,6 +76,11 @@ _HTML_TAG_RE = re.compile(r'</?(?:b|strong|i|em|u|span|sup|sub|p|div)\b[^>]*>', 
 
 
 def _unescape(s: str) -> str:
+    """Removes the HTML tags, entities and backslash escapes that the model writes.
+
+    :param s: text to unescape
+    :return: the text without them
+    """
     s = _HTML_TAG_RE.sub('', _HTML_BR_RE.sub(' ', s))
     for a, b in (('&nbsp;', ' '), ('&lt;', '<'), ('&gt;', '>'), ('&quot;', '"'), ('&#39;', "'"), ('&amp;', '&')):
         s = s.replace(a, b)
@@ -79,10 +88,21 @@ def _unescape(s: str) -> str:
 
 
 def parse_inline(text: str, bold: bool = False, italic: bool = False) -> list[Span]:
+    """Inline Markdown of a text, as styled spans.
+
+    :param text: inline Markdown
+    :param bold: True when the text is already bold
+    :param italic: True when the text is already italic
+    :return: the spans, in order
+    """
     spans: list[Span] = []
     pos = 0
 
     def plain(s: str) -> None:
+        """Adds ``s`` as a plain span, with the current style.
+
+        :param s: text between two matches
+        """
         if s:
             spans.append(Span(_unescape(s), bold, italic))
 
@@ -113,7 +133,11 @@ def parse_inline(text: str, bold: bool = False, italic: bool = False) -> list[Sp
 
 
 def plain_text(text: str) -> str:
-    """Inline Markdown → plain string (table cells, headings)."""
+    """Inline Markdown → plain string (table cells, headings).
+
+    :param text: inline Markdown
+    :return: the plain text, citations kept as ``[n]``
+    """
     return ''.join(f'[{s.text}]' if s.cite is not None else s.text for s in parse_inline(text)).strip()
 
 
@@ -129,10 +153,20 @@ _TABLE_SEP_RE = re.compile(r'^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$')
 
 
 def _indent(ws: str) -> int:
+    """List nesting level of an indentation: two spaces, or a tab, per level.
+
+    :param ws: leading whitespace of a line
+    :return: the nesting level
+    """
     return len(ws.replace('\t', '    ')) // 2
 
 
 def _cells(row: str) -> list[str]:
+    """The cells of a Markdown table row.
+
+    :param row: table row, with or without its outer pipes
+    :return: the stripped cells
+    """
     row = row.strip()
     row = row.removeprefix('|')
     if row.endswith('|') and not row.endswith('\\|'):
@@ -141,11 +175,21 @@ def _cells(row: str) -> list[str]:
 
 
 def tokenize(md: str) -> list[dict]:
+    """Block tokens of a Markdown text: headings, paragraphs, lists, tables, quotes and code blocks.
+
+    :param md: Markdown text
+    :return: the tokens in order, each a dict with a ``kind``
+    """
     lines = md.replace('\r\n', '\n').replace('\r', '\n').split('\n')
     tokens: list[dict] = []
     i = 0
 
     def starts_block(ln: str) -> bool:
+        """Whether a line starts a new block, so it does not continue the paragraph or item before it.
+
+        :param ln: line to test
+        :return: True when it starts a block
+        """
         s = ln.strip()
         return (not s or s.startswith(('```', '~~~', '>', '|')) or bool(_HEADING_RE.match(s))
                 or bool(_BULLET_RE.match(ln)) or bool(_ORDERED_RE.match(ln)) or bool(_HR_RE.match(ln)))

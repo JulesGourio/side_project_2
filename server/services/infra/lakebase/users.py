@@ -20,6 +20,12 @@ async def upsert_user(
     Deduplication key is the email (stable across workspaces); falls back to
     user_id when no email could be resolved.  Must run inside an existing
     connection/transaction (takes an acquired `conn`).
+
+    :param conn: open database connection, inside a transaction
+    :param user_id: numeric Databricks user id
+    :param workspace_id: workspace id of the user, None when unknown
+    :param email: email of the user, None when it could not be resolved
+    :param workspace_url: URL of the user's workspace, None when unknown
     """
     if not user_id:
         return

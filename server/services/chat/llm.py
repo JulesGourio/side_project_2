@@ -40,6 +40,12 @@ NO_MODEL_ANSWERED = 'every answer model failed'
 
 
 def _env_float(name: str, default: float) -> float:
+    """A float from the environment, or ``default`` when it is unset, empty or not a number.
+
+    :param name: environment variable name
+    :param default: value used when the variable is unset, empty or not a number
+    :return: the parsed value
+    """
     try:
         return float(os.getenv(name, str(default)) or default)
     except ValueError:
@@ -47,10 +53,20 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _endpoints_from(name: str) -> List[str]:
+    """The endpoint names of a comma-separated environment variable.
+
+    :param name: environment variable name
+    :return: the names, blanks removed
+    """
     return [e.strip() for e in os.getenv(name, '').split(',') if e.strip()]
 
 
 def _dedup(endpoints: List[str]) -> List[str]:
+    """The endpoints without repeats, first occurrence kept.
+
+    :param endpoints: endpoint names, possibly repeated or empty
+    :return: the distinct non-empty names, in order
+    """
     out: List[str] = []
     for e in endpoints:
         if e and e not in out:
@@ -59,13 +75,22 @@ def _dedup(endpoints: List[str]) -> List[str]:
 
 
 def answer_chain(primary: str) -> List[str]:
-    """The answer endpoints, in order: the primary, then CHAT_LLM_FALLBACK_ENDPOINTS."""
+    """The answer endpoints, in order: the primary, then CHAT_LLM_FALLBACK_ENDPOINTS.
+
+    :param primary: primary answer endpoint
+    :return: the endpoints in order, primary first
+    """
     return _dedup([primary] + _endpoints_from('CHAT_LLM_FALLBACK_ENDPOINTS'))
 
 
 def rewrite_chain(rewrite_endpoint: str, answer_endpoint: str) -> List[str]:
     """The rewrite endpoints: the rewrite model, then CHAT_REWRITE_FALLBACK_ENDPOINTS
-    (default: the answer chain)."""
+    (default: the answer chain).
+
+    :param rewrite_endpoint: endpoint of the rewrite or translation model
+    :param answer_endpoint: answer endpoint, whose chain is the default fallback
+    :return: the endpoints in order, rewrite model first
+    """
     fallbacks = _endpoints_from('CHAT_REWRITE_FALLBACK_ENDPOINTS') or answer_chain(answer_endpoint)
     return _dedup([rewrite_endpoint] + fallbacks)
 
@@ -104,7 +129,13 @@ def rewrite_reasoning_effort() -> str:
 
 
 def effective_max_tokens(endpoint: str, max_tokens: int, floor: int | None = None) -> int:
-    """``max_tokens``, raised to the reasoning floor on models that think inside it."""
+    """``max_tokens``, raised to the reasoning floor on models that think inside it.
+
+    :param endpoint: model name; models that take a temperature are not raised
+    :param max_tokens: output budget requested
+    :param floor: minimum budget for a reasoning model, None for CHAT_REASONING_MIN_TOKENS
+    :return: the output budget in tokens
+    """
     if supports_temperature(endpoint):
         return max_tokens
     return max(max_tokens, int(_env_float('CHAT_REASONING_MIN_TOKENS', 6000)) if floor is None else floor)
@@ -116,16 +147,30 @@ _cooling_until: Dict[str, float] = {}
 
 
 def cool(endpoint: str, seconds: float) -> None:
+    """Keeps ``endpoint`` out of the first places for ``seconds`` seconds from now.
+
+    :param endpoint: endpoint that just failed
+    :param seconds: length of the cooldown; nothing happens when it is not positive
+    """
     if seconds > 0:
         _cooling_until[endpoint] = max(_cooling_until.get(endpoint, 0.0), time.monotonic() + seconds)
 
 
 def cooling_left(endpoint: str) -> float:
+    """Seconds until ``endpoint`` is ready again, 0 when it is ready.
+
+    :param endpoint: endpoint name
+    :return: the seconds left
+    """
     return max(0.0, _cooling_until.get(endpoint, 0.0) - time.monotonic())
 
 
 def order_by_health(endpoints: List[str]) -> List[str]:
-    """Endpoints not cooling down first (chain order kept), then the cooling ones, soonest back first."""
+    """Endpoints not cooling down first (chain order kept), then the cooling ones, soonest back first.
+
+    :param endpoints: endpoint names in chain order
+    :return: the same names, the ready ones first
+    """
     ready = [e for e in endpoints if cooling_left(e) <= 0]
     cooling = sorted((e for e in endpoints if cooling_left(e) > 0), key=cooling_left)
     return ready + cooling
@@ -159,6 +204,13 @@ class LlmFailure(Exception):
     not_found, empty, stream_error."""
 
     def __init__(self, kind: str, detail: str = '', status: int = 0, retry_after: float | None = None):
+        """Stores the failure kind, its detail, HTTP status and Retry-After.
+
+        :param kind: failure kind: rate_limit, server, timeout, network, refused, auth, not_found, empty or stream_error
+        :param detail: short text from the upstream response, empty when there is none
+        :param status: HTTP status of the failed call, 0 when there is none
+        :param retry_after: seconds the endpoint asked to wait, None when it did not say
+        """
         super().__init__(f'{kind} {status or ""} {detail}'.strip())
         self.kind = kind
         self.detail = detail
@@ -171,11 +223,20 @@ FINAL_KINDS = {'refused', 'auth', 'not_found'}
 
 
 def http_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
-    """Separate so tests can swap the transport."""
+    """Separate so tests can swap the transport.
+
+    :param timeout: httpx timeouts of the client
+    :return: a new async HTTP client
+    """
     return httpx.AsyncClient(timeout=timeout)
 
 
 def retry_after(resp: httpx.Response) -> float | None:
+    """Seconds the ``Retry-After`` header asks to wait, None when it is absent or not a number.
+
+    :param resp: HTTP response that failed
+    :return: the number of seconds, or None
+    """
     try:
         return float(resp.headers.get('retry-after', ''))
     except ValueError:
@@ -183,6 +244,12 @@ def retry_after(resp: httpx.Response) -> float | None:
 
 
 def failure_for_status(resp: httpx.Response, body: str) -> LlmFailure:
+    """The failure of a response that is not 200, its kind chosen from the status.
+
+    :param resp: HTTP response that failed
+    :param body: text of the response
+    :return: the failure, its detail cut to 300 characters
+    """
     status = resp.status_code
     kind = ('rate_limit' if status == 429 else 'server' if status >= 500 else 'auth' if status in (401, 403)
             else 'not_found' if status == 404 else 'refused')
@@ -190,6 +257,14 @@ def failure_for_status(resp: httpx.Response, body: str) -> LlmFailure:
 
 
 def build_payload(endpoint: str, messages: List[Dict[str, Any]], max_tokens: int, stream: bool) -> Dict[str, Any]:
+    """The request body of a chat call; the streaming options and the temperature only where they apply.
+
+    :param endpoint: model name; ``temperature`` 0 is sent only to the models that take it
+    :param messages: chat messages
+    :param max_tokens: output budget
+    :param stream: True to ask for a stream with its usage
+    :return: the request body
+    """
     payload: Dict[str, Any] = {'messages': messages, 'max_tokens': max_tokens}
     if stream:
         payload.update({'stream': True, 'stream_options': {'include_usage': True}})
@@ -201,7 +276,15 @@ def build_payload(endpoint: str, messages: List[Dict[str, Any]], max_tokens: int
 async def stream_once(host: str, token: str, endpoint: str, messages: List[Dict[str, Any]],
                       max_tokens: int) -> AsyncGenerator[Tuple[str, Any], None]:
     """One streamed call. Yields ('text', str), ('usage', dict), ('truncated', None) and
-    ('keepalive', None) while waiting; raises ``LlmFailure``."""
+    ('keepalive', None) while waiting; raises ``LlmFailure``.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoint: serving endpoint name
+    :param messages: chat messages
+    :param max_tokens: output budget
+    :return: the (kind, value) events described above
+    """
     first_deadline = time.monotonic() + first_token_timeout_s()
     stall = stall_timeout_s()
     timeout = httpx.Timeout(max(first_token_timeout_s(), stall) + 30, connect=15.0)
@@ -275,10 +358,20 @@ async def stream_once(host: str, token: str, endpoint: str, messages: List[Dict[
 # --- The answer: chain, rounds, continuation ---
 
 def sse_event(payload: Dict[str, Any]) -> str:
+    """One server-sent event line carrying ``payload`` as JSON.
+
+    :param payload: event fields, JSON-serialisable
+    :return: the ``data:`` line, ending with a blank line
+    """
     return f'data: {json.dumps(payload)}\n\n'
 
 
 def cooldown_for(kind: str) -> float:
+    """Seconds an endpoint is kept out after a failure of this ``kind``.
+
+    :param kind: failure kind of LlmFailure
+    :return: the cooldown in seconds, 0 for kinds that do not cool an endpoint
+    """
     if kind == 'not_found':
         return _NOT_FOUND_COOLDOWN_S
     return cooldown_s() if kind in ('rate_limit', 'server', 'timeout', 'network') else 0.0
@@ -286,7 +379,15 @@ def cooldown_for(kind: str) -> float:
 
 async def stream_answer(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
                         max_tokens: int) -> AsyncGenerator[str, None]:
-    """Stream the answer of the first endpoint of ``endpoints`` that works (see module doc)."""
+    """Stream the answer of the first endpoint of ``endpoints`` that works (see module doc).
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoints: answer endpoints, primary first
+    :param messages: chat messages for the answer model
+    :param max_tokens: output budget of each call
+    :return: the SSE lines of the answer, then the ``llm`` event and the end-of-stream marker
+    """
     sem = _semaphore()
     queued_at = time.monotonic()
     if sem is not None and sem.locked():
@@ -326,6 +427,16 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
 
 async def _stream_answer(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
                          max_tokens: int, queue_wait_ms: int = 0) -> AsyncGenerator[str, None]:
+    """The answer rounds: the endpoints in turn, continuations after a cut, then the closing events.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoints: answer endpoints, primary first
+    :param messages: chat messages for the answer model
+    :param max_tokens: output budget of each call
+    :param queue_wait_ms: time the answer waited for a free slot, reported in the ``llm`` event
+    :return: the SSE lines of the answer and the closing events
+    """
     started = time.monotonic()
     chain = _dedup(endpoints)
     given_up: set = set()                       # endpoints not retried this turn
@@ -427,6 +538,11 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
 # --- Short non-streamed calls (search-query rewrite) ---
 
 def _message_text(content: Any) -> str:
+    """The text of a chat completion message: its content, or the text parts of a list.
+
+    :param content: message content: a string, a list of parts, or anything else
+    :return: the text, empty for any other shape
+    """
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -441,7 +557,17 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
     """(text, endpoint) of the first endpoint that returns non-empty text; two passes over the
     chain, ``timeout_s`` per call and 2 x ``timeout_s`` in all. Raises the last ``LlmFailure``
     when none does. ``info``, when given, receives ``attempts`` (every call: endpoint, outcome,
-    status, seconds) and the ``usage`` of the call that answered."""
+    status, seconds) and the ``usage`` of the call that answered.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoints: endpoints to try, in order
+    :param messages: chat messages
+    :param max_tokens: output budget
+    :param timeout_s: timeout of each call, in seconds
+    :param info: dict that receives the attempts and the usage, None to skip
+    :return: the text and the name of the endpoint that answered
+    """
     info = {} if info is None else info
     attempts = info.setdefault('attempts', [])
     last: LlmFailure | None = None
@@ -507,7 +633,17 @@ async def complete_patiently(host: str, token: str, endpoints: List[str], messag
                              max_tokens: int, timeout_s: float = 30.0,
                              info: Dict[str, Any] | None = None) -> Tuple[str, str]:
     """``complete`` again after each of PATIENT_WAITS_S while every endpoint fails; the last failure is raised
-    once the waits are spent. ``info`` accumulates the attempts of every try."""
+    once the waits are spent. ``info`` accumulates the attempts of every try.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoints: endpoints to try, in order
+    :param messages: chat messages
+    :param max_tokens: output budget
+    :param timeout_s: timeout of each call, in seconds
+    :param info: dict that accumulates the attempts of every try, None to skip
+    :return: the text and the name of the endpoint that answered
+    """
     info = {} if info is None else info
     last: Exception | None = None
     for wait in (0.0,) + PATIENT_WAITS_S:

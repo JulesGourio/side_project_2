@@ -29,10 +29,22 @@ from server.services.infra.pdf_report.common import (
 from server.services.infra.pdf_report.markdown import Span, parse_inline, plain_text, tokenize
 
 def _style(bold: bool, italic: bool) -> str:
+    """The font style letters of a bold and/or italic run: ``B``, ``I`` or both.
+
+    :param bold: True for a bold run
+    :param italic: True for an italic run
+    :return: the style string, empty for regular text
+    """
     return ('B' if bold else '') + ('I' if italic else '')
 
 
 def _new_pdf(kind_label: str, title: str):
+    """A PDF document with the running header, the footer and the fonts loaded.
+
+    :param kind_label: label shown in the running header
+    :param title: document title, also the title of the PDF
+    :return: the FPDF document
+    """
     from fpdf import FPDF
 
     class _Report(FPDF):
@@ -85,6 +97,11 @@ def _new_pdf(kind_label: str, title: str):
 
 class _Writer:
     def __init__(self, pdf, cite_links: dict[int, str]):
+        """Writer of the blocks of one section.
+
+        :param pdf: FPDF document being written
+        :param cite_links: source number -> URL, for the ``[n]`` markers
+        """
         self.pdf = pdf
         self.cite_links = cite_links
 
@@ -93,12 +110,23 @@ class _Writer:
         return self.pdf.page_break_trigger - self.pdf.get_y()
 
     def need(self, h: float) -> None:
+        """Starts a new page when less than ``h`` millimetres remain.
+
+        :param h: height needed, in millimetres
+        """
         if self.room() < h:
             self.pdf.add_page()
 
     def spans(self, spans: list[Span], size: float = BODY_SIZE, color=TEXT, line_h: float = LINE_H,
               bold: bool = False) -> None:
-        """Flow styled spans from the current position; wraps at the margins."""
+        """Flow styled spans from the current position; wraps at the margins.
+
+        :param spans: styled spans, from ``parse_inline``
+        :param size: font size, in points
+        :param color: RGB colour of the plain text
+        :param line_h: height of a text line, in millimetres
+        :param bold: True to set the whole text in bold
+        """
         pdf = self.pdf
         for sp in spans:
             if not sp.text:
@@ -120,6 +148,13 @@ class _Writer:
 
     # ── blocks ───────────────────────────────────────────────────────────────
     def heading(self, level: int, text: str, first: bool, keep: float = 26) -> None:
+        """Writes a heading, with a rule under the first two levels.
+
+        :param level: Markdown level, 1 to 6
+        :param text: heading text, Markdown inline
+        :param first: True for the first block of the section, which takes no space above
+        :param keep: height kept free below the heading, in millimetres, so it stays with the text that follows
+        """
         pdf = self.pdf
         size, color, before = {1: (15, INK, 7), 2: (12.5, ACCENT_DARK, 6), 3: (11, INK, 4.5)}.get(level, (10, INK, 3.5))
         if not first:
@@ -139,6 +174,10 @@ class _Writer:
             pdf.ln(1.5)
 
     def para(self, text: str) -> None:
+        """Writes a paragraph of inline Markdown.
+
+        :param text: paragraph text, Markdown inline
+        """
         pdf = self.pdf
         self.need(LINE_H * 2)
         pdf.set_x(pdf.l_margin)
@@ -147,6 +186,11 @@ class _Writer:
         pdf.ln(2.2)
 
     def item(self, tok: dict, next_is_item: bool) -> None:
+        """Writes one list item, bulleted or numbered, at its nesting depth.
+
+        :param tok: item token from ``tokenize``
+        :param next_is_item: True when the next block is also an item, for the spacing
+        """
         pdf = self.pdf
         depth = tok['depth']
         left0 = pdf.l_margin
@@ -173,6 +217,10 @@ class _Writer:
         pdf.ln(1.3 if next_is_item else 3)
 
     def quote(self, tokens: list[dict]) -> None:
+        """Writes the tokens of a block quote, indented and grey, with a bar on its left.
+
+        :param tokens: block tokens of the quote
+        """
         pdf = self.pdf
         left0 = pdf.l_margin
         self.need(LINE_H * 2)
@@ -197,6 +245,10 @@ class _Writer:
         pdf.ln(3)
 
     def code(self, text: str) -> None:
+        """Writes a code block on a grey background.
+
+        :param text: code text
+        """
         pdf = self.pdf
         pdf.ln(1)
         pdf.set_font(FONT, '', 8.5)
@@ -215,6 +267,11 @@ class _Writer:
         pdf.ln(5)
 
     def table(self, header: list[str], rows: list[list[str]]) -> None:
+        """Writes a table, with its column widths set from the content.
+
+        :param header: header cells, Markdown inline
+        :param rows: rows of cells, Markdown inline
+        """
         from fpdf.fonts import FontFace
 
         pdf = self.pdf
@@ -275,6 +332,10 @@ class _Writer:
 
     # ── composite blocks ─────────────────────────────────────────────────────
     def markdown(self, md: str) -> None:
+        """Writes a Markdown text, block by block.
+
+        :param md: Markdown text
+        """
         tokens = tokenize(md)
         for k, tok in enumerate(tokens):
             kind = tok['kind']
@@ -301,6 +362,11 @@ class _Writer:
                     self.hr()
 
     def question(self, text: str, label: str) -> None:
+        """Writes a question box, with its label above the text.
+
+        :param text: question text
+        :param label: label above the text, such as ``Question 2``
+        """
         pdf = self.pdf
         pdf.set_font(FONT, 'B', 10.5)
         lines = pdf.multi_cell(W - 10, 5.4, plain_text(text), dry_run=True, output='LINES')
@@ -323,6 +389,10 @@ class _Writer:
         pdf.set_y(y + h + 5)
 
     def sources(self, sources: list[Source]) -> None:
+        """Writes the numbered source list under a section.
+
+        :param sources: sources of the section
+        """
         if not sources:
             return
         pdf = self.pdf
@@ -361,6 +431,14 @@ class _Writer:
 
 
 def _cover(pdf, kind_label: str, title: str, meta: list[tuple[str, str]], date_str: str) -> None:
+    """Draws the cover block: label, date, title, meta lines and a rule.
+
+    :param pdf: FPDF document being drawn
+    :param kind_label: label of the kind of document
+    :param title: title, cut to three lines
+    :param meta: label and value pairs under the title
+    :param date_str: date printed at the top right
+    """
     x = MARGIN_X
     pdf.set_font(FONT, 'B', 8)
     pdf.set_text_color(*ACCENT)

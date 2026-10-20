@@ -27,20 +27,41 @@ FILES: Dict[str, str] = {
 
 @lru_cache(maxsize=None)
 def read(key: str) -> str:
+    """The text of a prompt file, read once and stripped.
+
+    :param key: prompt key, a key of FILES
+    :return: the prompt text
+    """
     return (PROMPTS_DIR / FILES[key]).read_text(encoding='utf-8').strip()
 
 
 def digest(key: str) -> str:
+    """Short hash of a prompt's text, to tell whether a registered version is the file's.
+
+    :param key: prompt key
+    :return: 16 hexadecimal characters of the SHA-256 of the text
+    """
     return hashlib.sha256(read(key).encode('utf-8')).hexdigest()[:16]
 
 
 def registry_name(schema: str, key: str) -> str:
+    """Name of a prompt in the MLflow registry.
+
+    :param schema: Unity Catalog schema of the registry, e.g. ``dev_proj.qualibot``
+    :param key: prompt key
+    :return: the name, ``<schema>.chat_<key>``
+    """
     return f'{schema}.chat_{key}'
 
 
 def keys_for_turn(division: str, language_named: bool) -> List[str]:
     """Prompts the answer step sends to the model: the system instructions, the language reminder. The prompt of the
-    search-query step (``rewrite`` or ``translate_query``) is added by the engine once it knows which one ran."""
+    search-query step (``rewrite`` or ``translate_query``) is added by the engine once it knows which one ran.
+
+    :param division: division code, any case
+    :param language_named: True when the reminder names the answer language
+    :return: the prompt keys of the answer step, in the order they are sent
+    """
     division = division.upper()
     division_keys = ['system_all'] if division == 'ALL' else ['system_division'] + (
         ['system_as_references'] if division == 'AS' else [])

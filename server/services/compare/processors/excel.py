@@ -20,7 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 def _sheet_to_lines(ws) -> List[str]:
-    """Convert a worksheet to a list of tab-separated row strings."""
+    """Convert a worksheet to a list of tab-separated row strings.
+
+    :param ws: openpyxl worksheet, read-only
+    :return: one tab-separated string per row, trailing empty rows dropped
+    """
     rows = []
     for row in ws.iter_rows(values_only=True):
         cells = [str(c) if c is not None else '' for c in row]
@@ -31,6 +35,11 @@ def _sheet_to_lines(ws) -> List[str]:
 
 
 def _extract_xlsx(file_bytes: bytes) -> Tuple[List[str], str]:
+    """Lines and sheet summary of an .xlsx workbook: a ``[Sheet: ...]`` marker, then the rows of each sheet.
+
+    :param file_bytes: content of the .xlsx file
+    :return: ``(lines, one-line summary of the sheets)``
+    """
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
     lines: List[str] = []
@@ -43,6 +52,11 @@ def _extract_xlsx(file_bytes: bytes) -> Tuple[List[str], str]:
 
 
 def _extract_xls(file_bytes: bytes) -> Tuple[List[str], str]:
+    """Lines and sheet summary of a legacy .xls workbook, read with xlrd.
+
+    :param file_bytes: content of the .xls file
+    :return: ``(lines, one-line summary of the sheets)``
+    """
     try:
         import xlrd
     except ImportError:
@@ -75,9 +89,19 @@ def _build_diff_keyed(
 
     Returns None if the first column is not a usable unique key (duplicates or
     >5% empty values), in which case the caller should fall back to unified_diff.
+
+    :param old_lines: lines of the old workbook, from ``_extract_xlsx`` or ``_extract_xls``
+    :param new_lines: lines of the new workbook, same format
+    :param old_name: file name of the old workbook
+    :param new_name: file name of the new workbook
+    :return: the keyed diff, or None when the first column is not a usable key
     """
     def _parse_sheets(lines: List[str]) -> List[Tuple[str, str, List[str]]]:
-        """Split lines into [(sheet_marker, header_row, [data_rows]), ...]."""
+        """Split lines into [(sheet_marker, header_row, [data_rows]), ...].
+
+        :param lines: workbook lines
+        :return: a list of ``(sheet marker, header line, data rows)``
+        """
         result: List[Tuple[str, str, List[str]]] = []
         sheet, header, data = '', '', []
         for line in lines:
@@ -108,6 +132,11 @@ def _build_diff_keyed(
         headers = old_header.split('\t') if old_header else []
 
         def _parse_rows(rows: List[str]) -> Dict[str, List[str]] | None:
+            """Rows keyed by their first column; None when a key repeats or too many keys are empty.
+
+            :param rows: data rows of one sheet, tab-separated
+            :return: the cells of each row by key, or None
+            """
             d: Dict[str, List[str]] = {}
             empty = 0
             for row in rows:
@@ -126,7 +155,11 @@ def _build_diff_keyed(
             return d
 
         def _is_auto_increment(keys: List[str]) -> bool:
-            """True if the keys are sequential integers (1,2,3… or 0,1,2…) — row numbers, not identifiers."""
+            """True if the keys are sequential integers (1,2,3… or 0,1,2…) — row numbers, not identifiers.
+
+            :param keys: row keys of one sheet
+            :return: True when the keys are the row numbers 0 or 1, 2, 3...
+            """
             try:
                 nums = [int(k) for k in keys]
                 nums_sorted = sorted(nums)
@@ -226,7 +259,14 @@ def _build_diff_keyed(
 
 
 def _build_diff(old_bytes, old_name, new_bytes, new_name) -> Tuple[str, str, str]:
-    """Return (diff_text, old_summary, new_summary)."""
+    """Return (diff_text, old_summary, new_summary).
+
+    :param old_bytes: content of the old workbook
+    :param old_name: file name of the old workbook, its extension selects the reader
+    :param new_bytes: content of the new workbook
+    :param new_name: file name of the new workbook
+    :return: ``(diff_text, old_summary, new_summary)``
+    """
     ext = ('.' + old_name.rsplit('.', 1)[-1].lower()) if '.' in old_name else '.xlsx'
     extract = _extract_xls if ext == '.xls' else _extract_xlsx
     old_lines, old_summary = extract(old_bytes)
@@ -263,6 +303,10 @@ def _build_diff(old_bytes, old_name, new_bytes, new_name) -> Tuple[str, str, str
 class ExcelProcessor(BaseProcessor):
 
     def __init__(self, method: str = 'standard') -> None:
+        """Stores the method: standard, structured or comparative.
+
+        :param method: method of the comparison
+        """
         self.method = method
 
     def build_messages(
@@ -273,6 +317,15 @@ class ExcelProcessor(BaseProcessor):
         new_name: str,
         system_prompt: str = '',
     ) -> ProcessResult:
+        """Message list of a cell-level comparison of two workbooks.
+
+        :param old_bytes: content of the old workbook
+        :param old_name: file name of the old workbook, its extension selects the reader
+        :param new_bytes: content of the new workbook
+        :param new_name: file name of the new workbook
+        :param system_prompt: system prompt of the comparative method; the other methods use their own
+        :return: the messages with their metadata
+        """
         if self.method == 'structured':
             sp = SYSTEM_PROMPT_STRUCTURED
         elif self.method == 'comparative':

@@ -68,6 +68,10 @@ def doc_to_text(doc_bytes: bytes, filename: str = 'document.doc') -> str | None:
     (pure Python, no system tools required).
 
     Returns the text string on success, or None if all methods fail.
+
+    :param doc_bytes: content of the .doc file
+    :param filename: file name, for the logs
+    :return: the text, or None when every method failed
     """
     if _antiword_available():
         result = _antiword_extract(doc_bytes, filename)
@@ -83,7 +87,12 @@ def doc_to_text(doc_bytes: bytes, filename: str = 'document.doc') -> str | None:
 
 
 def _antiword_extract(doc_bytes: bytes, filename: str) -> str | None:
-    """Call antiword subprocess to extract text."""
+    """Call antiword subprocess to extract text.
+
+    :param doc_bytes: content of the .doc file
+    :param filename: file name, for the logs
+    :return: the text, or None when antiword gives none
+    """
     with tempfile.NamedTemporaryFile(suffix='.doc', delete=False) as tmp:
         tmp.write(doc_bytes)
         tmp_path = tmp.name
@@ -120,6 +129,10 @@ def _olefile_extract(doc_bytes: bytes, filename: str) -> str | None:
     Opens the OLE2 compound document and reads text only from the
     'WordDocument', '1Table', and '0Table' streams — avoiding the noise
     from font/style/binary streams in the full file scan.
+
+    :param doc_bytes: content of the .doc file
+    :param filename: file name, for the logs
+    :return: the text runs joined by newlines, at most 400 of them; None when none is found
     """
     try:
         ole = olefile.OleFileIO(io.BytesIO(doc_bytes))
@@ -131,6 +144,10 @@ def _olefile_extract(doc_bytes: bytes, filename: str) -> str | None:
     results: list[str] = []
 
     def _scan_stream(stream_name: str) -> None:
+        """Adds the text runs of one OLE stream to the results, each run once.
+
+        :param stream_name: name of the OLE stream to read
+        """
         if not ole.exists(stream_name):
             return
         try:
@@ -166,7 +183,11 @@ def _olefile_extract(doc_bytes: bytes, filename: str) -> str | None:
 def docx_to_html_body(content: bytes) -> str:
     """Return mammoth's HTML body for a .docx — no page wrapper. Shared by
     the compare-tab preview endpoint and the Translate tab's side-by-side
-    before/after view."""
+    before/after view.
+
+    :param content: content of the .docx file
+    :return: the HTML body fragment, a placeholder paragraph when the document is empty
+    """
     with io.BytesIO(content) as f:
         result = mammoth.convert_to_html(f)
     return result.value or '<p class="empty">Document appears empty.</p>'
@@ -179,6 +200,10 @@ def pptx_to_slide_images(pptx_bytes: bytes, filename: str = 'presentation.pptx')
 
     Returns an ordered list of PNG bytes (one per slide), or an empty list
     if LibreOffice is unavailable or conversion fails.
+
+    :param pptx_bytes: content of the .pptx file
+    :param filename: file name; LibreOffice names its PNG files after it
+    :return: the PNG bytes of each slide, in slide order; empty when LibreOffice is unavailable or fails
     """
     lo = _libreoffice_cmd()
     if not lo:

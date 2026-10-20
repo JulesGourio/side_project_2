@@ -10,6 +10,9 @@ def get_credentials(request) -> tuple[str, str]:
     """(host, token): the environment first, then the SDK's own auth, then the caller's forwarded token.
 
     ``request`` is a Request or a WebSocket (anything with ``.headers``).
+
+    :param request: ``Request`` or ``WebSocket``, read for its headers
+    :return: ``(host, token)``, empty strings when none is found
     """
     host = os.environ.get('DATABRICKS_HOST', '').rstrip('/')
     if host and not host.startswith('http'):
