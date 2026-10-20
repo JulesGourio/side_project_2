@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Tuple, TypedDict
+from typing import Any, Tuple, TypedDict
 
 from fastapi import HTTPException, Request
 
@@ -146,11 +146,29 @@ def _live_caps_via_scim(token: str) -> dict:
     """
     from databricks.sdk import WorkspaceClient
     w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
-    me = w.current_user.me()
-    names = {g.display for g in (me.groups or []) if g.display}
+    return _caps_from_user(w.current_user.me())
+
+
+def _live_caps_via_app(user_id: str) -> dict:
+    """The visitor's groups read from SCIM by the app's own service principal; the visitor's token is not used.
+
+    :param user_id: numeric Databricks id of the visitor (the part of ``x-forwarded-user`` before ``@``)
+    :return: the capabilities from the visitor's groups
+    """
+    from databricks.sdk import WorkspaceClient
+    return _caps_from_user(WorkspaceClient().users.get(user_id))
+
+
+def _caps_from_user(user: Any) -> dict:
+    """Capabilities granted by the groups of a SCIM user.
+
+    :param user: SCIM user returned by the Databricks SDK (``groups``, ``user_name``, ``display_name``)
+    :return: ``{can_chat, can_compare, groups, email, display_name}``, ``groups`` being the allowed groups found
+    """
+    names = {g.display for g in (user.groups or []) if g.display}
     matched = names & (_CAPS_CHAT_GROUPS | _CAPS_COMPARE_GROUPS)
     return {'can_chat': bool(names & _CAPS_CHAT_GROUPS), 'can_compare': bool(names & _CAPS_COMPARE_GROUPS),
-            'groups': sorted(matched), 'email': me.user_name or '', 'display_name': me.display_name or ''}
+            'groups': sorted(matched), 'email': user.user_name or '', 'display_name': user.display_name or ''}
 
 
 async def _remember_identity(forwarded: str, email: str, display_name: str) -> None:
@@ -207,8 +225,9 @@ def _resolve_caps(token: str) -> Tuple[dict, str]:
 async def get_capabilities(request: Request) -> dict:
     """Resolve {can_chat, can_compare, groups} for the current user.
 
-    The visitor's own on-behalf-of token reads their groups, so the answer is live
-    and no job or table holds a copy of them. A check that shows no allowed group
+    The app's service principal reads the visitor's groups from SCIM; the visitor's own
+    token is tried only when that lookup fails. The answer is live and no job or table
+    holds a copy of the groups. A check that shows no allowed group
     denies. A check that cannot be made (no token, every source failing) grants
     everything and is not cached: the Databricks app permission already decides who
     reaches the app, the groups only narrow it.
@@ -231,16 +250,25 @@ async def get_capabilities(request: Request) -> dict:
     if hit and hit[0] > now:
         return hit[1]
 
-    obo_token = request.headers.get('x-forwarded-access-token', '').strip()
-    if not obo_token:
-        logger.warning('Capabilities %s: no on-behalf-of token — granting all (fail-open)', key)
-        return dict(_OPEN_CAPS)
+    caps: dict | None = None
+    source = 'APP'
+    user_id = forwarded.split('@', 1)[0]
+    if user_id.isdigit():
+        try:
+            caps = await asyncio.to_thread(_live_caps_via_app, user_id)
+        except Exception as e:
+            logger.warning('Capabilities %s: group lookup by the app failed (%s) — trying the visitor token', key, e)
 
-    try:
-        caps, source = await asyncio.to_thread(_resolve_caps, obo_token)
-    except Exception as e:
-        logger.warning('Capabilities %s: live group check failed (%s) — granting all (fail-open)', key, e)
-        return dict(_OPEN_CAPS)
+    if caps is None:
+        obo_token = request.headers.get('x-forwarded-access-token', '').strip()
+        if not obo_token:
+            logger.warning('Capabilities %s: no on-behalf-of token — granting all (fail-open)', key)
+            return dict(_OPEN_CAPS)
+        try:
+            caps, source = await asyncio.to_thread(_resolve_caps, obo_token)
+        except Exception as e:
+            logger.warning('Capabilities %s: live group check failed (%s) — granting all (fail-open)', key, e)
+            return dict(_OPEN_CAPS)
 
     email, display_name = caps.pop('email', ''), caps.pop('display_name', '')
     logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s) groups=%s', key, caps['can_chat'], caps['can_compare'],
