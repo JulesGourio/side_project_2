@@ -169,8 +169,10 @@ resources:
       description: "QualiBOT — document comparison and chat"
       source_code_path: .
       # On-behalf-of-user OAuth: the app checks the visitor's group membership itself (server/services/infra/user.py, active when CAPS_WAREHOUSE_ID is set).
+      # iam.current-user:read: groups read from SCIM /Me with the visitor's token (server/services/infra/user.py).
       user_api_scopes:
         - sql
+        - iam.current-user:read
       permissions:
         - group_name: "Role-Project-LEAP-CoreAdmin"
           level: CAN_MANAGE
