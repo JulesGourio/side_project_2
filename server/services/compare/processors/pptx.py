@@ -13,7 +13,7 @@ import io
 import logging
 from typing import Any, Dict, List, Tuple
 
-from server.services.compare.processors.text_diff import TextDiffProcessor
+from server.services.compare.processors.text_diff import Images, TextDiffProcessor
 from server.services.compare.processors._diff_engines import (
     dhash,
     hash16,
@@ -177,7 +177,7 @@ class PptxProcessor(TextDiffProcessor):
     page_label = 'Slide'
     warn_comparative = False
 
-    def extract(self, old_bytes, old_name, new_bytes, new_name):
+    def extract(self, old_bytes, old_name, new_bytes, new_name) -> Tuple[str, str, Images, Images]:
         """Slide text and images of the two presentations.
 
         :param old_bytes: content of the old presentation
@@ -190,7 +190,7 @@ class PptxProcessor(TextDiffProcessor):
         new_slides, new_imgs = _extract_pptx(new_bytes)
         return '\n'.join(old_slides), '\n'.join(new_slides), old_imgs, new_imgs
 
-    def paragraph_notes(self, filtered):
+    def paragraph_notes(self, filtered) -> str:
         """The note that opens the paragraph diff of a presentation.
 
         :param filtered: number of trivial entries the diff filtered out
@@ -200,7 +200,7 @@ class PptxProcessor(TextDiffProcessor):
                 'Similar text blocks shown as MODIFIED with ~~removed~~ and **added** words inline.\n'
                 'Each block tagged with its source slide.')
 
-    def comparative_notes(self, filtered):
+    def comparative_notes(self, filtered) -> str:
         """The note that opens the section diff of a presentation.
 
         :param filtered: number of trivial entries the diff filtered out

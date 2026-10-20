@@ -1,4 +1,4 @@
-"""Regression guard for the impact-search judge prompt's LANGUAGE contract.
+"""Guard for the impact-search judge prompt's LANGUAGE contract.
 
 A French document must get its "reason" in French: _SYNTHESIS_SYSTEM_PROMPT carries the language
 instruction that keeps a small model from answering in English, as SYSTEM_PROMPT_STANDARD does.

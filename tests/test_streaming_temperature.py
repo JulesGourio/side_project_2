@@ -1,4 +1,4 @@
-"""Regression guard for supports_temperature() endpoint coverage.
+"""Guard for supports_temperature() endpoint coverage.
 
 databricks-gpt-5-mini rejects temperature=0 with a 400 ("Only the default (1) value is supported"), like the
 gpt-5-6 family, so it must be in _NO_TEMPERATURE_RE.

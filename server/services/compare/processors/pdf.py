@@ -13,9 +13,9 @@ import io
 import logging
 import os
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
-from server.services.compare.processors.text_diff import TextDiffProcessor
+from server.services.compare.processors.text_diff import Images, TextDiffProcessor
 from server.services.compare.processors._diff_engines import (
     _IMG_MAX_DIM,
     _IMG_JPEG_QUALITY,
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # --- Fitz import helper ---
 
-def _import_fitz():
+def _import_fitz() -> Any:
     try:
         import pymupdf as fitz  # PyMuPDF >= 1.24
         return fitz
@@ -343,7 +343,7 @@ def _extract_and_hash_images(pdf_bytes: bytes) -> Dict[str, Dict[str, Any]]:
 class PDFProcessor(TextDiffProcessor):
     file_type = 'pdf'
 
-    def extract(self, old_bytes, old_name, new_bytes, new_name):
+    def extract(self, old_bytes, old_name, new_bytes, new_name) -> Tuple[str, str, Images, Images]:
         """Text and images of the two PDF files.
 
         :param old_bytes: content of the old PDF
@@ -355,7 +355,7 @@ class PDFProcessor(TextDiffProcessor):
         return (_extract_text_with_pages(old_bytes), _extract_text_with_pages(new_bytes),
                 _extract_and_hash_images(old_bytes), _extract_and_hash_images(new_bytes))
 
-    def paragraph_notes(self, filtered):
+    def paragraph_notes(self, filtered) -> str:
         """The note that opens the paragraph diff of a PDF.
 
         :param filtered: number of trivial entries the diff filtered out
@@ -367,7 +367,7 @@ class PDFProcessor(TextDiffProcessor):
                 'MODIFIED with ~~removed~~ and **added** words inline.\n'
                 'Each block tagged with its source page.')
 
-    def comparative_notes(self, filtered):
+    def comparative_notes(self, filtered) -> str:
         """The note that opens the section diff of a PDF.
 
         :param filtered: number of trivial entries the diff filtered out

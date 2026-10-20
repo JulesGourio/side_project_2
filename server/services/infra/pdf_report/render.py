@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from server.services.infra.pdf_report.common import (
     _FONT_FILES,
     ACCENT,
@@ -38,7 +40,7 @@ def _style(bold: bool, italic: bool) -> str:
     return ('B' if bold else '') + ('I' if italic else '')
 
 
-def _new_pdf(kind_label: str, title: str):
+def _new_pdf(kind_label: str, title: str) -> Any:
     """A PDF document with the running header, the footer and the fonts loaded.
 
     :param kind_label: label shown in the running header
@@ -48,7 +50,7 @@ def _new_pdf(kind_label: str, title: str):
     from fpdf import FPDF
 
     class _Report(FPDF):
-        def header(self):
+        def header(self) -> None:
             self.set_fill_color(*ACCENT)
             self.rect(0, 0, PAGE_W, 1.6, 'F')
             if self.page_no() == 1:
@@ -69,7 +71,7 @@ def _new_pdf(kind_label: str, title: str):
             self.set_line_width(0.2)
             self.line(MARGIN_X, 14.5, PAGE_W - MARGIN_X, 14.5)
 
-        def footer(self):
+        def footer(self) -> None:
             y = PAGE_H - 11
             self.set_draw_color(*RULE)
             self.set_line_width(0.2)

@@ -295,7 +295,7 @@ async def _stream_request(host: str, token: str, endpoint: str, messages: List[D
     """
     payload: Dict[str, Any] = {'messages': messages, 'max_tokens': max_tokens,
                                'stream': True, 'stream_options': {'include_usage': True}}
-    # The current Claude models take adaptive thinking steered by an effort level; a token budget is refused.
+    # Claude models take adaptive thinking steered by an effort level; a token budget is refused.
     if thinking:
         payload['thinking'] = {'type': 'adaptive'}
         payload['output_config'] = {'effort': THINKING_EFFORT}

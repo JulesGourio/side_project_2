@@ -1,4 +1,4 @@
-"""Regression guard for utils/deploy/target_env.json's per-target overrides.
+"""Guard for utils/deploy/target_env.json's per-target overrides.
 
 A target that omits its index override silently falls back to app.yaml's default index. Evals query
 the index by name, not through the app's env var, so only this guard sees the omission.

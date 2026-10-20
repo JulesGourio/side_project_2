@@ -50,7 +50,7 @@ def clean_for_language(text: str, answer: bool = False) -> str:
 
 
 @lru_cache(maxsize=1)
-def _fasttext_model():
+def _fasttext_model() -> Any:
     import fasttext
     fasttext.FastText.eprint = lambda *_a, **_kw: None  # silence the noisy stderr warning
     return fasttext.load_model(FASTTEXT_MODEL_PATH)
@@ -73,7 +73,7 @@ class TranslationContext:
         self.lang_name = lang_name
         self.needs_translation = needs_translation
         # Why the question step fell back to the original text ('' when it did not):
-        # saved as a warning of the chat turn (chat_turns / errors).
+        # saved as a warning of the chat turn (chat_turns, app_errors).
         self.error = error
         # Set by translate_answer_back: the answer was translated / why it was not.
         self.answer_translated = False

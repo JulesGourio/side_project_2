@@ -7,7 +7,7 @@ fill it as the turn runs. ``lakebase.store_chat_turn`` then writes it to three t
   durations of every step (``timings_ms``, columns ``<step>_ms``), the outcome and the issue codes;
 - ``chat_retrieved_chunks``: one row per passage retrieved (``passages``), handed to the LLM
   (``kept``) or set aside (``drop_reason``);
-- ``errors``: one row per issue of severity ``error`` or ``warning`` (``issues``), with its detail,
+- ``app_errors``: one row per issue of severity ``error`` or ``warning`` (``issues``), with its detail,
   its origin in the code (``path:line in function``) and the stack trace when there is one.
 
 Outcome (``status``): ``ok`` — answered, nothing went wrong; ``degraded`` — answered, but a step
@@ -24,7 +24,7 @@ from typing import Any, Dict, Iterator, List
 
 from server.services.infra import error_origin
 
-# Issues that are not failures of the app: kept in chat_turns.warnings, not written to errors.
+# Issues that are not failures of the app: kept in chat_turns.warnings, not written to app_errors.
 INFO = 'info'
 WARNING = 'warning'
 ERROR = 'error'
@@ -135,7 +135,7 @@ class TurnLog:
         self._add('failed', stage, message, ERROR, error_type, http_status, upstream,
                   {**(context or {}), **({'stack_trace': stack_trace[:4000]} if stack_trace else {})}, exc, origin)
 
-    def _add(self, code, stage, message, severity, error_type, http_status, upstream, context, exc, origin):
+    def _add(self, code, stage, message, severity, error_type, http_status, upstream, context, exc, origin) -> None:
         """Appends one issue to ``issues``, with the stack trace of ``exc`` when there is one.
 
         :param code: issue code

@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, Iterator, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +49,8 @@ _TOC_STYLE_RE = re.compile(r'^(?:TOC|TM)\s?\d', re.I)
 def _paragraph_text(p_elem) -> str:
     """Text of one w:p as displayed with every tracked change accepted.
 
-    python-docx's Paragraph.text only reads runs that are DIRECT children of the
-    paragraph (plus hyperlinks). Text inside a tracked insertion (w:ins), an
-    inline content control (w:sdt), a simple field (w:fldSimple) or a smart tag
-    was silently missing, so an edit made with track changes on (the normal
-    way a revision is prepared) was invisible to the comparison.
+    Reads runs at any depth: python-docx's Paragraph.text only reads direct runs and hyperlinks, and
+    misses tracked insertions, inline content controls, simple fields and smart tags.
 
     :param p_elem: ``w:p`` element
     :return: the text as displayed with tracked changes accepted, whitespace collapsed
@@ -92,7 +89,7 @@ def _is_toc_paragraph(p_elem) -> bool:
     return style is not None and bool(_TOC_STYLE_RE.match(style.get(_W_VAL, '')))
 
 
-def _iter_block_items(parent):
+def _iter_block_items(parent) -> Iterator:
     """Yield the w:p / w:tbl elements of a body, descending into block-level
     content controls (w:sdt) — cover pages, form sections and locked clauses
     live there, so they must not be skipped.

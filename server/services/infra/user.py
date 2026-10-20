@@ -153,8 +153,15 @@ def _live_caps_via_scim(token: str) -> dict:
 
 
 async def _remember_identity(forwarded: str, email: str, display_name: str) -> None:
-    """Records the visitor's email and name in `users`. Databricks Apps sends the visitor as a numeric id only, so without this
-    the table, and every report that reads it, has no email for them. Never raises."""
+    """Record the visitor's email and name in ``users``; reports read the email from there.
+
+    Databricks Apps sends the visitor as a numeric id only, so the email is not otherwise known.
+    Never raises.
+
+    :param forwarded: visitor id as sent by Databricks Apps, ``<user id>@<workspace id>``
+    :param email: e-mail of the visitor, ignored unless it contains ``@``
+    :param display_name: name of the visitor, stored as NULL when empty
+    """
     if not (forwarded and email and '@' in email) or _is_real_email(forwarded):
         return
     try:

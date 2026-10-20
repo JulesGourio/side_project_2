@@ -59,7 +59,7 @@ def _fix_mojibake(text: str) -> str:
     except (UnicodeDecodeError, UnicodeEncodeError):
         pass
 
-    def _fix_segment(match):
+    def _fix_segment(match) -> str:
         """Decodes one run of Latin-1 characters as UTF-8 when that is possible.
 
         :param match: match of a run of characters between U+0080 and U+00FF

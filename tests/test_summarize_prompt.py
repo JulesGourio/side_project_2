@@ -1,4 +1,4 @@
-"""Regression guard for the single-document summary prompts' LANGUAGE contract.
+"""Guard for the single-document summary prompts' LANGUAGE contract.
 
 _SUMMARY_SYSTEM_PROMPT and _SUMMARY_IMAGE_SYSTEM_PROMPT must carry the language instruction, so a French
 document is summarized in French, as SYSTEM_PROMPT_STANDARD does.

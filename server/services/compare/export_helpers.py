@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # --- JSON parsing ---
 
-def _parse_json_response(text: str):
+def _parse_json_response(text: str) -> list | None:
     """Robust JSON array parser — three fallback strategies.
 
     :param text: model reply that holds a JSON array
@@ -51,7 +51,8 @@ def _parse_json_response(text: str):
 
 # --- Image helpers ---
 
-def _make_composite_image(old_b64: str | None, new_b64: str | None, width: int = 200, height: int = 80):
+def _make_composite_image(old_b64: str | None, new_b64: str | None, width: int = 200,
+                          height: int = 80) -> io.BytesIO | None:
     """Return a BytesIO of a side-by-side OLD|NEW JPEG thumbnail, or None on failure.
 
     :param old_b64: base64 image of the old page, None when there is none
@@ -157,7 +158,7 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
         t = str(item.get('type', '') or '').lower()
         return any(kw in t for kw in _IMAGE_KEYWORDS)
 
-    def _row_page_int(item: dict):
+    def _row_page_int(item: dict) -> int | None:
         """First page number in the cell — used for image-pair matching (old page).
 
         :param item: diff item
@@ -167,7 +168,7 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
         m = re.search(r'\d+', raw)
         return int(m.group()) if m else None
 
-    def _row_page_new_int(item: dict):
+    def _row_page_new_int(item: dict) -> int | None:
         """Last page number in the cell — the NEW-document page for "old→new" entries.
         The report describes the new document, so rows are ordered by where the
         reader finds them there.
@@ -179,7 +180,7 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
         nums = re.findall(r'\d+', raw)
         return int(nums[-1]) if nums else None
 
-    def _section_tuple(item: dict):
+    def _section_tuple(item: dict) -> tuple | None:
         """Parse a dotted section number ("6.3.1" -> (6, 3, 1)) for stable
         secondary ordering. Returns None for named/unnumbered sections
         (TABLE OF CONTENTS, APPENDIX A, ...) so they sort after numbered ones
@@ -194,7 +195,7 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
 
     _BIG = 10 ** 9
 
-    def _page_sort_key(item):
+    def _page_sort_key(item) -> tuple:
         """Sort key of a row: new-document page first, then numbered section; unpaged rows go last.
 
         :param item: diff item
@@ -333,7 +334,7 @@ def _build_impact_excel_bytes(result: dict) -> bytes:
     docs = result.get('documents', [])
     wrap = Alignment(wrap_text=True, vertical='top')
 
-    def _sheet(ws, headers, widths, rows):
+    def _sheet(ws, headers, widths, rows) -> None:
         """Fills a worksheet: bold header, column widths, one row per (values, status), coloured by status.
 
         :param ws: openpyxl worksheet to fill
@@ -355,7 +356,7 @@ def _build_impact_excel_bytes(result: dict) -> bytes:
                     cell.fill = PatternFill('solid', fgColor=fill)
         ws.freeze_panes = 'A2'
 
-    def _change_detail(ids):
+    def _change_detail(ids) -> str:
         """The text of the changes with these ids, one per line.
 
         :param ids: change ids, e.g. ``C1``

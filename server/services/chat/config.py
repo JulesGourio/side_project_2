@@ -29,7 +29,7 @@ FASTTEXT_CONFIDENCE_THRESHOLD = 0.65
 NO_TRANSLATION_NEEDED = {'fr', 'en'}
 
 # An answer is only declared "in the wrong language" above this confidence: a false alarm
-# sends a correct answer through a translation it didn't need.
+# sends a correct answer through a translation it does not need.
 MISMATCH_CONFIDENCE_THRESHOLD = 0.8
 
 # English names of the languages met in Latécoère's sites (FR, CZ, BG, MX, BR) and a few

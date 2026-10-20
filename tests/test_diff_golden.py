@@ -1,4 +1,4 @@
-"""Golden-output regression tests for the text and image diff engines.
+"""Golden-output tests for the text and image diff engines.
 
 Inputs come from tests/diff_corpus.py; the expected outputs must stay byte-identical.
 """

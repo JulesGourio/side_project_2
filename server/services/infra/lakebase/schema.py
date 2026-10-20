@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import Any
 
 import asyncpg
 
@@ -21,10 +22,10 @@ async def _add_columns(conn, table: str, columns) -> None:
         await conn.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}')
 
 
-# Session folders of the former documents volume: <env>_landingzone/qualibot/doc_compare.
+# Volume paths rewritten by _move_legacy_volume_paths: session folders under <env>_landingzone/qualibot/doc_compare.
 LEGACY_VOLUME_PATTERN = r'^/Volumes/[^/]+_landingzone/qualibot/doc_compare'
 
-# Renamed tables, copied in dependency order (a feedback points to its message). The legacy tables are kept.
+# Source table -> current table, copied in dependency order (a feedback points to its message). Source tables are kept.
 LEGACY_TABLE_COPIES = (
     ('messages', 'compare_messages'),
     ('feedbacks', 'compare_feedbacks'),
@@ -32,17 +33,18 @@ LEGACY_TABLE_COPIES = (
 )
 
 
-# Column of a renamed table that points to a row of another one: (column, legacy parent, new parent).
+# Column of a copied table that points to a row of another one: (column, source parent, current parent).
 LEGACY_PARENT = {'compare_feedbacks': ('message_id', 'messages', 'compare_messages')}
 
 
 async def _carry_over_legacy_rows(conn) -> None:
-    """Copy the rows of the renamed tables into the new ones, ids kept so that a feedback still points to its message.
-    Only the legacy rows whose id is missing from the new table are copied, so a rerun adds nothing and the new table
-    may already hold rows of its own. Nothing is copied when a legacy id is already used there: the row would take the
-    place of another one's history. Once every message is copied, a feedback whose message was deleted before the
-    rename is copied without it. A copy that cannot be made is logged and the schema goes on; the legacy tables are
-    kept either way.
+    """Copy the rows of the source tables into the current ones, ids kept so a feedback still points to its message.
+
+    Only rows whose id is missing from the current table are copied, so a rerun adds nothing and the current table
+    may already hold rows of its own. Nothing is copied when a source id is already used there: the row would take
+    the place of another one. A feedback whose message is missing is copied without its link, unless some message
+    was not copied, in which case the feedbacks are not copied at all. A copy that cannot be made is logged and the
+    schema goes on; the source tables are kept either way.
 
     :param conn: database connection
     """
@@ -95,8 +97,8 @@ async def _carry_over_legacy_rows(conn) -> None:
 
 
 async def _move_legacy_volume_paths(conn) -> None:
-    """Rows copied from another environment point at its documents volume: move them under COMPARE_VOLUME_PATH.
-    Runs at every start, so rows copied by an earlier start are fixed too; it only touches the old paths.
+    """Rows copied from another environment point at that environment's documents volume: move them under
+    COMPARE_VOLUME_PATH. Runs at every start; it only touches paths matching LEGACY_VOLUME_PATTERN.
 
     :param conn: database connection
     """
@@ -121,7 +123,7 @@ class _OwnerTolerantConn:
         self._conn = conn
         self.skipped: list = []
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Any:
         """Forwards every other attribute to the wrapped connection.
 
         :param name: attribute name
@@ -129,7 +131,7 @@ class _OwnerTolerantConn:
         """
         return getattr(self._conn, name)
 
-    async def execute(self, query, *args):
+    async def execute(self, query, *args) -> Any:
         """Runs a statement; a privilege error is recorded in ``skipped`` and does not stop the caller.
 
         :param query: SQL statement
@@ -635,11 +637,11 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await _carry_over_legacy_rows(conn)
         await _move_legacy_volume_paths(conn)
 
-        # 1. Trim trailing whitespace and line breaks from emails.
+        # Trim trailing whitespace and line breaks from emails.
         await conn.execute("UPDATE users SET email = BTRIM(email) WHERE email ~ '\\s'")
         await conn.execute("UPDATE users SET email = NULL WHERE TRIM(COALESCE(email,'')) = ''")
 
-        # 3. Split composite user_ids (numeric@workspace) into separate columns for every table
+        # Split composite user_ids (numeric@workspace) into separate columns for every table.
         for table in ('users', 'compare_messages', 'compare_feedbacks',
                       'chat_sessions', 'chat_messages', 'chat_feedbacks'):
             try:

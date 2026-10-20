@@ -7,9 +7,9 @@ comparative: section canonical diff + section-grouped output.
 
 import logging
 import xml.etree.ElementTree as ET
-from typing import List
+from typing import List, Tuple
 
-from server.services.compare.processors.text_diff import TextDiffProcessor
+from server.services.compare.processors.text_diff import Images, TextDiffProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class XMLProcessor(TextDiffProcessor):
     warn_paragraph = False
     warn_comparative = False
 
-    def extract(self, old_bytes, old_name, new_bytes, new_name):
+    def extract(self, old_bytes, old_name, new_bytes, new_name) -> Tuple[str, str, Images, Images]:
         """Text of the two XML files; an XML file has no images.
 
         :param old_bytes: content of the old file
@@ -73,7 +73,7 @@ class XMLProcessor(TextDiffProcessor):
         """
         return '\n'.join(_extract_xml(old_bytes)), '\n'.join(_extract_xml(new_bytes)), {}, {}
 
-    def paragraph_notes(self, filtered):
+    def paragraph_notes(self, filtered) -> str:
         """The note that opens the paragraph diff of an XML file.
 
         :param filtered: number of trivial entries the diff filtered out
@@ -82,7 +82,7 @@ class XMLProcessor(TextDiffProcessor):
         return (f'Global paragraph alignment: {filtered} trivial lines filtered.\n'
                 'Similar elements shown as MODIFIED with ~~removed~~ and **added** words inline.')
 
-    def comparative_notes(self, filtered):
+    def comparative_notes(self, filtered) -> str:
         """The note that opens the section diff of an XML file.
 
         :param filtered: number of trivial entries the diff filtered out

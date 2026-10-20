@@ -1,4 +1,4 @@
-"""Copy of the rows of the tables renamed in the Lakebase refactor (server/services/infra/lakebase/schema.py)."""
+"""Fake connection for the legacy-table carry-over of the Lakebase schema (server/services/infra/lakebase/schema.py)."""
 import asyncio
 
 from server.services.infra.lakebase import schema

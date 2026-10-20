@@ -408,7 +408,7 @@ async def stream_answer(host: str, token: str, endpoints: List[str], messages: L
             raise
     released = False
 
-    def _release():
+    def _release() -> None:
         nonlocal released
         if sem is not None and not released:
             released = True

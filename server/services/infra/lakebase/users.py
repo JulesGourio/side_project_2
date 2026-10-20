@@ -10,13 +10,10 @@ async def upsert_user(
     workspace_url: str | None = None,
     display_name: str | None = None,
 ) -> None:
-    """Register (or update) an identity in the shared `users` table.
+    """Register (or update) an identity in the shared ``users`` table, for the compare and the chat flows alike.
 
-    Used by BOTH the document-comparison flow and the chat flow, so that every
-    identity that interacts with the app is registered exactly once — whether
-    the user compared a document or only chatted.  Without this, chat-only users
-    end up with a user_id in chat_sessions/chat_messages that has no matching
-    row in `users`.
+    Every identity that uses the app gets exactly one row, chat-only users included, so that the user ids of
+    chat sessions and messages always match a row.
 
     Deduplication key is the email (stable across workspaces); falls back to
     user_id when no email could be resolved.  Must run inside an existing
@@ -27,6 +24,7 @@ async def upsert_user(
     :param workspace_id: workspace id of the user, None when unknown
     :param email: email of the user, None when it could not be resolved
     :param workspace_url: URL of the user's workspace, None when unknown
+    :param display_name: name of the user, None when unknown; an existing name is kept when this is None
     """
     if not user_id:
         return

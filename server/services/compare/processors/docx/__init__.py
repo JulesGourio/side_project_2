@@ -5,15 +5,15 @@ structured:  paragraph semantic diff + strict JSON array output (for Excel expor
 comparative: section canonical diff + section-grouped output.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
-from server.services.compare.processors.text_diff import TextDiffProcessor
+from server.services.compare.processors.text_diff import Images, TextDiffProcessor
 from server.services.compare.processors.docx.extract import _extract_doc, _extract_docx
 
 __all__ = ['DocxProcessor', '_extract_doc', '_extract_docx']
 
 
-def _load_docx(old_bytes, old_name, new_bytes, new_name):
+def _load_docx(old_bytes, old_name, new_bytes, new_name) -> Tuple[str, str, Images, Images]:
     """Extract text and images from both documents, handling .doc fallback.
 
     :param old_bytes: content of the old file
@@ -40,7 +40,7 @@ def _load_docx(old_bytes, old_name, new_bytes, new_name):
 class DocxProcessor(TextDiffProcessor):
     file_type = 'docx'
 
-    def extract(self, old_bytes, old_name, new_bytes, new_name):
+    def extract(self, old_bytes, old_name, new_bytes, new_name) -> Tuple[str, str, Images, Images]:
         """Text and images of the two DOCX files.
 
         :param old_bytes: content of the old file
@@ -51,7 +51,7 @@ class DocxProcessor(TextDiffProcessor):
         """
         return _load_docx(old_bytes, old_name, new_bytes, new_name)
 
-    def paragraph_notes(self, filtered):
+    def paragraph_notes(self, filtered) -> str:
         """The note that opens the paragraph diff of a DOCX file.
 
         :param filtered: number of trivial entries the diff filtered out
@@ -61,7 +61,7 @@ class DocxProcessor(TextDiffProcessor):
                 'Similar paragraphs shown as MODIFIED with ~~removed~~ and **added** words inline.\n'
                 'Image page numbers are estimated from content flow (same estimate as the text [Page N] tags).')
 
-    def comparative_notes(self, filtered):
+    def comparative_notes(self, filtered) -> str:
         """The note that opens the section diff of a DOCX file.
 
         :param filtered: number of trivial entries the diff filtered out
