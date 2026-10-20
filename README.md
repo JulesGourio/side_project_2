@@ -96,14 +96,15 @@ the visitor (on-behalf-of-user token), whether the visitor belongs to one of the
 | Comparison | `Role-Project-LEAP-End-users-Qualibot-DocCompare`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
 | Chat | `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
 
-The check asks `is_account_group_member()` for each group, with that token, on the warehouse set in
-`CAPS_WAREHOUSE_ID` (the visitor needs `CAN_USE` on it). It sees account-level groups and membership
-through another group. The SCIM `Me` endpoint answers when no warehouse is set or the warehouse check
-fails; it only lists the groups attached to the workspace and the direct memberships. The result is
-cached for `CAPS_TTL_S` seconds (600 by default). When the check shows no allowed group, access is
-denied. When it cannot be made (no token, every source failing, or the warehouse failing while SCIM
-shows no allowed group), both features are granted, because the Databricks app permission already filters who
-reaches the app; this is logged as a warning and not cached. `CAPS_BYPASS=true` opens both
+The check joins two sources. The `users` table holds the groups written by the task
+`sync_user_capabilities` of the Lakebase export job, from the account audit log
+(`system.access.audit`): it is the only source for `Qualibot-ChatBot` and `Qualibot-DocCompare`,
+which are account-level groups not attached to the workspaces. The SCIM `Me` endpoint, read with
+the visitor's token, gives the groups attached to the workspace (`CoreDev`, `CoreAdmin`). The result
+is cached for `CAPS_TTL_S` seconds (600 by default). When no allowed group is found in either source,
+both features are granted, because the Databricks app permission already filters who reaches the
+app and a visitor who is in a group only through another group appears in neither source; this is
+logged as a warning. `CAPS_BYPASS=true` opens both
 features to every visitor; it is set on the DEV target only. In development (`ENV=development`),
 a request without the identity header is accepted.
 

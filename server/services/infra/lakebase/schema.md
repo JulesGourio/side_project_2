@@ -460,6 +460,9 @@ Indexes: `idx_errors_created_at` (`created_at`), `idx_errors_trace_id` (`trace_i
 | `workspace_url` | TEXT | workspace address |
 | `role` | TEXT NOT NULL, default `user` | role |
 | `is_active` | BOOLEAN NOT NULL, default `TRUE` | active account |
+| `groups` | TEXT[] NOT NULL, default `{}` | allowed groups of the user, written by the job task `sync_user_capabilities` from `system.access.audit` |
+| `can_chat`, `can_compare` | BOOLEAN NOT NULL, default `TRUE` | capabilities derived from `groups` by the same task (for reading; the app derives them itself) |
+| `groups_synced_at` | TIMESTAMPTZ | last write of `groups` by the task; NULL = never computed, the access check ignores the row |
 
 Unique index: `users_email_idx` (`email`, where it is not NULL).
 

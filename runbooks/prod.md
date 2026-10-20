@@ -107,7 +107,7 @@ databricks bundle deploy -t prod --profile qualibot-prod
 
 Le job `D_1_Qualibot_Lakebase_Export_To_Volume` (clé `lakebase_export`) est créé sur PROD avec son planning en `PAUSED` : il exporte Lakebase vers `prod_proj.qualibot.staging` puis charge les tables en Delta dans `prod_proj.qualibot`. Un premier lancement à la main (`databricks bundle run lakebase_export -t prod --profile qualibot-prod`) et un accord écrit avant de reprendre le planning.
 
-Après déploiement : jobs MLflow de la cible, puis vérification du chat et de la comparaison sur l'URL de l'app prod, et des logs de l'app (absence de `live group check failed`).
+Après déploiement : jobs MLflow de la cible, puis vérification du chat et de la comparaison sur l'URL de l'app prod, et des logs de l'app (lignes `Capabilities …` ; le SP prod doit avoir SELECT sur `system.access.audit` pour la tâche `sync_user_capabilities` du job Lakebase).
 
 ```powershell
 databricks bundle run -t prod create_chat_experiment_prod --profile qualibot-prod

@@ -4,6 +4,8 @@
 # The job is declared once at the root. The targets at the end only override run_as: the DEV service principal is the
 # default, and the UAT and PROD targets run as their own service principal. The schedule is lakebase_export_schedule_pause,
 # the Delta load is lakebase_import_to_delta (off on DEV, whose schema holds Delta copies of the UAT tables).
+# The task sync_user_capabilities runs alongside: it writes the visitors' groups to users, read by the app's access
+# check; the job identity needs SELECT on system.access.audit.
 
 resources:
   jobs:
@@ -61,6 +63,18 @@ resources:
               SCHEMA: "qualibot"
               VOLUME_NAME: "staging"
               ENABLED: ${var.lakebase_import_to_delta}
+          environment_key: default
+        - task_key: sync_user_capabilities
+          description: "Group membership of the visitors (system.access.audit) -> users.groups / can_chat / can_compare, read by the app"
+          notebook_task:
+            notebook_path: ../utils/lakebase_sync/sync_user_capabilities_job.py
+            source: WORKSPACE
+            base_parameters:
+              LAKEBASE_PROJECT_ID: "qualibot"
+              LAKEBASE_BRANCH: "production"
+              LAKEBASE_ENDPOINT: "primary"
+              LAKEBASE_DATABASE: "doccompare"
+              DRY_RUN: "false"
           environment_key: default
       environments:
         - environment_key: default

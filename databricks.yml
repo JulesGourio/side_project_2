@@ -168,7 +168,7 @@ resources:
       name: ${var.app_name}
       description: "QualiBOT — document comparison and chat"
       source_code_path: .
-      # On-behalf-of-user OAuth: the app checks the visitor's group membership itself (server/services/infra/user.py, active when CAPS_WAREHOUSE_ID is set).
+      # On-behalf-of-user OAuth: the app reads the visitor's workspace groups from SCIM /Me with their token (server/services/infra/user.py).
       user_api_scopes:
         - sql
       permissions:

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Tuple, TypedDict
+from typing import TypedDict
 
 from fastapi import HTTPException, Request
 
@@ -21,11 +21,10 @@ _dev_user_cache: str | None = None
 _CAPS_TTL_S = int(os.getenv('CAPS_TTL_S', '600'))
 _caps_cache: dict[str, tuple[float, dict]] = {}
 
-# Group check on behalf of the visitor, the only source of capabilities: the visitor's own groups from SCIM, then
-# is_account_group_member() on this warehouse when SCIM fails or shows no group (the visitor then needs CAN_USE on it).
-_CAPS_WAREHOUSE_ID = os.getenv('CAPS_WAREHOUSE_ID', '').strip()
+# Allowed groups per feature; the sync job (utils/lakebase_sync/user_capabilities.py) tracks the same sets.
 _CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
+_CAPS_ALL_GROUPS = _CAPS_CHAT_GROUPS | _CAPS_COMPARE_GROUPS
 
 # DEV only: CAPS_BYPASS=true grants chat and compare to every visitor.
 # tests/test_deploy_config.py guards that it never reaches uat or prod.
@@ -113,44 +112,52 @@ async def get_user_identity(request: Request) -> UserIdentity:
 _OPEN_CAPS = {'can_chat': True, 'can_compare': True, 'groups': []}
 
 
-def _live_caps_via_sql(token: str) -> dict:
-    """is_account_group_member() for each allowed group, run on behalf of the visitor.
+def _caps_from_groups(groups: set[str]) -> dict:
+    """Capabilities granted by a set of group names.
 
-    It sees account-level groups and nested membership, which SCIM /Me does not list.
-
-    :param token: access token of the visitor
-    :return: the capabilities, ``groups`` being the allowed groups the visitor belongs to
+    :param groups: names of the groups the visitor belongs to, any group included
+    :return: ``{can_chat, can_compare, groups}``, ``groups`` being the allowed groups found, sorted
     """
-    from databricks.sdk import WorkspaceClient
-    groups = sorted(_CAPS_CHAT_GROUPS | _CAPS_COMPARE_GROUPS)
-    # auth_type='pat' forces token-only auth: the app's ambient OAuth env vars (DATABRICKS_CLIENT_ID/SECRET) would clash with
-    # the explicit user token ('more than one authorization method configured').
-    w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
-    resp = w.statement_execution.execute_statement(
-        warehouse_id=_CAPS_WAREHOUSE_ID,
-        statement='SELECT ' + ', '.join(f"is_account_group_member('{g}')" for g in groups),
-        wait_timeout='30s',
-    )
-    if resp.status.state.value != 'SUCCEEDED':
-        raise RuntimeError(f'statement did not succeed: {resp.status}')
-    matched = {g for g, v in zip(groups, resp.result.data_array[0]) if v == 'true'}
+    matched = groups & _CAPS_ALL_GROUPS
     return {'can_chat': bool(matched & _CAPS_CHAT_GROUPS), 'can_compare': bool(matched & _CAPS_COMPARE_GROUPS),
             'groups': sorted(matched)}
 
 
-def _live_caps_via_scim(token: str) -> dict:
-    """The visitor's groups from SCIM /Me with their own token: no warehouse permission and no SQL scope needed.
+def _scim_identity(token: str) -> tuple[set[str], str, str]:
+    """The visitor's groups, e-mail and name from SCIM /Me with their own token.
+
+    SCIM lists only the groups attached to the workspace; the account-level groups come from the users table.
 
     :param token: access token of the visitor
-    :return: the capabilities from the visitor's groups
+    :return: ``(group names, email, display name)``, the last two empty when unknown
     """
     from databricks.sdk import WorkspaceClient
+    # auth_type='pat' forces token-only auth: the app's ambient OAuth env vars (DATABRICKS_CLIENT_ID/SECRET) would clash with
+    # the explicit user token ('more than one authorization method configured').
     w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
     me = w.current_user.me()
-    names = {g.display for g in (me.groups or []) if g.display}
-    matched = names & (_CAPS_CHAT_GROUPS | _CAPS_COMPARE_GROUPS)
-    return {'can_chat': bool(names & _CAPS_CHAT_GROUPS), 'can_compare': bool(names & _CAPS_COMPARE_GROUPS),
-            'groups': sorted(matched), 'email': me.user_name or '', 'display_name': me.display_name or ''}
+    return {g.display for g in (me.groups or []) if g.display}, me.user_name or '', me.display_name or ''
+
+
+async def _stored_groups(user_id: str, email: str) -> set[str] | None:
+    """Groups written to ``users`` by the sync job for the visitor, matched on user id or e-mail.
+
+    :param user_id: numeric Databricks id of the visitor
+    :param email: e-mail of the visitor, empty when unknown
+    :return: the stored groups, or None when the job never computed them or Lakebase is unavailable
+    """
+    from server.services.infra import lakebase
+    pool = lakebase.get_pool()
+    if not pool:
+        return None
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            'SELECT groups FROM users WHERE groups_synced_at IS NOT NULL AND (user_id = $1 OR email = $2)',
+            user_id, email or None,
+        )
+    if not rows:
+        return None
+    return {g for row in rows for g in (row['groups'] or [])}
 
 
 async def _remember_identity(forwarded: str, email: str, display_name: str) -> None:
@@ -178,37 +185,13 @@ async def _remember_identity(forwarded: str, email: str, display_name: str) -> N
         logger.warning('Identity of %s not recorded: %s', forwarded, e)
 
 
-def _resolve_caps(token: str) -> Tuple[dict, str]:
-    """(capabilities, source). The warehouse check when a warehouse is set, SCIM when it is not or when it fails.
-
-    Raises when no source could answer, or when the warehouse check failed and SCIM shows no allowed group: SCIM cannot
-    see account-level or nested groups, so that answer is not a refusal.
-
-    :param token: access token of the visitor
-    :return: ``(capabilities, source)``, the source being ``SQL`` or ``SCIM``
-    """
-    sql_error: Exception | None = None
-    if _CAPS_WAREHOUSE_ID:
-        try:
-            return _live_caps_via_sql(token), 'SQL'
-        except Exception as e:
-            sql_error = e
-            logger.warning('Capabilities: warehouse check failed (%s) — trying SCIM', e)
-    scim = _live_caps_via_scim(token)
-    if sql_error is not None and not (scim['can_chat'] or scim['can_compare']):
-        raise RuntimeError(f'SCIM shows no allowed group and the warehouse check failed ({sql_error})')
-    return scim, 'SCIM'
-
-
 async def get_capabilities(request: Request) -> dict:
     """Resolve {can_chat, can_compare, groups} for the current user.
 
-    The visitor's own on-behalf-of token asks is_account_group_member() on the warehouse
-    (SCIM /Me when no warehouse is set or the warehouse fails), so the answer is live
-    and no job or table holds a copy of them. A check that shows no allowed group
-    denies. A check that cannot be made (no token, every source failing) grants
-    everything and is not cached: the Databricks app permission already decides who
-    reaches the app, the groups only narrow it.
+    The groups are the union of the users table, written by the sync job from the account audit log (account-level
+    groups), and SCIM /Me on the visitor's own token (groups attached to the workspace). No allowed group found grants
+    everything: the Databricks app permission already decides who reaches the app, the groups only narrow it, and a
+    visitor in a group only through another group is in neither source. The result is cached for CAPS_TTL_S.
 
     CAPS_BYPASS=true short-circuits and grants everything (DEV only).
 
@@ -228,22 +211,38 @@ async def get_capabilities(request: Request) -> dict:
     if hit and hit[0] > now:
         return hit[1]
 
-    obo_token = request.headers.get('x-forwarded-access-token', '').strip()
-    if not obo_token:
-        logger.warning('Capabilities %s: no on-behalf-of token — granting all (fail-open)', key)
-        return dict(_OPEN_CAPS)
-
+    header_email = request.headers.get('x-forwarded-email', '').strip()
+    groups: set[str] = set()
+    sources: list[str] = []
     try:
-        caps, source = await asyncio.to_thread(_resolve_caps, obo_token)
+        stored = await _stored_groups(forwarded.split('@', 1)[0], header_email)
     except Exception as e:
-        logger.warning('Capabilities %s: live group check failed (%s) — granting all (fail-open)', key, e)
-        return dict(_OPEN_CAPS)
+        stored = None
+        logger.warning('Capabilities %s: users table not read (%s)', key, e)
+    if stored is not None:
+        groups |= stored
+        sources.append('TABLE')
 
-    email, display_name = caps.pop('email', ''), caps.pop('display_name', '')
-    logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s) groups=%s', key, caps['can_chat'], caps['can_compare'],
-                source, caps['groups'])
+    email = display_name = ''
+    obo_token = request.headers.get('x-forwarded-access-token', '').strip()
+    if obo_token:
+        try:
+            scim_groups, email, display_name = await asyncio.to_thread(_scim_identity, obo_token)
+            groups |= scim_groups
+            sources.append('SCIM')
+        except Exception as e:
+            logger.info('Capabilities %s: SCIM not read (%s)', key, e)
+
+    caps = _caps_from_groups(groups)
+    if caps['groups']:
+        logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s) groups=%s', key, caps['can_chat'],
+                    caps['can_compare'], '+'.join(sources), caps['groups'])
+    else:
+        caps = dict(_OPEN_CAPS)
+        logger.warning('Capabilities %s: no allowed group found (%s) — granting all (fail-open)', key,
+                       '+'.join(sources) or 'no source')
     _caps_cache[key] = (now + _CAPS_TTL_S, caps)
-    await _remember_identity(forwarded, email, display_name)
+    await _remember_identity(forwarded, email or header_email, display_name)
     return caps
 
 

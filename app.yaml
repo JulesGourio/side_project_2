@@ -69,10 +69,6 @@ env:
   # How long can_chat / can_compare stay cached per user.
   - name: CAPS_TTL_S
     value: "600"
-  # SQL warehouse for the is_account_group_member() check run on behalf of the visitor (server/services/infra/user.py).
-  # Required on every target except DEV, which bypasses the check. Set per target in utils/deploy/target_env.json.
-  - name: CAPS_WAREHOUSE_ID
-    value: ""
   # "true" skips the group check: every visitor gets chat + compare. DEV only, via utils/deploy/target_env.json.
   - name: CAPS_BYPASS
     value: "false"

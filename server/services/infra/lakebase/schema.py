@@ -456,8 +456,13 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             )
         ''')
         # Columns added to existing tables (idempotent).
+        # Group membership written by the sync_user_capabilities job task, read by the access check (user.py).
         await _add_columns(conn, 'users', [
             ('workspace_id', 'TEXT'),
+            ('can_chat', 'BOOLEAN NOT NULL DEFAULT TRUE'),
+            ('can_compare', 'BOOLEAN NOT NULL DEFAULT TRUE'),
+            ('groups', "TEXT[] NOT NULL DEFAULT '{}'"),
+            ('groups_synced_at', 'TIMESTAMPTZ'),
         ])
 
         # (deduplication and unique index applied after data migrations below)

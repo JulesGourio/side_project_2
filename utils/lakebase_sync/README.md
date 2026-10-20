@@ -13,6 +13,8 @@ One-shot migrations and one-off table copies are run by hand and never deployed.
 |---|---|---|
 | `export_lakebase_to_volume_job.py` | Notebook: one table becomes one JSON Lines file in the staging volume. Parameters: project, branch, endpoint, database, output volume, tables to skip | Task `export_lakebase_to_volume` of `lakebase_export` (every target) |
 | `import_lakebase_tables_to_delta_job.py` | Notebook: loads every table of the staging folder (chat, compare, impact search, users, caches, request logs, errors) into a Delta table of the same name in `<env>_proj.qualibot`. Does nothing when its `ENABLED` parameter is not `true` | Task `import_lakebase_tables_to_delta` of `lakebase_export`, after the export |
+| `sync_user_capabilities_job.py` | Notebook: reads the latest add/remove event per (visitor, tracked group) in `system.access.audit` and writes `groups`, `can_chat`, `can_compare` and `groups_synced_at` to `users`; the app's access check reads them. For each (visitor, group) the audit wins; pairs older than the audit's retention keep the stored value. `DRY_RUN=true` only logs the result. The job identity needs SELECT on `system.access.audit` | Task `sync_user_capabilities` of `lakebase_export`, alongside the export |
+| `user_capabilities.py` | Module of that notebook: tracked groups, audit query, merge and write | Imported by `sync_user_capabilities_job.py` |
 | `export_lakebase_to_json.py` | CLI: exports every table of a database to JSON Lines | Bitbucket step "Sync prod data (1/2)" |
 | `import_lakebase_from_json.py` | CLI: imports these files into a database | Bitbucket step "Sync prod data (2/2)" |
 

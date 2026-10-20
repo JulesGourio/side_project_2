@@ -454,98 +454,102 @@ def _caps_request(token='obo-token'):
     return SimpleNamespace(headers=headers)
 
 
-def test_get_capabilities_reads_the_visitors_groups_without_a_warehouse():
-    """The groups come from SCIM on the visitor's own token; no warehouse is needed."""
+_CHATBOT = 'Role-Project-LEAP-End-users-Qualibot-ChatBot'
+_DOCCOMPARE = 'Role-Project-LEAP-End-users-Qualibot-DocCompare'
+_COREDEV = 'Role-Project-LEAP-CoreDev'
+
+
+def _run_caps(stored=None, scim=None, request=None):
+    """get_capabilities with the users table returning ``stored`` and SCIM returning ``scim`` (an exception raises)."""
     import asyncio
 
     from server.services.infra import user as user_mod
 
     user_mod._caps_cache.clear()
-    scim = {'can_chat': True, 'can_compare': False, 'groups': []}
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''), \
-         patch.object(user_mod, '_live_caps_via_scim', return_value=scim) as live:
-        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
-    assert caps['can_chat'] is True and caps['can_compare'] is False
-    live.assert_called_once_with('obo-token')
+    table = AsyncMock(side_effect=stored) if isinstance(stored, Exception) else AsyncMock(return_value=stored)
+    scim_mock = patch.object(user_mod, '_scim_identity', side_effect=scim) if isinstance(scim, Exception) else \
+        patch.object(user_mod, '_scim_identity', return_value=scim or (set(), '', ''))
+    with patch.object(user_mod, '_stored_groups', table), scim_mock, \
+         patch.object(user_mod, '_remember_identity', AsyncMock()):
+        return asyncio.run(user_mod.get_capabilities(request or _caps_request()))
+
+
+def test_account_groups_come_from_the_users_table():
+    """ChatBot / DocCompare are account groups SCIM does not list: the table written by the sync job carries them."""
+    caps = _run_caps(stored={_DOCCOMPARE}, scim=({'users'}, '', ''))
+    assert caps == {'can_chat': False, 'can_compare': True, 'groups': [_DOCCOMPARE]}
+
+
+def test_table_and_scim_groups_are_joined():
+    caps = _run_caps(stored={_CHATBOT}, scim=({_COREDEV}, '', ''))
+    assert caps['can_chat'] and caps['can_compare'] and caps['groups'] == [_COREDEV, _CHATBOT]
+
+
+def test_workspace_groups_from_scim_are_enough_without_a_table_row():
+    caps = _run_caps(stored=None, scim=({_COREDEV, 'users'}, '', ''))
+    assert caps == {'can_chat': True, 'can_compare': True, 'groups': [_COREDEV]}
+
+
+def test_no_allowed_group_found_grants_all_and_is_cached():
+    """A visitor in a group only through another group is in neither source: the app permission already filters."""
+    from server.services.infra import user as user_mod
+
+    for stored, scim in ((None, ({'users'}, '', '')), (set(), RuntimeError('Unauthorized access to Org')),
+                         (RuntimeError('lakebase down'), RuntimeError('unauthorized'))):
+        caps = _run_caps(stored=stored, scim=scim)
+        assert caps['can_chat'] and caps['can_compare']
+        assert 'visitor@example.com' in user_mod._caps_cache
     user_mod._caps_cache.clear()
 
 
-def test_scim_groups_are_matched_by_name():
+def test_no_token_still_reads_the_table():
+    caps = _run_caps(stored={_CHATBOT}, request=_caps_request(token=''))
+    assert caps == {'can_chat': True, 'can_compare': False, 'groups': [_CHATBOT]}
+
+
+def test_scim_identity_reads_groups_email_and_name():
     from types import SimpleNamespace
 
     from server.services.infra import user as user_mod
 
-    groups = [SimpleNamespace(display='Role-Project-LEAP-End-users-Qualibot-ChatBot'), SimpleNamespace(display='other')]
+    groups = [SimpleNamespace(display=_COREDEV), SimpleNamespace(display='other')]
     me = SimpleNamespace(groups=groups, user_name='jane.doe@example.com', display_name='Jane Doe')
     client = SimpleNamespace(current_user=SimpleNamespace(me=lambda: me))
     with patch('databricks.sdk.WorkspaceClient', return_value=client), \
          patch.object(user_mod, 'get_workspace_url', return_value='https://h'):
-        caps = user_mod._live_caps_via_scim('obo-token')
-    assert caps['can_chat'] is True and caps['can_compare'] is False
-    assert caps['email'] == 'jane.doe@example.com' and caps['display_name'] == 'Jane Doe'
+        assert user_mod._scim_identity('obo-token') == ({_COREDEV, 'other'}, 'jane.doe@example.com', 'Jane Doe')
 
 
-def test_get_capabilities_asks_the_warehouse_when_scim_shows_no_group():
-    """A visitor SCIM does not show in an allowed group (group not assigned to the workspace) gets a second opinion."""
+def test_stored_groups_ignore_rows_the_job_never_computed():
     import asyncio
 
+    from server.services.infra import lakebase
     from server.services.infra import user as user_mod
 
-    user_mod._caps_cache.clear()
-    none = {'can_chat': False, 'can_compare': False, 'groups': []}
-    sql = {'can_chat': True, 'can_compare': True, 'groups': []}
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'), \
-         patch.object(user_mod, '_live_caps_via_scim', return_value=none), \
-         patch.object(user_mod, '_live_caps_via_sql', return_value=sql):
-        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
-    assert caps['can_chat'] is True and caps['can_compare'] is True
-    user_mod._caps_cache.clear()
+    queries = []
 
+    class _Conn:
+        async def fetch(self, query, *args):
+            queries.append((' '.join(query.split()), args))
+            return [{'groups': [_CHATBOT]}] if args[0] == '12345' else []
 
-def test_get_capabilities_denies_when_the_check_shows_no_allowed_group():
-    import asyncio
+    class _Pool:
+        def acquire(self):
+            class _Ctx:
+                async def __aenter__(self_inner):
+                    return _Conn()
 
-    from server.services.infra import user as user_mod
+                async def __aexit__(self_inner, *exc):
+                    return False
+            return _Ctx()
 
-    user_mod._caps_cache.clear()
-    none = {'can_chat': False, 'can_compare': False, 'groups': []}
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''), patch.object(user_mod, '_live_caps_via_scim', return_value=none):
-        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
-    assert not (caps['can_chat'] or caps['can_compare'])
-    assert 'visitor@example.com' in user_mod._caps_cache
-    user_mod._caps_cache.clear()
-
-    # A warehouse that fails does not overturn a SCIM answer that was obtained.
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'), patch.object(user_mod, '_live_caps_via_scim', return_value=none), \
-         patch.object(user_mod, '_live_caps_via_sql', side_effect=RuntimeError('warehouse down')):
-        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
-    assert not (caps['can_chat'] or caps['can_compare'])
-    user_mod._caps_cache.clear()
-
-
-def test_get_capabilities_grants_all_when_the_check_cannot_be_made():
-    """No token or every source failing grants everything (the app permission already filters), and is not cached."""
-    import asyncio
-
-    from server.services.infra import user as user_mod
-
-    user_mod._caps_cache.clear()
-    caps = asyncio.run(user_mod.get_capabilities(_caps_request(token='')))
-    assert caps['can_chat'] and caps['can_compare']
-
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''), \
-         patch.object(user_mod, '_live_caps_via_scim', side_effect=RuntimeError('unauthorized')):
-        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
-    assert caps['can_chat'] and caps['can_compare']
-
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', 'wh'), \
-         patch.object(user_mod, '_live_caps_via_scim', side_effect=RuntimeError('unauthorized')), \
-         patch.object(user_mod, '_live_caps_via_sql', side_effect=RuntimeError('warehouse down')):
-        caps = asyncio.run(user_mod.get_capabilities(_caps_request()))
-    assert caps['can_chat'] and caps['can_compare']
-    assert 'visitor@example.com' not in user_mod._caps_cache
-
-    user_mod._caps_cache.clear()
+    with patch.object(lakebase, 'get_pool', return_value=_Pool()):
+        assert asyncio.run(user_mod._stored_groups('12345', 'jane.doe@example.com')) == {_CHATBOT}
+        assert asyncio.run(user_mod._stored_groups('999', '')) is None
+    assert 'groups_synced_at IS NOT NULL' in queries[0][0]
+    assert queries[1][1] == ('999', None)
+    with patch.object(lakebase, 'get_pool', return_value=None):
+        assert asyncio.run(user_mod._stored_groups('12345', '')) is None
 
 
 def test_chat_route_returns_403_without_capability(client):
@@ -572,27 +576,33 @@ def test_access_check_fails_closed_when_env_is_unset(monkeypatch):
     assert user._is_dev() is False
 
 
-def test_visitor_email_and_name_are_recorded_from_scim():
-    """Databricks Apps sends a numeric id only: the email and name come from SCIM /Me and go to `users`, once per cache window."""
+def test_visitor_email_and_name_are_recorded_once_per_cache_window():
+    """Databricks Apps sends a numeric id: the email and name come from SCIM /Me, else from x-forwarded-email."""
     import asyncio
 
     from server.services.infra import user as user_mod
 
-    user_mod._caps_cache.clear()
-    scim = {'can_chat': True, 'can_compare': True, 'groups': [], 'email': 'jane.doe@example.com', 'display_name': 'Jane Doe'}
     req = _caps_request()
     req.headers['x-forwarded-user'] = '12345@678'
-    seen = []
+    cases = (
+        (({_COREDEV}, 'jane.doe@example.com', 'Jane Doe'), ('12345@678', 'jane.doe@example.com', 'Jane Doe')),
+        (RuntimeError('unauthorized'), ('12345@678', 'header@example.com', '')),
+    )
+    for scim, expected in cases:
+        user_mod._caps_cache.clear()
+        req.headers['x-forwarded-email'] = 'header@example.com'
+        seen = []
 
-    async def fake_remember(forwarded, email, display_name):
-        seen.append((forwarded, email, display_name))
+        async def fake_remember(forwarded, email, display_name):
+            seen.append((forwarded, email, display_name))
 
-    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''), patch.object(user_mod, '_live_caps_via_scim', return_value=scim), \
-         patch.object(user_mod, '_remember_identity', fake_remember):
-        caps = asyncio.run(user_mod.get_capabilities(req))
-        asyncio.run(user_mod.get_capabilities(req))
-    assert seen == [('12345@678', 'jane.doe@example.com', 'Jane Doe')]
-    assert 'email' not in caps and 'display_name' not in caps
+        scim_mock = patch.object(user_mod, '_scim_identity', side_effect=scim) if isinstance(scim, Exception) else \
+            patch.object(user_mod, '_scim_identity', return_value=scim)
+        with patch.object(user_mod, '_stored_groups', AsyncMock(return_value={_CHATBOT})), scim_mock, \
+             patch.object(user_mod, '_remember_identity', fake_remember):
+            asyncio.run(user_mod.get_capabilities(req))
+            asyncio.run(user_mod.get_capabilities(req))
+        assert seen == [expected]
     user_mod._caps_cache.clear()
 
 

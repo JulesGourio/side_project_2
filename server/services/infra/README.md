@@ -22,12 +22,11 @@ Parent: [services](../README.md).
 
 ## Rules
 
-- A check that shows no allowed group denies. A check that cannot be made (no token, the warehouse and SCIM both
-  failing, or the warehouse failing while SCIM shows no allowed group) grants everything and is not cached: the
-  Databricks app permission already decides who reaches the app. The groups come from `is_account_group_member()` on
-  `CAPS_WAREHOUSE_ID` with the visitor's token, which sees account-level and nested groups; SCIM `Me` (groups attached
-  to the workspace, direct membership only) answers when no warehouse is set or the warehouse fails. No table holds the
-  groups.
+- The groups are the union of `users.groups` (rows with `groups_synced_at` set, written by the sync job task
+  `utils/lakebase_sync/sync_user_capabilities_job.py` from the account audit log; the only source for the account-level
+  groups) and SCIM `Me` on the visitor's token (groups attached to the workspace). No allowed group found grants
+  everything: the Databricks app permission already decides who reaches the app, and a visitor in a group only through
+  another group is in neither source. The result, open or not, is cached for `CAPS_TTL_S`.
   The group names are the constants of `user.py`.
 - `CAPS_BYPASS=true` grants both capabilities to every visitor. `tests/test_deploy_config.py` keeps it off outside DEV.
 - When `ENV` is unset, `_is_dev()` is true. A request without an `x-forwarded-user` header then gets both capabilities,

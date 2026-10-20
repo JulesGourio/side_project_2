@@ -178,23 +178,51 @@ Le job de scoring `score_chat_traces_uat` reste en pause ; son premier lancement
 
 Puis l'app pointe sur `uat_proj.qualibot.chunks_index` (`utils/deploy/target_env.json`). Vérifier le chat et la comparaison d'impact sur l'URL de l'app.
 
-**0.8 — Suppression des jobs de synchronisation des droits (user capabilities)**
+**0.8 — Droits par groupe : tâche `sync_user_capabilities` du job Lakebase**
 
-Le code ne déclare plus de job de synchronisation des droits. Un job de ce type peut encore exister dans le workspace UAT : le lister, puis le supprimer.
+Les groupes `Qualibot-ChatBot` et `Qualibot-DocCompare` sont des groupes du compte, non rattachés aux workspaces : SCIM ne les voit pas, et les visiteurs ne peuvent pas avoir `CAN_USE` sur un entrepôt SQL. La tâche `sync_user_capabilities` du job `D_1_Qualibot_Lakebase_Export_To_Volume` lit `system.access.audit` et écrit `groups`, `can_chat`, `can_compare`, `groups_synced_at` dans `users`. L'app joint ces groupes à ceux de SCIM (CoreDev, CoreAdmin). Aucun groupe autorisé trouvé = accès complet (fail-open). **Les colonnes `can_chat`, `can_compare`, `groups` de `users` sont utilisées : ne jamais les supprimer.**
+
+1. Ancien job autonome de synchronisation, s'il existe encore : le lister puis le supprimer (le nouveau est une tâche du job Lakebase).
 
 ```powershell
 databricks jobs list --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.settings.name -match "Sync_User_Capabilities|sync-user-capabilities" } | ForEach-Object { "$($_.job_id) $($_.settings.name)" }
 ```
 
-Pour chaque `job_id` affiché : `databricks jobs delete <JOB_ID> --profile UAT` (supprime le job, pas de données).
+Pour chaque `job_id` affiché : `databricks jobs delete <JOB_ID> --profile UAT`.
 
-Ce DROP ne se lance qu'après le contrôle de 0.7 : chat et comparaison d'impact validés, logs de l'app sans `live group check failed`. Puis, dans l'éditeur SQL de la base Lakebase `doccompare` (projet `qualibot`, branche `production`), une fois que `uat` n'utilise plus les colonnes :
+2. Droit de lecture du journal pour le SP UAT (`3e5cd4e5-f765-4760-b974-ee7715258b39`) : à faire par un admin du metastore (ni l'utilisateur ni le SP ne peuvent le donner).
 
 ```sql
-ALTER TABLE users DROP COLUMN IF EXISTS can_chat, DROP COLUMN IF EXISTS can_compare, DROP COLUMN IF EXISTS groups;
+GRANT USE CATALOG ON CATALOG system TO `3e5cd4e5-f765-4760-b974-ee7715258b39`;
+GRANT USE SCHEMA ON SCHEMA system.access TO `3e5cd4e5-f765-4760-b974-ee7715258b39`;
+GRANT SELECT ON TABLE system.access.audit TO `3e5cd4e5-f765-4760-b974-ee7715258b39`;
 ```
 
-Les droits sont vérifiés à chaque requête par l'app (`is_account_group_member()` avec le token du visiteur). Après le déploiement, vérifier dans les logs de l'app l'absence de `live group check failed`.
+3. Bitbucket → Pipelines → Run pipeline → branche `claude/sharp-mayer-uqwx8x` → pipeline `deploy-uat` (jobs et app). Attendre qu'il soit vert.
+
+4. Simulation (rien n'est écrit), puis lecture du résultat dans la sortie de la tâche (une ligne par personne : `chat=… compare=… groups=[…]`) :
+
+```powershell
+databricks bundle run -t uat lakebase_export --profile UAT --only sync_user_capabilities --notebook-params DRY_RUN=true
+```
+
+5. Écriture réelle :
+
+```powershell
+databricks bundle run -t uat lakebase_export --profile UAT --only sync_user_capabilities
+```
+
+6. Contrôle, dans l'éditeur SQL de la base Lakebase `doccompare` (projet `qualibot`, branche `production`) :
+
+```sql
+SELECT email, can_chat, can_compare, groups, groups_synced_at FROM users WHERE groups_synced_at IS NOT NULL ORDER BY email;
+```
+
+7. Logs de l'app après une visite : `Capabilities …: … (TABLE+SCIM) groups=[…]`.
+
+```powershell
+databricks apps logs qualibot --profile UAT | Select-String "Capabilities"
+```
 
 **0.9 — Suppression de la cible de test `qualibot-uat-test` (tout doit disparaître) — fait, confirmé le 2026-10-15**
 
