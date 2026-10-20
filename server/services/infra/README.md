@@ -22,10 +22,12 @@ Parent: [services](../README.md).
 
 ## Rules
 
-- A check that shows no allowed group denies. A check that cannot be made (no token, SCIM and the warehouse both
-  failing) grants everything and is not cached: the Databricks app permission already decides who reaches the app. The
-  groups come from SCIM `Me` with the visitor's token (no warehouse permission needed); `is_account_group_member()` on
-  `CAPS_WAREHOUSE_ID` is only the second opinion when SCIM fails or shows no allowed group. No table holds the groups.
+- A check that shows no allowed group denies. A check that cannot be made (no token, the warehouse and SCIM both
+  failing, or the warehouse failing while SCIM shows no allowed group) grants everything and is not cached: the
+  Databricks app permission already decides who reaches the app. The groups come from `is_account_group_member()` on
+  `CAPS_WAREHOUSE_ID` with the visitor's token, which sees account-level and nested groups; SCIM `Me` (groups attached
+  to the workspace, direct membership only) answers when no warehouse is set or the warehouse fails. No table holds the
+  groups.
   The group names are the constants of `user.py`.
 - `CAPS_BYPASS=true` grants both capabilities to every visitor. `tests/test_deploy_config.py` keeps it off outside DEV.
 - When `ENV` is unset, `_is_dev()` is true. A request without an `x-forwarded-user` header then gets both capabilities,

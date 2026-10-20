@@ -113,29 +113,29 @@ async def get_user_identity(request: Request) -> UserIdentity:
 _OPEN_CAPS = {'can_chat': True, 'can_compare': True, 'groups': []}
 
 
-def _live_caps_via_sql(token: str) -> dict | None:
-    """is_account_group_member() on behalf of the requesting user. None = not usable, caller should fall back.
+def _live_caps_via_sql(token: str) -> dict:
+    """is_account_group_member() for each allowed group, run on behalf of the visitor.
+
+    It sees account-level groups and nested membership, which SCIM /Me does not list.
 
     :param token: access token of the visitor
-    :return: the capabilities, or None when the warehouse check is not configured
+    :return: the capabilities, ``groups`` being the allowed groups the visitor belongs to
     """
-    if not _CAPS_WAREHOUSE_ID:
-        return None
     from databricks.sdk import WorkspaceClient
-    chat_expr = ' OR '.join(f"is_account_group_member('{g}')" for g in _CAPS_CHAT_GROUPS)
-    compare_expr = ' OR '.join(f"is_account_group_member('{g}')" for g in _CAPS_COMPARE_GROUPS)
+    groups = sorted(_CAPS_CHAT_GROUPS | _CAPS_COMPARE_GROUPS)
     # auth_type='pat' forces token-only auth: the app's ambient OAuth env vars (DATABRICKS_CLIENT_ID/SECRET) would clash with
     # the explicit user token ('more than one authorization method configured').
     w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
     resp = w.statement_execution.execute_statement(
         warehouse_id=_CAPS_WAREHOUSE_ID,
-        statement=f'SELECT ({chat_expr}) AS can_chat, ({compare_expr}) AS can_compare',
+        statement='SELECT ' + ', '.join(f"is_account_group_member('{g}')" for g in groups),
         wait_timeout='30s',
     )
     if resp.status.state.value != 'SUCCEEDED':
         raise RuntimeError(f'statement did not succeed: {resp.status}')
-    row = resp.result.data_array[0]
-    return {'can_chat': row[0] == 'true', 'can_compare': row[1] == 'true', 'groups': []}
+    matched = {g for g, v in zip(groups, resp.result.data_array[0]) if v == 'true'}
+    return {'can_chat': bool(matched & _CAPS_CHAT_GROUPS), 'can_compare': bool(matched & _CAPS_COMPARE_GROUPS),
+            'groups': sorted(matched)}
 
 
 def _live_caps_via_scim(token: str) -> dict:
@@ -179,35 +179,32 @@ async def _remember_identity(forwarded: str, email: str, display_name: str) -> N
 
 
 def _resolve_caps(token: str) -> Tuple[dict, str]:
-    """(capabilities, source). SCIM first; the warehouse check only when SCIM fails or grants nothing, and a
-    warehouse is set. Raises when no source could answer.
+    """(capabilities, source). The warehouse check when a warehouse is set, SCIM when it is not or when it fails.
+
+    Raises when no source could answer, or when the warehouse check failed and SCIM shows no allowed group: SCIM cannot
+    see account-level or nested groups, so that answer is not a refusal.
 
     :param token: access token of the visitor
-    :return: ``(capabilities, source)``, the source being ``SCIM`` or ``SQL``
+    :return: ``(capabilities, source)``, the source being ``SQL`` or ``SCIM``
     """
-    scim: dict | None = None
-    try:
-        scim = _live_caps_via_scim(token)
-    except Exception as e:
-        if not _CAPS_WAREHOUSE_ID:
-            raise
-        logger.warning('Capabilities: SCIM group lookup failed (%s) — trying the warehouse', e)
-    if scim and (scim['can_chat'] or scim['can_compare']):
-        return scim, 'SCIM'
+    sql_error: Exception | None = None
     if _CAPS_WAREHOUSE_ID:
         try:
             return _live_caps_via_sql(token), 'SQL'
         except Exception as e:
-            if scim is None:
-                raise
-            logger.warning('Capabilities: SCIM shows no allowed group and the warehouse check failed (%s)', e)
+            sql_error = e
+            logger.warning('Capabilities: warehouse check failed (%s) — trying SCIM', e)
+    scim = _live_caps_via_scim(token)
+    if sql_error is not None and not (scim['can_chat'] or scim['can_compare']):
+        raise RuntimeError(f'SCIM shows no allowed group and the warehouse check failed ({sql_error})')
     return scim, 'SCIM'
 
 
 async def get_capabilities(request: Request) -> dict:
     """Resolve {can_chat, can_compare, groups} for the current user.
 
-    The visitor's own on-behalf-of token reads their groups, so the answer is live
+    The visitor's own on-behalf-of token asks is_account_group_member() on the warehouse
+    (SCIM /Me when no warehouse is set or the warehouse fails), so the answer is live
     and no job or table holds a copy of them. A check that shows no allowed group
     denies. A check that cannot be made (no token, every source failing) grants
     everything and is not cached: the Databricks app permission already decides who

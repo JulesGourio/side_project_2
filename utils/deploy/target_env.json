@@ -5,7 +5,7 @@
     "CHAT_INDEX": "dev_proj.qualibot.chunks_index",
     "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/dev_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
     "COMPARE_IMPACT_INDEX": "dev_proj.qualibot.chunks_index",
-    "CAPS_WAREHOUSE_ID": "",
+    "CAPS_WAREHOUSE_ID": "13eff4a6095513cb",
     "CAPS_BYPASS": "false",
     "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_traces",
     "CHAT_REWRITE_ENDPOINT": "databricks-gemini-3-1-flash-lite",

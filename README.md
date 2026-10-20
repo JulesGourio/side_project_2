@@ -96,12 +96,13 @@ the visitor (on-behalf-of-user token), whether the visitor belongs to one of the
 | Comparison | `Role-Project-LEAP-End-users-Qualibot-DocCompare`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
 | Chat | `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
 
-The check reads the visitor's own groups from the SCIM `Me` endpoint with that token, which needs
-no permission on a warehouse. When SCIM fails or shows no allowed group, and `CAPS_WAREHOUSE_ID` is set,
-`is_account_group_member()` is asked on that warehouse as a second opinion (the visitor then needs
-`CAN_USE` on it). The result is cached for `CAPS_TTL_S` seconds (600 by default). When the check
-shows no allowed group, access is denied. When it cannot be made at all (no token, every source
-failing), both features are granted, because the Databricks app permission already filters who
+The check asks `is_account_group_member()` for each group, with that token, on the warehouse set in
+`CAPS_WAREHOUSE_ID` (the visitor needs `CAN_USE` on it). It sees account-level groups and membership
+through another group. The SCIM `Me` endpoint answers when no warehouse is set or the warehouse check
+fails; it only lists the groups attached to the workspace and the direct memberships. The result is
+cached for `CAPS_TTL_S` seconds (600 by default). When the check shows no allowed group, access is
+denied. When it cannot be made (no token, every source failing, or the warehouse failing while SCIM
+shows no allowed group), both features are granted, because the Databricks app permission already filters who
 reaches the app; this is logged as a warning and not cached. `CAPS_BYPASS=true` opens both
 features to every visitor; it is set on the DEV target only. In development (`ENV=development`),
 a request without the identity header is accepted.
