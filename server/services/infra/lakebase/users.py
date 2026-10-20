@@ -8,6 +8,7 @@ async def upsert_user(
     workspace_id: str | None = None,
     email: str | None = None,
     workspace_url: str | None = None,
+    display_name: str | None = None,
 ) -> None:
     """Register (or update) an identity in the shared `users` table.
 
@@ -32,22 +33,23 @@ async def upsert_user(
     if email:
         # A user_id known without an email gets its email now: the upsert below would otherwise conflict on user_id.
         await conn.execute(
-            'UPDATE users SET email = $2, updated_at = NOW()'
+            'UPDATE users SET email = $2, display_name = COALESCE($3, display_name), updated_at = NOW()'
             ' WHERE user_id = $1 AND email IS NULL',
-            user_id, email,
+            user_id, email, display_name,
         )
         # Upsert on email — handles cross-workspace dedup (same person, new workspace)
         await conn.execute(
             '''
-            INSERT INTO users (user_id, workspace_id, email, workspace_url)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO users (user_id, workspace_id, email, workspace_url, display_name)
+            VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (email) WHERE email IS NOT NULL DO UPDATE SET
                 user_id       = EXCLUDED.user_id,
                 workspace_id  = EXCLUDED.workspace_id,
                 workspace_url = COALESCE(EXCLUDED.workspace_url, users.workspace_url),
+                display_name  = COALESCE(EXCLUDED.display_name, users.display_name),
                 updated_at    = NOW()
             ''',
-            user_id, workspace_id, email, workspace_url,
+            user_id, workspace_id, email, workspace_url, display_name,
         )
     else:
         # No email resolved — fall back to user_id deduplication

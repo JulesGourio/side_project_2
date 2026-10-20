@@ -507,6 +507,36 @@ databricks bundle run -t dev register_chat_prompts_dev --profile DEV
 
   PROD : même chose le moment venu, avec le SP des jobs `b82d3b5a-b633-4738-8dde-68bb2142cb02`, l'entrepôt `03054ddc44b7f902` et le SP de l'app PROD.
 
+- [ ] **Q14. Utilisateurs « Unknown » dans les rapports.** Databricks Apps envoie le visiteur sous la forme `<identifiant numérique>@<workspace>`, jamais son adresse. La table Lakebase `users` n'avait donc d'adresse que pour les identités déjà connues ; c'est le job de synchronisation des droits, supprimé, qui la remplissait. Un rapport qui affiche l'adresse ou le nom montre « Unknown » pour toutes les autres. Correction en deux temps :
+
+  1. **Dorénavant** (code `get_capabilities`, avec `deploy-uat`) : la lecture des groupes par SCIM renvoie aussi l'adresse et le nom du visiteur, enregistrés dans `users` à sa première requête puis toutes les 10 minutes (`CAPS_TTL_S`). Un identifiant déjà connu sans adresse la reçoit. Les visiteurs qui reviennent sont donc corrigés seuls.
+  2. **Les identités qui ne reviennent pas** : une fois, par une personne qui peut lire les utilisateurs du workspace (administrateur : `databricks users list` est refusé aux autres). Vérifier d'abord que l'identifiant de `users` est celui de SCIM (éditeur SQL Lakebase, base `doccompare`, puis `databricks users get <user_id>` pour un des identifiants renvoyés) :
+
+```sql
+SELECT user_id, workspace_id FROM users WHERE email IS NULL LIMIT 3;
+```
+
+```powershell
+databricks users get <user_id> --profile UAT
+```
+
+  Si le nom renvoyé est le bon, produire le script (les noms avec une apostrophe sont protégés, une adresse déjà présente sur une autre ligne n'est pas dupliquée) :
+
+```powershell
+databricks users list --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.userName -like '*@*' } | ForEach-Object {
+  $e = $_.userName.Replace("'", "''"); $n = "$($_.displayName)".Replace("'", "''")
+  "UPDATE users SET email = '$e', display_name = NULLIF('$n', ''), updated_at = NOW() WHERE user_id = '$($_.id)' AND email IS NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.email = '$e');"
+} | Set-Content backfill_users.sql -Encoding utf8
+```
+
+  Coller `backfill_users.sql` dans l'éditeur SQL Lakebase (compte propriétaire de `users`), puis contrôler :
+
+```sql
+SELECT COUNT(*) AS total, COUNT(email) AS avec_email, COUNT(*) - COUNT(email) AS sans_email FROM users;
+```
+
+  3. **Les rapports lisent une copie Delta** : `users` n'est copiée en Delta que depuis que le job d'export charge toutes les tables (`runbooks/uat_bascule.md` Q12). Lancer le job pour rafraîchir la copie : `databricks bundle run lakebase_export -t qualibot-uat --profile UAT`.
+
 Les alertes (S10) restent en pause et le nettoyage (D1, D2) attend un accord écrit.
 
 ## Phase S — bascule de l'app (accord écrit requis, moment calme recommandé)

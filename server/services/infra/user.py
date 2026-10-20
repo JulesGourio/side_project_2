@@ -146,8 +146,28 @@ def _live_caps_via_scim(token: str) -> dict:
     """
     from databricks.sdk import WorkspaceClient
     w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
-    names = {g.display for g in (w.current_user.me().groups or []) if g.display}
-    return {'can_chat': bool(names & _CAPS_CHAT_GROUPS), 'can_compare': bool(names & _CAPS_COMPARE_GROUPS), 'groups': []}
+    me = w.current_user.me()
+    names = {g.display for g in (me.groups or []) if g.display}
+    return {'can_chat': bool(names & _CAPS_CHAT_GROUPS), 'can_compare': bool(names & _CAPS_COMPARE_GROUPS), 'groups': [],
+            'email': me.user_name or '', 'display_name': me.display_name or ''}
+
+
+async def _remember_identity(forwarded: str, email: str, display_name: str) -> None:
+    """Records the visitor's email and name in `users`. Databricks Apps sends the visitor as a numeric id only, so without this
+    the table, and every report that reads it, has no email for them. Never raises."""
+    if not (forwarded and email and '@' in email) or _is_real_email(forwarded):
+        return
+    try:
+        from server.services.infra import lakebase
+        pool = lakebase.get_pool()
+        if not pool:
+            return
+        user_id, _, workspace_id = forwarded.partition('@')
+        async with pool.acquire() as conn:
+            await lakebase.upsert_user(conn, user_id=user_id, workspace_id=workspace_id or None, email=email,
+                                       display_name=display_name or None)
+    except Exception as e:  # noqa: BLE001 — a report column, never worth a failed request
+        logger.warning('Identity of %s not recorded: %s', forwarded, e)
 
 
 def _resolve_caps(token: str) -> Tuple[dict, str]:
@@ -214,8 +234,10 @@ async def get_capabilities(request: Request) -> dict:
         logger.warning('Capabilities %s: live group check failed (%s) — granting all (fail-open)', key, e)
         return dict(_OPEN_CAPS)
 
+    email, display_name = caps.pop('email', ''), caps.pop('display_name', '')
     logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s)', key, caps['can_chat'], caps['can_compare'], source)
     _caps_cache[key] = (now + _CAPS_TTL_S, caps)
+    await _remember_identity(forwarded, email, display_name)
     return caps
 
 

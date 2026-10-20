@@ -476,12 +476,13 @@ def test_scim_groups_are_matched_by_name():
     from server.services.infra import user as user_mod
 
     groups = [SimpleNamespace(display='Role-Project-LEAP-End-users-Qualibot-ChatBot'), SimpleNamespace(display='other')]
-    me = SimpleNamespace(groups=groups)
+    me = SimpleNamespace(groups=groups, user_name='jane.doe@example.com', display_name='Jane Doe')
     client = SimpleNamespace(current_user=SimpleNamespace(me=lambda: me))
     with patch('databricks.sdk.WorkspaceClient', return_value=client), \
          patch.object(user_mod, 'get_workspace_url', return_value='https://h'):
         caps = user_mod._live_caps_via_scim('obo-token')
     assert caps['can_chat'] is True and caps['can_compare'] is False
+    assert caps['email'] == 'jane.doe@example.com' and caps['display_name'] == 'Jane Doe'
 
 
 def test_get_capabilities_asks_the_warehouse_when_scim_shows_no_group():
@@ -569,3 +570,59 @@ def test_access_check_fails_closed_when_env_is_unset(monkeypatch):
     from server.services.infra import user
     monkeypatch.delenv('ENV', raising=False)
     assert user._is_dev() is False
+
+
+def test_visitor_email_and_name_are_recorded_from_scim():
+    """Databricks Apps sends a numeric id only: the email and name come from SCIM /Me and go to `users`, once per cache window."""
+    import asyncio
+
+    from server.services.infra import user as user_mod
+
+    user_mod._caps_cache.clear()
+    scim = {'can_chat': True, 'can_compare': True, 'groups': [], 'email': 'jane.doe@example.com', 'display_name': 'Jane Doe'}
+    req = _caps_request()
+    req.headers['x-forwarded-user'] = '12345@678'
+    seen = []
+
+    async def fake_remember(forwarded, email, display_name):
+        seen.append((forwarded, email, display_name))
+
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''), patch.object(user_mod, '_live_caps_via_scim', return_value=scim), \
+         patch.object(user_mod, '_remember_identity', fake_remember):
+        caps = asyncio.run(user_mod.get_capabilities(req))
+        asyncio.run(user_mod.get_capabilities(req))
+    assert seen == [('12345@678', 'jane.doe@example.com', 'Jane Doe')]
+    assert 'email' not in caps and 'display_name' not in caps
+    user_mod._caps_cache.clear()
+
+
+def test_identity_is_upserted_with_the_numeric_id_and_the_workspace():
+    import asyncio
+    from types import SimpleNamespace
+
+    from server.services.infra import lakebase
+    from server.services.infra import user as user_mod
+
+    calls = []
+
+    class _Conn:
+        pass
+
+    class _Pool:
+        def acquire(self):
+            class _Ctx:
+                async def __aenter__(self_inner):
+                    return _Conn()
+
+                async def __aexit__(self_inner, *exc):
+                    return False
+            return _Ctx()
+
+    async def fake_upsert(conn, **kw):
+        calls.append(kw)
+
+    with patch.object(lakebase, 'get_pool', return_value=_Pool()), patch.object(lakebase, 'upsert_user', fake_upsert):
+        asyncio.run(user_mod._remember_identity('12345@678', 'jane.doe@example.com', 'Jane Doe'))
+        asyncio.run(user_mod._remember_identity('someone@example.com', 'jane.doe@example.com', 'Jane Doe'))   # already an email: nothing
+        asyncio.run(user_mod._remember_identity('12345@678', '', ''))                                         # nothing resolved: nothing
+    assert calls == [{'user_id': '12345', 'workspace_id': '678', 'email': 'jane.doe@example.com', 'display_name': 'Jane Doe'}]
