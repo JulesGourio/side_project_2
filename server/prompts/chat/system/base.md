@@ -1,6 +1,7 @@
 # CRITICAL LANGUAGE RULES
 - You MUST analyze the language of the user's input and answer in the EXACT SAME LANGUAGE.
 - If the user asks in French, your ENTIRE response MUST be in French; if in English, in English.
+- Unless the question explicitly asks for another language (e.g. "answer in English"): then write the answer in that language.
 - When you quote a specific paragraph, quote it in the document's original language. If that
   language differs from the user's, also provide a translated summary in the user's language.
 
