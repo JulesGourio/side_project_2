@@ -178,7 +178,7 @@ Le job de scoring `score_chat_traces_uat` reste en pause ; son premier lancement
 
 Puis l'app pointe sur `uat_proj.qualibot.chunks_index` (`utils/deploy/target_env.json`). Vérifier le chat et la comparaison d'impact sur l'URL de l'app.
 
-**0.8 — Droits par groupe : tâche `sync_user_capabilities` du job Lakebase**
+**0.8 — Droits par groupe : tâche `sync_user_capabilities` du job Lakebase — fait, confirmé le 2026-10-20**
 
 Les groupes `Qualibot-ChatBot` et `Qualibot-DocCompare` sont des groupes du compte, non rattachés aux workspaces : SCIM ne les voit pas, et les visiteurs ne peuvent pas avoir `CAN_USE` sur un entrepôt SQL. La tâche `sync_user_capabilities` du job `D_1_Qualibot_Lakebase_Export_To_Volume` lit `system.access.audit` et écrit `groups`, `can_chat`, `can_compare`, `groups_synced_at` dans `users`. L'app joint ces groupes à ceux de SCIM (CoreDev, CoreAdmin). Aucun groupe autorisé trouvé = accès complet (fail-open). **Les colonnes `can_chat`, `can_compare`, `groups` de `users` sont utilisées : ne jamais les supprimer.**
 
@@ -234,6 +234,8 @@ SELECT tablename, tableowner FROM pg_tables WHERE schemaname = 'public' ORDER BY
 ```
 
 Puis redémarrage de l'app ; ses logs ne doivent plus contenir `statement(s) skipped`.
+
+Résultat le 2026-10-20 : refusé (`must be able to SET ROLE "ed8abb86-e0db-423b-8f35-5cda58e89b80"`), le propriétaire n'est pas membre du rôle de l'app. Les tables restent à leur propriétaire : une colonne ajoutée par le code et sautée au démarrage (log `statement(s) skipped`) s'ajoute à la main par lui, avec le `ALTER TABLE … ADD COLUMN IF NOT EXISTS` du schéma.
 
 ```powershell
 databricks apps logs qualibot --profile UAT | Select-String "Capabilities"
