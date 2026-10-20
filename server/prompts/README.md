@@ -16,8 +16,7 @@ uses the prompts is in [services/chat/engine](../services/chat/engine/README.md)
 | `chat/system/is.md` | `system_is` | `engine/config.py` (`prompt_parts`) | Division `IS` |
 | `chat/rewrite.md` | `rewrite` | `engine/queries.py` (`REWRITE_PROMPT`) | The bilingual search rewrite: follow-up messages and other or unsure languages |
 | `chat/translate_query.md` | `translate_query` | `engine/queries.py` (`translate_query`) | An opening message in French or English, when `CHAT_TRANSLATE_ONLY` is on |
-| `chat/language_reminder.md` | `language_reminder` | `engine/answer.py` (`LANGUAGE_REMINDER`) | Appended to the last user message when the answer language is not known |
-| `chat/language_reminder_named.md` | `language_reminder_named` | `engine/answer.py` (`NAMED_LANGUAGE_REMINDER`) | Appended when the answer language is known |
+| `chat/language_reminder.md` | `language_reminder` | `engine/answer.py` (`LANGUAGE_REMINDER`) | Appended to the last user message: the answer language, or the language of the question when it is not known |
 
 ## How they are read
 
@@ -28,7 +27,7 @@ uses the prompts is in [services/chat/engine](../services/chat/engine/README.md)
 
 ## Rules
 
-- The only placeholder is `{language}`, in `translate_query.md` and `language_reminder_named.md`. The code fills it: a
+- The only placeholder is `{language}`, in `translate_query.md` and `language_reminder.md`. The code fills it: a
   replacement in `translate_query`, a `format` call for the reminder. Any other brace in these files would break a call.
 - A prompt is edited in its file only. A trace links a registered prompt version only when the file's hash equals the
   registered hash. After an edit, the registration job runs again (`utils/evaluation/register_chat_prompts.py`).

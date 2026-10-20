@@ -345,15 +345,18 @@ def test_prompt_rules_and_language(monkeypatch):
     system = m['prompt'][0]['content']
     assert system.startswith(engine.load_instructions('ALL')[:200])
     assert '# Answering rules' in system and '# How to cite (mandatory)' in system and 'quote it exactly' in system
-    assert m['prompt'][-1]['content'].endswith('write your whole answer in Spanish, the language of the question above '
-                                               '(not the language of the documents).')
+    assert m['prompt'][-1]['content'].endswith('write your whole answer in Spanish (not the language of the documents). '
+                                               'If the question explicitly asks for another language, write the answer '
+                                               'in that language instead.')
     assert '[1] Document QP-1518 (division AS)\npassage 1\n\npassage 2' in m['prompt'][-1]['content']
     assert m['chain'][0] == 'databricks-gpt-6-luna'
 
 
 def test_generic_language_reminder_without_language(monkeypatch):
     _, m = _run(monkeypatch)
-    assert m['prompt'][-1]['content'].endswith(engine.LANGUAGE_REMINDER)
+    assert m['prompt'][-1]['content'].endswith('write your whole answer in the language of the question above '
+                                               '(not the language of the documents). If the question explicitly asks '
+                                               'for another language, write the answer in that language instead.')
 
 
 def test_history_markers_stripped_and_date_kept_out_of_search(monkeypatch):

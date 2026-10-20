@@ -23,14 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 LANGUAGE_REMINDER = prompts.read('language_reminder')
-NAMED_LANGUAGE_REMINDER = prompts.read('language_reminder_named')
 
 
 # --- Prompt and answer ---
 
 def with_language_reminder(messages: List[Dict[str, str]], language: Optional[str] = None) -> List[Dict[str, str]]:
     """``messages`` with the language reminder after the last user turn (a copy)."""
-    line = NAMED_LANGUAGE_REMINDER.format(language=language) if language else LANGUAGE_REMINDER
+    line = LANGUAGE_REMINDER.format(language=language or 'the language of the question above')
     out = [dict(m) for m in messages]
     out[-1]['content'] = f'{out[-1]["content"]}\n\n{line}'
     return out
@@ -122,7 +121,7 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
     trace_id = log.trace_id
     div = normalize_division(division)
     log.data.update({'division': div, 'index_name': index_name(), 'config': settings()})
-    log.prompts = prompts.keys_for_turn(div, bool(answer_language))
+    log.prompts = prompts.keys_for_turn(div)
     conversation = _clean_history(messages)
     if not conversation or conversation[-1]['role'] != 'user':
         log.fail('input', 'InputError', 'the last message must be a user question')
