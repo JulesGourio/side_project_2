@@ -665,7 +665,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
 
         if conn.skipped:
             logger.warning('Lakebase schema: %d statement(s) skipped, the app does not own their table (first: %s: %s) — '
-                           'run runbooks/scripts/lakebase/ensure_schema_as_owner.py as the owner', len(conn.skipped),
+                           'apply the schema as the owner of those tables', len(conn.skipped),
                            conn.skipped[0][0], conn.skipped[0][1])
 
     logger.info('Lakebase schema ready')

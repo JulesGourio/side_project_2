@@ -1,6 +1,5 @@
 # Export of the Lakebase tables of the app to the staging volume of the environment, then load of the exported tables as
 # Delta tables of <env>_proj.qualibot. One job for dev, uat and prod: the environment comes from pipeline_write_env.
-# One-off Lakebase schema migrations live in runbooks/scripts/lakebase/.
 #
 # The job is declared once at the root. The targets at the end only override run_as: the DEV service principal is the
 # default, and the UAT and PROD targets run as their own service principal. The schedule is lakebase_export_schedule_pause,

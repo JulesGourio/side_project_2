@@ -162,8 +162,8 @@ env:
   # Volume for saving and restoring comparison files; empty = disabled. Set per target in utils/deploy/target_env.json.
   - name: COMPARE_VOLUME_PATH
     value: ""
-  # Exact-layout PDF preview (server/services/compare/soffice.py): UC Volume path of a portable LibreOffice tar.gz built by
-  # runbooks/scripts/soffice/package_libreoffice.py, extracted once per app process. Absent = no "Exact (PDF)" mode (docx-preview instead).
+  # Exact-layout PDF preview (server/services/compare/soffice.py): UC Volume path of a portable LibreOffice tar.gz built ahead of time,
+  # extracted once per app process. Absent = no "Exact (PDF)" mode (docx-preview instead).
   - name: SOFFICE_ARCHIVE_VOLUME_PATH
     value: ""
   # Local dev: absolute path to an existing soffice binary, takes precedence over the archive.

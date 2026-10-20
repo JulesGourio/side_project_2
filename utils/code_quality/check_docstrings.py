@@ -38,7 +38,9 @@ def check_file(path: Path) -> List[Tuple[int, str, str]]:
     :return: ``(line, function name, problem)`` for each function with an undocumented parameter or no return type.
     """
     problems = []
-    for func in _functions(ast.parse(path.read_text(encoding='utf-8'))):
+    # Databricks notebooks start some lines with a %magic, which is not Python.
+    source = '\n'.join('' if line.startswith('%') else line for line in path.read_text(encoding='utf-8').split('\n'))
+    for func in _functions(ast.parse(source)):
         args = func.args
         names = [a.arg for a in args.posonlyargs + args.args + args.kwonlyargs if a.arg not in _SKIPPED]
         names += [a.arg for a in (args.vararg, args.kwarg) if a]

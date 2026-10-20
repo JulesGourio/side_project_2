@@ -72,7 +72,7 @@ def main() -> None:
             w.schemas.get(args.uc_schema)
         except NotFound as exc:
             raise SystemExit(f'Schema {args.uc_schema} does not exist: create it and grant the job service principal and the app '
-                             f'service principal first (runbooks/uat_bascule.md Q13). No experiment was created.') from exc
+                             f'service principal first. No experiment was created.') from exc
     if existing:
         experiment_id = existing.experiment_id
         logger.info('experiment %s already exists (id %s), left as is', args.experiment, experiment_id)

@@ -141,7 +141,7 @@ sync:
     - "client/src/**"            # frontend source — only built output (client/out) is needed
     - "client/public/**"         # source assets duplicated in client/out after build
     - "client/node_modules/**"
-    - "runbooks/**"              # manual steps for the operator, never read at runtime
+    - "runbooks/**"              # not deployed
     - "archive/**"               # superseded documentation, never read at runtime
     - ".git/**"
     - ".databricks/**"           # local CLI cache — contains 64MB+ terraform binaries
@@ -434,7 +434,7 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
-        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy; the data copy steps are in runbooks/uat.md.
+        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH).
         qualibot_images:
           catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
@@ -478,7 +478,7 @@ targets:
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
       parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
       # Real tables, no suffix. Without the parsing state in these tables the daily run reparses the whole
-      # corpus on GPU (runbooks/uat.md). One index serves the chat and impact search.
+      # corpus on GPU. One index serves the chat and impact search.
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
       # chunks_full is built, but chunks_full_index is not in parsing_vector_search_indexes, so it is neither created nor synced.
       parsing_build_chunks_full: "true"

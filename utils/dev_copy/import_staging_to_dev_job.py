@@ -4,8 +4,8 @@
 # MAGIC
 # MAGIC **Description:**
 # MAGIC First task of the DEV job `Z_1_Qualibot_Copy_Uat_To_Dev` (`databricks.yml`,
-# MAGIC target `dev`). Reads the snapshot written by `runbooks/scripts/dev_copy/export_uat_to_staging.py`
-# MAGIC (UAT workspace) from the staging volume and recreates each table as
+# MAGIC target `dev`). Reads the snapshot of the UAT tables written to the staging volume
+# MAGIC (UAT workspace) and recreates each table as
 # MAGIC `{pipeline_write_env}_proj.qualibot.<table>`, with the same table
 # MAGIC properties as the UAT tables: 60-day retention everywhere (see
 # MAGIC `utils/parsing_pipeline/README.md`) and Change Data Feed on `chunks` (required by a Delta Sync
