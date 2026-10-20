@@ -90,6 +90,17 @@ def test_write_updates_the_row_on_user_id_or_email_and_inserts_a_new_visitor():
     assert conn.committed
 
 
+def test_missing_columns_stop_the_write_without_altering_the_table():
+    """The job identity may write rows but not alter a table owned by the app."""
+    import pytest
+
+    cur = _Cursor(rowcounts=[], rows=[('user_id',), ('groups',)])
+    with pytest.raises(RuntimeError, match='can_chat'):
+        uc.check_columns(_Conn(cur))
+    assert all(s.startswith('SELECT') for s, _ in cur.statements)
+    uc.check_columns(_Conn(_Cursor(rowcounts=[], rows=[(c,) for c, _ in uc.USER_GROUP_COLUMNS])))
+
+
 def test_stored_groups_are_empty_before_the_columns_exist():
     cur = _Cursor(rowcounts=[], rows=[])
     assert uc.read_stored_groups(_Conn(cur)) == {}

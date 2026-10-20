@@ -42,7 +42,7 @@ WHERE rn = 1
 """.format(groups=', '.join(f"'{g}'" for g in sorted(CAPS_ALL_GROUPS)))
 
 
-# Same columns as the app's schema bootstrap (server/services/infra/lakebase/schema.py).
+# Columns the app's schema bootstrap adds to users (server/services/infra/lakebase/schema.py).
 USER_GROUP_COLUMNS = (
     ('can_chat', 'BOOLEAN NOT NULL DEFAULT TRUE'),
     ('can_compare', 'BOOLEAN NOT NULL DEFAULT TRUE'),
@@ -118,13 +118,17 @@ def write_groups(conn: Any, merged: dict[str, dict[str, Any]]) -> int:
     return len(merged)
 
 
-def ensure_columns(conn: Any) -> None:
-    """Add the group columns to ``users`` when the app has not created them yet; existing columns are left alone.
+def check_columns(conn: Any) -> None:
+    """Fail when ``users`` lacks a group column; the app, which owns the table, adds them at startup.
+
+    The job identity may write rows but not alter a table it does not own.
 
     :param conn: open psycopg2 connection to the app's Lakebase database
     """
     with conn.cursor() as cur:
-        for col, typedef in USER_GROUP_COLUMNS:
-            cur.execute(f'ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} {typedef}')
-    conn.commit()
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'")
+        present = {row[0] for row in cur.fetchall()}
+    missing = [col for col, _ in USER_GROUP_COLUMNS if col not in present]
+    if missing:
+        raise RuntimeError(f'users lacks {missing}: start the app with this code version, it adds them')
 

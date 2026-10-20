@@ -22,7 +22,7 @@ DRY_RUN = dbutils.widgets.get("DRY_RUN") == "true"
 
 sys.path.insert(0, os.path.dirname(os.getcwd()))
 from ops_config import lakebase_connect_with
-from user_capabilities import AUDIT_SQL, ensure_columns, merge_groups, read_stored_groups, write_groups
+from user_capabilities import AUDIT_SQL, check_columns, merge_groups, read_stored_groups, write_groups
 
 logger = logging.getLogger("sync_user_capabilities_job")
 logger.setLevel(logging.INFO)
@@ -54,7 +54,7 @@ try:
     if DRY_RUN:
         logger.info(f"DRY_RUN: {len(merged)} visitor(s) computed, nothing written")
     else:
-        ensure_columns(conn)
+        check_columns(conn)
         logger.info(f"{write_groups(conn, merged)} visitor(s) written to {LAKEBASE_DATABASE}.users")
 finally:
     conn.close()
