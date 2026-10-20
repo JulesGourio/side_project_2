@@ -30,20 +30,34 @@ from databricks.sdk.service.ml import ExperimentAccessControlRequest, Experiment
 logger = logging.getLogger('create_chat_experiment')
 
 
+def _run_grant(w: WorkspaceClient, warehouse_id: str, privileges: str, full_name: str, principal: str):
+    """Runs one GRANT; returns the error message, or None when it succeeded."""
+    statement = f'GRANT {privileges} ON TABLE {full_name} TO `{principal}`'
+    result = w.statement_execution.execute_statement(statement=statement, warehouse_id=warehouse_id, wait_timeout='30s')
+    if result.status.state.value == 'SUCCEEDED':
+        return None
+    return result.status.error.message if result.status.error else str(result.status)
+
+
 def grant_app_on_trace_tables(w: WorkspaceClient, uc_schema: str, experiment_id: str, principal: str, warehouse_id: str) -> None:
-    """MODIFY and SELECT for the app on the trace tables of the experiment (``<experiment id>_*``) and nothing else.
-    Run by the job service principal, which owns the tables MLflow just created. Idempotent."""
+    """MODIFY and SELECT for the app on the tables of the experiment (``<experiment id>_*``) and nothing else. MLflow also creates
+    views there: MODIFY does not apply to a view, which gets SELECT only. Run by the job service principal, which owns what MLflow
+    created. Idempotent."""
     catalog, schema = uc_schema.split('.', 1)
-    tables = sorted(t.name for t in w.tables.list(catalog_name=catalog, schema_name=schema) if t.name.startswith(f'{experiment_id}_'))
-    if not tables:
-        raise SystemExit(f'No trace table named {experiment_id}_* in {uc_schema}: give the app service principal MODIFY and SELECT '
-                         'on them once they exist.')
-    for name in tables:
-        statement = f'GRANT MODIFY, SELECT ON TABLE `{catalog}`.`{schema}`.`{name}` TO `{principal}`'
-        result = w.statement_execution.execute_statement(statement=statement, warehouse_id=warehouse_id, wait_timeout='30s')
-        if result.status.state.value != 'SUCCEEDED':
-            raise SystemExit(f'{statement} did not succeed: {result.status}')
-        logger.info('granted MODIFY, SELECT on %s.%s.%s to %s', catalog, schema, name, principal)
+    names = sorted(t.name for t in w.tables.list(catalog_name=catalog, schema_name=schema) if t.name.startswith(f'{experiment_id}_'))
+    if not names:
+        raise SystemExit(f'No object named {experiment_id}_* in {uc_schema}: give the app service principal MODIFY and SELECT '
+                         'on the trace tables once they exist.')
+    for name in names:
+        full_name = f'`{catalog}`.`{schema}`.`{name}`'
+        error = _run_grant(w, warehouse_id, 'MODIFY, SELECT', full_name, principal)
+        privileges = 'MODIFY, SELECT'
+        if error and 'PRIVILEGE_NOT_APPLICABLE' in error:
+            privileges = 'SELECT'
+            error = _run_grant(w, warehouse_id, privileges, full_name, principal)
+        if error:
+            raise SystemExit(f'GRANT {privileges} ON {full_name} TO {principal} did not succeed: {error}')
+        logger.info('granted %s on %s.%s.%s to %s', privileges, catalog, schema, name, principal)
 
 
 def main() -> None:
