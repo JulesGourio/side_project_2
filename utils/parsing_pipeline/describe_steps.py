@@ -16,6 +16,7 @@ from typing import List
 
 import nest_asyncio
 from databricks.sdk.runtime import spark
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from leap_utils.common.logger import get_logger
@@ -63,7 +64,7 @@ _UPDATED_IMAGE_COLUMNS = ("description", "input_tokens", "output_tokens", "statu
 _PLACED_SCHEMA = "IDDOC long, image_id int, part_no int, anchor_chunk_index int, section string, body string"
 
 
-def reset_images_to_pending():
+def reset_images_to_pending() -> None:
     """Full mode: every image goes back to PENDING, with no attempt yet, and is described again."""
     spark.sql(f"""
         UPDATE {IMAGE_TABLE}
@@ -75,8 +76,11 @@ def reset_images_to_pending():
     logger.info(f"[FULL] Reset all images to PENDING in {IMAGE_TABLE}")
 
 
-def pending_images():
-    """Images to describe: the retried statuses (PENDING, and ERROR rows left by earlier runs). FAILED_LIMIT is not one."""
+def pending_images() -> DataFrame:
+    """Images to describe: the retried statuses (PENDING, and ERROR rows left by earlier runs). FAILED_LIMIT is not one.
+
+    :return: images with a volume path that are still to describe.
+    """
     return spark.table(IMAGE_TABLE).filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES) & F.col("volume_path").isNotNull())
 
 
@@ -84,10 +88,12 @@ _UPDATES_SCHEMA = ("IDDOC long, image_id int, description string, input_tokens i
                    "status string, described_at timestamp, attempts int, last_error_kind string")
 
 
-def _merge_chunk_results(results):
+def _merge_chunk_results(results) -> None:
     """Persist one checkpoint chunk of descriptions into the image table with a MERGE.
 
     The schema is explicit: a chunk where every image stayed PENDING has no description to infer the type from.
+
+    :param results: Results of ``describe_all_images`` for one chunk, one dict per image.
     """
     now = datetime.now()
     update_rows = [
@@ -133,7 +139,12 @@ class _RunTally:
     pending_by_kind: Counter = field(default_factory=Counter)
     limited: List[tuple] = field(default_factory=list)   # (IDDOC, image_id, last_error_kind, attempts) of FAILED_LIMIT
 
-    def add(self, described):
+    def add(self, described) -> "_RunTally":
+        """Count one chunk of described images into this tally.
+
+        :param described: Results of one chunk, one dict per image.
+        :return: this tally.
+        """
         for r in described:
             self.images += 1
             if r["status"] == "FAILED_LIMIT":
@@ -152,12 +163,17 @@ class _RunTally:
         return self
 
 
-def describe_images(rows, ws_host, ws_token, endpoints):
+def describe_images(rows, ws_host, ws_token, endpoints) -> None:
     """Call the vision LLM on `rows` in checkpoint chunks, merging each chunk's results as soon as it is done.
 
     `endpoints` is the chain tried for each image. An image no endpoint described stays PENDING for the next run.
     One circuit breaker serves the whole run. A mid-run failure keeps the chunks already persisted.
     `nest_asyncio` lets `asyncio.run` work inside a notebook.
+
+    :param rows: Images to describe, from ``pending_images``.
+    :param ws_host: Workspace host of the LLM endpoints.
+    :param ws_token: Bearer token of the workspace.
+    :param endpoints: Endpoint names, tried in order for each image.
     """
     rows = one_per_image(rows)
     if not rows:
@@ -218,8 +234,11 @@ def describe_images(rows, ws_host, ws_token, endpoints):
 _LIMIT_LINES = 50
 
 
-def _log_description_summary(total):
-    """Log the run: outcomes, failures by kind, the images set aside this run, tokens (failed attempts too), what remains."""
+def _log_description_summary(total) -> None:
+    """Log the run: outcomes, failures by kind, the images set aside this run, tokens (failed attempts too), what remains.
+
+    :param total: Tally of the whole run.
+    """
     df_images = spark.table(IMAGE_TABLE)
     remaining = df_images.filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES)).count()
     limit_total = df_images.filter(F.col("status") == "FAILED_LIMIT").count()
@@ -240,13 +259,16 @@ def _log_description_summary(total):
         logger.info("  -> No image left to describe.")
 
 
-def described_images_without_chunk(rebuild):
+def described_images_without_chunk(rebuild) -> DataFrame:
     """Described images that have no passage yet (or all of them when `rebuild`).
 
     Scoped by an anti-join on `chunk_id` against the chunk tables, not by "described this run": a run that crashed
     after the descriptions were merged but before the passages were written would otherwise leave those images
     without a passage forever (DONE is never selected again). This makes the phase idempotent and self-healing, at
     the price of scanning all DONE images each run.
+
+    :param rebuild: True to return every described image, even those that already have a passage.
+    :return: described images that have no passage yet.
     """
     df_described = (
         spark.table(IMAGE_TABLE)
@@ -269,7 +291,7 @@ def described_images_without_chunk(rebuild):
     return df_described
 
 
-def log_nothing_to_inject():
+def log_nothing_to_inject() -> None:
     """Explain why no image passage is written: every DONE image already has one."""
     df_images = spark.table(IMAGE_TABLE)
     n_done = df_images.filter((F.col("status") == "DONE") & F.col("description").isNotNull()).count()
@@ -280,10 +302,13 @@ def log_nothing_to_inject():
         logger.info(f"  {n_pending} images not described -> not injected (described again next run)")
 
 
-def build_image_chunks(df_described):
+def build_image_chunks(df_described) -> DataFrame:
     """Image passages: position in the document, section, caption and a source prefix, long transcriptions split.
 
     No LLM call: everything comes from the stored descriptions and the text passages of the same document.
+
+    :param df_described: Described images, from ``described_images_without_chunk``.
+    :return: image passages, ready to merge into the chunk tables.
     """
     import pandas as pd
 
@@ -307,6 +332,12 @@ def build_image_chunks(df_described):
 
     # Defined here so it is pickled by value: the executors cannot import this module.
     def place_images(images: "pd.DataFrame", texts: "pd.DataFrame") -> "pd.DataFrame":
+        """Place the image passages of one document next to its text passages.
+
+        :param images: Described images of one document.
+        :param texts: Text passages of the same document.
+        :return: one row per passage part, with its anchor and section.
+        """
         import json
         import chunking
         chunks = []
@@ -391,10 +422,13 @@ def build_image_chunks(df_described):
     )
 
 
-def _merge_chunks(df_chunks, table):
+def _merge_chunks(df_chunks, table) -> None:
     """Merge on chunk_id rather than delete-all-for-IDDOC then reinsert, so untouched image chunks are not rewritten.
 
     The columns the passages add reach the table first.
+
+    :param df_chunks: Passages to merge.
+    :param table: Chunk table to merge into.
     """
     if not table_exists(table):
         write_table(df_chunks, table, "append", merge_schema=True)
@@ -403,10 +437,13 @@ def _merge_chunks(df_chunks, table):
     merge_into(df_chunks, table, ["chunk_id"], do_when_notmatchedbysource=False)
 
 
-def _update_processed_files(df_values, columns):
+def _update_processed_files(df_values, columns) -> None:
     """Set `columns` on the parsed_documents rows of the IDDOCs of `df_values` (IDDOC + columns); the others stay.
 
     The rows are saved first: the merge source must not read the table it merges into.
+
+    :param df_values: Rows with an ``IDDOC`` column and the new values.
+    :param columns: Columns of ``parsed_documents`` to set.
     """
     target = spark.table(TARGET_PROCESSED_FILES_TABLE)
     new_values = df_values.select("IDDOC", *[F.col(c).alias(f"_new_{c}") for c in columns])
@@ -421,8 +458,11 @@ def _update_processed_files(df_values, columns):
     spark.sql(f"DROP TABLE IF EXISTS {_PROCESSED_UPDATES_TABLE}")
 
 
-def write_image_chunks(df_image_chunks):
-    """Pre-cutoff documents go to chunks_archive, the others to chunks (Change Data Feed on, as Vector Search needs)."""
+def write_image_chunks(df_image_chunks) -> None:
+    """Pre-cutoff documents go to chunks_archive, the others to chunks (Change Data Feed on, as Vector Search needs).
+
+    :param df_image_chunks: Image passages, from ``build_image_chunks``.
+    """
     # Columns added upstream reach the chunk tables on write (schema auto-merge).
     spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
@@ -445,7 +485,7 @@ def write_image_chunks(df_image_chunks):
     logger.info(f"CDF enabled on {TARGET_CHUNK_TABLE}")
 
 
-def promote_documents_awaiting_images():
+def promote_documents_awaiting_images() -> None:
     """Documents without text that wait for their images move on once no image of them is left to describe.
 
     The statuses are EMPTY_TEXT (no image left to describe, decided in the same job run) and IMAGES_PENDING (parked by

@@ -11,10 +11,11 @@ Parent: [services](../README.md). The route that calls these services is [router
 |---|---|
 | `engine/` | Answers one question from the Vector Search index (see its README) |
 | `llm.py` | The streamed answer (`stream_answer`) and the short completions (`complete`, `complete_patiently`): endpoint chain, rounds, cooldowns, continuation after a cut, concurrency cap. Holds `TIRED_MESSAGE` |
+| `config.py` | Settings outside the engine: the translation bridge (switch, endpoints, language detection thresholds and noise patterns) and the MLflow export limits |
 | `prompts.py` | Loads the prompt files by key (`FILES`), cached per process. Names the prompts of a turn (`keys_for_turn`) |
 | `turn_log.py` | `TurnLog`: what one turn did (data, step durations, Vector Search calls, passages, issues, status) |
 | `mlflow_turns.py` | Rebuilds a finished `TurnLog` as one MLflow trace, links the registered prompt versions, records a user vote |
-| `translation_bridge.py` | Translation of a question in another language into English, and of the answer back. Off unless `CHAT_TRANSLATE_BRIDGE_ENABLED` is `true`; `app.yaml` sets it to `false`. Also the local language guess used by the engine |
+| `translation_bridge.py` | Translation of a question in another language into English, and of the answer back. Off unless `CHAT_TRANSLATE_BRIDGE_ENABLED` is `true`; `app.yaml` sets it to `false`. Also the local language guess used by the engine (`fast_lang_guess`). Its settings are in `config.py` |
 | `__init__.py` | Empty |
 
 ## Rules

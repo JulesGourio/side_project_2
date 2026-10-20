@@ -1,6 +1,6 @@
 """Lakebase (autoscaling PostgreSQL): pool, schema, request logging, caches and users."""
 
-from .audit import (
+from server.services.infra.lakebase.audit import (
     store_chat_turn,
     store_error,
     store_impact_request,
@@ -8,10 +8,10 @@ from .audit import (
     update_llm_request_run,
     update_llm_request_usage,
 )
-from .cache import get_cached_impact_result, get_cached_summary, store_impact_cache, store_summary_cache
-from .columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS
-from .connection import get_pool, init_lakebase, shutdown_lakebase
-from .users import upsert_user
+from server.services.infra.lakebase.cache import get_cached_impact_result, get_cached_summary, store_impact_cache, store_summary_cache
+from server.services.infra.lakebase.columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS
+from server.services.infra.lakebase.connection import get_pool, init_lakebase, shutdown_lakebase
+from server.services.infra.lakebase.users import upsert_user
 
 __all__ = [
     'CHAT_CHUNK_COLUMNS',

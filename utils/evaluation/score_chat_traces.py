@@ -114,7 +114,12 @@ found = mlflow.search_traces(locations=[experiment.experiment_id], filter_string
                              order_by=['timestamp DESC'], max_results=LIMIT * 3, return_type='list')
 
 
-def _vote(trace):
+def _vote(trace) -> str:
+    """Thumbs vote of the user on a trace.
+
+    :param trace: Trace of one chat turn.
+    :return: ``up``, ``down``, or an empty string when the user did not vote.
+    """
     for a in trace.info.assessments or []:
         if a.name == 'user_vote' and getattr(a, 'feedback', None) is not None:
             return 'up' if a.feedback.value else 'down'
@@ -148,7 +153,12 @@ if not CHUNK_RELEVANCE:
     RATES.pop('retrieval_relevance', None)
 
 
-def _passage_chars(trace):
+def _passage_chars(trace) -> int:
+    """Total characters of the passages sent to the model.
+
+    :param trace: Trace of one chat turn.
+    :return: characters of the page content of the retrieval span, 0 when there is none.
+    """
     for span in trace.data.spans:
         if span.name == 'retrieval':
             return sum(len((d.get('page_content') if isinstance(d, dict) else getattr(d, 'page_content', '')) or '')

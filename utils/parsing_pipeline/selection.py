@@ -7,11 +7,12 @@ The IDDOC extraction is defined once (`iddoc_column`, and its driver-side twin `
 
 import re
 from itertools import chain
-from typing import List, Optional
+from typing import List
 
+from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from pyspark.sql.window import Window
+from pyspark.sql.window import Window, WindowSpec
 
 from config import ENRICHMENT_COLS
 
@@ -30,9 +31,14 @@ TRASH_FILES_BLACKLIST = ["headers.html", "thumbs.db", ".ds_store", "desktop.ini"
 RANK_HELPER_COLS = ("ext_priority", "is_dm_file", "priority_rank", "files_count_for_iddoc")
 
 
-def iddoc_column(path_col: str = "source_path", name_col: str = "source_file_name"):
+def iddoc_column(path_col: str = "source_path", name_col: str = "source_file_name") -> Column:
     """Spark column with the IDDOC as bigint. Priority: /D_<n>/ folder, D_<n> file name, leading bare number.
-    Matches the D_ and Dm_ prefixes, case-insensitive."""
+    Matches the D_ and Dm_ prefixes, case-insensitive.
+
+    :param path_col: Column with the volume path of the file.
+    :param name_col: Column with the file name.
+    :return: IDDOC as bigint, null when no id is found.
+    """
     folder_id = F.regexp_extract(F.col(path_col), r"/[dD]m?_(\d+)/", 1)
     file_id = F.regexp_extract(F.col(name_col), r"^[dD]m?_(\d+)", 1)
     raw_num = F.regexp_extract(F.col(name_col), r"^(\d+)", 1)
@@ -46,9 +52,12 @@ def iddoc_column(path_col: str = "source_path", name_col: str = "source_file_nam
 _IDDOC_NAME_RE = re.compile(r"^[Dd]m?_(\d+)")
 
 
-def extract_iddoc_from_name(name: str) -> Optional[int]:
+def extract_iddoc_from_name(name: str) -> int | None:
     """Driver-side twin of `iddoc_column` for a root-level volume item name (D_<n> / Dm_<n>, case-insensitive), or
-    None. Keep both in sync if the naming convention changes."""
+    None. Keep both in sync if the naming convention changes.
+
+    :param name: Root-level item name, such as ``D_123`` or ``Dm_123/``; None is accepted.
+    """
     m = _IDDOC_NAME_RE.match((name or "").rstrip("/"))
     return int(m.group(1)) if m else None
 
@@ -69,13 +78,17 @@ _EMPTY_CONTENT_SCHEMA = T.StructType([
 ])
 
 
-def scan_volume_paths(spark, paths: List[str]):
+def scan_volume_paths(spark, paths: List[str]) -> tuple[DataFrame, DataFrame]:
     """(df_meta_raw, df_content) read distributively with binaryFile from an explicit list of folder paths, one per
     target IDDOC, so a run does not re-list the whole volume.
 
     df_meta_raw: one row per file (path, size, mtime, extension, IDDOC), no content.
     df_content: (source_path, content) to join the bytes back on the selected files.
     Empty but correctly typed DataFrames when `paths` is empty: binaryFile errors out on a zero-path load.
+
+    :param spark: Active Spark session.
+    :param paths: Folders to scan, one per target IDDOC.
+    :return: metadata DataFrame, one row per file, and content DataFrame.
     """
     if not paths:
         return (
@@ -104,18 +117,25 @@ def scan_volume_paths(spark, paths: List[str]):
 
 
 # --- Ranking and selection ---
-def _priority_window():
-    """Order of the candidates of one IDDOC; the last key keeps row_number() stable on same-mtime ties."""
+def _priority_window() -> WindowSpec:
+    """Order of the candidates of one IDDOC; the last key keeps row_number() stable on same-mtime ties.
+
+    :return: window that orders the candidates of one IDDOC.
+    """
     return Window.partitionBy("IDDOC").orderBy(
         F.col("is_dm_file").asc(), F.col("ext_priority").asc(),
         F.col("source_modification_time").desc(), F.col("source_path").asc(),
     )
 
 
-def rank_candidates(df_meta_raw):
+def rank_candidates(df_meta_raw) -> DataFrame:
     """Rank every file that has an IDDOC. The volume is the source of truth: the business metadata does not filter
     here, it is joined later by `select_best_files`. Adds ext_priority, is_dm_file, priority_rank and
-    files_count_for_iddoc."""
+    files_count_for_iddoc.
+
+    :param df_meta_raw: File metadata, from ``scan_volume_paths``.
+    :return: candidate files that have an IDDOC, with the rank columns.
+    """
     mapping_expr = F.create_map([F.lit(x) for x in chain(*FORMAT_PRIORITIES.items())])
     return (
         df_meta_raw.filter(F.col("IDDOC").isNotNull())
@@ -126,13 +146,16 @@ def rank_candidates(df_meta_raw):
     )
 
 
-def select_best_files(df_matched_full, df_business_meta):
+def select_best_files(df_matched_full, df_business_meta) -> DataFrame:
     """The best SUPPORTED file per IDDOC, enriched with the business metadata (no content yet).
 
     Re-ranks among the supported candidates only: an IDDOC whose overall rank-1 file is an unsupported format (a stray
     .msg or .zip) still gets its best supported file. IDDOCs whose `ref` cannot be resolved are dropped: their folder
     is an orphan (the document was created then deleted in Intraqual), so there is no metadata to parse with.
     REF '-' is a placeholder used by some documents and is kept.
+
+    :param df_matched_full: Ranked candidate files, from ``rank_candidates``.
+    :param df_business_meta: Business metadata with an ``IDDOC`` column.
     """
     df_sel = (
         df_matched_full.filter(F.col("ext_priority") < UNSUPPORTED_PRIORITY)
@@ -152,8 +175,14 @@ def select_best_files(df_matched_full, df_business_meta):
     return df_sel
 
 
-def attach_content(df_selected, df_content, ingestion_run_id: str):
-    """Join the file bytes back to the selected files and add the ingestion columns."""
+def attach_content(df_selected, df_content, ingestion_run_id: str) -> DataFrame:
+    """Join the file bytes back to the selected files and add the ingestion columns.
+
+    :param df_selected: Selected files, from ``select_best_files``.
+    :param df_content: Source path and bytes of the files, from ``scan_volume_paths``.
+    :param ingestion_run_id: Id of the run, stored with every file.
+    :return: selected files with their bytes, SHA-256 and ingestion columns.
+    """
     return (
         df_selected
         .join(df_content, on="source_path", how="inner")

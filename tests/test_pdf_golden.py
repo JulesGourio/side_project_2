@@ -1,4 +1,4 @@
-"""Layout regression for the PDF report: words, links and drawings per page on a fixed document.
+"""Layout of the PDF report: words, links and drawings per page on a fixed document.
 
 tests/golden/pdf_report.json holds the expected layout; the
 creation date is the only non-deterministic part of the file and is not compared.

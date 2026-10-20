@@ -26,7 +26,8 @@ intraqual_missing_staged/
 .env
 
 # IDE
-# .vscode/ is intentionally NOT ignored — tasks.json must ship with the repo
+# .vscode/tasks.json ships with the repo (the everyday deploy task); settings.json is personal editor configuration
+.vscode/settings.json
 .idea/
 .claude
 

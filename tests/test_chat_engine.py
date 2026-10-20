@@ -389,7 +389,7 @@ def test_last_message_must_be_user(monkeypatch):
 
 def _lang(monkeypatch, code, translate_only=True):
     from server.services.chat import translation_bridge
-    monkeypatch.setattr(translation_bridge, '_fast_lang_guess', lambda text: code)
+    monkeypatch.setattr(translation_bridge, 'fast_lang_guess', lambda text: code)
     if translate_only:
         monkeypatch.setenv('CHAT_TRANSLATE_ONLY', 'on')
 

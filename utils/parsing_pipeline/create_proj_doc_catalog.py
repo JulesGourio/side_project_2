@@ -54,7 +54,7 @@ sys.path.insert(0, REPO_DIR)
 
 # MAGIC %md
 # MAGIC ## Config Project Imports
-# MAGIC `quality` lives next to this notebook; Databricks puts the notebook folder on `sys.path`.
+# MAGIC `tables` lives next to this notebook; Databricks puts the notebook folder on `sys.path`.
 
 # COMMAND ----------
 
@@ -206,7 +206,12 @@ if not credential.token:
     raise RuntimeError("generate_database_credential returned an empty token.")
 
 
-def connect(database):
+def connect(database) -> psycopg2.extensions.connection:
+    """Open a connection to a database of the Lakebase project.
+
+    :param database: Name of the database to connect to.
+    :return: open connection, authenticated with the credential of this run.
+    """
     conn = psycopg2.connect(
         host=lakebase_host,
         port=5432,

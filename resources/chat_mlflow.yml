@@ -1,5 +1,5 @@
-# Creates the MLflow experiment of the live chat traces (server/services/chat/mlflow_turns.py), owned by the job service principal
-# instead of the person who runs the script. Manual trigger; idempotent (an existing experiment is left as is, permissions re-applied).
+# Creates the MLflow experiment of the live chat traces (server/services/chat/mlflow_turns.py), owned by the job service principal.
+# Manual trigger; idempotent (an existing experiment is left as is, permissions re-applied).
 
 targets:
   dev:
@@ -41,7 +41,7 @@ targets:
                   - "--experiment"
                   - ${var.chat_mlflow_experiment}
                   - "--uc-schema"
-                  - ${var.pipeline_write_env}_proj.qualibot_traces
+                  - ${var.pipeline_write_env}_proj.qualibot
                   - "--warehouse-id"
                   - ${var.alerts_warehouse_id}
                   - "--managers"
@@ -189,7 +189,7 @@ targets:
                   - "--experiment"
                   - ${var.chat_mlflow_experiment}
                   - "--uc-schema"
-                  - ${var.pipeline_write_env}_proj.qualibot_traces
+                  - ${var.pipeline_write_env}_proj.qualibot
                   - "--warehouse-id"
                   - ${var.alerts_warehouse_id}
                   - "--managers"
@@ -335,7 +335,7 @@ targets:
                   - "--experiment"
                   - ${var.chat_mlflow_experiment}
                   - "--uc-schema"
-                  - ${var.pipeline_write_env}_proj.qualibot_traces
+                  - ${var.pipeline_write_env}_proj.qualibot
                   - "--warehouse-id"
                   - ${var.alerts_warehouse_id}
                   - "--managers"

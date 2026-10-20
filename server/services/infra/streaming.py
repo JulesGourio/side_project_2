@@ -38,10 +38,20 @@ _NO_TEMPERATURE_RE = re.compile(r'gpt-5-6|gpt-6|gpt-5-mini\b|claude-(?:sonnet|op
 
 
 def supports_temperature(endpoint_name: str) -> bool:
+    """Whether the endpoint accepts a temperature other than its default.
+
+    :param endpoint_name: serving endpoint name
+    :return: True when the endpoint takes a temperature
+    """
     return not _NO_TEMPERATURE_RE.search(endpoint_name)
 
 
 def _fix_mojibake(text: str) -> str:
+    """Repairs UTF-8 text that was decoded as Latin-1, segment by segment.
+
+    :param text: text that may be mis-decoded; None or empty is returned as it is
+    :return: the repaired text
+    """
     if not text:
         return text
     try:
@@ -49,7 +59,12 @@ def _fix_mojibake(text: str) -> str:
     except (UnicodeDecodeError, UnicodeEncodeError):
         pass
 
-    def _fix_segment(match):
+    def _fix_segment(match) -> str:
+        """Decodes one run of Latin-1 characters as UTF-8 when that is possible.
+
+        :param match: match of a run of characters between U+0080 and U+00FF
+        :return: the decoded run, or the run unchanged
+        """
         seg = match.group(0)
         try:
             return seg.encode('latin-1').decode('utf-8')
@@ -60,11 +75,23 @@ def _fix_mojibake(text: str) -> str:
 
 
 def _cost_eur(endpoint_name: str, input_tokens: int, output_tokens: int) -> float:
+    """Cost in euros of one call, from the price per million tokens of its endpoint.
+
+    :param endpoint_name: serving endpoint name; an unlisted endpoint uses the default price
+    :param input_tokens: prompt tokens
+    :param output_tokens: completion tokens
+    :return: the cost, rounded to 6 decimals
+    """
     p = _PRICING_USD.get(endpoint_name, _DEFAULT_PRICING)
     return round((input_tokens * p['input'] + output_tokens * p['output']) / 1_000_000 * _EUR_PER_USD, 6)
 
 
 def _parse_text_delta(raw_data: str) -> str | None:
+    """The text of one streamed chat completion chunk, None when the chunk has none.
+
+    :param raw_data: JSON payload of one ``data:`` line
+    :return: the text, or None
+    """
     try:
         chunk = json.loads(raw_data)
     except json.JSONDecodeError:

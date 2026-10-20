@@ -30,7 +30,11 @@ EXPERIMENT_IDS_TAG = '_mlflow_experiment_ids'
 
 def _link_to_experiment(name: str, experiment_id: str) -> None:
     """Lists the prompt in the experiment's Prompts tab. MLflow sets this tag asynchronously on registration, and not
-    at all for an unchanged prompt, so it is set here, synchronously."""
+    at all for an unchanged prompt, so it is set here, synchronously.
+
+    :param name: Full name of the prompt in the registry.
+    :param experiment_id: Id of the chat experiment.
+    """
     tags = mlflow.genai.get_prompt_tags(name)
     tags = getattr(tags, 'tags', tags) or {}                           # a dict or a Prompt, depending on the MLflow version
     ids = [i for i in (tags.get(EXPERIMENT_IDS_TAG, '') or '').strip(',').split(',') if i]
@@ -39,6 +43,11 @@ def _link_to_experiment(name: str, experiment_id: str) -> None:
 
 
 def register(schema: str, experiment: str) -> None:
+    """Register every chat prompt under ``schema`` and tag the experiment with each version.
+
+    :param schema: Catalog and schema of the prompt registry, ``catalog.schema``.
+    :param experiment: Workspace path of the chat experiment.
+    """
     from server.services.chat import prompts
     found = mlflow.get_experiment_by_name(experiment)
     if found is None:

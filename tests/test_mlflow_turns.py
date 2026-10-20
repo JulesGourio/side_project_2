@@ -86,8 +86,12 @@ def test_off_without_experiment_or_when_missing(monkeypatch):
     assert lookups == ['chat']
     mlflow_turns._write_trace(_turn(), 'chat')              # missing experiment: silent no-op
     monkeypatch.setattr(mlflow_turns, '_missing_until', {})
+    activated = []
+    monkeypatch.setattr(mlflow_turns, '_activated', set())
+    monkeypatch.setattr(mlflow, 'set_experiment', lambda experiment_id: activated.append(experiment_id))
     monkeypatch.setattr(mlflow, 'get_experiment_by_name', lambda name: type('E', (), {'experiment_id': '42'})())
     assert mlflow_turns._experiment_id('chat') == '42'      # created after the first lookup: found without a restart
+    assert activated == ['42']                              # made the active experiment, where MLflow reads the Unity Catalog link
 
 
 def test_export_never_raises(monkeypatch):
@@ -265,5 +269,22 @@ def test_experiment_id_setting_is_used_without_any_lookup(monkeypatch):
     monkeypatch.delenv('CHAT_MLFLOW_EXPERIMENT', raising=False)
     monkeypatch.setattr(mlflow_turns, '_experiment', {})
     monkeypatch.setattr(mlflow, 'get_experiment_by_name', lambda name: (_ for _ in ()).throw(AssertionError('looked up by name')))
+    activated = []
+    monkeypatch.setattr(mlflow_turns, '_activated', set())
+    monkeypatch.setattr(mlflow, 'set_experiment', lambda experiment_id: activated.append(experiment_id))
     assert mlflow_turns.enabled()
     assert mlflow_turns._experiment_id('') == '123'
+    assert mlflow_turns._experiment_id('') == '123'
+    assert activated == ['123']                              # once per process
+
+
+def test_no_trace_when_the_experiment_cannot_be_activated(monkeypatch):
+    import mlflow
+    monkeypatch.setenv('CHAT_MLFLOW_EXPERIMENT_ID', '123')
+    monkeypatch.setattr(mlflow_turns, '_activated', set())
+
+    def refuse(experiment_id):
+        raise RuntimeError('no access')
+
+    monkeypatch.setattr(mlflow, 'set_experiment', refuse)
+    assert mlflow_turns._experiment_id('') is None

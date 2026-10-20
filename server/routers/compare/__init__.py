@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from . import analyze, impact, summarize, volume
+from server.routers.compare import analyze, impact, summarize, volume
 
 router = APIRouter()
 for _module in (analyze, impact, summarize, volume):

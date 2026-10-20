@@ -1,7 +1,7 @@
-"""Regression guard for the standard-comparison prompt's LANGUAGE contract.
+"""Guard for the standard-comparison prompt's LANGUAGE contract.
 
 SYSTEM_PROMPT_STANDARD must tell the model to answer in the document's language, as
-SYSTEM_PROMPT_STRUCTURED does; without it the Change Summary comes back in English while quoting French content.
+SYSTEM_PROMPT_STRUCTURED does.
 """
 
 import re

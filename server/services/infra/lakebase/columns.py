@@ -88,11 +88,21 @@ CHAT_CHUNK_COLUMNS: List[tuple] = [
 
 
 def _base_type(typedef: str) -> str:
+    """The base type of a column type: its first word, without ``NOT NULL`` or ``DEFAULT``.
+
+    :param typedef: column type, such as ``BOOLEAN NOT NULL DEFAULT TRUE``
+    :return: the base type, such as ``BOOLEAN``
+    """
     return typedef.split()[0]
 
 
 def _db_value(value: Any, typedef: str) -> Any:
-    """Python value -> asyncpg parameter for a column of type ``typedef``."""
+    """Python value -> asyncpg parameter for a column of type ``typedef``.
+
+    :param value: Python value; None is kept
+    :param typedef: SQL type of the column
+    :return: the value converted for the database parameter
+    """
     if value is None:
         return None
     base = _base_type(typedef)
@@ -112,6 +122,12 @@ def _db_value(value: Any, typedef: str) -> Any:
 
 
 def _placeholders(typedefs: List[str], offset: int = 0) -> str:
+    """The SQL placeholders of a list of column types; ``JSONB`` ones are cast.
+
+    :param typedefs: SQL types of the columns, in order
+    :param offset: number of the placeholders already used; 0 starts at ``$1``
+    :return: the placeholders, comma-separated
+    """
     return ', '.join(f'${i}::jsonb' if _base_type(t) == 'JSONB' else f'${i}'
                      for i, t in enumerate(typedefs, offset + 1))
 

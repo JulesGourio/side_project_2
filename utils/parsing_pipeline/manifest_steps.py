@@ -8,7 +8,7 @@ from collections import Counter
 from datetime import datetime
 
 from databricks.sdk.runtime import dbutils, spark
-from pyspark.sql import Window
+from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 
@@ -46,13 +46,21 @@ _PERMANENT_SKIP_STATUSES = (
 )
 
 
-def _id_list(iddocs):
-    """IDDOCs as a comma-separated list for a SQL IN clause."""
+def _id_list(iddocs) -> str:
+    """IDDOCs as a comma-separated list for a SQL IN clause.
+
+    :param iddocs: IDDOCs to list.
+    :return: comma-separated IDDOCs, for a SQL IN clause.
+    """
     return ",".join(str(i) for i in iddocs)
 
 
-def _delete_iddocs(tables, iddocs):
-    """DELETE the IDDOCs from every table that exists; a failing table is logged, the others still run."""
+def _delete_iddocs(tables, iddocs) -> None:
+    """DELETE the IDDOCs from every table that exists; a failing table is logged, the others still run.
+
+    :param tables: Tables to delete from.
+    :param iddocs: IDDOCs to delete.
+    """
     id_list = _id_list(iddocs)
     for table in tables:
         try:
@@ -61,8 +69,12 @@ def _delete_iddocs(tables, iddocs):
             logger.warning(f"Could not prune {table}: {exc}")
 
 
-def doc_rows(table):
-    """IDDOC -> (ref, title) for every known document of an Intraqual document table."""
+def doc_rows(table) -> dict[int, tuple]:
+    """IDDOC -> (ref, title) for every known document of an Intraqual document table.
+
+    :param table: Full name of an Intraqual document table.
+    :return: IDDOC to ``(ref, title)``.
+    """
     return {
         r.IDDOC: (r.ref, r.titre)
         for r in (
@@ -75,8 +87,12 @@ def doc_rows(table):
     }
 
 
-def find_stale_iddocs(df_scope_docs):
-    """Parsed IDDOCs that are no longer in scope (SKIPPED_* rows are reconciled separately)."""
+def find_stale_iddocs(df_scope_docs) -> list[int]:
+    """Parsed IDDOCs outside the scope (SKIPPED_* rows are reconciled separately).
+
+    :param df_scope_docs: Documents in scope, with an ``IDDOC`` column.
+    :return: parsed IDDOCs that left scope.
+    """
     try:
         return [
             r.IDDOC for r in
@@ -91,8 +107,11 @@ def find_stale_iddocs(df_scope_docs):
         return []
 
 
-def prune_stale_content(stale_iddocs):
-    """A new revision gets a new IDDOC: when the old one leaves scope, its derived rows are removed."""
+def prune_stale_content(stale_iddocs) -> None:
+    """A new revision gets a new IDDOC: when the old one leaves scope, its derived rows are removed.
+
+    :param stale_iddocs: IDDOCs that left scope.
+    """
     if not stale_iddocs:
         logger.info("Nothing to prune - no indexed IDDOC has left scope since the last run.")
         return
@@ -104,7 +123,7 @@ def prune_stale_content(stale_iddocs):
     logger.info(f"Pruned {len(stale_iddocs)} out-of-scope IDDOCs from chunks/image_metadata/parsed_documents.")
 
 
-def prune_stale_revisions():
+def prune_stale_revisions() -> None:
     """Remove the chunks of older revisions of REFs that still have several in-scope IDDOCs.
 
     Keeps the highest `indice` per REF (highest IDDOC as tie-break). `parsed_documents` is left untouched on purpose:
@@ -144,11 +163,20 @@ def prune_stale_revisions():
     )
 
 
-def classify_root_folders(root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre, iddoc_to_cat, iddoc_to_idcat):
+def classify_root_folders(root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre, iddoc_to_cat,
+                           iddoc_to_idcat) -> dict[str, list[dict]]:
     """Sort the volume root folders into KEEP / DELETE / ORPHAN / SKIP / MANUAL / CAT_EXCL.
 
     KEEP: in scope. DELETE: known but out of scope. ORPHAN: IDDOC unknown in gd_doc. SKIP: name is not D_/Dm_.
     MANUAL: REF excluded by configuration. CAT_EXCL: in scope but its principal category is excluded.
+
+    :param root_items: Items of the volume root, from ``dbutils.fs.ls``.
+    :param scope_iddocs: IDDOCs in scope.
+    :param iddoc_to_ref: IDDOC to REF.
+    :param iddoc_to_titre: IDDOC to title.
+    :param iddoc_to_cat: IDDOC to category name.
+    :param iddoc_to_idcat: IDDOC to principal category id.
+    :return: items by class: ``keep``, ``delete``, ``orphan``, ``skip``, ``manual`` and ``cat_excl``.
     """
     rows = {"keep": [], "delete": [], "orphan": [], "skip": [], "manual": [], "cat_excl": []}
     for item in root_items:
@@ -185,10 +213,12 @@ def classify_root_folders(root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre
     return rows
 
 
-def remove_stale_skip_rows(rows_keep):
+def remove_stale_skip_rows(rows_keep) -> None:
     """Delete the permanent-skip rows of IDDOCs that are back in scope, or they would never be parsed again.
 
     FILTERED_BY_DATE is not in the list: it can still coexist with KEEP.
+
+    :param rows_keep: Rows of the KEEP folders, with an ``IDDOC`` key.
     """
     stale_skip_iddocs = set()
     try:
@@ -212,15 +242,25 @@ def remove_stale_skip_rows(rows_keep):
                 f"(stale permanent-skip row removed, will be picked up by 3_parse).")
 
 
-def reconcile_processed_files(classified, known_iddocs, job_run_id):
+def reconcile_processed_files(classified, known_iddocs, job_run_id) -> None:
     """Record in parsed_documents the documents that must not be parsed.
 
     The table keeps one current row per IDDOC, so each reclassification replaces the previous status.
+
+    :param classified: Result of ``classify_root_folders``.
+    :param known_iddocs: IDDOCs of the Intraqual document table; they are not marked as removed.
+    :param job_run_id: Id of the Databricks job run.
     """
     run_id = f"cleanup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     run_ts = datetime.now()
 
-    def skipped_rows(items, status):
+    def skipped_rows(items, status) -> list[dict]:
+        """parsed_documents rows of one list of excluded items.
+
+        :param items: Classified items of one reason.
+        :param status: ``parse_status`` written for them.
+        :return: one row per item.
+        """
         return [{
             "IDDOC": r.get("IDDOC"),
             "source_path": r["path"].replace("dbfs:", ""),
@@ -285,22 +325,31 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id):
         logger.info(f"   {status:<27}: {sum(1 for r in all_skipped if r['parse_status'] == status)}")
 
 
-def archive_condition():
-    """Pre-cutoff documents: parsed within the ARCHIVE_MAX_DOCS budget and routed to chunks_archive."""
+def archive_condition() -> Column:
+    """Pre-cutoff documents: parsed within the ARCHIVE_MAX_DOCS budget and routed to chunks_archive.
+
+    :return: condition that is true for the documents published before the cutoff.
+    """
     return F.col("doc_date").isNotNull() & (F.col("doc_date") < F.lit(DOC_DATE_CUTOFF).try_cast("date"))
 
 
-def _doc_date_column(table):
-    """Document date column of an Intraqual table (`dtdiff`, or `DATEDIFF` when the table uses that name), NULL when absent."""
+def _doc_date_column(table) -> Column:
+    """Document date column of an Intraqual table (`dtdiff`, or `DATEDIFF` when the table uses that name), NULL when absent.
+
+    :param table: Intraqual table with a document date column.
+    """
     cols = {c.lower() for c in spark.read.table(table).columns}
     source = "dtdiff" if "dtdiff" in cols else "DATEDIFF" if "datediff" in cols else None
     return F.col(source).try_cast("date") if source else F.lit(None).try_cast("date")
 
 
-def build_manifest(rows_keep):
+def build_manifest(rows_keep) -> DataFrame:
     """One row per KEEP document with its revision, date, hierarchy and type.
 
     `indice` is the revision key `3_parse` compares across runs.
+
+    :param rows_keep: Rows of the KEEP folders, from ``classify_root_folders``.
+    :return: manifest with one row per IDDOC.
     """
     # A document can sit in both a D_<IDDOC> and a Dm_<IDDOC> folder: the manifest keeps one row per IDDOC.
     by_iddoc = {}
@@ -386,8 +435,11 @@ def build_manifest(rows_keep):
     )
 
 
-def write_manifest(df_manifest):
-    """Overwrite parse_manifest and log how many pre-cutoff documents may be parsed."""
+def write_manifest(df_manifest) -> None:
+    """Overwrite parse_manifest and log how many pre-cutoff documents may be parsed.
+
+    :param df_manifest: Manifest to write.
+    """
     write_table(df_manifest, PARSE_MANIFEST_TABLE, "overwrite", overwrite_schema=True)
     ensure_primary_key(PARSE_MANIFEST_TABLE, ["IDDOC"])
     df_written = spark.table(PARSE_MANIFEST_TABLE)
@@ -399,8 +451,12 @@ def write_manifest(df_manifest):
     )
 
 
-def delete_out_of_scope_folders(rows_delete, dry_run):
-    """Remove the out-of-scope root folders from the volume; a dry run only counts them."""
+def delete_out_of_scope_folders(rows_delete, dry_run) -> None:
+    """Remove the out-of-scope root folders from the volume; a dry run only counts them.
+
+    :param rows_delete: Items to remove, dicts with a ``path`` key.
+    :param dry_run: True only counts the items.
+    """
     if dry_run:
         logger.info(f"[DRY RUN] {len(rows_delete)} items would be deleted.")
         logger.info("  -> Set the dry_run widget to false to actually delete.")

@@ -14,7 +14,7 @@ whole blob at once dilutes the signal and matches nothing precisely.
 import re
 from typing import Any, Dict, List
 
-from ..infra.vector_search import _parse_json_array
+from server.services.infra.vector_search import _parse_json_array
 
 _CRIT_ORDER = {'high': 0, 'medium': 1, 'low': 2}
 
@@ -31,15 +31,29 @@ _ABSENT = ('', '--', '—', 'n/a', 'null', 'none')
 
 
 def _is_absent(value: Any) -> bool:
+    """Whether a field value is empty or a placeholder such as ``n/a``.
+
+    :param value: any field value
+    :return: True when the value carries no information
+    """
     return not value or str(value).strip().lower() in _ABSENT
 
 
 def _clean(value: Any) -> str:
+    """A field value as stripped text, empty when the value is absent.
+
+    :param value: any field value
+    :return: the text, or an empty string
+    """
     return '' if _is_absent(value) else str(value).strip()
 
 
 def _row_to_line(row: Dict[str, Any]) -> str:
-    """One structured-JSON row → one compact natural-language change statement."""
+    """One structured-JSON row → one compact natural-language change statement.
+
+    :param row: structured row: ``section``, ``before``, ``after`` and ``rationale``
+    :return: one line: section, then the change, then the rationale in parentheses
+    """
     section = _clean(row.get('section'))
     before = _clean(row.get('before'))
     after = _clean(row.get('after'))
@@ -65,6 +79,11 @@ _MD_BULLET_RE = re.compile(r'^\s*[-*+]\s+', re.M)
 
 
 def _strip_markdown(text: str) -> str:
+    """Text without Markdown emphasis, code marks and bullets, with whitespace collapsed.
+
+    :param text: Markdown text
+    :return: the plain text
+    """
     text = _MD_MARKUP_RE.sub('', text)
     text = _MD_BULLET_RE.sub('', text)
     return re.sub(r'[ \t]+', ' ', text).strip()
@@ -72,6 +91,19 @@ def _strip_markdown(text: str) -> str:
 
 def _change(idx: int, *, section='', type_='', criticality='', before='', after='',
             summary='', text='', searched=True) -> Dict[str, Any]:
+    """One change record, with its stable id ``C<idx>``.
+
+    :param idx: 1-based position of the change
+    :param section: section of the document the change is in
+    :param type_: type of the change, as the analysis gave it
+    :param criticality: ``high``, ``medium`` or ``low``
+    :param before: text before the change
+    :param after: text after the change
+    :param summary: rationale or content of the change
+    :param text: statement searched for in the other documents
+    :param searched: False for a change that is kept in the list but not searched
+    :return: the change as a dict with its ``id``
+    """
     return {
         'id': f'C{idx}', 'section': section, 'type': type_, 'criticality': criticality,
         'before': before, 'after': after, 'summary': summary, 'text': text, 'searched': searched,
@@ -85,6 +117,10 @@ def extract_changes(changes_text: str, max_text_chars: int = 2000) -> Dict[str, 
     empty list means the analysis reported no substantive change. Editorial/
     structural rows are kept (so ids match the Change Table) but flagged
     searched=False — renumbering or TOC edits never impact other documents.
+
+    :param changes_text: output of the analysis: a JSON array, a Markdown report or free text
+    :param max_text_chars: longest text kept for one change
+    :return: ``{'changes': [...], 'source': ...}``, ``source`` being ``structured``, ``markdown`` or ``raw``
     """
     text = (changes_text or '').strip()
     if not text:
@@ -141,6 +177,11 @@ def _group_by_section(changes: List[Dict[str, Any]], max_queries: int, max_query
     Changes of one section describe the same part of the document, so one
     query for them stays focused; a section too long for one query is split.
     Only if there are still too many groups are neighbouring sections merged.
+
+    :param changes: searched changes, in priority order
+    :param max_queries: maximum number of groups
+    :param max_query_chars: maximum length of the text of one group
+    :return: the groups, each a list of changes
     """
     groups: List[List[Dict[str, Any]]] = []
     by_section: Dict[str, List[Dict[str, Any]]] = {}
@@ -168,6 +209,11 @@ def changes_to_queries(changes_text: str, max_queries: int = 30, max_query_chars
     One query per searched change. Past max_queries, changes are grouped by
     section instead (see _group_by_section) so every change is still searched
     with a focused query — none is dropped.
+
+    :param changes_text: output of the analysis, as for ``extract_changes``
+    :param max_queries: maximum number of queries
+    :param max_query_chars: maximum length of the text of one query
+    :return: the ``extract_changes`` result with its ``queries``
     """
     extracted = extract_changes(changes_text, max_query_chars)
     searched = sorted(

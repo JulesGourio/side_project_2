@@ -4,34 +4,39 @@ import asyncio
 import logging
 import secrets
 import uuid
-from typing import Optional
+from typing import Literal
 
+import asyncpg
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ...services.chat import mlflow_turns
-from ...services.infra.lakebase import get_pool, upsert_user
-from ...services.infra.user import get_workspace_url, require_chat
-from .helpers import (
+from server.services.chat import mlflow_turns
+from server.services.infra.lakebase import get_pool, upsert_user
+from server.services.infra.user import get_workspace_url, require_chat
+from server.routers.chat.helpers import (
     _identity_or_anonymous, _stored_sources,
 )
-from .persistence import _upsert_session
+from server.routers.chat.persistence import _upsert_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 class ChatFeedbackRequest(BaseModel):
-    vote: str
-    comment: Optional[str] = None
-    message_id: Optional[int] = None
-    session_id: Optional[str] = None
+    vote: Literal['up', 'down']
+    comment: str | None = None
+    message_id: int | None = None
+    session_id: str | None = None
 
 
+async def _turn_trace_id(conn: asyncpg.Connection, message_id: int) -> str:
+    """MLflow trace id of the turn that produced an assistant message.
 
-async def _turn_trace_id(conn, message_id: int) -> str:
-    """MLflow trace id of the turn that produced assistant message ``message_id`` ('' when unknown)."""
+    :param conn: an acquired Lakebase connection.
+    :param message_id: id of the assistant message in ``chat_messages``.
+    :return: the trace id, or '' when unknown.
+    """
     try:
         return await conn.fetchval('SELECT mlflow_trace_id FROM chat_turns WHERE assistant_message_id = $1 '
                                    'ORDER BY id DESC LIMIT 1', message_id) or ''
@@ -40,11 +45,15 @@ async def _turn_trace_id(conn, message_id: int) -> str:
         return ''
 
 
-@router.post('/chat/feedback', dependencies=[Depends(require_chat)])
-async def chat_feedback(body: ChatFeedbackRequest, request: Request):
-    if body.vote not in ('up', 'down'):
-        return JSONResponse({'error': 'vote must be "up" or "down"'}, status_code=422)
+@router.post('/chat/feedback', dependencies=[Depends(require_chat)], response_model=None)
+async def chat_feedback(body: ChatFeedbackRequest, request: Request) -> dict | JSONResponse:
+    """Save a thumbs up / down on an assistant message and copy it to its MLflow trace.
 
+    :param body: the vote (anything but ``up`` or ``down`` is refused with a 422 before the route runs), an optional
+        comment, and the message and session it is about.
+    :param request: the incoming request, for the caller's identity.
+    :return: ``{'success': True, 'id', 'vote'}``, or an error response (503 without database, 500 on a failed save).
+    """
     pool = get_pool()
     if not pool:
         return JSONResponse(
@@ -83,8 +92,13 @@ async def chat_feedback(body: ChatFeedbackRequest, request: Request):
         return JSONResponse({'error': str(exc)}, status_code=500)
 
 
-@router.get('/chat/sessions', dependencies=[Depends(require_chat)])
-async def list_sessions(request: Request):
+@router.get('/chat/sessions', dependencies=[Depends(require_chat)], response_model=None)
+async def list_sessions(request: Request) -> dict | JSONResponse:
+    """The caller's conversations, most recently active first.
+
+    :param request: the incoming request, for the caller's identity.
+    :return: ``{'sessions': [...], 'available': bool}``.
+    """
     pool = get_pool()
     if not pool:
         return {'sessions': [], 'available': False}
@@ -125,8 +139,14 @@ async def list_sessions(request: Request):
         return {'sessions': [], 'available': False}
 
 
-@router.get('/chat/sessions/{session_id}', dependencies=[Depends(require_chat)])
-async def get_session(session_id: str, request: Request):
+@router.get('/chat/sessions/{session_id}', dependencies=[Depends(require_chat)], response_model=None)
+async def get_session(session_id: str, request: Request) -> dict | JSONResponse:
+    """One of the caller's conversations with its messages and source chips.
+
+    :param session_id: id of the conversation.
+    :param request: the incoming request, for the caller's identity.
+    :return: the conversation, or a 404 when it is not the caller's.
+    """
     pool = get_pool()
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
@@ -173,8 +193,14 @@ async def get_session(session_id: str, request: Request):
         return JSONResponse({'error': str(exc)}, status_code=500)
 
 
-@router.delete('/chat/sessions/{session_id}', dependencies=[Depends(require_chat)])
-async def delete_session(session_id: str, request: Request):
+@router.delete('/chat/sessions/{session_id}', dependencies=[Depends(require_chat)], response_model=None)
+async def delete_session(session_id: str, request: Request) -> dict | JSONResponse:
+    """Delete one of the caller's conversations.
+
+    :param session_id: id of the conversation.
+    :param request: the incoming request, for the caller's identity.
+    :return: ``{'success': True}``, or a 404 when it is not the caller's.
+    """
     pool = get_pool()
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
@@ -208,11 +234,14 @@ async def delete_session(session_id: str, request: Request):
         return JSONResponse({'error': str(exc)}, status_code=500)
 
 
-@router.post('/chat/sessions/{session_id}/share', dependencies=[Depends(require_chat)])
-async def share_session(session_id: str, request: Request):
+@router.post('/chat/sessions/{session_id}/share', dependencies=[Depends(require_chat)], response_model=None)
+async def share_session(session_id: str, request: Request) -> dict | JSONResponse:
     """Grant read-only access to this conversation to anyone with the link.
 
     Idempotent: returns the existing token rather than rotating it, so a link already distributed keeps working.
+
+    :param session_id: id of the conversation, which must belong to the caller.
+    :param request: the incoming request, for the caller's identity.
     """
     pool = get_pool()
     if not pool:
@@ -242,10 +271,14 @@ async def share_session(session_id: str, request: Request):
         return JSONResponse({'error': str(exc)}, status_code=500)
 
 
-@router.get('/chat/shared/{share_token}', dependencies=[Depends(require_chat)])
-async def get_shared_session(share_token: str, request: Request):
+@router.get('/chat/shared/{share_token}', dependencies=[Depends(require_chat)], response_model=None)
+async def get_shared_session(share_token: str, request: Request) -> dict | JSONResponse:
     """Read-only view of a shared conversation — any authenticated Qualibot
-    user with the link can view it, not just its owner."""
+    user with the link can view it, not just its owner.
+
+    :param share_token: the token of the shared link.
+    :param request: the incoming request, for the caller's identity.
+    """
     pool = get_pool()
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
@@ -274,7 +307,12 @@ async def get_shared_session(share_token: str, request: Request):
                 session['id'],
             )
 
-        def _feedback_for(m) -> Optional[dict]:
+        def _feedback_for(m) -> dict | None:
+            """The thumbs vote and comment on a message.
+
+            :param m: a ``chat_messages`` row joined with its latest feedback.
+            :return: ``{'vote', 'comment'}``, or None when the message has no vote.
+            """
             if not m['feedback_vote']:
                 return None
             return {'vote': m['feedback_vote'], 'comment': m['feedback_comment']}
@@ -300,11 +338,15 @@ async def get_shared_session(share_token: str, request: Request):
         return JSONResponse({'error': str(exc)}, status_code=500)
 
 
-@router.post('/chat/shared/{share_token}/duplicate', dependencies=[Depends(require_chat)])
-async def duplicate_shared_session(share_token: str, request: Request):
+@router.post('/chat/shared/{share_token}/duplicate', dependencies=[Depends(require_chat)], response_model=None)
+async def duplicate_shared_session(share_token: str, request: Request) -> dict | JSONResponse:
     """Copy a shared conversation into a new session owned by the caller, so
     they can keep asking questions without ever writing into someone else's
-    conversation."""
+    conversation.
+
+    :param share_token: the token of the shared link.
+    :param request: the incoming request, for the caller's identity.
+    """
     pool = get_pool()
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)

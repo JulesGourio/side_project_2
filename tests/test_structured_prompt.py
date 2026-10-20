@@ -1,4 +1,4 @@
-"""Regression guard for the structured-comparison prompt's RATIONALE contract.
+"""Guard for the structured-comparison prompt's RATIONALE contract.
 
 Rationale is a short summary of what
 changed, never an instruction telling the reader what to do. See the

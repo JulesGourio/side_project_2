@@ -12,16 +12,16 @@ Valid method values: standard | structured | comparative
 
 import base64
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from ._diff_engines import DIFF_TRUNCATED_MARKER, _MAX_DIFF_CHARS
-from .base import BaseProcessor
-from .docx import DocxProcessor
-from .excel import ExcelProcessor
-from .image import ImageProcessor
-from .pdf import PDFProcessor
-from .pptx import PptxProcessor
-from .xml import XMLProcessor
+from server.services.compare.processors._diff_engines import DIFF_TRUNCATED_MARKER, _MAX_DIFF_CHARS
+from server.services.compare.processors.base import BaseProcessor
+from server.services.compare.processors.docx import DocxProcessor
+from server.services.compare.processors.excel import ExcelProcessor
+from server.services.compare.processors.image import ImageProcessor
+from server.services.compare.processors.pdf import PDFProcessor
+from server.services.compare.processors.pptx import PptxProcessor
+from server.services.compare.processors.xml import XMLProcessor
 
 EXTENSION_MAP: dict[str, str] = {
     '.pdf':  'pdf',
@@ -56,11 +56,20 @@ _ENV_KEYS = {
 
 
 def get_extension(filename: str) -> str:
+    """The lowercase extension of a file name, with its dot; empty when it has none.
+
+    :param filename: file name
+    :return: the extension, such as ``.pdf``
+    """
     return ('.' + filename.rsplit('.', 1)[-1].lower()) if '.' in filename else ''
 
 
-def file_type_of(filename: str) -> Optional[str]:
-    """'pdf' / 'docx' / … for a supported file name, else None."""
+def file_type_of(filename: str) -> str | None:
+    """'pdf' / 'docx' / … for a supported file name, else None.
+
+    :param filename: file name
+    :return: the file type, or None when the extension is not supported
+    """
     return EXTENSION_MAP.get(get_extension(filename))
 
 
@@ -69,6 +78,9 @@ def diff_truncation_warnings(messages: List[Dict[str, Any]]) -> List[str]:
 
     Without it the report silently stops partway through the document: the truncation
     note reaches only the model.
+
+    :param messages: messages sent to the model
+    :return: the warning list, empty when the diff was not cut
     """
     for msg in messages:
         content = msg.get('content')
@@ -83,7 +95,7 @@ def diff_truncation_warnings(messages: List[Dict[str, Any]]) -> List[str]:
     return []
 
 
-def get_processor(filename: str, method_override: Optional[str] = None) -> Optional[BaseProcessor]:
+def get_processor(filename: str, method_override: str | None = None) -> BaseProcessor | None:
     """Return a processor for the given filename.
 
     Args:
@@ -91,6 +103,10 @@ def get_processor(filename: str, method_override: Optional[str] = None) -> Optio
         method_override: If provided, use this method instead of the env-var default.
                          Valid values: 'standard', 'structured', 'comparative'.
                          Unknown values fall back to 'standard'.
+
+    :param filename: name of the file to process
+    :param method_override: method to use instead of the environment default; None or blank keeps the default
+    :return: the processor, or None when the file type is not supported
     """
     ext = get_extension(filename)
     file_type = EXTENSION_MAP.get(ext)
@@ -122,30 +138,34 @@ def extract_document_text(filename: str, file_bytes: bytes) -> str:
     just without pairing it against a second document. Raises ValueError for
     unsupported extensions and image files (no text representation — see
     prepare_image_content for the vision-model path used for those instead).
+
+    :param filename: name of the file
+    :param file_bytes: content of the file
+    :return: the plain text of the document
     """
     ext = get_extension(filename)
     file_type = EXTENSION_MAP.get(ext)
     if file_type == 'pdf':
-        from .pdf import _extract_text_with_pages
+        from server.services.compare.processors.pdf import _extract_text_with_pages
         return _extract_text_with_pages(file_bytes)
     if file_type == 'docx':
         if filename.lower().endswith('.doc'):
-            from .docx import _extract_doc
+            from server.services.compare.processors.docx import _extract_doc
             lines, _ = _extract_doc(file_bytes, filename)
         else:
-            from .docx import _extract_docx
+            from server.services.compare.processors.docx import _extract_docx
             lines, _ = _extract_docx(file_bytes)
         return '\n'.join(lines)
     if file_type == 'pptx':
-        from .pptx import _extract_pptx
+        from server.services.compare.processors.pptx import _extract_pptx
         lines, _ = _extract_pptx(file_bytes)
         return '\n'.join(lines)
     if file_type == 'excel':
-        from .excel import _extract_xls, _extract_xlsx
+        from server.services.compare.processors.excel import _extract_xls, _extract_xlsx
         lines, _ = _extract_xls(file_bytes) if filename.lower().endswith('.xls') else _extract_xlsx(file_bytes)
         return '\n'.join(lines)
     if file_type == 'xml':
-        from .xml import _extract_xml
+        from server.services.compare.processors.xml import _extract_xml
         return '\n'.join(_extract_xml(file_bytes))
     if file_type == 'image':
         raise ValueError('Images have no text representation — use prepare_image_content instead.')
@@ -157,8 +177,12 @@ def prepare_image_content(filename: str, file_bytes: bytes) -> List[Dict[str, An
     vision LLM call — same normalisation ImageProcessor already applies to
     each side before a visual diff (resize/JPEG-recompress oversized or
     unsupported formats), just for one image instead of a pair.
+
+    :param filename: name of the image
+    :param file_bytes: content of the image
+    :return: one image content block for the vision model
     """
-    from .image import _normalise_image
+    from server.services.compare.processors.image import _normalise_image
     ext = get_extension(filename) or '.jpg'
     img_bytes, mime = _normalise_image(file_bytes, ext)
     b64 = base64.b64encode(img_bytes).decode('ascii')

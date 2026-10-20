@@ -86,9 +86,13 @@ _SIZE_KEYS = {'rerank': 'CHAT_RERANK_TOP_K', 'raw': 'CHAT_RAW_TOP_K', 'rawon': '
               'cap': 'CHAT_MAX_SEARCH_PASSAGES'}
 
 
-def parse_configs(text):
+def parse_configs(text) -> dict[str, dict]:
     """'label[=index][|rerank=N][|raw=N][|cap=N]', comma-separated -> {label: config}.
-    No index = the app's (CHAT_INDEX); no option = the app's search sizes."""
+    No index = the app's (CHAT_INDEX); no option = the app's search sizes.
+
+    :param text: Configurations, comma-separated: ``label[=index][|option=value]...``.
+    :return: label to configuration, with index, environment overrides and signature.
+    """
     out = {}
     for item in [x.strip() for x in text.split(',') if x.strip()]:
         head, *opts = [p.strip() for p in item.split('|') if p.strip()]
@@ -104,8 +108,11 @@ def parse_configs(text):
     return out
 
 
-def apply_config(cfg):
-    """Point the engine at the config's index and search sizes (read at call time)."""
+def apply_config(cfg) -> None:
+    """Point the engine at the config's index and search sizes (read at call time).
+
+    :param cfg: Configuration from ``CONFIGS``: index and search sizes to apply.
+    """
     os.environ['CHAT_INDEX'] = cfg['index']
     for key in _SIZE_KEYS.values():
         os.environ.pop(key, None)
@@ -116,9 +123,13 @@ CONFIGS = parse_configs(dbutils.widgets.get('indexes'))
 BY_SIGNATURE = {c['signature']: c for c in CONFIGS.values()}
 
 
-def version(spec):
+def version(spec) -> dict[str, str]:
     """'model@label' — label: one of `indexes` (default chat). 'index' = the search signature
-    (index + sizes), the cache key of its searches."""
+    (index + sizes), the cache key of its searches.
+
+    :param spec: Version as ``model@label``; the label defaults to ``chat``.
+    :return: dict with ``label``, ``model`` and ``index`` (the search signature).
+    """
     model, _, label = spec.strip().partition('@')
     label = label.strip() or 'chat'
     assert label in CONFIGS, f'{spec}: unknown label — pick from {list(CONFIGS)}'
@@ -134,6 +145,7 @@ assert JUDGE not in {REFERENCE['model']} | {c['model'] for c in CONTENDERS}, 'th
 import asyncio, json, time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 from databricks.sdk import WorkspaceClient
@@ -144,6 +156,7 @@ for _m in [m for m in sys.modules if m == 'server' or m.startswith('server.')]:
 from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _strip_division, _trim_history, _with_today_date  # app code
 from server.services.chat import engine, llm as chat_llm
 from server.services.chat import translation_bridge as _tb
+from server.services.chat.config import TRANSLATE_TIMEOUT_S
 from server.services.infra.streaming import _cost_eur
 
 assert hasattr(engine, 'retrieve_for_turn'), (
@@ -151,7 +164,7 @@ assert hasattr(engine, 'retrieve_for_turn'), (
     'Copy the latest zip, run deploy_qualibot.ps1 -AppEnv dev -SyncOnly, then Run all again.')
 
 # One translation client per event loop (each question runs in its own loop).
-_tb._get_http_client = lambda: httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
+_tb._get_http_client = lambda: httpx.AsyncClient(timeout=TRANSLATE_TIMEOUT_S)
 
 w = WorkspaceClient()
 HOST = w.config.host.rstrip('/')
@@ -161,8 +174,14 @@ def token() -> str:
     return w.config.authenticate()['Authorization'].split(' ', 1)[1]
 
 
-async def search(messages, division, index):
-    """The app's steps up to the prompt: history, translation, date, search on `index`."""
+async def search(messages, division, index) -> dict[str, Any]:
+    """The app's steps up to the prompt: history, translation, date, search on `index`.
+
+    :param messages: Conversation as dicts with ``role`` and ``content``.
+    :param division: Division of the question, as the app stores it.
+    :param index: Search signature, a key of ``BY_SIGNATURE``.
+    :return: prompt of the answer call and the documents it contains.
+    """
     tok = token()
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in messages])
     user_content = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), '')
@@ -181,8 +200,13 @@ async def search(messages, division, index):
     return {'prompt': engine.build_prompt(div, conversation, documents, language), 'documents': documents}
 
 
-async def generate(model, prompt):
-    """The app's answer call (chat/llm), pinned to one model; keeps the raw text with its [n] markers."""
+async def generate(model, prompt) -> dict[str, Any]:
+    """The app's answer call (chat/llm), pinned to one model; keeps the raw text with its [n] markers.
+
+    :param model: Model endpoint that writes the answer.
+    :param prompt: Prompt built by ``search``.
+    :return: answer text, latency, time to first word, token counts and cost.
+    """
     started, first, text, usage = time.monotonic(), None, [], {}
     async for chunk in chat_llm.stream_answer(HOST, token(), [model], prompt, MAX_TOKENS):
         if not chunk.startswith('data: '):
@@ -247,13 +271,28 @@ Return ONLY this JSON:
 </answer_2>"""
 
 
-def documents_text(documents, max_chars=100_000):
+def documents_text(documents, max_chars=100_000) -> str:
+    """Numbered text of the documents, for the judge prompt.
+
+    :param documents: List of (reference, document) pairs; a document holds a ``passages`` list.
+    :param max_chars: Maximum length of the text.
+    :return: documents, one numbered block each, cut to ``max_chars``.
+    """
     out = '\n\n'.join(f'[{i}] Document {ref}\n' + '\n\n'.join(d['passages'])
                       for i, (ref, d) in enumerate(documents, 1))
     return out[:max_chars]
 
 
-async def judge_once(conversation, docs1, docs2, a1, a2):
+async def judge_once(conversation, docs1, docs2, a1, a2) -> dict[str, Any]:
+    """Ask the judge once to pick the better of two answers.
+
+    :param conversation: Conversation as text.
+    :param docs1: Documents shown with the first answer.
+    :param docs2: Documents shown with the second answer.
+    :param a1: First answer.
+    :param a2: Second answer.
+    :return: parsed verdict, with ``_cost`` the judge cost in euros.
+    """
     if docs1 == docs2:
         note, docs = 'Both answers received the same documents.', f'<documents>\n{docs1}\n</documents>'
     else:
@@ -288,8 +327,12 @@ async def judge_once(conversation, docs1, docs2, a1, a2):
 CACHE = RESULTS + '_cache'
 
 
-def cache_load(kind):
-    """{key tuple: payload} of what an earlier run already saved (searches, answers)."""
+def cache_load(kind) -> dict[tuple, Any]:
+    """{key tuple: payload} of what an earlier run already saved (searches, answers).
+
+    :param kind: Kind of cached rows: ``search``, ``answer`` or ``shown``.
+    :return: key tuple to saved payload.
+    """
     if not spark.catalog.tableExists(CACHE):
         return {}
     out = {}
@@ -298,7 +341,12 @@ def cache_load(kind):
     return out
 
 
-def cache_save(kind, results):
+def cache_save(kind, results) -> None:
+    """Append the successful results of one kind to the cache table.
+
+    :param kind: Kind of cached rows: ``search``, ``answer`` or ``shown``.
+    :param results: Key tuple to payload; results with an error are not saved.
+    """
     rows = [(EVAL_ID, kind, json.dumps(list(k), ensure_ascii=False), json.dumps(v, ensure_ascii=False),
              datetime.now(timezone.utc)) for k, v in results.items() if 'error' not in v]
     if rows:
@@ -317,8 +365,15 @@ if not logger.handlers:
     logger.propagate = False
 
 
-def in_batches(fn, keys, on_batch, size=20):
-    """in_threads by batches; on_batch(dict) saves each batch as soon as it ends."""
+def in_batches(fn, keys, on_batch, size=20) -> dict[Any, Any]:
+    """in_threads by batches; on_batch(dict) saves each batch as soon as it ends.
+
+    :param fn: Coroutine function applied to each key.
+    :param keys: Keys to process.
+    :param on_batch: Called with each finished batch, to save it.
+    :param size: Keys per batch.
+    :return: key to result, for every key.
+    """
     out = {}
     for i in range(0, len(keys), size):
         batch = keys[i:i + size]
@@ -329,8 +384,19 @@ def in_batches(fn, keys, on_batch, size=20):
     return out
 
 
-def in_threads(fn, items):
-    def safe(item):
+def in_threads(fn, items) -> list[Any]:
+    """Run ``fn`` on every item, in threads and one event loop per call.
+
+    :param fn: Coroutine function taking one item.
+    :param items: Items to process.
+    :return: results in item order; a failing item gives an ``error`` dict.
+    """
+    def safe(item) -> Any:
+        """Run ``fn`` on one item, at most twice; an error becomes an ``error`` dict.
+
+        :param item: Item to process.
+        :return: result of ``fn``, or an ``error`` dict.
+        """
         for attempt in range(2):
             try:
                 return asyncio.run(fn(item))
@@ -403,7 +469,12 @@ jobs = sorted({(REFERENCE['model'], REFERENCE['index']) + k for k in cases_todo}
               | {(v['model'], v['index'], c['source'], c['case_id']) for c, v in TODO})
 
 
-async def _answer(job):
+async def _answer(job) -> dict[str, Any]:
+    """Generate the answer of one job from its saved search.
+
+    :param job: Tuple of (model, index, source, case_id).
+    :return: result of ``generate``.
+    """
     model, index, source, case_id = job
     s = SEARCH[(index, source, case_id)]
     if 'error' in s:
@@ -420,7 +491,12 @@ ANSWERS.update(in_batches(_answer, _missing,
 # As the app shows them: translated back to the question's language (cache kind 'shown').
 TRANSLATE_BACK = dbutils.widgets.get('translate_back') == 'true' and TRANSLATE_BRIDGE_ENABLED
 if TRANSLATE_BACK:
-    async def _shown(job):
+    async def _shown(job) -> dict[str, Any]:
+        """Translate one answer back to the language of its question.
+
+        :param job: Tuple of (model, index, source, case_id).
+        :return: answer with the translated text and a ``translated`` flag.
+        """
         a = ANSWERS[job]
         if 'error' in a:
             raise RuntimeError(a['error'])
@@ -444,12 +520,24 @@ logger.info("%s", " ".join(str(x) for x in (sum(1 for a in ANSWERS.values() if '
 
 # COMMAND ----------
 
-def _docs(index, source, case_id):
+def _docs(index, source, case_id) -> str:
+    """Text of the documents of a saved search, empty when the search failed.
+
+    :param index: Search signature.
+    :param source: Source of the case: ``golden`` or ``chat``.
+    :param case_id: Id of the case.
+    :return: numbered text of the documents.
+    """
     s = SEARCH[(index, source, case_id)]
     return documents_text(s['documents']) if 'error' not in s else ''
 
 
-async def _judge(item):
+async def _judge(item) -> dict[str, Any]:
+    """Judge one case against one contender, in both orders.
+
+    :param item: Tuple of (case, contender version).
+    :return: judgment with the winner, the scores, the unsupported claims and the costs.
+    """
     case, v = item
     k = (case['source'], case['case_id'])
     ref = ANSWERS[(REFERENCE['model'], REFERENCE['index']) + k]
@@ -495,7 +583,11 @@ judge_cost_eur double, error string"""
 _FIELDS = [f.strip().split(' ')[0] for f in _SCHEMA.replace('\n', ' ').split(',')]
 
 
-def save_judgments(batch):
+def save_judgments(batch) -> None:
+    """Append one batch of judgments to the results table.
+
+    :param batch: Map of index in ``TODO`` to judgment result.
+    """
     run_ts, rows = datetime.now(timezone.utc), []
     for i, out in batch.items():
         case, v = TODO[i]

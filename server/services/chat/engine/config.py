@@ -2,15 +2,19 @@
 
 import logging
 import os
+import re
 from functools import lru_cache
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-
-from .. import llm as chat_llm, prompts
+from server.services.chat import llm as chat_llm, prompts
 
 logger = logging.getLogger(__name__)
 
 _DIVISIONS = ('ALL', 'AS', 'IS')
+# Filled into system/division.md, the one prompt of the AS and IS divisions.
+DIVISION_NAMES = {'AS': 'Aerostructures', 'IS': 'Interconnection Systems'}
+# Prompt appended to a division's own part when that division has a rule the other does not.
+_DIVISION_EXTRA_PROMPTS = {'AS': 'system_as_references'}
 
 _DEFAULT_INDEX = 'dev_proj.qualibot.chunks_index'
 _DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'
@@ -20,11 +24,29 @@ _RERANK_TOP_K = 12               # reranked passages kept per query
 _RAW_TOP_K = 12                  # raw HYBRID passages per query (0 = reranked passages only)
 _PAIR_RERANK_TOP_K = 16          # two reranked queries (question, translation) + one raw query: 48 candidates in all
 _PAIR_RAW_TOP_K = 16
+_RAW_ON_ALL = ('question', 'fr', 'en')
+_RAW_ON = 'fr'  # raw search on the French rewrite only, to keep the number of queries down
+
+# Context words the rewrite model appends to a query: noise for the search. Dropped unless the
+# conversation itself says them.
+_COMPANY_RE = r'lat[eé]co[eè]re'
+NOISE_PHRASES = [re.compile(p, re.IGNORECASE) for p in (
+    rf"(?:dans|pour|sur)\s+(?:les\s+)?documents?\s+(?:qualit[eé]\s+)?(?:de\s+|d['’])?(?:la\s+soci[eé]t[eé]\s+)?{_COMPANY_RE}",
+    rf"(?:in|for|from)\s+(?:the\s+)?{_COMPANY_RE}(?:['’]s)?\s+(?:quality\s+)?documents?",
+    r"(?:dans|in)\s+(?:les\s+|the\s+)?(?:documents?\s+qualit[eé]|quality\s+documents?)\b",
+    r"\bdocuments?\s+qualit[eé]\b|\bquality\s+documents?\b",
+    rf"\b{_COMPANY_RE}\b",
+)]
 
 
 # --- Settings ---
 
-def normalize_division(division: Optional[str]) -> str:
+def normalize_division(division: str | None) -> str:
+    """Upper-cased division, or ``ALL`` for any unknown value.
+
+    :param division: division from the request, any case; None means ``ALL``
+    :return: one of ``ALL``, ``AS`` or ``IS``
+    """
     d = (division or 'ALL').upper()
     return d if d in _DIVISIONS else 'ALL'
 
@@ -42,6 +64,12 @@ def rewrite_endpoint() -> str:
 
 
 def _int_env(name: str, default: int) -> int:
+    """An integer from the environment, or ``default``.
+
+    :param name: environment variable name
+    :param default: value used when the variable is unset, empty or not an integer
+    :return: the parsed value
+    """
     try:
         return int(os.getenv(name, str(default)) or default)
     except ValueError:
@@ -62,10 +90,6 @@ def rerank_top_k() -> int:
 
 def raw_top_k() -> int:
     return max(0, _int_env('CHAT_RAW_TOP_K', _RAW_TOP_K))
-
-
-_RAW_ON_ALL = ('question', 'fr', 'en')
-_RAW_ON = 'fr'  # raw search on the French rewrite only, to keep the number of queries down
 
 
 def raw_on() -> List[str]:
@@ -104,7 +128,11 @@ def rewrite_timeout_s() -> float:
 
 
 def division_filter(division: str) -> Dict[str, Any]:
-    """Vector Search filter of the chat's division (ALL: none)."""
+    """Vector Search filter of the chat's division (ALL: none).
+
+    :param division: division code, any case (normalised here)
+    :return: ``{}`` for ``ALL``, else ``{"division": [code]}``
+    """
     d = normalize_division(division)
     return {} if d == 'ALL' else {'division': [d]}
 
@@ -119,13 +147,37 @@ def settings() -> Dict[str, Any]:
             'pair_rerank_top_k': pair_rerank_top_k(), 'pair_raw_top_k': pair_raw_top_k()}
 
 
+def division_prompt(division: str) -> str:
+    """The division part of the system instructions.
+
+    :param division: ``ALL``, ``AS`` or ``IS`` (already normalised).
+    :return: ``system_all`` for ``ALL``; for ``AS`` and ``IS`` the ``system_division`` template filled with the
+        division's names, followed by the division's extra rule if it has one.
+    """
+    if division == 'ALL':
+        return prompts.read('system_all')
+    other = next(code for code in DIVISION_NAMES if code != division)
+    text = prompts.read('system_division').format(
+        code=division, name=DIVISION_NAMES[division], other_code=other, other_name=DIVISION_NAMES[other])
+    extra = _DIVISION_EXTRA_PROMPTS.get(division)
+    return f'{text}\n\n{prompts.read(extra)}' if extra else text
+
+
 def prompt_parts(division: str) -> Dict[str, str]:
-    """The files the system instructions are made of: ``division_<div>`` then ``base``."""
-    div = normalize_division(division).lower()
-    return {f'division_{div}': prompts.read(f'system_{div}'), 'base': prompts.read('system_base')}
+    """The files the system instructions are made of: ``division_<div>`` then ``base``.
+
+    :param division: division code, any case (normalised here)
+    :return: the prompt texts by file key: the division part and the base part
+    """
+    div = normalize_division(division)
+    return {f'division_{div.lower()}': division_prompt(div), 'base': prompts.read('system_base')}
 
 
 @lru_cache(maxsize=None)
 def load_instructions(division: str) -> str:
-    """System instructions: the division's part, then the base shared by all."""
+    """System instructions: the division's part, then the base shared by all.
+
+    :param division: normalised division code: ``ALL``, ``AS`` or ``IS``
+    :return: the system instructions as one string
+    """
     return '\n\n'.join(prompt_parts(division).values())

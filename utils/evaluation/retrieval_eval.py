@@ -82,9 +82,13 @@ _SIZE_KEYS = {'rerank': 'CHAT_RERANK_TOP_K', 'raw': 'CHAT_RAW_TOP_K', 'rawon': '
 _APP_ENV = {k: os.environ.get(k) for k in _SIZE_KEYS.values()}      # the app's own values, restored between configs
 
 
-def parse_configs(text):
+def parse_configs(text) -> dict[str, dict]:
     """'label[=index][|rerank=N][|raw=N][|cap=N]', comma-separated -> {label: config}.
-    No index = the app's (CHAT_INDEX); no option = the app's search sizes."""
+    No index = the app's (CHAT_INDEX); no option = the app's search sizes.
+
+    :param text: Configurations, comma-separated, each ``label[=index][|option=value]...``.
+    :return: label to configuration: index, environment overrides and a signature.
+    """
     out = {}
     for item in [x.strip() for x in text.split(',') if x.strip()]:
         head, *opts = [p.strip() for p in item.split('|') if p.strip()]
@@ -102,8 +106,11 @@ def parse_configs(text):
     return out
 
 
-def apply_config(cfg):
-    """Point the engine at the config's index and search sizes (read at call time)."""
+def apply_config(cfg) -> None:
+    """Point the engine at the config's index and search sizes (read at call time).
+
+    :param cfg: One configuration from ``parse_configs``.
+    """
     os.environ['CHAT_INDEX'] = cfg['index']
     for key, value in _APP_ENV.items():
         os.environ.pop(key, None) if value is None else os.environ.__setitem__(key, value)
@@ -158,7 +165,8 @@ from server.services.chat.translation_bridge import translate_question_to_en
 # loop (asyncio.run in a thread): one client per call.
 import httpx as _httpx
 from server.services.chat import translation_bridge as _tb
-_tb._get_http_client = lambda: _httpx.AsyncClient(timeout=_tb._TIMEOUT_S)
+from server.services.chat.config import TRANSLATE_TIMEOUT_S
+_tb._get_http_client = lambda: _httpx.AsyncClient(timeout=TRANSLATE_TIMEOUT_S)
 
 w = WorkspaceClient()
 HOST = w.config.host.rstrip('/')
@@ -169,6 +177,12 @@ def token() -> str:
 
 
 async def search(messages: list, division: str) -> dict:
+    """Run the chat retrieval for one conversation and summarise the passages found.
+
+    :param messages: Conversation as dicts with ``role`` and ``content``, ending with the question.
+    :param division: Division of the question: ``AS``, ``IS`` or ``ALL``.
+    :return: canonical references of the documents found, passage counts and sizes, rewrite and search metadata.
+    """
     started = time.monotonic()
     tok = token()
     messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in messages])
@@ -189,6 +203,11 @@ async def search(messages: list, division: str) -> dict:
 
 
 def run_case(case: dict) -> dict:
+    """Run one case through ``search``, retried on errors.
+
+    :param case: Case with ``messages`` and ``division``.
+    :return: result of ``search``, or a dict with an ``error`` key after the last try.
+    """
     # Up to 3 tries: under parallel load the endpoints answer 429 / time out now and then.
     for wait in (5, 20, None):
         try:
@@ -201,7 +220,12 @@ def run_case(case: dict) -> dict:
 
 # COMMAND ----------
 
-def _refs(values):
+def _refs(values) -> list[str]:
+    """Sorted distinct canonical references of ``values``, empty items dropped.
+
+    :param values: Document references; may be None and may hold empty items.
+    :return: sorted list of canonical references.
+    """
     return sorted({canon_ref(v) for v in values or [] if v})
 
 

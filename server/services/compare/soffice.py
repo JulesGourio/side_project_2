@@ -32,7 +32,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,9 @@ _CONVERT_TIMEOUT_S = int(os.getenv('SOFFICE_CONVERT_TIMEOUT_S', '180'))
 _convert_semaphore = threading.Semaphore(int(os.getenv('SOFFICE_MAX_CONCURRENT', '2')))
 
 _discovery_lock = threading.Lock()
-_discovered_path: Optional[str] = None
-_discovery_error: Optional[str] = None
-_engine_version: Optional[str] = None
+_discovered_path: str | None = None
+_discovery_error: str | None = None
+_engine_version: str | None = None
 
 
 class SofficeUnavailable(RuntimeError):
@@ -72,8 +72,12 @@ def _cache_dir() -> Path:
     return d
 
 
-def _find_binary_in_tree(root: Path) -> Optional[Path]:
-    """Locate program/soffice inside an extracted portable tree."""
+def _find_binary_in_tree(root: Path) -> Path | None:
+    """Locate program/soffice inside an extracted portable tree.
+
+    :param root: directory of the extracted tree
+    :return: path of the soffice binary, None when the tree has none
+    """
     for candidate in root.glob('**/program/soffice'):
         if candidate.is_file():
             return candidate
@@ -87,6 +91,10 @@ def _find_binary_in_tree(root: Path) -> Optional[Path]:
 
 
 def _mark_executable(root: Path) -> None:
+    """Sets the executable bit on the files of ``program/``, outside Windows.
+
+    :param root: directory of the extracted tree
+    """
     if os.name == 'nt':
         return
     for p in root.glob('**/program/*'):
@@ -101,6 +109,9 @@ def _extract_archive_from_volume(volume_path: str) -> Path:
 
     Runs at most once per process (marker file); a crashed half-extract is
     detected by the missing marker and redone from scratch.
+
+    :param volume_path: UC Volume path of the portable ``.tar.gz``
+    :return: path of the soffice binary inside the extracted tree
     """
     from databricks.sdk import WorkspaceClient
 
@@ -161,12 +172,16 @@ def _well_known_paths() -> list:
     return [p for p in paths if p.is_file()]
 
 
-def _probe_version(binary: str) -> Optional[str]:
+def _probe_version(binary: str) -> str | None:
     """Run `soffice --headless --version`. Also serves as the executability
     check — a present-but-unrunnable binary (noexec mount, missing shared
     libs) fails here with a useful message instead of at first conversion.
     Headless + isolated profile: without them, a pristine Windows soffice.exe
-    blocks on first-run profile/dialog handling."""
+    blocks on first-run profile/dialog handling.
+
+    :param binary: path of the soffice binary
+    :return: the first line of its version output, ``unknown version`` when it prints nothing
+    """
     try:
         with tempfile.TemporaryDirectory(prefix='soffice_probe_') as tmp:
             profile = Path(tmp) / 'profile'
@@ -187,7 +202,12 @@ def _probe_version(binary: str) -> Optional[str]:
         raise SofficeUnavailable(f'{binary} not runnable: {e}')
 
 
-def _subprocess_env(binary: Optional[str] = None) -> dict:
+def _subprocess_env(binary: str | None = None) -> dict:
+    """Environment of a soffice run: headless defaults, and the library path of the portable tree.
+
+    :param binary: path of the soffice binary, None for the plain environment
+    :return: the environment as a dict
+    """
     env = dict(os.environ)
     # Headless-friendly defaults; harmless when already set.
     env.setdefault('HOME', tempfile.gettempdir())
@@ -264,6 +284,11 @@ def convert_docx_to_pdf(docx_bytes: bytes, timeout_s: int = _CONVERT_TIMEOUT_S, 
 
     Results are cached on disk by content hash — the before/after preview of a
     finished job is immutable, so repeat views cost nothing.
+
+    :param docx_bytes: content of the document
+    :param timeout_s: conversion timeout, in seconds
+    :param suffix: file extension of the document, with or without the dot
+    :return: the PDF bytes
     """
     digest = hashlib.sha256(docx_bytes).hexdigest()
     cached = _cache_dir() / f'{digest}.pdf'

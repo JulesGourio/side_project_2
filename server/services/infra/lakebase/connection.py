@@ -15,17 +15,16 @@ import asyncio
 import logging
 import os
 import time
-from typing import Optional
 
 import asyncpg
 from databricks.sdk import WorkspaceClient
 
-from .schema import ensure_schema
+from server.services.infra.lakebase.schema import ensure_schema
 
 logger = logging.getLogger(__name__)
 
-_pool: Optional[asyncpg.Pool] = None
-_refresh_task: Optional[asyncio.Task] = None
+_pool: asyncpg.Pool | None = None
+_refresh_task: asyncio.Task | None = None
 
 # Used only when the real expiry is unknown (fallback workspace token, see _get_host_and_token).
 _DEFAULT_REFRESH_INTERVAL_S = 55 * 60  # 55 min — token lifetime is ~1h
@@ -52,7 +51,7 @@ def _cfg() -> dict:
 
 def _get_host_and_token(
     project_id: str, branch: str, endpoint: str
-) -> tuple[str, str, str, Optional[float]]:
+) -> tuple[str, str, str, float | None]:
     """Fetch host and OAuth token from Databricks SDK (sync, run in thread).
 
     Lakebase OAuth auth uses the literal username "token"; the identity is
@@ -67,6 +66,11 @@ def _get_host_and_token(
     credential's expire_time) when known, so the refresh loop can schedule
     itself off ground truth instead of an assumed lifetime — the fallback
     workspace token carries no expiry info, so that path returns None.
+
+    :param project_id: Lakebase project id
+    :param branch: branch name
+    :param endpoint: endpoint name
+    :return: ``(host, username, token, expires_in_s)``; ``expires_in_s`` is None when the expiry is unknown
     """
     w = WorkspaceClient()
 
@@ -88,7 +92,7 @@ def _get_host_and_token(
     logger.debug(f'Lakebase connecting as: {username}')
 
     token: str | None = None
-    expires_in_s: Optional[float] = None
+    expires_in_s: float | None = None
     try:
         cred = w.postgres.generate_database_credential(endpoint=endpoint_path)
         token = cred.token or None
@@ -116,14 +120,26 @@ def _get_host_and_token(
     return host, username, token, expires_in_s
 
 
-def _next_refresh_delay(expires_in_s: Optional[float]) -> float:
-    """Delay before the next credential refresh, based on real expiry when known."""
+def _next_refresh_delay(expires_in_s: float | None) -> float:
+    """Delay before the next credential refresh, based on real expiry when known.
+
+    :param expires_in_s: remaining lifetime of the token in seconds, None when unknown
+    :return: the seconds until the next refresh
+    """
     if expires_in_s is None:
         return _DEFAULT_REFRESH_INTERVAL_S
     return max(expires_in_s - _REFRESH_SAFETY_BUFFER_S, _MIN_REFRESH_INTERVAL_S)
 
 
 async def _build_pool(host: str, username: str, token: str, database: str) -> asyncpg.Pool:
+    """Creates the connection pool of the database, over TLS.
+
+    :param host: Lakebase host
+    :param username: PostgreSQL user, the identity of the OAuth token
+    :param token: OAuth token, used as the password
+    :param database: database name
+    :return: the pool
+    """
     return await asyncpg.create_pool(
         host=host,
         port=5432,
@@ -144,6 +160,11 @@ async def _ensure_database(host: str, username: str, token: str, database: str) 
     Connects to the default 'postgres' system database first (always present),
     then issues CREATE DATABASE if needed.  Requires CREATE DB privilege on the
     service principal.
+
+    :param host: Lakebase host
+    :param username: PostgreSQL user
+    :param token: OAuth token, used as the password
+    :param database: database to create when it is missing
     """
     conn = await asyncpg.connect(
         host=host, port=5432, database='postgres',
@@ -169,6 +190,14 @@ async def _ensure_database(host: str, username: str, token: str, database: str) 
 async def _token_refresh_loop(
     project_id: str, branch: str, endpoint: str, database: str, delay: float
 ) -> None:
+    """Rebuilds the pool before its token expires; a failed refresh is retried after 60 seconds.
+
+    :param project_id: Lakebase project id
+    :param branch: branch name
+    :param endpoint: endpoint name
+    :param database: database name
+    :param delay: seconds to wait before the first refresh
+    """
     global _pool
     while True:
         await asyncio.sleep(delay)
@@ -235,5 +264,5 @@ async def shutdown_lakebase() -> None:
     logger.info('Lakebase shut down')
 
 
-def get_pool() -> Optional[asyncpg.Pool]:
+def get_pool() -> asyncpg.Pool | None:
     return _pool

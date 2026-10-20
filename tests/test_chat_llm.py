@@ -228,7 +228,7 @@ def test_clean_for_language_drops_codes_markers_and_quotes():
 
 
 def test_bare_code_is_not_guessed():
-    assert translation_bridge._fast_lang_guess('QP-1518') is None
+    assert translation_bridge.fast_lang_guess('QP-1518') is None
 
 
 def test_answer_language():
@@ -236,7 +236,7 @@ def test_answer_language():
     assert translation_bridge.answer_language(ctx('cs', 'Czech', True), 'q') == 'English'
     assert translation_bridge.answer_language(ctx('fr', 'fr', False), 'q') == 'French'
     assert translation_bridge.answer_language(ctx('unknown', 'x', False), 'q') is None
-    with patch.object(translation_bridge, '_fast_lang_guess', return_value='es'):
+    with patch.object(translation_bridge, 'fast_lang_guess', return_value='es'):
         assert translation_bridge.answer_language(None, '¿Qué procedimiento?') == 'Spanish'
 
 
@@ -249,9 +249,9 @@ def test_translation_falls_back_to_the_other_model(monkeypatch):
             raise httpx.ConnectError('down')
         return 'translated'
     monkeypatch.setattr(translation_bridge, '_call_endpoint', _endpoint)
-    monkeypatch.setattr(translation_bridge, 'TRANSLATE_FALLBACK_ENDPOINTS', [PRIMARY])
+    monkeypatch.setattr(translation_bridge, 'TRANSLATE_FALLBACK_ENDPOINTS', [BACKUP])
     assert asyncio.run(translation_bridge._call_llm('s', 'u', 'h', 't', 100)) == 'translated'
-    assert tried == [translation_bridge.TRANSLATE_ENDPOINT, PRIMARY]
+    assert tried == [PRIMARY, BACKUP]
 
 
 def test_truncated_translation_keeps_the_original(monkeypatch):

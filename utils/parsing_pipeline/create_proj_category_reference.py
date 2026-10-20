@@ -53,7 +53,7 @@ from pyspark.sql import functions as F
 
 # MAGIC %md
 # MAGIC ## Config Project Imports
-# MAGIC `categories`, `quality`, `tables` and `config` live next to this notebook.
+# MAGIC `categories`, `tables` and `config` live next to this notebook.
 
 # COMMAND ----------
 

@@ -8,7 +8,7 @@ import yaml
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from ..services.infra.user import get_capabilities, get_current_user
+from server.services.infra.user import get_capabilities, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -30,8 +30,8 @@ def _load_processors_config() -> dict:
         return {}
 
 
-@router.get('/config/app')
-async def get_app_config():
+@router.get('/config/app', response_model=None)
+async def get_app_config() -> dict | JSONResponse:
     """Return application configuration (branding, compare settings)."""
     try:
         safe = {
@@ -52,8 +52,8 @@ async def get_app_config():
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
-@router.get('/config/processors')
-async def get_processors_config():
+@router.get('/config/processors', response_model=None)
+async def get_processors_config() -> dict | JSONResponse:
     """Return the processor version mapping (from server/services/compare/processors/versions.yml)."""
     try:
         data = _load_processors_config()
@@ -63,10 +63,10 @@ async def get_processors_config():
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
-@router.get('/config/knowledge-base-date')
-async def get_knowledge_base_date():
+@router.get('/config/knowledge-base-date', response_model=None)
+async def get_knowledge_base_date() -> dict:
     """Return the knowledge base documents_as_of date (null when not set)."""
-    from ..services.infra.lakebase import get_pool
+    from server.services.infra.lakebase import get_pool
     pool = get_pool()
     if not pool:
         return {'date': None}
@@ -82,9 +82,12 @@ async def get_knowledge_base_date():
         return {'date': None}
 
 
-@router.get('/me')
-async def get_me(request: Request):
-    """Return current user info with feature permissions."""
+@router.get('/me', response_model=None)
+async def get_me(request: Request) -> dict | JSONResponse:
+    """Return current user info with feature permissions.
+
+    :param request: the incoming request, for the caller's identity.
+    """
     try:
         await get_current_user(request)  # no identity in the headers: the request fails
         caps = await get_capabilities(request)

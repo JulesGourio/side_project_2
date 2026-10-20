@@ -4,11 +4,11 @@ import asyncio
 import json
 import logging
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from .. import error_origin
-from . import connection
-from .columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS, _db_value, _placeholders
+from server.services.infra import error_origin
+from server.services.infra.lakebase import connection
+from server.services.infra.lakebase.columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS, _db_value, _placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +34,41 @@ def _error_row(
     new_filename: str = '',
     file_type: str = '',
     stack_trace: str = '',
-    llm_request_id: Optional[int] = None,
+    llm_request_id: int | None = None,
     severity: str = 'error',
     stage: str = '',
-    http_status: Optional[int] = None,
+    http_status: int | None = None,
     upstream: str = '',
     trace_id: str = '',
     session_id: str = '',
-    context: Optional[Dict[str, Any]] = None,
+    context: Dict[str, Any] | None = None,
     origin: str = '',
     user_message: str = '',
 ) -> tuple:
     """Parameters of _ERROR_INSERT, in order. ``origin``: where in the code (``path:line in
-    function``), taken from the stack trace when absent."""
+    function``), taken from the stack trace when absent.
+
+    :param endpoint: endpoint or route that failed
+    :param error_type: name of the error class
+    :param error_msg: error text, cut to 2000 characters
+    :param user_id: user id of the request
+    :param workspace_id: workspace id of the user
+    :param old_filename: name of the old file of a comparison
+    :param new_filename: name of the new file of a comparison
+    :param file_type: type of the compared files
+    :param stack_trace: traceback text, cut to 4000 characters
+    :param llm_request_id: ``llm_requests`` row of the failed call, None when there is none
+    :param severity: ``error`` (default) or ``warning``
+    :param stage: step where it failed
+    :param http_status: HTTP status of the failed call
+    :param upstream: service or endpoint involved
+    :param trace_id: trace id of the chat turn
+    :param session_id: session id of the chat turn
+    :param context: extra details, stored as JSON
+    :param origin: where in the code it failed, read from the stack trace when empty
+    :param user_message: message shown to the user, when there is one
+    :return: the values of the ``app_errors`` insert, in its column order
+    """
     origin = origin or error_origin.from_stack_trace(stack_trace)
     return (
         endpoint or None,
@@ -73,11 +95,16 @@ def _error_row(
     )
 
 
-def store_error(*, exc: Optional[BaseException] = None, **kwargs: Any) -> Optional[asyncio.Task]:
+def store_error(*, exc: BaseException | None = None, **kwargs: Any) -> asyncio.Task | None:
     """Persist an application error to the errors table, in the background (never raises).
     Arguments: those of ``_error_row`` (all optional, keyword only); ``exc`` adds its stack trace.
     Called synchronously so the origin can be read from the caller's frame when there is no
-    stack trace."""
+    stack trace.
+
+    :param exc: exception behind the error; its stack trace is kept
+    :param kwargs: the fields of ``_error_row``, keyword only
+    :return: the background write task, or None when there is no event loop
+    """
     if exc is not None and not kwargs.get('stack_trace'):
         kwargs['stack_trace'] = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     kwargs.setdefault('origin', error_origin.from_exception(exc) or error_origin.from_stack_trace(
@@ -90,6 +117,10 @@ def store_error(*, exc: Optional[BaseException] = None, **kwargs: Any) -> Option
 
 async def _write_error(row: tuple) -> None:
     # Bounded acquire: an exhausted pool must not pile up tasks on top of the original failure.
+    """Writes one error row in the background; a failed write is only logged.
+
+    :param row: values of the insert, from ``_error_row``
+    """
     pool = connection.get_pool()
     if not pool:
         return
@@ -104,12 +135,19 @@ async def store_chat_turn(
     log: Any,
     *,
     endpoint: str = '',
-    user_message_id: Optional[int] = None,
-    assistant_message_id: Optional[int] = None,
-) -> Optional[int]:
+    user_message_id: int | None = None,
+    assistant_message_id: int | None = None,
+) -> int | None:
     """Write one chat turn (a finished ``turn_log.TurnLog``): its chat_turns row, its
     chat_retrieved_chunks rows and one errors row per warning/error issue — in one
-    transaction. Best-effort, never raises; returns the chat_turns id."""
+    transaction. Best-effort, never raises; returns the chat_turns id.
+
+    :param log: finished ``TurnLog`` of the turn
+    :param endpoint: endpoint of the chat route
+    :param user_message_id: id of the user message in ``chat_messages``
+    :param assistant_message_id: id of the answer in ``chat_messages``
+    :return: the ``chat_turns`` id, or None when the turn could not be written
+    """
     pool = connection.get_pool()
     if not pool:
         return None
@@ -163,8 +201,16 @@ async def store_llm_request(
     file_type: str = '',
     endpoint_name: str = '',
     messages_json: str = '',
-) -> Optional[int]:
-    """Insert an LLM request audit record; returns the inserted id (or None on failure)."""
+) -> int | None:
+    """Insert an LLM request audit record; returns the inserted id (or None on failure).
+
+    :param old_file_hash: hash of the old file
+    :param new_file_hash: hash of the new file
+    :param file_type: type of the files
+    :param endpoint_name: serving endpoint called
+    :param messages_json: messages sent, as JSON
+    :return: the id of the new row, or None on failure
+    """
     pool = connection.get_pool()
     if not pool:
         return None
@@ -190,7 +236,7 @@ async def store_llm_request(
 
 
 async def update_llm_request_usage(
-    llm_request_id: Optional[int],
+    llm_request_id: int | None,
     *,
     input_tokens: int = 0,
     output_tokens: int = 0,
@@ -206,6 +252,17 @@ async def update_llm_request_usage(
 
     ``endpoint_name`` is the endpoint that answered when it differs from the one the row was created with;
     an empty value keeps the stored name.
+
+    :param llm_request_id: row to update; nothing happens when it is None or 0
+    :param input_tokens: prompt tokens; 0 keeps the stored value
+    :param output_tokens: completion tokens; 0 keeps the stored value
+    :param thinking_tokens: reasoning tokens; 0 keeps the stored value
+    :param total_tokens: total tokens; 0 keeps the stored value
+    :param cost_eur: cost in euros; 0 keeps the stored value
+    :param http_status: HTTP status of the call; 0 keeps the stored value
+    :param error_type: name of the error class, empty keeps the stored value
+    :param error_msg: error text, cut to 2000 characters
+    :param endpoint_name: endpoint that answered, when it differs from the row's; empty keeps the stored name
     """
     pool = connection.get_pool()
     if not pool or not llm_request_id:
@@ -242,18 +299,28 @@ async def update_llm_request_usage(
 
 
 async def update_llm_request_run(
-    llm_request_id: Optional[int],
+    llm_request_id: int | None,
     *,
     status: str,
-    queue_wait_ms: Optional[int] = None,
-    build_ms: Optional[int] = None,
-    first_token_ms: Optional[int] = None,
-    generation_ms: Optional[int] = None,
-    total_ms: Optional[int] = None,
-    chunked_parts: Optional[int] = None,
+    queue_wait_ms: int | None = None,
+    build_ms: int | None = None,
+    first_token_ms: int | None = None,
+    generation_ms: int | None = None,
+    total_ms: int | None = None,
+    chunked_parts: int | None = None,
 ) -> None:
     """Record the outcome and step durations of an /compare/analyze stream on its
-    llm_requests row (best-effort, never raises)."""
+    llm_requests row (best-effort, never raises).
+
+    :param llm_request_id: row to update
+    :param status: outcome of the stream, e.g. ``ok`` or ``error``
+    :param queue_wait_ms: time waited for a free answer slot, in milliseconds
+    :param build_ms: time to build the request, in milliseconds
+    :param first_token_ms: time to the first answer text, in milliseconds
+    :param generation_ms: time spent generating, in milliseconds
+    :param total_ms: total duration, in milliseconds
+    :param chunked_parts: number of parts when the diff was split, None otherwise
+    """
     pool = connection.get_pool()
     if not pool or not llm_request_id:
         return
@@ -296,15 +363,15 @@ async def store_impact_request(
     documents: List[Dict[str, Any]] | None = None,
     status: str = '',
     index_name: str = '',
-    queries_used: Optional[int] = None,
-    queries_failed: Optional[int] = None,
-    candidates: Optional[int] = None,
-    not_judged: Optional[int] = None,
-    judge_failed: Optional[int] = None,
-    extract_ms: Optional[int] = None,
-    search_ms: Optional[int] = None,
-    judge_ms: Optional[int] = None,
-) -> Optional[int]:
+    queries_used: int | None = None,
+    queries_failed: int | None = None,
+    candidates: int | None = None,
+    not_judged: int | None = None,
+    judge_failed: int | None = None,
+    extract_ms: int | None = None,
+    search_ms: int | None = None,
+    judge_ms: int | None = None,
+) -> int | None:
     """Log one /compare/impact call — success or failure (best-effort, never raises).
 
     Returns the impact_requests id (None if the row could not be written) so
@@ -316,6 +383,37 @@ async def store_impact_request(
     verdict/description, and nothing else, so a business reader auditing the
     trace isn't shown retrieval internals (chunk_count, query_hits, max_score)
     that don't mean anything to them.
+
+    :param method: processing method of the comparison
+    :param user_id: user id of the request
+    :param workspace_id: workspace id of the user
+    :param old_file_hash: hash of the old file
+    :param new_file_hash: hash of the new file
+    :param changes_chars: length of the change list sent to the judge
+    :param truncated: True when the change list was cut to fit
+    :param chunks_returned: passages returned by the searches
+    :param num_documents: documents in the result
+    :param duration_s: duration of the call, in seconds
+    :param endpoint_name: judge endpoint
+    :param input_tokens: prompt tokens of the judge calls
+    :param output_tokens: completion tokens of the judge calls
+    :param total_tokens: total tokens of the judge calls
+    :param cost_eur: cost of the judge calls, in euros
+    :param http_status: HTTP status of the call
+    :param error_type: name of the error class, empty when there is none
+    :param error_msg: error text, cut to 2000 characters
+    :param documents: per-document judgments, saved to ``impact_document_results`` when given
+    :param status: ``ok`` or ``error``; derived from the HTTP status when empty
+    :param index_name: Vector Search index searched
+    :param queries_used: Vector Search queries sent
+    :param queries_failed: Vector Search queries that failed
+    :param candidates: documents judged
+    :param not_judged: documents retrieved but not judged
+    :param judge_failed: judge calls that failed
+    :param extract_ms: duration of the extraction step, in milliseconds
+    :param search_ms: duration of the search step, in milliseconds
+    :param judge_ms: duration of the judging step, in milliseconds
+    :return: the ``impact_requests`` id, None when the row could not be written
     """
     pool = connection.get_pool()
     if not pool:

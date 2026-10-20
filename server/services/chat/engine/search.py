@@ -4,14 +4,14 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import httpx
 
-from ...infra import vs_gate
-from ...infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
-from ..turn_log import TurnLog, passage_title
-from .config import raw_top_k, rerank_top_k
+from server.services.infra import vs_gate
+from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
+from server.services.chat.turn_log import TurnLog, passage_title
+from server.services.chat.engine.config import raw_top_k, rerank_top_k
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,12 @@ class ChatVsiError(Exception):
     """A failure surfaced to the user as an ``error`` event."""
 
     def __init__(self, message: str, error_type: str, http_status: int = 0):
+        """Stores the message, the error name and the HTTP status of a failure.
+
+        :param message: text shown to the user
+        :param error_type: name of the error, sent in the error event
+        :param http_status: HTTP status of the failed call, 0 when there is none
+        """
         super().__init__(message)
         self.message = message
         self.error_type = error_type
@@ -34,11 +40,23 @@ class ChatVsiError(Exception):
 
 async def _post_query(host: str, token: str, index: str, payload: Dict[str, Any]) -> httpx.Response:
     """One Vector Search query through the app-wide gate (``vs_gate``: at most
-    ``VS_MAX_CONCURRENT_QUERIES`` in flight, retried on 429 / 5xx / timeout)."""
+    ``VS_MAX_CONCURRENT_QUERIES`` in flight, retried on 429 / 5xx / timeout).
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index: full name of the Vector Search index
+    :param payload: query body sent to the index
+    :return: the HTTP response
+    """
     return await vs_gate.post(host, token, index, payload, _QUERY_TIMEOUT_S)
 
 
 def _rows(resp: httpx.Response) -> List[Dict[str, Any]]:
+    """The rows of a query response, keyed by column name.
+
+    :param resp: HTTP response of a query
+    :return: the rows as dicts, archive notices left out
+    """
     data = resp.json()
     columns = [c['name'] for c in data.get('manifest', {}).get('columns', [])]
     chunks = [dict(zip(columns, row)) for row in data.get('result', {}).get('data_array', [])]
@@ -51,6 +69,17 @@ class RerankUnavailable(Exception):
 
 async def _query(host: str, token: str, index: str, query_text: str, k: int, filters: Dict[str, Any],
                  rerank: bool) -> List[Dict[str, Any]]:
+    """One HYBRID Vector Search query, with the reranker when asked.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index: full name of the Vector Search index
+    :param query_text: text searched, cut to 20000 characters
+    :param k: number of results asked
+    :param filters: Vector Search filters, empty for none
+    :param rerank: whether the reranker orders the results
+    :return: the rows of the response
+    """
     payload: Dict[str, Any] = {'query_text': query_text[:_MAX_QUERY_CHARS], 'columns': _COLUMNS,
                                'num_results': k, 'query_type': 'HYBRID'}
     if filters:
@@ -64,17 +93,27 @@ async def _query(host: str, token: str, index: str, query_text: str, k: int, fil
     return _rows(resp)
 
 
-def _tag(rows: List[Dict[str, Any]], q: Optional[int], via: str) -> List[Dict[str, Any]]:
+def _tag(rows: List[Dict[str, Any]], q: int | None, via: str) -> List[Dict[str, Any]]:
     """Records on each row which query found it (``q``: index in the turn's queries, None for a
     lookup), how (``via``: rerank / raw / ref_lookup), at which rank, with which
-    score — kept in chat_retrieved_chunks.hits."""
+    score — kept in chat_retrieved_chunks.hits.
+
+    :param rows: rows returned by one query
+    :param q: index of the query in the turn's queries, None for a lookup
+    :param via: how the rows were found: ``rerank``, ``raw`` or ``ref_lookup``
+    :return: the same rows, each with its ``_hits`` set
+    """
     for rank, row in enumerate(rows):
         row['_hits'] = [{'q': q, 'via': via, 'rank': rank, 'score': row.get('score')}]
     return rows
 
 
 def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    """One row per chunk, ordered by its best rank in any list; the ``_hits`` of every copy kept."""
+    """One row per chunk, ordered by its best rank in any list; the ``_hits`` of every copy kept.
+
+    :param lists: result lists, each in rank order
+    :return: one row per chunk, best rank first
+    """
     ranked: Dict[str, Tuple[int, Dict[str, Any]]] = {}
     hits: Dict[str, List[Dict[str, Any]]] = {}
     for result in lists:
@@ -93,6 +132,12 @@ def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
 
 
 def _search_error(index: str, exc: BaseException) -> ChatVsiError:
+    """The ``ChatVsiError`` to raise for a failed Vector Search call.
+
+    :param index: index name, for the log
+    :param exc: exception of the failed call
+    :return: the error, with the message shown to the user
+    """
     if isinstance(exc, ChatVsiError):
         return exc
     if isinstance(exc, httpx.HTTPStatusError):
@@ -107,12 +152,29 @@ def _search_error(index: str, exc: BaseException) -> ChatVsiError:
 
 
 def _status_of(exc: BaseException) -> int:
+    """The HTTP status of a failed call, 0 for any other error.
+
+    :param exc: exception raised by a call
+    :return: the status code, or 0
+    """
     return exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else 0
 
 
 async def _recorded_query(host: str, token: str, index: str, filters: Dict[str, Any], log: TurnLog,
-                          i: Optional[int], q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
-    """One Vector Search call, recorded on the turn (query, mode, size, start, duration, outcome, hits)."""
+                          i: int | None, q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
+    """One Vector Search call, recorded on the turn (query, mode, size, start, duration, outcome, hits).
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index: full name of the Vector Search index
+    :param filters: Vector Search filters, empty for none
+    :param log: turn log that records the call
+    :param i: index of the query in the turn's queries, None for a lookup
+    :param q: query text
+    :param k: number of results asked
+    :param rerank: whether the reranker is used
+    :return: the rows of the response
+    """
     entry = {'query_index': i, 'query': q[:300], 'mode': 'rerank' if rerank else 'raw', 'k': k,
              'start_ms': log.elapsed_ms()}
     t0 = time.monotonic()
@@ -131,31 +193,67 @@ async def _recorded_query(host: str, token: str, index: str, filters: Dict[str, 
 def start_question_search(host: str, token: str, index: str, filters: Dict[str, Any], question: str,
                           log: TurnLog) -> 'asyncio.Task[List[Dict[str, Any]]]':
     """Starts the reranked search of the question as asked, now: the rewrite runs while it does, and ``search``
-    (``first=``) picks the result up instead of querying again."""
+    (``first=``) picks the result up instead of querying again.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index: full name of the Vector Search index
+    :param filters: Vector Search filters, empty for none
+    :param question: the question as asked, without its date line
+    :param log: turn log that records the call
+    :return: task that resolves to the reranked rows of the question
+    """
     task = asyncio.ensure_future(_recorded_query(host, token, index, filters, log, 0, question, rerank_top_k(), True))
     task.add_done_callback(lambda t: t.cancelled() or t.exception())      # Read the exception so an unused failure is not logged.
     return task
 
 
 async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any],
-                 raw_queries: Optional[List[str]] = None, log: Optional[TurnLog] = None,
-                 rerank_k: Optional[int] = None, raw_k: Optional[int] = None,
-                 first: Optional['asyncio.Task[List[Dict[str, Any]]]'] = None) -> List[Dict[str, Any]]:
+                 raw_queries: List[str] | None = None, log: TurnLog | None = None,
+                 rerank_k: int | None = None, raw_k: int | None = None,
+                 first: 'asyncio.Task[List[Dict[str, Any]]] | None' = None) -> List[Dict[str, Any]]:
     """Reranked top k for every query + raw top k for ``raw_queries`` (default: every query),
     merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
     if everything failed. Without raw passages (``raw_top_k() == 0``), a refused reranker falls
     back to the raw search with the reranked size. ``first``: the reranked search of ``queries[0]``, already
-    started by ``start_question_search`` (same size)."""
+    started by ``start_question_search`` (same size).
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index: full name of the Vector Search index
+    :param queries: queries searched with the reranker; the first one is the question
+    :param filters: Vector Search filters, empty for none
+    :param raw_queries: queries also searched without the reranker, None for every query
+    :param log: turn log to fill, created when None
+    :param rerank_k: passages kept per reranked query, None for CHAT_RERANK_TOP_K
+    :param raw_k: passages kept per raw query, None for CHAT_RAW_TOP_K; 0 skips the raw searches
+    :param first: task of the reranked question search started earlier, used instead of a new call
+    :return: the merged rows, best rank first
+    """
     log = log if log is not None else TurnLog()
     rerank_k = rerank_top_k() if rerank_k is None else rerank_k
     raw_k = raw_top_k() if raw_k is None else raw_k
     rerank_ok = True
 
-    async def call(i: Optional[int], q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
+    async def call(i: int | None, q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
+        """One recorded Vector Search call.
+
+        :param i: index of the query in the turn's queries, None for a lookup
+        :param q: query text
+        :param k: number of results asked
+        :param rerank: whether the reranker is used
+        :return: the rows of the response
+        """
         return await _recorded_query(host, token, index, filters, log, i, q, k, rerank)
 
     async def reranked(i: int, q: str) -> List[Dict[str, Any]]:
+        """The reranked search of a query.
+
+        :param i: index of the query in ``queries``
+        :param q: query text
+        :return: the rows of that query; a raw search when the index refused the reranker
+        """
         nonlocal rerank_ok
         if not rerank_ok:
             return [] if raw_k else _tag(await call(i, q, rerank_k, False), i, 'raw')
@@ -169,6 +267,12 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
             return [] if raw_k else _tag(await call(i, q, rerank_k, False), i, 'raw')
 
     async def raw(i: int, q: str) -> List[Dict[str, Any]]:
+        """The raw search of a query.
+
+        :param i: index of the query in ``queries``, None when ``q`` is not one of them
+        :param q: raw query text
+        :return: the rows of the raw search
+        """
         return _tag(await call(i, q, raw_k, False), i, 'raw')
 
     calls = [reranked(i, q) for i, q in enumerate(queries)]
@@ -200,9 +304,21 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
 
 async def fetch_documents(host: str, token: str, index: str, query: str, refs: List[str], k: int,
                           filters: Dict[str, Any], via: str = 'ref_lookup',
-                          log: Optional[TurnLog] = None) -> List[Dict[str, Any]]:
+                          log: TurnLog | None = None) -> List[Dict[str, Any]]:
     """HYBRID search restricted to the given REFs (``via``: ref_lookup).
-    Failures are logged, never raised."""
+    Failures are logged, never raised.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index: full name of the Vector Search index
+    :param query: question text, searched within the named documents
+    :param refs: REFs the results are restricted to
+    :param k: passages fetched
+    :param filters: other Vector Search filters
+    :param via: label recorded on the hits
+    :param log: turn log that records a failure, optional
+    :return: the rows, or an empty list when the lookup failed
+    """
     try:
         return _tag(await _query(host, token, index, query, k, {**filters, 'REF': refs}, rerank=False), None, via)
     except Exception as exc:  # noqa: BLE001 — the turn goes on without the lookup
