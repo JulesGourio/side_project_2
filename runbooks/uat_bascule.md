@@ -490,6 +490,8 @@ databricks apps logs qualibot --profile UAT --tail-lines 1000 --search "mlflow_t
 SHOW TABLES IN uat_proj.qualibot LIKE '*_otel_*';
 ```
 
+  Reconnaître où est parti une trace : `SELECT mlflow_trace_id FROM chat_turns ORDER BY id DESC LIMIT 3;` (Lakebase). Un identifiant `trace:/uat_proj.qualibot.<ID>/…` est une trace dans Unity Catalog ; un identifiant `tr-…` est une trace restée dans le stockage de l'expérience (essai du 2026-10-20 : l'app n'activait pas l'expérience, MLflow ne voyait pas le lien Unity Catalog et les tables restaient vides ; corrigé par `mlflow.set_experiment`).
+
   Les quatre tables doivent apparaître et se remplir ; la recherche `mlflow_turns` ne doit montrer ni `does not exist` ni `not written`. Mettre ensuite un pouce haut ou bas sur une réponse : la ligne `vote … not logged` ne doit pas apparaître. Points non vérifiés ici, à surveiller dans cet ordre (envoyer la ligne de journal en cas d'échec) : l'écriture des traces par l'app, le vote, puis `score_chat_traces_uat` en `dry_run`, qui doit retrouver les traces par l'identifiant de l'expérience.
 
   6. **DEV** (même procédure, profil `DEV`, `deploy-dev`) : SP des jobs `fde6ff28-739f-4a41-b61e-604a298c8478`, SP de l'app `8e411164-a7e8-46ff-8013-8c56af2c3656`, schéma `dev_proj.qualibot`, entrepôt `13eff4a6095513cb`, même chemin d'expérience, `CHAT_MLFLOW_EXPERIMENT_ID` de la cible `dev` :

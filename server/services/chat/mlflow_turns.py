@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 _NS_PER_MS = 1_000_000
 _lock = threading.Lock()
+_activated: set = set()                        # experiment ids made active in this process
 _experiment: Dict[str, str | None] = {}       # experiment name -> id, once found
 _missing_until: Dict[str, float] = {}           # experiment name -> when to look again
 _prompt_cache: Dict[str, Any] = {}              # experiment id -> (fetched at, chat_prompt.* tags)
@@ -65,6 +66,30 @@ def experiment_id_setting() -> str:
 
 def enabled() -> bool:
     return bool(experiment_id_setting() or experiment_name())
+
+
+def _activate(mlflow: Any, experiment_id: str) -> bool:
+    """Makes the experiment the active one of the process, once.
+
+    MLflow chooses where the spans go when the first span of the process is created, from the *active* experiment: the Unity
+    Catalog tables it is linked to. The ``experiment_id`` given to a span does not do it, and the traces would then land in the
+    experiment's own storage, outside Unity Catalog.
+
+    :param mlflow: the mlflow module
+    :param experiment_id: id of the chat experiment
+    :return: False when the experiment could not be activated (no trace is written then)
+    """
+    with _lock:
+        if experiment_id in _activated:
+            return True
+    try:
+        mlflow.set_experiment(experiment_id=experiment_id)
+    except Exception as exc:  # noqa: BLE001 — retried on the next turn
+        logger.warning('mlflow_turns: experiment %s could not be activated, no trace written: %s', experiment_id, exc)
+        return False
+    with _lock:
+        _activated.add(experiment_id)
+    return True
 
 
 def _experiment_id(name: str) -> str | None:
@@ -89,11 +114,13 @@ def _experiment_id(name: str) -> str | None:
         os.environ.setdefault('MLFLOW_TRACING_SQL_WAREHOUSE_ID', os.environ['DATABRICKS_WAREHOUSE_ID'])
     fixed = experiment_id_setting()
     if fixed:
-        return fixed
+        return fixed if _activate(mlflow, fixed) else None
     try:
         found = mlflow.get_experiment_by_name(name)
     except Exception as exc:  # noqa: BLE001 — retried on the next turn
         logger.warning('mlflow_turns: experiment lookup %s failed: %s', name, exc)
+        return None
+    if found and not _activate(mlflow, found.experiment_id):
         return None
     with _lock:
         if found:
