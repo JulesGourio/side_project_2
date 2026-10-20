@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 from server.services.infra.doc_catalog import _catalog, canon_ref
 from server.services.chat.turn_log import TurnLog
 from server.services.chat.engine.queries import opening_language, rewrite_queries, translate_query
+from server.services.chat.engine.types import DocumentPassages, PassageRecord, SearchRow
 from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search, start_question_search
 from server.services.chat.engine.config import (
     division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on,
@@ -50,37 +51,40 @@ def refs_named_in(text: str) -> List[str]:
     cat = _catalog()
     if not cat or not text:
         return []
-    refs: List[str] = []
+    refs = []
     for entry in cat.find_in_text(text):
-        for ref in [entry['ref']] + [sib['ref'] for sib in cat.group_siblings(entry['ref'])]:
-            if ref not in refs:
-                refs.append(ref)
-    return refs[:_REF_LOOKUP_MAX]
+        siblings = [sibling['ref'] for sibling in cat.group_siblings(entry['ref'])]
+        refs.extend([entry['ref']] + siblings)
+    return list(dict.fromkeys(refs))[:_REF_LOOKUP_MAX]
 
 
-def one_language_per_document(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def one_language_per_document(rows: List[SearchRow]) -> List[SearchRow]:
     """Only the passages of the best-ranked language variant of each document.
 
     :param rows: passages in rank order
     :return: the passages of the first-ranked language variant of each document
     """
-    chosen: Dict[str, str] = {}
-    return [row for row in rows if chosen.setdefault(canon_ref(row['REF']), row['REF']) == row['REF']]
+    best_variant: Dict[str, str] = {}
+    kept = []
+    for row in rows:
+        if best_variant.setdefault(canon_ref(row['REF']), row['REF']) == row['REF']:
+            kept.append(row)
+    return kept
 
 
-def group_documents(rows: List[Dict[str, Any]]) -> List[Tuple[str, Dict[str, Any]]]:
+def group_documents(rows: List[SearchRow]) -> List[Tuple[str, DocumentPassages]]:
     """Passages grouped by document (REF), in order of first appearance.
 
     :param rows: passages with ``REF``, ``url``, ``division`` and ``chunk_text``
     :return: list of ``(REF, {url, division, passages})`` pairs
     """
-    docs: Dict[str, Dict[str, Any]] = {}
+    docs: Dict[str, DocumentPassages] = {}
     for row in rows:
         docs.setdefault(row['REF'], {'url': row['url'], 'division': row.get('division'), 'passages': []})['passages'].append(row['chunk_text'])
     return list(docs.items())
 
 
-def _passage(row: Dict[str, Any], position: int, drop_reason: str = '') -> Dict[str, Any]:
+def _passage(row: SearchRow, position: int, drop_reason: str = '') -> PassageRecord:
     """One chat_retrieved_chunks record (doc_number, prompt_rank and cited are set once the prompt
     and the answer exist).
 
@@ -143,11 +147,8 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
                 queries.append(q)
 
         # REFs named in the question first, then in the earlier turns (a follow-up often names no REF itself).
-        named: List[str] = []
-        for ref in refs_named_in(question) + refs_named_in('\n'.join(m['content'] for m in conversation[:-1])):
-            if ref not in named:
-                named.append(ref)
-        named = named[:_REF_LOOKUP_MAX]
+        earlier_turns = '\n'.join(m['content'] for m in conversation[:-1])
+        named = list(dict.fromkeys(refs_named_in(question) + refs_named_in(earlier_turns)))[:_REF_LOOKUP_MAX]
         log.data.update({'index_name': index, 'fr_query': fr_query, 'en_query': en_query, 'named_refs': named})
 
         by_name = {'question': question, 'fr': fr_query, 'en': en_query}
@@ -161,7 +162,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         sizes = {'rerank_k': pair_rerank_top_k(), 'raw_k': pair_raw_top_k()} if language and len(queries) == 2 else {}
         with log.timed('search'):
             rows = await search(host, token, index, queries, filters, raw_texts, log=log, first=early, **sizes)
-        over_cap: List[Dict[str, Any]] = []
+        over_cap: List[SearchRow] = []
         if max_search_passages():
             rows, over_cap = rows[:max_search_passages()], rows[max_search_passages():]
         if named:

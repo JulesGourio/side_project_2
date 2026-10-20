@@ -289,3 +289,10 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Résumé d'un document (texte puis image) dans l'onglet Comparaison : le résumé s'affiche ; le journal montre `databricks-gpt-6-luna`.
 - [ ] Recherche d'impact sur une paire déjà jugée avant le changement : comparer les verdicts avec l'ancien résultat (le juge est maintenant GPT-6 Luna, jamais mesuré pour ce rôle).
 - [ ] Vote pouce haut / bas dans le chat et dans la comparaison : enregistré.
+
+## 2026-10-20 — revue de la PR Bitbucket 2, lot 2
+
+- [ ] Déployer l'app DEV (pipeline Bitbucket `deploy-dev`).
+- [ ] Onglet Comparaison : aperçu d'un PowerPoint de plusieurs diapositives. Toutes les diapositives s'affichent, dans l'ordre (avant : la première seulement). Sans LibreOffice sur l'app, l'aperçu de secours (texte positionné) s'affiche.
+- [ ] Aperçu d'un `.doc` avec des accents (é, à, ç) : le texte est lisible, pas de `�`.
+- [ ] Chat DEV : une question de plus de 20 000 caractères (long texte collé) répond ; la ligne de `chat_turns` a le code `query_truncated` dans `warnings`.

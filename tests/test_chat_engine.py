@@ -645,3 +645,36 @@ def test_instructions_ask_for_the_sources_table_without_unknown_versions():
         assert 'never write that it is unknown' in text
         assert 'REF | Title | Version | Status | Division' in text
         assert 'Do not end your answer with a list of the documents' not in text
+
+
+def test_a_query_over_the_vector_search_limit_is_cut_and_reported(monkeypatch):
+    long_question = [{'role': 'user', 'content': 'procédure ' * 3000}]
+    events, m = _run(monkeypatch, messages=long_question)
+    log = m['log']
+    assert 'query_truncated' in log.codes
+    assert all(len(p['query_text']) <= 20000 for p in m['sent'])
+    assert any(call.get('truncated_from', 0) > 20000 for call in log.vs_calls)
+    assert [i['code'] for i in log.issues].count('query_truncated') == 1
+
+
+def test_a_short_query_is_not_reported_as_cut(monkeypatch):
+    _, m = _run(monkeypatch)
+    assert 'query_truncated' not in m['log'].codes
+
+
+def test_one_language_variant_is_kept_per_document():
+    rows = [{'REF': 'QP-1518_FR'}, {'REF': 'MR-1465'}, {'REF': 'QP-1518_EN'}, {'REF': 'QP-1518_FR'}]
+    kept = engine.retrieval.one_language_per_document(rows)
+    assert [r['REF'] for r in kept] == ['QP-1518_FR', 'MR-1465', 'QP-1518_FR']
+
+
+def test_named_refs_are_deduplicated_in_order_of_appearance():
+    class Catalog:
+        def find_in_text(self, text):
+            return [{'ref': 'QP-1518_FR'}, {'ref': 'MR-1465'}]
+
+        def group_siblings(self, ref):
+            return [{'ref': 'QP-1518_EN'}] if ref == 'QP-1518_FR' else [{'ref': 'QP-1518_FR'}]
+
+    with patch.object(engine.retrieval, '_catalog', lambda: Catalog()):
+        assert engine.retrieval.refs_named_in('x') == ['QP-1518_FR', 'QP-1518_EN', 'MR-1465']

@@ -203,3 +203,50 @@ fichier ni aucune référence `export_lakebase_uat*`. Rien à changer.
 2. Le retrait des règles de langue de `base.md` demande une mesure sur DEV (#885138148).
 3. `CLAUDE.md` (commentaires courts) contredit les docstrings Sphinx, désormais sur tout `server/` : à aligner si Yann maintient sa demande (#885148691).
 4. `turn_log.py` : garder les niveaux de gravité dans le module du journal ? (#885272670)
+
+## Lot 2 — commentaires exportés le 2026-10-20 (8 commentaires)
+
+PR au commit `c7d44ccaefee72b53c4afe04caed162b877dbb23`. Les numéros de ligne cités ne correspondent pas exactement à ce
+dépôt (les docstrings ont décalé les fichiers) : chaque commentaire a été rattaché au code par son sens.
+
+**#885789675 — `engine/retrieval.py` L52 — « pas super lisible mais bon à voir si on change »** — Fait.
+`refs_named_in` : la double boucle imbriquée devient une liste de REF (la référence et ses variantes de langue) dédupliquée
+une fois par `dict.fromkeys`. Même simplification pour la construction de `named` dans `retrieve_for_turn` et pour
+`one_language_per_document` (boucle explicite à la place d'un `setdefault` dans une compréhension). Comportement identique ; deux tests
+ajoutés (ordre et déduplication des REF, une variante de langue par document).
+
+**#885790057 — `retrieval.py` L57 — « Any c'est pas incroyable. Si possible des TypedDict »** — Fait.
+Nouveau `engine/types.py` : `SearchRow` (ligne de l'index), `Hit`, `PassageRecord` (enregistrement `chat_retrieved_chunks`) et
+`DocumentPassages`. Ils remplacent `Dict[str, Any]` dans `search.py` et `retrieval.py`. Les filtres et le corps des requêtes
+gardent `Dict[str, Any]` : leur forme est libre. Aucun outil de typage statique ne tourne sur le dépôt, donc ces types
+documentent et aident l'éditeur, ils ne sont pas vérifiés à l'exécution.
+
+**#885793573 — `engine/search.py` L54 — « danger !! Aucun avertissement qu'on coupe la query »** — Fait, et c'était vrai.
+Une requête de plus de 20 000 caractères était coupée sans trace. Maintenant : un avertissement dans les logs, un incident
+`query_truncated` sur le tour (colonne `warnings`, ligne dans `app_errors`) et la longueur d'origine dans `vs_calls[].truncated_from`.
+Code ajouté à la liste de `schema.md`. Deux tests.
+
+**#885835700 — `compare/conversion.py` L44 — « danger si concurrence non ? »** — Fait, et c'était vrai.
+`_libreoffice_cmd` marquait la recherche comme faite avant de l'avoir terminée : un second thread arrivant pendant la
+recherche recevait `None` et prenait le rendu de secours. La fonction est supprimée : la conversion passe par `soffice.py`
+(`convert_docx_to_pdf`), qui cherche le binaire une fois sous verrou et limite les conversions simultanées. La vérification
+d'antiword est aussi mise sous verrou.
+
+**#885835950 — `conversion.py` L94 — « encodage manquant non ? »** — Fait, et c'était vrai.
+antiword était appelé sans fichier de correspondance, donc il écrit en Windows-1252 alors qu'on lisait de l'UTF-8 : les accents
+étaient remplacés par `�`. Maintenant `-m UTF-8.txt` (comme le pipeline de parsing). Si ce fichier n'est pas installé, antiword
+échoue : on relance sans lui et on lit en Windows-1252. Deux tests.
+
+**#885834566 — `conversion.py` L162 — « pq 400 ? »** — Fait (nommé et signalé).
+Le plafond de 400 passages de texte extraits d'un `.doc` par olefile était un nombre libre dans le code. C'est une borne contre
+le bruit du balayage binaire : constante `_OLEFILE_MAX_RUNS`, et un avertissement dans les logs quand elle coupe. Valeur inchangée :
+je n'ai pas de mesure qui dise mieux.
+
+**#885833326 — `conversion.py` L178 — « ça a été testé cette fonction ? »** — Non, pas avant ; fait.
+Aucun test ne couvrait `conversion.py`. `tests/test_conversion.py` (10 tests) couvre : le texte `.docx` et le cas vide, antiword en UTF-8
+et en repli, la borne d'olefile, un fichier qui n'est pas OLE, et le rendu des diapositives, y compris un vrai essai avec LibreOffice.
+
+**#885833609 — `conversion.py` L200 — « tu es sûr que ça convertit toutes les pages »** — Non : c'était faux. Corrigé.
+L'export PNG de LibreOffice ne rend que la première diapositive (vérifié ici sur un diaporama de 3 : un seul fichier). L'aperçu
+d'un PowerPoint n'affichait donc qu'une image. Maintenant LibreOffice produit un PDF et chaque page devient une image PNG, dans
+l'ordre, 100 diapositives au plus (avertissement dans les logs au-delà). Test avec un vrai diaporama de 3 diapositives : 3 images.

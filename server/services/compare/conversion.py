@@ -2,7 +2,7 @@
 
 Priority chain per format:
   .doc  → antiword → olefile stream extraction
-  .pptx → LibreOffice headless (if available) → empty list
+  .pptx → LibreOffice headless to PDF, one PNG per page (if available) → empty list
 """
 
 import io
@@ -12,51 +12,46 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 
 import mammoth
 import olefile
+import pymupdf
+
+from server.services.compare.soffice import SofficeConversionError, SofficeUnavailable, convert_docx_to_pdf
 
 logger = logging.getLogger(__name__)
 
-# Cache availability checks so we only shell-out once per process lifetime.
+# antiword writes in the encoding of its mapping file: UTF-8.txt gives UTF-8, the default mapping gives Windows-1252.
+_ANTIWORD_UTF8 = ['-m', 'UTF-8.txt']
+_ANTIWORD_TIMEOUT_S = 30
+# The raw OLE scan returns every printable run it finds; the cap keeps the text of a noisy file bounded.
+_OLEFILE_MAX_RUNS = 400
+_SLIDE_DPI = 96
+# A presentation is rendered as one image per slide, embedded in the preview page.
+_MAX_SLIDE_IMAGES = 100
+
+# Availability of antiword is checked once per process; the lock keeps two threads from checking at the same time.
 _antiword_checked: bool | None = None
-_lo_cmd: str | None = None
-_lo_checked: bool = False
+_antiword_lock = threading.Lock()
 
 
 # --- Tool detection ---
 
 def _antiword_available() -> bool:
+    """Whether the antiword binary is on the PATH (looked up once per process).
+
+    :return: True when antiword can be called
+    """
     global _antiword_checked
-    if _antiword_checked is None:
-        _antiword_checked = shutil.which('antiword') is not None
-        if _antiword_checked:
-            logger.info('antiword found: %s', shutil.which('antiword'))
-        else:
-            logger.warning('antiword not found — .doc text extraction will use Python fallback')
-    return _antiword_checked
-
-
-def _libreoffice_cmd() -> str | None:
-    global _lo_cmd, _lo_checked
-    if not _lo_checked:
-        _lo_checked = True
-        for name in ('libreoffice', 'libreoffice7', 'libreoffice24', 'soffice'):
-            path = shutil.which(name)
-            if path:
-                _lo_cmd = path
-                logger.info('LibreOffice found: %s', path)
-                break
-        if not _lo_cmd:
-            # No system install: use the portable LibreOffice tree that soffice.py provisions from a UC Volume.
-            # That is what makes PPTX slide rendering work on Databricks Apps.
-            from server.services.compare.soffice import SofficeUnavailable, find_soffice
-            try:
-                _lo_cmd = find_soffice()
-                logger.info('LibreOffice found via portable tree: %s', _lo_cmd)
-            except SofficeUnavailable as e:
-                logger.info('LibreOffice not found (%s) — PPTX/DOC rendering uses Python fallback', e)
-    return _lo_cmd
+    with _antiword_lock:
+        if _antiword_checked is None:
+            _antiword_checked = shutil.which('antiword') is not None
+            if _antiword_checked:
+                logger.info('antiword found: %s', shutil.which('antiword'))
+            else:
+                logger.warning('antiword not found — .doc text extraction will use Python fallback')
+        return _antiword_checked
 
 
 # --- .doc → text via antiword ---
@@ -86,8 +81,34 @@ def doc_to_text(doc_bytes: bytes, filename: str = 'document.doc') -> str | None:
     return None
 
 
+def _run_antiword(path: str, mapping_args: list[str], filename: str) -> subprocess.CompletedProcess | None:
+    """Run antiword on a file.
+
+    :param path: path of the .doc file
+    :param mapping_args: antiword options that choose the output encoding
+    :param filename: file name, for the logs
+    :return: the finished process, or None when antiword could not run or timed out
+    """
+    try:
+        return subprocess.run(
+            ['antiword', *mapping_args, '-w', '0', path],
+            capture_output=True,
+            timeout=_ANTIWORD_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning('antiword timed out for %s', filename)
+    except FileNotFoundError:
+        logger.warning('antiword binary not found at runtime')
+    except Exception as exc:
+        logger.warning('antiword error: %s', exc)
+    return None
+
+
 def _antiword_extract(doc_bytes: bytes, filename: str) -> str | None:
     """Call antiword subprocess to extract text.
+
+    The output is requested in UTF-8. When the UTF-8 mapping file is not installed antiword exits with an error, and
+    the default mapping is used instead (Windows-1252 output).
 
     :param doc_bytes: content of the .doc file
     :param filename: file name, for the logs
@@ -98,22 +119,16 @@ def _antiword_extract(doc_bytes: bytes, filename: str) -> str | None:
         tmp_path = tmp.name
 
     try:
-        proc = subprocess.run(
-            ['antiword', '-w', '0', tmp_path],
-            capture_output=True,
-            timeout=30,
-        )
+        proc, encoding = _run_antiword(tmp_path, _ANTIWORD_UTF8, filename), 'utf-8'
+        if proc is not None and proc.returncode != 0:
+            logger.info('antiword UTF-8 mapping failed for %s, using the default mapping', filename)
+            proc, encoding = _run_antiword(tmp_path, [], filename), 'cp1252'
+        if proc is None:
+            return None
         if proc.returncode == 0:
-            text = proc.stdout.decode('utf-8', errors='replace').strip()
+            text = proc.stdout.decode(encoding, errors='replace').strip()
             return text if text else None
-        stderr = proc.stderr.decode('utf-8', errors='replace')[:300]
-        logger.warning('antiword exit %d: %s', proc.returncode, stderr)
-    except subprocess.TimeoutExpired:
-        logger.warning('antiword timed out for %s', filename)
-    except FileNotFoundError:
-        logger.warning('antiword binary not found at runtime')
-    except Exception as exc:
-        logger.warning('antiword error: %s', exc)
+        logger.warning('antiword exit %d: %s', proc.returncode, proc.stderr.decode('utf-8', errors='replace')[:300])
     finally:
         try:
             os.unlink(tmp_path)
@@ -132,7 +147,7 @@ def _olefile_extract(doc_bytes: bytes, filename: str) -> str | None:
 
     :param doc_bytes: content of the .doc file
     :param filename: file name, for the logs
-    :return: the text runs joined by newlines, at most 400 of them; None when none is found
+    :return: the text runs joined by newlines, at most ``_OLEFILE_MAX_RUNS`` of them; None when none is found
     """
     try:
         ole = olefile.OleFileIO(io.BytesIO(doc_bytes))
@@ -175,7 +190,9 @@ def _olefile_extract(doc_bytes: bytes, filename: str) -> str | None:
     if not results:
         return None
 
-    return '\n'.join(results[:400])
+    if len(results) > _OLEFILE_MAX_RUNS:
+        logger.warning('olefile: %d text runs found in %s, keeping the first %d', len(results), filename, _OLEFILE_MAX_RUNS)
+    return '\n'.join(results[:_OLEFILE_MAX_RUNS])
 
 
 # --- .docx → HTML body fragment via mammoth ---
@@ -196,63 +213,23 @@ def docx_to_html_body(content: bytes) -> str:
 # --- PPTX → slide PNG images via LibreOffice ---
 
 def pptx_to_slide_images(pptx_bytes: bytes, filename: str = 'presentation.pptx') -> list[bytes]:
-    """Render each PPTX slide to a PNG image using LibreOffice headless.
+    """Render each slide of a presentation to a PNG image.
 
-    Returns an ordered list of PNG bytes (one per slide), or an empty list
-    if LibreOffice is unavailable or conversion fails.
+    LibreOffice converts the presentation to a PDF (its PNG export only renders the first slide), and each page of the
+    PDF becomes one image. At most ``_MAX_SLIDE_IMAGES`` slides are rendered.
 
-    :param pptx_bytes: content of the .pptx file
-    :param filename: file name; LibreOffice names its PNG files after it
+    :param pptx_bytes: content of the .pptx or .ppt file
+    :param filename: file name, which gives LibreOffice the extension to choose its import filter
     :return: the PNG bytes of each slide, in slide order; empty when LibreOffice is unavailable or fails
     """
-    lo = _libreoffice_cmd()
-    if not lo:
+    suffix = os.path.splitext(filename)[1] or '.pptx'
+    try:
+        pdf_bytes = convert_docx_to_pdf(pptx_bytes, suffix=suffix)
+    except (SofficeUnavailable, SofficeConversionError) as exc:
+        logger.info('LibreOffice cannot render %s (%s) — the caller falls back to the Python renderer', filename, exc)
         return []
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        pptx_path = os.path.join(tmp_dir, filename)
-        with open(pptx_path, 'wb') as f:
-            f.write(pptx_bytes)
-
-        # Isolated profile per invocation (same rationale as soffice.py):
-        # concurrent conversions must not fight over a shared profile lock.
-        profile_dir = os.path.join(tmp_dir, 'profile')
-        os.makedirs(profile_dir, exist_ok=True)
-        profile_uri = 'file:///' + profile_dir.replace('\\', '/').lstrip('/')
-        try:
-            proc = subprocess.run(
-                [lo, f'-env:UserInstallation={profile_uri}',
-                 '--headless', '--convert-to', 'png', '--outdir', tmp_dir, pptx_path],
-                capture_output=True,
-                timeout=120,
-            )
-        except subprocess.TimeoutExpired:
-            logger.warning('LibreOffice PPTX→PNG timed out')
-            return []
-        except Exception as exc:
-            logger.warning('LibreOffice failed: %s', exc)
-            return []
-
-        if proc.returncode != 0:
-            logger.warning(
-                'LibreOffice exit %d: %s',
-                proc.returncode,
-                proc.stderr.decode('utf-8', errors='replace')[:300],
-            )
-
-        base = os.path.splitext(filename)[0]
-        found: list[tuple[int, bytes]] = []
-
-        for fn in os.listdir(tmp_dir):
-            if not fn.lower().endswith('.png'):
-                continue
-            m = re.match(rf'^{re.escape(base)}(\d*)\.png$', fn, re.IGNORECASE)
-            if not m:
-                continue
-            num_str = m.group(1)
-            num = int(num_str) if num_str else 0
-            with open(os.path.join(tmp_dir, fn), 'rb') as fh:
-                found.append((num, fh.read()))
-
-        found.sort(key=lambda x: x[0])
-        return [img for _, img in found]
+    with pymupdf.open(stream=pdf_bytes, filetype='pdf') as pdf:
+        if pdf.page_count > _MAX_SLIDE_IMAGES:
+            logger.warning('%s has %d slides, rendering the first %d', filename, pdf.page_count, _MAX_SLIDE_IMAGES)
+        return [pdf[i].get_pixmap(dpi=_SLIDE_DPI).tobytes('png') for i in range(min(pdf.page_count, _MAX_SLIDE_IMAGES))]

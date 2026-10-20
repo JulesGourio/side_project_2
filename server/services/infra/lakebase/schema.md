@@ -150,6 +150,7 @@ One row per turn. The columns of the first table are fixed; the others come from
 | `rewrite_failed` | no model rewrote the query: search run with the question alone |
 | `rewrite_fallback` | rewrite done by the fallback model |
 | `vs_partial` | some Vector Search queries failed (`vs_calls_ok` < `vs_calls_expected`) |
+| `query_truncated` | a query longer than the Vector Search limit was cut before the call (`vs_calls[].truncated_from` gives its length) |
 | `rerank_refused` | the index refused the reranker: raw search only |
 | `no_passages` | no passage found |
 | `llm_fallback` | answer given by the fallback model |

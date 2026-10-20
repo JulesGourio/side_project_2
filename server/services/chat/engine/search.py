@@ -12,6 +12,7 @@ from server.services.infra import vs_gate
 from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
 from server.services.chat.turn_log import TurnLog, passage_title
 from server.services.chat.engine.config import raw_top_k, rerank_top_k
+from server.services.chat.engine.types import Hit, SearchRow
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ async def _post_query(host: str, token: str, index: str, payload: Dict[str, Any]
     return await vs_gate.post(host, token, index, payload, _QUERY_TIMEOUT_S)
 
 
-def _rows(resp: httpx.Response) -> List[Dict[str, Any]]:
+def _rows(resp: httpx.Response) -> List[SearchRow]:
     """The rows of a query response, keyed by column name.
 
     :param resp: HTTP response of a query
@@ -68,18 +69,20 @@ class RerankUnavailable(Exception):
 
 
 async def _query(host: str, token: str, index: str, query_text: str, k: int, filters: Dict[str, Any],
-                 rerank: bool) -> List[Dict[str, Any]]:
+                 rerank: bool) -> List[SearchRow]:
     """One HYBRID Vector Search query, with the reranker when asked.
 
     :param host: Databricks workspace URL
     :param token: Databricks access token
     :param index: full name of the Vector Search index
-    :param query_text: text searched, cut to 20000 characters
+    :param query_text: text searched, cut to ``_MAX_QUERY_CHARS`` characters (a warning is logged when it is)
     :param k: number of results asked
     :param filters: Vector Search filters, empty for none
     :param rerank: whether the reranker orders the results
     :return: the rows of the response
     """
+    if len(query_text) > _MAX_QUERY_CHARS:
+        logger.warning('chat: query of %d characters cut to %d for Vector Search', len(query_text), _MAX_QUERY_CHARS)
     payload: Dict[str, Any] = {'query_text': query_text[:_MAX_QUERY_CHARS], 'columns': _COLUMNS,
                                'num_results': k, 'query_type': 'HYBRID'}
     if filters:
@@ -93,7 +96,7 @@ async def _query(host: str, token: str, index: str, query_text: str, k: int, fil
     return _rows(resp)
 
 
-def _tag(rows: List[Dict[str, Any]], q: int | None, via: str) -> List[Dict[str, Any]]:
+def _tag(rows: List[SearchRow], q: int | None, via: str) -> List[SearchRow]:
     """Records on each row which query found it (``q``: index in the turn's queries, None for a
     lookup), how (``via``: rerank / raw / ref_lookup), at which rank, with which
     score — kept in chat_retrieved_chunks.hits.
@@ -108,14 +111,14 @@ def _tag(rows: List[Dict[str, Any]], q: int | None, via: str) -> List[Dict[str, 
     return rows
 
 
-def _merge_by_rank(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+def _merge_by_rank(lists: List[List[SearchRow]]) -> List[SearchRow]:
     """One row per chunk, ordered by its best rank in any list; the ``_hits`` of every copy kept.
 
     :param lists: result lists, each in rank order
     :return: one row per chunk, best rank first
     """
-    ranked: Dict[str, Tuple[int, Dict[str, Any]]] = {}
-    hits: Dict[str, List[Dict[str, Any]]] = {}
+    ranked: Dict[str, Tuple[int, SearchRow]] = {}
+    hits: Dict[str, List[Hit]] = {}
     for result in lists:
         for rank, row in enumerate(result):
             cid = row['chunk_id']
@@ -161,7 +164,7 @@ def _status_of(exc: BaseException) -> int:
 
 
 async def _recorded_query(host: str, token: str, index: str, filters: Dict[str, Any], log: TurnLog,
-                          i: int | None, q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
+                          i: int | None, q: str, k: int, rerank: bool) -> List[SearchRow]:
     """One Vector Search call, recorded on the turn (query, mode, size, start, duration, outcome, hits).
 
     :param host: Databricks workspace URL
@@ -177,6 +180,11 @@ async def _recorded_query(host: str, token: str, index: str, filters: Dict[str, 
     """
     entry = {'query_index': i, 'query': q[:300], 'mode': 'rerank' if rerank else 'raw', 'k': k,
              'start_ms': log.elapsed_ms()}
+    if len(q) > _MAX_QUERY_CHARS:
+        entry['truncated_from'] = len(q)
+        if 'query_truncated' not in log.codes:
+            log.issue('query_truncated', 'search',
+                      f'a query of {len(q)} characters was cut to {_MAX_QUERY_CHARS} before the Vector Search call')
     t0 = time.monotonic()
     log.vs_calls.append(entry)
     try:
@@ -191,7 +199,7 @@ async def _recorded_query(host: str, token: str, index: str, filters: Dict[str, 
 
 
 def start_question_search(host: str, token: str, index: str, filters: Dict[str, Any], question: str,
-                          log: TurnLog) -> 'asyncio.Task[List[Dict[str, Any]]]':
+                          log: TurnLog) -> 'asyncio.Task[List[SearchRow]]':
     """Starts the reranked search of the question as asked, now: the rewrite runs while it does, and ``search``
     (``first=``) picks the result up instead of querying again.
 
@@ -211,7 +219,7 @@ def start_question_search(host: str, token: str, index: str, filters: Dict[str, 
 async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any],
                  raw_queries: List[str] | None = None, log: TurnLog | None = None,
                  rerank_k: int | None = None, raw_k: int | None = None,
-                 first: 'asyncio.Task[List[Dict[str, Any]]] | None' = None) -> List[Dict[str, Any]]:
+                 first: 'asyncio.Task[List[SearchRow]] | None' = None) -> List[SearchRow]:
     """Reranked top k for every query + raw top k for ``raw_queries`` (default: every query),
     merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
@@ -236,7 +244,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
     raw_k = raw_top_k() if raw_k is None else raw_k
     rerank_ok = True
 
-    async def call(i: int | None, q: str, k: int, rerank: bool) -> List[Dict[str, Any]]:
+    async def call(i: int | None, q: str, k: int, rerank: bool) -> List[SearchRow]:
         """One recorded Vector Search call.
 
         :param i: index of the query in the turn's queries, None for a lookup
@@ -247,7 +255,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
         """
         return await _recorded_query(host, token, index, filters, log, i, q, k, rerank)
 
-    async def reranked(i: int, q: str) -> List[Dict[str, Any]]:
+    async def reranked(i: int, q: str) -> List[SearchRow]:
         """The reranked search of a query.
 
         :param i: index of the query in ``queries``
@@ -266,7 +274,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
             logger.warning('chat: reranker refused by %s (%s) — raw search only', index, exc)
             return [] if raw_k else _tag(await call(i, q, rerank_k, False), i, 'raw')
 
-    async def raw(i: int, q: str) -> List[Dict[str, Any]]:
+    async def raw(i: int, q: str) -> List[SearchRow]:
         """The raw search of a query.
 
         :param i: index of the query in ``queries``, None when ``q`` is not one of them
@@ -304,7 +312,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
 
 async def fetch_documents(host: str, token: str, index: str, query: str, refs: List[str], k: int,
                           filters: Dict[str, Any], via: str = 'ref_lookup',
-                          log: TurnLog | None = None) -> List[Dict[str, Any]]:
+                          log: TurnLog | None = None) -> List[SearchRow]:
     """HYBRID search restricted to the given REFs (``via``: ref_lookup).
     Failures are logged, never raised.
 
