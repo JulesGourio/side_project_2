@@ -13,7 +13,7 @@ import hashlib
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 from mlflow.entities import Feedback
 from mlflow.genai.scorers import (Guidelines, RelevanceToQuery, RetrievalGroundedness, RetrievalRelevance,
@@ -36,11 +36,22 @@ CONTEXT_JUDGES = {'retrieval_groundedness', 'numeric_fidelity', 'honest_limits',
 
 
 def _tag(trace, name: str) -> str:
+    """Value of a trace tag, empty when the tag is absent.
+
+    :param trace: Trace of one chat turn, as MLflow returns it.
+    :param name: Tag name.
+    :return: tag value.
+    """
     return (trace.info.tags or {}).get(name, '') or ''
 
 
 @scorer
 def language_match(trace) -> Feedback:
+    """Whether the answer is written in the language of the question.
+
+    :param trace: Trace of one chat turn, as MLflow returns it.
+    :return: feedback ``yes`` / ``no``, or no value when a language is unknown.
+    """
     asked, answered = _tag(trace, 'question_lang_guess'), _tag(trace, 'answer_lang_guess')
     if not asked or not answered:
         return Feedback(value=None, rationale='language not detected (model unavailable or text too short)')
@@ -49,6 +60,11 @@ def language_match(trace) -> Feedback:
 
 @scorer
 def has_citation(trace) -> Feedback:
+    """Whether the answer cites at least one document it was given.
+
+    :param trace: Trace of one chat turn, as MLflow returns it.
+    :return: feedback ``yes`` / ``no``, or no value when no passage was sent.
+    """
     sent, cited = int(_tag(trace, 'passages_sent') or 0), int(_tag(trace, 'cited_count') or 0)
     if not sent:
         return Feedback(value=None, rationale='no passage was sent to the model')
@@ -57,23 +73,43 @@ def has_citation(trace) -> Feedback:
 
 @scorer
 def degraded_turn(trace) -> Feedback:
+    """Whether the turn ended with degraded status.
+
+    :param trace: Trace of one chat turn, as MLflow returns it.
+    :return: feedback ``yes`` / ``no``, with the warnings as rationale.
+    """
     status, warnings = _tag(trace, 'status'), _tag(trace, 'warnings')
     return Feedback(value='yes' if status == 'degraded' else 'no', rationale=warnings or status)
 
 
 @scorer
 def used_fallback_model(trace) -> Feedback:
+    """Whether the answer came from the fallback model.
+
+    :param trace: Trace of one chat turn, as MLflow returns it.
+    :return: feedback ``yes`` / ``no``, with the answer endpoint as rationale.
+    """
     return Feedback(value='yes' if _tag(trace, 'llm_fallback') == 'true' else 'no', rationale=_tag(trace, 'answer_endpoint'))
 
 
 @scorer
 def first_token_s(trace) -> Feedback:
+    """Time to the first word of the answer, in seconds.
+
+    :param trace: Trace of one chat turn, as MLflow returns it.
+    :return: feedback value in seconds, or no value when not recorded.
+    """
     ms = _tag(trace, 'first_token_ms')
     return Feedback(value=round(int(ms) / 1000, 1) if ms else None, rationale='time to the first word')
 
 
 @scorer
 def first_token_in_budget(trace) -> Feedback:
+    """Whether the first word came within FIRST_TOKEN_BUDGET_S.
+
+    :param trace: Trace of one chat turn, as MLflow returns it.
+    :return: feedback ``yes`` / ``no``, or no value when not recorded.
+    """
     ms = _tag(trace, 'first_token_ms')
     if not ms:
         return Feedback(value=None, rationale='no first token')
@@ -84,6 +120,11 @@ def first_token_in_budget(trace) -> Feedback:
 
 @scorer
 def turn_cost_eur(trace) -> Feedback:
+    """Model cost of the turn, in euros.
+
+    :param trace: Trace of one chat turn, as MLflow returns it.
+    :return: feedback value in euros, or no value when not recorded.
+    """
     cost = _tag(trace, 'cost_eur')
     return Feedback(value=float(cost) if cost else None, rationale='rewrite + answer')
 
@@ -107,7 +148,12 @@ OFF_TOPIC_REFUSAL = (
 
 def judge_scorers(model: str, retrieval_relevance: bool = True) -> Dict[str, object]:
     """name -> judge scorer, all reading through ``model`` (``databricks:/<endpoint>`` or an empty string for the
-    Databricks managed judge)."""
+    Databricks managed judge).
+
+    :param model: Judge endpoint as ``databricks:/<endpoint>``, or an empty string for the Databricks managed judge.
+    :param retrieval_relevance: Whether to include the retrieval relevance judge.
+    :return: judge name to scorer.
+    """
     judge = {'model': model} if model else {}
     scorers = {
         'retrieval_groundedness': RetrievalGroundedness(**judge),
@@ -123,7 +169,13 @@ def judge_scorers(model: str, retrieval_relevance: bool = True) -> Dict[str, obj
 
 
 def sampled(trace_id: str, scorer_name: str, rate: float) -> bool:
-    """Stable draw: the same trace and judge always give the same answer, so a re-run judges the same turns."""
+    """Stable draw: the same trace and judge always give the same answer, so a re-run judges the same turns.
+
+    :param trace_id: Id of the trace.
+    :param scorer_name: Name of the judge.
+    :param rate: Share of the traces to judge, between 0 and 1.
+    :return: True when this trace is judged by this scorer.
+    """
     if rate >= 1.0:
         return True
     if rate <= 0.0:
@@ -132,9 +184,14 @@ def sampled(trace_id: str, scorer_name: str, rate: float) -> bool:
     return draw < rate
 
 
-def plan(traces: List[Dict[str, str]], rates: Optional[Dict[str, float]] = None) -> Dict[str, List[str]]:
+def plan(traces: List[Dict[str, str]], rates: Dict[str, float] | None = None) -> Dict[str, List[str]]:
     """judge name -> trace ids it reads. ``traces``: [{'trace_id', 'status', 'vote'}]. Thumbs-down and degraded turns
-    are read by every judge."""
+    are read by every judge.
+
+    :param traces: Traces to plan, as dicts with ``trace_id``, ``status`` and ``vote``.
+    :param rates: Sample rate per judge; SAMPLE_RATES when None.
+    :return: judge name to the trace ids it reads.
+    """
     rates = rates or SAMPLE_RATES
     out: Dict[str, List[str]] = {name: [] for name in rates}
     for t in traces:
@@ -147,7 +204,12 @@ def plan(traces: List[Dict[str, str]], rates: Optional[Dict[str, float]] = None)
 
 def estimated_input_tokens(chosen: Dict[str, List[str]], passage_chars: Dict[str, int]) -> int:
     """Rough input tokens of a plan (4 chars a token): the passages sent are re-read by every context judge;
-    the others read the question and the answer only (counted as 1,500 tokens)."""
+    the others read the question and the answer only (counted as 1,500 tokens).
+
+    :param chosen: Judge name to the trace ids it reads, as returned by ``plan``.
+    :param passage_chars: Characters of the passages sent, per trace id.
+    :return: estimated number of input tokens.
+    """
     total = 0
     for name, ids in chosen.items():
         for trace_id in ids:
@@ -159,6 +221,12 @@ class Throttle:
     """At most ``calls_per_second`` calls start per second, across threads (a fixed spacing, not a burst)."""
 
     def __init__(self, calls_per_second: float, clock=time.monotonic, sleep=time.sleep):
+        """Store the spacing between calls and the clock that measures it.
+
+        :param calls_per_second: Maximum calls started per second; 0 or less disables the throttle.
+        :param clock: Monotonic clock function, injectable for tests.
+        :param sleep: Sleep function, injectable for tests.
+        """
         self._gap = 1.0 / calls_per_second if calls_per_second > 0 else 0.0
         self._clock, self._sleep, self._lock, self._next = clock, sleep, threading.Lock(), 0.0
 
@@ -174,12 +242,24 @@ class Throttle:
 
 
 def is_rate_limited(exc: BaseException) -> bool:
+    """Whether an error is a rate limit (HTTP 429) of the model endpoint.
+
+    :param exc: Exception raised by the call.
+    :return: True for a rate limit, else False.
+    """
     text = str(exc).lower()
     return getattr(exc, 'status_code', None) == 429 or any(m in text for m in ('429', 'rate limit', 'too many requests'))
 
 
-def with_backoff(call: Callable[[], object], retries: int = 3, base_s: float = 4.0, sleep=time.sleep):
-    """``call()``, retried with doubling waits when the model endpoint answers 429; other errors are raised."""
+def with_backoff(call: Callable[[], object], retries: int = 3, base_s: float = 4.0, sleep=time.sleep) -> Any:
+    """``call()``, retried with doubling waits when the model endpoint answers 429; other errors are raised.
+
+    :param call: Function without arguments to run.
+    :param retries: Number of retries after the first attempt.
+    :param base_s: First wait in seconds; each retry doubles it.
+    :param sleep: Sleep function, injectable for tests.
+    :return: result of ``call``.
+    """
     for attempt in range(retries + 1):
         try:
             return call()
@@ -193,10 +273,23 @@ def score_all(jobs: List[Tuple[str, object, object]], max_workers: int = 2, call
               retries: int = 3, clock=time.monotonic, sleep=time.sleep) -> List[Dict[str, object]]:
     """Runs ``jobs`` = [(scorer name, scorer, trace)] with at most ``max_workers`` calls in flight and
     ``calls_per_second`` starting per second, so the judges cannot drain the model endpoint's token quota.
-    Returns [{'name', 'trace', 'value', 'rationale', 'error'}] in job order; a failing call is an ``error``, not a crash."""
+    Returns [{'name', 'trace', 'value', 'rationale', 'error'}] in job order; a failing call is an ``error``, not a crash.
+
+    :param jobs: List of (scorer name, scorer, trace) tuples.
+    :param max_workers: Calls in flight at once.
+    :param calls_per_second: Calls started per second across all threads.
+    :param retries: Retries per call on rate limit.
+    :param clock: Monotonic clock function, injectable for tests.
+    :param sleep: Sleep function, injectable for tests.
+    """
     throttle = Throttle(calls_per_second, clock, sleep)
 
-    def run(job):
+    def run(job) -> dict[str, object]:
+        """Run one scoring job, throttled and retried on rate limit.
+
+        :param job: Tuple of (scorer name, scorer, trace).
+        :return: result dict with ``name``, ``trace``, ``value``, ``rationale`` and ``error``.
+        """
         name, scorer_obj, trace = job
         throttle.wait()
         try:

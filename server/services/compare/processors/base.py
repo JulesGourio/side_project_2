@@ -41,4 +41,12 @@ class BaseProcessor(ABC):
         new_name: str,
         system_prompt: str = '',
     ) -> ProcessResult:
-        """Build the LLM message list for this file pair."""
+        """Build the LLM message list for this file pair.
+
+        :param old_bytes: content of the old file
+        :param old_name: file name of the old file
+        :param new_bytes: content of the new file
+        :param new_name: file name of the new file
+        :param system_prompt: system prompt, for the methods that take one
+        :return: the messages with their metadata and the image pairs
+        """

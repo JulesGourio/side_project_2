@@ -8,18 +8,20 @@ import uuid
 from logging import Formatter
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import Response
 
-from . import tracing  # noqa: F401 — sets up MLflow tracking URI
-from .routers import chat, compare, config, exports, feedback, health, history, preview
-from .services.infra.doc_catalog import catalog_refresher
-from .services.infra.lakebase import get_pool, init_lakebase, shutdown_lakebase, store_error
-from .services.chat.translation_bridge import shutdown_http_client as shutdown_translation_bridge
+from server import tracing  # noqa: F401 — sets up MLflow tracking URI
+from server.routers import chat, compare, config, exports, feedback, health, history, preview
+from server.services.infra.doc_catalog import catalog_refresher
+from server.services.infra.lakebase import get_pool, init_lakebase, shutdown_lakebase, store_error
+from server.services.chat.translation_bridge import shutdown_http_client as shutdown_translation_bridge
 
 logging.basicConfig(
   level=logging.INFO,
@@ -46,7 +48,11 @@ if not _volume_path:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+  """Open the Lakebase pool and start the document catalog refresher, then close both on shutdown.
+
+  :param app: the FastAPI application, unused here
+  """
   await init_lakebase()
   # Document catalog (REF links, titles) from Lakebase, reloaded every 30 min.
   catalog_task = asyncio.create_task(catalog_refresher(get_pool))
@@ -70,7 +76,13 @@ app.add_middleware(
 
 
 @app.middleware('http')
-async def log_requests(request: Request, call_next):
+async def log_requests(request: Request, call_next) -> Response:
+  """Log each request and its outcome, and tag the response with a short request id.
+
+  :param request: the incoming request
+  :param call_next: the next handler in the middleware chain
+  :return: the response of the downstream handler, with the ``X-Request-ID`` header set
+  """
   req_id = str(uuid.uuid4())[:8]
   start = time.monotonic()
   logger.info(f'[{req_id}] --> {request.method} {request.url.path}')
@@ -87,7 +99,13 @@ async def log_requests(request: Request, call_next):
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+  """Log an unhandled exception, record it in the error store, and answer with a generic 500.
+
+  :param request: the request that raised
+  :param exc: the unhandled exception
+  :return: a JSON response with a generic error body and status 500
+  """
   logger.error(f'Unhandled exception on {request.method} {request.url.path}: {exc}', exc_info=True)
   store_error(
       endpoint=f'{request.method} {request.url.path}',
@@ -119,9 +137,14 @@ if build_path.exists():
     if dir_path.exists():
       app.mount(f'/{static_dir}', StaticFiles(directory=str(dir_path)), name=static_dir)
 
-  @app.get('/{full_path:path}')
-  async def serve_spa(request: Request, full_path: str):
-    """SPA catch-all: serve index.html for any non-API route."""
+  @app.get('/{full_path:path}', response_model=None)
+  async def serve_spa(request: Request, full_path: str) -> FileResponse:
+    """SPA catch-all: serve index.html for any non-API route.
+
+    :param request: the incoming request, unused here
+    :param full_path: path after the host, without the leading slash
+    :return: the file at that path when it exists, otherwise index.html
+    """
     file_path = build_path / full_path
     if full_path and file_path.is_file():
       return FileResponse(str(file_path))

@@ -65,7 +65,7 @@ from pyspark.sql import functions as F
 
 # MAGIC %md
 # MAGIC ## Config Project Imports
-# MAGIC `manifest_steps` holds the phases of this task; `categories`, `quality`, `tables` and `config` live next to this notebook.
+# MAGIC `manifest_steps` holds the phases of this task; `categories`, `tables` and `config` live next to this notebook.
 
 # COMMAND ----------
 

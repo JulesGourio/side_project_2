@@ -1,30 +1,34 @@
 """Feedback endpoint — save user votes and comments to Lakebase."""
 
 import logging
-from typing import Optional
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..services.infra.lakebase import get_pool
-from ..services.infra.user import get_user_identity, get_workspace_url, require_compare
+from server.services.infra.lakebase import get_pool
+from server.services.infra.user import get_user_identity, get_workspace_url, require_compare
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 class FeedbackRequest(BaseModel):
-    vote: str          # "up" or "down"
-    comment: Optional[str] = None
-    message_id: Optional[int] = None
+    vote: Literal['up', 'down']
+    comment: str | None = None
+    message_id: int | None = None
 
 
-@router.post('/feedback', dependencies=[Depends(require_compare)])
-async def submit_feedback(body: FeedbackRequest, request: Request):
-    if body.vote not in ('up', 'down'):
-        return JSONResponse({'error': 'vote must be "up" or "down"'}, status_code=422)
+@router.post('/feedback', dependencies=[Depends(require_compare)], response_model=None)
+async def submit_feedback(body: FeedbackRequest, request: Request) -> dict | JSONResponse:
+    """Save a thumbs up / down on a comparison result.
 
+    :param body: the vote (anything but ``up`` or ``down`` is refused with a 422 before the route runs), an optional
+        comment and the message it is about.
+    :param request: the incoming request, for the caller's identity.
+    :return: ``{'success': True, 'id', 'vote'}``, or an error response (503 without database, 500 on a failed save).
+    """
     pool = get_pool()
     if not pool:
         return JSONResponse({'error': 'Feedback unavailable (database not configured)', 'available': False}, status_code=503)
@@ -59,22 +63,26 @@ async def submit_feedback(body: FeedbackRequest, request: Request):
 
 
 class ImpactFeedbackRequest(BaseModel):
-    vote: str          # "up" or "down"
-    comment: Optional[str] = None
-    impact_request_id: Optional[int] = None
-    message_id: Optional[int] = None
-    old_file_hash: Optional[str] = None
-    new_file_hash: Optional[str] = None
+    vote: Literal['up', 'down']
+    comment: str | None = None
+    impact_request_id: int | None = None
+    message_id: int | None = None
+    old_file_hash: str | None = None
+    new_file_hash: str | None = None
     # Set for a vote on one document's verdict; empty for a vote on the whole result.
-    ref: Optional[str] = None
-    verdict_shown: Optional[str] = None
+    ref: str | None = None
+    verdict_shown: str | None = None
 
 
-@router.post('/compare/impact/feedback', dependencies=[Depends(require_compare)])
-async def submit_impact_feedback(body: ImpactFeedbackRequest, request: Request):
-    if body.vote not in ('up', 'down'):
-        return JSONResponse({'error': 'vote must be "up" or "down"'}, status_code=422)
+@router.post('/compare/impact/feedback', dependencies=[Depends(require_compare)], response_model=None)
+async def submit_impact_feedback(body: ImpactFeedbackRequest, request: Request) -> dict | JSONResponse:
+    """Save a thumbs up / down on an impact search result, or on one document's verdict when ``body.ref`` is set.
 
+    :param body: the vote (anything but ``up`` or ``down`` is refused with a 422 before the route runs), an optional
+        comment (cut to 2000 characters) and what it is about: the impact request, the compared files, the document.
+    :param request: the incoming request, for the caller's identity.
+    :return: ``{'success': True, 'id'}``, or an error response (503 without database, 500 on a failed save).
+    """
     pool = get_pool()
     if not pool:
         return JSONResponse({'error': 'Feedback unavailable (database not configured)', 'available': False}, status_code=503)

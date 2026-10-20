@@ -2,14 +2,19 @@
 
 import json
 import logging
-from typing import Optional
 
-from . import connection
+from server.services.infra.lakebase import connection
 
 logger = logging.getLogger(__name__)
 
-async def get_cached_impact_result(old_file_hash: str, new_file_hash: str, app_version: str) -> Optional[dict]:
-    """Return the most recent cached /compare/impact result for this file pair, or None."""
+async def get_cached_impact_result(old_file_hash: str, new_file_hash: str, app_version: str) -> dict | None:
+    """Return the most recent cached /compare/impact result for this file pair, or None.
+
+    :param old_file_hash: hash of the old file
+    :param new_file_hash: hash of the new file
+    :param app_version: app version that made the result
+    :return: the cached result, or None when there is none
+    """
     if not old_file_hash or not new_file_hash:
         return None
     pool = connection.get_pool()
@@ -33,7 +38,13 @@ async def get_cached_impact_result(old_file_hash: str, new_file_hash: str, app_v
 
 
 async def store_impact_cache(old_file_hash: str, new_file_hash: str, app_version: str, result: dict) -> None:
-    """Persist a fresh /compare/impact result for later cache hits (best-effort, never raises)."""
+    """Persist a fresh /compare/impact result for later cache hits (best-effort, never raises).
+
+    :param old_file_hash: hash of the old file
+    :param new_file_hash: hash of the new file
+    :param app_version: app version that made the result
+    :param result: result to store, JSON-serialisable
+    """
     if not old_file_hash or not new_file_hash:
         return
     pool = connection.get_pool()
@@ -52,8 +63,13 @@ async def store_impact_cache(old_file_hash: str, new_file_hash: str, app_version
         logger.debug('store_impact_cache failed: %s', e)
 
 
-async def get_cached_summary(file_hash: str, app_version: str) -> Optional[dict]:
-    """Return the most recent cached /compare/summarize result for this file, or None."""
+async def get_cached_summary(file_hash: str, app_version: str) -> dict | None:
+    """Return the most recent cached /compare/summarize result for this file, or None.
+
+    :param file_hash: hash of the file
+    :param app_version: app version that made the summary
+    :return: the cached summary, or None when there is none
+    """
     if not file_hash:
         return None
     pool = connection.get_pool()
@@ -77,7 +93,13 @@ async def get_cached_summary(file_hash: str, app_version: str) -> Optional[dict]
 
 
 async def store_summary_cache(file_hash: str, app_version: str, result: dict, endpoint_name: str = '') -> None:
-    """Persist a fresh /compare/summarize result for later cache hits (best-effort, never raises)."""
+    """Persist a fresh /compare/summarize result for later cache hits (best-effort, never raises).
+
+    :param file_hash: hash of the file
+    :param app_version: app version that made the summary
+    :param result: summary to store, JSON-serialisable
+    :param endpoint_name: endpoint that wrote the summary, empty for none
+    """
     if not file_hash:
         return
     pool = connection.get_pool()

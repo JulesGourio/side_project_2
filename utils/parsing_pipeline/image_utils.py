@@ -10,10 +10,11 @@ import logging
 import signal
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pandas as pd
 
+from pyspark.sql import Column
 from pyspark.sql import types as T
 from pyspark.sql import functions as F
 from pyspark.sql.functions import pandas_udf
@@ -56,12 +57,20 @@ FULL_PARSE_SCHEMA = T.StructType([
 
 # --- Image helpers ---
 def _image_md5(pil_img) -> str:
-    """MD5 of raw pixel bytes — fast, deterministic deduplication key."""
+    """MD5 of raw pixel bytes — fast, deterministic deduplication key.
+
+    :param pil_img: PIL image.
+    """
     return hashlib.md5(pil_img.tobytes()).hexdigest()
 
 
-def _get_pil_image(pic, doc):
-    """PIL image of a Docling picture, trying the document API then the picture's own image; None if neither works."""
+def _get_pil_image(pic, doc) -> Any:
+    """PIL image of a Docling picture, trying the document API then the picture's own image; None if neither works.
+
+    :param pic: Docling picture.
+    :param doc: Docling document that holds the picture.
+    :return: PIL image, or None when neither way works.
+    """
     for fn in (lambda: pic.get_image(doc=doc),
                lambda: pic.image.pil_image if pic.image else None):
         try:
@@ -73,8 +82,12 @@ def _get_pil_image(pic, doc):
     return None
 
 
-def _page_size(doc, page_no):
-    """(width, height) of a page, or (None, None) when unknown."""
+def _page_size(doc, page_no) -> tuple[float | None, float | None]:
+    """(width, height) of a page, or (None, None) when unknown.
+
+    :param doc: Docling document.
+    :param page_no: Page number, starting at 1.
+    """
     try:
         page = doc.pages.get(page_no)
         if page and page.size:
@@ -84,8 +97,12 @@ def _page_size(doc, page_no):
     return None, None
 
 
-def _resolve_caption(doc, ref) -> Optional[str]:
-    """Text of a picture caption reference such as `#/texts/12`, or None."""
+def _resolve_caption(doc, ref) -> str | None:
+    """Text of a picture caption reference such as `#/texts/12`, or None.
+
+    :param doc: Docling document.
+    :param ref: Caption reference of a picture.
+    """
     try:
         parts = ref.cref.lstrip("#/").split("/")
         if len(parts) == 2:
@@ -98,7 +115,14 @@ def _resolve_caption(doc, ref) -> Optional[str]:
 
 def _get_image_context(page_texts: list, page_no, bbox, caption_crefs: set,
                        max_tokens: int = 250) -> str:
-    """Build before/after textual context around an image, token-budgeted."""
+    """Build before/after textual context around an image, token-budgeted.
+
+    :param page_texts: Text items of the page.
+    :param page_no: Page number of the image.
+    :param bbox: Bounding box of the image.
+    :param caption_crefs: References of the image captions, left out of the context.
+    :param max_tokens: Token budget of the context, split between the text before and after.
+    """
     if not bbox or not page_no or not page_texts:
         return ""
     try:
@@ -111,7 +135,13 @@ def _get_image_context(page_texts: list, page_no, bbox, caption_crefs: set,
         below = sorted([t for t in texts if t.prov[0].bbox.t > img_mid_y],
                        key=lambda t: t.prov[0].bbox.t)
 
-        def accumulate(sorted_texts, limit):
+        def accumulate(sorted_texts, limit) -> list[str]:
+            """Take texts in order while they fit the token limit; the first one is always taken.
+
+            :param sorted_texts: Text items, sorted by distance from the image.
+            :param limit: Token budget.
+            :return: stripped texts, in order.
+            """
             acc, toks = [], 0
             for t in sorted_texts:
                 s = t.text.strip()
@@ -136,8 +166,16 @@ def _get_image_context(page_texts: list, page_no, bbox, caption_crefs: set,
 # --- Image extraction from a Docling document ---
 def extract_images_from_doc(doc, doc_id: str, volume_base_path: str,
                             min_area_ratio: float, max_repeat: int,
-                            timings: Optional[dict] = None) -> List[Dict[str, Any]]:
-    """Save the pictures of a Docling document to the volume and return one metadata dict per image (page, label, caption, nearby text, area ratio); images that are too small (min_area_ratio) or repeated more than max_repeat times are skipped."""
+                            timings: dict | None = None) -> List[Dict[str, Any]]:
+    """Save the pictures of a Docling document to the volume and return one metadata dict per image (page, label, caption, nearby text, area ratio); images that are too small (min_area_ratio) or repeated more than max_repeat times are skipped.
+
+    :param doc: Docling document.
+    :param doc_id: Id of the document, used in the image paths.
+    :param volume_base_path: Folder of the images on the volume.
+    :param min_area_ratio: Smallest image, as a share of its page.
+    :param max_repeat: Largest number of pages on which the same image may repeat.
+    :param timings: Dict filled with the step durations, or None.
+    """
     pictures = list(doc.pictures)
     if not pictures:
         return []
@@ -211,7 +249,7 @@ def extract_images_from_doc(doc, doc_id: str, volume_base_path: str,
     return manifest
 
 
-def image_status_col(volume_path, width, height):
+def image_status_col(volume_path, width, height) -> Column:
     """Initial status of an image in image_metadata (deterministic, no LLM call).
 
     EXTRACTION_FAILED  : no image was written to the volume.
@@ -221,6 +259,11 @@ def image_status_col(volume_path, width, height):
 
     Deliberately conservative: does NOT filter on a large width/height ratio
     (a real horizontal flowchart is legitimately wide). See IMG_SKIP_* in config.py.
+
+    :param volume_path: Column with the volume path of the image; null when it was not written.
+    :param width: Column with the image width in pixels.
+    :param height: Column with the image height in pixels.
+    :return: status column: ``EXTRACTION_FAILED``, ``SKIPPED_DECORATIVE`` or ``PENDING``.
     """
     largest = F.greatest(F.coalesce(width, F.lit(0)), F.coalesce(height, F.lit(0)))
     smallest = F.least(F.coalesce(width, F.lit(0)), F.coalesce(height, F.lit(0)))
@@ -245,13 +288,25 @@ class _ParseTimeout:
     pathological file (giant PDF/xlsx) from blocking a Spark task for hours.
     """
     def __init__(self, seconds: int):
+        """Store the timeout and whether SIGALRM can enforce it.
+
+        :param seconds: Maximum duration in seconds; 0 or less disables the timeout.
+        """
         self.seconds = int(seconds) if seconds else 0
         self._active = self.seconds > 0 and hasattr(signal, "SIGALRM")
 
-    def _raise(self, *_):
+    def _raise(self, *_) -> None:
+        """Raise the timeout error when the timer fires.
+
+        :param _: Signal arguments, unused.
+        """
         raise TimeoutError(f"parse exceeded {self.seconds}s")
 
-    def __enter__(self):
+    def __enter__(self) -> "_ParseTimeout":
+        """Arm the timer when the block starts.
+
+        :return: this timeout.
+        """
         if self._active:
             try:
                 self._old = signal.signal(signal.SIGALRM, self._raise)
@@ -263,15 +318,26 @@ class _ParseTimeout:
                 self._active = False
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc) -> bool:
+        """Disarm the timer when the block ends.
+
+        :param exc: Exception information of the block, unused.
+        :return: False, so an exception of the block propagates.
+        """
         if self._active:
             signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, self._old)
         return False
 
 
-def _fallback_or_error(fb: Optional[Dict[str, Any]], ext_lower: str, timings: dict) -> dict:
-    """Turn a fallback result into the UDF result dict, or into an error result when the fallback failed."""
+def _fallback_or_error(fb: Dict[str, Any] | None, ext_lower: str, timings: dict) -> dict:
+    """Turn a fallback result into the UDF result dict, or into an error result when the fallback failed.
+
+    :param fb: Result of a fallback parser, or None when it failed.
+    :param ext_lower: Lowercase file extension, for the error message.
+    :param timings: Step durations of the file.
+    :return: result of the UDF for this file.
+    """
     if fb:
         return {"text": fb["text"], "parser_error": None, "parser_strategy": fb["parser_strategy"],
                 "parse_time_seconds": fb["parse_time_seconds"], "images": fb["images"], "timings": timings}
@@ -285,8 +351,18 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
                                  min_area_ratio_series: pd.Series, max_repeat_series: pd.Series,
                                  enable_timing_series: pd.Series,
                                  xml_only_series: pd.Series) -> pd.DataFrame:
-    """Pandas UDF run on the executors: parse each document (Docling, or a fallback by format) and extract its images, one result per row."""
-    # xml_only_series must stay a required positional column — pandas UDFs reject a default/Optional[...] one.
+    """Pandas UDF run on the executors: parse each document (Docling, or a fallback by format) and extract its images, one result per row.
+
+    :param content_series: Document bytes.
+    :param ext_series: File extensions.
+    :param doc_id_series: Ids of the documents.
+    :param volume_path_series: Base folder of the images on the volume.
+    :param min_area_ratio_series: Smallest image, as a share of its page.
+    :param max_repeat_series: Largest number of pages on which an image may repeat.
+    :param enable_timing_series: Whether to record the step durations; the first row decides.
+    :param xml_only_series: Whether the file goes straight to the XML fallback.
+    """
+    # xml_only_series must stay a required positional column — pandas UDFs reject a default/... | None one.
     patch_worker_env()
     ensure_config()
     enable_timing = bool(enable_timing_series.iloc[0]) if len(enable_timing_series) else False

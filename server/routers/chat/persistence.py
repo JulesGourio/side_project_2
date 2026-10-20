@@ -3,19 +3,31 @@
 import json
 import logging
 import secrets
-from typing import Optional, Tuple
+from typing import List, Tuple
 
-from ...services.chat.turn_log import TurnLog
-from ...services.infra.lakebase import upsert_user
-from .helpers import _detect_division, _strip_division
+import asyncpg
+
+from server.services.chat.turn_log import TurnLog
+from server.services.infra.lakebase import upsert_user
+from server.routers.chat.helpers import _detect_division, _strip_division
 
 logger = logging.getLogger(__name__)
 
 
-async def _upsert_session(conn, session_id: str, user_id: str, workspace_id: Optional[str], workspace_url: str, name: str,
-                          touch: bool = True) -> None:
-    # share_token is minted up front; it stays unused until the owner shares the conversation.
-    # touch=False keeps the thread's date for a hidden turn (error, aborted): the sidebar sorts by updated_at.
+async def _upsert_session(conn: asyncpg.Connection, session_id: str, user_id: str, workspace_id: str | None,
+                          workspace_url: str, name: str, touch: bool = True) -> None:
+    """Create the chat session row, or bump its ``updated_at`` when it exists.
+
+    ``share_token`` is minted up front; it stays unused until the owner shares the conversation.
+
+    :param conn: an acquired Lakebase connection.
+    :param session_id: id of the conversation (the browser creates it).
+    :param user_id: owner of the conversation.
+    :param workspace_id: workspace of the owner, None when unknown.
+    :param workspace_url: workspace URL of the owner.
+    :param name: thread title, used only when the row is created.
+    :param touch: False keeps the thread's date for a hidden turn (error, aborted): the sidebar sorts by updated_at.
+    """
     await conn.execute(
         '''
         INSERT INTO chat_sessions (id, user_id, workspace_id, workspace_url, name, share_token)
@@ -27,28 +39,45 @@ async def _upsert_session(conn, session_id: str, user_id: str, workspace_id: Opt
 
 
 async def _save_turn(
-    pool,
+    pool: asyncpg.Pool,
     session_id: str,
     user_id: str,
-    workspace_id: Optional[str],
+    workspace_id: str | None,
     workspace_url: str,
     user_content: str,
     assistant_content: str,
-    sources: Optional[list] = None,
+    sources: List[dict] | None = None,
     trace_id: str = '',
-    email: Optional[str] = None,
+    email: str | None = None,
     endpoint_name: str = '',
     status: str = 'ok',
     error_msg: str = '',
     division: str = 'ALL',
     question_lang: str = '',
-    log: Optional[TurnLog] = None,
-) -> Tuple[Optional[int], Optional[int]]:
-    """Persist the user and assistant messages with their sources; return (user message id, assistant message id),
-    or (None, None) when the save failed.
+    log: TurnLog | None = None,
+) -> Tuple[int | None, int | None]:
+    """Persist the user and assistant messages with their sources.
 
     A failed or aborted turn is saved too, so the question and the reason it broke stay traceable. Only 'ok' turns
     are shown in the history. The retrieval itself is saved by store_chat_turn (chat_turns), under the same trace_id.
+
+    :param pool: the Lakebase connection pool.
+    :param session_id: id of the conversation.
+    :param user_id: author of the question.
+    :param workspace_id: workspace of the author, None when unknown.
+    :param workspace_url: workspace URL of the author.
+    :param user_content: the question as sent, ``[Division: …]`` prefix included.
+    :param assistant_content: the answer (empty for a failed turn).
+    :param sources: the source chips shown under the answer.
+    :param trace_id: ``chat-…`` id shared with ``chat_turns``.
+    :param email: e-mail of the author, used to register the user.
+    :param endpoint_name: model endpoint that wrote the answer.
+    :param status: ``ok``, ``error`` or ``aborted``.
+    :param error_msg: reason of a failed turn (cut to 2000 characters).
+    :param division: ``AS``, ``IS`` or ``ALL``; ``ALL`` falls back to the prefix of the question.
+    :param question_lang: ISO code of the question's language, when detected.
+    :param log: the turn log, which receives a ``persist_failed`` issue if the save fails.
+    :return: (user message id, assistant message id), or (None, None) when the save failed.
     """
     # Thread title from the user's question, without the [Division: …] prefix.
     clean_content = _strip_division(user_content)

@@ -4,8 +4,8 @@ Text engines (engines.py): paragraph_semantic_diff is the primary one, section_c
 alternative. Image hashing and pairing live in images.py, the LLM system prompts in prompts.py.
 """
 
-from .engines import paragraph_semantic_diff, section_canonical_diff
-from .images import (
+from server.services.compare.processors._diff_engines.engines import paragraph_semantic_diff, section_canonical_diff
+from server.services.compare.processors._diff_engines.images import (
     _IMG_JPEG_QUALITY,
     _IMG_MAX_DIM,
     _compute_image_diff_pairs,
@@ -16,8 +16,8 @@ from .images import (
     image_diff_pairs,
     images_are_similar,
 )
-from .prompts import SYSTEM_PROMPT_STANDARD, SYSTEM_PROMPT_STRUCTURED
-from .text import (
+from server.services.compare.processors._diff_engines.prompts import SYSTEM_PROMPT_STANDARD, SYSTEM_PROMPT_STRUCTURED
+from server.services.compare.processors._diff_engines.text import (
     _MAX_DIFF_CHARS,
     DIFF_TRUNCATED_MARKER,
     extraction_warnings,

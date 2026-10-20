@@ -4,9 +4,9 @@ import difflib
 import os
 import re
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from .collapse import (
+from server.services.compare.processors._diff_engines.collapse import (
     _BOILERPLATE_MIN_PAGES,
     _cancel_resegmented,
     _collapse_page_repeats,
@@ -14,7 +14,7 @@ from .collapse import (
     _dedup_repeated_headers,
     _is_pagination_only,
 )
-from .relocation import (
+from server.services.compare.processors._diff_engines.relocation import (
     _STRIKETHROUGH_RE,
     _align_duplicates,
     _drop_merged_cells,
@@ -22,7 +22,7 @@ from .relocation import (
     _position_index,
     _tag_relocated,
 )
-from .text import SECTION_RE, inline_word_diff, is_substantive, is_substantive_keep_modals, strip_tag
+from server.services.compare.processors._diff_engines.text import SECTION_RE, inline_word_diff, is_substantive, is_substantive_keep_modals, strip_tag
 
 # Word similarity above which two unmatched paragraphs pair as one MODIFIED entry (below: REMOVED + ADDED).
 _PAIR_RATIO_THRESHOLD = float(os.getenv('COMPARE_PAIR_RATIO_THRESHOLD', '0.55'))
@@ -40,11 +40,22 @@ _CONT_RE = re.compile(
 
 
 def _clean(s: str) -> str:
+    """Lowercase text with dot leaders and repeated spaces collapsed, used as the comparison key.
+
+    :param s: text to normalise
+    :return: the normalised text
+    """
     s = re.sub(r'[\.\-_]{2,}', ' ', s)
     return re.sub(r'\s+', ' ', s).strip().lower()
 
 
-def _parse_blocks(text: str, page_label: Optional[str]) -> List[Dict[str, Any]]:
+def _parse_blocks(text: str, page_label: str | None) -> List[Dict[str, Any]]:
+    """Splits a text into blocks, each tagged with its section, its page and its comparison key.
+
+    :param text: text of one document, one block per line
+    :param page_label: label that makes ``[Page N]`` tags give the page number; None reads no page
+    :return: the blocks as dicts with ``idx``, ``sec``, ``txt``, ``clean`` and ``page``
+    """
     lines = text.splitlines()
     bare_lines = [strip_tag(b) for b in lines]
     # Mask a trailing page fraction ("... V09 4/39") before counting repeats: a footer stamp embedding its page
@@ -71,6 +82,11 @@ def _parse_blocks(text: str, page_label: Optional[str]) -> List[Dict[str, Any]]:
 
 
 def _merge_continued(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Joins each '(Continued)' page-break header to the paragraph it continues.
+
+    :param items: blocks in document order
+    :return: the blocks, the continuations merged and the bare headers dropped
+    """
     result: List[Dict[str, Any]] = []
     last_content_idx: Dict[str, int] = {}
     for item in items:
@@ -99,8 +115,19 @@ def _merge_continued(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _sort_for_display(results: List[Dict[str, Any]], old_items: List[Dict[str, Any]],
                       new_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Order entries by section, aligning the two documents' headings with SequenceMatcher on normalized
-    keys (a revision that re-cases headings or bumps clause numbers would otherwise match almost none)."""
+    keys (a revision that re-cases headings or bumps clause numbers would otherwise match almost none).
+
+    :param results: entries to order, sorted in place
+    :param old_items: blocks of the old document
+    :param new_items: blocks of the new document
+    :return: the entries in display order
+    """
     def _sec_align_key(s: str) -> str:
+        """Section name as a key for aligning two documents: no clause number, spaces collapsed, case folded.
+
+        :param s: section name
+        :return: the key
+        """
         s = re.sub(r'^\d+(?:\.\d+)*\.?\s*', '', s)
         return re.sub(r'\s+', ' ', s).strip().casefold()
 
@@ -109,6 +136,9 @@ def _sort_for_display(results: List[Dict[str, Any]], old_items: List[Dict[str, A
 
         A heading recurring at distant points (a generic 'General', a repeated workflow step) stays several separate
         runs instead of collapsing onto the first one's slot.
+
+        :param items: blocks of one document
+        :return: ``(sequence of section runs, map from each block idx to its run)``
         """
         seq: List[str] = []
         idx_to_run: Dict[int, int] = {}
@@ -129,6 +159,13 @@ def _sort_for_display(results: List[Dict[str, Any]], old_items: List[Dict[str, A
     new_key_counts = Counter(new_raw_keys)
 
     def _disambiguate(raw_keys: List[str], counts_here: Counter, counts_other: Counter) -> List[str]:
+        """Section keys, with a per-occurrence suffix on keys that recur on either side.
+
+        :param raw_keys: normalised section keys of one side, in order
+        :param counts_here: occurrences of each key on this side
+        :param counts_other: occurrences of each key on the other side
+        :return: the keys to align
+        """
         return [
             k if counts_here[k] <= 1 and counts_other.get(k, 0) <= 1 else f'{k}\x00{i}'
             for i, k in enumerate(raw_keys)
@@ -157,7 +194,11 @@ def _sort_for_display(results: List[Dict[str, Any]], old_items: List[Dict[str, A
 
     def _order_key(r: Dict[str, Any]) -> Tuple[int, int, float]:
         """(section run, page, fractional position): one axis for both documents, so a REMOVED and the ADDED that
-        replaces it end up next to each other."""
+        replaces it end up next to each other.
+
+        :param r: entry to order
+        :return: ``(section run order, page, fractional position)``
+        """
         if r.get('from_new'):
             run = new_idx_to_run.get(r['sort_idx'])
             order = new_run_order[run] if run is not None else 999_999
@@ -180,7 +221,7 @@ def _sort_for_display(results: List[Dict[str, Any]], old_items: List[Dict[str, A
     return results
 
 
-def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[str] = None) -> Tuple[str, int]:
+def paragraph_semantic_diff(old_text: str, new_text: str, page_label: str | None = None) -> Tuple[str, int]:
     """Primary paragraph-level semantic alignment engine.
 
     '(Continued)' page splits are merged, exact matches dropped, near matches (word ratio > 0.55, 3+ words) become
@@ -189,6 +230,11 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     Per-page boilerplate repeats and document-wide restyles collapse into one annotated entry.
 
     Returns (diff_string, filtered_count).
+
+    :param old_text: text of the old document
+    :param new_text: text of the new document
+    :param page_label: label of the pages in the entries, e.g. ``Page``; None when the document has no pages
+    :return: ``(diff_string, filtered_count)``
     """
     # Raw (pre-dedup) blocks are kept: the artifact nets below count occurrences on them, because the dedup pass is
     # what makes counts look uneven between the two revisions.
@@ -240,7 +286,7 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
         if ln < 3:
             continue
         n_count = Counter(n_words)
-        sm: Optional[difflib.SequenceMatcher] = None
+        sm: difflib.SequenceMatcher | None = None
         for i, o_words in enumerate(old_words_cache):
             lo = len(o_words)
             if lo < 3:
@@ -268,6 +314,11 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     filtered = resegmented
 
     def _emit_modified(o: Dict[str, Any], n: Dict[str, Any]) -> None:
+        """Adds the MODIFIED entry of a pair when the change is substantive; counts the pair as filtered otherwise.
+
+        :param o: old-side block
+        :param n: new-side block
+        """
         nonlocal filtered
         if is_substantive_keep_modals(o['txt'], n['txt']):
             diff_str = inline_word_diff(o['txt'], n['txt'])
@@ -300,7 +351,12 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     # ── Second-chance pairing: table rows sharing the same row key ──────────
     # DOCX table rows are emitted as 'RowLabel: col: val | …'. A heavily rewritten row is still the same row evolving:
     # pair leftovers with the same row label and section instead of reporting REMOVED + ADDED.
-    def _row_key(txt: str) -> Optional[str]:
+    def _row_key(txt: str) -> str | None:
+        """Row label of a table row written 'Label: ...', used to pair rows; None when the text is no row.
+
+        :param txt: block text
+        :return: the cleaned label, or None
+        """
         head, sep, _ = txt.partition(':')
         if not sep:
             return None
@@ -331,7 +387,12 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: Optional[s
     # ── Third-chance pairing: same text behind a different leading number ───
     # '3. INSPECTION' -> '4. INSPECTION' is too short for the similarity pass. Paired, it shows only the number change;
     # a real value change ('2.5 mm max' -> '3.5 mm max') must never be hidden.
-    def _numbered_key(txt: str) -> Optional[str]:
+    def _numbered_key(txt: str) -> str | None:
+        """Text behind a leading number ('3. INSPECTION' gives 'inspection'), used to pair renumbered headings.
+
+        :param txt: block text
+        :return: the text, or None when there is no leading number or no words after it
+        """
         head, _, rest = txt.strip().partition(' ')
         rest = _clean(rest)
         if not rest or not any(ch.isdigit() for ch in head) or not any(ch.isalpha() for ch in rest):
@@ -435,6 +496,10 @@ def section_canonical_diff(old_text: str, new_text: str) -> Tuple[str, int]:
 
     Returns:
         (diff_string, filtered_count)
+
+    :param old_text: text of the old document
+    :param new_text: text of the new document
+    :return: ``(diff_string, filtered_count)``
     """
     raw = list(difflib.unified_diff(old_text.splitlines(), new_text.splitlines(), n=3, lineterm=''))
     cur_sec = ''

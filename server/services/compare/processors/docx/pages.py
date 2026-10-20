@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Tuple
 
-from .ooxml import _W_BR, _W_LRPB, _W_TYPE
+from server.services.compare.processors.docx.ooxml import _W_BR, _W_LRPB, _W_TYPE
 
 # --- Page-number estimation ---
 # No rendering engine: pages are estimated from the page-break markers plus a content-flow estimate.
@@ -20,6 +20,9 @@ def _count_breaks_split(element) -> Tuple[int, int]:
     only when the file was freshly saved by Word, stale/partial otherwise.
     Keeping them separate lets the caller drop the lastRendered ones when they
     look stale (see _lrpb_is_stale).
+
+    :param element: ``w:p`` or ``w:tr`` element
+    :return: ``(explicit page breaks, lastRenderedPageBreak markers)``
     """
     forced = 0
     lrpb = 0
@@ -38,6 +41,10 @@ def _lrpb_is_stale(total_forced: int, total_lrpb: int) -> bool:
     each forced break, so the count is normally >= the number of forced breaks. When it is much smaller, the document
     was edited after its last full render: the markers are a stale subset that would inflate the page count, so they
     are discarded in favour of forced breaks and content flow.
+
+    :param total_forced: explicit page breaks of the document
+    :param total_lrpb: lastRenderedPageBreak markers of the document
+    :return: True when the markers should be ignored
     """
     return total_lrpb < total_forced * 0.5
 
@@ -56,6 +63,9 @@ def _assign_pages(entries: List[Dict[str, Any]], use_lrpb: bool) -> None:
     _PAGE_WEIGHT_CAP. The weight rule paginates marker-poor documents (long text
     files with only a couple of explicit breaks) without disturbing marker-rich
     ones, where breaks fire first and keep the accumulator small.
+
+    :param entries: document-ordered entries, updated in place
+    :param use_lrpb: True to count the lastRenderedPageBreak markers as page breaks
     """
     page = 1
     acc = 0

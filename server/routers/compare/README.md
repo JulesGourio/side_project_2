@@ -11,7 +11,8 @@ the audit rows and the access checks are in [services/infra](../../services/infr
 | Module | Routes | Content |
 |---|---|---|
 | `__init__.py` | none | Includes the four modules below |
-| `common.py` | none | `_get_config()`: every `COMPARE_*` setting, read per request. The default analysis prompt, used when `COMPARE_ANALYSIS_SYSTEM_PROMPT` is unset. File validation (size, extension). `_is_within_volume` |
+| `config.py` | none | `get_config()`: every `COMPARE_*` setting, read per request, with its default as a named constant. `APP_VERSION`, the file size limit, the number of analyses at once. The default analysis prompt, used when `COMPARE_ANALYSIS_SYSTEM_PROMPT` is unset |
+| `common.py` | none | File helpers: validation (size, extension), safe file names, `_is_within_volume` |
 | `analyze.py` | `POST /compare/analyze` | Diff of two files as server-sent events: cache check, wait for a slot, processor, audit row (`llm_requests`), one call or a chunked analysis |
 | `impact.py` | `POST /compare/impact` | Impact search as NDJSON: `plan`, one `document` event per judged candidate, `done`. Result cache, audit row (`impact_requests`) |
 | `summarize.py` | `POST /compare/summarize` | Summary of one document (text, or an image through the vision endpoint), cached by file hash |

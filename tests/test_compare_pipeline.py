@@ -126,11 +126,8 @@ def test_diff_collapses_per_page_boilerplate():
 
 
 def test_diff_keeps_below_threshold_repeats_expanded():
-    # Two occurrences only (< _BOILERPLATE_MIN_PAGES): nothing proves it is a
-    # page artefact - keep both entries untouched. Pages carry enough filler for
-    # the two occurrences to sit further apart than _dedup_repeated_headers'
-    # window, which would otherwise absorb the second one and make this test
-    # pass for the wrong reason (the count would include the '## NEW NOTE' section heading).
+    # Two occurrences prove nothing (< _BOILERPLATE_MIN_PAGES): both entries stay.
+    # The filler keeps them beyond _dedup_repeated_headers' window, which would otherwise absorb the second one.
     def page(i, stamp):
         rows = [f'Wiring for connector J{i} pin {k} routed to terminal T{k} [Page {i}]'
                 for k in range(30)]

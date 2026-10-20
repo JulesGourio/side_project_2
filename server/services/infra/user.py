@@ -4,20 +4,20 @@ import asyncio
 import logging
 import os
 import time
-from typing import Optional, Tuple, TypedDict
+from typing import Tuple, TypedDict
 
 from fastapi import HTTPException, Request
 
 
 class UserIdentity(TypedDict):
     user_id: str                 # Numeric part only — e.g. "78655966095635"
-    workspace_id: Optional[str]  # Workspace code (part after '@') — e.g. "2865348338307293"
-    email: Optional[str]         # Real email if x-forwarded-user is one, otherwise None
+    workspace_id: str | None  # Workspace code (part after '@') — e.g. "2865348338307293"
+    email: str | None         # Real email if x-forwarded-user is one, otherwise None
 
 
 logger = logging.getLogger(__name__)
 
-_dev_user_cache: Optional[str] = None
+_dev_user_cache: str | None = None
 _CAPS_TTL_S = int(os.getenv('CAPS_TTL_S', '600'))
 _caps_cache: dict[str, tuple[float, dict]] = {}
 
@@ -37,7 +37,11 @@ def _is_dev() -> bool:
 
 
 def _is_real_email(value: str) -> bool:
-    """True if value looks like a real email (not a numeric Databricks workspace-scoped ID)."""
+    """True if value looks like a real email (not a numeric Databricks workspace-scoped ID).
+
+    :param value: string to test, usually the ``x-forwarded-user`` header
+    :return: True when it is an email and not a numeric workspace-scoped id
+    """
     if '@' not in value:
         return False
     local, _, domain = value.partition('@')
@@ -68,6 +72,9 @@ async def get_current_user(request: Request) -> str:
     1. x-forwarded-user — real email → use directly
     2. x-forwarded-user — numeric Databricks ID → return the numeric part
     3. WorkspaceClient.current_user.me() — local development only
+
+    :param request: incoming request, read for its headers
+    :return: the email, or the numeric user id
     """
     forwarded = request.headers.get('x-forwarded-user', '').strip()
     if forwarded and _is_real_email(forwarded):
@@ -80,7 +87,11 @@ async def get_current_user(request: Request) -> str:
 
 
 async def get_user_identity(request: Request) -> UserIdentity:
-    """Return the split user_id, workspace_id, and email from the request headers."""
+    """Return the split user_id, workspace_id, and email from the request headers.
+
+    :param request: incoming request, read for its headers
+    :return: the user id, the workspace id and the email, parsed from the headers
+    """
     forwarded = request.headers.get('x-forwarded-user', '').strip()
 
     if not forwarded:
@@ -95,15 +106,19 @@ async def get_user_identity(request: Request) -> UserIdentity:
 
     parts = forwarded.split('@', 1)
     clean_uid = parts[0]
-    workspace_id: Optional[str] = parts[1] if len(parts) > 1 else None
+    workspace_id: str | None = parts[1] if len(parts) > 1 else None
     return UserIdentity(user_id=clean_uid, workspace_id=workspace_id, email=None)
 
 
 _OPEN_CAPS = {'can_chat': True, 'can_compare': True, 'groups': []}
 
 
-def _live_caps_via_sql(token: str) -> Optional[dict]:
-    """is_account_group_member() on behalf of the requesting user. None = not usable, caller should fall back."""
+def _live_caps_via_sql(token: str) -> dict | None:
+    """is_account_group_member() on behalf of the requesting user. None = not usable, caller should fall back.
+
+    :param token: access token of the visitor
+    :return: the capabilities, or None when the warehouse check is not configured
+    """
     if not _CAPS_WAREHOUSE_ID:
         return None
     from databricks.sdk import WorkspaceClient
@@ -124,17 +139,52 @@ def _live_caps_via_sql(token: str) -> Optional[dict]:
 
 
 def _live_caps_via_scim(token: str) -> dict:
-    """The visitor's groups from SCIM /Me with their own token: no warehouse permission and no SQL scope needed."""
+    """The visitor's groups from SCIM /Me with their own token: no warehouse permission and no SQL scope needed.
+
+    :param token: access token of the visitor
+    :return: the capabilities from the visitor's groups
+    """
     from databricks.sdk import WorkspaceClient
     w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
-    names = {g.display for g in (w.current_user.me().groups or []) if g.display}
-    return {'can_chat': bool(names & _CAPS_CHAT_GROUPS), 'can_compare': bool(names & _CAPS_COMPARE_GROUPS), 'groups': []}
+    me = w.current_user.me()
+    names = {g.display for g in (me.groups or []) if g.display}
+    return {'can_chat': bool(names & _CAPS_CHAT_GROUPS), 'can_compare': bool(names & _CAPS_COMPARE_GROUPS), 'groups': [],
+            'email': me.user_name or '', 'display_name': me.display_name or ''}
+
+
+async def _remember_identity(forwarded: str, email: str, display_name: str) -> None:
+    """Record the visitor's email and name in ``users``; reports read the email from there.
+
+    Databricks Apps sends the visitor as a numeric id only, so the email is not otherwise known.
+    Never raises.
+
+    :param forwarded: visitor id as sent by Databricks Apps, ``<user id>@<workspace id>``
+    :param email: e-mail of the visitor, ignored unless it contains ``@``
+    :param display_name: name of the visitor, stored as NULL when empty
+    """
+    if not (forwarded and email and '@' in email) or _is_real_email(forwarded):
+        return
+    try:
+        from server.services.infra import lakebase
+        pool = lakebase.get_pool()
+        if not pool:
+            return
+        user_id, _, workspace_id = forwarded.partition('@')
+        async with pool.acquire() as conn:
+            await lakebase.upsert_user(conn, user_id=user_id, workspace_id=workspace_id or None, email=email,
+                                       display_name=display_name or None)
+    except Exception as e:  # noqa: BLE001 — a report column, never worth a failed request
+        logger.warning('Identity of %s not recorded: %s', forwarded, e)
 
 
 def _resolve_caps(token: str) -> Tuple[dict, str]:
     """(capabilities, source). SCIM first; the warehouse check only when SCIM fails or grants nothing, and a
-    warehouse is set. Raises when no source could answer."""
-    scim: Optional[dict] = None
+    warehouse is set. Raises when no source could answer.
+
+    :param token: access token of the visitor
+    :return: ``(capabilities, source)``, the source being ``SCIM`` or ``SQL``
+    """
+    scim: dict | None = None
     try:
         scim = _live_caps_via_scim(token)
     except Exception as e:
@@ -163,6 +213,9 @@ async def get_capabilities(request: Request) -> dict:
     reaches the app, the groups only narrow it.
 
     CAPS_BYPASS=true short-circuits and grants everything (DEV only).
+
+    :param request: incoming request, read for its headers
+    :return: ``{can_chat, can_compare, groups}`` for the current user
     """
     if _CAPS_BYPASS:
         return dict(_OPEN_CAPS)
@@ -188,20 +241,28 @@ async def get_capabilities(request: Request) -> dict:
         logger.warning('Capabilities %s: live group check failed (%s) — granting all (fail-open)', key, e)
         return dict(_OPEN_CAPS)
 
+    email, display_name = caps.pop('email', ''), caps.pop('display_name', '')
     logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s)', key, caps['can_chat'], caps['can_compare'], source)
     _caps_cache[key] = (now + _CAPS_TTL_S, caps)
+    await _remember_identity(forwarded, email, display_name)
     return caps
 
 
 async def require_chat(request: Request) -> None:
-    """FastAPI dependency: 403 unless the user may use the chatbot."""
+    """FastAPI dependency: 403 unless the user may use the chatbot.
+
+    :param request: incoming request
+    """
     caps = await get_capabilities(request)
     if not caps['can_chat']:
         raise HTTPException(status_code=403, detail='Chat access not granted')
 
 
 async def require_compare(request: Request) -> None:
-    """FastAPI dependency: 403 unless the user may use document comparison."""
+    """FastAPI dependency: 403 unless the user may use document comparison.
+
+    :param request: incoming request
+    """
     caps = await get_capabilities(request)
     if not caps['can_compare']:
         raise HTTPException(status_code=403, detail='Document comparison access not granted')

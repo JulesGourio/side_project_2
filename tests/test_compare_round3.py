@@ -1,11 +1,11 @@
-"""Compare regression tests: streams, cache, chunked analysis and warnings.
+"""Compare tests: streams, cache, chunked analysis and warnings.
 
 Coverage:
   - /compare/impact and /compare/summarize through FastAPI (stream shape, cache)
   - chunked analysis: a failed part leaves a valid JSON array
   - "unrelated documents" warning
   - DOCX tables without a header row stay positional
-  - relocation detection still works with the single shared index
+  - relocation detection on the shared index
 """
 
 import asyncio

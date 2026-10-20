@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime
 from decimal import Decimal
+from typing import Any
 
 # ── Databricks CLI profiles ────────────────────────────────────────────────────
 PROFILE_DEV  = "DEV"
@@ -62,10 +63,17 @@ MIGRATE_TO_PROD_TABLE_ORDER = [
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
-def lakebase_connect_with(w, project_id: str, branch: str, endpoint: str, database: str):
+def lakebase_connect_with(w, project_id: str, branch: str, endpoint: str, database: str) -> Any:
     """psycopg2 connection to a Lakebase database, authenticated by generate_database_credential (as the app does).
 
     ``w`` is a WorkspaceClient of the workspace that hosts the Lakebase (CLI profile or ambient notebook identity).
+
+    :param w: WorkspaceClient of the workspace hosting the Lakebase (CLI profile or ambient notebook identity).
+    :param project_id: Lakebase project name, as shown in the Databricks UI.
+    :param branch: Lakebase branch name, for example ``production``.
+    :param endpoint: Endpoint name of the branch, for example ``primary``.
+    :param database: Name of the database to connect to.
+    :return: open psycopg2 connection, authenticated with a short-lived database credential.
     """
     import psycopg2
 
@@ -92,8 +100,12 @@ def lakebase_connect_with(w, project_id: str, branch: str, endpoint: str, databa
     )
 
 
-def lakebase_connect(env: str):
-    """Connection to the Lakebase of an env of LAKEBASE_PROJECTS, through its CLI profile."""
+def lakebase_connect(env: str) -> Any:
+    """Connection to the Lakebase of an env of LAKEBASE_PROJECTS, through its CLI profile.
+
+    :param env: Environment key of LAKEBASE_PROJECTS, ``UAT``, ``DEV`` or ``PROD``.
+    :return: open psycopg2 connection to the Lakebase of that environment.
+    """
     if env not in LAKEBASE_PROJECTS:
         raise ValueError(f"Unknown Lakebase environment: '{env}'. Available: {list(LAKEBASE_PROJECTS)}")
     from databricks.sdk import WorkspaceClient
@@ -102,8 +114,12 @@ def lakebase_connect(env: str):
     return lakebase_connect_with(w, cfg["project_id"], cfg["branch"], cfg["endpoint"], cfg["database"])
 
 
-def json_serializer(obj):
-    """``default=`` hook of json.dumps for Lakebase rows (dates, Decimal, bytes)."""
+def json_serializer(obj) -> Any:
+    """``default=`` hook of json.dumps for Lakebase rows (dates, Decimal, bytes).
+
+    :param obj: Value that json cannot serialise natively.
+    :return: JSON-compatible representation of ``obj``.
+    """
     if isinstance(obj, (datetime.date, datetime.datetime)):
         return obj.isoformat()
     if isinstance(obj, Decimal):

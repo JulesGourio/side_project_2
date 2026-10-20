@@ -116,16 +116,19 @@ variables:
     default: "dev-job"
   chat_mlflow_experiment:
     description: >-
-      Workspace path of the MLflow experiment that receives one trace per chat turn (the traces are stored in the Unity Catalog schema <pipeline_write_env>_proj.qualibot_traces). It sits in the shared folder /Shared/Experiment, not in the home folder of a person or a service principal. Read by the chat jobs of resources/chat_mlflow.yml;
+      Workspace path of the MLflow experiment that receives one trace per chat turn (the traces are stored in Unity Catalog tables <experiment id>_otel_* of the schema <pipeline_write_env>_proj.qualibot). It sits in the shared folder /Shared/Experiment, not in the home folder of a person or a service principal. Read by the chat jobs of resources/chat_mlflow.yml;
       the app reads CHAT_MLFLOW_EXPERIMENT in utils/deploy/target_env.json, which must hold the same value (tests/test_deploy_config.py).
       Moving the experiment in the workspace changes this path: update both.
-    default: "/Shared/Experiment/qualibot_chat_turns"
+    default: "/Shared/Experiment/qualibot_chat_traces"
   lakebase_export_schedule_pause:
     description: "PAUSED: the Lakebase export job (D_1_Qualibot_Lakebase_Export_To_Volume) does not run on its schedule. UNPAUSED: it runs at 02:00 and 14:00 (Europe/Brussels)."
     default: "PAUSED"
   lakebase_import_to_delta:
     description: "true: the export job also loads every exported table as a Delta table of <pipeline_write_env>_proj.qualibot. false on DEV, whose schema holds Delta copies of the UAT tables."
     default: "false"
+  lakebase_tables_to_skip:
+    description: "Comma-separated Lakebase tables the export job leaves out. Empty: every table is exported."
+    default: ""
   notification_email:
     description: "Recipient of the failure notifications of every job"
     default: "LEAP_Databricks_Alert@latecoere.aero"
@@ -138,7 +141,7 @@ sync:
     - "client/src/**"            # frontend source — only built output (client/out) is needed
     - "client/public/**"         # source assets duplicated in client/out after build
     - "client/node_modules/**"
-    - "runbooks/**"              # manual steps for the operator, never read at runtime
+    - "runbooks/**"              # not deployed
     - "archive/**"               # superseded documentation, never read at runtime
     - ".git/**"
     - ".databricks/**"           # local CLI cache — contains 64MB+ terraform binaries
@@ -166,8 +169,10 @@ resources:
       description: "QualiBOT — document comparison and chat"
       source_code_path: .
       # On-behalf-of-user OAuth: the app checks the visitor's group membership itself (server/services/infra/user.py, active when CAPS_WAREHOUSE_ID is set).
+      # iam.current-user:read: groups read from SCIM /Me with the visitor's token (server/services/infra/user.py).
       user_api_scopes:
         - sql
+        - iam.current-user:read
       permissions:
         - group_name: "Role-Project-LEAP-CoreAdmin"
           level: CAN_MANAGE
@@ -316,6 +321,8 @@ targets:
       app_name: "qualibot"
       pipeline_write_env: dev
       alerts_warehouse_id: "13eff4a6095513cb"
+      lakebase_import_to_delta: "true"
+      lakebase_tables_to_skip: "doc_catalog,impact_cache,impact_document_results,impact_feedbacks,impact_requests,llm_requests,summary_cache,users"
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Same prod sources as UAT.
@@ -430,7 +437,7 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
-        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy; the data copy steps are in runbooks/uat.md.
+        # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH).
         qualibot_images:
           catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
@@ -474,7 +481,7 @@ targets:
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
       parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
       # Real tables, no suffix. Without the parsing state in these tables the daily run reparses the whole
-      # corpus on GPU (runbooks/uat.md). One index serves the chat and impact search.
+      # corpus on GPU. One index serves the chat and impact search.
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
       # chunks_full is built, but chunks_full_index is not in parsing_vector_search_indexes, so it is neither created nor synced.
       parsing_build_chunks_full: "true"
@@ -484,6 +491,8 @@ targets:
       job_activity_tag: "uat-job"
       lakebase_export_schedule_pause: "UNPAUSED"
       lakebase_import_to_delta: "true"
+      # Legacy Lakebase names of the app before the 2026-10-14 refactor: their copies in uat_proj would be stale.
+      lakebase_tables_to_skip: "messages,feedbacks,errors,knowledge_base_metadata"
       job_cluster_policy_id_S: "000E7559CADE5290"
       notification_email: "jules.gourio.external@latecoere.aero"
 

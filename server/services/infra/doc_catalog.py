@@ -11,21 +11,25 @@ import asyncio
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
 _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
 
 # The catalog loaded from Lakebase (None until the first successful load).
-_live: Optional['_Catalog'] = None
+_live: '_Catalog | None' = None
 
 # The pipeline's intraqual_ref_url() embeds the REF in the URL (identification.aspx?ref=<REF>): the REF is read from there.
 _REF_IN_URL_RE = re.compile(r'[?&]ref=([^&]+)', re.IGNORECASE)
 
 
-def _ref_from_url(url: str) -> Optional[str]:
-    """Pull the REF back out of one of our own ref=<REF> URLs, or None."""
+def _ref_from_url(url: str) -> str | None:
+    """Pull the REF back out of one of our own ref=<REF> URLs, or None.
+
+    :param url: URL of a source, which may carry ``ref=<REF>``
+    :return: the REF, or None when the URL carries none
+    """
     m = _REF_IN_URL_RE.search(url or '')
     if not m:
         return None
@@ -34,7 +38,11 @@ def _ref_from_url(url: str) -> Optional[str]:
 
 
 def _norm(ref: str) -> str:
-    """Normalise a REF for matching: collapse whitespace, uppercase."""
+    """Normalise a REF for matching: collapse whitespace, uppercase.
+
+    :param ref: REF as written
+    :return: the REF upper-cased, with single spaces
+    """
     return ' '.join(ref.split()).upper()
 
 
@@ -45,6 +53,11 @@ _NON_ALNUM_RE = re.compile(r'[^A-Z0-9]')
 
 
 def _canon(ref: str) -> str:
+    """Canonical form of a REF: upper-cased, without its language suffix and punctuation.
+
+    :param ref: REF in any spelling
+    :return: the canonical key
+    """
     stripped = _LANG_SUFFIX_RE.sub('', ref.upper())
     return _NON_ALNUM_RE.sub('', stripped)
 
@@ -52,7 +65,11 @@ def _canon(ref: str) -> str:
 def canon_ref(ref: str) -> str:
     """Public: canonical grouping key for a REF (site/language suffix + punctuation
     stripped) — used by callers outside this module (e.g. vector_search.py) that
-    need to cluster same-document language variants without a full catalog lookup."""
+    need to cluster same-document language variants without a full catalog lookup.
+
+    :param ref: REF in any spelling
+    :return: the canonical key
+    """
     return _canon(ref)
 
 
@@ -63,25 +80,37 @@ _SITE_FLAGS: Dict[str, str] = {
 }
 
 
-def site_code(ref: str) -> Optional[str]:
+def site_code(ref: str) -> str | None:
     """The trailing site/language suffix of a REF (e.g. "GB" from "XX-1234-GB"),
     upper-cased, or None if the REF carries no recognised suffix — most of the
     corpus has none; it marks the default/untranslated document, not a known
-    language."""
+    language.
+
+    :param ref: REF, any case; None allowed
+    :return: the upper-cased suffix, or None when the REF has none
+    """
     m = _LANG_SUFFIX_RE.search((ref or '').upper())
     return m.group(1).upper() if m else None
 
 
 def site_flag(ref: str) -> str:
     """Best-effort flag emoji for a REF's site/language suffix; '' if the REF has
-    no suffix or the suffix isn't in _SITE_FLAGS."""
+    no suffix or the suffix isn't in _SITE_FLAGS.
+
+    :param ref: REF, any case; None allowed
+    :return: the flag emoji, or an empty string
+    """
     code = site_code(ref)
     return _SITE_FLAGS.get(code, '') if code else ''
 
 
 def title_for_ref(ref: str) -> str:
     """Best-effort human-readable title (intraqual ``Titre``) for a REF; '' if the
-    catalog isn't loaded or the REF is unknown."""
+    catalog isn't loaded or the REF is unknown.
+
+    :param ref: REF of the document
+    :return: the title, or an empty string when unknown
+    """
     cat = _catalog()
     if not cat:
         return ''
@@ -90,7 +119,11 @@ def title_for_ref(ref: str) -> str:
 
 
 def document_info(ref: str) -> Dict[str, Any]:
-    """{title, revision, doc_date (ISO)} of a REF from the catalog, only the fields it has; {} when unknown."""
+    """{title, revision, doc_date (ISO)} of a REF from the catalog, only the fields it has; {} when unknown.
+
+    :param ref: REF of the document
+    :return: dict with the ``title``, ``revision`` and ``doc_date`` (ISO) the catalog has; empty when unknown
+    """
     cat = _catalog()
     entry = cat.by_ref.get(_norm(ref)) if cat else None
     if not entry:
@@ -103,7 +136,11 @@ def document_info(ref: str) -> Dict[str, Any]:
 
 def with_document_info(sources: List[dict]) -> List[dict]:
     """``sources`` with the catalog title, revision and date of each REF (``doc_title``,
-    ``revision``, ``doc_date``), for the source chips and the exports."""
+    ``revision``, ``doc_date``), for the source chips and the exports.
+
+    :param sources: source dicts whose ``title`` holds the REF; updated in place
+    :return: the same list, with ``doc_title``, ``revision`` and ``doc_date`` added where known
+    """
     for s in sources or []:
         info = document_info(s.get('title') or '')
         if info.get('title'):
@@ -119,6 +156,10 @@ class _Catalog:
 
     def __init__(self, entries: List[dict]):
         # norm REF -> {ref, url, title, base_ref}
+        """Builds the REF indexes and the pattern that finds REFs in a text.
+
+        :param entries: catalog rows: ``ref``, ``url``, ``title``, ``base_ref``, ``revision``, ``doc_date``
+        """
         self.by_ref: Dict[str, dict] = {}
         # catalog URL -> canonical REF (reverse lookup, to relabel chips)
         self.url_to_ref: Dict[str, str] = {}
@@ -147,7 +188,7 @@ class _Catalog:
             alts.add(ref)
             alts.add(e.get('base_ref') or _canon(ref))
         refs = sorted(alts, key=len, reverse=True)
-        self.pattern: Optional[re.Pattern] = None
+        self.pattern: re.Pattern | None = None
         if refs:
             alt = '|'.join(re.escape(r) for r in refs)
             try:
@@ -160,7 +201,11 @@ class _Catalog:
         """Return catalog entries for every document mentioned in ``text``
         (matched literally or via its canonical form), including that
         document's other site/language entries, in order of first mention,
-        de-duplicated."""
+        de-duplicated.
+
+        :param text: answer or question text
+        :return: the catalog entries in order of first mention, without duplicates
+        """
         if not text or not self.pattern:
             return []
         out: List[dict] = []
@@ -186,26 +231,38 @@ class _Catalog:
 
     def group_siblings(self, ref: str) -> List[dict]:
         """Return the other site/language REFs for the same document as
-        ``ref`` (empty if unknown or if it has no siblings)."""
+        ``ref`` (empty if unknown or if it has no siblings).
+
+        :param ref: REF of the document
+        :return: the other site or language entries of the same document
+        """
         entry = self.by_ref.get(_norm(ref))
         canon = (entry.get('base_ref') or _canon(ref)) if entry else _canon(ref)
         group = self.by_canon.get(canon, [])
         return [e for e in group if e is not entry]
 
 
-def _catalog() -> Optional[_Catalog]:
+def _catalog() -> _Catalog | None:
     return _live
 
 
 def set_catalog(entries: List[Dict[str, Any]]) -> None:
-    """Replace the live catalog (entries: ref, url, title, base_ref, in_chat, revision, doc_date)."""
+    """Replace the live catalog (entries: ref, url, title, base_ref, in_chat, revision, doc_date).
+
+    :param entries: catalog rows as dicts: ``ref``, ``url``, ``title``, ``base_ref``, ``in_chat``, ``revision``,
+        ``doc_date``
+    """
     global _live
     _live = _Catalog(entries)
 
 
 async def refresh_from_lakebase(pool) -> int:
     """Load the Lakebase table doc_catalog into the live catalog. Returns the number of
-    documents loaded; 0 (live catalog left as is) when the table is empty or unreadable."""
+    documents loaded; 0 (live catalog left as is) when the table is empty or unreadable.
+
+    :param pool: database pool with an ``acquire()`` context manager
+    :return: the number of documents loaded; 0 when the table is empty or unreadable
+    """
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch('SELECT ref, url, title, base_ref, in_chat, revision, doc_date FROM doc_catalog')
@@ -222,7 +279,10 @@ async def refresh_from_lakebase(pool) -> int:
 
 
 async def catalog_refresher(get_pool) -> None:
-    """Background task: reload the catalog from Lakebase now, then every DOC_CATALOG_REFRESH_S."""
+    """Background task: reload the catalog from Lakebase now, then every DOC_CATALOG_REFRESH_S.
+
+    :param get_pool: callable returning the current pool, or None before it exists
+    """
     while True:
         pool = get_pool()
         if pool is not None:
@@ -236,7 +296,11 @@ def other_language_refs(ref: str) -> List[dict]:
     loaded (e.g. local dev without the export) or the document has no known
     siblings. Used by vector_search.py to show impacted-doc results alongside
     the REFs of that same document in other languages, even when the vector
-    search didn't itself independently retrieve those other-language chunks."""
+    search didn't itself independently retrieve those other-language chunks.
+
+    :param ref: REF of the document
+    :return: the other site or language entries of the same document; empty when the catalog is not loaded
+    """
     cat = _catalog()
     if not cat:
         return []
@@ -260,6 +324,10 @@ def augment_sources(content: str, sources: List[dict]) -> List[dict]:
     Existing source order is preserved, so inline ``⟦n⟧`` citation markers keep
     pointing at the same chips; new ones are appended at the end. Returns the
     (possibly extended) sources list; on any failure returns it unchanged.
+
+    :param content: answer text, including the documents it cites in prose
+    :param sources: source chips of the answer
+    :return: the sources, with the cited documents and their language variants added
     """
     cat = _catalog()
     try:

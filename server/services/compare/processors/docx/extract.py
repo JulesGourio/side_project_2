@@ -9,17 +9,23 @@ from typing import Any, Dict, List, Tuple
 from docx import Document
 from PIL import Image as PILImage
 
-from .._diff_engines import _IMG_JPEG_QUALITY, dhash, hash16, images_are_similar, looks_like_table_header
-from ...conversion import doc_to_text
-from .ooxml import (
+from server.services.compare.processors._diff_engines import _IMG_JPEG_QUALITY, dhash, hash16, images_are_similar, looks_like_table_header
+from server.services.compare.conversion import doc_to_text
+from server.services.compare.processors.docx.ooxml import (
     _footnote_lines, _is_toc_paragraph, _iter_block_items, _paragraph_text, _row_cells, _textbox_texts,
     _vml_shape_lines,
 )
-from .pages import _IMG_WEIGHT, _assign_pages, _count_breaks_split, _lrpb_is_stale
+from server.services.compare.processors.docx.pages import _IMG_WEIGHT, _assign_pages, _count_breaks_split, _lrpb_is_stale
 
 logger = logging.getLogger(__name__)
 
 def _extract_doc(doc_bytes: bytes, filename: str) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """Text lines of a binary .doc file; a .doc carries no images here.
+
+    :param doc_bytes: content of the .doc file
+    :param filename: file name, for the logs
+    :return: ``(text lines, [])``
+    """
     text = doc_to_text(doc_bytes, filename)
     return (text.splitlines() if text else []), []
 
@@ -33,6 +39,9 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
     Page numbers are derived from explicit page breaks (<w:br w:type="page"/>) and
     implicit breaks recorded by Word at save time (<w:lastRenderedPageBreak/>).
     Table data rows are labelled with column names from the header row.
+
+    :param docx_bytes: content of the .docx file
+    :return: ``(text lines, images keyed by hash)``
     """
     try:
         doc = Document(io.BytesIO(docx_bytes))
@@ -59,7 +68,11 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
     pend_weight = 0
 
     def _emit(text: str, weight: int) -> None:
-        """Append one output entry, folding in any pending breaks/weight."""
+        """Append one output entry, folding in any pending breaks/weight.
+
+        :param text: text of the output line
+        :param weight: weight of the line for the page estimate; the pending weight of image-only paragraphs is added
+        """
         nonlocal pend_forced, pend_lrpb, pend_weight
         entries.append({
             'text': text,
@@ -73,6 +86,11 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
         pend_weight = 0
 
     def _harvest_images(xml_element, position: int) -> None:
+        """Records the images of an element against the position of its output line.
+
+        :param xml_element: paragraph or table row holding the images
+        :param position: counter value of the output line
+        """
         for pic_elem in xml_element.iter(_PIC_PIC):
             blip = pic_elem.find(f'.//{_A_BLIP}')
             if blip is None:
@@ -121,6 +139,11 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
                 logger.debug('DOCX image extraction skipped: %s', e)
 
     def _img_count(xml_element) -> int:
+        """Number of images (DrawingML blips) in an element.
+
+        :param xml_element: XML element to search
+        :return: the number of images
+        """
         return sum(1 for _ in xml_element.iter(_A_BLIP))
 
     for element in _iter_block_items(doc.element.body):
@@ -170,6 +193,11 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
             seen_rows: set = set()
 
             def _positional(cells: List[Tuple[int, str]]) -> str:
+                """A table row joined by column position, with empty cells kept.
+
+                :param cells: ``(column index, text)`` pairs of the row
+                :return: the cells joined by ``|``
+                """
                 by_col = dict(cells)
                 return ' | '.join(by_col.get(c, '') for c in range(max(by_col) + 1))
 
@@ -238,6 +266,11 @@ def _extract_docx(docx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any
     sorted_pos = sorted(pos_to_page)
 
     def _page_for(pos: int) -> int:
+        """Page of a paragraph position; a position without an entry takes the page of the entry before it.
+
+        :param pos: paragraph counter
+        :return: the page number, 1 before the first entry
+        """
         if pos in pos_to_page:
             return pos_to_page[pos]
         i = bisect_right(sorted_pos, pos) - 1

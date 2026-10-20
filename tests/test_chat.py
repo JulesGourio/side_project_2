@@ -420,20 +420,28 @@ def test_save_turn_failure_is_a_persist_issue_of_the_turn():
     assert log.codes == ['persist_failed'] and 'connection lost' in log.issues[0]['message']
 
 
-def test_trim_history_bounds_prompt_and_keeps_latest_question():
-    from server.routers.chat import _trim_history, CHAT_MAX_HISTORY
+def test_trim_history_bounds_prompt_and_keeps_latest_question(monkeypatch):
+    from server.routers.chat import _trim_history, helpers
 
-    # 13 alternating messages, last one is the user's newest question
+    monkeypatch.setattr(helpers, 'CHAT_MAX_HISTORY_TOKENS', 100)
+    # 13 alternating messages of ~26 tokens each (100 characters), the last one is the user's newest question
     msgs = [
-        {'role': 'user' if i % 2 == 0 else 'assistant', 'content': str(i)}
+        {'role': 'user' if i % 2 == 0 else 'assistant', 'content': f'{i:02d}' + 'x' * 98}
         for i in range(13)
     ]
     trimmed = _trim_history(msgs)
-    assert len(trimmed) <= CHAT_MAX_HISTORY
+    assert 0 < len(trimmed) < len(msgs)
+    assert sum(helpers._estimate_tokens(m) for m in trimmed) <= 100
     assert trimmed[-1] == msgs[-1]          # newest question never dropped
     assert trimmed[0]['role'] == 'user'     # window never opens on an assistant turn
     # A short conversation is returned unchanged
     assert _trim_history(msgs[:3]) == msgs[:3]
+    # The newest question is kept even when alone it exceeds the budget
+    long_question = [{'role': 'user', 'content': 'y' * 4000}]
+    assert _trim_history(msgs[:2] + long_question) == long_question
+    # 0 = no trimming
+    monkeypatch.setattr(helpers, 'CHAT_MAX_HISTORY_TOKENS', 0)
+    assert _trim_history(msgs) == msgs
 
 
 # --- Feature access control (capabilities + 403 guards) ---
@@ -468,12 +476,13 @@ def test_scim_groups_are_matched_by_name():
     from server.services.infra import user as user_mod
 
     groups = [SimpleNamespace(display='Role-Project-LEAP-End-users-Qualibot-ChatBot'), SimpleNamespace(display='other')]
-    me = SimpleNamespace(groups=groups)
+    me = SimpleNamespace(groups=groups, user_name='jane.doe@example.com', display_name='Jane Doe')
     client = SimpleNamespace(current_user=SimpleNamespace(me=lambda: me))
     with patch('databricks.sdk.WorkspaceClient', return_value=client), \
          patch.object(user_mod, 'get_workspace_url', return_value='https://h'):
         caps = user_mod._live_caps_via_scim('obo-token')
     assert caps['can_chat'] is True and caps['can_compare'] is False
+    assert caps['email'] == 'jane.doe@example.com' and caps['display_name'] == 'Jane Doe'
 
 
 def test_get_capabilities_asks_the_warehouse_when_scim_shows_no_group():
@@ -561,3 +570,59 @@ def test_access_check_fails_closed_when_env_is_unset(monkeypatch):
     from server.services.infra import user
     monkeypatch.delenv('ENV', raising=False)
     assert user._is_dev() is False
+
+
+def test_visitor_email_and_name_are_recorded_from_scim():
+    """Databricks Apps sends a numeric id only: the email and name come from SCIM /Me and go to `users`, once per cache window."""
+    import asyncio
+
+    from server.services.infra import user as user_mod
+
+    user_mod._caps_cache.clear()
+    scim = {'can_chat': True, 'can_compare': True, 'groups': [], 'email': 'jane.doe@example.com', 'display_name': 'Jane Doe'}
+    req = _caps_request()
+    req.headers['x-forwarded-user'] = '12345@678'
+    seen = []
+
+    async def fake_remember(forwarded, email, display_name):
+        seen.append((forwarded, email, display_name))
+
+    with patch.object(user_mod, '_CAPS_WAREHOUSE_ID', ''), patch.object(user_mod, '_live_caps_via_scim', return_value=scim), \
+         patch.object(user_mod, '_remember_identity', fake_remember):
+        caps = asyncio.run(user_mod.get_capabilities(req))
+        asyncio.run(user_mod.get_capabilities(req))
+    assert seen == [('12345@678', 'jane.doe@example.com', 'Jane Doe')]
+    assert 'email' not in caps and 'display_name' not in caps
+    user_mod._caps_cache.clear()
+
+
+def test_identity_is_upserted_with_the_numeric_id_and_the_workspace():
+    import asyncio
+    from types import SimpleNamespace
+
+    from server.services.infra import lakebase
+    from server.services.infra import user as user_mod
+
+    calls = []
+
+    class _Conn:
+        pass
+
+    class _Pool:
+        def acquire(self):
+            class _Ctx:
+                async def __aenter__(self_inner):
+                    return _Conn()
+
+                async def __aexit__(self_inner, *exc):
+                    return False
+            return _Ctx()
+
+    async def fake_upsert(conn, **kw):
+        calls.append(kw)
+
+    with patch.object(lakebase, 'get_pool', return_value=_Pool()), patch.object(lakebase, 'upsert_user', fake_upsert):
+        asyncio.run(user_mod._remember_identity('12345@678', 'jane.doe@example.com', 'Jane Doe'))
+        asyncio.run(user_mod._remember_identity('someone@example.com', 'jane.doe@example.com', 'Jane Doe'))   # already an email: nothing
+        asyncio.run(user_mod._remember_identity('12345@678', '', ''))                                         # nothing resolved: nothing
+    assert calls == [{'user_id': '12345', 'workspace_id': '678', 'email': 'jane.doe@example.com', 'display_name': 'Jane Doe'}]

@@ -21,12 +21,12 @@ import json
 import logging
 import os
 import time
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, List, Tuple
 
 import httpx
 
-from ..chat import llm as chat_llm
-from ..infra.streaming import DEFAULT_CONNECT_TIMEOUT_S, DEFAULT_TIMEOUT_S, _cost_eur, _parse_text_delta, supports_temperature
+from server.services.chat import llm as chat_llm
+from server.services.infra.streaming import DEFAULT_CONNECT_TIMEOUT_S, DEFAULT_TIMEOUT_S, _cost_eur, _parse_text_delta, supports_temperature
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +45,23 @@ class CompareLlmUnavailable(Exception):
     """Every attempt of a compare call failed. ``detail`` is the technical cause (error log only)."""
 
     def __init__(self, detail: str, status: int = 0):
+        """Stores the technical cause and the HTTP status of the last failure.
+
+        :param detail: technical cause, for the error log only
+        :param status: HTTP status of the last failure, 0 when there is none
+        """
         super().__init__(detail)
         self.detail = detail
         self.status = status
 
 
 def _env_float(name: str, default: float) -> float:
+    """A float from the environment, or ``default`` when it is unset, empty or not a number.
+
+    :param name: environment variable name
+    :param default: value used when the variable is unset, empty or not a number
+    :return: the parsed value
+    """
     try:
         return float(os.getenv(name, str(default)) or default)
     except ValueError:
@@ -66,6 +77,11 @@ def deadline_s() -> float:
 
 
 def _dedup(endpoints: List[str]) -> List[str]:
+    """The endpoints without repeats, first occurrence kept.
+
+    :param endpoints: endpoint names, possibly repeated or empty
+    :return: the distinct non-empty names, in order
+    """
     out: List[str] = []
     for e in endpoints:
         if e and e not in out:
@@ -74,21 +90,35 @@ def _dedup(endpoints: List[str]) -> List[str]:
 
 
 def compare_chain(primary: str) -> List[str]:
-    """The primary, then COMPARE_LLM_FALLBACK_ENDPOINTS (default: the other Luna model)."""
+    """The primary, then COMPARE_LLM_FALLBACK_ENDPOINTS (default: the other Luna model).
+
+    :param primary: primary endpoint of the feature
+    :return: the endpoints in order, primary first
+    """
     configured = [e.strip() for e in os.getenv('COMPARE_LLM_FALLBACK_ENDPOINTS', '').split(',') if e.strip()]
     fallbacks = configured or [GPT_6_LUNA if primary == GPT_5_6_LUNA else GPT_5_6_LUNA]
     return _dedup([primary] + fallbacks)
 
 
 def message_text(message: Dict[str, Any]) -> str:
-    """Text of a chat completion message: a plain string, or the text parts of a list (reasoning models)."""
+    """Text of a chat completion message: a plain string, or the text parts of a list (reasoning models).
+
+    :param message: chat completion message dict
+    :return: the text of the message, empty when it has none
+    """
     content = message.get('content') or ''
     if isinstance(content, list):
         return ''.join(p.get('text', '') for p in content if isinstance(p, dict) and p.get('type', 'text') == 'text')
     return content
 
 
-def _round_wait(round_no: int, last: Optional[LlmFailure]) -> float:
+def _round_wait(round_no: int, last: LlmFailure | None) -> float:
+    """Seconds to wait before a new round, raised to the Retry-After of the last failure.
+
+    :param round_no: number of the round about to start, from 1
+    :param last: last failure of the chain, None when there is none
+    :return: the wait in seconds, at most 30 when Retry-After raises it
+    """
     waits = chat_llm.ROUND_WAITS_S
     wait = waits[min(round_no - 1, len(waits) - 1)]
     if last is not None and last.retry_after:
@@ -97,6 +127,12 @@ def _round_wait(round_no: int, last: Optional[LlmFailure]) -> float:
 
 
 def _record_failure(endpoint: str, exc: LlmFailure, given_up: set) -> None:
+    """Logs a failed attempt and cools its endpoint; a final failure keeps it out of this call.
+
+    :param endpoint: endpoint that failed
+    :param exc: the failure
+    :param given_up: endpoints not tried again in this call, updated here
+    """
     logger.warning('compare_llm: %s failed (%s %s): %s', endpoint, exc.kind, exc.status or '', exc.detail[:200])
     chat_llm.cool(endpoint, chat_llm.cooldown_for(exc.kind))
     if exc.kind in chat_llm.FINAL_KINDS:
@@ -104,11 +140,20 @@ def _record_failure(endpoint: str, exc: LlmFailure, given_up: set) -> None:
 
 
 def http_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
-    """Separate so tests can swap the transport."""
+    """Separate so tests can swap the transport.
+
+    :param timeout: httpx timeouts of the client
+    :return: a new async HTTP client
+    """
     return httpx.AsyncClient(timeout=timeout)
 
 
 def _sse(payload: Dict[str, Any]) -> str:
+    """One server-sent event line carrying ``payload`` as JSON.
+
+    :param payload: event fields, JSON-serialisable
+    :return: the ``data:`` line, ending with a blank line
+    """
     return f'data: {json.dumps(payload)}\n\n'
 
 
@@ -116,7 +161,16 @@ def _sse(payload: Dict[str, Any]) -> str:
 
 async def _post(host: str, token: str, endpoint: str, messages: List[Dict[str, Any]], max_tokens: int,
                 timeout_s: float) -> Dict[str, Any]:
-    """One non-streamed call; the completion, or ``LlmFailure`` (an answer with no text is one too)."""
+    """One non-streamed call; the completion, or ``LlmFailure`` (an answer with no text is one too).
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoint: serving endpoint name
+    :param messages: chat messages
+    :param max_tokens: output budget
+    :param timeout_s: timeout of the call, in seconds
+    :return: the completion, as returned by the endpoint
+    """
     payload = chat_llm.build_payload(endpoint, messages, max_tokens, False)
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
     try:
@@ -140,14 +194,25 @@ async def _post(host: str, token: str, endpoint: str, messages: List[Dict[str, A
 
 async def complete_chain(host: str, token: str, endpoints: List[str], messages: List[Dict[str, Any]],
                          max_tokens: int, timeout_s: float,
-                         accept: Optional[Callable[[Dict[str, Any]], Any]] = None) -> Tuple[Any, str]:
+                         accept: Callable[[Dict[str, Any]], Any] | None = None) -> Tuple[Any, str]:
     """``(value, endpoint)`` of the first endpoint of the chain whose completion ``accept`` takes (it returns the
     value to use, or raises ``LlmFailure`` to move on; anything else propagates). Raises
-    ``CompareLlmUnavailable`` when no attempt succeeded within the rounds and the deadline."""
+    ``CompareLlmUnavailable`` when no attempt succeeded within the rounds and the deadline.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoints: endpoints to try, primary first
+    :param messages: chat messages
+    :param max_tokens: output budget
+    :param timeout_s: timeout of each attempt, in seconds
+    :param accept: turns the completion into the value to return, or raises ``LlmFailure`` to move on; None returns the
+        completion
+    :return: ``(value, endpoint)`` of the endpoint that answered
+    """
     chain = _dedup(endpoints)
     started = time.monotonic()
     given_up: set = set()
-    last: Optional[LlmFailure] = None
+    last: LlmFailure | None = None
     for round_no in range(rounds()):
         if round_no:
             wait = _round_wait(round_no, last)
@@ -178,7 +243,12 @@ async def complete_chain(host: str, token: str, endpoints: List[str], messages: 
 # --- Streamed analysis ---
 
 def wants_thinking(endpoint: str, thinking_budget: int) -> bool:
-    """Only the Claude endpoints take the thinking parameters; the name test keeps the analysis endpoint swappable."""
+    """Only the Claude endpoints take the thinking parameters; the name test keeps the analysis endpoint swappable.
+
+    :param endpoint: serving endpoint name
+    :param thinking_budget: thinking budget asked; 0 asks for no thinking
+    :return: True when the thinking parameters are sent to this endpoint
+    """
     return thinking_budget > 0 and 'claude' in endpoint.lower()
 
 
@@ -186,7 +256,17 @@ async def _stream_once(host: str, token: str, endpoint: str, messages: List[Dict
                        thinking_budget: int, temperature: float) -> AsyncGenerator[Tuple[str, Any], None]:
     """One streamed call. Yields ('text', str), ('usage', dict), ('truncated', None) and ('keepalive', None)
     while waiting; raises ``LlmFailure``. A Claude endpoint that refuses the thinking parameters (400) is called
-    again without them, so a model change on its side never takes the primary out of the chain."""
+    again without them, so a model change on its side never takes the primary out of the chain.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoint: serving endpoint name
+    :param messages: chat messages
+    :param max_tokens: output budget
+    :param thinking_budget: thinking budget asked; 0 asks for no thinking
+    :param temperature: sampling temperature, sent to the endpoints that take it
+    :return: the ``(kind, value)`` events described above
+    """
     thinking = wants_thinking(endpoint, thinking_budget)
     try:
         async for item in _stream_request(host, token, endpoint, messages, max_tokens, thinking, temperature):
@@ -202,9 +282,20 @@ async def _stream_once(host: str, token: str, endpoint: str, messages: List[Dict
 
 async def _stream_request(host: str, token: str, endpoint: str, messages: List[Dict[str, Any]], max_tokens: int,
                           thinking: bool, temperature: float) -> AsyncGenerator[Tuple[str, Any], None]:
+    """One streamed call, with the thinking parameters when asked.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoint: serving endpoint name
+    :param messages: chat messages
+    :param max_tokens: output budget
+    :param thinking: True to send the adaptive thinking parameters
+    :param temperature: sampling temperature, sent to the endpoints that take it
+    :return: the ``(kind, value)`` events: text, usage, truncated and keepalive
+    """
     payload: Dict[str, Any] = {'messages': messages, 'max_tokens': max_tokens,
                                'stream': True, 'stream_options': {'include_usage': True}}
-    # The current Claude models take adaptive thinking steered by an effort level; a token budget is refused.
+    # Claude models take adaptive thinking steered by an effort level; a token budget is refused.
     if thinking:
         payload['thinking'] = {'type': 'adaptive'}
         payload['output_config'] = {'effort': THINKING_EFFORT}
@@ -288,11 +379,22 @@ async def _stream_request(host: str, token: str, endpoint: str, messages: List[D
 
 async def stream_analysis(host: str, token: str, endpoint: str, messages: List[Dict[str, Any]], max_tokens: int,
                           thinking_budget: int, temperature: float,
-                          info: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+                          info: Dict[str, Any] | None = None) -> AsyncGenerator[str, None]:
     """SSE of the analysis of the first endpoint of the chain that answers: text deltas, a ``warning`` when the
     output hit max_tokens, one ``usage`` event, then ``[DONE]``; keepalive comments while waiting. When every
     attempt failed: one ``error`` event with ``TIRED_MESSAGE`` (``detail`` = the cause, dropped by the router).
-    ``info['endpoint']`` is set to the endpoint that finished the answer (not set when none answered)."""
+    ``info['endpoint']`` is set to the endpoint that finished the answer (not set when none answered).
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoint: primary analysis endpoint
+    :param messages: chat messages of the analysis
+    :param max_tokens: output budget of each call
+    :param thinking_budget: thinking budget; above 0 asks the Claude endpoints to think
+    :param temperature: sampling temperature
+    :param info: dict that receives ``endpoint`` when an endpoint answers, None to skip
+    :return: the SSE lines of the analysis, ending with the end-of-stream marker
+    """
     chain = compare_chain(endpoint)
     started = time.monotonic()
     given_up: set = set()
@@ -302,7 +404,7 @@ async def stream_analysis(host: str, token: str, endpoint: str, messages: List[D
     answered = False
     usage_seen = False
     usage = {'input_tokens': 0, 'output_tokens': 0, 'thinking_tokens': 0, 'cost_eur': 0.0}
-    last: Optional[LlmFailure] = None
+    last: LlmFailure | None = None
 
     for round_no in range(rounds()):
         if round_no:

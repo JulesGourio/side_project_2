@@ -143,7 +143,7 @@ targets:
             quartz_cron_expression: "0 0 7 ? * MON"
             timezone_id: "Europe/Brussels"
             pause_status: PAUSED
-  qualibot-uat:
+  uat:
     resources:
       jobs:
 

@@ -15,13 +15,13 @@ import json
 import logging
 import re
 import time
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Tuple
 
-from ..compare.llm import CompareLlmUnavailable, LlmFailure, TIRED_MESSAGE, compare_chain, complete_chain
-from ..compare.llm import message_text as _message_text
-from . import vs_gate
-from .doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
-from .streaming import _cost_eur
+from server.services.compare.llm import CompareLlmUnavailable, LlmFailure, TIRED_MESSAGE, compare_chain, complete_chain
+from server.services.compare.llm import message_text as _message_text
+from server.services.infra import vs_gate
+from server.services.infra.doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
+from server.services.infra.streaming import _cost_eur
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,11 @@ _STATUS_ORDER = {'impacted': 0, 'check': 1, 'not_impacted': 2, 'error': 3}
 
 
 def _split_prefix(chunk_text: str) -> Tuple[str, Dict[str, str]]:
-    """Strip the pipeline's provenance prefix; return (body, {title, doc_date, page})."""
+    """Strip the pipeline's provenance prefix; return (body, {title, doc_date, page}).
+
+    :param chunk_text: chunk text, with or without its provenance prefix
+    :return: ``(body, {title, doc_date, page})``, the metadata keys present only when found
+    """
     m = _PREFIX_RE.match(chunk_text or '')
     if not m:
         return chunk_text or '', {}
@@ -119,7 +123,11 @@ def _split_prefix(chunk_text: str) -> Tuple[str, Dict[str, str]]:
 
 
 def _extract_header(semantic_headers: Any) -> str:
-    """Best-effort: the first header value of the semantic_headers JSON blob."""
+    """Best-effort: the first header value of the semantic_headers JSON blob.
+
+    :param semantic_headers: JSON text of the semantic headers of the chunk, None or empty allowed
+    :return: the first header value, empty for an image chunk
+    """
     if not semantic_headers:
         return ''
     try:
@@ -134,7 +142,11 @@ def _extract_header(semantic_headers: Any) -> str:
 
 
 def _chunk_order(chunk_id: str) -> Tuple[int, int]:
-    """Document order: text chunks by index, image chunks after them."""
+    """Document order: text chunks by index, image chunks after them.
+
+    :param chunk_id: chunk id, ending with its index
+    :return: ``(group, index)`` sort key: text chunks first, then image chunks, then the unknown ones
+    """
     parts = (chunk_id or '').split('-')
     try:
         return (1, int(parts[-1])) if 'IMG' in parts else (0, int(parts[-1]))
@@ -143,7 +155,11 @@ def _chunk_order(chunk_id: str) -> Tuple[int, int]:
 
 
 def _parse_json_array(text: str) -> List[Dict[str, Any]] | None:
-    """Robust JSON array parser — mirrors the compare exports' parse_json_response fallback chain."""
+    """Robust JSON array parser — mirrors the compare exports' parse_json_response fallback chain.
+
+    :param text: model reply that holds a JSON array
+    :return: the list, or None when no array can be read
+    """
     stripped = text.strip()
     for candidate in (
         stripped,
@@ -162,6 +178,11 @@ def _parse_json_array(text: str) -> List[Dict[str, Any]] | None:
 
 
 def _parse_json_object(text: str) -> Dict[str, Any] | None:
+    """Robust JSON object parser: the text itself, a fenced block, or its first brace group.
+
+    :param text: model reply that holds a JSON object, None allowed
+    :return: the dict, or None when no object can be read
+    """
     stripped = (text or '').strip()
     for candidate in (
         stripped,
@@ -179,8 +200,13 @@ def _parse_json_object(text: str) -> Dict[str, Any] | None:
     return None
 
 
-def _find_quote(text: str, quote: str) -> Optional[List[int]]:
-    """[start, end] of the quote in text, tolerant to whitespace/case drift; None if absent."""
+def _find_quote(text: str, quote: str) -> List[int] | None:
+    """[start, end] of the quote in text, tolerant to whitespace/case drift; None if absent.
+
+    :param text: passage text to search
+    :param quote: quote copied from the passage by the judge
+    :return: ``[start, end]`` of the quote in the text, or None when it is absent
+    """
     words = (quote or '').strip().strip('"«»“”').split()
     if not words:
         return None
@@ -191,6 +217,15 @@ def _find_quote(text: str, quote: str) -> Optional[List[int]]:
 # --- Retrieval ---
 
 async def _fetch_chunks(host: str, token: str, index_name: str, query_text: str, num_results: int) -> List[Dict[str, Any]]:
+    """One HYBRID query of an index for the impact search; returns its rows as dicts.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index_name: full name of the Vector Search index
+    :param query_text: text of the change searched for
+    :param num_results: number of rows asked
+    :return: the rows, archive notices left out
+    """
     payload = {'query_text': query_text, 'columns': _COLUMNS, 'num_results': num_results, 'query_type': 'HYBRID'}
     # Through the app-wide gate shared with the chat (vs_gate: bounded concurrency, 429 retries).
     resp = await vs_gate.post(host, token, index_name, payload, _QUERY_TIMEOUT_S)
@@ -208,11 +243,23 @@ async def _fetch_chunks_multi(
 
     Each chunk is tagged with '_change_ids' (the changes whose query hit it).
     Raises only if EVERY query fails; partial failures are counted.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index_name: full name of the Vector Search index
+    :param queries: one dict per change, with its ``text`` and its ``change_ids``
+    :param num_results: rows asked per query
+    :return: ``{'chunks': [...], 'queries_failed': n}``
     """
     sem = asyncio.Semaphore(_QUERY_CONCURRENCY)
     failures: List[str] = []
 
     async def _one(q: Dict[str, Any]) -> List[Dict[str, Any]] | None:
+        """Runs the query of one change, retried, and tags its rows with the change id.
+
+        :param q: query dict: ``text`` and ``change_ids``
+        :return: the rows, None when every try failed
+        """
         async with sem:
             last_err: Exception | None = None
             for attempt in range(_QUERY_RETRIES + 1):
@@ -245,6 +292,10 @@ def _aggregate_docs(chunks: List[Dict[str, Any]], excluded_canon: frozenset = fr
     doc_catalog.canon_ref) are merged: the best-evidence variant is judged and
     the others are attached as 'variants'. Documents whose canonical REF is in
     excluded_canon (the document being compared) are dropped.
+
+    :param chunks: rows of all the queries
+    :param excluded_canon: canonical REFs to leave out, the document being compared
+    :return: the documents, best ranked first, each with its passages and its language variants
     """
     docs: Dict[str, Dict[str, Any]] = {}
     for rec in sorted(chunks, key=lambda c: c.get('score', 0.0) or 0.0, reverse=True):
@@ -298,6 +349,11 @@ def _aggregate_docs(chunks: List[Dict[str, Any]], excluded_canon: frozenset = fr
 
 
 def _change_num(change_id: str) -> int:
+    """Numeric part of a change id: ``C12`` gives 12.
+
+    :param change_id: change id, such as ``C12``
+    :return: the number, 0 when there is none
+    """
     try:
         return int(change_id.lstrip('C'))
     except ValueError:
@@ -313,6 +369,11 @@ def _changes_block(changes: List[Dict[str, Any]], max_chars: int, priority_ids: 
     ones in priority_ids — those whose query retrieved this candidate — go in
     first. A flat [:max_chars] dropped the END of the table for every
     candidate, including the very changes that had retrieved it.
+
+    :param changes: change records, in table order
+    :param max_chars: length budget of the block
+    :param priority_ids: ids of the changes that retrieved the candidate, kept first when the budget is short
+    :return: the lines of the changes shown to the judge
     """
     lines: Dict[str, str] = {}
     for c in changes:
@@ -339,6 +400,11 @@ def _changes_block(changes: List[Dict[str, Any]], max_chars: int, priority_ids: 
 
 
 def _candidate_block(cand: Dict[str, Any]) -> str:
+    """The candidate document as shown to the judge: its header and its numbered passages.
+
+    :param cand: candidate document of ``_aggregate_docs``
+    :return: the text of the block
+    """
     head = f"ref: {cand['ref']}\ntitle: {cand['title'] or title_for_ref(cand['ref'])}\ndivision: {cand['division']}"
     if cand.get('doc_date'):
         head += f"\npublished: {cand['doc_date']}"
@@ -355,13 +421,27 @@ class JudgeTruncated(ValueError):
 
 async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: Dict[str, Any], max_tokens: int) -> Dict[str, Any]:
     """One judgment, through the endpoint chain of ``endpoint``. Raises ``JudgeTruncated`` (a bigger budget may
-    help) or ``CompareLlmUnavailable`` (every endpoint failed)."""
+    help) or ``CompareLlmUnavailable`` (every endpoint failed).
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param endpoint: primary endpoint of the judge chain
+    :param changes_text: change list, from ``_changes_block``
+    :param cand: candidate document
+    :param max_tokens: output budget of the call
+    :return: the judgment, the token counts, the endpoint that answered and the cost
+    """
     messages = [
         {'role': 'system', 'content': _JUDGE_SYSTEM_PROMPT},
         {'role': 'user', 'content': f'CHANGES:\n{changes_text}\n\nCANDIDATE DOCUMENT:\n{_candidate_block(cand)}'},
     ]
 
     def accept(completion: Dict[str, Any]) -> Dict[str, Any]:
+        """Turns a judge completion into its verdict, or raises when the completion has none.
+
+        :param completion: completion returned by an endpoint
+        :return: the verdict with the token counts
+        """
         choice = (completion.get('choices') or [{}])[0]
         content = _message_text(choice.get('message') or {})
         usage = completion.get('usage') or {}
@@ -385,13 +465,24 @@ async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: 
 
 def _status(impacted: bool, confidence: str, has_passages: bool = True) -> str:
     # "Impacted" with no passage the UI can show is a claim nobody can verify.
+    """Status of a judged document: ``impacted``, ``check`` or ``not_impacted``.
+
+    :param impacted: the verdict of the judge
+    :param confidence: ``high``, ``medium`` or ``low``
+    :param has_passages: whether the judge gave a passage that can be shown
+    :return: the status
+    """
     if confidence == 'low' or (impacted and not has_passages):
         return 'check'
     return 'impacted' if impacted else 'not_impacted'
 
 
 def _other_languages(cand: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Retrieved variants plus catalog-known siblings not retrieved by this search."""
+    """Retrieved variants plus catalog-known siblings not retrieved by this search.
+
+    :param cand: candidate document
+    :return: the other language variants, retrieved ones first, then those known from the catalog
+    """
     seen = {cand['ref'].strip().upper()}
     out = []
     for v in cand.get('variants', []):
@@ -408,6 +499,12 @@ def _other_languages(cand: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _doc_base(cand: Dict[str, Any], archive_before: str) -> Dict[str, Any]:
+    """The fields every document of the result has, judged or not.
+
+    :param cand: candidate document
+    :param archive_before: ISO date before which a document is archived; empty for none
+    :return: the document fields
+    """
     doc_date = cand.get('doc_date', '')
     return {
         'iddoc': cand['iddoc'],
@@ -426,6 +523,13 @@ def _doc_base(cand: Dict[str, Any], archive_before: str) -> Dict[str, Any]:
 
 
 def _judged_doc(cand: Dict[str, Any], judgment: Dict[str, Any], archive_before: str) -> Dict[str, Any]:
+    """The result document of a judged candidate, with the passages the judge found.
+
+    :param cand: candidate document
+    :param judgment: verdict of the judge
+    :param archive_before: ISO date before which a document is archived; empty for none
+    :return: the result document
+    """
     impacted = bool(judgment.get('impacted', False))
     confidence = str(judgment.get('confidence', '') or '').lower()
     passages = []
@@ -471,7 +575,12 @@ def _judged_doc(cand: Dict[str, Any], judgment: Dict[str, Any], archive_before: 
 
 
 def _exclusion_keys(names: List[str], known_refs: List[str]) -> frozenset:
-    """Canonical REFs (of retrieved documents) that appear in the compared files' names."""
+    """Canonical REFs (of retrieved documents) that appear in the compared files' names.
+
+    :param names: file names of the compared documents
+    :param known_refs: REFs of the retrieved documents
+    :return: the canonical REFs to leave out
+    """
     canon_names = [canon_ref(n) for n in names if n]
     out = set()
     for ref in known_refs:
@@ -495,13 +604,27 @@ async def run_impact_search(
     max_tokens: int,
     archive_before: str,
     exclude_names: List[str],
-    info: Optional[Dict[str, Any]] = None,
+    info: Dict[str, Any] | None = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Yield 'plan' → one 'document' per judged candidate (as each finishes) → 'done'.
 
     Raises before 'plan' on retrieval failure (caller reports it); a failed
     judge call yields that document with status 'error' instead of aborting.
     ``info['endpoints']``, when given, lists the endpoints that answered a judge call, in order of first answer.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index_name: full name of the Vector Search index
+    :param llm_endpoint: primary endpoint of the judge
+    :param extracted: output of ``changes_to_queries``: ``changes``, ``source`` and ``queries``
+    :param num_results: rows asked per query
+    :param max_candidates: number of documents judged, best ranked first
+    :param max_changes_chars: length budget of the change list given to the judge
+    :param max_tokens: output budget of a judge call
+    :param archive_before: ISO date before which a document is archived; empty for none
+    :param exclude_names: file names of the compared documents, whose own REF is left out
+    :param info: dict that receives the endpoints that answered a judge call, None to skip
+    :return: the events of the stream: ``plan``, one ``document`` per judged candidate, then ``done``
     """
     queries = extracted['queries']
     fetched = await _fetch_chunks_multi(host, token, index_name, queries, num_results)
@@ -526,6 +649,11 @@ async def run_impact_search(
     usage = {'input_tokens': 0, 'output_tokens': 0, 'cost_eur': 0.0}
 
     async def _one(cand: Dict[str, Any]) -> Dict[str, Any]:
+        """Judges one candidate document, retried, and returns its result document.
+
+        :param cand: candidate document
+        :return: the result document; its status is ``error`` when the judge failed
+        """
         async with sem:
             # Judge trace (saved in impact_document_results): time from the first call to the
             # verdict, retries included, number of calls, tokens of the successful call.
@@ -581,7 +709,11 @@ async def run_impact_search(
 
 
 def sort_documents(documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Display order: impacted, to check, not impacted, failed; then retrieval evidence."""
+    """Display order: impacted, to check, not impacted, failed; then retrieval evidence.
+
+    :param documents: result documents
+    :return: the documents in display order
+    """
     return sorted(documents, key=lambda d: (
         _STATUS_ORDER.get(d.get('status', ''), 9), -len(d.get('change_ids', [])), -(d.get('max_score') or 0),
     ))

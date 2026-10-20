@@ -22,7 +22,7 @@ Rules:
 
 import re
 import unicodedata
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 Path = Tuple[Tuple[int, str], ...]          # ((level, title), ...)
 
@@ -59,25 +59,35 @@ _CONTENT_START_RE = re.compile(
     r"table of contents|table des mati[eè]res|introduction|1\s*[.)-]?\s+[A-ZÉ])", re.IGNORECASE)
 FRONT_ZONE_CHARS = 8000          # cover blocks are only looked for at the top of the document
 def default_count_tokens(text: str) -> int:
-    """Token estimate (3.5 characters per token) used when no tokenizer is given."""
+    """Token estimate (3.5 characters per token) used when no tokenizer is given.
+
+    :param text: Text to measure.
+    """
     return max(1, int(len(text) / 3.5)) if text else 0
 
 
 # --- Markdown -> blocks ---
 def _is_table(block: str) -> bool:
-    """True for a Markdown table: two lines starting with `|` and a `---` separator on the second."""
+    """True for a Markdown table: two lines starting with `|` and a `---` separator on the second.
+
+    :param block: Block of Markdown text.
+    """
     lines = block.split("\n")
     return len(lines) >= 2 and all(l.lstrip().startswith("|") for l in lines[:2]) and "---" in lines[1]
 
 
 def markdown_blocks(text: str) -> List[Dict[str, Any]]:
     """[{'path': Path, 'text': str, 'table': bool}] in document order. Headings of level 1–3
-    open a section and are not repeated in the text; deeper headings stay in the text."""
+    open a section and are not repeated in the text; deeper headings stay in the text.
+
+    :param text: Markdown document.
+    """
     blocks: List[Dict[str, Any]] = []
     path: List[Tuple[int, str]] = []
     buf: List[str] = []
 
-    def flush():
+    def flush() -> None:
+        """Turn the text buffered since the last heading into blocks of the current path."""
         chunk = "\n".join(buf).strip()
         buf.clear()
         if not chunk:
@@ -103,7 +113,14 @@ def markdown_blocks(text: str) -> List[Dict[str, Any]]:
 
 # --- Oversized blocks ---
 def _split_text(text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]) -> List[str]:
-    """Split on line breaks, then sentences, then spaces, then hard cuts."""
+    """Split on line breaks, then sentences, then spaces, then hard cuts.
+
+    :param text: Text to split.
+    :param max_tokens: Maximum tokens of a piece.
+    :param max_chars: Maximum characters of a piece.
+    :param count: Token counting function.
+    :return: pieces of ``text``, in order.
+    """
     if count(text) <= max_tokens and len(text) <= max_chars:
         return [text]
     for sep in ("\n", ". ", " "):
@@ -128,7 +145,14 @@ def _split_text(text: str, max_tokens: int, max_chars: int, count: Callable[[str
 
 
 def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]) -> List[str]:
-    """Split a Markdown table by rows into pieces within the token and character limits, repeating the header in each."""
+    """Split a Markdown table by rows into pieces within the token and character limits, repeating the header in each.
+
+    :param text: Markdown table, its header in the first two lines.
+    :param max_tokens: Maximum tokens of a piece.
+    :param max_chars: Maximum characters of a piece.
+    :param count: Token counting function.
+    :return: pieces of the table, each one starting with the header.
+    """
     lines = text.split("\n")
     head, rows = lines[:2], lines[2:]
     head_tok, head_chars = count("\n".join(head)), len("\n".join(head))
@@ -150,7 +174,10 @@ def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[st
 
 # --- Blocks -> passages ---
 def _common_path(paths: Sequence[Path]) -> Path:
-    """Longest heading path shared by all the given paths."""
+    """Longest heading path shared by all the given paths.
+
+    :param paths: Heading paths of the blocks.
+    """
     common = list(paths[0])
     for p in paths[1:]:
         n = 0
@@ -161,22 +188,33 @@ def _common_path(paths: Sequence[Path]) -> Path:
 
 
 def _section_key(path: Path) -> Path:
-    """Heading path cut at level 2: passages of one section share it."""
+    """Heading path cut at level 2: passages of one section share it.
+
+    :param path: Heading path of a block.
+    """
     return tuple(h for h in path if h[0] <= 2)
 
 
 def _path_label(path: Path) -> str:
-    """Heading path as `A > B > C`."""
+    """Heading path as `A > B > C`.
+
+    :param path: Heading path.
+    """
     return " > ".join(t for _, t in path)
 
 
 def _render(blocks: List[Dict[str, Any]], overlap: str = "") -> Tuple[str, Path]:
-    """Passage text: the shared heading path in brackets, an optional overlap, then the blocks (their extra headings shown when they differ)."""
+    """Passage text: the shared heading path in brackets, an optional overlap, then the blocks (their extra headings shown when they differ).
+
+    :param blocks: Blocks of one passage.
+    :param overlap: Text repeated at the top of the passage; empty for none.
+    :return: passage text, and the heading path shared by its blocks.
+    """
     common = _common_path([b["path"] for b in blocks])
     lines = [f"[{_path_label(common)}]"] if common else []
     if overlap:
         lines.append(overlap)
-    shown: Optional[Path] = common
+    shown: Path | None = common
     for b in blocks:
         if b["path"] != shown and len(b["path"]) > len(common):
             lines.append(f"[{_path_label(b['path'][len(common):])}]")
@@ -186,7 +224,11 @@ def _render(blocks: List[Dict[str, Any]], overlap: str = "") -> Tuple[str, Path]
 
 
 def _tail(text: str, max_chars: int) -> str:
-    """The last lines (or sentences) of text, at most max_chars, never a table fragment."""
+    """The last lines (or sentences) of text, at most max_chars, never a table fragment.
+
+    :param text: Text whose end is kept.
+    :param max_chars: Maximum characters kept.
+    """
     if max_chars <= 0 or text.lstrip().startswith("|"):
         return ""
     if len(text) <= max_chars:
@@ -214,7 +256,12 @@ def _tail(text: str, max_chars: int) -> str:
 def block_kind(text: str, path: Path, in_front_zone: bool) -> str:
     """'toc', 'front' (cover block, approval circuit, revision history) or 'content', for ONE
     block (paragraph or table). Passages never mix kinds, so a summary written right after the
-    cover block stays searchable."""
+    cover block stays searchable.
+
+    :param text: Text of the block.
+    :param path: Heading path of the block.
+    :param in_front_zone: True when the block is in the first ``FRONT_ZONE_CHARS`` characters of the document.
+    """
     titles = " ".join(t for _, t in path)
     leaders = len(_DOT_LEADER_RE.findall(text))
     numbered = len(_NUMBERED_PAGE_RE.findall(text))
@@ -233,7 +280,10 @@ def block_kind(text: str, path: Path, in_front_zone: bool) -> str:
 
 def _split_cover_block(text: str) -> List[str]:
     """A cover block that runs straight into the summary (no blank line): cut before the line
-    where the content starts, so the summary is not marked with the cover block."""
+    where the content starts, so the summary is not marked with the cover block.
+
+    :param text: Block that may hold a cover block followed by the summary.
+    """
     lines = text.split("\n")
     for i, line in enumerate(lines[1:], 1):
         if _CONTENT_START_RE.match(line.strip()) and sum(1 for m in _FRONT_MARKS if m.search("\n".join(lines[:i]))) >= 2:
@@ -243,7 +293,10 @@ def _split_cover_block(text: str) -> List[str]:
 
 
 def _toc_lines(text: str) -> int:
-    """Number of table-of-contents lines (dot leaders, or numbered with a page) in a text."""
+    """Number of table-of-contents lines (dot leaders, or numbered with a page) in a text.
+
+    :param text: Text to scan.
+    """
     return len(_DOT_LEADER_RE.findall(text)) + len(_NUMBERED_PAGE_RE.findall(text))
 
 
@@ -251,7 +304,10 @@ def _settle_kinds(blocks: List[Dict[str, Any]]) -> None:
     """Kinds that depend on the neighbours. A table of contents exported one line per paragraph
     is a run of 3+ short blocks with a page number (or any such line under a "Contents" title);
     in the front zone, a short label ("***VALIDATION***") or a block with one cover mark next to
-    a cover block is part of it."""
+    a cover block is part of it.
+
+    :param blocks: Blocks of one document, in order; their ``kind`` is set in place.
+    """
     i = 0
     while i < len(blocks):
         j = i
@@ -279,7 +335,17 @@ def chunk_markdown(text: str, *, min_tokens: int = 250, target_tokens: int = 500
                    max_chars: int = 4000, overlap_ratio: float = 0.12, chars_per_token: float = 3.5,
                    count_tokens: Callable[[str], int] = default_count_tokens) -> List[Dict[str, Any]]:
     """Passages of a markdown document: dicts with chunk_index, chunk_text, chunk_char_count,
-    chunk_token_count, chunk_content_type, metadata (Header N -> title)."""
+    chunk_token_count, chunk_content_type, metadata (Header N -> title).
+
+    :param text: Markdown document.
+    :param min_tokens: Sections smaller than this are merged with a neighbour.
+    :param target_tokens: Size a passage aims at.
+    :param max_tokens: Maximum tokens of a passage.
+    :param max_chars: Maximum characters of a passage.
+    :param overlap_ratio: Share of the target size repeated between two passages of one section.
+    :param chars_per_token: Characters per token, for the character target.
+    :param count_tokens: Token counting function.
+    """
     count = count_tokens
     target_chars = min(max_chars, int(target_tokens * chars_per_token * 1.6))
     # 1. blocks: cover blocks cut from the summary that follows them, each block's kind
@@ -392,7 +458,11 @@ _STOP = {
 
 def detect_language(text: str, ref: str = "") -> str:
     """ISO 639-1 code: from the REF language suffix when present (_GB, _FR…), else from
-    stop words in the first 5,000 characters. 'und' when nothing fits."""
+    stop words in the first 5,000 characters. 'und' when nothing fits.
+
+    :param text: Text of the document.
+    :param ref: REF of the document, with an optional language suffix.
+    """
     m = re.search(r"[-_. ](FR|EN|GB|BG|CZ|MX|ES|BR)$", (ref or "").upper())
     if m:
         return _SUFFIX_LANG[m.group(1)]
@@ -409,7 +479,11 @@ def detect_language(text: str, ref: str = "") -> str:
 # --- Spreadsheets ---
 def header_row_index(rows: Sequence[Sequence[str]], scan: int = 10) -> int:
     """Index of the header row among the first non-empty rows: the first one that fills at
-    least 60 % of the widest row (a title line or a logo cell above the table is skipped)."""
+    least 60 % of the widest row (a title line or a logo cell above the table is skipped).
+
+    :param rows: Rows of the sheet, each a sequence of cell values.
+    :param scan: Number of leading rows searched.
+    """
     head = [r for r in rows[:scan]]
     if not head:
         return 0
@@ -423,7 +497,10 @@ def header_row_index(rows: Sequence[Sequence[str]], scan: int = 10) -> int:
 
 def sheet_lines(rows: Sequence[Sequence[Any]]) -> List[str]:
     """Rows of one sheet as "- header: value, header: value" lines. Lines above the header row
-    (sheet title, logo cell) are kept as plain text instead of becoming the header."""
+    (sheet title, logo cell) are kept as plain text instead of becoming the header.
+
+    :param rows: Rows of one sheet.
+    """
     rows = [[("" if v is None else str(v)).strip() for v in r] for r in rows]
     rows = [r for r in rows if any(r)]
     if not rows:
@@ -444,14 +521,21 @@ _IMAGE_MARK = "[... IMAGE INSERTED HERE ...]"
 
 
 def _norm(s: str) -> str:
-    """Lowercase ASCII text without punctuation, for fuzzy comparison."""
+    """Lowercase ASCII text without punctuation, for fuzzy comparison.
+
+    :param s: Text to normalise.
+    """
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
     return re.sub(r"\W+", " ", s).strip()
 
 
-def image_anchor(context_text: str, chunks: Sequence[Tuple[int, str, Dict[str, str]]]) -> Optional[Tuple[int, Dict[str, str]]]:
+def image_anchor(context_text: str, chunks: Sequence[Tuple[int, str, Dict[str, str]]]) -> Tuple[int, Dict[str, str]] | None:
     """(chunk_index, headers) of the text passage where the image sits, found by the text just
-    before the image (else just after) that Docling stored in image_metadata.context_text."""
+    before the image (else just after) that Docling stored in image_metadata.context_text.
+
+    :param context_text: Text around the image in the document.
+    :param chunks: Text passages, as ``(chunk_index, text, headers)``.
+    """
     if not context_text or not chunks:
         return None
     before, _, after = context_text.partition(_IMAGE_MARK)
@@ -470,9 +554,14 @@ def image_anchor(context_text: str, chunks: Sequence[Tuple[int, str, Dict[str, s
     return None
 
 
-def image_passage_body(description: str, captions: Sequence[str] = (), headers: Optional[Dict[str, str]] = None) -> str:
+def image_passage_body(description: str, captions: Sequence[str] = (), headers: Dict[str, str] | None = None) -> str:
     """Description of an image with the section it sits in and its caption, which the vision
-    prompt keeps out of the description itself."""
+    prompt keeps out of the description itself.
+
+    :param description: Description written by the vision model.
+    :param captions: Captions of the image.
+    :param headers: Heading path of the image; None when unknown.
+    """
     lines = []
     if headers:
         lines.append("Section : " + " > ".join(headers[k] for k in sorted(headers)))
@@ -485,7 +574,13 @@ def image_passage_body(description: str, captions: Sequence[str] = (), headers: 
 def split_long_description(text: str, max_chars: int = 4000, max_tokens: int = 1000,
                            count_tokens: Callable[[str], int] = default_count_tokens) -> List[str]:
     """A long transcription (scanned page) cut into passages; the first line (the
-    '# [TYPE] what the page is' summary) is repeated at the top of each part."""
+    '# [TYPE] what the page is' summary) is repeated at the top of each part.
+
+    :param text: Transcription to split.
+    :param max_chars: Maximum characters of a part.
+    :param max_tokens: Maximum tokens of a part.
+    :param count_tokens: Token counting function.
+    """
     text = (text or "").strip()
     if len(text) <= max_chars and count_tokens(text) <= max_tokens:
         return [text]

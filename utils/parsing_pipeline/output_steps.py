@@ -8,7 +8,7 @@ from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 from leap_utils.common.logger import get_logger
-from tables import add_missing_columns, ensure_primary_key, merge_into, table_exists, write_table
+from tables import add_missing_columns, ensure_primary_key, merge_into, overwrite_rows, table_exists, write_table
 from config import (
     PIPELINE_WRITE_ENV,
     ARCHIVE_NOTICES_IN_RAG,
@@ -30,11 +30,13 @@ logger = get_logger(__name__)
 _IMAGE_MERGE_TEMP = f"{PIPELINE_WRITE_ENV}_proj.qualibot._image_metadata_merge_temp"
 
 
-def _merge_image_metadata(df_image_metadata):
+def _merge_image_metadata(df_image_metadata) -> None:
     """Merge image_metadata instead of delete-then-append.
 
     The rows arrive with the descriptions `build_steps.build_image_metadata` decided to keep (same image only): the
     merge takes them as they are, a previous description must not come back on an image that moved.
+
+    :param df_image_metadata: Image rows to write, with the descriptions to keep.
     """
     if not table_exists(TARGET_IMAGE_METADATA_TABLE):
         # First write into an empty catalog: the merge needs the table to exist.
@@ -49,10 +51,15 @@ def _merge_image_metadata(df_image_metadata):
     logger.info(f"Merged into {TARGET_IMAGE_METADATA_TABLE}")
 
 
-def _write_run_health_summary(df_processed_files, job_run_id, run_mode):
+def _write_run_health_summary(df_processed_files, job_run_id, run_mode) -> None:
     """One row per pipeline run in TARGET_HEALTH_TABLE — REF/error counts for the
     monitoring dashboard. Scoped to this run's df_processed_files: a FULL run's
-    row covers the whole corpus, not just net-new docs vs the prior run."""
+    row covers the whole corpus, not just net-new docs vs the prior run.
+
+    :param df_processed_files: Documents of this run, one row each.
+    :param job_run_id: Id of the Databricks job run.
+    :param run_mode: Run mode: ``incremental``, ``full`` or ``rechunk``.
+    """
     status = F.col("parse_status")
     is_success = status == "SUCCESS"
     is_skipped = status.startswith("SKIP")
@@ -87,8 +94,14 @@ def _write_run_health_summary(df_processed_files, job_run_id, run_mode):
     logger.info(f"Wrote run health summary to {TARGET_HEALTH_TABLE}")
 
 
-def log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_run_id):
-    """Append one row per NEW/REVISED document to TARGET_CHANGE_LOG_TABLE -- must run before parsed_documents gets rewritten below, since it reads the pre-run row for old ref/indice/doc_date."""
+def log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_run_id) -> None:
+    """Append one row per NEW/REVISED document to TARGET_CHANGE_LOG_TABLE -- must run before parsed_documents gets rewritten below, since it reads the pre-run row for old ref/indice/doc_date.
+
+    :param df_business_meta: Business metadata of the documents, with an ``IDDOC`` column.
+    :param target_iddocs: IDDOCs parsed in this run.
+    :param revised_iddocs: IDDOCs whose revision changed in this run.
+    :param job_run_id: Id of the Databricks job run.
+    """
     if not target_iddocs:
         return
 
@@ -136,9 +149,17 @@ def log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_ru
 
 
 def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
-                  df_image_metadata, job_run_id, revised_iddocs=frozenset()):
+                  df_image_metadata, job_run_id, revised_iddocs=frozenset()) -> None:
     """Write parsed_documents/chunks/image_metadata — overwrite on a full or
-    rechunk run, append (+ MERGE for image_metadata) on an incremental run."""
+    rechunk run, append (+ MERGE for image_metadata) on an incremental run.
+
+    :param df_processed_files: Documents of this run, one row each, for ``parsed_documents``.
+    :param df_chunks_all: Chunks for the chat table.
+    :param df_chunks_archive: Chunks of the documents published before ``DOC_DATE_CUTOFF``.
+    :param df_image_metadata: Image rows to write.
+    :param job_run_id: Id of the Databricks job run.
+    :param revised_iddocs: IDDOCs whose revision changed; their old image rows are cleared.
+    """
     spark.conf.set("spark.databricks.delta.optimizeWrite.enabled", "true")
     spark.conf.set("spark.databricks.delta.autoCompact.enabled", "true")
 
@@ -146,7 +167,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
         write_table(df_processed_files, TARGET_PROCESSED_FILES_TABLE, "overwrite", overwrite_schema=True)
         logger.info(f"Wrote {TARGET_PROCESSED_FILES_TABLE}")
 
-        write_table(df_chunks_all, TARGET_CHUNK_TABLE, "overwrite", overwrite_schema=True)
+        overwrite_rows(df_chunks_all, TARGET_CHUNK_TABLE)
         ensure_primary_key(TARGET_CHUNK_TABLE, ["chunk_id"])
         logger.info(f"Wrote {TARGET_CHUNK_TABLE} (ALL)")
 
@@ -177,7 +198,7 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
         write_table(df_chunks_archive, TARGET_CHUNK_TABLE_ARCHIVE, "append", merge_schema=True)
         logger.info(f"Appended to {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
 
-        # Revised IDDOCs have new content, so _merge_image_metadata's keep_prev logic must not preserve their old image rows.
+        # Revised IDDOCs have new content: their old image rows must go, or the merge keeps them.
         if revised_iddocs:
             revised_list = ",".join(str(i) for i in revised_iddocs)
             if table_exists(TARGET_IMAGE_METADATA_TABLE):
@@ -203,10 +224,13 @@ def write_outputs(df_processed_files, df_chunks_all, df_chunks_archive,
     logger.info("[NEXT] Run create_proj_image_metadata to describe PENDING images.")
 
 
-def write_archive_notices(df_notices):
+def write_archive_notices(df_notices) -> None:
     """Rewrite TARGET_ARCHIVE_NOTICE_TABLE, then reconcile the notices held by the
     chat's `chunks` table: MERGEd in when ARCHIVE_NOTICES_IN_RAG is on, removed otherwise.
-    MERGE (not delete + append) so Change Data Feed only carries real changes."""
+    MERGE (not delete + append) so Change Data Feed only carries real changes.
+
+    :param df_notices: One archive notice per document published before the cutoff.
+    """
     write_table(df_notices, TARGET_ARCHIVE_NOTICE_TABLE, "overwrite", overwrite_schema=True)
     df_notices = spark.table(TARGET_ARCHIVE_NOTICE_TABLE)
     logger.info(f"[NOTICES] Wrote {df_notices.count()} archive notice(s) to {TARGET_ARCHIVE_NOTICE_TABLE} "
@@ -239,7 +263,7 @@ def write_archive_notices(df_notices):
         logger.info(f"[NOTICES] Merged archive notices into {tbl}")
 
 
-def flag_ghost_documents():
+def flag_ghost_documents() -> None:
     """Flag SUCCESS documents that ended up with zero chunks as MISSING_CHUNKS.
 
     Runs right after the write instead of waiting for the daily SQL alert;

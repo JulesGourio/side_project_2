@@ -1,4 +1,4 @@
-"""Regression tests for the Compare diff, analysis, volume and impact paths.
+"""Tests for the Compare diff, analysis, volume and impact paths.
 
 Coverage:
   - diff engine: one-word changes in long paragraphs are reported

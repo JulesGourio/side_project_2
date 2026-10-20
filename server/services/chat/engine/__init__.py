@@ -6,17 +6,17 @@ stream_chat yields the events routers/chat/ws.py expects and fills the turn's Tu
 Settings are read from the environment at call time (config.py).
 """
 
-from .answer import LANGUAGE_REMINDER, build_prompt, stream_chat
-from .citations import CitationStreamParser, parse_citations
-from .config import (
+from server.services.chat.engine.answer import LANGUAGE_REMINDER, build_prompt, stream_chat
+from server.services.chat.engine.citations import CitationStreamParser, parse_citations
+from server.services.chat.engine.config import (
     division_filter,
     load_instructions,
     normalize_division,
     prompt_parts,
     settings,
 )
-from .queries import REWRITE_PROMPT, rewrite_queries, split_bilingual, strip_added_noise
-from .retrieval import _clean_history, group_documents, retrieve_for_turn
+from server.services.chat.engine.queries import REWRITE_PROMPT, rewrite_queries, split_bilingual, strip_added_noise
+from server.services.chat.engine.retrieval import _clean_history, group_documents, retrieve_for_turn
 
 __all__ = [
     'CitationStreamParser',

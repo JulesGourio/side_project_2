@@ -258,3 +258,32 @@ Notebooks : aucun changement de logique, seuls leurs imports changent (`quality`
 - [ ] `databricks bundle run parsing_pipeline -t dev --profile DEV --only 3_parse` (run incrémental) : le job se termine sans `ModuleNotFoundError` ni `No module named 'worker'` sur les exécuteurs.
 - [ ] `databricks bundle run parsing_pipeline -t dev --profile DEV --only 4_describe_images` : `worker.py` et `image_fallbacks.py` sont envoyés, la description des images tourne.
 
+
+## Chunks écrasé sans changer le schéma (2026-10-19)
+
+À rejouer sur chaque cible dont `chunks` alimente un index Vector Search (UAT d'abord : `runbooks/uat.md` E2, étapes 1 à 8). Sur DEV, après le déploiement des jobs, relancer `D_1_Qualibot_Parsing_Pipeline_DEV` en mode `rechunk`.
+
+- [ ] `5_sync_index` en SUCCESS après un run `rechunk`, et `DESCRIBE HISTORY <env>_proj.qualibot.chunks` montre un `WRITE` en `Overwrite`, pas un `CREATE OR REPLACE TABLE AS SELECT`.
+- [ ] Le message de l'index ne contient plus `latest pipeline update failed`.
+
+## 2026-10-19 — Lakebase DEV dans dev_proj.qualibot
+- Notebook one-shot `runbooks/scripts/dev_cleanup/rename_dev_uat_copies.py` (hors bundle, soumis sous le SP DEV) : renomme les 4 copies UAT en `uat_<nom>`. Une fois.
+- DEV : `lakebase_import_to_delta` = `true`, `lakebase_tables_to_skip` (liste dans `databricks.yml`). L'export charge les autres tables dans `dev_proj.qualibot`.
+- À relancer : `runbooks/dev.md` bloc L (L.1 à L.4). Puis `pytest tests/test_lakebase_sync_config.py tests/test_deploy_config.py tests/test_bundle_paths.py`.
+
+## 2026-10-19 — revue de la PR Bitbucket 2 (commentaires de Yann Depledt)
+
+Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md`. Changements qui touchent le déploiement :
+
+- `app.yaml` : `CHAT_MAX_HISTORY` (10 messages) devient `CHAT_MAX_HISTORY_TOKENS` (8000 jetons estimés) ; `CHAT_TRANSLATE_ENDPOINT`, `COMPARE_IMPACT_ENDPOINT`, `COMPARE_SUMMARY_ENDPOINT` et `COMPARE_SUMMARY_IMAGE_ENDPOINT` passent à `databricks-gpt-6-luna` (repli `databricks-gpt-5-6-luna`). Aucune de ces valeurs n'est dans `target_env.json`.
+- Prompts : `system/as.md` et `system/is.md` sont remplacés par `system/division.md` (gabarit) et `system/as_reference_ordering.md`. Les clés `system_as` et `system_is` disparaissent, `system_division` et `system_as_references` apparaissent.
+- Routes : `vote` n'accepte plus que `up` ou `down` (422 de FastAPI à la place du 422 maison) ; `PUT /history/{id}/impact` reçoit toujours `{"impact_json": "…"}`.
+
+- [ ] Déployer l'app DEV (pipeline Bitbucket `deploy-dev`, branche `claude/sharp-mayer-uqwx8x`).
+- [ ] `databricks bundle run register_chat_prompts_dev -t dev --profile DEV` : une ligne `registered version … alias deployed` pour `chat_system_division` et `chat_system_as_references`.
+- [ ] Chat DEV : une question en division AS et une en division IS ; les deux répondent, et une liste de références AS est ordonnée QP puis MI.
+- [ ] Chat DEV : une conversation de plus de 8000 jetons (collage d'un long texte) répond sans erreur ; la dernière question est conservée.
+- [ ] Comparaison DEV : un PDF contre un PDF jusqu'à la fin de l'analyse, puis la recherche d'impact, puis l'ouverture de l'entrée dans l'historique (l'impact enregistré se recharge).
+- [ ] Résumé d'un document (texte puis image) dans l'onglet Comparaison : le résumé s'affiche ; le journal montre `databricks-gpt-6-luna`.
+- [ ] Recherche d'impact sur une paire déjà jugée avant le changement : comparer les verdicts avec l'ancien résultat (le juge est maintenant GPT-6 Luna, jamais mesuré pour ce rôle).
+- [ ] Vote pouce haut / bas dans le chat et dans la comparaison : enregistré.

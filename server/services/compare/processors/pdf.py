@@ -13,10 +13,10 @@ import io
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Tuple
 
-from .text_diff import TextDiffProcessor
-from ._diff_engines import (
+from server.services.compare.processors.text_diff import Images, TextDiffProcessor
+from server.services.compare.processors._diff_engines import (
     _IMG_MAX_DIM,
     _IMG_JPEG_QUALITY,
     dhash,
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # --- Fitz import helper ---
 
-def _import_fitz():
+def _import_fitz() -> Any:
     try:
         import pymupdf as fitz  # PyMuPDF >= 1.24
         return fitz
@@ -56,7 +56,11 @@ _PAGE_ARTIFACT_RE = re.compile(
 
 
 def _is_page_artifact(text: str) -> bool:
-    """True for blocks that are just a page number / 'Page X of Y' marker."""
+    """True for blocks that are just a page number / 'Page X of Y' marker.
+
+    :param text: block text
+    :return: True for a block that is only a page number
+    """
     return bool(_PAGE_ARTIFACT_RE.match(text))
 
 
@@ -77,11 +81,15 @@ _TABLE_BAND_MAX_ROWS = 3
 _TABLE_LABELS = os.getenv('COMPARE_PDF_TABLE_LABELS', 'true').lower() == 'true'
 
 
-def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[Any]:
+def _table_rows_for_page(page, state: Dict[str, Any] | None = None) -> List[Any]:
     """[(y, 'cell | cell | cell', bbox), ...] for every real table on the page.
 
     `state` carries the last header to the next page, so a table continuing without repeating its header keeps its
     labels.
+
+    :param page: PyMuPDF page
+    :param state: carries the last table header to the next page, updated in place; None starts a new state
+    :return: ``(y, 'cell | cell', bbox)`` for each table row of the page
     """
     out: List[Any] = []
     state = state if state is not None else {}
@@ -115,7 +123,7 @@ def _table_rows_for_page(page, state: Optional[Dict[str, Any]] = None) -> List[A
         norm = [r + [''] * (n_cols - len(r)) for r in norm]
         used = [c for c in range(n_cols) if any(r[c] for r in norm)]
 
-        header: Optional[List[str]] = None
+        header: List[str] | None = None
         header_row = -1
         if _TABLE_LABELS and norm:
             if looks_like_table_header(norm[0]):
@@ -155,7 +163,12 @@ _SENTENCE_END = '.:;!?…'
 
 def _continues_across_pages(tail: str, head: str) -> bool:
     """True when `head` (first body block of a page) is the rest of the sentence
-    left open by `tail` (last body block of the previous page)."""
+    left open by `tail` (last body block of the previous page).
+
+    :param tail: text of the last body block of the previous page
+    :param head: text of the first body block of the page
+    :return: True when ``head`` continues the sentence left open by ``tail``
+    """
     tail, head = tail.rstrip(), head.lstrip()
     if not tail or not head or len(tail.split()) < 4:
         return False
@@ -175,6 +188,8 @@ def _merge_page_split_paragraphs(pages: List[List[Dict[str, Any]]]) -> None:
     they are identified first (same text on most pages, in the top or bottom
     band) and skipped when looking for a page's first/last body block. Table
     rows are never merged.
+
+    :param pages: lines of each page; the paragraphs cut by a page break are re-joined in place
     """
     n_pages = len(pages)
     if n_pages < 2:
@@ -188,6 +203,11 @@ def _merge_page_split_paragraphs(pages: List[List[Dict[str, Any]]]) -> None:
     running = {k for k, on in seen_on.items() if len(on) >= max(2, n_pages * _RUNNING_MIN_PAGE_SHARE)}
 
     def _body(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The lines of a page without its running header and footer.
+
+        :param lines: lines of one page
+        :return: the body lines
+        """
         return [
             line for line in lines
             if not ((line['rel_y'] <= _RUNNING_TOP_BAND or line['rel_y'] >= _RUNNING_BOTTOM_BAND)
@@ -223,6 +243,9 @@ def _extract_text_with_pages(pdf_bytes: bytes) -> str:
     expanded for the same reason: one revision exported with "ﬁ" glyphs and the
     other without would differ on every word containing "fi". A paragraph cut by
     a page break is re-joined (_merge_page_split_paragraphs).
+
+    :param pdf_bytes: content of the PDF
+    :return: the text lines, each tagged ``[Page N]``, joined by newlines
     """
     fitz = _import_fitz()
     doc = fitz.open(stream=pdf_bytes, filetype='pdf')
@@ -279,6 +302,9 @@ def _extract_and_hash_images(pdf_bytes: bytes) -> Dict[str, Dict[str, Any]]:
     """Extract embedded images, deduplicate by perceptual dhash, record pages.
 
     Returns: { dhash_str: { 'b64': str, 'pages': [1, 3, ...] } }
+
+    :param pdf_bytes: content of the PDF
+    :return: the images keyed by perceptual hash, each with ``b64``, ``pages`` and ``hash16``
     """
     fitz = _import_fitz()
     doc = fitz.open(stream=pdf_bytes, filetype='pdf')
@@ -317,18 +343,36 @@ def _extract_and_hash_images(pdf_bytes: bytes) -> Dict[str, Dict[str, Any]]:
 class PDFProcessor(TextDiffProcessor):
     file_type = 'pdf'
 
-    def extract(self, old_bytes, old_name, new_bytes, new_name):
+    def extract(self, old_bytes, old_name, new_bytes, new_name) -> Tuple[str, str, Images, Images]:
+        """Text and images of the two PDF files.
+
+        :param old_bytes: content of the old PDF
+        :param old_name: file name of the old PDF
+        :param new_bytes: content of the new PDF
+        :param new_name: file name of the new PDF
+        :return: ``(old text, new text, old images, new images)``
+        """
         return (_extract_text_with_pages(old_bytes), _extract_text_with_pages(new_bytes),
                 _extract_and_hash_images(old_bytes), _extract_and_hash_images(new_bytes))
 
-    def paragraph_notes(self, filtered):
+    def paragraph_notes(self, filtered) -> str:
+        """The note that opens the paragraph diff of a PDF.
+
+        :param filtered: number of trivial entries the diff filtered out
+        :return: the note
+        """
         return (f'Global paragraph alignment: {filtered} trivial lines filtered '
                 '(within-group modal swaps, whitespace, TOC entries, layout shifts).\n'
                 'Page-split blocks pre-merged. Similar paragraphs shown as '
                 'MODIFIED with ~~removed~~ and **added** words inline.\n'
                 'Each block tagged with its source page.')
 
-    def comparative_notes(self, filtered):
+    def comparative_notes(self, filtered) -> str:
+        """The note that opens the section diff of a PDF.
+
+        :param filtered: number of trivial entries the diff filtered out
+        :return: the note
+        """
         return (f'Section canonical diff: {filtered} trivial pairs filtered '
                 '(modal verbs, whitespace, synonyms).\n'
                 'Changes grouped by section. Each line tagged with its source page.')

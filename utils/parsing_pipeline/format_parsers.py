@@ -19,7 +19,7 @@ import time
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
@@ -36,7 +36,7 @@ _FORMAT_MAP_NAMES: Dict[str, str] = {
 
 
 # --- Docling bootstrap (lazy, cached per worker) ---
-def patch_worker_env():
+def patch_worker_env() -> None:
     """Set offline / thread-limit env vars on Spark workers."""
     os.environ.setdefault("USER", "spark_worker")
     os.environ["USE_TF"] = "0"
@@ -52,8 +52,11 @@ def patch_worker_env():
         os.environ[var] = n_threads
 
 
-def _import_docling():
-    """Import Docling after the worker environment is patched; it is heavy, so each process does it once, on demand."""
+def _import_docling() -> dict[str, Any]:
+    """Import Docling after the worker environment is patched; it is heavy, so each process does it once, on demand.
+
+    :return: Docling classes by name; ``TableFormerMode`` is None when absent.
+    """
     patch_worker_env()
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
@@ -91,24 +94,35 @@ _DOCLING_MODULES = None
 _CONVERTER_CACHE: Dict = {}
 
 
-def _get_docling():
-    """Docling classes, imported once per process."""
+def _get_docling() -> dict[str, Any]:
+    """Docling classes, imported once per process.
+
+    :return: Docling classes by name.
+    """
     global _DOCLING_MODULES
     if _DOCLING_MODULES is None:
         _DOCLING_MODULES = _import_docling()
     return _DOCLING_MODULES
 
 
-def _get_input_format(ext: str):
-    """Docling `InputFormat` for a file extension, or None when Docling does not handle it."""
+def _get_input_format(ext: str) -> Any:
+    """Docling `InputFormat` for a file extension, or None when Docling does not handle it.
+
+    :param ext: File extension with the dot, such as ``.pdf``.
+    :return: Docling input format, or None.
+    """
     return getattr(_get_docling()["InputFormat"], _FORMAT_MAP_NAMES.get(ext, ""), None)
 
 
-def _get_converter(input_format, do_ocr: Optional[bool] = None, timings: Optional[dict] = None):
+def _get_converter(input_format, do_ocr: bool | None = None, timings: dict | None = None) -> Any:
     """Build or retrieve a cached DocumentConverter for the given format.
 
     The cache key includes GPU mode, table mode, OCR and picture-image flags so
     that overriding any knob (e.g. an OCR retry) yields a distinct converter.
+
+    :param input_format: Docling input format of the file.
+    :param do_ocr: Whether to run OCR; None takes the configured default.
+    :param timings: Dict filled with the step durations, or None.
     """
     dl = _get_docling()
     use_gpu = _cfg("USE_GPU", fallback=False)
@@ -163,8 +177,13 @@ def _get_converter(input_format, do_ocr: Optional[bool] = None, timings: Optiona
 
 
 # --- Text helpers ---
-def safe_decode(raw_bytes: bytes, encodings: Optional[List[str]] = None) -> str:
-    """Decode bytes trying utf-8, utf-8-sig, cp1252 and latin-1 in turn, then utf-8 ignoring errors."""
+def safe_decode(raw_bytes: bytes, encodings: List[str] | None = None) -> str:
+    """Decode bytes trying utf-8, utf-8-sig, cp1252 and latin-1 in turn, then utf-8 ignoring errors.
+
+    :param raw_bytes: Bytes to decode.
+    :param encodings: Encodings to try in order, instead of the default list.
+    :return: decoded text; empty for empty input.
+    """
     if not raw_bytes:
         return ""
     for enc in (encodings or ["utf-8", "utf-8-sig", "cp1252", "latin-1"]):
@@ -176,7 +195,11 @@ def safe_decode(raw_bytes: bytes, encodings: Optional[List[str]] = None) -> str:
 
 
 def _write_tmp_file(content: bytes, suffix: str) -> Path:
-    """Write bytes to a temporary file Docling can open; the caller deletes it."""
+    """Write bytes to a temporary file Docling can open; the caller deletes it.
+
+    :param content: Bytes to write.
+    :param suffix: File suffix, with the dot.
+    """
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False, prefix="docling_parse_")
     tmp.write(content)
     tmp.close()
@@ -184,10 +207,12 @@ def _write_tmp_file(content: bytes, suffix: str) -> Path:
 
 
 # --- Binary-format conversion (no Docling) ---
-def _convert_doc_antiword(doc_path: Path) -> Tuple[Optional[Path], Optional[str]]:
+def _convert_doc_antiword(doc_path: Path) -> Tuple[Path | None, str | None]:
     """Convert .doc to Markdown via the Antiword binary (if configured).
 
     Returns (path, None) on success or (None, reason) on failure.
+
+    :param doc_path: Path of the ``.doc`` file.
     """
     antiword_bin = _cfg("ANTIWORD_BIN")
     antiword_share = _cfg("ANTIWORD_SHARE_DIR")
@@ -220,8 +245,11 @@ def _convert_doc_antiword(doc_path: Path) -> Tuple[Optional[Path], Optional[str]
         return None, f"raised {type(e).__name__}: {str(e)[:300]}"
 
 
-def _convert_rtf(content: bytes) -> Tuple[Optional[str], Optional[str]]:
-    """Returns (text, None) on success or (None, error_detail) on failure."""
+def _convert_rtf(content: bytes) -> Tuple[str | None, str | None]:
+    """Returns (text, None) on success or (None, error_detail) on failure.
+
+    :param content: Bytes of the RTF file.
+    """
     try:
         from striprtf.striprtf import rtf_to_text
         text = rtf_to_text(content.decode("utf-8", errors="replace"))
@@ -230,8 +258,12 @@ def _convert_rtf(content: bytes) -> Tuple[Optional[str], Optional[str]]:
         return None, _exc_detail(e)
 
 
-def _convert_odt(content: bytes, suffix: str) -> Tuple[Optional[str], Optional[str]]:
-    """Returns (text, None) on success or (None, error_detail) on failure."""
+def _convert_odt(content: bytes, suffix: str) -> Tuple[str | None, str | None]:
+    """Returns (text, None) on success or (None, error_detail) on failure.
+
+    :param content: Bytes of the ODF file.
+    :param suffix: Extension, ``.odt`` or ``.ods``.
+    """
     try:
         from odf.opendocument import load as odf_load
         from odf.text import P
@@ -264,8 +296,11 @@ def _convert_odt(content: bytes, suffix: str) -> Tuple[Optional[str], Optional[s
             pass
 
 
-def _convert_xls(content: bytes) -> Tuple[Optional[str], Optional[str]]:
-    """Returns (text, None) on success or (None, error_detail) on failure."""
+def _convert_xls(content: bytes) -> Tuple[str | None, str | None]:
+    """Returns (text, None) on success or (None, error_detail) on failure.
+
+    :param content: Bytes of the XLS file.
+    """
     try:
         import xlrd
     except ImportError as e:
@@ -291,10 +326,15 @@ def _convert_xls(content: bytes) -> Tuple[Optional[str], Optional[str]]:
 
 
 # --- Core parsing ---
-def parse_with_docling(content: bytes, extension: str, timings: Optional[dict] = None) -> Dict[str, Any]:
+def parse_with_docling(content: bytes, extension: str, timings: dict | None = None) -> Dict[str, Any]:
     """Route raw bytes to the right parser by extension. Returns a dict with
     text / parser_error / parser_strategy / parse_time_seconds / _docling_doc.
-    If ``timings`` is provided it is filled with per-step durations."""
+    If ``timings`` is provided it is filled with per-step durations.
+
+    :param content: Bytes of the file.
+    :param extension: File extension, without the dot.
+    :param timings: Dict filled with the step durations, or None.
+    """
     ext = f".{extension.lower().lstrip('.')}"
     start = time.perf_counter()
 
@@ -330,7 +370,11 @@ def parse_with_docling(content: bytes, extension: str, timings: Optional[dict] =
 
 def _exc_detail(e: Exception, limit: int = 500) -> str:
     """Walks __cause__/__context__ instead of str(e) alone — Docling/PyTorch
-    exceptions frequently wrap a deeper root cause this way."""
+    exceptions frequently wrap a deeper root cause this way.
+
+    :param e: Exception to describe.
+    :param limit: Maximum length of the text.
+    """
     parts = [str(e)]
     cause = e.__cause__ or e.__context__
     seen = {id(e)}
@@ -342,7 +386,13 @@ def _exc_detail(e: Exception, limit: int = 500) -> str:
 
 
 def _err(start, ext, msg, strategy=None) -> Dict[str, Any]:
-    """Result of a failed parse: no text, the error message and a `docling_error:<ext>` strategy."""
+    """Result of a failed parse: no text, the error message and a `docling_error:<ext>` strategy.
+
+    :param start: Time the parse started, from ``time.perf_counter``.
+    :param ext: File extension with the dot.
+    :param msg: Error message.
+    :param strategy: Parser strategy; defaults to ``docling_error:<ext>``.
+    """
     return {
         "text": "", "parser_error": msg,
         "parser_strategy": strategy or f"docling_error:{ext.lstrip('.')}",
@@ -351,7 +401,10 @@ def _err(start, ext, msg, strategy=None) -> Dict[str, Any]:
 
 
 def _export_markdown(doc) -> str:
-    """Markdown of a Docling document with image placeholders (plain export when the installed version lacks the option)."""
+    """Markdown of a Docling document with image placeholders (plain export when the installed version lacks the option).
+
+    :param doc: Docling document.
+    """
     try:
         from docling_core.types.doc.document import ImageRefMode
         return doc.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)
@@ -372,7 +425,10 @@ _RECOMPRESS_JPEG_QUALITY = 78
 
 def _recompress_image_bytes(data: bytes) -> bytes:
     """Downscale/recompress one embedded image; returns original bytes on any
-    failure or if the result isn't actually smaller (e.g. already tiny)."""
+    failure or if the result isn't actually smaller (e.g. already tiny).
+
+    :param data: Encoded image bytes.
+    """
     try:
         from PIL import Image
         img = Image.open(io.BytesIO(data))
@@ -397,7 +453,11 @@ def strip_ooxml_bloat(content: bytes, ext: str) -> bytes:
     """Rebuild a .docx/.docm/.pptx/.pptm zip without embedded OLE/Office
     objects or embedded video/audio, and with large embedded images
     recompressed. Returns the ORIGINAL bytes unchanged on any error or if the
-    file isn't a zip we recognise: a file that parses without this step must not fail because of it."""
+    file isn't a zip we recognise: a file that parses without this step must not fail because of it.
+
+    :param content: Bytes of the file.
+    :param ext: File extension, with or without the dot.
+    """
     if ext.lstrip(".").lower() not in {"docx", "docm", "pptx", "pptm"}:
         return content
     try:
@@ -424,7 +484,14 @@ def strip_ooxml_bloat(content: bytes, ext: str) -> bytes:
 
 
 def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, Any]:
-    """Parse with Docling through a temporary file; the step timings are recorded when `timings` is given."""
+    """Parse with Docling through a temporary file; the step timings are recorded when `timings` is given.
+
+    :param content: Bytes of the file.
+    :param ext: File extension with the dot.
+    :param input_format: Docling input format of the file.
+    :param start: Time the parse started, from ``time.perf_counter``.
+    :param timings: Dict filled with the step durations, or None.
+    """
     t_tmp = time.perf_counter()
     tmp_path = _write_tmp_file(content, ext)
     if timings is not None:
@@ -485,7 +552,12 @@ def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, 
 
 
 def _parse_textlike(content: bytes, ext: str, start: float) -> Dict[str, Any]:
-    """Text-based formats: decoded and normalised; csv and tsv become one bullet per row."""
+    """Text-based formats: decoded and normalised; csv and tsv become one bullet per row.
+
+    :param content: Bytes of the file.
+    :param ext: File extension with the dot.
+    :param start: Time the parse started, from ``time.perf_counter``.
+    """
     decoded = safe_decode(content)
     if ext in {".csv", ".tsv"}:
         try:
@@ -504,7 +576,11 @@ def _parse_textlike(content: bytes, ext: str, start: float) -> Dict[str, Any]:
 
 
 def _parse_doc_antiword(content: bytes, start: float) -> Dict[str, Any]:
-    """Parse .doc via antiword; reroute to DOCX if it is actually a renamed ZIP."""
+    """Parse .doc via antiword; reroute to DOCX if it is actually a renamed ZIP.
+
+    :param content: Bytes of the file.
+    :param start: Time the parse started, from ``time.perf_counter``.
+    """
     if content[:4] == b"PK\x03\x04":
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zfh:
@@ -539,7 +615,11 @@ def _parse_doc_antiword(content: bytes, start: float) -> Dict[str, Any]:
 
 
 def _parse_rtf(content: bytes, start: float) -> Dict[str, Any]:
-    """RTF: striprtf converts it to Markdown text, which Docling then reads as a Markdown document."""
+    """RTF: striprtf converts it to Markdown text, which Docling then reads as a Markdown document.
+
+    :param content: Bytes of the file.
+    :param start: Time the parse started, from ``time.perf_counter``.
+    """
     text, err_reason = _convert_rtf(content)
     if not text or not text.strip():
         return {"text": "", "parser_error": f"RTF conversion failed: {err_reason}",
@@ -564,7 +644,12 @@ def _parse_rtf(content: bytes, start: float) -> Dict[str, Any]:
 
 
 def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
-    """ODT and ODS through odfpy."""
+    """ODT and ODS through odfpy.
+
+    :param content: Bytes of the file.
+    :param ext: File extension with the dot, ``.odt`` or ``.ods``.
+    :param start: Time the parse started, from ``time.perf_counter``.
+    """
     raw_text, err_reason = _convert_odt(content, ext)
     text = normalize_text(raw_text or "")
     return {"text": text, "parser_error": None if text else f"ODF conversion failed: {err_reason}",
@@ -573,7 +658,12 @@ def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
 
 
 def parse_xls(content: bytes, start: float) -> Dict[str, Any]:
-    """XLS (binary Excel) through xlrd."""
+    """XLS (binary Excel) through xlrd.
+
+    :param content: Bytes of the file.
+    :param start: Time the parse started, from ``time.perf_counter``.
+    :return: parse result: text, parser error, parser strategy and parse time.
+    """
     raw_text, err_reason = _convert_xls(content)
     text = normalize_text(raw_text or "")
     return {"text": text, "parser_error": None if text else f"XLS conversion failed: {err_reason}",
@@ -583,7 +673,11 @@ def parse_xls(content: bytes, start: float) -> Dict[str, Any]:
 
 def _parse_xlsb_pyxlsb(content: bytes, start: float) -> Dict[str, Any]:
     """.xlsb is a ZIP container like .xlsx, but its sheets are binary BIFF12 records, not XML:
-    openpyxl and the XML fallback cannot read it, so it has its own parser."""
+    openpyxl and the XML fallback cannot read it, so it has its own parser.
+
+    :param content: Bytes of the file.
+    :param start: Time the parse started, from ``time.perf_counter``.
+    """
     try:
         import pyxlsb
         all_text = []
@@ -605,7 +699,12 @@ def _parse_xlsb_pyxlsb(content: bytes, start: float) -> Dict[str, Any]:
 
 def parse_xlsx_openpyxl(content: bytes, start: float, ext: str = "xlsx") -> Dict[str, Any]:
     """Fallback for .xlsx/.xlsm: openpyxl, then raw ZIP+XML extraction.
-    .xlsb is routed to _parse_xlsb_pyxlsb instead — see its docstring."""
+    .xlsb is routed to _parse_xlsb_pyxlsb instead — see its docstring.
+
+    :param content: Bytes of the file.
+    :param start: Time the parse started, from ``time.perf_counter``.
+    :param ext: Extension without the dot: ``xlsx``, ``xlsm`` or ``xlsb``.
+    """
     if ext.lstrip(".") == "xlsb":
         return _parse_xlsb_pyxlsb(content, start)
 

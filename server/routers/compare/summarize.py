@@ -9,35 +9,42 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from ...services.compare.processors.factory import (
+from server.services.compare.processors.factory import (
     EXTENSION_MAP, extract_document_text,
     get_extension, prepare_image_content,
 )
-from ...services.compare.llm import TIRED_MESSAGE
-from ...services.compare.summarize import summarize_image, summarize_text
-from ...services.infra.credentials import get_credentials
-from ...services.infra.lakebase import (
+from server.services.compare.llm import TIRED_MESSAGE
+from server.services.compare.summarize import summarize_image, summarize_text
+from server.services.infra.credentials import get_credentials
+from server.services.infra.lakebase import (
     get_cached_summary, store_error,
     store_summary_cache,
 )
-from ...services.infra.user import get_user_identity, require_compare
-from .common import (
-    APP_VERSION, _get_config, _validate_file,
-)
+from server.services.infra.user import get_user_identity, require_compare
+from server.routers.compare.config import APP_VERSION, get_config
+from server.routers.compare.common import _validate_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post('/compare/summarize', dependencies=[Depends(require_compare)])
+@router.post('/compare/summarize', dependencies=[Depends(require_compare)], response_model=None)
 async def summarize_document(
     request: Request,
     file: UploadFile = File(...),
     file_hash: str = Form(''),
     force_refresh: str = Form('false'),
-):
+) -> dict | JSONResponse:
+    """Summarise one document, from the cache when the same bytes were summarised before.
+
+    :param request: the incoming request, for the Databricks credentials.
+    :param file: the document to summarise (text, office file or image).
+    :param file_hash: ignored: the hash is computed from the uploaded bytes.
+    :param force_refresh: ``'true'`` to skip the cached summary.
+    :return: the summary with its usage and ``cached`` flag, or an error response (400 invalid request or settings, 502 model failure).
+    """
     try:
-        cfg = _get_config()
+        cfg = get_config()
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
 

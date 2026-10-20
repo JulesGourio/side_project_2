@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get('/health')
-async def health_check():
+@router.get('/health', response_model=None)
+async def health_check() -> dict:
   """Returns application health status."""
   return {
     'status': 'healthy',

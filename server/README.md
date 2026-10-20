@@ -36,7 +36,7 @@ Two sources; the second one wins:
    sourced by `start.sh`. A setting missing for a target keeps its `app.yaml` default.
 
 Locally, `app.py` loads `.env.local` when it exists. Each module reads the settings it uses:
-`routers/compare/common.py`, `services/chat/engine/config.py`, `services/chat/llm.py`, `services/compare/llm.py`,
+`routers/compare/config.py`, `services/chat/config.py`, `services/chat/engine/config.py`, `services/chat/llm.py`, `services/compare/llm.py`,
 `services/infra/lakebase/connection.py`, `services/infra/user.py`.
 
 `ENV` is set nowhere in the repository. `app.py` then takes `production` (no CORS origin), while
@@ -52,7 +52,7 @@ Locally, `app.py` loads `.env.local` when it exists. Each module reads the setti
 - The user never sees a technical failure. A failed chat turn or stream sends one fixed message; the cause goes to the
   logs and to `app_errors` (see [services/infra/lakebase](services/infra/lakebase/README.md)).
 - Most settings are read at call time. A few are read once at import: `CHAT_ENABLED` in `routers/chat/ws.py`, the
-  `CAPS_*` settings in `services/infra/user.py`, the file size limit in `routers/compare/common.py`.
+  `CAPS_*` settings in `services/infra/user.py`, the file size limit in `routers/compare/config.py`, the translation bridge and MLflow settings in `services/chat/config.py`.
 
 ## See also
 

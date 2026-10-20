@@ -3,9 +3,9 @@
 import os
 import re
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
-from .text import _DIFF_ENTRY_RE
+from server.services.compare.processors._diff_engines.text import _DIFF_ENTRY_RE
 
 # A change whose identical text recurs on at least this many distinct pages is title-block/boilerplate (revision
 # stamp, classification field, footer): one real change rendered once per page by the PDF extraction.
@@ -18,6 +18,10 @@ def _dedup_repeated_headers(items: List[Dict[str, Any]], window: int = 25) -> Li
 
     Not symmetric under repagination: the leftover surplus copy is caught downstream by _drop_present_verbatim /
     _drop_merged_cells, since no window value is symmetric.
+
+    :param items: blocks in source order, each with its ``clean`` text and its ``idx`` (source line)
+    :param window: source lines within which a repeat of a short block is dropped
+    :return: the blocks without their repeats
     """
     MAX_WORDS = 15
     seen: Dict[str, int] = {}
@@ -48,8 +52,17 @@ def _cancel_resegmented(
     other side: a paragraph break added or removed).
 
     Returns (remaining_olds, remaining_news, n_blocks_cancelled).
+
+    :param olds: old-side blocks
+    :param news: new-side blocks
+    :return: the remaining old blocks, the remaining new blocks and the number of blocks cancelled
     """
     def _runs(items: List[Dict[str, Any]]) -> Dict[str, Tuple[int, ...]]:
+        """Map from the joined text of 1 to 3 consecutive blocks to the positions they cover.
+
+        :param items: blocks of one side
+        :return: text -> tuple of the positions in ``items``
+        """
         out: Dict[str, Tuple[int, ...]] = {}
         for a in range(len(items)):
             text = items[a]['clean']
@@ -105,6 +118,11 @@ _ANY_MARKUP_RE = re.compile(r'~~[^~]*~~|\*\*[^*]*\*\*')
 
 
 def _is_pagination_only(content: str) -> bool:
+    """Whether a MODIFIED entry changed only its page number in a repagination.
+
+    :param content: entry text, starting with its type
+    :return: True when the only change is a page number
+    """
     m = _DIFF_ENTRY_RE.match(content)
     if not m or m.group(1) != 'MODIFIED':
         return False
@@ -112,23 +130,33 @@ def _is_pagination_only(content: str) -> bool:
     return bool(_PAGE_FRACTION_SUB_RE.search(m.group(3))) and not _ANY_MARKUP_RE.search(stripped)
 
 
-def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: Optional[str]) -> Tuple[List[Dict[str, Any]], int]:
+def _collapse_page_repeats(results: List[Dict[str, Any]], page_label: str | None) -> Tuple[List[Dict[str, Any]], int]:
     """Collapse per-page repeats of the SAME change into one entry that keeps the first occurrence's position and
     says how many pages repeat it. Untagged entries are never collapsed. Pagination fragments are masked so
     'Issue A6 Page N' repeats group across pages, and dot-leader TOC rows group per kind.
 
     Returns (collapsed_results, n_entries_absorbed).
+
+    :param results: entries of the diff, in order
+    :param page_label: word that names the page in the summary, e.g. ``Page``; falsy disables the collapse
+    :return: the collapsed entries and the number of entries absorbed
     """
     if not page_label:
         return results, 0
 
     def _group_key(kind: str, text: str) -> Tuple[str, str]:
+        """Grouping key of an entry: its kind and its text without pagination and markup.
+
+        :param kind: entry type, e.g. ``MODIFIED``
+        :param text: entry text
+        :return: ``(kind, key)``; ``<toc>`` as the key for table-of-contents rows
+        """
         if _TOC_LINE_RE.search(text):
             return kind, '<toc>'
         return kind, _PAGINATION_RE.sub(r'\1 #', _MARKUP_RE.sub('', text))
 
     groups: Dict[Tuple[str, str], List[Tuple[int, Dict[str, Any], str]]] = defaultdict(list)
-    parsed: List[Optional[Tuple[str, int, str]]] = []
+    parsed: List[Tuple[str, int, str] | None] = []
     for r in results:
         m = _DIFF_ENTRY_RE.match(r['content'])
         pm = re.search(r'(\d+)', m.group(2) or '') if m else None
@@ -194,9 +222,18 @@ def _collapse_systemic_substitutions(
     Only entries made up ENTIRELY of recurring pairs are collapsed (an entry mixing a systemic swap with other wording
     changes is kept in full), and a pair with a digit on either side is never systemic (a pin number repeated across
     table rows must stay visible per row).
+
+    :param results: entries of the diff, in order
+    :param min_occurrences: number of entries a substitution must recur in to be systemic
+    :return: the collapsed entries and the number of entries absorbed
     """
 
     def _norm(tok: str) -> str:
+        """Normalised text of one side of a substitution: spaces collapsed, case folded.
+
+        :param tok: text of one side of a substitution
+        :return: the normalised text
+        """
         return re.sub(r'\s+', ' ', tok).strip().casefold()
 
     entry_pairs: Dict[int, List[Tuple[str, str]]] = {}

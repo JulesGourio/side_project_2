@@ -27,7 +27,11 @@ _TAG_RE = re.compile(r'\s*\[(?:Page|Para|Heading|Slide|Item)[^\]]*\].*$', re.I)
 
 
 def strip_tag(text: str) -> str:
-    """Remove trailing structural tags ([Page N], [Para N], [Page N, Para M], [Heading N])."""
+    """Remove trailing structural tags ([Page N], [Para N], [Page N, Para M], [Heading N]).
+
+    :param text: line of text, possibly ending with a structural tag
+    :return: the text without its tag
+    """
     return _TAG_RE.sub('', text).strip()
 
 
@@ -37,7 +41,11 @@ DIFF_TRUNCATED_MARKER = '[... diff truncated — document too large. Only the fi
 
 
 def truncate_diff(text: str) -> str:
-    """Truncate diff text to _MAX_DIFF_CHARS to prevent LLM token limit errors."""
+    """Truncate diff text to _MAX_DIFF_CHARS to prevent LLM token limit errors.
+
+    :param text: diff text
+    :return: the text, cut at COMPARE_MAX_DIFF_CHARS with the truncation marker appended when it was cut
+    """
     if len(text) <= _MAX_DIFF_CHARS:
         return text
     logger.warning('Diff truncated: %d chars > %d limit', len(text), _MAX_DIFF_CHARS)
@@ -51,7 +59,12 @@ _MIN_EXTRACTED_CHARS = 200
 
 def extraction_warnings(old_text: str, new_text: str) -> List[str]:
     """Detect near-empty text extraction so a scanned/corrupt document doesn't
-    silently produce a false 'No significant changes detected'."""
+    silently produce a false 'No significant changes detected'.
+
+    :param old_text: text extracted from the old document
+    :param new_text: text extracted from the new document
+    :return: the warnings, empty when both extractions look usable
+    """
     warnings: List[str] = []
     for label, text in (('OLD', old_text), ('NEW', new_text)):
         if len(strip_tag(text).strip()) < _MIN_EXTRACTED_CHARS:
@@ -69,7 +82,18 @@ _UNRELATED_MIN_BLOCKS = 20
 
 
 def unrelated_warnings(old_text: str, new_text: str) -> List[str]:
+    """Warning when two texts share almost no paragraph: probably two different documents.
+
+    :param old_text: text extracted from the old document
+    :param new_text: text extracted from the new document
+    :return: the warning list, empty when the texts look like two revisions
+    """
     def _blocks(text: str) -> Set[str]:
+        """The lines of a text with at least four words, lowercased and without structural tags.
+
+        :param text: text of one document
+        :return: the set of those lines
+        """
         out = set()
         for line in text.splitlines():
             bare = ' '.join(strip_tag(line).lower().split())
@@ -92,6 +116,11 @@ _HEADER_MAX_CELL_WORDS = 6
 
 
 def looks_like_table_header(cells: List[str]) -> bool:
+    """Whether the first row of a table reads as column labels.
+
+    :param cells: texts of the cells of the first row
+    :return: True when the row looks like a header
+    """
     return (
         len(cells) >= _HEADER_MIN_COLS
         and all(any(ch.isalpha() for ch in c) for c in cells)
@@ -102,7 +131,11 @@ def looks_like_table_header(cells: List[str]) -> bool:
 
 def canonicalize(text: str) -> str:
     """Lowercase + strip modal verbs + normalize whitespace.
-    Used only for comparison/scoring — never sent to the LLM."""
+    Used only for comparison/scoring — never sent to the LLM.
+
+    :param text: text to normalise
+    :return: lowercase text, modal verbs removed, punctuation and spacing normalised
+    """
     text = text.lower()
     text = MODAL_RE.sub(' ', text)
     text = re.sub(r'[^a-z0-9%./ ]+', ' ', text)
@@ -110,7 +143,12 @@ def canonicalize(text: str) -> str:
 
 
 def is_substantive(old: str, new: str) -> bool:
-    """True if the pair represents a genuine substantive change."""
+    """True if the pair represents a genuine substantive change.
+
+    :param old: text of the old block
+    :param new: text of the new block
+    :return: True when the pair is a genuine change
+    """
     oc, nc = canonicalize(old), canonicalize(new)
     dist = 1.0 - difflib.SequenceMatcher(None, oc, nc).ratio()
     if dist >= _SEM_THRESHOLD:
@@ -125,7 +163,12 @@ def is_substantive(old: str, new: str) -> bool:
 
 
 def inline_word_diff(old_text: str, new_text: str) -> str:
-    """Show word-level changes: ~~removed words~~ **added words**."""
+    """Show word-level changes: ~~removed words~~ **added words**.
+
+    :param old_text: text of the old block
+    :param new_text: text of the new block
+    :return: the text with ``~~removed words~~`` and ``**added words**`` markup
+    """
     old_words = old_text.split()
     new_words = new_text.split()
     sm = difflib.SequenceMatcher(None, old_words, new_words, autojunk=False)
@@ -149,6 +192,9 @@ def canonicalize_keep_modals(text: str) -> str:
     preserved so the similarity scorer can detect them as differences.
     Within-group swaps (shall→must) surface as MODIFIED pairs; the LLM system prompt
     filters them via the EQUIVALENCES rule.
+
+    :param text: text to normalise
+    :return: lowercase text with the modal verbs kept, punctuation and spacing normalised
     """
     text = text.lower()
     text = re.sub(r'[^a-z0-9%./ ]+', ' ', text)
@@ -164,6 +210,9 @@ def _modal_group_profile(text: str) -> List[str]:
 
     Sorted multiset — within-group swaps (shall→must) produce identical
     profiles, cross-group swaps (may→shall) differ.
+
+    :param text: text to read
+    :return: sorted list with one ``M``, ``P`` or ``A`` per modal verb found
     """
     groups = []
     for m in MODAL_RE.findall(text):
@@ -188,10 +237,21 @@ _SPELLING_VARIANT_RATIO = 0.85
 
 
 def _word_tokens(text: str) -> List[str]:
+    """Word tokens of a text, lowercased, with modal verbs replaced by their obligation group.
+
+    :param text: text to split into words
+    :return: the lowercase word tokens, modal verbs replaced by their obligation group
+    """
     return [_MODAL_TOKEN_GROUP.get(w, w) for w in _WORD_TOKEN_RE.findall(text.lower())]
 
 
 def _has_word_level_change(old: str, new: str) -> bool:
+    """Whether two texts differ in a word that matters, not only in case, spacing, articles or spelling.
+
+    :param old: text of the old block
+    :param new: text of the new block
+    :return: True when a word changed in a way that matters
+    """
     old_words, new_words = _word_tokens(old), _word_tokens(new)
     if old_words == new_words:
         return False
@@ -210,7 +270,12 @@ def _has_word_level_change(old: str, new: str) -> bool:
 
 
 def is_substantive_keep_modals(old: str, new: str) -> bool:
-    """True if the pair is a genuine change, counting cross-group modal switches."""
+    """True if the pair is a genuine change, counting cross-group modal switches.
+
+    :param old: text of the old block
+    :param new: text of the new block
+    :return: True when the pair is a genuine change, cross-group modal switches included
+    """
     oc = canonicalize_keep_modals(old)
     nc = canonicalize_keep_modals(new)
     dist = 1.0 - difflib.SequenceMatcher(None, oc, nc).ratio()

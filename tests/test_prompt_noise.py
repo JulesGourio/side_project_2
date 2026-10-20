@@ -1,4 +1,4 @@
-"""Regression guard for structured-comparison prompt noise.
+"""Guard for structured-comparison prompt noise.
 
 The structured prompt is meant to SKIP trivial rows (number-rendering swaps,
 date metadata, synonym swaps). This test runs the noise detectors over the

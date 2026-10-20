@@ -4,7 +4,7 @@ Reference of the application's tables in Lakebase (project `qualibot`, branch `p
 
 Source of truth: `server/services/infra/lakebase/schema.py` (creation and changes) and `columns.py` (columns of the chat turn log). The app creates the tables at startup (`ensure_schema`) with `CREATE TABLE IF NOT EXISTS`, then `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. At startup it also drops the obsolete columns and merges duplicate rows of `users`; it never drops a table.
 
-A new column is added in `schema.py`, or in `columns.py` for the chat tables. A new key of a turn's log (`TurnLog.data`) must have its column in `CHAT_TURN_COLUMNS`: `tests/test_lakebase_logging.py` checks it. For a database already in service, the same change can be applied without an app restart through `runbooks/scripts/lakebase/migrations.py`.
+A new column is added in `schema.py`, or in `columns.py` for the chat tables. A new key of a turn's log (`TurnLog.data`) must have its column in `CHAT_TURN_COLUMNS`: `tests/test_lakebase_logging.py` checks it.
 
 ## Overview
 

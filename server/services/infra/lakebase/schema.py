@@ -2,23 +2,30 @@
 
 import logging
 import os
+from typing import Any
 
 import asyncpg
 
-from .columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS
+from server.services.infra.lakebase.columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS
 
 logger = logging.getLogger(__name__)
 
 
 async def _add_columns(conn, table: str, columns) -> None:
+    """Adds the columns the table does not have yet; the existing ones are left as they are.
+
+    :param conn: database connection
+    :param table: table name
+    :param columns: ``(name, SQL type)`` pairs
+    """
     for col, typedef in columns:
         await conn.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}')
 
 
-# Session folders of the former documents volume: <env>_landingzone/qualibot/doc_compare.
+# Volume paths rewritten by _move_legacy_volume_paths: session folders under <env>_landingzone/qualibot/doc_compare.
 LEGACY_VOLUME_PATTERN = r'^/Volumes/[^/]+_landingzone/qualibot/doc_compare'
 
-# Renamed tables, copied in dependency order (a feedback points to its message). The legacy tables are kept.
+# Source table -> current table, copied in dependency order (a feedback points to its message). Source tables are kept.
 LEGACY_TABLE_COPIES = (
     ('messages', 'compare_messages'),
     ('feedbacks', 'compare_feedbacks'),
@@ -26,17 +33,21 @@ LEGACY_TABLE_COPIES = (
 )
 
 
-# Column of a renamed table that points to a row of another one: (column, legacy parent, new parent).
+# Column of a copied table that points to a row of another one: (column, source parent, current parent).
 LEGACY_PARENT = {'compare_feedbacks': ('message_id', 'messages', 'compare_messages')}
 
 
 async def _carry_over_legacy_rows(conn) -> None:
-    """Copy the rows of the renamed tables into the new ones, ids kept so that a feedback still points to its message.
-    Only the legacy rows whose id is missing from the new table are copied, so a rerun adds nothing and the new table
-    may already hold rows of its own. Nothing is copied when a legacy id is already used there: the row would take the
-    place of another one's history. Once every message is copied, a feedback whose message was deleted before the
-    rename is copied without it. A copy that cannot be made is logged and the schema goes on; the legacy tables are
-    kept either way."""
+    """Copy the rows of the source tables into the current ones, ids kept so a feedback still points to its message.
+
+    Only rows whose id is missing from the current table are copied, so a rerun adds nothing and the current table
+    may already hold rows of its own. Nothing is copied when a source id is already used there: the row would take
+    the place of another one. A feedback whose message is missing is copied without its link, unless some message
+    was not copied, in which case the feedbacks are not copied at all. A copy that cannot be made is logged and the
+    schema goes on; the source tables are kept either way.
+
+    :param conn: database connection
+    """
     for legacy, current in LEGACY_TABLE_COPIES:
         if not await conn.fetchval('SELECT to_regclass($1) IS NOT NULL', legacy):
             continue
@@ -86,8 +97,11 @@ async def _carry_over_legacy_rows(conn) -> None:
 
 
 async def _move_legacy_volume_paths(conn) -> None:
-    """Rows copied from another environment point at its documents volume: move them under COMPARE_VOLUME_PATH.
-    Runs at every start, so rows copied by an earlier start are fixed too; it only touches the old paths."""
+    """Rows copied from another environment point at that environment's documents volume: move them under
+    COMPARE_VOLUME_PATH. Runs at every start; it only touches paths matching LEGACY_VOLUME_PATTERN.
+
+    :param conn: database connection
+    """
     volume_root = os.getenv('COMPARE_VOLUME_PATH', '').rstrip('/')
     if not volume_root:
         return
@@ -102,13 +116,28 @@ class _OwnerTolerantConn:
     logged and the next statement runs, so one such table does not stop the creation of the tables after it."""
 
     def __init__(self, conn):
+        """Wraps ``conn`` and records the statements skipped for lack of privilege.
+
+        :param conn: database connection to wrap
+        """
         self._conn = conn
         self.skipped: list = []
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Any:
+        """Forwards every other attribute to the wrapped connection.
+
+        :param name: attribute name
+        :return: the attribute of the wrapped connection
+        """
         return getattr(self._conn, name)
 
-    async def execute(self, query, *args):
+    async def execute(self, query, *args) -> Any:
+        """Runs a statement; a privilege error is recorded in ``skipped`` and does not stop the caller.
+
+        :param query: SQL statement
+        :param args: parameters of the statement
+        :return: the result of the statement, None when it was skipped
+        """
         try:
             return await self._conn.execute(query, *args)
         except asyncpg.InsufficientPrivilegeError as e:
@@ -118,6 +147,10 @@ class _OwnerTolerantConn:
 async def ensure_schema(pool: asyncpg.Pool) -> None:
     # Additive only: no DROP, DELETE or TRUNCATE at start-up.
     # Lakebase rewrites the table, so it looks empty for a moment before the data is back.
+    """Creates the tables of the app, or migrates them; additive only, run at every start.
+
+    :param pool: connection pool of the database
+    """
     async with pool.acquire() as raw_conn:
         conn = _OwnerTolerantConn(raw_conn)
         # ── messages (primary history table) ─────────────────────────────────
@@ -604,11 +637,11 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await _carry_over_legacy_rows(conn)
         await _move_legacy_volume_paths(conn)
 
-        # 1. Trim trailing whitespace and line breaks from emails.
+        # Trim trailing whitespace and line breaks from emails.
         await conn.execute("UPDATE users SET email = BTRIM(email) WHERE email ~ '\\s'")
         await conn.execute("UPDATE users SET email = NULL WHERE TRIM(COALESCE(email,'')) = ''")
 
-        # 3. Split composite user_ids (numeric@workspace) into separate columns for every table
+        # Split composite user_ids (numeric@workspace) into separate columns for every table.
         for table in ('users', 'compare_messages', 'compare_feedbacks',
                       'chat_sessions', 'chat_messages', 'chat_feedbacks'):
             try:
@@ -634,7 +667,7 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
 
         if conn.skipped:
             logger.warning('Lakebase schema: %d statement(s) skipped, the app does not own their table (first: %s: %s) — '
-                           'run runbooks/scripts/lakebase/ensure_schema_as_owner.py as the owner', len(conn.skipped),
+                           'apply the schema as the owner of those tables', len(conn.skipped),
                            conn.skipped[0][0], conn.skipped[0][1])
 
     logger.info('Lakebase schema ready')

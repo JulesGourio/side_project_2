@@ -10,12 +10,21 @@ Priority for every parameter: env var > explicit override in notebook > this def
 import datetime as _dt
 import os as _os
 
-def _env(key, default):
-    """Return env var if set, otherwise default."""
+def _env(key, default) -> str:
+    """Return env var if set, otherwise default.
+
+    :param key: Name of the environment variable.
+    :param default: Value returned when the variable is unset.
+    :return: value of the variable, or ``default`` when it is unset.
+    """
     return _os.environ.get(key, default)
 
-def _require_env(key):
-    """Return env var; raise if unset — no environment-specific default."""
+def _require_env(key) -> str:
+    """Return env var; raise if unset — no environment-specific default.
+
+    :param key: Name of the environment variable.
+    :return: value of the variable, never empty.
+    """
     val = _os.environ.get(key)
     if not val:
         raise RuntimeError(f"{key} must be set (see resources/parsing_pipeline.job.yml)")
@@ -172,7 +181,7 @@ DEDUPLICATE_CHUNKS       = True
 
 # --- Docling engine settings ---
 # USE_GPU: explicit override via PARSING_USE_GPU, else auto-detected (nvidia-smi).
-def _detect_gpu():
+def _detect_gpu() -> bool:
     """True when nvidia-smi exists and runs."""
     import shutil as _sh, subprocess as _sp
     if _sh.which("nvidia-smi") is None:

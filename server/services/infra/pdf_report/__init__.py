@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from .common import KIND_LABELS, MARGIN_X, PAGE_W, RULE, Section, Source
-from .markdown import clean_text, parse_inline, plain_text, tokenize
-from .render import _cover, _new_pdf, _Writer
+from server.services.infra.pdf_report.common import KIND_LABELS, MARGIN_X, PAGE_W, RULE, Section, Source
+from server.services.infra.pdf_report.markdown import clean_text, parse_inline, plain_text, tokenize
+from server.services.infra.pdf_report.render import _cover, _new_pdf, _Writer
 
 __all__ = [
     'KIND_LABELS',
@@ -42,6 +42,15 @@ def build_report_pdf(
     meta: list[tuple[str, str]] | None = None,
     now: _dt.datetime | None = None,
 ) -> bytes:
+    """PDF of a chatbot answer, a conversation or a comparison: a cover, then one block per section.
+
+    :param kind: kind of document: chatbot answer, chatbot conversation, change summary, document summary or report
+    :param title: title on the cover; the kind label when empty
+    :param sections: blocks of Markdown, in order
+    :param meta: label and value lines under the title; the empty values are left out
+    :param now: date of the document, the current time when None
+    :return: the PDF bytes
+    """
     kind_label = KIND_LABELS.get(kind, KIND_LABELS['report'])
     title = clean_text(title).strip() or kind_label
     meta = [(clean_text(k), clean_text(v)) for k, v in (meta or []) if v]
@@ -75,6 +84,13 @@ def build_report_pdf(
 
 def build_markdown_pdf(markdown_text: str, title: str, kind: str = 'report',
                        meta: list[tuple[str, str]] | None = None) -> bytes:
-    """One Markdown body, no question / sources (comparison exports)."""
+    """One Markdown body, no question / sources (comparison exports).
+
+    :param markdown_text: Markdown body
+    :param title: title of the document
+    :param kind: kind of document, see ``build_report_pdf``
+    :param meta: label and value lines under the title, None for none
+    :return: the PDF bytes
+    """
     return build_report_pdf(kind=kind, title=title, meta=meta, sections=[Section(markdown_text)])
 

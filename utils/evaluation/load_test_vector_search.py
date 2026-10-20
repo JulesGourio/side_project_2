@@ -44,6 +44,7 @@ dbutils.widgets.text('results_table', 'dev_proj.qualibot.eval_load_vector_search
 import asyncio, json, random, re, time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 from databricks.sdk import WorkspaceClient
@@ -63,12 +64,16 @@ w = WorkspaceClient()
 HOST = w.config.host.rstrip('/')
 
 
-def headers():
+def headers() -> dict[str, str]:
     return {**w.config.authenticate(), 'Content-Type': 'application/json'}
 
 
-def run_async(coro):
-    """asyncio.run in its own thread: the notebook may already have an event loop."""
+def run_async(coro) -> Any:
+    """asyncio.run in its own thread: the notebook may already have an event loop.
+
+    :param coro: Coroutine to run to completion.
+    :return: result of the coroutine.
+    """
     with ThreadPoolExecutor(max_workers=1) as ex:
         return ex.submit(asyncio.run, coro).result()
 
@@ -106,7 +111,13 @@ logger.info("%s", " ".join(str(x) for x in (len(TEXTS), 'query texts',)))
 COLUMNS = ['chunk_id', 'IDDOC', 'REF', 'division', 'url', 'semantic_headers', 'chunk_text']
 
 
-def payload(kind, text):
+def payload(kind, text) -> dict[str, Any]:
+    """Request body of one query of the given scenario kind.
+
+    :param kind: Scenario kind, for example ``hybrid10``, ``rerank12`` or ``ann10``.
+    :param text: Query text, cut to 20000 characters.
+    :return: request body for the Vector Search query route.
+    """
     p = {'query_text': text[:20000], 'columns': COLUMNS, 'num_results': 10, 'query_type': 'HYBRID'}
     if kind in ('rerank12', 'rerank12_text'):
         cols = ['REF', 'semantic_headers', 'chunk_text'] if kind == 'rerank12' else ['chunk_text']
@@ -123,13 +134,23 @@ _SCHEMA = """run_id string, scenario string, kind string, level int, started_at 
 http_status int, error string"""
 
 
-async def step(scenario, level):
+async def step(scenario, level) -> list[dict[str, Any]]:
+    """Run one step: ``level`` workers send queries for STEP_S seconds.
+
+    :param scenario: Scenario name, one of the SCENARIOS widget values.
+    :param level: Number of queries in progress at once.
+    :return: one row per query sent during the step.
+    """
     rows, deadline = [], time.monotonic() + STEP_S
     hdrs = headers()
     url = f'{HOST}/api/2.0/vector-search/indexes/{INDEX}/query'
     texts = iter(TEXTS * 1000)
     async with httpx.AsyncClient(timeout=60, limits=httpx.Limits(max_connections=level + 4)) as client:
-        async def worker(wid):
+        async def worker(wid) -> None:
+            """Send queries back to back until the step deadline, one row per query.
+
+            :param wid: Index of the worker within the step.
+            """
             n = 0
             while time.monotonic() < deadline:
                 kind = scenario if scenario != 'chat_mix' else ('rerank12' if (wid + n) % 2 else 'hybrid10')

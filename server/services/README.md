@@ -26,7 +26,7 @@ The `__init__.py` of each package is empty.
 ## Rules
 
 - The chatbot prompts are files in [`server/prompts/chat/`](../prompts/README.md). The compare prompts and the impact
-  judge prompt are Python constants: the default analysis prompt in `routers/compare/common.py`, the summary prompts in
+  judge prompt are Python constants: the default analysis prompt in `routers/compare/config.py`, the summary prompts in
   `compare/summarize.py`, the diff prompts in `compare/processors/_diff_engines/prompts.py`, the judge prompt in
   `infra/vector_search.py`.
 - Blocking calls (SDK, file parsing, conversions) run in a thread through `asyncio.to_thread`.

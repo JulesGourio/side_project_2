@@ -13,6 +13,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import psycopg2.extras
 from databricks.sdk import WorkspaceClient
@@ -25,7 +26,13 @@ BRANCH = "production"
 ENDPOINT = "primary"
 
 
-def connect(profile: str, database: str):
+def connect(profile: str, database: str) -> Any:
+    """Open a connection to the source Lakebase database.
+
+    :param profile: Databricks CLI profile of the source workspace.
+    :param database: Name of the database to connect to.
+    :return: open psycopg2 connection.
+    """
     return lakebase_connect_with(WorkspaceClient(profile=profile), PROJECT_ID, BRANCH, ENDPOINT, database)
 
 

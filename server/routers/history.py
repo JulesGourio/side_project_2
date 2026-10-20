@@ -2,17 +2,20 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Mapping
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..services.infra.lakebase import get_pool, upsert_user
-from ..services.infra.user import get_user_identity, get_workspace_url, require_compare
+from server.services.infra.lakebase import get_pool, upsert_user
+from server.services.infra.user import get_user_identity, get_workspace_url, require_compare
 # One definition: a row written with another default than the one the cache
 # lookup reads with would never be found again.
-from .compare.common import APP_VERSION
+from server.routers.compare.config import APP_VERSION
+
+# What a JSON response can hold; `_serialize` stringifies anything else.
+JsonScalar = str | int | float | bool | None
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -26,27 +29,32 @@ _UNAVAILABLE = JSONResponse(
 class SaveComparisonRequest(BaseModel):
     old_filename: str
     new_filename: str
-    old_file_hash: Optional[str] = None
-    new_file_hash: Optional[str] = None
-    analysis_text: Optional[str] = None
-    impact_text: Optional[str] = None
-    volume_session_path: Optional[str] = None
-    file_type: Optional[str] = None
-    processing_method: Optional[str] = None
-    processor_version: Optional[str] = None
-    ttft_s: Optional[float] = None
-    generation_s: Optional[float] = None
-    input_tokens: Optional[int] = None
-    output_tokens: Optional[int] = None
-    thinking_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
-    cost_eur: Optional[float] = None
-    llm_request_id: Optional[int] = None
+    old_file_hash: str | None = None
+    new_file_hash: str | None = None
+    analysis_text: str | None = None
+    impact_text: str | None = None
+    volume_session_path: str | None = None
+    file_type: str | None = None
+    processing_method: str | None = None
+    processor_version: str | None = None
+    ttft_s: float | None = None
+    generation_s: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    thinking_tokens: int | None = None
+    total_tokens: int | None = None
+    cost_eur: float | None = None
+    llm_request_id: int | None = None
 
 
-def _serialize(row) -> dict:
+def _serialize(row: Mapping[str, Any]) -> dict[str, JsonScalar]:
+    """A database row as a JSON-ready dict.
+
+    :param row: a ``compare_messages`` record (any column set).
+    :return: the same keys; datetimes as ISO strings (UTC when naive), other non-scalar values as ``str``.
+    """
     d = dict(row)
-    result = {}
+    result: dict[str, JsonScalar] = {}
     for k, v in d.items():
         if isinstance(v, datetime):
             # Ensure timezone info is present — asyncpg may return naive UTC datetimes.
@@ -61,8 +69,14 @@ def _serialize(row) -> dict:
     return result
 
 
-@router.post('/history', dependencies=[Depends(require_compare)])
-async def save_comparison(body: SaveComparisonRequest, request: Request):
+@router.post('/history', dependencies=[Depends(require_compare)], response_model=None)
+async def save_comparison(body: SaveComparisonRequest, request: Request) -> dict | JSONResponse:
+    """Save a finished comparison in the caller's history.
+
+    :param body: the compared files, the analysis and the timings/tokens of the run.
+    :param request: the incoming request, for the caller's identity.
+    :return: the saved row's id (``messages_id``), or an error response (503 without database, 500 on a failed save).
+    """
     pool = get_pool()
     if not pool:
         return _UNAVAILABLE
@@ -141,14 +155,21 @@ async def save_comparison(body: SaveComparisonRequest, request: Request):
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
-class SaveImpactRequest(BaseModel):
-    # The impact search result as displayed (JSON), kept with the comparison it
-    # was run on so reopening the history entry shows it again.
-    impact_json: str
+@router.put('/history/{comparison_id}/impact', dependencies=[Depends(require_compare)], response_model=None)
+async def save_comparison_impact(
+    comparison_id: int,
+    request: Request,
+    # The impact search result as displayed (JSON), kept with the comparison it was run on so reopening the history
+    # entry shows it again. Sent as {"impact_json": "..."}.
+    impact_json: str = Body(..., embed=True),
+) -> dict | JSONResponse:
+    """Attach the impact search result to a saved comparison.
 
-
-@router.put('/history/{comparison_id}/impact', dependencies=[Depends(require_compare)])
-async def save_comparison_impact(comparison_id: int, body: SaveImpactRequest, request: Request):
+    :param comparison_id: id of the comparison in ``compare_messages``, which must belong to the caller.
+    :param request: the incoming request, for the caller's identity.
+    :param impact_json: the result as displayed, serialised to JSON.
+    :return: ``{'success': True}``, or a 404 when the comparison is not the caller's.
+    """
     pool = get_pool()
     if not pool:
         return _UNAVAILABLE
@@ -160,7 +181,7 @@ async def save_comparison_impact(comparison_id: int, body: SaveImpactRequest, re
         async with pool.acquire() as conn:
             updated = await conn.fetchval(
                 'UPDATE compare_messages SET impact_text = $1 WHERE id = $2 AND user_id = $3 RETURNING id',
-                body.impact_json, comparison_id, identity['user_id'],
+                impact_json, comparison_id, identity['user_id'],
             )
         if updated is None:
             return JSONResponse({'error': 'Comparison not found'}, status_code=404)
@@ -170,8 +191,15 @@ async def save_comparison_impact(comparison_id: int, body: SaveImpactRequest, re
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
-@router.get('/history', dependencies=[Depends(require_compare)])
-async def list_comparisons(request: Request, limit: int = 20, offset: int = 0):
+@router.get('/history', dependencies=[Depends(require_compare)], response_model=None)
+async def list_comparisons(request: Request, limit: int = 20, offset: int = 0) -> dict | JSONResponse:
+    """The caller's saved comparisons, newest first.
+
+    :param request: the incoming request, for the caller's identity.
+    :param limit: page size, kept between 1 and 100.
+    :param offset: rows to skip, at least 0.
+    :return: ``{'comparisons': [...], 'total', 'available'}``.
+    """
     pool = get_pool()
     if not pool:
         return {'comparisons': [], 'total': 0, 'available': False}
@@ -205,8 +233,14 @@ async def list_comparisons(request: Request, limit: int = 20, offset: int = 0):
         return JSONResponse({'error': str(e)}, status_code=500)
 
 
-@router.get('/history/{comparison_id}', dependencies=[Depends(require_compare)])
-async def get_comparison(comparison_id: int, request: Request):
+@router.get('/history/{comparison_id}', dependencies=[Depends(require_compare)], response_model=None)
+async def get_comparison(comparison_id: int, request: Request) -> dict | JSONResponse:
+    """One of the caller's saved comparisons, in full.
+
+    :param comparison_id: id of the comparison in ``compare_messages``.
+    :param request: the incoming request, for the caller's identity.
+    :return: the row, or a 404 when it is not the caller's.
+    """
     pool = get_pool()
     if not pool:
         return _UNAVAILABLE

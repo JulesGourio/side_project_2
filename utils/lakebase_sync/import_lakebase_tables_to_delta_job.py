@@ -26,15 +26,20 @@ if not TARGET_CATALOG:
     raise ValueError("The CATALOG parameter is required")
 TARGET_SCHEMA = dbutils.widgets.get("SCHEMA").strip()
 SOURCE_EXPORT_DIR = f"/Volumes/{TARGET_CATALOG}/{TARGET_SCHEMA}/{dbutils.widgets.get('VOLUME_NAME').strip()}/lakebase_export"
-# Tables this job loaded before it loaded them all: they exist without the marker property below.
+# Tables that do not carry the marker property below but belong to this job.
 FIRST_LOADED_TABLES = {"chat_feedbacks", "chat_messages", "chat_sessions", "chat_turns", "chat_retrieved_chunks",
                        "app_errors"}
-# Set on every table the job writes: only a table that carries it (or one of the first six) is dropped and rewritten,
-# so a table of the parsing pipeline or anyone else that happens to share a Lakebase table name is never overwritten.
+# Set on every table the job writes. Only a table that carries it, or is listed in FIRST_LOADED_TABLES, is dropped
+# and rewritten, so a table that shares its name with another writer is never overwritten.
 OWNER_PROPERTY = "lakebase_export"
 
 
 def to_dbfs_path(path: str) -> str:
+    """Path in the ``dbfs:`` form that ``dbutils.fs`` accepts.
+
+    :param path: Path of a volume (``/Volumes/...``) or of DBFS (``dbfs:/...``).
+    :return: the path with the ``dbfs:`` prefix; other paths unchanged.
+    """
     if path.startswith("dbfs:/"):
         return path
     if path.startswith("/Volumes/"):
@@ -42,7 +47,12 @@ def to_dbfs_path(path: str) -> str:
     return path
 
 
-def iter_export_files(source_dir: str):
+def iter_export_files(source_dir: str) -> list:
+    """JSON files of an export folder, sorted by name.
+
+    :param source_dir: Export folder, as a volume path.
+    :return: file entries of ``dbutils.fs.ls`` ending in ``.json``.
+    """
     entries = sorted(
         dbutils.fs.ls(to_dbfs_path(source_dir)), key=lambda entry: entry.name
     )
@@ -69,7 +79,11 @@ logger.info(f"Tables to load: {sorted(PurePosixPath(entry.path).stem for entry i
 
 
 def is_ours(target_table: str, table: str) -> bool:
-    """True if the Delta table does not exist yet, or was written by this job."""
+    """True if the Delta table does not exist yet, or was written by this job.
+
+    :param target_table: Backticked three-level name of the Delta table.
+    :param table: Name of the Lakebase table being loaded.
+    """
     if not spark.catalog.tableExists(target_table):
         return True
     if table in FIRST_LOADED_TABLES:

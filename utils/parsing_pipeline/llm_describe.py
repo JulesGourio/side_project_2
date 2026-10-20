@@ -10,7 +10,7 @@ All tunables come from config.py.
 import asyncio
 import base64
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Dict, List, Sequence, Set
 
 from config import (
     IMAGE_DESCRIPTION_PROMPT,
@@ -37,7 +37,11 @@ class _Spend:
 
 
 def endpoint_chain(primary: str, fallbacks: str) -> List[str]:
-    """Primary, then the comma-separated fallbacks in order, each endpoint once (a fallback equal to the primary is a no-op)."""
+    """Primary, then the comma-separated fallbacks in order, each endpoint once (a fallback equal to the primary is a no-op).
+
+    :param primary: Primary endpoint name.
+    :param fallbacks: Comma-separated fallback endpoint names.
+    """
     chain: List[str] = []
     for endpoint in [primary, *(fallbacks or "").split(",")]:
         endpoint = endpoint.strip()
@@ -47,14 +51,21 @@ def endpoint_chain(primary: str, fallbacks: str) -> List[str]:
 
 
 def round_wait_s(round_no: int, waits: Sequence[float]) -> float:
-    """Seconds slept before pass `round_no` (0-based): none before the first pass, then `waits` in order, the last one repeated."""
+    """Seconds slept before pass `round_no` (0-based): none before the first pass, then `waits` in order, the last one repeated.
+
+    :param round_no: Pass number, starting at 0.
+    :param waits: Seconds slept before each pass after the first.
+    """
     if round_no == 0 or not waits:
         return 0.0
     return float(waits[min(round_no - 1, len(waits) - 1)])
 
 
 def error_kind(exc: BaseException) -> str:
-    """Short name of a failed call: stored on the image and counted in the run summary."""
+    """Short name of a failed call: stored on the image and counted in the run summary.
+
+    :param exc: Exception raised by the call.
+    """
     if isinstance(exc, _EmptyAnswer):
         return "empty_answer"
     status = getattr(exc, "status_code", None)
@@ -70,7 +81,11 @@ def error_kind(exc: BaseException) -> str:
 
 
 def one_per_image(rows: List[dict]) -> List[dict]:
-    """The rows with the first occurrence of each (IDDOC, image_id): an image listed twice would be paid for twice."""
+    """The rows with the first occurrence of each (IDDOC, image_id): an image listed twice would be paid for twice.
+
+    :param rows: Image rows, possibly listed twice.
+    :return: rows without duplicates, in their original order.
+    """
     seen = set()
     unique = []
     for row in rows:
@@ -82,12 +97,21 @@ def one_per_image(rows: List[dict]) -> List[dict]:
 
 
 def _escape_braces(text: str) -> str:
-    """Braces doubled so the text cannot interfere with `str.format`."""
+    """Braces doubled so the text cannot interfere with `str.format`.
+
+    :param text: Text to escape.
+    """
     return text.replace("{", "{{").replace("}", "}}")
 
 
 def build_llm_prompt(context_text: str, division: str = "", category: str = "", label: str = "") -> str:
-    """Vision prompt of an image (an OCR prompt for a scanned page); the nearby text is only a domain hint."""
+    """Vision prompt of an image (an OCR prompt for a scanned page); the nearby text is only a domain hint.
+
+    :param context_text: Text around the image in the document.
+    :param division: Division of the document; empty for unknown.
+    :param category: Category path of the document; empty for unknown.
+    :param label: ``scanned_page`` selects the OCR prompt, any other value the description prompt.
+    """
     ctx = (context_text or "").replace(" [...image...] ", " ").strip()[:1200]
     template = PDF_PAGE_OCR_PROMPT if label == "scanned_page" else IMAGE_DESCRIPTION_PROMPT
     return template.format(context=_escape_braces(ctx or "(none)"), division=_escape_braces(division or "unknown"),
@@ -95,7 +119,10 @@ def build_llm_prompt(context_text: str, division: str = "", category: str = "", 
 
 
 def is_skip_response(text) -> bool:
-    """True if the model refused to describe the image (response starts with SKIP)."""
+    """True if the model refused to describe the image (response starts with SKIP).
+
+    :param text: Answer of the model, or None.
+    """
     return bool(text) and str(text).strip().upper().startswith("SKIP")
 
 
@@ -108,14 +135,27 @@ class EndpointBreaker:
     __slots__ = ("_max", "_streak", "_open")
 
     def __init__(self, max_consecutive: int) -> None:
+        """Set up the breaker with no failure yet.
+
+        :param max_consecutive: Failed images in a row on one endpoint that open it.
+        """
         self._max = max(1, max_consecutive)
         self._streak: Dict[str, int] = {}
         self._open: Set[str] = set()
 
     def is_open(self, endpoint: str) -> bool:
+        """Whether the endpoint is skipped for the rest of the run.
+
+        :param endpoint: Endpoint name.
+        """
         return endpoint in self._open
 
     def record(self, endpoint: str, ok: bool) -> None:
+        """Count one result of an endpoint: a success resets its streak, a failure extends it.
+
+        :param endpoint: Endpoint name.
+        :param ok: True for a success.
+        """
         if ok:
             self._streak[endpoint] = 0
             return
@@ -136,6 +176,10 @@ class _AsyncRateLimiter:
     __slots__ = ("_rate", "_tokens", "_updated_at", "_lock")
 
     def __init__(self, rate_per_minute: float) -> None:
+        """Set up the limiter with one token in the bucket.
+
+        :param rate_per_minute: Requests allowed per minute, on average.
+        """
         self._rate: float = rate_per_minute / 60.0   # tokens / second
         self._tokens: float = 1.0
         self._updated_at: float = 0.0                # set on first acquire
@@ -163,17 +207,31 @@ def safe_requests_per_minute(itpm_budget: int, otpm_budget: int, qph_budget: int
     """Safe requests per minute: the minimum over the three quota axes (input tokens, output tokens, requests).
 
     The bottleneck is usually the output (low OTPM plus reasoning tokens). Always >= 1.
+
+    :param itpm_budget: Input tokens per minute allowed.
+    :param otpm_budget: Output tokens per minute allowed.
+    :param qph_budget: Requests per hour allowed.
+    :param avg_in: Average input tokens per image.
+    :param avg_out: Average output tokens per image.
     """
     return max(1.0, min(itpm_budget / max(1, avg_in), otpm_budget / max(1, avg_out), qph_budget / 60.0))
 
 
 def _error_text(exc: BaseException) -> str:
+    """Type name and message of an error, cut to 200 characters.
+
+    :param exc: Exception to describe.
+    """
     # The type name is kept because a timeout has an empty message.
     return f"{type(exc).__name__}: {str(exc)[:200]}"
 
 
-def _usage_of(resp):
-    """(input tokens, output tokens) of a chat completion; (0, 0) when the endpoint sent no usage."""
+def _usage_of(resp) -> tuple[int, int]:
+    """(input tokens, output tokens) of a chat completion; (0, 0) when the endpoint sent no usage.
+
+    :param resp: Chat completion response.
+    :return: input and output tokens; ``(0, 0)`` when the endpoint sent no usage.
+    """
     usage = getattr(resp, "usage", None)
     if not usage:
         return 0, 0
@@ -181,7 +239,11 @@ def _usage_of(resp):
 
 
 def _answer_of(resp, max_tokens: int) -> str:
-    """The text of a chat completion; _EmptyAnswer when it has no visible text."""
+    """The text of a chat completion; _EmptyAnswer when it has no visible text.
+
+    :param resp: Chat completion response.
+    :param max_tokens: Output token budget of the call, reported in the error.
+    """
     choice = resp.choices[0]
     content = choice.message.content
     # Some endpoints (e.g. Gemini) return the content as a list of parts.
@@ -203,6 +265,17 @@ async def _ask_endpoint(client, endpoint: str, messages, semaphore: asyncio.Sema
     """One endpoint, up to `max_retries` attempts with backoff. Returns the text, or raises the last error.
 
     The tokens of every attempt that returned usage are added to `spend`, the unusable ones also to its failed part.
+
+    :param client: Async OpenAI client.
+    :param endpoint: Serving endpoint name.
+    :param messages: Chat messages of the request.
+    :param semaphore: Limits the calls in flight.
+    :param rate_limiter: Token bucket shared by the run.
+    :param max_tokens: Output token budget of each call.
+    :param temperature: Sampling temperature.
+    :param max_retries: Attempts on this endpoint.
+    :param timeout: Seconds to wait for one call.
+    :param spend: Token tally of the image, updated in place.
     """
     from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
 
@@ -232,8 +305,13 @@ async def _ask_endpoint(client, endpoint: str, messages, semaphore: asyncio.Sema
     return text
 
 
-def _settle(status: str, attempts: int, max_attempts: Optional[int]) -> str:
-    """FAILED_LIMIT once a still-PENDING image has used up its attempts (None: no limit)."""
+def _settle(status: str, attempts: int, max_attempts: int | None) -> str:
+    """FAILED_LIMIT once a still-PENDING image has used up its attempts (None: no limit).
+
+    :param status: Status of the image.
+    :param attempts: Attempts made so far.
+    :param max_attempts: Attempts allowed; None for no limit.
+    """
     if status == "PENDING" and max_attempts is not None and attempts >= max_attempts:
         return "FAILED_LIMIT"
     return status
@@ -242,7 +320,7 @@ def _settle(status: str, attempts: int, max_attempts: Optional[int]) -> str:
 async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphore, endpoints: Sequence[str],
                              max_tokens: int, temperature: float, max_retries: int, rate_limiter: _AsyncRateLimiter,
                              breaker: EndpointBreaker, timeout: float = 90.0, rounds: int = 1,
-                             round_waits_s: Sequence[float] = (), max_attempts: Optional[int] = None) -> dict:
+                             round_waits_s: Sequence[float] = (), max_attempts: int | None = None) -> dict:
     """Describe one image: each endpoint in turn, `rounds` passes over the chain, `round_waits_s` before each later pass.
 
     Returns `row_data` plus description, status, the tokens spent (`input_tokens`, `output_tokens`, and the failed
@@ -251,11 +329,32 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
     attempts. An attempt is a run in which the image failed for a reason other than a quota (429), or could not be
     read: a 429 is a property of the quota, not of the image, and an image skipped only because its endpoints are open
     in this run is not counted either.
+
+    :param client: Async OpenAI client.
+    :param row_data: Image row: IDDOC, image_id, volume_path, label, context and category columns.
+    :param semaphore: Limits the calls in flight.
+    :param endpoints: Endpoint names, tried in order.
+    :param max_tokens: Output token budget of each call.
+    :param temperature: Sampling temperature.
+    :param max_retries: Attempts per endpoint.
+    :param rate_limiter: Token bucket shared by the run.
+    :param breaker: Circuit breaker shared by the run.
+    :param timeout: Seconds to wait for one call.
+    :param rounds: Passes over the endpoint chain.
+    :param round_waits_s: Seconds slept before each pass after the first.
+    :param max_attempts: Attempts after which a still-pending image is FAILED_LIMIT; None for no limit.
     """
     spend = _Spend()
     other_failure = False
 
-    def result(description, status, last_error="", last_kind=None):
+    def result(description, status, last_error="", last_kind=None) -> dict:
+        """Outcome of the image, as the row written back to the table.
+
+        :param description: Description text, or None when no endpoint answered.
+        :param status: Status to record, before the attempt limit applies.
+        :param last_error: Message of the last failure; empty when none.
+        :param last_kind: Kind of the last failure, or None.
+        """
         counted = status != "PENDING" or other_failure or last_kind == "read_error"
         attempts = int(row_data.get("attempts") or 0) + (1 if counted else 0)
         status = _settle(status, attempts, max_attempts)
@@ -321,8 +420,23 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
 async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, endpoints: Sequence[str], max_tokens: int,
                               temperature: float, max_retries: int, max_concurrent: int, requests_per_minute: float,
                               breaker: EndpointBreaker, rounds: int = 1, round_waits_s: Sequence[float] = (),
-                              max_attempts: Optional[int] = None) -> List[dict]:
-    """Describe all images concurrently, at most `max_concurrent` at a time and `requests_per_minute` on average."""
+                              max_attempts: int | None = None) -> List[dict]:
+    """Describe all images concurrently, at most `max_concurrent` at a time and `requests_per_minute` on average.
+
+    :param rows: Image rows to describe.
+    :param ws_host: Workspace host of the endpoints, without scheme.
+    :param ws_token: Bearer token of the workspace.
+    :param endpoints: Endpoint names, tried in order.
+    :param max_tokens: Output token budget of each call.
+    :param temperature: Sampling temperature.
+    :param max_retries: Attempts per endpoint.
+    :param max_concurrent: Calls in flight at once.
+    :param requests_per_minute: Requests allowed per minute, on average.
+    :param breaker: Circuit breaker shared by the run.
+    :param rounds: Passes over the endpoint chain.
+    :param round_waits_s: Seconds slept before each pass after the first.
+    :param max_attempts: Attempts after which a still-pending image is FAILED_LIMIT; None for no limit.
+    """
     from openai import AsyncOpenAI
 
     rate_limiter = _AsyncRateLimiter(requests_per_minute)

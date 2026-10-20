@@ -5,6 +5,7 @@ Driver side, returns Spark DataFrames. Reproduces the category display of the In
 `2_manifest` (scope gate) and indirectly by `3_parse` through the category_reference table.
 """
 
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from config import (
@@ -22,9 +23,13 @@ IDCAT_DIRECTIVE = 962      # "0 - DIRECTIVE GROUPE LATECOERE"
 MAX_HIERARCHY_DEPTH = 7    # Levels 1 to 7 in gd_cat
 
 
-def normalize_cols_upper(df):
+def normalize_cols_upper(df) -> DataFrame:
     """Rename all DataFrame columns to UPPERCASE: the *_latest materialized views sometimes expose lowercase columns
-    (gd_doc_cat_latest: iddoc, idcat, principale) while the code expects the original gd_doc* schema."""
+    (gd_doc_cat_latest: iddoc, idcat, principale) while the code expects the original gd_doc* schema.
+
+    :param df: Spark DataFrame whose columns may be lowercase.
+    :return: the same data with every column name in uppercase.
+    """
     for c in df.columns:
         if c != c.upper():
             df = df.withColumnRenamed(c, c.upper())
@@ -32,7 +37,7 @@ def normalize_cols_upper(df):
 
 
 # --- Category hierarchy builder (dynamic, from gd_cat + gd_doc_cat) ---
-def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCHY_DEPTH):
+def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
     """Build a per-IDDOC category hierarchy by walking up gd_cat.IDPERE.
 
     Returns a DataFrame with columns:
@@ -40,6 +45,10 @@ def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCH
         niveau_plus_1, niveau_plus_2, ..., niveau_plus_{max_depth-1}
 
     Reproduces the logic of the Intraqual application for category display.
+
+    :param spark: Active Spark session.
+    :param idlg: IDLG value of gd_cat to keep; 1 by default.
+    :param max_depth: Number of category levels to walk up, the last output level is ``niveau_plus_{max_depth-1}``.
     """
     # The IDPERE walk-up below self-joins gd_cat against itself, which Spark
     # blocks by default for this MV type.
@@ -165,11 +174,15 @@ def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCH
     return df_hierarchy.select(*hierarchy_cols).drop(*[c for c in raw_cols if c in df_hierarchy.columns])
 
 
-def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH):
+def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
     """One row per IDDOC: division + niveau_plus_1..N.
 
     Primary: build_category_hierarchy(). Fallback: DIVISION_ARCHIVE_TABLE fills
     gaps only, never overrides a live-resolved row; empty/unset = disabled (default).
+
+    :param spark: Active Spark session.
+    :param max_depth: Number of category levels, as in ``build_category_hierarchy``.
+    :return: one row per IDDOC with its division and ``niveau_plus_*`` columns.
     """
     niveau_cols = [f"niveau_plus_{niv}" for niv in range(1, max_depth)]
 
@@ -196,8 +209,12 @@ def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH):
 
 
 # --- Step 0 — Qualibot perimeter (scope gate) ---
-def load_scope_docs(spark):
-    """Return (IDDOC, ref, titre) for every document inside the Qualibot scope (DOC_SCOPE_FILTER, config.py)."""
+def load_scope_docs(spark) -> DataFrame:
+    """Return (IDDOC, ref, titre) for every document inside the Qualibot scope (DOC_SCOPE_FILTER, config.py).
+
+    :param spark: Active Spark session.
+    :return: DataFrame of IDDOC, ref and titre, one row per document in scope.
+    """
     return (
         normalize_cols_upper(spark.read.table(GD_DOC_LATEST))
         .filter(F.expr(DOC_SCOPE_FILTER))

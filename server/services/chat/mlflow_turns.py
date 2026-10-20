@@ -33,26 +33,25 @@ import os
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from . import prompts
-from ..infra.doc_catalog import document_info
-from .turn_log import passage_title
+from server.services.chat import prompts
+from server.services.chat.config import (
+    MLFLOW_EXPORT_TIMEOUT_S, MLFLOW_MAX_DOC_CHARS, MLFLOW_MAX_ISSUE_CHARS, MLFLOW_PROMPT_EMPTY_TTL_S,
+    MLFLOW_PROMPT_TAG, MLFLOW_PROMPT_TTL_S, MLFLOW_RETRY_MISSING_S,
+)
+from server.services.chat import translation_bridge
+from server.services.infra.doc_catalog import document_info
+from server.services.chat.turn_log import passage_title
 
 logger = logging.getLogger(__name__)
 
 _NS_PER_MS = 1_000_000
-_MAX_DOC_CHARS = 20_000          # passage text kept per document in the retriever span output
-_MAX_ISSUE_CHARS = 500
 _lock = threading.Lock()
-_experiment: Dict[str, Optional[str]] = {}       # experiment name -> id, once found
+_activated: set = set()                        # experiment ids made active in this process
+_experiment: Dict[str, str | None] = {}       # experiment name -> id, once found
 _missing_until: Dict[str, float] = {}           # experiment name -> when to look again
-_RETRY_MISSING_S = 60
 _prompt_cache: Dict[str, Any] = {}              # experiment id -> (fetched at, chat_prompt.* tags)
-_PROMPT_TAG = 'chat_prompt.'
-_PROMPT_EMPTY_TTL_S = 30                  # nothing registered yet: look again soon
-_PROMPT_TTL_S = 600
-_EXPORT_TIMEOUT_S = 10
 
 
 def experiment_name() -> str:
@@ -69,11 +68,38 @@ def enabled() -> bool:
     return bool(experiment_id_setting() or experiment_name())
 
 
-def _experiment_id(name: str) -> Optional[str]:
+def _activate(mlflow: Any, experiment_id: str) -> bool:
+    """Makes the experiment the active one of the process, once.
+
+    MLflow chooses where the spans go when the first span of the process is created, from the *active* experiment: the Unity
+    Catalog tables it is linked to. The ``experiment_id`` given to a span does not do it, and the traces would then land in the
+    experiment's own storage, outside Unity Catalog.
+
+    :param mlflow: the mlflow module
+    :param experiment_id: id of the chat experiment
+    :return: False when the experiment could not be activated (no trace is written then)
+    """
+    with _lock:
+        if experiment_id in _activated:
+            return True
+    try:
+        mlflow.set_experiment(experiment_id=experiment_id)
+    except Exception as exc:  # noqa: BLE001 — retried on the next turn
+        logger.warning('mlflow_turns: experiment %s could not be activated, no trace written: %s', experiment_id, exc)
+        return False
+    with _lock:
+        _activated.add(experiment_id)
+    return True
+
+
+def _experiment_id(name: str) -> str | None:
     """Id of the experiment ``name``, looked up once it exists.
 
     Never created here: the ``create_chat_experiment`` job creates it, as the job service principal.
     A missing one is looked up again after a minute.
+
+    :param name: experiment name or workspace path
+    :return: the experiment id, None while the experiment is missing or cannot be reached
     """
     with _lock:
         if _experiment.get(name):
@@ -88,28 +114,33 @@ def _experiment_id(name: str) -> Optional[str]:
         os.environ.setdefault('MLFLOW_TRACING_SQL_WAREHOUSE_ID', os.environ['DATABRICKS_WAREHOUSE_ID'])
     fixed = experiment_id_setting()
     if fixed:
-        return fixed
+        return fixed if _activate(mlflow, fixed) else None
     try:
         found = mlflow.get_experiment_by_name(name)
     except Exception as exc:  # noqa: BLE001 — retried on the next turn
         logger.warning('mlflow_turns: experiment lookup %s failed: %s', name, exc)
         return None
+    if found and not _activate(mlflow, found.experiment_id):
+        return None
     with _lock:
         if found:
             _experiment[name] = found.experiment_id
             return found.experiment_id
-        _missing_until[name] = time.monotonic() + _RETRY_MISSING_S
+        _missing_until[name] = time.monotonic() + MLFLOW_RETRY_MISSING_S
     logger.warning('mlflow_turns: experiment %s does not exist, chat traces are off until it is created', name)
     return None
 
 
 async def export_turn(log: Any) -> None:
-    """Writes the finished turn ``log`` as a trace and records its id in ``log.data`` (never raises)."""
+    """Writes the finished turn ``log`` as a trace and records its id in ``log.data`` (never raises).
+
+    :param log: finished TurnLog of the turn
+    """
     name = experiment_name()
     if not enabled() or not log.status:
         return
     try:
-        trace_id = await asyncio.wait_for(asyncio.to_thread(_write_trace, log, name), timeout=_EXPORT_TIMEOUT_S)
+        trace_id = await asyncio.wait_for(asyncio.to_thread(_write_trace, log, name), timeout=MLFLOW_EXPORT_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 — telemetry must not disturb the chat
         logger.warning('mlflow_turns: trace of %s not written: %s', log.trace_id, exc)
         return
@@ -117,32 +148,58 @@ async def export_turn(log: Any) -> None:
         log.data['mlflow_trace_id'] = trace_id
 
 
-def _language_guess(text: Optional[str]) -> str:
-    """Two-letter code of the language of ``text`` (local fastText model), '' when unsure or unavailable."""
+def _language_guess(text: str | None) -> str:
+    """Two-letter code of the language of ``text`` (local fastText model), '' when unsure or unavailable.
+
+    :param text: text to guess the language of, None allowed
+    :return: the two-letter code, or an empty string when unsure
+    """
     if not text:
         return ''
     try:
-        from .translation_bridge import _fast_lang_guess
-        return _fast_lang_guess(text[:2000]) or ''
+        return translation_bridge.fast_lang_guess(text[:2000]) or ''
     except Exception:  # noqa: BLE001 — a tag, not worth a failed trace
         return ''
 
 
 def _hash(value: str) -> str:
+    """Short SHA-256 of ``value``, so that identifiers stay out of the traces.
+
+    :param value: text to hash
+    :return: 12 hexadecimal characters
+    """
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
 
 
 _DATE_RE = re.compile(r'Date de diffusion:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|inconnue)')
 
 
-def _passage_date(chunk_text: Optional[str]) -> str:
-    """Diffusion date from the passage's ``[Source: …]`` prefix (what the answer model reads)."""
+def _passage_date(chunk_text: str | None) -> str:
+    """Diffusion date from the passage's ``[Source: …]`` prefix (what the answer model reads).
+
+    :param chunk_text: passage text, None allowed
+    :return: the date as ``YYYY-MM-DD``, ``inconnue`` when the source says so, or an empty string
+    """
     found = _DATE_RE.search((chunk_text or '')[:600])
     return found.group(1) if found else ''
 
 
+def _vs_call_label(call: Dict[str, Any]) -> str:
+    """Label of a Vector Search call span: ``q1 rerank``, ``q2 raw``… (``q-`` when it belongs to no query).
+
+    :param call: one entry of ``TurnLog.vs_calls`` (``query_index`` may be None, ``mode`` is always set).
+    :return: the label.
+    """
+    index = call.get('query_index')
+    return f"q{index + 1 if index is not None else '-'} {call['mode']}"
+
+
 def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """The documents handed to the model, in prompt order: n, REF, title, diffusion date, revision, passages, best score, cited."""
+    """The documents handed to the model, in prompt order: n, REF, title, diffusion date, revision, passages, best score, cited.
+
+    :param sent: kept passages, in prompt order
+    :return: one dict per document, in prompt order
+    """
     docs: Dict[str, Dict[str, Any]] = {}
     for p in sent:
         d = docs.setdefault(p.get('ref') or '', {'n': p.get('doc_number'), 'ref': p.get('ref'), 'title': passage_title(p.get('chunk_text')),
@@ -161,15 +218,24 @@ def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _hit_label(hit: Dict[str, Any]) -> str:
-    """'q1 rerank #3 (0.83)': which query found the passage, how, at which rank, with which score."""
+    """'q1 rerank #3 (0.83)': which query found the passage, how, at which rank, with which score.
+
+    :param hit: one hit of a passage: query index, way found, rank and score
+    :return: the label
+    """
     q = 'ref' if hit.get('q') is None else f"q{hit['q'] + 1}"
     score = hit.get('score')
     return f"{q} {hit.get('via')} #{(hit.get('rank') or 0) + 1}" + (f' ({score:.3f})' if isinstance(score, (int, float)) else '')
 
 
 def _document(passage: Dict[str, Any]) -> Any:
+    """The passage as an MLflow document, its text cut to MLFLOW_MAX_DOC_CHARS.
+
+    :param passage: passage record of the turn log
+    :return: the MLflow document
+    """
     from mlflow.entities import Document
-    return Document(page_content=(passage.get('chunk_text') or '')[:_MAX_DOC_CHARS],
+    return Document(page_content=(passage.get('chunk_text') or '')[:MLFLOW_MAX_DOC_CHARS],
                     metadata={'doc_uri': passage.get('url') or passage.get('ref') or '', 'ref': passage.get('ref'),
                               'doc_number': passage.get('doc_number'), 'cited': bool(passage.get('cited')),
                               'source': passage.get('source'), 'score': passage.get('best_score'),
@@ -177,14 +243,18 @@ def _document(passage: Dict[str, Any]) -> Any:
 
 
 def _prompt_tags(experiment_id: str) -> Dict[str, str]:
-    """The experiment's ``chat_prompt.<key>`` tags, refreshed every ``_PROMPT_TTL_S``."""
+    """The experiment's ``chat_prompt.<key>`` tags, refreshed every ``MLFLOW_PROMPT_TTL_S``.
+
+    :param experiment_id: id of the experiment
+    :return: the tags by name, refreshed after MLFLOW_PROMPT_TTL_S
+    """
     cached = _prompt_cache.get(experiment_id)
-    if cached and time.monotonic() - cached[0] < (_PROMPT_TTL_S if cached[1] else _PROMPT_EMPTY_TTL_S):
+    if cached and time.monotonic() - cached[0] < (MLFLOW_PROMPT_TTL_S if cached[1] else MLFLOW_PROMPT_EMPTY_TTL_S):
         return cached[1]
     tags: Dict[str, str] = {}
     try:
         import mlflow
-        tags = {k: v for k, v in (mlflow.get_experiment(experiment_id).tags or {}).items() if k.startswith(_PROMPT_TAG)}
+        tags = {k: v for k, v in (mlflow.get_experiment(experiment_id).tags or {}).items() if k.startswith(MLFLOW_PROMPT_TAG)}
     except Exception as exc:  # noqa: BLE001 — retried after the TTL
         logger.warning('mlflow_turns: experiment tags unreadable: %s', exc)
     _prompt_cache[experiment_id] = (time.monotonic(), tags)
@@ -193,11 +263,16 @@ def _prompt_tags(experiment_id: str) -> Dict[str, str]:
 
 def _linked_prompts(experiment_id: str, keys: List[str]) -> str:
     """JSON for the ``mlflow.linkedPrompts`` trace tag: the registered version of each prompt ``keys`` the turn used,
-    when its recorded hash is the file's (a prompt edited since the last registration is not linked)."""
+    when its recorded hash is the file's (a prompt edited since the last registration is not linked).
+
+    :param experiment_id: id of the experiment
+    :param keys: prompt keys the turn used
+    :return: the JSON of the linked prompts, empty when none is linked
+    """
     tags, linked = _prompt_tags(experiment_id), []
     for key in keys:
         try:
-            entry = json.loads(tags.get(_PROMPT_TAG + key) or '')
+            entry = json.loads(tags.get(MLFLOW_PROMPT_TAG + key) or '')
         except ValueError:
             continue
         if entry.get('sha') == prompts.digest(key):
@@ -208,7 +283,13 @@ def _linked_prompts(experiment_id: str, keys: List[str]) -> str:
 
 
 def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = '') -> None:
-    """Attaches the user's thumbs up / down to the turn's trace (blocking; run it in a thread, never raises)."""
+    """Attaches the user's thumbs up / down to the turn's trace (blocking; run it in a thread, never raises).
+
+    :param mlflow_trace_id: trace of the turn
+    :param vote: ``up`` or ``down``
+    :param comment: comment of the user, cut to 2000 characters, optional
+    :param user_id: id of the user, hashed before it is stored
+    """
     if not (enabled() and mlflow_trace_id):
         return
     try:
@@ -222,7 +303,13 @@ def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = 
         logger.warning('mlflow_turns: vote on %s not logged: %s', mlflow_trace_id, exc)
 
 
-def _write_trace(log: Any, name: str) -> Optional[str]:
+def _write_trace(log: Any, name: str) -> str | None:
+    """Writes the finished turn as one MLflow trace.
+
+    :param log: finished TurnLog of the turn
+    :param name: experiment name, from CHAT_MLFLOW_EXPERIMENT
+    :return: the trace id, None when the experiment is not found
+    """
     import mlflow
     from mlflow.entities import SpanType
     from mlflow.tracing.constant import SpanAttributeKey
@@ -236,11 +323,30 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
     failed = log.status == 'error'
 
     def at(ms: int) -> int:
+        """Absolute time in nanoseconds of an offset from the start of the turn.
+
+        :param ms: offset from the start of the turn, in milliseconds
+        :return: the time in nanoseconds
+        """
         return t0 + int(ms) * _NS_PER_MS
 
     def child(parent: Any, step: str, span_type: str, start_ms: int, duration_ms: int, *,
-              inputs: Any = None, outputs: Any = None, attributes: Optional[Dict[str, Any]] = None,
-              status: Optional[str] = None, label: Optional[str] = None) -> Any:
+              inputs: Any = None, outputs: Any = None, attributes: Dict[str, Any] | None = None,
+              status: str | None = None, label: str | None = None) -> Any:
+        """Adds a span that has already finished under ``parent``.
+
+        :param parent: parent span
+        :param step: span name, used when no label is given
+        :param span_type: MLflow span type, e.g. ``SpanType.RETRIEVER``
+        :param start_ms: offset of the span start from the start of the turn, in milliseconds
+        :param duration_ms: length of the span, in milliseconds
+        :param inputs: span inputs, None for none
+        :param outputs: span outputs, None for none
+        :param attributes: span attributes; the None values are left out
+        :param status: span status such as ``OK`` or ``ERROR``, None for the default
+        :param label: span name replacing ``step``, None to use ``step``
+        :return: the span
+        """
         span = mlflow.start_span_no_context(label or step, span_type=span_type, parent_span=parent, inputs=inputs,
                                             start_time_ns=at(start_ms))
         span.end(outputs=outputs, attributes={k: v for k, v in (attributes or {}).items() if v is not None},
@@ -248,7 +354,7 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
         return span
 
     issues = [{'code': i['code'], 'stage': i['stage'], 'severity': i['severity'],
-               'message': (i['message'] or '')[:_MAX_ISSUE_CHARS], 'at_ms': i['at_ms']} for i in log.issues]
+               'message': (i['message'] or '')[:MLFLOW_MAX_ISSUE_CHARS], 'at_ms': i['at_ms']} for i in log.issues]
     tags = {
         'chat_trace_id': log.trace_id, 'division': str(data.get('division') or ''), 'status': log.status,
         'question_lang': str(data.get('question_lang') or ''), 'answer_endpoint': str(data.get('answer_endpoint') or ''),
@@ -286,13 +392,15 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
                     'search_queries': data.get('rewrite_mode') or 'rewrite'},
             start_time_ns=at(start))
         if 'rewrite' in timings:
-            child(retrieval, 'translate' if data.get('rewrite_mode') == 'translate' else 'rewrite', SpanType.LLM,
-                  starts.get('rewrite', start), timings['rewrite'],
-                  inputs={'question': data.get('question')}, outputs={'fr': data.get('fr_query'), 'en': data.get('en_query')},
-                  status='OK' if data.get('rewrite_ok') is not False else 'ERROR',
+            rewrite_name = 'translate' if data.get('rewrite_mode') == 'translate' else 'rewrite'
+            rewrite_status = 'ERROR' if data.get('rewrite_ok') is False else 'OK'
+            rewrite_usage = _usage(data.get('rewrite_input_tokens'), data.get('rewrite_output_tokens'))
+            child(retrieval, rewrite_name, SpanType.LLM, starts.get('rewrite', start), timings['rewrite'],
+                  inputs={'question': data.get('question')},
+                  outputs={'fr': data.get('fr_query'), 'en': data.get('en_query')},
+                  status=rewrite_status,
                   attributes={SpanAttributeKey.MODEL: data.get('rewrite_endpoint'),
-                              SpanAttributeKey.CHAT_USAGE: _usage(data.get('rewrite_input_tokens'),
-                                                                  data.get('rewrite_output_tokens')),
+                              SpanAttributeKey.CHAT_USAGE: rewrite_usage,
                               'cost_eur': data.get('rewrite_cost_eur')})
         if 'search' in timings:
             search = mlflow.start_span_no_context(
@@ -300,7 +408,7 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
                 inputs={'queries': {'question': data.get('question'), 'fr': data.get('fr_query'), 'en': data.get('en_query')},
                         'index': data.get('index_name')})
             for call in log.vs_calls:
-                label = f"q{(call.get('query_index') or 0) + 1 if call.get('query_index') is not None else '-'} {call['mode']}"
+                label = _vs_call_label(call)
                 child(search, 'vector_search', SpanType.RETRIEVER, call['start_ms'], call.get('ms') or 0, label=label,
                       inputs={'query': call['query'], 'mode': call['mode'], 'num_results': call['k']},
                       outputs={'results': call.get('results'), 'error': call.get('error'),
@@ -363,7 +471,13 @@ def _write_trace(log: Any, name: str) -> Optional[str]:
     return root.trace_id
 
 
-def _usage(input_tokens: Optional[int], output_tokens: Optional[int]) -> Optional[Dict[str, int]]:
+def _usage(input_tokens: int | None, output_tokens: int | None) -> Dict[str, int] | None:
+    """Token usage of a span, None when no count is known.
+
+    :param input_tokens: input tokens, None when unknown
+    :param output_tokens: output tokens, None when unknown
+    :return: the input, output and total token counts, or None
+    """
     if input_tokens is None and output_tokens is None:
         return None
     i, o = int(input_tokens or 0), int(output_tokens or 0)
