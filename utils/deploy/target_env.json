@@ -10,7 +10,8 @@
     "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_traces",
     "CHAT_REWRITE_ENDPOINT": "databricks-gemini-3-1-flash-lite",
     "CHAT_TRANSLATE_ONLY": "on",
-    "CHAT_MLFLOW_WAREHOUSE_ID": "13eff4a6095513cb"
+    "CHAT_MLFLOW_WAREHOUSE_ID": "13eff4a6095513cb",
+    "CHAT_MLFLOW_EXPERIMENT_ID": "3049939644482707"
   },
   "uat": {
     "COMPARE_VOLUME_PATH": "/Volumes/uat_proj/qualibot/doc_compare",
