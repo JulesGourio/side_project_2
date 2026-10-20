@@ -220,6 +220,21 @@ SELECT email, can_chat, can_compare, groups, groups_synced_at FROM users WHERE g
 
 7. Logs de l'app après une visite : `Capabilities …: … (TABLE+SCIM) groups=[…]`.
 
+8. Tables de la base `doccompare` encore détenues par la personne qui a fait la copie : l'app (SP `ed8abb86-e0db-423b-8f35-5cda58e89b80`) ne peut pas y ajouter de colonnes (log `Lakebase schema: N statement(s) skipped`). Les colonnes de `users` ont été ajoutées à la main le 2026-10-20. Transfert de propriété, par le propriétaire actuel, dans l'éditeur SQL Lakebase :
+
+```sql
+DO $$
+DECLARE t text;
+BEGIN
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tableowner = current_user LOOP
+    EXECUTE format('ALTER TABLE public.%I OWNER TO %I', t, 'ed8abb86-e0db-423b-8f35-5cda58e89b80');
+  END LOOP;
+END $$;
+SELECT tablename, tableowner FROM pg_tables WHERE schemaname = 'public' ORDER BY tableowner, tablename;
+```
+
+Puis redémarrage de l'app ; ses logs ne doivent plus contenir `statement(s) skipped`.
+
 ```powershell
 databricks apps logs qualibot --profile UAT | Select-String "Capabilities"
 ```
