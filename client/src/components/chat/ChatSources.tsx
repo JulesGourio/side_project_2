@@ -90,6 +90,9 @@ function SourceChipGroup({ variants }: { variants: Source[] }) {
 
   return (
     <span className={`${chipBase} px-2.5`} style={chipStyle} title={tooltip}>
+      {variants.filter(v => v.n != null).map(v => (
+        <span key={`n-${v.n}`}>{chipNumberBadge(v.n!)}</span>
+      ))}
       {bare?.url ? (
         <a
           href={bare.url}
