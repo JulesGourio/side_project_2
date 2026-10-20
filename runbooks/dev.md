@@ -960,6 +960,23 @@ Les 4 copies UAT portant les noms des tables Lakebase DEV sont renommées `uat_<
 
   Attendu : `compare_messages` contient les lignes du Lakebase DEV ; `uat_compare_messages` garde les 228 lignes UAT.
 
+### U. Droits par groupe : tâche `sync_user_capabilities` (DEV d'abord, à faire)
+
+La tâche `sync_user_capabilities` du job `D_1_Qualibot_Lakebase_Export_To_Volume` lit `system.access.audit` et écrit `groups`, `can_chat`, `can_compare`, `groups_synced_at` dans `users` ; l'app les joint aux groupes SCIM. Contrôle des groupes actif en DEV (`CAPS_BYPASS=false`).
+
+- [ ] **U1. Droit de lecture du journal pour le SP DEV** (`fde6ff28-739f-4a41-b61e-604a298c8478`), par un admin du metastore DEV :
+
+  ```sql
+  GRANT USE CATALOG ON CATALOG system TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+  GRANT USE SCHEMA ON SCHEMA system.access TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+  GRANT SELECT ON TABLE system.access.audit TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+  ```
+- [ ] **U2. Déploiement** : Bitbucket → Pipelines → Run pipeline → branche `claude/sharp-mayer-uqwx8x` → `deploy-dev` (jobs et app).
+- [ ] **U3. Simulation** (rien n'est écrit) : `databricks bundle run -t dev lakebase_export --profile DEV --only sync_user_capabilities --notebook-params DRY_RUN=true`
+- [ ] **U4. Écriture** : `databricks bundle run -t dev lakebase_export --profile DEV --only sync_user_capabilities`
+- [ ] **U5. Contrôle Lakebase DEV** (base `doccompare`) : `SELECT email, can_chat, can_compare, groups, groups_synced_at FROM users WHERE groups_synced_at IS NOT NULL ORDER BY email;`
+- [ ] **U6. Logs de l'app** après une visite : `databricks apps logs qualibot --profile DEV | Select-String "Capabilities"` → `(TABLE+SCIM) groups=[…]`.
+
 ### Plus tard — non fait, sur décision
 
 - Traces MLflow en tables Delta Unity Catalog : adapté à un gros volume, requêtable en SQL ; exige MLflow ≥ 3.11.1 dans l'app et un entrepôt SQL ; non modifiable ensuite pour cette expérience ; non testé.
