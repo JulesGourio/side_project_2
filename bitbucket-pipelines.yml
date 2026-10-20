@@ -118,7 +118,7 @@ definitions:
           - databricks bundle plan -t dev -p job-runner-sa-dev
 
     # -----------------------------------------------------------------------
-    # UAT, read-only: bundle plan of qualibot-uat. Nothing is deployed.
+    # UAT, read-only: bundle plan of uat. Nothing is deployed.
     # -----------------------------------------------------------------------
     - step: &plan-uat
         name: Plan UAT bundle (read-only, uat)
@@ -143,8 +143,8 @@ definitions:
           - chmod 600 "$HOME/.databrickscfg"
           - databricks current-user me -p job-runner-sa-uat
           - python3 utils/deploy/render_target_config_env.py uat
-          - databricks bundle validate -t qualibot-uat -p job-runner-sa-uat
-          - databricks bundle plan -t qualibot-uat -p job-runner-sa-uat
+          - databricks bundle validate -t uat -p job-runner-sa-uat
+          - databricks bundle plan -t uat -p job-runner-sa-uat
 
     # -----------------------------------------------------------------------
     # UAT, one-off: detach the bundle state from the former uat_landingzone objects (nothing is deleted in Databricks)
@@ -173,13 +173,13 @@ definitions:
           - chmod 600 "$HOME/.databrickscfg"
           - databricks current-user me -p job-runner-sa-uat
           - python3 utils/deploy/render_target_config_env.py uat
-          - databricks bundle validate -t qualibot-uat -p job-runner-sa-uat
-          - databricks bundle deployment unbind qualibot_schema -t qualibot-uat -p job-runner-sa-uat
-          - databricks bundle deployment unbind qualibot_test -t qualibot-uat -p job-runner-sa-uat
-          - databricks bundle deployment unbind qualibot_doc_compare -t qualibot-uat -p job-runner-sa-uat
-          - databricks bundle deployment unbind qualibot_images -t qualibot-uat -p job-runner-sa-uat
-          - databricks bundle deployment bind qualibot_doc_compare uat_proj.qualibot.doc_compare -t qualibot-uat -p job-runner-sa-uat --auto-approve
-          - databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t qualibot-uat -p job-runner-sa-uat --auto-approve
+          - databricks bundle validate -t uat -p job-runner-sa-uat
+          - databricks bundle deployment unbind qualibot_schema -t uat -p job-runner-sa-uat
+          - databricks bundle deployment unbind qualibot_test -t uat -p job-runner-sa-uat
+          - databricks bundle deployment unbind qualibot_doc_compare -t uat -p job-runner-sa-uat
+          - databricks bundle deployment unbind qualibot_images -t uat -p job-runner-sa-uat
+          - databricks bundle deployment bind qualibot_doc_compare uat_proj.qualibot.doc_compare -t uat -p job-runner-sa-uat --auto-approve
+          - databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t uat -p job-runner-sa-uat --auto-approve
 
     # -----------------------------------------------------------------------
     # DEV, one-off: detach the test volume from the bundle state. Nothing is deleted
@@ -223,14 +223,14 @@ definitions:
         script:
           - bash utils/deploy/bitbucket_deploy.sh uat setup
           - python3 utils/deploy/render_target_config_env.py uat
-          - databricks bundle validate -t qualibot-uat -p job-runner-sa-uat
-          - databricks bundle deployment bind qualibot-history projects/qualibot -t qualibot-uat -p job-runner-sa-uat --auto-approve
+          - databricks bundle validate -t uat -p job-runner-sa-uat
+          - databricks bundle deployment bind qualibot-history projects/qualibot -t uat -p job-runner-sa-uat --auto-approve
 
     # -----------------------------------------------------------------------
-    # UAT: target qualibot-uat, profile job-runner-sa-uat.
+    # UAT: target uat, profile job-runner-sa-uat.
     # -----------------------------------------------------------------------
     - step: &deploy-uat
-        name: Deploy bundle to UAT (qualibot-uat)
+        name: Deploy bundle to UAT (uat)
         deployment: uat
         clone:
           depth: 1
@@ -241,7 +241,7 @@ definitions:
     # UAT jobs and notebooks only: same as deploy-uat, app neither redeployed nor restarted.
     # -----------------------------------------------------------------------
     - step: &deploy-uat-jobs
-        name: Deploy jobs and notebooks to UAT, app untouched (qualibot-uat)
+        name: Deploy jobs and notebooks to UAT, app untouched (uat)
         deployment: uat
         clone:
           depth: 1
@@ -249,10 +249,10 @@ definitions:
           - bash utils/deploy/bitbucket_deploy.sh uat jobs
 
     # -----------------------------------------------------------------------
-    # PROD: target qualibot-prod, profile job-runner-sa-prod.
+    # PROD: target prod, profile job-runner-sa-prod.
     # -----------------------------------------------------------------------
     - step: &deploy-prod
-        name: Deploy bundle to PROD (qualibot-prod)
+        name: Deploy bundle to PROD (prod)
         deployment: production
         clone:
           depth: 1
@@ -263,7 +263,7 @@ definitions:
     # PROD jobs and notebooks only: same as deploy-prod, app neither redeployed nor restarted.
     # -----------------------------------------------------------------------
     - step: &deploy-prod-jobs
-        name: Deploy jobs and notebooks to PROD, app untouched (qualibot-prod)
+        name: Deploy jobs and notebooks to PROD, app untouched (prod)
         deployment: production
         clone:
           depth: 1

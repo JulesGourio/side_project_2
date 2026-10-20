@@ -18,8 +18,8 @@ Parent: [`utils/`](../README.md). The jobs are defined in [`resources/app_schedu
 | `D_1_Qualibot_Apps_Stop_Nightly_Dev` | `dev` | stop | `${var.app_name}` |
 | `W_1_Qualibot_Stop_Weekend_Dev` | `dev` | stop | `${var.app_name}` |
 | `W_1_Qualibot_Start_Weekend_Dev` | `dev` | start | `${var.app_name}` |
-| `W_1_Qualibot_Stop_Weekend_Uat` | `qualibot-uat` | stop | `qualibot` |
-| `W_1_Qualibot_Start_Weekend_Uat` | `qualibot-uat` | start | `qualibot` |
+| `W_1_Qualibot_Stop_Weekend_Uat` | `uat` | stop | `qualibot` |
+| `W_1_Qualibot_Start_Weekend_Uat` | `uat` | start | `qualibot` |
 
 The jobs run in the workspace of their target, under the identity set in their `run_as`. The `dev` jobs and the UAT jobs
 have different identities, and the identity needs CAN_MANAGE on each app it stops or starts.

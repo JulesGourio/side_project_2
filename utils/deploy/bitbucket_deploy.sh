@@ -27,13 +27,13 @@ case "$ENV_NAME" in
         DEPLOY_ENV_LABEL=dev
         ;;
     uat)
-        BUNDLE_TARGET=qualibot-uat
+        BUNDLE_TARGET=uat
         PROFILE=job-runner-sa-uat
         HOST_DEFAULT=https://dbc-3a17bfce-9e88.cloud.databricks.com
         DEPLOY_ENV_LABEL=uat
         ;;
     prod)
-        BUNDLE_TARGET=qualibot-prod
+        BUNDLE_TARGET=prod
         PROFILE=job-runner-sa-prod
         HOST_DEFAULT=https://dbc-77b87d5a-6bcb.cloud.databricks.com
         DEPLOY_ENV_LABEL=production

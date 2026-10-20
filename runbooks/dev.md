@@ -29,7 +29,7 @@ Branche : **`feature/chat-vsi-merged-on-impact-search`**. Pas de PR ; le zip à 
 | Sujet | Valeur |
 |---|---|
 | Workspace | DEV — `https://dbc-c623749d-731b.cloud.databricks.com`, profil CLI `DEV` |
-| Cible bundle | `dev` (en miroir de `qualibot-uat`) |
+| Cible bundle | `dev` (en miroir de `uat`) |
 | App | `qualibot`, SP de l'app `8e411164-a7e8-46ff-8013-8c56af2c3656` |
 | Schéma | `dev_proj.qualibot` : tables, volumes et index du pipeline et de l'app, tables d'évaluation, registre des prompts |
 | Suffixe tables / index | aucun |
@@ -570,7 +570,7 @@ commune (`server/services/infra/vs_gate.py`, 8 requêtes en cours au plus, relan
 
 ### E. Export du corpus UAT (workspace UAT, run ponctuel)
 
-Lecture seule sur les tables UAT ; écrit uniquement dans `/Volumes/uat_proj/qualibot/staging/dev_copy/`. La cible `qualibot-uat` du bundle
+Lecture seule sur les tables UAT ; écrit uniquement dans `/Volumes/uat_proj/qualibot/staging/dev_copy/`. La cible `uat` du bundle
 n'est pas touchée. Tables exportées : `chunks`, `parsing_checkpoint`, `parsed_documents`, `image_metadata`, `parse_manifest`,
 `category_reference`, plus l'archive LibreOffice. Pas de tables d'archive avant 2018.
 
@@ -957,7 +957,7 @@ Les 4 copies UAT portant les noms des tables Lakebase DEV sont renommées `uat_<
 - Activer les plannings DEV (parsing quotidien, export Lakebase, stop/start de l'app) : passer les plannings `PAUSED` à `UNPAUSED` (`parsing_schedule_pause` dans `databricks.yml`, `pause_status` dans `resources/*.yml`), puis redéployer.
 - Si le pipeline de parsing DEV est réactivé (sous le SP DEV) : vérifier que le SP peut synchroniser les index et utiliser l'endpoint `qualibot` créés sous votre identité (CAN_MANAGE sur l'endpoint au besoin).
 - Copier aussi les images du volume `uat_proj.qualibot.images` (seulement si un run de parsing DEV doit retravailler des images déjà extraites).
-- Ne pas toucher ici à `qualibot-uat` ou `prod` : voir `runbooks/uat.md` (dont le bloc D, qui déploie la branche du chatbot en UAT) et `runbooks/prod.md`. Il faut d'abord que le DEV soit validé.
+- Ne pas toucher ici à `uat` ou `prod` : voir `runbooks/uat.md` (dont le bloc D, qui déploie la branche du chatbot en UAT) et `runbooks/prod.md`. Il faut d'abord que le DEV soit validé.
 
 ## Fait
 

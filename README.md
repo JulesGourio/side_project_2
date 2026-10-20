@@ -178,8 +178,8 @@ bun run build
 | Deploy script `-AppEnv` | Bundle target | Databricks app | CLI profile | Workspace |
 |---|---|---|---|---|
 | `dev` | `dev` | `qualibot` | `DEV` | `dbc-c623749d-731b` |
-| `uat` | `qualibot-uat` | `qualibot` | `UAT` | `dbc-3a17bfce-9e88` |
-| `prod` | `qualibot-prod` | `qualibot` | `qualibot-prod` | `dbc-77b87d5a-6bcb` |
+| `uat` | `uat` | `qualibot` | `UAT` | `dbc-3a17bfce-9e88` |
+| `prod` | `prod` | `qualibot` | `qualibot-prod` | `dbc-77b87d5a-6bcb` |
 
 The full host names are in `databricks.yml`. The CLI profile of the target must be authenticated.
 

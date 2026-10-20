@@ -358,7 +358,7 @@ resources:
         pause_status: ${var.parsing_schedule_pause}
 
 targets:
-  qualibot-uat:
+  uat:
     resources:
       jobs:
         parsing_pipeline:
@@ -366,7 +366,7 @@ targets:
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39  # job-runner-sa-uat
 
-  qualibot-prod:
+  prod:
     resources:
       jobs:
         parsing_pipeline:

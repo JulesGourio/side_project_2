@@ -152,7 +152,7 @@ targets:
             timezone_id: "Europe/Brussels"
             pause_status: PAUSED
 
-  qualibot-uat:
+  uat:
     resources:
       jobs:
         create_chat_experiment_uat:
@@ -298,7 +298,7 @@ targets:
             timezone_id: "Europe/Brussels"
             pause_status: PAUSED
 
-  qualibot-prod:
+  prod:
     resources:
       jobs:
         create_chat_experiment_prod:

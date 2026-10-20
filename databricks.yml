@@ -185,7 +185,7 @@ resources:
 
 targets:
   # ---------------------------------------------------------------------------
-  # DEV target: full copy of qualibot-uat in the DEV workspace.
+  # DEV target: full copy of uat in the DEV workspace.
   # Own app, Lakebase project, Vector Search endpoint and dev_proj.qualibot tables, loaded from a UAT snapshot by the copy_uat_to_dev job (resources/dev_copy.yml).
   # Every new schedule is PAUSED. run_as is the DEV service principal: job-runner-sa-uat is UAT-scoped and silently ignored here.
   # The in-app group check is off for this target only: CAPS_BYPASS in utils/deploy/target_env.json.
@@ -343,11 +343,12 @@ targets:
       parsing_archive_notices_in_rag: "false"
       parsing_build_chunks_full: "false"
 
-  qualibot-uat:
+  uat:
     default: true
     workspace:
       host: https://dbc-3a17bfce-9e88.cloud.databricks.com
-      root_path: /Workspace/.bundle/${bundle.name}/${bundle.target}
+      # Pinned: the bundle state of the deployed UAT lives in this folder. A new target name must not move it.
+      root_path: /Workspace/.bundle/${bundle.name}/qualibot-uat
     resources:
       postgres_projects:
         qualibot-history:
@@ -495,11 +496,12 @@ targets:
       job_cluster_policy_id_S: "000E7559CADE5290"
       notification_email: "jules.gourio.external@latecoere.aero"
 
-  qualibot-prod:
+  prod:
     mode: production
     workspace:
       host: https://dbc-77b87d5a-6bcb.cloud.databricks.com
-      root_path: /Workspace/.bundle/${bundle.name}/${bundle.target}
+      # Pinned like uat: keeps the state folder the prod target has always used.
+      root_path: /Workspace/.bundle/${bundle.name}/qualibot-prod
     resources:
       postgres_projects:
         qualibot-history:

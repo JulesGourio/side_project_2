@@ -13,8 +13,8 @@ $ErrorActionPreference = 'Stop'
 # are in target_env.json, rendered by render_target_config_env.py.
 $Targets = @{
     dev        = @{ Target = 'dev';               AppName = 'qualibot';           Profile = 'DEV' }
-    uat        = @{ Target = 'qualibot-uat';      AppName = 'qualibot';           Profile = 'UAT' }
-    prod       = @{ Target = 'qualibot-prod';     AppName = 'qualibot';           Profile = 'qualibot-prod' }
+    uat        = @{ Target = 'uat';               AppName = 'qualibot';           Profile = 'UAT' }
+    prod       = @{ Target = 'prod';              AppName = 'qualibot';           Profile = 'qualibot-prod' }
 }
 
 if (-not $Targets.ContainsKey($AppEnv)) {

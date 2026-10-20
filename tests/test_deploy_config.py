@@ -77,7 +77,7 @@ def test_caps_bypass_only_on_dev():
 # The chat experiment path is read by the chat jobs (variable of databricks.yml) and by the app (target_env.json): a move of
 # the experiment that updates only one of them silently stops the traces.
 BUNDLE_PATH = os.path.join(HERE, '..', 'databricks.yml')
-_BUNDLE_TARGETS = {'dev': 'dev', 'uat': 'qualibot-uat', 'prod': 'qualibot-prod'}
+_BUNDLE_TARGETS = {'dev': 'dev', 'uat': 'uat', 'prod': 'prod'}
 
 
 def test_chat_experiment_path_is_the_same_for_the_jobs_and_the_app():
