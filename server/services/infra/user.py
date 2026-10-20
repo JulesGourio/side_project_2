@@ -148,8 +148,9 @@ def _live_caps_via_scim(token: str) -> dict:
     w = WorkspaceClient(host=get_workspace_url(), token=token, auth_type='pat')
     me = w.current_user.me()
     names = {g.display for g in (me.groups or []) if g.display}
-    return {'can_chat': bool(names & _CAPS_CHAT_GROUPS), 'can_compare': bool(names & _CAPS_COMPARE_GROUPS), 'groups': [],
-            'email': me.user_name or '', 'display_name': me.display_name or ''}
+    matched = names & (_CAPS_CHAT_GROUPS | _CAPS_COMPARE_GROUPS)
+    return {'can_chat': bool(names & _CAPS_CHAT_GROUPS), 'can_compare': bool(names & _CAPS_COMPARE_GROUPS),
+            'groups': sorted(matched), 'email': me.user_name or '', 'display_name': me.display_name or ''}
 
 
 async def _remember_identity(forwarded: str, email: str, display_name: str) -> None:
@@ -242,7 +243,8 @@ async def get_capabilities(request: Request) -> dict:
         return dict(_OPEN_CAPS)
 
     email, display_name = caps.pop('email', ''), caps.pop('display_name', '')
-    logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s)', key, caps['can_chat'], caps['can_compare'], source)
+    logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s) groups=%s', key, caps['can_chat'], caps['can_compare'],
+                source, caps['groups'])
     _caps_cache[key] = (now + _CAPS_TTL_S, caps)
     await _remember_identity(forwarded, email, display_name)
     return caps
