@@ -6,7 +6,7 @@ PowerShell, depuis la racine du projet sur la machine de déploiement. Pour DEV 
 
 > **Branches.** Les blocs A, B et C sont sur la branche **`audit/doc-compare`**. L'étape 0 et le bloc D sont sur la branche **`feature/chat-vsi-merged-on-impact-search`**. Le zip à déployer est celui de la branche indiquée par le bloc.
 >
-> **Interdit avant le bloc D5** : cette branche ne se déploie sur `qualibot-uat` qu'au bloc D5, dans son ordre. Son code attend des tables et un index **sans suffixe** (`chunks`, `chunks_index`, `parsing_checkpoint`…) et n'a plus de Knowledge Assistant. Un `bundle deploy` de cette branche avant D5 ferait repartir le pipeline UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui n'existe pas encore.
+> **Interdit avant le bloc D5** : cette branche ne se déploie sur `uat` qu'au bloc D5, dans son ordre. Son code attend des tables et un index **sans suffixe** (`chunks`, `chunks_index`, `parsing_checkpoint`…) et n'a plus de Knowledge Assistant. Un `bundle deploy` de cette branche avant D5 ferait repartir le pipeline UAT de tables vides (re-parsing GPU de tout le corpus) et l'app chercherait un index qui n'existe pas encore.
 
 Nettoyage du code à rejouer : `runbooks/retest.md` (DEV d'abord).
 
@@ -14,11 +14,11 @@ Nettoyage du code à rejouer : `runbooks/retest.md` (DEV d'abord).
 
 | Bloc | Quoi | Cible | Touche le chatbot ? |
 |---|---|---|---|
-| 0 | Migration des tables et volumes vers `uat_proj.qualibot` | `uat_proj`, `qualibot-uat` | non |
-| A | Valider l'app (impact search v2 + audit comparaison) sur `qualibot-uat` | `qualibot-uat` | non |
-| B | Pipeline : phase de test « documents d'avant 2018 » | `qualibot-uat` (job seul) | non |
-| C | Mettre l'app en service sur `qualibot-uat` | `qualibot-uat` | non |
-| D | Activations après validation (index complet, fiches, bascule du chatbot) | `qualibot-uat` | **oui** pour D3 à D5 |
+| 0 | Migration des tables et volumes vers `uat_proj.qualibot` | `uat_proj`, `uat` | non |
+| A | Valider l'app (impact search v2 + audit comparaison) sur `uat` | `uat` | non |
+| B | Pipeline : phase de test « documents d'avant 2018 » | `uat` (job seul) | non |
+| C | Mettre l'app en service sur `uat` | `uat` | non |
+| D | Activations après validation (index complet, fiches, bascule du chatbot) | `uat` | **oui** pour D3 à D5 |
 
 A et B sont indépendants et peuvent se faire dans n'importe quel ordre. D ne se fait qu'après B, étape par étape, sur décision explicite.
 
@@ -26,7 +26,7 @@ A et B sont indépendants et peuvent se faire dans n'importe quel ordre. D ne se
 
 ### 0. Migration vers `uat_proj.qualibot`
 
-Les noms des jobs n'ont plus de suffixe de cible (`D_1_Qualibot_Parsing_Pipeline`, et non plus `..._qualibot-uat`). Le premier `bundle deploy` de `qualibot-uat` renomme les jobs existants en place (même identifiant, même planning) : pas de doublon.
+Les noms des jobs n'ont plus de suffixe de cible (`D_1_Qualibot_Parsing_Pipeline`, et non plus `..._qualibot-uat`). Le premier `bundle deploy` de `uat` renomme les jobs existants en place (même identifiant, même planning) : pas de doublon.
 
 L'app et le pipeline vivent dans `uat_proj.qualibot`. Les tables `*_v1` et les volumes de l'ancien emplacement ne servent qu'à la copie unique de cette étape. Rien ne touche à l'app tant que le déploiement n'a pas été accordé (0.7).
 
@@ -84,12 +84,12 @@ databricks volumes create uat_proj qualibot images MANAGED --profile UAT
 databricks fs cp -r dbfs:/Volumes/uat_landingzone/qualibot/images dbfs:/Volumes/uat_proj/qualibot/images --profile UAT
 ```
 
-Le volume `staging` n'est pas copié (échanges transitoires). Les trois volumes déclarés dans le bundle pour `qualibot-uat` (`doc_compare`, `test`, `images`) doivent être liés au bundle avant le déploiement, sinon celui-ci essaie de les recréer :
+Le volume `staging` n'est pas copié (échanges transitoires). Les trois volumes déclarés dans le bundle pour `uat` (`doc_compare`, `test`, `images`) doivent être liés au bundle avant le déploiement, sinon celui-ci essaie de les recréer :
 
 ```powershell
-databricks bundle deployment bind qualibot_doc_compare uat_proj.qualibot.doc_compare -t qualibot-uat --profile UAT   # à lancer par le SP (même règle que DEV : pipeline Bitbucket), pas avec le profil personnel
-databricks bundle deployment unbind qualibot_test -t qualibot-uat --profile UAT
-databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t qualibot-uat --profile UAT
+databricks bundle deployment bind qualibot_doc_compare uat_proj.qualibot.doc_compare -t uat --profile UAT   # à lancer par le SP (même règle que DEV : pipeline Bitbucket), pas avec le profil personnel
+databricks bundle deployment unbind qualibot_test -t uat --profile UAT
+databricks bundle deployment bind qualibot_images uat_proj.qualibot.images -t uat --profile UAT
 ```
 
 **0.3 — Index Vector Search `uat_proj.qualibot.chunks_index`**
@@ -127,7 +127,7 @@ GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA uat_proj.qualibot TO `<
 **0.5 — Tables chat depuis Lakebase (run ponctuel)**
 
 ```powershell
-databricks bundle run -t qualibot-uat lakebase_export --profile UAT
+databricks bundle run -t uat lakebase_export --profile UAT
 ```
 
 Ce job exporte Lakebase vers le volume, puis recharge `chat_*` et `app_errors` dans `uat_proj.qualibot`.
@@ -147,14 +147,14 @@ Attendu : toutes les tables de 0.2 et les tables chat présentes, `status.ready`
 Ce déploiement fait partie du bloc D5 : il ne se lance pas avant D5 (voir l'avertissement en tête de fichier), et jamais sans accord explicite. Une fois accordé :
 
 ```powershell
-databricks bundle deploy -t qualibot-uat --profile UAT
+databricks bundle deploy -t uat --profile UAT
 ```
 
 Puis, une fois le déploiement fait, les jobs MLflow de la cible (expérience des traces du chat, en tables Unity Catalog, et registre des prompts : `runbooks/uat_bascule.md` Q13) :
 
 ```powershell
-databricks bundle run -t qualibot-uat create_chat_experiment_uat --profile UAT
-databricks bundle run -t qualibot-uat register_chat_prompts_uat --profile UAT
+databricks bundle run -t uat create_chat_experiment_uat --profile UAT
+databricks bundle run -t uat register_chat_prompts_uat --profile UAT
 ```
 
 Le job de scoring `score_chat_traces_uat` reste en pause ; son premier lancement se fait à la main, en `dry_run` (estimation seulement).
@@ -171,7 +171,7 @@ databricks jobs list --profile UAT -o json | ConvertFrom-Json | Where-Object { $
 
 Pour chaque `job_id` affiché : `databricks jobs delete <JOB_ID> --profile UAT` (supprime le job, pas de données).
 
-Ce DROP ne se lance qu'après le contrôle de 0.7 : chat et comparaison d'impact validés, logs de l'app sans `live group check failed`. Puis, dans l'éditeur SQL de la base Lakebase `doccompare` (projet `qualibot`, branche `production`), une fois que `qualibot-uat` n'utilise plus les colonnes :
+Ce DROP ne se lance qu'après le contrôle de 0.7 : chat et comparaison d'impact validés, logs de l'app sans `live group check failed`. Puis, dans l'éditeur SQL de la base Lakebase `doccompare` (projet `qualibot`, branche `production`), une fois que `uat` n'utilise plus les colonnes :
 
 ```sql
 ALTER TABLE users DROP COLUMN IF EXISTS can_chat, DROP COLUMN IF EXISTS can_compare, DROP COLUMN IF EXISTS groups;
@@ -181,7 +181,7 @@ Les droits sont vérifiés à chaque requête par l'app (`is_account_group_membe
 
 **0.9 — Suppression de la cible de test `qualibot-uat-test` (tout doit disparaître) — fait, confirmé le 2026-10-15**
 
-Il n'y a plus de cible de test : la bascule se fait directement sur `qualibot-uat`. Le `bundle destroy` a besoin du code qui déclare la cible : il se lance donc depuis le commit `6384ff0`, le dernier qui la contient. Le dossier de travail ne la contient plus. Le zip `qualibot-destroy.zip` contient `databricks.yml` et `resources/` tels qu'ils étaient au commit `6384ff0` : c'est tout ce qu'il faut pour le destroy.
+Il n'y a plus de cible de test : la bascule se fait directement sur `uat`. Le `bundle destroy` a besoin du code qui déclare la cible : il se lance donc depuis le commit `6384ff0`, le dernier qui la contient. Le dossier de travail ne la contient plus. Le zip `qualibot-destroy.zip` contient `databricks.yml` et `resources/` tels qu'ils étaient au commit `6384ff0` : c'est tout ce qu'il faut pour le destroy.
 
 1. Code de la cible (PowerShell, à la racine du projet) :
 
@@ -295,9 +295,9 @@ DROP SCHEMA IF EXISTS dev_lab.lab_jules CASCADE;
 
 Les tables `*_v1`, les index `*_v1` et les volumes de l'ancien emplacement ne sont supprimés par aucune étape de ce runbook : ils restent la source de la copie de l'étape 0. Leur suppression, si elle est décidée, se fait à la main, après validation complète du chat, de la comparaison d'impact, du parsing et du tableau de bord d'usage.
 
-### A. Valider l'app sur `qualibot-uat` (branche `audit/doc-compare`)
+### A. Valider l'app sur `uat` (branche `audit/doc-compare`)
 
-Pas de cible de test : les contrôles ci-dessous se font sur `qualibot-uat` juste après le déploiement de C1 (C1 remplace cette étape de déploiement).
+Pas de cible de test : les contrôles ci-dessous se font sur `uat` juste après le déploiement de C1 (C1 remplace cette étape de déploiement).
 
 - [ ] **A2. Impact search v2** : comparer deux fichiers, puis « Judge Impacted Docs » — les documents arrivent un par un, « Show passages » montre la phrase surlignée, la vue « By change » et « Export Excel » fonctionnent ; « Cancel » pendant la recherche l'arrête.
 
@@ -333,20 +333,20 @@ Comportement du code, par défaut (aucun index modifié, rien de nouveau dans le
 - **`archive_notices`** : une fiche par vieux document (référence, titre, indice, type, date, « contenu non indexé »), parsé ou non. Réécrite à chaque run, sans GPU. Lue par aucun index.
 - **`chunks_full`** : `chunks` + `chunks_archive`. Construite, mais l'index `chunks_full_index` n'est **pas** créé.
 
-Le job n'existe que sur `qualibot-uat`. `bundle deploy` seul met à jour le job et ses notebooks ; il ne redéploie pas le code de l'app (pas de `apps deploy`).
+Le job n'existe que sur `uat`. `bundle deploy` seul met à jour le job et ses notebooks ; il ne redéploie pas le code de l'app (pas de `apps deploy`).
 
 - [ ] **B1. Déployer le job, plafond à 0**
 
   ```powershell
   Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:BUNDLE_VAR_parsing_archive_max_docs -ErrorAction SilentlyContinue
-  databricks bundle deploy --target qualibot-uat --profile UAT
+  databricks bundle deploy --target uat --profile UAT
   ```
 
 - [ ] **B2. Run n°1, sans aucun vieux document parsé** (ou attendre le run de 4 h)
 
   ```powershell
-  databricks bundle run parsing_pipeline --target qualibot-uat --profile UAT
+  databricks bundle run parsing_pipeline --target uat --profile UAT
   ```
 
 - [ ] **B3. Vérifier le run n°1** (éditeur SQL, workspace UAT)
@@ -375,9 +375,9 @@ Le job n'existe que sur `qualibot-uat`. `bundle deploy` seul met à jour le job 
 
   ```powershell
   $env:BUNDLE_VAR_parsing_archive_max_docs = '100'
-  databricks bundle deploy --target qualibot-uat --profile UAT
+  databricks bundle deploy --target uat --profile UAT
   Remove-Item Env:BUNDLE_VAR_parsing_archive_max_docs
-  databricks bundle run parsing_pipeline --target qualibot-uat --profile UAT
+  databricks bundle run parsing_pipeline --target uat --profile UAT
   ```
 
   Le plafond reste à 100 dans le job jusqu'au prochain `bundle deploy` : les runs de nuit ne parsent donc rien de plus.
@@ -409,7 +409,7 @@ Le job n'existe que sur `qualibot-uat`. `bundle deploy` seul met à jour le job 
 
 - [ ] **B6. Transmettre les résultats** (durée du run, statuts en erreur, qualité des fiches). Décision ensuite sur le bloc D.
 
-### C. Mettre l'app en service sur `qualibot-uat`
+### C. Mettre l'app en service sur `uat`
 
 Après A5 (fusion décidée). App seule : pas de `-Infra`.
 
@@ -443,7 +443,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
 
 - [ ] **D3. Règle « documents archivés » dans le chatbot** (avant D4) : la section « Archived documents » de `server/prompts/chat/system/base.md` doit être relue et validée. Toute modification est faite dans le code, puis l'app est redéployée.
 
-- [ ] **D4. Mettre les fiches dans l'index du chatbot** (après D3 et D5) : passer `parsing_archive_notices_in_rag` à `true` pour `qualibot-uat` ; `bundle deploy` + un run les ajoutent à `chunks` et l'index se synchronise. Tester ensuite dans le chatbot :
+- [ ] **D4. Mettre les fiches dans l'index du chatbot** (après D3 et D5) : passer `parsing_archive_notices_in_rag` à `true` pour `uat` ; `bundle deploy` + un run les ajoutent à `chunks` et l'index se synchronise. Tester ensuite dans le chatbot :
   - demander un vieux document par sa référence : il le signale, dit que le contenu n'est pas disponible, renvoie à Intraqual (lien sous la réponse) ;
   - poser une question sans rapport : aucune fiche citée.
 
@@ -488,8 +488,8 @@ Chaque point est indépendant et demande une modification de la configuration : 
   - [ ] **D5.4. Re-découper le corpus dans `chunks`** (aucun re-parsing GPU : les fichiers déjà parsés sont relus depuis `parsing_checkpoint` ; les passages d'image sont reconstruits depuis les descriptions existantes, sans appel LLM). Copier le zip de cette branche, puis :
 
     ```powershell
-    databricks bundle deploy -t qualibot-uat --profile UAT --var="parsing_run_mode=full"
-    databricks bundle run parsing_pipeline -t qualibot-uat --profile UAT
+    databricks bundle deploy -t uat --profile UAT --var="parsing_run_mode=full"
+    databricks bundle run parsing_pipeline -t uat --profile UAT
     ```
 
     Le run écrit `chunks`, `chunks_archive`, `parsed_documents`, puis crée l'index `uat_proj.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`. Sa dernière tâche remplit aussi le catalogue des documents de l'app (table Lakebase `doc_catalog` de `doccompare` : REF, titre, lien).
@@ -497,7 +497,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
   - [ ] **D5.5. Revenir au mode quotidien** (le planning repart, sur les nouvelles tables) :
 
     ```powershell
-    databricks bundle deploy -t qualibot-uat --profile UAT
+    databricks bundle deploy -t uat --profile UAT
     ```
 
   - [ ] **D5.6. Droits du SP de l'app UAT** (`qualibot`) :
@@ -521,32 +521,32 @@ Chaque point est indépendant et demande une modification de la configuration : 
   - [ ] **D5.8b. Exporter le journal pour la notation** : lancer une fois le job d'export Lakebase (`D_1_Qualibot_Lakebase_Export_To_Volume`) ; il écrit toutes les tables, dont `chat_turns` et `chat_retrieved_chunks`, dans le volume de staging, et sa 2e tâche les charge aussi dans `uat_proj.qualibot` (avec `errors`) :
 
     ```powershell
-    databricks bundle run lakebase_export -t qualibot-uat --profile UAT
+    databricks bundle run lakebase_export -t uat --profile UAT
     ```
 
     ```sql
     SELECT COUNT(*) FROM uat_proj.qualibot.chat_retrieved_chunks;
     ```
 
-    La notation courante est `utils/evaluation/score_chat_traces.py` (job `score_chat_traces_uat`, en pause). Le job de notation de l'ancien assistant n'est plus dans le bundle : le prochain `bundle deploy -t qualibot-uat` (sur accord) le supprime.
+    La notation courante est `utils/evaluation/score_chat_traces.py` (job `score_chat_traces_uat`, en pause). Le job de notation de l'ancien assistant n'est plus dans le bundle : le prochain `bundle deploy -t uat` (sur accord) le supprime.
 
   - [ ] **D5.8c. Révisions des documents dans le catalogue** (après D5.7 : c'est l'app qui ajoute les colonnes `doc_catalog.revision` / `doc_date`, la tâche de D5.4 a donc écrit le catalogue sans elles) :
 
     ```powershell
-    databricks bundle run parsing_pipeline -t qualibot-uat --profile UAT --only 6_update_kb_metadata
+    databricks bundle run parsing_pipeline -t uat --profile UAT --only 6_update_kb_metadata
     ```
 
     Puis redémarrer l'app UAT (Apps → `qualibot` → Stop / Start), ou attendre 30 min. Vérifier comme `runbooks/dev.md` 0.11 et 0.13.
 
-  - [ ] **D5.8d. Alertes SQL** (déployées par le bundle avec `deploy-uat-jobs`, en pause : rien à créer à la main). Vérifier que six alertes `Qualibot - …` existent : `databricks bundle summary -t qualibot-uat --profile UAT`. Activer : `alerts_pause_status` à `UNPAUSED` pour `qualibot-uat` dans `databricks.yml`, puis `deploy-uat-jobs`, après décision écrite. `job_failures` demande SELECT sur `system.lakeflow` pour le SP UAT (admin du metastore).
+  - [ ] **D5.8d. Alertes SQL** (déployées par le bundle avec `deploy-uat-jobs`, en pause : rien à créer à la main). Vérifier que six alertes `Qualibot - …` existent : `databricks bundle summary -t uat --profile UAT`. Activer : `alerts_pause_status` à `UNPAUSED` pour `uat` dans `databricks.yml`, puis `deploy-uat-jobs`, après décision écrite. `job_failures` demande SELECT sur `system.lakeflow` pour le SP UAT (admin du metastore).
   - [ ] **D5.9. Supprimer l'ancien** (quelques jours plus tard, une fois l'app validée) :
     - les 3 KA UAT (`qualibot_ALL_v2` / `_AS_v2` / `_IS_v2`, UI **Agents** → ⋮ → Delete) — le KA de test `trace_test` aussi s'il existe encore ;
     Les objets `_v1` (tables, index, volumes) ne sont pas supprimés par ce runbook (voir étape 0.11).
 
-### E. Sonnet 5.5 pour l'analyse de comparaison (à faire avec le déploiement de `qualibot-uat`, pas avant)
+### E. Sonnet 5.5 pour l'analyse de comparaison (à faire avec le déploiement de `uat`, pas avant)
 
 Le modèle d'analyse des changements passe de `databricks-claude-sonnet-4-6` à `databricks-claude-sonnet-5-5` (`app.yaml`). Il n'y a rien à
-accorder (voir `utils/grants/README.md`) : le changement arrive avec le prochain déploiement de `qualibot-uat`, donc après la décision D5.
+accorder (voir `utils/grants/README.md`) : le changement arrive avec le prochain déploiement de `uat`, donc après la décision D5.
 Avant ce déploiement, vérifier que l'endpoint existe sur UAT (Attendu : `"name": "databricks-claude-sonnet-5-5"`) :
 
 - [ ] **E1. Endpoint présent** :

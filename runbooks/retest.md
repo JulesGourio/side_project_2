@@ -175,7 +175,7 @@ La sortie de 0.2 (PowerShell et SQL), puis l'erreur de chaque pas qui échoue, o
 ## 1. Contrôles de code et de configuration
 
 - [ ] `python -m pytest -q` (depuis la racine du dépôt)
-- [ ] `databricks bundle validate -t dev --profile DEV`, puis `databricks bundle validate -t qualibot-prod --profile qualibot-prod` : aucun chemin de notebook introuvable, aucune variable inconnue
+- [ ] `databricks bundle validate -t dev --profile DEV`, puis `databricks bundle validate -t prod --profile qualibot-prod` : aucun chemin de notebook introuvable, aucune variable inconnue
 - [ ] `databricks bundle plan -t dev --profile DEV` avant le déploiement : aucune ressource en `delete` ni `recreate` (les clés de ressources ne changent pas)
 - [ ] `python runbooks/scripts/compare/compare_preview.py <a.docx> <b.docx>` une fois : les imports de `runbooks/scripts/` sont bons
 - [ ] Après `bundle deploy -t dev` : les noms des jobs suivent `<D|W|Z>_<niveau>_<Domaine>_<Rôle>` :
@@ -235,7 +235,7 @@ Les notebooks sont `create_proj_<asset>.py` et `update_proj_vector_indexes.py` d
 
 ## 8. Avant le premier déploiement UAT / PROD (sur accord)
 
-Au prochain `bundle deploy -t qualibot-uat`, Databricks supprime les jobs qui ne sont plus déclarés (jobs de l'ancien assistant et de la notation associée, job de migration de test, job de setup de schéma, job de synchronisation des droits). Ne pas déployer l'UAT pour cela seul.
+Au prochain `bundle deploy -t uat`, Databricks supprime les jobs qui ne sont plus déclarés (jobs de l'ancien assistant et de la notation associée, job de migration de test, job de setup de schéma, job de synchronisation des droits). Ne pas déployer l'UAT pour cela seul.
 
 - [ ] Le job de parsing s'appelle `D_1_Qualibot_Parsing_Pipeline` (sans suffixe de cible) : après le déploiement, `databricks jobs list --profile DEV -o json | ConvertFrom-Json | Where-Object { $_.settings.name -like '*Qualibot*' } | ForEach-Object { $_.settings.name }` ne montre aucun nom qui finit par `_dev`, `_uat` ou `_prod`.
 - [ ] Le job `qualibot-sync-user-capabilities-uat` (hors bundle) se supprime : `runbooks/uat.md` étape 0.8.

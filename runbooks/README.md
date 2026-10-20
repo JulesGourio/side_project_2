@@ -27,7 +27,7 @@ The operator runbooks (`dev.md`, `uat.md`, `prod.md`, `retest.md`) are written i
 
 - Copy of the UAT corpus to DEV: `dev.md` 00.3, 00.4 and block C.
 - Lakebase export to the volume, loading of the chat tables: `uat.md` step 0.5 (UAT) and `dev.md` 00.6 (DEV).
-- Validation of UAT on `qualibot-uat`: `uat.md` block A.
+- Validation of UAT on `uat`: `uat.md` block A.
 - Parsing, indexes and metadata: `uat.md` blocks B and D; `dev.md` block Q.
 - Trace scoring and the MLflow experiment: `dev.md` 0.8, 0.9 and 0.14.
 - Scripts: the table below.

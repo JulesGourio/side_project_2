@@ -25,8 +25,8 @@ python utils/deploy/render_target_config_env.py <dev|uat|prod> [output_path]
 | `-AppEnv` | Bundle target | App | CLI profile |
 |---|---|---|---|
 | `dev` | `dev` | `qualibot` | `DEV` |
-| `uat` (default) | `qualibot-uat` | `qualibot` | `UAT` |
-| `prod` | `qualibot-prod` | `qualibot` | `qualibot-prod` |
+| `uat` (default) | `uat` | `qualibot` | `UAT` |
+| `prod` | `prod` | `qualibot` | `qualibot-prod` |
 
 ## What the script does
 

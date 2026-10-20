@@ -198,7 +198,7 @@ ORDER BY perdus DESC LIMIT 50;
 
 Aucune suppression avant lecture des résultats ; une correction éventuelle passe par un job SP, puis une resynchronisation de `chunks_index`.
 
-Résultat (2026-10-19) : 315 IDDOC hors manifeste portent des chunks (10 885 chunks, surtout du texte) et 41 IDDOC hors manifeste ont des lignes dans `image_metadata`. Cause : en mode `full`, `build_processed_files_and_chunks` et `build_image_metadata` ne filtrent pas sur le périmètre (le filtre n'existe que pour `incremental` et `rechunk`), donc la reconstruction reprend tout le checkpoint, révisions remplacées comprises. Correction : `parsing_run_mode: "rechunk"` pour `qualibot-uat` (purge des IDDOC sortis du périmètre à `2_manifest`, puis reconstruction filtrée), `deploy-uat-jobs`, run de `D_1_Qualibot_Parsing_Pipeline` (J5). Après le run, rejouer les requêtes 5 et 3 : zéro IDDOC hors manifeste. Puis J7 : retour à `incremental`.
+Résultat (2026-10-19) : 315 IDDOC hors manifeste portent des chunks (10 885 chunks, surtout du texte) et 41 IDDOC hors manifeste ont des lignes dans `image_metadata`. Cause : en mode `full`, `build_processed_files_and_chunks` et `build_image_metadata` ne filtrent pas sur le périmètre (le filtre n'existe que pour `incremental` et `rechunk`), donc la reconstruction reprend tout le checkpoint, révisions remplacées comprises. Correction : `parsing_run_mode: "rechunk"` pour `uat` (purge des IDDOC sortis du périmètre à `2_manifest`, puis reconstruction filtrée), `deploy-uat-jobs`, run de `D_1_Qualibot_Parsing_Pipeline` (J5). Après le run, rejouer les requêtes 5 et 3 : zéro IDDOC hors manifeste. Puis J7 : retour à `incremental`.
 
 ```sql
 -- 10. Documents avec moins de chunks, avec appartenance au manifeste
@@ -242,11 +242,11 @@ FROM uat_proj.qualibot.parsing_checkpoint WHERE IDDOC IN (25372, 19226, 21324, 2
 
 Tout de suite : mettre en pause les plannings du jeu A encore `UNPAUSED` (export Lakebase, démarrage et arrêt du week-end). Après la réparation des chunks et sur accord écrit : supprimer les sept jobs du jeu A (`databricks jobs delete <id> --profile UAT`), puis seulement M1. Hors bundle, à décider : `qualibot-sync-user-capabilities-uat` (`851363031959777`, planning actif), probablement obsolète depuis que l'accès se vérifie par appartenance de groupe.
 
-- [ ] **J0c. Retirer les déclarations temporaires** `qualibot_schema` et `qualibot_test` de `databricks.yml` (cible `qualibot-uat`), commit et push. Les ressources de l'app (`doc-compare-volume` et `test-volume` vers `uat_landingzone`) restent temporaires jusqu'à S4.
+- [ ] **J0c. Retirer les déclarations temporaires** `qualibot_schema` et `qualibot_test` de `databricks.yml` (cible `uat`), commit et push. Les ressources de l'app (`doc-compare-volume` et `test-volume` vers `uat_landingzone`) restent temporaires jusqu'à S4.
 
 - [ ] **J1. Pause du planning du job de parsing UAT** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Pause* sur le planning.
 
-- [ ] **J2. Mode du rechunk** : `rechunk` = aucun parsing, `chunks` reconstruits depuis le checkpoint, `image_metadata` conservée telle quelle ; `full` = scanne tous les documents, parse ceux dont l'IDDOC n'a pas de ligne réutilisable pour les mêmes octets (au plus `parsing_max_parse_files`, 500 par défaut, sinon arrêt avant le parsing), reconstruit toutes les tables depuis le checkpoint, et copie le checkpoint dans `_pipeline_checkpoint_<horodatage>`. Le run UAT du 2026-10-16 a été lancé en `full` (ligne 456 de `databricks.yml`, cible `qualibot-uat`).
+- [ ] **J2. Mode du rechunk** : `rechunk` = aucun parsing, `chunks` reconstruits depuis le checkpoint, `image_metadata` conservée telle quelle ; `full` = scanne tous les documents, parse ceux dont l'IDDOC n'a pas de ligne réutilisable pour les mêmes octets (au plus `parsing_max_parse_files`, 500 par défaut, sinon arrêt avant le parsing), reconstruit toutes les tables depuis le checkpoint, et copie le checkpoint dans `_pipeline_checkpoint_<horodatage>`. Le run UAT du 2026-10-16 a été lancé en `full` (ligne 456 de `databricks.yml`, cible `uat`).
 
 - [ ] **J3. Déploiement des jobs UAT** (seulement si J0b est conforme) : copier le git dans `latec-compare`, puis Bitbucket, pipeline `deploy-uat-jobs`. Attendu : vert.
 
@@ -348,7 +348,7 @@ databricks fs ls dbfs:/Volumes/uat_landingzone/qualibot/doc_compare --profile UA
 databricks fs ls dbfs:/Volumes/uat_proj/qualibot/doc_compare --profile UAT
 ```
 
-- [ ] **Q5. Plan du déploiement** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur l'app, le schéma, les volumes ou le projet Lakebase. Dans `apps.doc-compare`, la ressource `doc-compare-volume` passe de `uat_landingzone.qualibot.doc_compare` à `uat_proj.qualibot.doc_compare` et `test-volume` disparaît : c'est voulu. Comparer l'ACL de Q1 avec la liste du bloc `qualibot-uat` de `databricks.yml` (CoreAdmin et CoreDev `CAN_MANAGE`, les groupes ChatBot et DocCompare `CAN_USE`, trois utilisateurs, le SP `job-runner-sa-uat`) : tout accès actuel absent de la liste serait retiré.
+- [ ] **Q5. Plan du déploiement** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, pipeline `plan-uat`. Attendu : aucun `delete` ni `recreate` sur l'app, le schéma, les volumes ou le projet Lakebase. Dans `apps.doc-compare`, la ressource `doc-compare-volume` passe de `uat_landingzone.qualibot.doc_compare` à `uat_proj.qualibot.doc_compare` et `test-volume` disparaît : c'est voulu. Comparer l'ACL de Q1 avec la liste du bloc `uat` de `databricks.yml` (CoreAdmin et CoreDev `CAN_MANAGE`, les groupes ChatBot et DocCompare `CAN_USE`, trois utilisateurs, le SP `job-runner-sa-uat`) : tout accès actuel absent de la liste serait retiré.
 
 - [ ] **Q5b. Propriété des tables Lakebase** (base `doccompare`, projet `qualibot`, branche `production`). Au démarrage l'app ajoute les tables et colonnes manquantes sous son propre rôle, et ne peut pas modifier une table qui appartient à un autre rôle : `Lakebase schema ensure failed … must be owner of table llm_requests` (journal du 2026-10-18 et du 2026-10-19). Les tables sont réparties entre trois propriétaires (le SP du job pour `catalog_metadata` et `doc_catalog`, l'app pour `compare_messages` et `compare_feedbacks`, la personne qui les a créées pour les 13 autres) et aucun de ces rôles ne peut en prendre un autre (`GRANT` refusé : `permission denied to grant role`). Le code ignore désormais une instruction refusée pour cette raison et continue (un seul avertissement par démarrage). Les 13 tables de la personne ne peuvent être modifiées que par elle : elle applique une fois le DDL manquant (ajouts seulement, aucun DROP, DELETE ni TRUNCATE, aucune ligne touchée). Les tables créées ainsi lui appartiennent, l'app les lit et les écrit déjà comme les 13 autres.
 
@@ -420,8 +420,8 @@ databricks apps logs qualibot --profile UAT --tail-lines 1000 --search "ERROR"
 - [ ] **Q8. Expérience MLflow et prompts du chat** (PowerShell, une fois le déploiement fait) :
 
 ```powershell
-databricks bundle run -t qualibot-uat create_chat_experiment_uat --profile UAT
-databricks bundle run -t qualibot-uat register_chat_prompts_uat --profile UAT
+databricks bundle run -t uat create_chat_experiment_uat --profile UAT
+databricks bundle run -t uat register_chat_prompts_uat --profile UAT
 ```
 
 `score_chat_traces_uat` reste en pause ; son premier lancement se fait à la main, en `dry_run`.
@@ -440,7 +440,7 @@ SELECT (SELECT COUNT(*) FROM messages) AS legacy, (SELECT COUNT(*) FROM compare_
 - [ ] **Q12. Export du journal de notation** (S8) : UI UAT, Workflows, `D_1_Qualibot_Lakebase_Export_To_Volume`, *Run now*. Le job est le même sur DEV, UAT et PROD (clé `lakebase_export`, tâches `export_lakebase_to_volume` et `import_lakebase_tables_to_delta`) et charge maintenant toutes les tables en Delta. Son ancienne clé `lakebase_export_uat_to_volume` disparaît : le plan de `deploy-uat-jobs` annonce un `delete` de cet ancien job et un `create` du nouveau (même nom affiché, nouvel identifiant, planning identique `UNPAUSED`). C'est voulu. Après le déploiement, lancer :
 
 ```powershell
-databricks bundle run lakebase_export -t qualibot-uat --profile UAT
+databricks bundle run lakebase_export -t uat --profile UAT
 ```
 
 Attendu dans la tâche d'import : `Tables to load: [...]`, une ligne par table non vide, et aucune ligne `left untouched`.
@@ -468,8 +468,8 @@ databricks warehouses get-permissions 5890912c31867b77 --profile UAT -o json
   3. **Créer l'expérience, puis lier les prompts** (la création réapplique les droits : `CAN_EDIT` à l'app, `CAN_MANAGE` à CoreAdmin et CoreDev) :
 
 ```powershell
-databricks bundle run -t qualibot-uat create_chat_experiment_uat --profile UAT
-databricks bundle run -t qualibot-uat register_chat_prompts_uat --profile UAT
+databricks bundle run -t uat create_chat_experiment_uat --profile UAT
+databricks bundle run -t uat register_chat_prompts_uat --profile UAT
 ```
 
   Attendu dans le journal du premier job : `experiment /Shared/Experiment/qualibot_chat_turns created (id <ID>), traces in uat_proj.qualibot_traces`. Si l'expérience existe déjà à ce chemin, elle est laissée telle quelle et **n'est pas** convertie : la supprimer ou changer le chemin. **Noter l'`<ID>`.**
@@ -558,7 +558,7 @@ SELECT COUNT(*) FROM uat_proj.qualibot.chat_retrieved_chunks;
 
 - [ ] **S9. Catalogue des révisions** : UI UAT, Workflows, `D_1_Qualibot_Parsing_Pipeline`, *Run now* (mode quotidien). Puis redémarrer l'app : UI UAT, Apps, `qualibot`, *Stop*, puis *Start*.
 
-- [ ] **S10. Alertes SQL** : déployées avec les jobs (J3), en pause. Activation (`alerts_pause_status` à `UNPAUSED`, cible `qualibot-uat`) sur décision écrite.
+- [ ] **S10. Alertes SQL** : déployées avec les jobs (J3), en pause. Activation (`alerts_pause_status` à `UNPAUSED`, cible `uat`) sur décision écrite.
 
 ## Phase D — nettoyage (plusieurs jours après la validation, accord écrit)
 

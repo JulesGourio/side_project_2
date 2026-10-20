@@ -1,6 +1,6 @@
 # Opérations manuelles — PROD (`prod_proj.qualibot`)
 
-Cible : `qualibot-prod` (profil CLI `qualibot-prod`). Rien ici ne déploie : le déploiement prod n'est jamais lancé sans accord explicite. Les commandes sont à taper à la main, dans l'ordre.
+Cible : `prod` (profil CLI `qualibot-prod`). Rien ici ne déploie : le déploiement prod n'est jamais lancé sans accord explicite. Les commandes sont à taper à la main, dans l'ordre.
 
 Le catalogue `prod_landingzone.intraqual` (source Intraqual) ne se touche pas.
 
@@ -54,10 +54,10 @@ databricks fs cp -r dbfs:/Volumes/prod_landingzone/qualibot/images dbfs:/Volumes
 Le volume `staging` n'est pas copié. Le bundle déclare `doc_compare`, `test`, `images`, `docling_models` pour prod : avant tout déploiement, lier les volumes créés pour éviter qu'il tente de les recréer :
 
 ```powershell
-databricks bundle deployment bind qualibot_doc_compare prod_proj.qualibot.doc_compare -t qualibot-prod --profile qualibot-prod
-databricks bundle deployment unbind qualibot_test -t qualibot-prod --profile qualibot-prod
-databricks bundle deployment bind qualibot_images prod_proj.qualibot.images -t qualibot-prod --profile qualibot-prod
-databricks bundle deployment bind qualibot_docling_models prod_proj.qualibot.docling_models -t qualibot-prod --profile qualibot-prod
+databricks bundle deployment bind qualibot_doc_compare prod_proj.qualibot.doc_compare -t prod --profile qualibot-prod
+databricks bundle deployment unbind qualibot_test -t prod --profile qualibot-prod
+databricks bundle deployment bind qualibot_images prod_proj.qualibot.images -t prod --profile qualibot-prod
+databricks bundle deployment bind qualibot_docling_models prod_proj.qualibot.docling_models -t prod --profile qualibot-prod
 ```
 
 ## 3. Tables (seulement si l'ancien schéma `prod_landingzone.qualibot` en contient, étape 0)
@@ -102,16 +102,16 @@ Les droits sur les volumes (`READ VOLUME`, `WRITE VOLUME`) sont à donner sur `p
 ## 6. Déploiement (sur accord explicite uniquement)
 
 ```powershell
-databricks bundle deploy -t qualibot-prod --profile qualibot-prod
+databricks bundle deploy -t prod --profile qualibot-prod
 ```
 
-Le job `D_1_Qualibot_Lakebase_Export_To_Volume` (clé `lakebase_export`) est créé sur PROD avec son planning en `PAUSED` : il exporte Lakebase vers `prod_proj.qualibot.staging` puis charge les tables en Delta dans `prod_proj.qualibot`. Un premier lancement à la main (`databricks bundle run lakebase_export -t qualibot-prod --profile qualibot-prod`) et un accord écrit avant de reprendre le planning.
+Le job `D_1_Qualibot_Lakebase_Export_To_Volume` (clé `lakebase_export`) est créé sur PROD avec son planning en `PAUSED` : il exporte Lakebase vers `prod_proj.qualibot.staging` puis charge les tables en Delta dans `prod_proj.qualibot`. Un premier lancement à la main (`databricks bundle run lakebase_export -t prod --profile qualibot-prod`) et un accord écrit avant de reprendre le planning.
 
 Après déploiement : jobs MLflow de la cible, puis vérification du chat et de la comparaison sur l'URL de l'app prod, et des logs de l'app (absence de `live group check failed`).
 
 ```powershell
-databricks bundle run -t qualibot-prod create_chat_experiment_prod --profile qualibot-prod
-databricks bundle run -t qualibot-prod register_chat_prompts_prod --profile qualibot-prod
+databricks bundle run -t prod create_chat_experiment_prod --profile qualibot-prod
+databricks bundle run -t prod register_chat_prompts_prod --profile qualibot-prod
 ```
 
 Le scoring `score_chat_traces_prod` reste en pause ; son premier lancement se fait à la main, en `dry_run`.
