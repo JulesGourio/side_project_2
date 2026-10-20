@@ -79,12 +79,12 @@ nothing reads them at run time.
 |---|---|---|
 | Comparison: analysis (summary and table of changes) | `databricks-claude-sonnet-5-5` (default) | `COMPARE_ANALYSIS_ENDPOINT` |
 | Comparison: impact search | Vector Search index | `COMPARE_IMPACT_INDEX` |
-| Comparison: judgement of each candidate document | `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` |
-| Comparison: single-document summary (text and images) | `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |
+| Comparison: judgement of each candidate document | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` |
+| Comparison: single-document summary (text and images) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |
 | Chat: answer | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_LLM_ENDPOINT`, `CHAT_LLM_FALLBACK_ENDPOINTS` |
 | Chat: query rewrite | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna`; `databricks-gemini-3-1-flash-lite` on every deployed target | `CHAT_REWRITE_ENDPOINT`, `CHAT_REWRITE_FALLBACK_ENDPOINTS` |
 | Chat: translation bridge (disabled) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_TRANSLATE_ENDPOINT`, `CHAT_TRANSLATE_FALLBACK_ENDPOINTS` |
-| Parsing: image description (vision) | `databricks-gpt-5-6-luna` | `PARSING_LLM_ENDPOINT` |
+| Parsing: image description (vision) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `PARSING_LLM_ENDPOINT` |
 | Parsing: passage embeddings | `databricks-qwen3-embedding-0-6b` | `embedding_model` of task `5_sync_index` |
 
 The exact values per target are in `app.yaml` (defaults) and `utils/deploy/target_env.json`

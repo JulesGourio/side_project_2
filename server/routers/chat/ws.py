@@ -140,6 +140,48 @@ async def chat_ws(websocket: WebSocket) -> None:
             )
         return saved[1]
 
+    async def _finish_turn() -> None:
+        """End of the engine stream: save and send the answer, or fail the turn when the stream held no text."""
+        nonlocal collected_sources, error_text, outcome
+        if not (user_content and accumulated):
+            # The engine finished without any text and without an error: tell the browser the turn failed, or
+            # it stays on "Thinking".
+            error_text = f'{endpoint}: stream ended with no text'
+            logger.warning('chat turn empty [ws]: division=%s endpoint=%s',
+                           division, endpoint)
+            log.fail('llm', 'EmptyAnswer', error_text)
+            await _persist('error', '')
+            await _send_tired()
+            return
+
+        final_content = _apply_citation_markers(''.join(accumulated), collected_citations)
+        # Re-surface documents the answer names in prose but the
+        # endpoint never annotated, so they become clickable chips.
+        collected_sources = augment_sources(''.join(accumulated), collected_sources)
+        # Number only the inline-cited sources; prose-only chips
+        # (catalog-resurfaced) stay numberless.
+        _number_sources(collected_sources, collected_citations)
+        with_document_info(collected_sources)
+        if translate_ctx:
+            with log.timed('translate_back'):
+                final_content = await translate_answer_back(final_content, translate_ctx, host, token)
+            log.data['answer_translated'] = translate_ctx.answer_translated
+            if translate_ctx.answer_error:
+                log.issue('translate_back_failed', 'translate_back', translate_ctx.answer_error)
+        log.data['sources_count'] = len(collected_sources)
+        log.answer = final_content
+        msg_id = await _persist('ok', final_content)
+        outcome = 'ok'
+        logger.info('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
+                    division, endpoint, len(collected_sources), len(collected_citations))
+        await websocket.send_json({
+            'type': 'done',
+            'session_id': session_id,
+            'message_id': msg_id,
+            'content': final_content,
+            'sources': collected_sources,
+        })
+
     try:
         messages_for_engine = messages
         if TRANSLATE_BRIDGE_ENABLED and user_content:
@@ -165,43 +207,7 @@ async def chat_ws(websocket: WebSocket) -> None:
 
         async for chunk in answer_stream:
             if chunk.startswith('data: [DONE]'):
-                if user_content and accumulated:
-                    final_content = _apply_citation_markers(''.join(accumulated), collected_citations)
-                    # Re-surface documents the answer names in prose but the
-                    # endpoint never annotated, so they become clickable chips.
-                    collected_sources = augment_sources(''.join(accumulated), collected_sources)
-                    # Number only the inline-cited sources; prose-only chips
-                    # (catalog-resurfaced) stay numberless.
-                    _number_sources(collected_sources, collected_citations)
-                    with_document_info(collected_sources)
-                    if translate_ctx:
-                        with log.timed('translate_back'):
-                            final_content = await translate_answer_back(final_content, translate_ctx, host, token)
-                        log.data['answer_translated'] = translate_ctx.answer_translated
-                        if translate_ctx.answer_error:
-                            log.issue('translate_back_failed', 'translate_back', translate_ctx.answer_error)
-                    log.data['sources_count'] = len(collected_sources)
-                    log.answer = final_content
-                    msg_id = await _persist('ok', final_content)
-                    outcome = 'ok'
-                    logger.info('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
-                                division, endpoint, len(collected_sources), len(collected_citations))
-                    await websocket.send_json({
-                        'type': 'done',
-                        'session_id': session_id,
-                        'message_id': msg_id,
-                        'content': final_content,
-                        'sources': collected_sources,
-                    })
-                else:
-                    # The engine finished without any text and without an error: tell the browser the turn failed, or
-                    # it stays on "Thinking".
-                    error_text = f'{endpoint}: stream ended with no text'
-                    logger.warning('chat turn empty [ws]: division=%s endpoint=%s',
-                                   division, endpoint)
-                    log.fail('llm', 'EmptyAnswer', error_text)
-                    await _persist('error', '')
-                    await _send_tired()
+                await _finish_turn()
                 break
 
             if not chunk.startswith('data: '):

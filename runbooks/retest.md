@@ -275,7 +275,7 @@ Notebooks : aucun changement de logique, seuls leurs imports changent (`quality`
 
 Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md`. Changements qui touchent le déploiement :
 
-- `app.yaml` : `CHAT_MAX_HISTORY` (10 messages) devient `CHAT_MAX_HISTORY_TOKENS` (8000 jetons estimés) ; `CHAT_TRANSLATE_ENDPOINT` passe à `databricks-gpt-6-luna` (repli `databricks-gpt-5-6-luna`). Aucune valeur dans `target_env.json`.
+- `app.yaml` : `CHAT_MAX_HISTORY` (10 messages) devient `CHAT_MAX_HISTORY_TOKENS` (8000 jetons estimés) ; `CHAT_TRANSLATE_ENDPOINT`, `COMPARE_IMPACT_ENDPOINT`, `COMPARE_SUMMARY_ENDPOINT` et `COMPARE_SUMMARY_IMAGE_ENDPOINT` passent à `databricks-gpt-6-luna` (repli `databricks-gpt-5-6-luna`). Aucune de ces valeurs n'est dans `target_env.json`.
 - Prompts : `system/as.md` et `system/is.md` sont remplacés par `system/division.md` (gabarit) et `system/as_reference_ordering.md`. Les clés `system_as` et `system_is` disparaissent, `system_division` et `system_as_references` apparaissent.
 - Routes : `vote` n'accepte plus que `up` ou `down` (422 de FastAPI à la place du 422 maison) ; `PUT /history/{id}/impact` reçoit toujours `{"impact_json": "…"}`.
 
@@ -284,4 +284,6 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Chat DEV : une question en division AS et une en division IS ; les deux répondent, et une liste de références AS est ordonnée QP puis MI.
 - [ ] Chat DEV : une conversation de plus de 8000 jetons (collage d'un long texte) répond sans erreur ; la dernière question est conservée.
 - [ ] Comparaison DEV : un PDF contre un PDF jusqu'à la fin de l'analyse, puis la recherche d'impact, puis l'ouverture de l'entrée dans l'historique (l'impact enregistré se recharge).
+- [ ] Résumé d'un document (texte puis image) dans l'onglet Comparaison : le résumé s'affiche ; le journal montre `databricks-gpt-6-luna`.
+- [ ] Recherche d'impact sur une paire déjà jugée avant le changement : comparer les verdicts avec l'ancien résultat (le juge est maintenant GPT-6 Luna, jamais mesuré pour ce rôle).
 - [ ] Vote pouce haut / bas dans le chat et dans la comparaison : enregistré.

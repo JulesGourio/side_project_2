@@ -88,7 +88,7 @@ env:
     value: "dev_proj.qualibot.chunks_index"
   # Not gemini-3-1-flash-lite for the judge: it gives false-positive impacts.
   - name: COMPARE_IMPACT_ENDPOINT
-    value: "databricks-gpt-5-6-luna"
+    value: "databricks-gpt-6-luna"
   # Up to MAX_QUERIES changes get their own query (the lowest-criticality ones share the last); PER_QUERY_RESULTS hits each (the API caps HYBRID num_results at 200).
   - name: COMPARE_IMPACT_MAX_QUERIES
     value: "30"
@@ -106,9 +106,9 @@ env:
   # Single-document summary ("Summarize" buttons, Compare tab): a cheap model, cached on the file hash (server/services/compare/summarize.py).
   # Images go to a vision endpoint (the one used for image description in the parsing pipeline, PARSING_LLM_ENDPOINT).
   - name: COMPARE_SUMMARY_ENDPOINT
-    value: "databricks-gpt-5-6-luna"
+    value: "databricks-gpt-6-luna"
   - name: COMPARE_SUMMARY_IMAGE_ENDPOINT
-    value: "databricks-gpt-5-6-luna"
+    value: "databricks-gpt-6-luna"
   # 300000 chars (~65-75k tokens) leaves room in the summary model's context window for the system prompt and output.
   - name: COMPARE_SUMMARY_MAX_CHARS
     value: "300000"

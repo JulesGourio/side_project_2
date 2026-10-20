@@ -28,8 +28,8 @@ DEFAULT_IMPACT_ARCHIVE_BEFORE = '2018-01-01'
 
 # Single-document summary: independent of the diff, on a cheap model. Images need a vision-capable model, hence the
 # separate endpoint.
-DEFAULT_SUMMARY_ENDPOINT = 'databricks-gpt-5-6-luna'
-DEFAULT_SUMMARY_IMAGE_ENDPOINT = 'databricks-gpt-5-6-luna'
+DEFAULT_SUMMARY_ENDPOINT = 'databricks-gpt-6-luna'
+DEFAULT_SUMMARY_IMAGE_ENDPOINT = 'databricks-gpt-6-luna'
 DEFAULT_SUMMARY_MAX_CHARS = 300000
 DEFAULT_SUMMARY_MAX_TOKENS = 800
 

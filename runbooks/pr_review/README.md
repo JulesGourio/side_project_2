@@ -18,11 +18,12 @@ nouveau lot. Récupération : `python debug\fetch_comment_pr.py` (copie de `runb
 `settings.json` (marqueurs de cellules Jupyter, réglage personnel) sort du suivi git et entre dans `.gitignore`.
 `.vscode/tasks.json` reste versionné : c'est la tâche « Pull + Deploy » que le README documente.
 
-**#885059913 — `README.md` L84 — « Switch to 6 Luna »** — Fait pour le chat, pas ailleurs.
-Le pont de traduction du chat tournait encore sur GPT-5.6 Luna : le défaut du code, `app.yaml` et la ligne du README passent à
-`databricks-gpt-6-luna` avec repli `databricks-gpt-5-6-luna` (les deux modèles du chat se sauvent l'un l'autre). Les autres lignes
-sur GPT-5.6 Luna (jugement et résumé de la comparaison, description d'images du parsing) ne sont pas touchées : les changer
-demande une mesure que je n'ai pas. **Question** : veux-tu aussi les passer à GPT-6 Luna ?
+**#885059913 — `README.md` L84 — « Switch to 6 Luna »** — Fait (lot 1, puis étendu le 2026-10-20 sur ta demande).
+Le pont de traduction du chat, le jugement et le résumé de la comparaison (texte et images) ont `databricks-gpt-6-luna` pour
+modèle principal, dans le code et dans `app.yaml`. Le repli est `databricks-gpt-5-6-luna` : le chat le prend dans `app.yaml`,
+la comparaison le choisit seule (`compare_chain` : l'autre modèle Luna). Le parsing (description d'images) était déjà sur
+GPT-6 Luna dans le code ; seule la ligne du README était restée sur l'ancien modèle. **Non mesuré** : le jugement d'impact change
+de modèle sans comparaison des verdicts ; à regarder sur DEV (voir `runbooks/retest.md`).
 
 **#885062343 — `client/out/index.html` L1 — « Pourquoi en double avec client/index.html »** — Pas de changement.
 `client/index.html` est la source de Vite ; `client/out/index.html` est le résultat du build (mêmes balises plus les scripts et
@@ -92,10 +93,10 @@ paraphrase du code ; des docstrings Sphinx complètes vont plus loin que cette r
 **#885148761 — `persistence.py` L30 — « type »** — Fait. `pool: asyncpg.Pool`, `conn: asyncpg.Connection`, `sources: List[dict] | None`
 (`persistence.py` et `sessions._turn_trace_id`).
 
-**#885246366 — `server/routers/chat/ws.py` L159 — « 1 seul if »** — Fait en partie.
-Le `if … pass / else …` qui supprime les morceaux de texte pendant la traduction devient un seul `if not (…)`. Le test
-`if user_content and accumulated … else …` à la fin du flux garde deux niveaux : ses deux branches sont différentes (réponse
-sauvegardée / flux vide traité comme une erreur). Si le commentaire visait autre chose, dis-moi lequel.
+**#885246366 — `server/routers/chat/ws.py` L159 — « 1 seul if »** — Fait (lot 1 en partie, terminé le 2026-10-20).
+Le `if … pass / else …` du texte pendant la traduction est devenu un seul `if not (…)`. Le test de fin de flux, qui imbriquait
+deux `if` dans la boucle, est sorti dans la fonction `_finish_turn()` : la boucle n'a plus qu'un `if chunk.startswith('data: [DONE]')`,
+et `_finish_turn` traite d'abord le cas « flux sans texte » (sortie anticipée), puis le cas normal, sans `else`.
 
 **#885245561 — `ws.py` L16 — « Changer le nom de ma var de base »** — Fait. `ENABLED` de `translation_bridge` devient
 `TRANSLATE_BRIDGE_ENABLED` (comme la variable d'environnement), défini dans `server/services/chat/config.py`. L'alias `as` est
@@ -196,7 +197,7 @@ fichier ni aucune référence `export_lakebase_uat*`. Rien à changer.
 
 ### Points ouverts pour le relecteur
 
-1. Faut-il passer aussi la comparaison (jugement, résumé) et le parsing (images) sur GPT-6 Luna ? (#885059913)
+1. ~~Passer la comparaison et le parsing sur GPT-6 Luna~~ : décidé le 2026-10-20, fait (#885059913).
 2. Le retrait des règles de langue de `base.md` demande une mesure sur DEV (#885138148).
-3. Docstrings Sphinx sur les ~460 fonctions de `server/services/` : à planifier, et à accorder avec `CLAUDE.md` (#885148691).
+3. Docstrings Sphinx sur les ~460 fonctions de `server/services/` : en attente de décision (explication donnée dans le chat le 2026-10-20) (#885148691).
 4. `turn_log.py` : garder les niveaux de gravité dans le module du journal ? (#885272670)
