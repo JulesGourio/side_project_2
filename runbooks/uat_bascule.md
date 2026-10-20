@@ -447,33 +447,38 @@ Attendu dans la tâche d'import : `Tables to load: [...]`, une ligne par table n
 
 Retour arrière : redéployer (`deploy-uat`) la branche précédente. Les tables `_v1`, les index `_v1` et les agents restent intacts jusqu'à D1 et D2, et le démarrage de la nouvelle version n'a fait que des ajouts dans Lakebase.
 
-- [ ] **Q13. Traces MLflow du chat dans Unity Catalog.** Les traces (spans, durées, passages, évaluations) sont dans des tables Delta du schéma `<env>_proj.qualibot_traces`, un schéma à part : l'app y reçoit `MODIFY`, ce qu'on ne veut pas sur `qualibot`, où sont le corpus et le pipeline. MLflow exige quand même une **expérience** : c'est l'objet auquel l'emplacement Unity Catalog est lié, un conteneur vide qui ne garde aucune trace. Elle est créée par le job `create_chat_experiment_<cible>` dans le dossier partagé `/Workspace/Shared/Experiment` (chemin MLflow `/Shared/Experiment/qualibot_chat_traces`, variable `chat_mlflow_experiment` de `databricks.yml` et `CHAT_MLFLOW_EXPERIMENT` de `utils/deploy/target_env.json`, deux valeurs identiques : test `tests/test_deploy_config.py`), hors du dossier d'une personne ou d'un compte de service. Une expérience neuve : l'ancienne et ses traces ne sont plus lues. L'app finit par adresser l'expérience par son **identifiant** (`CHAT_MLFLOW_EXPERIMENT_ID`), qui ne change ni au déplacement, ni au renommage, ni au changement de compte de service. L'expérience hérite des droits du dossier `Shared` : toute personne du workspace peut la modifier ou la supprimer, mais elle ne contient aucune donnée, les traces restent protégées par les droits Unity Catalog. L'entrepôt SQL `CHAT_MLFLOW_WAREHOUSE_ID` lit les tables de traces. MLflow `>= 3.11.1` est requis (app et jobs).
+- [ ] **Q13. Traces MLflow du chat dans Unity Catalog.** Les traces (spans, durées, passages, évaluations) sont dans quatre tables Delta `<identifiant de l'expérience>_otel_*` du schéma du projet, `<env>_proj.qualibot`, séparées des autres tables par ce préfixe. Pas de schéma à créer. MLflow exige quand même une **expérience** : c'est l'objet auquel l'emplacement Unity Catalog est lié, un conteneur vide qui ne garde aucune trace. Elle est créée par le job `create_chat_experiment_<cible>` dans le dossier partagé `/Workspace/Shared/Experiment` (chemin MLflow `/Shared/Experiment/qualibot_chat_traces`, variable `chat_mlflow_experiment` de `databricks.yml` et `CHAT_MLFLOW_EXPERIMENT` de `utils/deploy/target_env.json`, deux valeurs identiques : test `tests/test_deploy_config.py`), hors du dossier d'une personne ou d'un compte de service. L'app finit par adresser l'expérience par son **identifiant** (`CHAT_MLFLOW_EXPERIMENT_ID`), qui ne change ni au déplacement, ni au renommage, ni au changement de compte de service. L'expérience hérite des droits du dossier `Shared` : toute personne du workspace peut la modifier ou la supprimer, mais elle ne contient aucune donnée. Le job donne à l'app `MODIFY` et `SELECT` sur ces quatre tables **seulement** (pas sur le schéma : l'app pourrait sinon écrire dans le corpus et les tables du pipeline). L'entrepôt SQL `CHAT_MLFLOW_WAREHOUSE_ID` lit les tables de traces et exécute ces `GRANT`. MLflow `>= 3.11.1` est requis (app et jobs).
 
-  1. **Schéma et droits** (éditeur SQL UAT, une personne qui a `MANAGE` ou `ALL PRIVILEGES` sur `uat_proj`, comme CoreAdmin ; sinon passer par un job sous `job-runner-sa-uat`, comme `runbooks/scripts/grants/`) :
+  1. **Contrôler les droits existants** (éditeur SQL UAT). Le SP des jobs doit avoir `USE SCHEMA`, `CREATE TABLE`, `MODIFY` et `SELECT` sur le schéma (`ALL PRIVILEGES` ne suffit pas pour les tables de traces), le SP de l'app `USE SCHEMA` :
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS uat_proj.qualibot_traces;
-GRANT ALL PRIVILEGES ON SCHEMA uat_proj.qualibot_traces TO `3e5cd4e5-f765-4760-b974-ee7715258b39`;
-GRANT MODIFY, SELECT ON SCHEMA uat_proj.qualibot_traces TO `3e5cd4e5-f765-4760-b974-ee7715258b39`;
-GRANT USE SCHEMA, MODIFY, SELECT ON SCHEMA uat_proj.qualibot_traces TO `ed8abb86-e0db-423b-8f35-5cda58e89b80`;
+SHOW GRANTS ON SCHEMA uat_proj.qualibot;
 ```
 
-  Le premier compte est le SP des jobs (il crée les tables de traces ; `MODIFY` et `SELECT` sont à donner explicitement, `ALL PRIVILEGES` ne suffit pas pour ces tables), le second le SP de l'app. Les deux comptes de service doivent aussi pouvoir utiliser l'entrepôt `5890912c31867b77` (`CAN_USE`, déjà donné au groupe `leap-qualibot-service-accounts`) :
+  S'il manque quelque chose (une personne qui a `MANAGE` ou `ALL PRIVILEGES` sur `uat_proj`, comme CoreAdmin ; sinon un job sous `job-runner-sa-uat`, comme `runbooks/scripts/grants/`) :
+
+```sql
+GRANT USE SCHEMA, CREATE TABLE, MODIFY, SELECT ON SCHEMA uat_proj.qualibot TO `3e5cd4e5-f765-4760-b974-ee7715258b39`;
+GRANT USE SCHEMA ON SCHEMA uat_proj.qualibot TO `ed8abb86-e0db-423b-8f35-5cda58e89b80`;
+```
+
+  Les deux comptes de service doivent aussi pouvoir utiliser l'entrepôt `5890912c31867b77` (`CAN_USE`, déjà donné au groupe `leap-qualibot-service-accounts`) :
 
 ```powershell
 databricks warehouses get-permissions 5890912c31867b77 --profile UAT -o json
 ```
 
-  2. **Déployer l'app** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, `deploy-uat` (nouveau chemin, nouvel entrepôt, MLflow 3.11.1 à l'installation).
-  3. **Créer l'expérience, puis lier les prompts** (la création réapplique les droits : `CAN_EDIT` à l'app, `CAN_MANAGE` à CoreAdmin et CoreDev) :
+  2. **Déployer** : Bitbucket, branche `claude/sharp-mayer-uqwx8x`, `deploy-uat` (nouveau chemin, nouvel entrepôt, MLflow 3.11.1 à l'installation).
+  3. **Créer l'expérience, puis lier les prompts** (la création réapplique les droits sur l'expérience : `CAN_EDIT` à l'app, `CAN_MANAGE` à CoreAdmin et CoreDev) :
 
 ```powershell
 databricks bundle run -t qualibot-uat create_chat_experiment_uat --profile UAT
 databricks bundle run -t qualibot-uat register_chat_prompts_uat --profile UAT
 ```
 
-  Attendu dans le journal du premier job : `experiment /Shared/Experiment/qualibot_chat_traces created (id <ID>), traces in uat_proj.qualibot_traces`. Si l'expérience existe déjà à ce chemin, elle est laissée telle quelle et **n'est pas** convertie : la supprimer ou changer le chemin. **Noter l'`<ID>`.**
-  Si le job échoue avec `SCHEMA_DOES_NOT_EXIST` (essai du 2026-10-20 : le schéma n'était pas créé), MLflow supprime l'expérience qu'il venait de créer (suppression douce) et **son nom reste réservé** : un nouvel essai au même chemin échoue. Le script vérifie désormais que le schéma existe avant de créer quoi que ce soit, et refuse un nom resté dans la corbeille. Le chemin est passé de `qualibot_chat_turns` à `qualibot_chat_traces` pour cette raison. L'expérience `qualibot_chat_turns` supprimée peut rester dans la corbeille de l'espace de travail ; la vider est facultatif. Le préfixe des tables de traces est choisi par MLflow : `uat_proj.qualibot_traces.<identifiant de l'expérience>`.
+  Attendu dans le journal du premier job : `experiment /Shared/Experiment/qualibot_chat_traces created (id <ID>), traces in uat_proj.qualibot`, puis quatre lignes `granted MODIFY, SELECT on uat_proj.qualibot.<ID>_otel_… to ed8abb86-…`. Si l'expérience existe déjà à ce chemin, elle est laissée telle quelle et **n'est pas** convertie : la supprimer ou changer le chemin. **Noter l'`<ID>`.**
+
+  Un essai à un chemin dont une création a échoué (essai du 2026-10-20, schéma absent) laisse l'expérience supprimée en douce et **son nom réservé** : le script vérifie que le schéma existe avant de créer quoi que ce soit et refuse un nom resté dans la corbeille. C'est pourquoi le chemin est passé de `qualibot_chat_turns` à `qualibot_chat_traces`. La vieille expérience peut rester dans la corbeille de l'espace de travail ; la vider est facultatif.
   4. **Adresser l'expérience par son identifiant** : dans `utils/deploy/target_env.json`, ajouter à la cible `uat` la ligne `"CHAT_MLFLOW_EXPERIMENT_ID": "<ID>"`, commit, push, `deploy-uat`. Tant que l'identifiant n'est pas là, l'app retrouve l'expérience par son chemin.
   5. **Vérifier** : poser une question dans le chat, attendre une minute, puis :
 
@@ -482,18 +487,17 @@ databricks apps logs qualibot --profile UAT --tail-lines 1000 --search "mlflow_t
 ```
 
 ```sql
-SHOW TABLES IN uat_proj.qualibot_traces;
+SHOW TABLES IN uat_proj.qualibot LIKE '*_otel_*';
 ```
 
-  Les tables de traces doivent apparaître et se remplir ; la recherche `mlflow_turns` ne doit montrer ni `does not exist` ni `not written`. Mettre ensuite un pouce haut ou bas sur une réponse : la ligne `vote … not logged` ne doit pas apparaître. Points non vérifiés ici, à surveiller dans cet ordre (envoyer la ligne de journal en cas d'échec) : la création de l'expérience avec cet emplacement (le format avec préfixe de table est le plus récent), l'écriture des traces par l'app, le vote, puis `score_chat_traces_uat` en `dry_run`, qui doit retrouver les traces par l'identifiant de l'expérience.
+  Les quatre tables doivent apparaître et se remplir ; la recherche `mlflow_turns` ne doit montrer ni `does not exist` ni `not written`. Mettre ensuite un pouce haut ou bas sur une réponse : la ligne `vote … not logged` ne doit pas apparaître. Points non vérifiés ici, à surveiller dans cet ordre (envoyer la ligne de journal en cas d'échec) : l'écriture des traces par l'app, le vote, puis `score_chat_traces_uat` en `dry_run`, qui doit retrouver les traces par l'identifiant de l'expérience.
 
-  6. **DEV** (même procédure, profil `DEV`, `deploy-dev`) : SP des jobs `fde6ff28-739f-4a41-b61e-604a298c8478`, SP de l'app `8e411164-a7e8-46ff-8013-8c56af2c3656`, schéma `dev_proj.qualibot_traces`, entrepôt `13eff4a6095513cb`, même chemin d'expérience, `CHAT_MLFLOW_EXPERIMENT_ID` de la cible `dev` :
+  6. **DEV** (même procédure, profil `DEV`, `deploy-dev`) : SP des jobs `fde6ff28-739f-4a41-b61e-604a298c8478`, SP de l'app `8e411164-a7e8-46ff-8013-8c56af2c3656`, schéma `dev_proj.qualibot`, entrepôt `13eff4a6095513cb`, même chemin d'expérience, `CHAT_MLFLOW_EXPERIMENT_ID` de la cible `dev` :
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS dev_proj.qualibot_traces;
-GRANT ALL PRIVILEGES ON SCHEMA dev_proj.qualibot_traces TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
-GRANT MODIFY, SELECT ON SCHEMA dev_proj.qualibot_traces TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
-GRANT USE SCHEMA, MODIFY, SELECT ON SCHEMA dev_proj.qualibot_traces TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
+SHOW GRANTS ON SCHEMA dev_proj.qualibot;
+GRANT USE SCHEMA, CREATE TABLE, MODIFY, SELECT ON SCHEMA dev_proj.qualibot TO `fde6ff28-739f-4a41-b61e-604a298c8478`;
+GRANT USE SCHEMA ON SCHEMA dev_proj.qualibot TO `8e411164-a7e8-46ff-8013-8c56af2c3656`;
 ```
 
 ```powershell

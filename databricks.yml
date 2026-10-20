@@ -116,7 +116,7 @@ variables:
     default: "dev-job"
   chat_mlflow_experiment:
     description: >-
-      Workspace path of the MLflow experiment that receives one trace per chat turn (the traces are stored in the Unity Catalog schema <pipeline_write_env>_proj.qualibot_traces). It sits in the shared folder /Shared/Experiment, not in the home folder of a person or a service principal. Read by the chat jobs of resources/chat_mlflow.yml;
+      Workspace path of the MLflow experiment that receives one trace per chat turn (the traces are stored in Unity Catalog tables <experiment id>_otel_* of the schema <pipeline_write_env>_proj.qualibot). It sits in the shared folder /Shared/Experiment, not in the home folder of a person or a service principal. Read by the chat jobs of resources/chat_mlflow.yml;
       the app reads CHAT_MLFLOW_EXPERIMENT in utils/deploy/target_env.json, which must hold the same value (tests/test_deploy_config.py).
       Moving the experiment in the workspace changes this path: update both.
     default: "/Shared/Experiment/qualibot_chat_traces"

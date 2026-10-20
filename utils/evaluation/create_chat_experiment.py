@@ -12,8 +12,11 @@ USAGE
         --uc-schema dev_proj.qualibot --warehouse-id <id>      # traces in Delta tables
 
 Without ``--uc-schema`` the traces stay in the experiment's own storage. With it they go to Unity
-Catalog tables (MLflow >= 3.11.1; permanent for the experiment); the app service principal then also
-needs USE CATALOG / USE SCHEMA / MODIFY / SELECT on that schema (printed at the end).
+Catalog tables (MLflow >= 3.11.1; permanent for the experiment). MLflow creates four tables named
+``<experiment id>_otel_*`` in that schema, which can be the schema of the project itself: the tables are told apart by
+their prefix. The script then gives the app service principal MODIFY and SELECT on those tables only (not on the
+schema, which would let the app write to every other table), through ``--warehouse-id``. The app also needs USE CATALOG
+and USE SCHEMA on the schema, which it already has.
 """
 import argparse
 import logging
@@ -25,6 +28,22 @@ from databricks.sdk.errors import NotFound
 from databricks.sdk.service.ml import ExperimentAccessControlRequest, ExperimentPermissionLevel
 
 logger = logging.getLogger('create_chat_experiment')
+
+
+def grant_app_on_trace_tables(w: WorkspaceClient, uc_schema: str, experiment_id: str, principal: str, warehouse_id: str) -> None:
+    """MODIFY and SELECT for the app on the trace tables of the experiment (``<experiment id>_*``) and nothing else.
+    Run by the job service principal, which owns the tables MLflow just created. Idempotent."""
+    catalog, schema = uc_schema.split('.', 1)
+    tables = sorted(t.name for t in w.tables.list(catalog_name=catalog, schema_name=schema) if t.name.startswith(f'{experiment_id}_'))
+    if not tables:
+        raise SystemExit(f'No trace table named {experiment_id}_* in {uc_schema}: give the app service principal MODIFY and SELECT '
+                         'on them once they exist.')
+    for name in tables:
+        statement = f'GRANT MODIFY, SELECT ON TABLE `{catalog}`.`{schema}`.`{name}` TO `{principal}`'
+        result = w.statement_execution.execute_statement(statement=statement, warehouse_id=warehouse_id, wait_timeout='30s')
+        if result.status.state.value != 'SUCCEEDED':
+            raise SystemExit(f'{statement} did not succeed: {result.status}')
+        logger.info('granted MODIFY, SELECT on %s.%s.%s to %s', catalog, schema, name, principal)
 
 
 def main() -> None:
@@ -84,10 +103,7 @@ def main() -> None:
                 args.app, principal, ', '.join(managers) or 'none')
 
     if args.uc_schema:
-        catalog, schema = args.uc_schema.split('.', 1)
-        logger.info('now run in a SQL editor:\n'
-                    'GRANT USE CATALOG ON CATALOG %s TO `%s`;\nGRANT USE SCHEMA, MODIFY, SELECT ON SCHEMA %s TO `%s`;',
-                    catalog, principal, args.uc_schema, principal)
+        grant_app_on_trace_tables(w, args.uc_schema, str(experiment_id), principal, args.warehouse_id)
 
 
 if __name__ == '__main__':
