@@ -8,6 +8,7 @@
     "CAPS_BYPASS": "false",
     "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_traces",
     "CHAT_TRANSLATE_ONLY": "on",
+    "CHAT_ALLOWED_ORIGINS": "https://qualibot-2865348338307293.aws.databricksapps.com",
     "CHAT_MLFLOW_WAREHOUSE_ID": "13eff4a6095513cb",
     "CHAT_MLFLOW_EXPERIMENT_ID": "3049939644482707"
   },
@@ -18,6 +19,7 @@
     "COMPARE_IMPACT_INDEX": "uat_proj.qualibot.chunks_index",
     "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_traces",
     "CHAT_TRANSLATE_ONLY": "on",
+    "CHAT_ALLOWED_ORIGINS": "https://qualibot-3155144190025826.aws.databricksapps.com",
     "CHAT_MLFLOW_WAREHOUSE_ID": "5890912c31867b77",
     "CHAT_MLFLOW_EXPERIMENT_ID": "258804869957724"
   },

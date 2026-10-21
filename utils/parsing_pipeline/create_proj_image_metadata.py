@@ -79,7 +79,7 @@ for _mod in cfg.WORKER_MODULES:
 
 # MAGIC %md
 # MAGIC ## Config Widgets
-# MAGIC `rebuild_image_chunks = true` rewrites the passage of EVERY described image from its stored description (new section, caption, long transcriptions split), without any LLM call.
+# MAGIC `rebuild_image_chunks = true` rewrites the passage of EVERY described image from its stored description (new section, caption, long transcriptions split), without any LLM call. It is on whenever `parsing_redescribe_all_images` is `true`, so new descriptions reach the index.
 # MAGIC
 # MAGIC `llm_fallback_endpoints` is a comma-separated list of vision endpoints tried, in order, after the primary `PARSING_LLM_ENDPOINT`. Each endpoint must take image input.
 
@@ -92,7 +92,7 @@ LOG_LEVEL = dbutils.widgets.get("log_level")
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
 dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])
-REBUILD_IMAGE_CHUNKS = dbutils.widgets.get("rebuild_image_chunks") == "true"
+REBUILD_IMAGE_CHUNKS = dbutils.widgets.get("rebuild_image_chunks") == "true" or cfg.REDESCRIBE_ALL_IMAGES
 
 dbutils.widgets.text("llm_fallback_endpoints", cfg.LLM_FALLBACK_ENDPOINTS, "Fallback endpoints (comma-separated)")
 LLM_FALLBACK_ENDPOINTS = dbutils.widgets.get("llm_fallback_endpoints")
@@ -125,6 +125,8 @@ logger.info(f"RUN_MODE={cfg.RUN_MODE} | Endpoints={' -> '.join(LLM_ENDPOINTS)} |
 # MAGIC # Inputs
 # MAGIC ## Images needing a description
 # MAGIC `incremental` (default, safe to re-run): `PENDING` images, plus `ERROR` rows (described rather than skipped). An image that failed on every endpoint is left `PENDING` with no description, so the next run describes it again, until it reaches the attempt limit (`FAILED_LIMIT`). `DONE`, `SKIPPED`, `SKIPPED_DECORATIVE`, `EXTRACTION_FAILED` and `FAILED_LIMIT` stay terminal.
+# MAGIC
+# MAGIC An image whose content and request (context, division, category, label) are the same as one already described reuses its description from `image_description_cache`, without any call; `parsing_redescribe_all_images=true` does not use the cache.
 # MAGIC
 # MAGIC `parsing_redescribe_all_images=true` resets every status to `PENDING` first and describes everything again (a prompt or
 # MAGIC model change). The parsing run mode does not: a `full` parse keeps every description of an image that did not change.
@@ -168,7 +170,7 @@ logger.info(f"Batch: {len(rows_to_process)} images ({n_pending} new + {n_retry} 
 
 # COMMAND ----------
 
-describe_steps.describe_images(rows_to_process, WS_HOST, WS_TOKEN, LLM_ENDPOINTS)
+describe_steps.describe_images(rows_to_process, WS_HOST, WS_TOKEN, LLM_ENDPOINTS, use_cache=not cfg.REDESCRIBE_ALL_IMAGES)
 
 # COMMAND ----------
 

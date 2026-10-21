@@ -17,6 +17,8 @@ from tables import ensure_primary_key, table_exists, write_table
 from leap_utils.common.logger import get_logger
 from config import (
     ARCHIVE_MAX_DOCS,
+    CHECKPOINT_ORPHAN_KEEP_DAYS,
+    CHECKPOINT_TABLE,
     DIVISION_REFERENCE_TABLE,
     DOC_DATE_CUTOFF,
     EXCLUDED_IDCATS,
@@ -132,6 +134,25 @@ def prune_stale_content(stale_iddocs) -> None:
         f"WHERE parse_status IN {_STATUSES_TO_PRUNE} AND IDDOC IN ({_id_list(stale_iddocs)})"
     )
     logger.info(f"Pruned {len(stale_iddocs)} out-of-scope IDDOCs from chunks/image_metadata/parsed_documents.")
+
+
+def prune_old_checkpoint_rows(df_scope_docs, keep_days: int = CHECKPOINT_ORPHAN_KEEP_DAYS) -> None:
+    """Delete the parse results of documents that left the scope and were last parsed more than ``keep_days`` ago.
+
+    A document that left scope and comes back keeps its parse result for ``keep_days``, so it is not parsed again.
+
+    :param df_scope_docs: Documents in scope, with an ``IDDOC`` column.
+    :param keep_days: age of the parse result, in days, from which an out-of-scope document is dropped.
+    """
+    try:
+        df_scope_docs.select("IDDOC").distinct().createOrReplaceTempView("_scope_iddocs")
+        spark.sql(
+            f"DELETE FROM {CHECKPOINT_TABLE} WHERE ingestion_timestamp < current_timestamp() - INTERVAL {int(keep_days)} DAYS "
+            f"AND IDDOC NOT IN (SELECT IDDOC FROM _scope_iddocs)"
+        )
+        logger.info(f"Checkpoint rows of out-of-scope documents parsed more than {keep_days} days ago deleted.")
+    except Exception as exc:
+        logger.warning(f"Could not clean {CHECKPOINT_TABLE}: {exc}")
 
 
 def prune_stale_revisions() -> None:

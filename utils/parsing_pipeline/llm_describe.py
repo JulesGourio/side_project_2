@@ -9,6 +9,7 @@ All tunables come from config.py.
 
 import asyncio
 import base64
+import hashlib
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Set
 
@@ -109,6 +110,19 @@ def image_mime_type(image_bytes: bytes) -> str:
     if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
         return "image/webp"
     return "image/jpeg"
+
+
+def description_cache_key(prompt: str, image_bytes: bytes) -> str:
+    """Key of a description: the image and everything the model is told about it.
+
+    :param prompt: text of the request (context, division, category, label)
+    :param image_bytes: content of the image file
+    :return: hexadecimal SHA-256 of the prompt and the image
+    """
+    digest = hashlib.sha256(prompt.encode("utf-8"))
+    digest.update(b"\x00")
+    digest.update(image_bytes)
+    return digest.hexdigest()
 
 
 def _escape_braces(text: str) -> str:
@@ -335,7 +349,8 @@ def _settle(status: str, attempts: int, max_attempts: int | None) -> str:
 async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphore, endpoints: Sequence[str],
                              max_tokens: int, temperature: float, max_retries: int, rate_limiter: _AsyncRateLimiter,
                              breaker: EndpointBreaker, timeout: float = 90.0, rounds: int = 1,
-                             round_waits_s: Sequence[float] = (), max_attempts: int | None = None) -> dict:
+                             round_waits_s: Sequence[float] = (), max_attempts: int | None = None,
+                             cache: Dict[str, dict] | None = None) -> dict:
     """Describe one image: each endpoint in turn, `rounds` passes over the chain, `round_waits_s` before each later pass.
 
     Returns `row_data` plus description, status, the tokens spent (`input_tokens`, `output_tokens`, and the failed
@@ -358,9 +373,13 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
     :param rounds: Passes over the endpoint chain.
     :param round_waits_s: Seconds slept before each pass after the first.
     :param max_attempts: Attempts after which a still-pending image is FAILED_LIMIT; None for no limit.
+    :param cache: Descriptions already made, by ``description_cache_key``: an image with the same content and the same
+        request reuses its description without any call; None to describe every image.
     """
     spend = _Spend()
     other_failure = False
+    cache_key = ""
+    from_cache = False
 
     def result(description, status, last_error="", last_kind=None) -> dict:
         """Outcome of the image, as the row written back to the table.
@@ -382,6 +401,8 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
             "failed_input_tokens": spend.failed_input_tokens,
             "failed_output_tokens": spend.failed_output_tokens,
             "attempts": attempts,
+            "cache_key": cache_key,
+            "from_cache": from_cache,
             "last_error": last_error,
             "last_error_kind": last_kind if status in ("PENDING", "FAILED_LIMIT") else None,
         }
@@ -398,13 +419,19 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
         return result(None, "PENDING", last_error=f"failed to read image: {_error_text(e)}", last_kind="read_error")
 
     category_parts = [p for p in (row_data.get("niveau_plus_1", ""), row_data.get("niveau_plus_2", "")) if p]
+    prompt = build_llm_prompt(
+        row_data.get("context_text", ""),
+        division=row_data.get("division", ""),
+        category=" > ".join(category_parts),
+        label=row_data.get("label", ""),
+    )
+    cache_key = description_cache_key(prompt, image_bytes)
+    cached = (cache or {}).get(cache_key)
+    if cached and cached.get("description"):
+        from_cache = True
+        return result(cached["description"], cached["status"])
     messages = [{"role": "user", "content": [
-        {"type": "text", "text": build_llm_prompt(
-            row_data.get("context_text", ""),
-            division=row_data.get("division", ""),
-            category=" > ".join(category_parts),
-            label=row_data.get("label", ""),
-        )},
+        {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": f"data:{image_mime_type(image_bytes)};base64,{image_b64}"}},
     ]}]
 
@@ -436,7 +463,7 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
 async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, endpoints: Sequence[str], max_tokens: int,
                               temperature: float, max_retries: int, max_concurrent: int, requests_per_minute: float,
                               breaker: EndpointBreaker, rounds: int = 1, round_waits_s: Sequence[float] = (),
-                              max_attempts: int | None = None) -> List[dict]:
+                              max_attempts: int | None = None, cache: Dict[str, dict] | None = None) -> List[dict]:
     """Describe all images concurrently, at most `max_concurrent` at a time and `requests_per_minute` on average.
 
     :param rows: Image rows to describe.
@@ -452,6 +479,7 @@ async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, end
     :param rounds: Passes over the endpoint chain.
     :param round_waits_s: Seconds slept before each pass after the first.
     :param max_attempts: Attempts after which a still-pending image is FAILED_LIMIT; None for no limit.
+    :param cache: Descriptions already made, by ``description_cache_key``; None to describe every image.
     """
     from openai import AsyncOpenAI
 
@@ -461,7 +489,8 @@ async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, end
     try:
         results = await asyncio.gather(
             *[describe_one_image(client, r, semaphore, endpoints, max_tokens, temperature, max_retries, rate_limiter,
-                                 breaker, rounds=rounds, round_waits_s=round_waits_s, max_attempts=max_attempts)
+                                 breaker, rounds=rounds, round_waits_s=round_waits_s, max_attempts=max_attempts,
+                                 cache=cache)
               for r in rows],
             return_exceptions=True,
         )

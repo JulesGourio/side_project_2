@@ -86,6 +86,7 @@ TARGET_CHUNK_TABLE     = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks"
 TARGET_CHUNK_TABLE_ARCHIVE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_archive"
 
 TARGET_IMAGE_METADATA_TABLE  = f"{PIPELINE_WRITE_ENV}_proj.qualibot.image_metadata"
+TARGET_IMAGE_CACHE_TABLE     = f"{PIPELINE_WRITE_ENV}_proj.qualibot.image_description_cache"  # one description per (image, request)
 TARGET_HEALTH_TABLE          = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_run_health"  # one row per pipeline run, for the monitoring dashboard
 TARGET_CHANGE_LOG_TABLE      = f"{PIPELINE_WRITE_ENV}_proj.qualibot.document_change_log"  # one row per NEW/REVISED document, for the monitoring dashboard
 
@@ -172,6 +173,7 @@ ENABLE_TIMING_TEST = True
 # --- Resilience -- batch checkpointing & per-file timeout ---
 CHECKPOINT_BATCH_SIZE   = 100   # Write to Delta every N files (crash-safe)
 CHECKPOINT_SNAPSHOT_KEEP_DAYS = 30  # a full run keeps its checkpoint snapshot this long
+CHECKPOINT_ORPHAN_KEEP_DAYS = 180    # a document out of scope keeps its parse result this long, in case it comes back
 PARSE_TIMEOUT_SECONDS   = 200   # Max seconds per file -- beyond this, mark as TIMEOUT
 MAX_CHUNKS_SPREADSHEET  = 100   # Limit chunks for xlsx/xls/xlsm (None = no limit)
 
