@@ -13,6 +13,7 @@ import io
 import logging
 from typing import Any, Dict, List, Tuple
 
+from server.services.compare.conversion import ppt_to_pptx
 from server.services.compare.processors.text_diff import Images, TextDiffProcessor
 from server.services.compare.processors._diff_engines import (
     dhash,
@@ -148,22 +149,45 @@ def _collect_shape_images(shapes, slide_num: int, images: Dict[str, Dict[str, An
             logger.debug('PPTX image extraction skipped (slide %d): %s', slide_num, e)
 
 
-def _extract_pptx(pptx_bytes: bytes) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
+def _notes_lines(slide) -> List[str]:
+    """The paragraphs of the speaker notes of a slide.
+
+    :param slide: python-pptx slide
+    :return: the non-empty paragraphs, empty when the slide has no notes
+    """
+    try:
+        if not slide.has_notes_slide:
+            return []
+        frame = slide.notes_slide.notes_text_frame
+        return [t for t in (p.text.strip() for p in frame.paragraphs) if t] if frame is not None else []
+    except Exception as e:
+        logger.debug('PPTX notes extraction skipped: %s', e)
+        return []
+
+
+def _extract_pptx(pptx_bytes: bytes, filename: str = '') -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
     """Return (slide_text_lines, images_dict).
 
     Each text line is tagged with a trailing [Slide N] tag so the diff engine
     can track which slide a change originates from. Images are returned in the
     same shape used by DOCX/PDF (see _collect_shape_images).
 
-    :param pptx_bytes: content of the .pptx file
+    Speaker notes follow the text of their slide, each paragraph tagged ``[Notes slide N]``.
+
+    :param pptx_bytes: content of the .pptx file, or of a .ppt file when ``filename`` ends with ``.ppt``
+    :param filename: file name; a ``.ppt`` name makes the file be converted to .pptx first
     :return: ``(slide text lines, images keyed by hash)``
+    :raises ValueError: when a .ppt file cannot be converted
     """
     from pptx import Presentation
+    if filename.lower().endswith('.ppt'):
+        pptx_bytes = ppt_to_pptx(pptx_bytes, filename)
     prs = Presentation(io.BytesIO(pptx_bytes))
     slide_texts: List[str] = []
     images: Dict[str, Dict[str, Any]] = {}
     for slide_num, slide in enumerate(prs.slides, start=1):
         lines = [f'{t} [Slide {slide_num}]' for t in _shapes_text(slide.shapes)]
+        lines += [f'[Notes slide {slide_num}] {t} [Slide {slide_num}]' for t in _notes_lines(slide)]
         slide_texts.append('\n'.join(lines) if lines else f'[Slide {slide_num}]')
         _collect_shape_images(slide.shapes, slide_num, images)
     return slide_texts, images
@@ -186,8 +210,8 @@ class PptxProcessor(TextDiffProcessor):
         :param new_name: file name of the new presentation
         :return: ``(old text, new text, old images, new images)``
         """
-        old_slides, old_imgs = _extract_pptx(old_bytes)
-        new_slides, new_imgs = _extract_pptx(new_bytes)
+        old_slides, old_imgs = _extract_pptx(old_bytes, old_name)
+        new_slides, new_imgs = _extract_pptx(new_bytes, new_name)
         return '\n'.join(old_slides), '\n'.join(new_slides), old_imgs, new_imgs
 
     def paragraph_notes(self, filtered) -> str:

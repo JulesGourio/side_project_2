@@ -22,11 +22,13 @@ from config import (
     EXCLUDED_IDCATS,
     MANUAL_REF_EXCLUSIONS,
     PARSE_MANIFEST_TABLE,
+    PIPELINE_WRITE_ENV,
     TARGET_CHUNK_TABLE,
     TARGET_CHUNK_TABLE_ARCHIVE,
     TARGET_IMAGE_METADATA_TABLE,
     TARGET_PROCESSED_FILES_TABLE,
     PRUNED_STATUSES,
+    SUPERSEDED_REVISION,
 )
 
 # Root folders are named D_<IDDOC> or Dm_<IDDOC>; anything else cannot give an IDDOC.
@@ -126,8 +128,8 @@ def prune_stale_content(stale_iddocs) -> None:
 def prune_stale_revisions() -> None:
     """Remove the chunks of older revisions of REFs that still have several in-scope IDDOCs.
 
-    Keeps the highest `indice` per REF (highest IDDOC as tie-break). `parsed_documents` is left untouched on purpose:
-    deleting its row would make the old IDDOC eligible for parsing again on the next run.
+    Keeps the highest `indice` per REF (highest IDDOC as tie-break). The row of an older revision in `parsed_documents`
+    is set to a terminal status, so it is neither flagged as a document without chunks nor parsed and described again.
     """
     if not table_exists(TARGET_CHUNK_TABLE):
         logger.warning(f"{TARGET_CHUNK_TABLE} does not exist yet - revision pruning skipped.")
@@ -158,9 +160,11 @@ def prune_stale_revisions() -> None:
         return
 
     _delete_iddocs(_DERIVED_TABLES, stale_revision_iddocs)
+    spark.sql(f"UPDATE {TARGET_PROCESSED_FILES_TABLE} SET parse_status = '{SUPERSEDED_REVISION}' "
+              f"WHERE IDDOC IN ({_id_list(stale_revision_iddocs)}) AND parse_status = 'SUCCESS'")
     logger.info(
         f"Pruned {len(stale_revision_iddocs)} stale-revision IDDOC(s) across {n_dup_refs} REF(s) from chunks and "
-        f"image_metadata (parsed_documents rows kept to prevent a re-parse loop)."
+        f"image_metadata; their parsed_documents rows are now {SUPERSEDED_REVISION}."
     )
 
 
@@ -424,12 +428,19 @@ def write_manifest(df_manifest) -> None:
 def delete_out_of_scope_folders(rows_delete, dry_run) -> None:
     """Remove the out-of-scope root folders from the volume; a dry run only counts them.
 
+    Only the prod pipeline deletes: every environment reads the same source volume, so a delete from another environment
+    would remove the documents the prod pipeline reads.
+
     :param rows_delete: Items to remove, dicts with a ``path`` key.
     :param dry_run: True only counts the items.
     """
     if dry_run:
         logger.info(f"[DRY RUN] {len(rows_delete)} items would be deleted.")
         logger.info("  -> Set the dry_run widget to false to actually delete.")
+        return
+    if PIPELINE_WRITE_ENV != "prod":
+        logger.warning(f"{len(rows_delete)} items not deleted: the source volume is shared and only the prod pipeline "
+                       f"deletes from it (this run writes to {PIPELINE_WRITE_ENV}).")
         return
     if not rows_delete:
         logger.info("Nothing to delete.")

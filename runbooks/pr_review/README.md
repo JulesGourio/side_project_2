@@ -1,326 +1,386 @@
 # Journal de revue — PR Bitbucket 2 (`latec-compare`)
 
-Un bloc par commentaire (id Bitbucket), dans l'ordre de l'export. Les nouveaux commentaires s'ajoutent en bas, dans un
-nouveau lot. Récupération : `python debug\fetch_comment_pr.py` (copie de `runbooks/scripts/bitbucket_pr/fetch_pr_comments.py`).
-
-- PR faite sur le commit `14296499a19baf710dc6c10d74bdd71204176b2d`. Les lignes citées sont celles de ce commit ; les fichiers
-  concernés n'ont pas changé depuis, sauf mention contraire, mais plusieurs numéros de ligne ne tombent pas pile sur le code
-  visé : chaque commentaire a été rattaché au code par son sens.
-- Relecteur : Yann Depledt. Jules Gourio a laissé un commentaire à lui-même (#885301989).
-- Vérification de chaque lot : `pytest tests` (résultat en bas du lot), `runbooks/scripts/code_quality/check_docstrings.py server/routers`,
-  et un essai des routes touchées avec le client de test FastAPI.
-
-## Lot 1 — commentaires exportés le 2026-10-19 (41 commentaires)
-
-### Fichiers de dépôt
-
-**#885061633 — `.vscode/settings.json` L1 — « Exclure le .vscode non ? »** — Fait en partie.
-`settings.json` (marqueurs de cellules Jupyter, réglage personnel) sort du suivi git et entre dans `.gitignore`.
-`.vscode/tasks.json` reste versionné : c'est la tâche « Pull + Deploy » que le README documente.
-
-**#885059913 — `README.md` L84 — « Switch to 6 Luna »** — Fait (lot 1, puis étendu le 2026-10-20 sur ta demande).
-Le pont de traduction du chat, le jugement et le résumé de la comparaison (texte et images) ont `databricks-gpt-6-luna` pour
-modèle principal, dans le code et dans `app.yaml`. Le repli est `databricks-gpt-5-6-luna` : le chat le prend dans `app.yaml`,
-la comparaison le choisit seule (`compare_chain` : l'autre modèle Luna). Le parsing (description d'images) était déjà sur
-GPT-6 Luna dans le code ; seule la ligne du README était restée sur l'ancien modèle. **Non mesuré** : le jugement d'impact change
-de modèle sans comparaison des verdicts ; à regarder sur DEV (voir `runbooks/retest.md`).
-
-**#885062343 — `client/out/index.html` L1 — « Pourquoi en double avec client/index.html »** — Pas de changement.
-`client/index.html` est la source de Vite ; `client/out/index.html` est le résultat du build (mêmes balises plus les scripts et
-feuilles de style au nom haché). `client/out/` est versionné exprès : l'application déployée sert ce dossier, et `databricks.yml`
-n'envoie que lui (`client/src/**` et `client/public/**` sont exclus de la synchronisation).
-
-**#885062844 — `client/public/logos/databricks-symbol-color.svg` — « Pareil logos en double ? »** — Pas de changement.
-Ce fichier n'existe pas dans le dépôt que j'ai (il ne reste que `LOGO_LATECOERE.png` et `LOGO_Qualibot.png`). Les logos de
-`client/public/logos/` et de `client/out/logos/` sont le même cas que ci-dessus : `out/` est la copie produite par le build.
-Si le fichier existe chez toi, envoie-moi son chemin exact.
-
-### Prompts du chat
-
-**#885070557 — `server/prompts/chat/language_reminder_named.md` L1 — « pas compris pourquoi deux »** — Pas de changement de code ; explication ajoutée.
-Les deux rappels servent à deux situations : `language_reminder.md` (langue inconnue) demande de répondre « dans la langue de la
-question » ; `language_reminder_named.md` (langue détectée par fastText) la nomme avec `{language}`, ce qui est une consigne plus
-forte. Un seul fichier changerait la formulation du cas « inconnu », donc le comportement mesuré. La raison est écrite dans
-`server/prompts/README.md`.
-
-**#885071187 — `language_reminder_named.md` L1 — « + j'aurais plutôt mis dans un fichier de config .py »** — Non fait.
-Règle du projet : un prompt du chat est un fichier, jamais une chaîne Python (le job `register_chat_prompts` hache les fichiers et
-une trace ne lie la version enregistrée que si le hash correspond). Ce qui varie entre prompts va en revanche dans la config
-Python (voir #885138943).
-
-**#885138943 — `server/prompts/chat/system/as.md` L1 — « Variabiliser pour réutiliser le même texte entre IS/AS »** — Fait.
-`as.md` et `is.md` sont remplacés par `system/division.md`, un gabarit (`{code}`, `{name}`, `{other_code}`, `{other_name}`), rempli
-par `division_prompt()` avec `DIVISION_NAMES` dans `server/services/chat/engine/config.py`. La règle propre à AS (ordre QP puis MI)
-va dans `system/as_reference_ordering.md`, ajoutée au seul prompt AS. Le texte envoyé au modèle est le même à la mise en forme
-près. Les clés du registre changent (`system_as`, `system_is` → `system_division`, `system_as_references`) : relancer
-`register_chat_prompts` (voir `runbooks/retest.md`).
-
-**#885138148 — `system/base.md` L2 — « un petit langdetect en amont ? »** — Pas de changement ; proposition.
-La détection en amont existe déjà : fastText (`fast_lang_guess`) détecte la langue et `answer_language` la nomme dans le rappel
-`{language}` ajouté après la question. Le bloc « CRITICAL LANGUAGE RULES » de `base.md` couvre le cas où la détection est
-incertaine (rappel non nommé) et la règle de citation dans la langue du document. Le retirer change la configuration mesurée
-(`archive/docs/chat_tests.md`) : à faire avec une mesure sur DEV avant, pas à l'aveugle.
-
-### Routes du chat
-
-**#885145601 — `server/routers/chat/helpers.py` L13 — « réfléchir en tokens plutôt que conversation turn ? »** — Fait.
-`CHAT_MAX_HISTORY` (10 messages) est remplacé par `CHAT_MAX_HISTORY_TOKENS` (8000 par défaut, `app.yaml`). Les messages les plus
-récents qui tiennent dans le budget sont gardés ; la dernière question l'est toujours, même seule au-dessus du budget ; la fenêtre
-n'ouvre jamais sur un message de l'assistant. Taille estimée à 4 caractères par jeton, sans tokenizer (un appel de plus par tour
-pour une fenêtre approximative n'apporte rien). Test mis à jour.
-
-**#885146344 — `helpers.py` L111 — « same »** — Fait (lu comme #885146016 : constantes en haut). `_SOURCE_FIELDS` remonte avec les autres.
-
-**#885146016 — `helpers.py` L36 — « bouge les constantes au début »** — Fait. `_CITE_MARKER_TMPL`, `_PROTECTED_SPAN_RE`, `_SOURCE_FIELDS`,
-`CHAT_MAX_HISTORY_TOKENS` et les motifs de division sont en tête du module.
-
-**#885147969 — `server/routers/chat/persistence.py` L8 — « Import absolu c'est mieux je pense »** — Fait, pour tout `server/`.
-Les imports relatifs (`from ..services…`, `from .helpers…`) deviennent `from server.…` dans les 53 fichiers concernés, pour que le
-style soit le même partout. Un script a fait la conversion ; le code compile, les tests passent.
-
-**#885149621 — `server/routers/chat/sessions.py` L13 — « relatif… »** — Fait (même changement que #885147969).
-
-**#885148302 — `persistence.py` L19 — « Doc function! »** — Fait. Docstring de `_upsert_session` avec ses paramètres.
-
-**#885148691 — `persistence.py` L47 — « missing sphynx params ! A check dans toute la base de code »** — Fait (lot 1 pour `server/routers/`, 2026-10-20 pour `server/services/`).
-Docstrings Sphinx (`:param`, `:return:`) sur toutes les fonctions de `server/` : `runbooks/scripts/code_quality/check_docstrings.py` ne signale
-plus aucun `:param` manquant. La passe sur `server/services/` (51 fichiers, ~460 fonctions) a été écrite par un agent Haiku 5.5
-(effort moyen), puis contrôlée : l'arbre syntaxique de chaque fichier est identique à celui d'avant une fois les docstrings
-retirées (aucune ligne de code modifiée), les tests donnent le même résultat. Les descriptions les moins sûres sont à relire en
-priorité : `engine/answer.py` `revision_note`, `compare/export_helpers.py` `_build_excel_bytes`, `_diff_engines/relocation.py`
-(`_drop_present_verbatim`, `_align_duplicates`), `infra/error_origin.py` `caller`, `_diff_engines/images.py`
-`_compute_image_diff_pairs`, `_diff_engines/engines.py` `_order_key`, `infra/vector_search.py` `run_impact_search`.
-Reste ouvert : `CLAUDE.md` demande des commentaires courts, ce qui va à l'encontre de ces docstrings (décision du propriétaire).
-
-**#885148761 — `persistence.py` L30 — « type »** — Fait. `pool: asyncpg.Pool`, `conn: asyncpg.Connection`, `sources: List[dict] | None`
-(`persistence.py` et `sessions._turn_trace_id`).
-
-**#885246366 — `server/routers/chat/ws.py` L159 — « 1 seul if »** — Fait (lot 1 en partie, terminé le 2026-10-20).
-Le `if … pass / else …` du texte pendant la traduction est devenu un seul `if not (…)`. Le test de fin de flux, qui imbriquait
-deux `if` dans la boucle, est sorti dans la fonction `_finish_turn()` : la boucle n'a plus qu'un `if chunk.startswith('data: [DONE]')`,
-et `_finish_turn` traite d'abord le cas « flux sans texte » (sortie anticipée), puis le cas normal, sans `else`.
-
-**#885245561 — `ws.py` L16 — « Changer le nom de ma var de base »** — Fait. `ENABLED` de `translation_bridge` devient
-`TRANSLATE_BRIDGE_ENABLED` (comme la variable d'environnement), défini dans `server/services/chat/config.py`. L'alias `as` est
-supprimé de `ws.py`, de `routers/chat/__init__.py` et des notebooks d'évaluation.
-
-### Routes de comparaison
-
-**#885248209 — `server/routers/compare/analyze.py` L57 — « Please ptit comments pour expliquer »** — Fait. Commentaires sur le sémaphore
-(`MAX_CONCURRENT_ANALYSES`), les en-têtes SSE (`_SSE_HEADERS`) et `_sanitize_messages` ; docstrings de toutes les fonctions du module.
-
-**#885252966 — `server/routers/compare/common.py` L86 — « docstrings + param descriptions »** — Fait.
-
-**#885252414 — `common.py` L59 — « les valeurs par défaut dans un fichier de config perso. A discuter »** — Fait.
-Chaque valeur par défaut de `get_config()` est une constante nommée `DEFAULT_*` dans `server/routers/compare/config.py`.
-
-**#885251487 — `common.py` L18 — « Config file! ou alors ton common = config ? »** — Fait.
-`common.py` est coupé : `config.py` (réglages, `APP_VERSION`, taille maximale, nombre d'analyses simultanées, prompt d'analyse par
-défaut, `get_config()` sans souligné) et `common.py` (validation des fichiers, noms sûrs, `_is_within_volume`). Les imports de
-`analyze`, `impact`, `summarize`, `volume`, `exports`, `history` sont mis à jour.
-
-**#885255107 — `server/routers/compare/impact.py` L72 — « Fonction à split ? t'en penses quoi ? »** — Fait (mon avis : oui, mais pas en
-la coupant en morceaux).
-Les fonctions internes `_search`, `_audit`, `_warn`, `_judges` ne dépendaient que de valeurs fixées avant le flux : elles deviennent
-les méthodes de `_ImpactSearch`. Le flux `_impact_events` est un générateur de module. `_counts` reste interne : il lit l'état qui
-change pendant le flux. `find_impacted_documents` fait une cinquantaine de lignes.
-
-**#885254220 — `common.py` L114 — « Boolean complexe à détailler en variables »** — Fait (`climbs_out`, `is_root`, `is_below_root`).
-
-**#885251206 — `analyze.py` L123 — « Casser la fonction trop longue + ajouter les rtype »** — Fait.
-`analyze_documents` passait de 290 lignes à une soixantaine. Extraits : `_AnalysisJob` (données de la requête), `_read_uploads`,
-`_upload_to_volume`, `_acquire_slot`, `_keepalive_until_done`, `_track_llm_event`, `_analysis_events`. Types de retour ajoutés sur
-tout `server/routers/`. `tests/test_compare_analyze_stream.py` (nouveau) couvre le flux ; il passe aussi sur l'ancien code, donc
-le comportement est inchangé.
-
-**#885259506 — `server/routers/exports.py` L101 — « choisis Optional[Type] ou Type | None et applique partout »** — Fait.
-Choix : `Type | None` (Python 3.11 minimum d'après `pyproject.toml`, et déjà employé dans `exports.py`). Converti dans tout
-`server/` (34 fichiers), imports `Optional` retirés. Les annotations entre guillemets deviennent `'X | None'`.
-
-### Feedback et historique
-
-**#885261374 — `server/routers/feedback.py` L18 — « pq str alors ? Enforcer up or down »** — Fait. `vote: Literal['up', 'down']`
-dans les deux modèles de `feedback.py` et dans celui de `chat/sessions.py`. Une valeur invalide donne le 422 de FastAPI.
-
-**#885261904 — `feedback.py` L26 — « T'aurais plus besoin de ces checks »** — Fait. Les contrôles manuels sont supprimés.
-
-**#885262081 — `feedback.py` L62 — « Same! »** — Fait (même suppression pour le second endpoint, et pour le chat).
-
-**#885262563 — `server/routers/history.py` L20 — « config file »** — Fait. `APP_VERSION` s'importe de `compare/config.py`.
-
-**#885266896 — `history.py` L47 — « pas dict mais dict[Type, Type]… TypedDict c'est mieux »** — Fait avec `dict`, pas `TypedDict`.
-`_serialize(row: Mapping[str, Any]) -> dict[str, JsonScalar]`. Pas de `TypedDict` : la fonction sert à `SELECT *` comme à des
-listes de colonnes, les clés ne sont pas fixes.
-
-**#885267451 — `history.py` L144 — « class pour 1 var ? »** — Fait. `SaveImpactRequest` est supprimée ; la route lit
-`impact_json: str = Body(..., embed=True)`. Le JSON envoyé par le navigateur est le même (`{"impact_json": "…"}`), vérifié.
-
-### Services du chat
-
-**#885269686 — `server/services/chat/engine/config.py` L67 — « en haut »** — Fait. `_RAW_ON_ALL` et `_RAW_ON` remontent avec les autres constantes.
-
-**#885269518 — `engine/config.py` L32 — « config == config pas common »** — Compris comme : un module de réglages s'appelle `config`.
-`engine/config.py` l'était déjà ; c'est le `common.py` de la comparaison qui est corrigé (#885251487). À confirmer si je me suis trompé.
-
-**#885270078 — `server/services/chat/engine/queries.py` L49 — « config »** — Fait. `_COMPANY` et `_NOISE_PHRASES` passent dans
-`engine/config.py` (`NOISE_PHRASES`).
-
-**#885271146 — `server/services/chat/mlflow_turns.py` L119 — « en haut + config »** — Fait. L'import de `translation_bridge` est en tête du
-module (il était dans la fonction), et les limites de l'export (`MLFLOW_*`) sont dans le nouveau `server/services/chat/config.py`.
-`_fast_lang_guess` devient publique (`fast_lang_guess`) puisqu'elle sert à plusieurs modules ; tests et notebooks d'évaluation mis à jour.
-
-**#885271431 — `mlflow_turns.py` L287 — « pas cool à lire »** — Fait. Le span `rewrite` utilise des variables nommées avant l'appel, et
-le libellé des appels Vector Search est calculé par `_vs_call_label()`.
-
-**#885272147 — `server/services/chat/translation_bridge.py` L67 — « config! »** — Fait. Les motifs de nettoyage de texte, les seuils de
-détection et les noms de langues vont dans `services/chat/config.py`.
-
-**#885271954 — `translation_bridge.py` L36 — « model hardcodé ! »** — Fait. Les modèles par défaut sont dans `services/chat/config.py` (et
-passent à GPT-6 Luna, voir #885059913) ; `app.yaml` les fixe aussi.
-
-**#885272670 — `server/services/chat/turn_log.py` L33 — « config »** — Pas de changement ; à discuter.
-`INFO`, `WARNING`, `ERROR` sont le vocabulaire du journal de tour (importé par `ws.py`, le moteur et `lakebase`), pas des réglages
-qu'on ajuste par cible. Les mettre en config ferait dépendre le journal d'un module de réglages.
-
-### Commentaire de Jules
-
-**#885301989 — `utils/lakebase_sync/export_lakebase_uat_to_volume_job.py` L1 — « Les jobs là sont refaits… »** — Déjà fait avant cette revue.
-Le commit `97f8853` a remplacé les jobs par un seul (`lakebase_export`, `export_lakebase_to_volume`, `import_lakebase_tables_to_delta`),
-sans `uat` dans les noms, avec catalogue et planning par cible ; chaque job copie Lakebase{env} vers UC{env}. Il ne reste aucun
-fichier ni aucune référence `export_lakebase_uat*`. Rien à changer.
-
-### Vérification du lot 1
-
-- `pytest tests` : 527 réussis, 5 échecs, 12 ignorés. Les 5 échecs (`test_compare_documents` ×3, `test_lakebase_carry_over` ×2) sont
-  les mêmes avant mes changements, sur ce poste (module PDF et base locale).
-- Essai des routes avec le client de test : `PUT /history/{id}/impact` (corps `{"impact_json"}` accepté, corps vide refusé),
-  `POST /feedback` et `/chat/feedback` avec un vote invalide (422), `/compare/analyze` et `/compare/impact` sans réglages (erreurs claires).
-- Rien n'a été déployé ni exécuté sur Databricks. Étapes à faire : `runbooks/retest.md`, section « revue de la PR Bitbucket 2 ».
-
-### Points ouverts pour le relecteur
-
-1. ~~Passer la comparaison et le parsing sur GPT-6 Luna~~ : décidé le 2026-10-20, fait (#885059913).
-2. Le retrait des règles de langue de `base.md` demande une mesure sur DEV (#885138148).
-3. `CLAUDE.md` (commentaires courts) contredit les docstrings Sphinx, désormais sur tout `server/` : à aligner si Yann maintient sa demande (#885148691).
-4. `turn_log.py` : garder les niveaux de gravité dans le module du journal ? (#885272670)
-
-## Lot 2 — commentaires exportés le 2026-10-20 (8 commentaires)
-
-PR au commit `c7d44ccaefee72b53c4afe04caed162b877dbb23`. Les numéros de ligne cités ne correspondent pas exactement à ce
-dépôt (les docstrings ont décalé les fichiers) : chaque commentaire a été rattaché au code par son sens.
-
-**#885789675 — `engine/retrieval.py` L52 — « pas super lisible mais bon à voir si on change »** — Fait.
-`refs_named_in` : la double boucle imbriquée devient une liste de REF (la référence et ses variantes de langue) dédupliquée
-une fois par `dict.fromkeys`. Même simplification pour la construction de `named` dans `retrieve_for_turn` et pour
-`one_language_per_document` (boucle explicite à la place d'un `setdefault` dans une compréhension). Comportement identique ; deux tests
-ajoutés (ordre et déduplication des REF, une variante de langue par document).
-
-**#885790057 — `retrieval.py` L57 — « Any c'est pas incroyable. Si possible des TypedDict »** — Fait.
-Nouveau `engine/types.py` : `SearchRow` (ligne de l'index), `Hit`, `PassageRecord` (enregistrement `chat_retrieved_chunks`) et
-`DocumentPassages`. Ils remplacent `Dict[str, Any]` dans `search.py` et `retrieval.py`. Les filtres et le corps des requêtes
-gardent `Dict[str, Any]` : leur forme est libre. Aucun outil de typage statique ne tourne sur le dépôt, donc ces types
-documentent et aident l'éditeur, ils ne sont pas vérifiés à l'exécution.
-
-**#885793573 — `engine/search.py` L54 — « danger !! Aucun avertissement qu'on coupe la query »** — Fait, et c'était vrai.
-Une requête de plus de 20 000 caractères était coupée sans trace. Maintenant : un avertissement dans les logs, un incident
-`query_truncated` sur le tour (colonne `warnings`, ligne dans `app_errors`) et la longueur d'origine dans `vs_calls[].truncated_from`.
-Code ajouté à la liste de `schema.md`. Deux tests.
-
-**#885835700 — `compare/conversion.py` L44 — « danger si concurrence non ? »** — Fait, et c'était vrai.
-`_libreoffice_cmd` marquait la recherche comme faite avant de l'avoir terminée : un second thread arrivant pendant la
-recherche recevait `None` et prenait le rendu de secours. La fonction est supprimée : la conversion passe par `soffice.py`
-(`convert_docx_to_pdf`), qui cherche le binaire une fois sous verrou et limite les conversions simultanées. La vérification
-d'antiword est aussi mise sous verrou.
-
-**#885835950 — `conversion.py` L94 — « encodage manquant non ? »** — Fait, et c'était vrai.
-antiword était appelé sans fichier de correspondance, donc il écrit en Windows-1252 alors qu'on lisait de l'UTF-8 : les accents
-étaient remplacés par `�`. Maintenant `-m UTF-8.txt` (comme le pipeline de parsing). Si ce fichier n'est pas installé, antiword
-échoue : on relance sans lui et on lit en Windows-1252. Deux tests.
-
-**#885834566 — `conversion.py` L162 — « pq 400 ? »** — Fait (nommé et signalé).
-Le plafond de 400 passages de texte extraits d'un `.doc` par olefile était un nombre libre dans le code. C'est une borne contre
-le bruit du balayage binaire : constante `_OLEFILE_MAX_RUNS`, et un avertissement dans les logs quand elle coupe. Valeur inchangée :
-je n'ai pas de mesure qui dise mieux.
-
-**#885833326 — `conversion.py` L178 — « ça a été testé cette fonction ? »** — Non, pas avant ; fait.
-Aucun test ne couvrait `conversion.py`. `tests/test_conversion.py` (10 tests) couvre : le texte `.docx` et le cas vide, antiword en UTF-8
-et en repli, la borne d'olefile, un fichier qui n'est pas OLE, et le rendu des diapositives, y compris un vrai essai avec LibreOffice.
-
-**#885833609 — `conversion.py` L200 — « tu es sûr que ça convertit toutes les pages »** — Non : c'était faux. Corrigé.
-L'export PNG de LibreOffice ne rend que la première diapositive (vérifié ici sur un diaporama de 3 : un seul fichier). L'aperçu
-d'un PowerPoint n'affichait donc qu'une image. Maintenant LibreOffice produit un PDF et chaque page devient une image PNG, dans
-l'ordre, 100 diapositives au plus (avertissement dans les logs au-delà). Test avec un vrai diaporama de 3 diapositives : 3 images.
-
-## Lot 3 — commentaires exportés le 2026-10-21 (14 commentaires)
-
-PR au commit `7c2b82c51a07a3210778879a6f3e4571940b718b`. Plusieurs commentaires portent sur une version plus ancienne de la
-PR : les numéros de ligne ne correspondent plus, chaque commentaire est rattaché au code par son sens.
-
-**#886269905 — `compare/processors/factory.py` L89 — « param sous cette forme :param: »** — Fait.
-`get_processor` gardait un bloc `Args:` (style Google) au-dessus des `:param`. Il est supprimé et son contenu (valeurs de
-`method_override`) passe dans le `:param`. Il n'y avait qu'un autre bloc de ce style, `Returns:` dans `section_canonical_diff`
-(`_diff_engines/engines.py`, commentaire #885860992) : supprimé aussi, le `:return:` le disait déjà.
-Pas de `:rtype:` : les annotations de retour portent les types. Question ouverte : voir la fin du lot.
-
-**#885860006 — `compare/llm.py` L236 — « C'est normal d'ignorer ? »** — Oui, et c'est maintenant écrit.
-L'échec d'un modèle n'est pas ignoré : il est journalisé, le modèle est mis en pause, le suivant de la chaîne est essayé, et
-`CompareLlmUnavailable` est levée quand aucun ne répond. Un commentaire le dit.
-
-**#885864584 — `compare/processors/docx/extract.py` L27 — « fonction trop longue à split »** — Fait.
-`_extract_docx` (200 lignes, 6 fonctions imbriquées qui partageaient 9 variables) devient la classe `_DocxWalk` (`emit`,
-`count_breaks`, `harvest_images`, `walk_paragraph`, `walk_table`, `finish`), plus `_oriented_image` (lecture et retournement d'une image)
-et deux petites fonctions de module. Même résultat que l'ancien code sur 3 documents de test (texte, tableaux, images
-retournées, saut de page).
-
-**#885869279 — `third_party/antiword/share/8859-1.txt` L69 — « C'est quoi ces trucs ? Il faut les garder dans la PR ? »** — Garder.
-Ce sont les tables de caractères du programme antiword (conversion des `.doc` en texte), plus l'exécutable. Le job de parsing
-les lit (`ANTIWORDHOME`) : le cluster ne peut pas installer antiword. L'app, elle, installe le paquet `.deb` au démarrage
-(`start.sh`) et n'utilise pas ces fichiers. Le README de `third_party/` le décrit. Seule `UTF-8.txt` est demandée par le code ;
-les autres tables viennent avec le paquet et ne gênent pas, mais on peut les retirer si tu préfères une PR plus courte.
-
-**#886268712 — `factory.py` L27 — « pas de .PDF ? »** — Déjà géré. `get_extension` passe l'extension en minuscules : `Plan.PDF` est un PDF.
-Test ajouté (`tests/test_excel_processor.py`).
-
-**#886269539 — `factory.py` L34 — « xlmx en + ? »** — Fait. `.xlsm` (classeur avec macros) est ajouté côté serveur
-(`EXTENSION_MAP`, aperçu) et côté client (`files.ts`). openpyxl le lit comme un `.xlsx` (test avec un vrai contenu de type xlsm).
-Le client versionné `client/out` doit être reconstruit pour que le navigateur accepte `.xlsm`.
-
-**#886274477 — `compare/soffice.py` L126 — « comments »** — Fait. Commentaires sur le marqueur de fin d'extraction, le dossier remis à
-zéro, le téléchargement par blocs, la confiance dans l'archive et le bit exécutable.
-
-**#886275266 — `compare/summarize.py` L18 — « Mérite un fichier de config »** — Fait pour les nombres.
-`SUMMARY_LLM_TIMEOUT_S` va dans `services/compare/config.py`. Les deux prompts de résumé restent des constantes Python :
-la règle « un prompt est un fichier » de `CLAUDE.md` vise le chat. Question ouverte : voir la fin du lot.
-
-**#886276049 — `infra/pdf_report/markdown.py` L58 — « Détailler avec un comments ce que ça fait »** — Fait. Commentaire sur l'expression
-régulière du Markdown en ligne : l'ordre des alternatives (code, lien, citation, gras-italique, gras, italique, barré, URL) et pourquoi.
-
-**#886277833 — `infra/vector_search.py` L49 — « pareil config »** — Fait pour les nombres. Délais, nombre de requêtes en parallèle,
-reprises, plafonds de passages et de jetons du juge d'impact vont dans `services/infra/config.py` (`IMPACT_*`,
-`VECTOR_SEARCH_QUERY_TIMEOUT_S`), importés par la recherche d'impact et par le moteur du chat. Le prompt du juge reste en Python (voir ci-dessus).
-
-**#885862606 — `_diff_engines/relocation.py` L196 — « mettre en haut »** — Fait. Les trois constantes (`_RELOCATION_COVERAGE_THRESHOLD`,
-`_RELOCATION_MIN_RUN_WORDS`, `_STRIKETHROUGH_RE`) rejoignent les autres en tête du module.
-
-**#885862314 — `relocation.py` L58 — « double boucle. Pas moyen de mieux faire ? »** — Non pour l'algorithme, mieux pour la lecture.
-La double boucle remplit une table de programmation dynamique : le meilleur appariement des blocs identiques qui garde leur ordre et
-minimise l'écart de position. Un appariement glouton (le plus proche) se trompe dès qu'un bloc est inséré tôt dans une version.
-Le coût est borné (`_DUP_ALIGN_MAX_CELLS` : au-delà, appariement dans l'ordre). La table est maintenant calculée par
-`_drift_cost_table`, avec sa docstring ; `_align_duplicates` ne fait plus que lire l'appariement. Résultat identique à l'ancien code
-sur 3000 cas tirés au hasard.
-
-**#885865732 — `compare/processors/excel.py` L64 — « split »** — Fait. `_build_diff_keyed` (170 lignes, 3 fonctions imbriquées) est coupée en
-`_parse_sheets`, `_parse_rows`, `_is_auto_increment`, `_column_name`, `_volatile_columns`, `_row_fields`, `_modified_rows` et
-`_sheet_diff`. Même résultat que l'ancien code sur 400 tirages au hasard, sauf un défaut corrigé : une feuille sans ligne de données
-faisait planter l'ancien code (`IndexError`) ; elle donne maintenant un rapport. Tests ajoutés (`tests/test_excel_processor.py`).
-
-### Vérification du lot 3
-- Aucun test ne couvrait ces fichiers avant ce lot ; `tests/test_excel_processor.py` est nouveau. Les tests donnent les mêmes échecs
-  qu'avant mes changements (PDF, base locale) plus `test_code_conventions` (notebooks du parsing modifiés par une autre
-  session : les cellules de code consécutives).
-- Les trois découpages (docx, excel, relocation) ont été comparés à l'ancien code : mêmes sorties.
-
-### Points ouverts pour le relecteur
-1. `:rtype:` en plus de `:return:` ? Les annotations de retour disent déjà le type ; l'écrire deux fois risque la divergence. Réponse
-   proposée : garder les annotations, et ajouter `:rtype:` seulement si l'outil de documentation le demande.
-2. Les prompts de la comparaison (résumé, juge d'impact, diff) en fichiers sous `server/prompts/`, comme ceux du chat ?
+**Statuts** : `Fait` = corrigé ici (avec test si c'est du code) · `Partiel` = une partie corrigée, le reste est dit · `Ouvert` = pas fait · `Décision` = attend ton choix (voir « Points en suspens ») · `Pas de changement` = réponse donnée, code inchangé.
+
+## Synthèse
+
+| Statut | Yann | Logan | Jules | Total |
+|---|---|---|---|---|
+| Fait | 58 | 39 | 1 | 98 |
+| Partiel | 0 | 4 | 0 | 4 |
+| Ouvert | 0 | 2 | 0 | 2 |
+| Décision | 0 | 1 | 0 | 1 |
+| Pas de changement | 4 | 0 | 0 | 4 |
+| **Total** | **62** | **46** | **1** | **109** |
+
+## Décisions de Jules (2026-10-21) et leurs raisons
+
+| Sujet | Décision | Raison |
+|---|---|---|
+| Lakebase entre environnements | Jamais copié d'un environnement à l'autre ; `sync-prod-data` ne copie plus que les modèles docling | « Il n'y a besoin d'aucun job du Lakebase UAT vers DEV : le job DEV copie le Lakebase DEV, le job UAT copie le Lakebase UAT, c'est tout ce qu'il faut. » |
+| Jetons de partage | Inchangés | « Chaque environnement garde ses share_tokens, cela aide à lire les chats plus facilement. » |
+| Chats DEV | Vraies données DEV | « Ce n'est pas grave si on peut faire un select dessus. » |
+| RGPD | `user_id` oui, pas de purge, `localStorage` 7 jours | « L'historique garde ceci dans Databricks. » |
+| `client/out` | Construit au déploiement (option B) | Le build ne doit plus dériver du code source ni échapper à la CI. |
+| Modèle de réécriture du chat | GPT-6 Luna sur toutes les cibles | Un seul modèle, documentation alignée. |
+| Bloc « langue » de `base.md` | Ramené à deux lignes | La détection fastText existe déjà ; le bloc long était redondant. |
+| Tableau de sources en fin de réponse | GARDÉ ; `CLAUDE.md` corrigé | « Je veux bien les réponses plus longues. » |
+| Échec de la réécriture | Tour dégradé qui cherche avec la question brute, autant de candidats qu'un tour normal (48) | Meilleure expérience pour l'utilisateur. |
+| CI | CLI épinglée ; tests bloquent UAT/PROD ; `Production` limité à `main` après validation ; OIDC plus tard | Déploiements reproductibles ; la restriction attend que tout soit validé ; OIDC demande l'administrateur de compte Databricks. |
+| Dépendances et `leap_utils` | Option A pour les deux : épinglage ; réduction à 11 modules | Reproductibilité ; 78 % de la copie ne servait jamais. |
+| Prompts de la comparaison | En fichiers ; annotations seulement (pas de `:rtype:`) | Suit Logan ; même règle que les prompts du chat. |
+| Rôle Lakebase de PROD | `prevent_destroy` préparé | Protéger le rôle contre une suppression accidentelle. |
+| Export Lakebase de PROD | Dé-pausé (à déployer avec PROD) | Les alertes de PROD lisent la copie Delta. |
+| Adresse d'alerte DEV/UAT | Conservée (`jules.gourio.external`) | Décision de Jules. |
+| Utilisateurs nommés de l'app UAT | `christophe.pelissier` et `yosif.karapendov` retirés | Vérifié : tous deux ont can_chat par les groupes. |
+| Documentation API interactive | Désactivée | « On s'en fout. » |
+| Polices web | Livrées avec le build du client (Fontsource) | L'apparence reste identique, plus d'appel à Google. |
+| Tests | Aucune donnée stockée | « Je ne veux pas ces données dans les tests. » |
+
+## Contexte
+
+Un tableau par thème : une ligne par remarque (relecteur Yann, revue indépendante « Logan », commentaire de Jules). Les commentaires
+Bitbucket se récupèrent avec `python debug\fetch_comment_pr.py` (copie de `runbooks/scripts/bitbucket_pr/fetch_pr_comments.py`). La PR est
+faite sur le commit `14296499a19baf710dc6c10d74bdd71204176b2d` ; les numéros de ligne cités ne tombent pas toujours pile (les fichiers ont
+bougé depuis) : chaque remarque a été rattachée au code par son sens. Relecteurs : Yann Depledt (commentaires inline) et Logan (fichier
+`QualiBOT_PR_Review.html`, revue en lecture seule du commit `db1f6d7`, faite le 2026-10-20). Jules Gourio est l'auteur. Les nouveaux
+commentaires s'ajoutent en bas du tableau de leur thème.
+
+- **Origine** : `Yann` = commentaire inline Bitbucket (`Y-n`, id Bitbucket en petit après le numéro) ; `Logan` = constat de la revue
+  indépendante (`L-1` à `L-29` = sa numérotation ; `L-b1` à `L-b17` = ses constats de gravité basse, dans l'ordre de sa liste) ; `Jules` =
+  commentaire de l'auteur (`J-1`). Quand Logan a aussi jugé un commentaire de Yann, son avis est dans la ligne de Yann. Logan a jugé les 48
+  premiers commentaires de Yann (lots 1 et 2) ; le lot 3 est arrivé après.
+- **Lecture des cellules** : « … » en fin de cellule = la suite est dans la liste `Détails` sous le tableau. Pour les lignes de Yann, la
+  colonne de Logan donne son avis en gras puis sa proposition ; pour les lignes de Logan, elle donne sa correction proposée (`—` = rien).
+- Là où Logan est en désaccord avec Yann, le code suit Yann (c'est le relecteur), sauf mention. Rien n'a été déployé ni exécuté sur
+  Databricks.
+
+## Tableaux des remarques
+
+### A. Sécurité et isolation des utilisateurs
+
+| # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
+|---|---|---|---|---|
+| L-1 | Logan · `preview.py:26-40`, `conversion.py:189` | [Critique] `/api/preview` écrit l'upload à `join(tmp, filename)` : nom absolu ou `../` = écriture hors dossier (binaire LibreOffice, `client/out/index.html`). Route sans `require_compare`, taille ni type. | Nom fixe (`input.pptx`) ; `require_compare` + `_validate_file` sur les deux routes d'aperçu. | D'accord. Suffixe vérifié (`_SAFE_SUFFIX`), nom fixe, contrôles sur les deux routes, rendu hors boucle d'événements, erreurs génériques.<br>**Fait** |
+| L-2 | Logan · `volume.py:51,89-140`, `exports.py:160-288` | [Critique] `session_path` (query) jamais vérifié : lecture et écrasement des documents des autres (`/compare/load`, `save-*`) ; dossiers nommés à la seconde (~86 000 essais par jour). | L'id d'historique vient du client, le chemin du serveur (`WHERE id AND user_id`) ; dossiers en UUID ; supprimer la copie `.tmp/{id}` inutile. | D'accord. Racine par utilisateur + dossier UUID, `owns_session` sur `load` et `save-*` (403), copie `.tmp` retirée.<br>**Fait** |
+| L-4 | Logan · `analyze.py:68-117`, `history.py:63-120` | [Haute] Cache d'analyse alimenté par `POST /history` (corps de requête) : un texte planté est servi aux autres, avec l'id et le chemin du premier utilisateur. | Écrire le cache côté serveur en fin de flux réussi (table à part) ; ne jamais renvoyer l'identifiant d'un autre. | D'accord. Table `analysis_cache` écrite par le serveur seul ; plus d'identifiant d'un autre utilisateur dans le résultat en cache.<br>**Fait** |
+| L-5 | Logan · `sessions.py:283`, `ws.py:80`, `persistence.py:15-26` | [Haute] Le lien de partage donne l'id réel de session ; le WebSocket accepte n'importe quel `session_id` et l'`upsert` ne vérifie pas le propriétaire : on écrit dans la conversation d'un autre. | `DO UPDATE … WHERE user_id = EXCLUDED.user_id`, compter les lignes affectées, ne plus renvoyer l'id. | D'accord. Vue partagée avec le jeton comme id, `upsert` conditionné au propriétaire, `session_not_owned` enregistré.<br>**Fait** |
+| L-13 | Logan · `sessions.py:43-83,141,264-270`, `feedback.py:23-112` | [Moyenne] Feedback non lié au votant (ids SERIAL énumérables) ; la vue partagée montre les commentaires privés ; `get_session` ne filtre pas `deleted`. | — | Vote accepté seulement sur un message de l'utilisateur ; vue partagée = vote du propriétaire seul ; sessions supprimées exclues.<br>**Fait** |
+| L-14 | Logan · `ws.py:63-67,79-81` | [Moyenne] Contrôle d'accès du WebSocket fail-open, pas de contrôle d'Origin, entrée non validée (rôle `system`, taille illimitée, message sans contenu). | — | Échec = refus ; liste d'Origin optionnelle (`ALLOWED_ORIGINS`, vérifiée seulement si renseignée) ; rôles et taille validés (`_clean_messages`).<br>**Fait** |
+| L-15 | Logan · `credentials.py:9-30`, `doc_catalog.py:246-314` | [Moyenne] Tout utilisateur du chat atteint tout document indexé (compte de service) ; les puces du catalogue ignorent `in_chat` et la division. | Documenter comme contrôle accepté. | Pas de code changé. Chat et recherche d'impact interrogent Vector Search avec le service principal de l'app : les droits Unity Catalog ne s'appliquent pas par utilisateur, c'est l'index qui décide (`server/services/infra/README.md`, « Access to indexed documents »). Liens REF du catalogue sur tout le périmètre de parsing, volontairement. À confirmer, ou à filtrer par `in_chat` et division. …<br>**Décision** |
+| L-b1 | Logan · exports, historique, config, sessions, volume, feedback, impact, aperçu | [Basse] `str(exc)` renvoyé au navigateur (chemins de volume, erreurs SQL). | Réponse générique comme le gestionnaire global. | Réponse générique `INTERNAL_ERROR` sur ces routes ; le détail va dans les logs.<br>**Fait** |
+| L-b2 | Logan · client (Markdown) | [Basse] Exfiltration par injection de prompt : images Markdown vers un hôte quelconque, pas de CSP, liens non limités à https. | N'autoriser que des hôtes connus. | D'accord, à faire côté client (reconstruire `client/out`). (Liens https seulement, images de l'origine ou `data:` seulement, en-tête CSP + nosniff + referrer-policy (`server/app.py`).)<br>**Fait** |
+| L-b3 | Logan · `export_helpers.py:243` | [Basse] Injection de formule à l'export Excel (texte commençant par `=`). | — | Texte stocké comme texte (`_store_text_as_text`).<br>**Fait** |
+| L-b4 | Logan · `/api/history` | [Basse] Coûts falsifiables : `cost_eur` et jetons envoyés par le client. | — | D'accord ; à calculer côté serveur. (`/api/history` ignore coût et jetons du client (relus depuis `llm_requests` du demandeur).)<br>**Fait** |
+| L-b10 | Logan · `_caps_cache` | [Basse] Cache des droits sans éviction ; pas de limitation de débit par utilisateur sur les routes LLM. | — | D'accord, faible priorité. (Cache des droits plafonné à 5000 entrées ; limite de 30 requêtes/minute/utilisateur (`RATE_LIMIT_PER_MINUTE`, 0 = coupée) sur analyse, résumé, impact.)<br>**Fait** |
+| L-b11 | Logan · middleware identité | [Basse] Historique anonyme partagé (`user_id = ''`) sans en-tête d'identité. | — | Non atteignable derrière le proxy ; à refuser quand même si l'en-tête manque. (Sans identité, les routes d'historique, de sessions et de feedback répondent 401 (sauf en dev).)<br>**Fait** |
+| L-b17 | Logan · tests | [Basse] Chemins de sécurité sans test (propriété `load`/`save-*`, réutilisation de `session_id`, aperçu, tout le client). | — | Tests ajoutés pour la propriété des sessions, la réutilisation de `session_id`, l'aperçu protégé et la reconnexion Lakebase (`test_chat.py`, `test_compare_audit.py`, `test_lakebase_connection.py`). Le client reste sans test. (Tests ajoutés : propriété des sessions, aperçu protégé, reconnexion Lakebase, en-têtes de sécurité, limite de débit. Le code client reste sans test.)<br>**Fait** |
+
+### B. Pipeline de parsing
+
+| # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
+|---|---|---|---|---|
+| L-3 | Logan · `build_steps.py:128-131,355-358` | [Critique] En mode `full`, le checkpoint n'est pas filtré sur le manifeste : révisions remplacées remises dans `chunks` et dans l'index (UAT tourne en `full`). | Filtrer sur le manifeste dans tous les modes ; supprimer les lignes de checkpoint hors manifeste. | Filtre sur les IDDOC cibles dans tous les modes. Le nettoyage des lignes de checkpoint n'est pas ajouté (simple ajout si tu le veux).<br>**Fait** |
+| L-7 | Logan · `manifest_steps.py:107-144`, `output_steps.py:242-266` | [Haute] Une révision remplacée perd ses chunks mais garde `SUCCESS` : `MISSING_CHUNKS`, re-parsing et nouvelle description d'images (payante), un jour sur deux. | Statut terminal pour les révisions élaguées. | Statut `SUPERSEDED_REVISION` posé à l'élagage.<br>**Fait** |
+| L-21 | Logan · `describe_steps.py`, `update_proj_vector_indexes.py:323-335`, `parsing_pipeline.job.yml:62` … | [Moyenne] Robustesse et coût : `redescribe_all_images` jamais appliqué aux passages, prune qui échoue en silence, attente d'index qui passe au premier sondage, pas de délai maximal … | — | D'accord sur le fond. Pipeline de parsing : pas touché pendant que Jules teste le parsing de l'actif de données Intraqual sur DEV ; à faire après son test.<br>**Ouvert** |
+| L-22 | Logan · `manifest_steps.py:402-423` | [Moyenne] `dry_run=false` depuis DEV ou UAT supprimerait des dossiers de la zone PROD partagée. | Suppression seulement quand l'environnement d'écriture est `prod`. | Fait ainsi.<br>**Fait** |
+| L-b12 | Logan · `document_change_log`, `_pipeline_checkpoint_<ts>` | [Basse] Doublons dans `document_change_log` sur runs réparés ; clones de checkpoint jamais supprimés. | — | D'accord, nettoyage à écrire. Pipeline de parsing : pas touché pendant le test de Jules sur DEV ; à faire après.<br>**Ouvert** |
+
+**Détails**
+
+- **L-21** — Fichiers (suite) : `llm_describe.py:293` ; Critique (suite) : descriptions d'images non mises en cache, PNG étiqueté jpeg, PROD
+  en pause.
+
+### C. Fiabilité et performance du serveur
+
+| # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
+|---|---|---|---|---|
+| L-10 | Logan · `connection.py:197-223` | [Haute] Lakebase en panne au démarrage : aucune reconnexion et `/health` reste vert. | Boucle de reconnexion avec attente croissante ; état Lakebase dans `/health`. | Fait ainsi (`tests/test_lakebase_connection.py`).<br>**Fait** |
+| L-11 | Logan · `preview.py:26-86`, `credentials.py:15-25`, `doc_catalog.py:142-157`, `analyze.py:233,407` | [Moyenne] Boucle d'événements bloquée (aperçu synchrone, `Config()` à chaque tour, grosse regex des REF), sémaphore compare libéré à la déconnexion, un `httpx.AsyncClient` par appel, cache PDF jamais nettoyé. | `asyncio.to_thread`, un client SDK partagé, un sémaphore LibreOffice, clients HTTP poolés. | Aperçu via `asyncio.to_thread`, configuration SDK en cache, cache PDF borné à 200 fichiers, recherche des références en thread, sémaphore libéré à la fin du travail réel, clients HTTP partagés fermés à l'arrêt.<br>**Fait** |
+| L-27 | Logan · `persistence.py:83-91`, `users.py:40`, `schema.py:571-578` | [Moyenne] Un `upsert` d'utilisateur en échec perd la sauvegarde du chat ; deux messages d'un tour hors transaction ; index manquants ; pas de verrou de migration. | — | `upsert` non fatal (`user_upsert_failed`) ; tour écrit en une transaction ; index sur `compare_messages(user_id, created_at)`, `chat_sessions(user_id, updated_at)`, `chat_feedbacks(message_id)` ; verrou consultatif ; golden de schéma régénéré.<br>**Fait** |
+| L-b8 | Logan · `store_error`, votes, uploads | [Basse] `create_task` sans référence : tâches perdables. | Garder une référence. | `store_error` doit rester synchrone (règle du projet) ; les votes et uploads sont à traiter. (`spawn()` garde une référence aux tâches (`store_error` reste synchrone).)<br>**Fait** |
+| L-b9 | Logan · rafraîchissement du jeton Lakebase | [Basse] `await old_pool.close()` peut être bloqué par une requête bloquée. | — | D'accord (délai maximal à poser). (Fermeture du pool bornée à 30 s puis `terminate()`.)<br>**Fait** |
+| Y-50 <sub>885860006</sub> | Yann · `llm.py:236` | « C'est normal d'ignorer ? » | **Pas jugé** | Ce n'est pas ignoré : échec journalisé, modèle mis en pause, suivant essayé, `CompareLlmUnavailable` levée si aucun ne répond. Commentaire ajouté.<br>**Fait** |
+
+### D. Comparaison de documents (diff, Excel, conversions)
+
+| # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
+|---|---|---|---|---|
+| L-6 | Logan · `excel.py:99-105,155-166`, `text.py:14,180`, `xml.py:25-56` | [Haute] Le diff perd de vrais changements : colonnes Excel « volatiles », feuilles et colonnes ajoutées, en-têtes, signes perdus (−40 → 40), XML malformé = « aucun changement », formules non lues. | Exclure une colonne seulement avec ≥ 20 lignes et la lister ; feuilles nouvelles ; capturer `[-+−±]?` ; erreur visible sur XML. | Formules lues : chaque cellule s'affiche `<valeur en cache> {=formule}` (`excel.py`), une formule modifiée à valeur égale est rapportée ; test ajouté. Colonne exclue seulement avec ≥ 20 lignes et listée, feuilles et colonnes nouvelles, en-têtes, signes, XML malformé = erreur visible.<br>**Fait** |
+| L-16 | Logan · `impact_queries.py:81-132,165-172`, `impact.py:179-181,226`, `vector_search.py:456,473-482` | [Moyenne] Recherche d'impact : sections coupées à 2000 caractères, runs partiels mis en cache, citation inventée = quand même « impacté », auto-exclusion par REF seulement. | Garde `queries_failed > 0` sur le cache (voir Y-23). | Sections longues découpées en plusieurs changements ; citation inventée = statut `check` ; cache protégé contre les runs partiels. Reste : l'auto-exclusion du document téléversé ne marche que par la REF du nom de fichier (la route d'impact reçoit des hachages et des noms, pas le texte de l'ancien document).<br>**Partiel** |
+| L-17 | Logan · `chunked_analysis.py:29-53,274-277` | [Moyenne] Gros documents découpés : lignes « aucun changement » entre les vrais changements, titre collé en fin de ligne, titres de section perdus, Excel jamais découpé (600 000 caractères en un appel). | — | D'accord, rien fait. (Lignes « aucun changement » retirées à la fusion, titres séparés, titre repris dans les parties suivantes, diffs Excel découpés.)<br>**Fait** |
+| L-18 | Logan · `analyze.py:70-100`, `summarize.py:57`, `impact.py:45-56` | [Moyenne] Clés de cache sans prompt, modèle ni réglages. | Faire comme `_impact_cache_version`. | `_analysis_cache_version` et `_summary_cache_version` ajoutées.<br>**Fait** |
+| L-23 | Logan · `llm.py:186-190`, `streaming.py:37` | [Moyenne] Température et « thinking » des modèles Claude morts ou invalides (400 silencieux, repli sur Luna). | — | Pas de température quand le raisonnement est actif ; test corrigé.<br>**Fait** |
+| L-29 | Logan · `conversion.py:41-50,93-99,161,175-236` | [Moyenne] Conversions Office (soulevées par Yann) : aperçu PPTX = diapositive 1, `.doc` coupé à 400 fragments, encodage antiword, course sur la détection LibreOffice. | PDF d'abord puis une image par page ; `-m UTF-8.txt`. | Voir Y-44 à Y-48.<br>**Fait** |
+| L-b5 | Logan · `.ppt`, images | [Basse] `.ppt` annoncé mais illisible par python-pptx ; grandes images non redimensionnées. | — | D'accord. (`.ppt` converti via LibreOffice, sinon message clair ; images réduites à 2000 px.)<br>**Fait** |
+| L-b6 | Logan · prompt d'images | [Basse] Images au-delà de 95 supprimées en silence, étiquettes restées dans le prompt. | — | D'accord. (Étiquettes des images au-delà de 95 retirées avec un avertissement visible.)<br>**Fait** |
+| L-b7 | Logan · extraction DOCX/PPTX | [Basse] Trous d'extraction : en-têtes et pieds DOCX, notes PPTX ; ligne courte ajoutée identique à une voisine masquée. | — | D'accord. (En-têtes/pieds DOCX et notes PPTX extraits ; ligne répétée = en-tête seulement à partir de 3 pages.)<br>**Fait** |
+| Y-44 <sub>885835700</sub> | Yann · `conversion.py:44` | « Danger si concurrence non ? » | **D'accord** : le drapeau « vérifié » est posé avant la fin de la recherche (voir L-29). | Vrai. `_libreoffice_cmd` supprimée : conversion par `soffice.py` (`convert_docx_to_pdf`), recherche du binaire une fois sous verrou, conversions simultanées limitées ; vérification d'antiword aussi sous verrou.<br>**Fait** |
+| Y-45 <sub>885835950</sub> | Yann · `conversion.py:94` | « Encodage manquant non ? » | **D'accord** : charset dépendant de la locale, toujours décodé en UTF-8.<br>Proposition : `-m UTF-8.txt` | Vrai : accents remplacés par `�`. `-m UTF-8.txt` ajouté ; sans ce fichier, on relance sans lui et on lit en Windows-1252. Deux tests.<br>**Fait** |
+| Y-46 <sub>885834566</sub> | Yann · `conversion.py:162` | « Pq 400 ? » | **D'accord** : bug réel, `.doc` long coupé en silence, aussi en comparaison sans antiword. | Plafond nommé `_OLEFILE_MAX_RUNS` et avertissement quand il coupe. Valeur inchangée, aucune mesure ne dit mieux.<br>**Fait** |
+| Y-47 <sub>885833326</sub> | Yann · `conversion.py:178` | « Ça a été testé cette fonction ? » | **D'accord** : aucun test, et fonction cassée (diapositive 1 seule). | Non, pas avant. `tests/test_conversion.py` (10 tests : docx, antiword UTF-8 et repli, borne olefile, fichier non OLE, diapositives avec un vrai LibreOffice).<br>**Fait** |
+| Y-48 <sub>885833609</sub> | Yann · `conversion.py:200` | « Tu es sûr que ça convertit toutes les pages ? » | **D'accord** : LibreOffice n'écrit que la première (voir L-29).<br>Proposition : PDF puis une image par page | Faux, corrigé : PDF puis une image PNG par page, 100 diapositives au plus (avertissement au-delà). Test avec un diaporama de 3 : 3 images.<br>**Fait** |
+| Y-53 <sub>886268712</sub> | Yann · `factory.py:27` | « Pas de .PDF ? » | **Pas jugé** | Déjà géré : `get_extension` met en minuscules. Test ajouté (`test_excel_processor.py`).<br>**Fait** |
+| Y-54 <sub>886269539</sub> | Yann · `factory.py:34` | « xlmx en + ? » | **Pas jugé** | `.xlsm` ajouté côté serveur (`EXTENSION_MAP`, aperçu) et client (`files.ts`) ; openpyxl le lit comme un xlsx (test). Reconstruire `client/out` pour que le navigateur l'accepte.<br>**Fait** |
+| Y-60 <sub>885862314</sub> | Yann · `relocation.py:58` | « Double boucle. Pas moyen de mieux faire ? » | **Pas jugé** | Non pour l'algorithme (table de programmation dynamique, le glouton se trompe dès qu'un bloc est inséré tôt ; coût borné par `_DUP_ALIGN_MAX_CELLS`). Mieux pour la lecture : `_drift_cost_table` avec docstring. …<br>**Fait** |
+| Y-61 <sub>885865732</sub> | Yann · `excel.py:64` | « Split » (`_build_diff_keyed`, 170 lignes) | **Pas jugé** | Coupée en `_parse_sheets`, `_parse_rows`, `_is_auto_increment`, `_column_name`, `_volatile_columns`, `_row_fields`, `_modified_rows`, `_sheet_diff`. Identique sur 400 tirages, sauf un `IndexError` corrigé (feuille sans ligne). Tests ajoutés.<br>**Fait** |
+
+**Détails**
+
+- **Y-60** — Position (suite) : Identique à l'ancien code sur 3000 cas.
+
+### E. Chat (moteur, prompts, WebSocket)
+
+| # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
+|---|---|---|---|---|
+| L-19 | Logan · `useChatConversation.ts:90`, `helpers.py:84-92`, `queries.py:25` | [Moyenne] Tours en échec renvoyés au modèle comme historique (ils comptent, et transforment une première question en « suivi » donc coupent la voie traduction seule) ; fenêtre de N−1 messages … | — | Nettoyage côté serveur (`_clean_messages`). Reste : ne plus renvoyer les bulles d'erreur côté navigateur, et l'arrêt serveur. (Le serveur nettoie l'historique et le client n'envoie plus les bulles d'erreur ni les messages vides.)<br>**Fait** |
+| Y-2 <sub>885059913</sub> | Yann · `README.md:84` | « Switch to 6 Luna » | **D'accord** : les cibles surchargent la réécriture (voir L-25).<br>Proposition : Choisir un modèle et aligner les docs. | Pont de traduction, jugement et résumé de la comparaison (texte et images) sur `databricks-gpt-6-luna` ; repli `databricks-gpt-5-6-luna` (chat : `app.yaml` ; comparaison : l'autre modèle, `compare_chain`). Réécriture du chat : voir point 4. …<br>**Fait** |
+| Y-5 <sub>885070557</sub> | Yann · `language_reminder_named.md:1` | « Pas compris pourquoi deux » | **Désaccord** : deux cas distincts (langue détectée / non détectée), documenté. | D'accord avec Logan. Un seul fichier changerait la formulation du cas « inconnu », donc le comportement mesuré. Raison écrite dans `server/prompts/README.md`.<br>**Pas de changement** |
+| Y-6 <sub>885071187</sub> | Yann · `language_reminder_named.md:1` | « Plutôt un fichier de config .py » | **Désaccord** : les `.md` sont enregistrés dans le registre de prompts et éditables sans code. | Règle du projet : un prompt du chat est un fichier (le hash lie la version enregistrée à la trace). Ce qui varie va en config Python (voir Y-7).<br>**Pas de changement** |
+| Y-7 <sub>885138943</sub> | Yann · `as.md:1` | « Variabiliser pour réutiliser le même texte entre IS/AS » | **D'accord** : texte répété, un gabarit `{division}` ; garder en `.md`.<br>Proposition : Un gabarit + bloc d'ordre propre à AS. | `as.md` et `is.md` remplacés par `system/division.md` (gabarit rempli par `division_prompt()` et `DIVISION_NAMES` de `engine/config.py`) ; règle QP puis MI dans `as_reference_ordering.md`. …<br>**Fait** |
+| Y-8 <sub>885138148</sub> | Yann · `base.md:2` | « Un petit langdetect en amont ? » | **En partie** : existe déjà (fastText) ; bloc réductible à une ligne de repli.<br>Proposition : Ramener le bloc « langue » à une ligne. | Bloc « langue » de `base.md` ramené à deux lignes (réponse dans la langue de la question sauf demande contraire ; citation dans la langue d'origine avec traduction). Détection fastText et rappel nommé déjà en place. …<br>**Fait** |
+| Y-9 <sub>885145601</sub> | Yann · `helpers.py:13` | « Réfléchir en tokens plutôt que conversation turn ? » | **D'accord** : dix messages peuvent être énormes ; bug réel de fenêtre N−1 (voir L-19). | `CHAT_MAX_HISTORY_TOKENS` (8000, `app.yaml`) remplace `CHAT_MAX_HISTORY` : messages récents qui tiennent, dernière question toujours gardée, jamais d'ouverture sur un message assistant, 4 caractères par jeton (pas de tokenizer).<br>**Fait** |
+| Y-39 <sub>885271954</sub> | Yann · `translation_bridge.py:36` | « Model hardcodé ! » | **En partie** : lu dans `CHAT_TRANSLATE_ENDPOINT`, le défaut duplique `app.yaml` (comme Y-22). | Défauts regroupés dans `services/chat/config.py` (modèle GPT-6 Luna, voir Y-2), fixés aussi par `app.yaml`.<br>**Fait** |
+| Y-43 <sub>885793573</sub> | Yann · `search.py:54` | « Danger ! Aucun avertissement qu'on coupe la query » | **En partie** : silencieux mais impact faible (plafond sous la limite, seule la question brute l'atteint).<br>Proposition : Journaliser un incident à la coupe. | Vrai : > 20 000 caractères coupés sans trace. Avertissement dans les logs, incident `query_truncated` (colonne `warnings`, `app_errors`), longueur d'origine dans `vs_calls[].truncated_from`, code ajouté à `schema.md`. Deux tests.<br>**Fait** |
+
+**Détails**
+
+- **L-19** — Critique (suite) : « Stop » n'arrête pas le serveur.
+- **Y-2** — Position (suite) : Non mesuré : le jugement d'impact change de modèle sans comparaison des verdicts, à regarder sur DEV.
+- **Y-7** — Position (suite) : Clés de registre changées : relancer `register_chat_prompts`.
+- **Y-8** — Position (suite) : À mesurer sur DEV (réponses en mauvaise langue, questions courtes ou mixtes) ; relancer
+  `register_chat_prompts`.
+
+### F. Style et structure du code (config, docstrings, types, imports, fonctions longues)
+
+| # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
+|---|---|---|---|---|
+| Y-10 <sub>885146344</sub> | Yann · `helpers.py:111` | « Same » (constante en haut) | **D'accord** : style. | `_SOURCE_FIELDS` remonte avec les autres (voir Y-11).<br>**Fait** |
+| Y-11 <sub>885146016</sub> | Yann · `helpers.py:36` | « Bouge les constantes au début » | **D'accord** : style. | `_CITE_MARKER_TMPL`, `_PROTECTED_SPAN_RE`, `_SOURCE_FIELDS`, `CHAT_MAX_HISTORY_TOKENS` et motifs de division en tête de module.<br>**Fait** |
+| Y-12 <sub>885147969</sub> | Yann · `persistence.py:8` | « Import absolu c'est mieux je pense » | **Désaccord** : les relatifs explicites sont corrects (PEP 8), churn sans gain. | Écart assumé avec Logan : demande de Yann et règle de `CLAUDE.md`. `from server.…` dans 53 fichiers, conversion par script, code compile, tests passent.<br>**Fait** |
+| Y-13 <sub>885149621</sub> | Yann · `sessions.py:13` | « Relatif… » | **Désaccord** (comme Y-12). | Même changement que Y-12 (écart assumé).<br>**Fait** |
+| Y-14 <sub>885148302</sub> | Yann · `persistence.py:19` | « Doc function! » | **D'accord** : c'est la fonction sans contrôle de propriétaire (voir L-5).<br>Proposition : Corriger le contrôle et documenter. | Docstring de `_upsert_session` avec paramètres ; contrôle de propriétaire ajouté (L-5).<br>**Fait** |
+| Y-15 <sub>885148691</sub> | Yann · `persistence.py:47` | « Missing sphynx params ! A check dans toute la base de code » | **D'accord** : standard d'équipe, le code avait des docstrings en prose. | Docstrings Sphinx (`:param`, `:return:`) sur toutes les fonctions de `server/` (et `utils/`) ; `check_docstrings.py` = 0 problème. Passe sur `server/services/` (51 fichiers, ~460 fonctions) : AST identique à celui d'avant. …<br>**Fait** |
+| Y-16 <sub>885148761</sub> | Yann · `persistence.py:30` | « Type » | **D'accord**.<br>Proposition : `pool: asyncpg.Pool` | `pool: asyncpg.Pool`, `conn: asyncpg.Connection`, `sources: List[dict] \| None` (`persistence.py`, `sessions._turn_trace_id`).<br>**Fait** |
+| Y-17 <sub>885246366</sub> | Yann · `ws.py:159` | « 1 seul if » | **Désaccord** : le `if` interne a son propre `else` (flux vide), fusionner changerait le comportement. | Fait en gardant le comportement : `if not (…)` unique ; fin de flux dans `_finish_turn()` (flux sans texte en sortie anticipée, puis cas normal sans `else`).<br>**Fait** |
+| Y-18 <sub>885245561</sub> | Yann · `ws.py:16` | « Changer le nom de ma var de base » | **D'accord** : renommer à la définition.<br>Proposition : `ENABLED` → `TRANSLATE_BRIDGE_ENABLED` | Renommé (défini dans `services/chat/config.py`), alias `as` supprimé de `ws.py`, `routers/chat/__init__.py` et des notebooks d'évaluation.<br>**Fait** |
+| Y-19 <sub>885248209</sub> | Yann · `analyze.py:57` | « Please ptit comments pour expliquer » | **D'accord** (et le sémaphore est relâché à la déconnexion, voir L-11). | Commentaires sur le sémaphore, `_SSE_HEADERS`, `_sanitize_messages`, docstrings du module. Le sémaphore lui-même reste ouvert (L-11).<br>**Fait** |
+| Y-20 <sub>885252966</sub> | Yann · `common.py:86` | « Docstrings + param descriptions » | **D'accord** : style. | Fait.<br>**Fait** |
+| Y-21 <sub>885252414</sub> | Yann · `common.py:59` | « Valeurs par défaut dans un fichier de config perso. À discuter » | **D'accord** (voir Y-22). | Chaque défaut de `get_config()` devient une constante `DEFAULT_*` dans `compare/config.py`.<br>**Fait** |
+| Y-22 <sub>885251487</sub> | Yann · `common.py:18` | « Config file ! ou alors ton common = config ? » | **D'accord** : prompt par défaut différent de celui d'`app.yaml`, `APP_VERSION` à deux valeurs ; un seul module de réglages. … | `config.py` (réglages, `APP_VERSION`, taille max, analyses simultanées, prompt par défaut, `get_config()`) et `common.py` (validation, noms sûrs, `_is_within_volume`) ; imports mis à jour. …<br>**Fait** |
+| Y-23 <sub>885255107</sub> | Yann · `impact.py:72` | « Fonction à split ? t'en penses quoi ? » | **D'accord** : 160 lignes, helpers testables ; ajouter la garde de cache (voir L-16).<br>Proposition : Helpers au niveau module. | Oui, mais pas en morceaux : `_search`, `_audit`, `_warn`, `_judges` deviennent méthodes de `_ImpactSearch` ; `_impact_events` est un générateur de module ; `find_impacted_documents` ~50 lignes. Garde de cache : ouvert (L-16).<br>**Fait** |
+| Y-24 <sub>885254220</sub> | Yann · `common.py:114` | « Boolean complexe à détailler en variables » | **D'accord** : lisibilité seule, logique correcte. | `climbs_out`, `is_root`, `is_below_root`.<br>**Fait** |
+| Y-25 <sub>885251206</sub> | Yann · `analyze.py:123` | « Casser la fonction trop longue + ajouter les rtype » | **D'accord** : ~92 lignes avec fermetures, peu de types de retour. | 290 lignes → ~60 : `_AnalysisJob`, `_read_uploads`, `_upload_to_volume`, `_acquire_slot`, `_keepalive_until_done`, `_track_llm_event`, `_analysis_events` ; types de retour sur tout `server/routers/` …<br>**Fait** |
+| Y-26 <sub>885259506</sub> | Yann · `exports.py:101` | « Optional[Type] ou Type \| None et applique partout » | **D'accord** : `T \| None`. | `Type \| None` (Python ≥ 3.11) partout dans `server/` (34 fichiers), imports `Optional` retirés ; annotations entre guillemets en `'X \| None'`.<br>**Fait** |
+| Y-27 <sub>885261374</sub> | Yann · `feedback.py:18` | « Pq str alors ? Enforcer up or down » | **D'accord**.<br>Proposition : `Literal['up', 'down']` | `vote: Literal['up', 'down']` dans les deux modèles de `feedback.py` et dans celui de `chat/sessions.py` ; valeur invalide = 422.<br>**Fait** |
+| Y-28 <sub>885261904</sub> | Yann · `feedback.py:26` | « T'aurais plus besoin de ces checks » | **D'accord** : Pydantic fait déjà le 422 ; le vrai problème est L-13. | Contrôles manuels supprimés ; propriété du message vérifiée (L-13).<br>**Fait** |
+| Y-29 <sub>885262081</sub> | Yann · `feedback.py:62` | « Same! » | **D'accord** (comme Y-27). | Même suppression pour le second endpoint et pour le chat.<br>**Fait** |
+| Y-30 <sub>885262563</sub> | Yann · `history.py:20` | « Config file » | **En partie** : objet réponse global, mieux une petite fonction qui renvoie une réponse neuve.<br>Proposition : `_unavailable()` | `APP_VERSION` s'importe de `compare/config.py` ; le 2026-10-21 `_UNAVAILABLE` devient la fonction `_unavailable()`.<br>**Fait** |
+| Y-31 <sub>885266896</sub> | Yann · `history.py:47` | « Pas dict mais dict[Type, Type]… TypedDict c'est mieux » | **D'accord** : basse priorité. | `_serialize(row: Mapping[str, Any]) -> dict[str, JsonScalar]`. Pas de `TypedDict` : la fonction sert à `SELECT *` et à des listes de colonnes, clés non fixes.<br>**Fait** |
+| Y-32 <sub>885267451</sub> | Yann · `history.py:144` | « Class pour 1 var ? » | **Désaccord** : un modèle Pydantic est la façon normale de recevoir un corps JSON. | Écart assumé : `SaveImpactRequest` supprimée, la route lit `impact_json: str = Body(..., embed=True)`. JSON du navigateur inchangé (vérifié).<br>**Fait** |
+| Y-33 <sub>885269686</sub> | Yann · `engine/config.py:67` | « En haut » | **D'accord** : style. | `_RAW_ON_ALL` et `_RAW_ON` remontent.<br>**Fait** |
+| Y-34 <sub>885269518</sub> | Yann · `engine/config.py:32` | « config == config pas common » | **D'accord** : renommer `common.py` de la comparaison. | Compris comme « un module de réglages s'appelle `config` » : `engine/config.py` l'était, `common.py` de la comparaison est corrigé (Y-22). À confirmer si je me suis trompé.<br>**Fait** |
+| Y-35 <sub>885270078</sub> | Yann · `queries.py:49` | « Config » | **En partie** : liste de phrases-bruit, constante nommée en haut suffit. | `_COMPANY` et `_NOISE_PHRASES` passent dans `engine/config.py` (`NOISE_PHRASES`).<br>**Fait** |
+| Y-36 <sub>885271146</sub> | Yann · `mlflow_turns.py:119` | « En haut + config » | **En partie** : en haut oui, une regex de parsing n'est pas de la config. | Import de `translation_bridge` en tête ; limites d'export `MLFLOW_*` dans `services/chat/config.py` ; `_fast_lang_guess` → `fast_lang_guess` (publique) ; tests et notebooks mis à jour.<br>**Fait** |
+| Y-37 <sub>885271431</sub> | Yann · `mlflow_turns.py:287` | « Pas cool à lire » | **D'accord** : conditionnel dans une f-string.<br>Proposition : Construire le libellé avant. | Span `rewrite` avec variables nommées ; libellé des appels Vector Search par `_vs_call_label()`.<br>**Fait** |
+| Y-38 <sub>885272147</sub> | Yann · `translation_bridge.py:67` | « Config! » | **Désaccord** : regex de nettoyage, pas des réglages. | Écart assumé : motifs, seuils de détection et noms de langues déplacés dans `services/chat/config.py`.<br>**Fait** |
+| Y-40 <sub>885272670</sub> | Yann · `turn_log.py:33` | « Config » | **Désaccord** : regex de parsing / vocabulaire. | D'accord avec Logan. `INFO`, `WARNING`, `ERROR` sont le vocabulaire du journal de tour (importé par `ws.py`, le moteur, `lakebase`), pas des réglages par cible ; en config, le journal dépendrait d'un module de réglages. …<br>**Pas de changement** |
+| Y-41 <sub>885789675</sub> | Yann · `retrieval.py:52` | « Pas super lisible mais bon à voir » | **D'accord** : `setdefault` dans une compréhension.<br>Proposition : Écrire en boucle. | `refs_named_in`, `named` dans `retrieve_for_turn` et `one_language_per_document` simplifiés (liste dédupliquée par `dict.fromkeys`, boucle explicite). Comportement identique, deux tests.<br>**Fait** |
+| Y-42 <sub>885790057</sub> | Yann · `retrieval.py:57` | « Any c'est pas incroyable. Si possible des TypedDict » | **D'accord** : basse priorité. | Nouveau `engine/types.py` : `SearchRow`, `Hit`, `PassageRecord`, `DocumentPassages`. Filtres et corps de requêtes gardent `Dict[str, Any]`. Pas de typage statique outillé : ces types documentent sans être vérifiés.<br>**Fait** |
+| Y-49 <sub>886269905</sub> | Yann · `factory.py:89` | « Param sous cette forme :param: » | **Pas jugé** | Bloc `Args:` de `get_processor` supprimé, contenu repris dans le `:param`. Pas de `:rtype:` (annotations de retour seulement, décidé).<br>**Fait** |
+| Y-51 <sub>885864584</sub> | Yann · `extract.py:27` | « Fonction trop longue à split » | **Pas jugé** | `_extract_docx` (200 lignes, 6 fonctions imbriquées) → classe `_DocxWalk` + `_oriented_image` + deux fonctions de module. Même résultat sur 3 documents de test.<br>**Fait** |
+| Y-55 <sub>886274477</sub> | Yann · `soffice.py:126` | « Comments » | **Pas jugé** | Commentaires ajoutés (marqueur de fin, dossier remis à zéro, téléchargement par blocs, confiance dans l'archive, bit exécutable).<br>**Fait** |
+| Y-56 <sub>886275266</sub> | Yann · `summarize.py:18` | « Mérite un fichier de config » | **Pas jugé** | Nombres fait : `SUMMARY_LLM_TIMEOUT_S` dans `services/compare/config.py`. Prompts de résumé en fichiers (`server/prompts/compare/summary.md`, `summary_image.md`, via `compare/prompts.py`).<br>**Fait** |
+| Y-57 <sub>886276049</sub> | Yann · `markdown.py:58` | « Détailler avec un comment ce que ça fait » | **Pas jugé** | Commentaire sur la regex du Markdown en ligne : ordre des alternatives et raison.<br>**Fait** |
+| Y-58 <sub>886277833</sub> | Yann · `vector_search.py:49` | « Pareil config » | **Pas jugé** | Nombres fait : délais, parallélisme, reprises, plafonds de passages et jetons dans `services/infra/config.py` (`IMPACT_*`, `VECTOR_SEARCH_QUERY_TIMEOUT_S`), importés par la recherche d'impact et le moteur du chat. …<br>**Fait** |
+| Y-59 <sub>885862606</sub> | Yann · `relocation.py:196` | « Mettre en haut » | **Pas jugé** | Trois constantes (`_RELOCATION_COVERAGE_THRESHOLD`, `_RELOCATION_MIN_RUN_WORDS`, `_STRIKETHROUGH_RE`) en tête de module.<br>**Fait** |
+| Y-62 <sub>885860992</sub> | Yann · `engines.py` (`section_canonical_diff`) | Bloc `Returns:` de style Google (même remarque que Y-49) | **Pas jugé** | Bloc supprimé, le `:return:` le disait déjà.<br>**Fait** |
+
+**Détails**
+
+- **Y-15** — Position (suite) : À relire en priorité : `engine/answer.py` `revision_note`, `export_helpers.py` `_build_excel_bytes`,
+  `relocation.py` (`_drop_present_verbatim`, `_align_duplicates`), `error_origin.py` `caller`, `images.py` `_compute_image_diff_pairs`,
+  `engines.py` `_order_key`, `vector_search.py` `run_impact_search`.
+- **Y-22** — Avis et proposition (suite) : Proposition : Un module de réglages ; prompts de la comparaison dans `server/prompts/`. ;
+  Position (suite) : Les six prompts de la comparaison sont des fichiers (`server/prompts/compare/`, chargés par `compare/prompts.py`,
+  `load_prompt`), texte identique, surcharge `COMPARE_ANALYSIS_SYSTEM_PROMPT` conservée.
+- **Y-25** — Position (suite) : `test_compare_analyze_stream.py` passe aussi sur l'ancien code. `:rtype:` non ajouté (annotations seulement,
+  décidé suite à Logan).
+- **Y-40** — Position (suite) : À discuter si Yann y tient.
+- **Y-58** — Position (suite) : Prompt du juge en fichier (`server/prompts/compare/impact_judge.md`).
+
+### G. Dépôt, CI/CD, déploiement, dépendances
+
+| # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
+|---|---|---|---|---|
+| Y-1 <sub>885061633</sub> | Yann · `settings.json:1` | « Exclure le .vscode non ? » | **En partie** : `settings.json` = réglages personnels ; `tasks.json` sert à l'équipe.<br>Proposition : Exclure `settings.json`, garder `tasks.json`. | `settings.json` sort de git et entre dans `.gitignore` ; `tasks.json` reste volontairement (il porte la tâche de déploiement).<br>**Fait** |
+| Y-3 <sub>885062343</sub> | Yann · `index.html:1` | « Pourquoi en double avec client/index.html » | **En partie** : pas un doublon (source Vite / build) ; le vrai problème est de versionner le build.<br>Proposition : Construire au déploiement, ignorer `out/`. | Pas un doublon : `client/index.html` est la source, `out/` le build (balises plus scripts au nom haché). …<br>**Fait** |
+| Y-52 <sub>885869279</sub> | Yann · `8859-1.txt:69` | « C'est quoi ces trucs ? À garder dans la PR ? » | **Pas jugé** | Garder : tables de caractères et exécutable d'antiword, lus par le job de parsing (`ANTIWORDHOME`) que le cluster ne peut pas installer. L'app installe le `.deb` (`start.sh`). …<br>**Pas de changement** |
+| L-9 | Logan · `bitbucket-pipelines.yml:312-354`, `bitbucket_deploy.sh:49-62`, `databricks.yml:499` | [Haute] PROD déployable depuis toute branche, aucun test en CI, CLI installée par script non épinglé (`main`), jeton longue durée. | Tests d'abord, UAT sur `main`, PROD manuel ; environnement de déploiement PROD limité à `main` ; épingler la CLI ; OAuth/OIDC. | Tests avant les déploiements UAT et PROD (DEV sans) ; CLI épinglée à 1.20.0 (`utils/deploy/databricks_cli_version.txt`). Reste : OAuth/OIDC à la place du jeton longue durée ; `Production` limité à `main` (Jules : quand tout est validé). …<br>**Partiel** |
+| L-20 | Logan · `alerts.yml:82-126`, `03_chat_failure_rate.sql`, `lakebase_sync.yml:124` … | [Moyenne] Alertes qui ne peuvent pas se déclencher (copie Delta rafraîchie 2 fois par jour, 22 runs sur 24 voient 0 ligne), pas de job d'export en PROD, tableaux DEV figés … | — | Ressources Databricks à traiter à part. (Alerte d'échec du chat à 03 h et 15 h (fenêtre 13 h) après la copie ; l'export Lakebase de PROD est en pause, donc ces alertes n'y lisent rien.) (L'export Lakebase de PROD est dé-pausé dans `databricks.yml` ; il ne tournera qu'au déploiement de PROD.)<br>**Fait** |
+| L-25 | Logan · `target_env.json`, `app.yaml`, `databricks.yml`, `test_deploy_config.py:22`, READMEs | [Moyenne] Config et docs incohérentes : réécriture Gemini vs « Luna seulement », `CHAT_TRANSLATE_ONLY` documenté « off », fichiers cités absents, README CI faux, README du moteur vs `base.md` … | — | Réécriture tranchée (GPT-6 Luna) ; README CI et docs corrigés (sources, `CHAT_TRANSLATE_ONLY`, références absentes) ; tableau de sources de `base.md` gardé, `CLAUDE.md` corrigé ; repli « réécriture échouée » réel : le tour continue avec la question brute (statut dégradé) et demande autant de candidats qu'un tour normal (48) ; `prevent_destroy` sur le rôle Lakebase de PROD.<br>**Fait** |
+| L-26 | Logan · `leap_utils/` | [Moyenne] 12 272 lignes copiées, 78 % jamais atteint (le pipeline utilise 7 modules, 2 628 lignes), risque de dérive. | Dépendre d'un paquet épinglé ou ne copier que les modules utilisés. | Réduit aux 11 modules que le pipeline de parsing atteint (3 195 lignes gardées, 23 fichiers / 9 077 lignes supprimés), voir `leap_utils/README.md`. Un paquet épinglé reste possible plus tard.<br>**Fait** |
+| L-28 | Logan · `requirements.txt`, `pyproject.toml`, `start.sh:31-45`, `bitbucket_deploy.sh:49`, `.mcp.json` | [Moyenne] Dépendances non reproductibles : `>=` ≠ `uv.lock`, bibliothèques de jobs non épinglées, `.deb` antiword en `http://` sans somme de contrôle, `@playwright/mcp@latest`. | — | Dépendances directes épinglées aux versions du `uv.lock` de Jules (les tests passent dessus) ; `.deb` antiword en https avec SHA-256 (amd64 seul). Reste : les dépendances indirectes de l'installation de l'app ne sont pas verrouillées.<br>**Partiel** |
+| L-b13 | Logan · `client/out`, `.gitleaksignore` | [Basse] `client/out` versionné, jamais reconstruit par la CI, exclu du scan de secrets. | Construire au déploiement. | Fait : voir Y-3 (construit au déploiement, plus versionné).<br>**Fait** |
+| L-b16 | Logan · `databricks.yml`, YAML des jobs | [Basse] Identités individuelles (dont un compte externe) nommées en dur. | Groupes et variables. | Adresse d'alerte des jobs DEV/UAT conservée sur `jules.gourio.external` (décision de Jules) ; `christophe.pelissier` et `yosif.karapendov` retirés des droits de l'app UAT (vérifié : tous deux ont can_chat par les groupes) ; compte de déploiement de Jules et système de droits Lakebase conservés.<br>**Fait** |
+
+**Détails**
+
+- **Y-3** — Position (suite) : `client/out` n'est plus versionné (`.gitignore`, retiré de git) : chaque déploiement le construit avec bun
+  (`bitbucket_deploy.sh`, version 1.4.2 épinglée ; `deploy_qualibot.ps1` le faisait déjà) et les règles de sync (`include client/out/**`,
+  `--include`) l'envoient.
+- **Y-52** — Position (suite) : Seule `UTF-8.txt` est demandée par le code ; les autres peuvent partir si tu veux une PR plus courte.
+- **L-15** — Position (suite) : un document absent de l'index du chat reste ouvrable dans le portail Intraqual, d'où les liens sur tout le périmètre.
+- **L-9** — Position (suite) : OAuth/OIDC demande un administrateur de compte Databricks et une configuration Bitbucket (plus tard). Version de la CLI lue par `bitbucket_deploy.sh` dans `utils/deploy/databricks_cli_version.txt` (1.20.0, à
+  vérifier au premier déploiement). Restreindre `Production` à `main` : Repository settings > Deployments, une fois tout validé.
+- **L-20** — Fichiers (suite) : `import_lakebase_from_json.py:149-153` ; Critique (suite) : import UAT→PROD qui échoue sur table manquante.
+- **L-25** — Critique (suite) : repli « rewrite failed » mort, volumes `uat_landingzone`, pas de `prevent_destroy`, test `uat-test`.
+- **L-28** — Position (suite) : `.mcp.json` absent de ce dépôt. Pas de `uv.lock` dans ce dépôt : dépendances indirectes non verrouillées.
+
+### H. Client et interface
+
+| # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
+|---|---|---|---|---|
+| L-24 | Logan · `useHistoryLoad.ts:46-51`, `useChatConversation.ts:34-56`, `useAnalysisTrack.ts:80`, `config.ts:68-70` … | [Moyenne] Courses (historique A puis B, « Nouveau chat », résumé du fichier précédent), `running` bloqué si le hachage échoue, pas de watchdog du chat, suppression sans erreur, `/api/me` en échec = accès complet. | — | Besoin de reconstruire `client/out`. (Compteurs de requêtes (historique, nouveau chat, résumés), `try/finally` du hachage, garde-fou de 120 s sur le chat, suppression avec erreur, `/api/me` en échec = écran avec « Réessayer ».)<br>**Fait** |
+| Y-4 <sub>885062844</sub> | Yann · `databricks-symbol-color.svg` | « Pareil logos en double ? » | **En partie** : même cause que Y-3 ; réduire le favicon de 1 Mo.<br>Proposition : Réduire `LOGO_Qualibot.png`. | Le svg n'existe plus dans le dépôt ; favicon de 1 Mo remplacé par des icônes 64 px et 180 px, logo 66 Ko ; `out/` : voir Y-3 (plus versionné).<br>**Fait** |
+| L-b14 | Logan · `client/` | [Basse] Bundle JS de 1,14 Mo en un morceau, `pdfjs-dist` inutilisé, favicon de 1 Mo, polices Google chargées à l'exécution. | — | D'accord. (`pdfjs-dist` retiré, favicon 64 px et icône 180 px, logo 66 Ko, code vendor en morceaux ; polices Google retirées (polices système).) (Polices Montserrat, Open Sans et JetBrains Mono livrées avec le build du client (Fontsource), plus aucun appel à Google.)<br>**Fait** |
+
+**Détails**
+
+- **L-24** — Fichiers (suite) : `useChatSessions.ts:27-31`
+
+### I. Données, RGPD, conformité
+
+| # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
+|---|---|---|---|---|
+| L-8 | Logan · `bitbucket-pipelines.yml:262-286`, `ops_config.py:39` | [Haute] Données de chat et d'utilisateurs hors plateforme : artefacts Bitbucket du pipeline d'export, jetons de partage copiés en Delta, DEV chargé depuis des instantanés UAT. | Passer par un volume UC ou un job base à base ; jeton créé au clic sur Partager ; exclure `share_token` des exports et les faire tourner ; décider si l'historique va en environnement bas. | Le pipeline `sync-prod-data` ne copie plus que le volume des modèles docling ; `export_lakebase_to_json.py`, `import_lakebase_from_json.py` et leurs constantes (`ops_config.py`) supprimés. …<br>**Fait** |
+| J-1 <sub>885301989</sub> | Jules · `export_lakebase_uat_to_volume_job.py:1` | « Les jobs là sont refaits… » (plus de `uat` dans les noms, un job par cible qui copie Lakebase{env} → UC{env}) | Confirmé sur `origin/DEV` (la partie export Bitbucket restait, voir L-8). | Déjà fait avant la revue (commit `97f8853` : `lakebase_export`, `export_lakebase_to_volume`, `import_lakebase_tables_to_delta`). Plus aucune référence `export_lakebase_uat*`.<br>**Fait** |
+| L-12 | Logan · `analyze.py:288`, `schema.py:391-394`, `ws.py:90-92`, `storage.ts:63-74` | [Moyenne] Pas de rétention ni d'effacement par utilisateur : textes complets dans `llm_requests`, passages dans `chat_retrieved_chunks`, questions dans les logs et MLflow, suppressions « douces » … | — | `llm_requests.user_id` (colonne, index, rempli à chaque analyse). Stockage du navigateur (`localStorage`) effacé 7 jours après la dernière écriture (`clearExpiredStorage`) ; l'historique en base recharge toujours l'entrée (analyse, impact, fichiers). Job de purge REFUSÉ par Jules (« pas besoin de faire la suppression »).<br>**Fait** |
+| L-b15 | Logan · antiword, modèle fastText | [Basse] Notices de licence manquantes (antiword GPL-2, modèle fastText CC-BY-SA). | Ajouter les notices. | `THIRD_PARTY_NOTICES.md` créé. Reste : confirmer les versions des licences (version GPL d'antiword, CC-BY-SA 3.0 ou 4.0 pour fastText).<br>**Partiel** |
+
+**Détails**
+
+- **L-8** — Position (suite) : Jetons de partage inchangés ; chats DEV = vraies données DEV (accepté).
+- **L-12** — Critique (suite) : `llm_requests` sans `user_id`, `localStorage`. ; Position (suite) : `clearExpiredStorage` est dans
+  `storage.ts` ; reconstruire le client (fait au déploiement).
+
+## Points en suspens
+
+### 1. Données hors plateforme (L-8)
+
+- **Le problème** : des données de conversations d'utilisateurs sortaient de leur environnement : fichiers conservés par Bitbucket après le
+  pipeline d'export, jetons de partage (les liens qui ouvrent une conversation) copiés dans des tables, environnement de développement (DEV)
+  rempli avec des copies de l'UAT.
+- **Options et conséquences** : décidé le 2026-10-21. Lakebase (la base de l'application) ne quitte plus son environnement : le pipeline
+  `sync-prod-data` ne copie plus que le volume des modèles docling, et les scripts d'export/import JSON et leurs constantes sont supprimés.
+  Les jetons de partage restent inchangés (chaque environnement garde les siens). Les conversations de DEV sont de vraies conversations de
+  DEV.
+- **Avis de Logan** : retirer `staging/**` des artefacts ; créer le jeton au clic sur Partager et l'exclure des exports ; dire si
+  l'historique peut aller dans un environnement bas.
+- **Décision / état** : Décidé le 2026-10-21 : Lakebase jamais copié entre environnements (« il n'y a besoin d'aucun job du Lakebase UAT vers
+  DEV : le job DEV copie le Lakebase DEV, le job UAT copie le Lakebase UAT, c'est tout ce qu'il faut ») ; jetons de partage inchangés (« chaque
+  environnement garde ses share_tokens, cela aide à lire les chats plus facilement ») ; chats DEV = vraies données DEV (« ce n'est pas grave si
+  on peut faire un select dessus »). **Fait**
+
+### 2. Rétention et RGPD (L-12)
+
+- **Le problème** : les textes complets des documents et des passages retrouvés restent en base sans limite de durée, et le navigateur en
+  garde des copies.
+- **Options et conséquences** : `user_id` ajouté à `llm_requests` (colonne, index, insertion d'audit), ce qui permet de retrouver les
+  données d'une personne. Pas de job de purge. Le stockage du navigateur (`localStorage`) est effacé 7 jours après la dernière écriture
+  (`clearExpiredStorage`) ; l'historique en base recharge l'entrée avec analyse, impact et fichiers du volume.
+- **Avis de Logan** : fixer une durée de conservation pour `llm_requests.messages_json` et `chat_retrieved_chunks` ; traiter `localStorage`.
+- **Décision / état** : Décidé le 2026-10-21 : `user_id` oui, pas de purge (« pas besoin de faire la suppression » ; « l'historique garde
+  ceci dans Databricks »), `localStorage` effacé à 7 jours (client reconstruit au déploiement). **Fait**
+
+### 3. `client/out` versionné ou construit au déploiement
+
+- **Le problème** : `client/out` (le site compilé) était dans git : il pouvait dériver du code source, n'était pas reconstruit par la CI et
+  échappait au scan de secrets.
+- **Options et conséquences** : option B retenue, construire au déploiement avec bun 1.4.2 épinglé (`bitbucket_deploy.sh` ;
+  `deploy_qualibot.ps1` le faisait déjà). `client/out` est ignoré et retiré de git ; les règles de synchronisation (`include client/out/**`,
+  `--include`) ne changent pas.
+- **Avis de Logan** : construire au déploiement et ignorer `out/`.
+- **Décision / état** : Décidé le 2026-10-21 : construit au déploiement (option B). **Fait**
+
+### 4. Modèle de réécriture du chat
+
+- **Le problème** : les cibles remplaçaient le modèle de réécriture par un autre, alors que la documentation annonçait « Luna seulement ».
+- **Options et conséquences** : GPT-6 Luna sur toutes les cibles ; surcharges Gemini retirées de `utils/deploy/target_env.json` et README
+  corrigé.
+- **Avis de Logan** : choisir un modèle et aligner la documentation.
+- **Décision / état** : Décidé le 2026-10-21 : GPT-6 Luna sur toutes les cibles. **Fait**
+
+### 5. Bloc « langue » de `base.md`
+
+- **Le problème** : Yann demande une détection de langue en amont. Elle existe déjà (fastText détecte la langue et ajoute un rappel nommé),
+  mais `base.md` gardait en plus un long bloc de règles de langue.
+- **Options et conséquences** : bloc ramené à deux lignes (réponse dans la langue de la question sauf demande contraire ; citation dans la
+  langue d'origine avec traduction). Risque : réponse dans la mauvaise langue sur des questions courtes ou mixtes.
+- **Avis de Logan** : couper à une ligne de repli.
+- **Décision / état** : Décidé le 2026-10-21 : bloc réduit à deux lignes ; mesure sur DEV à faire, puis `register_chat_prompts`. **Fait**
+
+### 6. CI (intégration continue)
+
+- **Le problème** : la CLI Databricks est installée sans version fixée, le jeton de déploiement est longue durée, et les tests ne bloquent
+  pas les déploiements.
+- **Options et conséquences** : tests avant les déploiements UAT et PROD (pas DEV), avec `requirements.txt` épinglé : 597 réussis. La
+  version de la CLI (1.20.0) est lue dans `utils/deploy/databricks_cli_version.txt` par `bitbucket_deploy.sh`. OAuth/OIDC
+  (authentification sans jeton longue durée) demande un administrateur de compte Databricks et une configuration Bitbucket.
+- **Avis de Logan** : épingler la CLI, passer à OAuth/OIDC, lancer les tests avant les déploiements.
+- **Décision / état** : Décidé le 2026-10-21 : CLI épinglée, tests bloquants pour UAT et PROD ; `Production` limité à `main` une fois tout
+  validé (Repository settings > Deployments) ; OIDC plus tard. **Partiel** (voir L-9)
+
+### 7. Dépendances et `leap_utils`
+
+- **Le problème** : `requirements.txt` accepte n'importe quelle version plus récente (`>=`), le `.deb` d'antiword est téléchargé en
+  `http://` sans somme de contrôle, et `leap_utils` est une copie de 12 272 lignes dont environ 78 % ne servent jamais.
+- **Options et conséquences** : option A pour les deux. `requirements.txt` épinglé aux versions testées ; `.deb` en https avec SHA-256
+  (amd64 seul) ; `leap_utils` réduit aux 11 modules atteints (3 195 lignes). `.mcp.json` est absent de ce dépôt. Les dépendances transitives
+  ne sont pas verrouillées.
+- **Avis de Logan** : dépendre d'un paquet épinglé ou copier module par module ; épingler les dépendances et vérifier le `.deb`.
+- **Décision / état** : Décidé le 2026-10-21 : option A pour les deux (épinglage direct, `leap_utils` réduit à 11 modules). **Fait** ; dépendances indirectes : voir L-28.
+
+### 8. Prompts de la comparaison et `:rtype:`
+
+- **Le problème** : les prompts de la comparaison étaient des chaînes dans le code Python, contrairement à ceux du chat qui sont des
+  fichiers. Yann demande aussi la mention `:rtype:` dans les docstrings.
+- **Options et conséquences** : six prompts mis en fichiers (`server/prompts/compare/`, chargés par `compare/prompts.py`, `load_prompt`),
+  texte identique, surcharge `COMPARE_ANALYSIS_SYSTEM_PROMPT` gardée. `:rtype:` non ajouté : les annotations de retour suffisent.
+- **Avis de Logan** : prompts de la comparaison en fichiers.
+- **Décision / état** : Décidé le 2026-10-21 : prompts en fichiers ; annotations seulement, sans `:rtype:` (suite à Logan). **Fait**
+
+### 9. Accès aux documents indexés (L-15)
+
+- **Le problème** : le chat et la recherche d'impact interrogent Vector Search avec le service principal de l'app, donc les droits Unity
+  Catalog ne sont pas appliqués par utilisateur ; les liens REF du catalogue couvrent tout le périmètre de parsing.
+- **Options et conséquences** : accepter ce contrôle (déjà écrit dans `server/services/infra/README.md`, section « Access to indexed
+  documents ») ou filtrer les liens du catalogue par `in_chat` et division. Les liens couvrent volontairement tout le périmètre : un
+  document absent de l'index du chat s'ouvre dans le portail Intraqual.
+- **Avis de Logan** : documenter comme contrôle accepté.
+- **Décision / état** : à confirmer par Jules. **Décision**
+
+## Vérifications
+
+- **Lot 1** : `pytest tests` : 527 réussis, 5 échecs, 12 ignorés ; les 5 échecs (`test_compare_documents` ×3, `test_lakebase_carry_over` ×2)
+  existaient avant mes changements, sur ce poste (module PDF, base locale). Essai des routes avec le client de test : `PUT
+  /history/{id}/impact` (corps `{"impact_json"}` accepté, corps vide refusé), `POST /feedback` et `/chat/feedback` avec un vote invalide
+  (422), `/compare/analyze` et `/compare/impact` sans réglages (erreurs claires).
+- **Lot 2** : tests ajoutés pour `refs_named_in` et `one_language_per_document`, la coupe de requête (`query_truncated`), antiword (UTF-8,
+  repli), la borne olefile et le diaporama de 3 diapositives avec un vrai LibreOffice (`tests/test_conversion.py`, 10 tests).
+- **Lot 3** : `tests/test_excel_processor.py` est nouveau ; les trois découpages (docx, excel, relocation) ont été comparés à l'ancien code : mêmes sorties.
+- **Ensemble (état actuel)** : 597 réussis, 12 ignorés, 0 échec avec `requirements.txt` épinglé (pymupdf 1.28.0, Pillow 11.1.0) ; avec
+  pymupdf 2.0, les 3 tests PDF échouent ; `check_docstrings.py` : 0 problème. Rien n'a été déployé ni exécuté sur Databricks ; étapes dans
+  `runbooks/retest.md`, section « revue de la PR Bitbucket 2 ».
+
+## Reste ouvert (hors décisions)
+
+Lignes encore Ouvert, Partiel ou Décision dans les tableaux :
+
+- L-21 et L-b12 (Ouvert) : pipeline de parsing, pas touché pendant que Jules teste le parsing de l'actif de données Intraqual sur DEV ; à
+  faire après son test.
+- L-9 (Partiel) : OAuth/OIDC à la place du jeton longue durée ; environnement Bitbucket `Production` limité à `main` après validation.
+- L-28 (Partiel) : dépendances indirectes de l'installation de l'app non verrouillées.
+- L-15 (Décision) : accepter le contrôle d'accès par l'index, ou filtrer les liens du catalogue par `in_chat` et division.
+- L-16 (Partiel) : auto-exclusion du document téléversé seulement par la REF du nom de fichier.
+- L-b15 (Partiel) : versions des licences à confirmer (GPL d'antiword, CC-BY-SA 3.0 ou 4.0 de fastText).

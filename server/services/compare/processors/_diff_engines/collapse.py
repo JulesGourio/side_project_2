@@ -14,7 +14,8 @@ _BOILERPLATE_MIN_PAGES = int(os.getenv('COMPARE_BOILERPLATE_MIN_PAGES', '3'))
 
 def _dedup_repeated_headers(items: List[Dict[str, Any]], window: int = 25) -> List[Dict[str, Any]]:
     """Drop a short block that reappears within `window` source lines (repeated column headers, running footers,
-    wiring labels: layout, not content).
+    wiring labels: layout, not content), when the block occurs on at least ``_BOILERPLATE_MIN_PAGES`` distinct pages.
+    A block of a document without page numbers is dropped on its position alone.
 
     Not symmetric under repagination: the leftover surplus copy is caught downstream by _drop_present_verbatim /
     _drop_merged_cells, since no window value is symmetric.
@@ -24,13 +25,18 @@ def _dedup_repeated_headers(items: List[Dict[str, Any]], window: int = 25) -> Li
     :return: the blocks without their repeats
     """
     MAX_WORDS = 15
+    pages: Dict[str, Set[int]] = defaultdict(set)
+    for item in items:
+        if item.get('page') is not None:
+            pages[item['clean']].add(item['page'])
     seen: Dict[str, int] = {}
     result: List[Dict[str, Any]] = []
     for item in items:
         clean = item['clean']
         if 0 < len(clean.split()) <= MAX_WORDS:
             prev = seen.get(clean)
-            if prev is not None and (item['idx'] - prev) <= window:
+            recurring = not pages[clean] or len(pages[clean]) >= _BOILERPLATE_MIN_PAGES
+            if prev is not None and recurring and (item['idx'] - prev) <= window:
                 seen[clean] = item['idx']
                 continue
         seen[clean] = item['idx']

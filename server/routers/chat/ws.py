@@ -1,10 +1,10 @@
 """WebSocket route: one chat turn answered by the Vector Search engine, then persisted and logged."""
 
+import asyncio
 import json
 import logging
 import os
 import traceback
-import uuid
 from typing import Tuple
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -12,7 +12,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from server.services.chat import mlflow_turns
 from server.services.chat.engine import normalize_division, stream_chat
 from server.services.chat.llm import TIRED_MESSAGE
-from server.services.chat.config import TRANSLATE_BRIDGE_ENABLED
+from server.services.chat.config import ALLOWED_ORIGINS, TRANSLATE_BRIDGE_ENABLED
 from server.services.chat.translation_bridge import (
     answer_language as answer_language_for,
     translate_answer_back,
@@ -24,8 +24,8 @@ from server.services.infra.doc_catalog import augment_sources, with_document_inf
 from server.services.infra.lakebase import get_pool, store_chat_turn, store_error
 from server.services.infra.user import get_capabilities, get_workspace_url
 from server.routers.chat.helpers import (
-    _apply_citation_markers, _identity_or_anonymous, _number_sources,
-    _trim_history, _with_today_date,
+    _apply_citation_markers, _clean_messages, _identity_or_anonymous, _number_sources,
+    _trim_history, _valid_session_id, _with_today_date,
 )
 from server.routers.chat.persistence import _save_turn
 
@@ -48,6 +48,13 @@ async def chat_ws(websocket: WebSocket) -> None:
     """
     await websocket.accept()
     route = '/api/chat/ws'
+
+    # A browser always sends its Origin: when origins are listed, a page of another site cannot open this socket.
+    origin = websocket.headers.get('origin', '')
+    if ALLOWED_ORIGINS and origin not in ALLOWED_ORIGINS:
+        logger.warning('chat [ws]: connection from origin %r refused', origin)
+        await websocket.close()
+        return
 
     if not CHAT_ENABLED:
         await websocket.send_json({'type': 'error', 'error': 'Chat is disabled'})
@@ -80,9 +87,9 @@ async def chat_ws(websocket: WebSocket) -> None:
         return
 
     log = TurnLog()
-    messages = _trim_history([{'role': m['role'], 'content': m['content']} for m in data.get('messages', [])])
-    session_id = data.get('session_id') or str(uuid.uuid4())
-    division = (data.get('division') or 'ALL').upper()
+    messages = _trim_history(_clean_messages(data.get('messages')))
+    session_id = _valid_session_id(data.get('session_id'))
+    division = str(data.get('division') or 'ALL').upper()
     endpoint = f'chat-{normalize_division(division).lower()}'
 
     identity = await _identity_or_anonymous(websocket)
@@ -157,7 +164,7 @@ async def chat_ws(websocket: WebSocket) -> None:
         final_content = _apply_citation_markers(''.join(accumulated), collected_citations)
         # Re-surface documents the answer names in prose but the
         # endpoint never annotated, so they become clickable chips.
-        collected_sources = augment_sources(''.join(accumulated), collected_sources)
+        collected_sources = await asyncio.to_thread(augment_sources, ''.join(accumulated), collected_sources)
         # Number only the inline-cited sources; prose-only chips
         # (catalog-resurfaced) stay numberless.
         _number_sources(collected_sources, collected_citations)

@@ -19,6 +19,7 @@ from typing import Any, AsyncIterator, Dict, List, Tuple
 
 from server.services.compare.llm import CompareLlmUnavailable, LlmFailure, TIRED_MESSAGE, compare_chain, complete_chain
 from server.services.compare.llm import message_text as _message_text
+from server.services.compare.prompts import load_prompt
 from server.services.infra import vs_gate
 from server.services.infra.config import (
     IMPACT_JUDGE_CONCURRENCY, IMPACT_JUDGE_MAX_TOKENS_CAP, IMPACT_JUDGE_RETRIES, IMPACT_JUDGE_TIMEOUT_S,
@@ -35,54 +36,7 @@ _COLUMNS = ['chunk_id', 'IDDOC', 'REF', 'division', 'url', 'semantic_headers', '
 # it holds no content, so it can never be an impacted passage.
 _ARCHIVE_NOTICE_MARKER = 'ARCHIVED DOCUMENT — CONTENT NOT INDEXED'
 
-_JUDGE_SYSTEM_PROMPT = """\
-You are Qualibot, a technical documentation controller. A reference document has just been revised. \
-You are given the numbered list of CHANGES made to it (C1, C2, ...) and ONE candidate document from the \
-knowledge base, retrieved by an approximate similarity search, with several numbered PASSAGES of it.
-
-Decide whether this candidate document is genuinely impacted, i.e. must be updated to stay consistent \
-with the revised reference. "Genuinely impacted" means at least one passage states, prescribes, or \
-relies on something — a value, step, requirement, tool, term, role, or reference — that a change \
-directly contradicts, replaces, or makes outdated. Sharing vocabulary or the general topic is NOT \
-enough (mentioning "torque" does not make a document impacted by a change to a specific torque \
-value, unless a passage states that value or a step depending on it). Judge only from the passages \
-shown; never assume content that isn't there. Read ALL passages: the conflict can sit in any of them.
-
-Passages may start with a heading hint like [heading: "6. DESCRIPTION DETAILLEE"]; the passage text \
-itself often embeds more precise section markers like "[6. DESCRIPTION > 6.1 GENERER DES IDEES]". \
-Prefer the inline markers, fall back to the hint. [no heading] just means none was captured — never \
-echo it as a section name.
-
-confidence:
-- "high": a passage explicitly states the exact fact the change modifies (impacted), or every \
-passage is clearly about something unrelated (not impacted).
-- "medium": same topic and plausibly affected, but the link needs a reasonable inference.
-- "low": thin or ambiguous evidence either way — a human should double-check.
-
-"reason": open with a one-sentence verdict on the whole document, then (if impacted) in 1-2 more \
-sentences what the document currently says versus what the change sets (old vs new values when \
-concrete). If not impacted, say concretely what the document is about and why that is unrelated. \
-No vague filler ("may be affected", "seems related").
-
-"passages": ONLY when impacted, one entry per passage that conflicts with a change — list EVERY such \
-passage, not just the most obvious one. For each:
-- "passage": its number;
-- "changes": the ids of the change(s) it conflicts with;
-- "section": section number and/or title where it sits (from the inline markers or heading hint), \
-"" if none;
-- "quote": the exact conflicting words copied VERBATIM from the passage (a few words to one \
-sentence, no ellipsis, no rewording) — it is highlighted in the UI by exact match;
-- "explanation": one short sentence, what the passage says versus what the change now requires.
-
-Respond with ONLY a JSON object, no markdown fences:
-{"impacted": true|false, "confidence": "high"|"medium"|"low", "reason": "...", \
-"passages": [{"passage": 1, "changes": ["C1"], "section": "...", "quote": "...", "explanation": "..."}]}
-
-Be conservative: no clear conflict in the passages → impacted false and "passages": [].
-
-LANGUAGE: write "reason" and "explanation" in the SAME language as the CHANGES text and the \
-passages. Do not switch to English when they are not in English.\
-"""
+_JUDGE_SYSTEM_PROMPT = load_prompt('impact_judge')
 
 # "[Source: REF | Title: ... | Division: ... | Category: ... | Date de diffusion: YYYY-MM-DD | Image: page 4, ...]\n\n"
 # — the provenance prefix the parsing pipeline embeds in every chunk (utils.source_prefixed_text).
@@ -453,14 +407,14 @@ async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: 
 
 
 def _status(impacted: bool, confidence: str, has_passages: bool = True) -> str:
-    # "Impacted" with no passage the UI can show is a claim nobody can verify.
     """Status of a judged document: ``impacted``, ``check`` or ``not_impacted``.
 
     :param impacted: the verdict of the judge
     :param confidence: ``high``, ``medium`` or ``low``
-    :param has_passages: whether the judge gave a passage that can be shown
+    :param has_passages: whether the judge gave a passage whose quote was found in the candidate text
     :return: the status
     """
+    # An impacted verdict with no quote found in the text is a claim nobody can verify.
     if confidence == 'low' or (impacted and not has_passages):
         return 'check'
     return 'impacted' if impacted else 'not_impacted'
@@ -554,7 +508,7 @@ def _judged_doc(cand: Dict[str, Any], judgment: Dict[str, Any], archive_before: 
     return {
         **_doc_base(cand, archive_before),
         'judged': True,
-        'status': _status(impacted, confidence, bool(passages)),
+        'status': _status(impacted, confidence, any(p['highlight'] for p in passages)),
         'impacted': impacted,
         'confidence': confidence,
         'reason': str(judgment.get('reason') or '').strip(),

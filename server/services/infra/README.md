@@ -39,6 +39,14 @@ Parent: [services](../README.md).
   then return nothing: no REF is resolved, no source chip is added.
 - Capabilities are cached per visitor for `CAPS_TTL_S` (default 600 s).
 
+## Access to indexed documents
+
+Chat and impact search query Vector Search with the service principal of the app, not with the token of the visitor
+(which is only a fallback). Unity Catalog grants are therefore not applied per user: every visitor allowed into the chat
+reaches every passage of the index, and what a visitor can see is decided by what the parsing pipeline puts in it. The
+division filter (AS / IS) narrows the search but is not a permission. The REF links of the catalog cover the whole
+parsing scope, including documents that are not in the chat index, so a link opens the document in the Intraqual portal.
+
 ## See also
 
 - [lakebase](lakebase/README.md) and [pdf_report](pdf_report/README.md).

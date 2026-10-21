@@ -59,3 +59,5 @@ Locally, `app.py` loads `.env.local` when it exists. Each module reads the setti
 - [routers](routers/README.md): the HTTP routes.
 - [services](services/README.md): the logic behind them.
 - [prompts](prompts/README.md): the chatbot prompt files.
+
+The interactive API documentation (`/docs`, `/redoc`, `/openapi.json`) is not served unless the environment variable `ENABLE_API_DOCS` is `true`.

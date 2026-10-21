@@ -25,10 +25,8 @@ The `__init__.py` of each package is empty.
 
 ## Rules
 
-- The chatbot prompts are files in [`server/prompts/chat/`](../prompts/README.md). The compare prompts and the impact
-  judge prompt are Python constants: the default analysis prompt in `routers/compare/config.py`, the summary prompts in
-  `compare/summarize.py`, the diff prompts in `compare/processors/_diff_engines/prompts.py`, the judge prompt in
-  `infra/vector_search.py`.
+- The chatbot prompts and the comparison prompts are files in [`server/prompts/`](../prompts/README.md), read through
+  `chat/prompts.py` and `compare/prompts.py`.
 - Blocking calls (SDK, file parsing, conversions) run in a thread through `asyncio.to_thread`.
 - Log writes to Lakebase are best-effort: they log their own failure and never raise into the request.
 

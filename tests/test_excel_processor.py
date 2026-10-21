@@ -59,12 +59,31 @@ def test_added_removed_and_modified_rows_are_reported_by_key():
     assert "~ B:" in report and "Value: '2' → '9'" in report
 
 
-def test_a_column_that_changes_in_most_rows_is_left_out():
-    old = [f'K{i}\tx\t{i}' for i in range(6)]
-    new = [f'K{i}\tx\t{i + 100}' for i in range(6)]
+def test_a_column_recalculated_in_most_of_many_rows_is_left_out():
+    old = [f'K{i}\tx\t{i}' for i in range(25)]
+    new = [f'K{i}\tx\t{i + 100}' for i in range(25)]
     report = _diff(old, new)
     assert 'Auto-excluded columns' in report and '"Rank"' in report
     assert 'No significant changes detected' in report
+
+
+def test_a_column_changed_in_a_few_rows_is_reported_not_excluded():
+    old = [f'K{i}\tx\t{i}' for i in range(6)]
+    new = [f'K{i}\tx\t{i + 100}' for i in range(6)]
+    report = _diff(old, new)
+    assert 'Auto-excluded' not in report and "Rank: '3' → '103'" in report
+
+
+def test_a_column_added_at_the_end_and_a_changed_header_are_reported():
+    report = excel._build_diff_keyed(
+        ['[Sheet: S]', 'Ref\tValue', 'A\t1'], ['[Sheet: S]', 'Ref\tValue\tUnit', 'A\t1\tmm'], 'old', 'new')
+    assert 'Header changed' in report and "Unit: '' → 'mm'" in report
+
+
+def test_a_sheet_present_only_in_the_new_workbook_is_reported():
+    report = excel._build_diff_keyed(
+        HEADER + ['A\t1\t1'], HEADER + ['A\t1\t1', '[Sheet: Extra]', 'Ref\tValue', 'B\t2'], 'old', 'new')
+    assert '[Sheet: Extra]: sheet added (1 rows)' in report
 
 
 def test_a_sheet_without_data_rows_gives_a_report_instead_of_failing():
@@ -79,3 +98,26 @@ def test_the_diff_falls_back_when_the_first_column_is_no_key():
 def test_a_removed_sheet_is_reported():
     report = excel._build_diff_keyed(HEADER + ['A\t1\t1'], ['[Sheet: Other]', 'Ref\tValue', 'A\t1'], 'a', 'b')
     assert '[Sheet: S]: sheet removed entirely' in report
+
+
+def test_a_value_that_looks_like_a_formula_is_exported_as_text():
+    from server.services.compare.export_helpers import _build_excel_bytes
+    rows = [{'section': 's', 'type': 'MODIFIED', 'criticality': 'high', 'before': '=HYPERLINK("http://x","y")',
+             'after': 'ok', 'rationale': 'r'}]
+    book = openpyxl.load_workbook(io.BytesIO(_build_excel_bytes(rows, '')))
+    cells = [c for row in book.active.iter_rows() for c in row if isinstance(c.value, str) and 'HYPERLINK' in c.value]
+    assert cells and all(c.data_type == 's' for c in cells)
+
+
+def test_a_formula_changed_with_the_same_cached_value_is_read_with_its_formula():
+    from server.services.compare.processors.excel import _extract_xlsx
+    old_lines, _ = _extract_xlsx(_workbook([['Name', 'Total'], ['A', '=SUM(1,2)']]))
+    new_lines, _ = _extract_xlsx(_workbook([['Name', 'Total'], ['A', '=SUM(1,3)']]))
+    assert old_lines[2] == 'A\t {=SUM(1,2)}' and new_lines[2] == 'A\t {=SUM(1,3)}'
+    assert old_lines != new_lines
+
+
+def test_a_plain_value_is_read_without_braces():
+    from server.services.compare.processors.excel import _extract_xlsx
+    lines, _ = _extract_xlsx(_workbook([['Name', 'Total'], ['A', 5]]))
+    assert lines == ['[Sheet: Data]', 'Name\tTotal', 'A\t5']

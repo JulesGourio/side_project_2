@@ -10,6 +10,9 @@ from server.services.infra.lakebase.columns import CHAT_CHUNK_COLUMNS, CHAT_TURN
 
 logger = logging.getLogger(__name__)
 
+# Key of the advisory lock that serialises the schema migration between instances.
+_SCHEMA_LOCK_ID = 7_351_902
+
 
 async def _add_columns(conn, table: str, columns) -> None:
     """Adds the columns the table does not have yet; the existing ones are left as they are.
@@ -145,9 +148,26 @@ class _OwnerTolerantConn:
 
 
 async def ensure_schema(pool: asyncpg.Pool) -> None:
-    # Additive only: no DROP, DELETE or TRUNCATE at start-up.
-    # Lakebase rewrites the table, so it looks empty for a moment before the data is back.
     """Creates the tables of the app, or migrates them; additive only, run at every start.
+
+    Two instances starting together (a restart overlapping the previous instance) apply the schema one after the other:
+    the migration runs under a database-wide advisory lock.
+
+    :param pool: connection pool of the database
+    """
+    async with pool.acquire() as lock_conn:
+        await lock_conn.execute('SELECT pg_advisory_lock($1)', _SCHEMA_LOCK_ID)
+        try:
+            await _apply_schema(pool)
+        finally:
+            await lock_conn.execute('SELECT pg_advisory_unlock($1)', _SCHEMA_LOCK_ID)
+
+
+async def _apply_schema(pool: asyncpg.Pool) -> None:
+    """The statements of the schema, in order.
+
+    Additive only: no DROP, DELETE or TRUNCATE at start-up. Lakebase rewrites the table, so it looks empty for a moment
+    before the data is back.
 
     :param pool: connection pool of the database
     """
@@ -260,7 +280,9 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             ('generation_ms',   'INTEGER'),     # LLM call start -> end
             ('total_ms',        'INTEGER'),
             ('chunked_parts',   'INTEGER'),     # map-reduce parts (0: one call)
+            ('user_id',         'TEXT'),        # who ran the analysis
         ])
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_llm_requests_user ON llm_requests (user_id)')
 
         # ── errors (application errors persisted for monitoring) ──────────────
         await conn.execute('''
@@ -420,6 +442,25 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
         await conn.execute('''
             CREATE INDEX IF NOT EXISTS idx_impact_cache_hashes
                 ON impact_cache (old_file_hash, new_file_hash, app_version)
+        ''')
+
+        # ── analysis_cache (result cache for /compare/analyze, written by the server only, never from a request body) ──
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS analysis_cache (
+                id                  SERIAL PRIMARY KEY,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                old_file_hash       TEXT NOT NULL,
+                new_file_hash       TEXT NOT NULL,
+                cache_version       TEXT NOT NULL,
+                analysis_text       TEXT NOT NULL,
+                file_type           TEXT,
+                processing_method   TEXT,
+                processor_version   TEXT
+            )
+        ''')
+        await conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_analysis_cache_hashes
+                ON analysis_cache (old_file_hash, new_file_hash, cache_version)
         ''')
 
         # ── summary_cache (cache for /compare/summarize, keyed on the single document's own hash + app_version) ──
@@ -636,6 +677,11 @@ async def ensure_schema(pool: asyncpg.Pool) -> None:
             ('resolution_reason',  'TEXT'),
         ])
 
+
+        # ── Indexes of the queries every request makes: history list, session list, votes ──
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_compare_messages_user ON compare_messages (user_id, created_at DESC)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions (user_id, updated_at DESC)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_feedbacks_message ON chat_feedbacks (message_id)')
 
         # ── Data migrations (idempotent — WHERE only matches rows in the composite format) ──
 

@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 _SEM_THRESHOLD = 0.05          # canonical distance threshold for is_substantive
 _MAX_DIFF_CHARS = int(os.getenv('COMPARE_MAX_DIFF_CHARS', '600000'))  # ~150K tokens
 
-NUMBER_RE = re.compile(r'\b\d+(?:[.,]\d+)*(?:\s*%|\s*mm|\s*in(?:ch)?|\s*kg|\s*psi)?\b')
+# A sign counts as part of a number when it starts a word ("-40", "10^-3"): dropping it turned limits into their opposite.
+NUMBER_RE = re.compile(r'(?:(?<![\w.])[-+−–±])?\b\d+(?:[.,]\d+)*(?:\s*%|\s*mm|\s*in(?:ch)?|\s*kg|\s*psi)?\b')
 PART_NUM_RE = re.compile(r'\d{4,}')  # long digit runs in alphanumeric part numbers (no word-boundary)
 NORM_REF_RE = re.compile(
     r'\b(?:ISO|IEC|ASTM|SAE|NAS|EN|AMS|AS|ANSI|BS|DIN|MIL|BSS|BAC|BMS|OSHA|NIST)[- ]?\d[\w\-.]*',

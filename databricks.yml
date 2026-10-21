@@ -135,6 +135,7 @@ variables:
 sync:
   include:
     - "target_config.env"        # gitignored but must reach the workspace (per-env overrides)
+    - "client/out/**"            # gitignored: the frontend is built at deployment and served by the app
   exclude:
     - "~$*"                      # Excel/Word lock files (Windows, file open in Office)
     - "client/src/**"            # frontend source — only built output (client/out) is needed
@@ -183,7 +184,7 @@ resources:
 targets:
   # ---------------------------------------------------------------------------
   # DEV target: full copy of uat in the DEV workspace.
-  # Own app, Lakebase project, Vector Search endpoint and dev_proj.qualibot tables, loaded from a UAT snapshot by a one-shot submit (runbooks/scripts/dev_copy/).
+  # Own app, Lakebase project, Vector Search endpoint and dev_proj.qualibot tables, loaded from a UAT snapshot by a one-shot submit.
   # Every new schedule is PAUSED. run_as is the DEV service principal: job-runner-sa-uat is UAT-scoped and silently ignored here.
   # The in-app group check is off for this target only: CAPS_BYPASS in utils/deploy/target_env.json.
   # ---------------------------------------------------------------------------
@@ -274,7 +275,7 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
-      # The volumes of dev_proj.qualibot are created by the first deploy; their data is loaded by the one-shot copy (runbooks/scripts/dev_copy/).
+      # The volumes of dev_proj.qualibot are created by the first deploy; their data is loaded by the one-shot copy.
       schemas:
         qualibot_proj_schema:
           catalog_name: ${var.pipeline_write_env}_proj
@@ -313,7 +314,7 @@ targets:
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP (stop/start jobs)
               level: CAN_MANAGE
           # No UC volume binding on this target: it would grant USE CATALOG on dev_proj to the app SP, which a human deployer cannot do.
-          # The SP gets its grants from the one-shot grant (runbooks/scripts/grants/).
+          # The SP gets its grants from a one-shot grant job.
     variables:
       app_name: "qualibot"
       pipeline_write_env: dev
@@ -454,10 +455,6 @@ targets:
               level: CAN_USE
             - user_name: "jules.gourio.external@latecoere.aero"
               level: CAN_MANAGE
-            - user_name: "christophe.pelissier@latecoere.aero"
-              level: CAN_USE
-            - user_name: "yosif.karapendov@latecoere.aero"
-              level: CAN_USE
             - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat
               level: CAN_MANAGE
           resources:
@@ -557,6 +554,8 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
+          lifecycle:
+            prevent_destroy: true
         # CoreDev group: full access through DATABRICKS_SUPERUSER membership.
         coredev:
           role_id: "coredev"
@@ -608,8 +607,8 @@ targets:
       intraqual_gold_catalog_schema: "prod_gold.quality_system"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       job_activity_tag: "prod-job"
-      # PAUSED until promoted on explicit decision.
-      lakebase_export_schedule_pause: "PAUSED"
+      # The PROD export copies the PROD Lakebase to prod_proj.qualibot twice a day: the chat alerts read those copies.
+      lakebase_export_schedule_pause: "UNPAUSED"
       lakebase_import_to_delta: "true"
       job_cluster_policy_id_S: "001C199A8D85FE35"
       parsing_offline_models_path: "/Volumes/prod_proj/qualibot/docling_models"

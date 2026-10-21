@@ -1,5 +1,6 @@
 """Passages handed to the answer model for a turn: named documents, one language per document."""
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Tuple
@@ -10,7 +11,7 @@ from server.services.chat.engine.queries import opening_language, rewrite_querie
 from server.services.chat.engine.types import DocumentPassages, PassageRecord, SearchRow
 from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search, start_question_search
 from server.services.chat.engine.config import (
-    division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on,
+    division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on, raw_top_k, rerank_top_k,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,16 @@ def refs_named_in(text: str) -> List[str]:
         siblings = [sibling['ref'] for sibling in cat.group_siblings(entry['ref'])]
         refs.extend([entry['ref']] + siblings)
     return list(dict.fromkeys(refs))[:_REF_LOOKUP_MAX]
+
+
+def _refs_named_in_turns(question: str, earlier_turns: str) -> List[str]:
+    """REFs named in the question, then in the earlier turns, without duplicates (at most _REF_LOOKUP_MAX).
+
+    :param question: last user turn
+    :param earlier_turns: the previous turns joined by newlines
+    :return: the REFs in order of appearance, the question's first
+    """
+    return list(dict.fromkeys(refs_named_in(question) + refs_named_in(earlier_turns)))[:_REF_LOOKUP_MAX]
 
 
 def one_language_per_document(rows: List[SearchRow]) -> List[SearchRow]:
@@ -108,7 +119,8 @@ def _passage(row: SearchRow, position: int, drop_reason: str = '') -> PassageRec
 async def retrieve_for_turn(host: str, token: str, division: str, conversation: List[Dict[str, str]],
                             log: TurnLog | None = None) -> Dict[str, Any]:
     """The passages handed to the LLM for the last user turn of ``conversation`` (already
-    cleaned by ``_clean_history``). Raises ``ChatVsiError`` when the search fails. Also used
+    cleaned by ``_clean_history``). A failed rewrite or translation degrades the turn: the question is searched as asked.
+    Raises ``ChatVsiError`` when the search fails. Also used
     alone by the retrieval evaluation (no answer generated). ``log`` (created when absent, returned
     as ``found['log']``) receives the step durations, the queries, every passage retrieved — kept
     or set aside — and what did not run as configured.
@@ -129,17 +141,25 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         today = _DATE_PREFIX_RE.match(conversation[-1]['content'])
         log.today = today.group(0).strip()[7:-1] if today else ''
         language = opening_language(conversation, question)
+        degraded = False
         log.data['rewrite_mode'] = 'translate' if language else 'rewrite'
         if language:
             with log.timed('rewrite'):
-                translated = await translate_query(host, token, question, 'en' if language == 'fr' else 'fr', log=log)
+                try:
+                    translated = await translate_query(host, token, question, 'en' if language == 'fr' else 'fr', log=log)
+                except Exception:   # already logged by translate_query: the turn goes on with the question as asked
+                    translated, degraded = question, True
             fr_query, en_query = (question, translated) if language == 'fr' else (translated, question)
             log.prompts.insert(0, 'translate_query')
         else:
             early = start_question_search(host, token, index, filters, question, log)
             with log.timed('rewrite'):
-                fr_query, en_query = await rewrite_queries(
-                    host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
+                try:
+                    fr_query, en_query = await rewrite_queries(
+                        host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
+                except Exception:   # already logged by rewrite_queries: the turn goes on with the question as asked
+                    fr_query = en_query = question
+                    degraded = True
             log.prompts.insert(0, 'rewrite')
         queries = [question]
         for q in (fr_query, en_query):
@@ -148,7 +168,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
 
         # REFs named in the question first, then in the earlier turns (a follow-up often names no REF itself).
         earlier_turns = '\n'.join(m['content'] for m in conversation[:-1])
-        named = list(dict.fromkeys(refs_named_in(question) + refs_named_in(earlier_turns)))[:_REF_LOOKUP_MAX]
+        named = await asyncio.to_thread(_refs_named_in_turns, question, earlier_turns)
         log.data.update({'index_name': index, 'fr_query': fr_query, 'en_query': en_query, 'named_refs': named})
 
         by_name = {'question': question, 'fr': fr_query, 'en': en_query}
@@ -157,9 +177,17 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             text = by_name[name]
             if text and text.casefold() not in {x.casefold() for x in raw_texts}:
                 raw_texts.append(text)
-        if raw_on() and not raw_texts:   # rewrite failed: the question keeps its raw search
-            raw_texts = [question]
         sizes = {'rerank_k': pair_rerank_top_k(), 'raw_k': pair_raw_top_k()} if language and len(queries) == 2 else {}
+        if degraded:
+            # One query stands for the three (or two) of a normal turn: it asks for as many candidates in all.
+            if language:
+                sizes = {'rerank_k': 2 * pair_rerank_top_k(), 'raw_k': pair_raw_top_k() * max(1, len(raw_on()))}
+            else:
+                sizes = {'rerank_k': 3 * rerank_top_k(), 'raw_k': raw_top_k() * max(1, len(raw_on()))}
+            if early is not None:   # started with the normal size
+                early.cancel()
+                await asyncio.gather(early, return_exceptions=True)
+                early = None
         with log.timed('search'):
             rows = await search(host, token, index, queries, filters, raw_texts, log=log, first=early, **sizes)
         over_cap: List[SearchRow] = []

@@ -3,17 +3,21 @@
 import asyncio
 import base64
 import io
+import logging
 
 import mammoth
 import openpyxl
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image as PILImage
 from pptx import Presentation
 
+from server.routers.compare.common import _validate_file
 from server.services.compare.conversion import doc_to_text, docx_to_html_body, pptx_to_slide_images
 from server.services.compare.soffice import SofficeUnavailable, convert_docx_to_pdf
+from server.services.infra.user import require_compare
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 try:
@@ -23,34 +27,43 @@ except ImportError:
     _ALIGN_MAP = {}
 
 
-@router.post('/preview', response_class=HTMLResponse)
+@router.post('/preview', response_class=HTMLResponse, dependencies=[Depends(require_compare)])
 async def preview_document(file: UploadFile = File(...)) -> HTMLResponse:
     """An HTML preview of an office document.
 
-    :param file: the document to preview (docx, doc, pptx, ppt, xlsx, xls).
-    :return: the HTML page, or a 400 when the file type has no preview.
+    :param file: the document to preview (docx, doc, pptx, ppt, xlsx, xlsm, xls).
+    :return: the HTML page, or a 400 when the file is refused or its type has no preview.
     """
     content = await file.read()
-    mime = file.content_type or ''
-    name = file.filename or ''
-    name_lower = name.lower()
+    try:
+        _validate_file(file, content)
+    except ValueError as e:
+        return HTMLResponse(f'<p>{_esc(str(e))}</p>', status_code=400)
+    # The converters are synchronous and can take seconds: they run off the event loop so chat streams keep flowing.
+    return await asyncio.to_thread(_render_preview, content, file.content_type or '', file.filename or '')
 
+
+def _render_preview(content: bytes, mime: str, name: str) -> HTMLResponse:
+    """Choose the preview of a document from its type.
+
+    :param content: the document bytes
+    :param mime: content type sent by the browser
+    :param name: file name sent by the browser
+    :return: the HTML page, or a 400 when the type has no preview
+    """
+    name_lower = name.lower()
     if 'wordprocessingml' in mime or name_lower.endswith('.docx'):
         return _preview_docx(content)
-
     if name_lower.endswith('.doc'):
         return _preview_doc(content, name)
-
     if 'presentationml' in mime or name_lower.endswith(('.pptx', '.ppt')):
         return _preview_pptx(content, name)
-
     if 'spreadsheet' in mime or 'excel' in mime or name_lower.endswith(('.xlsx', '.xlsm', '.xls')):
         return _preview_excel(content)
-
     return HTMLResponse('<p>Preview not available for this file type.</p>', status_code=400)
 
 
-@router.post('/preview/pdf')
+@router.post('/preview/pdf', dependencies=[Depends(require_compare)])
 async def preview_document_pdf(file: UploadFile = File(...)) -> Response:
     """Exact-layout preview: convert an office document (docx/doc/pptx/xlsx)
     to PDF through headless LibreOffice (server/services/compare/soffice.py). Returns
@@ -58,16 +71,23 @@ async def preview_document_pdf(file: UploadFile = File(...)) -> Response:
     back to the HTML/docx-preview rendering.
 
     :param file: the office document to convert.
+    :return: the PDF, or a JSON error (400 refused file, 501 no engine, 502 conversion failed).
     """
     content = await file.read()
+    try:
+        _validate_file(file, content)
+    except ValueError as e:
+        return JSONResponse({'error': str(e)}, status_code=400)
     name = file.filename or 'document.docx'
     suffix = '.' + name.rsplit('.', 1)[-1].lower() if '.' in name else '.docx'
     try:
         pdf_bytes = await asyncio.to_thread(convert_docx_to_pdf, content, suffix=suffix)
     except SofficeUnavailable as e:
-        return JSONResponse({'error': f'Exact PDF rendering unavailable: {e}'}, status_code=501)
+        logger.info('preview/pdf: no engine (%s)', e)
+        return JSONResponse({'error': 'Exact PDF rendering unavailable'}, status_code=501)
     except Exception as e:
-        return JSONResponse({'error': f'PDF conversion failed: {e}'}, status_code=502)
+        logger.warning('preview/pdf: conversion of %r failed: %s', name, e)
+        return JSONResponse({'error': 'PDF conversion failed'}, status_code=502)
     return Response(content=pdf_bytes, media_type='application/pdf')
 
 

@@ -1,17 +1,14 @@
-import { useEffect, useState } from 'react';
 import { CompareView } from '@/components/compare/CompareView';
+import { AccessCheckFailed } from '@/components/shared/AccessCheckFailed';
 import { AccessDenied } from '@/components/shared/AccessDenied';
-import { getUserMe } from '@/lib/config';
+import { useUserMe } from '@/lib/useUserMe';
 
 export function ComparePage() {
-  const [canCompare, setCanCompare] = useState<boolean | null>(null);
+  const { state, retry } = useUserMe();
 
-  useEffect(() => {
-    getUserMe().then((me) => setCanCompare(me.can_compare));
-  }, []);
-
-  if (canCompare === null) return null;
-  if (!canCompare) return <AccessDenied feature="Document comparison" />;
+  if (state.status === 'loading') return null;
+  if (state.status === 'failed') return <AccessCheckFailed onRetry={retry} />;
+  if (!state.canCompare) return <AccessDenied feature="Document comparison" />;
 
   return <CompareView />;
 }

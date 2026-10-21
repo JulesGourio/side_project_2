@@ -13,7 +13,7 @@ from PIL import Image as PILImage
 from server.services.compare.processors._diff_engines import _IMG_JPEG_QUALITY, dhash, hash16, images_are_similar, looks_like_table_header
 from server.services.compare.conversion import doc_to_text
 from server.services.compare.processors.docx.ooxml import (
-    _footnote_lines, _is_toc_paragraph, _iter_block_items, _paragraph_text, _row_cells, _textbox_texts,
+    _footnote_lines, _header_footer_lines, _is_toc_paragraph, _iter_block_items, _paragraph_text, _row_cells, _textbox_texts,
     _vml_shape_lines,
 )
 from server.services.compare.processors.docx.pages import _IMG_WEIGHT, _assign_pages, _count_breaks_split, _lrpb_is_stale
@@ -256,7 +256,7 @@ class _DocxWalk:
                     self.pend_weight += img_weight
 
     def finish(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
-        """Footnotes, page numbers and image pages, once the whole body is walked.
+        """Footnotes, headers and footers, page numbers and image pages, once the whole body is walked.
 
         Page numbers are decided now that the break-marker totals are known. Images were recorded against paragraph
         counters: they are remapped onto the estimated pages so DOCX images get the same position-aware pairing as
@@ -264,7 +264,7 @@ class _DocxWalk:
 
         :return: ``(text lines tagged [Page N, Para M], images keyed by hash)``
         """
-        for line in _footnote_lines(self.doc):
+        for line in _footnote_lines(self.doc) + _header_footer_lines(self.doc):
             self.text_pos += 1
             self.emit(line, 0)
 

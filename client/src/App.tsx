@@ -4,19 +4,27 @@ import { TopBar } from '@/components/layout/TopBar';
 import { ComparePage } from '@/pages/ComparePage';
 import { ChatPage } from '@/pages/ChatPage';
 import { SharedChatPage } from '@/pages/SharedChatPage';
+import { AccessCheckFailed } from '@/components/shared/AccessCheckFailed';
 import { AccessDenied } from '@/components/shared/AccessDenied';
 import { getAppConfig, getUserMe } from '@/lib/config';
 
 function DefaultRedirect() {
   const [target, setTarget] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    Promise.all([getAppConfig(), getUserMe()]).then(([cfg, me]) => {
-      const chatEnabled = cfg.chat?.enabled ?? true;
-      if (me.can_compare) setTarget('/compare');
-      else if (chatEnabled && me.can_chat) setTarget('/chat');
-      else setTarget('/no-access');
-    });
-  }, []);
+    setFailed(false);
+    Promise.all([getAppConfig(), getUserMe()]).then(
+      ([cfg, me]) => {
+        const chatEnabled = cfg.chat?.enabled ?? true;
+        if (me.can_compare) setTarget('/compare');
+        else if (chatEnabled && me.can_chat) setTarget('/chat');
+        else setTarget('/no-access');
+      },
+      () => setFailed(true),
+    );
+  }, [attempt]);
+  if (failed) return <AccessCheckFailed onRetry={() => setAttempt((n) => n + 1)} />;
   if (!target) return null;
   return <Navigate to={target} replace />;
 }
