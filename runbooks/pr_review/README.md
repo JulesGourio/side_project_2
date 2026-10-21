@@ -6,12 +6,36 @@
 
 | Statut | Yann | Logan | Jules | Total |
 |---|---|---|---|---|
-| Fait | 56 | 36 | 1 | 93 |
-| Partiel | 1 | 7 | 0 | 8 |
-| Ouvert | 1 | 3 | 0 | 4 |
+| Fait | 58 | 39 | 1 | 98 |
+| Partiel | 0 | 4 | 0 | 4 |
+| Ouvert | 0 | 2 | 0 | 2 |
 | Décision | 0 | 1 | 0 | 1 |
 | Pas de changement | 4 | 0 | 0 | 4 |
 | **Total** | **62** | **46** | **1** | **109** |
+
+## Décisions de Jules (2026-10-21) et leurs raisons
+
+| Sujet | Décision | Raison |
+|---|---|---|
+| Lakebase entre environnements | Jamais copié d'un environnement à l'autre ; `sync-prod-data` ne copie plus que les modèles docling | « Il n'y a besoin d'aucun job du Lakebase UAT vers DEV : le job DEV copie le Lakebase DEV, le job UAT copie le Lakebase UAT, c'est tout ce qu'il faut. » |
+| Jetons de partage | Inchangés | « Chaque environnement garde ses share_tokens, cela aide à lire les chats plus facilement. » |
+| Chats DEV | Vraies données DEV | « Ce n'est pas grave si on peut faire un select dessus. » |
+| RGPD | `user_id` oui, pas de purge, `localStorage` 7 jours | « L'historique garde ceci dans Databricks. » |
+| `client/out` | Construit au déploiement (option B) | Le build ne doit plus dériver du code source ni échapper à la CI. |
+| Modèle de réécriture du chat | GPT-6 Luna sur toutes les cibles | Un seul modèle, documentation alignée. |
+| Bloc « langue » de `base.md` | Ramené à deux lignes | La détection fastText existe déjà ; le bloc long était redondant. |
+| Tableau de sources en fin de réponse | GARDÉ ; `CLAUDE.md` corrigé | « Je veux bien les réponses plus longues. » |
+| Échec de la réécriture | Tour dégradé qui cherche avec la question brute, autant de candidats qu'un tour normal (48) | Meilleure expérience pour l'utilisateur. |
+| CI | CLI épinglée ; tests bloquent UAT/PROD ; `Production` limité à `main` après validation ; OIDC plus tard | Déploiements reproductibles ; la restriction attend que tout soit validé ; OIDC demande l'administrateur de compte Databricks. |
+| Dépendances et `leap_utils` | Option A pour les deux : épinglage ; réduction à 11 modules | Reproductibilité ; 78 % de la copie ne servait jamais. |
+| Prompts de la comparaison | En fichiers ; annotations seulement (pas de `:rtype:`) | Suit Logan ; même règle que les prompts du chat. |
+| Rôle Lakebase de PROD | `prevent_destroy` préparé | Protéger le rôle contre une suppression accidentelle. |
+| Export Lakebase de PROD | Dé-pausé (à déployer avec PROD) | Les alertes de PROD lisent la copie Delta. |
+| Adresse d'alerte DEV/UAT | Conservée (`jules.gourio.external`) | Décision de Jules. |
+| Utilisateurs nommés de l'app UAT | `christophe.pelissier` et `yosif.karapendov` retirés | Vérifié : tous deux ont can_chat par les groupes. |
+| Documentation API interactive | Désactivée | « On s'en fout. » |
+| Polices web | Livrées avec le build du client (Fontsource) | L'apparence reste identique, plus d'appel à Google. |
+| Tests | Aucune donnée stockée | « Je ne veux pas ces données dans les tests. » |
 
 ## Contexte
 
@@ -43,7 +67,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | L-5 | Logan · `sessions.py:283`, `ws.py:80`, `persistence.py:15-26` | [Haute] Le lien de partage donne l'id réel de session ; le WebSocket accepte n'importe quel `session_id` et l'`upsert` ne vérifie pas le propriétaire : on écrit dans la conversation d'un autre. | `DO UPDATE … WHERE user_id = EXCLUDED.user_id`, compter les lignes affectées, ne plus renvoyer l'id. | D'accord. Vue partagée avec le jeton comme id, `upsert` conditionné au propriétaire, `session_not_owned` enregistré.<br>**Fait** |
 | L-13 | Logan · `sessions.py:43-83,141,264-270`, `feedback.py:23-112` | [Moyenne] Feedback non lié au votant (ids SERIAL énumérables) ; la vue partagée montre les commentaires privés ; `get_session` ne filtre pas `deleted`. | — | Vote accepté seulement sur un message de l'utilisateur ; vue partagée = vote du propriétaire seul ; sessions supprimées exclues.<br>**Fait** |
 | L-14 | Logan · `ws.py:63-67,79-81` | [Moyenne] Contrôle d'accès du WebSocket fail-open, pas de contrôle d'Origin, entrée non validée (rôle `system`, taille illimitée, message sans contenu). | — | Échec = refus ; liste d'Origin optionnelle (`ALLOWED_ORIGINS`, vérifiée seulement si renseignée) ; rôles et taille validés (`_clean_messages`).<br>**Fait** |
-| L-15 | Logan · `credentials.py:9-30`, `doc_catalog.py:246-314` | [Moyenne] Tout utilisateur du chat atteint tout document indexé (compte de service) ; les puces du catalogue ignorent `in_chat` et la division. | Documenter comme contrôle accepté. | Pas de changement de code ici : à écrire comme contrôle accepté si tu le confirmes. Les puces du catalogue restent à filtrer.<br>**Décision** |
+| L-15 | Logan · `credentials.py:9-30`, `doc_catalog.py:246-314` | [Moyenne] Tout utilisateur du chat atteint tout document indexé (compte de service) ; les puces du catalogue ignorent `in_chat` et la division. | Documenter comme contrôle accepté. | Pas de code changé. Chat et recherche d'impact interrogent Vector Search avec le service principal de l'app : les droits Unity Catalog ne s'appliquent pas par utilisateur, c'est l'index qui décide (`server/services/infra/README.md`, « Access to indexed documents »). Liens REF du catalogue sur tout le périmètre de parsing, volontairement. À confirmer, ou à filtrer par `in_chat` et division. …<br>**Décision** |
 | L-b1 | Logan · exports, historique, config, sessions, volume, feedback, impact, aperçu | [Basse] `str(exc)` renvoyé au navigateur (chemins de volume, erreurs SQL). | Réponse générique comme le gestionnaire global. | Réponse générique `INTERNAL_ERROR` sur ces routes ; le détail va dans les logs.<br>**Fait** |
 | L-b2 | Logan · client (Markdown) | [Basse] Exfiltration par injection de prompt : images Markdown vers un hôte quelconque, pas de CSP, liens non limités à https. | N'autoriser que des hôtes connus. | D'accord, à faire côté client (reconstruire `client/out`). (Liens https seulement, images de l'origine ou `data:` seulement, en-tête CSP + nosniff + referrer-policy (`server/app.py`).)<br>**Fait** |
 | L-b3 | Logan · `export_helpers.py:243` | [Basse] Injection de formule à l'export Excel (texte commençant par `=`). | — | Texte stocké comme texte (`_store_text_as_text`).<br>**Fait** |
@@ -58,9 +82,9 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 |---|---|---|---|---|
 | L-3 | Logan · `build_steps.py:128-131,355-358` | [Critique] En mode `full`, le checkpoint n'est pas filtré sur le manifeste : révisions remplacées remises dans `chunks` et dans l'index (UAT tourne en `full`). | Filtrer sur le manifeste dans tous les modes ; supprimer les lignes de checkpoint hors manifeste. | Filtre sur les IDDOC cibles dans tous les modes. Le nettoyage des lignes de checkpoint n'est pas ajouté (simple ajout si tu le veux).<br>**Fait** |
 | L-7 | Logan · `manifest_steps.py:107-144`, `output_steps.py:242-266` | [Haute] Une révision remplacée perd ses chunks mais garde `SUCCESS` : `MISSING_CHUNKS`, re-parsing et nouvelle description d'images (payante), un jour sur deux. | Statut terminal pour les révisions élaguées. | Statut `SUPERSEDED_REVISION` posé à l'élagage.<br>**Fait** |
-| L-21 | Logan · `describe_steps.py`, `update_proj_vector_indexes.py:323-335`, `parsing_pipeline.job.yml:62` … | [Moyenne] Robustesse et coût : `redescribe_all_images` jamais appliqué aux passages, prune qui échoue en silence, attente d'index qui passe au premier sondage, pas de délai maximal … | — | D'accord sur le fond ; chantier à part, rien changé.<br>**Ouvert** |
+| L-21 | Logan · `describe_steps.py`, `update_proj_vector_indexes.py:323-335`, `parsing_pipeline.job.yml:62` … | [Moyenne] Robustesse et coût : `redescribe_all_images` jamais appliqué aux passages, prune qui échoue en silence, attente d'index qui passe au premier sondage, pas de délai maximal … | — | D'accord sur le fond. Pipeline de parsing : pas touché pendant que Jules teste le parsing de l'actif de données Intraqual sur DEV ; à faire après son test.<br>**Ouvert** |
 | L-22 | Logan · `manifest_steps.py:402-423` | [Moyenne] `dry_run=false` depuis DEV ou UAT supprimerait des dossiers de la zone PROD partagée. | Suppression seulement quand l'environnement d'écriture est `prod`. | Fait ainsi.<br>**Fait** |
-| L-b12 | Logan · `document_change_log`, `_pipeline_checkpoint_<ts>` | [Basse] Doublons dans `document_change_log` sur runs réparés ; clones de checkpoint jamais supprimés. | — | D'accord, nettoyage à écrire.<br>**Ouvert** |
+| L-b12 | Logan · `document_change_log`, `_pipeline_checkpoint_<ts>` | [Basse] Doublons dans `document_change_log` sur runs réparés ; clones de checkpoint jamais supprimés. | — | D'accord, nettoyage à écrire. Pipeline de parsing : pas touché pendant le test de Jules sur DEV ; à faire après.<br>**Ouvert** |
 
 **Détails**
 
@@ -72,7 +96,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
 |---|---|---|---|---|
 | L-10 | Logan · `connection.py:197-223` | [Haute] Lakebase en panne au démarrage : aucune reconnexion et `/health` reste vert. | Boucle de reconnexion avec attente croissante ; état Lakebase dans `/health`. | Fait ainsi (`tests/test_lakebase_connection.py`).<br>**Fait** |
-| L-11 | Logan · `preview.py:26-86`, `credentials.py:15-25`, `doc_catalog.py:142-157`, `analyze.py:233,407` | [Moyenne] Boucle d'événements bloquée (aperçu synchrone, `Config()` à chaque tour, grosse regex des REF), sémaphore compare libéré à la déconnexion, un `httpx.AsyncClient` par appel, cache PDF jamais nettoyé. | `asyncio.to_thread`, un client SDK partagé, un sémaphore LibreOffice, clients HTTP poolés. | Aperçu via `asyncio.to_thread`, configuration SDK en cache, cache PDF borné à 200 fichiers. Reste : regex des REF, sémaphore compare, client HTTP partagé. (Recherche des références en thread, sémaphore libéré à la fin du travail réel, clients HTTP partagés fermés à l'arrêt.)<br>**Fait** |
+| L-11 | Logan · `preview.py:26-86`, `credentials.py:15-25`, `doc_catalog.py:142-157`, `analyze.py:233,407` | [Moyenne] Boucle d'événements bloquée (aperçu synchrone, `Config()` à chaque tour, grosse regex des REF), sémaphore compare libéré à la déconnexion, un `httpx.AsyncClient` par appel, cache PDF jamais nettoyé. | `asyncio.to_thread`, un client SDK partagé, un sémaphore LibreOffice, clients HTTP poolés. | Aperçu via `asyncio.to_thread`, configuration SDK en cache, cache PDF borné à 200 fichiers, recherche des références en thread, sémaphore libéré à la fin du travail réel, clients HTTP partagés fermés à l'arrêt.<br>**Fait** |
 | L-27 | Logan · `persistence.py:83-91`, `users.py:40`, `schema.py:571-578` | [Moyenne] Un `upsert` d'utilisateur en échec perd la sauvegarde du chat ; deux messages d'un tour hors transaction ; index manquants ; pas de verrou de migration. | — | `upsert` non fatal (`user_upsert_failed`) ; tour écrit en une transaction ; index sur `compare_messages(user_id, created_at)`, `chat_sessions(user_id, updated_at)`, `chat_feedbacks(message_id)` ; verrou consultatif ; golden de schéma régénéré.<br>**Fait** |
 | L-b8 | Logan · `store_error`, votes, uploads | [Basse] `create_task` sans référence : tâches perdables. | Garder une référence. | `store_error` doit rester synchrone (règle du projet) ; les votes et uploads sont à traiter. (`spawn()` garde une référence aux tâches (`store_error` reste synchrone).)<br>**Fait** |
 | L-b9 | Logan · rafraîchissement du jeton Lakebase | [Basse] `await old_pool.close()` peut être bloqué par une requête bloquée. | — | D'accord (délai maximal à poser). (Fermeture du pool bornée à 30 s puis `terminate()`.)<br>**Fait** |
@@ -82,8 +106,8 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 | # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
 |---|---|---|---|---|
-| L-6 | Logan · `excel.py:99-105,155-166`, `text.py:14,180`, `xml.py:25-56` | [Haute] Le diff perd de vrais changements : colonnes Excel « volatiles », feuilles et colonnes ajoutées, en-têtes, signes perdus (−40 → 40), XML malformé = « aucun changement », formules non lues. | Exclure une colonne seulement avec ≥ 20 lignes et la lister ; feuilles nouvelles ; capturer `[-+−±]?` ; erreur visible sur XML. | Tout fait sauf les formules (`data_only=True`, ouvert) : colonne exclue seulement avec ≥ 20 lignes et listée, feuilles et colonnes nouvelles rapportées, changement d'en-tête, signes capturés, XML malformé = erreur visible.<br>**Partiel** |
-| L-16 | Logan · `impact_queries.py:81-132,165-172`, `impact.py:179-181,226`, `vector_search.py:456,473-482` | [Moyenne] Recherche d'impact : sections coupées à 2000 caractères, runs partiels mis en cache, citation inventée = quand même « impacté », auto-exclusion par REF seulement. | Garde `queries_failed > 0` sur le cache (voir Y-23). | D'accord, rien fait. (Sections longues découpées en plusieurs changements ; citation inventée = statut `check` ; cache déjà protégé ; exclusion du document lui-même toujours par la référence du nom de fichier.)<br>**Partiel** |
+| L-6 | Logan · `excel.py:99-105,155-166`, `text.py:14,180`, `xml.py:25-56` | [Haute] Le diff perd de vrais changements : colonnes Excel « volatiles », feuilles et colonnes ajoutées, en-têtes, signes perdus (−40 → 40), XML malformé = « aucun changement », formules non lues. | Exclure une colonne seulement avec ≥ 20 lignes et la lister ; feuilles nouvelles ; capturer `[-+−±]?` ; erreur visible sur XML. | Formules lues : chaque cellule s'affiche `<valeur en cache> {=formule}` (`excel.py`), une formule modifiée à valeur égale est rapportée ; test ajouté. Colonne exclue seulement avec ≥ 20 lignes et listée, feuilles et colonnes nouvelles, en-têtes, signes, XML malformé = erreur visible.<br>**Fait** |
+| L-16 | Logan · `impact_queries.py:81-132,165-172`, `impact.py:179-181,226`, `vector_search.py:456,473-482` | [Moyenne] Recherche d'impact : sections coupées à 2000 caractères, runs partiels mis en cache, citation inventée = quand même « impacté », auto-exclusion par REF seulement. | Garde `queries_failed > 0` sur le cache (voir Y-23). | Sections longues découpées en plusieurs changements ; citation inventée = statut `check` ; cache protégé contre les runs partiels. Reste : l'auto-exclusion du document téléversé ne marche que par la REF du nom de fichier (la route d'impact reçoit des hachages et des noms, pas le texte de l'ancien document).<br>**Partiel** |
 | L-17 | Logan · `chunked_analysis.py:29-53,274-277` | [Moyenne] Gros documents découpés : lignes « aucun changement » entre les vrais changements, titre collé en fin de ligne, titres de section perdus, Excel jamais découpé (600 000 caractères en un appel). | — | D'accord, rien fait. (Lignes « aucun changement » retirées à la fusion, titres séparés, titre repris dans les parties suivantes, diffs Excel découpés.)<br>**Fait** |
 | L-18 | Logan · `analyze.py:70-100`, `summarize.py:57`, `impact.py:45-56` | [Moyenne] Clés de cache sans prompt, modèle ni réglages. | Faire comme `_impact_cache_version`. | `_analysis_cache_version` et `_summary_cache_version` ajoutées.<br>**Fait** |
 | L-23 | Logan · `llm.py:186-190`, `streaming.py:37` | [Moyenne] Température et « thinking » des modèles Claude morts ou invalides (400 silencieux, repli sur Luna). | — | Pas de température quand le raisonnement est actif ; test corrigé.<br>**Fait** |
@@ -189,16 +213,16 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 | # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
 |---|---|---|---|---|
-| Y-1 <sub>885061633</sub> | Yann · `settings.json:1` | « Exclure le .vscode non ? » | **En partie** : `settings.json` = réglages personnels ; `tasks.json` sert à l'équipe.<br>Proposition : Exclure `settings.json`, garder `tasks.json`. | `settings.json` sort du suivi et entre dans `.gitignore` ; `tasks.json` reste (tâche « Pull + Deploy » du README).<br>**Partiel** |
+| Y-1 <sub>885061633</sub> | Yann · `settings.json:1` | « Exclure le .vscode non ? » | **En partie** : `settings.json` = réglages personnels ; `tasks.json` sert à l'équipe.<br>Proposition : Exclure `settings.json`, garder `tasks.json`. | `settings.json` sort de git et entre dans `.gitignore` ; `tasks.json` reste volontairement (il porte la tâche de déploiement).<br>**Fait** |
 | Y-3 <sub>885062343</sub> | Yann · `index.html:1` | « Pourquoi en double avec client/index.html » | **En partie** : pas un doublon (source Vite / build) ; le vrai problème est de versionner le build.<br>Proposition : Construire au déploiement, ignorer `out/`. | Pas un doublon : `client/index.html` est la source, `out/` le build (balises plus scripts au nom haché). …<br>**Fait** |
 | Y-52 <sub>885869279</sub> | Yann · `8859-1.txt:69` | « C'est quoi ces trucs ? À garder dans la PR ? » | **Pas jugé** | Garder : tables de caractères et exécutable d'antiword, lus par le job de parsing (`ANTIWORDHOME`) que le cluster ne peut pas installer. L'app installe le `.deb` (`start.sh`). …<br>**Pas de changement** |
-| L-9 | Logan · `bitbucket-pipelines.yml:312-354`, `bitbucket_deploy.sh:49-62`, `databricks.yml:499` | [Haute] PROD déployable depuis toute branche, aucun test en CI, CLI installée par script non épinglé (`main`), jeton longue durée. | Tests d'abord, UAT sur `main`, PROD manuel ; environnement de déploiement PROD limité à `main` ; épingler la CLI ; OAuth/OIDC. | Tests avant les déploiements UAT et PROD (DEV sans, pour itérer), après installation de `requirements.txt` épinglé ; garde de branche PROD déjà là. …<br>**Partiel** |
+| L-9 | Logan · `bitbucket-pipelines.yml:312-354`, `bitbucket_deploy.sh:49-62`, `databricks.yml:499` | [Haute] PROD déployable depuis toute branche, aucun test en CI, CLI installée par script non épinglé (`main`), jeton longue durée. | Tests d'abord, UAT sur `main`, PROD manuel ; environnement de déploiement PROD limité à `main` ; épingler la CLI ; OAuth/OIDC. | Tests avant les déploiements UAT et PROD (DEV sans) ; CLI épinglée à 1.20.0 (`utils/deploy/databricks_cli_version.txt`). Reste : OAuth/OIDC à la place du jeton longue durée ; `Production` limité à `main` (Jules : quand tout est validé). …<br>**Partiel** |
 | L-20 | Logan · `alerts.yml:82-126`, `03_chat_failure_rate.sql`, `lakebase_sync.yml:124` … | [Moyenne] Alertes qui ne peuvent pas se déclencher (copie Delta rafraîchie 2 fois par jour, 22 runs sur 24 voient 0 ligne), pas de job d'export en PROD, tableaux DEV figés … | — | Ressources Databricks à traiter à part. (Alerte d'échec du chat à 03 h et 15 h (fenêtre 13 h) après la copie ; l'export Lakebase de PROD est en pause, donc ces alertes n'y lisent rien.) (L'export Lakebase de PROD est dé-pausé dans `databricks.yml` ; il ne tournera qu'au déploiement de PROD.)<br>**Fait** |
-| L-25 | Logan · `target_env.json`, `app.yaml`, `databricks.yml`, `test_deploy_config.py:22`, READMEs | [Moyenne] Config et docs incohérentes : réécriture Gemini vs « Luna seulement », `CHAT_TRANSLATE_ONLY` documenté « off », fichiers cités absents, README CI faux, README du moteur vs `base.md` … | — | Réécriture tranchée (point 4) ; README CI corrigé. Le reste est à traiter. (Docs corrigées (liste de sources, `CHAT_TRANSLATE_ONLY`, références absentes) ; restent à trancher : tableau de sources de `base.md`, repli « réécriture échouée » mort, `prevent_destroy` du rôle PROD.) (Repli « réécriture échouée » rendu réel : le tour continue avec la question brute (statut dégradé) ; `prevent_destroy` ajouté au rôle Lakebase de PROD ; reste à trancher : le tableau de sources de `base.md`.) (Décision : le tableau de sources de `base.md` est gardé, `CLAUDE.md` corrigé ; le repli « réécriture échouée » cherche avec la question brute en demandant autant de candidats qu'un tour normal (48).)<br>**Fait** |
+| L-25 | Logan · `target_env.json`, `app.yaml`, `databricks.yml`, `test_deploy_config.py:22`, READMEs | [Moyenne] Config et docs incohérentes : réécriture Gemini vs « Luna seulement », `CHAT_TRANSLATE_ONLY` documenté « off », fichiers cités absents, README CI faux, README du moteur vs `base.md` … | — | Réécriture tranchée (GPT-6 Luna) ; README CI et docs corrigés (sources, `CHAT_TRANSLATE_ONLY`, références absentes) ; tableau de sources de `base.md` gardé, `CLAUDE.md` corrigé ; repli « réécriture échouée » réel : le tour continue avec la question brute (statut dégradé) et demande autant de candidats qu'un tour normal (48) ; `prevent_destroy` sur le rôle Lakebase de PROD.<br>**Fait** |
 | L-26 | Logan · `leap_utils/` | [Moyenne] 12 272 lignes copiées, 78 % jamais atteint (le pipeline utilise 7 modules, 2 628 lignes), risque de dérive. | Dépendre d'un paquet épinglé ou ne copier que les modules utilisés. | Réduit aux 11 modules que le pipeline de parsing atteint (3 195 lignes gardées, 23 fichiers / 9 077 lignes supprimés), voir `leap_utils/README.md`. Un paquet épinglé reste possible plus tard.<br>**Fait** |
-| L-28 | Logan · `requirements.txt`, `pyproject.toml`, `start.sh:31-45`, `bitbucket_deploy.sh:49`, `.mcp.json` | [Moyenne] Dépendances non reproductibles : `>=` ≠ `uv.lock`, bibliothèques de jobs non épinglées, `.deb` antiword en `http://` sans somme de contrôle, `@playwright/mcp@latest`. | — | `requirements.txt` : toutes les dépendances directes épinglées aux versions des tests (pymupdf 1.28.0, Pillow 11.1.0) ; `start.sh` : `.deb` antiword en https avec SHA-256, paquet amd64 seul (arm64 : paquet fourni ou apt). …<br>**Partiel** |
+| L-28 | Logan · `requirements.txt`, `pyproject.toml`, `start.sh:31-45`, `bitbucket_deploy.sh:49`, `.mcp.json` | [Moyenne] Dépendances non reproductibles : `>=` ≠ `uv.lock`, bibliothèques de jobs non épinglées, `.deb` antiword en `http://` sans somme de contrôle, `@playwright/mcp@latest`. | — | Dépendances directes épinglées aux versions du `uv.lock` de Jules (les tests passent dessus) ; `.deb` antiword en https avec SHA-256 (amd64 seul). Reste : les dépendances indirectes de l'installation de l'app ne sont pas verrouillées.<br>**Partiel** |
 | L-b13 | Logan · `client/out`, `.gitleaksignore` | [Basse] `client/out` versionné, jamais reconstruit par la CI, exclu du scan de secrets. | Construire au déploiement. | Fait : voir Y-3 (construit au déploiement, plus versionné).<br>**Fait** |
-| L-b16 | Logan · `databricks.yml`, YAML des jobs | [Basse] Identités individuelles (dont un compte externe) nommées en dur. | Groupes et variables. | D'accord. (Adresse d'alerte des jobs DEV/UAT remise sur la boîte partagée ; les droits nominatifs sur les apps et le projet Lakebase restent en attente (le retrait coupe l'accès des personnes).) (Décidé : adresse d'alerte DEV/UAT conservée ; deux noms retirés de l'accès à l'app UAT ; droits du compte de déploiement et du système Lakebase conservés.)<br>**Partiel** |
+| L-b16 | Logan · `databricks.yml`, YAML des jobs | [Basse] Identités individuelles (dont un compte externe) nommées en dur. | Groupes et variables. | Adresse d'alerte des jobs DEV/UAT conservée sur `jules.gourio.external` (décision de Jules) ; `christophe.pelissier` et `yosif.karapendov` retirés des droits de l'app UAT (vérifié : tous deux ont can_chat par les groupes) ; compte de déploiement de Jules et système de droits Lakebase conservés.<br>**Fait** |
 
 **Détails**
 
@@ -206,19 +230,19 @@ commentaires s'ajoutent en bas du tableau de leur thème.
   (`bitbucket_deploy.sh`, version 1.4.2 épinglée ; `deploy_qualibot.ps1` le faisait déjà) et les règles de sync (`include client/out/**`,
   `--include`) l'envoient.
 - **Y-52** — Position (suite) : Seule `UTF-8.txt` est demandée par le code ; les autres peuvent partir si tu veux une PR plus courte.
-- **L-9** — Position (suite) : Version de la CLI lue dans `utils/deploy/databricks_cli_version.txt` (vide pour l'instant = dernière, avec
-  avertissement, en attente de `databricks version`). OAuth/OIDC : ouvert. Restreindre l'environnement Bitbucket `Production` à `main` : à
-  faire par toi (Repository settings > Deployments).
+- **L-15** — Position (suite) : un document absent de l'index du chat reste ouvrable dans le portail Intraqual, d'où les liens sur tout le périmètre.
+- **L-9** — Position (suite) : OAuth/OIDC demande un administrateur de compte Databricks et une configuration Bitbucket (plus tard). Version de la CLI lue par `bitbucket_deploy.sh` dans `utils/deploy/databricks_cli_version.txt` (1.20.0, à
+  vérifier au premier déploiement). Restreindre `Production` à `main` : Repository settings > Deployments, une fois tout validé.
 - **L-20** — Fichiers (suite) : `import_lakebase_from_json.py:149-153` ; Critique (suite) : import UAT→PROD qui échoue sur table manquante.
 - **L-25** — Critique (suite) : repli « rewrite failed » mort, volumes `uat_landingzone`, pas de `prevent_destroy`, test `uat-test`.
-- **L-28** — Position (suite) : `.mcp.json` absent de ce dépôt. Dépendances transitives non verrouillées (pas de `uv.lock`) : ouvert.
+- **L-28** — Position (suite) : `.mcp.json` absent de ce dépôt. Pas de `uv.lock` dans ce dépôt : dépendances indirectes non verrouillées.
 
 ### H. Client et interface
 
 | # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
 |---|---|---|---|---|
 | L-24 | Logan · `useHistoryLoad.ts:46-51`, `useChatConversation.ts:34-56`, `useAnalysisTrack.ts:80`, `config.ts:68-70` … | [Moyenne] Courses (historique A puis B, « Nouveau chat », résumé du fichier précédent), `running` bloqué si le hachage échoue, pas de watchdog du chat, suppression sans erreur, `/api/me` en échec = accès complet. | — | Besoin de reconstruire `client/out`. (Compteurs de requêtes (historique, nouveau chat, résumés), `try/finally` du hachage, garde-fou de 120 s sur le chat, suppression avec erreur, `/api/me` en échec = écran avec « Réessayer ».)<br>**Fait** |
-| Y-4 <sub>885062844</sub> | Yann · `databricks-symbol-color.svg` | « Pareil logos en double ? » | **En partie** : même cause que Y-3 ; réduire le favicon de 1 Mo.<br>Proposition : Réduire `LOGO_Qualibot.png`. | Ce fichier n'existe pas dans mon dépôt (il reste `LOGO_LATECOERE.png` et `LOGO_Qualibot.png`) ; `out/` : voir Y-3 (plus versionné). Favicon : à réduire. Si le fichier existe chez toi, envoie son chemin exact.<br>**Ouvert** |
+| Y-4 <sub>885062844</sub> | Yann · `databricks-symbol-color.svg` | « Pareil logos en double ? » | **En partie** : même cause que Y-3 ; réduire le favicon de 1 Mo.<br>Proposition : Réduire `LOGO_Qualibot.png`. | Le svg n'existe plus dans le dépôt ; favicon de 1 Mo remplacé par des icônes 64 px et 180 px, logo 66 Ko ; `out/` : voir Y-3 (plus versionné).<br>**Fait** |
 | L-b14 | Logan · `client/` | [Basse] Bundle JS de 1,14 Mo en un morceau, `pdfjs-dist` inutilisé, favicon de 1 Mo, polices Google chargées à l'exécution. | — | D'accord. (`pdfjs-dist` retiré, favicon 64 px et icône 180 px, logo 66 Ko, code vendor en morceaux ; polices Google retirées (polices système).) (Polices Montserrat, Open Sans et JetBrains Mono livrées avec le build du client (Fontsource), plus aucun appel à Google.)<br>**Fait** |
 
 **Détails**
@@ -231,15 +255,14 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 |---|---|---|---|---|
 | L-8 | Logan · `bitbucket-pipelines.yml:262-286`, `ops_config.py:39` | [Haute] Données de chat et d'utilisateurs hors plateforme : artefacts Bitbucket du pipeline d'export, jetons de partage copiés en Delta, DEV chargé depuis des instantanés UAT. | Passer par un volume UC ou un job base à base ; jeton créé au clic sur Partager ; exclure `share_token` des exports et les faire tourner ; décider si l'historique va en environnement bas. | Le pipeline `sync-prod-data` ne copie plus que le volume des modèles docling ; `export_lakebase_to_json.py`, `import_lakebase_from_json.py` et leurs constantes (`ops_config.py`) supprimés. …<br>**Fait** |
 | J-1 <sub>885301989</sub> | Jules · `export_lakebase_uat_to_volume_job.py:1` | « Les jobs là sont refaits… » (plus de `uat` dans les noms, un job par cible qui copie Lakebase{env} → UC{env}) | Confirmé sur `origin/DEV` (la partie export Bitbucket restait, voir L-8). | Déjà fait avant la revue (commit `97f8853` : `lakebase_export`, `export_lakebase_to_volume`, `import_lakebase_tables_to_delta`). Plus aucune référence `export_lakebase_uat*`.<br>**Fait** |
-| L-12 | Logan · `analyze.py:288`, `schema.py:391-394`, `ws.py:90-92`, `storage.ts:63-74` | [Moyenne] Pas de rétention ni d'effacement par utilisateur : textes complets dans `llm_requests`, passages dans `chat_retrieved_chunks`, questions dans les logs et MLflow, suppressions « douces » … | — | `user_id` ajouté à `llm_requests` (colonne, index, insertion d'audit, route d'analyse). Pas de job de purge (décidé). …<br>**Partiel** |
-| L-b15 | Logan · antiword, modèle fastText | [Basse] Notices de licence manquantes (antiword GPL-2, modèle fastText CC-BY-SA). | Ajouter les notices. | D'accord. (`THIRD_PARTY_NOTICES.md` créé ; versions des licences (GPL d'antiword, CC-BY-SA de fastText) à confirmer.)<br>**Partiel** |
+| L-12 | Logan · `analyze.py:288`, `schema.py:391-394`, `ws.py:90-92`, `storage.ts:63-74` | [Moyenne] Pas de rétention ni d'effacement par utilisateur : textes complets dans `llm_requests`, passages dans `chat_retrieved_chunks`, questions dans les logs et MLflow, suppressions « douces » … | — | `llm_requests.user_id` (colonne, index, rempli à chaque analyse). Stockage du navigateur (`localStorage`) effacé 7 jours après la dernière écriture (`clearExpiredStorage`) ; l'historique en base recharge toujours l'entrée (analyse, impact, fichiers). Job de purge REFUSÉ par Jules (« pas besoin de faire la suppression »).<br>**Fait** |
+| L-b15 | Logan · antiword, modèle fastText | [Basse] Notices de licence manquantes (antiword GPL-2, modèle fastText CC-BY-SA). | Ajouter les notices. | `THIRD_PARTY_NOTICES.md` créé. Reste : confirmer les versions des licences (version GPL d'antiword, CC-BY-SA 3.0 ou 4.0 pour fastText).<br>**Partiel** |
 
 **Détails**
 
 - **L-8** — Position (suite) : Jetons de partage inchangés ; chats DEV = vraies données DEV (accepté).
-- **L-12** — Critique (suite) : `llm_requests` sans `user_id`, `localStorage`. ; Position (suite) : `localStorage` effacé 7 jours après la
-  dernière écriture (`clearExpiredStorage`, `storage.ts`) ; l'historique en base recharge toujours l'entrée (analyse, impact, fichiers du
-  volume). Reconstruire le client (fait au déploiement).
+- **L-12** — Critique (suite) : `llm_requests` sans `user_id`, `localStorage`. ; Position (suite) : `clearExpiredStorage` est dans
+  `storage.ts` ; reconstruire le client (fait au déploiement).
 
 ## Points en suspens
 
@@ -254,7 +277,10 @@ commentaires s'ajoutent en bas du tableau de leur thème.
   DEV.
 - **Avis de Logan** : retirer `staging/**` des artefacts ; créer le jeton au clic sur Partager et l'exclure des exports ; dire si
   l'historique peut aller dans un environnement bas.
-- **Décision / état** : scripts supprimés ; jetons et conversations de DEV laissés tels quels. **Fait**
+- **Décision / état** : Décidé le 2026-10-21 : Lakebase jamais copié entre environnements (« il n'y a besoin d'aucun job du Lakebase UAT vers
+  DEV : le job DEV copie le Lakebase DEV, le job UAT copie le Lakebase UAT, c'est tout ce qu'il faut ») ; jetons de partage inchangés (« chaque
+  environnement garde ses share_tokens, cela aide à lire les chats plus facilement ») ; chats DEV = vraies données DEV (« ce n'est pas grave si
+  on peut faire un select dessus »). **Fait**
 
 ### 2. Rétention et RGPD (L-12)
 
@@ -264,8 +290,8 @@ commentaires s'ajoutent en bas du tableau de leur thème.
   données d'une personne. Pas de job de purge. Le stockage du navigateur (`localStorage`) est effacé 7 jours après la dernière écriture
   (`clearExpiredStorage`) ; l'historique en base recharge l'entrée avec analyse, impact et fichiers du volume.
 - **Avis de Logan** : fixer une durée de conservation pour `llm_requests.messages_json` et `chat_retrieved_chunks` ; traiter `localStorage`.
-- **Décision / état** : `user_id` ajouté ; pas de purge ; expiration à 7 jours du stockage du navigateur (client à reconstruire, fait au
-  déploiement). **Fait**
+- **Décision / état** : Décidé le 2026-10-21 : `user_id` oui, pas de purge (« pas besoin de faire la suppression » ; « l'historique garde
+  ceci dans Databricks »), `localStorage` effacé à 7 jours (client reconstruit au déploiement). **Fait**
 
 ### 3. `client/out` versionné ou construit au déploiement
 
@@ -275,7 +301,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
   `deploy_qualibot.ps1` le faisait déjà). `client/out` est ignoré et retiré de git ; les règles de synchronisation (`include client/out/**`,
   `--include`) ne changent pas.
 - **Avis de Logan** : construire au déploiement et ignorer `out/`.
-- **Décision / état** : construit au déploiement (option B). **Fait**
+- **Décision / état** : Décidé le 2026-10-21 : construit au déploiement (option B). **Fait**
 
 ### 4. Modèle de réécriture du chat
 
@@ -283,7 +309,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 - **Options et conséquences** : GPT-6 Luna sur toutes les cibles ; surcharges Gemini retirées de `utils/deploy/target_env.json` et README
   corrigé.
 - **Avis de Logan** : choisir un modèle et aligner la documentation.
-- **Décision / état** : GPT-6 Luna partout. **Fait**
+- **Décision / état** : Décidé le 2026-10-21 : GPT-6 Luna sur toutes les cibles. **Fait**
 
 ### 5. Bloc « langue » de `base.md`
 
@@ -292,19 +318,18 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 - **Options et conséquences** : bloc ramené à deux lignes (réponse dans la langue de la question sauf demande contraire ; citation dans la
   langue d'origine avec traduction). Risque : réponse dans la mauvaise langue sur des questions courtes ou mixtes.
 - **Avis de Logan** : couper à une ligne de repli.
-- **Décision / état** : bloc réduit ; mesure sur DEV à faire, puis `register_chat_prompts`. **Fait**
+- **Décision / état** : Décidé le 2026-10-21 : bloc réduit à deux lignes ; mesure sur DEV à faire, puis `register_chat_prompts`. **Fait**
 
 ### 6. CI (intégration continue)
 
 - **Le problème** : la CLI Databricks est installée sans version fixée, le jeton de déploiement est longue durée, et les tests ne bloquent
   pas les déploiements.
-- **Options et conséquences** : tests avant les déploiements UAT et PROD (pas DEV), avec `requirements.txt` épinglé ; 5 échecs ont disparu
-  (pymupdf épinglé à 1.26.7, fausse connexion corrigée) : 597 réussis. La version de la CLI est lue dans
-  `utils/deploy/databricks_cli_version.txt` par `bitbucket_deploy.sh` ; vide pour l'instant, ce qui prend la dernière version avec un
-  avertissement. OAuth/OIDC (authentification sans jeton longue durée) demande une configuration Databricks et Bitbucket hors dépôt.
+- **Options et conséquences** : tests avant les déploiements UAT et PROD (pas DEV), avec `requirements.txt` épinglé : 597 réussis. La
+  version de la CLI (1.20.0) est lue dans `utils/deploy/databricks_cli_version.txt` par `bitbucket_deploy.sh`. OAuth/OIDC
+  (authentification sans jeton longue durée) demande un administrateur de compte Databricks et une configuration Bitbucket.
 - **Avis de Logan** : épingler la CLI, passer à OAuth/OIDC, lancer les tests avant les déploiements.
-- **Décision / état** : tests et lecture de la version faits ; attente de la sortie de `databricks version` ; OIDC ouvert ; restriction de
-  l'environnement `Production` à `main` à faire par toi (Repository settings > Deployments). **Partiel**
+- **Décision / état** : Décidé le 2026-10-21 : CLI épinglée, tests bloquants pour UAT et PROD ; `Production` limité à `main` une fois tout
+  validé (Repository settings > Deployments) ; OIDC plus tard. **Partiel** (voir L-9)
 
 ### 7. Dépendances et `leap_utils`
 
@@ -314,7 +339,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
   (amd64 seul) ; `leap_utils` réduit aux 11 modules atteints (3 195 lignes). `.mcp.json` est absent de ce dépôt. Les dépendances transitives
   ne sont pas verrouillées.
 - **Avis de Logan** : dépendre d'un paquet épinglé ou copier module par module ; épingler les dépendances et vérifier le `.deb`.
-- **Décision / état** : épinglage direct et `leap_utils` réduit (option A). **Fait**
+- **Décision / état** : Décidé le 2026-10-21 : option A pour les deux (épinglage direct, `leap_utils` réduit à 11 modules). **Fait** ; dépendances indirectes : voir L-28.
 
 ### 8. Prompts de la comparaison et `:rtype:`
 
@@ -323,7 +348,17 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 - **Options et conséquences** : six prompts mis en fichiers (`server/prompts/compare/`, chargés par `compare/prompts.py`, `load_prompt`),
   texte identique, surcharge `COMPARE_ANALYSIS_SYSTEM_PROMPT` gardée. `:rtype:` non ajouté : les annotations de retour suffisent.
 - **Avis de Logan** : prompts de la comparaison en fichiers.
-- **Décision / état** : prompts en fichiers ; annotations seulement (suite à Logan). **Fait**
+- **Décision / état** : Décidé le 2026-10-21 : prompts en fichiers ; annotations seulement, sans `:rtype:` (suite à Logan). **Fait**
+
+### 9. Accès aux documents indexés (L-15)
+
+- **Le problème** : le chat et la recherche d'impact interrogent Vector Search avec le service principal de l'app, donc les droits Unity
+  Catalog ne sont pas appliqués par utilisateur ; les liens REF du catalogue couvrent tout le périmètre de parsing.
+- **Options et conséquences** : accepter ce contrôle (déjà écrit dans `server/services/infra/README.md`, section « Access to indexed
+  documents ») ou filtrer les liens du catalogue par `in_chat` et division. Les liens couvrent volontairement tout le périmètre : un
+  document absent de l'index du chat s'ouvre dans le portail Intraqual.
+- **Avis de Logan** : documenter comme contrôle accepté.
+- **Décision / état** : à confirmer par Jules. **Décision**
 
 ## Vérifications
 
@@ -340,25 +375,12 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 ## Reste ouvert (hors décisions)
 
-Constats de Logan marqués Ouvert (ou partiels), sans décision à prendre de ta part :
+Lignes encore Ouvert, Partiel ou Décision dans les tableaux :
 
-- L-3 : suppression des lignes de checkpoint hors manifeste (simple ajout).
-- L-6 : formules Excel (`data_only=True`).
-- L-11 : regex des REF sur la boucle d'événements, sémaphore compare libéré à la déconnexion, client HTTP partagé.
-- L-15 : écrire le contrôle accepté (accès au service principal) ; filtrer les puces du catalogue sur `in_chat` et la division.
-- L-16 : recherche d'impact (sections coupées, garde de cache `queries_failed > 0`, citation inventée, auto-exclusion).
-- L-17 : gros documents découpés ; Excel jamais découpé.
-- L-19 : ne plus renvoyer les bulles d'erreur depuis le navigateur ; arrêt serveur sur « Stop ».
-- L-20 : alertes, job d'export PROD, tableaux DEV, import UAT→PROD.
-- L-21 : robustesse et coût du pipeline (`redescribe_all_images`, prune silencieux, attente d'index, délais maximaux, cache des
-  descriptions, PNG/jpeg, planification PROD).
-- L-24 : courses côté client (nécessite de reconstruire `client/out`).
-- L-25 : reste de la config et des docs incohérentes (fichiers cités absents, README du moteur, repli mort, volumes `uat_landingzone`,
-  `prevent_destroy`, test `uat-test`).
-- Basses : L-b2, L-b4, L-b5, L-b6, L-b7, L-b8, L-b9, L-b10, L-b11, L-b12, L-b14, L-b15, L-b16 ; L-b17 pour le code client.
-- Y-4 : réduire le favicon de 1 Mo (avec L-b14).
-- Y-40 : `turn_log.py` garde ses niveaux de gravité dans le module du journal, à discuter si Yann maintient sa demande.
-- Décisions et réglages hors dépôt ou à venir : version de la CLI fixée à 1.20.0 dans `utils/deploy/databricks_cli_version.txt` (à vérifier
-  au premier déploiement) ; OAuth/OIDC à la place du jeton longue durée ; restriction de l'environnement Bitbucket `Production` à `main`
-  (action à faire une fois tout validé) ; dépendances transitives non verrouillées (pas de `uv.lock`) ; L-b2 (CSP) ; L-24 (courses client) ;
-  L-16 et L-17 (recherche d'impact, rapports découpés) ; L-20 et L-21 (alertes, coût du pipeline) ; mesure DEV de la langue (Y-8).
+- L-21 et L-b12 (Ouvert) : pipeline de parsing, pas touché pendant que Jules teste le parsing de l'actif de données Intraqual sur DEV ; à
+  faire après son test.
+- L-9 (Partiel) : OAuth/OIDC à la place du jeton longue durée ; environnement Bitbucket `Production` limité à `main` après validation.
+- L-28 (Partiel) : dépendances indirectes de l'installation de l'app non verrouillées.
+- L-15 (Décision) : accepter le contrôle d'accès par l'index, ou filtrer les liens du catalogue par `in_chat` et division.
+- L-16 (Partiel) : auto-exclusion du document téléversé seulement par la REF du nom de fichier.
+- L-b15 (Partiel) : versions des licences à confirmer (GPL d'antiword, CC-BY-SA 3.0 ou 4.0 de fastText).

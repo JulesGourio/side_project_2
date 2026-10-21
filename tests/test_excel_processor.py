@@ -107,3 +107,17 @@ def test_a_value_that_looks_like_a_formula_is_exported_as_text():
     book = openpyxl.load_workbook(io.BytesIO(_build_excel_bytes(rows, '')))
     cells = [c for row in book.active.iter_rows() for c in row if isinstance(c.value, str) and 'HYPERLINK' in c.value]
     assert cells and all(c.data_type == 's' for c in cells)
+
+
+def test_a_formula_changed_with_the_same_cached_value_is_read_with_its_formula():
+    from server.services.compare.processors.excel import _extract_xlsx
+    old_lines, _ = _extract_xlsx(_workbook([['Name', 'Total'], ['A', '=SUM(1,2)']]))
+    new_lines, _ = _extract_xlsx(_workbook([['Name', 'Total'], ['A', '=SUM(1,3)']]))
+    assert old_lines[2] == 'A\t {=SUM(1,2)}' and new_lines[2] == 'A\t {=SUM(1,3)}'
+    assert old_lines != new_lines
+
+
+def test_a_plain_value_is_read_without_braces():
+    from server.services.compare.processors.excel import _extract_xlsx
+    lines, _ = _extract_xlsx(_workbook([['Name', 'Total'], ['A', 5]]))
+    assert lines == ['[Sheet: Data]', 'Name\tTotal', 'A\t5']

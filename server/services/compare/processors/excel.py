@@ -19,15 +19,32 @@ from server.services.compare.processors._diff_engines import SYSTEM_PROMPT_STAND
 logger = logging.getLogger(__name__)
 
 
-def _sheet_to_lines(ws) -> List[str]:
+def _cell_text(value: Any, formula: Any) -> str:
+    """Text of a cell: its value, followed by its formula in braces when it holds one.
+
+    :param value: cached value of the cell, None when empty
+    :param formula: content of the cell as stored in the file (a string starting with ``=`` for a formula)
+    :return: the cell text
+    """
+    text = str(value) if value is not None else ''
+    if isinstance(formula, str) and formula.startswith('='):
+        return f'{text} {{{formula}}}'
+    return text
+
+
+def _sheet_to_lines(ws, ws_formulas=None) -> List[str]:
     """Convert a worksheet to a list of tab-separated row strings.
 
-    :param ws: openpyxl worksheet, read-only
+    :param ws: openpyxl worksheet read for its values, read-only
+    :param ws_formulas: the same worksheet read without values (formulas as stored), None to show values only
     :return: one tab-separated string per row, trailing empty rows dropped
     """
     rows = []
-    for row in ws.iter_rows(values_only=True):
-        cells = [str(c) if c is not None else '' for c in row]
+    value_rows = ws.iter_rows(values_only=True)
+    formula_rows = ws_formulas.iter_rows(values_only=True) if ws_formulas is not None else None
+    for row in value_rows:
+        formulas = next(formula_rows, ()) if formula_rows is not None else ()
+        cells = [_cell_text(c, formulas[i] if i < len(formulas) else None) for i, c in enumerate(row)]
         rows.append('\t'.join(cells))
     while rows and not rows[-1].strip():
         rows.pop()
@@ -42,12 +59,13 @@ def _extract_xlsx(file_bytes: bytes) -> Tuple[List[str], str]:
     """
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    wb_formulas = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=False)
     lines: List[str] = []
     for name in wb.sheetnames:
-        ws = wb[name]
         lines.append(f'[Sheet: {name}]')
-        lines.extend(_sheet_to_lines(ws))
+        lines.extend(_sheet_to_lines(wb[name], wb_formulas[name]))
     wb.close()
+    wb_formulas.close()
     return lines, f'{len(wb.sheetnames)} sheet(s): {", ".join(wb.sheetnames)}'
 
 
