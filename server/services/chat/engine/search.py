@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Tuple
 import httpx
 
 from server.services.infra import vs_gate
-from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
+from server.services.infra.config import VECTOR_SEARCH_QUERY_TIMEOUT_S
+from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS
 from server.services.chat.turn_log import TurnLog, passage_title
 from server.services.chat.engine.config import raw_top_k, rerank_top_k
 from server.services.chat.engine.types import Hit, SearchRow
@@ -49,7 +50,7 @@ async def _post_query(host: str, token: str, index: str, payload: Dict[str, Any]
     :param payload: query body sent to the index
     :return: the HTTP response
     """
-    return await vs_gate.post(host, token, index, payload, _QUERY_TIMEOUT_S)
+    return await vs_gate.post(host, token, index, payload, VECTOR_SEARCH_QUERY_TIMEOUT_S)
 
 
 def _rows(resp: httpx.Response) -> List[SearchRow]:

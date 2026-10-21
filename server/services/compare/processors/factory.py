@@ -30,7 +30,7 @@ EXTENSION_MAP: dict[str, str] = {
     '.tiff': 'image', '.tif':  'image',
     '.docx': 'docx',  '.doc':  'docx',
     '.pptx': 'pptx',  '.ppt':  'pptx',
-    '.xlsx': 'excel', '.xls':  'excel',
+    '.xlsx': 'excel', '.xlsm': 'excel', '.xls':  'excel',
     '.xml':  'xml',
 }
 
@@ -98,14 +98,9 @@ def diff_truncation_warnings(messages: List[Dict[str, Any]]) -> List[str]:
 def get_processor(filename: str, method_override: str | None = None) -> BaseProcessor | None:
     """Return a processor for the given filename.
 
-    Args:
-        filename: Name of the file to process.
-        method_override: If provided, use this method instead of the env-var default.
-                         Valid values: 'standard', 'structured', 'comparative'.
-                         Unknown values fall back to 'standard'.
-
     :param filename: name of the file to process
-    :param method_override: method to use instead of the environment default; None or blank keeps the default
+    :param method_override: method to use instead of the environment default (``standard``, ``structured`` or
+        ``comparative``; an unknown value falls back to ``standard``); None or blank keeps the default
     :return: the processor, or None when the file type is not supported
     """
     ext = get_extension(filename)

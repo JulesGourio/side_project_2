@@ -59,6 +59,10 @@ class Span:
     cite: int | None = None
 
 
+# One alternation, tried left to right at each position, so the first alternative that matches wins: code spans first
+# (their content is never styled), then links, citation markers such as [1] or [2, 3], bold-italic, bold, italic with
+# * or _ (underscores only at word edges, so snake_case stays intact), strikethrough, and bare URLs (trailing
+# punctuation excluded). Each alternative is a named group that `parse_inline` reads to choose the span style.
 _INLINE_RE = re.compile(
     r'(?P<code>`[^`\n]+`)'
     r'|(?P<link>\[(?P<ltext>[^\]\n]+)\]\((?P<lurl>[^)\s]+)\))'

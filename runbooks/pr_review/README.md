@@ -250,3 +250,77 @@ et en repli, la borne d'olefile, un fichier qui n'est pas OLE, et le rendu des d
 L'export PNG de LibreOffice ne rend que la première diapositive (vérifié ici sur un diaporama de 3 : un seul fichier). L'aperçu
 d'un PowerPoint n'affichait donc qu'une image. Maintenant LibreOffice produit un PDF et chaque page devient une image PNG, dans
 l'ordre, 100 diapositives au plus (avertissement dans les logs au-delà). Test avec un vrai diaporama de 3 diapositives : 3 images.
+
+## Lot 3 — commentaires exportés le 2026-10-21 (14 commentaires)
+
+PR au commit `7c2b82c51a07a3210778879a6f3e4571940b718b`. Plusieurs commentaires portent sur une version plus ancienne de la
+PR : les numéros de ligne ne correspondent plus, chaque commentaire est rattaché au code par son sens.
+
+**#886269905 — `compare/processors/factory.py` L89 — « param sous cette forme :param: »** — Fait.
+`get_processor` gardait un bloc `Args:` (style Google) au-dessus des `:param`. Il est supprimé et son contenu (valeurs de
+`method_override`) passe dans le `:param`. Il n'y avait qu'un autre bloc de ce style, `Returns:` dans `section_canonical_diff`
+(`_diff_engines/engines.py`, commentaire #885860992) : supprimé aussi, le `:return:` le disait déjà.
+Pas de `:rtype:` : les annotations de retour portent les types. Question ouverte : voir la fin du lot.
+
+**#885860006 — `compare/llm.py` L236 — « C'est normal d'ignorer ? »** — Oui, et c'est maintenant écrit.
+L'échec d'un modèle n'est pas ignoré : il est journalisé, le modèle est mis en pause, le suivant de la chaîne est essayé, et
+`CompareLlmUnavailable` est levée quand aucun ne répond. Un commentaire le dit.
+
+**#885864584 — `compare/processors/docx/extract.py` L27 — « fonction trop longue à split »** — Fait.
+`_extract_docx` (200 lignes, 6 fonctions imbriquées qui partageaient 9 variables) devient la classe `_DocxWalk` (`emit`,
+`count_breaks`, `harvest_images`, `walk_paragraph`, `walk_table`, `finish`), plus `_oriented_image` (lecture et retournement d'une image)
+et deux petites fonctions de module. Même résultat que l'ancien code sur 3 documents de test (texte, tableaux, images
+retournées, saut de page).
+
+**#885869279 — `third_party/antiword/share/8859-1.txt` L69 — « C'est quoi ces trucs ? Il faut les garder dans la PR ? »** — Garder.
+Ce sont les tables de caractères du programme antiword (conversion des `.doc` en texte), plus l'exécutable. Le job de parsing
+les lit (`ANTIWORDHOME`) : le cluster ne peut pas installer antiword. L'app, elle, installe le paquet `.deb` au démarrage
+(`start.sh`) et n'utilise pas ces fichiers. Le README de `third_party/` le décrit. Seule `UTF-8.txt` est demandée par le code ;
+les autres tables viennent avec le paquet et ne gênent pas, mais on peut les retirer si tu préfères une PR plus courte.
+
+**#886268712 — `factory.py` L27 — « pas de .PDF ? »** — Déjà géré. `get_extension` passe l'extension en minuscules : `Plan.PDF` est un PDF.
+Test ajouté (`tests/test_excel_processor.py`).
+
+**#886269539 — `factory.py` L34 — « xlmx en + ? »** — Fait. `.xlsm` (classeur avec macros) est ajouté côté serveur
+(`EXTENSION_MAP`, aperçu) et côté client (`files.ts`). openpyxl le lit comme un `.xlsx` (test avec un vrai contenu de type xlsm).
+Le client versionné `client/out` doit être reconstruit pour que le navigateur accepte `.xlsm`.
+
+**#886274477 — `compare/soffice.py` L126 — « comments »** — Fait. Commentaires sur le marqueur de fin d'extraction, le dossier remis à
+zéro, le téléchargement par blocs, la confiance dans l'archive et le bit exécutable.
+
+**#886275266 — `compare/summarize.py` L18 — « Mérite un fichier de config »** — Fait pour les nombres.
+`SUMMARY_LLM_TIMEOUT_S` va dans `services/compare/config.py`. Les deux prompts de résumé restent des constantes Python :
+la règle « un prompt est un fichier » de `CLAUDE.md` vise le chat. Question ouverte : voir la fin du lot.
+
+**#886276049 — `infra/pdf_report/markdown.py` L58 — « Détailler avec un comments ce que ça fait »** — Fait. Commentaire sur l'expression
+régulière du Markdown en ligne : l'ordre des alternatives (code, lien, citation, gras-italique, gras, italique, barré, URL) et pourquoi.
+
+**#886277833 — `infra/vector_search.py` L49 — « pareil config »** — Fait pour les nombres. Délais, nombre de requêtes en parallèle,
+reprises, plafonds de passages et de jetons du juge d'impact vont dans `services/infra/config.py` (`IMPACT_*`,
+`VECTOR_SEARCH_QUERY_TIMEOUT_S`), importés par la recherche d'impact et par le moteur du chat. Le prompt du juge reste en Python (voir ci-dessus).
+
+**#885862606 — `_diff_engines/relocation.py` L196 — « mettre en haut »** — Fait. Les trois constantes (`_RELOCATION_COVERAGE_THRESHOLD`,
+`_RELOCATION_MIN_RUN_WORDS`, `_STRIKETHROUGH_RE`) rejoignent les autres en tête du module.
+
+**#885862314 — `relocation.py` L58 — « double boucle. Pas moyen de mieux faire ? »** — Non pour l'algorithme, mieux pour la lecture.
+La double boucle remplit une table de programmation dynamique : le meilleur appariement des blocs identiques qui garde leur ordre et
+minimise l'écart de position. Un appariement glouton (le plus proche) se trompe dès qu'un bloc est inséré tôt dans une version.
+Le coût est borné (`_DUP_ALIGN_MAX_CELLS` : au-delà, appariement dans l'ordre). La table est maintenant calculée par
+`_drift_cost_table`, avec sa docstring ; `_align_duplicates` ne fait plus que lire l'appariement. Résultat identique à l'ancien code
+sur 3000 cas tirés au hasard.
+
+**#885865732 — `compare/processors/excel.py` L64 — « split »** — Fait. `_build_diff_keyed` (170 lignes, 3 fonctions imbriquées) est coupée en
+`_parse_sheets`, `_parse_rows`, `_is_auto_increment`, `_column_name`, `_volatile_columns`, `_row_fields`, `_modified_rows` et
+`_sheet_diff`. Même résultat que l'ancien code sur 400 tirages au hasard, sauf un défaut corrigé : une feuille sans ligne de données
+faisait planter l'ancien code (`IndexError`) ; elle donne maintenant un rapport. Tests ajoutés (`tests/test_excel_processor.py`).
+
+### Vérification du lot 3
+- Aucun test ne couvrait ces fichiers avant ce lot ; `tests/test_excel_processor.py` est nouveau. Les tests donnent les mêmes échecs
+  qu'avant mes changements (PDF, base locale) plus `test_code_conventions` (notebooks du parsing modifiés par une autre
+  session : les cellules de code consécutives).
+- Les trois découpages (docx, excel, relocation) ont été comparés à l'ancien code : mêmes sorties.
+
+### Points ouverts pour le relecteur
+1. `:rtype:` en plus de `:return:` ? Les annotations de retour disent déjà le type ; l'écrire deux fois risque la divergence. Réponse
+   proposée : garder les annotations, et ajouter `:rtype:` seulement si l'outil de documentation le demande.
+2. Les prompts de la comparaison (résumé, juge d'impact, diff) en fichiers sous `server/prompts/`, comme ceux du chat ?

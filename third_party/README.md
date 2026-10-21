@@ -12,11 +12,11 @@ The repository root is described in the [root README](../README.md). None of the
 | `antiword/antiword_0.37-16_amd64.deb` | Debian package of antiword 0.37 for x86-64 | `start.sh` (app startup), only when `antiword` is not on the `PATH` yet |
 | `antiword/bin/antiword` | antiword executable, x86-64 ELF | Parsing pipeline, task `3_parse` (`utils/parsing_pipeline/format_parsers.py`) |
 | `antiword/share/` | Character tables (`UTF-8.txt`, `cp*.txt`, `8859-*.txt`, `MacRoman.txt`, `koi8-*.txt`, `roman.txt`) and `fontnames` | Parsing pipeline, through the `ANTIWORDHOME` variable of the antiword call |
-| `fasttext/lid.176.ftz` | fastText language-identification model (176 languages) | `server/services/chat/translation_bridge.py` (`_FASTTEXT_MODEL_PATH`) |
+| `fasttext/lid.176.ftz` | fastText language-identification model (176 languages) | `server/services/chat/config.py` (`FASTTEXT_MODEL_PATH`), used by `translation_bridge.py` |
 
 ## Who reads each file
 
-- **The app** calls `antiword` by its name on the `PATH` (`server/services/compare/conversion.py`). `start.sh` installs
+- **The app** calls `antiword` by its name on the `PATH` (`server/services/compare/conversion.py`), with `-m UTF-8.txt` so that accents come out in UTF-8; the table is found in `$HOME/.antiword`. `start.sh` installs
   the program into `$HOME/.local/bin` and copies the tables of the `.deb` into `$HOME/.antiword` (the `ANTIWORD_DATA`
   variable). It never reads `third_party/antiword/bin/` or `third_party/antiword/share/`.
 - **The parsing pipeline** sets `ANTIWORD_BIN` and `ANTIWORD_SHARE_DIR` from `utils/parsing_pipeline/config.py`

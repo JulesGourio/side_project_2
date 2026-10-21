@@ -11,6 +11,7 @@ Parent: [services](../README.md).
 |---|---|
 | `user.py` | The identity from the request headers (`get_user_identity`). The capabilities (`get_capabilities`): a live group check on the visitor's token, cached per visitor. The FastAPI dependencies `require_chat` and `require_compare`. The workspace URL |
 | `credentials.py` | `get_credentials`: host and token from the environment, then from the SDK's own authentication, then the forwarded token of the request |
+| `config.py` | Settings of the shared services: the Vector Search query timeout and the limits of the impact search judge (fan-out, retries, passages per candidate, token budget) |
 | `vector_search.py` | The impact search (`run_impact_search`): one query per change, grouping per document, one judge call per candidate, the event stream, the display order. Also the constants and the JSON parsing used by the chat search |
 | `vs_gate.py` | `post`: every Vector Search query of the app goes through it, with a cap on the queries in flight and retries |
 | `doc_catalog.py` | The document catalog, read from the Lakebase table `doc_catalog` and reloaded every `DOC_CATALOG_REFRESH_S` seconds: REF lookup, titles, revisions, dates, language variants, `augment_sources`, `with_document_info` |
