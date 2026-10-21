@@ -373,13 +373,40 @@ commentaires s'ajoutent en bas du tableau de leur thème.
   pymupdf 2.0, les 3 tests PDF échouent ; `check_docstrings.py` : 0 problème. Rien n'a été déployé ni exécuté sur Databricks ; étapes dans
   `runbooks/retest.md`, section « revue de la PR Bitbucket 2 ».
 
-## Reste ouvert (hors décisions)
+## Reste à faire et points à vérifier
 
-Lignes encore Partiel dans les tableaux :
+Établi le 2026-10-21. Le code est testé en local (700 tests) mais rien n'a tourné sur Databricks : tout ce qui suit est ce qui n'est
+pas terminé à 100 %, avec l'option recommandée.
 
-- L-9 : OAuth/OIDC à la place du jeton longue durée (demande un administrateur de compte Databricks) ; environnement Bitbucket
-  `Production` limité à `main` une fois tout validé. Décidé le 2026-10-21 : on reste comme ça pour l'instant.
-- L-16 : l'auto-exclusion du document téléversé ne se fait que par la REF du nom de fichier ; la route d'impact ne reçoit pas le
-  texte de l'ancien document.
-- L-21 : cache des descriptions d'images par empreinte, `redescribe_all_images` qui ne met pas à jour les passages existants,
-  planning PROD en pause (décision de mise en production).
+### À décider (le travail est connu, le choix est à Jules)
+
+| # | Sujet | Problème | Options | Recommandation |
+|---|---|---|---|---|
+| R1 | Cache des descriptions d'images (L-21) | Une nouvelle révision a un nouvel IDDOC : toutes ses images repassent par le modèle de vision, même identiques à celles de la révision précédente. | a) Rien. b) Cache par empreinte de l'image. c) Cache par empreinte de l'image ET de son texte de contexte. | c) : la description dépend du contexte, donc on réutilise seulement si l'image et son contexte sont identiques. |
+| R2 | `redescribe_all_images` (L-21) | La re-description de toutes les images (dizaines de milliers d'appels) met à jour `image_metadata` mais ne réécrit pas les passages déjà indexés : on paie sans effet sur le chat. | a) Forcer la reconstruction des passages quand la re-description est demandée. b) Exposer `rebuild_image_chunks` dans le job. | a). |
+| R3 | Planning du parsing en PROD (L-21) | Le planning PROD reste en pause par défaut. | a) Dé-pauser à la mise en production. b) Après quelques runs manuels. | b), puis la même cadence qu'UAT. |
+| R4 | Auto-exclusion de la recherche d'impact (L-16) | L'ancienne version du document téléversé peut remonter comme document impacté si son nom de fichier ne contient pas la REF. | a) Accepter. b) Lire le début de l'ancien document dans le dossier de session et exclure les REF du catalogue qui y figurent. c) Envoyer le texte depuis le navigateur. | b). |
+| R5 | Origine des WebSockets (L-14) | Le contrôle d'origine ne s'applique que si `CHAT_ALLOWED_ORIGINS` est renseigné, ce qui n'est pas le cas. | a) Laisser. b) Renseigner l'adresse de chaque app dans `target_env.json`. | b), en commençant par DEV. |
+| R6 | Nettoyage du checkpoint (L-3) | Les lignes du checkpoint des documents sortis du périmètre restent (inoffensives depuis le filtre, mais elles grossissent). | a) Laisser. b) Les supprimer à l'élagage. | b). |
+| R7 | Bundle JS (L-b14) | Le morceau `syntax` pèse 621 Ko. | a) Laisser. b) Le charger à la demande. | b), faible priorité. |
+| R8 | Dashboard DEV (L-20) | Un tableau de bord lit d'anciennes tables figées ; il n'est pas dans le dépôt. | a) Changer ses sources dans l'interface. b) M'envoyer ses requêtes. | b). |
+| R9 | OIDC et environnement `Production` (L-9) | Jeton longue durée ; restriction à `main` à faire. | Décidé : on reste comme ça ; restriction après validation complète. | — |
+| R10 | Dépendances indirectes (L-28) | Non figées ; Databricks Apps préinstalle des paquets. | Accepté ; garde-fou : `tests/test_requirements_pinned.py`. | — |
+
+### À vérifier après déploiement (non éprouvé sur Databricks)
+
+- Pipeline Bitbucket : téléchargement de la CLI 1.20.0, installation de bun, construction du client.
+- Politique de sécurité (CSP) : aucune violation dans la console ; l'app s'affiche (y compris en iframe si la plateforme l'utilise, `frame-ancestors 'self'`).
+- Réécriture en panne : la recherche de secours demande 36 (ou 32) passages réordonnés ; la limite du réordonnanceur n'est pas vérifiée.
+- 401 sans identité : non testable en DEV (contrôle d'accès coupé) ; à voir en UAT.
+- Statut `check` de la recherche d'impact : effet sur les verdicts non mesuré.
+- Découpage des rapports, formules Excel, `.ppt`, images réduites à 2000 px : à essayer sur quelques vrais fichiers.
+- Migration du schéma Lakebase (`analysis_cache`, index, verrou) : premier démarrage de DEV.
+- Imports de `leap_utils` réduit à 11 modules : une tâche courte du parsing.
+- Attente de l'index (`ONLINE_TRIGGERED_UPDATE`) : noms d'état à confirmer dans un vrai run.
+- Interface : aucun test automatique côté client.
+
+### Avant la mise en production
+
+- `prevent_destroy` du rôle Lakebase de PROD posé ; si l'app est recréée, mettre l'identifiant du principal de service en dur.
+- Export Lakebase de PROD dé-pausé : le principal de service de PROD doit avoir ses droits avant le déploiement.
