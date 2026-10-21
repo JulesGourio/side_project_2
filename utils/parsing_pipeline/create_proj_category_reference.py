@@ -106,6 +106,7 @@ source_ages = {} if MAX_SOURCE_STALENESS_HOURS <= 0 else categories.source_ages_
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC # Data Preparation
 
 # COMMAND ----------
@@ -154,6 +155,7 @@ else:
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC ## category_reference
 # MAGIC The key is `IDDOC`: a duplicate would multiply the rows of every join made with this table by the next tasks (RED). An empty table would give every document no division (RED). `division` is expected on 99 % of the documents (AMBER).
 

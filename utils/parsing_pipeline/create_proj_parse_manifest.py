@@ -177,6 +177,7 @@ df_main_cat = (
 
 # COMMAND ----------
 
+# MAGIC %md
 # MAGIC ## Volume root
 # MAGIC One folder per document, named `D_<IDDOC>` or `Dm_<IDDOC>`.
 
