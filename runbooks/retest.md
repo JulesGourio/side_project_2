@@ -317,3 +317,4 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Lien de partage d'un chat : lecture seule, vote du propriétaire seul ; ouvrir une session partagée dans le WebSocket avec son id ne l'écrit pas (`session_not_owned` dans `app_errors`).
 - [ ] Classeur `.xlsm`, colonnes ajoutées, feuille nouvelle, valeur −40 → 40 : chaque changement apparaît dans le rapport.
 - [ ] Parsing UAT en mode `full` : aucune révision remplacée ne revient dans `chunks` ; pas de nouveau `MISSING_CHUNKS` sur les révisions remplacées.
+- [ ] Chat DEV : question en français puis en anglais (premier message) : la réécriture/traduction répond, le journal du tour montre `databricks-gpt-6-luna` pour l'étape de réécriture (plus Gemini) ; comparer la latence du premier jeton avec l'ancienne.

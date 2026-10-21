@@ -470,7 +470,7 @@ aux entrées du lot 3 plus haut.
    dire si l'historique de chat peut aller dans les environnements bas.
 2. **#12 RGPD** : durée de conservation de `llm_requests.messages_json` et `chat_retrieved_chunks`, et `localStorage`.
 3. **`client/out`** : versionné (actuel) ou construit au déploiement (recommandé par l'agent).
-4. **Modèle de réécriture** : garder Gemini Flash Lite (mettre la doc à jour) ou revenir à un modèle Luna.
+4. **Modèle de réécriture** : tranché le 2026-10-21, GPT-6 Luna partout (les surcharges Gemini de `target_env.json` sont retirées).
 5. **`base.md`** : réduire le bloc « langue » à une ligne ; à mesurer sur DEV avant.
 6. **#9 CI** : épingler la CLI, OAuth/OIDC ; les tests bloquent-ils le déploiement ?
 7. **#28 dépendances** et **#26 `leap_utils`** : paquet épinglé ou module par module.
