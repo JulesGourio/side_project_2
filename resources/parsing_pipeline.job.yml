@@ -76,6 +76,7 @@ resources:
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
               PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
+              PARSING_DIVISION_ARCHIVE_TABLE: ${var.parsing_division_archive_table}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -105,6 +106,7 @@ resources:
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
               PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
+              PARSING_DIVISION_ARCHIVE_TABLE: ${var.parsing_division_archive_table}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -145,6 +147,7 @@ resources:
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
               PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
+              PARSING_DIVISION_ARCHIVE_TABLE: ${var.parsing_division_archive_table}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -181,6 +184,7 @@ resources:
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
               PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
+              PARSING_DIVISION_ARCHIVE_TABLE: ${var.parsing_division_archive_table}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}

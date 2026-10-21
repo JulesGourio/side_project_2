@@ -311,3 +311,9 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Section G de `uat.md` (déploiement des jobs, `1_categories`, `2_manifest`, comparaison de `category_reference` et `parse_manifest` avant / après : 0 ligne de différence attendue).
 - [ ] `1_categories` : le journal liste l'âge de `document_revisions_intraqual` et `category_ancestors_intraqual` ; une valeur de `parsing_max_source_staleness_hours` à `1` fait échouer la tâche avec la liste des tables périmées (puis remettre `36`).
 - [ ] Chat : la source d'un document AS et celle d'un document IS gardent leur division et leur catégorie.
+
+## 2026-10-21 — division : feuille AS/IS et table historique
+
+- [ ] Section H de `dev.md` (grant de lecture, copie de la table, déploiement, `1_categories`, `2_manifest`, distribution des divisions).
+- [ ] Chat DEV en division AS puis IS : les documents qui étaient en AUTRE (feuille `AS`/`IS`, ou historique) remontent ; sous ALL le nombre de sources ne baisse pas.
+- [ ] Après un `rechunk` suivi de la synchronisation de l'index : plus de document avec plusieurs divisions parmi ses passages.

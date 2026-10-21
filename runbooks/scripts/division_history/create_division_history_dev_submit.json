@@ -1,0 +1,19 @@
+{
+  "run_name": "qualibot-create-division-history-dev",
+  "run_as": {
+    "service_principal_name": "fde6ff28-739f-4a41-b61e-604a298c8478"
+  },
+  "tasks": [
+    {
+      "task_key": "create_division_history",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/qualibot_division_history/create_division_history",
+        "source": "WORKSPACE",
+        "base_parameters": {
+          "source_table": "uat_proj.qualibot.division_history",
+          "target_table": "dev_proj.qualibot.division_history"
+        }
+      }
+    }
+  ]
+}

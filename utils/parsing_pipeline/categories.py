@@ -40,8 +40,8 @@ def build_category_levels(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFr
 
     :param spark: Active Spark session.
     :param max_depth: Number of levels kept, from the root (level 1) down.
-    :return: DataFrame of ``IDDOC``, ``root_idcat`` and ``raw_niv1`` .. ``raw_niv{max_depth}``; a level below the
-        category's own depth is null.
+    :return: DataFrame of ``IDDOC``, ``root_idcat``, ``leaf_nomcat`` (name of the category itself) and ``raw_niv1`` ..
+        ``raw_niv{max_depth}``; a level below the category's own depth is null.
     """
     df_path = (
         read_revisions(spark)
@@ -51,7 +51,6 @@ def build_category_levels(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFr
             F.col("root_category_ID").alias("root_idcat"),
             F.posexplode("category_ID_path").alias("pos", "idcat"),
         )
-        .filter(F.col("pos") < max_depth)
     )
     df_names = (
         spark.read.table(INTRAQUAL_CATEGORY_ANCESTORS_TABLE)
@@ -61,10 +60,11 @@ def build_category_levels(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFr
     return (
         df_path.join(F.broadcast(df_names), on="idcat", how="left")
         .groupBy("IDDOC", "root_idcat")
-        .agg(*[
-            F.max(F.when(F.col("pos") == niv - 1, F.col("nomcat"))).alias(f"raw_niv{niv}")
-            for niv in range(1, max_depth + 1)
-        ])
+        .agg(
+            F.max_by("nomcat", "pos").alias("leaf_nomcat"),
+            *[F.max(F.when(F.col("pos") == niv - 1, F.col("nomcat"))).alias(f"raw_niv{niv}")
+              for niv in range(1, max_depth + 1)],
+        )
     )
 
 
@@ -84,6 +84,9 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
          .when(F.col("raw_niv1").startswith("AS -"), F.lit("AS"))
          .when(F.col("raw_niv1").startswith("IS -"), F.lit("IS"))
          .when(F.col("root_idcat") == IDCAT_DIRECTIVE, F.lit("DIRECTIVE"))
+         # Under the process tree a leaf category named after the division marks the document.
+         .when(F.upper(F.trim(F.col("leaf_nomcat"))) == "AS", F.lit("AS"))
+         .when(F.upper(F.trim(F.col("leaf_nomcat"))) == "IS", F.lit("IS"))
          .otherwise(F.lit("AUTRE"))
     )
 
@@ -119,12 +122,14 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
 def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
     """One row per IDDOC: division + niveau_plus_1..N.
 
-    Primary: build_category_hierarchy(). Fallback: DIVISION_ARCHIVE_TABLE fills
-    gaps only, never overrides a live-resolved row; empty/unset = disabled (default).
+    Primary: build_category_hierarchy(). DIVISION_ARCHIVE_TABLE (IDDOC, division and optionally niveau_plus_*)
+    holds the division the document had before the category tree changed: it replaces a live ``AUTRE`` division
+    (the levels stay the live ones) and adds the documents the live hierarchy does not know. Empty/unset = disabled.
 
     :param spark: Active Spark session.
     :param max_depth: Number of category levels, as in ``build_category_hierarchy``.
-    :return: one row per IDDOC with its division and ``niveau_plus_*`` columns.
+    :return: one row per IDDOC with its division, ``niveau_plus_*`` columns and ``division_source``
+        (``live_hierarchy``, ``archive_division`` or ``archive_fallback``).
     """
     niveau_cols = [f"niveau_plus_{niv}" for niv in range(1, max_depth)]
 
@@ -137,16 +142,32 @@ def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
     if not (DIVISION_ARCHIVE_TABLE or "").strip():
         return df_live
 
+    df_archive_all = spark.table(DIVISION_ARCHIVE_TABLE)
     df_archive = (
-        spark.table(DIVISION_ARCHIVE_TABLE)
-        .filter(F.col("division").isNotNull())
-        .select("IDDOC", "division", *niveau_cols)
+        df_archive_all
+        .filter(F.col("division").isNotNull() & (F.col("division") != "AUTRE"))
+        .select(
+            "IDDOC", F.col("division").alias("archive_division"),
+            *[F.col(c).cast("string").alias(c) if c in df_archive_all.columns else F.lit(None).cast("string").alias(c)
+              for c in niveau_cols],
+        )
         .dropDuplicates(["IDDOC"])
-        .join(df_live.select("IDDOC"), on="IDDOC", how="left_anti")
+    )
+    df_replaced = (
+        df_live.join(df_archive.select("IDDOC", "archive_division"), on="IDDOC", how="left")
+        .withColumn("division_source", F.when((F.col("division") == "AUTRE") & F.col("archive_division").isNotNull(),
+                                              F.lit("archive_division")).otherwise(F.col("division_source")))
+        .withColumn("division", F.when(F.col("division_source") == "archive_division", F.col("archive_division"))
+                                 .otherwise(F.col("division")))
+        .drop("archive_division")
+    )
+    df_added = (
+        df_archive.join(df_live.select("IDDOC"), on="IDDOC", how="left_anti")
+        .withColumnRenamed("archive_division", "division")
+        .select("IDDOC", "division", *niveau_cols)
         .withColumn("division_source", F.lit("archive_fallback"))
     )
-
-    return df_live.unionByName(df_archive)
+    return df_replaced.unionByName(df_added)
 
 
 # --- Step 0 — Qualibot perimeter (scope gate) ---

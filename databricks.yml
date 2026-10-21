@@ -80,6 +80,11 @@ variables:
       Comma-separated Vector Search index names synced by task 5_sync_index.
       Empty = nothing to sync.
     default: ""
+  parsing_division_archive_table:
+    description: >-
+      Table (IDDOC, division) holding the division of each document before the category tree changed. It replaces a
+      computed AUTRE division. Empty = disabled.
+    default: ""
   parsing_archive_max_docs:
     description: >-
       Total number of pre-2018 documents allowed to be parsed into chunks_archive,
@@ -324,6 +329,7 @@ targets:
       parsing_run_mode: "incremental"
       # Same prod sources as UAT.
       intraqual_gold_catalog_schema: "prod_gold.quality_system"
+      parsing_division_archive_table: "dev_proj.qualibot.division_history"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
       parsing_offline_models_path: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
@@ -474,6 +480,7 @@ targets:
       parsing_run_mode: "incremental"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_gold through the shared metastore.
       intraqual_gold_catalog_schema: "prod_gold.quality_system"
+      parsing_division_archive_table: "uat_proj.qualibot.division_history"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
       parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
