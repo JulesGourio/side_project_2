@@ -142,7 +142,7 @@ ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
 MANUAL_REF_EXCLUSIONS = set()
 
 # --- Category exclusion ---
-# Documents whose principal category (IDCAT) is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by create_proj_parse_manifest.py.
+# Documents whose principal category, or one of its ancestors, is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by create_proj_parse_manifest.py.
 EXCLUDED_IDCATS = {3798}  # ONE_QMS-5S
 
 # --- Empty + small file auto-exclusion ---

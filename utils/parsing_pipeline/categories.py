@@ -21,6 +21,7 @@ IDCAT_PROCESSES = 12       # "1 - PROCESSES / PROCESSUS" → belongs to AS
 IDCAT_AS = 3346            # "AS - Aerostructures"
 IDCAT_IS = 3284            # "IS - Interconnection Systems"
 IDCAT_DIRECTIVE = 962      # "0 - DIRECTIVE GROUPE LATECOERE"
+IDCAT_PROCESS_TREE = 3870  # "00-LATECOERE PROCESSES_One QMS": processes shared by the divisions
 MAX_HIERARCHY_DEPTH = 7
 
 
@@ -40,8 +41,8 @@ def build_category_levels(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFr
 
     :param spark: Active Spark session.
     :param max_depth: Number of levels kept, from the root (level 1) down.
-    :return: DataFrame of ``IDDOC``, ``root_idcat`` and ``raw_niv1`` .. ``raw_niv{max_depth}``; a level below the
-        category's own depth is null.
+    :return: DataFrame of ``IDDOC``, ``root_idcat``, ``leaf_nomcat`` (name of the category itself) and ``raw_niv1`` ..
+        ``raw_niv{max_depth}``; a level below the category's own depth is null.
     """
     df_path = (
         read_revisions(spark)
@@ -51,7 +52,6 @@ def build_category_levels(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFr
             F.col("root_category_ID").alias("root_idcat"),
             F.posexplode("category_ID_path").alias("pos", "idcat"),
         )
-        .filter(F.col("pos") < max_depth)
     )
     df_names = (
         spark.read.table(INTRAQUAL_CATEGORY_ANCESTORS_TABLE)
@@ -61,10 +61,11 @@ def build_category_levels(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFr
     return (
         df_path.join(F.broadcast(df_names), on="idcat", how="left")
         .groupBy("IDDOC", "root_idcat")
-        .agg(*[
-            F.max(F.when(F.col("pos") == niv - 1, F.col("nomcat"))).alias(f"raw_niv{niv}")
-            for niv in range(1, max_depth + 1)
-        ])
+        .agg(
+            F.max_by("nomcat", "pos").alias("leaf_nomcat"),
+            *[F.max(F.when(F.col("pos") == niv - 1, F.col("nomcat"))).alias(f"raw_niv{niv}")
+              for niv in range(1, max_depth + 1)],
+        )
     )
 
 
@@ -84,6 +85,10 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
          .when(F.col("raw_niv1").startswith("AS -"), F.lit("AS"))
          .when(F.col("raw_niv1").startswith("IS -"), F.lit("IS"))
          .when(F.col("root_idcat") == IDCAT_DIRECTIVE, F.lit("DIRECTIVE"))
+         # Under the process tree a leaf category named after the division marks the document.
+         .when(F.upper(F.trim(F.col("leaf_nomcat"))) == "AS", F.lit("AS"))
+         .when(F.upper(F.trim(F.col("leaf_nomcat"))) == "IS", F.lit("IS"))
+         .when(F.col("root_idcat") == IDCAT_PROCESS_TREE, F.lit("COMMUN"))
          .otherwise(F.lit("AUTRE"))
     )
 

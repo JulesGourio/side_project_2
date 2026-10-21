@@ -27,6 +27,8 @@ CATEGORIES = {
     3284: ("IS - Interconnection Systems", None), 3285: ("Cablage", 3284),
     962: ("0 - DIRECTIVE GROUPE LATECOERE", None),
     900: ("Autre racine", None),
+    3870: ("00-LATECOERE PROCESSES_One QMS", None), 5001: ("R30-Develop", 3870), 5002: ("AS", 5001),
+    5003: ("IS", 5001), 5004: ("5- Quality manufacturing process", 5001), 5005: ("BUS", 5001),
 }
 
 
@@ -58,6 +60,10 @@ def spark():
         (7, "QP-6", "Draft", "A", 1, 3, False, 13),         # not validated
         (8, "QP-7", "Hidden", "A", 1, 7, True, 13),         # hidden
         (9, "QP-8", "No category", "A", 1, 7, False, None),
+        (10, "E-1", "Marked AS", "A", 1, 7, False, 5002),
+        (11, "E-2", "Marked IS", "A", 1, 7, False, 5003),
+        (12, "E-3", "Unmarked process", "A", 1, 7, False, 5004),
+        (14, "E-5", "Marked BUS", "A", 1, 7, False, 5005),
     ]
     rows = [(i, ref, title, idx, status, state, hidden, cat,
              _path(cat) if cat else None, _path(cat)[0] if cat else None)
@@ -102,7 +108,7 @@ def test_division_and_levels_of_each_root(spark):
 def test_one_row_per_revision_with_a_category(spark):
     ref = _reference(spark)
     assert 9 not in ref
-    assert len(ref) == 8
+    assert len(ref) == 12
     assert {r["division_source"] for r in ref.values()} == {"live_hierarchy"}
 
 
@@ -112,7 +118,16 @@ def test_levels_below_the_category_depth_are_null(spark):
     assert ref[1]["niveau_plus_3"] is None
 
 
+def test_a_leaf_category_named_after_a_division_sets_the_division(spark):
+    ref = _reference(spark)
+    assert ref[10]["division"] == "AS"
+    assert ref[11]["division"] == "IS"
+    assert ref[12]["division"] == "COMMUN"
+    assert ref[14]["division"] == "COMMUN"
+    assert ref[5]["division"] == "AUTRE"
+
+
 def test_scope_keeps_current_validated_visible_revisions(spark):
     scope = {r.IDDOC: (r.ref, r.titre) for r in categories.load_scope_docs(spark).collect()}
-    assert sorted(scope) == [1, 2, 3, 4, 5, 9]
+    assert sorted(scope) == [1, 2, 3, 4, 5, 9, 10, 11, 12, 14]
     assert scope[1] == ("QP-1", "As doc")

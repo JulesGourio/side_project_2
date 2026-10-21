@@ -1038,7 +1038,27 @@ SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, ni
 
 (`<M>` : version de `parse_manifest` relevée en 2.)
 
+### H. Division COMMUN et exclusion de ONE_QMS-5S (code poussé le 2026-10-21, à faire)
+
+1. Déployer les jobs : Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-dev-jobs`.
+
+2. Lancer les deux tâches (`dry_run` reste à `true`) :
+
+```powershell
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
+```
+
+3. Contrôler (SQL editor DEV, lecture seule). Attendu : environ 4 900 à 5 100 documents, AS ≈ 1 950, COMMUN ≈ 2 800, IS ≈ 95, DIRECTIVE ≈ 40, AUTRE ≈ 250 :
+
+```sql
+SELECT division, count(*) AS documents FROM dev_proj.qualibot.parse_manifest GROUP BY division ORDER BY documents DESC;
+SELECT count(*) AS documents FROM dev_proj.qualibot.parse_manifest;
+```
+
 ## Fait
+
+- 2026-10-21 — Division COMMUN et exclusion de ONE_QMS-5S (section H) validées en DEV : `parse_manifest` = 5 242 documents (COMMUN 2 793, AS 1 953, AUTRE 249, sans division 110, IS 95, DIRECTIVE 42). Reste : reconstruire `chunks` et synchroniser l'index DEV pour que le chat utilise ces divisions.
 
 - Migration DEV : plan sans suppression (2026-10-16), app redéployée, historique DocCompare visible avec les documents (chemins corrigés à la copie et à chaque démarrage, confirmé 2026-10-16). Restent : point 7 (endpoint Sonnet, index) et le premier run du pipeline de parsing.
 - P1, P2, P4 : profil CLI, SP DEV, groupes visibles (2026-10-05).

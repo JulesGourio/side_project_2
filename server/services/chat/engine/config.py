@@ -131,10 +131,11 @@ def division_filter(division: str) -> Dict[str, Any]:
     """Vector Search filter of the chat's division (ALL: none).
 
     :param division: division code, any case (normalised here)
-    :return: ``{}`` for ``ALL``, else ``{"division": [code]}``
+    :return: ``{}`` for ``ALL``, else the division's documents plus the shared ones:
+        ``{"division": [code, "COMMUN", "DIRECTIVE"]}``
     """
     d = normalize_division(division)
-    return {} if d == 'ALL' else {'division': [d]}
+    return {} if d == 'ALL' else {'division': [d, 'COMMUN', 'DIRECTIVE']}
 
 
 def settings() -> Dict[str, Any]:
