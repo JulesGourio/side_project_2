@@ -320,3 +320,14 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Chat DEV : question en français puis en anglais (premier message) : la réécriture/traduction répond, le journal du tour montre `databricks-gpt-6-luna` pour l'étape de réécriture (plus Gemini) ; comparer la latence du premier jeton avec l'ancienne.
 - [ ] Comparaison DEV : après une analyse, la ligne de `llm_requests` a `user_id` rempli (`SELECT user_id, created_at FROM llm_requests ORDER BY id DESC LIMIT 5`).
 - [ ] Pipeline `sync-prod-data` : ne copie plus que les modèles docling, plus aucun fichier Lakebase dans les artefacts.
+
+## 2026-10-21 — décisions de la revue (build du client au déploiement, dépendances figées, prompts de la comparaison)
+
+- [ ] Premier déploiement DEV par le pipeline `deploy-dev` : l'étape installe bun 1.4.2, construit `client/out` et l'app l'affiche (l'étape dure 1 à 2 minutes de plus). Si `client/out` manque dans les fichiers du bundle, l'app n'affiche plus l'interface : vérifier dans l'espace de travail que `client/out/index.html` existe.
+- [ ] Sur le PC de déploiement (`deploy_qualibot.ps1`), `client/out` reste produit par `bun run build` et envoyé (`--include 'client/out/**'`).
+- [ ] Onglet Comparaison : analyser deux fichiers, rafraîchir la page (les fichiers et le rapport reviennent), cliquer une entrée de l'historique (analyse, impact et fichiers se rechargent). Sept jours après la dernière écriture, le navigateur ne garde plus rien ; l'historique de la base reste.
+- [ ] Les six prompts de la comparaison viennent de `server/prompts/compare/` : lancer une analyse, un résumé de document (texte puis image) et une recherche d'impact ; les résultats sont comparables à ceux d'avant.
+- [ ] Chat DEV, langue : 10 questions courtes ou mélangées (FR/EN, une ligne, sigles seuls). La réponse est dans la langue de la question, ou celle demandée. Puis lancer `register_chat_prompts` (le fichier `base.md` a changé) pour que la version du prompt soit liée.
+- [ ] Pipeline `tests` (Bitbucket) : passe sans échec avec `requirements.txt` figé (pymupdf 1.26.7 : avec la version 2.0, 3 tests de tableaux PDF échouent).
+- [ ] Démarrage de l'app : `start.sh` installe antiword (paquet fourni, sinon `apt`, sinon téléchargement https vérifié par SHA-256) ; un `.doc` s'aperçoit avec ses accents.
+- [ ] Parsing (si `leap_utils` est utilisé par le job) : lancer `create_proj_parse_manifest` ou la tâche la plus courte du job de parsing sur DEV pour vérifier que les imports `leap_utils` (11 modules conservés) fonctionnent.

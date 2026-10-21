@@ -196,8 +196,10 @@ Options: `-SkipBuild` skips the frontend build; `-SyncOnly` uploads the code onl
 rebuilding the frontend and without restarting the app.
 
 `bitbucket-pipelines.yml` runs the same bundle and app deployments in CI. Its custom pipelines
-are triggered by hand: nothing deploys on a push. The PROD pipelines run the test suite first and refuse to run from a
-branch other than `main`.
+are triggered by hand: nothing deploys on a push. The UAT and PROD pipelines run the test suite first (a failing test stops the
+deployment) and the PROD ones refuse to run from a branch other than `main`. The frontend is not versioned: every deployment
+builds it (`bun run build`) and ships `client/out`. The Databricks CLI version of the pipelines is the one in
+`utils/deploy/databricks_cli_version.txt`; Python dependencies are pinned in `requirements.txt`.
 
 ### Resources per environment
 

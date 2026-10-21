@@ -11,29 +11,13 @@ from typing import Any, Dict, List, Tuple, Union
 from server.services.infra.streaming import _cost_eur
 from server.services.compare.config import SUMMARY_LLM_TIMEOUT_S
 from server.services.compare.llm import complete_chain, compare_chain, message_text
+from server.services.compare.prompts import load_prompt
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_SYSTEM_PROMPT = """\
-You are a technical documentation assistant. Summarize the document text given to you: its purpose \
-and scope, the key requirements or content it specifies, and its overall structure. Be concise and \
-factual - no filler, no meta-commentary about the summary itself or how it was produced. Plain \
-Markdown, roughly 150-300 words, at most a couple of "##" subheadings and only if genuinely useful \
-for a long or multi-part document.
+SUMMARY_SYSTEM_PROMPT = load_prompt('summary')
 
-LANGUAGE: write the summary in the SAME language as the document text given to you. Do not switch \
-to English when the document is not in English.\
-"""
-
-SUMMARY_IMAGE_SYSTEM_PROMPT = """\
-You are a technical documentation assistant. Describe this image concisely: what it depicts (photo, \
-diagram, schematic, table, chart...), the key labeled elements, values, or callouts visible, and its \
-likely purpose in a technical document. Be factual - describe only what is visible, no speculation, \
-no meta-commentary about the description itself. Plain Markdown, roughly 100-200 words.
-
-LANGUAGE: if the image contains readable text (labels, headers, table content), write the \
-description in that SAME language. Do not switch to English when the visible text is not in English.\
-"""
+SUMMARY_IMAGE_SYSTEM_PROMPT = load_prompt('summary_image')
 
 
 async def _call_llm(

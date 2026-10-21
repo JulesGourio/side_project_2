@@ -136,6 +136,7 @@ variables:
 sync:
   include:
     - "target_config.env"        # gitignored but must reach the workspace (per-env overrides)
+    - "client/out/**"            # gitignored: the frontend is built at deployment and served by the app
   exclude:
     - "~$*"                      # Excel/Word lock files (Windows, file open in Office)
     - "client/src/**"            # frontend source — only built output (client/out) is needed

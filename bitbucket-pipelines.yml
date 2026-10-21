@@ -9,8 +9,8 @@
 # The deploy steps call utils/deploy/bitbucket_deploy.sh (one line each): every environment
 # has deploy-<env> (bundle + app restart) and deploy-<env>-jobs (bundle only).
 #
-# Custom pipelines are triggered by hand. A PROD pipeline runs the test suite first and refuses to deploy from a branch
-# other than main. A push to main triggers nothing for now.
+# Custom pipelines are triggered by hand. The UAT and PROD pipelines run the test suite first (a failing test stops the deployment);
+# PROD refuses to deploy from a branch other than main. A push to main triggers nothing for now.
 # =============================================================================
 
 image: python:3.11-slim
@@ -25,6 +25,8 @@ definitions:
         clone:
           depth: 1
         script:
+          # requirements.txt first: the tests run on the versions the app installs.
+          - pip install -q -r requirements.txt
           - pip install -q -e ".[dev]"
           - python -m pytest -q tests
 
@@ -356,8 +358,10 @@ pipelines:
     unbind-dev-test-volume:
       - step: *unbind-dev-test-volume
     deploy-uat:
+      - step: *tests
       - step: *deploy-uat
     deploy-uat-jobs:
+      - step: *tests
       - step: *deploy-uat-jobs
     tests:
       - step: *tests

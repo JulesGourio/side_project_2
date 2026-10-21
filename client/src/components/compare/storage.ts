@@ -15,6 +15,12 @@ export const LS = {
   impactVotes: 'compare_impact_votes', // { "<request id>:<ref>": "up" | "down" }
 } as const;
 
+/** Time of the last write of any comparison key (epoch ms, as a string). */
+const LS_SAVED_AT = 'compare_saved_at';
+
+/** What the browser keeps of a comparison is dropped this long after its last write; the history in the database keeps the rest. */
+export const LS_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+
 /** While a report streams in, persist it at most this often. */
 export const LS_STREAM_PERSIST_MS = 1000;
 
@@ -30,6 +36,7 @@ export function lsGet(key: string): string | null {
 export function lsSet(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
+    localStorage.setItem(LS_SAVED_AT, String(Date.now()));
   } catch {
     // quota exceeded — the in-memory state is still correct
   }
@@ -49,6 +56,23 @@ export function lsGetJson<T>(key: string): T | null {
     return null;
   }
 }
+
+/** Remove every comparison key (documents, reports, hashes, votes) when the last write is older than `LS_MAX_AGE_MS`. */
+export function clearExpiredStorage(now: number = Date.now()): void {
+  try {
+    const savedAt = Number(localStorage.getItem(LS_SAVED_AT));
+    if (!savedAt) {
+      localStorage.setItem(LS_SAVED_AT, String(now)); // data stored before the timestamp existed starts its 7 days now
+      return;
+    }
+    if (now - savedAt <= LS_MAX_AGE_MS) return;
+    localStorage.removeItem(LS_SAVED_AT);
+    for (const key of Object.values(LS)) localStorage.removeItem(key);
+  } catch { /* storage unavailable */ }
+}
+
+// Runs when the module loads, before any hook reads the stored documents.
+clearExpiredStorage();
 
 export function isFeedbackSubmitted(key: string): boolean {
   return (lsGetJson<string[]>(LS.feedbackSubmitted) ?? []).includes(key);
