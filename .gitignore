@@ -95,3 +95,4 @@ utils/deploy/.intraqual_profile/
 # Local MLflow output (tracking store and runs)
 mlruns/
 mlflow.db
+.delivery/
