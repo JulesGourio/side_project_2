@@ -12,11 +12,11 @@
 
 | Statut | Yann | Logan | Jules | Total |
 |---|---|---|---|---|
-| Fait | 51 | 39 | 1 | 91 |
-| Partiel | 1 | 6 | 0 | 7 |
+| Fait | 52 | 41 | 1 | 94 |
+| Partiel | 0 | 5 | 0 | 5 |
 | Ouvert | 0 | 0 | 0 | 0 |
 | En attente de Yann | 10 | 0 | 0 | 10 |
-| Décision de Jules | 0 | 1 | 0 | 1 |
+| Décision de Jules | 0 | 0 | 0 | 0 |
 | **Total** | **62** | **46** | **1** | **109** |
 
 ## Décisions de Jules (2026-10-21 et 2026-10-22) et leurs raisons
@@ -44,6 +44,7 @@
 | Tests | Aucune donnée stockée | « Je ne veux pas ces données dans les tests. » |
 | Descriptions d'images (R1) | Réutilisées pour la même image et la même requête (option c) | La description dépend du contexte : on réutilise seulement si l'image et son texte de contexte sont identiques. |
 | Re-description des images (R2) | Les passages sont reconstruits (option a) | Sinon on paie les appels sans effet sur le chat. |
+| Auto-exclusion de la recherche d'impact (R4) | Option a : on accepte | « On s'en fout. » |
 | Planning du parsing en PROD (R3) | Reste en pause (option b, « on verra plus tard ») | Après quelques runs manuels validés. |
 | Origine des WebSockets (R5) | Adresses renseignées pour DEV et UAT ; PROD à faire | Le contrôle ne s'applique que si la liste est renseignée. |
 | Checkpoint du parsing (R6) | Lignes supprimées pour les documents hors périmètre parsés il y a plus de 180 jours | Les plus récentes restent : un document qui revient n'est pas reparsé. |
@@ -121,7 +122,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
 |---|---|---|---|---|
 | L-6 | Logan · `excel.py:99-105,155-166`, `text.py:14,180`, `xml.py:25-56` | [Haute] Le diff perd de vrais changements : colonnes Excel « volatiles », feuilles et colonnes ajoutées, en-têtes, signes perdus (−40 → 40), XML malformé = « aucun changement », formules non lues. | Exclure une colonne seulement avec ≥ 20 lignes et la lister ; feuilles nouvelles ; capturer `[-+−±]?` ; erreur visible sur XML. | Formules lues : chaque cellule s'affiche `<valeur en cache> {=formule}` (`excel.py`), une formule modifiée à valeur égale est rapportée ; test ajouté. Colonne exclue seulement avec ≥ 20 lignes et listée, feuilles et colonnes nouvelles, en-têtes, signes, XML malformé = erreur visible.<br>**Fait** |
-| L-16 | Logan · `impact_queries.py:81-132,165-172`, `impact.py:179-181,226`, `vector_search.py:456,473-482` | [Moyenne] Recherche d'impact : sections coupées à 2000 caractères, runs partiels mis en cache, citation inventée = quand même « impacté », auto-exclusion par REF seulement. | Garde `queries_failed > 0` sur le cache (voir Y-23). | Sections longues découpées en plusieurs changements ; citation inventée = statut `check` ; cache protégé contre les runs partiels. Reste : l'ancienne version du document téléversé peut remonter comme premier document impacté si son nom de fichier ne contient pas sa REF ; R4 à choisir.<br>**Décision de Jules** |
+| L-16 | Logan · `impact_queries.py:81-132,165-172`, `impact.py:179-181,226`, `vector_search.py:456,473-482` | [Moyenne] Recherche d'impact : sections coupées à 2000 caractères, runs partiels mis en cache, citation inventée = quand même « impacté », auto-exclusion par REF seulement. | Garde `queries_failed > 0` sur le cache (voir Y-23). | Décidé par Jules (R4 a) : on accepte. L'ancienne version peut ressortir en tête si le nom du fichier ne contient pas sa REF ; elle se reconnaît à sa référence. Sections longues découpées, citation inventée classée « à vérifier ».<br>**Fait** |
 | L-17 | Logan · `chunked_analysis.py:29-53,274-277` | [Moyenne] Gros documents découpés : lignes « aucun changement » entre les vrais changements, titre collé en fin de ligne, titres de section perdus, Excel jamais découpé (600 000 caractères en un appel). | — | Lignes « aucun changement » retirées à la fusion, titres séparés, titre repris dans les parties suivantes, diffs Excel découpés.<br>**Fait** |
 | L-18 | Logan · `analyze.py:70-100`, `summarize.py:57`, `impact.py:45-56` | [Moyenne] Clés de cache sans prompt, modèle ni réglages. | Faire comme `_impact_cache_version`. | `_analysis_cache_version` et `_summary_cache_version` ajoutées.<br>**Fait** |
 | L-23 | Logan · `llm.py:186-190`, `streaming.py:37` | [Moyenne] Température et « thinking » des modèles Claude morts ou invalides (400 silencieux, repli sur Luna). | — | Pas de température quand le raisonnement est actif ; test corrigé.<br>**Fait** |
@@ -147,7 +148,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 | # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
 |---|---|---|---|---|
-| L-19 | Logan · `useChatConversation.ts:90`, `helpers.py:84-92`, `queries.py:25` | [Moyenne] Tours en échec renvoyés au modèle comme historique (ils comptent, et transforment une première question en « suivi » donc coupent la voie traduction seule) ; fenêtre de N−1 messages … | — | Le serveur nettoie l'historique (`_clean_messages`) et le client n'envoie plus les bulles d'erreur ni les messages vides. Reste : « Stop » n'arrête pas le calcul côté serveur.<br>**Partiel** |
+| L-19 | Logan · `useChatConversation.ts:90`, `helpers.py:84-92`, `queries.py:25` | [Moyenne] Tours en échec renvoyés au modèle comme historique (ils comptent, et transforment une première question en « suivi » donc coupent la voie traduction seule) ; fenêtre de N−1 messages … | — | Un « Stop » ou un onglet fermé met fin au tour tout de suite, à n'importe quelle étape (écoute de la fermeture du socket, tâche annulée, tour enregistré `aborted`), y compris quand la traduction retient la réponse ; le serveur ne continue plus à produire ni à payer. Le client n'envoie plus les bulles d'erreur au modèle.<br>**Fait** |
 | Y-2 <sub>885059913</sub> | Yann · `README.md:84` | « Switch to 6 Luna » | **D'accord** : les cibles surchargent la réécriture (voir L-25).<br>Proposition : Choisir un modèle et aligner les docs. | Pont de traduction, jugement et résumé de la comparaison (texte et images) sur `databricks-gpt-6-luna` ; repli `databricks-gpt-5-6-luna` (chat : `app.yaml` ; comparaison : l'autre modèle, `compare_chain`). Réécriture du chat : voir point 4. …<br>**Fait** |
 | Y-5 <sub>885070557</sub> | Yann · `language_reminder_named.md:1` | « Pas compris pourquoi deux » | **Désaccord** : deux cas distincts (langue détectée / non détectée), documenté. | D'accord avec Logan. Un seul fichier changerait la formulation du cas « inconnu », donc le comportement mesuré. Raison écrite dans `server/prompts/README.md`. Attend Yann : pas de changement, réponse non acceptée.<br>**En attente de Yann** |
 | Y-6 <sub>885071187</sub> | Yann · `language_reminder_named.md:1` | « Plutôt un fichier de config .py » | **Désaccord** : les `.md` sont enregistrés dans le registre de prompts et éditables sans code. | Règle du projet : un prompt du chat est un fichier (le hash lie la version enregistrée à la trace). Ce qui varie va en config Python (voir Y-7). Attend Yann : pas de changement, réponse non acceptée.<br>**En attente de Yann** |
@@ -200,7 +201,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | Y-38 <sub>885272147</sub> | Yann · `translation_bridge.py:67` | « Config! » | **Désaccord** : regex de nettoyage, pas des réglages. | Écart assumé : motifs, seuils de détection et noms de langues déplacés dans `services/chat/config.py`.<br>**Fait** |
 | Y-40 <sub>885272670</sub> | Yann · `turn_log.py:33` | « Config » | **Désaccord** : regex de parsing / vocabulaire. | D'accord avec Logan. `INFO`, `WARNING`, `ERROR` sont le vocabulaire du journal de tour (importé par `ws.py`, le moteur, `lakebase`), pas des réglages par cible ; en config, le journal dépendrait d'un module de réglages. … Attend Yann : pas de changement, réponse non acceptée.<br>**En attente de Yann** |
 | Y-41 <sub>885789675</sub> | Yann · `retrieval.py:52` | « Pas super lisible mais bon à voir » | **D'accord** : `setdefault` dans une compréhension.<br>Proposition : Écrire en boucle. | `refs_named_in`, `named` dans `retrieve_for_turn` et `one_language_per_document` simplifiés (liste dédupliquée par `dict.fromkeys`, boucle explicite). Comportement identique, deux tests.<br>**Fait** |
-| Y-42 <sub>885790057</sub> | Yann · `retrieval.py:57` | « Any c'est pas incroyable. Si possible des TypedDict » | **D'accord** : basse priorité. | Nouveau `engine/types.py` : `SearchRow`, `Hit`, `PassageRecord`, `DocumentPassages`. Filtres et corps de requêtes gardent `Dict[str, Any]`. Pas de typage statique outillé : ces types documentent sans être vérifiés.<br>**Partiel** |
+| Y-42 <sub>885790057</sub> | Yann · `retrieval.py:57` | « Any c'est pas incroyable. Si possible des TypedDict » | **D'accord** : basse priorité. | Les filtres Vector Search, le corps des requêtes, le résultat de la récupération et les faits de l'appel de réponse ont maintenant leurs `TypedDict` (`engine/types.py`) ; ne restent en dict libre que les réglages enregistrés avec le tour et les puces de sources.<br>**Fait** |
 | Y-49 <sub>886269905</sub> | Yann · `factory.py:89` | « Param sous cette forme :param: » | **Pas jugé** | Bloc `Args:` de `get_processor` supprimé, contenu repris dans le `:param`. Pas de `:rtype:` (annotations de retour seulement, décidé).<br>**Fait** |
 | Y-51 <sub>885864584</sub> | Yann · `extract.py:27` | « Fonction trop longue à split » | **Pas jugé** | `_extract_docx` (200 lignes, 6 fonctions imbriquées) → classe `_DocxWalk` + `_oriented_image` + deux fonctions de module. Même résultat sur 3 documents de test.<br>**Fait** |
 | Y-55 <sub>886274477</sub> | Yann · `soffice.py:126` | « Comments » | **Pas jugé** | Commentaires ajoutés (marqueur de fin, dossier remis à zéro, téléchargement par blocs, confiance dans l'archive, bit exécutable).<br>**Fait** |
@@ -410,19 +411,11 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 | # | Problème | Ce qu'il faut |
 |---|---|---|
-| Y-42 | Les lignes de recherche ont des `TypedDict`, pas les filtres ni les corps de requêtes. | Typer ces dictionnaires, ou Yann accepte. |
 | L-9 | Jeton longue durée, `Production` pas encore limité à `main`. | OIDC (administrateur de compte), puis restriction après validation (Jules : plus tard). |
 | L-14 | Le contrôle d'origine du WebSocket n'est pas configuré en PROD. | Renseigner `CHAT_ALLOWED_ORIGINS` quand l'app PROD existe ; vérifier le profil `PROD`. |
-| L-19 | « Stop » n'arrête pas le calcul côté serveur. | Annuler la tâche serveur à l'arrêt. |
 | L-20 | Le tableau de bord DEV lit d'anciennes tables figées ; l'export PROD attend les droits de son principal de service. | Changer ses sources (Jules : plus tard) ; donner les droits avant le déploiement PROD. |
 | L-21 | Le planning du parsing de PROD reste en pause. | Quelques runs manuels validés, puis dé-pauser (Jules : plus tard). |
 | L-b17 | Le code client n'a aucun test automatique. | Ajouter des tests client, ou accepter. |
-
-### Décision de Jules
-
-| # | Problème | Ce qu'il faut |
-|---|---|---|
-| L-16 | L'ancienne version du document téléversé peut remonter comme premier document impacté si son nom de fichier ne contient pas sa REF. | Choisir R4 : a) accepter ; b) lire le début de l'ancien document dans le dossier de session et exclure les REF du catalogue qui y figurent ; c) envoyer le texte depuis le navigateur. Recommandé : b). |
 
 ### À vérifier après déploiement (non éprouvé sur Databricks)
 

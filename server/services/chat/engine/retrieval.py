@@ -3,12 +3,12 @@
 import asyncio
 import logging
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 from server.services.infra.doc_catalog import _catalog, canon_ref
 from server.services.chat.turn_log import TurnLog
 from server.services.chat.engine.queries import opening_language, rewrite_queries, translate_query
-from server.services.chat.engine.types import DocumentPassages, PassageRecord, SearchRow
+from server.services.chat.engine.types import DocumentPassages, PassageRecord, RetrievalResult, SearchRow
 from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search, start_question_search
 from server.services.chat.engine.config import (
     division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on, raw_top_k, rerank_top_k,
@@ -117,7 +117,7 @@ def _passage(row: SearchRow, position: int, drop_reason: str = '') -> PassageRec
 
 
 async def retrieve_for_turn(host: str, token: str, division: str, conversation: List[Dict[str, str]],
-                            log: TurnLog | None = None) -> Dict[str, Any]:
+                            log: TurnLog | None = None) -> RetrievalResult:
     """The passages handed to the LLM for the last user turn of ``conversation`` (already
     cleaned by ``_clean_history``). A failed rewrite or translation degrades the turn: the question is searched as asked.
     Raises ``ChatVsiError`` when the search fails. Also used

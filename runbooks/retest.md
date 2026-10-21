@@ -370,3 +370,9 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Tâche `4_describe_images` : une image PNG est décrite sans erreur de format (le type est lu dans le fichier).
 - [ ] Réparer un run (« Repair run » dans l'interface) après une réussite partielle : `document_change_log` ne gagne pas de ligne en double (`SELECT IDDOC, event_type, job_run_id, COUNT(*) FROM dev_proj.qualibot.document_change_log GROUP BY ALL HAVING COUNT(*) > 1` ne renvoie rien).
 - [ ] Run complet (`parsing_run_mode: full`, seulement quand c'est voulu) : les anciens `_pipeline_checkpoint_*` de plus de 30 jours disparaissent, le plus récent reste.
+
+## 2026-10-22 — arrêt d'un tour et types du moteur de chat
+
+- [ ] Chat DEV : cliquer sur « Stop » pendant une réponse, y compris pendant le temps de réflexion avant le premier mot. La réponse s'arrête, aucune nouvelle ligne de coût ne s'ajoute, et la ligne de `chat_turns` a le statut `aborted` et le code `client_disconnected` (`SELECT status, warnings, created_at FROM dev_proj.qualibot.chat_turns ORDER BY created_at DESC LIMIT 5` après un export).
+- [ ] Même test avec une question dans une langue qui demande la traduction du retour : l'arrêt est pris en compte immédiatement.
+- [ ] Une réponse complète se termine normalement (statut `ok`) : l'écoute de la fermeture du socket ne la coupe pas.
