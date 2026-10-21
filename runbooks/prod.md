@@ -120,6 +120,10 @@ Le scoring `score_chat_traces_prod` reste en pause ; son premier lancement se fa
 
 Les objets de l'ancien schéma `prod_landingzone.qualibot` ne sont supprimés par aucune étape de ce runbook. Leur suppression, si elle est décidée, se fait à la main, après validation complète de la prod.
 
+## 8. Une fois tout validé : restreindre l'environnement Bitbucket Production à `main`
+
+À faire dans Bitbucket, après la validation complète de DEV et UAT : Repository settings → Deployments → environnement `Production` → autoriser le déploiement depuis la branche `main` seulement. Le pipeline refuse déjà un déploiement PROD hors de `main` ; ce réglage ajoute le même verrou côté Bitbucket.
+
 ## Fait
 
 _(rien de confirmé pour l'instant)_
