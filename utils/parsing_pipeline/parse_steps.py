@@ -346,7 +346,7 @@ def setup_workers(repo_dir) -> int:
     :param repo_dir: Folder of the parsing modules, shipped to the executors.
     """
     import config as cfg
-    from utils import broadcast_config, configure, write_worker_config
+    from worker import broadcast_config, configure, write_worker_config
 
     for module in cfg.WORKER_MODULES:
         spark.sparkContext.addPyFile(os.path.join(repo_dir, module))
