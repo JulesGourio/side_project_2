@@ -36,6 +36,9 @@ _MIN_REFRESH_INTERVAL_S = 60  # never refresh tighter than this
 _RECONNECT_MIN_S = 10.0
 _RECONNECT_MAX_S = 300.0
 
+# A replaced pool is closed after this grace period (in-flight requests), then terminated if the close hangs.
+_RETIRE_GRACE_S = 30.0
+_RETIRE_CLOSE_TIMEOUT_S = 30.0
 # Bounds the initial TCP connect (asyncpg waits 60 s by default): local dev may have port 5432 blocked, and the short
 # timeout falls back to the no-history path quickly.
 _CONNECT_TIMEOUT_S = float(os.getenv('LAKEBASE_CONNECT_TIMEOUT_S', '5'))
@@ -192,6 +195,22 @@ async def _ensure_database(host: str, username: str, token: str, database: str) 
         await conn.close()
 
 
+async def _retire_pool(pool: asyncpg.Pool, grace_s: float = _RETIRE_GRACE_S,
+                       close_timeout_s: float = _RETIRE_CLOSE_TIMEOUT_S) -> None:
+    """Closes a replaced pool once its in-flight requests are done; connections still busy after the timeout are cut.
+
+    :param pool: the pool that was replaced
+    :param grace_s: seconds to wait for requests that already took the pool through ``get_pool()``
+    :param close_timeout_s: seconds a graceful close may take before the connections are terminated
+    """
+    await asyncio.sleep(grace_s)
+    try:
+        await asyncio.wait_for(pool.close(), timeout=close_timeout_s)
+    except asyncio.TimeoutError:
+        logger.warning('Lakebase: old pool still busy after %.0fs, terminating it', close_timeout_s)
+        pool.terminate()
+
+
 async def _token_refresh_loop(
     project_id: str, branch: str, endpoint: str, database: str, delay: float
 ) -> None:
@@ -214,9 +233,7 @@ async def _token_refresh_loop(
             old_pool = _pool
             _pool = new_pool
             if old_pool:
-                # Grace period for in-flight requests that already grabbed the old pool via get_pool().
-                await asyncio.sleep(30)
-                await old_pool.close()
+                await _retire_pool(old_pool)
             delay = _next_refresh_delay(expires_in_s)
             logger.info(f'Lakebase token refreshed (next refresh in {delay:.0f}s)')
         except Exception as e:

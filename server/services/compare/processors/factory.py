@@ -15,6 +15,7 @@ import os
 from typing import Any, Dict, List
 
 from server.services.compare.processors._diff_engines import DIFF_TRUNCATED_MARKER, _MAX_DIFF_CHARS
+from server.services.compare.processors._diff_engines.images import IMAGE_CAP_MARKER
 from server.services.compare.processors.base import BaseProcessor
 from server.services.compare.processors.docx import DocxProcessor
 from server.services.compare.processors.excel import ExcelProcessor
@@ -74,25 +75,32 @@ def file_type_of(filename: str) -> str | None:
 
 
 def diff_truncation_warnings(messages: List[Dict[str, Any]]) -> List[str]:
-    """A user-facing warning when truncate_diff() cut the diff sent to the LLM.
+    """User-facing warnings for content that never reached the LLM: a cut diff, dropped images.
 
-    Without it the report silently stops partway through the document: the truncation
-    note reaches only the model.
+    Without them the report silently stops partway through the document or ignores images: the notes
+    reach only the model.
 
     :param messages: messages sent to the model
-    :return: the warning list, empty when the diff was not cut
+    :return: the warnings, empty when nothing was cut or dropped
     """
+    warnings: List[str] = []
+    texts: List[str] = []
     for msg in messages:
         content = msg.get('content')
         blocks = content if isinstance(content, list) else [{'type': 'text', 'text': content or ''}]
-        for block in blocks:
-            if block.get('type') == 'text' and DIFF_TRUNCATED_MARKER in (block.get('text') or ''):
-                return [
-                    'The documents differ too much to be analysed in full: only the first '
-                    f'{_MAX_DIFF_CHARS:,} characters of the differences were read. '
-                    'Changes towards the end of the document are missing from this report.'
-                ]
-    return []
+        texts += [block.get('text') or '' for block in blocks if block.get('type') == 'text']
+    if any(DIFF_TRUNCATED_MARKER in t for t in texts):
+        warnings.append(
+            'The documents differ too much to be analysed in full: only the first '
+            f'{_MAX_DIFF_CHARS:,} characters of the differences were read. '
+            'Changes towards the end of the document are missing from this report.'
+        )
+    if any(IMAGE_CAP_MARKER in t for t in texts):
+        warnings.append(
+            'The documents contain more images than can be analysed in one request: the images beyond '
+            'the limit were not compared. Image changes may be missing from this report.'
+        )
+    return warnings
 
 
 def get_processor(filename: str, method_override: str | None = None) -> BaseProcessor | None:
@@ -153,7 +161,7 @@ def extract_document_text(filename: str, file_bytes: bytes) -> str:
         return '\n'.join(lines)
     if file_type == 'pptx':
         from server.services.compare.processors.pptx import _extract_pptx
-        lines, _ = _extract_pptx(file_bytes)
+        lines, _ = _extract_pptx(file_bytes, filename)
         return '\n'.join(lines)
     if file_type == 'excel':
         from server.services.compare.processors.excel import _extract_xls, _extract_xlsx

@@ -1,5 +1,6 @@
 """Passages handed to the answer model for a turn: named documents, one language per document."""
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Tuple
@@ -56,6 +57,16 @@ def refs_named_in(text: str) -> List[str]:
         siblings = [sibling['ref'] for sibling in cat.group_siblings(entry['ref'])]
         refs.extend([entry['ref']] + siblings)
     return list(dict.fromkeys(refs))[:_REF_LOOKUP_MAX]
+
+
+def _refs_named_in_turns(question: str, earlier_turns: str) -> List[str]:
+    """REFs named in the question, then in the earlier turns, without duplicates (at most _REF_LOOKUP_MAX).
+
+    :param question: last user turn
+    :param earlier_turns: the previous turns joined by newlines
+    :return: the REFs in order of appearance, the question's first
+    """
+    return list(dict.fromkeys(refs_named_in(question) + refs_named_in(earlier_turns)))[:_REF_LOOKUP_MAX]
 
 
 def one_language_per_document(rows: List[SearchRow]) -> List[SearchRow]:
@@ -148,7 +159,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
 
         # REFs named in the question first, then in the earlier turns (a follow-up often names no REF itself).
         earlier_turns = '\n'.join(m['content'] for m in conversation[:-1])
-        named = list(dict.fromkeys(refs_named_in(question) + refs_named_in(earlier_turns)))[:_REF_LOOKUP_MAX]
+        named = await asyncio.to_thread(_refs_named_in_turns, question, earlier_turns)
         log.data.update({'index_name': index, 'fr_query': fr_query, 'en_query': en_query, 'named_refs': named})
 
         by_name = {'question': question, 'fr': fr_query, 'en': en_query}

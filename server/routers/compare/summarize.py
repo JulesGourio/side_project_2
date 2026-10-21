@@ -21,7 +21,8 @@ from server.services.infra.lakebase import (
     get_cached_summary, store_error,
     store_summary_cache,
 )
-from server.services.infra.user import get_user_identity, require_compare
+from server.services.infra.tasks import spawn
+from server.services.infra.user import get_user_identity, rate_limit, require_compare
 from server.routers.compare.config import APP_VERSION, get_config
 from server.routers.compare.common import _validate_file
 
@@ -41,7 +42,7 @@ def _summary_cache_version(cfg: dict) -> str:
     return f'{APP_VERSION}:{hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()[:16]}'
 
 
-@router.post('/compare/summarize', dependencies=[Depends(require_compare)], response_model=None)
+@router.post('/compare/summarize', dependencies=[Depends(require_compare), Depends(rate_limit)], response_model=None)
 async def summarize_document(
     request: Request,
     file: UploadFile = File(...),
@@ -133,5 +134,5 @@ async def summarize_document(
 
     result['duration_s'] = round(time.monotonic() - start, 2)
     if file_hash:
-        asyncio.create_task(store_summary_cache(file_hash, cache_version, result, endpoint_name=result.get('endpoint') or endpoint))
+        spawn(store_summary_cache(file_hash, cache_version, result, endpoint_name=result.get('endpoint') or endpoint))
     return result

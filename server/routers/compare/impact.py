@@ -19,7 +19,8 @@ from server.services.infra.lakebase import (
     get_cached_impact_result, store_error,
     store_impact_cache, store_impact_request,
 )
-from server.services.infra.user import get_user_identity, require_compare
+from server.services.infra.tasks import spawn
+from server.services.infra.user import get_user_identity, rate_limit, require_compare
 from server.services.infra.vector_search import run_impact_search, sort_documents
 from server.routers.compare.config import APP_VERSION, get_config
 
@@ -216,7 +217,7 @@ async def _impact_events(run: _ImpactSearch, request: Request, token: str,
                 usage = event['usage']
     except (asyncio.CancelledError, GeneratorExit):
         # The browser left (closed tab, new search): record the search as aborted.
-        asyncio.create_task(run.audit(endpoint_name=run.judges(), duration_s=time.monotonic() - start,
+        spawn(run.audit(endpoint_name=run.judges(), duration_s=time.monotonic() - start,
                                       status='aborted', num_documents=len(documents), **_counts()))
         raise
     except Exception as e:
@@ -226,7 +227,7 @@ async def _impact_events(run: _ImpactSearch, request: Request, token: str,
             endpoint='/api/compare/impact', error_type=type(e).__name__, error_msg=str(e), stage=stage,
             upstream=run.llm_endpoint if plan else run.index_name, user_id=run.identity['user_id'],
             workspace_id=run.identity.get('workspace_id') or '', stack_trace=traceback.format_exc())
-        asyncio.create_task(run.audit(endpoint_name=run.judges(), duration_s=time.monotonic() - start,
+        spawn(run.audit(endpoint_name=run.judges(), duration_s=time.monotonic() - start,
                                       http_status=502, status='error', error_type=type(e).__name__,
                                       error_msg=str(e), **_counts()))
         yield _ndjson({'type': 'error', 'error': 'Impact search failed'})
@@ -248,14 +249,14 @@ async def _impact_events(run: _ImpactSearch, request: Request, token: str,
     # A result is kept only when it is complete: a failed query or judge call would be replayed to every later user.
     complete = not plan.get('queries_failed') and not any(d.get('status') == 'error' for d in documents)
     if run.old_hash and run.new_hash and complete:
-        asyncio.create_task(store_impact_cache(
+        spawn(store_impact_cache(
             run.old_hash, run.new_hash, cache_version,
             {**plan, 'documents': documents, 'usage': usage, 'duration_s': duration_s,
              'impact_request_id': request_id},
         ))
 
 
-@router.post('/compare/impact', dependencies=[Depends(require_compare)])
+@router.post('/compare/impact', dependencies=[Depends(require_compare), Depends(rate_limit)])
 async def find_impacted_documents(body: ImpactRequest, request: Request) -> Response:
     """Stream NDJSON events: plan → document (one per judged candidate, as each finishes) → done | error.
 

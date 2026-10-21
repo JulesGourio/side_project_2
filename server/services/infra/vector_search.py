@@ -407,14 +407,14 @@ async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: 
 
 
 def _status(impacted: bool, confidence: str, has_passages: bool = True) -> str:
-    # "Impacted" with no passage the UI can show is a claim nobody can verify.
     """Status of a judged document: ``impacted``, ``check`` or ``not_impacted``.
 
     :param impacted: the verdict of the judge
     :param confidence: ``high``, ``medium`` or ``low``
-    :param has_passages: whether the judge gave a passage that can be shown
+    :param has_passages: whether the judge gave a passage whose quote was found in the candidate text
     :return: the status
     """
+    # An impacted verdict with no quote found in the text is a claim nobody can verify.
     if confidence == 'low' or (impacted and not has_passages):
         return 'check'
     return 'impacted' if impacted else 'not_impacted'
@@ -508,7 +508,7 @@ def _judged_doc(cand: Dict[str, Any], judgment: Dict[str, Any], archive_before: 
     return {
         **_doc_base(cand, archive_before),
         'judged': True,
-        'status': _status(impacted, confidence, bool(passages)),
+        'status': _status(impacted, confidence, any(p['highlight'] for p in passages)),
         'impacted': impacted,
         'confidence': confidence,
         'reason': str(judgment.get('reason') or '').strip(),

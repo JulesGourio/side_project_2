@@ -20,6 +20,7 @@ from typing import Any, AsyncGenerator, Dict, List, Tuple
 
 import httpx
 
+from server.services.infra.http_clients import shared_client
 from server.services.infra.streaming import _cost_eur, _parse_text_delta, supports_temperature
 
 logger = logging.getLogger(__name__)
@@ -222,13 +223,13 @@ class LlmFailure(Exception):
 FINAL_KINDS = {'refused', 'auth', 'not_found'}
 
 
-def http_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
-    """Separate so tests can swap the transport.
+def http_client() -> httpx.AsyncClient:
+    """The client shared by every chat model call (separate so tests can swap the transport). Callers pass their own
+    timeout on each request.
 
-    :param timeout: httpx timeouts of the client
-    :return: a new async HTTP client
+    :return: the shared async HTTP client
     """
-    return httpx.AsyncClient(timeout=timeout)
+    return shared_client('chat_llm')
 
 
 def retry_after(resp: httpx.Response) -> float | None:
@@ -290,63 +291,63 @@ async def stream_once(host: str, token: str, endpoint: str, messages: List[Dict[
     timeout = httpx.Timeout(max(first_token_timeout_s(), stall) + 30, connect=15.0)
     got_text, last_text_at = False, 0.0
     try:
-        async with http_client(timeout) as client:
-            async with client.stream('POST', f'{host}/serving-endpoints/{endpoint}/invocations',
-                                     json=build_payload(endpoint, messages, max_tokens, True),
-                                     headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}) as resp:
-                if resp.status_code != 200:
-                    body = (await resp.aread()).decode('utf-8', errors='replace')
-                    raise failure_for_status(resp, body)
-                lines = resp.aiter_lines().__aiter__()
-                pending: asyncio.Task | None = None
-                try:
-                    while True:
-                        if pending is None:
-                            pending = asyncio.ensure_future(lines.__anext__())
-                        now = time.monotonic()
-                        budget = (last_text_at + stall - now) if got_text else (first_deadline - now)
-                        if budget <= 0:
-                            raise LlmFailure('timeout', 'stream stalled' if got_text else 'no answer text')
-                        done, _ = await asyncio.wait({pending}, timeout=min(_KEEPALIVE_S, budget))
-                        if not done:
-                            yield 'keepalive', None
-                            continue
-                        task, pending = pending, None
-                        try:
-                            line = task.result()
-                        except StopAsyncIteration:
-                            break
-                        line = line.strip()
-                        if not line.startswith('data: '):
-                            continue
-                        data = line[6:].strip()
-                        if data == '[DONE]':
-                            break
-                        try:
-                            chunk = json.loads(data)
-                        except json.JSONDecodeError:
-                            continue
-                        if isinstance(chunk, dict) and chunk.get('error'):
-                            err = chunk['error']
-                            msg = err.get('message') if isinstance(err, dict) else str(err)
-                            code = err.get('code') if isinstance(err, dict) else ''
-                            raise LlmFailure('rate_limit' if str(code) == '429' else 'stream_error', str(msg)[:300])
-                        if chunk.get('usage'):
-                            u = chunk['usage']
-                            inp, out = u.get('prompt_tokens') or 0, u.get('completion_tokens') or 0
-                            yield 'usage', {'input_tokens': inp, 'output_tokens': out,
-                                            'thinking_tokens': (u.get('completion_tokens_details') or {}).get('reasoning_tokens') or 0,
-                                            'cost_eur': _cost_eur(endpoint, inp, out)}
-                        choices = chunk.get('choices') or []
-                        if choices and choices[0].get('finish_reason') == 'length':
-                            yield 'truncated', None
-                        text = _parse_text_delta(data)
-                        if text:
-                            got_text, last_text_at = True, time.monotonic()
-                            yield 'text', text
-                finally:
-                    if pending is not None:
-                        pending.cancel()
+        client = http_client()
+        async with client.stream('POST', f'{host}/serving-endpoints/{endpoint}/invocations',
+                                 json=build_payload(endpoint, messages, max_tokens, True), timeout=timeout,
+                                 headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}) as resp:
+            if resp.status_code != 200:
+                body = (await resp.aread()).decode('utf-8', errors='replace')
+                raise failure_for_status(resp, body)
+            lines = resp.aiter_lines().__aiter__()
+            pending: asyncio.Task | None = None
+            try:
+                while True:
+                    if pending is None:
+                        pending = asyncio.ensure_future(lines.__anext__())
+                    now = time.monotonic()
+                    budget = (last_text_at + stall - now) if got_text else (first_deadline - now)
+                    if budget <= 0:
+                        raise LlmFailure('timeout', 'stream stalled' if got_text else 'no answer text')
+                    done, _ = await asyncio.wait({pending}, timeout=min(_KEEPALIVE_S, budget))
+                    if not done:
+                        yield 'keepalive', None
+                        continue
+                    task, pending = pending, None
+                    try:
+                        line = task.result()
+                    except StopAsyncIteration:
+                        break
+                    line = line.strip()
+                    if not line.startswith('data: '):
+                        continue
+                    data = line[6:].strip()
+                    if data == '[DONE]':
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(chunk, dict) and chunk.get('error'):
+                        err = chunk['error']
+                        msg = err.get('message') if isinstance(err, dict) else str(err)
+                        code = err.get('code') if isinstance(err, dict) else ''
+                        raise LlmFailure('rate_limit' if str(code) == '429' else 'stream_error', str(msg)[:300])
+                    if chunk.get('usage'):
+                        u = chunk['usage']
+                        inp, out = u.get('prompt_tokens') or 0, u.get('completion_tokens') or 0
+                        yield 'usage', {'input_tokens': inp, 'output_tokens': out,
+                                        'thinking_tokens': (u.get('completion_tokens_details') or {}).get('reasoning_tokens') or 0,
+                                        'cost_eur': _cost_eur(endpoint, inp, out)}
+                    choices = chunk.get('choices') or []
+                    if choices and choices[0].get('finish_reason') == 'length':
+                        yield 'truncated', None
+                    text = _parse_text_delta(data)
+                    if text:
+                        got_text, last_text_at = True, time.monotonic()
+                        yield 'text', text
+            finally:
+                if pending is not None:
+                    pending.cancel()
     except LlmFailure:
         raise
     except httpx.TimeoutException as exc:
@@ -585,20 +586,21 @@ async def complete(host: str, token: str, endpoints: List[str], messages: List[D
                 raise last or LlmFailure('timeout', 'no time left')
             t0 = time.monotonic()
             try:
-                async with http_client(httpx.Timeout(min(timeout_s, left), connect=10.0)) as client:
-                    payload = build_payload(endpoint, messages,
-                                       effective_max_tokens(endpoint, max_tokens, _REWRITE_REASONING_MIN_TOKENS), False)
-                    effort = rewrite_reasoning_effort()
-                    if effort and not supports_temperature(endpoint) and endpoint not in _EFFORT_REFUSED:
-                        payload['reasoning_effort'] = effort
-                    url, headers = (f'{host}/serving-endpoints/{endpoint}/invocations',
-                                    {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
-                    resp = await client.post(url, json=payload, headers=headers)
-                    if resp.status_code == 400 and 'reasoning_effort' in payload and 'reasoning' in resp.text.lower():
-                        _EFFORT_REFUSED.add(endpoint)             # this endpoint takes no such parameter: never send it again
-                        logger.warning('chat_llm: %s refused reasoning_effort, sent without', endpoint)
-                        payload.pop('reasoning_effort')
-                        resp = await client.post(url, json=payload, headers=headers)
+                client = http_client()
+                call_timeout = httpx.Timeout(min(timeout_s, left), connect=10.0)
+                payload = build_payload(endpoint, messages,
+                                   effective_max_tokens(endpoint, max_tokens, _REWRITE_REASONING_MIN_TOKENS), False)
+                effort = rewrite_reasoning_effort()
+                if effort and not supports_temperature(endpoint) and endpoint not in _EFFORT_REFUSED:
+                    payload['reasoning_effort'] = effort
+                url, headers = (f'{host}/serving-endpoints/{endpoint}/invocations',
+                                {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
+                resp = await client.post(url, json=payload, headers=headers, timeout=call_timeout)
+                if resp.status_code == 400 and 'reasoning_effort' in payload and 'reasoning' in resp.text.lower():
+                    _EFFORT_REFUSED.add(endpoint)             # this endpoint takes no such parameter: never send it again
+                    logger.warning('chat_llm: %s refused reasoning_effort, sent without', endpoint)
+                    payload.pop('reasoning_effort')
+                    resp = await client.post(url, json=payload, headers=headers, timeout=call_timeout)
                 if resp.status_code != 200:
                     raise failure_for_status(resp, resp.text)
                 body = resp.json()

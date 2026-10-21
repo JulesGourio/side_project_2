@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import List
 
 from server.services.chat.llm import TIRED_MESSAGE
-from server.services.infra.user import get_user_identity
+from server.services.infra.user import get_user_identity, reject_anonymous
 
 
 # Token budget of the past messages replayed to the engine each turn (answers are grounded in retrieval, so long memory
@@ -228,3 +228,14 @@ async def _identity_or_anonymous(request) -> dict:
         return await get_user_identity(request)
     except Exception:
         return {'user_id': '', 'workspace_id': None, 'email': None}
+
+
+async def _identified(request) -> dict:
+    """The caller's identity, refused with a 401 when there is none (outside development).
+
+    :param request: the incoming FastAPI request.
+    :return: ``{'user_id', 'workspace_id', 'email'}``.
+    """
+    identity = await _identity_or_anonymous(request)
+    reject_anonymous(identity)
+    return identity

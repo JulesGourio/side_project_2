@@ -136,6 +136,30 @@ def _footnote_lines(doc) -> List[str]:
     return lines
 
 
+def _header_footer_lines(doc) -> List[str]:
+    """'[Header] text' and '[Footer] text' for each distinct header and footer of the document.
+
+    :param doc: python-docx ``Document``
+    :return: the lines, empty when there are none or they cannot be read
+    """
+    lines: List[str] = []
+    seen: set = set()
+    try:
+        for section in doc.sections:
+            for tag, part in (('Header', section.header), ('Header', section.first_page_header),
+                              ('Header', section.even_page_header), ('Footer', section.footer),
+                              ('Footer', section.first_page_footer), ('Footer', section.even_page_footer)):
+                if part.is_linked_to_previous:
+                    continue
+                for text in (' '.join(p.text.split()) for p in part.paragraphs):
+                    if text and (tag, text) not in seen:
+                        seen.add((tag, text))
+                        lines.append(f'[{tag}] {text}')
+    except Exception as e:  # headers and footers are a bonus — never fail extraction over them
+        logger.debug('DOCX header/footer extraction skipped: %s', e)
+    return lines
+
+
 def _parse_vml_style(style_str: str) -> Dict[str, str]:
     """The properties of a VML ``style`` attribute, as a dict.
 

@@ -338,3 +338,16 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Section G de `uat.md` (déploiement des jobs, `1_categories`, `2_manifest`, comparaison de `category_reference` et `parse_manifest` avant / après : 0 ligne de différence attendue).
 - [ ] `1_categories` : le journal liste l'âge de `document_revisions_intraqual` et `category_ancestors_intraqual` ; une valeur de `parsing_max_source_staleness_hours` à `1` fait échouer la tâche avec la liste des tables périmées (puis remettre `36`).
 - [ ] Chat : la source d'un document AS et celle d'un document IS gardent leur division et leur catégorie.
+
+## 2026-10-21 — constats restants de la revue indépendante (client, serveur, recherche d'impact)
+
+- [ ] Déployer l'app DEV (le client est construit par le pipeline) puis ouvrir la console du navigateur : pas d'erreur de politique de sécurité (CSP) au chargement, les images du chat et les liens https des sources fonctionnent, un lien `http://` s'affiche sans lien.
+- [ ] Polices : l'interface utilise les polices du système (plus de Montserrat/Open Sans/JetBrains Mono) ; dire si l'apparence convient.
+- [ ] Historique : cliquer vite sur deux entrées A puis B : B reste affichée. « Nouveau chat » pendant le chargement d'une session : la nouvelle conversation reste.
+- [ ] Chat : arrêter le réseau pendant une réponse : après 2 minutes sans événement, le message « un peu fatigué » s'affiche. Les bulles d'erreur ne sont plus renvoyées au modèle au message suivant.
+- [ ] Fichier `.ppt` : converti et comparé (LibreOffice présent), sinon message clair demandant `.pptx`. Un `.docx` avec en-tête/pied de page et un `.pptx` avec notes : ces blocs apparaissent dans le rapport.
+- [ ] Recherche d'impact sur un rapport Markdown de plus de 40 puces : toutes les puces donnent une requête ; un résultat jugé impacté dont la citation n'est pas dans le texte apparaît en « à vérifier ».
+- [ ] Document découpé (rapport long) : pas de ligne « No significant changes » entre les vrais changements ; les changements restent sous la bonne section.
+- [ ] Limite de débit : 31 analyses en moins d'une minute avec le même compte donnent une réponse 429 générique à la 31ᵉ (`RATE_LIMIT_PER_MINUTE`, 0 = coupée).
+- [ ] Sans en-tête d'identité (appel direct hors proxy) : les routes d'historique répondent 401.
+- [ ] Alerte `chat_failure_rate` : son horaire est 03 h et 15 h (Europe/Paris) avec une fenêtre de 13 h ; elle reste en pause.

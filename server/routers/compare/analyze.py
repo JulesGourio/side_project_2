@@ -24,7 +24,8 @@ from server.services.infra.lakebase import (
     store_llm_request,
     update_llm_request_run, update_llm_request_usage,
 )
-from server.services.infra.user import get_user_identity, require_compare
+from server.services.infra.tasks import spawn
+from server.services.infra.user import get_user_identity, rate_limit, require_compare
 from server.routers.compare.config import APP_VERSION, MAX_CONCURRENT_ANALYSES, get_config
 from server.routers.compare.common import _validate_file
 
@@ -192,6 +193,29 @@ async def _acquire_slot(req_id: str) -> AsyncGenerator[str, None]:
             yield ': keepalive\n\n'
 
 
+def _release_slot_when_idle(build_task: asyncio.Future | None) -> None:
+    """Free the analysis slot, once the thread that builds the messages has ended.
+
+    A browser that leaves does not stop that thread, so the slot stays taken until it returns.
+
+    :param build_task: the message-building task, None when it never started.
+    """
+    if build_task is None or build_task.done():
+        _analyze_semaphore.release()
+        return
+
+    def _release(task: asyncio.Future) -> None:
+        """Release the slot and mark the task's error as seen.
+
+        :param task: the finished building task.
+        """
+        if not task.cancelled():
+            task.exception()
+        _analyze_semaphore.release()
+
+    build_task.add_done_callback(_release)
+
+
 async def _keepalive_until_done(task: asyncio.Future, req_id: str) -> AsyncGenerator[str, None]:
     """Yield a keepalive every 10 s until ``task`` (the CPU-bound message building) is done.
 
@@ -231,7 +255,7 @@ def _track_llm_event(chunk: str, job: _AnalysisJob, run: Dict[str, Any], llm_req
         elif etype == 'warning':
             report.cacheable = False  # a cut or partial report is never replayed
         elif etype == 'usage':
-            asyncio.create_task(update_llm_request_usage(
+            spawn(update_llm_request_usage(
                 llm_request_id,
                 input_tokens=event.get('input_tokens', 0),
                 output_tokens=event.get('output_tokens', 0),
@@ -258,7 +282,7 @@ def _track_llm_event(chunk: str, job: _AnalysisJob, run: Dict[str, Any], llm_req
                 upstream=job.endpoint,
                 context={'chunked_parts': run['chunked_parts'], 'elapsed_ms': _elapsed_ms(t_llm)},
             )
-            asyncio.create_task(update_llm_request_usage(
+            spawn(update_llm_request_usage(
                 llm_request_id,
                 http_status=event.get('http_status', 0),
                 error_type=event.get('error_type', 'LLMError'),
@@ -301,6 +325,7 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
 
     llm_request_id = None
     report = _Report()
+    build_task: asyncio.Future | None = None
 
     try:
         # Building the messages is CPU-bound: it runs in a thread while keepalives hold the connection.
@@ -397,7 +422,7 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
 
         run['generation_ms'] = _elapsed_ms(t_llm)
         if run['status'] == 'ok' and report.cacheable and report.parts:
-            asyncio.create_task(store_analysis_cache(
+            spawn(store_analysis_cache(
                 job.old_hash, job.new_hash, job.cache_version, ''.join(report.parts), result.metadata.file_type,
                 result.metadata.method, job.processor_version))
         logger.info(f'[{req_id}] SSE stream complete')
@@ -424,14 +449,14 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
         except Exception:
             pass  # client already gone
     finally:
-        _analyze_semaphore.release()
+        _release_slot_when_idle(build_task)
         if llm_request_id:
-            asyncio.create_task(update_llm_request_run(llm_request_id, total_ms=_elapsed_ms(t_start), **run))
+            spawn(update_llm_request_run(llm_request_id, total_ms=_elapsed_ms(t_start), **run))
             if answered.get('endpoint'):
-                asyncio.create_task(update_llm_request_usage(llm_request_id, endpoint_name=answered['endpoint']))
+                spawn(update_llm_request_usage(llm_request_id, endpoint_name=answered['endpoint']))
 
 
-@router.post('/compare/analyze', dependencies=[Depends(require_compare)])
+@router.post('/compare/analyze', dependencies=[Depends(require_compare), Depends(rate_limit)])
 async def analyze_documents(
     request: Request,
     old_file: UploadFile = File(...),

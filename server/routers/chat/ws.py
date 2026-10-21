@@ -1,5 +1,6 @@
 """WebSocket route: one chat turn answered by the Vector Search engine, then persisted and logged."""
 
+import asyncio
 import json
 import logging
 import os
@@ -163,7 +164,7 @@ async def chat_ws(websocket: WebSocket) -> None:
         final_content = _apply_citation_markers(''.join(accumulated), collected_citations)
         # Re-surface documents the answer names in prose but the
         # endpoint never annotated, so they become clickable chips.
-        collected_sources = augment_sources(''.join(accumulated), collected_sources)
+        collected_sources = await asyncio.to_thread(augment_sources, ''.join(accumulated), collected_sources)
         # Number only the inline-cited sources; prose-only chips
         # (catalog-resurfaced) stay numberless.
         _number_sources(collected_sources, collected_citations)

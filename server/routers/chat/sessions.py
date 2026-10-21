@@ -13,9 +13,10 @@ from pydantic import BaseModel
 
 from server.services.chat import mlflow_turns
 from server.services.infra.lakebase import get_pool, upsert_user
+from server.services.infra.tasks import spawn
 from server.services.infra.user import get_workspace_url, require_chat
 from server.routers.chat.helpers import (
-    _identity_or_anonymous, _stored_sources,
+    _identified, _stored_sources,
 )
 from server.routers.chat.persistence import _upsert_session
 from server.routers.errors import INTERNAL_ERROR
@@ -63,7 +64,7 @@ async def chat_feedback(body: ChatFeedbackRequest, request: Request) -> dict | J
             status_code=503,
         )
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
     workspace_id = identity.get('workspace_id')
     workspace_url = get_workspace_url()
@@ -90,7 +91,7 @@ async def chat_feedback(body: ChatFeedbackRequest, request: Request) -> dict | J
             )
             mlflow_trace_id = await _turn_trace_id(conn, body.message_id)
         if mlflow_trace_id:
-            asyncio.get_running_loop().create_task(asyncio.to_thread(
+            spawn(asyncio.to_thread(
                 mlflow_turns.log_vote, mlflow_trace_id, body.vote, body.comment or '', user_id))
         return {'success': True, 'id': row['id'], 'vote': row['vote']}
     except Exception as exc:
@@ -109,7 +110,7 @@ async def list_sessions(request: Request) -> dict | JSONResponse:
     if not pool:
         return {'sessions': [], 'available': False}
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
 
     try:
@@ -157,7 +158,7 @@ async def get_session(session_id: str, request: Request) -> dict | JSONResponse:
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
 
     try:
@@ -211,7 +212,7 @@ async def delete_session(session_id: str, request: Request) -> dict | JSONRespon
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
 
     try:
@@ -253,7 +254,7 @@ async def share_session(session_id: str, request: Request) -> dict | JSONRespons
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
 
     try:
@@ -358,7 +359,7 @@ async def duplicate_shared_session(share_token: str, request: Request) -> dict |
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
     workspace_id = identity.get('workspace_id')
     workspace_url = get_workspace_url()

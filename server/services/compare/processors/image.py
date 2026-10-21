@@ -31,6 +31,8 @@ _SUPPORTED_MIME = {
 
 _IMG_MAX_PX = 1600
 _IMG_JPEG_QUALITY = 85
+# Longest side of an image sent as it is (JPEG, PNG): larger ones are downscaled.
+_SEND_MAX_PX = 2000
 
 
 def _normalise_image(img_bytes: bytes, ext: str) -> tuple[bytes, str]:
@@ -51,7 +53,35 @@ def _normalise_image(img_bytes: bytes, ext: str) -> tuple[bytes, str]:
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=_IMG_JPEG_QUALITY, optimize=True)
         return buf.getvalue(), 'image/jpeg'
+    if mime in ('image/jpeg', 'image/png'):
+        return _downscale(img_bytes, mime), mime
     return img_bytes, mime
+
+
+def _downscale(img_bytes: bytes, mime: str) -> bytes:
+    """The image with its longest side reduced to ``_SEND_MAX_PX``, in its own format and with the same aspect ratio.
+
+    :param img_bytes: JPEG or PNG file bytes
+    :param mime: ``image/jpeg`` or ``image/png``
+    :return: the resized image, or the original bytes when it is small enough or cannot be read
+    """
+    from PIL import Image
+    try:
+        img = Image.open(io.BytesIO(img_bytes))
+        w, h = img.size
+        if max(w, h) <= _SEND_MAX_PX:
+            return img_bytes
+        scale = _SEND_MAX_PX / max(w, h)
+        img = img.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+        buf = io.BytesIO()
+        if mime == 'image/png':
+            img.save(buf, format='PNG', optimize=True)
+        else:
+            img.convert('RGB').save(buf, format='JPEG', quality=_IMG_JPEG_QUALITY, optimize=True)
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning('Image could not be downscaled, sent as it is: %s', e)
+        return img_bytes
 
 
 class ImageProcessor(BaseProcessor):

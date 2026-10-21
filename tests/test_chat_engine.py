@@ -190,7 +190,7 @@ def _row(cid, ref, text='passage', division='AS'):
 
 def _vs(answer, sent):
     """Fake httpx post: answer(payload) -> list of rows or an int status."""
-    async def _post(self, url, json=None, headers=None):
+    async def _post(self, url, json=None, headers=None, timeout=None):
         sent.append(json)
         out = answer(json)
         if isinstance(out, int):

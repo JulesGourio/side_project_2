@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.services.infra.lakebase import get_pool
-from server.services.infra.user import get_user_identity, get_workspace_url, require_compare
+from server.services.infra.user import get_user_identity, get_workspace_url, reject_anonymous, require_compare
 from server.routers.errors import INTERNAL_ERROR
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,7 @@ async def submit_feedback(body: FeedbackRequest, request: Request) -> dict | JSO
         identity = await get_user_identity(request)
     except Exception:
         identity = {'user_id': '', 'workspace_id': None, 'email': None}
+    reject_anonymous(identity)
     user_id = identity['user_id']
     workspace_id = identity.get('workspace_id')
     workspace_url = get_workspace_url()
@@ -107,6 +108,7 @@ async def submit_impact_feedback(body: ImpactFeedbackRequest, request: Request) 
         identity = await get_user_identity(request)
     except Exception:
         identity = {'user_id': '', 'workspace_id': None, 'email': None}
+    reject_anonymous(identity)
 
     try:
         async with pool.acquire() as conn:

@@ -11,8 +11,9 @@ import json
 import logging
 import os
 import re
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, AsyncGenerator, Dict, List, Tuple
 
+from server.services.compare.impact_queries import _NO_CHANGES_RE, _strip_markdown
 from server.services.compare.llm import stream_analysis
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,9 @@ _VISUAL_MARKER = '--- VISUAL CHANGES ---'
 # Parts run concurrently (bounded): sequential parts would push the SSE response past the gateway's hard duration limit.
 # The wall clock is then about the slowest part, not the sum of all parts.
 _CHUNK_PARALLELISM = int(os.getenv('COMPARE_CHUNK_PARALLELISM', '3'))
+_EXCEL_OPENER = '```diff\n'
+_EXCEL_CLOSER = '\n```'
+_HEADING_RE = re.compile(r'^#{1,6}\s+\S.*$', re.M)
 
 
 # --- Splitting ---
@@ -65,10 +69,62 @@ def _split_body(body: str, chunk_chars: int) -> List[str]:
             parts.append(cur)
             cur = piece
         else:
-            cur += piece
+            # Pieces cut inside a section carry no leading newline: without one a heading would stick to the previous line.
+            cur = f'{cur}\n{piece}' if cur and not piece.startswith('\n') else cur + piece
     if cur:
         parts.append(cur)
     return [p for p in (p.strip('\n') for p in parts) if p]
+
+
+def _locate_body(first_text: str) -> Tuple[str, str, str, str, str, str] | None:
+    """Find the diff body in the first text block of a processor message.
+
+    :param first_text: text of the first block of the user message
+    :return: ``(before, opener, body, closer, tail_last, tail_other)``: the text before the body, the opener and closer
+        that frame it in every part, the text that follows the closer in the last part and in the others;
+        None when the layout has no splittable diff body
+    """
+    if _TEXT_MARKER in first_text:
+        head, _, rest = first_text.partition(_TEXT_MARKER)
+        body, _, tail = rest.partition(_VISUAL_MARKER)
+        return (head, f'{_TEXT_MARKER}\n', body, f'\n\n{_VISUAL_MARKER}', tail,
+                '\nNo embedded images in this part.')
+    start = first_text.find(_EXCEL_OPENER)
+    end = first_text.rfind(_EXCEL_CLOSER)
+    if first_text.startswith('Excel spreadsheet comparison') and 0 <= start < end:
+        body_start = start + len(_EXCEL_OPENER)
+        return first_text[:start], _EXCEL_OPENER, first_text[body_start:end], _EXCEL_CLOSER, '', ''
+    return None
+
+
+def _last_heading(body: str) -> str:
+    """The last Markdown heading line of a text.
+
+    :param body: body of a part
+    :return: the heading, empty when there is none
+    """
+    found = _HEADING_RE.findall(body)
+    return found[-1].strip() if found else ''
+
+
+def _carried_heading(in_effect: str, body: str) -> str:
+    """Heading under which a part starts when it does not start with its own.
+
+    :param in_effect: heading in effect at the end of the previous parts, empty when none
+    :param body: body of this part
+    :return: ``in_effect``, empty when this part opens with a heading
+    """
+    first = body.lstrip('\n').split('\n', 1)[0]
+    return '' if _HEADING_RE.match(first) else in_effect
+
+
+def _is_no_change_part(text: str) -> bool:
+    """Whether the output of a part only says that nothing changed.
+
+    :param text: Markdown output of one part
+    :return: True for a short "no significant changes" statement
+    """
+    return bool(_NO_CHANGES_RE.search(text)) and len(_strip_markdown(text)) < 120
 
 
 def split_messages_for_chunking(
@@ -94,10 +150,10 @@ def split_messages_for_chunking(
         return None
 
     first_text = content[0].get('text', '')
-    if _TEXT_MARKER not in first_text:
+    located = _locate_body(first_text)
+    if located is None:
         return None
-    head, _, rest = first_text.partition(_TEXT_MARKER)
-    body, _, tail = rest.partition(_VISUAL_MARKER)
+    before, opener, body, closer, tail_last, tail_other = located
     if len(body) <= threshold_chars:
         return None
 
@@ -108,18 +164,24 @@ def split_messages_for_chunking(
     trailing_blocks = content[1:]  # image blocks — attached to the last part only
     n = len(part_bodies)
     parts: List[List[Dict[str, Any]]] = []
+    in_effect = ''
     for i, part_body in enumerate(part_bodies):
         is_last = i == n - 1
         note = (
             f'[Large document — diff split into {n} parts, this is part {i + 1}/{n}. '
             'Report ONLY the changes appearing in this part.]\n\n'
         )
-        text = f'{head}{note}{_TEXT_MARKER}\n{part_body}\n\n{_VISUAL_MARKER}'
+        carried = _carried_heading(in_effect, part_body)
+        in_effect = _last_heading(part_body) or in_effect
+        if carried:
+            note += (f'[This part continues the section "{carried}": report its changes under that '
+                     'section until a new heading appears.]\n\n')
+        text = f'{before}{note}{opener}{part_body}{closer}'
         if is_last:
-            blocks: List[Dict[str, Any]] = [{'type': 'text', 'text': f'{text}{tail}' if tail else text}]
+            blocks: List[Dict[str, Any]] = [{'type': 'text', 'text': f'{text}{tail_last}' if tail_last else text}]
             blocks += trailing_blocks
         else:
-            blocks = [{'type': 'text', 'text': f'{text}\nNo embedded images in this part.'}]
+            blocks = [{'type': 'text', 'text': f'{text}{tail_other}'}]
 
         part_messages = [dict(m) for m in messages]
         part_messages[user_idx] = {'role': 'user', 'content': blocks}
@@ -257,6 +319,8 @@ async def stream_analysis_chunked(
     total_usage = {'input_tokens': 0, 'output_tokens': 0, 'thinking_tokens': 0,
                    'total_tokens': 0, 'cost_eur': 0.0}
     emitted_objects = 0
+    emitted_text = False
+    no_change_text = ''
     n = len(message_parts)
     sem = asyncio.Semaphore(_CHUNK_PARALLELISM)
     part_infos: List[Dict[str, Any]] = [{} for _ in message_parts]
@@ -320,8 +384,12 @@ async def stream_analysis_chunked(
                     emitted_objects += len(objects)
             else:
                 logger.info('Chunked analysis: part %d/%d done — %d chars', part_idx + 1, n, len(res['text']))
-                if res['text']:
-                    yield _delta_event(('\n\n' if part_idx > 0 else '') + res['text'])
+                if res['text'] and _is_no_change_part(res['text']):
+                    # Kept only if no other part reports a change; between real changes it would read as one.
+                    no_change_text = no_change_text or res['text']
+                elif res['text']:
+                    yield _delta_event(('\n\n' if emitted_text else '') + res['text'])
+                    emitted_text = True
     finally:
         for t in tasks:
             if not t.done():
@@ -333,6 +401,8 @@ async def stream_analysis_chunked(
 
     if structured:
         yield _delta_event('\n]' if emitted_objects else '[]')
+    elif no_change_text and not emitted_text:
+        yield _delta_event(no_change_text)
 
     usage_event = {'type': 'usage', **total_usage}
     usage_event['cost_eur'] = round(usage_event['cost_eur'], 6)
