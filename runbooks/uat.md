@@ -26,7 +26,7 @@ A et B sont indépendants et peuvent se faire dans n'importe quel ordre. D ne se
 
 ### 0. Migration vers `uat_proj.qualibot`
 
-Statut au 21/10/2026 : fait : inventaire, clones, volumes, droits, index `chunks_index` (E2), export Lakebase (0.5), déploiement (0.7). Reste : `status.ready` de l'index (0.6), suppression des jobs en double et de l'ancien job de synchronisation (F3, 0.8 étape 1). La copie de sécurité (0.2c) n'a pas été faite avant l'export.
+Statut au 21/10/2026 : fait : inventaire, clones, volumes, droits, index `chunks_index` (E2), export Lakebase (0.5), contrôle (0.6), déploiement (0.7). Reste : suppression des jobs en double et de l'ancien job de synchronisation (F3, 0.8 étape 1). La copie de sécurité (0.2c) n'a pas été faite avant l'export.
 
 Les noms des jobs n'ont plus de suffixe de cible (`D_1_Qualibot_Parsing_Pipeline`, et non plus `..._qualibot-uat`). Le premier `bundle deploy` de `uat` renomme les jobs existants en place (même identifiant, même planning) : pas de doublon.
 
@@ -149,7 +149,7 @@ Ce job exporte Lakebase vers le volume, puis recharge `chat_*` et `app_errors` d
 
 **0.6 — Contrôle avant déploiement**
 
-Statut : `[ ]` (2026-10-21) tables (dont les tables chat et les six tables `258804869957724_*`) et volumes (`doc_compare`, `docling_models`, `images`, `staging`) présents. Reste : `status.ready` de l'index, la sortie du 2026-10-21 était tronquée (commande en F1).
+Statut : `[x] (2026-10-21)` tables (dont les tables chat et les six tables `258804869957724_*`) et volumes (`doc_compare`, `docling_models`, `images`, `staging`) présents ; index `chunks_index` `ready` = `true`, `indexed_row_count` = 137187.
 
 ```powershell
 databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
@@ -829,7 +829,7 @@ DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 10;
 
 ### F. Après le run complet de E2.8 (2026-10-21) — contrôles, planning, doublons
 
-Statut : F1 `[x] (2026-10-21)` : le run complet (job run `884840682425994`, mode `rechunk`) est en SUCCESS, `chunks` écrasé en `Overwrite` (v21), 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents ; reste le `status.ready` de l'index. F2 `[ ]` (déploiement du planning en `incremental` / `UNPAUSED`). F3 `[ ]` (jobs en double : dix-sept identifiants à inspecter, ci-dessous). F4 / F5 : voir les statuts de l'étape 0 et de D5. Le job `D_1_Qualibot_Parsing_Pipeline` (id `762813135325407`) a réussi. `databricks.yml` passe `uat` en `parsing_schedule_pause: "UNPAUSED"` et `parsing_run_mode: "incremental"` (le mode `rechunk` ne parse aucun nouveau document : il ne convient pas au planning quotidien).
+Statut : F1 `[x] (2026-10-21)` : le run complet (job run `884840682425994`, mode `rechunk`) est en SUCCESS, `chunks` écrasé en `Overwrite` (v21), 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents ; index `ready` = `true` (137187 lignes), job run `884840682425994` démarré le 2026-10-19 23:35 UTC. F2 `[ ]` (déploiement du planning en `incremental` / `UNPAUSED`). F3 `[ ]` (jobs en double : sept orphelins de l'ancienne racine + trois jobs de l'utilisateur à supprimer, ci-dessous). F4 / F5 : voir les statuts de l'étape 0 et de D5. Le job `D_1_Qualibot_Parsing_Pipeline` (id `762813135325407`) a réussi. `databricks.yml` passe `uat` en `parsing_schedule_pause: "UNPAUSED"` et `parsing_run_mode: "incremental"` (le mode `rechunk` ne parse aucun nouveau document : il ne convient pas au planning quotidien).
 
 **F1 — Contrôles du run (PowerShell, profil `UAT`)** : `<RUN_ID>` est l'identifiant affiché par `run-now` (sinon : `databricks jobs list-runs --job-id 762813135325407 --limit 3 --profile UAT`).
 
@@ -901,14 +901,29 @@ $ids = 377525869078389,779339891964836,236940839371957,783022027143685,762813135
 foreach ($id in $ids) { $j = databricks jobs get $id --profile UAT -o json | ConvertFrom-Json; "{0,-18} {1,-42} {2,-8} {3,-9} {4,-12} {5} {6}" -f $j.job_id, $j.settings.name, $j.settings.deployment.kind, $j.settings.schedule.pause_status, [DateTimeOffset]::FromUnixTimeMilliseconds($j.created_time).ToString('yyyy-MM-dd'), $j.creator_user_name, $j.settings.deployment.metadata_file_path }
 ```
 
-Garder, pour chaque nom, la ligne `deploiement=BUNDLE` (celle que le déploiement met à jour) ; le job de parsing à garder a l'id `762813135325407`. Supprimer les autres :
+Lecture du 2026-10-21 : le bundle de `uat` a pour racine `/Workspace/.bundle/qualibot/qualibot-uat` (`databricks.yml`). Les jobs créés le 2026-10-19 y sont rattachés (`377525869078389`, `236940839371957`, `762813135325407`, `854972118459514`, `990105543498681`, `161560065917637`, `36091234966600`) : ce sont ceux à garder. Les sept jobs de même nom de l'ancienne racine `/Workspace/Shared/.bundle/qualibot/qualibot-uat` (`779339891964836`, `783022027143685`, `1090642136386557`, `342815175501077`, `824967477595237`, `687448690184801`, `931830613336591`) ne sont plus mis à jour par aucun déploiement : à supprimer, sous le SP UAT (créateur de ces jobs). Les deux `New Job …` (`583262342123077`, `1103271564905209`) et l'ancien `qualibot-sync-user-capabilities-uat` (`851363031959777`) ont été créés par l'utilisateur, qui les supprime lui-même. Ne pas lancer l'étape one-shot `migrate-uat-state` du pipeline Bitbucket : elle recopierait l'ancien état sur la nouvelle racine.
+
+Les sept jobs de l'ancienne racine :
 
 ```powershell
-databricks jobs delete <JOB_ID> --profile UAT
-(databricks jobs list --profile UAT -o json | ConvertFrom-Json) | Group-Object { $_.settings.name } | Where-Object Count -gt 1 | ForEach-Object { $_.Name }
+databricks workspace mkdirs /Workspace/Shared/qualibot_uat_cleanup --profile UAT
+databricks workspace import /Workspace/Shared/qualibot_uat_cleanup/delete_duplicate_jobs --file runbooks/scripts/uat_cleanup/delete_duplicate_jobs.py --format SOURCE --language PYTHON --overwrite --profile UAT
+databricks jobs submit --json "@runbooks/scripts/uat_cleanup/delete_duplicate_jobs_submit.json" --profile UAT
 ```
 
-La dernière ligne ne doit plus rien afficher. Si la suppression est refusée (`PERMISSION_DENIED`) : c'est que le job appartient au SP ; le supprimer par une soumission sous le SP UAT, pas avec le compte personnel.
+Le notebook ne supprime un identifiant que si son nom et sa racine de bundle correspondent ; il échoue en nommant ceux qu'il a refusés. Les trois jobs de l'utilisateur :
+
+```powershell
+databricks jobs delete 583262342123077 --profile UAT
+databricks jobs delete 1103271564905209 --profile UAT
+databricks jobs delete 851363031959777 --profile UAT
+```
+
+Contrôle : la commande suivante ne doit plus rien afficher.
+
+```powershell
+(databricks jobs list --profile UAT -o json | ConvertFrom-Json) | Group-Object { $_.settings.name } | Where-Object Count -gt 1 | ForEach-Object { $_.Name }
+```
 
 **F4 — Contrôles du point 2 (étape 0)**
 
@@ -1050,5 +1065,6 @@ D5.9, anciens assistants (UI UAT → Agents) : les trois `qualibot_ALL_v2` / `_A
 
 ## Fait
 
+- 2026-10-21 — 37 documents `MISSING_CHUNKS` (171 passages au total) : documents presque sans texte (30 caractères, 5 images) flaggés par la garde `flag_ghost_documents` avant l'ajout des passages d'images ; 1970 passages sans `division` (30 documents listés, dont `UDA-00-053`, `TDA7-00-046`, `FDAQL-2851`). À surveiller après le premier run quotidien ; aucune action.
 - 2026-10-21 — E2 terminé : run complet `D_1_Qualibot_Parsing_Pipeline` (job run `884840682425994`, mode `rechunk`) en SUCCESS, `chunks` écrasé en `Overwrite` (v21) sans changement de schéma, 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents (7583 avec révision, 7576 avec date). Étapes 0.3, 0.5, 0.7, C1, C2 et E1 confirmées.
 - 2026-10-19 — E2, étapes 3 à 7 : `chunks_index` reconstruit par le compte de service (nouveau pipeline `c10bcd69-bfbc-4625-b94a-ebc7a81858b9`, « Index creation succeeded »), `indexed_row_count` = 137187 = lignes de `chunks`, QM-1041 n'apparaît plus dans les sources du chat. Restent : étapes 1 et 2 (déploiement du code corrigé, à confirmer) et 8 (run complet, test du correctif).
