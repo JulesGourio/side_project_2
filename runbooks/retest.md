@@ -318,3 +318,5 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Classeur `.xlsm`, colonnes ajoutées, feuille nouvelle, valeur −40 → 40 : chaque changement apparaît dans le rapport.
 - [ ] Parsing UAT en mode `full` : aucune révision remplacée ne revient dans `chunks` ; pas de nouveau `MISSING_CHUNKS` sur les révisions remplacées.
 - [ ] Chat DEV : question en français puis en anglais (premier message) : la réécriture/traduction répond, le journal du tour montre `databricks-gpt-6-luna` pour l'étape de réécriture (plus Gemini) ; comparer la latence du premier jeton avec l'ancienne.
+- [ ] Comparaison DEV : après une analyse, la ligne de `llm_requests` a `user_id` rempli (`SELECT user_id, created_at FROM llm_requests ORDER BY id DESC LIMIT 5`).
+- [ ] Pipeline `sync-prod-data` : ne copie plus que les modèles docling, plus aucun fichier Lakebase dans les artefacts.

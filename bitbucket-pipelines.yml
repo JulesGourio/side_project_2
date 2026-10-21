@@ -284,7 +284,7 @@ definitions:
           - bash utils/deploy/bitbucket_deploy.sh prod jobs
 
     # -----------------------------------------------------------------------
-    # Copies the docling models volume and the Lakebase data from UAT to PROD, in two steps.
+    # Copies the docling models volume from UAT to PROD, in two steps. Lakebase data never leaves its environment.
     # Staging files pass between the steps as pipeline artifacts.
     # -----------------------------------------------------------------------
     - step: &export-from-uat
@@ -295,7 +295,6 @@ definitions:
         script:
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
           - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          - pip install -q psycopg2-binary databricks-sdk
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
               echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'UAT')." >&2
@@ -309,7 +308,6 @@ definitions:
             EOF
           - chmod 600 "$HOME/.databrickscfg"
           - databricks fs cp -r dbfs:/Volumes/uat_proj/qualibot/docling_models staging/docling_models --profile job-runner-sa-uat
-          - python3 utils/lakebase_sync/export_lakebase_to_json.py --profile job-runner-sa-uat --out-dir staging/lakebase
         artifacts:
           - staging/**
 
@@ -322,7 +320,6 @@ definitions:
           - test "$BITBUCKET_BRANCH" = "main" || { echo "PROD is deployed from the main branch only." >&2; exit 1; }
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
           - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          - pip install -q psycopg2-binary databricks-sdk
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
               echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'Production')." >&2
@@ -336,7 +333,6 @@ definitions:
             EOF
           - chmod 600 "$HOME/.databrickscfg"
           - databricks fs cp -r staging/docling_models dbfs:/Volumes/prod_proj/qualibot/docling_models --overwrite --profile job-runner-sa-prod
-          - python3 utils/lakebase_sync/import_lakebase_from_json.py --profile job-runner-sa-prod --in-dir staging/lakebase
 
 pipelines:
   # Manual triggers (UAT first, then PROD).

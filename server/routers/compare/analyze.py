@@ -24,7 +24,7 @@ from server.services.infra.lakebase import (
     store_llm_request,
     update_llm_request_run, update_llm_request_usage,
 )
-from server.services.infra.user import require_compare
+from server.services.infra.user import get_user_identity, require_compare
 from server.routers.compare.config import APP_VERSION, MAX_CONCURRENT_ANALYSES, get_config
 from server.routers.compare.common import _validate_file
 
@@ -140,6 +140,7 @@ class _AnalysisJob:
     old_hash: str
     new_hash: str
     cache_version: str                # key of the report cache
+    user_id: str = ''                 # who asked, stored with the audit row
 
 
 @dataclass
@@ -341,6 +342,7 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
             file_type=result.metadata.file_type,
             endpoint_name=job.endpoint,
             messages_json=json.dumps(_sanitize_messages(result.messages), ensure_ascii=False),
+            user_id=job.user_id,
         )
 
         # Large diffs are split into per-section chunks (map-reduce); one model call per chunk.
@@ -500,6 +502,7 @@ async def analyze_documents(
         req_id=old_hash[:8] or 'nohash', host=host, token=token, endpoint=endpoint, cfg=cfg, processor=processor,
         processor_version=pv, old_name=old_name, new_name=new_name, old_bytes=old_bytes, new_bytes=new_bytes,
         old_hash=old_hash, new_hash=new_hash, cache_version=cache_version,
+        user_id=(await get_user_identity(request))['user_id'] or '',
     )
     # The response is returned at once so the SSE connection exists before any slow work; keepalive comments
     # (':keepalive') carry it through the gateway during long waits.

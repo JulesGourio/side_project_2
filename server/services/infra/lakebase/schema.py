@@ -280,7 +280,9 @@ async def _apply_schema(pool: asyncpg.Pool) -> None:
             ('generation_ms',   'INTEGER'),     # LLM call start -> end
             ('total_ms',        'INTEGER'),
             ('chunked_parts',   'INTEGER'),     # map-reduce parts (0: one call)
+            ('user_id',         'TEXT'),        # who ran the analysis
         ])
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_llm_requests_user ON llm_requests (user_id)')
 
         # ── errors (application errors persisted for monitoring) ──────────────
         await conn.execute('''

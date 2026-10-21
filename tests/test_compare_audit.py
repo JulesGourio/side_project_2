@@ -121,6 +121,7 @@ def client(app, monkeypatch):
     alice = AsyncMock(return_value={'user_id': 'alice', 'workspace_id': None, 'email': None})
     monkeypatch.setattr('server.routers.compare.common.get_user_identity', alice)
     monkeypatch.setattr('server.routers.compare.volume.get_user_identity', alice)
+    monkeypatch.setattr('server.routers.compare.analyze.get_user_identity', alice)
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

@@ -29,6 +29,7 @@ def _post(monkeypatch, llm_chunks, warnings=('scanned PDF',)):
 
     mocks = SimpleNamespace(run=AsyncMock(), usage=AsyncMock(), store=AsyncMock(return_value=7), cache=AsyncMock())
     with patch.object(analyze, 'get_credentials', return_value=('https://host', 'tok')), \
+            patch.object(analyze, 'get_user_identity', AsyncMock(return_value={'user_id': 'u1', 'workspace_id': None, 'email': None})), \
             patch.object(analyze, 'get_processor', return_value=processor), \
             patch.object(analyze, 'get_cached_analysis', AsyncMock(return_value=None)), \
             patch.object(analyze, 'store_analysis_cache', mocks.cache), \

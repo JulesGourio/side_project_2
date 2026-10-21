@@ -305,6 +305,9 @@ One row per `/compare/analyze` analysis.
 | `generation_ms` | INTEGER | from the call to the end |
 | `total_ms` | INTEGER | total duration |
 | `chunked_parts` | INTEGER | number of parts (split into several calls; 0: one call) |
+| `user_id` | TEXT | user who ran the analysis (NULL for rows written before the column existed) |
+
+Index: `idx_llm_requests_user` (`user_id`).
 
 ## Impact search
 
