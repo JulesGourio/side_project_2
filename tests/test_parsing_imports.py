@@ -17,7 +17,7 @@ print(','.join(loaded))
 
 
 def test_importing_the_driver_helpers_does_not_start_spark():
-    defaults = {"PIPELINE_WRITE_ENV": "dev", "PARSING_INTRAQUAL_BRONZE": "bronze.sch",
+    defaults = {"PIPELINE_WRITE_ENV": "dev", "PARSING_INTRAQUAL_GOLD": "gold.sch",
                 "PARSING_VOLUME_ROOT_PATH": "/Volumes/c/s/root", "PARSING_VOLUME_BASE_PATH": "/Volumes/c/s/img",
                 "PARSING_OFFLINE_MODELS": "/models"}
     env = {**os.environ, **{k: v for k, v in defaults.items() if k not in os.environ},

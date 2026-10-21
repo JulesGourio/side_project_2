@@ -296,3 +296,9 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Onglet Comparaison : aperçu d'un PowerPoint de plusieurs diapositives. Toutes les diapositives s'affichent, dans l'ordre (avant : la première seulement). Sans LibreOffice sur l'app, l'aperçu de secours (texte positionné) s'affiche.
 - [ ] Aperçu d'un `.doc` avec des accents (é, à, ç) : le texte est lisible, pas de `�`.
 - [ ] Chat DEV : une question de plus de 20 000 caractères (long texte collé) répond ; la ligne de `chat_turns` a le code `query_truncated` dans `warnings`.
+
+## 2026-10-21 — le parsing lit le data asset Intraqual (gold) au lieu du bronze
+
+- [ ] Section G de `uat.md` (droits, déploiement des jobs, `1_categories`, `2_manifest`, comparaison de `category_reference` et `parse_manifest` avant / après : 0 ligne de différence attendue).
+- [ ] `1_categories` : le journal liste l'âge de `document_revisions_intraqual` et `category_ancestors_intraqual` ; une valeur de `parsing_max_source_staleness_hours` à `1` fait échouer la tâche avec la liste des tables périmées (puis remettre `36`).
+- [ ] Chat : la source d'un document AS et celle d'un document IS gardent leur division et leur catégorie.

@@ -1,0 +1,15 @@
+{
+  "run_name": "qualibot-grant-intraqual-gold",
+  "run_as": {
+    "service_principal_name": "3e5cd4e5-f765-4760-b974-ee7715258b39"
+  },
+  "tasks": [
+    {
+      "task_key": "grant_intraqual_gold",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/qualibot_grants/grant_intraqual_gold",
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}

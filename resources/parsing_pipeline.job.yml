@@ -79,7 +79,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -108,7 +108,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -148,7 +148,7 @@ resources:
               spark.databricks.delta.autoCompact.enabled: "true"
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -184,7 +184,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -195,7 +195,7 @@ resources:
 
       tasks:
         - task_key: "1_categories"
-          description: "Intraqual source freshness guard + build category_reference"
+          description: "Intraqual data asset freshness guard + build category_reference"
           job_cluster_key: meta_cpu_cluster
           notebook_task:
             notebook_path: ../utils/parsing_pipeline/create_proj_category_reference.py
@@ -350,7 +350,7 @@ resources:
               - databricks-sdk>=0.118.0
               - packaging
 
-      # Daily at night: upstream Intraqual ingestion lands during the day, and 1_categories fails explicitly if sources are older than
+      # Daily at night: the upstream Intraqual data asset lands during the day, and 1_categories fails explicitly if sources are older than
       # `parsing_max_source_staleness_hours`.
       schedule:
         quartz_cron_expression: ${var.parsing_schedule_cron}

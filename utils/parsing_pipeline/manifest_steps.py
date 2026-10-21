@@ -12,7 +12,7 @@ from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 
-from categories import normalize_cols_upper
+from categories import read_revisions
 from tables import ensure_primary_key, table_exists, write_table
 from leap_utils.common.logger import get_logger
 from config import (
@@ -20,9 +20,6 @@ from config import (
     DIVISION_REFERENCE_TABLE,
     DOC_DATE_CUTOFF,
     EXCLUDED_IDCATS,
-    GD_DOC_FALLBACK,
-    GD_DOC_LATEST,
-    GD_TYPDOC_LATEST,
     MANUAL_REF_EXCLUSIONS,
     PARSE_MANIFEST_TABLE,
     TARGET_CHUNK_TABLE,
@@ -69,17 +66,20 @@ def _delete_iddocs(tables, iddocs) -> None:
             logger.warning(f"Could not prune {table}: {exc}")
 
 
-def doc_rows(table) -> dict[int, tuple]:
-    """IDDOC -> (ref, title) for every known document of an Intraqual document table.
+def doc_rows() -> dict[int, tuple]:
+    """IDDOC -> (ref, title) for every known revision of the Intraqual documents.
 
-    :param table: Full name of an Intraqual document table.
     :return: IDDOC to ``(ref, title)``.
     """
     return {
         r.IDDOC: (r.ref, r.titre)
         for r in (
-            spark.read.table(table)
-            .select(F.col("IDDOC"), F.col("REF").alias("ref"), F.col("TITRE").alias("titre"))
+            read_revisions(spark)
+            .select(
+                F.col("document_revision_ID").alias("IDDOC"),
+                F.col("document_reference").alias("ref"),
+                F.col("document_title").alias("titre"),
+            )
             .filter(F.col("IDDOC").isNotNull())
             .dropDuplicates(["IDDOC"])
             .collect()
@@ -142,12 +142,13 @@ def prune_stale_revisions() -> None:
         logger.info("No REF with multiple IDDOCs in chunks - nothing to prune.")
         return
 
-    newest_first = Window.partitionBy("REF").orderBy(F.desc("_gd_indice"), F.desc("IDDOC"))
+    newest_first = Window.partitionBy("REF").orderBy(F.desc("_indice"), F.desc("IDDOC"))
     stale_revision_iddocs = [
         r.IDDOC for r in
         df_chunk_iddocs
         .join(df_dup_refs, on="REF", how="inner")
-        .join(spark.table(GD_DOC_LATEST).select("IDDOC", F.col("indice").alias("_gd_indice")), on="IDDOC", how="left")
+        .join(read_revisions(spark).select(F.col("document_revision_ID").alias("IDDOC"),
+                                           F.col("document_index").alias("_indice")), on="IDDOC", how="left")
         .withColumn("_rn", F.row_number().over(newest_first))
         .filter(F.col("_rn") > 1)
         .select("IDDOC").distinct().collect()
@@ -167,7 +168,7 @@ def classify_root_folders(root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre
                            iddoc_to_idcat) -> dict[str, list[dict]]:
     """Sort the volume root folders into KEEP / DELETE / ORPHAN / SKIP / MANUAL / CAT_EXCL.
 
-    KEEP: in scope. DELETE: known but out of scope. ORPHAN: IDDOC unknown in gd_doc. SKIP: name is not D_/Dm_.
+    KEEP: in scope. DELETE: known but out of scope. ORPHAN: IDDOC unknown in the Intraqual revisions. SKIP: name is not D_/Dm_.
     MANUAL: REF excluded by configuration. CAT_EXCL: in scope but its principal category is excluded.
 
     :param root_items: Items of the volume root, from ``dbutils.fs.ls``.
@@ -285,7 +286,7 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id) -> None:
         + skipped_rows(classified["cat_excl"], "SKIPPED_CATEGORY_EXCLUDED")
     )
 
-    # Documents recorded earlier that vanished from both the volume and gd_doc. The anti-join cannot tell a
+    # Documents recorded earlier that vanished from both the volume and the Intraqual revisions. The anti-join cannot tell a
     # source-side deletion from another cause of disappearance.
     folder_iddocs = {r["IDDOC"] for key in ("keep", "delete", "orphan", "manual", "cat_excl") for r in classified[key]}
     try:
@@ -333,16 +334,6 @@ def archive_condition() -> Column:
     return F.col("doc_date").isNotNull() & (F.col("doc_date") < F.lit(DOC_DATE_CUTOFF).try_cast("date"))
 
 
-def _doc_date_column(table) -> Column:
-    """Document date column of an Intraqual table (`dtdiff`, or `DATEDIFF` when the table uses that name), NULL when absent.
-
-    :param table: Intraqual table with a document date column.
-    """
-    cols = {c.lower() for c in spark.read.table(table).columns}
-    source = "dtdiff" if "dtdiff" in cols else "DATEDIFF" if "datediff" in cols else None
-    return F.col(source).try_cast("date") if source else F.lit(None).try_cast("date")
-
-
 def build_manifest(rows_keep) -> DataFrame:
     """One row per KEEP document with its revision, date, hierarchy and type.
 
@@ -369,22 +360,13 @@ def build_manifest(rows_keep) -> DataFrame:
         ]),
     )
 
+    df_revisions = read_revisions(spark).filter(F.col("document_revision_ID").isNotNull())
     df_dates = (
-        spark.read.table(GD_DOC_LATEST)
-        .select(F.col("IDDOC"), _doc_date_column(GD_DOC_LATEST).alias("doc_date"),
-                F.col("INDICE").try_cast("string").alias("indice"))
-        .filter(F.col("IDDOC").isNotNull())
+        df_revisions
+        .select(F.col("document_revision_ID").alias("IDDOC"), F.col("published_date").try_cast("date").alias("doc_date"),
+                F.col("document_index").try_cast("string").alias("indice"))
         .dropDuplicates(["IDDOC"])
     )
-    if (GD_DOC_FALLBACK or "").strip():
-        df_dates_fallback = (
-            spark.read.table(GD_DOC_FALLBACK)
-            .select(F.col("IDDOC"), _doc_date_column(GD_DOC_FALLBACK).alias("doc_date_fb"))
-            .filter(F.col("IDDOC").isNotNull())
-            .dropDuplicates(["IDDOC"])
-        )
-    else:
-        df_dates_fallback = df_dates.select("IDDOC").limit(0).withColumn("doc_date_fb", F.lit(None).try_cast("date"))
 
     try:
         df_hierarchy = spark.table(DIVISION_REFERENCE_TABLE).drop("division_source")
@@ -393,27 +375,15 @@ def build_manifest(rows_keep) -> DataFrame:
             f"{DIVISION_REFERENCE_TABLE} not found - run create_proj_category_reference before create_proj_parse_manifest. ({exc})"
         )
 
-    df_doc_types = (
-        normalize_cols_upper(spark.read.table(GD_TYPDOC_LATEST))
-        .filter(F.col("IDLG") == 1)
-        .select(F.col("IDTYPDOC"), F.col("NOMTYPDOC").alias("type_document"))
-        .dropDuplicates(["IDTYPDOC"])
-    )
     df_iddoc_type = (
-        spark.read.table(GD_DOC_LATEST)
-        .select("IDDOC", "IDTYPDOC")
-        .filter(F.col("IDDOC").isNotNull())
+        df_revisions
+        .select(F.col("document_revision_ID").alias("IDDOC"), F.col("document_type").alias("type_document"))
         .dropDuplicates(["IDDOC"])
-        .join(F.broadcast(df_doc_types), on="IDTYPDOC", how="left")
-        .select("IDDOC", "type_document")
     )
 
     df_manifest = (
         df_keep
         .join(df_dates, on="IDDOC", how="left")
-        .join(F.broadcast(df_dates_fallback), on="IDDOC", how="left")
-        .withColumn("doc_date", F.coalesce(F.col("doc_date"), F.col("doc_date_fb")))
-        .drop("doc_date_fb")
         .join(F.broadcast(df_hierarchy), on="IDDOC", how="left")
         .join(F.broadcast(df_iddoc_type), on="IDDOC", how="left")
         .withColumn("langue", F.lit("fr-FR"))
