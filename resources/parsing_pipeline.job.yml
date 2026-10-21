@@ -20,8 +20,7 @@
 #
 # Every schedule stays PAUSED until explicitly promoted.
 #
-# The job is declared once at the root. The targets at the end only override run_as: the DEV service principal
-# is the default, and the UAT and PROD targets run as their own service principal.
+# The job is declared once at the root; each target at the end names the service principal it runs as (run_as).
 
 resources:
   jobs:
@@ -33,7 +32,6 @@ resources:
       # One run at a time: the parse tasks hand over through parsing_run_scope and parsing_gpu_queue, rewritten by each run.
       max_concurrent_runs: 1
 
-      # DEV service principal by default; the targets at the end of this file override it.
       queue:
         enabled: true
       email_notifications:
@@ -41,8 +39,6 @@ resources:
           - ${var.notification_email}
       notification_settings:
         no_alert_for_canceled_runs: true
-      run_as:
-        service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
 
       tags:
         project: Qualibot
@@ -358,6 +354,14 @@ resources:
         pause_status: ${var.parsing_schedule_pause}
 
 targets:
+  dev:
+    resources:
+      jobs:
+        parsing_pipeline:
+          name: "D_1_Qualibot_Parsing_Pipeline"
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
+
   uat:
     resources:
       jobs:
