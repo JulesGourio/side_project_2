@@ -21,6 +21,7 @@ IDCAT_PROCESSES = 12       # "1 - PROCESSES / PROCESSUS" → belongs to AS
 IDCAT_AS = 3346            # "AS - Aerostructures"
 IDCAT_IS = 3284            # "IS - Interconnection Systems"
 IDCAT_DIRECTIVE = 962      # "0 - DIRECTIVE GROUPE LATECOERE"
+IDCAT_PROCESS_TREE = 3870  # "00-LATECOERE PROCESSES_One QMS": processes shared by the divisions
 MAX_HIERARCHY_DEPTH = 7
 
 
@@ -87,6 +88,7 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
          # Under the process tree a leaf category named after the division marks the document.
          .when(F.upper(F.trim(F.col("leaf_nomcat"))) == "AS", F.lit("AS"))
          .when(F.upper(F.trim(F.col("leaf_nomcat"))) == "IS", F.lit("IS"))
+         .when(F.col("root_idcat") == IDCAT_PROCESS_TREE, F.lit("COMMUN"))
          .otherwise(F.lit("AUTRE"))
     )
 

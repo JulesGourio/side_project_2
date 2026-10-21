@@ -122,8 +122,9 @@ def test_a_leaf_category_named_after_a_division_sets_the_division(spark):
     ref = _reference(spark)
     assert ref[10]["division"] == "AS"
     assert ref[11]["division"] == "IS"
-    assert ref[12]["division"] == "AUTRE"
-    assert ref[14]["division"] == "AUTRE"
+    assert ref[12]["division"] == "COMMUN"
+    assert ref[14]["division"] == "COMMUN"
+    assert ref[5]["division"] == "AUTRE"
 
 
 def test_scope_keeps_current_validated_visible_revisions(spark):
