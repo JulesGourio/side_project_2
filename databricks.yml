@@ -472,7 +472,7 @@ targets:
       pipeline_write_env: uat
       alerts_warehouse_id: "5890912c31867b77"
       parsing_num_workers: "4"
-      parsing_run_mode: "rechunk"
+      parsing_run_mode: "incremental"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_bronze through the shared metastore.
       intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
@@ -483,7 +483,7 @@ targets:
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
       # chunks_full is built, but chunks_full_index is not in parsing_vector_search_indexes, so it is neither created nor synced.
       parsing_build_chunks_full: "true"
-      parsing_schedule_pause: "PAUSED"
+      parsing_schedule_pause: "UNPAUSED"
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "uat-job"

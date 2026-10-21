@@ -471,13 +471,15 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
                 call_messages = list(messages) + [{'role': 'assistant', 'content': written},
                                                   {'role': 'user', 'content': CONTINUE_PROMPT}]
             t0 = time.monotonic()
-            got = ''
+            got, first_text_s = '', None
             try:
                 async for kind, value in stream_once(host, token, endpoint, call_messages,
                                                      effective_max_tokens(endpoint, max_tokens)):
                     if kind == 'keepalive':
                         yield ': keepalive\n\n'
                     elif kind == 'text':
+                        if first_text_s is None:
+                            first_text_s = round(time.monotonic() - t0, 2)
                         if written and not got:
                             value = value.lstrip() if written.endswith((' ', '\n')) else value
                         got += value
@@ -491,7 +493,7 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
                 if not got and not written:
                     raise LlmFailure('empty', 'no answer text')
                 attempts.append({'endpoint': endpoint, 'outcome': 'ok' if not written else 'continued',
-                                 's': round(time.monotonic() - t0, 1)})
+                                 's': round(time.monotonic() - t0, 1), 'first_text_s': first_text_s})
                 written += got
                 answered_by = endpoint
                 break
@@ -499,7 +501,8 @@ async def _stream_answer(host: str, token: str, endpoints: List[str], messages: 
                 last = exc
                 written += got
                 attempts.append({'endpoint': endpoint, 'outcome': exc.kind, 'status': exc.status,
-                                 's': round(time.monotonic() - t0, 1), 'after_chars': len(written)})
+                                 's': round(time.monotonic() - t0, 1), 'first_text_s': first_text_s,
+                                 'after_chars': len(written)})
                 logger.warning('chat_llm: %s failed (%s %s, %d chars written): %s',
                                endpoint, exc.kind, exc.status or '', len(written), exc.detail[:200])
                 cool(endpoint, cooldown_for(exc.kind))

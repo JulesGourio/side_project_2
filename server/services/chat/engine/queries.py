@@ -82,10 +82,11 @@ async def translate_query(host: str, token: str, question: str, target: str,
     system = prompts.read('translate_query').replace('{language}', _TRANSLATE_NAMES[target])
     chain = chat_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
     info: Dict[str, Any] = {}
+    messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': question}]
+    log.model_io['rewrite'] = {'messages': messages}
     try:
-        text, used = await chat_llm.complete_patiently(host, token, chain, [{'role': 'system', 'content': system},
-                                                                   {'role': 'user', 'content': question}],
-                                             translate_max_tokens(), rewrite_timeout_s(), info=info)
+        text, used = await chat_llm.complete_patiently(host, token, chain, messages, translate_max_tokens(),
+                                                       rewrite_timeout_s(), info=info)
     except Exception as exc:
         logger.warning('chat: query translation failed after its retries (%s)', exc)
         log.data.update({'rewrite_ok': False, 'rewrite_attempts': info.get('attempts')})
@@ -117,6 +118,7 @@ async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, st
     log = log if log is not None else TurnLog()
     transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)
     messages = [{'role': 'system', 'content': REWRITE_PROMPT}, {'role': 'user', 'content': transcript}]
+    log.model_io['rewrite'] = {'messages': messages}
     chain = chat_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
     info: Dict[str, Any] = {}
     try:
