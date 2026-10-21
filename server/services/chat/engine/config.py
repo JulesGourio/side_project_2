@@ -6,6 +6,8 @@ import re
 from functools import lru_cache
 from typing import Any, Dict, List
 
+from server.services.chat.engine.types import VsFilters
+
 from server.services.chat import llm as chat_llm, prompts
 
 logger = logging.getLogger(__name__)
@@ -127,7 +129,7 @@ def rewrite_timeout_s() -> float:
     return float(_int_env('CHAT_REWRITE_TIMEOUT_S', 15))
 
 
-def division_filter(division: str) -> Dict[str, Any]:
+def division_filter(division: str) -> VsFilters:
     """Vector Search filter of the chat's division (ALL: none).
 
     :param division: division code, any case (normalised here)

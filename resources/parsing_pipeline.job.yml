@@ -31,6 +31,7 @@ resources:
 
       # One run at a time: the parse tasks hand over through parsing_run_scope and parsing_gpu_queue, rewritten by each run.
       max_concurrent_runs: 1
+      timeout_seconds: 172800   # 48 h: a run never holds the single concurrent slot longer
 
       queue:
         enabled: true
@@ -191,6 +192,7 @@ resources:
 
       tasks:
         - task_key: "1_categories"
+          timeout_seconds: 3600
           description: "Intraqual data asset freshness guard + build category_reference"
           job_cluster_key: meta_cpu_cluster
           notebook_task:
@@ -200,6 +202,7 @@ resources:
             - pypi: {package: "packaging"}
 
         - task_key: "2_manifest"
+          timeout_seconds: 7200
           description: "Qualibot scope -> parsed_documents exclusions + parse_manifest"
           depends_on:
             - task_key: "1_categories"
@@ -285,6 +288,7 @@ resources:
           # No cluster library: Docling and its parsers are installed by the %pip cells of the notebook (S policy, standard runtime).
 
         - task_key: "4_describe_images"
+          timeout_seconds: 43200
           description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
           depends_on:
             - task_key: "3c_chunks"
@@ -302,6 +306,7 @@ resources:
             - pypi: {package: "packaging"}
 
         - task_key: "5_sync_index"
+          timeout_seconds: 10800
           description: "Sync Vector Search indexes on the rewritten chunk tables (creating one first if it doesn't exist yet)"
           depends_on:
             - task_key: "4_describe_images"
@@ -322,6 +327,7 @@ resources:
             - pypi: {package: "databricks-sdk>=0.118.0"}
 
         - task_key: "6_update_kb_metadata"
+          timeout_seconds: 3600
           description: "Rewrite the document catalog and bump catalog_metadata (Lakebase) now the chain succeeded end to end"
           depends_on:
             - task_key: "5_sync_index"

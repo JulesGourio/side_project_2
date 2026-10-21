@@ -362,3 +362,17 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Application DEV : les polices Montserrat (titres), Open Sans (texte) et JetBrains Mono (code) s'affichent comme avant, sans requête vers `fonts.googleapis.com` (onglet Réseau du navigateur).
 - [ ] Chat DEV, panne simulée de la réécriture : le journal du tour montre 2 recherches (une réordonnée de 36 passages, une brute de 12) pour un tour en mode bilingue, soit 48 candidats comme un tour normal.
 - [ ] UAT, après le déploiement : `christophe.pelissier` et `yosif.karapendov` accèdent encore à l'application seulement s'ils sont membres des groupes `Role-Project-LEAP-End-users-Qualibot-DocCompare` ou `...-ChatBot` ; sinon l'accès est coupé (voulu).
+
+## 2026-10-21 — parsing : tolérance aux pannes (constats L-21 et L-b12)
+
+- [ ] Déployer les jobs sur DEV (`deploy-dev-jobs`) et lancer un run incrémental du job de parsing : `bundle validate` accepte les `timeout_seconds` du job (48 h) et des tâches `1_categories`, `2_manifest`, `4_describe_images`, `5_sync_index`, `6_update_kb_metadata`.
+- [ ] Tâche `5_sync_index` : le journal montre le message d'attente de la synchronisation puis « done — indexed_rows … » seulement quand l'index revient à `ONLINE_NO_PENDING_UPDATE` (avant, elle concluait dès le premier sondage).
+- [ ] Tâche `4_describe_images` : une image PNG est décrite sans erreur de format (le type est lu dans le fichier).
+- [ ] Réparer un run (« Repair run » dans l'interface) après une réussite partielle : `document_change_log` ne gagne pas de ligne en double (`SELECT IDDOC, event_type, job_run_id, COUNT(*) FROM dev_proj.qualibot.document_change_log GROUP BY ALL HAVING COUNT(*) > 1` ne renvoie rien).
+- [ ] Run complet (`parsing_run_mode: full`, seulement quand c'est voulu) : les anciens `_pipeline_checkpoint_*` de plus de 30 jours disparaissent, le plus récent reste.
+
+## 2026-10-22 — arrêt d'un tour et types du moteur de chat
+
+- [ ] Chat DEV : cliquer sur « Stop » pendant une réponse, y compris pendant le temps de réflexion avant le premier mot. La réponse s'arrête, aucune nouvelle ligne de coût ne s'ajoute, et la ligne de `chat_turns` a le statut `aborted` et le code `client_disconnected` (`SELECT status, warnings, created_at FROM dev_proj.qualibot.chat_turns ORDER BY created_at DESC LIMIT 5` après un export).
+- [ ] Même test avec une question dans une langue qui demande la traduction du retour : l'arrêt est pris en compte immédiatement.
+- [ ] Une réponse complète se termine normalement (statut `ok`) : l'écoute de la fermeture du socket ne la coupe pas.

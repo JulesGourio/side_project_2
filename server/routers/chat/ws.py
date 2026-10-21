@@ -190,7 +190,16 @@ async def chat_ws(websocket: WebSocket) -> None:
             'sources': collected_sources,
         })
 
-    try:
+    async def _client_left() -> None:
+        """Return when the browser closes the socket; what it sends meanwhile is ignored."""
+        while True:
+            message = await websocket.receive()
+            if message['type'] == 'websocket.disconnect':
+                return
+
+    async def _turn() -> None:
+        """Translate the question, run the engine and relay its events until the answer is sent or the turn fails."""
+        nonlocal translate_ctx, answer_stream, collected_sources, collected_citations, error_text
         messages_for_engine = messages
         if TRANSLATE_BRIDGE_ENABLED and user_content:
             with log.timed('translate_in'):
@@ -258,6 +267,16 @@ async def chat_ws(websocket: WebSocket) -> None:
                 await _send_tired()
                 break
 
+    turn = asyncio.create_task(_turn())
+    left = asyncio.create_task(_client_left())
+    try:
+        # A stop (or a closed tab) ends the turn at once, whatever step it is in, not at the next send.
+        await asyncio.wait({turn, left}, return_when=asyncio.FIRST_COMPLETED)
+        if not turn.done():
+            turn.cancel()
+            await asyncio.gather(turn, return_exceptions=True)
+            raise WebSocketDisconnect()
+        turn.result()
     except WebSocketDisconnect:
         logger.info('Chat WebSocket disconnected during stream')
         if outcome == 'ok':
@@ -280,6 +299,7 @@ async def chat_ws(websocket: WebSocket) -> None:
             except Exception:
                 pass
     finally:
+        left.cancel()
         if answer_stream is not None:
             # Frees the engine's answer slot now, not when the generator is garbage-collected.
             try:

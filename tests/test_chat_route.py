@@ -12,7 +12,9 @@ Coverage:
     a browser that leaves mid-answer gives an 'aborted' turn
 """
 
+import asyncio
 import json
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -49,7 +51,7 @@ OK_EVENTS = (
 )
 
 
-def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=True):
+def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=True, leave_after=None):
     """One WebSocket turn with everything external mocked; returns (messages, mocks)."""
     engine = engine or MagicMock(side_effect=_engine_stream(*OK_EVENTS))
     save_turn = AsyncMock(return_value=(41, 42))
@@ -76,10 +78,13 @@ def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=Tru
                 while True:
                     m = ws.receive_json()
                     received.append(m)
-                    if m['type'] in ('done', 'error'):
+                    if m['type'] in ('done', 'error') or (leave_after and len(received) >= leave_after):
                         break
             except WebSocketDisconnect:
                 pass
+            if leave_after:
+                ws.close()
+                time.sleep(0.5)   # the server ends the turn on its own; the test client must not tear it down first
     return received, {'engine': engine, 'save_turn': save_turn, 'store_turn': store_turn}
 
 
@@ -202,3 +207,33 @@ def test_failed_turn_records_the_message_the_user_saw(client):
     _, mocks = _talk(client, pool=MagicMock(), engine=engine)
     log = _logged_turn(mocks).args[0]
     assert log.data['user_message'] == TIRED_MESSAGE and log.error['message'] == 'every answer model failed'
+
+
+def test_a_stop_ends_the_turn_in_the_engine_and_saves_it_as_aborted(client):
+    state = {'closed': False}
+
+    async def _never_ending(*args, **kwargs):
+        try:
+            yield f"data: {json.dumps({'type': 'response.output_text.delta', 'delta': 'début'})}\n\n"
+            await asyncio.sleep(3600)
+        finally:
+            state['closed'] = True
+    received, mocks = _talk(client, pool=MagicMock(), engine=MagicMock(side_effect=_never_ending), leave_after=1)
+    log = _logged_turn(mocks).args[0]
+    assert received[0]['type'] == 'delta' and state['closed']
+    assert log.status == 'aborted' and log.codes == ['client_disconnected']
+    assert mocks['save_turn'].await_args.kwargs['status'] == 'aborted'
+
+
+def test_a_stop_while_the_answer_is_hidden_by_the_translation_still_ends_the_turn(client):
+    state = {'closed': False}
+
+    async def _silent(*args, **kwargs):
+        try:
+            yield ': keepalive\n\n'
+            await asyncio.sleep(3600)
+        finally:
+            state['closed'] = True
+    received, mocks = _talk(client, pool=MagicMock(), engine=MagicMock(side_effect=_silent), leave_after=1)
+    assert received[0]['type'] == 'ping' and state['closed']
+    assert (_logged_turn(mocks).args[0].status, _logged_turn(mocks).args[0].error, _logged_turn(mocks).args[0].codes) == ('aborted', {}, ['client_disconnected'])

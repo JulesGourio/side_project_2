@@ -22,6 +22,8 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 | `categories.py` | Category hierarchy, division of each document, scope gate (Spark) |
 | `manifest_steps.py` | Phases of `2_manifest` |
 | `selection.py` | Choice of the best file per IDDOC (format priorities) |
+| `index_state.py` | Whether a Vector Search index is still syncing, from its detailed state |
+| `retention.py` | Which checkpoint snapshots a full run drops (older than `CHECKPOINT_SNAPSHOT_KEEP_DAYS`, the latest is kept) |
 | `parse_steps.py` | Phases of `3_parse`: run scope, selection, batched parsing, resume, retry, empty folders |
 | `build_steps.py` | Tables of `3_parse` built from the checkpoint: `image_metadata`, `parsed_documents`, passages, archive notices |
 | `output_steps.py` | Writes of `3_parse`: tables, run health, change log, archive notices, ghost-document guard |
@@ -36,8 +38,8 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 
 The modules listed in `config.WORKER_MODULES` (`chunking`, `worker`, `format_parsers`, `image_fallbacks`, `image_utils`, `config`) are shipped to the Spark workers; the others run on the driver.
 
-Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config.py`, `selection.py`
-and the image description in `llm_describe.py`.
+Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config.py`, `selection.py`,
+`index_state.py`, `retention.py` and the image description in `llm_describe.py`.
 
 ## Tasks
 
@@ -291,3 +293,18 @@ Quality checks (`tables.py`, Great Expectations through `leap_utils`): a RED fai
 
 - [`resources/parsing_pipeline.job.yml`](../../resources/parsing_pipeline.job.yml): the job, its clusters and its parameters.
 - [`utils/README.md`](../README.md): the other scripts of `utils/`.
+
+## Behaviours worth knowing
+
+- **Timeouts.** The job stops after 48 hours. `1_categories` and `6_update_kb_metadata` stop after 1 hour, `2_manifest` after 2,
+  `5_sync_index` after 3 and `4_describe_images` after 12. The parsing tasks (`3_parse`, `3b_parse_pdf`, `3c_chunks`) have
+  no task limit: a full run takes many hours.
+- **Pruning.** When a delete on a derived table fails, the rows of `parsed_documents` that point to it stay, so the next
+  run finds the same IDDOCs and prunes them again; the failure is logged as an error.
+- **Index wait.** `5_sync_index` treats `ONLINE_TRIGGERED_UPDATE` and `ONLINE_UPDATING_PIPELINE_RESOURCES` as a sync in progress
+  and waits for `ONLINE_NO_PENDING_UPDATE`.
+- **Change log.** A repaired run keeps its job run id; `document_change_log` does not repeat the changes it already holds
+  for that run.
+- **Checkpoint snapshots.** A full run drops the `_pipeline_checkpoint_<timestamp>` snapshots older than 30 days, keeping the
+  most recent one.
+- **Image descriptions.** The media type sent to the vision model (PNG, JPEG, GIF or WebP) is read from the file.

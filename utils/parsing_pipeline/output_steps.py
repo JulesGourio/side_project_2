@@ -139,6 +139,14 @@ def log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_ru
                 "old_doc_date", "new_doc_date", "job_run_id", "logged_at")
     )
 
+    try:
+        # A repaired run keeps its job run id: the changes it already logged are not logged twice.
+        df_logged = (spark.table(TARGET_CHANGE_LOG_TABLE).filter(F.col("job_run_id") == job_run_id)
+                     .select("IDDOC", "event_type", "job_run_id").distinct())
+        df_log = df_log.join(df_logged, on=["IDDOC", "event_type", "job_run_id"], how="left_anti")
+    except Exception:
+        logger.info(f"[CHANGE LOG] No existing {TARGET_CHANGE_LOG_TABLE} to check for repeated rows.")
+
     n = df_log.count()
     if n == 0:
         logger.info("[CHANGE LOG] No new/revised documents to log this run.")

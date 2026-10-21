@@ -1,6 +1,7 @@
-"""Shapes of the dicts the chat engine passes around: search rows, hits, passage records, grouped documents."""
+"""Shapes of the dicts the chat engine passes around: search rows, hits, passage records, grouped documents, the
+Vector Search filter and request body, what the retrieval returns and what the answer call reports."""
 
-from typing import List, TypedDict
+from typing import Any, List, TypedDict
 
 
 class Hit(TypedDict):
@@ -49,3 +50,54 @@ class PassageRecord(TypedDict):
     url: str | None
     semantic_headers: str | None
     chunk_text: str | None
+
+
+class VsFilters(TypedDict, total=False):
+    """The Vector Search filter of a turn: the divisions searched (absent for no filter)."""
+    division: List[str]
+
+
+class RerankerSpec(TypedDict):
+    """The reranker part of a Vector Search request."""
+    model: str
+    parameters: dict[str, List[str]]
+
+
+class QueryPayload(TypedDict, total=False):
+    """The body of a Vector Search query."""
+    query_text: str
+    columns: List[str]
+    num_results: int
+    query_type: str
+    filters_json: str
+    reranker: RerankerSpec
+
+
+class RetrievalResult(TypedDict):
+    """What ``retrieve_for_turn`` returns."""
+    question: str
+    fr_query: str
+    en_query: str
+    rows: List[SearchRow]
+    named: List[str]
+    index: str
+    log: Any               # the TurnLog of the turn
+
+
+class AnswerUsage(TypedDict, total=False):
+    """Token counts and cost reported by the answer call."""
+    input_tokens: int
+    output_tokens: int
+    thinking_tokens: int
+    cost_eur: float
+
+
+class AnswerFacts(TypedDict, total=False):
+    """What the answer call reports about itself."""
+    endpoint: str
+    fallback: bool
+    attempts: List[dict[str, Any]]
+    queue_wait_ms: int
+    truncated: bool
+    continuations: int
+    interrupted: bool

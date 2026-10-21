@@ -334,3 +334,32 @@ def test_a_quota_error_alone_leaves_the_attempt_count_unchanged():
     out = _describe(client, ["primary"], max_retries=1, row=_row(attempts=3))
     assert out["status"] == "PENDING" and out["attempts"] == 3
     assert out["description"] is None
+
+
+def _described_with_cache(client, cache, row=None):
+    async def scenario():
+        limiter = _AsyncRateLimiter(rate_per_minute=6_000_000)
+        return await describe_one_image(client, row or _row(), asyncio.Semaphore(4), ["primary"], 100, 1.0, 2, limiter,
+                                        EndpointBreaker(100), timeout=5.0, cache=cache)
+    return asyncio.run(scenario())
+
+
+def test_a_description_is_reused_for_the_same_image_and_the_same_request():
+    from llm_describe import description_cache_key
+    first = _described_with_cache(FakeClient({"primary": [_resp("A wiring diagram.")]}), {})
+    assert first["status"] == "DONE" and first["from_cache"] is False and first["cache_key"]
+    cache = {first["cache_key"]: {"description": first["description"], "status": first["status"]}}
+    silent = FakeClient({"primary": [_resp("must not be asked")]})
+    again = _described_with_cache(silent, cache)
+    assert again["description"] == "A wiring diagram." and again["from_cache"] is True
+    assert silent.calls == [] and again["input_tokens"] == 0 and again["output_tokens"] == 0
+    assert description_cache_key("prompt", b"image") != description_cache_key("prompt", b"image2")
+    assert description_cache_key("prompt", b"image") != description_cache_key("prompt two", b"image")
+
+
+def test_another_context_for_the_same_image_is_described_again():
+    first = _described_with_cache(FakeClient({"primary": [_resp("A wiring diagram.")]}), {})
+    cache = {first["cache_key"]: {"description": first["description"], "status": first["status"]}}
+    client = FakeClient({"primary": [_resp("A different description.")]})
+    other = _described_with_cache(client, cache, row=_row(context_text="Another page about wiring"))
+    assert other["from_cache"] is False and other["description"] == "A different description." and client.calls

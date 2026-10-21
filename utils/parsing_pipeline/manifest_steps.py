@@ -17,6 +17,8 @@ from tables import ensure_primary_key, table_exists, write_table
 from leap_utils.common.logger import get_logger
 from config import (
     ARCHIVE_MAX_DOCS,
+    CHECKPOINT_ORPHAN_KEEP_DAYS,
+    CHECKPOINT_TABLE,
     DIVISION_REFERENCE_TABLE,
     DOC_DATE_CUTOFF,
     EXCLUDED_IDCATS,
@@ -54,18 +56,22 @@ def _id_list(iddocs) -> str:
     return ",".join(str(i) for i in iddocs)
 
 
-def _delete_iddocs(tables, iddocs) -> None:
+def _delete_iddocs(tables, iddocs) -> list[str]:
     """DELETE the IDDOCs from every table that exists; a failing table is logged, the others still run.
 
     :param tables: Tables to delete from.
     :param iddocs: IDDOCs to delete.
+    :return: the tables whose delete failed, empty when every delete ran.
     """
     id_list = _id_list(iddocs)
+    failed = []
     for table in tables:
         try:
             spark.sql(f"DELETE FROM {table} WHERE IDDOC IN ({id_list})")
         except Exception as exc:
-            logger.warning(f"Could not prune {table}: {exc}")
+            logger.error(f"Could not prune {table}: {exc}")
+            failed.append(table)
+    return failed
 
 
 def doc_rows() -> dict[int, tuple]:
@@ -117,12 +123,36 @@ def prune_stale_content(stale_iddocs) -> None:
     if not stale_iddocs:
         logger.info("Nothing to prune - no indexed IDDOC has left scope since the last run.")
         return
-    _delete_iddocs(_DERIVED_TABLES, stale_iddocs)
+    failed = _delete_iddocs(_DERIVED_TABLES, stale_iddocs)
+    if failed:
+        # The parsed_documents rows stay: they are what lets the next run find these IDDOCs and retry.
+        logger.error(f"Pruning incomplete ({failed}): the rows of {len(stale_iddocs)} IDDOC(s) stay in "
+                     f"{TARGET_PROCESSED_FILES_TABLE} and are pruned again on the next run.")
+        return
     spark.sql(
         f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} "
         f"WHERE parse_status IN {_STATUSES_TO_PRUNE} AND IDDOC IN ({_id_list(stale_iddocs)})"
     )
     logger.info(f"Pruned {len(stale_iddocs)} out-of-scope IDDOCs from chunks/image_metadata/parsed_documents.")
+
+
+def prune_old_checkpoint_rows(df_scope_docs, keep_days: int = CHECKPOINT_ORPHAN_KEEP_DAYS) -> None:
+    """Delete the parse results of documents that left the scope and were last parsed more than ``keep_days`` ago.
+
+    A document that left scope and comes back keeps its parse result for ``keep_days``, so it is not parsed again.
+
+    :param df_scope_docs: Documents in scope, with an ``IDDOC`` column.
+    :param keep_days: age of the parse result, in days, from which an out-of-scope document is dropped.
+    """
+    try:
+        df_scope_docs.select("IDDOC").distinct().createOrReplaceTempView("_scope_iddocs")
+        spark.sql(
+            f"DELETE FROM {CHECKPOINT_TABLE} WHERE ingestion_timestamp < current_timestamp() - INTERVAL {int(keep_days)} DAYS "
+            f"AND IDDOC NOT IN (SELECT IDDOC FROM _scope_iddocs)"
+        )
+        logger.info(f"Checkpoint rows of out-of-scope documents parsed more than {keep_days} days ago deleted.")
+    except Exception as exc:
+        logger.warning(f"Could not clean {CHECKPOINT_TABLE}: {exc}")
 
 
 def prune_stale_revisions() -> None:
@@ -159,7 +189,11 @@ def prune_stale_revisions() -> None:
         logger.info("No revision duplicates found in chunks.")
         return
 
-    _delete_iddocs(_DERIVED_TABLES, stale_revision_iddocs)
+    failed = _delete_iddocs(_DERIVED_TABLES, stale_revision_iddocs)
+    if failed:
+        logger.error(f"Revision pruning incomplete ({failed}): the statuses are left as they are and the pruning "
+                     f"runs again on the next run.")
+        return
     spark.sql(f"UPDATE {TARGET_PROCESSED_FILES_TABLE} SET parse_status = '{SUPERSEDED_REVISION}' "
               f"WHERE IDDOC IN ({_id_list(stale_revision_iddocs)}) AND parse_status = 'SUCCESS'")
     logger.info(

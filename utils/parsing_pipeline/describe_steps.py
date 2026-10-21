@@ -47,6 +47,7 @@ from config import (
     MIN_INDEXABLE_DESC_CHARS,
     TARGET_CHUNK_TABLE,
     TARGET_CHUNK_TABLE_ARCHIVE,
+    TARGET_IMAGE_CACHE_TABLE,
     TARGET_IMAGE_METADATA_TABLE,
     TARGET_PROCESSED_FILES_TABLE,
     IMAGE_RETRIED_STATUSES,
@@ -125,6 +126,43 @@ def _merge_chunk_results(results) -> None:
     merge_into(spark.table(_UPDATES_TABLE), IMAGE_TABLE, ["IDDOC", "image_id"], do_when_notmatched=False)
 
 
+_CACHE_SCHEMA = "cache_key string, description string, status string, cached_at timestamp"
+
+
+def load_description_cache() -> dict:
+    """Descriptions already made, by cache key; empty when the cache table does not exist yet.
+
+    :return: ``{cache_key: {"description": ..., "status": ...}}``
+    """
+    if not table_exists(TARGET_IMAGE_CACHE_TABLE):
+        return {}
+    rows = spark.table(TARGET_IMAGE_CACHE_TABLE).select("cache_key", "description", "status").collect()
+    return {r["cache_key"]: {"description": r["description"], "status": r["status"]} for r in rows}
+
+
+def save_descriptions_to_cache(described, cache: dict) -> int:
+    """Add the descriptions the model just made to the cache table and to the in-memory cache.
+
+    :param described: Results of ``describe_all_images`` for one chunk, one dict per image.
+    :param cache: In-memory cache of the run, updated in place.
+    :return: number of descriptions added.
+    """
+    fresh = {}
+    for r in described:
+        key = r.get("cache_key")
+        if key and not r.get("from_cache") and r["status"] in ("DONE", "SKIPPED") and r.get("description"):
+            fresh[key] = (key, r["description"], r["status"], datetime.now())
+    if not fresh:
+        return 0
+    df = spark.createDataFrame(list(fresh.values()), _CACHE_SCHEMA)
+    if table_exists(TARGET_IMAGE_CACHE_TABLE):
+        merge_into(df, TARGET_IMAGE_CACHE_TABLE, ["cache_key"])
+    else:
+        write_table(df, TARGET_IMAGE_CACHE_TABLE, "overwrite", overwrite_schema=True)
+    cache.update({k: {"description": v[1], "status": v[2]} for k, v in fresh.items()})
+    return len(fresh)
+
+
 @dataclass
 class _RunTally:
     """Counts and tokens of described images: one chunk, or the whole run."""
@@ -163,7 +201,7 @@ class _RunTally:
         return self
 
 
-def describe_images(rows, ws_host, ws_token, endpoints) -> None:
+def describe_images(rows, ws_host, ws_token, endpoints, use_cache: bool = True) -> None:
     """Call the vision LLM on `rows` in checkpoint chunks, merging each chunk's results as soon as it is done.
 
     `endpoints` is the chain tried for each image. An image no endpoint described stays PENDING for the next run.
@@ -174,6 +212,7 @@ def describe_images(rows, ws_host, ws_token, endpoints) -> None:
     :param ws_host: Workspace host of the LLM endpoints.
     :param ws_token: Bearer token of the workspace.
     :param endpoints: Endpoint names, tried in order for each image.
+    :param use_cache: False to describe every image again (a new description still replaces the cached one).
     """
     rows = one_per_image(rows)
     if not rows:
@@ -195,6 +234,8 @@ def describe_images(rows, ws_host, ws_token, endpoints) -> None:
                 f"an image set aside as FAILED_LIMIT after {IMAGE_MAX_ATTEMPTS} attempts)")
 
     breaker = EndpointBreaker(LLM_BREAKER_FAILURES)
+    cache = load_description_cache()
+    logger.info(f"Description cache: {len(cache)} entries" + ("" if use_cache else " (not used in this run)"))
     n_chunks = math.ceil(len(rows) / LLM_CHECKPOINT_CHUNK_SIZE)
     logger.info(f"{len(rows)} images -> {n_chunks} chunk(s) of up to {LLM_CHECKPOINT_CHUNK_SIZE}, persisted after each chunk")
 
@@ -208,6 +249,7 @@ def describe_images(rows, ws_host, ws_token, endpoints) -> None:
                 max_tokens=LLM_MAX_TOKENS, temperature=LLM_TEMPERATURE, max_retries=LLM_MAX_RETRIES,
                 max_concurrent=LLM_MAX_CONCURRENT, requests_per_minute=rpm, breaker=breaker,
                 rounds=LLM_ROUNDS, round_waits_s=LLM_ROUND_WAITS_S, max_attempts=IMAGE_MAX_ATTEMPTS,
+                cache=cache if use_cache else None,
             ))
         except Exception as exc:
             logger.error(f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} describe_all_images failed: {str(exc)[:300]}")
@@ -215,6 +257,8 @@ def describe_images(rows, ws_host, ws_token, endpoints) -> None:
             raise
 
         _merge_chunk_results(described)
+        reused = sum(1 for r in described if r.get("from_cache"))
+        added = save_descriptions_to_cache(described, cache)
         chunk_tally = _RunTally().add(described)
         total.add(described)
         # Released per chunk: the single-node cluster has little memory.
@@ -223,7 +267,8 @@ def describe_images(rows, ws_host, ws_token, endpoints) -> None:
 
         logger.info(f"[chunk {chunk_idx + 1}/{n_chunks}] {chunk_tally.images} images in {time.time() - started:.1f}s | "
                     f"done={chunk_tally.done} skipped={chunk_tally.skipped} pending={chunk_tally.pending} | "
-                    f"tokens {chunk_tally.input_tokens:,} in / {chunk_tally.output_tokens:,} out")
+                    f"tokens {chunk_tally.input_tokens:,} in / {chunk_tally.output_tokens:,} out | "
+                    f"{reused} from the cache, {added} added to it")
         if breaker.open_endpoints:
             logger.warning(f"  Endpoints skipped for the rest of the run: {', '.join(breaker.open_endpoints)}")
 

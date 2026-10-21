@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any, Dict, List, Tuple
 
-
+from server.services.chat.engine.types import DocumentPassages
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class CitationStreamParser:
     citation. Sources are numbered by first appearance.
     """
 
-    def __init__(self, documents: List[Tuple[str, Dict[str, Any]]]):
+    def __init__(self, documents: List[Tuple[str, DocumentPassages]]):
         """Keeps the documents that the answer's ``[n]`` markers number.
 
         :param documents: (REF, document) pairs in prompt order: marker ``n`` cites ``documents[n - 1]``
@@ -82,7 +82,7 @@ class CitationStreamParser:
         return clean
 
 
-def parse_citations(raw: str, documents: List[Tuple[str, Dict[str, Any]]]) -> Tuple[str, List[dict], List[dict]]:
+def parse_citations(raw: str, documents: List[Tuple[str, DocumentPassages]]) -> Tuple[str, List[dict], List[dict]]:
     """Whole-text parse (reference for the streaming parser, used by the tests).
 
     :param raw: the whole answer text
