@@ -334,16 +334,17 @@ def test_raw_search_on_every_query_when_asked(monkeypatch):
     assert sorted(raw) == sorted([QUESTION, 'qualification CND', 'NDT qualification'])
 
 
-def test_failed_rewrite_stops_the_turn_after_its_retries(monkeypatch):
+def test_failed_rewrite_searches_the_question_after_its_retries(monkeypatch):
     async def _go():
-        await engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}])
+        return await engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}])
     monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(lambda p: [_row('a', 'A-1')], []))
     complete = AsyncMock(side_effect=RuntimeError('down'))
     with (patch.object(chat_llm, 'complete', complete), patch.object(chat_llm.asyncio, 'sleep', AsyncMock()),
           patch.object(engine.retrieval, 'refs_named_in', lambda t: [])):
-        with pytest.raises(RuntimeError):
-            asyncio.run(_go())
+        found = asyncio.run(_go())
     assert complete.await_count == 1 + len(chat_llm.PATIENT_WAITS_S)
+    assert found['fr_query'] == found['en_query'] == found['question']
+    assert found['rows'] and found['log'].codes == ['rewrite_failed']
 
 
 def test_reranked_only_with_reranker_refused_falls_back_to_raw(monkeypatch):
@@ -423,9 +424,9 @@ def test_history_markers_stripped_and_date_kept_out_of_search(monkeypatch):
     assert f'[Date: 2026-10-06]\n\n{QUESTION}' in m['prompt'][-1]['content']
 
 
-def test_rewrite_failure_ends_the_turn_with_an_error(monkeypatch):
+def test_rewrite_failure_degrades_the_turn_and_still_answers(monkeypatch):
     events, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
-    assert 'error' in _types(events)
+    assert 'error' not in _types(events) and 'sources' in _types(events)
     assert m['rewrite'].await_count == 1 + len(chat_llm.PATIENT_WAITS_S)
 
 
@@ -477,12 +478,15 @@ def test_an_english_opening_question_is_translated_into_french_and_the_raw_searc
         ['What are the NDT qualification requirements?', 'Quelles sont les exigences de qualification CND ?'])
 
 
-def test_a_failed_translation_ends_the_turn_with_an_error(monkeypatch):
+def test_a_failed_translation_degrades_the_turn_and_searches_the_question(monkeypatch):
     _lang(monkeypatch, 'fr')
     events, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
-    assert 'error' in _types(events)
+    assert 'error' not in _types(events)
     assert m['log'].data['rewrite_ok'] is False
     assert 'rewrite_failed' in [i['code'] for i in m['log'].issues]
+    assert m['log'].data['fr_query'] == m['log'].data['en_query']
+    assert m['sent'], 'the search still ran'
+    assert m['log'].finish('ok') == 'degraded'
 
 
 @pytest.mark.parametrize('code,history,env', [

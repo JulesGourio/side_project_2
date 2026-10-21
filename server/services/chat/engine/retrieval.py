@@ -119,7 +119,8 @@ def _passage(row: SearchRow, position: int, drop_reason: str = '') -> PassageRec
 async def retrieve_for_turn(host: str, token: str, division: str, conversation: List[Dict[str, str]],
                             log: TurnLog | None = None) -> Dict[str, Any]:
     """The passages handed to the LLM for the last user turn of ``conversation`` (already
-    cleaned by ``_clean_history``). Raises ``ChatVsiError`` when the search fails. Also used
+    cleaned by ``_clean_history``). A failed rewrite or translation degrades the turn: the question is searched as asked.
+    Raises ``ChatVsiError`` when the search fails. Also used
     alone by the retrieval evaluation (no answer generated). ``log`` (created when absent, returned
     as ``found['log']``) receives the step durations, the queries, every passage retrieved — kept
     or set aside — and what did not run as configured.
@@ -143,14 +144,20 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         log.data['rewrite_mode'] = 'translate' if language else 'rewrite'
         if language:
             with log.timed('rewrite'):
-                translated = await translate_query(host, token, question, 'en' if language == 'fr' else 'fr', log=log)
+                try:
+                    translated = await translate_query(host, token, question, 'en' if language == 'fr' else 'fr', log=log)
+                except Exception:   # already logged by translate_query: the turn goes on with the question as asked
+                    translated = question
             fr_query, en_query = (question, translated) if language == 'fr' else (translated, question)
             log.prompts.insert(0, 'translate_query')
         else:
             early = start_question_search(host, token, index, filters, question, log)
             with log.timed('rewrite'):
-                fr_query, en_query = await rewrite_queries(
-                    host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
+                try:
+                    fr_query, en_query = await rewrite_queries(
+                        host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
+                except Exception:   # already logged by rewrite_queries: the turn goes on with the question as asked
+                    fr_query = en_query = question
             log.prompts.insert(0, 'rewrite')
         queries = [question]
         for q in (fr_query, en_query):
@@ -168,8 +175,6 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             text = by_name[name]
             if text and text.casefold() not in {x.casefold() for x in raw_texts}:
                 raw_texts.append(text)
-        if raw_on() and not raw_texts:   # rewrite failed: the question keeps its raw search
-            raw_texts = [question]
         sizes = {'rerank_k': pair_rerank_top_k(), 'raw_k': pair_raw_top_k()} if language and len(queries) == 2 else {}
         with log.timed('search'):
             rows = await search(host, token, index, queries, filters, raw_texts, log=log, first=early, **sizes)

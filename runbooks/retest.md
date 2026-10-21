@@ -351,3 +351,6 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Limite de débit : 31 analyses en moins d'une minute avec le même compte donnent une réponse 429 générique à la 31ᵉ (`RATE_LIMIT_PER_MINUTE`, 0 = coupée).
 - [ ] Sans en-tête d'identité (appel direct hors proxy) : les routes d'historique répondent 401.
 - [ ] Alerte `chat_failure_rate` : son horaire est 03 h et 15 h (Europe/Paris) avec une fenêtre de 13 h ; elle reste en pause.
+- [ ] Chat DEV : couper temporairement le modèle de réécriture (ou simuler une panne) : la réponse arrive quand même, la ligne de `chat_turns` a le statut `degraded` et le code `rewrite_failed`.
+- [ ] `/docs`, `/redoc` et `/openapi.json` ne sont plus servis (variable `ENABLE_API_DOCS=true` pour les rétablir en développement).
+- [ ] Les alertes de job DEV et UAT arrivent à l'adresse partagée `LEAP_Databricks_Alert@latecoere.aero`.

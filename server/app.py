@@ -64,7 +64,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
   await close_shared_clients()
 
 
-app = FastAPI(title='QualiBOT', version='1.0.0', lifespan=lifespan)
+_API_DOCS = os.getenv('ENABLE_API_DOCS', '').lower() == 'true'
+app = FastAPI(title='QualiBOT', version='1.0.0', lifespan=lifespan,
+              docs_url='/docs' if _API_DOCS else None, redoc_url='/redoc' if _API_DOCS else None,
+              openapi_url='/openapi.json' if _API_DOCS else None)
 
 # CORS: allow localhost in dev, same-origin only in production
 allowed_origins = ['http://localhost:3000'] if env == 'development' else []

@@ -334,7 +334,6 @@ targets:
       parsing_schedule_pause: "PAUSED"
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "dev-job"
-      notification_email: "jules.gourio.external@latecoere.aero"
       job_cluster_policy_id_S: "001E30C26BD479FE"
       # The pre-2018 archive is not built on DEV.
       parsing_archive_max_docs: "0"
@@ -492,7 +491,6 @@ targets:
       # Legacy Lakebase names of the app before the 2026-10-14 refactor: their copies in uat_proj would be stale.
       lakebase_tables_to_skip: "messages,feedbacks,errors,knowledge_base_metadata"
       job_cluster_policy_id_S: "000E7559CADE5290"
-      notification_email: "jules.gourio.external@latecoere.aero"
 
   prod:
     mode: production
@@ -558,6 +556,8 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
+          lifecycle:
+            prevent_destroy: true
         # CoreDev group: full access through DATABRICKS_SUPERUSER membership.
         coredev:
           role_id: "coredev"
@@ -609,8 +609,8 @@ targets:
       intraqual_gold_catalog_schema: "prod_gold.quality_system"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       job_activity_tag: "prod-job"
-      # PAUSED until promoted on explicit decision.
-      lakebase_export_schedule_pause: "PAUSED"
+      # The PROD export copies the PROD Lakebase to prod_proj.qualibot twice a day: the chat alerts read those copies.
+      lakebase_export_schedule_pause: "UNPAUSED"
       lakebase_import_to_delta: "true"
       job_cluster_policy_id_S: "001C199A8D85FE35"
       parsing_offline_models_path: "/Volumes/prod_proj/qualibot/docling_models"

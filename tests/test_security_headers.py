@@ -23,3 +23,9 @@ def test_health_response_carries_security_headers() -> None:
     assert 'fonts.googleapis.com' not in csp
     assert response.headers['X-Content-Type-Options'] == 'nosniff'
     assert response.headers['Referrer-Policy'] == 'same-origin'
+
+
+def test_interactive_api_docs_are_not_declared_by_default() -> None:
+    """The interactive API documentation routes are off unless ENABLE_API_DOCS is true."""
+    from server.app import app
+    assert (app.docs_url, app.redoc_url, app.openapi_url) == (None, None, None)
