@@ -122,14 +122,12 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
 def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
     """One row per IDDOC: division + niveau_plus_1..N.
 
-    Primary: build_category_hierarchy(). DIVISION_ARCHIVE_TABLE (IDDOC, division and optionally niveau_plus_*)
-    holds the division the document had before the category tree changed: it replaces a live ``AUTRE`` division
-    (the levels stay the live ones) and adds the documents the live hierarchy does not know. Empty/unset = disabled.
+    Primary: build_category_hierarchy(). Fallback: DIVISION_ARCHIVE_TABLE fills
+    gaps only, never overrides a live-resolved row; empty/unset = disabled (default).
 
     :param spark: Active Spark session.
     :param max_depth: Number of category levels, as in ``build_category_hierarchy``.
-    :return: one row per IDDOC with its division, ``niveau_plus_*`` columns and ``division_source``
-        (``live_hierarchy``, ``archive_division`` or ``archive_fallback``).
+    :return: one row per IDDOC with its division and ``niveau_plus_*`` columns.
     """
     niveau_cols = [f"niveau_plus_{niv}" for niv in range(1, max_depth)]
 
@@ -142,32 +140,16 @@ def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
     if not (DIVISION_ARCHIVE_TABLE or "").strip():
         return df_live
 
-    df_archive_all = spark.table(DIVISION_ARCHIVE_TABLE)
     df_archive = (
-        df_archive_all
-        .filter(F.col("division").isNotNull() & (F.col("division") != "AUTRE"))
-        .select(
-            "IDDOC", F.col("division").alias("archive_division"),
-            *[F.col(c).cast("string").alias(c) if c in df_archive_all.columns else F.lit(None).cast("string").alias(c)
-              for c in niveau_cols],
-        )
-        .dropDuplicates(["IDDOC"])
-    )
-    df_replaced = (
-        df_live.join(df_archive.select("IDDOC", "archive_division"), on="IDDOC", how="left")
-        .withColumn("division_source", F.when((F.col("division") == "AUTRE") & F.col("archive_division").isNotNull(),
-                                              F.lit("archive_division")).otherwise(F.col("division_source")))
-        .withColumn("division", F.when(F.col("division_source") == "archive_division", F.col("archive_division"))
-                                 .otherwise(F.col("division")))
-        .drop("archive_division")
-    )
-    df_added = (
-        df_archive.join(df_live.select("IDDOC"), on="IDDOC", how="left_anti")
-        .withColumnRenamed("archive_division", "division")
+        spark.table(DIVISION_ARCHIVE_TABLE)
+        .filter(F.col("division").isNotNull())
         .select("IDDOC", "division", *niveau_cols)
+        .dropDuplicates(["IDDOC"])
+        .join(df_live.select("IDDOC"), on="IDDOC", how="left_anti")
         .withColumn("division_source", F.lit("archive_fallback"))
     )
-    return df_replaced.unionByName(df_added)
+
+    return df_live.unionByName(df_archive)
 
 
 # --- Step 0 — Qualibot perimeter (scope gate) ---

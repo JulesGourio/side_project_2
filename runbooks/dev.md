@@ -1038,40 +1038,6 @@ SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, ni
 
 (`<M>` : version de `parse_manifest` relevée en 2.)
 
-### H. Division : table historique et règle de feuille (code poussé le 2026-10-21, à faire)
-
-Même changement que `uat.md` H. La table de DEV est copiée depuis celle d'UAT : il faut d'abord que l'étape 1 de `uat.md` H soit faite.
-
-1. Donner la lecture de la table UAT au SP DEV (soumission sous le SP UAT) :
-
-```powershell
-databricks workspace import /Workspace/Shared/qualibot_division_history/grant_division_history --file runbooks/scripts/division_history/grant_division_history.py --format SOURCE --language PYTHON --overwrite --profile UAT
-databricks jobs submit --json "@runbooks/scripts/division_history/grant_division_history_submit.json" --profile UAT
-```
-
-2. Copier la table dans DEV (soumission sous le SP DEV) :
-
-```powershell
-databricks workspace import /Workspace/Shared/qualibot_division_history/create_division_history --file runbooks/scripts/division_history/create_division_history.py --format SOURCE --language PYTHON --overwrite --profile DEV
-databricks jobs submit --json "@runbooks/scripts/division_history/create_division_history_dev_submit.json" --profile DEV
-```
-
-3. Déployer les jobs : Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-dev-jobs`.
-
-4. Lancer les deux tâches (`dry_run` reste à `true`) :
-
-```powershell
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
-```
-
-5. Contrôler la division (SQL editor DEV, lecture seule). Attendu : AS et IS en nette hausse, AUTRE autour de 2 400 :
-
-```sql
-SELECT division, count(*) AS documents FROM dev_proj.qualibot.parse_manifest GROUP BY division ORDER BY documents DESC;
-SELECT division_source, division, count(*) AS documents FROM dev_proj.qualibot.category_reference GROUP BY 1, 2 ORDER BY documents DESC;
-```
-
 ## Fait
 
 - Migration DEV : plan sans suppression (2026-10-16), app redéployée, historique DocCompare visible avec les documents (chemins corrigés à la copie et à chaque démarrage, confirmé 2026-10-16). Restent : point 7 (endpoint Sonnet, index) et le premier run du pipeline de parsing.

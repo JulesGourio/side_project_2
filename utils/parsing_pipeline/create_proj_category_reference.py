@@ -8,7 +8,7 @@
 # MAGIC    `MAX_SOURCE_STALENESS_HOURS`. A stale source must **fail** the run: otherwise the pipeline recomputes a scope on stale
 # MAGIC    data and silently ships a partial index.
 # MAGIC 2. **Category consolidation** — `division` / `niveau_plus_1..N` per IDDOC into `category_reference`, from
-# MAGIC    `document_revisions_intraqual` x `category_ancestors_intraqual` (+ `DIVISION_ARCHIVE_TABLE` if enabled, empty by default: it replaces a computed `AUTRE` division with the one the document had before the category tree changed).
+# MAGIC    `document_revisions_intraqual` x `category_ancestors_intraqual` (+ `DIVISION_ARCHIVE_TABLE` if enabled, empty by default).
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC The freshness guard fails the task after `category_reference` is built but before it is written, so a stale run leaves the previous table in place.
@@ -18,7 +18,7 @@
 # MAGIC
 # MAGIC **Inputs Data**
 # MAGIC - `{PARSING_INTRAQUAL_GOLD}.document_revisions_intraqual`, `category_ancestors_intraqual` (Intraqual data asset; read by `categories.build_division_reference`, last write time read by the freshness guard)
-# MAGIC - `{PARSING_DIVISION_ARCHIVE_TABLE}` (same function, `IDDOC` and `division`; disabled when empty)
+# MAGIC - `{PARSING_DIVISION_ARCHIVE_TABLE}` (same function, disabled by default: empty)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.category_reference`

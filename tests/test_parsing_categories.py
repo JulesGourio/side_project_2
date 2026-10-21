@@ -19,7 +19,6 @@ import categories
 
 REVISIONS = "test_categories_revisions"
 ANCESTORS = "test_categories_ancestors"
-ARCHIVE = "test_categories_division_history"
 
 # (name, parent) by category id; the roots are the ids the division rules know.
 CATEGORIES = {
@@ -64,7 +63,6 @@ def spark():
         (10, "E-1", "Marked AS", "A", 1, 7, False, 5002),
         (11, "E-2", "Marked IS", "A", 1, 7, False, 5003),
         (12, "E-3", "Unmarked process", "A", 1, 7, False, 5004),
-        (13, "E-4", "Known before the tree change", "A", 1, 7, False, 5004),
         (14, "E-5", "Marked BUS", "A", 1, 7, False, 5005),
     ]
     rows = [(i, ref, title, idx, status, state, hidden, cat,
@@ -77,11 +75,7 @@ def spark():
     session.createDataFrame([(c, c, n) for c, (n, _) in CATEGORIES.items()],
                             "category_ID long, ancestor_category_ID long, ancestor_category_name string"
                             ).write.mode("overwrite").saveAsTable(ANCESTORS)
-    # IDDOC 13 was AS before the tree change, 12 has no history, 4 is DIRECTIVE live and AS in the history, 99 is unknown live.
-    session.createDataFrame([(13, "AS"), (4, "AS"), (99, "IS"), (1, "AUTRE")], "IDDOC long, division string"
-                            ).write.mode("overwrite").saveAsTable(ARCHIVE)
     yield session
-    session.sql(f"DROP TABLE IF EXISTS {ARCHIVE}")
     session.sql(f"DROP TABLE IF EXISTS {REVISIONS}")
     session.sql(f"DROP TABLE IF EXISTS {ANCESTORS}")
     shutil.rmtree("spark-warehouse", ignore_errors=True)
@@ -114,7 +108,7 @@ def test_division_and_levels_of_each_root(spark):
 def test_one_row_per_revision_with_a_category(spark):
     ref = _reference(spark)
     assert 9 not in ref
-    assert len(ref) == 13
+    assert len(ref) == 12
     assert {r["division_source"] for r in ref.values()} == {"live_hierarchy"}
 
 
@@ -132,19 +126,7 @@ def test_a_leaf_category_named_after_a_division_sets_the_division(spark):
     assert ref[14]["division"] == "AUTRE"
 
 
-def test_the_archive_division_replaces_a_live_autre_only(spark, monkeypatch):
-    monkeypatch.setattr(categories, "DIVISION_ARCHIVE_TABLE", ARCHIVE)
-    ref = _reference(spark)
-    assert (ref[13]["division"], ref[13]["division_source"]) == ("AS", "archive_division")
-    assert ref[13]["niveau_plus_1"] == "00-LATECOERE PROCESSES_One QMS"
-    assert ref[12]["division"] == "AUTRE" and ref[12]["division_source"] == "live_hierarchy"
-    assert ref[4]["division"] == "DIRECTIVE" and ref[4]["division_source"] == "live_hierarchy"
-    assert ref[1]["division"] == "AS" and ref[1]["division_source"] == "live_hierarchy"
-    assert (ref[99]["division"], ref[99]["division_source"]) == ("IS", "archive_fallback")
-    assert ref[99]["niveau_plus_1"] is None
-
-
 def test_scope_keeps_current_validated_visible_revisions(spark):
     scope = {r.IDDOC: (r.ref, r.titre) for r in categories.load_scope_docs(spark).collect()}
-    assert sorted(scope) == [1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14]
+    assert sorted(scope) == [1, 2, 3, 4, 5, 9, 10, 11, 12, 14]
     assert scope[1] == ("QP-1", "As doc")

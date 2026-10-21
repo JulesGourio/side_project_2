@@ -1099,25 +1099,6 @@ SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, ni
 
 (`<M>` : version de `parse_manifest` relevée en 2.)
 
-### H. Division : table historique et règle de feuille (code poussé le 2026-10-21, à faire)
-
-`1_categories` donne la division `AS`/`IS` par la feuille de catégorie `AS` ou `IS` (arbre One QMS), puis remplace un `AUTRE` calculé par la division de `<env>_proj.qualibot.division_history` (`IDDOC`, `division`), construite une fois depuis `uat_landingzone.qualibot.chunks_v1`. `BUS` n'est pas mappé.
-
-1. Construire la table en UAT (soumission sous le SP UAT) :
-
-```powershell
-databricks workspace import /Workspace/Shared/qualibot_division_history/create_division_history --file runbooks/scripts/division_history/create_division_history.py --format SOURCE --language PYTHON --overwrite --profile UAT
-databricks jobs submit --json "@runbooks/scripts/division_history/create_division_history_uat_submit.json" --profile UAT
-```
-
-2. Contrôler (SQL editor UAT, lecture seule). Attendu : environ 4 900 documents, AS ≈ 4 100, IS ≈ 700 :
-
-```sql
-SELECT division, count(*) AS documents FROM uat_proj.qualibot.division_history GROUP BY division ORDER BY documents DESC;
-```
-
-3. Pousser le code, Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-uat-jobs`. Ne pas lancer `1_categories` en UAT avant le contrôle de DEV (section G de `dev.md`).
-
 ## Fait
 
 - 2026-10-21 — 37 documents `MISSING_CHUNKS` (171 passages au total) : documents presque sans texte (30 caractères, 5 images) flaggés par la garde `flag_ghost_documents` avant l'ajout des passages d'images ; 1970 passages sans `division` (30 documents listés, dont `UDA-00-053`, `TDA7-00-046`, `FDAQL-2851`). À surveiller après le premier run quotidien ; aucune action.
