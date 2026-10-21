@@ -299,6 +299,6 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 
 ## 2026-10-21 — le parsing lit le data asset Intraqual (gold) au lieu du bronze
 
-- [ ] Section G de `uat.md` (droits, déploiement des jobs, `1_categories`, `2_manifest`, comparaison de `category_reference` et `parse_manifest` avant / après : 0 ligne de différence attendue).
+- [ ] Section G de `uat.md` (déploiement des jobs, `1_categories`, `2_manifest`, comparaison de `category_reference` et `parse_manifest` avant / après : 0 ligne de différence attendue).
 - [ ] `1_categories` : le journal liste l'âge de `document_revisions_intraqual` et `category_ancestors_intraqual` ; une valeur de `parsing_max_source_staleness_hours` à `1` fait échouer la tâche avec la liste des tables périmées (puis remettre `36`).
 - [ ] Chat : la source d'un document AS et celle d'un document IS gardent leur division et leur catégorie.

@@ -1006,30 +1006,23 @@ La tâche `sync_user_capabilities` du job `D_1_Qualibot_Lakebase_Export_To_Volum
 
 `1_categories`, `2_manifest` et `6_update_kb_metadata` lisent `prod_gold.quality_system.document_revisions_intraqual` et `category_ancestors_intraqual` (variable `intraqual_gold_catalog_schema`, env `PARSING_INTRAQUAL_GOLD`) au lieu de `prod_bronze.intraqual.gd_*_latest`. Les sorties (`category_reference`, `parse_manifest`) gardent le même schéma. Le garde-fou de fraîcheur lit la date d'écriture de ces deux tables (`DESCRIBE DETAIL`), plus `intraqual_ingestion_freshness_all`.
 
-1. Droits (déjà donnés si la section G de uat.md est faite) : le SP UAT et le SP DEV lisent `prod_gold.quality_system` (notebook et soumission sous le SP UAT, qui doit avoir GRANT sur ce schéma) :
+1. Pousser le code, puis Bitbucket → Pipelines → Run pipeline → branche poussée → `deploy-dev-jobs`. Attendre qu'il soit vert.
 
-```powershell
-databricks workspace import /Workspace/Shared/qualibot_grants/grant_intraqual_gold --file runbooks/scripts/grants/grant_intraqual_gold.py --format SOURCE --language PYTHON --overwrite --profile DEV
-databricks jobs submit --json "@runbooks/scripts/grants/grant_intraqual_gold_submit.json" --profile DEV
-```
-
-2. Pousser le code, puis Bitbucket → Pipelines → Run pipeline → branche poussée → `deploy-dev-jobs`. Attendre qu'il soit vert.
-
-3. Relever la version actuelle de `category_reference` et de `parse_manifest` (SQL editor, lecture seule), à noter :
+2. Relever la version actuelle de `category_reference` et de `parse_manifest` (SQL editor, lecture seule), à noter :
 
 ```sql
 DESCRIBE HISTORY dev_proj.qualibot.category_reference LIMIT 1;
 DESCRIBE HISTORY dev_proj.qualibot.parse_manifest LIMIT 1;
 ```
 
-4. Lancer les deux tâches (aucune suppression sur le volume : `dry_run` reste à `true`) :
+3. Lancer les deux tâches (aucune suppression sur le volume : `dry_run` reste à `true`) :
 
 ```powershell
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
 databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
 ```
 
-5. Comparer avec la version notée (remplacer `<N>` par la version relevée en 3). Les deux requêtes doivent rendre 0 ligne, sauf documents modifiés dans Intraqual depuis :
+4. Comparer avec la version notée (remplacer `<N>` par la version relevée en 2). Les deux requêtes doivent rendre 0 ligne, sauf documents modifiés dans Intraqual depuis :
 
 ```sql
 SELECT 'avant' AS cote, * FROM (SELECT * FROM dev_proj.qualibot.category_reference VERSION AS OF <N> EXCEPT SELECT * FROM dev_proj.qualibot.category_reference)
@@ -1043,7 +1036,7 @@ UNION ALL
 SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM (SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest EXCEPT SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest VERSION AS OF <M>);
 ```
 
-(`<M>` : version de `parse_manifest` relevée en 3.)
+(`<M>` : version de `parse_manifest` relevée en 2.)
 
 ## Fait
 
