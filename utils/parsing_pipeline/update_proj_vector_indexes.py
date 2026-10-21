@@ -60,6 +60,7 @@ sys.path.insert(0, REPO_DIR)
 
 import tables
 tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
+from index_state import index_is_updating
 from tables import add_missing_columns, merge_into, table_exists, write_table
 
 # COMMAND ----------
@@ -338,7 +339,7 @@ else:
             if "FAILED" in state or "OFFLINE" in state:
                 msg = getattr(st, "message", None) or "no further detail from the SDK"
                 raise RuntimeError(f"{name}: sync failed (state={state}) — {msg}")
-            if st and st.ready and "PROVISIONING" not in state and "SYNC" not in state:
+            if st and st.ready and not index_is_updating(state):
                 # A failed sync leaves the index ready on its last good state: only its message says so. The previous
                 # run's message lasts until the new update starts, hence several polls before raising.
                 message = getattr(st, "message", None) or ""

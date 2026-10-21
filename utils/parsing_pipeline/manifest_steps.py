@@ -54,18 +54,22 @@ def _id_list(iddocs) -> str:
     return ",".join(str(i) for i in iddocs)
 
 
-def _delete_iddocs(tables, iddocs) -> None:
+def _delete_iddocs(tables, iddocs) -> list[str]:
     """DELETE the IDDOCs from every table that exists; a failing table is logged, the others still run.
 
     :param tables: Tables to delete from.
     :param iddocs: IDDOCs to delete.
+    :return: the tables whose delete failed, empty when every delete ran.
     """
     id_list = _id_list(iddocs)
+    failed = []
     for table in tables:
         try:
             spark.sql(f"DELETE FROM {table} WHERE IDDOC IN ({id_list})")
         except Exception as exc:
-            logger.warning(f"Could not prune {table}: {exc}")
+            logger.error(f"Could not prune {table}: {exc}")
+            failed.append(table)
+    return failed
 
 
 def doc_rows() -> dict[int, tuple]:
@@ -117,7 +121,12 @@ def prune_stale_content(stale_iddocs) -> None:
     if not stale_iddocs:
         logger.info("Nothing to prune - no indexed IDDOC has left scope since the last run.")
         return
-    _delete_iddocs(_DERIVED_TABLES, stale_iddocs)
+    failed = _delete_iddocs(_DERIVED_TABLES, stale_iddocs)
+    if failed:
+        # The parsed_documents rows stay: they are what lets the next run find these IDDOCs and retry.
+        logger.error(f"Pruning incomplete ({failed}): the rows of {len(stale_iddocs)} IDDOC(s) stay in "
+                     f"{TARGET_PROCESSED_FILES_TABLE} and are pruned again on the next run.")
+        return
     spark.sql(
         f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} "
         f"WHERE parse_status IN {_STATUSES_TO_PRUNE} AND IDDOC IN ({_id_list(stale_iddocs)})"
@@ -159,7 +168,11 @@ def prune_stale_revisions() -> None:
         logger.info("No revision duplicates found in chunks.")
         return
 
-    _delete_iddocs(_DERIVED_TABLES, stale_revision_iddocs)
+    failed = _delete_iddocs(_DERIVED_TABLES, stale_revision_iddocs)
+    if failed:
+        logger.error(f"Revision pruning incomplete ({failed}): the statuses are left as they are and the pruning "
+                     f"runs again on the next run.")
+        return
     spark.sql(f"UPDATE {TARGET_PROCESSED_FILES_TABLE} SET parse_status = '{SUPERSEDED_REVISION}' "
               f"WHERE IDDOC IN ({_id_list(stale_revision_iddocs)}) AND parse_status = 'SUCCESS'")
     logger.info(

@@ -96,6 +96,21 @@ def one_per_image(rows: List[dict]) -> List[dict]:
     return unique
 
 
+def image_mime_type(image_bytes: bytes) -> str:
+    """Media type of an image from its first bytes, as sent in a ``data:`` URL.
+
+    :param image_bytes: content of the image file
+    :return: ``image/png``, ``image/gif``, ``image/webp`` or, for anything else, ``image/jpeg``
+    """
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
 def _escape_braces(text: str) -> str:
     """Braces doubled so the text cannot interfere with `str.format`.
 
@@ -377,7 +392,8 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
 
     try:
         with open(row_data["volume_path"], "rb") as f:
-            image_b64 = base64.b64encode(f.read()).decode()
+            image_bytes = f.read()
+        image_b64 = base64.b64encode(image_bytes).decode()
     except Exception as e:
         return result(None, "PENDING", last_error=f"failed to read image: {_error_text(e)}", last_kind="read_error")
 
@@ -389,7 +405,7 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
             category=" > ".join(category_parts),
             label=row_data.get("label", ""),
         )},
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+        {"type": "image_url", "image_url": {"url": f"data:{image_mime_type(image_bytes)};base64,{image_b64}"}},
     ]}]
 
     last_error, last_kind = "", "no_endpoint"

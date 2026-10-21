@@ -171,6 +171,7 @@ ENABLE_TIMING_TEST = True
 
 # --- Resilience -- batch checkpointing & per-file timeout ---
 CHECKPOINT_BATCH_SIZE   = 100   # Write to Delta every N files (crash-safe)
+CHECKPOINT_SNAPSHOT_KEEP_DAYS = 30  # a full run keeps its checkpoint snapshot this long
 PARSE_TIMEOUT_SECONDS   = 200   # Max seconds per file -- beyond this, mark as TIMEOUT
 MAX_CHUNKS_SPREADSHEET  = 100   # Limit chunks for xlsx/xls/xlsm (None = no limit)
 
