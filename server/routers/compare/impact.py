@@ -229,7 +229,7 @@ async def _impact_events(run: _ImpactSearch, request: Request, token: str,
         asyncio.create_task(run.audit(endpoint_name=run.judges(), duration_s=time.monotonic() - start,
                                       http_status=502, status='error', error_type=type(e).__name__,
                                       error_msg=str(e), **_counts()))
-        yield _ndjson({'type': 'error', 'error': f'Impact search failed: {e}'})
+        yield _ndjson({'type': 'error', 'error': 'Impact search failed'})
         return
 
     duration_s = round(time.monotonic() - start, 2)
@@ -245,7 +245,9 @@ async def _impact_events(run: _ImpactSearch, request: Request, token: str,
     )
     yield _ndjson({'type': 'done', 'usage': usage, 'duration_s': duration_s, 'impact_request_id': request_id})
 
-    if run.old_hash and run.new_hash and not any(d.get('status') == 'error' for d in documents):
+    # A result is kept only when it is complete: a failed query or judge call would be replayed to every later user.
+    complete = not plan.get('queries_failed') and not any(d.get('status') == 'error' for d in documents)
+    if run.old_hash and run.new_hash and complete:
         asyncio.create_task(store_impact_cache(
             run.old_hash, run.new_hash, cache_version,
             {**plan, 'documents': documents, 'usage': usage, 'duration_s': duration_s,
@@ -292,7 +294,8 @@ async def find_impacted_documents(body: ImpactRequest, request: Request) -> Resp
 
     identity = await get_user_identity(request)
     t_extract = time.monotonic()
-    extracted = changes_to_queries(body.changes_text, max_queries=cfg['impact_max_queries'])
+    extracted = changes_to_queries(body.changes_text, max_queries=cfg['impact_max_queries'],
+                                   max_query_chars=cfg['impact_max_query_chars'])
     extract_ms = int((time.monotonic() - t_extract) * 1000)
 
     run = _ImpactSearch(body=body, cfg=cfg, host=host, identity=identity, extracted=extracted,

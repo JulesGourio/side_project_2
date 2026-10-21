@@ -36,6 +36,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# The extension comes from an uploaded file name and becomes part of a path: letters and digits only.
+_SAFE_SUFFIX = re.compile(r'^\.[A-Za-z0-9]{1,8}$')
 _CONVERT_TIMEOUT_S = int(os.getenv('SOFFICE_CONVERT_TIMEOUT_S', '180'))
 
 # soffice is single-document-per-invocation here (isolated profiles), but each
@@ -64,6 +66,22 @@ def _extract_root() -> Path:
         stem = re.sub(r'[^A-Za-z0-9._-]', '_', archive.rsplit('/', 1)[-1]).removesuffix('.tar.gz')
         return base / stem
     return base
+
+
+_CACHE_MAX_FILES = 200
+
+
+def _prune_cache(directory: Path) -> None:
+    """Keep the most recently written PDFs of the cache and delete the rest.
+
+    :param directory: cache directory
+    """
+    try:
+        files = sorted(directory.glob('*.pdf'), key=lambda f: f.stat().st_mtime, reverse=True)
+        for old in files[_CACHE_MAX_FILES:]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        pass  # cache is best-effort
 
 
 def _cache_dir() -> Path:
@@ -294,6 +312,9 @@ def convert_docx_to_pdf(docx_bytes: bytes, timeout_s: int = _CONVERT_TIMEOUT_S, 
     :param suffix: file extension of the document, with or without the dot
     :return: the PDF bytes
     """
+    suffix = suffix if suffix.startswith('.') else '.' + suffix
+    if not _SAFE_SUFFIX.match(suffix):
+        raise SofficeConversionError(f'unsupported file extension {suffix!r}')
     digest = hashlib.sha256(docx_bytes).hexdigest()
     cached = _cache_dir() / f'{digest}.pdf'
     if cached.is_file() and cached.stat().st_size > 0:
@@ -304,7 +325,7 @@ def convert_docx_to_pdf(docx_bytes: bytes, timeout_s: int = _CONVERT_TIMEOUT_S, 
     with _convert_semaphore:
         with tempfile.TemporaryDirectory(prefix='soffice_job_') as tmp:
             tmp_path = Path(tmp)
-            src = tmp_path / f'input{suffix if suffix.startswith(".") else "." + suffix}'
+            src = tmp_path / f'input{suffix}'
             src.write_bytes(docx_bytes)
             # Isolated profile per invocation — allows concurrent soffice
             # processes and avoids the shared-profile lock file entirely.
@@ -342,6 +363,7 @@ def convert_docx_to_pdf(docx_bytes: bytes, timeout_s: int = _CONVERT_TIMEOUT_S, 
     try:
         tmp_cache.write_bytes(pdf_bytes)
         tmp_cache.replace(cached)
+        _prune_cache(cached.parent)
     except OSError:
         pass  # cache is best-effort
     return pdf_bytes

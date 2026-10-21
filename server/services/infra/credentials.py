@@ -2,8 +2,23 @@
 
 import logging
 import os
+from functools import lru_cache
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _sdk_config() -> Any:
+    """The SDK configuration, built once: it keeps its own token and renews it when it expires.
+
+    Building it for every request would repeat the host discovery and a token request on the event loop.
+
+    :return: a ``databricks.sdk.core.Config``
+    :raises Exception: when the SDK finds no way to authenticate (the failure is not cached)
+    """
+    from databricks.sdk.core import Config
+    return Config()
 
 
 def get_credentials(request) -> tuple[str, str]:
@@ -20,8 +35,7 @@ def get_credentials(request) -> tuple[str, str]:
     token = os.environ.get('DATABRICKS_TOKEN', '')
     if not host or not token:
         try:
-            from databricks.sdk.core import Config
-            cfg = Config()
+            cfg = _sdk_config()
             if not host:
                 host = (cfg.host or '').rstrip('/')
             if not token:

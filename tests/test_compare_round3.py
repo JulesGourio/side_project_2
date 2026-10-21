@@ -120,7 +120,7 @@ def test_impact_reports_a_search_failure_as_an_error_event(client):
     ):
         res = client.post('/api/compare/impact', json={'changes_text': CHANGES})
     events = _events(res)
-    assert events[-1]['type'] == 'error' and 'Vector Search' in events[-1]['error']
+    assert events[-1]['type'] == 'error' and events[-1]['error'] == 'Impact search failed'  # the cause is logged, not sent
 
 
 def test_impact_without_changes_does_not_search(client):

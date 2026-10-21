@@ -73,6 +73,7 @@ def _extract_xls(file_bytes: bytes) -> Tuple[List[str], str]:
 
 
 _VOLATILE_COL_THRESHOLD = 0.50  # columns changing in >50% of matched rows are auto-excluded
+_VOLATILE_MIN_ROWS = 20         # a column is only judged recalculated from this many matched rows: a handful of edits is a change
 _MAX_EMPTY_KEY_RATIO = 0.05     # above this share of empty first-column cells the first column is no key
 _ROW_FIELDS_CHARS = 300         # an added or removed row is shown up to this many characters
 _CHANGE_CHARS = 200             # a changed cell is shown up to this many characters
@@ -151,19 +152,33 @@ def _column_name(headers: List[str], index: int) -> str:
     return headers[index] if index < len(headers) else f'col_{index}'
 
 
+def _cell(cells: List[str], index: int) -> str:
+    """A cell of a row, empty beyond the end of the row (a column added or dropped at the end).
+
+    :param cells: cells of the row
+    :param index: column index
+    :return: the cell text
+    """
+    return cells[index] if index < len(cells) else ''
+
+
 def _volatile_columns(old_rows: Dict[str, List[str]], new_rows: Dict[str, List[str]]) -> set:
     """Columns that change in most of the rows present in both revisions (recalculated every cycle).
+
+    Needs ``_VOLATILE_MIN_ROWS`` matched rows: on fewer rows, a column changed everywhere is an edit, not a recalculation.
 
     :param old_rows: rows of the old sheet by key
     :param new_rows: rows of the new sheet by key
     :return: the indexes of the volatile columns
     """
     common_keys = old_rows.keys() & new_rows.keys()
+    if len(common_keys) < _VOLATILE_MIN_ROWS:
+        return set()
     col_change: Dict[int, int] = {}
     for key in common_keys:
         o, n = old_rows[key], new_rows[key]
-        for ci in range(min(len(o), len(n))):
-            if o[ci] != n[ci]:
+        for ci in range(max(len(o), len(n))):
+            if _cell(o, ci) != _cell(n, ci):
                 col_change[ci] = col_change.get(ci, 0) + 1
     return {ci for ci, count in col_change.items() if count > len(common_keys) * _VOLATILE_COL_THRESHOLD}
 
@@ -198,31 +213,37 @@ def _modified_rows(old_rows: Dict[str, List[str]], new_rows: Dict[str, List[str]
     for key in sorted(old_rows.keys() & new_rows.keys()):
         o, n = old_rows[key], new_rows[key]
         changes = [
-            f'{_column_name(headers, ci)}: {o[ci]!r} → {n[ci]!r}'
-            for ci in range(min(len(o), len(n)))
-            if ci not in volatile and o[ci] != n[ci]
+            f'{_column_name(headers, ci)}: {_cell(o, ci)!r} → {_cell(n, ci)!r}'
+            for ci in range(max(len(o), len(n)))
+            if ci not in volatile and _cell(o, ci) != _cell(n, ci)
         ]
         if changes:
             modified.append((key, changes))
     return modified
 
 
-def _sheet_diff(sheet: str, old_header: str, old_rows: Dict[str, List[str]], new_rows: Dict[str, List[str]]) -> List[str]:
+def _sheet_diff(sheet: str, old_header: str, new_header: str, old_rows: Dict[str, List[str]],
+                new_rows: Dict[str, List[str]]) -> List[str]:
     """The report lines of one sheet present in both workbooks.
 
     :param sheet: the ``[Sheet: ...]`` marker
     :param old_header: header line of the old sheet
+    :param new_header: header line of the new sheet
     :param old_rows: rows of the old sheet by key
     :param new_rows: rows of the new sheet by key
     :return: the report lines
     """
-    headers = old_header.split('\t') if old_header else []
+    old_headers = old_header.split('\t') if old_header else []
+    # A column added at the end is named by the new header.
+    headers = old_headers + (new_header.split('\t')[len(old_headers):] if new_header else [])
     added_keys = sorted(new_rows.keys() - old_rows.keys())
     removed_keys = sorted(old_rows.keys() - new_rows.keys())
     volatile = _volatile_columns(old_rows, new_rows)
     volatile_names = [_column_name(headers, ci) for ci in sorted(volatile)]
 
     out = [f'\n{sheet}', f'Key column: {headers[0] if headers else "col_0"}']
+    if new_header and new_header != old_header:
+        out.append(f'Header changed: {old_header.replace(chr(9), " | ")!r} → {new_header.replace(chr(9), " | ")!r}')
     if volatile_names:
         out.append(
             'Auto-excluded columns (recalculated every update — not shown): '
@@ -241,7 +262,7 @@ def _sheet_diff(sheet: str, old_header: str, old_rows: Dict[str, List[str]], new
         for key, changes in modified:
             out.append(f'  ~ {key}:')
             out.extend(f'    {change[:_CHANGE_CHARS]}' for change in changes[:_CHANGES_PER_ROW])
-    if not added_keys and not removed_keys and not modified:
+    if not added_keys and not removed_keys and not modified and not (new_header and new_header != old_header):
         out.append('\nNo significant changes detected (only auto-calculated columns differ).')
     return out
 
@@ -268,9 +289,10 @@ def _build_diff_keyed(
     :return: the keyed diff, or None when the first column is not a usable key
     """
     new_blocks = _parse_sheets(new_lines)
+    old_blocks = _parse_sheets(old_lines)
     out_parts: List[str] = [f'--- {old_name}', f'+++ {new_name}']
 
-    for sheet, old_header, old_data in _parse_sheets(old_lines):
+    for sheet, old_header, old_data in old_blocks:
         new_block = next((b for b in new_blocks if b[0] == sheet), None)
         if new_block is None:
             out_parts.append(f'\n{sheet}: sheet removed entirely')
@@ -282,7 +304,12 @@ def _build_diff_keyed(
         # Fall back if first column is just sequential row numbers — keyed diff would misalign on insertions
         if _is_auto_increment(list(old_rows)) or _is_auto_increment(list(new_rows)):
             return None
-        out_parts.extend(_sheet_diff(sheet, old_header, old_rows, new_rows))
+        out_parts.extend(_sheet_diff(sheet, old_header, new_block[1], old_rows, new_rows))
+
+    old_sheets = {block[0] for block in old_blocks}
+    for sheet, _, new_data in new_blocks:
+        if sheet not in old_sheets:
+            out_parts.append(f'\n{sheet}: sheet added ({len([row for row in new_data if row.strip()])} rows)')
 
     return '\n'.join(out_parts) if len(out_parts) > 2 else '(No cell differences detected)'
 

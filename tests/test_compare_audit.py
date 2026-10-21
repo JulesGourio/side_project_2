@@ -12,7 +12,7 @@ Coverage:
 import asyncio
 import hashlib
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -118,6 +118,9 @@ def client(app, monkeypatch):
     monkeypatch.setenv('DATABRICKS_TOKEN', 'token')
     monkeypatch.setenv('COMPARE_VOLUME_PATH', '/Volumes/cat/sch/compare')
     app.dependency_overrides[require_compare] = lambda: None
+    alice = AsyncMock(return_value={'user_id': 'alice', 'workspace_id': None, 'email': None})
+    monkeypatch.setattr('server.routers.compare.common.get_user_identity', alice)
+    monkeypatch.setattr('server.routers.compare.volume.get_user_identity', alice)
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -140,9 +143,9 @@ def test_analyze_rejects_mixed_file_types(client):
 
 def test_analyze_cache_lookup_uses_server_side_hashes(client):
     old_bytes, new_bytes = b'%PDF-1.4 old revision', b'%PDF-1.4 new revision'
-    cached = {'id': 7, 'analysis_text': 'cached report', 'file_type': 'pdf',
-              'processing_method': 'standard', 'processor_version': 'standard', 'volume_session_path': ''}
-    with patch('server.routers.compare.analyze._get_cached_analysis', new=AsyncMock(return_value=cached)) as lookup:
+    cached = {'analysis_text': 'cached report', 'file_type': 'pdf',
+              'processing_method': 'standard', 'processor_version': 'standard'}
+    with patch('server.routers.compare.analyze.get_cached_analysis', new=AsyncMock(return_value=cached)) as lookup:
         res = client.post(
             '/api/compare/analyze',
             files={'old_file': ('a.pdf', old_bytes, 'application/pdf'),
@@ -153,7 +156,9 @@ def test_analyze_cache_lookup_uses_server_side_hashes(client):
     assert lookup.await_args.args[:2] == (
         hashlib.sha256(old_bytes).hexdigest(), hashlib.sha256(new_bytes).hexdigest(),
     )
-    assert _sse(res.text)[0]['cached'] is True
+    metadata = _sse(res.text)[0]
+    assert metadata['cached'] is True
+    assert 'message_id' not in metadata and 'session_path' not in metadata  # nobody's identifiers are replayed
 
 
 @pytest.mark.parametrize('session_path', [
@@ -170,7 +175,7 @@ def test_save_result_rejects_paths_outside_the_volume(client):
     res = client.post('/api/compare/save-result', data={
         'session_path': '/Volumes/cat/sch/compare/../../other', 'filename': 'analysis.md', 'content': 'x',
     })
-    assert res.status_code == 400
+    assert res.status_code == 403
 
 
 def test_is_within_volume_accepts_session_folders():
@@ -330,3 +335,35 @@ def test_message_text_accepts_content_parts():
     parts = [{'type': 'reasoning', 'summary': []}, {'type': 'text', 'text': '{"impacted": false}'}]
     assert vector_search._message_text({'content': parts}) == '{"impacted": false}'
     assert vector_search._message_text({}) == ''
+
+
+def test_a_user_reaches_only_the_sessions_under_their_own_root(client):
+    from server.routers.compare.common import user_session_root
+    volume = '/Volumes/cat/sch/compare'
+    mine = f'{user_session_root(volume, "alice")}/2026-01-01_120000_ab12cd34'
+    theirs = f'{user_session_root(volume, "bob")}/2026-01-01_120000_ab12cd34'
+    assert client.post('/api/compare/save-result', data={
+        'session_path': theirs, 'filename': 'analysis.md', 'content': 'x'}).status_code == 403
+    assert client.get('/api/compare/load', params={'session_path': f'{volume}/2026-01-01_120000'}).status_code == 403
+    with patch('server.routers.compare.volume.WorkspaceClient'):
+        assert client.get('/api/compare/load', params={'session_path': mine}).status_code != 403
+
+
+def test_the_session_roots_of_two_users_differ_and_never_nest():
+    from server.routers.compare.common import user_session_root
+    a, b = user_session_root('/Volumes/c/s/v', 'alice'), user_session_root('/Volumes/c/s/v', 'bob')
+    assert a != b and not a.startswith(b + '/') and not b.startswith(a + '/')
+
+
+def test_an_old_session_is_reachable_through_the_callers_own_history(client):
+    from server.routers.compare import common
+    conn = AsyncMock()
+    conn.fetchval.return_value = 1
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    old = '/Volumes/cat/sch/compare/2025-06-01_101010'
+    with patch.object(common, 'get_pool', return_value=pool), patch('server.routers.compare.volume.WorkspaceClient'):
+        res = client.get('/api/compare/load', params={'session_path': old})
+    assert res.status_code != 403
+    assert conn.fetchval.await_args.args[1:] == ('alice', old)

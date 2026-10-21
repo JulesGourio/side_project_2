@@ -13,6 +13,7 @@ from server.services.infra.user import get_user_identity, get_workspace_url, req
 # One definition: a row written with another default than the one the cache
 # lookup reads with would never be found again.
 from server.routers.compare.config import APP_VERSION
+from server.routers.errors import INTERNAL_ERROR
 
 # What a JSON response can hold; `_serialize` stringifies anything else.
 JsonScalar = str | int | float | bool | None
@@ -20,10 +21,15 @@ JsonScalar = str | int | float | bool | None
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_UNAVAILABLE = JSONResponse(
-    {'error': 'History not available (LAKEBASE_PROJECT_ID not configured)', 'available': False},
-    status_code=503,
-)
+def _unavailable() -> JSONResponse:
+    """Build the response returned when the history store is not configured.
+
+    :return: a new 503 response (responses are not shared between requests)
+    """
+    return JSONResponse(
+        {'error': 'History not available (LAKEBASE_PROJECT_ID not configured)', 'available': False},
+        status_code=503,
+    )
 
 
 class SaveComparisonRequest(BaseModel):
@@ -79,7 +85,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request) -> dict
     """
     pool = get_pool()
     if not pool:
-        return _UNAVAILABLE
+        return _unavailable()
 
     try:
         identity = await get_user_identity(request)
@@ -152,7 +158,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request) -> dict
         return result
     except Exception as e:
         logger.error(f'Failed to save comparison: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.put('/history/{comparison_id}/impact', dependencies=[Depends(require_compare)], response_model=None)
@@ -172,7 +178,7 @@ async def save_comparison_impact(
     """
     pool = get_pool()
     if not pool:
-        return _UNAVAILABLE
+        return _unavailable()
     try:
         identity = await get_user_identity(request)
     except Exception:
@@ -188,7 +194,7 @@ async def save_comparison_impact(
         return {'success': True}
     except Exception as e:
         logger.error(f'Failed to save impact result: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.get('/history', dependencies=[Depends(require_compare)], response_model=None)
@@ -230,7 +236,7 @@ async def list_comparisons(request: Request, limit: int = 20, offset: int = 0) -
         return {'comparisons': [_serialize(r) for r in rows], 'total': total, 'available': True}
     except Exception as e:
         logger.error(f'Failed to list comparisons: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.get('/history/{comparison_id}', dependencies=[Depends(require_compare)], response_model=None)
@@ -243,7 +249,7 @@ async def get_comparison(comparison_id: int, request: Request) -> dict | JSONRes
     """
     pool = get_pool()
     if not pool:
-        return _UNAVAILABLE
+        return _unavailable()
     try:
         identity = await get_user_identity(request)
     except Exception:
@@ -261,4 +267,4 @@ async def get_comparison(comparison_id: int, request: Request) -> dict | JSONRes
         return _serialize(row)
     except Exception as e:
         logger.error(f'Failed to get comparison {comparison_id}: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)

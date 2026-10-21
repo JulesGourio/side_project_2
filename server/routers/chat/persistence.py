@@ -2,7 +2,6 @@
 
 import json
 import logging
-import secrets
 from typing import List, Tuple
 
 import asyncpg
@@ -15,10 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 async def _upsert_session(conn: asyncpg.Connection, session_id: str, user_id: str, workspace_id: str | None,
-                          workspace_url: str, name: str, touch: bool = True) -> None:
-    """Create the chat session row, or bump its ``updated_at`` when it exists.
+                          workspace_url: str, name: str, touch: bool = True) -> bool:
+    """Create the chat session row, or bump its ``updated_at`` when it exists and belongs to ``user_id``.
 
-    ``share_token`` is minted up front; it stays unused until the owner shares the conversation.
+    A session id that already belongs to someone else is left untouched: the caller cannot write into it. The share
+    token is created only when the owner shares the conversation.
 
     :param conn: an acquired Lakebase connection.
     :param session_id: id of the conversation (the browser creates it).
@@ -27,15 +27,18 @@ async def _upsert_session(conn: asyncpg.Connection, session_id: str, user_id: st
     :param workspace_url: workspace URL of the owner.
     :param name: thread title, used only when the row is created.
     :param touch: False keeps the thread's date for a hidden turn (error, aborted): the sidebar sorts by updated_at.
+    :return: True when the session is the caller's (created or updated), False when another user owns that id.
     """
-    await conn.execute(
+    status = await conn.execute(
         '''
-        INSERT INTO chat_sessions (id, user_id, workspace_id, workspace_url, name, share_token)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (id) DO UPDATE SET updated_at = CASE WHEN $7 THEN NOW() ELSE chat_sessions.updated_at END
+        INSERT INTO chat_sessions (id, user_id, workspace_id, workspace_url, name)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (id) DO UPDATE SET updated_at = CASE WHEN $6 THEN NOW() ELSE chat_sessions.updated_at END
+        WHERE chat_sessions.user_id = EXCLUDED.user_id
         ''',
-        session_id, user_id, workspace_id, workspace_url, name, secrets.token_urlsafe(20), touch,
+        session_id, user_id, workspace_id, workspace_url, name, touch,
     )
+    return status.endswith(' 1')
 
 
 async def _save_turn(
@@ -108,39 +111,51 @@ async def _save_turn(
 
     try:
         async with pool.acquire() as conn:
-            # Register the identity in `users` so chat-only users are not orphaned.
-            await upsert_user(
-                conn,
-                user_id=user_id,
-                workspace_id=workspace_id,
-                email=email,
-                workspace_url=workspace_url or None,
-            )
-            await _upsert_session(conn, session_id, user_id, workspace_id, workspace_url, name,
-                                  touch=(status or 'ok') == 'ok')
-            user_msg_id = await conn.fetchval(
-                '''
-                INSERT INTO chat_messages
-                    (session_id, user_id, workspace_id, workspace_url, role, content, trace_id,
-                     status, division, question_lang)
-                VALUES ($1, $2, $3, $4, 'user', $5, $6, $7, $8, $9)
-                RETURNING id
-                ''',
-                session_id, user_id, workspace_id, workspace_url, user_content, trace_id or None,
-                status or 'ok', division, question_lang or None,
-            )
-            assistant_msg_id = await conn.fetchval(
-                '''
-                INSERT INTO chat_messages
-                    (session_id, user_id, workspace_id, workspace_url, role, content, trace_id,
-                     endpoint_name, sources_json, status, error_msg, division, question_lang)
-                VALUES ($1, $2, $3, $4, 'assistant', $5, $6, $7, $8, $9, $10, $11, $12)
-                RETURNING id
-                ''',
-                session_id, user_id, workspace_id, workspace_url, assistant_content, trace_id or None,
-                endpoint_name or None, sources_json, status or 'ok',
-                (error_msg or None) and error_msg[:2000], division, question_lang or None,
-            )
+            # Register the identity in `users` so chat-only users are not orphaned. A failure here must not lose the
+            # conversation: the messages are saved either way.
+            try:
+                await upsert_user(
+                    conn,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    email=email,
+                    workspace_url=workspace_url or None,
+                )
+            except Exception as exc:
+                logger.warning('Chat save: user not registered: %s', exc)
+                if log is not None:
+                    log.issue('user_upsert_failed', 'persist', f'users not updated: {exc}', error_type=type(exc).__name__)
+            if not await _upsert_session(conn, session_id, user_id, workspace_id, workspace_url, name,
+                                         touch=(status or 'ok') == 'ok'):
+                logger.warning('Chat save refused: session %s belongs to another user', session_id)
+                if log is not None:
+                    log.issue('session_not_owned', 'persist', 'the session id belongs to another user; nothing saved')
+                return None, None
+            # One transaction: a question is never saved without its answer, or the reverse.
+            async with conn.transaction():
+                user_msg_id = await conn.fetchval(
+                    '''
+                    INSERT INTO chat_messages
+                        (session_id, user_id, workspace_id, workspace_url, role, content, trace_id,
+                         status, division, question_lang)
+                    VALUES ($1, $2, $3, $4, 'user', $5, $6, $7, $8, $9)
+                    RETURNING id
+                    ''',
+                    session_id, user_id, workspace_id, workspace_url, user_content, trace_id or None,
+                    status or 'ok', division, question_lang or None,
+                )
+                assistant_msg_id = await conn.fetchval(
+                    '''
+                    INSERT INTO chat_messages
+                        (session_id, user_id, workspace_id, workspace_url, role, content, trace_id,
+                         endpoint_name, sources_json, status, error_msg, division, question_lang)
+                    VALUES ($1, $2, $3, $4, 'assistant', $5, $6, $7, $8, $9, $10, $11, $12)
+                    RETURNING id
+                    ''',
+                    session_id, user_id, workspace_id, workspace_url, assistant_content, trace_id or None,
+                    endpoint_name or None, sources_json, status or 'ok',
+                    (error_msg or None) and error_msg[:2000], division, question_lang or None,
+                )
         return user_msg_id, assistant_msg_id
     except Exception as exc:
         logger.warning('Chat DB save failed: %s', exc)

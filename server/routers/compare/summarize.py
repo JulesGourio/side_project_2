@@ -14,6 +14,7 @@ from server.services.compare.processors.factory import (
     get_extension, prepare_image_content,
 )
 from server.services.compare.llm import TIRED_MESSAGE
+from server.services.compare import summarize as summarize_service
 from server.services.compare.summarize import summarize_image, summarize_text
 from server.services.infra.credentials import get_credentials
 from server.services.infra.lakebase import (
@@ -26,6 +27,18 @@ from server.routers.compare.common import _validate_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _summary_cache_version(cfg: dict) -> str:
+    """Key part of the summary cache: the settings that shape a summary besides the file.
+
+    :param cfg: the compare settings (``get_config()``)
+    :return: ``<APP_VERSION>:<hash of the endpoints, limits and prompts>``
+    """
+    parts = [cfg['summary_endpoint'], cfg['summary_image_endpoint'], str(cfg['summary_max_chars']),
+             str(cfg['summary_max_tokens']), summarize_service.SUMMARY_SYSTEM_PROMPT,
+             summarize_service.SUMMARY_IMAGE_SYSTEM_PROMPT]
+    return f'{APP_VERSION}:{hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()[:16]}'
 
 
 @router.post('/compare/summarize', dependencies=[Depends(require_compare)], response_model=None)
@@ -59,9 +72,10 @@ async def summarize_document(
     # Same rule as /compare/analyze: the cache key is the hash of the bytes
     # actually received, not the one the client claims.
     file_hash = hashlib.sha256(data).hexdigest()
+    cache_version = _summary_cache_version(cfg)
 
     if not force:
-        cached = await get_cached_summary(file_hash, APP_VERSION)
+        cached = await get_cached_summary(file_hash, cache_version)
         if cached is not None:
             return {**cached, 'cached': True}
 
@@ -82,7 +96,7 @@ async def summarize_document(
         return JSONResponse({'error': str(e)}, status_code=400)
     except Exception as e:
         logger.error(f'Summary content extraction failed: {e}', exc_info=True)
-        return JSONResponse({'error': f'Could not process "{file.filename}": {e}'}, status_code=502)
+        return JSONResponse({'error': f'Could not process "{file.filename}"'}, status_code=502)
 
     if not is_image and not text.strip():
         return {
@@ -119,5 +133,5 @@ async def summarize_document(
 
     result['duration_s'] = round(time.monotonic() - start, 2)
     if file_hash:
-        asyncio.create_task(store_summary_cache(file_hash, APP_VERSION, result, endpoint_name=result.get('endpoint') or endpoint))
+        asyncio.create_task(store_summary_cache(file_hash, cache_version, result, endpoint_name=result.get('endpoint') or endpoint))
     return result

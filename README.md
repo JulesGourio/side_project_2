@@ -196,7 +196,8 @@ Options: `-SkipBuild` skips the frontend build; `-SyncOnly` uploads the code onl
 rebuilding the frontend and without restarting the app.
 
 `bitbucket-pipelines.yml` runs the same bundle and app deployments in CI. Its custom pipelines
-are triggered by hand. A push to `main` deploys UAT, and PROD is a manual step after it.
+are triggered by hand: nothing deploys on a push. The PROD pipelines run the test suite first and refuse to run from a
+branch other than `main`.
 
 ### Resources per environment
 

@@ -15,6 +15,20 @@ logger = logging.getLogger(__name__)
 
 # --- JSON parsing ---
 
+def _store_text_as_text(wb: Any) -> None:
+    """Mark every text cell of a workbook as text, so a model-written value such as ``=HYPERLINK(...)`` is shown, not run.
+
+    openpyxl turns a string that starts with ``=`` into a formula; nothing in these exports is meant to be one.
+
+    :param wb: the openpyxl workbook about to be saved
+    """
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.data_type = 's'
+
+
 def _parse_json_response(text: str) -> list | None:
     """Robust JSON array parser — three fallback strategies.
 
@@ -310,6 +324,7 @@ def _build_excel_bytes(rows: list, ft: str, image_pairs: list | None = None) -> 
                         logger.warning('Excel image insert failed row %d: %s', ri, exc)
                         img_cell.value = f'[{img_pair.get("status", "?")}]'
 
+    _store_text_as_text(wb)
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -397,6 +412,7 @@ def _build_impact_excel_bytes(result: dict) -> bytes:
            ['Id', 'Criticality', 'Section', 'Before', 'After', 'Rationale / detail', 'Searched'],
            [6, 11, 24, 40, 40, 50, 9], change_rows)
 
+    _store_text_as_text(wb)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

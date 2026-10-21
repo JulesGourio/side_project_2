@@ -9,14 +9,25 @@
 # The deploy steps call utils/deploy/bitbucket_deploy.sh (one line each): every environment
 # has deploy-<env> (bundle + app restart) and deploy-<env>-jobs (bundle only).
 #
-# Custom pipelines are triggered by hand. A push to main runs the UAT deployment, then
-# offers the PROD deployment as a manual step.
+# Custom pipelines are triggered by hand. A PROD pipeline runs the test suite first and refuses to deploy from a branch
+# other than main. A push to main triggers nothing for now.
 # =============================================================================
 
 image: python:3.11-slim
 
 definitions:
   steps:
+    # -----------------------------------------------------------------------
+    # Test suite. It runs before every PROD deployment and can be triggered alone (tests).
+    # -----------------------------------------------------------------------
+    - step: &tests
+        name: Run the test suite
+        clone:
+          depth: 1
+        script:
+          - pip install -q -e ".[dev]"
+          - python -m pytest -q tests
+
     # -----------------------------------------------------------------------
     # DEV: target dev, profile job-runner-sa-dev (DEV service principal
     # fde6ff28-739f-4a41-b61e-604a298c8478). Copy of the UAT data in the DEV workspace.
@@ -257,6 +268,7 @@ definitions:
         clone:
           depth: 1
         script:
+          - test "$BITBUCKET_BRANCH" = "main" || { echo "PROD is deployed from the main branch only." >&2; exit 1; }
           - bash utils/deploy/bitbucket_deploy.sh prod app
 
     # -----------------------------------------------------------------------
@@ -268,6 +280,7 @@ definitions:
         clone:
           depth: 1
         script:
+          - test "$BITBUCKET_BRANCH" = "main" || { echo "PROD is deployed from the main branch only." >&2; exit 1; }
           - bash utils/deploy/bitbucket_deploy.sh prod jobs
 
     # -----------------------------------------------------------------------
@@ -306,6 +319,7 @@ definitions:
         clone:
           depth: 1
         script:
+          - test "$BITBUCKET_BRANCH" = "main" || { echo "PROD is deployed from the main branch only." >&2; exit 1; }
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
           - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
           - pip install -q psycopg2-binary databricks-sdk
@@ -349,9 +363,13 @@ pipelines:
       - step: *deploy-uat
     deploy-uat-jobs:
       - step: *deploy-uat-jobs
+    tests:
+      - step: *tests
     deploy-prod:
+      - step: *tests
       - step: *deploy-prod
     deploy-prod-jobs:
+      - step: *tests
       - step: *deploy-prod-jobs
     sync-prod-data:
       - step: *export-from-uat

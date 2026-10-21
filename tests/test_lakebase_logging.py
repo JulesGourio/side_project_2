@@ -243,7 +243,7 @@ def test_analyze_audit_row_gets_the_endpoint_that_answered(client):
 
     usage = AsyncMock()
     with (
-        patch('server.routers.compare.analyze._get_cached_analysis', new=AsyncMock(return_value=None)),
+        patch('server.routers.compare.analyze.get_cached_analysis', new=AsyncMock(return_value=None)),
         patch('server.routers.compare.analyze.get_processor', return_value=processor),
         patch('server.routers.compare.analyze.store_llm_request', new=AsyncMock(return_value=11)),
         patch('server.routers.compare.analyze.update_llm_request_usage', new=usage),
@@ -286,7 +286,7 @@ def test_analyze_records_outcome_and_durations(client):
 
     run = AsyncMock()
     with (
-        patch('server.routers.compare.analyze._get_cached_analysis', new=AsyncMock(return_value=None)),
+        patch('server.routers.compare.analyze.get_cached_analysis', new=AsyncMock(return_value=None)),
         patch('server.routers.compare.analyze.get_processor', return_value=processor),
         patch('server.routers.compare.analyze.store_llm_request', new=AsyncMock(return_value=11)),
         patch('server.routers.compare.analyze.update_llm_request_usage', new=AsyncMock()),

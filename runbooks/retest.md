@@ -305,3 +305,15 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Comparaison DEV : un `.docx` avec tableaux et images retournées, avant/après, donne le même rapport qu'avant (comparer avec un résultat enregistré).
 - [ ] Comparaison DEV : deux classeurs `.xlsx` dont l'un a une feuille sans ligne de données : un rapport s'affiche, pas d'erreur.
 - [ ] Résumé d'un document et recherche d'impact : réponses normales (les délais viennent maintenant de `services/*/config.py`).
+
+## 2026-10-21 — revue indépendante de la PR (correctifs de sécurité et de fiabilité)
+
+- [ ] Reconstruire le client seulement si `client/` a changé dans ton dépôt : `cd client; bun install; bun run build`.
+- [ ] Déployer l'app DEV (pipeline Bitbucket `deploy-dev`) ; au premier démarrage le schéma ajoute `analysis_cache` et 3 index (migration idempotente, verrou consultatif).
+- [ ] `/health` : le bloc Lakebase indique l'état ; redémarrer l'app pendant que Lakebase est en veille : l'app se reconnecte seule.
+- [ ] Aperçu PowerPoint / Word : fonctionne ; l'appel direct à `/api/preview` sans accès Comparaison est refusé.
+- [ ] Comparaison : charger un ancien historique (les sessions enregistrées avant ce déploiement se rechargent) ; `session_path` d'un autre utilisateur refusé (403).
+- [ ] Même paire de fichiers deux fois : la seconde analyse vient de `analysis_cache` (`cached: true`) et ne renvoie aucun identifiant d'un autre utilisateur.
+- [ ] Lien de partage d'un chat : lecture seule, vote du propriétaire seul ; ouvrir une session partagée dans le WebSocket avec son id ne l'écrit pas (`session_not_owned` dans `app_errors`).
+- [ ] Classeur `.xlsm`, colonnes ajoutées, feuille nouvelle, valeur −40 → 40 : chaque changement apparaît dans le rapport.
+- [ ] Parsing UAT en mode `full` : aucune révision remplacée ne revient dans `chunks` ; pas de nouveau `MISSING_CHUNKS` sur les révisions remplacées.

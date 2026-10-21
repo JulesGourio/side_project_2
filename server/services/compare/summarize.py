@@ -14,7 +14,7 @@ from server.services.compare.llm import complete_chain, compare_chain, message_t
 
 logger = logging.getLogger(__name__)
 
-_SUMMARY_SYSTEM_PROMPT = """\
+SUMMARY_SYSTEM_PROMPT = """\
 You are a technical documentation assistant. Summarize the document text given to you: its purpose \
 and scope, the key requirements or content it specifies, and its overall structure. Be concise and \
 factual - no filler, no meta-commentary about the summary itself or how it was produced. Plain \
@@ -25,7 +25,7 @@ LANGUAGE: write the summary in the SAME language as the document text given to y
 to English when the document is not in English.\
 """
 
-_SUMMARY_IMAGE_SYSTEM_PROMPT = """\
+SUMMARY_IMAGE_SYSTEM_PROMPT = """\
 You are a technical documentation assistant. Describe this image concisely: what it depicts (photo, \
 diagram, schematic, table, chart...), the key labeled elements, values, or callouts visible, and its \
 likely purpose in a technical document. Be factual - describe only what is visible, no speculation, \
@@ -103,7 +103,7 @@ async def summarize_text(
     truncated = len(text) > max_chars
     text = text[:max_chars]
 
-    completion, endpoint = await _call_llm(host, token, llm_endpoint, _SUMMARY_SYSTEM_PROMPT, text, max_tokens)
+    completion, endpoint = await _call_llm(host, token, llm_endpoint, SUMMARY_SYSTEM_PROMPT, text, max_tokens)
     summary = message_text(completion['choices'][0]['message']).strip()
 
     return {
@@ -132,7 +132,7 @@ async def summarize_image(
     :param max_tokens: output budget
     :return: dict with ``summary``, ``truncated``, ``endpoint`` and ``usage``
     """
-    completion, endpoint = await _call_llm(host, token, llm_endpoint, _SUMMARY_IMAGE_SYSTEM_PROMPT, content_blocks, max_tokens)
+    completion, endpoint = await _call_llm(host, token, llm_endpoint, SUMMARY_IMAGE_SYSTEM_PROMPT, content_blocks, max_tokens)
     summary = message_text(completion['choices'][0]['message']).strip()
 
     return {

@@ -11,7 +11,7 @@ import logging
 import re
 
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
@@ -30,7 +30,8 @@ from server.services.infra.pdf_report import (
     build_report_pdf,
 )
 from server.routers.compare.config import get_config
-from server.routers.compare.common import _is_within_volume, _sanitize_filename
+from server.routers.compare.common import _sanitize_filename, owns_session
+from server.routers.errors import INTERNAL_ERROR
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -170,7 +171,7 @@ async def export_pdf(req: PdfExportRequest) -> Response:
     except Exception as e:
         logger.error('export-pdf: PDF generation failed: %s', e, exc_info=True)
         store_error(endpoint='/api/export/pdf', error_type=type(e).__name__, error_msg=str(e), exc=e)
-        return JSONResponse({'error': f'PDF generation failed: {e}'}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
     return Response(
         content=pdf_bytes,
@@ -183,13 +184,15 @@ async def export_pdf(req: PdfExportRequest) -> Response:
 
 @router.post('/compare/save-result', dependencies=[Depends(require_compare)], response_model=None)
 async def save_result_to_session(
+    request: Request,
     session_path: str = Form(...),
     filename: str = Form(...),
     content: str = Form(...),
 ) -> dict | JSONResponse:
     """Save a text result in the session folder of the volume.
 
-    :param session_path: folder of the saved session; it must be inside the volume.
+    :param request: the incoming request, for the caller's identity: only the caller's own sessions are writable.
+    :param session_path: folder of the saved session; it must be the caller's.
     :param filename: name of the file to write.
     :param content: text to write.
     :return: ``{'success': True, 'path'}``, or an error response (400 invalid request or volume not configured, 500 on a failed upload).
@@ -202,8 +205,8 @@ async def save_result_to_session(
     volume_path = cfg['volume_path'].rstrip('/')
     if not volume_path or volume_path.startswith('TODO'):
         return JSONResponse({'error': 'volume_path not configured'}, status_code=400)
-    if not _is_within_volume(session_path, volume_path):
-        return JSONResponse({'error': 'Invalid session_path'}, status_code=400)
+    if not await owns_session(request, volume_path, session_path):
+        return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
 
     safe_name = _sanitize_filename(filename)
     if not (safe_name.endswith('.md') or safe_name.endswith('.txt')):
@@ -214,13 +217,15 @@ async def save_result_to_session(
         await asyncio.to_thread(_upload, remote_path, content.encode('utf-8'))
         return {'success': True, 'path': remote_path}
     except Exception as e:
-        return JSONResponse({'error': str(e)}, status_code=500)
+        logger.error('Request failed: %s', e, exc_info=True)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 # --- /compare/save-excel  /compare/save-pdf — auto-save formatted exports to volume ---
 
 @router.post('/compare/save-excel', dependencies=[Depends(require_compare)], response_model=None)
 async def save_excel_to_session(
+    request: Request,
     session_path: str = Form(...),
     json_text: str = Form(...),
     file_type: str = Form(''),
@@ -229,7 +234,8 @@ async def save_excel_to_session(
 ) -> dict | JSONResponse:
     """Generate Excel from a structured JSON analysis and save it to the session volume directory.
 
-    :param session_path: folder of the saved session; it must be inside the volume.
+    :param request: the incoming request, for the caller's identity: only the caller's own sessions are writable.
+    :param session_path: folder of the saved session; it must be the caller's.
     :param json_text: the structured JSON analysis returned by the model.
     :param file_type: type of the compared files.
     :param filename: name of the workbook, without extension.
@@ -244,8 +250,8 @@ async def save_excel_to_session(
     volume_path = cfg['volume_path'].rstrip('/')
     if not volume_path or volume_path.startswith('TODO'):
         return JSONResponse({'error': 'volume_path not configured'}, status_code=400)
-    if not _is_within_volume(session_path, volume_path):
-        return JSONResponse({'error': 'Invalid session_path'}, status_code=400)
+    if not await owns_session(request, volume_path, session_path):
+        return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
 
     rows = _parse_json_response(json_text)
     if rows is None:
@@ -264,7 +270,7 @@ async def save_excel_to_session(
     except Exception as e:
         logger.error('save-excel: Excel generation failed: %s', e, exc_info=True)
         store_error(endpoint='/api/compare/save-excel', error_type=type(e).__name__, error_msg=str(e), exc=e)
-        return JSONResponse({'error': f'Excel generation failed: {e}'}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
     safe_name = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('._') or 'analysis'
     if not safe_name.endswith('.xlsx'):
@@ -277,11 +283,12 @@ async def save_excel_to_session(
     except Exception as e:
         logger.error('save-excel: volume upload failed: %s', e, exc_info=True)
         store_error(endpoint='/api/compare/save-excel', error_type=type(e).__name__, error_msg=str(e), exc=e)
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.post('/compare/save-pdf', dependencies=[Depends(require_compare)], response_model=None)
 async def save_pdf_to_session(
+    request: Request,
     session_path: str = Form(...),
     markdown_text: str = Form(None),   # optional — server generates PDF from markdown
     pdf_file: UploadFile = File(None),  # optional — client uploads a pre-rendered PDF
@@ -292,7 +299,8 @@ async def save_pdf_to_session(
 ) -> dict | JSONResponse:
     """Save a PDF to volume. Can accept EITHER an uploaded client PDF, OR generate one server-side from markdown.
 
-    :param session_path: folder of the saved session; it must be inside the volume.
+    :param request: the incoming request, for the caller's identity: only the caller's own sessions are writable.
+    :param session_path: folder of the saved session; it must be the caller's.
     :param markdown_text: Markdown to render as the PDF, when no PDF is uploaded.
     :param pdf_file: a PDF rendered by the browser, saved as is.
     :param filename: name of the file, without extension.
@@ -309,8 +317,8 @@ async def save_pdf_to_session(
     volume_path = cfg['volume_path'].rstrip('/')
     if not volume_path or volume_path.startswith('TODO'):
         return JSONResponse({'error': 'volume_path not configured'}, status_code=400)
-    if not _is_within_volume(session_path, volume_path):
-        return JSONResponse({'error': 'Invalid session_path'}, status_code=400)
+    if not await owns_session(request, volume_path, session_path):
+        return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
 
     try:
         if markdown_text:
@@ -323,7 +331,7 @@ async def save_pdf_to_session(
     except Exception as e:
         logger.error('save-pdf: processing failed: %s', e, exc_info=True)
         store_error(endpoint='/api/compare/save-pdf', error_type=type(e).__name__, error_msg=str(e), exc=e)
-        return JSONResponse({'error': f'Could not process PDF: {e}'}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
     safe_name = _pdf_filename(filename, 'analysis')
 
@@ -334,4 +342,4 @@ async def save_pdf_to_session(
     except Exception as e:
         logger.error('save-pdf: volume upload failed: %s', e, exc_info=True)
         store_error(endpoint='/api/compare/save-pdf', error_type=type(e).__name__, error_msg=str(e), exc=e)
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)

@@ -25,11 +25,16 @@ logger = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
 _refresh_task: asyncio.Task | None = None
+_reconnect_task: asyncio.Task | None = None
 
 # Used only when the real expiry is unknown (fallback workspace token, see _get_host_and_token).
 _DEFAULT_REFRESH_INTERVAL_S = 55 * 60  # 55 min — token lifetime is ~1h
 _REFRESH_SAFETY_BUFFER_S = 5 * 60  # refresh this long before actual expiry
 _MIN_REFRESH_INTERVAL_S = 60  # never refresh tighter than this
+
+# Wait between two connection attempts while Lakebase is unreachable at startup: doubles from the minimum to the maximum.
+_RECONNECT_MIN_S = 10.0
+_RECONNECT_MAX_S = 300.0
 
 # Bounds the initial TCP connect (asyncpg waits 60 s by default): local dev may have port 5432 blocked, and the short
 # timeout falls back to the no-history path quickly.
@@ -223,42 +228,97 @@ async def _token_refresh_loop(
 # --- Public API ---
 
 
+async def _connect(cfg: dict) -> float | None:
+    """Connect to Lakebase, make sure the database and the schema exist, and set the pool.
+
+    :param cfg: the Lakebase settings from ``_cfg()``
+    :return: seconds until the token expires, None when unknown
+    :raises Exception: when the endpoint cannot be reached or refuses the connection
+    """
+    global _pool
+    host, username, token, expires_in_s = await asyncio.to_thread(
+        _get_host_and_token, cfg['project_id'], cfg['branch'], cfg['endpoint']
+    )
+    await _ensure_database(host, username, token, cfg['database'])
+    _pool = await _build_pool(host, username, token, cfg['database'])
+    try:
+        await ensure_schema(_pool)
+    except Exception as e:
+        # A failing schema migration must never skip the refresh loop: the live pool's token expires in ~1h.
+        logger.error(f'Lakebase schema ensure failed — continuing with existing schema: {e}')
+    logger.info(f'Lakebase ready ({host})')
+    return expires_in_s
+
+
+def _start_refresh(cfg: dict, expires_in_s: float | None) -> None:
+    """Start the task that rebuilds the pool before its token expires.
+
+    :param cfg: the Lakebase settings from ``_cfg()``
+    :param expires_in_s: seconds until the current token expires, None when unknown
+    """
+    global _refresh_task
+    _refresh_task = asyncio.create_task(
+        _token_refresh_loop(
+            cfg['project_id'], cfg['branch'], cfg['endpoint'], cfg['database'], _next_refresh_delay(expires_in_s),
+        )
+    )
+
+
+async def _connect_until_ready(cfg: dict) -> None:
+    """Retry the connection with a growing wait until it works, then start the token refresh.
+
+    Lakebase can still be waking from scale-to-zero when the app starts: without this loop the pool would stay empty
+    until the next restart.
+
+    :param cfg: the Lakebase settings from ``_cfg()``
+    """
+    wait = _RECONNECT_MIN_S
+    while True:
+        await asyncio.sleep(wait)
+        try:
+            _start_refresh(cfg, await _connect(cfg))
+            return
+        except Exception as e:
+            logger.error(f'Lakebase still unreachable (retrying in {min(wait * 2, _RECONNECT_MAX_S):.0f}s): {e}')
+            wait = min(wait * 2, _RECONNECT_MAX_S)
+
+
+def status() -> str:
+    """The state of the Lakebase connection, for the health check.
+
+    :return: ``disabled`` (no project configured), ``ready`` (pool open) or ``connecting`` (not reachable yet)
+    """
+    if not _cfg()['project_id']:
+        return 'disabled'
+    return 'ready' if _pool else 'connecting'
+
+
 async def init_lakebase() -> None:
-    global _pool, _refresh_task
+    """Open the Lakebase pool at startup; when Lakebase is not reachable, keep trying in the background.
+
+    Nothing here raises: the app runs without history until the connection works.
+    """
+    global _reconnect_task
     cfg = _cfg()
-    project_id = cfg['project_id']
-    if not project_id:
+    if not cfg['project_id']:
         logger.warning('LAKEBASE_PROJECT_ID not set — history feature disabled')
         return
     try:
-        host, username, token, expires_in_s = await asyncio.to_thread(
-            _get_host_and_token, project_id, cfg['branch'], cfg['endpoint']
-        )
-        await _ensure_database(host, username, token, cfg['database'])
-        _pool = await _build_pool(host, username, token, cfg['database'])
-        try:
-            await ensure_schema(_pool)
-        except Exception as e:
-            # A failing schema migration must never skip the refresh loop below: the live pool's token expires in ~1h.
-            logger.error(f'Lakebase schema ensure failed — continuing with existing schema: {e}')
-        _refresh_task = asyncio.create_task(
-            _token_refresh_loop(
-                project_id, cfg['branch'], cfg['endpoint'], cfg['database'],
-                _next_refresh_delay(expires_in_s),
-            )
-        )
-        logger.info(f'Lakebase ready ({host})')
+        _start_refresh(cfg, await _connect(cfg))
     except Exception as e:
-        logger.error(f'Lakebase init failed — history disabled: {e}')
+        logger.error(f'Lakebase init failed — history disabled until it connects: {e}')
+        _reconnect_task = asyncio.create_task(_connect_until_ready(cfg))
 
 
 async def shutdown_lakebase() -> None:
-    if _refresh_task:
-        _refresh_task.cancel()
-        try:
-            await _refresh_task
-        except asyncio.CancelledError:
-            pass
+    """Stop the background tasks and close the pool."""
+    for task in (_refresh_task, _reconnect_task):
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     if _pool:
         await _pool.close()
     logger.info('Lakebase shut down')

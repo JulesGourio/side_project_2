@@ -329,9 +329,12 @@ Never answer SKIP: even a page containing only a stamp or a mostly-blank form st
 IMAGES_PENDING = "IMAGES_PENDING"
 EMPTY_TEXT = "EMPTY_TEXT"
 
+# A revision replaced by a newer one of the same REF: its chunks are pruned and it is never parsed again.
+SUPERSEDED_REVISION = "SKIPPED_SUPERSEDED_REVISION"
+
 TERMINAL_STATUSES = (
     "SUCCESS", "SKIPPED_EMPTY_SMALL_FILE", "SKIPPED_REF_MANUAL", "SKIPPED_SOURCE_REMOVED",
-    "SKIPPED_EMPTY_IMAGES", "SKIPPED_EMPTY_FOLDER", IMAGES_PENDING,
+    "SKIPPED_EMPTY_IMAGES", "SKIPPED_EMPTY_FOLDER", SUPERSEDED_REVISION, IMAGES_PENDING,
 )
 
 # Statuses 4_describe_images moves on in the same job run.

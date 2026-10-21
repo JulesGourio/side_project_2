@@ -301,8 +301,9 @@ async def _stream_request(host: str, token: str, endpoint: str, messages: List[D
     if thinking:
         payload['thinking'] = {'type': 'adaptive'}
         payload['output_config'] = {'effort': THINKING_EFFORT}
-    # Temperature and top_p are mutually exclusive on these endpoints: only temperature is sent.
-    if supports_temperature(endpoint):
+    # Temperature and top_p are mutually exclusive on these endpoints: only temperature is sent. Extended thinking refuses a
+    # temperature other than the default, so a request that thinks sends none.
+    if supports_temperature(endpoint) and not thinking:
         payload['temperature'] = temperature
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
     timeout = httpx.Timeout(DEFAULT_TIMEOUT_S, connect=DEFAULT_CONNECT_TIMEOUT_S)
