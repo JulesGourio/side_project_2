@@ -10,7 +10,7 @@ import pytest
 
 PARSING = os.path.join(os.path.dirname(__file__), "..", "utils", "parsing_pipeline")
 sys.path.insert(0, PARSING)
-for key, value in {"PIPELINE_WRITE_ENV": "dev", "PARSING_INTRAQUAL_GOLD": "gold.sch",
+for key, value in {"PIPELINE_WRITE_ENV": "dev", "PARSING_INTRAQUAL_BRONZE": "bronze.sch",
                    "PARSING_VOLUME_ROOT_PATH": "/Volumes/c/s/root", "PARSING_VOLUME_BASE_PATH": "/Volumes/c/s/img",
                    "PARSING_OFFLINE_MODELS": "/models"}.items():
     os.environ.setdefault(key, value)

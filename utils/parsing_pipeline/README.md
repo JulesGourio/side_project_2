@@ -61,6 +61,9 @@ through Docling's simple pipeline, and doc / xls / ppt / rtf / odt through forma
 one run at a time. The parse notebooks pin an `opencv-python-headless` older than 4.13 (4.13 aborts on the runtime's OpenSSL) in a `%pip` cell: 4.11.0.86 on the CPU tasks (the standard runtime keeps numpy 1; 4.12 needs numpy 2), 4.12.0.88 on the GPU task. It replaces the
 OpenCV build that Docling pulls in, which fails on the GPU runtime and without a display library.
 
+The notebooks that join the `gd_*_latest` views set `spark.databricks.remoteFiltering.blockSelfJoins` to `false`
+(`create_proj_parse_manifest.py`, `categories.build_category_hierarchy`).
+
 ## Settings
 
 The job sets the environment variables read by `config.py`. The main ones, with their defaults in `config.py`:
@@ -85,8 +88,7 @@ listed at the top of `config.py`.
 
 ## Documents and scope
 
-- **Scope gate** (`DOC_SCOPE_FILTER`): `revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false` on
-  `document_revisions_intraqual` (the Intraqual data asset; `courant`, `etat` and `nonvisible` at source). Only the
+- **Scope gate** (`DOC_SCOPE_FILTER`): `courant = 1 AND etat = 7 AND nonvisible = 0` on `gd_doc_latest`. Only the
   current revision of a validated, visible document enters the chain. `difftotale` is not part of the gate: the
   Intraqual portal shows documents with `difftotale = 0`.
 - **Manifest**: `2_manifest` keeps the in-scope documents, with their REF, title, revision (`indice`), date,
@@ -100,7 +102,7 @@ listed at the top of `config.py`.
 - **Pruning and `DRY_RUN`**: the pruning of derived rows runs on every run. The widget `dry_run` (default `true`)
   protects the volume only: out-of-scope folders are deleted when it is `non`.
 - **Volume folders** are classified by `2_manifest`: `KEEP` (parsed), `DELETE` (out of scope), `ORPHAN` (IDDOC
-  unknown in `document_revisions_intraqual`, kept on the volume, not parsed), `SKIP` (name not `D_<IDDOC>` or `Dm_<IDDOC>`), `MANUAL`,
+  unknown in `gd_doc`, kept on the volume, not parsed), `SKIP` (name not `D_<IDDOC>` or `Dm_<IDDOC>`), `MANUAL`,
   `CAT_EXCL`.
 - **Archive**: a document published before `PARSING_DOC_DATE_CUTOFF` is parsed like the others, but its passages go
   to `chunks_archive` and never to `chunks`. `parsed_documents.is_filtered_by_date` is `true` for these. A document

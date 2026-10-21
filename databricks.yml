@@ -51,11 +51,12 @@ variables:
   parsing_images_volume:
     description: "Volume of <pipeline_write_env>_proj.qualibot the parsing pipeline extracts images to"
     default: "images"
-  intraqual_gold_catalog_schema:
+  intraqual_bronze_catalog_schema:
     description: >-
-      catalog.schema of the Intraqual data asset tables (document_revisions_intraqual,
-      category_ancestors_intraqual) — the pipeline's metadata source.
-    default: "prod_gold.quality_system"
+      catalog.schema of the Intraqual bronze materialized views (gd_*_latest) —
+      the pipeline's real metadata source. prod_bronze became official on
+      2026-07-27; dev_bronze had stopped refreshing on 2026-07-21.
+    default: "prod_bronze.intraqual"
   intraqual_suffix:
     description: "Suffix for Intraqual tables (empty by default)"
     default: ""
@@ -72,8 +73,8 @@ variables:
     default: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
   parsing_max_source_staleness_hours:
     description: >-
-      1_categories fails the run if an Intraqual data asset table hasn't been written within
-      this window. 0 disables the check (catch-up run on a stalled data asset).
+      00b fails the run if an Intraqual source table hasn't been refreshed within
+      this window. 0 disables the check (catch-up run on a stalled ingestion).
     default: "36"
   parsing_vector_search_indexes:
     description: >-
@@ -323,7 +324,7 @@ targets:
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Same prod sources as UAT.
-      intraqual_gold_catalog_schema: "prod_gold.quality_system"
+      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
       parsing_offline_models_path: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
@@ -472,8 +473,8 @@ targets:
       alerts_warehouse_id: "5890912c31867b77"
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
-      # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_gold through the shared metastore.
-      intraqual_gold_catalog_schema: "prod_gold.quality_system"
+      # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_bronze through the shared metastore.
+      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
       parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
@@ -605,7 +606,7 @@ targets:
       alerts_warehouse_id: "03054ddc44b7f902"
       parsing_num_workers: "8"
       parsing_run_mode: "incremental"
-      intraqual_gold_catalog_schema: "prod_gold.quality_system"
+      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       job_activity_tag: "prod-job"
       # PAUSED until promoted on explicit decision.

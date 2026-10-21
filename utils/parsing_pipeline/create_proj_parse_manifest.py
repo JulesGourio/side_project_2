@@ -9,11 +9,11 @@
 # MAGIC **Description:**
 # MAGIC Builds the `parse_manifest` read by task `3_parse` and reconciles the volume root with the current Qualibot scope.
 # MAGIC The phases are functions of `manifest_steps.py`, applied in this order:
-# MAGIC * **Scope gate** (`revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false` on `document_revisions_intraqual`): only current, validated, visible documents pass.
+# MAGIC * **Scope gate** (`courant = 1 AND etat = 7 AND nonvisible = 0` on `gd_doc_latest`): only current, validated, visible documents pass.
 # MAGIC * **Category exclusion** (IDCAT 3798 — ONE_QMS-5S): documents whose principal category belongs to `EXCLUDED_IDCATS` are logged as
 # MAGIC   `SKIPPED_CATEGORY_EXCLUDED` and removed from the parse manifest.
 # MAGIC * **Folder name convention**: only root folders named `D_<IDDOC>` or `Dm_<IDDOC>` are processed (case-insensitive); the IDDOC cannot be extracted from other names.
-# MAGIC * **Orphan detection**: folders whose IDDOC is not in `document_revisions_intraqual` stay on the volume,
+# MAGIC * **Orphan detection**: folders whose IDDOC is not in `gd_doc_latest` (nor in the optional fallback table) stay on the volume,
 # MAGIC   are excluded from parsing and logged as `SKIPPED_IDDOC_NOT_FOUND`.
 # MAGIC * **Date cutoff = a parse budget, not an exclusion**: documents published before `DOC_DATE_CUTOFF` stay in the manifest, but only the
 # MAGIC   `ARCHIVE_MAX_DOCS` most recent get `parse_content=True`; `3_parse` routes those to `chunks_archive` (impact search only).
@@ -27,7 +27,7 @@
 # MAGIC
 # MAGIC **Inputs Data**
 # MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.category_reference`, `parsed_documents`
-# MAGIC - `{PARSING_INTRAQUAL_GOLD}.document_revisions_intraqual` (Intraqual data asset)
+# MAGIC - `{PARSING_INTRAQUAL_BRONZE}.gd_doc_latest`, `gd_doc_cat_latest`, `gd_cat_latest`, `gd_typdoc_latest`
 # MAGIC - `{PARSING_VOLUME_ROOT_PATH}` volume listing
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
@@ -75,7 +75,20 @@ import tables
 tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from leap_utils.common import logger as log_utils
 
-from config import DOC_SCOPE_FILTER, EXCLUDED_IDCATS, VOLUME_ROOT_PATH
+from config import (
+    DOC_SCOPE_FILTER, GD_CAT_LATEST, GD_DOC_CAT_LATEST, GD_DOC_FALLBACK, GD_DOC_LATEST,
+    EXCLUDED_IDCATS, VOLUME_ROOT_PATH,
+)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Spark
+# MAGIC Several joins below read a materialized view on both sides, which Spark blocks by default.
+
+# COMMAND ----------
+
+spark.conf.set("spark.databricks.remoteFiltering.blockSelfJoins", "false")
 
 # COMMAND ----------
 
@@ -153,30 +166,39 @@ stale_iddocs = manifest_steps.find_stale_iddocs(df_scope_docs)
 
 # MAGIC %md
 # MAGIC ## Known documents, inside and outside scope
-# MAGIC IDDOC to (REF, title) for every revision of `document_revisions_intraqual`. Used later to tell an out-of-scope document from a true orphan.
+# MAGIC IDDOC to (REF, title) for every document of `gd_doc_latest` (and the optional fallback table). Used later to tell an out-of-scope document from a true orphan.
 
 # COMMAND ----------
 
-all_rows = manifest_steps.doc_rows()
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Main category of each IDDOC
-# MAGIC `document_revisions_intraqual` carries one main category per revision, with its name (French labels only).
-
-# COMMAND ----------
-
-df_main_cat = (
-    categories.read_revisions(spark)
-    .filter(F.col("category_ID").isNotNull())
-    .select(F.col("document_revision_ID").alias("IDDOC"), F.col("category_ID").alias("IDCAT"),
-            F.col("category_name").alias("NOMCAT"))
-    .dropDuplicates(["IDDOC"])
+primary_rows = manifest_steps.doc_rows(GD_DOC_LATEST)
+fallback_rows = (
+    {k: v for k, v in manifest_steps.doc_rows(GD_DOC_FALLBACK).items() if k not in primary_rows}
+    if (GD_DOC_FALLBACK or "").strip() else {}
 )
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Principal category of each IDDOC
+# MAGIC `gd_doc_cat_latest` keeps one principal category per document, `gd_cat_latest` gives its name (French labels only, `IDLG = 1`).
+
+# COMMAND ----------
+
+df_doc_cat = (
+    spark.read.table(GD_DOC_CAT_LATEST)
+    .filter(F.lower(F.col("principale")) == "oui")
+    .select(F.col("iddoc").alias("IDDOC"), F.col("idcat").alias("IDCAT"))
+    .dropDuplicates(["IDDOC"])
+)
+df_cat = (
+    spark.read.table(GD_CAT_LATEST)
+    .filter(F.col("IDLG") == 1)
+    .select(F.col("IDCAT"), F.col("NOMCAT"), F.col("NIVEAU"))
+)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Volume root
 # MAGIC One folder per document, named `D_<IDDOC>` or `Dm_<IDDOC>`.
 
@@ -198,13 +220,13 @@ logger.info(f"{len(root_items)} items at the volume root level")
 
 # COMMAND ----------
 
+all_rows = {**primary_rows, **fallback_rows}
 iddoc_to_ref = {iddoc: v[0] for iddoc, v in all_rows.items()}
 iddoc_to_titre = {iddoc: v[1] for iddoc, v in all_rows.items()}
-logger.info(f"IDDOC->REF available: {len(iddoc_to_ref)}")
+logger.info(f"IDDOC->REF available: {len(iddoc_to_ref)} ({len(primary_rows)} primary, {len(fallback_rows)} fallback)")
 
-_main_cat_rows = df_main_cat.collect()
-iddoc_to_cat = {r.IDDOC: r.NOMCAT for r in _main_cat_rows}
-iddoc_to_idcat = {r.IDDOC: r.IDCAT for r in _main_cat_rows}
+iddoc_to_cat = {r.IDDOC: r.NOMCAT for r in df_doc_cat.join(df_cat, on="IDCAT", how="left").select("IDDOC", "NOMCAT").collect()}
+iddoc_to_idcat = {r.IDDOC: r.IDCAT for r in df_doc_cat.collect()}
 logger.info(f"{len(iddoc_to_cat)} IDDOCs with a principal category")
 
 # COMMAND ----------
@@ -232,7 +254,7 @@ manifest_steps.prune_stale_revisions()
 
 # MAGIC %md
 # MAGIC ## Tr. 3 - Classify the root folders
-# MAGIC Each folder becomes KEEP, DELETE (out of scope), ORPHAN (IDDOC unknown in `document_revisions_intraqual`), SKIP (name not `D_`/`Dm_`), MANUAL (REF excluded by configuration) or CAT_EXCL (excluded principal category).
+# MAGIC Each folder becomes KEEP, DELETE (out of scope), ORPHAN (IDDOC unknown in `gd_doc`), SKIP (name not `D_`/`Dm_`), MANUAL (REF excluded by configuration) or CAT_EXCL (excluded principal category).
 
 # COMMAND ----------
 
@@ -254,7 +276,7 @@ manifest_steps.remove_stale_skip_rows(classified["keep"])
 
 # MAGIC %md
 # MAGIC ## Tr. 5 - Reconcile parsed_documents
-# MAGIC Documents that must not be parsed get a SKIPPED row with the reason, so the monitoring dashboard can explain every exclusion. A document recorded earlier but absent from both the volume and `document_revisions_intraqual` becomes SKIPPED_SOURCE_REMOVED.
+# MAGIC Documents that must not be parsed get a SKIPPED row with the reason, so the monitoring dashboard can explain every exclusion. A document recorded earlier but absent from both the volume and `gd_doc` becomes SKIPPED_SOURCE_REMOVED.
 
 # COMMAND ----------
 

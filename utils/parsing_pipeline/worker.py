@@ -224,7 +224,7 @@ def intraqual_ref_url(ref_col) -> Column:
 def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_col,
                           doc_date_col=None, include_prefix=True, type_col=None) -> Column:
     """chunk_text with an optional "[Source: ...]" provenance prefix (include_prefix).
-    type_col (document type label, e.g. "05 - Procédure - QP") adds a "Type:" field.
+    type_col (gd_typdoc label, e.g. "05 - Procédure - QP") adds a "Type:" field.
 
     :param body_col: Column with the passage body.
     :param ref_col: Column of REF values.
