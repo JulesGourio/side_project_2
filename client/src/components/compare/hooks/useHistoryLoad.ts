@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { toast } from 'sonner';
 import { loadSessionFiles } from '../api';
 import { placeholderDoc } from '../files';
@@ -29,7 +30,9 @@ function parseSavedImpact(raw: string | null): ImpactResult | null {
 // A history row fills one track. The other track is kept only if it belongs to the same two files;
 // otherwise it is reset, so it cannot describe another comparison next to these file names.
 export function useHistoryLoad({ docs, structured, standard, impact, setError }: HistoryLoadContext) {
+  const loadSeqRef = useRef(0);
   return async (entry: FullComparison) => {
+    const seq = ++loadSeqRef.current;
     const isStructured = entry.processing_method === 'structured';
     const oldHash = entry.old_file_hash || '';
     const newHash = entry.new_file_hash || '';
@@ -48,6 +51,8 @@ export function useHistoryLoad({ docs, structured, standard, impact, setError }:
     const restored = entry.volume_session_path
       ? await loadSessionFiles(entry.volume_session_path, entry.old_filename, entry.new_filename)
       : {};
+    // A later click owns the documents now.
+    if (seq !== loadSeqRef.current) return;
     if (restored.old) docs.setDoc('old', restored.old);
     if (restored.new) docs.setDoc('new', restored.new);
     const arrow = `${entry.old_filename} → ${entry.new_filename}`;

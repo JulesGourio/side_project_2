@@ -1,5 +1,4 @@
 /* Import fonts and CSS files - imports must come first */
-@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Open+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
 @import "./theme.css";
 
 @tailwind base;
@@ -44,7 +43,7 @@
     letter-spacing: -0.02em; /* Tighter tracking for headings */
   }
 
-  /* Latecoere corporate type scale with Montserrat headings */
+  /* Corporate type scale */
   h1 {
     font-family: var(--font-heading);
     font-size: 2.5rem;

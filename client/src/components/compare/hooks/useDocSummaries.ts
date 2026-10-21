@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { downloadPdf } from '@/lib/exportPdf';
 import { errorMessage } from '../api';
@@ -13,6 +13,8 @@ const SIDE_LABEL: Record<DocSide, string> = { old: 'Original (A)', new: 'Revised
 export function useDocSummaries(docs: Record<DocSide, DocFile | null>) {
   const [summaries, setSummaries] = useState<Summaries>({ old: EMPTY_SUMMARY, new: EMPTY_SUMMARY });
   const [activeSide, setActiveSide] = useState<DocSide>('old');
+  // Per side: the request that may still write its result (a new file or a re-run supersedes the previous one).
+  const requestRef = useRef<Record<DocSide, number>>({ old: 0, new: 0 });
 
   const update = (side: DocSide, next: DocSummaryState | ((prev: DocSummaryState) => DocSummaryState)) =>
     setSummaries(prev => ({ ...prev, [side]: typeof next === 'function' ? next(prev[side]) : next }));
@@ -21,6 +23,8 @@ export function useDocSummaries(docs: Record<DocSide, DocFile | null>) {
     const doc = docs[side];
     if (!doc) return;
     setActiveSide(side);
+    const request = ++requestRef.current[side];
+    const isCurrent = () => request === requestRef.current[side];
     update(side, { ...EMPTY_SUMMARY, loading: true });
     try {
       const form = new FormData();
@@ -29,6 +33,7 @@ export function useDocSummaries(docs: Record<DocSide, DocFile | null>) {
       form.append('force_refresh', forceRefresh ? 'true' : 'false');
       const res = await fetch('/api/compare/summarize', { method: 'POST', body: form });
       const data = await res.json();
+      if (!isCurrent()) return;
       if (!res.ok || data.error) throw new Error(data.error || `Server error: ${res.status}`);
       update(side, {
         text: data.summary || '',
@@ -46,6 +51,7 @@ export function useDocSummaries(docs: Record<DocSide, DocFile | null>) {
       });
       if (data.cached) toast.info('Result retrieved from cache');
     } catch (err) {
+      if (!isCurrent()) return;
       const message = errorMessage(err);
       update(side, prev => ({ ...prev, loading: false, error: message }));
       toast.error(`Summary failed: ${message}`);
@@ -76,8 +82,11 @@ export function useDocSummaries(docs: Record<DocSide, DocFile | null>) {
     setActiveSide,
     summarize,
     download,
-    clear: (side?: DocSide) => (side
-      ? update(side, EMPTY_SUMMARY)
-      : setSummaries({ old: EMPTY_SUMMARY, new: EMPTY_SUMMARY })),
+    clear: (side?: DocSide) => {
+      if (side) requestRef.current[side]++;
+      else requestRef.current = { old: requestRef.current.old + 1, new: requestRef.current.new + 1 };
+      if (side) update(side, EMPTY_SUMMARY);
+      else setSummaries({ old: EMPTY_SUMMARY, new: EMPTY_SUMMARY });
+    },
   };
 }

@@ -7,6 +7,7 @@ import {
   SyntaxHighlighterProps,
 } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { isSafeImage, isSafeLink } from "./safeUrl";
 
 // Type workaround for the syntax highlighter with React 18
 const SyntaxHighlighterComponent =
@@ -135,8 +136,12 @@ export function MarkdownRenderer({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        // The default sanitizer strips unknown protocols, which would drop the cite:n links.
-        urlTransform={(url) => (url.startsWith("cite:") ? url : defaultUrlTransform(url))}
+        // The default sanitizer strips unknown protocols, which would drop the cite:n links and inline images.
+        urlTransform={(url, key) => {
+          if (url.startsWith("cite:")) return url;
+          if (key === "src" && isSafeImage(url) && url.startsWith("data:")) return url;
+          return defaultUrlTransform(url);
+        }}
         components={{
           h1: ({ children }) => (
             <h1
@@ -226,14 +231,15 @@ export function MarkdownRenderer({
                   {Number.isNaN(n) ? "?" : n}
                 </sup>
               );
-              return cite?.url ? (
-                <a href={cite.url} target="_blank" rel="noopener noreferrer" title={tip} className="no-underline">
+              return isSafeLink(cite?.url) ? (
+                <a href={cite!.url} target="_blank" rel="noopener noreferrer" title={tip} className="no-underline">
                   {badge}
                 </a>
               ) : (
                 <span title={tip} className="cursor-default">{badge}</span>
               );
             }
+            if (!isSafeLink(href)) return <span>{children}</span>;
             return (
               <a
                 href={href}
@@ -245,6 +251,13 @@ export function MarkdownRenderer({
               </a>
             );
           },
+
+          img: ({ src, alt }) =>
+            isSafeImage(src) ? (
+              <img src={src} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" className="max-w-full h-auto" />
+            ) : (
+              <span>{alt}</span>
+            ),
 
           code: ({ className, children, ...props }: any) => {
             const match = /language-(\w+)/.exec(className || "");

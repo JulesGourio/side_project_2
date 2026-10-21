@@ -22,6 +22,7 @@ from server.routers import chat, compare, config, exports, feedback, health, his
 from server.services.infra.doc_catalog import catalog_refresher
 from server.services.infra.lakebase import get_pool, init_lakebase, shutdown_lakebase, store_error
 from server.services.chat.translation_bridge import shutdown_http_client as shutdown_translation_bridge
+from server.services.infra.http_clients import close_shared_clients
 
 logging.basicConfig(
   level=logging.INFO,
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
   catalog_task.cancel()
   await shutdown_lakebase()
   await shutdown_translation_bridge()
+  await close_shared_clients()
 
 
 app = FastAPI(title='QualiBOT', version='1.0.0', lifespan=lifespan)
@@ -73,6 +75,31 @@ app.add_middleware(
   allow_methods=['*'],
   allow_headers=['*'],
 )
+
+
+SECURITY_HEADERS = {
+  'Content-Security-Policy': (
+    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
+    "font-src 'self' data:; script-src 'self'; connect-src 'self'; frame-src 'self' blob:; "
+    "object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+  ),
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'same-origin',
+}
+
+
+@app.middleware('http')
+async def add_security_headers(request: Request, call_next) -> Response:
+  """Set the browser security headers (CSP, nosniff, referrer policy) on every HTTP response.
+
+  :param request: the incoming request
+  :param call_next: the next handler in the middleware chain
+  :return: the downstream response with ``SECURITY_HEADERS`` added
+  """
+  response = await call_next(request)
+  for name, value in SECURITY_HEADERS.items():
+    response.headers[name] = value
+  return response
 
 
 @app.middleware('http')
