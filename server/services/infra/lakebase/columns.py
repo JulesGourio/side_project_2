@@ -46,7 +46,7 @@ CHAT_TURN_COLUMNS: List[tuple] = [
     # answer
     ('answer_endpoint',       'TEXT'),               # model that answered (NULL: none)
     ('llm_fallback',          'BOOLEAN'),
-    ('llm_attempts',          'JSONB'),              # every call: endpoint, outcome, status, seconds
+    ('llm_attempts',          'JSONB'),              # every call: endpoint, outcome, status, seconds, first_text_s
     ('truncated',             'BOOLEAN'),            # output limit reached
     ('continuations',         'INTEGER'),            # answer resumed after a cut
     ('input_tokens',          'INTEGER'),
