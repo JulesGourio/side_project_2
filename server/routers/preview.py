@@ -44,7 +44,7 @@ async def preview_document(file: UploadFile = File(...)) -> HTMLResponse:
     if 'presentationml' in mime or name_lower.endswith(('.pptx', '.ppt')):
         return _preview_pptx(content, name)
 
-    if 'spreadsheet' in mime or 'excel' in mime or name_lower.endswith(('.xlsx', '.xls')):
+    if 'spreadsheet' in mime or 'excel' in mime or name_lower.endswith(('.xlsx', '.xlsm', '.xls')):
         return _preview_excel(content)
 
     return HTMLResponse('<p>Preview not available for this file type.</p>', status_code=400)

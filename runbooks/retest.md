@@ -296,3 +296,12 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Onglet Comparaison : aperçu d'un PowerPoint de plusieurs diapositives. Toutes les diapositives s'affichent, dans l'ordre (avant : la première seulement). Sans LibreOffice sur l'app, l'aperçu de secours (texte positionné) s'affiche.
 - [ ] Aperçu d'un `.doc` avec des accents (é, à, ç) : le texte est lisible, pas de `�`.
 - [ ] Chat DEV : une question de plus de 20 000 caractères (long texte collé) répond ; la ligne de `chat_turns` a le code `query_truncated` dans `warnings`.
+
+## 2026-10-21 — revue de la PR Bitbucket 2, lot 3
+
+- [ ] Reconstruire le client (`client/out` est versionné) : `cd client; bun install; bun run build`, puis versionner `client/out`.
+- [ ] Déployer l'app DEV (pipeline Bitbucket `deploy-dev`).
+- [ ] Comparaison DEV : un classeur `.xlsm` est accepté, comparé, et son aperçu s'affiche.
+- [ ] Comparaison DEV : un `.docx` avec tableaux et images retournées, avant/après, donne le même rapport qu'avant (comparer avec un résultat enregistré).
+- [ ] Comparaison DEV : deux classeurs `.xlsx` dont l'un a une feuille sans ligne de données : un rapport s'affiche, pas d'erreur.
+- [ ] Résumé d'un document et recherche d'impact : réponses normales (les délais viennent maintenant de `services/*/config.py`).

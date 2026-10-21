@@ -9,11 +9,10 @@ import logging
 from typing import Any, Dict, List, Tuple, Union
 
 from server.services.infra.streaming import _cost_eur
+from server.services.compare.config import SUMMARY_LLM_TIMEOUT_S
 from server.services.compare.llm import complete_chain, compare_chain, message_text
 
 logger = logging.getLogger(__name__)
-
-_LLM_TIMEOUT_S = 60.0
 
 _SUMMARY_SYSTEM_PROMPT = """\
 You are a technical documentation assistant. Summarize the document text given to you: its purpose \
@@ -59,7 +58,7 @@ async def _call_llm(
         {'role': 'system', 'content': system_prompt},
         {'role': 'user', 'content': user_content},
     ]
-    return await complete_chain(host, token, compare_chain(llm_endpoint), messages, max_tokens, _LLM_TIMEOUT_S)
+    return await complete_chain(host, token, compare_chain(llm_endpoint), messages, max_tokens, SUMMARY_LLM_TIMEOUT_S)
 
 
 def _usage_from_completion(completion: Dict[str, Any], endpoint: str) -> Dict[str, Any]:

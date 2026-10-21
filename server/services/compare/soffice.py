@@ -116,6 +116,7 @@ def _extract_archive_from_volume(volume_path: str) -> Path:
     from databricks.sdk import WorkspaceClient
 
     root = _extract_root()
+    # Written last: its absence means a previous extraction was interrupted and the tree cannot be trusted.
     marker = root / '.extract_complete'
     if marker.exists():
         binary = _find_binary_in_tree(root)
@@ -124,6 +125,7 @@ def _extract_archive_from_volume(volume_path: str) -> Path:
         # Marker without binary — corrupted; start over.
         shutil.rmtree(root, ignore_errors=True)
 
+    # Start from an empty folder: leftovers of an interrupted extraction would mix with the new files.
     if root.exists():
         shutil.rmtree(root, ignore_errors=True)
     root.mkdir(parents=True, exist_ok=True)
@@ -133,6 +135,7 @@ def _extract_archive_from_volume(volume_path: str) -> Path:
     w = WorkspaceClient()
     resp = w.files.download(volume_path)
     archive_path = root / 'archive.tar.gz'
+    # Streamed to disk in 8 MB blocks: the archive is large and must not sit in memory.
     with open(archive_path, 'wb') as f:
         shutil.copyfileobj(resp.contents, f, length=8 * 1024 * 1024)
     logger.info(
@@ -140,10 +143,11 @@ def _extract_archive_from_volume(volume_path: str) -> Path:
         archive_path.stat().st_size / 1e6, time.monotonic() - started,
     )
 
+    # The archive is the operator's own file on the volume, not user input, so its member paths are trusted.
     with tarfile.open(archive_path, 'r:gz') as tar:
         tar.extractall(root)
-    archive_path.unlink(missing_ok=True)
-    _mark_executable(root)
+    archive_path.unlink(missing_ok=True)  # frees the disk space of the temp dir
+    _mark_executable(root)  # the executable bits do not survive every archive tool
 
     binary = _find_binary_in_tree(root)
     if not binary:

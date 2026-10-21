@@ -494,9 +494,6 @@ def section_canonical_diff(old_text: str, new_text: str) -> Tuple[str, int]:
     (canonicalization + number/ref check). Context lines are removed from output —
     only ADDED / REMOVED blocks are emitted.
 
-    Returns:
-        (diff_string, filtered_count)
-
     :param old_text: text of the old document
     :param new_text: text of the new document
     :return: ``(diff_string, filtered_count)``

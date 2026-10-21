@@ -20,31 +20,20 @@ from typing import Any, AsyncIterator, Dict, List, Tuple
 from server.services.compare.llm import CompareLlmUnavailable, LlmFailure, TIRED_MESSAGE, compare_chain, complete_chain
 from server.services.compare.llm import message_text as _message_text
 from server.services.infra import vs_gate
+from server.services.infra.config import (
+    IMPACT_JUDGE_CONCURRENCY, IMPACT_JUDGE_MAX_TOKENS_CAP, IMPACT_JUDGE_RETRIES, IMPACT_JUDGE_TIMEOUT_S,
+    IMPACT_JUDGE_TRUNCATION_BUDGET_FACTOR, IMPACT_PASSAGE_CHARS, IMPACT_PASSAGES_PER_CANDIDATE, IMPACT_QUERY_CONCURRENCY,
+    IMPACT_QUERY_RETRIES, VECTOR_SEARCH_QUERY_TIMEOUT_S,
+)
 from server.services.infra.doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
 from server.services.infra.streaming import _cost_eur
 
 logger = logging.getLogger(__name__)
 
-_QUERY_TIMEOUT_S = 30.0
-_LLM_TIMEOUT_S = 90.0
 _COLUMNS = ['chunk_id', 'IDDOC', 'REF', 'division', 'url', 'semantic_headers', 'chunk_text']
 # Metadata-only chunk the parsing pipeline writes for an archived document (config.ARCHIVE_NOTICE_MARKER):
 # it holds no content, so it can never be an impacted passage.
 _ARCHIVE_NOTICE_MARKER = 'ARCHIVED DOCUMENT — CONTENT NOT INDEXED'
-# Cost scales with max_candidates * this * _PASSAGE_CHARS; lower-scoring hits past
-# this cap are the least likely to hold the conflict.
-_PASSAGES_PER_CANDIDATE = 10
-_PASSAGE_CHARS = 3000
-# The embedding endpoint behind query_text rejects concurrent requests with
-# "Request id already running" under load — keep the fan-out narrow and retry.
-_QUERY_CONCURRENCY = 3
-_QUERY_RETRIES = 2
-_JUDGE_CONCURRENCY = 6
-_JUDGE_RETRIES = 1
-# A reasoning judge spends max_tokens on hidden reasoning and can return an empty answer (finish_reason 'length') on a
-# candidate with many passages; the retry gets a larger budget, capped.
-_JUDGE_TRUNCATION_BUDGET_FACTOR = 3
-_JUDGE_MAX_TOKENS_CAP = 8000
 
 _JUDGE_SYSTEM_PROMPT = """\
 You are Qualibot, a technical documentation controller. A reference document has just been revised. \
@@ -228,7 +217,7 @@ async def _fetch_chunks(host: str, token: str, index_name: str, query_text: str,
     """
     payload = {'query_text': query_text, 'columns': _COLUMNS, 'num_results': num_results, 'query_type': 'HYBRID'}
     # Through the app-wide gate shared with the chat (vs_gate: bounded concurrency, 429 retries).
-    resp = await vs_gate.post(host, token, index_name, payload, _QUERY_TIMEOUT_S)
+    resp = await vs_gate.post(host, token, index_name, payload, VECTOR_SEARCH_QUERY_TIMEOUT_S)
     resp.raise_for_status()
     data = resp.json()
     columns = [c['name'] for c in data.get('manifest', {}).get('columns', [])]
@@ -251,7 +240,7 @@ async def _fetch_chunks_multi(
     :param num_results: rows asked per query
     :return: ``{'chunks': [...], 'queries_failed': n}``
     """
-    sem = asyncio.Semaphore(_QUERY_CONCURRENCY)
+    sem = asyncio.Semaphore(IMPACT_QUERY_CONCURRENCY)
     failures: List[str] = []
 
     async def _one(q: Dict[str, Any]) -> List[Dict[str, Any]] | None:
@@ -262,7 +251,7 @@ async def _fetch_chunks_multi(
         """
         async with sem:
             last_err: Exception | None = None
-            for attempt in range(_QUERY_RETRIES + 1):
+            for attempt in range(IMPACT_QUERY_RETRIES + 1):
                 try:
                     chunks = await _fetch_chunks(host, token, index_name, q['text'], num_results)
                     for c in chunks:
@@ -270,7 +259,7 @@ async def _fetch_chunks_multi(
                     return chunks
                 except Exception as e:  # noqa: BLE001 — retried, then surfaced via failures
                     last_err = e
-                    if attempt < _QUERY_RETRIES:
+                    if attempt < IMPACT_QUERY_RETRIES:
                         await asyncio.sleep(1.0 * (attempt + 1))
             failures.append(str(last_err))
             logger.warning(f'Vector Search query for {q["change_ids"]} failed after retries: {last_err}')
@@ -320,7 +309,7 @@ def _aggregate_docs(chunks: List[Dict[str, Any]], excluded_canon: frozenset = fr
             doc['doc_date'] = doc['doc_date'] or meta.get('doc_date', '')
             doc['passages'][chunk_id] = {
                 'chunk_id': chunk_id, 'score': score, 'header': _extract_header(rec.get('semantic_headers')),
-                'text': body[:_PASSAGE_CHARS], 'page': meta.get('page', ''), 'change_ids': set(rec.get('_change_ids', [])),
+                'text': body[:IMPACT_PASSAGE_CHARS], 'page': meta.get('page', ''), 'change_ids': set(rec.get('_change_ids', [])),
             }
         else:
             passage['change_ids'].update(rec.get('_change_ids', []))
@@ -340,7 +329,7 @@ def _aggregate_docs(chunks: List[Dict[str, Any]], excluded_canon: frozenset = fr
         merged.append(primary)
 
     for doc in merged:
-        top = sorted(doc['passages'].values(), key=lambda p: p['score'], reverse=True)[:_PASSAGES_PER_CANDIDATE]
+        top = sorted(doc['passages'].values(), key=lambda p: p['score'], reverse=True)[:IMPACT_PASSAGES_PER_CANDIDATE]
         doc['passages'] = sorted(top, key=lambda p: _chunk_order(p['chunk_id']))
         for p in doc['passages']:
             p['change_ids'] = sorted(p['change_ids'], key=_change_num)
@@ -459,7 +448,7 @@ async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: 
             'output_tokens': usage.get('completion_tokens', 0) or 0,
         }
 
-    res, used = await complete_chain(host, token, compare_chain(endpoint), messages, max_tokens, _LLM_TIMEOUT_S, accept=accept)
+    res, used = await complete_chain(host, token, compare_chain(endpoint), messages, max_tokens, IMPACT_JUDGE_TIMEOUT_S, accept=accept)
     return {**res, 'endpoint': used, 'cost_eur': _cost_eur(used, res['input_tokens'], res['output_tokens'])}
 
 
@@ -645,7 +634,7 @@ async def run_impact_search(
         'not_judged': [{**_doc_base(c, archive_before), 'judged': False} for c in rest],
     }
 
-    sem = asyncio.Semaphore(_JUDGE_CONCURRENCY)
+    sem = asyncio.Semaphore(IMPACT_JUDGE_CONCURRENCY)
     usage = {'input_tokens': 0, 'output_tokens': 0, 'cost_eur': 0.0}
 
     async def _one(cand: Dict[str, Any]) -> Dict[str, Any]:
@@ -661,7 +650,7 @@ async def run_impact_search(
             last_err: Exception | None = None
             budget = max_tokens
             attempts = 0
-            for attempt in range(_JUDGE_RETRIES + 1):
+            for attempt in range(IMPACT_JUDGE_RETRIES + 1):
                 attempts = attempt + 1
                 try:
                     changes_text = _changes_block(extracted['changes'], max_changes_chars, tuple(cand['change_ids']))
@@ -683,8 +672,8 @@ async def run_impact_search(
                 except Exception as e:  # noqa: BLE001 — one bad candidate must not sink the search
                     last_err = e
                     if isinstance(e, JudgeTruncated):
-                        budget = min(budget * _JUDGE_TRUNCATION_BUDGET_FACTOR, max(_JUDGE_MAX_TOKENS_CAP, max_tokens))
-                    if attempt < _JUDGE_RETRIES:
+                        budget = min(budget * IMPACT_JUDGE_TRUNCATION_BUDGET_FACTOR, max(IMPACT_JUDGE_MAX_TOKENS_CAP, max_tokens))
+                    if attempt < IMPACT_JUDGE_RETRIES:
                         await asyncio.sleep(1.0)
             logger.warning(f'impact judge failed for {cand["ref"]}: {last_err}')
             # error_detail is the cause for the error log only; the router drops it before the browser sees the document.

@@ -234,6 +234,8 @@ async def complete_chain(host: str, token: str, endpoints: List[str], messages: 
                     logger.warning('compare_llm: answered by fallback %s (primary %s)', endpoint, chain[0])
                 return value, endpoint
             except LlmFailure as exc:
+                # Not an error yet: the failure is recorded and cools the endpoint, the next candidate is tried, and
+                # CompareLlmUnavailable is raised below only when none of them answers.
                 last = exc
                 _record_failure(endpoint, exc, given_up)
     detail = f'every endpoint failed ({", ".join(chain)}): {last}' if last else f'no endpoint tried ({", ".join(chain)})'
