@@ -829,7 +829,7 @@ DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 10;
 
 ### F. Après le run complet de E2.8 (2026-10-21) — contrôles, planning, doublons
 
-Statut : F1 `[x] (2026-10-21)` : le run complet (job run `884840682425994`, mode `rechunk`) est en SUCCESS, `chunks` écrasé en `Overwrite` (v21), 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents ; index `ready` = `true` (137187 lignes), job run `884840682425994` démarré le 2026-10-19 23:35 UTC. F2 `[ ]` (déploiement du planning en `incremental` / `UNPAUSED`). F3 `[ ]` (jobs en double : sept orphelins de l'ancienne racine + trois jobs de l'utilisateur à supprimer, ci-dessous). F4 / F5 : voir les statuts de l'étape 0 et de D5. Le job `D_1_Qualibot_Parsing_Pipeline` (id `762813135325407`) a réussi. `databricks.yml` passe `uat` en `parsing_schedule_pause: "UNPAUSED"` et `parsing_run_mode: "incremental"` (le mode `rechunk` ne parse aucun nouveau document : il ne convient pas au planning quotidien).
+Statut : F1 `[x] (2026-10-21)` : le run complet (job run `884840682425994`, mode `rechunk`) est en SUCCESS, `chunks` écrasé en `Overwrite` (v21), 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents ; index `ready` = `true` (137187 lignes), job run `884840682425994` démarré le 2026-10-19 23:35 UTC. F2 `[ ]` (déploiement du planning en `incremental` / `UNPAUSED`). F3 `[x] (2026-10-21)` (jobs en double supprimés ; le contrôle ne liste plus que deux jobs système `[2748374992560664]` et `[4171178917767011] Metric Backfill Computation Job`, créés par Databricks pour d'autres expériences que `258804869957724` : à ne pas supprimer). F4 / F5 : voir les statuts de l'étape 0 et de D5. Le job `D_1_Qualibot_Parsing_Pipeline` (id `762813135325407`) a réussi. `databricks.yml` passe `uat` en `parsing_schedule_pause: "UNPAUSED"` et `parsing_run_mode: "incremental"` (le mode `rechunk` ne parse aucun nouveau document : il ne convient pas au planning quotidien).
 
 **F1 — Contrôles du run (PowerShell, profil `UAT`)** : `<RUN_ID>` est l'identifiant affiché par `run-now` (sinon : `databricks jobs list-runs --job-id 762813135325407 --limit 3 --profile UAT`).
 
@@ -919,7 +919,7 @@ databricks jobs delete 1103271564905209 --profile UAT
 databricks jobs delete 851363031959777 --profile UAT
 ```
 
-Contrôle : la commande suivante ne doit plus rien afficher.
+Contrôle : la commande suivante ne doit plus afficher de job Qualibot (les jobs système `[<id expérience>] Metric Backfill Computation Job` d'autres expériences restent en double, sans lien avec le projet).
 
 ```powershell
 (databricks jobs list --profile UAT -o json | ConvertFrom-Json) | Group-Object { $_.settings.name } | Where-Object Count -gt 1 | ForEach-Object { $_.Name }
