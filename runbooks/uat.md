@@ -823,6 +823,220 @@ DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 10;
 
 À marquer fait (daté) dans « Fait » une fois confirmé.
 
+### F. Après le run complet de E2.8 (2026-10-21) — contrôles, planning, doublons
+
+Statut : `[ ]` à confirmer. Le job `D_1_Qualibot_Parsing_Pipeline` (id `762813135325407`) a réussi. `databricks.yml` passe `uat` en `parsing_schedule_pause: "UNPAUSED"` et `parsing_run_mode: "incremental"` (le mode `rechunk` ne parse aucun nouveau document : il ne convient pas au planning quotidien).
+
+**F1 — Contrôles du run (PowerShell, profil `UAT`)** : `<RUN_ID>` est l'identifiant affiché par `run-now` (sinon : `databricks jobs list-runs --job-id 762813135325407 --limit 3 --profile UAT`).
+
+```powershell
+$run = databricks jobs get-run <RUN_ID> --profile UAT -o json | ConvertFrom-Json
+$run.state | Format-List
+$run.tasks | ForEach-Object { "{0,-22} {1,-10} {2} min" -f $_.task_key, $_.state.result_state, [math]::Round(($_.end_time - $_.start_time) / 60000) }
+databricks vector-search-indexes get-index uat_proj.qualibot.chunks_index --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.status | Format-List }
+```
+
+Attendu : `result_state` = `SUCCESS` pour toutes les tâches (dont `5_sync_index`), `ready` à `true`, `indexed_row_count` égal au `count(*)` de `chunks` ci-dessous, aucun message d'échec.
+
+SQL (éditeur SQL UAT) :
+
+```sql
+DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 10;
+
+SELECT (SELECT count(*) FROM uat_proj.qualibot.chunks) AS chunks,
+       (SELECT count(DISTINCT IDDOC) FROM uat_proj.qualibot.chunks) AS documents,
+       (SELECT count(*) FROM uat_proj.qualibot.chunks_archive) AS archive,
+       (SELECT count(*) FROM uat_proj.qualibot.archive_notices) AS fiches,
+       (SELECT count(*) FROM uat_proj.qualibot.chunks_full) AS chunks_full;
+
+SELECT parse_status, count(*) AS n FROM uat_proj.qualibot.parsed_documents GROUP BY parse_status ORDER BY n DESC;
+
+SELECT division, count(*) AS n FROM uat_proj.qualibot.chunks GROUP BY division ORDER BY n DESC;
+
+SELECT * FROM uat_proj.qualibot.parsing_run_health ORDER BY 1 DESC LIMIT 3;
+
+SELECT chunk_id, REF, IDDOC FROM vector_search(index => 'uat_proj.qualibot.chunks_index', query => 'Design Organisation Manual DOM QM-1041', num_results => 50) WHERE IDDOC = 20605;
+```
+
+Attendu : la ligne la plus récente de `DESCRIBE HISTORY` est un `WRITE` avec `operationParameters` `Overwrite` (pas `CREATE OR REPLACE TABLE AS SELECT`) ; `chunks_full` = `chunks` + `archive` ; aucun `parse_status` d'erreur anormal ; `QM-1041` : 0 ligne.
+
+Lakebase (éditeur SQL, base `doccompare`) :
+
+```sql
+SELECT COUNT(*) AS docs, COUNT(revision) AS with_revision, COUNT(doc_date) AS with_date FROM doc_catalog;
+```
+
+**F2 — Planning actif** : copier le zip de cette branche dans `latec-compare`, puis (PowerShell) :
+
+```powershell
+cd C:\Users\L0041770\Desktop\GenAI\Qualibot\latec-compare
+git status
+git add -A
+git commit -m "UAT: daily parsing schedule unpaused, incremental run mode"
+git push
+```
+
+Bitbucket → Pipelines → Run pipeline → branche poussée → `deploy-uat-jobs`. Attendre qu'il soit vert. Puis :
+
+```powershell
+databricks jobs list --profile UAT -o json | ConvertFrom-Json | Sort-Object { $_.settings.name } | ForEach-Object { "{0,-18} {1,-10} {2}" -f $_.job_id, $_.settings.schedule.pause_status, $_.settings.name }
+```
+
+Attendu : `D_1_Qualibot_Parsing_Pipeline` en `UNPAUSED`. Les jobs de scoring (`D_2_Qualibot_Score_Chat_Traces`) et les six alertes restent `PAUSED` jusqu'à décision écrite (D5.8d et `runbooks/uat_bascule.md` Q13).
+
+**F3 — Jobs en double sur UAT**
+
+```powershell
+databricks jobs list --profile UAT -o json | ConvertFrom-Json | Group-Object { $_.settings.name } | Where-Object Count -gt 1 | ForEach-Object { $_.Group | ForEach-Object { "{0,-18} {1,-45} deploiement={2} createur={3} cree={4}" -f $_.job_id, $_.settings.name, $_.settings.deployment.kind, $_.creator_user_name, [DateTimeOffset]::FromUnixTimeMilliseconds($_.created_time).ToString('yyyy-MM-dd HH:mm') } }
+```
+
+Garder, pour chaque nom, la ligne `deploiement=BUNDLE` (celle que le déploiement met à jour) ; le job de parsing à garder a l'id `762813135325407`. Supprimer les autres :
+
+```powershell
+databricks jobs delete <JOB_ID> --profile UAT
+databricks jobs list --profile UAT -o json | ConvertFrom-Json | Group-Object { $_.settings.name } | Where-Object Count -gt 1 | ForEach-Object { $_.Name }
+```
+
+La dernière ligne ne doit plus rien afficher. Si la suppression est refusée (`PERMISSION_DENIED`) : c'est que le job appartient au SP ; le supprimer par une soumission sous le SP UAT, pas avec le compte personnel.
+
+**F4 — Contrôles du point 2 (étape 0)**
+
+0.2c, copies de sécurité (attendu : 6 tables `*_avant_20261019`) :
+
+```sql
+SHOW TABLES IN uat_proj.qualibot LIKE '*_avant_20261019';
+```
+
+Absentes alors que l'export 0.5 n'a pas tourné : les créer d'abord.
+
+```powershell
+databricks workspace mkdirs /Workspace/Shared/qualibot_oneshot --profile UAT
+databricks workspace import /Workspace/Shared/qualibot_oneshot/backup_uat_chat_tables --file runbooks/scripts/uat_backup/backup_uat_chat_tables.py --format SOURCE --language PYTHON --overwrite --profile UAT
+databricks jobs submit --json @runbooks/scripts/uat_backup/backup_uat_chat_tables_submit.json --profile UAT
+```
+
+0.5, export Lakebase (dernier run et tables chat) :
+
+```powershell
+$lb = databricks jobs list --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.settings.name -eq "D_1_Qualibot_Lakebase_Export_To_Volume" } | ForEach-Object { $_.job_id }
+databricks jobs list-runs --job-id $lb --limit 3 --profile UAT
+```
+
+```sql
+SELECT 'chat_messages' AS t, count(*) AS n FROM uat_proj.qualibot.chat_messages
+UNION ALL SELECT 'chat_sessions', count(*) FROM uat_proj.qualibot.chat_sessions
+UNION ALL SELECT 'chat_feedbacks', count(*) FROM uat_proj.qualibot.chat_feedbacks
+UNION ALL SELECT 'chat_turns', count(*) FROM uat_proj.qualibot.chat_turns
+UNION ALL SELECT 'chat_retrieved_chunks', count(*) FROM uat_proj.qualibot.chat_retrieved_chunks
+UNION ALL SELECT 'app_errors', count(*) FROM uat_proj.qualibot.app_errors;
+```
+
+0.6, contrôle :
+
+```powershell
+databricks tables list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks volumes list uat_proj qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+databricks vector-search-indexes get-index uat_proj.qualibot.chunks_index --profile UAT -o json | ConvertFrom-Json | Select-Object name, status
+```
+
+0.7, déploiement fait ? (jobs sans suffixe, app, expérience MLflow et tables de traces) :
+
+```powershell
+databricks jobs list --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.settings.name -match "Qualibot" } | ForEach-Object { "{0,-18} {1}" -f $_.job_id, $_.settings.name }
+databricks apps get qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { "{0} / {1} / deploiement {2}" -f $_.app_status.state, $_.compute_status.state, $_.active_deployment.status.state }
+databricks experiments get-by-name /Shared/Experiment/qualibot_chat_traces --profile UAT -o json
+```
+
+```sql
+SHOW TABLES IN uat_proj.qualibot LIKE '*otel*';
+```
+
+Absents : `databricks bundle run -t uat create_chat_experiment_uat --profile UAT` puis `databricks bundle run -t uat register_chat_prompts_uat --profile UAT`.
+
+0.8, groupes (Lakebase, base `doccompare`) et logs :
+
+```sql
+SELECT email, can_chat, can_compare, groups, groups_synced_at FROM users WHERE groups_synced_at IS NOT NULL ORDER BY email;
+```
+
+```powershell
+databricks apps logs qualibot --profile UAT | Select-String "Capabilities|statement\(s\) skipped"
+databricks jobs list --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.settings.name -match "Sync_User_Capabilities|sync-user-capabilities" } | ForEach-Object { "$($_.job_id) $($_.settings.name)" }
+```
+
+Attendu : des lignes `Capabilities … groups=[…]`, aucune ligne `statement(s) skipped`, aucun ancien job de synchronisation.
+
+0.10 et 0.11 (lecture seule) :
+
+```sql
+SHOW SCHEMAS IN dev_lab;
+SHOW TABLES IN dev_lab.lab_jules;
+```
+
+```powershell
+databricks tables list uat_landingzone qualibot --profile UAT -o json | ConvertFrom-Json | ForEach-Object { $_.full_name }
+```
+
+0.12 U1 / U3 (Lakebase, base `doccompare`) : l'historique de comparaison a été copié si le premier nombre égale le second de chaque ligne.
+
+```sql
+SELECT (SELECT COUNT(*) FROM compare_messages) AS compare_messages, (SELECT COUNT(*) FROM messages) AS messages,
+       (SELECT COUNT(*) FROM compare_feedbacks) AS compare_feedbacks, (SELECT COUNT(*) FROM feedbacks) AS feedbacks,
+       (SELECT COUNT(*) FROM app_errors) AS app_errors, (SELECT COUNT(*) FROM errors) AS errors;
+```
+
+**F5 — Contrôles du point 6 (bloc D5)**
+
+D5.3, rétention de 60 jours (attendu : 7 tables, 2 propriétés chacune, `interval 60 days`) :
+
+```sql
+SELECT table_name, property_name, property_value FROM uat_proj.information_schema.table_properties
+WHERE table_schema = 'qualibot' AND property_name IN ('delta.deletedFileRetentionDuration', 'delta.logRetentionDuration')
+ORDER BY table_name, property_name;
+```
+
+D5.4, corpus et index : les contrôles de F1.
+
+D5.6, droits de l'app et modèles :
+
+```powershell
+databricks apps get qualibot --profile UAT -o json | ConvertFrom-Json | Select-Object name, service_principal_client_id, service_principal_name
+databricks serving-endpoints get databricks-gpt-6-luna --profile UAT -o json | ConvertFrom-Json | Select-Object name, @{n='etat';e={$_.state.ready}}
+databricks serving-endpoints get databricks-gpt-5-6-luna --profile UAT -o json | ConvertFrom-Json | Select-Object name, @{n='etat';e={$_.state.ready}}
+```
+
+```sql
+SHOW GRANTS ON TABLE uat_proj.qualibot.chunks_index;
+```
+
+Attendu : le SP de l'app (`service_principal_client_id` ci-dessus) a `SELECT`. `CAN_QUERY` sur les endpoints n'est pas accordé (règle du projet : tout utilisateur du workspace peut déjà les interroger) : seul compte le test de chat.
+
+D5.7, app déployée : la commande `databricks apps get` de F4 (0.7), puis `databricks apps logs qualibot --profile UAT | Select-String "doc_catalog|Copied legacy"`.
+
+D5.8, journal des tours (Lakebase, base `doccompare`, après quelques questions dans le chat ALL / AS / IS) :
+
+```sql
+SELECT created_at, trace_id, mlflow_trace_id, status, warnings, answer_endpoint, first_token_ms, total_ms
+FROM chat_turns ORDER BY id DESC LIMIT 6;
+
+SELECT t.trace_id, COUNT(*) AS passages, SUM(CASE WHEN c.kept THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN c.cited THEN 1 ELSE 0 END) AS cited
+FROM chat_turns t JOIN chat_retrieved_chunks c ON c.turn_id = t.id
+GROUP BY t.id, t.trace_id ORDER BY t.id DESC LIMIT 6;
+
+SELECT created_at, endpoint, severity, stage, error_type, origin, fingerprint, user_message, LEFT(error_msg, 120) AS msg
+FROM app_errors ORDER BY id DESC LIMIT 20;
+
+SELECT ref, revision, doc_date FROM doc_catalog WHERE ref IN ('MI-14059', 'QP-1518', 'MIT-1087');
+```
+
+D5.8d, alertes (déployées en pause) :
+
+```powershell
+databricks bundle summary -t uat --profile UAT | Select-String "alert"
+```
+
+D5.9, anciens assistants (UI UAT → Agents) : les trois `qualibot_ALL_v2` / `_AS_v2` / `_IS_v2` sont à supprimer plus tard, sur accord.
+
 ## Fait
 
 - 2026-10-19 — E2, étapes 3 à 7 : `chunks_index` reconstruit par le compte de service (nouveau pipeline `c10bcd69-bfbc-4625-b94a-ebc7a81858b9`, « Index creation succeeded »), `indexed_row_count` = 137187 = lignes de `chunks`, QM-1041 n'apparaît plus dans les sources du chat. Restent : étapes 1 et 2 (déploiement du code corrigé, à confirmer) et 8 (run complet, test du correctif).
