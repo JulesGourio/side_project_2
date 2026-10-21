@@ -58,8 +58,8 @@ server/
 
 ### Tests and data
 
-- `tests/`: pytest suite. `golden/` and `fixtures/` hold expected outputs and recorded
-  model answers; `diff_corpus.py` and `prompt_noise.py` are test data and detectors used by the tests.
+- `tests/`: pytest suite. Inputs are built inline in the tests; `golden/` holds the expected bootstrap SQL of the Lakebase
+  schema and `prompt_noise.py` the heuristics of `test_prompt_noise.py`.
 - `third_party/antiword/`: the antiword binary, its character tables and the Debian package used by `start.sh`
   (converts `.doc` files). `third_party/fasttext/lid.176.ftz`: the fastText language-identification model.
 - `leap_utils/`: copy of the shared library (table writes and merges, quality checks).

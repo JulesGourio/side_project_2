@@ -331,3 +331,4 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Pipeline `tests` (Bitbucket) : passe sans échec avec `requirements.txt` figé (pymupdf 1.28.0, comme `uv.lock` : avec la version 2.0, 3 tests de tableaux PDF échouent).
 - [ ] Démarrage de l'app : `start.sh` installe antiword (paquet fourni, sinon `apt`, sinon téléchargement https vérifié par SHA-256) ; un `.doc` s'aperçoit avec ses accents.
 - [ ] Parsing (si `leap_utils` est utilisé par le job) : lancer `create_proj_parse_manifest` ou la tâche la plus courte du job de parsing sur DEV pour vérifier que les imports `leap_utils` (11 modules conservés) fonctionnent.
+- [ ] Comparaison DEV, mode « comparatif » (moteur par sections) : un texte où « shall » devient « may » est maintenant rapporté comme changement (avant : ignoré). Vérifier sur un couple de PDF qui contient un tel changement.

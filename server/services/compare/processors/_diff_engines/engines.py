@@ -22,7 +22,7 @@ from server.services.compare.processors._diff_engines.relocation import (
     _position_index,
     _tag_relocated,
 )
-from server.services.compare.processors._diff_engines.text import SECTION_RE, inline_word_diff, is_substantive, is_substantive_keep_modals, strip_tag
+from server.services.compare.processors._diff_engines.text import SECTION_RE, inline_word_diff, is_substantive_keep_modals, strip_tag
 
 # Word similarity above which two unmatched paragraphs pair as one MODIFIED entry (below: REMOVED + ADDED).
 _PAIR_RATIO_THRESHOLD = float(os.getenv('COMPARE_PAIR_RATIO_THRESHOLD', '0.55'))
@@ -490,8 +490,8 @@ def paragraph_semantic_diff(old_text: str, new_text: str, page_label: str | None
 def section_canonical_diff(old_text: str, new_text: str) -> Tuple[str, int]:
     """Alternative diff engine using classic unified diff grouped by section heading.
 
-    Uses unified_diff n=3, filters trivial pairs with is_substantive
-    (canonicalization + number/ref check). Context lines are removed from output —
+    Uses unified_diff n=3, filters trivial pairs with is_substantive_keep_modals
+    (canonicalization + number/ref check, obligation-level switches count). Context lines are removed from output —
     only ADDED / REMOVED blocks are emitted.
 
     :param old_text: text of the old document
@@ -526,7 +526,7 @@ def section_canonical_diff(old_text: str, new_text: str) -> Tuple[str, int]:
                 i += 1
             old_chunk = ' '.join(strip_tag(l) for l in removed)
             new_chunk = ' '.join(strip_tag(l) for l in added)
-            if not removed or not added or is_substantive(old_chunk, new_chunk):
+            if not removed or not added or is_substantive_keep_modals(old_chunk, new_chunk):
                 if cur_sec and not sec_emitted:
                     out.append(f'\n## {cur_sec}')
                     sec_emitted = True

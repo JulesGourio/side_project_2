@@ -3,7 +3,8 @@
 Coverage:
   - CitationStreamParser: marker split across chunks, grouped markers, unknown number,
     '[' that is not a marker, no citation, incomplete marker at end of stream; equivalence
-    with the whole-text parse on the 21 real golden answers (tests/fixtures/chat_raw_answers.json)
+    with the whole-text parse on synthetic answers (bold, lists, tables, code spans, accents,
+    trailing markers) over every split position and several chunk sizes
   - search: three queries, reranked and raw on the French rewrite, merged by rank, division filter, partial
     failures tolerated, reranker refused -> raw only, REF lookup first,
     one language per document
@@ -13,7 +14,6 @@ Coverage:
 
 import asyncio
 import json
-import os
 import random
 import re
 from unittest.mock import AsyncMock, patch
@@ -25,7 +25,6 @@ from server.services.chat import engine, llm as chat_llm
 from server.services.chat.engine import CitationStreamParser, parse_citations
 from server.services.chat.turn_log import TurnLog
 
-FIXTURE = os.path.join(os.path.dirname(__file__), 'fixtures', 'chat_raw_answers.json')
 DOCS = [(f'REF-{i}', {'url': f'https://intraqual/ref={i}'}) for i in range(1, 6)]
 _VISIBLE_MARKER = re.compile(r'\[\d+\]')
 
@@ -94,33 +93,87 @@ def test_incomplete_marker_at_end_of_stream_is_plain_text():
     assert citations == []
 
 
-# --- Equivalence with the whole-text parse, on the real golden answers ---
+# --- Equivalence with the whole-text parse, on synthetic answers ---
 
-def _fixture():
-    with open(FIXTURE, encoding='utf-8') as f:
-        return json.load(f)
-
-
-def test_fixture_is_the_real_capture():
-    data = _fixture()
-    assert len(data) == 21
-    assert sum(len(re.findall(r'\[\d+\]', ''.join(a['deltas']))) for a in data) > 100
-
-
-@pytest.mark.parametrize('answer', _fixture(), ids=lambda a: a['question'][:40])
-def test_streaming_parse_equals_whole_text_parse(answer):
-    documents = [(ref, doc) for ref, doc in answer['documents']]
-    raw = ''.join(answer['deltas'])
-    expected = parse_citations(raw, documents)
-
-    assert _feed_all(answer['deltas'], documents) == expected          # the real stream chunking
-    rng = random.Random(raw)                                            # deterministic per answer
-    for _ in range(25):                                                 # random re-chunkings, 1-char chunks included
-        cuts = sorted(rng.sample(range(1, len(raw)), k=min(len(raw) - 1, rng.randint(1, 60)))) if len(raw) > 1 else []
-        chunks = [raw[i:j] for i, j in zip([0] + cuts, cuts + [len(raw)])]
-        assert _feed_all(chunks, documents) == expected
+ANSWERS = {
+    'plain_citation': 'La qualification CND est exigée [1] pour les soudures.',
+    'several_in_a_row': 'Les deux procédures [1][2][3] s\'appliquent, voir aussi [2].',
+    'bold': 'Le **délai de 30 jours [4]** reste valable, **sauf dérogation** [5].',
+    'list': '- Étape 1 : contrôle visuel [1]\n- Étape 2 : ressuage [2]\n- Étape 3 : rapport [1]\n',
+    'table': '| Document | Version |\n|---|---|\n| Procédure CND [1] | C |\n| Gamme de soudage [3] | B [3] |\n',
+    'unknown_numbers': 'Un renvoi inconnu [9], un autre [0] et un valide [5].',
+    'code_span': 'Écrire `tab[1]` puis `liste[i]` dans le script [2] ; voir [1].',
+    'markdown_link': 'Voir [le portail](https://intraqual/x) et [^1] puis [3].',
+    'no_citation': 'Aucun document ne répond à cette question, désolé.',
+    'accents': 'Été : étanchéité « à vérifier » [2] — œuvre d\'Hélène, côté zone à risque [4].',
+    'trailing_marker': 'Conclusion dans la procédure [1]',
+    'trailing_incomplete': 'Fin de réponse [1] et [',
+    'trailing_digits': 'Fin de réponse [2] et [12',
+    'only_markers': '[1][2][1]',
+    'empty_brackets': 'Valeurs [] et [ 1 ] et [1a] puis [2].',
+}
 
 
+def _chunkings(raw):
+    """Chunkings of ``raw``: every single split position, then fixed sizes and random cuts.
+
+    :param raw: the answer text to cut
+    :return: lists of chunks whose concatenation is ``raw``
+    """
+    for i in range(1, len(raw)):
+        yield [raw[:i], raw[i:]]
+    for size in (1, 2, 3, 7):
+        yield [raw[i:i + size] for i in range(0, len(raw), size)]
+    rng = random.Random(raw)
+    for _ in range(10):
+        cuts = sorted(rng.sample(range(1, len(raw)), k=min(len(raw) - 1, rng.randint(1, 20)))) if len(raw) > 1 else []
+        yield [raw[i:j] for i, j in zip([0] + cuts, cuts + [len(raw)])]
+
+
+@pytest.mark.parametrize('name', list(ANSWERS))
+def test_streaming_parse_equals_whole_text_parse(name):
+    raw = ANSWERS[name]
+    expected = parse_citations(raw, DOCS)
+    assert _feed_all([raw]) == expected
+    for chunks in _chunkings(raw):
+        assert _feed_all(chunks) == expected
+
+
+def test_inline_answers_cover_every_feature():
+    cited = {name: parse_citations(raw, DOCS)[2] for name, raw in ANSWERS.items()}
+    assert len(cited['several_in_a_row']) == 4 and cited['no_citation'] == []
+    assert all(cited[name] for name in ('list', 'unknown_numbers'))
+
+
+def test_expected_text_and_citations_of_a_list_answer():
+    text, sources, citations = _feed_all([ANSWERS['list'][:30], ANSWERS['list'][30:]])
+    assert text == '- Étape 1 : contrôle visuel \n- Étape 2 : ressuage \n- Étape 3 : rapport \n'
+    assert [s['title'] for s in sources] == ['REF-1', 'REF-2']
+    assert [c['n'] for c in citations] == [1, 2, 1]
+    assert [c['pos'] for c in citations] == [text.index('visuel ') + 7, text.index('ressuage ') + 9, text.index('rapport ') + 8]
+
+
+def test_expected_text_and_citations_of_unknown_numbers():
+    text, sources, citations = _feed_all(list(ANSWERS['unknown_numbers']))
+    assert text == 'Un renvoi inconnu , un autre  et un valide .'
+    assert [s['title'] for s in sources] == ['REF-5']
+    assert citations == [{'n': 1, 'pos': len(text) - 1}]
+
+
+def test_expected_text_and_citations_of_grouped_markers():
+    text, sources, citations = _feed_all(['Les deux procédures [1][', '2][3] s\'appliquent, voir aussi [2].'])
+    assert text == 'Les deux procédures  s\'appliquent, voir aussi .'
+    assert [s['title'] for s in sources] == ['REF-1', 'REF-2', 'REF-3']
+    assert [c['n'] for c in citations] == [1, 2, 3, 2]
+    assert [c['pos'] for c in citations] == [20, 20, 20, len(text) - 1]
+
+
+def test_expected_text_of_trailing_markers():
+    text, _, citations = _feed_all(['Fin de réponse [2] et [12'])
+    assert text == 'Fin de réponse  et [12'
+    assert citations == [{'n': 1, 'pos': 15}]
+    text, _, citations = _feed_all(['Conclusion [1', ']'])
+    assert text == 'Conclusion ' and citations == [{'n': 1, 'pos': 11}]
 
 
 # --- The engine — Vector Search faked at the HTTP level ---
