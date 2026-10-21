@@ -424,6 +424,26 @@ def test_history_markers_stripped_and_date_kept_out_of_search(monkeypatch):
     assert f'[Date: 2026-10-06]\n\n{QUESTION}' in m['prompt'][-1]['content']
 
 
+def _candidates_asked(sent):
+    """Number of passages asked from the index in all, over every search of the turn."""
+    return sum(p['num_results'] for p in sent)
+
+
+def test_a_degraded_bilingual_turn_asks_as_many_candidates_as_a_normal_one(monkeypatch):
+    _, normal = _run(monkeypatch)
+    _, degraded = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
+    assert _candidates_asked(degraded['sent']) == _candidates_asked(normal['sent']) == 48
+    assert len(degraded['sent']) == 2
+
+
+def test_a_degraded_translate_turn_asks_as_many_candidates_as_a_normal_one(monkeypatch):
+    _lang(monkeypatch, 'fr')
+    _, normal = _run(monkeypatch)
+    _lang(monkeypatch, 'fr')
+    _, degraded = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
+    assert _candidates_asked(degraded['sent']) == _candidates_asked(normal['sent']) == 48
+
+
 def test_rewrite_failure_degrades_the_turn_and_still_answers(monkeypatch):
     events, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
     assert 'error' not in _types(events) and 'sources' in _types(events)

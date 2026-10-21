@@ -334,6 +334,7 @@ targets:
       parsing_schedule_pause: "PAUSED"
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "dev-job"
+      notification_email: "jules.gourio.external@latecoere.aero"
       job_cluster_policy_id_S: "001E30C26BD479FE"
       # The pre-2018 archive is not built on DEV.
       parsing_archive_max_docs: "0"
@@ -454,10 +455,6 @@ targets:
               level: CAN_USE
             - user_name: "jules.gourio.external@latecoere.aero"
               level: CAN_MANAGE
-            - user_name: "christophe.pelissier@latecoere.aero"
-              level: CAN_USE
-            - user_name: "yosif.karapendov@latecoere.aero"
-              level: CAN_USE
             - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat
               level: CAN_MANAGE
           resources:
@@ -491,6 +488,7 @@ targets:
       # Legacy Lakebase names of the app before the 2026-10-14 refactor: their copies in uat_proj would be stale.
       lakebase_tables_to_skip: "messages,feedbacks,errors,knowledge_base_metadata"
       job_cluster_policy_id_S: "000E7559CADE5290"
+      notification_email: "jules.gourio.external@latecoere.aero"
 
   prod:
     mode: production

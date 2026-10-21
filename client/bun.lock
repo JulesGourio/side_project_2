@@ -5,6 +5,9 @@
     "": {
       "name": "latec-compare-client",
       "dependencies": {
+        "@fontsource/jetbrains-mono": "^5.3.0",
+        "@fontsource/montserrat": "^5.3.0",
+        "@fontsource/open-sans": "^5.3.0",
         "lucide-react": "^0.539.0",
         "react": "^18.3.0",
         "react-dom": "^18.3.0",
@@ -99,6 +102,12 @@
     "@eslint/eslintrc": ["@eslint/eslintrc@2.1.4", "", { "dependencies": { "ajv": "^6.12.4", "debug": "^4.3.2", "espree": "^9.6.0", "globals": "^13.19.0", "ignore": "^5.2.0", "import-fresh": "^3.2.1", "js-yaml": "^4.1.0", "minimatch": "^3.1.2", "strip-json-comments": "^3.1.1" } }, "sha512-269Z39MS6wVJtsoUl10L60WdkhJVdPG24Q4eZTH3nnF6lpvSShEK3wQjDX9JRWAUPvPh7COouPpU9IrqaZFvtQ=="],
 
     "@eslint/js": ["@eslint/js@8.57.1", "", {}, "sha512-d9zaMRSTIKDLhctzH12MtXvJKSSUhaHcjV+2Z+GK+EEY7XKpP5yR4x+N3TAcHTcu963nIr+TMcCb4DBCYX1z6Q=="],
+
+    "@fontsource/jetbrains-mono": ["@fontsource/jetbrains-mono@5.3.0", "", {}, "sha512-fqDfB5I9f1p1TV486aUgB9t8zP84P0O1FtQR5Ol9vjwPy+S+EIGlVYm1cvj2W5shcZMTg2nZFdVMoH5wFu8a1A=="],
+
+    "@fontsource/montserrat": ["@fontsource/montserrat@5.3.0", "", {}, "sha512-iQPDtZOnmM5ih4JBGaMSXisRap0ixb9bAUw2hDtY7EjVfaqiiNlKtVuJl9XclxUwtwMMHNcWXfQR6zI9x05+Tg=="],
+
+    "@fontsource/open-sans": ["@fontsource/open-sans@5.3.0", "", {}, "sha512-V1bdMlGNyZrJwzrdusshMOw2YR0aqYDL7kOo9dkxUEKl8dFv66A9HLckOOXl572sG/7ohhDQrCrTFGSn9LZcSw=="],
 
     "@humanwhocodes/config-array": ["@humanwhocodes/config-array@0.13.0", "", { "dependencies": { "@humanwhocodes/object-schema": "^2.0.3", "debug": "^4.3.1", "minimatch": "^3.0.5" } }, "sha512-DZLEEqFWQFiyK6h5YIeynKx7JlvCYWL0cImfSRXZ9l4Sg2efkFGTuFf6vzXjK1cq6IYkU+Eg/JizXw+TD2vRNw=="],
 
