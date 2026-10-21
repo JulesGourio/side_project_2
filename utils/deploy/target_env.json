@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-target env var overrides for the deployed app. A key omitted for a target keeps app.yaml's default. The chat model, its fallbacks and token caps are the same everywhere: app.yaml.",
+  "_comment": "Per-target env var overrides for the deployed app. A key omitted for a target keeps app.yaml's default. The chat model, its fallbacks and token caps are the same everywhere: app.yaml. CHAT_TRANSLATE_ONLY is off in app.yaml and on in every target.",
   "dev": {
     "COMPARE_VOLUME_PATH": "/Volumes/dev_proj/qualibot/doc_compare",
     "CHAT_INDEX": "dev_proj.qualibot.chunks_index",
