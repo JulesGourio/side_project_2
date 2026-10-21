@@ -20,8 +20,7 @@
 #
 # Every schedule stays PAUSED until explicitly promoted.
 #
-# The job is declared once at the root. The targets at the end only override run_as: the DEV service principal
-# is the default, and the UAT and PROD targets run as their own service principal.
+# The job is declared once at the root; each target at the end names the service principal it runs as (run_as).
 
 resources:
   jobs:
@@ -33,7 +32,6 @@ resources:
       # One run at a time: the parse tasks hand over through parsing_run_scope and parsing_gpu_queue, rewritten by each run.
       max_concurrent_runs: 1
 
-      # DEV service principal by default; the targets at the end of this file override it.
       queue:
         enabled: true
       email_notifications:
@@ -41,8 +39,6 @@ resources:
           - ${var.notification_email}
       notification_settings:
         no_alert_for_canceled_runs: true
-      run_as:
-        service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
 
       tags:
         project: Qualibot
@@ -79,7 +75,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -108,7 +104,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -148,7 +144,7 @@ resources:
               spark.databricks.delta.autoCompact.enabled: "true"
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -184,7 +180,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -195,7 +191,7 @@ resources:
 
       tasks:
         - task_key: "1_categories"
-          description: "Intraqual source freshness guard + build category_reference"
+          description: "Intraqual data asset freshness guard + build category_reference"
           job_cluster_key: meta_cpu_cluster
           notebook_task:
             notebook_path: ../utils/parsing_pipeline/create_proj_category_reference.py
@@ -350,7 +346,7 @@ resources:
               - databricks-sdk>=0.118.0
               - packaging
 
-      # Daily at night: upstream Intraqual ingestion lands during the day, and 1_categories fails explicitly if sources are older than
+      # Daily at night: the upstream Intraqual data asset lands during the day, and 1_categories fails explicitly if sources are older than
       # `parsing_max_source_staleness_hours`.
       schedule:
         quartz_cron_expression: ${var.parsing_schedule_cron}
@@ -358,6 +354,14 @@ resources:
         pause_status: ${var.parsing_schedule_pause}
 
 targets:
+  dev:
+    resources:
+      jobs:
+        parsing_pipeline:
+          name: "D_1_Qualibot_Parsing_Pipeline"
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
+
   uat:
     resources:
       jobs:

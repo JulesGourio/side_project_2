@@ -433,7 +433,7 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
             "ref", "titre", "type_document", "categorie", "langue", "auteur", "document_prefixes",
             "division", "niveau_plus_1", "niveau_plus_2", "niveau_plus_3",
             "niveau_plus_4", "niveau_plus_5", "niveau_plus_6",
-            "doc_date",   # publication date (gd_doc.dtdiff)
+            "doc_date",   # publication date (document_revisions_intraqual.published_date)
             "indice",     # revision key — detects a republished doc
             "ingestion_run_id", "ingestion_timestamp", "job_run_id",
             "parser_strategy", "parse_status", "error_trace", "parse_time_seconds",

@@ -4,11 +4,11 @@
 # MAGIC
 # MAGIC **Description:**
 # MAGIC First link of the daily chain. Two roles:
-# MAGIC 1. **Freshness guard** — checks that the Intraqual source tables were refreshed by the `intraqual_ingestion` job within
+# MAGIC 1. **Freshness guard** — checks that the Intraqual data asset tables were last written within
 # MAGIC    `MAX_SOURCE_STALENESS_HOURS`. A stale source must **fail** the run: otherwise the pipeline recomputes a scope on stale
 # MAGIC    data and silently ships a partial index.
 # MAGIC 2. **Category consolidation** — `division` / `niveau_plus_1..N` per IDDOC into `category_reference`, from
-# MAGIC    `gd_doc_cat_latest` x `gd_cat_latest` (+ `DIVISION_ARCHIVE_TABLE` if enabled, empty by default).
+# MAGIC    `document_revisions_intraqual` x `category_ancestors_intraqual` (+ `DIVISION_ARCHIVE_TABLE` if enabled, empty by default).
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC The freshness guard fails the task after `category_reference` is built but before it is written, so a stale run leaves the previous table in place.
@@ -17,8 +17,7 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `1_categories`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_INGESTION_FRESHNESS_TABLE}`
-# MAGIC - `{PARSING_INTRAQUAL_BRONZE}.gd_doc_cat_latest`, `gd_cat_latest` (read by `categories.build_division_reference`)
+# MAGIC - `{PARSING_INTRAQUAL_GOLD}.document_revisions_intraqual`, `category_ancestors_intraqual` (Intraqual data asset; read by `categories.build_division_reference`, last write time read by the freshness guard)
 # MAGIC - `{PARSING_DIVISION_ARCHIVE_TABLE}` (same function, disabled by default: empty)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
@@ -64,9 +63,7 @@ from tables import ensure_primary_key, write_table
 from leap_utils.common import logger as log_utils
 
 from config import (
-    DIVISION_ARCHIVE_TABLE, DIVISION_REFERENCE_TABLE,
-    GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST, GD_TYPDOC_LATEST,
-    GD_UTILISATEUR_LATEST, INGESTION_FRESHNESS_TABLE, MAX_SOURCE_STALENESS_HOURS,
+    DIVISION_ARCHIVE_TABLE, DIVISION_REFERENCE_TABLE, INTRAQUAL_REQUIRED_TABLES, MAX_SOURCE_STALENESS_HOURS,
 )
 
 # COMMAND ----------
@@ -87,46 +84,25 @@ logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_
 
 # MAGIC %md
 # MAGIC ## Config Constants
-# MAGIC The guard checks the five Intraqual tables the whole chain reads (documents, categories, document types, users). They are named once here so the guard and the logs agree.
+# MAGIC The guard checks the Intraqual data asset tables the whole chain reads (revisions and category ancestors). They are named once in `config.py` so the guard and the logs agree.
 
 # COMMAND ----------
 
 logger.info(f"Output      : {DIVISION_REFERENCE_TABLE}")
 logger.info(f"Archive     : {DIVISION_ARCHIVE_TABLE or '(disabled)'}")
 
-REQUIRED_SOURCES = [
-    GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST,
-    GD_TYPDOC_LATEST, GD_UTILISATEUR_LATEST,
-]
-
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Inputs
-# MAGIC ## Ingestion freshness table
-# MAGIC One row per Intraqual table with the time of its last refresh, written by the `intraqual_ingestion` job. It is read only to compute the age of the required tables.
-# MAGIC
-# MAGIC The category tables themselves are read inside `categories.build_division_reference()`, see Technical debt.
+# MAGIC ## Age of the source tables
+# MAGIC Hours since each required table was last written, read from the Delta table details. The Intraqual data asset rewrites them on every run, so their age is the age of the last successful run of that job.
 # MAGIC
 # MAGIC A `MAX_SOURCE_STALENESS_HOURS` of 0 disables the guard.
 
 # COMMAND ----------
 
-if MAX_SOURCE_STALENESS_HOURS <= 0:
-    df_fresh = None
-else:
-    df_fresh = (
-        spark.table(INGESTION_FRESHNESS_TABLE)
-        .filter(F.lower(F.col("table_name")).isin([t.lower() for t in REQUIRED_SOURCES]))
-        .select(
-            "table_name",
-            "last_update_time",
-            F.round(
-                (F.unix_timestamp(F.current_timestamp()) - F.unix_timestamp("last_update_time")) / 3600.0, 1
-            ).alias("age_hours"),
-        )
-        .orderBy(F.desc("age_hours"))
-    )
+source_ages = {} if MAX_SOURCE_STALENESS_HOURS <= 0 else categories.source_ages_hours(spark, INTRAQUAL_REQUIRED_TABLES)
 
 # COMMAND ----------
 
@@ -156,26 +132,24 @@ df_reference = categories.build_division_reference(spark).cache()
 # MAGIC %md
 # MAGIC # Quality Checks
 # MAGIC ## Freshness guard (RED)
-# MAGIC A stale or missing source must fail the run before anything is written: otherwise the next tasks compute the scope on old data and the index silently misses documents. The message names the stale and the missing tables, since the usual cause is a failed `intraqual_ingestion` job.
+# MAGIC A stale or unreadable source must fail the run before anything is written: otherwise the next tasks compute the scope on old data and the index silently misses documents. The message names the stale and the unreadable tables, since the usual cause is a failed Intraqual data asset job.
 
 # COMMAND ----------
 
-if df_fresh is None:
+if MAX_SOURCE_STALENESS_HOURS <= 0:
     logger.info("Freshness guard disabled (MAX_SOURCE_STALENESS_HOURS <= 0).")
 else:
-    _rows = df_fresh.collect()
-    for r in _rows:
-        logger.info(f"  {r.age_hours:>6} h  {r.table_name}")
+    for table, age in source_ages.items():
+        logger.info(f"  {age if age is not None else '?':>6} h  {table}")
 
-    _seen = {r.table_name.lower() for r in _rows}
-    _absent = [t for t in REQUIRED_SOURCES if t.lower() not in _seen]
-    _stale = [(r.table_name, r.age_hours) for r in _rows if r.age_hours > MAX_SOURCE_STALENESS_HOURS]
-    if _absent or _stale:
+    _unreadable = [t for t, age in source_ages.items() if age is None]
+    _stale = [(t, age) for t, age in source_ages.items() if age is not None and age > MAX_SOURCE_STALENESS_HOURS]
+    if _unreadable or _stale:
         raise RuntimeError(
             f"Intraqual sources not fresh (threshold {MAX_SOURCE_STALENESS_HOURS}h) — "
-            f"the `intraqual_ingestion` job likely failed.\n"
+            f"the Intraqual data asset job likely failed.\n"
             f"  Stale: {_stale or 'none'}\n"
-            f"  Missing from {INGESTION_FRESHNESS_TABLE}: {_absent or 'none'}"
+            f"  Missing or unreadable: {_unreadable or 'none'}"
         )
     logger.info(f"All sources fresh (< {MAX_SOURCE_STALENESS_HOURS}h).")
 

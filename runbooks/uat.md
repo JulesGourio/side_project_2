@@ -1063,6 +1063,42 @@ databricks bundle summary -t uat --profile UAT | Select-String "alert"
 
 D5.9, anciens assistants (UI UAT → Agents) : les trois `qualibot_ALL_v2` / `_AS_v2` / `_IS_v2` sont à supprimer plus tard, sur accord.
 
+### G. Le parsing lit le data asset Intraqual au lieu du bronze (code poussé le 2026-10-21, à faire)
+
+`1_categories`, `2_manifest` et `6_update_kb_metadata` lisent `prod_gold.quality_system.document_revisions_intraqual` et `category_ancestors_intraqual` (variable `intraqual_gold_catalog_schema`, env `PARSING_INTRAQUAL_GOLD`) au lieu de `prod_bronze.intraqual.gd_*_latest`. Les sorties (`category_reference`, `parse_manifest`) gardent le même schéma. Le garde-fou de fraîcheur lit la date d'écriture de ces deux tables (`DESCRIBE DETAIL`), plus `intraqual_ingestion_freshness_all`.
+
+1. Pousser le code, puis Bitbucket → Pipelines → Run pipeline → branche poussée → `deploy-uat-jobs`. Attendre qu'il soit vert.
+
+2. Relever la version actuelle de `category_reference` et de `parse_manifest` (SQL editor, lecture seule), à noter :
+
+```sql
+DESCRIBE HISTORY uat_proj.qualibot.category_reference LIMIT 1;
+DESCRIBE HISTORY uat_proj.qualibot.parse_manifest LIMIT 1;
+```
+
+3. Lancer les deux tâches (aucune suppression sur le volume : `dry_run` reste à `true`) :
+
+```powershell
+databricks bundle run parsing_pipeline -t uat --profile UAT --only 1_categories
+databricks bundle run parsing_pipeline -t uat --profile UAT --only 2_manifest
+```
+
+4. Comparer avec la version notée (remplacer `<N>` par la version relevée en 2). Les deux requêtes doivent rendre 0 ligne, sauf documents modifiés dans Intraqual depuis :
+
+```sql
+SELECT 'avant' AS cote, * FROM (SELECT * FROM uat_proj.qualibot.category_reference VERSION AS OF <N> EXCEPT SELECT * FROM uat_proj.qualibot.category_reference)
+UNION ALL
+SELECT 'apres', * FROM (SELECT * FROM uat_proj.qualibot.category_reference EXCEPT SELECT * FROM uat_proj.qualibot.category_reference VERSION AS OF <N>);
+```
+
+```sql
+SELECT 'avant' AS cote, IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM (SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM uat_proj.qualibot.parse_manifest VERSION AS OF <M> EXCEPT SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM uat_proj.qualibot.parse_manifest)
+UNION ALL
+SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM (SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM uat_proj.qualibot.parse_manifest EXCEPT SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM uat_proj.qualibot.parse_manifest VERSION AS OF <M>);
+```
+
+(`<M>` : version de `parse_manifest` relevée en 2.)
+
 ## Fait
 
 - 2026-10-21 — 37 documents `MISSING_CHUNKS` (171 passages au total) : documents presque sans texte (30 caractères, 5 images) flaggés par la garde `flag_ghost_documents` avant l'ajout des passages d'images ; 1970 passages sans `division` (30 documents listés, dont `UDA-00-053`, `TDA7-00-046`, `FDAQL-2851`). À surveiller après le premier run quotidien ; aucune action.

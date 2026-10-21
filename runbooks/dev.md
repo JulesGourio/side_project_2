@@ -1002,6 +1002,42 @@ La tâche `sync_user_capabilities` du job `D_1_Qualibot_Lakebase_Export_To_Volum
 - Copier aussi les images du volume `uat_proj.qualibot.images` (seulement si un run de parsing DEV doit retravailler des images déjà extraites).
 - Ne pas toucher ici à `uat` ou `prod` : voir `runbooks/uat.md` (dont le bloc D, qui déploie la branche du chatbot en UAT) et `runbooks/prod.md`. Il faut d'abord que le DEV soit validé.
 
+### G. Le parsing lit le data asset Intraqual au lieu du bronze (code poussé le 2026-10-21, à faire)
+
+`1_categories`, `2_manifest` et `6_update_kb_metadata` lisent `prod_gold.quality_system.document_revisions_intraqual` et `category_ancestors_intraqual` (variable `intraqual_gold_catalog_schema`, env `PARSING_INTRAQUAL_GOLD`) au lieu de `prod_bronze.intraqual.gd_*_latest`. Les sorties (`category_reference`, `parse_manifest`) gardent le même schéma. Le garde-fou de fraîcheur lit la date d'écriture de ces deux tables (`DESCRIBE DETAIL`), plus `intraqual_ingestion_freshness_all`.
+
+1. Pousser le code, puis Bitbucket → Pipelines → Run pipeline → branche poussée → `deploy-dev-jobs`. Attendre qu'il soit vert.
+
+2. Relever la version actuelle de `category_reference` et de `parse_manifest` (SQL editor, lecture seule), à noter :
+
+```sql
+DESCRIBE HISTORY dev_proj.qualibot.category_reference LIMIT 1;
+DESCRIBE HISTORY dev_proj.qualibot.parse_manifest LIMIT 1;
+```
+
+3. Lancer les deux tâches (aucune suppression sur le volume : `dry_run` reste à `true`) :
+
+```powershell
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
+```
+
+4. Comparer avec la version notée (remplacer `<N>` par la version relevée en 2). Les deux requêtes doivent rendre 0 ligne, sauf documents modifiés dans Intraqual depuis :
+
+```sql
+SELECT 'avant' AS cote, * FROM (SELECT * FROM dev_proj.qualibot.category_reference VERSION AS OF <N> EXCEPT SELECT * FROM dev_proj.qualibot.category_reference)
+UNION ALL
+SELECT 'apres', * FROM (SELECT * FROM dev_proj.qualibot.category_reference EXCEPT SELECT * FROM dev_proj.qualibot.category_reference VERSION AS OF <N>);
+```
+
+```sql
+SELECT 'avant' AS cote, IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM (SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest VERSION AS OF <M> EXCEPT SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest)
+UNION ALL
+SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM (SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest EXCEPT SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest VERSION AS OF <M>);
+```
+
+(`<M>` : version de `parse_manifest` relevée en 2.)
+
 ## Fait
 
 - Migration DEV : plan sans suppression (2026-10-16), app redéployée, historique DocCompare visible avec les documents (chemins corrigés à la copie et à chaque démarrage, confirmé 2026-10-16). Restent : point 7 (endpoint Sonnet, index) et le premier run du pipeline de parsing.

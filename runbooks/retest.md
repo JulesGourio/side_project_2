@@ -332,3 +332,9 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Démarrage de l'app : `start.sh` installe antiword (paquet fourni, sinon `apt`, sinon téléchargement https vérifié par SHA-256) ; un `.doc` s'aperçoit avec ses accents.
 - [ ] Parsing (si `leap_utils` est utilisé par le job) : lancer `create_proj_parse_manifest` ou la tâche la plus courte du job de parsing sur DEV pour vérifier que les imports `leap_utils` (11 modules conservés) fonctionnent.
 - [ ] Comparaison DEV, mode « comparatif » (moteur par sections) : un texte où « shall » devient « may » est maintenant rapporté comme changement (avant : ignoré). Vérifier sur un couple de PDF qui contient un tel changement.
+
+## 2026-10-21 — le parsing lit le data asset Intraqual (gold) au lieu du bronze
+
+- [ ] Section G de `uat.md` (déploiement des jobs, `1_categories`, `2_manifest`, comparaison de `category_reference` et `parse_manifest` avant / après : 0 ligne de différence attendue).
+- [ ] `1_categories` : le journal liste l'âge de `document_revisions_intraqual` et `category_ancestors_intraqual` ; une valeur de `parsing_max_source_staleness_hours` à `1` fait échouer la tâche avec la liste des tables périmées (puis remettre `36`).
+- [ ] Chat : la source d'un document AS et celle d'un document IS gardent leur division et leur catégorie.
