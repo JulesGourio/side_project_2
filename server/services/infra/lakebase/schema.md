@@ -112,7 +112,7 @@ One row per turn. The columns of the first table are fixed; the others come from
 |---|---|---|
 | `answer_endpoint` | TEXT | model that answered (NULL: none) |
 | `llm_fallback` | BOOLEAN | answer given by the fallback model |
-| `llm_attempts` | JSONB | every call to a model: endpoint, outcome, HTTP status, seconds |
+| `llm_attempts` | JSONB | every call to a model: endpoint, outcome, HTTP status, seconds, seconds to the first text (`first_text_s`) |
 | `truncated` | BOOLEAN | output token limit reached |
 | `continuations` | INTEGER | number of resumptions after a cut |
 | `input_tokens` | INTEGER | input tokens of the answer |

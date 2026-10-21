@@ -164,7 +164,8 @@ async def chat_ws(websocket: WebSocket) -> None:
         with_document_info(collected_sources)
         if translate_ctx:
             with log.timed('translate_back'):
-                final_content = await translate_answer_back(final_content, translate_ctx, host, token)
+                final_content = await translate_answer_back(final_content, translate_ctx, host, token,
+                                                            record=log.model_io.setdefault('translate_back', {}))
             log.data['answer_translated'] = translate_ctx.answer_translated
             if translate_ctx.answer_error:
                 log.issue('translate_back_failed', 'translate_back', translate_ctx.answer_error)
@@ -186,7 +187,8 @@ async def chat_ws(websocket: WebSocket) -> None:
         messages_for_engine = messages
         if TRANSLATE_BRIDGE_ENABLED and user_content:
             with log.timed('translate_in'):
-                en_question, translate_ctx = await translate_question_to_en(user_content, host, token)
+                en_question, translate_ctx = await translate_question_to_en(
+                    user_content, host, token, record=log.model_io.setdefault('translate_in', {}))
             log.data['question_lang'] = translate_ctx.lang_code
             if translate_ctx.error:
                 log.issue('translate_in_failed', 'translate_in', translate_ctx.error)

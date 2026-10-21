@@ -206,6 +206,7 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
     chain = chat_llm.answer_chain(llm_endpoint())
     prompt = build_prompt(div, conversation, documents, answer_language)
     _record_prompt(log, div, documents, prompt)
+    log.model_io['answer'] = {'messages': prompt}
     llm_started = time.monotonic()
     log.starts_ms['answer'] = log.elapsed_ms()
 

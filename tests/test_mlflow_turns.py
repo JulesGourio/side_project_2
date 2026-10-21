@@ -288,3 +288,40 @@ def test_no_trace_when_the_experiment_cannot_be_activated(monkeypatch):
 
     monkeypatch.setattr(mlflow, 'set_experiment', refuse)
     assert mlflow_turns._experiment_id('') is None
+
+
+def test_model_steps_show_the_messages_sent_and_their_tokens(spans):
+    from mlflow.entities import SpanType
+    log = _turn()
+    messages = [{'role': 'system', 'content': 'SYS'}, {'role': 'user', 'content': 'Q ?'}]
+    log.model_io = {'answer': {'messages': messages}, 'rewrite': {'messages': messages},
+                    'translate_in': {'messages': messages, 'endpoint': 'trans', 'input_tokens': 7, 'output_tokens': 3},
+                    'translate_back': {'messages': messages, 'endpoint': 'trans', 'input_tokens': 11, 'output_tokens': 5}}
+    log.timings_ms.update({'translate_in': 100, 'translate_back': 80})
+    log.starts_ms.update({'translate_in': 0, 'translate_back': 3950})
+    mlflow_turns._write_trace(log, 'chat')
+    s = _by_name(spans)
+    assert s['answer'].kwargs['inputs']['messages'] == messages and s['rewrite'].kwargs['inputs']['messages'] == messages
+    assert s['translate_in'].kwargs['span_type'] == SpanType.LLM and s['translate_back'].kwargs['span_type'] == SpanType.LLM
+    assert s['translate_in'].ended['attributes']['mlflow.chat.tokenUsage'] == {
+        'input_tokens': 7, 'output_tokens': 3, 'total_tokens': 10}
+    assert s['translate_back'].kwargs['inputs']['messages'] == messages
+    assert s['chat_turn'].ended['attributes']['input_tokens_total'] == 7 + 11 + 100
+    assert s['chat_turn'].ended['attributes']['output_tokens_total'] == 3 + 5 + 50
+
+
+def test_each_model_call_splits_into_time_to_first_token_and_generation(spans):
+    log = _turn()
+    log.data['llm_attempts'] = [{'endpoint': 'a', 'outcome': 'rate_limit', 'status': 429, 's': 1.0, 'first_text_s': None},
+                                {'endpoint': 'b', 'outcome': 'ok', 's': 2.0, 'first_text_s': 0.5}]
+    mlflow_turns._write_trace(log, 'chat')
+    s = _by_name(spans)
+    assert sum(1 for x in spans if x.name == 'time_to_first_token') == 1
+    assert s['time_to_first_token'].parent is s['call_2'] and s['generation'].parent is s['call_2']
+    t0 = 1_000_000_000
+    call_2_start = 900 + 50 + 1000                                   # answer start + queue wait + first call
+    assert s['time_to_first_token'].ended['end'] == t0 + (call_2_start + 500) * 1_000_000
+    assert s['generation'].ended['end'] == t0 + (call_2_start + 2000) * 1_000_000
+    attributes = s['answer'].ended['attributes']
+    assert attributes['queue_wait_ms'] == 50 and attributes['time_to_first_token_ms'] == 500
+    assert attributes['streaming_ms'] == 2500 and attributes['tokens_per_second'] == 20.0

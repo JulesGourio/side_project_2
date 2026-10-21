@@ -543,6 +543,22 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Transmettre le tableau final du notebook (table `dev_proj.qualibot.chat_trace_scores`) et les lignes `failed` de « Quality Checks ».
   Quand les juges sont validés : baisser les échantillons (`TARGET_SAMPLE_RATES` dans `utils/evaluation/chat_scorers.py`) et activer le planning (PAUSED aujourd'hui).
 
+- [ ] **0.14bis Détail des traces** (2026-10-21, à faire) : messages envoyés à chaque modèle (réécriture, traduction, réponse) dans la
+  trace, temps avant le premier token et temps de génération par appel, tokens entrée/sortie par étape. Redéployer l'app DEV seule
+  (pas de changement de job, pas de changement de table) :
+
+  ```powershell
+  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+
+  Puis poser une question dans l'app DEV et ouvrir sa trace dans MLflow (`/Shared/Experiment/qualibot_chat_traces`). Attendu : le span
+  `answer` a un champ `messages` (le system prompt et le contexte), `time_to_first_token_ms`, `streaming_ms`, `tokens_per_second` ;
+  chaque `call_N` contient `time_to_first_token` et `generation` ; la racine a `input_tokens_total` et `output_tokens_total`.
+  Si la liaison aux prompts (tag `mlflow.linkedPrompts`) reste absente, lire dans les logs de l'app la ligne `prompt … differs from the
+  registered version` : elle indique qu'il faut relancer l'enregistrement des prompts (`databricks bundle run register_chat_prompts_dev -t dev --profile DEV`).
+
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
   - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, Les tables
     d'évaluation (`eval_*`, `eval_golden_questions`, `eval_synthetic_questions`, `eval_feedback_failures`) sont les défauts des notebooks :
