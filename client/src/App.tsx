@@ -12,8 +12,8 @@ function DefaultRedirect() {
   useEffect(() => {
     Promise.all([getAppConfig(), getUserMe()]).then(([cfg, me]) => {
       const chatEnabled = cfg.chat?.enabled ?? true;
-      if (me.can_compare) setTarget('/compare');
-      else if (chatEnabled && me.can_chat) setTarget('/chat');
+      if (chatEnabled && me.can_chat) setTarget('/chat');
+      else if (me.can_compare) setTarget('/compare');
       else setTarget('/no-access');
     });
   }, []);

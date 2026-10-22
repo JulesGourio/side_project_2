@@ -4,6 +4,13 @@ Cible : `prod` (profil CLI `qualibot-prod`). Rien ici ne déploie : le déploiem
 
 Le catalogue `prod_landingzone.intraqual` (source Intraqual) ne se touche pas.
 
+## Ressources PROD
+
+| Quoi | Lien / commande |
+|---|---|
+| App `qualibot` (utilisateurs) | https://qualibot-1210945332048776.aws.databricksapps.com |
+| App — état | `databricks apps get qualibot --profile qualibot-prod` |
+
 ## 0. État de départ (lecture seule, profil `qualibot-prod`)
 
 ```powershell
