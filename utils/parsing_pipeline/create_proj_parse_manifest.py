@@ -1,8 +1,4 @@
 # Databricks notebook source
-# /// script
-# [tool.databricks.environment]
-# environment_version = "5"
-# ///
 # MAGIC %md
 # MAGIC # PROJ PARSE_MANIFEST
 # MAGIC
@@ -64,7 +60,7 @@ from pyspark.sql import functions as F
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Project Imports
+# MAGIC ## Config Function Imports
 # MAGIC `manifest_steps` holds the phases of this task; `categories`, `tables` and `config` live next to this notebook.
 
 # COMMAND ----------
@@ -91,6 +87,15 @@ dbutils.widgets.removeAll()
 
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
 LOG_LEVEL = dbutils.widgets.get("log_level")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config logger
+# MAGIC The logger is created once the widgets are read, so the level they give applies to every line after.
+
+# COMMAND ----------
+
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
 dbutils.widgets.dropdown("dry_run", "true", ["true", "false"], "dry_run: false to actually delete the out-of-scope folders")

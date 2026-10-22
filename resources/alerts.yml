@@ -39,7 +39,7 @@ resources:
             - user_email: ${var.notification_email}
       schedule:
         quartz_cron_schedule: "0 0 9 * * ?"
-        timezone_id: Europe/Paris
+        timezone_id: Europe/Brussels
         pause_status: ${var.alerts_pause_status}
 
     parse_errors:
@@ -76,7 +76,7 @@ resources:
             - user_email: ${var.notification_email}
       schedule:
         quartz_cron_schedule: "0 0 9 * * ?"
-        timezone_id: Europe/Paris
+        timezone_id: Europe/Brussels
         pause_status: ${var.alerts_pause_status}
 
     chat_failure_rate:
@@ -125,7 +125,7 @@ resources:
             - user_email: ${var.notification_email}
       schedule:
         quartz_cron_schedule: "0 0 3,15 * * ?"
-        timezone_id: Europe/Paris
+        timezone_id: Europe/Brussels
         pause_status: ${var.alerts_pause_status}
 
     job_failures:
@@ -165,7 +165,7 @@ resources:
             - user_email: ${var.notification_email}
       schedule:
         quartz_cron_schedule: "0 0 8 * * ?"
-        timezone_id: Europe/Paris
+        timezone_id: Europe/Brussels
         pause_status: ${var.alerts_pause_status}
 
     new_error_kinds:
@@ -207,7 +207,7 @@ resources:
             - user_email: ${var.notification_email}
       schedule:
         quartz_cron_schedule: "0 0 3 * * ?"
-        timezone_id: Europe/Paris
+        timezone_id: Europe/Brussels
         pause_status: ${var.alerts_pause_status}
 
     chat_degraded_turns:
@@ -251,5 +251,5 @@ resources:
             - user_email: ${var.notification_email}
       schedule:
         quartz_cron_schedule: "0 0 3 * * ?"
-        timezone_id: Europe/Paris
+        timezone_id: Europe/Brussels
         pause_status: ${var.alerts_pause_status}

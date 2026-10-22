@@ -1,8 +1,10 @@
 # Audit des conventions — `utils/parsing_pipeline`, `resources/` et jobs Python
 
-Date : 2026-10-21. Branche auditée : `claude/sharp-mayer-uqwx8x`, commit `49237be`.
+Date : 2026-10-22. Audit initial le 2026-10-21 ; mise à jour le 2026-10-22 après application des corrections (statuts ci-dessous).
 
-Historique de l'audit : une première version portait sur `6ca3df7`. La branche a avancé de 25 fichiers du périmètre entre les deux commits ; cette version relit tout sur `49237be` et remplace la précédente. Les écarts résolus entre-temps sont signalés comme tels.
+Branche : `claude/sharp-mayer-uqwx8x`. Base de l'audit : commit `49237be`. Les corrections sont dans le commit qui suit ce rapport.
+
+Historique : une première version portait sur `6ca3df7`. La branche a avancé de 25 fichiers du périmètre entre les deux commits ; la version du 21 relit tout sur `49237be`.
 
 ## 0. Périmètre, sources et méthode
 
@@ -11,275 +13,249 @@ Historique de l'audit : une première version portait sur `6ca3df7`. La branche 
 | Source | Version | Rôle |
 |---|---|---|
 | `CLAUDE.md` de ce dépôt (sections *Notebooks*, *Jobs*, *Conventions de code*, *Conventions opérationnelles*) | branche courante | règle de référence pour qualibot |
-| `datab` (dépôt personnel LEAP), branche la plus récente = `main` | `816e584` (2026-10-15, inchangé depuis le premier audit) | guidelines LEAP : `CLAUDE.md`, `templates/`, `README.md` |
+| `datab` (dépôt personnel LEAP), branche la plus récente = `main` | `816e584` (2026-10-15) | guidelines LEAP : `CLAUDE.md`, `templates/`, `README.md` |
 | `archives/qualibot_archi.zip` de `datab` (dépôt de référence) | extrait dans un dossier de travail | notebooks `proj/` et `data_asset/`, `leap_utils/`, `platform/ci/check_notebook.py` (le Convention Checker) |
 
 Les règles de qualibot priment quand elles diffèrent de LEAP. Chaque écart est signalé avec la règle qui le fixe.
 
 **Méthode**
 
-1. Lecture intégrale de `datab/CLAUDE.md`, de `templates/notebook_proj_template.py`, des `templates/bundle_data_asset/` et de `platform/ci/check_notebook.py` (970 lignes, règles `S*`, `B*`, `N*`).
-2. Convention Checker LEAP exécuté tel quel sur les 8 notebooks (`create_proj_*.py` et `update_proj_vector_indexes.py`), puis tri : vrais écarts, faux positifs, règles sans objet.
-3. `runbooks/scripts/code_quality/check_docstrings.py` sur `utils/parsing_pipeline` : **0 problème** ; sur `server utils` : **0 problème**.
-4. `ruff` 0.17.1 (venv de travail, `--no-fix`, `--isolated`) : règles `F401`, `F841`, `F811` et `E501`.
-5. Scans `grep` ciblés : idiomes interdits, environnements en dur, widgets, commentaires d'historique, sections, cellules de code sans Markdown, écritures de tables, sections vides.
-6. Lecture des `resources/*.yml`, de `databricks.yml`, de `bitbucket-pipelines.yml`.
-7. Comparaison de `leap_utils/` avec celui de l'archive.
+1. Lecture de `datab/CLAUDE.md`, de `templates/notebook_proj_template.py`, des `templates/bundle_data_asset/` et de `platform/ci/check_notebook.py`.
+2. Convention Checker LEAP exécuté sur les 8 notebooks, puis tri : vrais écarts, faux positifs, règles sans objet.
+3. `check_docstrings.py` sur `utils/parsing_pipeline`, puis sur `server utils` : **0 problème** dans les deux cas, après corrections.
+4. `ruff` 0.17.1 (`--no-fix`, `--isolated`) : `F401`, `F841`, `F811`.
+5. Scans `grep` ciblés, lectures des YAML, de `databricks.yml` et de `bitbucket-pipelines.yml`.
+6. **Vérification après corrections** : suite complète `pytest -q tests` dans un venv de travail (dépendances de `requirements.txt` sauf `fasttext-wheel`, qui ne compile pas ici, et `python-multipart`) : **704 réussis, 13 ignorés**. Les ignorés et l'absence de `fasttext` ne touchent pas aux fichiers modifiés.
 
 **Limites**
 
-- Rien n'a été exécuté sur Databricks ; l'audit est statique.
-- Les templates Gold et Silver de `datab` ne sont lus que par leurs titres (le pipeline parsing n'est ni un Silver ni un Gold).
-- Les tests de `tests/` n'ont pas été lancés.
+- Rien n'a été exécuté sur Databricks : les notebooks modifiés n'ont pas tourné. Leur syntaxe Python est vérifiée, et leurs cellules restent découpées comme le veut `test_code_conventions.py`.
+- Les templates Gold et Silver de `datab` ne sont lus que par leurs titres.
 
 ## 1. Synthèse
 
-**Verdict.** Le pipeline respecte les règles dures : pas d'environnement en dur dans le code, aucun `.cast()`, `.to_date()`, `.union()`, `.saveAsTable()` ni `print()`, pas de `DBTITLE`, GX regroupé dans `# Quality Checks`, une explication Markdown avant chaque bloc de code, docstrings complètes, commentaires « pourquoi » sans historique ni référence à `runbooks/`, aucune importation inutilisée (`F401`), timeout posé sur le job.
+**Verdict.** Le pipeline respecte les règles dures : pas d'environnement en dur dans le code, aucun `.cast()`, `.to_date()`, `.union()`, `.saveAsTable()` ni `print()`, pas de `DBTITLE`, GX regroupé dans `# Quality Checks`, une explication Markdown avant chaque bloc de code, docstrings complètes, commentaires « pourquoi » sans historique, aucune importation inutilisée.
 
-**Aucun bloquant au sens du Convention Checker.** Les écarts se concentrent sur quatre points :
-
-1. **Uniformité des notebooks** : noms de sous-sections, sections vides, logger mal rangé, README faux.
-2. **Actions Spark hors garde `DEBUG`** : un `.show()` et huit `.count()` s'exécutent à chaque run en production.
-3. **Configuration répartie** : widgets, variables de cluster et valeurs écrites en dur dans le YAML, sans règle claire.
-4. **Dépendances et ressources** : versions épinglées à deux endroits (dérive d'OpenCV), UUID de service principal écrits en dur dans les cibles, cluster GPU sans policy (dérogation non écrite dans le YAML), et trois tâches lourdes sans `timeout_seconds` (E7 bis).
-
-**Garde-fous en CI** : une étape `pytest` existe désormais (avant chaque déploiement PROD, et seule sur demande). Il manque encore la vérification des docstrings et le lint.
+**Aucun bloquant au sens du Convention Checker.** Après les corrections de cette passe, il reste ouverts : la dérive des dépendances (E3), les UUID et valeurs en dur dans les YAML (E5, E6), le cluster GPU sans policy (E7), l'absence de lint et de docstrings en CI (E8), et les points de documentation E13 et E20 à E22.
 
 ### Tableau des écarts (priorité décroissante)
 
-| # | Gravité | Écart | Où (commit `49237be`) | Solution proposée |
-|---|---|---|---|---|
-| E1 | Important | Actions Spark hors `DEBUG` : `.show()` non gardé, huit `.count()` pour des logs | §2.3 | Widget `debug` et garde `if DEBUG:`, ou log sans action |
-| E2 | Important | Cinq `.collect()` dans trois notebooks, dont des listes d'identifiants | §2.3 | `quality_checks.collect_column_in_list()` (présent dans `leap_utils`) |
-| E3 | Important | Dépendances épinglées à deux endroits (notebooks `%pip` et `libraries` du YAML), dérive d'OpenCV 4.11.0.86 (CPU) / 4.12.0.88 (GPU) | §2.5 | Une seule liste de pins et un test de cohérence (modèle : `tests/test_requirements_pinned.py`) |
-| E4 | Important | Widgets standard absents (`pipeline_read_env`, `reference_read_env`, `debug`) ; environnement lu à deux endroits (variable de cluster dans 6 notebooks, widget dans 2) | §2.4 | Choisir un mécanisme et le documenter |
-| E5 | Important | UUID de service principal écrits en dur dans les cibles : 28 dans `resources/*.yml`, 4 dans `databricks.yml` | §3.1 | Variable `dbx_service_principal` par cible |
-| E6 | Important | Valeurs de pipeline en dur dans le YAML (endpoint et modèle Vector Search, projet, branche et endpoint Lakebase, endpoint LLM) | §3.1 | Variables dans `databricks.yml` |
-| E7 | Important | Cluster GPU `parse_gpu_cluster` sans policy ; LEAP impose une policy | §3.1 | Dérogation écrite dans le YAML ; demande d'une policy GPU-ML |
-| E7 bis | Important | Trois tâches lourdes sans `timeout_seconds` : `3_parse`, `3b_parse_pdf`, `3c_chunks`. Seul le timeout du job (48 h) les borne, et le job n'a qu'un slot (`max_concurrent_runs: 1`) | §3.1 | `timeout_seconds` sur chaque tâche, calé sur la durée observée |
-| E8 | Important | Pas de vérification des docstrings ni de lint en CI (les tests sont lancés) | §5 | Étape `check_docstrings.py server utils` dans `bitbucket-pipelines.yml` |
-| E9 | Mineur | Cinq notebooks : `## Config Project Imports` au lieu de `## Config Function Imports` | §2.1 | Renommer |
-| E10 | Mineur | Trois notebooks sans `## Config logger` (logger créé dans une autre sous-section) | §2.1 | Ajouter la sous-section |
-| E11 | Mineur | Trois sections vides sans `#N/A` : `Data Preparation` (`category_reference`, `doc_catalog`), `Data Transformations` (`update_proj_vector_indexes`) | §2.1 | Ajouter `#N/A` (règle LEAP §3.1) |
-| E12 | Mineur | README du pipeline : tableau « Files » attribue `create_proj_chunks.py` à `3_parse` (c'est `3c_chunks`) et n'a pas de ligne pour les notebooks `parsing_checkpoint` et `_gpu` | §5 | Corriger le tableau (le tableau « Tasks » est juste) |
-| E13 | Mineur | CLAUDE.md (ligne 25) : « every notebook calls `quality.require_gx()` » ; le code appelle `tables.require_gx()` (7 notebooks) et `doc_catalog` n'appelle rien (serverless, checks en Python, voulu) | §5 | Corriger la règle et documenter l'exception |
-| E14 | Mineur | `# /// script` (métadonnées d'environnement serverless) en tête de `create_proj_parse_manifest.py`, alors que la tâche tourne sur cluster classique | §2.2 | Supprimer, ou confirmer l'usage |
-| E15 | Mineur | Pré-contrôle `raise RuntimeError` en `# Inputs` de `doc_catalog` (hors `# Quality Checks`) | §2.2 | Déplacer en `# Quality Checks` ou documenter comme pré-condition |
-| E16 | Mineur | `row_number()` puis `filter(_rn > 1)` dans `manifest_steps.py:184`, alors que `drop_duplicates_by_order()` existe | §2.2 | Remplacer si le sens « garder le plus récent » est identique |
-| E17 | Mineur | `evaluation/pairwise_answers.py` importe des fonctions privées de `server` (`_strip_division`, `_trim_history`, `_with_today_date`, `_cost_eur`) | §6 | Exposer des noms publics dans `server.services.chat` |
-| E18 | Mineur | Alertes en `Europe/Paris` ; la règle est `Europe/Brussels` (même décalage, mais la règle est littérale) | §3.2 | Aligner |
-| E19 | Mineur | Tags `project: Qualibot` et `project-name: qualibot` (doublon, casse différente) | §3.2 | Garder `project-name` |
-| E20 | Mineur | `E501` : 875 lignes de plus de 100 caractères dans `utils/parsing_pipeline` (la config `ruff` du projet fixe 100, rien ne l'applique ; `server` en a plus de 900) | §4 | Trancher : `ruff format` en CI, ou retirer le réglage |
-| E21 | Mineur | Alias `from pyspark.sql import functions as F` (15 imports ; LEAP impose `f`) | §4 | Décision : garder `F` et l'écrire dans CLAUDE.md |
-| E22 | Mineur | Bloc `sys.path` copié-collé (8 lignes) dans 7 notebooks | §2.2 | Factoriser, ou accepter |
-
-**Résolus depuis le premier audit** (`6ca3df7`) : le `run_as` racine en dur a été retiré (les cibles le posent toutes) ; `timeout_seconds` est posé sur le job et sur cinq tâches (E7 bis reste ouvert pour les trois tâches lourdes) ; l'étape `pytest` est ajoutée au CI ; `.collect()` est passé de 7 à 5 ; la source Intraqual est passée de Bronze à Gold (voir §3.2).
+| # | Gravité | Écart | Où | Solution | Statut |
+|---|---|---|---|---|---|
+| E1 | Important | Actions Spark hors `DEBUG` : `.show()` non gardé, `.count()` servant un log | §2.3 | `debug` ajouté, garde `if DEBUG:` | **Traité** (2 gardes, 1 `count` retiré, 1 `count() > 0` → `isEmpty()`) |
+| E2 | Important | `.collect()` : cinq appels dans trois notebooks | §2.3 | Le helper `collect_column_in_list` a été retiré de `leap_utils` (commit `96780e0`) | **Clos sans changement** : chaque `.collect()` restant sert une valeur Python |
+| E3 | Important | Dépendances épinglées à deux endroits (notebooks `%pip` et `libraries` du YAML), dérive d'OpenCV 4.11 / 4.12 | §2.5 | Une liste de pins unique et un test | **Ouvert** |
+| E4 | Important | Widgets standard absents ; environnement lu à deux endroits | §2.4 | Deux chemins documentés, défaut `dev` supprimé, `debug` ajouté | **Traité** (règle à inscrire dans CLAUDE.md, E13) |
+| E5 | Important | UUID de service principal en dur dans les cibles (28 + 4) | §3.1 | Variable `dbx_service_principal` par cible | **Ouvert** |
+| E6 | Important | Valeurs de pipeline en dur dans le YAML | §3.1 | Variables dans `databricks.yml` | **Ouvert** |
+| E7 | Important | Cluster GPU `parse_gpu_cluster` sans policy | §3.1 | Demande d'une policy GPU-ML | **Ouvert** (demande à l'administrateur) |
+| E7 bis | Important | Trois tâches lourdes sans `timeout_seconds` | §3.1 | `timeout_seconds` sur `3_parse`, `3b_parse_pdf`, `3c_chunks` | **Traité** (valeurs à caler sur un run complet) |
+| E8 | Important | Pas de vérification des docstrings ni de lint en CI | §5 | Étape dans `bitbucket-pipelines.yml` | **Ouvert** |
+| E9 | Mineur | `## Config Project Imports` au lieu de `## Config Function Imports` (5 notebooks) | §2.1 | Renommer | **Traité** |
+| E10 | Mineur | `## Config logger` absent (3 notebooks) | §2.1 | Sous-section ajoutée | **Traité** |
+| E11 | Mineur | Sections vides sans `#N/A` (3 sections) | §2.1 | `#N/A` ajouté | **Traité** |
+| E12 | Mineur | README : tableau « Files » faux, lignes manquantes | §5 | Tableau corrigé, paragraphe des timeouts mis à jour | **Traité** |
+| E13 | Mineur | CLAUDE.md : « every notebook calls `quality.require_gx()` » ; le code appelle `tables.require_gx()` | §5 | Corriger la règle et l'exception | **Ouvert** (hors de la liste demandée ; à faire avec la règle E4) |
+| E14 | Mineur | `# /// script` serverless dans un notebook sur cluster classique | §2.2 | Bloc supprimé | **Traité** |
+| E15 | Mineur | `RuntimeError` de pré-condition en `# Inputs` de `doc_catalog` | §2.2 | Documenté comme pré-condition, code inchangé | **Traité** (choix : pas de déplacement, voir §2.2) |
+| E16 | Mineur | `row_number()` + `_rn > 1` au lieu de `drop_duplicates_by_order` | §2.2 | Étudié | **Non retenu** (voir §2.2) |
+| E17 | Mineur | Job qui importe des fonctions privées de `server` | §6 | Noms publics | **Ouvert** |
+| E18 | Mineur | Alertes en `Europe/Paris` | §3.2 | `Europe/Brussels` (6 lignes) | **Traité** |
+| E19 | Mineur | Tag `project` en doublon avec `project-name` | §3.2 | Tag supprimé | **Traité** |
+| E20 | Mineur | `E501` : 875 lignes de plus de 100 caractères | §4 | Proposition (§4 bis) | **Proposition** |
+| E21 | Mineur | Alias `F` au lieu de `f` | §4 | Proposition (§4 bis) | **Proposition** |
+| E22 | Mineur | Bloc `sys.path` copié dans 7 notebooks | §2.2 | Proposition (§4 bis) | **Proposition** |
 
 ## 2. Notebooks (`utils/parsing_pipeline/create_proj_*.py`, `update_proj_vector_indexes.py`)
 
 ### 2.1 Structure et titres
 
-**Conforme**
+**Conforme** : en-tête `# PROJ <ASSET>` et rubriques ; ordre des sections ; blocs `## Prep<N>` et `## Tr. <N>` ; pas de `DBTITLE` ; `removeAll()` avant les widgets ; `Technical debt` rempli.
 
-- Les 8 notebooks commencent par `# Databricks notebook source`, puis un en-tête `# PROJ <ASSET>` avec les rubriques `Description`, `Highlighted complexities`, `Intended Pipeline`, `Inputs Data`, `Output Tables` (LEAP §3.2).
-- L'ordre des sections est correct dans les 8 : Technical debt, Configuration, Inputs, Data Preparation, Data Transformations, Quality Checks, Outputs.
-- Les blocs sont nommés `## Prep<N> - …` et `## Tr. <N> - …` là où ils existent.
-- Pas de `# DBTITLE`. `dbutils.widgets.removeAll()` est appelé avant les widgets dans les 8 notebooks.
-- `Technical debt` est rempli dans les 8, avec des lignes concrètes.
+**Corrigé dans cette passe**
 
-**Écarts**
-
-- **E9 — noms de sous-sections d'imports** (règle qualibot : `Config Function Imports`) :
-  - `Config Project Imports` : `create_proj_category_reference.py:54`, `create_proj_doc_catalog.py:56`, `create_proj_image_metadata.py:61`, `create_proj_parse_manifest.py:67`, `update_proj_vector_indexes.py:56`.
-  - `Config Function Imports` : `create_proj_chunks.py:94`, `create_proj_parsing_checkpoint.py:97`, `create_proj_parsing_checkpoint_gpu.py:67`.
-  - Les notebooks de référence utilisent surtout `Config LEAP Function Imports` (55 occurrences). Une seule forme, appliquée partout.
-- **E10 — `## Config logger` absent** dans `create_proj_category_reference.py`, `create_proj_image_metadata.py` et `create_proj_parse_manifest.py` : le logger est créé dans `Config Constants` ou `Config Widgets`. Les cinq autres ont la sous-section.
-- **E11 — sections vides sans `#N/A`** :
-  - `create_proj_category_reference.py` : `# Data Preparation` (ligne 110) suivi directement de `# Data Transformations` (ligne 115) ;
-  - `create_proj_doc_catalog.py` : `# Data Preparation` (ligne 127) suivi de `# Data Transformations` (ligne 132) ;
-  - `update_proj_vector_indexes.py` : `# Data Transformations` (ligne 152) suivi de `# Quality Checks` (ligne 157).
+- **E9** : `## Config Function Imports` dans les 8 notebooks (`create_proj_category_reference.py`, `create_proj_doc_catalog.py`, `create_proj_image_metadata.py`, `create_proj_parse_manifest.py`, `update_proj_vector_indexes.py` étaient en `Config Project Imports`).
+- **E10** : `## Config logger` ajouté dans `create_proj_category_reference.py`, `create_proj_image_metadata.py` et `create_proj_parse_manifest.py`, avec une ligne qui explique le rôle de la sous-section.
+- **E11** : `#N/A` ajouté sous `# Data Preparation` (`create_proj_category_reference.py`, `create_proj_doc_catalog.py`) et sous `# Data Transformations` (`update_proj_vector_indexes.py`), comme le guide LEAP §3.1.
 
 ### 2.2 Code et organisation
 
-**Conforme**
+**Conforme** : cellules de code précédées d'une explication Markdown (test `test_every_pipeline_notebook_explains_each_code_block` vert) ; écritures via les wrappers de `tables.py` ; contrôles GX dans `# Quality Checks` ; aucun idiome interdit ; commentaires sans historique.
 
-- Chaque cellule de code est précédée d'une cellule Markdown qui explique le *pourquoi* (vérifié par script). Le test `test_every_pipeline_notebook_explains_each_code_block` de `tests/test_code_conventions.py` couvre la règle ; E14 est le seul écart et il est déjà signalé.
-- Les écritures passent par les wrappers `tables.py` (`write_table`, `merge_into`, `overwrite_rows`), qui délèguent à `leap_utils` (`save_table`, `merge_into`). `overwrite_rows` utilise `INSERT OVERWRITE` pour garder la clé primaire ; le commentaire le justifie (`tables.py:109`).
-- Les contrôles GX passent par `tables.check_dataframe` et `check_rows` (`leap_utils` `gx_validation` en dessous), dans `# Quality Checks`, avec une sévérité `RED` ou `AMBER` explicite.
-- Aucun `.cast()`, `.to_date()`, `.union()`, `.saveAsTable()`, `.toDF(*[…])` ni `.lstrip('0')`.
-- `ruff` (`F401`, `F811`) : aucune importation inutilisée ni redéfinie. Les 47 erreurs `invalid-syntax` remontées par `ruff` viennent des lignes `%pip` (magic Databricks) : ce ne sont pas de vraies erreurs.
-- Les commentaires des notebooks et des modules sont des rappels de comportement. Aucun ne raconte l'historique, ni ne cite une date, un incident, un fichier de `runbooks/` (grep sur `2025|2026|incident|fixed|regression|runbook|no longer|used to|PR`).
+**Corrigé dans cette passe**
 
-**Écarts**
+- **E14** : bloc `# /// script` supprimé de `create_proj_parse_manifest.py`.
+- **E15** : le contrôle d'existence des tables de `doc_catalog` reste en `# Inputs`, mais il a maintenant sa propre cellule Markdown « Pre-condition: parsing tables exist ». Le déplacer en `# Quality Checks` aurait changé le message d'erreur : il sortirait après les lectures Spark, et un table absente donnerait une `AnalysisException` au lieu du nom de la table.
+- **E16 — non retenu** : `drop_duplicates_by_order()` garde la première ligne de chaque clé. Le code a besoin de tous les IDDOC sauf le plus récent. Il faudrait donc garder la première ligne, puis faire un anti-join pour retrouver les autres : un join de plus pour le même résultat. Le filtre `_rn > 1` reste le plus direct. Pas de changement.
 
-- **E14** : `create_proj_parse_manifest.py:2-5` contient un bloc `# /// script` avec `environment_version = "5"`. C'est la forme serverless ; le notebook tourne sur `meta_cpu_cluster` (classique), donc le bloc n'a pas d'effet ou il est résiduel.
-- **E15** : `create_proj_doc_catalog.py:122` lève `RuntimeError` si une table manque, en `# Inputs`. Le contrôle est correct mais hors de la section groupée.
-- **E16** : `manifest_steps.py:184` fait `row_number().over(newest_first)` puis `filter(_rn > 1)` : une déduplication « garder le plus récent » que `table_utils.drop_duplicates_by_order()` (`leap_utils/data_asset/table_utils.py:818`) couvre.
-- **E22** : le même bloc de 8 lignes (`_ctx = dbutils.notebook.entry_point…`, deux `sys.path.insert`) se trouve dans 7 notebooks.
+**Ouvert**
 
-### 2.3 Actions Spark et collecte (E1, E2)
+- **E22** : même bloc `sys.path` dans 7 notebooks. Voir §4 bis.
 
-- **`.show()` non gardé** : `create_proj_category_reference.py:127` (`.show(truncate=False)`) s'exécute dans la tâche `1_categories` à chaque run. Solution : le supprimer, ou le remplacer par un log.
-- **`.count()` pour des logs** (hors GX et hors `DEBUG`) : `create_proj_category_reference.py:124`, `create_proj_image_metadata.py:140,186`, `create_proj_parsing_checkpoint.py:194,222,236`, `create_proj_parsing_checkpoint_gpu.py:173`, `update_proj_vector_indexes.py:202`. Chaque `.count()` lance un job Spark. Solution : un widget `debug` (absent aujourd'hui), puis `if DEBUG:` ; ou compter une seule fois ce qui est déjà matérialisé.
-- **`.collect()`** :
-  - `create_proj_doc_catalog.py:149` (liste de lignes) ;
-  - `create_proj_image_metadata.py:142` (agrégat `groupBy` converti en dictionnaire) et `:160` (lignes à traiter) ;
-  - `create_proj_parse_manifest.py:139` (ensemble d'IDDOC) et `:209`.
-  Pour une colonne, `quality_checks.collect_column_in_list(df, col)` (`leap_utils/common/validation/quality_checks.py:42`) remplace l'ensemble et la liste. Les lignes à traiter (`:160`) et l'agrégat (`:142`) gardent le `.collect()`.
+### 2.3 Actions Spark hors `DEBUG` (E1, E2)
 
-### 2.4 Widgets et environnement (E4)
+**E1 — traité.**
 
-- Aucun notebook ne déclare `pipeline_read_env`, `reference_read_env` ni `debug` (LEAP `S07`).
-- L'environnement vient de deux sources :
-  - la variable de cluster `PIPELINE_WRITE_ENV`, lue dans `config.py:36` (`_require_env`), pour six notebooks ;
-  - le widget `pipeline_write_env` dans `create_proj_doc_catalog.py:88` et `update_proj_vector_indexes.py:92`, défaut `dev`.
-- Le défaut `dev` est conforme à LEAP (`S08`), mais il est dangereux pour un job : un paramètre manquant écrit en DEV sans erreur.
-- **Solution** : garder la variable de cluster pour tout le pipeline (déjà la source de `config.py`), supprimer les deux widgets d'environnement, et écrire la règle dans CLAUDE.md (« le pipeline reçoit son environnement par `PIPELINE_WRITE_ENV` ; le widget n'existe que pour les lancements à la main »).
+- `create_proj_category_reference.py` : `.groupBy(...).count().show()` ne s'exécute plus que si `DEBUG` est vrai. Le texte du bloc Markdown dit maintenant « en mode debug ».
+- `create_proj_parsing_checkpoint_gpu.py` : le message `[OUTPUT]` n'appelle plus `df_written.count()` ; il donne l'identifiant du run, et le nombre de lignes reste visible dans la table.
+- `update_proj_vector_indexes.py` : `spark.table(FULL_TABLE).count()` (un parcours de toute la table `chunks_full`) n'est fait qu'en `DEBUG`.
+- `create_proj_parsing_checkpoint.py` : `df_cpu.count() > 0` devient `not df_cpu.isEmpty()` : même résultat, sans compter toutes les lignes.
 
-### 2.5 Dépendances (E3)
+Les autres `.count()` restent, parce qu'ils décident d'une branche ou d'un budget, et pas seulement d'un log :
+
+- `create_proj_image_metadata.py:140` (`pending_count` : lot et `if pending_count == 0`) ;
+- `create_proj_image_metadata.py:186` (`described_count == 0` décide d'injecter ou non) ;
+- `create_proj_parsing_checkpoint.py:194` (`num_files > 0`) ;
+- `create_proj_parsing_checkpoint.py:222` (`enforce_parse_budget` : le budget est un nombre).
+
+**E2 — clos sans changement de code.** Le helper `collect_column_in_list` cité dans la première version n'existe plus : `leap_utils` a été réduit au sous-ensemble utilisé par qualibot (commit `96780e0`, `quality_checks.py` retiré). Les `.collect()` restants ramènent des valeurs que le code utilise en Python :
+
+- `create_proj_doc_catalog.py:149` : lignes du catalogue, écrites ensuite dans Lakebase ;
+- `create_proj_image_metadata.py:142` : deux compteurs de statut, dans le log de production ;
+- `create_proj_image_metadata.py:160` : lignes à décrire, une par image ;
+- `create_proj_parse_manifest.py:139` : ensemble des IDDOC du périmètre, utilisé en Python ;
+- `create_proj_parse_manifest.py:209` : dictionnaire de catégories principales.
+
+Aucune de ces listes ne peut être remplacée par un calcul Spark sans réécrire la logique qui la consomme.
+
+### 2.4 Widgets et environnement (E4) — traité
+
+**Décision.** Le pipeline a deux chemins, et chacun est fixé :
+
+- Les tâches `1_categories` à `4_describe_images` lisent `PIPELINE_WRITE_ENV` dans l'environnement du cluster (`config.py:36`).
+- `5_sync_index` (`update_proj_vector_indexes.py`) et `6_update_kb_metadata` (`create_proj_doc_catalog.py`, serverless, sans variable d'environnement) reçoivent `pipeline_write_env` par `base_parameters`, lu dans un widget.
+
+**Changements.**
+
+- Le défaut `dev` des deux widgets est supprimé. Un paramètre manquant ne peut plus écrire en DEV sans erreur : le notebook s'arrête avec `ValueError` si la valeur n'est pas `dev`, `uat` ou `prod`.
+- Le widget `debug` est ajouté dans `create_proj_category_reference.py` et `update_proj_vector_indexes.py` (il pilote les gardes E1).
+- `pipeline_read_env` et `reference_read_env` ne sont pas ajoutés : le pipeline ne lit aucune table par ces widgets (toutes les lectures passent par `PARSING_*`). Les ajouter reviendrait à déclarer des paramètres morts. La règle LEAP `S07` ne s'applique donc pas ici ; c'est à inscrire avec E13.
+
+### 2.5 Dépendances (E3) — ouvert
 
 - `create_proj_chunks.py:55` et `create_proj_parsing_checkpoint.py:58` installent en `%pip` : `numpy<2`, `pydantic>=2.10.3,<3`, `docling==2.140.0`, `docling-core==2.102.0`, etc.
-- La tâche `3b_parse_pdf` (`resources/parsing_pipeline.job.yml:257`) déclare les mêmes paquets en `libraries`, avec les mêmes versions. Un changement à un seul endroit crée une dérive.
-- OpenCV : `opencv-python-headless==4.11.0.86` dans les deux notebooks CPU (`create_proj_chunks.py:65`, `create_proj_parsing_checkpoint.py:68`), `==4.12.0.88` dans le notebook GPU (`create_proj_parsing_checkpoint_gpu.py:45`). Le README explique pourquoi on épingle OpenCV (4.13 échoue sur le runtime) ; l'écart 4.11 contre 4.12 entre CPU et GPU n'est expliqué nulle part.
-- `requirements.txt` à la racine et `tests/test_requirements_pinned.py` existent déjà pour l'application ; ils ne couvrent pas les paquets du pipeline.
-- **Solution** : une liste de pins unique du pipeline, lue par les `%pip -r` des notebooks, et un test sur le modèle de `test_requirements_pinned.py` qui la compare aux `libraries` du YAML. Décider si OpenCV doit être identique partout ; si non, l'écrire dans le README.
-- LEAP impose `libraries` sur les tâches, jamais sur le cluster : c'est respecté. Les `%pip` dans le notebook (`3_parse`, `3c_chunks`) sont une variante ; la documenter dans CLAUDE.md.
+- La tâche `3b_parse_pdf` (`resources/parsing_pipeline.job.yml`, ligne 257) déclare les mêmes paquets en `libraries`. Un changement à un seul endroit crée une dérive.
+- OpenCV : `4.11.0.86` dans les deux notebooks CPU, `4.12.0.88` dans le notebook GPU. Le README explique pourquoi on épingle (4.13 échoue sur le runtime) ; l'écart 4.11 / 4.12 n'est expliqué nulle part.
+- `requirements.txt` et `tests/test_requirements_pinned.py` existent pour l'application. Ils ne couvrent pas les paquets du pipeline.
+- **Solution proposée** : une liste de pins du pipeline, lue par les `%pip -r` des notebooks, et un test sur le modèle de `test_requirements_pinned.py` qui la compare aux `libraries` du YAML. Décider si OpenCV doit être identique partout.
 
 ## 3. Jobs (`resources/*.yml`, `databricks.yml`)
 
-### 3.1 Clusters, `run_as`, valeurs en dur (E5, E6, E7)
+### 3.1 Clusters, `run_as`, valeurs en dur, timeouts (E5, E6, E7, E7 bis)
 
-- **E5 — UUID en dur dans les cibles** : 28 UUID dans `resources/*.yml` et 4 dans `databricks.yml` (lignes 214, 314, 374, 458). `parsing_pipeline.job.yml` pose désormais `run_as` dans chaque cible (lignes 369, 377, 385) ; `app_schedules.yml`, `chat_mlflow.yml` et `lakebase_sync.yml` répètent le DEV en dur dans `run_as` et `permissions`. `databricks.yml` ne déclare pas de variable `dbx_service_principal` (le template LEAP en a une : `templates/bundle_data_asset/databricks.yml`).
-  - **Solution** : une variable `dbx_service_principal` par cible dans `databricks.yml`, puis `run_as: service_principal_name: ${var.dbx_service_principal}` partout.
-- **E6 — valeurs en dur dans les tâches** : `resources/parsing_pipeline.job.yml:301` (`llm_fallback_endpoints: "databricks-gpt-5-6-luna"`, qui duplique le modèle de `config.py`), `:322-323` (`vector_search_endpoint: "qualibot"`, `embedding_model: "databricks-qwen3-embedding-0-6b"`), `:339-341` (`lakebase_project_id`, `lakebase_branch`, `lakebase_endpoint`).
-  - **Solution** : variables dans `databricks.yml` par cible ; une seule source pour le modèle LLM.
-- **E7 — cluster GPU sans policy** : `parse_gpu_cluster` n'a pas de `policy_id`, alors que les trois clusters CPU en ont une (`${var.job_cluster_policy_id_S}`). La raison (pas de version GPU-ML dans la liste autorisée de la policy S) est dans un commentaire de tête de YAML. **Solution** : demander une policy GPU-ML à l'administrateur ; en attendant, garder la dérogation et la noter dans le README du pipeline.
-- **Clusters CPU** : `data_security_mode: SINGLE_USER`, `policy_id` S, `num_workers: 0` : conforme.
-- **E7 bis — timeouts** : `timeout_seconds` est posé sur le job (`resources/parsing_pipeline.job.yml:34`, 172800 s) et sur `1_categories` (3600), `2_manifest` (7200), `4_describe_images` (43200), `5_sync_index` (10800) et `6_update_kb_metadata` (3600). Il manque sur `3_parse`, `3b_parse_pdf` et `3c_chunks`, les tâches qui parsent et tiennent le slot le plus longtemps. Une tâche bloquée (GPU, spot, boucle) tient le seul slot du job jusqu'à 48 h. **Solution** : un `timeout_seconds` sur chacune des trois, avec une marge au-dessus de la durée observée sur le dernier run complet.
+- **E5 — ouvert** : 28 UUID dans `resources/*.yml` et 4 dans `databricks.yml`. `databricks.yml` ne déclare pas de variable `dbx_service_principal`. Solution : une variable par cible, puis `${var.dbx_service_principal}` partout.
+- **E6 — ouvert** : `resources/parsing_pipeline.job.yml` lignes 301 (`llm_fallback_endpoints`), 322-323 (`vector_search_endpoint`, `embedding_model`), 339-341 (`lakebase_*`). Solution : variables par cible.
+- **E7 — ouvert** : `parse_gpu_cluster` n'a pas de `policy_id`. La raison est dans un commentaire de tête de YAML. Demande d'une policy GPU-ML à l'administrateur.
+- **E7 bis — traité** : `timeout_seconds` posé sur les trois tâches lourdes, et leurs valeurs écrites dans le README :
+  - `3_parse` : 86400 s (24 h). Au-dessus du run de 20 h relevé dans CLAUDE.md.
+  - `3b_parse_pdf` : 43200 s (12 h).
+  - `3c_chunks` : 21600 s (6 h).
+  Ces valeurs sont des marges, pas des mesures : à caler sur le prochain run complet. Le job reste à 48 h, et chaque tâche est plus courte que lui.
+- **Clusters CPU** : `SINGLE_USER`, policy S, `num_workers: 0` : conforme.
 
-### 3.2 Tags, fuseaux, notifications (E18, E19)
+### 3.2 Tags, fuseaux, notifications (E18, E19) — traité
 
 | Règle | `parsing_pipeline.job.yml` | `alerts.yml` | `app_schedules.yml` | `chat_mlflow.yml` | `lakebase_sync.yml` |
 |---|---|---|---|---|---|
 | `queue.enabled: true` | oui | oui | oui | oui | oui |
-| `email_notifications.on_failure` = `${var.notification_email}` | oui | alertes SQL | oui | oui | oui |
+| `email_notifications.on_failure` | oui | alertes SQL | oui | oui | oui |
 | `no_alert_for_canceled_runs: true` | oui | — | oui | oui | oui |
-| tags `activity-type`, `job-purpose`, `project-name` | oui (+ `project` en doublon, E19) | — | oui | oui | oui |
-| fuseau `Europe/Brussels` | oui | **non** (`Europe/Paris`, E18) | oui | oui | oui |
-| timeout du job | oui (48 h) ; tâches : 5 sur 8, E7 bis | — | — | — | — |
+| tags `activity-type`, `job-purpose`, `project-name` | oui (`project` retiré, E19) | — | oui | oui | oui |
+| fuseau `Europe/Brussels` | oui | oui (corrigé, E18) | oui | oui | oui |
+| timeout du job et des tâches | oui (48 h) ; tâches : toutes sauf la condition `3b_needs_gpu`, depuis E7 bis | — | — | — | — |
 | nom `<D\|W\|M\|F\|Z>_<niveau>_<domaine>_<objet>` | `D_1_Qualibot_Parsing_Pipeline` | — | oui | oui | oui |
 
-- **Notification PROD** : la cible PROD n'a pas de surcharge et hérite de `LEAP_Databricks_Alert@latecoere.aero` (défaut racine, `databricks.yml:132-135`) : conforme à LEAP §11.
-- **Conforme** : `max_concurrent_runs: 1` là où le passage de relais le demande ; `pause_status` lu d'une variable ; `run_if: AT_LEAST_ONE_SUCCESS` sur `3c_chunks` ; `condition_task` sur `pdfs_for_gpu`.
+- **Notification PROD** : hérite de `LEAP_Databricks_Alert@latecoere.aero` (défaut racine, `databricks.yml`). Conforme.
+- `tests/test_alerts.py` ne contrôle pas le fuseau : aucune modification de test nécessaire.
 
-### 3.3 Source des métadonnées (conforme, à savoir)
+### 3.3 Source des métadonnées (conforme)
 
-- La source n'est plus Bronze : `PARSING_INTRAQUAL_GOLD` = `${var.intraqual_gold_catalog_schema}` = `prod_gold.quality_system`, table `document_revisions_intraqual` (`config.py:43`). Les trois cibles lisent la même source, et la variable est déclarée dans `databricks.yml`. La cible UAT le justifie en commentaire (le metastore partagé).
-- Le nom `prod_gold` est volontairement en dur dans les variables de chaque cible, pas dans le code : conforme au principe « config dans les variables ».
-
-### 3.4 Points de vigilance (non écarts)
-
-- `D_1` pour un pipeline quotidien : cohérent avec le préfixe des jobs partagés (commentaire en tête du YAML).
-- Les chemins `notebook_path: ../utils/parsing_pipeline/…` pointent vers le dépôt déployé (`source: WORKSPACE`), et non vers Git (`git_source`) comme dans le template LEAP. Le modèle de déploiement de qualibot diffère ; la règle LEAP « code depuis `main` en prod » ne s'applique pas telle quelle. À documenter.
+- `PARSING_INTRAQUAL_GOLD` = `prod_gold.quality_system`, table `document_revisions_intraqual` (`config.py:43`). Variable déclarée dans `databricks.yml`, identique dans les trois cibles.
 
 ## 4. Convention Checker LEAP : tri des résultats
 
 | Règle | Notebooks | Verdict |
 |---|---|---|
-| `B07` (pas de check RED) | 8 | **Faux positif** : `tables.check_dataframe` passe `validation_level=level` (`tables.py:344`) ; la regex attend le littéral `"RED"`. |
-| `S21` (pas de `save_table`/`merge_into`) | 7 | **Faux positif** : les écritures passent par `tables.write_table` / `merge_into` (§2.2). |
-| `S22` (logger) | 8 | **Faux positif** : `log_utils.setup_applevel_logger` (alias). Écart de nom seulement. |
-| `S23` (pas de `concat_ws`) | 8 | **Sans objet** : les clés sont construites en amont (chunks, `parsed_documents`). |
-| `N01` (nom de fichier) | 1 | **Exception documentée** (`update_proj_vector_indexes.py`). |
-| `S07` / `S09` (widgets standard, non standard) | 8 / 7 | **À trancher** : qualibot n'impose pas les cinq widgets ; voir E4. |
-| `S10` (alias `f`) | 4 | **Écart de nom** : qualibot utilise `F` (E21). |
-| `S12` (`.show`) | 1 | **Écart réel** (E1). |
-| `S14` (`.count` hors GX / `DEBUG`) | 5 | **Écart réel** (E1). |
-| `S17` / `S31` (`.collect`) | 3 / 2 | **Écart réel** (E2). |
+| `B07` (pas de check RED) | 8 | **Faux positif** : `tables.check_dataframe` passe `validation_level=level` (`tables.py:344`). |
+| `S21` (pas de `save_table`/`merge_into`) | 7 | **Faux positif** : écritures via `tables.write_table` / `merge_into`. |
+| `S22` (logger) | 8 | **Faux positif** : `log_utils.setup_applevel_logger` (alias). |
+| `S23` (pas de `concat_ws`) | 8 | **Sans objet** : clés construites en amont. |
+| `N01` (nom de fichier) | 1 | **Exception documentée**. |
+| `S07` / `S09` (widgets) | 8 / 7 | **Traité** (E4) : décision de §2.4. |
+| `S08` (défaut du widget `pipeline_write_env`) | — | **Traité** (E4) : défaut supprimé. |
+| `S10` (alias `f`) | 4 | **Écart de nom**, proposition E21. |
+| `S12` (`.show`) | 1 | **Traité** (E1). |
+| `S14` (`.count` hors GX / `DEBUG`) | 5 → 2 | **Traité** (E1) pour les logs ; les deux restants décident d'une branche (§2.3). |
+| `S17` / `S31` (`.collect`) | 3 / 2 | **Clos sans changement** (E2). |
 
-**Ruff** : aucune importation inutilisée (`F401`), aucune variable inutilisée (`F841`), aucune redéfinition (`F811`). Restent les `F821` sur `spark`, `dbutils`, `display` (globales de notebook, attendues).
+**Ruff** : `F401`, `F841`, `F811` : aucun. `F821` sur `spark`, `dbutils`, `display` : globales de notebook, attendues.
 
-**Docstrings** : `check_docstrings.py` sur `utils/parsing_pipeline` et sur `server utils` : 0 problème.
+## 4 bis. Propositions pour E20, E21 et E22
+
+**E20 — longueur des lignes (875 lignes au-delà de 100 caractères).** La config `ruff` du projet fixe 100, mais `fix = true` est activé et rien ne lance `ruff` en CI.
+
+- Proposition : **ne pas reformater le code existant.** Un `ruff format` sur un millier de lignes toucherait des notebooks qu'on ne peut pas exécuter ici, pour un gain nul en comportement.
+- À la place : retirer `fix = true` (un lint en CI ne doit pas réécrire les fichiers), ajouter `ruff check --no-fix --select F,E9` en CI comme porte bloquante, et laisser `E501` hors de la porte. La règle de longueur devient une cible pour le code neuf.
+
+**E21 — alias `F` au lieu de `f` (15 imports).**
+
+- Proposition : **garder `F`** et l'écrire dans CLAUDE.md comme convention de qualibot. Le renommage ne change aucun comportement, mais touche 15 imports et des dizaines de lignes pour rien. La règle LEAP (`f`) reste la référence pour les notebooks importés dans le dépôt LEAP, où le Convention Checker la vérifie.
+
+**E22 — bloc `sys.path` copié dans 7 notebooks (8 lignes).**
+
+- Proposition : **accepter le bloc.** Il doit s'exécuter avant tout import local (`import tables`, `import config`), donc il ne peut pas vivre dans un module importé par le notebook lui-même. Une factorisation par `%run ./bootstrap` est possible, mais elle n'est pas vérifiable ici et ajoute un notebook de plus à maintenir.
+- Recommandation : le garder, avec un commentaire unique et identique dans les 7 notebooks. Si un huitième notebook apparaît, reprendre la question.
 
 ## 5. Documentation et CI
 
-- **E12 — README du pipeline** (`utils/parsing_pipeline/README.md:17`) : le tableau « Files » associe `create_proj_chunks.py` à `3_parse`. Le tableau « Tasks » du même README (ligne 53) l'associe bien à `3c_chunks`. Le tableau « Files » n'a pas de ligne pour `create_proj_parsing_checkpoint.py` (`3_parse`) ni pour `create_proj_parsing_checkpoint_gpu.py` (`3b_parse_pdf`).
-- **E13 — CLAUDE.md** (ligne 25, section *Notebooks*) : « Every notebook calls `quality.require_gx()` in its import cell ». Le code appelle `tables.require_gx()` dans 7 notebooks ; `create_proj_doc_catalog.py` n'appelle rien (serverless, checks en Python par `tables.check_rows`, voulu). Corriger la règle et documenter l'exception.
-- **E8 — CI** : `bitbucket-pipelines.yml` (étape `tests`, lignes 24-31) lance `pytest -q tests` avant chaque déploiement PROD, et peut être lancée seule. Il manque une étape `python3 runbooks/scripts/code_quality/check_docstrings.py server utils` et une étape de lint (`ruff check --no-fix`, la règle `fix = true` de `pyproject.toml` doit être désactivée pour la CI).
+- **E12 — traité** : tableau « Files » du README corrigé (`create_proj_chunks.py` = `3c_chunks`, ajout des lignes `create_proj_parsing_checkpoint.py` et `create_proj_parsing_checkpoint_gpu.py`). Le paragraphe des timeouts indique les nouvelles limites.
+- **E13 — ouvert** : CLAUDE.md ligne 25 dit « Every notebook calls `quality.require_gx()` ». Le code appelle `tables.require_gx()` (7 notebooks) ; `create_proj_doc_catalog.py` n'appelle rien (serverless). Corriger la règle, et inscrire la règle des widgets (E4) et la convention `F` (E21) si ces points sont retenus.
+- **E8 — ouvert** : `bitbucket-pipelines.yml` lance `pytest -q tests` avant chaque déploiement PROD (étape `tests`). Il manque `check_docstrings.py server utils` et une étape de lint non destructive (voir E20).
 
 ## 6. Autres jobs Python
 
 | Fichier | Constat | Gravité |
 |---|---|---|
-| `utils/lakebase_sync/*_job.py`, `utils/app_mgmt/stop_start_app_job.py`, `utils/evaluation/*.py` (notebooks) | en-tête Databricks, `logger` présent, pas de `print()`, `removeAll()` avant les widgets, pas de `DBTITLE`, pas de commentaire d'historique | conforme |
-| `utils/evaluation/pairwise_answers.py:156-160` | importe `_strip_division`, `_trim_history`, `_with_today_date`, `_cost_eur` (fonctions privées de `server`) : un changement dans l'application casse le job sans erreur de compilation | Mineur (E17) |
-| `resources/alerts.yml` | fuseau `Europe/Paris` (lignes 42, 79, 128, …) | Mineur (E18) |
-| `resources/*.yml` | UUID en dur | Important (E5) |
-
-Les jobs Python ne déclarent pas de `Technical debt` : hors périmètre LEAP (qui ne concerne que les notebooks de pipeline), donc pas un écart.
+| `utils/lakebase_sync/*_job.py`, `utils/app_mgmt/stop_start_app_job.py`, `utils/evaluation/*.py` (notebooks) | en-tête Databricks, `logger`, pas de `print()`, `removeAll()`, pas de `DBTITLE`, pas d'historique | conforme |
+| `utils/evaluation/pairwise_answers.py:156-160` | importe 4 fonctions privées de `server` | Mineur (E17, ouvert) |
+| `resources/*.yml` | UUID en dur | Important (E5, ouvert) |
 
 ## 7. `leap_utils/` : dérive par rapport à l'archive
 
-- Mêmes fichiers des deux côtés.
-- Une seule différence de contenu : `leap_utils/data_asset/table_utils.py`. Le flag `FRESHNESS_PILOT_ENABLED = False` désactive l'écriture du pilote de fraîcheur, qui écrirait dans `{env}_bronze` (catalogue non géré par qualibot). C'est voulu et documenté.
-- Les autres différences sont des fins de ligne (CRLF dans l'archive, LF ici).
-- **Action** : aucune. Garder le flag à jour si la référence change.
+**Mise à jour.** `leap_utils/` de ce dépôt n'est plus une copie complète : il a été réduit au sous-ensemble utilisé par qualibot (commit `96780e0`, « leap_utils trimmed »). Par rapport à l'archive :
+
+- 24 fichiers absents ici (dont `common/validation/quality_checks.py`, qui contenait `collect_column_in_list`) ; le reste est identique, sauf `data_asset/table_utils.py`.
+- `table_utils.py` : le flag `FRESHNESS_PILOT_ENABLED = False` désactive l'écriture du pilote de fraîcheur, qui écrirait dans `{env}_bronze`. Voulu et documenté.
+- Les autres différences sont des fins de ligne (CRLF dans l'archive).
+
+**Action** : aucune. Tout ajout d'une fonction de `leap_utils` doit être vérifié dans l'archive avant usage.
 
 ## 8. Lacunes des guidelines LEAP (`datab`) — à compléter, sans modifier le dépôt
 
-Ces points ne sont pas couverts par `datab/CLAUDE.md`. Propositions à valider avant d'écrire dans `datab` :
-
-1. **Environnement d'un pipeline multi-tâches** : une variable de cluster (`PIPELINE_WRITE_ENV`) est-elle acceptable à la place des widgets ?
-2. **Cluster GPU** : une dérogation à « policy obligatoire » quand l'organisation n'a pas de policy GPU, avec un calendrier de levée.
-3. **Dépendances** : une seule liste de pins pour les notebooks et le YAML, avec un test de cohérence.
-4. **Alias pyspark** : `F` ou `f` (LEAP impose `f` ; qualibot utilise `F`).
-5. **Écritures** : un wrapper local de `leap_utils` (`tables.py`) est accepté si chaque écriture délègue à `save_table` ou `merge_into` ; l'exception `INSERT OVERWRITE` (clé primaire) est à inscrire.
+1. **Environnement d'un pipeline multi-tâches** : variable de cluster en priorité, widget seulement pour le serverless.
+2. **Cluster GPU** : dérogation à « policy obligatoire » tant que l'organisation n'en fournit pas, avec un calendrier de levée.
+3. **Dépendances** : une liste de pins pour les notebooks et le YAML, avec un test de cohérence.
+4. **Alias pyspark** : `F` ou `f`.
+5. **Écritures** : un wrapper local (`tables.py`) est accepté si chaque écriture délègue à `save_table` ou `merge_into` ; l'exception `INSERT OVERWRITE` (clé primaire) est à inscrire.
 6. **Faux positifs du Convention Checker** : `B07`, `S21`, `S22`, `S23` quand les checks passent par un wrapper.
-7. **Pré-conditions** : un contrôle qui vérifie l'existence d'une table en entrée est-il un check (groupé) ou une pré-condition ?
+7. **Pré-conditions** : un contrôle d'existence d'une table en entrée est une pré-condition documentée, pas un check groupé.
+8. **Timeouts par tâche** : valeur à poser sur chaque tâche, calée sur la durée observée, pas une limite héritée du job.
 
-## 9. Actions proposées (ordre de travail)
+## 9. Actions restantes
 
-**Lot A — mécanique, sans risque (une seule PR)**
-1. Renommer les 5 sous-sections `Config Project Imports` (E9).
-2. Ajouter `## Config logger` dans 3 notebooks (E10) et `#N/A` dans 3 sections vides (E11).
-3. Corriger le tableau « Files » du README (E12) et la règle `quality.require_gx()` de CLAUDE.md (E13).
-4. Supprimer le bloc `# /// script` s'il est inutile (E14).
+**Fait dans cette passe** : E1, E4, E7 bis, E9 à E12, E14, E15 (documenté), E16 (non retenu), E18, E19 ; E2 clos sans changement.
 
-**Lot B — exécution Spark (validation sur DEV requise)**
-5. Ajouter le widget `debug` ; garder le `.show()` et les `.count()` derrière `if DEBUG:` (E1).
-6. Remplacer les `.collect()` de listes par `collect_column_in_list` (E2).
-7. Déplacer le `RuntimeError` de `doc_catalog` en `# Quality Checks` (E15).
+**À faire, par ordre**
 
-**Lot C — configuration et ressources (validation sur DEV requise)**
-8. Une seule source d'environnement (E4) : décision, puis documentation.
-9. Variables `dbx_service_principal` et valeurs de pipeline dans `databricks.yml` (E5, E6).
-9 bis. `timeout_seconds` sur `3_parse`, `3b_parse_pdf` et `3c_chunks` (E7 bis) : à faire en premier dans ce lot, sans changer le code.
-10. Une seule liste de pins et un test de cohérence (E3).
-
-**Lot D — gouvernance**
-11. Étape de vérification des docstrings et de lint dans `bitbucket-pipelines.yml` (E8).
-12. Demande de policy GPU-ML (E7).
-13. Décisions sur E20 (longueur de ligne) et E21 (alias `F`), à écrire dans CLAUDE.md.
-
-**Lot E — à la prochaine modification du fichier concerné**
-14. E16, E17, E18, E19, E22.
-
-## 10. Conforme (points vérifiés)
-
-- En-tête `# PROJ <ASSET>` et rubriques de description.
-- Ordre des sections des 8 notebooks ; `Technical debt` rempli.
-- Une explication Markdown avant chaque cellule de code.
-- Pas d'environnement en dur dans le code (sauf la valeur par défaut `dev` des deux widgets, voulue).
-- Pas de `print`, `DBTITLE`, `.cast`, `.to_date`, `.union`, `.saveAsTable`, `.toDF(*…)`, `.lstrip('0')`.
-- GX : tous les contrôles sont dans `# Quality Checks` (sauf E15), sévérité explicite.
-- Écritures : passent par les wrappers qui délèguent à `leap_utils`.
-- Commentaires : rappels de comportement ; aucun historique, aucune date, aucune référence à `runbooks/`.
-- Docstrings : 0 problème ; `ruff` : aucune importation inutilisée.
-- Jobs : `queue`, `email_notifications`, `no_alert_for_canceled_runs`, tags obligatoires, `run_as` par cible, `SINGLE_USER` sur les clusters CPU, timeout du job, fuseau `Europe/Brussels` (sauf alertes, E18).
-- Notification PROD : `LEAP_Databricks_Alert@latecoere.aero`.
-- Schedules : `PAUSED` ou variable.
-- Tests : `tests/test_code_conventions.py`, `tests/test_requirements_pinned.py`, et une étape `pytest` en CI.
+1. Calibrer les trois timeouts sur le prochain run complet (E7 bis).
+2. Inscrire dans CLAUDE.md les règles E4 (chemins d'environnement) et E21 (`F`), et corriger la règle `quality.require_gx()` (E13).
+3. Appliquer les propositions E20 et E22 si elles sont retenues (§4 bis).
+4. Pins du pipeline dans une seule liste, avec un test (E3).
+5. Variables `dbx_service_principal` et valeurs de pipeline dans `databricks.yml` (E5, E6).
+6. Demande de policy GPU-ML (E7).
+7. Porte de docstrings et de lint en CI (E8).
+8. E17 au prochain changement de `pairwise_answers.py`.
 
 ---
 
-_Rapport produit à partir de `datab` `main` (`816e584`) et de `claude/sharp-mayer-uqwx8x` (`49237be`). Aucune modification de `datab`. Aucune exécution Databricks._
+_Rapport produit à partir de `datab` `main` (`816e584`) et de `claude/sharp-mayer-uqwx8x` (`49237be`), corrections appliquées le 2026-10-22. Aucune modification de `datab`. Aucune exécution Databricks._

@@ -233,7 +233,7 @@ else:
 
 # COMMAND ----------
 
-if df_cpu is not None and df_cpu.count() > 0:
+if df_cpu is not None and not df_cpu.isEmpty():
     parse_steps.cleanup_stale_image_folders(df_cpu)
     parse_steps.parse_pending_files(df_cpu, parse_steps.make_parse_fn(CLUSTER_PARALLELISM))
     parse_steps.show_failed_documents(df_business_meta)

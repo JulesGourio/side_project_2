@@ -42,7 +42,6 @@ resources:
         no_alert_for_canceled_runs: true
 
       tags:
-        project: Qualibot
         activity-type: ${var.job_activity_tag}
         ingestion-system: intraqual_ingestion
         job-purpose: project
@@ -220,6 +219,8 @@ resources:
 
         - task_key: "3_parse"
           description: "Scope, selection, resume, parse of the non-PDF formats and of a few PDFs (CPU)"
+          # Bounds a full corpus parse; the job holds its single slot until the task stops.
+          timeout_seconds: 86400
           depends_on:
             - task_key: "2_manifest"
           job_cluster_key: parse_cpu_cluster
@@ -241,6 +242,7 @@ resources:
 
         - task_key: "3b_parse_pdf"
           description: "Docling on the PDFs queued by 3_parse (GPU, only when needed)"
+          timeout_seconds: 43200
           depends_on:
             - task_key: "3b_needs_gpu"
               outcome: "true"
@@ -274,6 +276,7 @@ resources:
         # Joins the two branches: the condition is false (no GPU task) or the GPU task succeeded. A failed GPU task stops here.
         - task_key: "3c_chunks"
           description: "Retry, chunking, quality checks and table writes from the parse checkpoint (CPU)"
+          timeout_seconds: 21600
           depends_on:
             - task_key: "3b_needs_gpu"
               outcome: "false"
