@@ -75,7 +75,7 @@ server/
 | Comparison: single-document summary (text and images) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |
 | Chat: answer | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_LLM_ENDPOINT`, `CHAT_LLM_FALLBACK_ENDPOINTS` |
 | Chat: query rewrite | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_REWRITE_ENDPOINT`, `CHAT_REWRITE_FALLBACK_ENDPOINTS` |
-| Chat: translation bridge (disabled) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_TRANSLATE_ENDPOINT`, `CHAT_TRANSLATE_FALLBACK_ENDPOINTS` |
+| Chat: translation of the first question (translate-only mode: off in `app.yaml`, on in DEV, UAT and PROD through `target_env.json`) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_TRANSLATE_ENDPOINT`, `CHAT_TRANSLATE_FALLBACK_ENDPOINTS` |
 | Parsing: image description (vision) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `PARSING_LLM_ENDPOINT` |
 | Parsing: passage embeddings | `databricks-qwen3-embedding-0-6b` | `embedding_model` of task `5_sync_index` |
 
@@ -105,7 +105,7 @@ is cached for `CAPS_TTL_S` seconds (600 by default). When no allowed group is fo
 both features are granted, because the Databricks app permission already filters who reaches the
 app and a visitor who is in a group only through another group appears in neither source; this is
 logged as a warning. `CAPS_BYPASS=true` opens both
-features to every visitor; it is set on the DEV target only. In development (`ENV=development`),
+features to every visitor; it is allowed on the DEV target only, and DEV currently runs with the group check on. In development (`ENV=development`),
 a request without the identity header is accepted.
 
 ## Configuration
@@ -213,7 +213,7 @@ Delta tables, volumes and Vector Search indexes live in the schema `<env>_proj.q
 
 The application's Lakebase tables are `compare_messages`, `compare_feedbacks`, `llm_requests`,
 `app_errors`, `impact_requests`, `impact_document_results`, `impact_feedbacks`, `impact_cache`,
-`summary_cache`, `chat_sessions`, `chat_messages`, `chat_feedbacks`, `chat_turns`,
+`analysis_cache`, `summary_cache`, `chat_sessions`, `chat_messages`, `chat_feedbacks`, `chat_turns`,
 `chat_retrieved_chunks`, `doc_catalog`, `catalog_metadata` and `users`. The application creates
 and completes this schema at startup. Column reference: [server/services/infra/lakebase/schema.md](server/services/infra/lakebase/schema.md).
 

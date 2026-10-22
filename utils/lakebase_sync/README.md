@@ -1,7 +1,7 @@
 # lakebase_sync
 
 Scripts that take the data out of the Lakebase database of the application (to a volume, or as JSON Lines files) and
-load it elsewhere: Delta tables of DEV and of UAT, and the Lakebase database of PROD. The connection settings shared
+load it elsewhere: Delta tables of `<env>_proj.qualibot`, and the Lakebase database of PROD (JSON import, Bitbucket step). The connection settings shared
 with the other folders (CLI profiles, Lakebase projects, databases per environment, table order) are in
 [`ops_config.py`](../ops_config.py).
 
@@ -28,8 +28,7 @@ The jobs are defined in [`resources/lakebase_sync.yml`](../../resources/lakebase
   `ENABLED`. It reads `/Volumes/<CATALOG>/<SCHEMA>/<VOLUME_NAME>/lakebase_export`, loads every exported table and skips a table
   with 0 rows. Each table it writes gets the property `lakebase_export = true` (the six chat tables, loaded before it existed,
   are exempt): a Delta table of the same name that does not carry it is left untouched and the task fails at the end with
-  its name. The job passes `ENABLED` from `lakebase_import_to_delta`: `false` on DEV, whose `dev_proj.qualibot` holds Delta copies of
-  the UAT tables made by `copy_Lakebase_tables.py`.
+  its name. The job passes `ENABLED` from `lakebase_import_to_delta` of its target.
 
 ## Lakebase environments
 
@@ -41,10 +40,10 @@ The environments known by `ops_config.py`:
 | `DEV` | `DEV` | `doccompare` | Database of the DEV application |
 | `PROD` | `PROD` | `doccompare` | Database of the PROD application |
 
-All four use the Lakebase project `qualibot`, branch `production`, endpoint `primary`.
+All three use the Lakebase project `qualibot`, branch `production`, endpoint `primary`.
 
 ## Rules
 
-- Lakebase data stays in its environment: each environment's job copies its own Lakebase to its own `<env>_proj.qualibot`. Nothing copies it to another environment.
+- Each environment's export copies its own Lakebase to its own `<env>_proj.qualibot`. The only copy between environments is the UAT-to-PROD pair of Bitbucket steps "Sync prod data", started by hand.
   Without it, the next insert of the application would reuse an imported id.
 - The JSON files hold user data (questions, answers, identifiers). They stay in the staging folders and volumes.

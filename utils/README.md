@@ -53,7 +53,7 @@ PowerShell, from the repository root:
 
 ## Rules
 
-- Lakebase data is never copied from one environment to another.
+- Lakebase data goes from UAT to PROD only through the two Bitbucket steps "Sync prod data" (export from UAT, then import to PROD), started by hand. No other step copies it between environments.
 - The exported files hold user data (questions, answers, identifiers). They stay in the staging folders and volumes.
 - The grant jobs cover the volumes, the indexes, the tables and the project schemas. They never grant on serving
   endpoints: every workspace user already queries them.
