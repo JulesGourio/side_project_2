@@ -9,6 +9,7 @@ Priority for every parameter: env var > explicit override in notebook > this def
 
 import datetime as _dt
 import os as _os
+import sys as _sys
 
 
 def _env(key, default) -> str:
@@ -24,13 +25,18 @@ def _env(key, default) -> str:
 def _require_env(key) -> str:
     """Return env var; raise if unset — no environment-specific default.
 
+    The job's environments are set on the driver by the notebook. The Python workers of the executors import the
+    worker modules, hence this one, without them: they only need the constants that do not depend on an environment.
+
     :param key: Name of the environment variable.
-    :return: value of the variable, never empty.
+    :return: value of the variable, never empty on the driver; empty on an executor's Python worker when unset.
     """
     val = _os.environ.get(key)
-    if not val:
-        raise RuntimeError(f"{key} must be set (see resources/parsing_pipeline.job.yml)")
-    return val
+    if val:
+        return val
+    if "pyspark.worker" in _sys.modules:
+        return ""
+    raise RuntimeError(f"{key} must be set (see resources/parsing_pipeline.job.yml)")
 
 
 # --- Environment, schema, paths ---
