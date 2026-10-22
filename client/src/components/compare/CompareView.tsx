@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertCircle, History, Info, Trash2 } from 'lucide-react';
+import { AlertCircle, History, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { WhatsNewButton, WhatsNewModal } from '@/components/layout/WhatsNewBanner';
 import { AnalysisActions } from './AnalysisActions';
@@ -110,6 +110,9 @@ export function CompareView() {
           <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
             Upload two documents (PDF, DOCX, PPTX, Excel, image…) to detect differences.
           </p>
+          <p className="text-sm font-semibold" style={{ color: 'var(--color-text-heading)' }}>
+            This tool is intended to compare two versions of the same document.
+          </p>
         </div>
         <div className="flex-shrink-0 flex items-center gap-2">
           <WhatsNewButton tabId="compare" open={showWhatsNew} onClick={() => setShowWhatsNew(o => !o)} />
@@ -134,13 +137,6 @@ export function CompareView() {
       </div>
 
       {showWhatsNew && <WhatsNewModal tabId="compare" onClose={() => setShowWhatsNew(false)} />}
-
-      <div className="flex items-start gap-3 px-4 py-3.5 rounded-xl border" style={{ borderColor: '#d97706', background: '#fffbeb' }}>
-        <Info className="h-4 w-4 mt-0.5 flex-shrink-0" style={{ color: '#d97706' }} />
-        <p className="text-sm leading-relaxed" style={{ color: '#92400e' }}>
-          This tool is intended to compare two versions of the same document.
-        </p>
-      </div>
 
       <ComparisonHistory open={historyOpen} onClose={() => setHistoryOpen(false)} onLoad={handleLoadFromHistory} />
 

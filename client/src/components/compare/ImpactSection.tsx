@@ -25,9 +25,6 @@ export function ImpactSection({ configured, result, error, running, usingTable, 
   return (
     <>
       {configured && <div className="space-y-3">
-        <div className="rounded-xl border px-4 py-2.5 text-xs" style={{ borderColor: ACCENT.amber, background: '#fffbeb', color: '#92400e' }}>
-          This section is in testing phase — results may be incomplete or inaccurate.
-        </div>
         <h2 className="text-sm font-semibold" style={{ color: 'var(--color-text-heading)' }}>Impact Search</h2>
         {canSearch && (
           <p className="text-xs -mb-1" style={{ color: 'var(--color-text-muted)' }}>
