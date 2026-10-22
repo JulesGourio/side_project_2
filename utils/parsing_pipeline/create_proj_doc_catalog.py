@@ -158,18 +158,6 @@ CHUNKS_TABLE = f"{PIPELINE_READ_ENV}_proj.qualibot.chunks"
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Pre-condition: parsing tables exist
-# MAGIC Checked before any read, so a missing table fails here by name rather than in a Spark read.
-
-# COMMAND ----------
-
-for table in (MANIFEST_TABLE, CHUNKS_TABLE):
-    if not table_exists(table):
-        raise RuntimeError(f"{table} does not exist - run the parsing tasks first")
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC # Data Preparation
 # MAGIC #N/A
 
@@ -209,6 +197,18 @@ logger.info(f"{len(catalog_rows)} documents in scope, {n_in_chat} with passages 
 
 # MAGIC %md
 # MAGIC # Quality Checks
+# MAGIC ## Pre-condition: parsing tables exist
+# MAGIC The two tables are checked first: a missing table fails here by name.
+
+# COMMAND ----------
+
+for table in (MANIFEST_TABLE, CHUNKS_TABLE):
+    if not table_exists(table):
+        raise RuntimeError(f"{table} does not exist - run the parsing tasks first")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## doc_catalog rows
 # MAGIC A manifest that gave no document means an upstream failure; writing it would empty the app's catalog (RED). `ref` is the primary key of `doc_catalog` (RED). The title and the division are expected on 99 % of the documents (AMBER).
 

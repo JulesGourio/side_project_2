@@ -57,7 +57,7 @@ Les règles de qualibot priment quand elles diffèrent de LEAP. Chaque écart es
 | E12 | Mineur | README : tableau « Files » faux, lignes manquantes | §5 | Tableau corrigé, paragraphe des timeouts mis à jour | **Traité** |
 | E13 | Mineur | CLAUDE.md : « every notebook calls `quality.require_gx()` » ; le code appelle `tables.require_gx()` | §5 | Corriger la règle et l'exception | **Ouvert** (hors de la liste demandée ; à faire avec la règle E4) |
 | E14 | Mineur | `# /// script` serverless dans un notebook sur cluster classique | §2.2 | Bloc supprimé | **Traité** |
-| E15 | Mineur | `RuntimeError` de pré-condition en `# Inputs` de `doc_catalog` | §2.2 | Documenté comme pré-condition, code inchangé | **Traité** (choix : pas de déplacement, voir §2.2) |
+| E15 | Mineur | `RuntimeError` de pré-condition en `# Inputs` de `doc_catalog` | §2.2 | Déplacé en tête de `# Quality Checks` | **Traité** |
 | E16 | Mineur | `row_number()` + `_rn > 1` au lieu de `drop_duplicates_by_order` | §2.2 | Étudié | **Non retenu** (voir §2.2) |
 | E17 | Mineur | Job qui importe des fonctions privées de `server` | §6 | Noms publics | **Ouvert** |
 | E18 | Mineur | Alertes en `Europe/Paris` | §3.2 | `Europe/Brussels` (6 lignes) | **Traité** |
