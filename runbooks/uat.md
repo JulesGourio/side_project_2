@@ -1100,8 +1100,72 @@ SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, ni
 
 (`<M>` : version de `parse_manifest` relevée en 2.)
 
+### H. Porter en UAT le périmètre officiel, la date 2016 et le correctif des lots (décidé 2026-10-22, à faire)
+
+Décision : pas de copie des tables de DEV vers l'UAT. Le checkpoint UAT (5 915 documents) est presque complet face à celui de DEV (6 032) ; un run `full` ne parse que les fichiers manquants (DEV : 224 documents, 228 fichiers en 22 min sur CPU). Le plafond `max_parse_files` (500) arrête la tâche avant tout calcul coûteux si le checkpoint n'est pas reconnu.
+
+1. Mise à jour du dépôt, puis poussée vers Bitbucket :
+
+```powershell
+git status --short
+git fetch origin claude/intraqual-data-asset
+git checkout claude/intraqual-data-asset
+git reset --hard origin/claude/intraqual-data-asset
+git log --oneline -3
+git push bitbucket claude/intraqual-data-asset
+```
+
+2. Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-uat-jobs` (jobs et notebooks, app intacte). Attendre qu'il soit vert.
+
+3. Identifiant du job, puis run `full` :
+
+```powershell
+databricks jobs list --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.settings.name -eq "D_1_Qualibot_Parsing_Pipeline" } | ForEach-Object { $_.job_id }
+'{"job_parameters":{"run_mode":"full"}}' | Out-File -Encoding ascii -NoNewline run_params.json
+databricks jobs run-now <ID_DU_JOB_UAT> --profile UAT --json "@run_params.json"
+```
+
+4. Si la synchronisation de l'index échoue (`DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE`), le reconstruire (environ 1 h, le chat UAT est sans recherche pendant ce temps) :
+
+```powershell
+databricks workspace mkdirs /Workspace/Shared/qualibot_uat_index --profile UAT
+databricks workspace import /Workspace/Shared/qualibot_uat_index/rebuild_chunks_index --file runbooks/scripts/uat_index/rebuild_chunks_index.py --format SOURCE --language PYTHON --overwrite --profile UAT
+databricks jobs submit --json "@runbooks/scripts/uat_index/rebuild_chunks_index_submit.json" --profile UAT
+```
+
+5. Contrôles (SQL editor UAT, lecture seule). Attendu : divisions AS, IS, GROUP seulement ; 0 document à plusieurs divisions ; 0 passage d'avant 2016 ; 0 orphelin :
+
+```sql
+SELECT division, count(DISTINCT IDDOC) AS documents FROM uat_proj.qualibot.chunks GROUP BY division ORDER BY documents DESC;
+SELECT count(*) AS documents_a_plusieurs_divisions FROM (SELECT IDDOC FROM uat_proj.qualibot.chunks GROUP BY IDDOC HAVING count(DISTINCT division) > 1);
+SELECT count(*) AS chunks_avant_2016 FROM uat_proj.qualibot.chunks WHERE doc_date < '2016-01-01';
+SELECT count(DISTINCT c.IDDOC) AS orphelins FROM uat_proj.qualibot.chunks c LEFT ANTI JOIN uat_proj.qualibot.parse_manifest m ON m.IDDOC = c.IDDOC;
+SELECT count(*) AS manquants FROM uat_proj.qualibot.parse_manifest m WHERE m.parse_content = true AND NOT EXISTS (SELECT 1 FROM uat_proj.qualibot.parsing_checkpoint c WHERE c.IDDOC = m.IDDOC);
+```
+
+6. Une fois l'index `ONLINE` et les contrôles bons : Bitbucket → `deploy-uat` (app). Le filtre AS/IS du chat inclut alors les documents GROUP.
+
+- [x] Index `chunks_index_test` supprimé par le SP UAT _(2026-10-22)_.
+- [ ] Étapes 1 à 6.
+
+### I. Ménage UAT (à faire après H)
+
+Les tables dont l'app UAT n'écrit plus se repèrent à leur date de dernière modification (SQL editor UAT, lecture seule). Envoyer le résultat avant toute suppression : la liste des suppressions est écrite nom par nom, jamais par motif.
+
+```sql
+SELECT table_name, table_type, last_altered
+FROM uat_proj.information_schema.tables
+WHERE table_schema = 'qualibot'
+ORDER BY last_altered;
+```
+
+Candidats (anciens noms remplacés par `app_errors`, `compare_messages`, `compare_feedbacks`, `catalog_metadata`) : `errors`, `messages`, `feedbacks`, `knowledge_base_metadata`. Les sauvegardes `_pipeline_checkpoint_<date>` disparaissent au prochain run `full` (une seule est gardée). Anciens index et objets de `uat_landingzone.qualibot` (`chunks_index_v1`, `chunks_as_index_v1`, `chunks_is_index_v1`, `chunks_test_generic_index`) et anciens assistants `qualibot_ALL_v2` / `_AS_v2` / `_IS_v2` : à supprimer sur accord, après validation complète d'H.
+
+- [ ] Résultat de la requête reçu, liste de suppression écrite et validée.
+
 ## Fait
 
+- 2026-10-22 — `chunks_index_test` supprimé en UAT (index, table de réécriture ; sa vue et son journal partent avec l'index).
 - 2026-10-21 — 37 documents `MISSING_CHUNKS` (171 passages au total) : documents presque sans texte (30 caractères, 5 images) flaggés par la garde `flag_ghost_documents` avant l'ajout des passages d'images ; 1970 passages sans `division` (30 documents listés, dont `UDA-00-053`, `TDA7-00-046`, `FDAQL-2851`). À surveiller après le premier run quotidien ; aucune action.
 - 2026-10-21 — E2 terminé : run complet `D_1_Qualibot_Parsing_Pipeline` (job run `884840682425994`, mode `rechunk`) en SUCCESS, `chunks` écrasé en `Overwrite` (v21) sans changement de schéma, 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents (7583 avec révision, 7576 avec date). Étapes 0.3, 0.5, 0.7, C1, C2 et E1 confirmées.
 - 2026-10-19 — E2, étapes 3 à 7 : `chunks_index` reconstruit par le compte de service (nouveau pipeline `c10bcd69-bfbc-4625-b94a-ebc7a81858b9`, « Index creation succeeded »), `indexed_row_count` = 137187 = lignes de `chunks`, QM-1041 n'apparaît plus dans les sources du chat. Restent : étapes 1 et 2 (déploiement du code corrigé, à confirmer) et 8 (run complet, test du correctif).

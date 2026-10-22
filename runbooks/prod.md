@@ -38,6 +38,61 @@ Garde : l'app `qualibot`, le projet Lakebase `qualibot` (+ rôles, schéma), le 
 4. Valeurs à ajouter dans `utils/deploy/target_env.json` pour `prod` avant le déploiement : `SOFFICE_ARCHIVE_VOLUME_PATH`, puis `CHAT_MLFLOW_EXPERIMENT_ID` une fois `create_chat_experiment_prod` lancé.
 5. Droits de l'étape 5 à passer par un `jobs submit` en SP prod, pas en SQL à la main.
 
+## 0.3 Remise à zéro de PROD puis copie du corpus de DEV (décidée 2026-10-22, pas à pas)
+
+Garde : l'app `qualibot` (son adresse ne change pas : le déploiement la met à jour sur place), le projet Lakebase `qualibot` (non touché : `reset_prod_lakebase.py` n'est lancé que sur décision explicite), `prod_landingzone.intraqual`, les volumes `docling_models` et `doc_compare`. Tout se lance par un compte de service PROD (`b82d3b5a-b633-4738-8dde-68bb2142cb02`), jamais en SQL personnel. Chaque script supprimant ou copiant démarre en simulation (`dry_run = true`) : lire ses logs avant de relancer en `false`.
+
+**P0. Le profil `PROD` pointe sur PROD** (lecture seule). Doit afficher l'adresse `qualibot-1210945332048776` ; sinon corriger l'hôte du profil avant tout :
+
+```powershell
+databricks apps get qualibot --profile PROD -o json | ConvertFrom-Json | Select-Object name, url
+```
+
+**P1. Sonde d'accès** (lecture seule) : PROD peut-il lire `dev_proj` ? Le log donne `READ OK` ou `READ NO` pour `dev`, `uat` et `prod`, plus la liste des tables de `prod_proj.qualibot` et `prod_landingzone.qualibot`.
+
+```powershell
+databricks workspace mkdirs /Workspace/Shared/qualibot_prod_copy --profile PROD
+databricks workspace import /Workspace/Shared/qualibot_prod_copy/probe_access --file runbooks/scripts/prod_copy/probe_access.py --format SOURCE --language PYTHON --overwrite --profile PROD
+databricks jobs submit --json "@runbooks/scripts/prod_copy/probe_access_submit.json" --profile PROD
+```
+
+- `READ OK  dev_proj.qualibot.chunks` : continuer avec P2 à P6.
+- `READ NO` : la copie passe par un export sur un volume lisible des deux côtés ; script à écrire, ne pas continuer sans lui.
+
+**P2. Anciens jobs et endpoints** (jobs `qualibot-provision-knowledge-assistant-qualibot-prod`, `D_1_qualibot-parsing-pipeline-qualibot-prod`, endpoints `ka-3315943a-endpoint`, `ka-5d35f4d5-endpoint`, `ka-88a4da35-endpoint`, `ka-c9dbc4db-endpoint`). Simulation, puis suppression en remplaçant `"dry_run": "true"` par `"false"` dans `drop_prod_legacy_submit.json` :
+
+```powershell
+databricks workspace mkdirs /Workspace/Shared/qualibot_prod_cleanup --profile PROD
+databricks workspace import /Workspace/Shared/qualibot_prod_cleanup/drop_prod_legacy --file runbooks/scripts/prod_cleanup/drop_prod_legacy.py --format SOURCE --language PYTHON --overwrite --profile PROD
+databricks jobs submit --json "@runbooks/scripts/prod_cleanup/drop_prod_legacy_submit.json" --profile PROD
+```
+
+**P3. Tables, index et ancien schéma** (`prod_proj.qualibot` : toutes les tables sauf `…_otel_*`, index, schéma `prod_landingzone.qualibot`). Ordre : phase `prepare` (crée le schéma et les volumes, copie `docling_models` et `doc_compare`) en simulation puis réelle, puis phase `drop` en simulation puis réelle. Les phases et `dry_run` se changent dans `base_parameters` de `drop_prod_objects_submit.json` :
+
+```powershell
+databricks workspace import /Workspace/Shared/qualibot_prod_cleanup/drop_prod_objects --file runbooks/scripts/prod_cleanup/drop_prod_objects.py --format SOURCE --language PYTHON --overwrite --profile PROD
+databricks jobs submit --json "@runbooks/scripts/prod_cleanup/drop_prod_objects_submit.json" --profile PROD
+```
+
+**P4. Copie du corpus et de l'état de parsing de DEV** (`category_reference`, `parse_manifest`, `parsing_checkpoint`, `image_metadata`, `parsed_documents`, `chunks_archive`, `chunks`). Les chemins de volume stockés (`dev_proj`) sont réécrits en `prod_proj`, le nombre de lignes est contrôlé table par table. Simulation d'abord (paramètres par défaut), puis `"dry_run": "false"` dans `copy_tables_to_prod_submit.json` :
+
+```powershell
+databricks workspace import /Workspace/Shared/qualibot_prod_copy/copy_tables_to_prod --file runbooks/scripts/prod_copy/copy_tables_to_prod.py --format SOURCE --language PYTHON --overwrite --profile PROD
+databricks jobs submit --json "@runbooks/scripts/prod_copy/copy_tables_to_prod_submit.json" --profile PROD
+```
+
+Limite connue : les fichiers d'images restent dans le volume `images` de DEV ; le volume `images` de PROD démarre vide. Seule la reprise d'une image en échec les relit.
+
+**P5. Endpoint Vector Search** (absent sur PROD), puis modèles Docling depuis l'UAT (pipeline Bitbucket `sync-prod-data`, deux étapes, depuis `main`) :
+
+```powershell
+databricks vector-search-endpoints create-endpoint qualibot STANDARD --profile PROD
+```
+
+**P6. Suite** : sections 4 à 6 et 9 ci-dessous (droits par le SP, valeurs de `target_env.json`, déploiement **sur accord explicite**). Après le déploiement, `databricks bundle run parsing_pipeline -t prod --profile PROD --params run_mode=rechunk` reconstruit `chunks` depuis le checkpoint copié, crée `prod_proj.qualibot.chunks_index`, le synchronise et remplit le catalogue de documents, sans re-parsing.
+
+- [ ] P0 · [ ] P1 · [ ] P2 · [ ] P3 · [ ] P4 · [ ] P5 · [ ] P6
+
 ## 1. Catalogue et schéma `prod_proj` (admin metastore, seulement si absent)
 
 Si `prod_proj` n'existe pas, un admin le crée (SQL, éditeur du workspace prod) :

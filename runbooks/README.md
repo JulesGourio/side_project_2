@@ -23,6 +23,16 @@ The operator runbooks (`dev.md`, `uat.md`, `prod.md`, `retest.md`) are written i
 - CLI profiles: `DEV` (DEV), `UAT` (UAT), `PROD` (PROD). `migrate_lakebase.py` accepts the environments `DEV`, `UAT` and `PROD`.
 - The application and pipeline objects (tables, volumes, Vector Search indexes) live in `<env>_proj.qualibot`, with the same names in every environment. The Intraqual catalog (`prod_landingzone.intraqual`) is not modified by these runbooks.
 
+## State and what remains (2026-10-22)
+
+| Environment | Done | Remains, in order |
+|---|---|---|
+| DEV | Official scope (3 roots), date 2016, divisions AS/IS/GROUP, batch fix, parsing run and checks passed | Rebuild `chunks_index` (`dev.md` I), test the chat with the AS and IS filters, reset the temporary DEV settings (`dev.md` H, K) |
+| UAT | Test index `chunks_index_test` deleted | `uat.md` H: push, `deploy-uat-jobs`, `full` run, checks, `deploy-uat`; then `uat.md` I: clean-up list from the table dates |
+| PROD | Reset and copy scripts written (`scripts/prod_cleanup/`, `scripts/prod_copy/`) | `prod.md` 0.3 P0 to P6, then sections 4 to 6 (grants by the SP, `target_env.json`, deployment on explicit approval) |
+
+PROD starts after DEV and UAT are validated (checklist at the end of `prod.md`).
+
 ## Where to find an operation
 
 - Copy of the UAT corpus to DEV: `dev.md` 00.3, 00.4 and block C.
@@ -55,6 +65,10 @@ Run every command from the repository root. Command-line Python scripts import `
 | [`scripts/soffice/package_libreoffice.py`](scripts/soffice/package_libreoffice.py) | CLI. Builds the portable LibreOffice archive (tar.gz) used by the "Exact (PDF)" preview, from the LibreOffice bundle downloaded beforehand. Needs network access to the Ubuntu archive | `python runbooks/scripts/soffice/package_libreoffice.py <bundle.tar.gz> <sortie.tar.gz>`, then `databricks fs cp <sortie.tar.gz> dbfs:/Volumes/<catalog>/<schema>/<volume>/libreoffice/libreoffice-linux-x64.tar.gz` |
 | [`scripts/soffice/scan_needed_libs.py`](scripts/soffice/scan_needed_libs.py) | CLI. Lists the shared libraries a portable LibreOffice tree needs but does not ship. Used to check the system libraries that `package_libreoffice.py` bundles | `python runbooks/scripts/soffice/scan_needed_libs.py <dossier_extrait>` |
 | [`scripts/compare/compare_preview.py`](scripts/compare/compare_preview.py) | CLI. Offline report on a document pair: extraction, diff, images and chunking, with no model call. Logs what would be sent to the model | `python runbooks/scripts/compare/compare_preview.py old.docx new.docx`. Options: `--method {standard,structured,comparative}` (default `structured`), `--dump-diff <fichier>` (writes the full text block), `--threshold <valeur>` (overrides the similarity threshold, default 0.55), `--chunk-threshold` (default 60000), `--chunk-size` (default 45000) |
+| [`scripts/prod_copy/probe_access.py`](scripts/prod_copy/probe_access.py) | Notebook, PROD workspace, read-only. Tells which environments PROD can read (tables and volumes) and lists the PROD schemas | `prod.md` 0.3, step P1 |
+| [`scripts/prod_copy/copy_tables_to_prod.py`](scripts/prod_copy/copy_tables_to_prod.py) | Notebook, PROD workspace. Copies the corpus and parsing state of DEV into `prod_proj.qualibot` (deep clone, volume paths rewritten, row counts checked). Dry run by default | `prod.md` 0.3, step P4 |
+| [`scripts/prod_cleanup/drop_prod_legacy.py`](scripts/prod_cleanup/drop_prod_legacy.py) | Notebook, PROD workspace. Deletes the legacy Knowledge Assistant jobs and endpoints, by exact name. Dry run by default | `prod.md` 0.3, step P2 |
+| [`scripts/uat_cleanup/drop_uat_test_index.py`](scripts/uat_cleanup/drop_uat_test_index.py) | Notebook, UAT workspace. Deletes the test Vector Search index `chunks_index_test` and its writeback table | Done on 2026-10-22 |
 
 ### Notebook commands
 

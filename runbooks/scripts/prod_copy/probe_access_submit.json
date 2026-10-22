@@ -1,0 +1,15 @@
+{
+  "run_name": "qualibot-prod-probe-access",
+  "run_as": {
+    "service_principal_name": "b82d3b5a-b633-4738-8dde-68bb2142cb02"
+  },
+  "tasks": [
+    {
+      "task_key": "probe_access",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/qualibot_prod_copy/probe_access",
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}
