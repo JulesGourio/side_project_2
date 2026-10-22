@@ -314,7 +314,7 @@ targets:
       app_name: "qualibot"
       pipeline_write_env: dev
       alerts_warehouse_id: "13eff4a6095513cb"
-      lakebase_import_to_delta: "true"
+      lakebase_import_to_delta: "false"
       lakebase_tables_to_skip: "doc_catalog,impact_cache,impact_document_results,impact_feedbacks,impact_requests,llm_requests,summary_cache,users"
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"

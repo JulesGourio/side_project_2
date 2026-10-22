@@ -28,7 +28,7 @@ The jobs are defined in [`resources/lakebase_sync.yml`](../../resources/lakebase
   `ENABLED`. It reads `/Volumes/<CATALOG>/<SCHEMA>/<VOLUME_NAME>/lakebase_export`, loads every exported table and skips a table
   with 0 rows. Each table it writes gets the property `lakebase_export = true` (the six chat tables, loaded before it existed,
   are exempt): a Delta table of the same name that does not carry it is left untouched and the task fails at the end with
-  its name. The job passes `ENABLED` from `lakebase_import_to_delta` of its target.
+  its name. The job passes `ENABLED` from `lakebase_import_to_delta` of its target. Each target imports only the Lakebase of its own environment.
 
 ## Lakebase environments
 
