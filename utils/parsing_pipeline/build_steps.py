@@ -8,6 +8,7 @@ from pyspark import StorageLevel
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 
+import categories
 import image_utils
 import worker
 from parse_steps import read_checkpoint_deduped
@@ -65,8 +66,15 @@ def with_fresh_business_metadata(df_checkpoint) -> DataFrame:
         df.join(F.broadcast(df_manifest), on="IDDOC", how="left")
         .join(F.broadcast(df_hierarchy), on="IDDOC", how="left")
     )
+    # A document in scope takes its category fields as they are now, null included: the old values describe a tree that changed.
+    in_scope = F.col("_fresh_ref").isNotNull()
+    defaults = {"division": F.lit("ALL")}
     for c in BUSINESS_METADATA_COLS:
-        df = df.withColumn(c, F.coalesce(F.col(f"_fresh_{c}"), F.col(c)))
+        fresh = F.col(f"_fresh_{c}")
+        if c in HIERARCHY_COLS:
+            df = df.withColumn(c, F.when(in_scope, F.coalesce(fresh, defaults.get(c, F.lit(None)))).otherwise(F.col(c)))
+        else:
+            df = df.withColumn(c, F.coalesce(fresh, F.col(c)))
     return df.drop(*[f"_fresh_{c}" for c in BUSINESS_METADATA_COLS])
 
 
@@ -206,26 +214,20 @@ def _with_rows_of_unlisted_documents(df_image_metadata, df_full_pipeline) -> Dat
     return df_image_metadata.unionByName(df_kept)
 
 
-def _apply_date_and_rag_filters(df_processed_files) -> tuple[DataFrame, DataFrame | None, Column]:
+def _apply_date_and_rag_filters(df_processed_files) -> tuple[DataFrame, DataFrame | None]:
     """Flag is_filtered_by_date and is_in_rag on df_processed_files.
 
-    doc_date < DOC_DATE_CUTOFF: parsed, chunks routed to chunks_archive instead of
+    doc_date < DOC_DATE_CUTOFF, outside the date-exempt roots: parsed, chunks routed to chunks_archive instead of
     the RAG tables (is_in_rag=False). NULL doc_date = recent. Manual exclusions come from
     the ``RAG_EXCLUSION_TABLE`` table.
-    Returns (df_processed_files, df_exclusions_or_none, cutoff_col).
 
     :param df_processed_files: Document rows of this run.
+    :return: the rows with the flags, and the manual exclusions (None when there is no exclusion table).
     """
-    cutoff = F.lit(DOC_DATE_CUTOFF).try_cast("date")
-    df_processed_files = df_processed_files.withColumn(
+    df_processed_files = categories.with_archive_flag(spark, df_processed_files).withColumn(
         "is_filtered_by_date",
-        F.when(
-            (F.col("parse_status") == "SUCCESS")
-            & F.col("doc_date").isNotNull()
-            & (F.col("doc_date") < cutoff),
-            F.lit(True)
-        ).otherwise(F.lit(False))
-    )
+        F.when((F.col("parse_status") == "SUCCESS") & F.col("is_archive"), F.lit(True)).otherwise(F.lit(False))
+    ).drop("is_archive")
     filtered_by_date_count = df_processed_files.filter(F.col("is_filtered_by_date") == True).count()
     if filtered_by_date_count:
         logger.info(f"[DATE FILTER] {filtered_by_date_count} documents routed to chunks_archive (predating {DOC_DATE_CUTOFF})")
@@ -251,7 +253,7 @@ def _apply_date_and_rag_filters(df_processed_files) -> tuple[DataFrame, DataFram
             "is_in_rag",
             F.when(F.col("is_filtered_by_date") == True, F.lit(False)).otherwise(F.lit(True))
         )
-    return df_processed_files, df_exclusions, cutoff
+    return df_processed_files, df_exclusions
 
 
 def _build_chunks(df_full_pipeline, df_exclusions) -> DataFrame:
@@ -445,7 +447,7 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
         ).otherwise(F.lit(None)))
     )
 
-    df_processed_files, df_exclusions, cutoff = _apply_date_and_rag_filters(df_processed_files)
+    df_processed_files, df_exclusions = _apply_date_and_rag_filters(df_processed_files)
 
     # Persisted: the chunking UDF is the expensive part, and every count/filter/write below would rerun it.
     df_chunks = _build_chunks(df_full_pipeline, df_exclusions).persist(StorageLevel.MEMORY_AND_DISK)
@@ -465,9 +467,9 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
 
     df_chunks = _dedupe_and_limit_chunks(df_chunks)
 
-    is_recent = F.col("doc_date").isNull() | (F.col("doc_date") >= cutoff)
-    df_chunks_archive = df_chunks.filter(~is_recent)
-    df_chunks_all = df_chunks.filter(is_recent)
+    df_chunks = categories.with_archive_flag(spark, df_chunks)
+    df_chunks_archive = df_chunks.filter(F.col("is_archive")).drop("is_archive")
+    df_chunks_all = df_chunks.filter(~F.col("is_archive")).drop("is_archive")
 
     logger.info("DataFrames ready (lazy). Will materialise during write.")
     return df_processed_files, df_chunks_all, df_chunks_archive
@@ -482,8 +484,8 @@ def build_archive_notices(df_business_meta) -> DataFrame:
 
     :param df_business_meta: Business metadata of the documents, with an ``IDDOC`` column.
     """
-    cutoff = F.lit(DOC_DATE_CUTOFF).try_cast("date")
-    is_archive = F.col("doc_date").isNotNull() & (F.col("doc_date") < cutoff)
+    df_business_meta = categories.with_archive_flag(spark, df_business_meta)
+    is_archive = F.col("is_archive")
     df_recent_refs = (
         df_business_meta.filter(~is_archive & F.col("ref").isNotNull())
         .select("ref").distinct()

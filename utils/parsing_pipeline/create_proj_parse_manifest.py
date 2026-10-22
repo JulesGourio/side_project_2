@@ -10,13 +10,14 @@
 # MAGIC Builds the `parse_manifest` read by task `3_parse` and reconciles the volume root with the current Qualibot scope.
 # MAGIC The phases are functions of `manifest_steps.py`, applied in this order:
 # MAGIC * **Scope gate** (`revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false` on `document_revisions_intraqual`): only current, validated, visible documents pass.
-# MAGIC * **Category exclusion** (IDCAT 3798 — ONE_QMS-5S): documents whose principal category, or one of its ancestors, belongs to `EXCLUDED_IDCATS` are logged as
+# MAGIC * **Category exclusion** (IDCAT 3196 — ONE_QMS-5S > Obsolete Documents): documents whose principal category, or one of its ancestors, belongs to `EXCLUDED_IDCATS` are logged as
 # MAGIC   `SKIPPED_CATEGORY_EXCLUDED` and removed from the parse manifest.
 # MAGIC * **Folder name convention**: only root folders named `D_<IDDOC>` or `Dm_<IDDOC>` are processed (case-insensitive); the IDDOC cannot be extracted from other names.
 # MAGIC * **Orphan detection**: folders whose IDDOC is not in `document_revisions_intraqual` stay on the volume,
 # MAGIC   are excluded from parsing and logged as `SKIPPED_IDDOC_NOT_FOUND`.
 # MAGIC * **Date cutoff = a parse budget, not an exclusion**: documents published before `DOC_DATE_CUTOFF` stay in the manifest, but only the
 # MAGIC   `ARCHIVE_MAX_DOCS` most recent get `parse_content=True`; `3_parse` routes those to `chunks_archive` (impact search only).
+# MAGIC   Documents under a root of `DATE_EXEMPT_ROOT_IDCATS` (`date_exempt`) are not concerned: they are parsed and indexed whatever their date.
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC Physical deletion of out-of-scope folders only happens when `dry_run` is `false`. The cleanup of derived tables (stale chunks, image metadata)

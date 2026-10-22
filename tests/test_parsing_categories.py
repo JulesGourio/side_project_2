@@ -19,6 +19,7 @@ import categories
 
 REVISIONS = "test_categories_revisions"
 ANCESTORS = "test_categories_ancestors"
+REFERENCE = "test_categories_reference"
 
 # (name, parent) by category id; the roots are the ids the division rules know.
 CATEGORIES = {
@@ -101,7 +102,7 @@ def test_division_and_levels_of_each_root(spark):
     assert (ref[3]["niveau_plus_1"], ref[3]["niveau_plus_2"]) == ("IS - Interconnection Systems", "Cablage")
     assert ref[4]["division"] == "DIRECTIVE"
     assert ref[4]["niveau_plus_1"] == "0 - DIRECTIVE GROUPE LATECOERE"
-    assert ref[5]["division"] == "AUTRE"
+    assert ref[5]["division"] == "ALL"
     assert ref[5]["niveau_plus_1"] == "Autre racine"
 
 
@@ -122,9 +123,27 @@ def test_a_leaf_category_named_after_a_division_sets_the_division(spark):
     ref = _reference(spark)
     assert ref[10]["division"] == "AS"
     assert ref[11]["division"] == "IS"
-    assert ref[12]["division"] == "COMMUN"
-    assert ref[14]["division"] == "COMMUN"
-    assert ref[5]["division"] == "AUTRE"
+    assert ref[12]["division"] == "ALL"
+    assert ref[14]["division"] == "ALL"
+    assert ref[5]["division"] == "ALL"
+
+
+def test_the_process_tree_is_exempt_from_the_date_filter(spark, monkeypatch):
+    import datetime
+
+    ref = _reference(spark)
+    assert ref[10]["date_exempt"] and ref[12]["date_exempt"] and not ref[1]["date_exempt"]
+
+    spark.createDataFrame([(r["IDDOC"], r["date_exempt"]) for r in ref.values()], "IDDOC long, date_exempt boolean"
+                          ).write.mode("overwrite").saveAsTable(REFERENCE)
+    monkeypatch.setattr(categories, "DIVISION_REFERENCE_TABLE", REFERENCE)
+    old, recent = datetime.date(2010, 1, 1), datetime.date(2024, 1, 1)
+    rows = [(1, old), (1 + 100, recent), (10, old), (12, recent), (99, None)]
+    flagged = {r.IDDOC: r.is_archive for r in categories.with_archive_flag(
+        spark, spark.createDataFrame(rows, "IDDOC long, doc_date date")).collect()}
+    # 1: AS tree, before the cutoff -> archive; 10, 12: process tree -> indexed whatever the date; 101 and 99: no match, recent or undated.
+    assert flagged == {1: True, 101: False, 10: False, 12: False, 99: False}
+    spark.sql(f"DROP TABLE IF EXISTS {REFERENCE}")
 
 
 def test_scope_keeps_current_validated_visible_revisions(spark):

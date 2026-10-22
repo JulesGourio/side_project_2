@@ -134,10 +134,10 @@ def division_filter(division: str) -> VsFilters:
 
     :param division: division code, any case (normalised here)
     :return: ``{}`` for ``ALL``, else the division's documents plus the shared ones:
-        ``{"division": [code, "COMMUN", "DIRECTIVE"]}``
+        ``{"division": [code, "ALL", "DIRECTIVE"]}`` (a document of division ``ALL`` belongs to every division)
     """
     d = normalize_division(division)
-    return {} if d == 'ALL' else {'division': [d, 'COMMUN', 'DIRECTIVE']}
+    return {} if d == 'ALL' else {'division': [d, 'ALL', 'DIRECTIVE']}
 
 
 def settings() -> Dict[str, Any]:

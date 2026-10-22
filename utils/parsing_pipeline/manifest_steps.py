@@ -367,9 +367,10 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id) -> None:
 def archive_condition() -> Column:
     """Pre-cutoff documents: parsed within the ARCHIVE_MAX_DOCS budget and routed to chunks_archive.
 
-    :return: condition that is true for the documents published before the cutoff.
+    :return: condition that is true for the documents published before the cutoff, except the date-exempt ones.
     """
-    return F.col("doc_date").isNotNull() & (F.col("doc_date") < F.lit(DOC_DATE_CUTOFF).try_cast("date"))
+    return (F.col("doc_date").isNotNull() & (F.col("doc_date") < F.lit(DOC_DATE_CUTOFF).try_cast("date"))
+            & ~F.coalesce(F.col("date_exempt"), F.lit(False)))
 
 
 def build_manifest(rows_keep) -> DataFrame:
@@ -424,6 +425,8 @@ def build_manifest(rows_keep) -> DataFrame:
         .join(df_dates, on="IDDOC", how="left")
         .join(F.broadcast(df_hierarchy), on="IDDOC", how="left")
         .join(F.broadcast(df_iddoc_type), on="IDDOC", how="left")
+        .withColumn("division", F.coalesce(F.col("division"), F.lit("ALL")))
+        .withColumn("date_exempt", F.coalesce(F.col("date_exempt"), F.lit(False)))
         .withColumn("langue", F.lit("fr-FR"))
         .withColumn("auteur", F.lit(None).try_cast(StringType()))
     )

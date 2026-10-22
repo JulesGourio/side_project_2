@@ -19,6 +19,7 @@ from databricks.sdk.runtime import spark
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
+import categories
 from leap_utils.common.logger import get_logger
 from llm_describe import EndpointBreaker, describe_all_images, one_per_image, safe_requests_per_minute
 from tables import add_missing_columns, merge_into, table_exists, write_table
@@ -45,6 +46,7 @@ from config import (
     MAX_CHUNK_CHARS,
     MAX_CHUNK_TOKENS,
     MIN_INDEXABLE_DESC_CHARS,
+    PARSE_MANIFEST_TABLE,
     TARGET_CHUNK_TABLE,
     TARGET_CHUNK_TABLE_ARCHIVE,
     TARGET_IMAGE_CACHE_TABLE,
@@ -347,6 +349,10 @@ def log_nothing_to_inject() -> None:
         logger.info(f"  {n_pending} images not described -> not injected (described again next run)")
 
 
+# Document fields of the passages of an image, read from the manifest.
+_DOC_META_COLS = ("ref", "titre", "type_document", "indice", "langue", "doc_date", "division", "niveau_plus_1", "niveau_plus_2")
+
+
 def build_image_chunks(df_described) -> DataFrame:
     """Image passages: position in the document, section, caption and a source prefix, long transcriptions split.
 
@@ -365,12 +371,12 @@ def build_image_chunks(df_described) -> DataFrame:
     df_text_chunks = df_text_all.filter(F.col("chunk_content_type") != "image")
     df_max_idx = df_text_chunks.groupBy("IDDOC").agg(F.max("chunk_index").alias("max_text_index"))
 
-    # Document metadata is not on image_metadata: it comes from parsed_documents, for the source prefix.
-    df_pf = spark.table(TARGET_PROCESSED_FILES_TABLE)
+    # The document metadata (title, type, division, categories) is the manifest's: the values stored with each image
+    # are those of the parse.
+    df_manifest = spark.table(PARSE_MANIFEST_TABLE)
     df_doc_meta = (
-        df_pf.select("IDDOC", "doc_date",
-                     *[F.col(c) if c in df_pf.columns else F.lit(None).try_cast("string").alias(c)
-                       for c in ("type_document", "indice", "langue")])
+        df_manifest.select("IDDOC", *[F.col(c) if c in df_manifest.columns else F.lit(None).try_cast("string").alias(c)
+                                      for c in _DOC_META_COLS])
         .withColumn("indice", F.col("indice").try_cast("string"))
         .dropDuplicates(["IDDOC"])
     )
@@ -417,7 +423,7 @@ def build_image_chunks(df_described) -> DataFrame:
     image_id = F.concat_ws("-", F.col("IDDOC").try_cast("string"), F.lit("IMG"),
                            F.lpad(F.col("image_id").try_cast("string"), 3, "0"))
     return (
-        df_described.drop("description", "chunk_id")
+        df_described.drop("description", "chunk_id", *_DOC_META_COLS)
         .join(df_placed, on=["IDDOC", "image_id"], how="inner")
         .join(df_max_idx, on="IDDOC", how="left")
         .join(F.broadcast(df_doc_meta), on="IDDOC", how="left")
@@ -513,14 +519,14 @@ def write_image_chunks(df_image_chunks) -> None:
 
     # Cached because the left_anti join that built df_described would return 0 rows once the first MERGE ran.
     df_cached = df_image_chunks.cache()
-    is_recent = F.col("doc_date").isNull() | (F.col("doc_date") >= F.lit(DOC_DATE_CUTOFF).try_cast("date"))
+    df_cached = categories.with_archive_flag(spark, df_cached)
 
-    df_archive = df_cached.filter(~is_recent)
+    df_archive = df_cached.filter(F.col("is_archive")).drop("is_archive")
     n_archive = df_archive.count()
     _merge_chunks(df_archive, TARGET_CHUNK_TABLE_ARCHIVE)
     logger.info(f"Merged {n_archive} image chunks into {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
 
-    df_recent = df_cached.filter(is_recent)
+    df_recent = df_cached.filter(~F.col("is_archive")).drop("is_archive")
     n_recent = df_recent.count()
     _merge_chunks(df_recent, TARGET_CHUNK_TABLE)
     logger.info(f"Merged {n_recent} image chunks into {TARGET_CHUNK_TABLE}")

@@ -1038,23 +1038,21 @@ SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, ni
 
 (`<M>` : version de `parse_manifest` relevée en 2.)
 
-### H. Division COMMUN et exclusion de ONE_QMS-5S (code poussé le 2026-10-21, à faire)
+### H. Division ALL, passages d'images, date One QMS (code poussé le 2026-10-22, à faire)
 
-1. Déployer les jobs : Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-dev-jobs`.
+Divisions AS / IS / DIRECTIVE / ALL, passages d'images alignés sur le manifest, exclusion limitée à « Obsolete Documents », date ignorée sous la racine One QMS. Le mode du job est passé temporairement à `full` dans `databricks.yml` (cible `dev`) : il parse les documents absents du checkpoint (environ 1 300, dont les One QMS d'avant 2018 et les « To be classified » récents), décrit leurs images, reconstruit tous les passages et resynchronise l'index.
 
-2. Lancer les deux tâches (`dry_run` reste à `true`) :
-
-```powershell
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
-```
-
-3. Contrôler (SQL editor DEV, lecture seule). Attendu : environ 4 900 à 5 100 documents, AS ≈ 1 950, COMMUN ≈ 2 800, IS ≈ 95, DIRECTIVE ≈ 40, AUTRE ≈ 250 :
+1. Déployer : Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-dev-jobs`.
+2. Lancer : `databricks jobs run-now 362367007936662 --profile DEV`
+3. Contrôler (SQL editor DEV) :
 
 ```sql
-SELECT division, count(*) AS documents FROM dev_proj.qualibot.parse_manifest GROUP BY division ORDER BY documents DESC;
-SELECT count(*) AS documents FROM dev_proj.qualibot.parse_manifest;
+SELECT division, count(DISTINCT IDDOC) AS documents FROM dev_proj.qualibot.chunks GROUP BY division ORDER BY documents DESC;
+SELECT count(*) AS documents_a_plusieurs_divisions FROM (SELECT IDDOC FROM dev_proj.qualibot.chunks GROUP BY IDDOC HAVING count(DISTINCT division) > 1);
+SELECT chunk_content_type, (c.division <=> m.division) AS division_egale_au_manifest, count(*) AS passages
+FROM dev_proj.qualibot.chunks c JOIN dev_proj.qualibot.parse_manifest m ON m.IDDOC = c.IDDOC GROUP BY 1, 2 ORDER BY 1, 2;
 ```
+4. Reconstruire l'index (section I), puis remettre `parsing_run_mode: "incremental"` dans le bloc `dev` de `databricks.yml` et redéployer.
 
 ### I. Reconstruire l'index DEV après un changement de schéma de `chunks` (2026-10-22, à faire après contrôle de `chunks`)
 

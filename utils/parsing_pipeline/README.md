@@ -93,7 +93,8 @@ listed at the top of `config.py`.
   Intraqual portal shows documents with `difftotale = 0`.
 - **Division** (`categories.build_division_reference`): from the root of the main category (`AS -`, `IS -`, PROCESSES,
   DIRECTIVE); under the process tree (`00-LATECOERE PROCESSES_One QMS`) a leaf category named `AS` or `IS` sets it,
-  and the other documents of that tree are `COMMUN`; any other root gives `AUTRE`.
+  and every other document is `ALL` (shared by the divisions). Only `AS`, `IS`, `DIRECTIVE` and `ALL` exist. Pre-cutoff
+  documents go to `chunks_archive` except under the date-exempt roots (`DATE_EXEMPT_ROOT_IDCATS`).
 - **Manifest**: `2_manifest` keeps the in-scope documents, with their REF, title, revision (`indice`), date,
   category hierarchy, document type and `parse_content` flag. A category listed in `EXCLUDED_IDCATS` and a REF
   listed in `MANUAL_REF_EXCLUSIONS` are excluded.

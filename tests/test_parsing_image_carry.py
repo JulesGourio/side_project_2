@@ -101,3 +101,26 @@ def test_documents_whose_checkpoint_lists_no_image_keep_their_rows(build_steps, 
         [(8, 0, 1, 800, 600, "PENDING", None, None, None, None, T_REPARSED)], NEW_SCHEMA))
     out = build_steps._with_rows_of_unlisted_documents(new_rows, checkpoint).collect()
     assert sorted((r.IDDOC, r.description) for r in out) == [(7, "kept as is"), (8, "same image, re-parsed")]
+
+
+def test_a_document_in_scope_takes_its_category_fields_as_they_are_now(spark, build_steps, monkeypatch):
+    """A document without category in the reference no longer keeps the division it had before: it is shared (ALL)."""
+    spark.createDataFrame([(1, "REF-1", "Titre"), (2, "REF-2", "Titre")],
+                          "IDDOC long, ref string, titre string").write.mode("overwrite").saveAsTable("fresh_manifest")
+    spark.createDataFrame([(1, "AS", "AS - Cat")], "IDDOC long, division string, niveau_plus_1 string"
+                          ).write.mode("overwrite").saveAsTable("fresh_reference")
+    monkeypatch.setattr(build_steps, "PARSE_MANIFEST_TABLE", "fresh_manifest")
+    monkeypatch.setattr(build_steps, "DIVISION_REFERENCE_TABLE", "fresh_reference")
+    monkeypatch.setattr(build_steps, "HIERARCHY_COLS", ["division", "niveau_plus_1"])
+    monkeypatch.setattr(build_steps, "BUSINESS_METADATA_COLS", ["ref", "titre", "division", "niveau_plus_1"])
+    monkeypatch.setattr(build_steps, "MANIFEST_METADATA_COLS", ["ref", "titre"])
+
+    checkpoint = spark.createDataFrame(
+        [(1, "OLD", "old", "x", "y"), (2, "IS", "IS - Old", "x", "y"), (3, "IS", "IS - Old", "x", "y")],
+        "IDDOC long, division string, niveau_plus_1 string, ref string, titre string")
+    out = {r.IDDOC: r for r in build_steps.with_fresh_business_metadata(checkpoint).collect()}
+    assert (out[1].division, out[1].niveau_plus_1) == ("AS", "AS - Cat")
+    assert (out[2].division, out[2].niveau_plus_1) == ("ALL", None)       # in scope, no category
+    assert (out[3].division, out[3].niveau_plus_1) == ("IS", "IS - Old")  # out of scope: its own values
+    spark.sql("DROP TABLE IF EXISTS fresh_manifest")
+    spark.sql("DROP TABLE IF EXISTS fresh_reference")

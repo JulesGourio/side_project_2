@@ -144,7 +144,10 @@ MANUAL_REF_EXCLUSIONS = set()
 
 # --- Category exclusion ---
 # Documents whose principal category, or one of its ancestors, is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by create_proj_parse_manifest.py.
-EXCLUDED_IDCATS = {3798}  # ONE_QMS-5S
+EXCLUDED_IDCATS = {3196}  # ONE_QMS-5S > Obsolete Documents
+
+# Documents under these root categories are indexed whatever their date (DOC_DATE_CUTOFF does not apply to them).
+DATE_EXEMPT_ROOT_IDCATS = {3870}  # 00-LATECOERE PROCESSES_One QMS
 
 # --- Empty + small file auto-exclusion ---
 # Zero-text + small file = blank stub -> skipped permanently; zero-text above this size stays ERROR for review.
