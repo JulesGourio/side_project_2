@@ -1056,6 +1056,12 @@ SELECT division, count(*) AS documents FROM dev_proj.qualibot.parse_manifest GRO
 SELECT count(*) AS documents FROM dev_proj.qualibot.parse_manifest;
 ```
 
+### X. Import Lakebase → Delta désactivé sur DEV (à faire, pousse le 2026-10-22)
+
+Le code est poussé. Chaque cible n'importe que le Lakebase de son propre environnement ; sur DEV le chargement Delta est coupé (`lakebase_import_to_delta: "false"` dans `databricks.yml`), les tables `dev_proj.qualibot` gardent la copie UAT.
+
+À faire par toi, dans Bitbucket : lancer le pipeline custom `deploy-dev-jobs` (branche `claude/sharp-mayer-uqwx8x`). Il déploie les jobs DEV avec le nouveau réglage. Aucun job n'est lancé.
+
 ## Fait
 
 - 2026-10-21 — Division COMMUN et exclusion de ONE_QMS-5S (section H) validées en DEV : `parse_manifest` = 5 242 documents (COMMUN 2 793, AS 1 953, AUTRE 249, sans division 110, IS 95, DIRECTIVE 42). Reste : reconstruire `chunks` et synchroniser l'index DEV pour que le chat utilise ces divisions.
