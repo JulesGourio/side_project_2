@@ -27,6 +27,16 @@ Attendu : `prod_proj` existe ou non. Si l'ancien schéma `prod_landingzone.quali
 
 Identifiant `001C199A8D85FE35` confirmé sur le workspace prod (`databricks cluster-policies get 001C199A8D85FE35 --profile qualibot-prod`) : politique S attendue (`activity-type` = `prod-job`, `cluster-policy` = `S`, `SPOT_WITH_FALLBACK` fixé avec `first_on_demand` minimum 1, `auto:latest-lts`, nœud `.xlarge`). Aucune action à faire.
 
+## 0.2 Remise à zéro avant la bascule (décidée 2026-10-22, à faire avant l'étape 6)
+
+Garde : l'app `qualibot`, le projet Lakebase `qualibot` (+ rôles, schéma), le endpoint Vector Search `qualibot`, les volumes `docling_models` et `doc_compare` (tarball LibreOffice), `prod_landingzone.intraqual`. Supprime : jobs, agents/endpoints liés, index, tables de `prod_proj.qualibot`, schéma `prod_landingzone.qualibot`, données d'usage Lakebase. Scripts : `runbooks/scripts/prod_cleanup/`.
+
+1. Inventaire des jobs et des endpoints (lecture seule), puis suppression des jobs `*Qualibot*` (`databricks jobs delete <id>`).
+2. Notebook `drop_prod_objects` lancé par le SP prod (`b82d3b5a-b633-4738-8dde-68bb2142cb02`) : `dry_run=true` d'abord, puis `false`.
+3. `reset_prod_lakebase.py` : comptage, puis `--apply`.
+4. Valeurs à ajouter dans `utils/deploy/target_env.json` pour `prod` avant le déploiement : `SOFFICE_ARCHIVE_VOLUME_PATH`, puis `CHAT_MLFLOW_EXPERIMENT_ID` une fois `create_chat_experiment_prod` lancé.
+5. Droits de l'étape 5 à passer par un `jobs submit` en SP prod, pas en SQL à la main.
+
 ## 1. Catalogue et schéma `prod_proj` (admin metastore, seulement si absent)
 
 Si `prod_proj` n'existe pas, un admin le crée (SQL, éditeur du workspace prod) :
