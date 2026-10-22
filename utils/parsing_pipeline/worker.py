@@ -74,7 +74,9 @@ _DEFAULTS: Dict[str, Any] = {
     "MAX_CHUNK_CHARS": 4000,
     "CHUNK_OVERLAP_RATIO": 0.12,
     # Worker-config fallback file (must match VOLUME_BASE_PATH/_parsing_config.json)
-    "WORKER_CONFIG_JSON": os.path.join(_DEFAULT_VOLUME_BASE_PATH, "_parsing_config.json"),
+    "WORKER_CONFIG_JSON": (
+        os.path.join(_DEFAULT_VOLUME_BASE_PATH, "_parsing_config.json") if _DEFAULT_VOLUME_BASE_PATH else None
+    ),
 }
 
 CONFIG: Dict[str, Any] = {}
@@ -149,7 +151,7 @@ def ensure_config() -> None:
             if volume_base
             else _DEFAULTS["WORKER_CONFIG_JSON"]
         )
-        if os.path.isfile(vol_cfg):
+        if vol_cfg and os.path.isfile(vol_cfg):
             with open(vol_cfg) as fh:
                 CONFIG.update(json.loads(fh.read()))
     except Exception:
