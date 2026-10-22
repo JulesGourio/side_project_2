@@ -170,4 +170,4 @@ tables.check_dataframe(df_written, "parsing_checkpoint (GPU PDFs)", [
 
 # COMMAND ----------
 
-logger.info(f"[OUTPUT] {df_written.count()} PDF checkpoint row(s) written by run {parse_steps.INGESTION_RUN_ID}")
+logger.info(f"[OUTPUT] PDF checkpoint row(s) written by run {parse_steps.INGESTION_RUN_ID}")

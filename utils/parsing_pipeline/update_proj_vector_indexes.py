@@ -53,7 +53,7 @@ sys.path.insert(0, REPO_DIR)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Project Imports
+# MAGIC ## Config Function Imports
 # MAGIC `tables` lives next to this notebook; Databricks puts the notebook folder on `sys.path`, and neither module needs the `PARSING_*` environment variables, which this task does not receive.
 
 # COMMAND ----------
@@ -87,10 +87,15 @@ dbutils.widgets.removeAll()
 
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
 LOG_LEVEL = dbutils.widgets.get("log_level")
+dbutils.widgets.text("debug", "false")
+DEBUG = dbutils.widgets.get("debug").lower() == "true"
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-dbutils.widgets.text("pipeline_write_env", "dev", "Environment the tables are written to: dev, uat or prod")
+dbutils.widgets.text("pipeline_write_env", "", "Environment the tables are written to: dev, uat or prod")
 PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+
+if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
+    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
 dbutils.widgets.text("indexes", "", "Vector Search indexes (comma-separated)")
 dbutils.widgets.text("wait_minutes", "45", "Max wait for sync completion (minutes, 0 = don't wait)")
 # Only used to auto-create a missing index (this task has no PARSING_* env vars).
@@ -150,6 +155,7 @@ if REFRESH_CHUNKS_FULL:
 
 # MAGIC %md
 # MAGIC # Data Transformations
+# MAGIC #N/A
 
 # COMMAND ----------
 
@@ -199,7 +205,8 @@ if REFRESH_CHUNKS_FULL:
         merge_into(df_src, FULL_TABLE, ["chunk_id"], matched_clause=f"({changed})",
                    do_when_notmatchedbysource=True)
         logger.info(f"Merged {chunk_sources} into {FULL_TABLE}")
-    logger.info(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
+    if DEBUG:
+        logger.info(f"{FULL_TABLE}: {spark.table(FULL_TABLE).count()} chunks")
 
 if not INDEXES:
     logger.info("No index to sync (`indexes` param empty) - nothing more to do.")

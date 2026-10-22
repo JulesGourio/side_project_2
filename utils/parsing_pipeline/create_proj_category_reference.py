@@ -51,7 +51,7 @@ from pyspark.sql import functions as F
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Project Imports
+# MAGIC ## Config Function Imports
 # MAGIC `categories`, `tables` and `config` live next to this notebook.
 
 # COMMAND ----------
@@ -78,6 +78,17 @@ dbutils.widgets.removeAll()
 
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
 LOG_LEVEL = dbutils.widgets.get("log_level")
+dbutils.widgets.text("debug", "false")
+DEBUG = dbutils.widgets.get("debug").lower() == "true"
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config logger
+# MAGIC The logger is created once the widgets are read, so the level they give applies to every line after.
+
+# COMMAND ----------
+
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
 # COMMAND ----------
@@ -108,24 +119,26 @@ source_ages = {} if MAX_SOURCE_STALENESS_HOURS <= 0 else categories.source_ages_
 
 # MAGIC %md
 # MAGIC # Data Preparation
+# MAGIC #N/A
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Data Transformations
 # MAGIC ## Tr. 1 - Build category_reference
-# MAGIC One row per IDDOC with its `division` and `niveau_plus_1..N`, from the document-category and category tables (the archive table only fills the gaps when enabled). `division_source` says where each row was resolved, so the count per source is logged.
+# MAGIC One row per IDDOC with its `division` and `niveau_plus_1..N`, from the document-category and category tables (the archive table only fills the gaps when enabled). `division_source` says where each row was resolved, and, in debug mode, the count per source is shown.
 
 # COMMAND ----------
 
 df_reference = categories.build_division_reference(spark).cache()
 
-(
-    df_reference.groupBy("division_source").count()
-    .withColumnRenamed("count", "n_iddocs")
-    .orderBy(F.desc("n_iddocs"))
-    .show(truncate=False)
-)
+if DEBUG:
+    (
+        df_reference.groupBy("division_source").count()
+        .withColumnRenamed("count", "n_iddocs")
+        .orderBy(F.desc("n_iddocs"))
+        .show(truncate=False)
+    )
 
 # COMMAND ----------
 

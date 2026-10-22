@@ -14,7 +14,9 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 |---|---|
 | `create_proj_category_reference.py` | Task `1_categories`: freshness guard of the Intraqual sources, table `category_reference` |
 | `create_proj_parse_manifest.py` | Task `2_manifest`: scope, pruning of stale content, classification of the volume folders, table `parse_manifest` |
-| `create_proj_chunks.py` | Task `3_parse`: file selection, parsing, retry, passages, writes of the tables |
+| `create_proj_parsing_checkpoint.py` | Task `3_parse`: file selection, parsing of the non-PDF formats and of a few PDFs, checkpoint |
+| `create_proj_parsing_checkpoint_gpu.py` | Task `3b_parse_pdf`: Docling on the PDFs queued by `3_parse` (GPU) |
+| `create_proj_chunks.py` | Task `3c_chunks`: retry, passages, writes of the tables |
 | `create_proj_image_metadata.py` | Task `4_describe_images`: image descriptions by a vision model, image passages |
 | `update_proj_vector_indexes.py` | Task `5_sync_index`: creates missing indexes, triggers their sync, refreshes `chunks_full` |
 | `create_proj_doc_catalog.py` | Task `6_update_kb_metadata`: document catalog and knowledge-base date in Lakebase |
@@ -298,8 +300,9 @@ Quality checks (`tables.py`, Great Expectations through `leap_utils`): a RED fai
 ## Behaviours worth knowing
 
 - **Timeouts.** The job stops after 48 hours. `1_categories` and `6_update_kb_metadata` stop after 1 hour, `2_manifest` after 2,
-  `5_sync_index` after 3 and `4_describe_images` after 12. The parsing tasks (`3_parse`, `3b_parse_pdf`, `3c_chunks`) have
-  no task limit: a full run takes many hours.
+  `5_sync_index` after 3 and `4_describe_images` after 12. `3_parse` stops after 24 hours, `3b_parse_pdf` after 12 and
+  `3c_chunks` after 6. The job has one run slot, so a task that stops late holds the next run back: the limits are set
+  above the longest full parse seen, to be checked against the next full run.
 - **Pruning.** When a delete on a derived table fails, the rows of `parsed_documents` that point to it stay, so the next
   run finds the same IDDOCs and prunes them again; the failure is logged as an error.
 - **Index wait.** `5_sync_index` treats `ONLINE_TRIGGERED_UPDATE` and `ONLINE_UPDATING_PIPELINE_RESOURCES` as a sync in progress

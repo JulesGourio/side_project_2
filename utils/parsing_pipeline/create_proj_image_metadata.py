@@ -58,7 +58,7 @@ from pyspark.sql import functions as F
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Project Imports
+# MAGIC ## Config Function Imports
 # MAGIC `addPyFile` ships the modules to every executor, which the image placement of Tr. 2 needs for `chunking`.
 
 # COMMAND ----------
@@ -89,6 +89,15 @@ dbutils.widgets.removeAll()
 
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
 LOG_LEVEL = dbutils.widgets.get("log_level")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config logger
+# MAGIC The logger is created once the widgets are read, so the level they give applies to every line after.
+
+# COMMAND ----------
+
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
 dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])

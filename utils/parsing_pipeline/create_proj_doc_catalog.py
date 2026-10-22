@@ -53,7 +53,7 @@ sys.path.insert(0, REPO_DIR)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Project Imports
+# MAGIC ## Config Function Imports
 # MAGIC `tables` lives next to this notebook; Databricks puts the notebook folder on `sys.path`.
 
 # COMMAND ----------
@@ -85,8 +85,11 @@ dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "erro
 LOG_LEVEL = dbutils.widgets.get("log_level")
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-dbutils.widgets.text("pipeline_write_env", "dev")
+dbutils.widgets.text("pipeline_write_env", "")
 PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+
+if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
+    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
 dbutils.widgets.text("lakebase_project_id", "qualibot")
 LAKEBASE_PROJECT_ID = dbutils.widgets.get("lakebase_project_id")
 dbutils.widgets.text("lakebase_branch", "production")
@@ -117,6 +120,15 @@ MIN_KEEP_RATIO = 0.5
 
 MANIFEST_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest"
 CHUNKS_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks"
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Pre-condition: parsing tables exist
+# MAGIC Checked before any read, so a missing table fails here by name rather than in a Spark read.
+
+# COMMAND ----------
+
 for table in (MANIFEST_TABLE, CHUNKS_TABLE):
     if not table_exists(table):
         raise RuntimeError(f"{table} does not exist - run the parsing tasks first")
@@ -125,6 +137,7 @@ for table in (MANIFEST_TABLE, CHUNKS_TABLE):
 
 # MAGIC %md
 # MAGIC # Data Preparation
+# MAGIC #N/A
 
 # COMMAND ----------
 
