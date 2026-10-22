@@ -396,15 +396,15 @@ def enforce_parse_budget(num_files) -> None:
     """Stop the task before any GPU parse when more files are pending than `MAX_PARSE_FILES` allows.
 
     A daily run parses tens of files; thousands mean the checkpoint was not recognised (wrong table, copy missing),
-    which costs a day of GPU. A full re-parse on purpose sets the ceiling to 0 (parsing_max_parse_files).
+    which costs a day of GPU. A full re-parse on purpose sets the ceiling to 0 (job parameter max_parse_files).
 
     :param num_files: Number of files pending parse.
     """
     if MAX_PARSE_FILES and num_files > MAX_PARSE_FILES:
         raise RuntimeError(
-            f"[BUDGET] {num_files} files to parse, above parsing_max_parse_files={MAX_PARSE_FILES}. Nothing was parsed. "
+            f"[BUDGET] {num_files} files to parse, above max_parse_files={MAX_PARSE_FILES}. Nothing was parsed. "
             f"Check the [RESUME] line above and that {CHECKPOINT_TABLE} holds the previous parses; to re-parse on "
-            f'purpose, deploy with --var="parsing_max_parse_files=0" (or a higher ceiling) and run again.'
+            f"purpose, run the job with the parameter max_parse_files set to 0 (or a higher ceiling)."
         )
     logger.info(f"[BUDGET] {num_files} file(s) to parse (ceiling {MAX_PARSE_FILES or 'none'})")
 
@@ -422,6 +422,7 @@ def setup_workers(repo_dir) -> int:
 
     for module in cfg.WORKER_MODULES:
         spark.sparkContext.addPyFile(os.path.join(repo_dir, module))
+    spark.conf.set("app.parsing.volume_base_path", cfg.VOLUME_BASE_PATH)
     spark.conf.set("spark.sql.files.maxPartitionBytes", "134217728")
     spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
     spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "1")

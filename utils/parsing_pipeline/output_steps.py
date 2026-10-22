@@ -5,7 +5,6 @@ Driver-side only: nothing here is shipped to the executors.
 """
 
 from databricks.sdk.runtime import spark
-from delta.tables import DeltaTable
 from pyspark.sql import functions as f
 
 from leap_utils.common.logger import get_logger
@@ -19,7 +18,6 @@ from tables import (
 )
 from config import (
     PIPELINE_WRITE_ENV,
-    ARCHIVE_NOTICES_IN_RAG,
     ARCHIVE_NOTICE_CONTENT_TYPE,
     DOC_DATE_CUTOFF,
     RUN_MODE,
@@ -287,49 +285,24 @@ def write_outputs(
 
 
 def write_archive_notices(df_notices) -> None:
-    """Rewrite TARGET_ARCHIVE_NOTICE_TABLE, then reconcile the notices held by the
-    chat's `chunks` table: MERGEd in when ARCHIVE_NOTICES_IN_RAG is on, removed otherwise.
-    MERGE (not delete + append) so Change Data Feed only carries real changes.
+    """Rewrite TARGET_ARCHIVE_NOTICE_TABLE, then remove the archive notices from the chat's `chunks` table:
+    archives feed the impact search only, never the RAG.
 
     :param df_notices: One archive notice per document published before the cutoff.
     """
     write_table(df_notices, TARGET_ARCHIVE_NOTICE_TABLE, "overwrite", overwrite_schema=True)
     df_notices = spark.table(TARGET_ARCHIVE_NOTICE_TABLE)
     logger.info(
-        f"[NOTICES] Wrote {df_notices.count()} archive notice(s) to {TARGET_ARCHIVE_NOTICE_TABLE} "
-        f"(in RAG tables: {ARCHIVE_NOTICES_IN_RAG})"
+        f"[NOTICES] Wrote {df_notices.count()} archive notice(s) to {TARGET_ARCHIVE_NOTICE_TABLE}"
     )
 
     is_notice = f"chunk_content_type = '{ARCHIVE_NOTICE_CONTENT_TYPE}'"
     for tbl in [TARGET_CHUNK_TABLE]:
         if not table_exists(tbl):
             continue
-        if not ARCHIVE_NOTICES_IN_RAG:
-            if spark.table(tbl).filter(is_notice).limit(1).count():
-                spark.sql(f"DELETE FROM {tbl} WHERE {is_notice}")
-                logger.info(f"[NOTICES] Removed archive notices from {tbl}")
-            continue
-        df_src = df_notices
-        # Align on the target's own columns/types (it may hold columns notices don't have).
-        df_src = df_src.select(
-            *[
-                (f.col(field.name) if field.name in df_notices.columns else f.lit(None))
-                .try_cast(field.dataType)
-                .alias(field.name)
-                for field in spark.table(tbl).schema
-            ]
-        )
-        # leap_utils merge_into cannot delete the rows of the target that the source lacks under a condition: this merge stays on DeltaTable.
-        (
-            DeltaTable.forName(spark, tbl)
-            .alias("t")
-            .merge(df_src.alias("s"), "t.chunk_id = s.chunk_id")
-            .whenMatchedUpdateAll(condition="NOT (t.chunk_sha256 <=> s.chunk_sha256)")
-            .whenNotMatchedInsertAll()
-            .whenNotMatchedBySourceDelete(condition=f"t.{is_notice}")
-            .execute()
-        )
-        logger.info(f"[NOTICES] Merged archive notices into {tbl}")
+        if spark.table(tbl).filter(is_notice).limit(1).count():
+            spark.sql(f"DELETE FROM {tbl} WHERE {is_notice}")
+            logger.info(f"[NOTICES] Removed archive notices from {tbl}")
 
 
 def flag_ghost_documents() -> None:

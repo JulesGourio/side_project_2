@@ -9,8 +9,7 @@ import pytest
 PARSING = os.path.join(os.path.dirname(__file__), "..", "utils", "parsing_pipeline")
 sys.path.insert(0, PARSING)
 for key, value in {"PIPELINE_WRITE_ENV": "dev", "REFERENCE_READ_ENV": "ref",
-                   "PARSING_VOLUME_ROOT_PATH": "/Volumes/c/s/root", "PARSING_VOLUME_BASE_PATH": "/Volumes/c/s/img",
-                   "PARSING_OFFLINE_MODELS": "/models"}.items():
+                   "PARSING_IMAGES_VOLUME": "img"}.items():
     os.environ.setdefault(key, value)
 
 pyspark = pytest.importorskip("pyspark")

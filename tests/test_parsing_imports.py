@@ -18,8 +18,7 @@ print(','.join(loaded))
 
 def test_importing_the_driver_helpers_does_not_start_spark():
     defaults = {"PIPELINE_WRITE_ENV": "dev", "REFERENCE_READ_ENV": "ref",
-                "PARSING_VOLUME_ROOT_PATH": "/Volumes/c/s/root", "PARSING_VOLUME_BASE_PATH": "/Volumes/c/s/img",
-                "PARSING_OFFLINE_MODELS": "/models"}
+                "PARSING_IMAGES_VOLUME": "img"}
     env = {**os.environ, **{k: v for k, v in defaults.items() if k not in os.environ},
            "PYTHONPATH": os.pathsep.join([PARSING, os.path.abspath(ROOT)])}
     out = subprocess.run([sys.executable, "-c", CHECK], env=env, capture_output=True, text=True, timeout=120)
@@ -68,8 +67,7 @@ def test_every_import_between_parsing_modules_resolves():
 def test_config_imports_on_an_executor_worker_without_the_job_environments():
     """The Python workers of the executors import config through the worker modules, without the driver's environments."""
     base = {k: v for k, v in os.environ.items() if k not in ("PIPELINE_WRITE_ENV", "PIPELINE_READ_ENV", "REFERENCE_READ_ENV")}
-    base.update({"PARSING_VOLUME_ROOT_PATH": "/Volumes/c/s/root", "PARSING_VOLUME_BASE_PATH": "/Volumes/c/s/img",
-                 "PARSING_OFFLINE_MODELS": "/models", "PYTHONPATH": os.pathsep.join([PARSING, os.path.abspath(ROOT)])})
+    base.update({"PARSING_IMAGES_VOLUME": "img", "PYTHONPATH": os.pathsep.join([PARSING, os.path.abspath(ROOT)])})
     worker = "import sys, types; sys.modules['pyspark.worker'] = types.ModuleType('pyspark.worker'); import config"
     driver = "import config"
     on_worker = subprocess.run([sys.executable, "-c", worker], env=base, capture_output=True, text=True, timeout=60)

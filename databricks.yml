@@ -30,46 +30,15 @@ variables:
   parsing_num_workers:
     description: "Number of GPU workers for the parse cluster"
     default: "2"
-  parsing_run_mode:
-    description: "Parsing run mode: 'incremental' (new docs only), 'full' (rebuild all, parses only the files whose IDDOC and content hash are not in the checkpoint) or 'rechunk' (chunks rebuilt from the checkpoint, no parsing)"
-    default: "incremental"
-  parsing_parse_filter:
-    description: "Comma-separated IDDOC list to restrict a run to (empty = no filter, normal mode). Override via --var for a one-off targeted test run."
-    default: ""
-  parsing_redescribe_all_images:
-    description: "true = 4_describe_images resets every image to PENDING and describes them all again (prompt or model change, tens of thousands of LLM calls). Independent of parsing_run_mode."
-    default: "false"
-  parsing_gpu_min_pdfs:
-    description: "Above this many PDFs left to parse, 3_parse hands them to the GPU task; at or below, they are parsed on CPU and the GPU cluster does not start."
-    default: "30"
   parsing_parse_cpu_node_type:
     description: "Node of the CPU parse cluster (3_parse, 3c_chunks); the S policy allows *.xlarge only. r6id.xlarge = 4 vCPU, 32 GB, for four Docling processes."
     default: "r6id.xlarge"
-  parsing_max_parse_files:
-    description: "Most files one 3_parse run may send to the GPU parse; above it the task stops before parsing. 0 = no ceiling, only for a deliberate full re-parse."
-    default: "500"
   parsing_images_volume:
     description: "Volume of <pipeline_write_env>_proj.qualibot the parsing pipeline extracts images to"
     default: "images"
   reference_read_env:
     description: "Environment of the reference tables the pipeline reads (Intraqual data asset quality_system): prod in every target"
     default: "prod"
-  intraqual_volume_root:
-    description: "Volume path containing the raw Intraqual D_XXXXX document folders"
-    default: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
-  parsing_offline_models_path:
-    description: >-
-      Volume path to the offline Docling/embedding models. Per-environment —
-      each workspace's compute can only reach volumes in its own metastore
-      catalogs, never a different environment's (UAT cannot read dev_proj).
-      DEV's volume has an extra nested docling_models/ subfolder that UAT's
-      copy does not; the two paths are not the same suffix on a different catalog.
-    default: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
-  parsing_max_source_staleness_hours:
-    description: >-
-      1_categories fails the run if an Intraqual data asset table hasn't been written within
-      this window. 0 disables the check (catch-up run on a stalled data asset).
-    default: "36"
   parsing_vector_search_indexes:
     description: >-
       Comma-separated Vector Search index names synced by task 5_sync_index.
@@ -80,12 +49,6 @@ variables:
       Total number of pre-2018 documents allowed to be parsed into chunks_archive,
       most recent first (cumulative, not per run). 0 = none, -1 = all.
     default: "0"
-  parsing_archive_notices_in_rag:
-    description: >-
-      "true" copies the metadata-only notice chunk of each pre-2018 document into
-      chunks (chat index). "false" keeps them in
-      archive_notices only.
-    default: "false"
   parsing_build_chunks_full:
     description: >-
       "true" makes 5_sync_index refresh chunks_full (chunks + chunks_archive) even
@@ -317,13 +280,9 @@ targets:
       lakebase_import_to_delta: "true"
       lakebase_tables_to_skip: "doc_catalog,impact_cache,impact_document_results,impact_feedbacks,impact_requests,llm_requests,summary_cache,users"
       parsing_num_workers: "4"
-      parsing_run_mode: "full"
-      parsing_max_parse_files: "1000"
       # Same prod sources as UAT.
       reference_read_env: "prod"
-      intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
-      parsing_offline_models_path: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
       # Real tables, no suffix. One index serves the chat (division filter) and impact search.
       parsing_vector_search_indexes: "dev_proj.qualibot.chunks_index"
       # PAUSED on purpose — unpause only on explicit decision.
@@ -334,7 +293,6 @@ targets:
       job_cluster_policy_id_S: "001E30C26BD479FE"
       # The pre-2018 archive is not built on DEV.
       parsing_archive_max_docs: "0"
-      parsing_archive_notices_in_rag: "false"
       parsing_build_chunks_full: "false"
 
   uat:
@@ -464,12 +422,9 @@ targets:
       pipeline_write_env: uat
       alerts_warehouse_id: "5890912c31867b77"
       parsing_num_workers: "4"
-      parsing_run_mode: "incremental"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_gold through the shared metastore.
       reference_read_env: "prod"
-      intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
-      parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
       # Real tables, no suffix. Without the parsing state in these tables the daily run reparses the whole
       # corpus on GPU. One index serves the chat and impact search.
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
@@ -599,15 +554,12 @@ targets:
       pipeline_write_env: prod
       alerts_warehouse_id: "03054ddc44b7f902"
       parsing_num_workers: "8"
-      parsing_run_mode: "incremental"
       reference_read_env: "prod"
-      intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       job_activity_tag: "prod-job"
       # The PROD export copies the PROD Lakebase to prod_proj.qualibot twice a day: the chat alerts read those copies.
       lakebase_export_schedule_pause: "UNPAUSED"
       lakebase_import_to_delta: "true"
       job_cluster_policy_id_S: "001C199A8D85FE35"
-      parsing_offline_models_path: "/Volumes/prod_proj/qualibot/docling_models"
       # Same Lakebase database the deployed qualibot-prod app reads and writes (LAKEBASE_DATABASE in app.yaml).
       parsing_lakebase_database: "doccompare"
       # 5_sync_index creates the index on its first run if it does not exist.

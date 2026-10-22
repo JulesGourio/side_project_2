@@ -5,8 +5,8 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils", "parsing_pipeline"))
 
-PARSING_ENV = {"PIPELINE_WRITE_ENV": "dev", "REFERENCE_READ_ENV": "ref", "PARSING_VOLUME_ROOT_PATH": "/Volumes/c/s/root",
-               "PARSING_VOLUME_BASE_PATH": "/Volumes/c/s/img", "PARSING_OFFLINE_MODELS": "/models"}
+PARSING_ENV = {"PIPELINE_WRITE_ENV": "dev", "REFERENCE_READ_ENV": "ref", "PARSING_IMAGES_VOLUME": "img",
+               }
 for _key, _value in PARSING_ENV.items():
     os.environ.setdefault(_key, _value)
 

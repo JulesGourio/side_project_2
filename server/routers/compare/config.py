@@ -26,7 +26,7 @@ DEFAULT_IMPACT_MAX_CANDIDATES = 15
 DEFAULT_IMPACT_MAX_QUERY_CHARS = 20000
 DEFAULT_IMPACT_MAX_TOKENS = 1500
 # Documents published before this date are badged "archive" in the UI.
-DEFAULT_IMPACT_ARCHIVE_BEFORE = '2018-01-01'
+DEFAULT_IMPACT_ARCHIVE_BEFORE = '2016-01-01'
 
 # Single-document summary: independent of the diff, on a cheap model. Images need a vision-capable model, hence the
 # separate endpoint.

@@ -61,6 +61,11 @@ dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference
 dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
 dbutils.widgets.text("debug", "false")
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full or rechunk")
+dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targeted run (empty: no filter)")
+dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
+dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
+dbutils.widgets.text("redescribe_all_images", "false", "true: describe every image again")
 
 PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
 if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
@@ -74,6 +79,11 @@ os.environ["PIPELINE_WRITE_ENV"] = PIPELINE_WRITE_ENV
 os.environ["PIPELINE_READ_ENV"] = dbutils.widgets.get("pipeline_read_env")
 os.environ["REFERENCE_READ_ENV"] = dbutils.widgets.get("reference_read_env")
 os.environ["BYPASS_QUALITY_CHECKS"] = dbutils.widgets.get("bypass_quality_checks")
+os.environ["PARSING_RUN_MODE"] = dbutils.widgets.get("run_mode")
+os.environ["PARSING_PARSE_FILTER"] = dbutils.widgets.get("parse_filter")
+os.environ["PARSING_MAX_PARSE_FILES"] = dbutils.widgets.get("max_parse_files")
+os.environ["PARSING_MAX_SOURCE_STALENESS_HOURS"] = dbutils.widgets.get("max_source_staleness_hours")
+os.environ["PARSING_REDESCRIBE_ALL_IMAGES"] = dbutils.widgets.get("redescribe_all_images")
 
 # COMMAND ----------
 
@@ -120,9 +130,9 @@ for _mod in cfg.WORKER_MODULES:
 
 # MAGIC %md
 # MAGIC ### Job parameters
-# MAGIC `rebuild_image_chunks = true` rewrites the passage of EVERY described image from its stored description (new section, caption, long transcriptions split), without any LLM call. It is on whenever `parsing_redescribe_all_images` is `true`, so new descriptions reach the index.
+# MAGIC `rebuild_image_chunks = true` rewrites the passage of EVERY described image from its stored description (new section, caption, long transcriptions split), without any LLM call. It is on whenever `redescribe_all_images` is `true`, so new descriptions reach the index.
 # MAGIC
-# MAGIC `llm_fallback_endpoints` is a comma-separated list of vision endpoints tried, in order, after the primary `PARSING_LLM_ENDPOINT`. Each endpoint must take image input.
+# MAGIC The vision endpoints are constants of `config.py`: the primary `LLM_MODEL_ENDPOINT`, then `LLM_FALLBACK_ENDPOINTS`, tried in order. Each endpoint must take image input.
 
 # COMMAND ----------
 
@@ -139,10 +149,6 @@ REBUILD_IMAGE_CHUNKS = (
     dbutils.widgets.get("rebuild_image_chunks") == "true" or cfg.REDESCRIBE_ALL_IMAGES
 )
 
-dbutils.widgets.text(
-    "llm_fallback_endpoints", cfg.LLM_FALLBACK_ENDPOINTS, "Fallback endpoints (comma-separated)"
-)
-LLM_FALLBACK_ENDPOINTS = dbutils.widgets.get("llm_fallback_endpoints")
 
 # COMMAND ----------
 
@@ -164,7 +170,7 @@ except Exception:
     WS_TOKEN = _ctx.apiToken().get()
 WS_HOST = spark.conf.get("spark.databricks.workspaceUrl")
 
-LLM_ENDPOINTS = llm_describe.endpoint_chain(cfg.LLM_MODEL_ENDPOINT, LLM_FALLBACK_ENDPOINTS)
+LLM_ENDPOINTS = llm_describe.endpoint_chain(cfg.LLM_MODEL_ENDPOINT, cfg.LLM_FALLBACK_ENDPOINTS)
 logger.info(
     f"RUN_MODE={cfg.RUN_MODE} | Endpoints={' -> '.join(LLM_ENDPOINTS)} | concurrency={cfg.LLM_MAX_CONCURRENT} | "
     f"batch={cfg.LLM_BATCH_SIZE or 'ALL'}"
@@ -177,9 +183,9 @@ logger.info(
 # MAGIC ## Images needing a description
 # MAGIC `incremental` (default, safe to re-run): `PENDING` images, plus `ERROR` rows (described rather than skipped). An image that failed on every endpoint is left `PENDING` with no description, so the next run describes it again, until it reaches the attempt limit (`FAILED_LIMIT`). `DONE`, `SKIPPED`, `SKIPPED_DECORATIVE`, `EXTRACTION_FAILED` and `FAILED_LIMIT` stay terminal.
 # MAGIC
-# MAGIC An image whose content and request (context, division, category, label) are the same as one already described reuses its description from `image_description_cache`, without any call; `parsing_redescribe_all_images=true` does not use the cache.
+# MAGIC An image whose content and request (context, division, category, label) are the same as one already described reuses its description from `image_description_cache`, without any call; `redescribe_all_images=true` does not use the cache.
 # MAGIC
-# MAGIC `parsing_redescribe_all_images=true` resets every status to `PENDING` first and describes everything again (a prompt or
+# MAGIC `redescribe_all_images=true` resets every status to `PENDING` first and describes everything again (a prompt or
 # MAGIC model change). The parsing run mode does not: a `full` parse keeps every description of an image that did not change.
 
 # COMMAND ----------
