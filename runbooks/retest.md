@@ -339,10 +339,10 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] `1_categories` : le journal liste l'âge de `document_revisions_intraqual` et `category_ancestors_intraqual` ; une valeur de `parsing_max_source_staleness_hours` à `1` fait échouer la tâche avec la liste des tables périmées (puis remettre `36`).
 - [ ] Chat : la source d'un document AS et celle d'un document IS gardent leur division et leur catégorie.
 
-## 2026-10-22 — division ALL, images, date One QMS
+## 2026-10-22 — périmètre officiel One QMS, division GROUP, date 2016
 
 - [ ] Section H de `dev.md` (déploiement DEV, `1_categories`, `2_manifest`, répartition des divisions et du manifest).
-- [ ] Chat DEV en division AS puis IS : les réponses incluent des documents de division `ALL` ; sous ALL rien ne change (après `rechunk` et synchronisation de l'index).
+- [ ] Chat DEV en division AS puis IS : les réponses incluent des documents de division `GROUP` ; sous ALL rien ne change (après `rechunk` et synchronisation de l'index).
 
 ## 2026-10-21 — constats restants de la revue indépendante (client, serveur, recherche d'impact)
 

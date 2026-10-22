@@ -514,7 +514,7 @@ def build_manifest(rows_keep) -> DataFrame:
         df_keep.join(df_dates, on="IDDOC", how="left")
         .join(f.broadcast(df_hierarchy), on="IDDOC", how="left")
         .join(f.broadcast(df_iddoc_type), on="IDDOC", how="left")
-        .withColumn("division", f.coalesce(f.col("division"), f.lit("ALL")))
+        .withColumn("division", f.coalesce(f.col("division"), f.lit("GROUP")))
         .withColumn("date_exempt", f.coalesce(f.col("date_exempt"), f.lit(False)))
         .withColumn("langue", f.lit("fr-FR"))
         .withColumn("auteur", f.lit(None).try_cast(StringType()))

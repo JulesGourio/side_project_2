@@ -28,6 +28,8 @@ CATEGORIES = {
     3284: ("IS - Interconnection Systems", None), 3285: ("Cablage", 3284),
     962: ("0 - DIRECTIVE GROUPE LATECOERE", None),
     900: ("Autre racine", None),
+    948: ("AS - PROGRAMS / PROGRAMMES", None), 3209: ("AS - TECHNICAL INSTRUCTIONS", None),
+    3798: ("ONE_QMS-5S", None), 3967: ("To be classified", 3798),
     3870: ("00-LATECOERE PROCESSES_One QMS", None), 5001: ("R30-Develop", 3870), 5002: ("AS", 5001),
     5003: ("IS", 5001), 5004: ("5- Quality manufacturing process", 5001), 5005: ("BUS", 5001),
 }
@@ -65,6 +67,12 @@ def spark():
         (11, "E-2", "Marked IS", "A", 1, 7, False, 5003),
         (12, "E-3", "Unmarked process", "A", 1, 7, False, 5004),
         (14, "E-5", "Marked BUS", "A", 1, 7, False, 5005),
+        (15, "S-1", "Programs", "A", 1, 7, False, 948),
+        (16, "S-2", "Work instruction", "A", 1, 7, False, 3209),
+        (17, "S-3", "To be classified", "A", 1, 7, False, 3967),   # root outside the scope
+        (18, "S-4", "Superseded", "A", 0, 7, False, 5004),
+        (19, "S-5", "Draft", "A", 1, 3, False, 5004),
+        (20, "S-6", "Hidden", "A", 1, 7, True, 5004),
     ]
     rows = [(i, ref, title, idx, status, state, hidden, cat,
              _path(cat) if cat else None, _path(cat)[0] if cat else None)
@@ -102,14 +110,14 @@ def test_division_and_levels_of_each_root(spark):
     assert (ref[3]["niveau_plus_1"], ref[3]["niveau_plus_2"]) == ("IS - Interconnection Systems", "Cablage")
     assert ref[4]["division"] == "DIRECTIVE"
     assert ref[4]["niveau_plus_1"] == "0 - DIRECTIVE GROUPE LATECOERE"
-    assert ref[5]["division"] == "ALL"
+    assert ref[5]["division"] == "GROUP"
     assert ref[5]["niveau_plus_1"] == "Autre racine"
 
 
 def test_one_row_per_revision_with_a_category(spark):
     ref = _reference(spark)
     assert 9 not in ref
-    assert len(ref) == 12
+    assert len(ref) == 18
     assert {r["division_source"] for r in ref.values()} == {"live_hierarchy"}
 
 
@@ -123,14 +131,15 @@ def test_a_leaf_category_named_after_a_division_sets_the_division(spark):
     ref = _reference(spark)
     assert ref[10]["division"] == "AS"
     assert ref[11]["division"] == "IS"
-    assert ref[12]["division"] == "ALL"
-    assert ref[14]["division"] == "ALL"
-    assert ref[5]["division"] == "ALL"
+    assert ref[12]["division"] == "GROUP"
+    assert ref[14]["division"] == "GROUP"
+    assert ref[5]["division"] == "GROUP"
 
 
-def test_the_process_tree_is_exempt_from_the_date_filter(spark, monkeypatch):
+def test_a_date_exempt_root_is_indexed_whatever_the_date(spark, monkeypatch):
     import datetime
 
+    monkeypatch.setattr(categories, "DATE_EXEMPT_ROOT_IDCATS", {3870})
     ref = _reference(spark)
     assert ref[10]["date_exempt"] and ref[12]["date_exempt"] and not ref[1]["date_exempt"]
 
@@ -146,7 +155,7 @@ def test_the_process_tree_is_exempt_from_the_date_filter(spark, monkeypatch):
     spark.sql(f"DROP TABLE IF EXISTS {REFERENCE}")
 
 
-def test_scope_keeps_current_validated_visible_revisions(spark):
+def test_scope_keeps_the_current_validated_visible_revisions_of_the_three_roots(spark):
     scope = {r.IDDOC: (r.ref, r.titre) for r in categories.load_scope_docs(spark).collect()}
-    assert sorted(scope) == [1, 2, 3, 4, 5, 9, 10, 11, 12, 14]
-    assert scope[1] == ("QP-1", "As doc")
+    assert sorted(scope) == [10, 11, 12, 14, 15, 16]
+    assert scope[15] == ("S-1", "Programs")

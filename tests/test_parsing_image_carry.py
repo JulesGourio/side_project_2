@@ -104,7 +104,9 @@ def test_documents_whose_checkpoint_lists_no_image_keep_their_rows(build_steps, 
 
 
 def test_a_document_in_scope_takes_its_category_fields_as_they_are_now(spark, build_steps, monkeypatch):
-    """A document without category in the reference no longer keeps the division it had before: it is shared (ALL)."""
+    """A document without category in the reference no longer keeps the division it had before: it is shared (GROUP)."""
+    spark.sql("DROP TABLE IF EXISTS fresh_manifest")
+    spark.sql("DROP TABLE IF EXISTS fresh_reference")
     spark.createDataFrame([(1, "REF-1", "Titre"), (2, "REF-2", "Titre")],
                           "IDDOC long, ref string, titre string").write.mode("overwrite").saveAsTable("fresh_manifest")
     spark.createDataFrame([(1, "AS", "AS - Cat")], "IDDOC long, division string, niveau_plus_1 string"
@@ -120,7 +122,7 @@ def test_a_document_in_scope_takes_its_category_fields_as_they_are_now(spark, bu
         "IDDOC long, division string, niveau_plus_1 string, ref string, titre string")
     out = {r.IDDOC: r for r in build_steps.with_fresh_business_metadata(checkpoint).collect()}
     assert (out[1].division, out[1].niveau_plus_1) == ("AS", "AS - Cat")
-    assert (out[2].division, out[2].niveau_plus_1) == ("ALL", None)       # in scope, no category
+    assert (out[2].division, out[2].niveau_plus_1) == ("GROUP", None)       # in scope, no category
     assert (out[3].division, out[3].niveau_plus_1) == ("IS", "IS - Old")  # out of scope: its own values
     spark.sql("DROP TABLE IF EXISTS fresh_manifest")
     spark.sql("DROP TABLE IF EXISTS fresh_reference")

@@ -6,7 +6,7 @@
 # MAGIC Builds the `parse_manifest` read by task `3_parse` and reconciles the volume root with the current Qualibot scope.
 # MAGIC The phases are functions of `manifest_steps.py`, applied in this order:
 # MAGIC * **Scope gate** (`revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false` on `document_revisions_intraqual`): only current, validated, visible documents pass.
-# MAGIC * **Category exclusion** (IDCAT 3196 — ONE_QMS-5S > Obsolete Documents): documents whose principal category, or one of its ancestors, belongs to `EXCLUDED_IDCATS` are logged as
+# MAGIC * **Category exclusion** (none today): documents whose principal category belongs to `EXCLUDED_IDCATS` are logged as
 # MAGIC   `SKIPPED_CATEGORY_EXCLUDED` and removed from the parse manifest.
 # MAGIC * **Folder name convention**: only root folders named `D_<IDDOC>` or `Dm_<IDDOC>` are processed (case-insensitive); the IDDOC cannot be extracted from other names.
 # MAGIC * **Orphan detection**: folders whose IDDOC is not in `document_revisions_intraqual` stay on the volume,
@@ -203,20 +203,16 @@ all_rows = manifest_steps.doc_rows()
 
 # MAGIC %md
 # MAGIC ## Main category of each IDDOC
-# MAGIC `document_revisions_intraqual` carries one main category per revision, with its name (French labels only). When an ancestor of that category is in `EXCLUDED_IDCATS`, the excluded ancestor is the id used by the exclusion check.
+# MAGIC `document_revisions_intraqual` carries one main category per revision, with its name (French labels only).
 
 # COMMAND ----------
 
-_EXCLUDED_IDS_SQL = ", ".join(str(i) for i in sorted(EXCLUDED_IDCATS))
 df_main_cat = (
     categories.read_revisions(spark)
     .filter(f.col("category_ID").isNotNull())
     .select(
         f.col("document_revision_ID").alias("IDDOC"),
-        f.coalesce(
-            f.expr(f"get(array_intersect(category_ID_path, array({_EXCLUDED_IDS_SQL})), 0)"),
-            f.col("category_ID"),
-        ).alias("IDCAT"),
+        f.col("category_ID").alias("IDCAT"),
         f.col("category_name").alias("NOMCAT"),
     )
     .dropDuplicates(["IDDOC"])

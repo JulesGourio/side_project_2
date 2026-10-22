@@ -68,7 +68,7 @@ def with_fresh_business_metadata(df_checkpoint) -> DataFrame:
     )
     # A document in scope takes its category fields as they are now, null included: the old values describe a tree that changed.
     in_scope = f.col("_fresh_ref").isNotNull()
-    defaults = {"division": f.lit("ALL")}
+    defaults = {"division": f.lit("GROUP")}
     for c in BUSINESS_METADATA_COLS:
         fresh = f.col(f"_fresh_{c}")
         if c in HIERARCHY_COLS:

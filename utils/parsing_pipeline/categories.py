@@ -79,7 +79,7 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
 
     :param spark: Active Spark session.
     :param max_depth: Number of levels walked; the last output level is ``niveau_plus_{max_depth-1}``.
-    :return: DataFrame of ``IDDOC``, ``division`` (``AS``, ``IS``, ``DIRECTIVE`` or ``ALL``: shared by the divisions),
+    :return: DataFrame of ``IDDOC``, ``division`` (``AS``, ``IS``, ``DIRECTIVE`` or ``GROUP``: shared by the divisions),
         ``niveau_plus_1`` .. ``niveau_plus_{max_depth-1}`` and ``date_exempt`` (true when the document is indexed
         whatever its date).
     """
@@ -95,7 +95,7 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
         # Outside those roots, a leaf category named after the division marks the document.
         .when(f.upper(f.trim(f.col("leaf_nomcat"))) == "AS", f.lit("AS"))
         .when(f.upper(f.trim(f.col("leaf_nomcat"))) == "IS", f.lit("IS"))
-        .otherwise(f.lit("ALL")),
+        .otherwise(f.lit("GROUP")),
     )
 
     df = df.withColumn(
