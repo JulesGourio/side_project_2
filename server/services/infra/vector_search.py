@@ -19,81 +19,24 @@ from typing import Any, AsyncIterator, Dict, List, Tuple
 
 from server.services.compare.llm import CompareLlmUnavailable, LlmFailure, TIRED_MESSAGE, compare_chain, complete_chain
 from server.services.compare.llm import message_text as _message_text
+from server.services.compare.prompts import load_prompt
 from server.services.infra import vs_gate
+from server.services.infra.config import (
+    IMPACT_JUDGE_CONCURRENCY, IMPACT_JUDGE_MAX_TOKENS_CAP, IMPACT_JUDGE_RETRIES, IMPACT_JUDGE_TIMEOUT_S,
+    IMPACT_JUDGE_TRUNCATION_BUDGET_FACTOR, IMPACT_PASSAGE_CHARS, IMPACT_PASSAGES_PER_CANDIDATE, IMPACT_QUERY_CONCURRENCY,
+    IMPACT_QUERY_RETRIES, VECTOR_SEARCH_QUERY_TIMEOUT_S,
+)
 from server.services.infra.doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
 from server.services.infra.streaming import _cost_eur
 
 logger = logging.getLogger(__name__)
 
-_QUERY_TIMEOUT_S = 30.0
-_LLM_TIMEOUT_S = 90.0
 _COLUMNS = ['chunk_id', 'IDDOC', 'REF', 'division', 'url', 'semantic_headers', 'chunk_text']
 # Metadata-only chunk the parsing pipeline writes for an archived document (config.ARCHIVE_NOTICE_MARKER):
 # it holds no content, so it can never be an impacted passage.
 _ARCHIVE_NOTICE_MARKER = 'ARCHIVED DOCUMENT — CONTENT NOT INDEXED'
-# Cost scales with max_candidates * this * _PASSAGE_CHARS; lower-scoring hits past
-# this cap are the least likely to hold the conflict.
-_PASSAGES_PER_CANDIDATE = 10
-_PASSAGE_CHARS = 3000
-# The embedding endpoint behind query_text rejects concurrent requests with
-# "Request id already running" under load — keep the fan-out narrow and retry.
-_QUERY_CONCURRENCY = 3
-_QUERY_RETRIES = 2
-_JUDGE_CONCURRENCY = 6
-_JUDGE_RETRIES = 1
-# A reasoning judge spends max_tokens on hidden reasoning and can return an empty answer (finish_reason 'length') on a
-# candidate with many passages; the retry gets a larger budget, capped.
-_JUDGE_TRUNCATION_BUDGET_FACTOR = 3
-_JUDGE_MAX_TOKENS_CAP = 8000
 
-_JUDGE_SYSTEM_PROMPT = """\
-You are Qualibot, a technical documentation controller. A reference document has just been revised. \
-You are given the numbered list of CHANGES made to it (C1, C2, ...) and ONE candidate document from the \
-knowledge base, retrieved by an approximate similarity search, with several numbered PASSAGES of it.
-
-Decide whether this candidate document is genuinely impacted, i.e. must be updated to stay consistent \
-with the revised reference. "Genuinely impacted" means at least one passage states, prescribes, or \
-relies on something — a value, step, requirement, tool, term, role, or reference — that a change \
-directly contradicts, replaces, or makes outdated. Sharing vocabulary or the general topic is NOT \
-enough (mentioning "torque" does not make a document impacted by a change to a specific torque \
-value, unless a passage states that value or a step depending on it). Judge only from the passages \
-shown; never assume content that isn't there. Read ALL passages: the conflict can sit in any of them.
-
-Passages may start with a heading hint like [heading: "6. DESCRIPTION DETAILLEE"]; the passage text \
-itself often embeds more precise section markers like "[6. DESCRIPTION > 6.1 GENERER DES IDEES]". \
-Prefer the inline markers, fall back to the hint. [no heading] just means none was captured — never \
-echo it as a section name.
-
-confidence:
-- "high": a passage explicitly states the exact fact the change modifies (impacted), or every \
-passage is clearly about something unrelated (not impacted).
-- "medium": same topic and plausibly affected, but the link needs a reasonable inference.
-- "low": thin or ambiguous evidence either way — a human should double-check.
-
-"reason": open with a one-sentence verdict on the whole document, then (if impacted) in 1-2 more \
-sentences what the document currently says versus what the change sets (old vs new values when \
-concrete). If not impacted, say concretely what the document is about and why that is unrelated. \
-No vague filler ("may be affected", "seems related").
-
-"passages": ONLY when impacted, one entry per passage that conflicts with a change — list EVERY such \
-passage, not just the most obvious one. For each:
-- "passage": its number;
-- "changes": the ids of the change(s) it conflicts with;
-- "section": section number and/or title where it sits (from the inline markers or heading hint), \
-"" if none;
-- "quote": the exact conflicting words copied VERBATIM from the passage (a few words to one \
-sentence, no ellipsis, no rewording) — it is highlighted in the UI by exact match;
-- "explanation": one short sentence, what the passage says versus what the change now requires.
-
-Respond with ONLY a JSON object, no markdown fences:
-{"impacted": true|false, "confidence": "high"|"medium"|"low", "reason": "...", \
-"passages": [{"passage": 1, "changes": ["C1"], "section": "...", "quote": "...", "explanation": "..."}]}
-
-Be conservative: no clear conflict in the passages → impacted false and "passages": [].
-
-LANGUAGE: write "reason" and "explanation" in the SAME language as the CHANGES text and the \
-passages. Do not switch to English when they are not in English.\
-"""
+_JUDGE_SYSTEM_PROMPT = load_prompt('impact_judge')
 
 # "[Source: REF | Title: ... | Division: ... | Category: ... | Date de diffusion: YYYY-MM-DD | Image: page 4, ...]\n\n"
 # — the provenance prefix the parsing pipeline embeds in every chunk (utils.source_prefixed_text).
@@ -228,7 +171,7 @@ async def _fetch_chunks(host: str, token: str, index_name: str, query_text: str,
     """
     payload = {'query_text': query_text, 'columns': _COLUMNS, 'num_results': num_results, 'query_type': 'HYBRID'}
     # Through the app-wide gate shared with the chat (vs_gate: bounded concurrency, 429 retries).
-    resp = await vs_gate.post(host, token, index_name, payload, _QUERY_TIMEOUT_S)
+    resp = await vs_gate.post(host, token, index_name, payload, VECTOR_SEARCH_QUERY_TIMEOUT_S)
     resp.raise_for_status()
     data = resp.json()
     columns = [c['name'] for c in data.get('manifest', {}).get('columns', [])]
@@ -251,7 +194,7 @@ async def _fetch_chunks_multi(
     :param num_results: rows asked per query
     :return: ``{'chunks': [...], 'queries_failed': n}``
     """
-    sem = asyncio.Semaphore(_QUERY_CONCURRENCY)
+    sem = asyncio.Semaphore(IMPACT_QUERY_CONCURRENCY)
     failures: List[str] = []
 
     async def _one(q: Dict[str, Any]) -> List[Dict[str, Any]] | None:
@@ -262,7 +205,7 @@ async def _fetch_chunks_multi(
         """
         async with sem:
             last_err: Exception | None = None
-            for attempt in range(_QUERY_RETRIES + 1):
+            for attempt in range(IMPACT_QUERY_RETRIES + 1):
                 try:
                     chunks = await _fetch_chunks(host, token, index_name, q['text'], num_results)
                     for c in chunks:
@@ -270,7 +213,7 @@ async def _fetch_chunks_multi(
                     return chunks
                 except Exception as e:  # noqa: BLE001 — retried, then surfaced via failures
                     last_err = e
-                    if attempt < _QUERY_RETRIES:
+                    if attempt < IMPACT_QUERY_RETRIES:
                         await asyncio.sleep(1.0 * (attempt + 1))
             failures.append(str(last_err))
             logger.warning(f'Vector Search query for {q["change_ids"]} failed after retries: {last_err}')
@@ -320,7 +263,7 @@ def _aggregate_docs(chunks: List[Dict[str, Any]], excluded_canon: frozenset = fr
             doc['doc_date'] = doc['doc_date'] or meta.get('doc_date', '')
             doc['passages'][chunk_id] = {
                 'chunk_id': chunk_id, 'score': score, 'header': _extract_header(rec.get('semantic_headers')),
-                'text': body[:_PASSAGE_CHARS], 'page': meta.get('page', ''), 'change_ids': set(rec.get('_change_ids', [])),
+                'text': body[:IMPACT_PASSAGE_CHARS], 'page': meta.get('page', ''), 'change_ids': set(rec.get('_change_ids', [])),
             }
         else:
             passage['change_ids'].update(rec.get('_change_ids', []))
@@ -340,7 +283,7 @@ def _aggregate_docs(chunks: List[Dict[str, Any]], excluded_canon: frozenset = fr
         merged.append(primary)
 
     for doc in merged:
-        top = sorted(doc['passages'].values(), key=lambda p: p['score'], reverse=True)[:_PASSAGES_PER_CANDIDATE]
+        top = sorted(doc['passages'].values(), key=lambda p: p['score'], reverse=True)[:IMPACT_PASSAGES_PER_CANDIDATE]
         doc['passages'] = sorted(top, key=lambda p: _chunk_order(p['chunk_id']))
         for p in doc['passages']:
             p['change_ids'] = sorted(p['change_ids'], key=_change_num)
@@ -459,19 +402,19 @@ async def _judge(host: str, token: str, endpoint: str, changes_text: str, cand: 
             'output_tokens': usage.get('completion_tokens', 0) or 0,
         }
 
-    res, used = await complete_chain(host, token, compare_chain(endpoint), messages, max_tokens, _LLM_TIMEOUT_S, accept=accept)
+    res, used = await complete_chain(host, token, compare_chain(endpoint), messages, max_tokens, IMPACT_JUDGE_TIMEOUT_S, accept=accept)
     return {**res, 'endpoint': used, 'cost_eur': _cost_eur(used, res['input_tokens'], res['output_tokens'])}
 
 
 def _status(impacted: bool, confidence: str, has_passages: bool = True) -> str:
-    # "Impacted" with no passage the UI can show is a claim nobody can verify.
     """Status of a judged document: ``impacted``, ``check`` or ``not_impacted``.
 
     :param impacted: the verdict of the judge
     :param confidence: ``high``, ``medium`` or ``low``
-    :param has_passages: whether the judge gave a passage that can be shown
+    :param has_passages: whether the judge gave a passage whose quote was found in the candidate text
     :return: the status
     """
+    # An impacted verdict with no quote found in the text is a claim nobody can verify.
     if confidence == 'low' or (impacted and not has_passages):
         return 'check'
     return 'impacted' if impacted else 'not_impacted'
@@ -565,7 +508,7 @@ def _judged_doc(cand: Dict[str, Any], judgment: Dict[str, Any], archive_before: 
     return {
         **_doc_base(cand, archive_before),
         'judged': True,
-        'status': _status(impacted, confidence, bool(passages)),
+        'status': _status(impacted, confidence, any(p['highlight'] for p in passages)),
         'impacted': impacted,
         'confidence': confidence,
         'reason': str(judgment.get('reason') or '').strip(),
@@ -645,7 +588,7 @@ async def run_impact_search(
         'not_judged': [{**_doc_base(c, archive_before), 'judged': False} for c in rest],
     }
 
-    sem = asyncio.Semaphore(_JUDGE_CONCURRENCY)
+    sem = asyncio.Semaphore(IMPACT_JUDGE_CONCURRENCY)
     usage = {'input_tokens': 0, 'output_tokens': 0, 'cost_eur': 0.0}
 
     async def _one(cand: Dict[str, Any]) -> Dict[str, Any]:
@@ -661,7 +604,7 @@ async def run_impact_search(
             last_err: Exception | None = None
             budget = max_tokens
             attempts = 0
-            for attempt in range(_JUDGE_RETRIES + 1):
+            for attempt in range(IMPACT_JUDGE_RETRIES + 1):
                 attempts = attempt + 1
                 try:
                     changes_text = _changes_block(extracted['changes'], max_changes_chars, tuple(cand['change_ids']))
@@ -683,8 +626,8 @@ async def run_impact_search(
                 except Exception as e:  # noqa: BLE001 — one bad candidate must not sink the search
                     last_err = e
                     if isinstance(e, JudgeTruncated):
-                        budget = min(budget * _JUDGE_TRUNCATION_BUDGET_FACTOR, max(_JUDGE_MAX_TOKENS_CAP, max_tokens))
-                    if attempt < _JUDGE_RETRIES:
+                        budget = min(budget * IMPACT_JUDGE_TRUNCATION_BUDGET_FACTOR, max(IMPACT_JUDGE_MAX_TOKENS_CAP, max_tokens))
+                    if attempt < IMPACT_JUDGE_RETRIES:
                         await asyncio.sleep(1.0)
             logger.warning(f'impact judge failed for {cand["ref"]}: {last_err}')
             # error_detail is the cause for the error log only; the router drops it before the browser sees the document.

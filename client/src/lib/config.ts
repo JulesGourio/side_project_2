@@ -58,6 +58,7 @@ export async function getAppConfig(): Promise<AppConfig> {
   }
 }
 
+/** Rejects when the permissions cannot be read, except under the dev server, which may run without `/api/me`. */
 export async function getUserMe(): Promise<UserMe> {
   if (cachedMe) return cachedMe;
   try {
@@ -65,8 +66,9 @@ export async function getUserMe(): Promise<UserMe> {
     if (!res.ok) throw new Error(res.statusText);
     cachedMe = await res.json();
     return cachedMe!;
-  } catch {
-    return { can_compare: true, can_chat: true };
+  } catch (err) {
+    if (import.meta.env.DEV) return { can_compare: true, can_chat: true };
+    throw err;
   }
 }
 

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from server.services.infra.user import get_capabilities, get_current_user
+from server.routers.errors import INTERNAL_ERROR
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -49,7 +50,7 @@ async def get_app_config() -> dict | JSONResponse:
         return safe
     except Exception as e:
         logger.error(f'Error loading app config: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.get('/config/processors', response_model=None)
@@ -60,7 +61,7 @@ async def get_processors_config() -> dict | JSONResponse:
         return data
     except Exception as e:
         logger.error(f'Error loading processors config: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.get('/config/knowledge-base-date', response_model=None)
@@ -97,4 +98,4 @@ async def get_me(request: Request) -> dict | JSONResponse:
         }
     except Exception as e:
         logger.error(f'Error getting user info: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)

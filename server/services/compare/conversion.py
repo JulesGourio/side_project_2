@@ -13,12 +13,15 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from pathlib import Path
 
 import mammoth
 import olefile
 import pymupdf
 
-from server.services.compare.soffice import SofficeConversionError, SofficeUnavailable, convert_docx_to_pdf
+from server.services.compare.soffice import (
+    SofficeConversionError, SofficeUnavailable, _convert_semaphore, _subprocess_env, convert_docx_to_pdf, find_soffice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,7 @@ _ANTIWORD_UTF8 = ['-m', 'UTF-8.txt']
 _ANTIWORD_TIMEOUT_S = 30
 # The raw OLE scan returns every printable run it finds; the cap keeps the text of a noisy file bounded.
 _OLEFILE_MAX_RUNS = 400
+_PPT_CONVERT_TIMEOUT_S = 180
 _SLIDE_DPI = 96
 # A presentation is rendered as one image per slide, embedded in the preview page.
 _MAX_SLIDE_IMAGES = 100
@@ -233,3 +237,39 @@ def pptx_to_slide_images(pptx_bytes: bytes, filename: str = 'presentation.pptx')
         if pdf.page_count > _MAX_SLIDE_IMAGES:
             logger.warning('%s has %d slides, rendering the first %d', filename, pdf.page_count, _MAX_SLIDE_IMAGES)
         return [pdf[i].get_pixmap(dpi=_SLIDE_DPI).tobytes('png') for i in range(min(pdf.page_count, _MAX_SLIDE_IMAGES))]
+
+
+
+def ppt_to_pptx(ppt_bytes: bytes, filename: str = 'presentation.ppt') -> bytes:
+    """Convert a binary .ppt presentation to .pptx with LibreOffice.
+
+    :param ppt_bytes: content of the .ppt file
+    :param filename: file name, for the error messages
+    :return: the .pptx bytes
+    :raises ValueError: when LibreOffice is unavailable or cannot convert the file
+    """
+    try:
+        binary = find_soffice()
+    except SofficeUnavailable as exc:
+        raise ValueError(f'{filename}: the .ppt format is not supported here (no LibreOffice to convert it). '
+                         'Save the file as .pptx and compare again.') from exc
+    with _convert_semaphore, tempfile.TemporaryDirectory(prefix='soffice_ppt_') as tmp:
+        tmp_path = Path(tmp)
+        src = tmp_path / 'input.ppt'
+        src.write_bytes(ppt_bytes)
+        profile = tmp_path / 'profile'
+        profile.mkdir()
+        cmd = [binary, f'-env:UserInstallation={profile.as_uri()}', '--headless', '--norestore', '--nolockcheck',
+               '--nodefault', '--convert-to', 'pptx', '--outdir', str(tmp_path), str(src)]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=_PPT_CONVERT_TIMEOUT_S,
+                                 env=_subprocess_env(binary))
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f'{filename}: the conversion of the .ppt file timed out. '
+                             'Save the file as .pptx and compare again.') from exc
+        result = tmp_path / 'input.pptx'
+        if out.returncode != 0 or not result.is_file():
+            logger.warning('ppt conversion failed for %s: %s', filename, (out.stderr or out.stdout).strip()[:300])
+            raise ValueError(f'{filename}: the .ppt file could not be converted. '
+                             'Save the file as .pptx and compare again.')
+        return result.read_bytes()

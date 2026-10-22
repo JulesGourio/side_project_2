@@ -58,8 +58,8 @@ server/
 
 ### Tests and data
 
-- `tests/`: pytest suite. `golden/` and `fixtures/` hold expected outputs and recorded
-  model answers; `diff_corpus.py` and `prompt_noise.py` are test data and detectors used by the tests.
+- `tests/`: pytest suite. Inputs are built inline in the tests; `golden/` holds the expected bootstrap SQL of the Lakebase
+  schema and `prompt_noise.py` the heuristics of `test_prompt_noise.py`.
 - `third_party/antiword/`: the antiword binary, its character tables and the Debian package used by `start.sh`
   (converts `.doc` files). `third_party/fasttext/lid.176.ftz`: the fastText language-identification model.
 - `leap_utils/`: copy of the shared library (table writes and merges, quality checks).
@@ -74,7 +74,7 @@ server/
 | Comparison: judgement of each candidate document | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `COMPARE_IMPACT_ENDPOINT` |
 | Comparison: single-document summary (text and images) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT` |
 | Chat: answer | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_LLM_ENDPOINT`, `CHAT_LLM_FALLBACK_ENDPOINTS` |
-| Chat: query rewrite | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna`; `databricks-gemini-3-1-flash-lite` on every deployed target | `CHAT_REWRITE_ENDPOINT`, `CHAT_REWRITE_FALLBACK_ENDPOINTS` |
+| Chat: query rewrite | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_REWRITE_ENDPOINT`, `CHAT_REWRITE_FALLBACK_ENDPOINTS` |
 | Chat: translation bridge (disabled) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `CHAT_TRANSLATE_ENDPOINT`, `CHAT_TRANSLATE_FALLBACK_ENDPOINTS` |
 | Parsing: image description (vision) | `databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna` | `PARSING_LLM_ENDPOINT` |
 | Parsing: passage embeddings | `databricks-qwen3-embedding-0-6b` | `embedding_model` of task `5_sync_index` |
@@ -196,7 +196,10 @@ Options: `-SkipBuild` skips the frontend build; `-SyncOnly` uploads the code onl
 rebuilding the frontend and without restarting the app.
 
 `bitbucket-pipelines.yml` runs the same bundle and app deployments in CI. Its custom pipelines
-are triggered by hand. A push to `main` deploys UAT, and PROD is a manual step after it.
+are triggered by hand: nothing deploys on a push. The UAT and PROD pipelines run the test suite first (a failing test stops the
+deployment) and the PROD ones refuse to run from a branch other than `main`. The frontend is not versioned: every deployment
+builds it (`bun run build`) and ships `client/out`. The Databricks CLI version of the pipelines is the one in
+`utils/deploy/databricks_cli_version.txt`; Python dependencies are pinned in `requirements.txt`.
 
 ### Resources per environment
 

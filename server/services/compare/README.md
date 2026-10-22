@@ -13,6 +13,7 @@ Parent: [services](../README.md). The routes that call these services are in [ro
 | `llm.py` | The compare LLM chain. `stream_analysis` streams the diff, `complete_chain` runs the short calls (impact judge, summaries). `compare_chain` is the primary endpoint followed by `COMPARE_LLM_FALLBACK_ENDPOINTS`. Without that setting the fallback is GPT-5.6 Luna, or GPT-6 Luna when the primary is GPT-5.6 Luna. `CompareLlmUnavailable` when every attempt failed |
 | `chunked_analysis.py` | Large diffs: split at section boundaries, one analysis call per part (parts run in parallel, `COMPARE_CHUNK_PARALLELISM`), merged into one stream |
 | `impact_queries.py` | Reads the change list (structured JSON, Markdown report or free text), numbers the changes `C1`, `C2`..., and builds one search query per group of changes (`changes_to_queries`) |
+| `config.py` | Settings of the compare services (the timeout of a summary call) |
 | `summarize.py` | Summary of one document: text through the summary endpoint, or an image through the vision endpoint |
 | `export_helpers.py` | Excel workbooks of a structured diff, the impact action list, the side-by-side image thumbnails, and the parsing of the model's JSON |
 | `conversion.py` | `.doc` text (antiword, then olefile), `.docx` to HTML (mammoth), `.pptx` slides to PNG (LibreOffice) |

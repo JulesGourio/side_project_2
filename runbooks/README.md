@@ -90,3 +90,5 @@ databricks jobs submit --json @runbooks/scripts/dev_copy/copy_uat_to_dev_submit.
 - Nothing here is imported by `server/`, `utils/` or any file of `resources/`. A script that a job or a deployment must run belongs in `utils/`.
 - Notebooks and CLI scripts log with `logger`, never `print`.
 - No job reads the default values (widgets, constants) of these scripts. Check them before running a script again.
+
+- `leap_dbx_repository/`: copie de référence des notebooks et YAML du data asset Intraqual (silver/gold) qui appartiennent au dépôt `leap-dbx-repository`; jamais cités hors de ce dossier.

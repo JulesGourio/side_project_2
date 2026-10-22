@@ -35,35 +35,35 @@ def _require_env(key) -> str:
 # dev, uat or prod: the tables are written to <PIPELINE_WRITE_ENV>_proj.qualibot.<table>.
 PIPELINE_WRITE_ENV = _require_env("PIPELINE_WRITE_ENV")
 
-INTRAQUAL_BRONZE_CATALOG_SCHEMA = _require_env("PARSING_INTRAQUAL_BRONZE")
-_B = INTRAQUAL_BRONZE_CATALOG_SCHEMA
+# catalog.schema of the Intraqual data asset (quality_system): the silver and gold tables built from the bronze ones.
+INTRAQUAL_GOLD_CATALOG_SCHEMA = _require_env("PARSING_INTRAQUAL_GOLD")
+_G = INTRAQUAL_GOLD_CATALOG_SCHEMA
 
-GD_DOC_LATEST         = _env("PARSING_GD_DOC_LATEST",          f"{_B}.gd_doc_latest")
-GD_DOC_CAT_LATEST     = _env("PARSING_GD_DOC_CAT_LATEST",      f"{_B}.gd_doc_cat_latest")
-GD_CAT_LATEST         = _env("PARSING_GD_CAT_LATEST",          f"{_B}.gd_cat_latest")
-GD_TYPDOC_LATEST      = _env("PARSING_GD_TYPDOC_LATEST",       f"{_B}.gd_typdoc_latest")
-GD_UTILISATEUR_LATEST = _env("PARSING_GD_UTILISATEUR_LATEST",  f"{_B}.gd_utilisateur_latest")
+# One row per document revision (document_revision_ID is the IDDOC), with its main category, path and document type.
+INTRAQUAL_REVISIONS_TABLE = _env("PARSING_INTRAQUAL_REVISIONS_TABLE", f"{_G}.document_revisions_intraqual")
+# One row per category and ancestor: gives the name of every category of a path.
+INTRAQUAL_CATEGORY_ANCESTORS_TABLE = _env("PARSING_INTRAQUAL_CATEGORY_ANCESTORS_TABLE",
+                                          f"{_G}.category_ancestors_intraqual")
 
-# The daily job fails the run if this table shows a stale source, instead of silently indexing a partial corpus.
-INGESTION_FRESHNESS_TABLE = _env("PARSING_INGESTION_FRESHNESS_TABLE",
-                                 f"{_B}.intraqual_ingestion_freshness_all")
+# The daily job fails the run if one of these tables was last written longer ago than the threshold, instead of
+# silently indexing a partial corpus.
+INTRAQUAL_REQUIRED_TABLES = [INTRAQUAL_REVISIONS_TABLE, INTRAQUAL_CATEGORY_ANCESTORS_TABLE]
 MAX_SOURCE_STALENESS_HOURS = int(_env("PARSING_MAX_SOURCE_STALENESS_HOURS", "36"))
 
 # --- Qualibot perimeter (scope gate) ---
-# difftotale is not part of the gate: the portal shows documents with difftotale = 0 too.
+# Columns of INTRAQUAL_REVISIONS_TABLE. The full-diffusion flag is not part of the gate: the portal shows those documents too.
 DOC_SCOPE_FILTER = _env(
     "PARSING_DOC_SCOPE_FILTER",
-    "courant = 1 AND etat = 7 AND nonvisible = 0",
+    "revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false",
 )
 
-# --- Optional fallbacks (disabled by default) ---
+# --- Optional fallback (disabled by default) ---
 # Empty = disabled.
-GD_DOC_FALLBACK          = _env("PARSING_GD_DOC_FALLBACK",          "")
 DIVISION_ARCHIVE_TABLE   = _env("PARSING_DIVISION_ARCHIVE_TABLE",   "")
 DIVISION_REFERENCE_TABLE = _env("PARSING_DIVISION_REFERENCE_TABLE",
                                 f"{PIPELINE_WRITE_ENV}_proj.qualibot.category_reference")
 
-# Pre-computed by create_proj_parse_manifest — avoids querying gd_doc/gd_cat/gd_typdoc directly here.
+# Pre-computed by create_proj_parse_manifest — avoids querying the Intraqual tables directly here.
 PARSE_MANIFEST_TABLE  = _env("PARSING_PARSE_MANIFEST_TABLE",
                              f"{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest")
 
@@ -86,6 +86,7 @@ TARGET_CHUNK_TABLE     = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks"
 TARGET_CHUNK_TABLE_ARCHIVE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_archive"
 
 TARGET_IMAGE_METADATA_TABLE  = f"{PIPELINE_WRITE_ENV}_proj.qualibot.image_metadata"
+TARGET_IMAGE_CACHE_TABLE     = f"{PIPELINE_WRITE_ENV}_proj.qualibot.image_description_cache"  # one description per (image, request)
 TARGET_HEALTH_TABLE          = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_run_health"  # one row per pipeline run, for the monitoring dashboard
 TARGET_CHANGE_LOG_TABLE      = f"{PIPELINE_WRITE_ENV}_proj.qualibot.document_change_log"  # one row per NEW/REVISED document, for the monitoring dashboard
 
@@ -142,7 +143,7 @@ ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
 MANUAL_REF_EXCLUSIONS = set()
 
 # --- Category exclusion ---
-# Documents whose principal category (IDCAT) is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by create_proj_parse_manifest.py.
+# Documents whose principal category, or one of its ancestors, is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by create_proj_parse_manifest.py.
 EXCLUDED_IDCATS = {3798}  # ONE_QMS-5S
 
 # --- Empty + small file auto-exclusion ---
@@ -171,6 +172,8 @@ ENABLE_TIMING_TEST = True
 
 # --- Resilience -- batch checkpointing & per-file timeout ---
 CHECKPOINT_BATCH_SIZE   = 100   # Write to Delta every N files (crash-safe)
+CHECKPOINT_SNAPSHOT_KEEP_DAYS = 30  # a full run keeps its checkpoint snapshot this long
+CHECKPOINT_ORPHAN_KEEP_DAYS = 180    # a document out of scope keeps its parse result this long, in case it comes back
 PARSE_TIMEOUT_SECONDS   = 200   # Max seconds per file -- beyond this, mark as TIMEOUT
 MAX_CHUNKS_SPREADSHEET  = 100   # Limit chunks for xlsx/xls/xlsm (None = no limit)
 
@@ -329,9 +332,12 @@ Never answer SKIP: even a page containing only a stamp or a mostly-blank form st
 IMAGES_PENDING = "IMAGES_PENDING"
 EMPTY_TEXT = "EMPTY_TEXT"
 
+# A revision replaced by a newer one of the same REF: its chunks are pruned and it is never parsed again.
+SUPERSEDED_REVISION = "SKIPPED_SUPERSEDED_REVISION"
+
 TERMINAL_STATUSES = (
     "SUCCESS", "SKIPPED_EMPTY_SMALL_FILE", "SKIPPED_REF_MANUAL", "SKIPPED_SOURCE_REMOVED",
-    "SKIPPED_EMPTY_IMAGES", "SKIPPED_EMPTY_FOLDER", IMAGES_PENDING,
+    "SKIPPED_EMPTY_IMAGES", "SKIPPED_EMPTY_FOLDER", SUPERSEDED_REVISION, IMAGES_PENDING,
 )
 
 # Statuses 4_describe_images moves on in the same job run.

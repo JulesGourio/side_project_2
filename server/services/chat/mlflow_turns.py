@@ -7,17 +7,19 @@ their real start offsets, so nothing is measured twice; the user has already got
 ``CHAT_MLFLOW_EXPERIMENT_ID`` or ``CHAT_MLFLOW_EXPERIMENT`` (its workspace path) names an existing experiment; a failure is logged and never reaches the chat.
 Traces upload in MLflow's own background queue, so the call is local and short.
 
-    chat_turn                       the question → the answer shown (tags: division, status, warnings…)
-    ├─ translate_in                 non-French/English question → English (translation bridge)
+    chat_turn                       the question → the answer shown (tags: division, status, warnings…; total tokens)
+    ├─ translate_in                 LLM: non-French/English question → English (messages, tokens)
     ├─ retrieval                    output = the documents handed to the model (n, REF, title, passages, cited)
-    │   ├─ rewrite                  LLM: FR + EN search queries (model, tokens, cost)
+    │   ├─ rewrite                  LLM: messages, FR + EN search queries (model, tokens, cost)
     │   ├─ search                   the Vector Search calls, one span each (query, rerank / raw, results, duration)
     │   ├─ ref_lookup               REFs named in the conversation
     │   └─ passages_sent            RETRIEVER: the passages' full text, prompt order (what the judges read)
-    ├─ answer                       LLM: tokens, cost, first-token delay, truncation, fallback
+    ├─ answer                       LLM: messages, tokens, cost, time to first token, streaming time, tokens/s, truncation, fallback
     │   ├─ queue_wait               wait for a free answer slot
     │   └─ call_1, call_2…          one span per model call (outcome, status, seconds)
-    ├─ translate_back               answer translated back
+    │       ├─ time_to_first_token  call start → first text of the model
+    │       └─ generation           first text → end of the call
+    ├─ translate_back               LLM: answer translated back (messages, tokens)
     └─ persist                      messages saved to Lakebase
 
 The tags carry what the free scorers read (``utils/evaluation/chat_scorers.py``); the registered
@@ -33,7 +35,7 @@ import os
 import re
 import threading
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from server.services.chat import prompts
 from server.services.chat.config import (
@@ -353,6 +355,15 @@ def _write_trace(log: Any, name: str) -> str | None:
                  status=status, end_time_ns=at(start_ms + max(0, duration_ms)))
         return span
 
+    def tokens(step: str) -> Tuple[int | None, int | None]:
+        """Input and output tokens of a model step recorded in ``TurnLog.model_io``.
+
+        :param step: step name, the key of ``model_io``
+        :return: the input and output token counts, None for each one that is unknown
+        """
+        io = log.model_io.get(step) or {}
+        return io.get('input_tokens'), io.get('output_tokens')
+
     issues = [{'code': i['code'], 'stage': i['stage'], 'severity': i['severity'],
                'message': (i['message'] or '')[:MLFLOW_MAX_ISSUE_CHARS], 'at_ms': i['at_ms']} for i in log.issues]
     tags = {
@@ -378,9 +389,12 @@ def _write_trace(log: Any, name: str) -> str | None:
         tags=tags, metadata=metadata, experiment_id=experiment_id, start_time_ns=t0)
 
     if 'translate_in' in timings:
-        child(root, 'translate_in', SpanType.CHAIN, starts.get('translate_in', 0), timings['translate_in'],
-              inputs=data.get('question'), outputs=data.get('question_en'),
-              attributes={'question_lang': data.get('question_lang')})
+        io = log.model_io.get('translate_in') or {}
+        child(root, 'translate_in', SpanType.LLM if io.get('messages') else SpanType.CHAIN, starts.get('translate_in', 0),
+              timings['translate_in'], inputs={'messages': io['messages']} if io.get('messages') else data.get('question'),
+              outputs=data.get('question_en'),
+              attributes={'question_lang': data.get('question_lang'), SpanAttributeKey.MODEL: io.get('endpoint'),
+                          SpanAttributeKey.CHAT_USAGE: _usage(*tokens('translate_in'))})
 
     if 'retrieval' in timings:
         start = starts.get('retrieval', 0)
@@ -395,8 +409,9 @@ def _write_trace(log: Any, name: str) -> str | None:
             rewrite_name = 'translate' if data.get('rewrite_mode') == 'translate' else 'rewrite'
             rewrite_status = 'ERROR' if data.get('rewrite_ok') is False else 'OK'
             rewrite_usage = _usage(data.get('rewrite_input_tokens'), data.get('rewrite_output_tokens'))
+            rewrite_io = log.model_io.get('rewrite') or {}
             child(retrieval, rewrite_name, SpanType.LLM, starts.get('rewrite', start), timings['rewrite'],
-                  inputs={'question': data.get('question')},
+                  inputs={'messages': rewrite_io['messages']} if rewrite_io.get('messages') else {'question': data.get('question')},
                   outputs={'fr': data.get('fr_query'), 'en': data.get('en_query')},
                   status=rewrite_status,
                   attributes={SpanAttributeKey.MODEL: data.get('rewrite_endpoint'),
@@ -433,41 +448,67 @@ def _write_trace(log: Any, name: str) -> str | None:
     if 'generation' in timings or data.get('answer_endpoint') or 'answer' in starts:
         start = starts.get('answer', timings.get('retrieval', 0))
         wait, generation = timings.get('queue_wait') or 0, timings.get('generation') or 0
+        attempts = data.get('llm_attempts') or []
+        answering = next((a for a in attempts if a.get('first_text_s') is not None), None)
+        first_ms = int(answering['first_text_s'] * 1000) if answering else None
+        streaming_ms = max(0, generation - first_ms) if first_ms is not None else None
+        output_tokens = data.get('output_tokens')
+        answer_io = log.model_io.get('answer') or {}
+        answer_inputs = {'question': data.get('question'), 'documents': [d['ref'] for d in _documents_summary(
+            sorted((p for p in log.passages if p.get('kept')), key=lambda p: p.get('prompt_rank') or 0))],
+                         'today': getattr(log, 'today', ''), 'instructions_sha': data.get('instructions_sha'),
+                         'prompts': getattr(log, 'prompts', [])}
         answer = mlflow.start_span_no_context(
             'answer', span_type=SpanType.LLM, parent_span=root,
-            inputs={'question': data.get('question'), 'documents': [d['ref'] for d in _documents_summary(
-                sorted((p for p in log.passages if p.get('kept')), key=lambda p: p.get('prompt_rank') or 0))],
-                    'today': getattr(log, 'today', ''), 'instructions_sha': data.get('instructions_sha'),
-                    'prompts': getattr(log, 'prompts', [])},
+            inputs={'messages': answer_io['messages'], **answer_inputs} if answer_io.get('messages') else answer_inputs,
             start_time_ns=at(start))
         if wait:
             child(answer, 'queue_wait', SpanType.CHAIN, start, wait)
         cursor = start + wait
-        for n, attempt in enumerate(data.get('llm_attempts') or [], 1):
+        for n, attempt in enumerate(attempts, 1):
             seconds = int(float(attempt.get('s') or 0) * 1000)
-            child(answer, 'call', SpanType.LLM, cursor, seconds, label=f'call_{n}',
-                  status='OK' if attempt.get('outcome') in ('ok', 'continued') else 'ERROR',
-                  attributes={SpanAttributeKey.MODEL: attempt.get('endpoint'), 'outcome': attempt.get('outcome'),
-                              'http_status': attempt.get('status')})
+            first = attempt.get('first_text_s')
+            call = mlflow.start_span_no_context(f'call_{n}', span_type=SpanType.LLM, parent_span=answer,
+                                                start_time_ns=at(cursor))
+            if first is not None:
+                call_first_ms = min(seconds, int(first * 1000))
+                child(call, 'time_to_first_token', SpanType.CHAIN, cursor, call_first_ms)
+                child(call, 'generation', SpanType.CHAIN, cursor + call_first_ms, seconds - call_first_ms)
+            call.end(status='OK' if attempt.get('outcome') in ('ok', 'continued') else 'ERROR',
+                     attributes={SpanAttributeKey.MODEL: attempt.get('endpoint'), 'outcome': attempt.get('outcome'),
+                                 'http_status': attempt.get('status'),
+                                 'time_to_first_token_ms': int(first * 1000) if first is not None else None},
+                     end_time_ns=at(cursor + seconds))
             cursor += seconds
         answer.end(outputs=log.answer or None, status='ERROR' if failed else 'OK',
                    end_time_ns=at(start + wait + generation),
                    attributes={SpanAttributeKey.MODEL: data.get('answer_endpoint'),
-                               SpanAttributeKey.CHAT_USAGE: _usage(data.get('input_tokens'), data.get('output_tokens')),
+                               SpanAttributeKey.CHAT_USAGE: _usage(data.get('input_tokens'), output_tokens),
                                'thinking_tokens': data.get('thinking_tokens'), 'cost_eur': data.get('cost_eur'),
+                               'queue_wait_ms': wait, 'time_to_first_token_ms': first_ms, 'streaming_ms': streaming_ms,
+                               'tokens_per_second': round(output_tokens * 1000 / streaming_ms, 1) if streaming_ms and output_tokens else None,
                                'first_token_ms': timings.get('first_token'), 'truncated': data.get('truncated'),
                                'continuations': data.get('continuations'), 'fallback': data.get('llm_fallback'),
                                'answer_chars': data.get('answer_chars'), 'instructions_sha': data.get('instructions_sha')})
 
-    for step in ('translate_back', 'persist'):
-        if step in timings:
-            child(root, step, SpanType.CHAIN, starts.get(step, 0), timings[step])
+    if 'translate_back' in timings:
+        io = log.model_io.get('translate_back') or {}
+        child(root, 'translate_back', SpanType.LLM if io.get('messages') else SpanType.CHAIN, starts.get('translate_back', 0),
+              timings['translate_back'], inputs={'messages': io['messages']} if io.get('messages') else None,
+              outputs=log.answer or None,
+              attributes={SpanAttributeKey.MODEL: io.get('endpoint'), SpanAttributeKey.CHAT_USAGE: _usage(*tokens('translate_back'))})
+    if 'persist' in timings:
+        child(root, 'persist', SpanType.CHAIN, starts.get('persist', 0), timings['persist'])
 
+    parts = [(data.get('rewrite_input_tokens'), data.get('rewrite_output_tokens')), tokens('translate_in'),
+             tokens('translate_back'), (data.get('input_tokens'), data.get('output_tokens'))]
     root.end(outputs=log.answer or None, status='ERROR' if failed else 'OK', end_time_ns=at(total_ms),
              attributes={'timings_ms': json.dumps(timings), 'issues': json.dumps(issues),
                          'cited_refs': json.dumps(data.get('cited_refs') or []), 'sources_count': data.get('sources_count'),
                          'config': json.dumps(data.get('config') or {}, default=str),
-                         'cost_eur_total': round((data.get('cost_eur') or 0) + (data.get('rewrite_cost_eur') or 0), 6)})
+                         'cost_eur_total': round((data.get('cost_eur') or 0) + (data.get('rewrite_cost_eur') or 0), 6),
+                         'input_tokens_total': sum(int(i or 0) for i, _ in parts),
+                         'output_tokens_total': sum(int(o or 0) for _, o in parts)})
     return root.trace_id
 
 

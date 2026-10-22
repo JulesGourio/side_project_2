@@ -4,18 +4,20 @@ import asyncio
 import base64
 import io
 import logging
+import uuid
 import mimetypes
 import os
 from datetime import datetime
 from typing import List
 
 from databricks.sdk import WorkspaceClient
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from server.services.infra.user import require_compare
+from server.services.infra.user import get_user_identity, require_compare
 from server.routers.compare.config import get_config
-from server.routers.compare.common import _is_within_volume, _sanitize_filename, _validate_file
+from server.routers.compare.common import _sanitize_filename, _validate_file, owns_session, user_session_root
+from server.routers.errors import INTERNAL_ERROR
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -23,6 +25,7 @@ router = APIRouter()
 
 @router.post('/compare/save', dependencies=[Depends(require_compare)], response_model=None)
 async def save_to_volume(
+    request: Request,
     old_file: UploadFile = File(...),
     new_file: UploadFile = File(...),
     analysis_text: str = Form(''),
@@ -30,6 +33,7 @@ async def save_to_volume(
 ) -> dict | JSONResponse:
     """Save both documents and the results of a comparison in a new session folder of the volume.
 
+    :param request: the incoming request, for the caller's identity (the session folder is under the caller's own root).
     :param old_file: the previous revision.
     :param new_file: the new revision.
     :param analysis_text: the analysis shown to the user, saved next to the files.
@@ -55,8 +59,12 @@ async def save_to_volume(
     except Exception as e:
         return JSONResponse({'error': str(e)}, status_code=400)
 
-    timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    session_path = f'{volume_path}/{timestamp}'
+    user_id = (await get_user_identity(request))['user_id']
+    if not user_id:
+        return JSONResponse({'error': 'User not identified'}, status_code=401)
+    user_root = user_session_root(volume_path, user_id)
+    # The random suffix keeps two saves of the same second apart; the user root keeps other users out.
+    session_path = f'{user_root}/{datetime.now().strftime("%Y-%m-%d_%H%M%S")}_{uuid.uuid4().hex[:8]}'
     saved_files: List[str] = []
 
     def _save() -> None:
@@ -83,6 +91,7 @@ async def save_to_volume(
             saved_files.append(path)
 
         _ensure_dir(volume_path)
+        _ensure_dir(user_root)
         _ensure_dir(session_path)
         _upload(f'{session_path}/old_{_sanitize_filename(old_file.filename or "old")}', old_bytes)
         _upload(f'{session_path}/new_{_sanitize_filename(new_file.filename or "new")}', new_bytes)
@@ -97,35 +106,31 @@ async def save_to_volume(
         return {'success': True, 'session_path': session_path, 'saved_files': saved_files}
     except Exception as e:
         logger.error(f'Failed to save to volume: {e}')
-        return JSONResponse({'error': str(e), 'saved_files': saved_files}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR, 'saved_files': saved_files}, status_code=500)
 
 
 # --- /compare/load — restore files from a saved volume session ---
 
 @router.get('/compare/load', dependencies=[Depends(require_compare)], response_model=None)
-async def load_session_files(session_path: str, old_filename: str = '', new_filename: str = '') -> dict | JSONResponse:
+async def load_session_files(request: Request, session_path: str, old_filename: str = '',
+                             new_filename: str = '') -> dict | JSONResponse:
     """Retrieve the two documents stored in a volume session back as base64.
 
     Called when the user loads a history entry so the files are restored
     in the UI and can be previewed or re-analyzed.
 
-    :param session_path: folder of the saved session; it must be inside the volume.
+    :param request: the incoming request, for the caller's identity: only the caller's own sessions are readable.
+    :param session_path: folder of the saved session.
     :param old_filename: original name of the previous revision, to find its file.
     :param new_filename: original name of the new revision.
+    :return: the files as base64, or a 403 when the folder is not the caller's.
     """
-
-    # session_path comes from the DB (trusted) — security check only when volume_path is configured
     volume_path = os.getenv('COMPARE_VOLUME_PATH', '').rstrip('/')
-    if volume_path and not volume_path.startswith('TODO'):
-        if not _is_within_volume(session_path, volume_path):
-            logger.warning(f'load: session_path {session_path!r} outside configured volume {volume_path!r}')
-            return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
-    else:
-        # No volume configured — allow only UC Volume paths (starts with /Volumes/)
-        if not _is_within_volume(session_path, '/Volumes'):
-            logger.warning(f'load: session_path {session_path!r} does not look like a UC Volume path')
-            return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
-        logger.info(f'load: COMPARE_VOLUME_PATH not set, attempting load from trusted DB path {session_path!r}')
+    if volume_path.startswith('TODO'):
+        volume_path = ''
+    if not await owns_session(request, volume_path, session_path):
+        logger.warning('load: session_path %r refused (not a session of the caller)', session_path)
+        return JSONResponse({'error': 'Invalid session_path'}, status_code=403)
 
     def _read_file(w, path: str) -> bytes:
         """The content of one file of the volume.
@@ -181,4 +186,4 @@ async def load_session_files(session_path: str, old_filename: str = '', new_file
         return await asyncio.to_thread(_load)
     except Exception as e:
         logger.error(f'Failed to load session files: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)

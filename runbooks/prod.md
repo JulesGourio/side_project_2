@@ -105,7 +105,7 @@ Les droits sur les volumes (`READ VOLUME`, `WRITE VOLUME`) sont à donner sur `p
 databricks bundle deploy -t prod --profile qualibot-prod
 ```
 
-Le job `D_1_Qualibot_Lakebase_Export_To_Volume` (clé `lakebase_export`) est créé sur PROD avec son planning en `PAUSED` : il exporte Lakebase vers `prod_proj.qualibot.staging` puis charge les tables en Delta dans `prod_proj.qualibot`. Un premier lancement à la main (`databricks bundle run lakebase_export -t prod --profile qualibot-prod`) et un accord écrit avant de reprendre le planning.
+Le job `D_1_Qualibot_Lakebase_Export_To_Volume` (clé `lakebase_export`) est créé sur PROD avec son planning en `UNPAUSED` (tel que `databricks.yml` le fixe) : il exporte Lakebase vers `prod_proj.qualibot.staging` puis charge les tables en Delta dans `prod_proj.qualibot`. Un premier lancement à la main (`databricks bundle run lakebase_export -t prod --profile qualibot-prod`) et un accord écrit avant de reprendre le planning.
 
 Après déploiement : jobs MLflow de la cible, puis vérification du chat et de la comparaison sur l'URL de l'app prod, et des logs de l'app (lignes `Capabilities …` ; le SP prod doit avoir SELECT sur `system.access.audit` pour la tâche `sync_user_capabilities` du job Lakebase).
 
@@ -119,6 +119,46 @@ Le scoring `score_chat_traces_prod` reste en pause ; son premier lancement se fa
 ## 7. Anciens objets
 
 Les objets de l'ancien schéma `prod_landingzone.qualibot` ne sont supprimés par aucune étape de ce runbook. Leur suppression, si elle est décidée, se fait à la main, après validation complète de la prod.
+
+## 8. Une fois tout validé : restreindre l'environnement Bitbucket Production à `main`
+
+À faire dans Bitbucket, après la validation complète de DEV et UAT : Repository settings → Deployments → environnement `Production` → autoriser le déploiement depuis la branche `main` seulement. Le pipeline refuse déjà un déploiement PROD hors de `main` ; ce réglage ajoute le même verrou côté Bitbucket.
+
+## 9. Export Lakebase de PROD (dé-pausé dans `databricks.yml`)
+
+Le job `lakebase_export` de PROD tourne maintenant sur son horaire (02:00 et 14:00, Europe/Bruxelles) et charge les tables Lakebase de PROD dans `prod_proj.qualibot` : les alertes du chat lisent ces copies. Rien ne tourne avant le déploiement de PROD (approbation requise). Avant de déployer : le principal de service de PROD doit pouvoir lire le Lakebase de PROD, écrire dans le volume de transit et dans `prod_proj.qualibot` (grants par le pipeline Bitbucket de PROD, pas depuis le SQL du compte personnel).
+
+## 10. Rôle Lakebase de l'application PROD
+
+`prevent_destroy` est posé sur le rôle `app-service-principal` de PROD. Si l'application PROD est recréée avec un nouveau principal de service, le déploiement refuse de remplacer le rôle : mettre alors le nouvel identifiant en dur dans `postgres_role` comme pour UAT.
+
+## Checklist de mise en production (à cocher dans l'ordre, rien n'est déployé tant que tout n'est pas validé)
+
+Établie le 2026-10-22. Les commandes de chaque ligne sont dans les sections 0 à 10 ci-dessus ; les actions ci-dessous sont celles qu'on ne doit pas oublier.
+
+Avant tout
+- [ ] DEV puis UAT validés avec la checklist de test complète (chat, comparaison, aperçus, base de données, parsing).
+- [ ] Le profil CLI `PROD` de Jules répond aujourd'hui avec l'application DEV (même identifiant d'app, chemin `/Workspace/.bundle/qualibot/dev/files`) : corriger son hôte, puis `databricks apps get qualibot --profile PROD` doit montrer l'application PROD.
+- [ ] Pipeline Bitbucket `tests` vert sur `main`.
+
+Configuration à compléter une fois l'application PROD créée
+- [ ] Adresse de l'application PROD dans `utils/deploy/target_env.json` (`CHAT_ALLOWED_ORIGINS`, adresse exacte `https://qualibot-<id>.aws.databricksapps.com`).
+- [ ] Identifiant du principal de service de l'application PROD en dur dans `postgres_role` du rôle Lakebase `app-service-principal` de PROD (comme UAT), `prevent_destroy` reste posé.
+- [ ] `CHAT_MLFLOW_EXPERIMENT_ID` de PROD dans `target_env.json` après la création de l'expérience (section 6).
+- [ ] Droits du principal de service de PROD : volumes `doc_compare`, `images`, `staging`, schéma `prod_proj.qualibot`, index, lecture du Lakebase de PROD, SELECT sur `system.access.audit` (par le pipeline Bitbucket de PROD, jamais en SQL personnel).
+- [ ] Droits de l'application PROD : groupes seulement, aucun nom individuel.
+
+Déploiement (accord explicite de Jules)
+- [ ] Environnement Bitbucket `Production` limité à la branche `main` (section 8) ; jeton `DATABRICKS_TOKEN` de l'environnement en place.
+- [ ] Pipeline `deploy-prod` (tests d'abord), puis les jobs MLflow de la section 6.
+- [ ] Premier démarrage : `/api/health` renvoie `"lakebase": "ready"` ; le schéma Lakebase est créé.
+
+Après le déploiement
+- [ ] Export Lakebase de PROD : un premier lancement à la main, puis les copies Delta de `prod_proj.qualibot` ; alertes du chat : les dé-pauser (`alerts_pause_status`) quand les copies existent.
+- [ ] Parsing de PROD : planning toujours `PAUSED` ; quelques runs manuels en incrémental validés, puis `parsing_schedule_pause: "UNPAUSED"` pour `prod` dans `databricks.yml` (même cadence qu'UAT, 4 h) et un redéploiement des jobs.
+- [ ] Aucune donnée de chat ne vient d'UAT : le pipeline `sync-prod-data` ne copie que les modèles docling.
+- [ ] Parcours de test complet sur l'application PROD (chat, comparaison, aperçus, partage, historique).
+- [ ] OIDC à la place du jeton longue durée (plus tard, avec un administrateur de compte Databricks).
 
 ## Fait
 

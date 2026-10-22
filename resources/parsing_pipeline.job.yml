@@ -20,8 +20,7 @@
 #
 # Every schedule stays PAUSED until explicitly promoted.
 #
-# The job is declared once at the root. The targets at the end only override run_as: the DEV service principal
-# is the default, and the UAT and PROD targets run as their own service principal.
+# The job is declared once at the root; each target at the end names the service principal it runs as (run_as).
 
 resources:
   jobs:
@@ -32,8 +31,8 @@ resources:
 
       # One run at a time: the parse tasks hand over through parsing_run_scope and parsing_gpu_queue, rewritten by each run.
       max_concurrent_runs: 1
+      timeout_seconds: 172800   # 48 h: a run never holds the single concurrent slot longer
 
-      # DEV service principal by default; the targets at the end of this file override it.
       queue:
         enabled: true
       email_notifications:
@@ -41,11 +40,8 @@ resources:
           - ${var.notification_email}
       notification_settings:
         no_alert_for_canceled_runs: true
-      run_as:
-        service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
 
       tags:
-        project: Qualibot
         activity-type: ${var.job_activity_tag}
         ingestion-system: intraqual_ingestion
         job-purpose: project
@@ -79,7 +75,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -108,7 +104,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -148,7 +144,7 @@ resources:
               spark.databricks.delta.autoCompact.enabled: "true"
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -184,7 +180,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
+              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
               PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
@@ -195,7 +191,8 @@ resources:
 
       tasks:
         - task_key: "1_categories"
-          description: "Intraqual source freshness guard + build category_reference"
+          timeout_seconds: 3600
+          description: "Intraqual data asset freshness guard + build category_reference"
           job_cluster_key: meta_cpu_cluster
           notebook_task:
             notebook_path: ../utils/parsing_pipeline/create_proj_category_reference.py
@@ -204,6 +201,7 @@ resources:
             - pypi: {package: "packaging"}
 
         - task_key: "2_manifest"
+          timeout_seconds: 7200
           description: "Qualibot scope -> parsed_documents exclusions + parse_manifest"
           depends_on:
             - task_key: "1_categories"
@@ -219,6 +217,8 @@ resources:
 
         - task_key: "3_parse"
           description: "Scope, selection, resume, parse of the non-PDF formats and of a few PDFs (CPU)"
+          # Bounds a full corpus parse; the job holds its single slot until the task stops.
+          timeout_seconds: 86400
           depends_on:
             - task_key: "2_manifest"
           job_cluster_key: parse_cpu_cluster
@@ -240,6 +240,7 @@ resources:
 
         - task_key: "3b_parse_pdf"
           description: "Docling on the PDFs queued by 3_parse (GPU, only when needed)"
+          timeout_seconds: 43200
           depends_on:
             - task_key: "3b_needs_gpu"
               outcome: "true"
@@ -273,6 +274,7 @@ resources:
         # Joins the two branches: the condition is false (no GPU task) or the GPU task succeeded. A failed GPU task stops here.
         - task_key: "3c_chunks"
           description: "Retry, chunking, quality checks and table writes from the parse checkpoint (CPU)"
+          timeout_seconds: 21600
           depends_on:
             - task_key: "3b_needs_gpu"
               outcome: "false"
@@ -287,6 +289,7 @@ resources:
           # No cluster library: Docling and its parsers are installed by the %pip cells of the notebook (S policy, standard runtime).
 
         - task_key: "4_describe_images"
+          timeout_seconds: 43200
           description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
           depends_on:
             - task_key: "3c_chunks"
@@ -304,6 +307,7 @@ resources:
             - pypi: {package: "packaging"}
 
         - task_key: "5_sync_index"
+          timeout_seconds: 10800
           description: "Sync Vector Search indexes on the rewritten chunk tables (creating one first if it doesn't exist yet)"
           depends_on:
             - task_key: "4_describe_images"
@@ -324,6 +328,7 @@ resources:
             - pypi: {package: "databricks-sdk>=0.118.0"}
 
         - task_key: "6_update_kb_metadata"
+          timeout_seconds: 3600
           description: "Rewrite the document catalog and bump catalog_metadata (Lakebase) now the chain succeeded end to end"
           depends_on:
             - task_key: "5_sync_index"
@@ -348,7 +353,7 @@ resources:
               - databricks-sdk>=0.118.0
               - packaging
 
-      # Daily at night: upstream Intraqual ingestion lands during the day, and 1_categories fails explicitly if sources are older than
+      # Daily at night: the upstream Intraqual data asset lands during the day, and 1_categories fails explicitly if sources are older than
       # `parsing_max_source_staleness_hours`.
       schedule:
         quartz_cron_expression: ${var.parsing_schedule_cron}
@@ -356,6 +361,14 @@ resources:
         pause_status: ${var.parsing_schedule_pause}
 
 targets:
+  dev:
+    resources:
+      jobs:
+        parsing_pipeline:
+          name: "D_1_Qualibot_Parsing_Pipeline"
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
+
   uat:
     resources:
       jobs:

@@ -201,6 +201,7 @@ async def store_llm_request(
     file_type: str = '',
     endpoint_name: str = '',
     messages_json: str = '',
+    user_id: str = '',
 ) -> int | None:
     """Insert an LLM request audit record; returns the inserted id (or None on failure).
 
@@ -209,6 +210,7 @@ async def store_llm_request(
     :param file_type: type of the files
     :param endpoint_name: serving endpoint called
     :param messages_json: messages sent, as JSON
+    :param user_id: user who ran the analysis; empty stores NULL
     :return: the id of the new row, or None on failure
     """
     pool = connection.get_pool()
@@ -219,8 +221,8 @@ async def store_llm_request(
             row = await conn.fetchrow(
                 '''
                 INSERT INTO llm_requests
-                    (old_file_hash, new_file_hash, file_type, endpoint_name, messages_json)
-                VALUES ($1, $2, $3, $4, $5)
+                    (old_file_hash, new_file_hash, file_type, endpoint_name, messages_json, user_id)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING id
                 ''',
                 old_file_hash or None,
@@ -228,6 +230,7 @@ async def store_llm_request(
                 file_type or None,
                 endpoint_name or None,
                 messages_json or None,
+                user_id or None,
             )
         return row['id'] if row else None
     except Exception as e:

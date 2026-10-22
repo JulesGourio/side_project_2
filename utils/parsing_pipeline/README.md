@@ -14,7 +14,9 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 |---|---|
 | `create_proj_category_reference.py` | Task `1_categories`: freshness guard of the Intraqual sources, table `category_reference` |
 | `create_proj_parse_manifest.py` | Task `2_manifest`: scope, pruning of stale content, classification of the volume folders, table `parse_manifest` |
-| `create_proj_chunks.py` | Task `3_parse`: file selection, parsing, retry, passages, writes of the tables |
+| `create_proj_parsing_checkpoint.py` | Task `3_parse`: file selection, parsing of the non-PDF formats and of a few PDFs, checkpoint |
+| `create_proj_parsing_checkpoint_gpu.py` | Task `3b_parse_pdf`: Docling on the PDFs queued by `3_parse` (GPU) |
+| `create_proj_chunks.py` | Task `3c_chunks`: retry, passages, writes of the tables |
 | `create_proj_image_metadata.py` | Task `4_describe_images`: image descriptions by a vision model, image passages |
 | `update_proj_vector_indexes.py` | Task `5_sync_index`: creates missing indexes, triggers their sync, refreshes `chunks_full` |
 | `create_proj_doc_catalog.py` | Task `6_update_kb_metadata`: document catalog and knowledge-base date in Lakebase |
@@ -22,6 +24,8 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 | `categories.py` | Category hierarchy, division of each document, scope gate (Spark) |
 | `manifest_steps.py` | Phases of `2_manifest` |
 | `selection.py` | Choice of the best file per IDDOC (format priorities) |
+| `index_state.py` | Whether a Vector Search index is still syncing, from its detailed state |
+| `retention.py` | Which checkpoint snapshots a full run drops (older than `CHECKPOINT_SNAPSHOT_KEEP_DAYS`, the latest is kept) |
 | `parse_steps.py` | Phases of `3_parse`: run scope, selection, batched parsing, resume, retry, empty folders |
 | `build_steps.py` | Tables of `3_parse` built from the checkpoint: `image_metadata`, `parsed_documents`, passages, archive notices |
 | `output_steps.py` | Writes of `3_parse`: tables, run health, change log, archive notices, ghost-document guard |
@@ -36,8 +40,8 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 
 The modules listed in `config.WORKER_MODULES` (`chunking`, `worker`, `format_parsers`, `image_fallbacks`, `image_utils`, `config`) are shipped to the Spark workers; the others run on the driver.
 
-Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config.py`, `selection.py`
-and the image description in `llm_describe.py`.
+Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config.py`, `selection.py`,
+`index_state.py`, `retention.py` and the image description in `llm_describe.py`.
 
 ## Tasks
 
@@ -60,9 +64,6 @@ through Docling's simple pipeline, and doc / xls / ppt / rtf / odt through forma
 (the IDDOCs of the run, refused by `3c_chunks` if another job run wrote it) and `parsing_gpu_queue`, so the job runs
 one run at a time. The parse notebooks pin an `opencv-python-headless` older than 4.13 (4.13 aborts on the runtime's OpenSSL) in a `%pip` cell: 4.11.0.86 on the CPU tasks (the standard runtime keeps numpy 1; 4.12 needs numpy 2), 4.12.0.88 on the GPU task. It replaces the
 OpenCV build that Docling pulls in, which fails on the GPU runtime and without a display library.
-
-The notebooks that join the `gd_*_latest` views set `spark.databricks.remoteFiltering.blockSelfJoins` to `false`
-(`create_proj_parse_manifest.py`, `categories.build_category_hierarchy`).
 
 ## Settings
 
@@ -88,9 +89,13 @@ listed at the top of `config.py`.
 
 ## Documents and scope
 
-- **Scope gate** (`DOC_SCOPE_FILTER`): `courant = 1 AND etat = 7 AND nonvisible = 0` on `gd_doc_latest`. Only the
+- **Scope gate** (`DOC_SCOPE_FILTER`): `revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false` on
+  `document_revisions_intraqual` (the Intraqual data asset; `courant`, `etat` and `nonvisible` at source). Only the
   current revision of a validated, visible document enters the chain. `difftotale` is not part of the gate: the
   Intraqual portal shows documents with `difftotale = 0`.
+- **Division** (`categories.build_division_reference`): from the root of the main category (`AS -`, `IS -`, PROCESSES,
+  DIRECTIVE); under the process tree (`00-LATECOERE PROCESSES_One QMS`) a leaf category named `AS` or `IS` sets it,
+  and the other documents of that tree are `COMMUN`; any other root gives `AUTRE`.
 - **Manifest**: `2_manifest` keeps the in-scope documents, with their REF, title, revision (`indice`), date,
   category hierarchy, document type and `parse_content` flag. A category listed in `EXCLUDED_IDCATS` and a REF
   listed in `MANUAL_REF_EXCLUSIONS` are excluded.
@@ -102,7 +107,7 @@ listed at the top of `config.py`.
 - **Pruning**: the pruning of derived rows runs on every run. Out-of-scope folders are never deleted from the volume:
   they stay there and are not parsed.
 - **Volume folders** are classified by `2_manifest`: `KEEP` (parsed), `DELETE` (out of scope), `ORPHAN` (IDDOC
-  unknown in `gd_doc`, kept on the volume, not parsed), `SKIP` (name not `D_<IDDOC>` or `Dm_<IDDOC>`), `MANUAL`,
+  unknown in `document_revisions_intraqual`, kept on the volume, not parsed), `SKIP` (name not `D_<IDDOC>` or `Dm_<IDDOC>`), `MANUAL`,
   `CAT_EXCL`.
 - **Archive**: a document published before `PARSING_DOC_DATE_CUTOFF` is parsed like the others, but its passages go
   to `chunks_archive` and never to `chunks`. `parsed_documents.is_filtered_by_date` is `true` for these. A document
@@ -290,3 +295,19 @@ Quality checks (`tables.py`, Great Expectations through `leap_utils`): a RED fai
 
 - [`resources/parsing_pipeline.job.yml`](../../resources/parsing_pipeline.job.yml): the job, its clusters and its parameters.
 - [`utils/README.md`](../README.md): the other scripts of `utils/`.
+
+## Behaviours worth knowing
+
+- **Timeouts.** The job stops after 48 hours. `1_categories` and `6_update_kb_metadata` stop after 1 hour, `2_manifest` after 2,
+  `5_sync_index` after 3 and `4_describe_images` after 12. `3_parse` stops after 24 hours, `3b_parse_pdf` after 12 and
+  `3c_chunks` after 6. The job has one run slot, so a task that stops late holds the next run back: the limits are set
+  above the longest full parse seen, to be checked against the next full run.
+- **Pruning.** When a delete on a derived table fails, the rows of `parsed_documents` that point to it stay, so the next
+  run finds the same IDDOCs and prunes them again; the failure is logged as an error.
+- **Index wait.** `5_sync_index` treats `ONLINE_TRIGGERED_UPDATE` and `ONLINE_UPDATING_PIPELINE_RESOURCES` as a sync in progress
+  and waits for `ONLINE_NO_PENDING_UPDATE`.
+- **Change log.** A repaired run keeps its job run id; `document_change_log` does not repeat the changes it already holds
+  for that run.
+- **Checkpoint snapshots.** A full run drops the `_pipeline_checkpoint_<timestamp>` snapshots older than 30 days, keeping the
+  most recent one.
+- **Image descriptions.** The media type sent to the vision model (PNG, JPEG, GIF or WebP) is read from the file.

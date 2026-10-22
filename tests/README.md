@@ -20,12 +20,11 @@ Parent: [root README](../README.md).
 
 | Folder | Content | Read by |
 |---|---|---|
-| `golden/` | Expected outputs: `diff_cases.json` (text and image diff), `processors.json` (PDF, DOCX, PPTX and XML messages), `pdf_report.json` (words, links and drawings per page), `lakebase_schema.json` (the bootstrap SQL, whitespace-normalised) | `test_diff_golden.py`, `test_processors_golden.py`, `test_pdf_golden.py`, `test_lakebase_schema.py` |
-| `fixtures/` | `chat_raw_answers.json`: raw model answers | `test_chat_engine.py`, which checks the streaming citation parser against the whole-text parse |
+| `golden/` | `lakebase_schema.json`: the bootstrap SQL, whitespace-normalised | `test_lakebase_schema.py` |
 
-No test writes a file of `golden/` or `fixtures/`. A changed expected output is an edit of the JSON in the same change.
-`diff_corpus.py` builds the synthetic documents of the diff golden test, and `prompt_noise.py` holds the heuristics of
-`test_prompt_noise.py`. Neither file is a test.
+No test writes a file of `golden/`. A changed expected output is an edit of the JSON in the same change. The other tests build
+their inputs inline (generated documents, images and answers) and state the expected values in the test itself.
+`prompt_noise.py` holds the heuristics of `test_prompt_noise.py`; it is not a test.
 
 ## File groups
 
@@ -33,7 +32,7 @@ No test writes a file of `golden/` or `fixtures/`. A changed expected output is 
 |---|---|---|
 | Chat | `test_chat.py`, `test_chat_route.py`, `test_chat_engine.py`, `test_chat_llm.py`, `test_citation_markers.py`, `test_doc_catalog.py` | Session and feedback routes, the WebSocket route, the engine (search, citations, stream contract), the LLM fallbacks, and the document catalog |
 | Chat traces | `test_mlflow_turns.py`, `test_chat_scorers.py`, `test_lakebase_logging.py`, `test_register_chat_prompts.py` | The MLflow trace of a turn, the scorers, what is written to Lakebase per turn and per error, and the prompt registration |
-| Compare and impact | `test_compare_audit.py`, `test_compare_documents.py`, `test_compare_llm.py`, `test_compare_pipeline.py`, `test_compare_round3.py`, `test_impact_queries.py`, `test_visual_diff.py`, `test_pdf_report.py` | Extraction and diff, analysis calls, streams, cache, the visual diff, impact-search queries, and the PDF export |
+| Compare and impact | `test_compare_audit.py`, `test_compare_documents.py`, `test_diff_engines.py`, `test_processors.py`, `test_pdf_layout.py`, `test_compare_llm.py`, `test_compare_pipeline.py`, `test_compare_round3.py`, `test_impact_queries.py`, `test_visual_diff.py`, `test_pdf_report.py` | Extraction and diff, analysis calls, streams, cache, the visual diff, impact-search queries, and the PDF export |
 | Parsing pipeline | `test_parsing_chunking.py`, `test_parsing_describe.py`, `test_parsing_doc_status.py`, `test_parsing_quality.py`, `test_parsing_selection.py`, `test_parsing_tables.py` | Passage splitting, image description, document statuses, quality checks, file selection, and the write and cast conventions |
 | Deploy and evaluation | `test_deploy_config.py`, `test_check_vision_endpoints.py` | `target_env.json` and its guards; the vision check of `utils/evaluation/` |
 | Vector Search gate | `test_vs_gate.py` | The concurrency cap and the retries of the Vector Search queries |
