@@ -1079,6 +1079,15 @@ databricks jobs submit --json "@runbooks/scripts/dev_models/move_docling_models_
 
 La première soumission ne déplace rien : vérifier la liste affichée dans les logs de la tâche. La seconde déplace. Ensuite lancer le pipeline Bitbucket `deploy-dev-jobs` (étape « Deploy jobs and notebooks to DEV, app untouched (dev) »).
 
+### K. Lancer le parsing DEV complet avec ses paramètres (2026-10-22, à faire après J et `deploy-dev-jobs`)
+
+Le job n'a plus de variables de bundle pour le mode et le plafond : ce sont des paramètres du run, par défaut `incremental` et `500`. Le parsing complet de DEV demande `full` et un plafond de 1000 :
+
+```powershell
+'{"job_parameters":{"run_mode":"full","max_parse_files":"1000"}}' | Out-File -Encoding ascii -NoNewline run_params.json
+databricks jobs run-now 362367007936662 --profile DEV --json "@run_params.json"
+```
+
 ### X. Import Lakebase DEV → `dev_proj.qualibot` (à faire, poussé le 2026-10-22)
 
 Le réglage DEV est `lakebase_import_to_delta: "true"`. Le job exporte le Lakebase DEV puis charge les tables Delta `dev_proj.qualibot` depuis cet export. Chaque cible ne lit que son propre Lakebase. Quatre copies UAT (`compare_messages`, `compare_feedbacks`, `analysis_cache`, `catalog_metadata`) n'ont pas la propriété `lakebase_export` : l'étape X.1 la leur pose, pour que l'import les remplace.
