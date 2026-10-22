@@ -750,10 +750,12 @@ def run_docling_batches(df_to_parse, parse_count, parse_fn) -> None:
 
     num_batches = (parse_count + CHECKPOINT_BATCH_SIZE - 1) // CHECKPOINT_BATCH_SIZE
     logger.info(f"{num_batches} batch(es) of up to {CHECKPOINT_BATCH_SIZE} files...")
-    # Stable partition key avoids a driver-side collect()+isin() per batch; reuses the already-cached df_to_parse.
+    # The batch of each file is fixed once and the files are materialised: df_to_parse is defined against the checkpoint,
+    # so recomputing it after a batch was written would drop that batch's files and shift the others.
     df_to_parse_batched = df_to_parse.withColumn(
-        "_batch_idx", (f.monotonically_increasing_id() % f.lit(num_batches)).try_cast("int")
-    ).cache()
+        "_batch_idx",
+        (f.row_number().over(Window.orderBy("IDDOC", "source_path")) % f.lit(num_batches)).try_cast("int"),
+    ).localCheckpoint()
 
     for batch_idx in range(num_batches):
         df_batch = df_to_parse_batched.filter(f.col("_batch_idx") == batch_idx).drop("_batch_idx")
