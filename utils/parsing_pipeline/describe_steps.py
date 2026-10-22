@@ -5,6 +5,7 @@ and promotes the documents waiting for their images (EMPTY_TEXT, IMAGES_PENDING)
 Driver side only: the pandas function that places images runs on the executors but is defined inside
 `build_image_chunks`, so it is shipped by value.
 """
+
 import asyncio
 import gc
 import math
@@ -17,11 +18,16 @@ from typing import List
 import nest_asyncio
 from databricks.sdk.runtime import spark
 from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 
 import categories
 from leap_utils.common.logger import get_logger
-from llm_describe import EndpointBreaker, describe_all_images, one_per_image, safe_requests_per_minute
+from llm_describe import (
+    EndpointBreaker,
+    describe_all_images,
+    one_per_image,
+    safe_requests_per_minute,
+)
 from tables import add_missing_columns, merge_into, table_exists, write_table
 from worker import intraqual_ref_url, token_count_udf
 from config import (
@@ -61,10 +67,19 @@ logger = get_logger(__name__)
 IMAGE_TABLE = TARGET_IMAGE_METADATA_TABLE
 _UPDATES_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot._image_updates_temp"
 _PROCESSED_UPDATES_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot._processed_updates_temp"
-_UPDATED_IMAGE_COLUMNS = ("description", "input_tokens", "output_tokens", "status", "described_at", "attempts",
-                          "last_error_kind")
+_UPDATED_IMAGE_COLUMNS = (
+    "description",
+    "input_tokens",
+    "output_tokens",
+    "status",
+    "described_at",
+    "attempts",
+    "last_error_kind",
+)
 
-_PLACED_SCHEMA = "IDDOC long, image_id int, part_no int, anchor_chunk_index int, section string, body string"
+_PLACED_SCHEMA = (
+    "IDDOC long, image_id int, part_no int, anchor_chunk_index int, section string, body string"
+)
 
 
 def reset_images_to_pending() -> None:
@@ -84,11 +99,15 @@ def pending_images() -> DataFrame:
 
     :return: images with a volume path that are still to describe.
     """
-    return spark.table(IMAGE_TABLE).filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES) & F.col("volume_path").isNotNull())
+    return spark.table(IMAGE_TABLE).filter(
+        f.col("status").isin(*IMAGE_RETRIED_STATUSES) & f.col("volume_path").isNotNull()
+    )
 
 
-_UPDATES_SCHEMA = ("IDDOC long, image_id int, description string, input_tokens int, output_tokens int, "
-                   "status string, described_at timestamp, attempts int, last_error_kind string")
+_UPDATES_SCHEMA = (
+    "IDDOC long, image_id int, description string, input_tokens int, output_tokens int, "
+    "status string, described_at timestamp, attempts int, last_error_kind string"
+)
 
 
 def _merge_chunk_results(results) -> None:
@@ -114,18 +133,29 @@ def _merge_chunk_results(results) -> None:
         for r in results
     ]
     # A duplicated (IDDOC, image_id) in the source would fail the merge.
-    df_updates = spark.createDataFrame(update_rows, _UPDATES_SCHEMA).dropDuplicates(["IDDOC", "image_id"])
+    df_updates = spark.createDataFrame(update_rows, _UPDATES_SCHEMA).dropDuplicates(
+        ["IDDOC", "image_id"]
+    )
     add_missing_columns(df_updates, IMAGE_TABLE)
     # merge_into takes whole rows: the image rows of this chunk, with the new values on the updated columns.
     target = spark.table(IMAGE_TABLE)
-    new_values = df_updates.select("IDDOC", "image_id", *[F.col(c).alias(f"_new_{c}") for c in _UPDATED_IMAGE_COLUMNS])
-    write_table(
-        target.join(new_values, on=["IDDOC", "image_id"], how="inner").select(*[
-            F.col(f"_new_{c}").alias(c) if c in _UPDATED_IMAGE_COLUMNS else F.col(c) for c in target.columns
-        ]),
-        _UPDATES_TABLE, "overwrite", overwrite_schema=True,
+    new_values = df_updates.select(
+        "IDDOC", "image_id", *[f.col(c).alias(f"_new_{c}") for c in _UPDATED_IMAGE_COLUMNS]
     )
-    merge_into(spark.table(_UPDATES_TABLE), IMAGE_TABLE, ["IDDOC", "image_id"], do_when_notmatched=False)
+    write_table(
+        target.join(new_values, on=["IDDOC", "image_id"], how="inner").select(
+            *[
+                f.col(f"_new_{c}").alias(c) if c in _UPDATED_IMAGE_COLUMNS else f.col(c)
+                for c in target.columns
+            ]
+        ),
+        _UPDATES_TABLE,
+        "overwrite",
+        overwrite_schema=True,
+    )
+    merge_into(
+        spark.table(_UPDATES_TABLE), IMAGE_TABLE, ["IDDOC", "image_id"], do_when_notmatched=False
+    )
 
 
 _CACHE_SCHEMA = "cache_key string, description string, status string, cached_at timestamp"
@@ -138,7 +168,9 @@ def load_description_cache() -> dict:
     """
     if not table_exists(TARGET_IMAGE_CACHE_TABLE):
         return {}
-    rows = spark.table(TARGET_IMAGE_CACHE_TABLE).select("cache_key", "description", "status").collect()
+    rows = (
+        spark.table(TARGET_IMAGE_CACHE_TABLE).select("cache_key", "description", "status").collect()
+    )
     return {r["cache_key"]: {"description": r["description"], "status": r["status"]} for r in rows}
 
 
@@ -152,7 +184,12 @@ def save_descriptions_to_cache(described, cache: dict) -> int:
     fresh = {}
     for r in described:
         key = r.get("cache_key")
-        if key and not r.get("from_cache") and r["status"] in ("DONE", "SKIPPED") and r.get("description"):
+        if (
+            key
+            and not r.get("from_cache")
+            and r["status"] in ("DONE", "SKIPPED")
+            and r.get("description")
+        ):
             fresh[key] = (key, r["description"], r["status"], datetime.now())
     if not fresh:
         return 0
@@ -168,6 +205,7 @@ def save_descriptions_to_cache(described, cache: dict) -> int:
 @dataclass
 class _RunTally:
     """Counts and tokens of described images: one chunk, or the whole run."""
+
     images: int = 0
     done: int = 0
     skipped: int = 0
@@ -177,7 +215,9 @@ class _RunTally:
     failed_input_tokens: int = 0
     failed_output_tokens: int = 0
     pending_by_kind: Counter = field(default_factory=Counter)
-    limited: List[tuple] = field(default_factory=list)   # (IDDOC, image_id, last_error_kind, attempts) of FAILED_LIMIT
+    limited: List[tuple] = field(
+        default_factory=list
+    )  # (IDDOC, image_id, last_error_kind, attempts) of FAILED_LIMIT
 
     def add(self, described) -> "_RunTally":
         """Count one chunk of described images into this tally.
@@ -188,7 +228,9 @@ class _RunTally:
         for r in described:
             self.images += 1
             if r["status"] == "FAILED_LIMIT":
-                self.limited.append((r["IDDOC"], r["image_id"], r["last_error_kind"] or "unknown", r["attempts"]))
+                self.limited.append(
+                    (r["IDDOC"], r["image_id"], r["last_error_kind"] or "unknown", r["attempts"])
+                )
             self.input_tokens += int(r["input_tokens"])
             self.output_tokens += int(r["output_tokens"])
             self.failed_input_tokens += int(r["failed_input_tokens"])
@@ -222,40 +264,72 @@ def describe_images(rows, ws_host, ws_token, endpoints, use_cache: bool = True) 
         return
     # Without an endpoint every image would stay PENDING with no error: a missing setting must fail the run instead.
     if not endpoints:
-        raise ValueError("No LLM endpoint: set PARSING_LLM_ENDPOINT (primary) or llm_fallback_endpoints.")
+        raise ValueError(
+            "No LLM endpoint: set PARSING_LLM_ENDPOINT (primary) or llm_fallback_endpoints."
+        )
 
     nest_asyncio.apply()
     # Throughput bounded by the endpoint quota; the output tokens per minute are the bottleneck.
     rpm = safe_requests_per_minute(
-        LLM_ITPM_BUDGET, LLM_OTPM_BUDGET, LLM_QPH_BUDGET, LLM_AVG_INPUT_TOKENS, LLM_AVG_OUTPUT_TOKENS,
+        LLM_ITPM_BUDGET,
+        LLM_OTPM_BUDGET,
+        LLM_QPH_BUDGET,
+        LLM_AVG_INPUT_TOKENS,
+        LLM_AVG_OUTPUT_TOKENS,
     )
-    logger.info(f"Rate limiter : {rpm:.0f} req/min  (ITPM<={LLM_ITPM_BUDGET:,}, OTPM<={LLM_OTPM_BUDGET:,}, "
-                f"QPH<={LLM_QPH_BUDGET:,})")
-    logger.info(f"Endpoints  : {' -> '.join(endpoints)}  ({LLM_ROUNDS} passes, waits {list(LLM_ROUND_WAITS_S)} s, "
-                f"an endpoint skipped after {LLM_BREAKER_FAILURES} failed images in a row, "
-                f"an image set aside as FAILED_LIMIT after {IMAGE_MAX_ATTEMPTS} attempts)")
+    logger.info(
+        f"Rate limiter : {rpm:.0f} req/min  (ITPM<={LLM_ITPM_BUDGET:,}, OTPM<={LLM_OTPM_BUDGET:,}, "
+        f"QPH<={LLM_QPH_BUDGET:,})"
+    )
+    logger.info(
+        f"Endpoints  : {' -> '.join(endpoints)}  ({LLM_ROUNDS} passes, waits {list(LLM_ROUND_WAITS_S)} s, "
+        f"an endpoint skipped after {LLM_BREAKER_FAILURES} failed images in a row, "
+        f"an image set aside as FAILED_LIMIT after {IMAGE_MAX_ATTEMPTS} attempts)"
+    )
 
     breaker = EndpointBreaker(LLM_BREAKER_FAILURES)
     cache = load_description_cache()
-    logger.info(f"Description cache: {len(cache)} entries" + ("" if use_cache else " (not used in this run)"))
+    logger.info(
+        f"Description cache: {len(cache)} entries"
+        + ("" if use_cache else " (not used in this run)")
+    )
     n_chunks = math.ceil(len(rows) / LLM_CHECKPOINT_CHUNK_SIZE)
-    logger.info(f"{len(rows)} images -> {n_chunks} chunk(s) of up to {LLM_CHECKPOINT_CHUNK_SIZE}, persisted after each chunk")
+    logger.info(
+        f"{len(rows)} images -> {n_chunks} chunk(s) of up to {LLM_CHECKPOINT_CHUNK_SIZE}, persisted after each chunk"
+    )
 
     total = _RunTally()
     for chunk_idx in range(n_chunks):
-        chunk = rows[chunk_idx * LLM_CHECKPOINT_CHUNK_SIZE:(chunk_idx + 1) * LLM_CHECKPOINT_CHUNK_SIZE]
+        chunk = rows[
+            chunk_idx * LLM_CHECKPOINT_CHUNK_SIZE : (chunk_idx + 1) * LLM_CHECKPOINT_CHUNK_SIZE
+        ]
         started = time.time()
         try:
-            described = asyncio.run(describe_all_images(
-                rows=chunk, ws_host=ws_host, ws_token=ws_token, endpoints=endpoints,
-                max_tokens=LLM_MAX_TOKENS, temperature=LLM_TEMPERATURE, max_retries=LLM_MAX_RETRIES,
-                max_concurrent=LLM_MAX_CONCURRENT, requests_per_minute=rpm, breaker=breaker,
-                rounds=LLM_ROUNDS, round_waits_s=LLM_ROUND_WAITS_S, max_attempts=IMAGE_MAX_ATTEMPTS,
-                cache=cache if use_cache else None,
-            ))
+            described = asyncio.run(
+                describe_all_images(
+                    rows=chunk,
+                    ws_host=ws_host,
+                    ws_token=ws_token,
+                    endpoints=endpoints,
+                    max_tokens=LLM_MAX_TOKENS,
+                    temperature=LLM_TEMPERATURE,
+                    max_retries=LLM_MAX_RETRIES,
+                    max_concurrent=LLM_MAX_CONCURRENT,
+                    requests_per_minute=rpm,
+                    breaker=breaker,
+                    rounds=LLM_ROUNDS,
+                    round_waits_s=LLM_ROUND_WAITS_S,
+                    max_attempts=IMAGE_MAX_ATTEMPTS,
+                    cache=cache if use_cache else None,
+                )
+            )
         except Exception as exc:
-            logger.error(f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} describe_all_images failed: {str(exc)[:300]}")
-            logger.info(f"        {total.done} described / {total.pending} left pending from prior chunks are already persisted.")
+            logger.error(
+                f"[FATAL] chunk {chunk_idx + 1}/{n_chunks} describe_all_images failed: {str(exc)[:300]}"
+            )
+            logger.info(
+                f"        {total.done} described / {total.pending} left pending from prior chunks are already persisted."
+            )
             raise
 
         _merge_chunk_results(described)
@@ -267,12 +341,16 @@ def describe_images(rows, ws_host, ws_token, endpoints, use_cache: bool = True) 
         del described
         gc.collect()
 
-        logger.info(f"[chunk {chunk_idx + 1}/{n_chunks}] {chunk_tally.images} images in {time.time() - started:.1f}s | "
-                    f"done={chunk_tally.done} skipped={chunk_tally.skipped} pending={chunk_tally.pending} | "
-                    f"tokens {chunk_tally.input_tokens:,} in / {chunk_tally.output_tokens:,} out | "
-                    f"{reused} from the cache, {added} added to it")
+        logger.info(
+            f"[chunk {chunk_idx + 1}/{n_chunks}] {chunk_tally.images} images in {time.time() - started:.1f}s | "
+            f"done={chunk_tally.done} skipped={chunk_tally.skipped} pending={chunk_tally.pending} | "
+            f"tokens {chunk_tally.input_tokens:,} in / {chunk_tally.output_tokens:,} out | "
+            f"{reused} from the cache, {added} added to it"
+        )
         if breaker.open_endpoints:
-            logger.warning(f"  Endpoints skipped for the rest of the run: {', '.join(breaker.open_endpoints)}")
+            logger.warning(
+                f"  Endpoints skipped for the rest of the run: {', '.join(breaker.open_endpoints)}"
+            )
 
     spark.sql(f"DROP TABLE IF EXISTS {_UPDATES_TABLE}")
     _log_description_summary(total)
@@ -287,21 +365,31 @@ def _log_description_summary(total) -> None:
     :param total: Tally of the whole run.
     """
     df_images = spark.table(IMAGE_TABLE)
-    remaining = df_images.filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES)).count()
-    limit_total = df_images.filter(F.col("status") == "FAILED_LIMIT").count()
-    logger.info(f"Description summary: {total.done} described, {total.skipped} skipped, {total.pending} left pending, "
-                f"{len(total.limited)} set aside as FAILED_LIMIT over {total.images} images")
+    remaining = df_images.filter(f.col("status").isin(*IMAGE_RETRIED_STATUSES)).count()
+    limit_total = df_images.filter(f.col("status") == "FAILED_LIMIT").count()
+    logger.info(
+        f"Description summary: {total.done} described, {total.skipped} skipped, {total.pending} left pending, "
+        f"{len(total.limited)} set aside as FAILED_LIMIT over {total.images} images"
+    )
     if total.pending_by_kind:
         kinds = ", ".join(f"{kind} {n}" for kind, n in total.pending_by_kind.most_common())
         logger.info(f"  Left pending this run, by last error kind: {kinds}")
     for iddoc, image_id, kind, attempts in total.limited[:_LIMIT_LINES]:
-        logger.warning(f"  FAILED_LIMIT: IDDOC {iddoc} image {image_id}, last error {kind}, {attempts} attempts")
+        logger.warning(
+            f"  FAILED_LIMIT: IDDOC {iddoc} image {image_id}, last error {kind}, {attempts} attempts"
+        )
     if len(total.limited) > _LIMIT_LINES:
-        logger.warning(f"  ... {len(total.limited) - _LIMIT_LINES} more FAILED_LIMIT images this run")
-    logger.info(f"  Tokens: {total.input_tokens:,} in / {total.output_tokens:,} out, of which failed attempts "
-                f"{total.failed_input_tokens:,} in / {total.failed_output_tokens:,} out")
-    logger.info(f"  Remaining to describe: {remaining} (PENDING, described again by the next run); "
-                f"FAILED_LIMIT in the table: {limit_total} (not retried, see image_metadata.last_error_kind)")
+        logger.warning(
+            f"  ... {len(total.limited) - _LIMIT_LINES} more FAILED_LIMIT images this run"
+        )
+    logger.info(
+        f"  Tokens: {total.input_tokens:,} in / {total.output_tokens:,} out, of which failed attempts "
+        f"{total.failed_input_tokens:,} in / {total.failed_output_tokens:,} out"
+    )
+    logger.info(
+        f"  Remaining to describe: {remaining} (PENDING, described again by the next run); "
+        f"FAILED_LIMIT in the table: {limit_total} (not retried, see image_metadata.last_error_kind)"
+    )
     if remaining == 0:
         logger.info("  -> No image left to describe.")
 
@@ -320,37 +408,62 @@ def described_images_without_chunk(rebuild) -> DataFrame:
     df_described = (
         spark.table(IMAGE_TABLE)
         .filter(
-            (F.col("status") == "DONE")
-            & F.col("description").isNotNull()
-            & (F.length(F.trim(F.col("description"))) >= F.lit(MIN_INDEXABLE_DESC_CHARS))
-            & (~F.upper(F.trim(F.col("description"))).startswith("SKIP"))
+            (f.col("status") == "DONE")
+            & f.col("description").isNotNull()
+            & (f.length(f.trim(f.col("description"))) >= f.lit(MIN_INDEXABLE_DESC_CHARS))
+            & (~f.upper(f.trim(f.col("description"))).startswith("SKIP"))
         )
-        .withColumn("chunk_id", F.concat_ws("-", F.col("IDDOC").try_cast("string"), F.lit("IMG"),
-                                            F.lpad(F.col("image_id").try_cast("string"), 3, "0")))
+        .withColumn(
+            "chunk_id",
+            f.concat_ws(
+                "-",
+                f.col("IDDOC").try_cast("string"),
+                f.lit("IMG"),
+                f.lpad(f.col("image_id").try_cast("string"), 3, "0"),
+            ),
+        )
     )
     if rebuild:
         return df_described
     # Image passages of pre-cutoff documents live in chunks_archive, not chunks.
     for table in (TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE):
         if table_exists(table):
-            df_existing = spark.table(table).filter(F.col("chunk_content_type") == "image").select("chunk_id")
-            df_described = df_described.join(F.broadcast(df_existing), on="chunk_id", how="left_anti")
+            df_existing = (
+                spark.table(table).filter(f.col("chunk_content_type") == "image").select("chunk_id")
+            )
+            df_described = df_described.join(
+                f.broadcast(df_existing), on="chunk_id", how="left_anti"
+            )
     return df_described
 
 
 def log_nothing_to_inject() -> None:
     """Explain why no image passage is written: every DONE image already has one."""
     df_images = spark.table(IMAGE_TABLE)
-    n_done = df_images.filter((F.col("status") == "DONE") & F.col("description").isNotNull()).count()
-    n_pending = df_images.filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES)).count()
+    n_done = df_images.filter(
+        (f.col("status") == "DONE") & f.col("description").isNotNull()
+    ).count()
+    n_pending = df_images.filter(f.col("status").isin(*IMAGE_RETRIED_STATUSES)).count()
     logger.info("No new image chunks to inject.")
     logger.info(f"  {n_done} DONE images -> all already have chunks in {TARGET_CHUNK_TABLE}")
     if n_pending > 0:
-        logger.info(f"  {n_pending} images not described -> not injected (described again next run)")
+        logger.info(
+            f"  {n_pending} images not described -> not injected (described again next run)"
+        )
 
 
 # Document fields of the passages of an image, read from the manifest.
-_DOC_META_COLS = ("ref", "titre", "type_document", "indice", "langue", "doc_date", "division", "niveau_plus_1", "niveau_plus_2")
+_DOC_META_COLS = (
+    "ref",
+    "titre",
+    "type_document",
+    "indice",
+    "langue",
+    "doc_date",
+    "division",
+    "niveau_plus_1",
+    "niveau_plus_2",
+)
 
 
 def build_image_chunks(df_described) -> DataFrame:
@@ -364,20 +477,29 @@ def build_image_chunks(df_described) -> DataFrame:
     import pandas as pd
 
     df_text_all = spark.table(TARGET_CHUNK_TABLE).select(
-        "IDDOC", "chunk_index", "chunk_content_type", "chunk_text", "semantic_headers")
+        "IDDOC", "chunk_index", "chunk_content_type", "chunk_text", "semantic_headers"
+    )
     if table_exists(TARGET_CHUNK_TABLE_ARCHIVE):
-        df_text_all = df_text_all.unionByName(spark.table(TARGET_CHUNK_TABLE_ARCHIVE).select(
-            "IDDOC", "chunk_index", "chunk_content_type", "chunk_text", "semantic_headers"))
-    df_text_chunks = df_text_all.filter(F.col("chunk_content_type") != "image")
-    df_max_idx = df_text_chunks.groupBy("IDDOC").agg(F.max("chunk_index").alias("max_text_index"))
+        df_text_all = df_text_all.unionByName(
+            spark.table(TARGET_CHUNK_TABLE_ARCHIVE).select(
+                "IDDOC", "chunk_index", "chunk_content_type", "chunk_text", "semantic_headers"
+            )
+        )
+    df_text_chunks = df_text_all.filter(f.col("chunk_content_type") != "image")
+    df_max_idx = df_text_chunks.groupBy("IDDOC").agg(f.max("chunk_index").alias("max_text_index"))
 
     # The document metadata (title, type, division, categories) is the manifest's: the values stored with each image
     # are those of the parse.
     df_manifest = spark.table(PARSE_MANIFEST_TABLE)
     df_doc_meta = (
-        df_manifest.select("IDDOC", *[F.col(c) if c in df_manifest.columns else F.lit(None).try_cast("string").alias(c)
-                                      for c in _DOC_META_COLS])
-        .withColumn("indice", F.col("indice").try_cast("string"))
+        df_manifest.select(
+            "IDDOC",
+            *[
+                f.col(c) if c in df_manifest.columns else f.lit(None).try_cast("string").alias(c)
+                for c in _DOC_META_COLS
+            ],
+        )
+        .withColumn("indice", f.col("indice").try_cast("string"))
         .dropDuplicates(["IDDOC"])
     )
 
@@ -391,84 +513,148 @@ def build_image_chunks(df_described) -> DataFrame:
         """
         import json
         import chunking
+
         chunks = []
         for t in texts.itertuples():
             try:
                 headers = json.loads(t.semantic_headers or "{}")
             except ValueError:
                 headers = {}
-            chunks.append((int(t.chunk_index), t.chunk_text or "",
-                           {k: v for k, v in headers.items() if k.startswith("Header")}))
+            chunks.append(
+                (
+                    int(t.chunk_index),
+                    t.chunk_text or "",
+                    {k: v for k, v in headers.items() if k.startswith("Header")},
+                )
+            )
         rows = []
         for im in images.itertuples():
             anchor = chunking.image_anchor(im.context_text or "", chunks)
             headers = anchor[1] if anchor else {}
             captions = list(im.captions) if im.captions is not None else []
-            parts = chunking.split_long_description(im.description or "", max_chars=MAX_CHUNK_CHARS,
-                                                    max_tokens=MAX_CHUNK_TOKENS)
+            parts = chunking.split_long_description(
+                im.description or "", max_chars=MAX_CHUNK_CHARS, max_tokens=MAX_CHUNK_TOKENS
+            )
             for n, part in enumerate(parts, 1):
-                rows.append({"IDDOC": int(im.IDDOC), "image_id": int(im.image_id), "part_no": n,
-                             "anchor_chunk_index": anchor[0] if anchor else None,
-                             "section": " > ".join(headers[k] for k in sorted(headers)) or None,
-                             "body": chunking.image_passage_body(part, captions, headers)})
-        return pd.DataFrame(rows, columns=["IDDOC", "image_id", "part_no", "anchor_chunk_index", "section", "body"])
+                rows.append(
+                    {
+                        "IDDOC": int(im.IDDOC),
+                        "image_id": int(im.image_id),
+                        "part_no": n,
+                        "anchor_chunk_index": anchor[0] if anchor else None,
+                        "section": " > ".join(headers[k] for k in sorted(headers)) or None,
+                        "body": chunking.image_passage_body(part, captions, headers),
+                    }
+                )
+        return pd.DataFrame(
+            rows, columns=["IDDOC", "image_id", "part_no", "anchor_chunk_index", "section", "body"]
+        )
 
     df_images = df_described.select("IDDOC", "image_id", "description", "captions", "context_text")
-    df_texts = (
-        df_text_chunks.join(df_images.select("IDDOC").distinct(), on="IDDOC", how="inner")
-        .select("IDDOC", "chunk_index", "chunk_text", "semantic_headers")
+    df_texts = df_text_chunks.join(
+        df_images.select("IDDOC").distinct(), on="IDDOC", how="inner"
+    ).select("IDDOC", "chunk_index", "chunk_text", "semantic_headers")
+    df_placed = (
+        df_images.groupBy("IDDOC")
+        .cogroup(df_texts.groupBy("IDDOC"))
+        .applyInPandas(place_images, _PLACED_SCHEMA)
     )
-    df_placed = df_images.groupBy("IDDOC").cogroup(df_texts.groupBy("IDDOC")).applyInPandas(place_images, _PLACED_SCHEMA)
 
-    image_id = F.concat_ws("-", F.col("IDDOC").try_cast("string"), F.lit("IMG"),
-                           F.lpad(F.col("image_id").try_cast("string"), 3, "0"))
+    image_id = f.concat_ws(
+        "-",
+        f.col("IDDOC").try_cast("string"),
+        f.lit("IMG"),
+        f.lpad(f.col("image_id").try_cast("string"), 3, "0"),
+    )
     return (
         df_described.drop("description", "chunk_id", *_DOC_META_COLS)
         .join(df_placed, on=["IDDOC", "image_id"], how="inner")
         .join(df_max_idx, on="IDDOC", how="left")
-        .join(F.broadcast(df_doc_meta), on="IDDOC", how="left")
-        .withColumn("url", intraqual_ref_url(F.col("ref")))
-        .withColumns({
-            "max_text_index": F.coalesce(F.col("max_text_index"), F.lit(-1)),
-            "chunk_index": F.coalesce(F.col("max_text_index"), F.lit(-1)) + F.lit(1) + F.col("image_id"),
-            # Same prefix as worker.source_prefixed_text(), plus an "Image: page N, label" field.
-            "chunk_text": (F.concat(
-                F.lit("[Source: "), F.coalesce(F.col("ref"), F.lit("")),
-                F.lit(" | Title: "), F.coalesce(F.col("titre"), F.lit("")),
-                F.lit(" | Type: "), F.coalesce(F.col("type_document"), F.lit("")),
-                F.lit(" | Division: "), F.coalesce(F.col("division"), F.lit("")),
-                F.lit(" | Category: "), F.coalesce(F.col("niveau_plus_1"), F.lit("")),
-                F.when(F.col("niveau_plus_2").isNotNull(),
-                       F.concat(F.lit(" > "), F.col("niveau_plus_2"))).otherwise(F.lit("")),
-                F.lit(" | Date de diffusion: "), F.coalesce(F.date_format(F.col("doc_date"), "yyyy-MM-dd"), F.lit("inconnue")),
-                F.lit(" | Image: page "), F.coalesce(F.col("page_no").try_cast("string"), F.lit("?")),
-                F.lit(", "), F.col("label"), F.lit("]\n\n"), F.col("body"),
-            ) if EMBED_SOURCE_PREFIX else F.col("body")),
-        })
-        .withColumns({
-            "chunk_token_count": token_count_udf(F.col("chunk_text")),
-            # Part 1 keeps the plain image id (the anti-join in described_images_without_chunk relies on it);
-            # the next parts of a long transcription get -2, -3...
-            "chunk_id": F.when(F.col("part_no") == 1, image_id)
-                         .otherwise(F.concat_ws("-", image_id, F.col("part_no").try_cast("string"))),
-            "chunk_content_type": F.lit("image"),
-            "semantic_headers": F.to_json(F.struct(
-                F.col("label").alias("image_label"),
-                F.col("page_no").try_cast("string").alias("page"),
-                F.col("volume_path").alias("volume_path"),
-                F.col("area_ratio").try_cast("string").alias("area_ratio"),
-                F.col("captions").try_cast("string").alias("captions"),
-                F.col("section").alias("section"),
-            )),
-            "chunk_sha256": F.sha2(F.col("chunk_text"), 256),
-            "body_sha256": F.sha2(F.col("body"), 256),
-            "indice": F.col("indice").try_cast("string"),
-        })
-        .withColumn("REF", F.coalesce(F.col("ref"), F.col("source_file_name")))
+        .join(f.broadcast(df_doc_meta), on="IDDOC", how="left")
+        .withColumn("url", intraqual_ref_url(f.col("ref")))
+        .withColumns(
+            {
+                "max_text_index": f.coalesce(f.col("max_text_index"), f.lit(-1)),
+                "chunk_index": f.coalesce(f.col("max_text_index"), f.lit(-1))
+                + f.lit(1)
+                + f.col("image_id"),
+                # Same prefix as worker.source_prefixed_text(), plus an "Image: page N, label" field.
+                "chunk_text": (
+                    f.concat(
+                        f.lit("[Source: "),
+                        f.coalesce(f.col("ref"), f.lit("")),
+                        f.lit(" | Title: "),
+                        f.coalesce(f.col("titre"), f.lit("")),
+                        f.lit(" | Type: "),
+                        f.coalesce(f.col("type_document"), f.lit("")),
+                        f.lit(" | Division: "),
+                        f.coalesce(f.col("division"), f.lit("")),
+                        f.lit(" | Category: "),
+                        f.coalesce(f.col("niveau_plus_1"), f.lit("")),
+                        f.when(
+                            f.col("niveau_plus_2").isNotNull(),
+                            f.concat(f.lit(" > "), f.col("niveau_plus_2")),
+                        ).otherwise(f.lit("")),
+                        f.lit(" | Date de diffusion: "),
+                        f.coalesce(
+                            f.date_format(f.col("doc_date"), "yyyy-MM-dd"), f.lit("inconnue")
+                        ),
+                        f.lit(" | Image: page "),
+                        f.coalesce(f.col("page_no").try_cast("string"), f.lit("?")),
+                        f.lit(", "),
+                        f.col("label"),
+                        f.lit("]\n\n"),
+                        f.col("body"),
+                    )
+                    if EMBED_SOURCE_PREFIX
+                    else f.col("body")
+                ),
+            }
+        )
+        .withColumns(
+            {
+                "chunk_token_count": token_count_udf(f.col("chunk_text")),
+                # Part 1 keeps the plain image id (the anti-join in described_images_without_chunk relies on it);
+                # the next parts of a long transcription get -2, -3...
+                "chunk_id": f.when(f.col("part_no") == 1, image_id).otherwise(
+                    f.concat_ws("-", image_id, f.col("part_no").try_cast("string"))
+                ),
+                "chunk_content_type": f.lit("image"),
+                "semantic_headers": f.to_json(
+                    f.struct(
+                        f.col("label").alias("image_label"),
+                        f.col("page_no").try_cast("string").alias("page"),
+                        f.col("volume_path").alias("volume_path"),
+                        f.col("area_ratio").try_cast("string").alias("area_ratio"),
+                        f.col("captions").try_cast("string").alias("captions"),
+                        f.col("section").alias("section"),
+                    )
+                ),
+                "chunk_sha256": f.sha2(f.col("chunk_text"), 256),
+                "body_sha256": f.sha2(f.col("body"), 256),
+                "indice": f.col("indice").try_cast("string"),
+            }
+        )
+        .withColumn("REF", f.coalesce(f.col("ref"), f.col("source_file_name")))
         .select(
-            "IDDOC", "REF", "division", "chunk_id", "chunk_index", "chunk_text", "chunk_token_count",
-            "chunk_content_type", "semantic_headers", "chunk_sha256", "url", "doc_date", "titre", "type_document",
-            "indice", "langue", "body_sha256", "anchor_chunk_index",
+            "IDDOC",
+            "REF",
+            "division",
+            "chunk_id",
+            "chunk_index",
+            "chunk_text",
+            "chunk_token_count",
+            "chunk_content_type",
+            "semantic_headers",
+            "chunk_sha256",
+            "url",
+            "doc_date",
+            "titre",
+            "type_document",
+            "indice",
+            "langue",
+            "body_sha256",
+            "anchor_chunk_index",
         )
     )
 
@@ -497,15 +683,21 @@ def _update_processed_files(df_values, columns) -> None:
     :param columns: Columns of ``parsed_documents`` to set.
     """
     target = spark.table(TARGET_PROCESSED_FILES_TABLE)
-    new_values = df_values.select("IDDOC", *[F.col(c).alias(f"_new_{c}") for c in columns])
+    new_values = df_values.select("IDDOC", *[f.col(c).alias(f"_new_{c}") for c in columns])
     write_table(
-        target.join(new_values, on="IDDOC", how="inner").select(*[
-            F.col(f"_new_{c}").alias(c) if c in columns else F.col(c) for c in target.columns
-        ]),
-        _PROCESSED_UPDATES_TABLE, "overwrite", overwrite_schema=True,
+        target.join(new_values, on="IDDOC", how="inner").select(
+            *[f.col(f"_new_{c}").alias(c) if c in columns else f.col(c) for c in target.columns]
+        ),
+        _PROCESSED_UPDATES_TABLE,
+        "overwrite",
+        overwrite_schema=True,
     )
-    merge_into(spark.table(_PROCESSED_UPDATES_TABLE), TARGET_PROCESSED_FILES_TABLE, ["IDDOC"],
-               do_when_notmatched=False)
+    merge_into(
+        spark.table(_PROCESSED_UPDATES_TABLE),
+        TARGET_PROCESSED_FILES_TABLE,
+        ["IDDOC"],
+        do_when_notmatched=False,
+    )
     spark.sql(f"DROP TABLE IF EXISTS {_PROCESSED_UPDATES_TABLE}")
 
 
@@ -521,18 +713,22 @@ def write_image_chunks(df_image_chunks) -> None:
     df_cached = df_image_chunks.cache()
     df_cached = categories.with_archive_flag(spark, df_cached)
 
-    df_archive = df_cached.filter(F.col("is_archive")).drop("is_archive")
+    df_archive = df_cached.filter(f.col("is_archive")).drop("is_archive")
     n_archive = df_archive.count()
     _merge_chunks(df_archive, TARGET_CHUNK_TABLE_ARCHIVE)
-    logger.info(f"Merged {n_archive} image chunks into {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})")
+    logger.info(
+        f"Merged {n_archive} image chunks into {TARGET_CHUNK_TABLE_ARCHIVE} (pre-{DOC_DATE_CUTOFF})"
+    )
 
-    df_recent = df_cached.filter(~F.col("is_archive")).drop("is_archive")
+    df_recent = df_cached.filter(~f.col("is_archive")).drop("is_archive")
     n_recent = df_recent.count()
     _merge_chunks(df_recent, TARGET_CHUNK_TABLE)
     logger.info(f"Merged {n_recent} image chunks into {TARGET_CHUNK_TABLE}")
     df_cached.unpersist()
 
-    spark.sql(f"ALTER TABLE {TARGET_CHUNK_TABLE} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
+    spark.sql(
+        f"ALTER TABLE {TARGET_CHUNK_TABLE} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
+    )
     logger.info(f"CDF enabled on {TARGET_CHUNK_TABLE}")
 
 
@@ -545,48 +741,77 @@ def promote_documents_awaiting_images() -> None:
     A FAILED_LIMIT image is final for its document: the document is promoted without it, the image stays reported.
     """
     df_waiting = (
-        spark.table(TARGET_PROCESSED_FILES_TABLE).filter(F.col("parse_status").isin(*MOVED_BY_IMAGES)).select("IDDOC")
+        spark.table(TARGET_PROCESSED_FILES_TABLE)
+        .filter(f.col("parse_status").isin(*MOVED_BY_IMAGES))
+        .select("IDDOC")
     )
     n_waiting = df_waiting.count()
     if n_waiting == 0:
         logger.info("No document waiting for its images.")
         return
 
-    df_their_images = spark.table(IMAGE_TABLE).join(F.broadcast(df_waiting), on="IDDOC", how="inner")
-    df_not_ready = df_their_images.filter(F.col("status").isin(*IMAGE_RETRIED_STATUSES)).select("IDDOC").distinct()
-    df_ready = df_waiting.join(F.broadcast(df_not_ready), on="IDDOC", how="left_anti")
+    df_their_images = spark.table(IMAGE_TABLE).join(
+        f.broadcast(df_waiting), on="IDDOC", how="inner"
+    )
+    df_not_ready = (
+        df_their_images.filter(f.col("status").isin(*IMAGE_RETRIED_STATUSES))
+        .select("IDDOC")
+        .distinct()
+    )
+    df_ready = df_waiting.join(f.broadcast(df_not_ready), on="IDDOC", how="left_anti")
     if df_ready.count() == 0:
         logger.info(f"{n_waiting} document(s) waiting for images, none fully described yet.")
         return
 
     df_assembled = (
-        df_their_images.join(F.broadcast(df_ready), on="IDDOC", how="inner")
-        .filter((F.col("status") == "DONE") & F.col("description").isNotNull())
+        df_their_images.join(f.broadcast(df_ready), on="IDDOC", how="inner")
+        .filter((f.col("status") == "DONE") & f.col("description").isNotNull())
         .groupBy("IDDOC")
-        .agg(F.concat_ws("\n\n", F.transform(
-            F.sort_array(F.collect_list(F.struct(
-                F.coalesce(F.col("page_no"), F.lit(0)).alias("page_no"),
-                F.col("description").alias("d"),
-            ))),
-            lambda x: x["d"],
-        )).alias("document_text"))
-        .withColumns({
-            "document_char_count": F.length("document_text"),
-            "document_token_count": F.greatest(
-                F.lit(1), F.floor(F.length("document_text") / F.lit(CHARS_PER_TOKEN)).try_cast("int")),
-        })
+        .agg(
+            f.concat_ws(
+                "\n\n",
+                f.transform(
+                    f.sort_array(
+                        f.collect_list(
+                            f.struct(
+                                f.coalesce(f.col("page_no"), f.lit(0)).alias("page_no"),
+                                f.col("description").alias("d"),
+                            )
+                        )
+                    ),
+                    lambda x: x["d"],
+                ),
+            ).alias("document_text")
+        )
+        .withColumns(
+            {
+                "document_char_count": f.length("document_text"),
+                "document_token_count": f.greatest(
+                    f.lit(1),
+                    f.floor(f.length("document_text") / f.lit(CHARS_PER_TOKEN)).try_cast("int"),
+                ),
+            }
+        )
     )
     n_promoted = df_assembled.count()
     if n_promoted > 0:
         _update_processed_files(
-            df_assembled.select("IDDOC", "document_char_count", "document_token_count").withColumns({
-                "parse_status": F.lit("SUCCESS"),
-                "parser_strategy": F.lit("llm_ocr:pdf"),
-                "chunking_strategy": F.lit("image_llm_ocr"),
-                "images_needing_description": F.lit(0),
-            }),
-            ["document_char_count", "document_token_count", "parse_status", "parser_strategy", "chunking_strategy",
-             "images_needing_description"],
+            df_assembled.select("IDDOC", "document_char_count", "document_token_count").withColumns(
+                {
+                    "parse_status": f.lit("SUCCESS"),
+                    "parser_strategy": f.lit("llm_ocr:pdf"),
+                    "chunking_strategy": f.lit("image_llm_ocr"),
+                    "images_needing_description": f.lit(0),
+                }
+            ),
+            [
+                "document_char_count",
+                "document_token_count",
+                "parse_status",
+                "parser_strategy",
+                "chunking_strategy",
+                "images_needing_description",
+            ],
         )
         logger.info(f"Promoted {n_promoted} document(s) to SUCCESS (all images now described).")
 
@@ -595,11 +820,13 @@ def promote_documents_awaiting_images() -> None:
     n_skipped = df_ready_empty.count()
     if n_skipped > 0:
         _update_processed_files(
-            df_ready_empty.select("IDDOC").withColumns({
-                "parse_status": F.lit("SKIPPED_EMPTY_IMAGES"),
-                "parser_strategy": F.lit("llm_ocr:pdf"),
-                "images_needing_description": F.lit(0),
-            }),
+            df_ready_empty.select("IDDOC").withColumns(
+                {
+                    "parse_status": f.lit("SKIPPED_EMPTY_IMAGES"),
+                    "parser_strategy": f.lit("llm_ocr:pdf"),
+                    "images_needing_description": f.lit(0),
+                }
+            ),
             ["parse_status", "parser_strategy", "images_needing_description"],
         )
         logger.info(f"{n_skipped} document(s) had no usable image -> SKIPPED_EMPTY_IMAGES.")

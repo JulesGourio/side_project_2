@@ -13,4 +13,6 @@ def index_is_updating(detailed_state: str) -> bool:
     state = (detailed_state or "").upper()
     if "NO_PENDING_UPDATE" in state or "CONTINUOUS_UPDATE" in state:
         return False
-    return any(marker in state for marker in ("PROVISIONING", "SYNC", "TRIGGERED_UPDATE", "UPDATING"))
+    return any(
+        marker in state for marker in ("PROVISIONING", "SYNC", "TRIGGERED_UPDATE", "UPDATING")
+    )

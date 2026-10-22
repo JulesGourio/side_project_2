@@ -16,15 +16,15 @@
 # MAGIC   Documents under a root of `DATE_EXEMPT_ROOT_IDCATS` (`date_exempt`) are not concerned: they are parsed and indexed whatever their date.
 # MAGIC
 # MAGIC **Highlighted complexities:**
-# MAGIC Physical deletion of out-of-scope folders only happens when `dry_run` is `false`. The cleanup of derived tables (stale chunks, image metadata)
-# MAGIC always runs, because it only removes indexed content, not source files.
+# MAGIC Out-of-scope folders stay on the volume and are never parsed. The cleanup of derived tables (stale chunks, image metadata)
+# MAGIC removes the indexed content of those documents.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `2_manifest`)
 # MAGIC
 # MAGIC **Inputs Data**
 # MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.category_reference`, `parsed_documents`
-# MAGIC - `{PARSING_INTRAQUAL_GOLD}.document_revisions_intraqual` (Intraqual data asset)
+# MAGIC - `{REFERENCE_READ_ENV}_gold.quality_system.document_revisions_intraqual` (Intraqual data asset)
 # MAGIC - `{PARSING_VOLUME_ROOT_PATH}` volume listing
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
@@ -43,6 +43,44 @@
 
 # MAGIC %md
 # MAGIC # Configuration
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Widgets
+# MAGIC The environments, the quality bypass and the debug mode are widgets: the job passes them as base parameters,
+# MAGIC and the notebook copies them to the environment that `config` reads when it is imported.
+
+
+# COMMAND ----------
+
+import os
+
+dbutils.widgets.removeAll()
+
+dbutils.widgets.text("pipeline_write_env", "", "Environment the tables are written to: dev, uat or prod")
+dbutils.widgets.text("pipeline_read_env", "", "Environment of the tables another task of this job wrote (empty: pipeline_write_env)")
+dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference tables (Intraqual data asset)")
+dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
+dbutils.widgets.text("debug", "false")
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
+    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
+PIPELINE_READ_ENV = dbutils.widgets.get("pipeline_read_env") or PIPELINE_WRITE_ENV
+DEBUG = dbutils.widgets.get("debug").lower() == "true"
+LOG_LEVEL = dbutils.widgets.get("log_level")
+
+# config reads the environment when it is imported, so the widget values are copied there first.
+os.environ["PIPELINE_WRITE_ENV"] = PIPELINE_WRITE_ENV
+os.environ["PIPELINE_READ_ENV"] = dbutils.widgets.get("pipeline_read_env")
+os.environ["REFERENCE_READ_ENV"] = dbutils.widgets.get("reference_read_env")
+os.environ["BYPASS_QUALITY_CHECKS"] = dbutils.widgets.get("bypass_quality_checks")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Config Standard Package Imports
 # MAGIC The repository folder is added to `sys.path` because a job task does not do it for a notebook.
 
@@ -53,10 +91,12 @@ import sys
 
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
-sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(REPO_DIR))
+)  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
 sys.path.insert(0, REPO_DIR)
 
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 
 # COMMAND ----------
 
@@ -69,25 +109,11 @@ from pyspark.sql import functions as F
 import categories
 import manifest_steps
 import tables
+
 tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from leap_utils.common import logger as log_utils
 
 from config import DOC_SCOPE_FILTER, EXCLUDED_IDCATS, VOLUME_ROOT_PATH
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Config Widgets
-# MAGIC `dry_run` protects the **volume**: out-of-scope folders are only deleted when it is `false`. The cleanup of derived tables (stale chunks, image metadata) always runs, because it removes indexed content, not source files.
-# MAGIC
-# MAGIC `job_run_id` is written on every `parsed_documents` row so `3_parse` rows and these rows can be correlated.
-
-# COMMAND ----------
-
-dbutils.widgets.removeAll()
-
-dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-LOG_LEVEL = dbutils.widgets.get("log_level")
 
 # COMMAND ----------
 
@@ -99,13 +125,21 @@ LOG_LEVEL = dbutils.widgets.get("log_level")
 
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-dbutils.widgets.dropdown("dry_run", "true", ["true", "false"], "dry_run: false to actually delete the out-of-scope folders")
-dbutils.widgets.text("job_run_id", "", "Parent job run_id (correlates with 3_parse's parsed_documents rows)")
+# COMMAND ----------
 
-dry_run = dbutils.widgets.get("dry_run").lower() == "true"
+# MAGIC %md
+# MAGIC ### Job parameters
+# MAGIC `job_run_id` is written on every `parsed_documents` row so `3_parse` rows and these rows can be correlated.
+
+# COMMAND ----------
+
+dbutils.widgets.text(
+    "job_run_id", "", "Parent job run_id (correlates with 3_parse's parsed_documents rows)"
+)
+
 JOB_RUN_ID = dbutils.widgets.get("job_run_id") or None
 
-logger.info(f"Mode: {'DRY RUN (nothing will be deleted)' if dry_run else 'ACTUAL DELETION'} | volume={VOLUME_ROOT_PATH}")
+logger.info(f"Volume: {VOLUME_ROOT_PATH}")
 logger.info(f"Scope: {DOC_SCOPE_FILTER} | excluded categories: {sorted(EXCLUDED_IDCATS)}")
 
 # COMMAND ----------
@@ -176,11 +210,15 @@ all_rows = manifest_steps.doc_rows()
 _EXCLUDED_IDS_SQL = ", ".join(str(i) for i in sorted(EXCLUDED_IDCATS))
 df_main_cat = (
     categories.read_revisions(spark)
-    .filter(F.col("category_ID").isNotNull())
-    .select(F.col("document_revision_ID").alias("IDDOC"),
-            F.coalesce(F.expr(f"get(array_intersect(category_ID_path, array({_EXCLUDED_IDS_SQL})), 0)"),
-                       F.col("category_ID")).alias("IDCAT"),
-            F.col("category_name").alias("NOMCAT"))
+    .filter(f.col("category_ID").isNotNull())
+    .select(
+        f.col("document_revision_ID").alias("IDDOC"),
+        f.coalesce(
+            f.expr(f"get(array_intersect(category_ID_path, array({_EXCLUDED_IDS_SQL})), 0)"),
+            f.col("category_ID"),
+        ).alias("IDCAT"),
+        f.col("category_name").alias("NOMCAT"),
+    )
     .dropDuplicates(["IDDOC"])
 )
 
@@ -293,11 +331,18 @@ df_manifest = manifest_steps.build_manifest(classified["keep"]).cache()
 if classified["delete"]:
     display(spark.createDataFrame(classified["delete"]).orderBy("reason", "ref"))
 else:
-    logger.info("Nothing to delete - the volume is already clean.")
+    logger.info("No out-of-scope folder on the volume.")
 
 if classified["orphan"]:
-    logger.info(f"{len(classified['orphan'])} ORPHAN folders kept on the volume but excluded from parsing")
-    display(spark.createDataFrame([(r["IDDOC"], r["name"]) for r in classified["orphan"]], schema="IDDOC long, name string").orderBy("IDDOC"))
+    logger.info(
+        f"{len(classified['orphan'])} ORPHAN folders kept on the volume but excluded from parsing"
+    )
+    display(
+        spark.createDataFrame(
+            [(r["IDDOC"], r["name"]) for r in classified["orphan"]],
+            schema="IDDOC long, name string",
+        ).orderBy("IDDOC")
+    )
 
 for r in classified["skip"]:
     logger.info(f"Ignored folder (non-conforming name): {r['name']} ({r['path']})")
@@ -310,13 +355,18 @@ for r in classified["skip"]:
 
 # COMMAND ----------
 
-tables.check_dataframe(df_manifest, "parse_manifest", [
-    tables.non_empty(),
-    tables.not_null("IDDOC"),
-    tables.unique("IDDOC"),
-    tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
-    tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
-], logger)
+tables.check_dataframe(
+    df_manifest,
+    "parse_manifest",
+    [
+        tables.non_empty(),
+        tables.not_null("IDDOC"),
+        tables.unique("IDDOC"),
+        tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
+        tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
+    ],
+    logger,
+)
 
 # COMMAND ----------
 
@@ -328,14 +378,3 @@ tables.check_dataframe(df_manifest, "parse_manifest", [
 # COMMAND ----------
 
 manifest_steps.write_manifest(df_manifest)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Delete out-of-scope folders
-# MAGIC Only when `dry_run` is `false`.
-
-# COMMAND ----------
-
-manifest_steps.delete_out_of_scope_folders(classified["delete"], dry_run)
-

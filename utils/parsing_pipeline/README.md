@@ -105,8 +105,8 @@ listed at the top of `config.py`.
   of statuses `SUCCESS`, `ERROR`, `EMPTY_TEXT` and `IMAGES_PENDING`. When several in-scope IDDOCs share a REF,
   only the newest revision (highest `indice`, then highest IDDOC) keeps its passages. The `parsed_documents`
   rows of the other IDDOCs stay, so they are not parsed again.
-- **Pruning and `DRY_RUN`**: the pruning of derived rows runs on every run. The widget `dry_run` (default `true`)
-  protects the volume only: out-of-scope folders are deleted when it is `non`.
+- **Pruning**: the pruning of derived rows runs on every run. Out-of-scope folders are never deleted from the volume:
+  they stay there and are not parsed.
 - **Volume folders** are classified by `2_manifest`: `KEEP` (parsed), `DELETE` (out of scope), `ORPHAN` (IDDOC
   unknown in `document_revisions_intraqual`, kept on the volume, not parsed), `SKIP` (name not `D_<IDDOC>` or `Dm_<IDDOC>`), `MANUAL`,
   `CAT_EXCL`.

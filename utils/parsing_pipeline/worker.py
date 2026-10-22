@@ -17,7 +17,7 @@ import pandas as pd
 import chunking  # shipped with addPyFile, like this module
 
 from pyspark.sql import Column
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 from pyspark.sql import types as T
 from pyspark.sql.functions import pandas_udf
 
@@ -26,11 +26,20 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    _handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+    )
     logger.addHandler(_handler)
     logger.propagate = False
 
-for _noisy in ("py4j", "py4j.clientserver", "py4j.java_gateway", "pyspark", "docling", "transformers"):
+for _noisy in (
+    "py4j",
+    "py4j.clientserver",
+    "py4j.java_gateway",
+    "pyspark",
+    "docling",
+    "transformers",
+):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
@@ -46,10 +55,10 @@ _DEFAULTS: Dict[str, Any] = {
     "VOLUME_BASE_PATH": _DEFAULT_VOLUME_BASE_PATH,
     # Engine knobs (balanced defaults)
     "USE_GPU": False,
-    "DO_OCR": False,                      # True only if scanned PDFs are expected
-    "GPU_OCR_FALLBACK": False,             # Docling's own do_ocr=True re-parse (EasyOCR, GPU) -- distinct from the LLM-OCR fallback
-    "TABLE_STRUCTURE_MODE": "accurate",   # "accurate" | "fast"
-    "GENERATE_PICTURE_IMAGES": True,      # set False when not describing images
+    "DO_OCR": False,  # True only if scanned PDFs are expected
+    "GPU_OCR_FALLBACK": False,  # Docling's own do_ocr=True re-parse (EasyOCR, GPU) -- distinct from the LLM-OCR fallback
+    "TABLE_STRUCTURE_MODE": "accurate",  # "accurate" | "fast"
+    "GENERATE_PICTURE_IMAGES": True,  # set False when not describing images
     "IMAGE_SCALE": 0.75,
     # Image extraction
     "MIN_AREA_RATIO": 0.03,
@@ -99,10 +108,13 @@ def write_worker_config(spark_session) -> str:
 
     :param spark_session: Active Spark session; its ``spark.conf`` receives the JSON as well.
     """
-    path = _cfg("WORKER_CONFIG_JSON", fallback=os.path.join(_cfg("VOLUME_BASE_PATH"), "_parsing_config.json"))
+    path = _cfg(
+        "WORKER_CONFIG_JSON",
+        fallback=os.path.join(_cfg("VOLUME_BASE_PATH"), "_parsing_config.json"),
+    )
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(CONFIG, f)
+    with open(path, "w") as fh:
+        json.dump(CONFIG, fh)
     try:
         spark_session.conf.set("app.parsing.config_json", json.dumps(CONFIG))
     except Exception:
@@ -120,6 +132,7 @@ def ensure_config() -> None:
         return
     try:
         from pyspark.sql import SparkSession
+
         _spark = SparkSession.getActiveSession()
         if _spark:
             cfg_json = _spark.conf.get("app.parsing.config_json", "")
@@ -131,11 +144,14 @@ def ensure_config() -> None:
     try:
         # A cluster env var, visible in every process unlike CONFIG.
         volume_base = os.environ.get("PARSING_VOLUME_BASE_PATH")
-        vol_cfg = os.path.join(volume_base, "_parsing_config.json") if volume_base \
+        vol_cfg = (
+            os.path.join(volume_base, "_parsing_config.json")
+            if volume_base
             else _DEFAULTS["WORKER_CONFIG_JSON"]
+        )
         if os.path.isfile(vol_cfg):
-            with open(vol_cfg) as f:
-                CONFIG.update(json.loads(f.read()))
+            with open(vol_cfg) as fh:
+                CONFIG.update(json.loads(fh.read()))
     except Exception:
         pass  # _cfg() falls back to _DEFAULTS
 
@@ -152,7 +168,7 @@ def _cfg(key: str, fallback=None) -> Any:
         return _DEFAULTS[key]
     if fallback is not None:
         return fallback
-    if key in _DEFAULTS:           # default is legitimately None
+    if key in _DEFAULTS:  # default is legitimately None
         return None
     raise RuntimeError(f"Configuration key '{key}' not set and no default exists.")
 
@@ -175,7 +191,10 @@ def get_tiktoken_encoder() -> Any:
     global _TIKTOKEN_ENCODER
     if _TIKTOKEN_ENCODER is None:
         import tiktoken
-        _TIKTOKEN_ENCODER = tiktoken.get_encoding(_cfg("TOKENIZER_ENCODING", fallback="cl100k_base"))
+
+        _TIKTOKEN_ENCODER = tiktoken.get_encoding(
+            _cfg("TOKENIZER_ENCODING", fallback="cl100k_base")
+        )
     return _TIKTOKEN_ENCODER
 
 
@@ -196,14 +215,18 @@ def count_tokens(text: str) -> int:
 
 # --- Spark helpers ---
 # --- Spark schemas ---
-CHUNK_SCHEMA = T.ArrayType(T.StructType([
-    T.StructField("chunk_index", T.IntegerType(), True),
-    T.StructField("chunk_text", T.StringType(), True),
-    T.StructField("chunk_char_count", T.IntegerType(), True),
-    T.StructField("chunk_token_count", T.IntegerType(), True),
-    T.StructField("chunk_content_type", T.StringType(), True),
-    T.StructField("metadata", T.MapType(T.StringType(), T.StringType()), True),
-]))
+CHUNK_SCHEMA = T.ArrayType(
+    T.StructType(
+        [
+            T.StructField("chunk_index", T.IntegerType(), True),
+            T.StructField("chunk_text", T.StringType(), True),
+            T.StructField("chunk_char_count", T.IntegerType(), True),
+            T.StructField("chunk_token_count", T.IntegerType(), True),
+            T.StructField("chunk_content_type", T.StringType(), True),
+            T.StructField("metadata", T.MapType(T.StringType(), T.StringType()), True),
+        ]
+    )
+)
 
 
 _INTRAQUAL_REF_URL_BASE = "https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref="
@@ -215,14 +238,22 @@ def intraqual_ref_url(ref_col) -> Column:
     :param ref_col: Column of REF values.
     :return: column with the Intraqual URL of each REF, null when REF is null.
     """
-    return F.when(
+    return f.when(
         ref_col.isNotNull(),
-        F.concat(F.lit(_INTRAQUAL_REF_URL_BASE), F.regexp_replace(ref_col, " ", "%20")),
+        f.concat(f.lit(_INTRAQUAL_REF_URL_BASE), f.regexp_replace(ref_col, " ", "%20")),
     )
 
 
-def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_col,
-                          doc_date_col=None, include_prefix=True, type_col=None) -> Column:
+def source_prefixed_text(
+    body_col,
+    ref_col,
+    titre_col,
+    division_col,
+    category_col,
+    doc_date_col=None,
+    include_prefix=True,
+    type_col=None,
+) -> Column:
     """chunk_text with an optional "[Source: ...]" provenance prefix (include_prefix).
     type_col (document type label, e.g. "05 - Procédure - QP") adds a "Type:" field.
 
@@ -239,19 +270,31 @@ def source_prefixed_text(body_col, ref_col, titre_col, division_col, category_co
     if not include_prefix:
         return body_col
     date_part = (
-        F.concat(F.lit(" | Date de diffusion: "), F.coalesce(F.date_format(doc_date_col, "yyyy-MM-dd"), F.lit("inconnue")))
-        if doc_date_col is not None else F.lit("")
+        f.concat(
+            f.lit(" | Date de diffusion: "),
+            f.coalesce(f.date_format(doc_date_col, "yyyy-MM-dd"), f.lit("inconnue")),
+        )
+        if doc_date_col is not None
+        else f.lit("")
     )
-    type_part = (F.concat(F.lit(" | Type: "), F.coalesce(type_col, F.lit("")))
-                 if type_col is not None else F.lit(""))
-    return F.concat(
-        F.lit("[Source: "), F.coalesce(ref_col, F.lit("")),
-        F.lit(" | Title: "), F.coalesce(titre_col, F.lit("")),
+    type_part = (
+        f.concat(f.lit(" | Type: "), f.coalesce(type_col, f.lit("")))
+        if type_col is not None
+        else f.lit("")
+    )
+    return f.concat(
+        f.lit("[Source: "),
+        f.coalesce(ref_col, f.lit("")),
+        f.lit(" | Title: "),
+        f.coalesce(titre_col, f.lit("")),
         type_part,
-        F.lit(" | Division: "), F.coalesce(division_col, F.lit("")),
-        F.lit(" | Category: "), F.coalesce(category_col, F.lit("")),
+        f.lit(" | Division: "),
+        f.coalesce(division_col, f.lit("")),
+        f.lit(" | Category: "),
+        f.coalesce(category_col, f.lit("")),
         date_part,
-        F.lit("]\n\n"), body_col,
+        f.lit("]\n\n"),
+        body_col,
     )
 
 
@@ -284,9 +327,7 @@ def build_chunks_udf(text_series: pd.Series) -> pd.Series:
     :return: chunk structs per row.
     """
     ensure_config()
-    return pd.Series([
-        chunk_document(str(t)) if t else [] for t in text_series
-    ])
+    return pd.Series([chunk_document(str(t)) if t else [] for t in text_series])
 
 
 @pandas_udf(T.StringType())
@@ -297,8 +338,12 @@ def language_udf(text_series: pd.Series, ref_series: pd.Series) -> pd.Series:
     :param ref_series: Column of REF values.
     :return: language code per row.
     """
-    return pd.Series([chunking.detect_language(str(t or ""), str(r or ""))
-                      for t, r in zip(text_series, ref_series)])
+    return pd.Series(
+        [
+            chunking.detect_language(str(t or ""), str(r or ""))
+            for t, r in zip(text_series, ref_series)
+        ]
+    )
 
 
 @pandas_udf(T.IntegerType())

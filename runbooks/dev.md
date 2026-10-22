@@ -1040,7 +1040,7 @@ SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, ni
 
 ### H. Division ALL, passages d'images, date One QMS (code poussé le 2026-10-22, à faire)
 
-Divisions AS / IS / DIRECTIVE / ALL, passages d'images alignés sur le manifest, exclusion limitée à « Obsolete Documents », date ignorée sous la racine One QMS. Le mode du job est passé temporairement à `full` dans `databricks.yml` (cible `dev`) : il parse les documents absents du checkpoint (environ 1 300, dont les One QMS d'avant 2018 et les « To be classified » récents), décrit leurs images, reconstruit tous les passages et resynchronise l'index.
+Divisions AS / IS / DIRECTIVE / ALL, passages d'images alignés sur le manifest, exclusion limitée à « Obsolete Documents », date ignorée sous la racine One QMS. Le mode du job est passé temporairement à `full` et le plafond de fichiers à parser à 1000 (`parsing_max_parse_files`, 891 fichiers attendus) dans `databricks.yml` (cible `dev`) : il parse les documents absents du checkpoint (environ 1 300, dont les One QMS d'avant 2018 et les « To be classified » récents), décrit leurs images, reconstruit tous les passages et resynchronise l'index.
 
 1. Déployer : Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-dev-jobs`.
 2. Lancer : `databricks jobs run-now 362367007936662 --profile DEV`
@@ -1052,7 +1052,7 @@ SELECT count(*) AS documents_a_plusieurs_divisions FROM (SELECT IDDOC FROM dev_p
 SELECT chunk_content_type, (c.division <=> m.division) AS division_egale_au_manifest, count(*) AS passages
 FROM dev_proj.qualibot.chunks c JOIN dev_proj.qualibot.parse_manifest m ON m.IDDOC = c.IDDOC GROUP BY 1, 2 ORDER BY 1, 2;
 ```
-4. Reconstruire l'index (section I), puis remettre `parsing_run_mode: "incremental"` dans le bloc `dev` de `databricks.yml` et redéployer.
+4. Reconstruire l'index (section I), puis retirer `parsing_max_parse_files` et remettre `parsing_run_mode: "incremental"` dans le bloc `dev` de `databricks.yml`, puis redéployer.
 
 ### I. Reconstruire l'index DEV après un changement de schéma de `chunks` (2026-10-22, à faire après contrôle de `chunks`)
 

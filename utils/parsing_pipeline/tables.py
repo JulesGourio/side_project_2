@@ -20,7 +20,8 @@ Quality checks, two levels: RED (the task stops, nothing is written) and AMBER (
 """
 
 import logging
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Sequence, Tuple
 
 from leap_utils.common.logger import get_logger
@@ -32,8 +33,14 @@ _LOGGER = get_logger(__name__)
 
 
 # --- Writes ---
-def write_table(df, table: str, mode: str = "append", *, merge_schema: bool = False,
-                overwrite_schema: bool = False) -> None:
+def write_table(
+    df,
+    table: str,
+    mode: str = "append",
+    *,
+    merge_schema: bool = False,
+    overwrite_schema: bool = False,
+) -> None:
     """Save `df` as the Delta table `table` (leap_utils save_table).
 
     mode: "append", "overwrite" or "errorifexists". merge_schema: add the columns `df` has and the table lacks (append).
@@ -47,7 +54,9 @@ def write_table(df, table: str, mode: str = "append", *, merge_schema: bool = Fa
     """
     from leap_utils.data_asset import table_utils
 
-    table_utils.save_table(table, df, mode, overwrite_schema=overwrite_schema, merge_schema=merge_schema)
+    table_utils.save_table(
+        table, df, mode, overwrite_schema=overwrite_schema, merge_schema=merge_schema
+    )
 
 
 def add_missing_columns(df, table: str) -> None:
@@ -60,9 +69,9 @@ def add_missing_columns(df, table: str) -> None:
     :param table: Full table name, ``catalog.schema.name``.
     """
     existing = set(df.sparkSession.table(table).columns)
-    missing = [f for f in df.schema.fields if f.name not in existing]
+    missing = [field for field in df.schema.fields if field.name not in existing]
     if missing:
-        columns = ", ".join(f"`{f.name}` {f.dataType.simpleString()}" for f in missing)
+        columns = ", ".join(f"`{field.name}` {field.dataType.simpleString()}" for field in missing)
         df.sparkSession.sql(f"ALTER TABLE {table} ADD COLUMNS ({columns})")
 
 
@@ -83,13 +92,17 @@ def align_to_table(df, table: str) -> "DataFrame":
     :param table: Full table name, ``catalog.schema.name``.
     :return: DataFrame with the columns of the table, in its order.
     """
-    from pyspark.sql import functions as F
+    from pyspark.sql import functions as f
 
     target = df.sparkSession.table(table)
-    return df.select(*[
-        (F.col(f.name) if f.name in df.columns else F.lit(None)).try_cast(f.dataType).alias(f.name)
-        for f in target.schema
-    ])
+    return df.select(
+        *[
+            (f.col(field.name) if field.name in df.columns else f.lit(None))
+            .try_cast(field.dataType)
+            .alias(field.name)
+            for field in target.schema
+        ]
+    )
 
 
 def overwrite_rows(df, table: str) -> None:
@@ -110,8 +123,16 @@ def overwrite_rows(df, table: str) -> None:
     align_to_table(df, table).write.mode("overwrite").insertInto(table)
 
 
-def merge_into(df, table: str, keys, *, do_when_matched: bool = True, matched_clause=None,
-               do_when_notmatched: bool = True, do_when_notmatchedbysource: bool = False) -> None:
+def merge_into(
+    df,
+    table: str,
+    keys,
+    *,
+    do_when_matched: bool = True,
+    matched_clause=None,
+    do_when_notmatched: bool = True,
+    do_when_notmatchedbysource: bool = False,
+) -> None:
     """MERGE `df` into `table` on `keys` (leap_utils merge_into), the source aligned on the table's columns.
 
     `df` must be a source that does not read `table` itself: a derived source is saved to a temporary table first.
@@ -127,15 +148,26 @@ def merge_into(df, table: str, keys, *, do_when_matched: bool = True, matched_cl
     from leap_utils.data_asset import table_utils
 
     source = align_to_table(df, table)
-    if do_when_matched and not do_when_notmatched and not do_when_notmatchedbysource and not matched_clause:
+    if (
+        do_when_matched
+        and not do_when_notmatched
+        and not do_when_notmatchedbysource
+        and not matched_clause
+    ):
         # Update only. leap_utils refuses a MERGE whose only clause is a plain WHEN MATCHED; with the source reduced to
         # the keys the table already has, the INSERT clause it accepts never fires and the result is the same.
-        source = source.join(df.sparkSession.table(table).select(*keys), on=list(keys), how="left_semi")
+        source = source.join(
+            df.sparkSession.table(table).select(*keys), on=list(keys), how="left_semi"
+        )
         do_when_notmatched = True
     table_utils.merge_into(
-        source, table, list(keys),
-        do_when_matched=do_when_matched, matched_clause=matched_clause,
-        do_when_notmatched=do_when_notmatched, do_when_notmatchedbysource=do_when_notmatchedbysource,
+        source,
+        table,
+        list(keys),
+        do_when_matched=do_when_matched,
+        matched_clause=matched_clause,
+        do_when_notmatched=do_when_notmatched,
+        do_when_notmatchedbysource=do_when_notmatchedbysource,
     )
 
 
@@ -152,15 +184,21 @@ def ensure_primary_key(table: str, columns: Sequence[str]) -> None:
     from leap_utils.data_asset import table_utils
 
     catalog, schema, name = table.split(".")
-    declared = SparkSession.getActiveSession().sql(
-        f"SELECT count(*) AS n FROM {catalog}.information_schema.table_constraints "
-        f"WHERE table_schema = '{schema}' AND table_name = '{name}' AND constraint_type = 'PRIMARY KEY'"
-    ).first()["n"]
+    declared = (
+        SparkSession.getActiveSession()
+        .sql(
+            f"SELECT count(*) AS n FROM {catalog}.information_schema.table_constraints "
+            f"WHERE table_schema = '{schema}' AND table_name = '{name}' AND constraint_type = 'PRIMARY KEY'"
+        )
+        .first()["n"]
+    )
     if declared:
         return
     for column in columns:
         table_utils.set_table_column_not_null(table_path=table, column=column)
-    table_utils.add_table_primary_key(table_path=table, pk_name=f"proj_{name}_PK", columns=",".join(columns))
+    table_utils.add_table_primary_key(
+        table_path=table, pk_name=f"proj_{name}_PK", columns=",".join(columns)
+    )
 
 
 # --- Quality checks ---
@@ -176,10 +214,10 @@ class QualityCheckError(RuntimeError):
 
 @dataclass(frozen=True)
 class Check:
-    kind: str                       # "not_null" | "unique" | "non_empty"
+    kind: str  # "not_null" | "unique" | "non_empty"
     columns: Tuple[str, ...] = ()
     severity: str = RED
-    mostly: float = 1.0             # not_null: minimum share of non-null rows
+    mostly: float = 1.0  # not_null: minimum share of non-null rows
 
     @property
     def label(self) -> str:
@@ -263,7 +301,9 @@ def stats_from_rows(rows: Sequence[Mapping], checks: Sequence[Check]) -> Dict[st
         elif kind == "all_non_null":
             out[name] = sum(1 for r in rows if all(r[c] is not None for c in cols))
         elif kind == "distinct":
-            out[name] = len({tuple(r[c] for c in cols) for r in rows if all(r[c] is not None for c in cols)})
+            out[name] = len(
+                {tuple(r[c] for c in cols) for r in rows if all(r[c] is not None for c in cols)}
+            )
     return out
 
 
@@ -283,12 +323,20 @@ def evaluate(checks: Sequence[Check], stats: Mapping[str, int]) -> List[Result]:
             non_null = stats[_key("non_null", c.columns)]
             share = non_null / rows if rows else 1.0
             ok = share >= c.mostly if c.mostly < 1.0 else non_null == rows
-            results.append(Result(c, ok, f"{rows - non_null} null of {rows} rows ({share:.2%} populated"
-                                         + (f", expected >= {c.mostly:.2%})" if c.mostly < 1.0 else ")")))
+            results.append(
+                Result(
+                    c,
+                    ok,
+                    f"{rows - non_null} null of {rows} rows ({share:.2%} populated"
+                    + (f", expected >= {c.mostly:.2%})" if c.mostly < 1.0 else ")"),
+                )
+            )
         else:
             candidates = stats[_key("all_non_null", c.columns)]
             duplicates = candidates - stats[_key("distinct", c.columns)]
-            results.append(Result(c, duplicates == 0, f"{duplicates} duplicate row(s) among {candidates}"))
+            results.append(
+                Result(c, duplicates == 0, f"{duplicates} duplicate row(s) among {candidates}")
+            )
     return results
 
 
@@ -311,7 +359,10 @@ def report(table: str, results: Sequence[Result], logger: logging.Logger | None 
         else:
             log.warning(f"[QUALITY AMBER] {text}")
     if failed_red:
-        raise QualityCheckError(f"{len(failed_red)} RED quality check(s) failed on {table}:\n  " + "\n  ".join(failed_red))
+        raise QualityCheckError(
+            f"{len(failed_red)} RED quality check(s) failed on {table}:\n  "
+            + "\n  ".join(failed_red)
+        )
 
 
 def require_gx() -> None:
@@ -321,7 +372,20 @@ def require_gx() -> None:
     from leap_utils.common.validation import gx_validation  # noqa: F401
 
 
-def check_dataframe(df, table: str, checks: Sequence[Check], logger: logging.Logger | None = None) -> None:
+def _with_bypass(checks: Sequence["Check"]) -> List["Check"]:
+    """Checks to run: when the bypass is on, RED checks become AMBER.
+
+    :param checks: Checks as the notebook declares them.
+    :return: the checks, RED turned into AMBER when the environment sets BYPASS_QUALITY_CHECKS to true.
+    """
+    if os.environ.get("BYPASS_QUALITY_CHECKS", "false").lower() != "true":
+        return list(checks)
+    return [replace(c, severity=AMBER) if c.severity == RED else c for c in checks]
+
+
+def check_dataframe(
+    df, table: str, checks: Sequence[Check], logger: logging.Logger | None = None
+) -> None:
     """Run the checks on a DataFrame with Great Expectations (leap_utils) and log them.
 
     The RED checks run first: a failure stops the task before the table is written by the caller.
@@ -331,6 +395,7 @@ def check_dataframe(df, table: str, checks: Sequence[Check], logger: logging.Log
     :param checks: Checks to run.
     :param logger: Logger for the messages; the module logger when None.
     """
+    checks = _with_bypass(checks)
     from great_expectations.dataset import SparkDFDataset
     from leap_utils.common.validation import gx_validation
 
@@ -364,8 +429,12 @@ def _gx_expectation(gx_df, check: Check) -> Any:
     return gx_df.expect_compound_columns_to_be_unique(list(check.columns))
 
 
-def check_rows(rows: Sequence[Mapping], table: str, checks: Sequence[Check],
-               logger: logging.Logger | None = None) -> List[Result]:
+def check_rows(
+    rows: Sequence[Mapping],
+    table: str,
+    checks: Sequence[Check],
+    logger: logging.Logger | None = None,
+) -> List[Result]:
     """Run the checks on a list of dict-like rows (no Spark) and report; raises on a RED failure.
 
     :param rows: Dict-like rows to check.
@@ -373,6 +442,7 @@ def check_rows(rows: Sequence[Mapping], table: str, checks: Sequence[Check],
     :param checks: Checks to run.
     :param logger: Logger for the messages; the module logger when None.
     """
+    checks = _with_bypass(checks)
     results = evaluate(checks, stats_from_rows(rows, checks))
     report(table, results, logger)
     return results
@@ -391,28 +461,46 @@ def check_ref_mapping(spark, df_chunks, logger: logging.Logger) -> List[Result]:
     :param df_chunks: Chunks DataFrame with the ``IDDOC``, ``REF`` and ``chunk_text`` columns.
     :param logger: Logger for the warnings.
     """
-    from pyspark.sql import functions as F
+    from pyspark.sql import functions as f
     from config import PARSE_MANIFEST_TABLE
 
-    df_manifest = spark.table(PARSE_MANIFEST_TABLE).select("IDDOC", F.col("ref").alias("manifest_ref"))
-    prefix_ref = F.regexp_extract("chunk_text", r"\[Source:\s*(\S+)\s", 1)
+    df_manifest = spark.table(PARSE_MANIFEST_TABLE).select(
+        "IDDOC", f.col("ref").alias("manifest_ref")
+    )
+    prefix_ref = f.regexp_extract("chunk_text", r"\[Source:\s*(\S+)\s", 1)
     conditions = {
-        "ref_differs_from_manifest": F.col("manifest_ref").isNotNull() & (F.col("REF") != F.col("manifest_ref")),
-        "iddoc_absent_from_manifest": F.col("manifest_ref").isNull(),
-        "source_prefix_differs_from_ref": (prefix_ref != "") & (prefix_ref != F.col("REF"))
-                                          & (prefix_ref != F.trim(F.col("REF"))),
-        "ref_has_surrounding_spaces": F.col("REF") != F.trim(F.col("REF")),
+        "ref_differs_from_manifest": f.col("manifest_ref").isNotNull()
+        & (f.col("REF") != f.col("manifest_ref")),
+        "iddoc_absent_from_manifest": f.col("manifest_ref").isNull(),
+        "source_prefix_differs_from_ref": (prefix_ref != "")
+        & (prefix_ref != f.col("REF"))
+        & (prefix_ref != f.trim(f.col("REF"))),
+        "ref_has_surrounding_spaces": f.col("REF") != f.trim(f.col("REF")),
     }
-    df = df_chunks.join(F.broadcast(df_manifest), on="IDDOC", how="left")
-    counts = df.agg(*[F.count_distinct(F.when(cond, F.col("IDDOC"))).alias(name)
-                      for name, cond in conditions.items()]).first()
+    df = df_chunks.join(f.broadcast(df_manifest), on="IDDOC", how="left")
+    counts = df.agg(
+        *[
+            f.count_distinct(f.when(cond, f.col("IDDOC"))).alias(name)
+            for name, cond in conditions.items()
+        ]
+    ).first()
 
-    results = [Result(Check(name, ("REF",), AMBER), counts[name] == 0, f"{counts[name]} IDDOC(s)")
-               for name in conditions]
+    results = [
+        Result(Check(name, ("REF",), AMBER), counts[name] == 0, f"{counts[name]} IDDOC(s)")
+        for name in conditions
+    ]
     report("chunks", results, logger)
     for name, cond in conditions.items():
         if counts[name]:
-            examples = df.filter(cond).select("IDDOC", "REF", "manifest_ref").distinct().limit(10).collect()
-            logger.warning(f"[QUALITY AMBER] chunks: {name}, examples: "
-                           f"{[(r.IDDOC, r.REF, r.manifest_ref) for r in examples]}")
+            examples = (
+                df.filter(cond)
+                .select("IDDOC", "REF", "manifest_ref")
+                .distinct()
+                .limit(10)
+                .collect()
+            )
+            logger.warning(
+                f"[QUALITY AMBER] chunks: {name}, examples: "
+                f"{[(r.IDDOC, r.REF, r.manifest_ref) for r in examples]}"
+            )
     return results

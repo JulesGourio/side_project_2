@@ -3,13 +3,14 @@
 Reconciles the derived tables and the volume root with the current Qualibot scope, then builds `parse_manifest`.
 Driver side only: nothing here is shipped to the executors.
 """
+
 import re
 from collections import Counter
 from datetime import datetime
 
-from databricks.sdk.runtime import dbutils, spark
+from databricks.sdk.runtime import spark
 from pyspark.sql import Column, DataFrame, Window
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 from categories import read_revisions
@@ -24,7 +25,6 @@ from config import (
     EXCLUDED_IDCATS,
     MANUAL_REF_EXCLUSIONS,
     PARSE_MANIFEST_TABLE,
-    PIPELINE_WRITE_ENV,
     TARGET_CHUNK_TABLE,
     TARGET_CHUNK_TABLE_ARCHIVE,
     TARGET_IMAGE_METADATA_TABLE,
@@ -42,8 +42,12 @@ _DERIVED_TABLES = (TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE, TARGET_IMAGE_
 _STATUSES_TO_PRUNE = PRUNED_STATUSES
 # A row with one of these statuses blocks the IDDOC from being parsed, so it must go when the IDDOC re-enters scope.
 _PERMANENT_SKIP_STATUSES = (
-    "SKIPPED_REF_OUT_OF_SCOPE", "SKIPPED_IDDOC_NOT_FOUND", "SKIPPED_REF_MANUAL",
-    "SKIPPED_SOURCE_REMOVED", "SKIPPED_EMPTY_FOLDER", "SKIPPED_CATEGORY_EXCLUDED",
+    "SKIPPED_REF_OUT_OF_SCOPE",
+    "SKIPPED_IDDOC_NOT_FOUND",
+    "SKIPPED_REF_MANUAL",
+    "SKIPPED_SOURCE_REMOVED",
+    "SKIPPED_EMPTY_FOLDER",
+    "SKIPPED_CATEGORY_EXCLUDED",
 )
 
 
@@ -84,11 +88,11 @@ def doc_rows() -> dict[int, tuple]:
         for r in (
             read_revisions(spark)
             .select(
-                F.col("document_revision_ID").alias("IDDOC"),
-                F.col("document_reference").alias("ref"),
-                F.col("document_title").alias("titre"),
+                f.col("document_revision_ID").alias("IDDOC"),
+                f.col("document_reference").alias("ref"),
+                f.col("document_title").alias("titre"),
             )
-            .filter(F.col("IDDOC").isNotNull())
+            .filter(f.col("IDDOC").isNotNull())
             .dropDuplicates(["IDDOC"])
             .collect()
         )
@@ -103,10 +107,11 @@ def find_stale_iddocs(df_scope_docs) -> list[int]:
     """
     try:
         return [
-            r.IDDOC for r in
-            spark.table(TARGET_PROCESSED_FILES_TABLE)
-            .filter(F.col("parse_status").isin(*_STATUSES_TO_PRUNE))
-            .select("IDDOC").distinct()
+            r.IDDOC
+            for r in spark.table(TARGET_PROCESSED_FILES_TABLE)
+            .filter(f.col("parse_status").isin(*_STATUSES_TO_PRUNE))
+            .select("IDDOC")
+            .distinct()
             .join(df_scope_docs.select("IDDOC"), on="IDDOC", how="left_anti")
             .collect()
         ]
@@ -126,14 +131,18 @@ def prune_stale_content(stale_iddocs) -> None:
     failed = _delete_iddocs(_DERIVED_TABLES, stale_iddocs)
     if failed:
         # The parsed_documents rows stay: they are what lets the next run find these IDDOCs and retry.
-        logger.error(f"Pruning incomplete ({failed}): the rows of {len(stale_iddocs)} IDDOC(s) stay in "
-                     f"{TARGET_PROCESSED_FILES_TABLE} and are pruned again on the next run.")
+        logger.error(
+            f"Pruning incomplete ({failed}): the rows of {len(stale_iddocs)} IDDOC(s) stay in "
+            f"{TARGET_PROCESSED_FILES_TABLE} and are pruned again on the next run."
+        )
         return
     spark.sql(
         f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} "
         f"WHERE parse_status IN {_STATUSES_TO_PRUNE} AND IDDOC IN ({_id_list(stale_iddocs)})"
     )
-    logger.info(f"Pruned {len(stale_iddocs)} out-of-scope IDDOCs from chunks/image_metadata/parsed_documents.")
+    logger.info(
+        f"Pruned {len(stale_iddocs)} out-of-scope IDDOCs from chunks/image_metadata/parsed_documents."
+    )
 
 
 def prune_old_checkpoint_rows(df_scope_docs, keep_days: int = CHECKPOINT_ORPHAN_KEEP_DAYS) -> None:
@@ -150,7 +159,9 @@ def prune_old_checkpoint_rows(df_scope_docs, keep_days: int = CHECKPOINT_ORPHAN_
             f"DELETE FROM {CHECKPOINT_TABLE} WHERE ingestion_timestamp < current_timestamp() - INTERVAL {int(keep_days)} DAYS "
             f"AND IDDOC NOT IN (SELECT IDDOC FROM _scope_iddocs)"
         )
-        logger.info(f"Checkpoint rows of out-of-scope documents parsed more than {keep_days} days ago deleted.")
+        logger.info(
+            f"Checkpoint rows of out-of-scope documents parsed more than {keep_days} days ago deleted."
+        )
     except Exception as exc:
         logger.warning(f"Could not clean {CHECKPOINT_TABLE}: {exc}")
 
@@ -167,23 +178,33 @@ def prune_stale_revisions() -> None:
 
     df_chunk_iddocs = spark.table(TARGET_CHUNK_TABLE).select("REF", "IDDOC").distinct()
     df_dup_refs = (
-        df_chunk_iddocs.groupBy("REF").agg(F.count("IDDOC").alias("n")).filter(F.col("n") > 1).select("REF")
+        df_chunk_iddocs.groupBy("REF")
+        .agg(f.count("IDDOC").alias("n"))
+        .filter(f.col("n") > 1)
+        .select("REF")
     )
     n_dup_refs = df_dup_refs.count()
     if n_dup_refs == 0:
         logger.info("No REF with multiple IDDOCs in chunks - nothing to prune.")
         return
 
-    newest_first = Window.partitionBy("REF").orderBy(F.desc("_indice"), F.desc("IDDOC"))
+    newest_first = Window.partitionBy("REF").orderBy(f.desc("_indice"), f.desc("IDDOC"))
     stale_revision_iddocs = [
-        r.IDDOC for r in
-        df_chunk_iddocs
-        .join(df_dup_refs, on="REF", how="inner")
-        .join(read_revisions(spark).select(F.col("document_revision_ID").alias("IDDOC"),
-                                           F.col("document_index").alias("_indice")), on="IDDOC", how="left")
-        .withColumn("_rn", F.row_number().over(newest_first))
-        .filter(F.col("_rn") > 1)
-        .select("IDDOC").distinct().collect()
+        r.IDDOC
+        for r in df_chunk_iddocs.join(df_dup_refs, on="REF", how="inner")
+        .join(
+            read_revisions(spark).select(
+                f.col("document_revision_ID").alias("IDDOC"),
+                f.col("document_index").alias("_indice"),
+            ),
+            on="IDDOC",
+            how="left",
+        )
+        .withColumn("_rn", f.row_number().over(newest_first))
+        .filter(f.col("_rn") > 1)
+        .select("IDDOC")
+        .distinct()
+        .collect()
     ]
     if not stale_revision_iddocs:
         logger.info("No revision duplicates found in chunks.")
@@ -191,19 +212,24 @@ def prune_stale_revisions() -> None:
 
     failed = _delete_iddocs(_DERIVED_TABLES, stale_revision_iddocs)
     if failed:
-        logger.error(f"Revision pruning incomplete ({failed}): the statuses are left as they are and the pruning "
-                     f"runs again on the next run.")
+        logger.error(
+            f"Revision pruning incomplete ({failed}): the statuses are left as they are and the pruning "
+            f"runs again on the next run."
+        )
         return
-    spark.sql(f"UPDATE {TARGET_PROCESSED_FILES_TABLE} SET parse_status = '{SUPERSEDED_REVISION}' "
-              f"WHERE IDDOC IN ({_id_list(stale_revision_iddocs)}) AND parse_status = 'SUCCESS'")
+    spark.sql(
+        f"UPDATE {TARGET_PROCESSED_FILES_TABLE} SET parse_status = '{SUPERSEDED_REVISION}' "
+        f"WHERE IDDOC IN ({_id_list(stale_revision_iddocs)}) AND parse_status = 'SUCCESS'"
+    )
     logger.info(
         f"Pruned {len(stale_revision_iddocs)} stale-revision IDDOC(s) across {n_dup_refs} REF(s) from chunks and "
         f"image_metadata; their parsed_documents rows are now {SUPERSEDED_REVISION}."
     )
 
 
-def classify_root_folders(root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre, iddoc_to_cat,
-                           iddoc_to_idcat) -> dict[str, list[dict]]:
+def classify_root_folders(
+    root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre, iddoc_to_cat, iddoc_to_idcat
+) -> dict[str, list[dict]]:
     """Sort the volume root folders into KEEP / DELETE / ORPHAN / SKIP / MANUAL / CAT_EXCL.
 
     KEEP: in scope. DELETE: known but out of scope. ORPHAN: IDDOC unknown in the Intraqual revisions. SKIP: name is not D_/Dm_.
@@ -227,13 +253,24 @@ def classify_root_folders(root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre
 
         iddoc = int(match.group(1))
         ref = iddoc_to_ref.get(iddoc)
-        known = {"name": name, "IDDOC": iddoc, "ref": ref, "titre": iddoc_to_titre.get(iddoc),
-                 "categorie": iddoc_to_cat.get(iddoc)}
+        known = {
+            "name": name,
+            "IDDOC": iddoc,
+            "ref": ref,
+            "titre": iddoc_to_titre.get(iddoc),
+            "categorie": iddoc_to_cat.get(iddoc),
+        }
         excluded = {**known, "path": item.path}
 
         if ref is None:
-            rows["orphan"].append({"name": name, "IDDOC": iddoc, "path": item.path,
-                                   "reason": "ORPHAN_IDDOC_NOT_IN_GD_DOC"})
+            rows["orphan"].append(
+                {
+                    "name": name,
+                    "IDDOC": iddoc,
+                    "path": item.path,
+                    "reason": "ORPHAN_IDDOC_NOT_IN_GD_DOC",
+                }
+            )
         elif ref in MANUAL_REF_EXCLUSIONS:
             rows["manual"].append({**excluded, "reason": "REF_MANUAL_EXCLUSION"})
         elif iddoc not in scope_iddocs:
@@ -244,7 +281,9 @@ def classify_root_folders(root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre
             rows["keep"].append(known)
 
     logger.info(f"KEEP   : {len(rows['keep']):>5}")
-    logger.info(f"DELETE : {len(rows['delete']):>5}  (out of scope - deleted only if dry_run=false)")
+    logger.info(
+        f"DELETE : {len(rows['delete']):>5}  (out of scope - kept on the volume, not parsed)"
+    )
     logger.info(f"ORPHAN : {len(rows['orphan']):>5}  (unknown IDDOC - kept, excluded from parsing)")
     logger.info(f"SKIP   : {len(rows['skip']):>5}  (non-conforming names - untouched)")
     logger.info(f"MANUAL : {len(rows['manual']):>5}  (REF in MANUAL_REF_EXCLUSIONS)")
@@ -264,11 +303,13 @@ def remove_stale_skip_rows(rows_keep) -> None:
         if rows_keep and table_exists(TARGET_PROCESSED_FILES_TABLE):
             df_keep = spark.createDataFrame([(r["IDDOC"],) for r in rows_keep], "IDDOC long")
             stale_skip_iddocs = {
-                r.IDDOC for r in
-                spark.table(TARGET_PROCESSED_FILES_TABLE)
-                .filter(F.col("parse_status").isin(*_PERMANENT_SKIP_STATUSES))
-                .join(F.broadcast(df_keep), on="IDDOC", how="inner")
-                .select("IDDOC").distinct().collect()
+                r.IDDOC
+                for r in spark.table(TARGET_PROCESSED_FILES_TABLE)
+                .filter(f.col("parse_status").isin(*_PERMANENT_SKIP_STATUSES))
+                .join(f.broadcast(df_keep), on="IDDOC", how="inner")
+                .select("IDDOC")
+                .distinct()
+                .collect()
             }
     except Exception as exc:
         logger.warning(f"Un-skip check failed: {exc}")
@@ -276,9 +317,13 @@ def remove_stale_skip_rows(rows_keep) -> None:
     if not stale_skip_iddocs:
         logger.info("Nothing to un-skip.")
         return
-    spark.sql(f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} WHERE IDDOC IN ({_id_list(stale_skip_iddocs)})")
-    logger.info(f"Un-skipped {len(stale_skip_iddocs)} IDDOC(s) that re-entered scope "
-                f"(stale permanent-skip row removed, will be picked up by 3_parse).")
+    spark.sql(
+        f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} WHERE IDDOC IN ({_id_list(stale_skip_iddocs)})"
+    )
+    logger.info(
+        f"Un-skipped {len(stale_skip_iddocs)} IDDOC(s) that re-entered scope "
+        f"(stale permanent-skip row removed, will be picked up by 3_parse)."
+    )
 
 
 def reconcile_processed_files(classified, known_iddocs, job_run_id) -> None:
@@ -300,22 +345,25 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id) -> None:
         :param status: ``parse_status`` written for them.
         :return: one row per item.
         """
-        return [{
-            "IDDOC": r.get("IDDOC"),
-            "source_path": r["path"].replace("dbfs:", ""),
-            "source_file_name": r["name"],
-            "ref": r.get("ref"),
-            "titre": r.get("titre"),
-            "categorie": r.get("categorie"),
-            "parse_status": status,
-            # The monitoring dashboard explains each exclusion from this reason.
-            "removal_reason": r.get("reason"),
-            "is_in_rag": False,
-            "is_filtered_by_date": False,
-            "ingestion_run_id": run_id,
-            "ingestion_timestamp": run_ts,
-            "job_run_id": job_run_id,
-        } for r in items]
+        return [
+            {
+                "IDDOC": r.get("IDDOC"),
+                "source_path": r["path"].replace("dbfs:", ""),
+                "source_file_name": r["name"],
+                "ref": r.get("ref"),
+                "titre": r.get("titre"),
+                "categorie": r.get("categorie"),
+                "parse_status": status,
+                # The monitoring dashboard explains each exclusion from this reason.
+                "removal_reason": r.get("reason"),
+                "is_in_rag": False,
+                "is_filtered_by_date": False,
+                "ingestion_run_id": run_id,
+                "ingestion_timestamp": run_ts,
+                "job_run_id": job_run_id,
+            }
+            for r in items
+        ]
 
     all_skipped = (
         skipped_rows(classified["delete"], "SKIPPED_REF_OUT_OF_SCOPE")
@@ -326,42 +374,78 @@ def reconcile_processed_files(classified, known_iddocs, job_run_id) -> None:
 
     # Documents recorded earlier that vanished from both the volume and the Intraqual revisions. The anti-join cannot tell a
     # source-side deletion from another cause of disappearance.
-    folder_iddocs = {r["IDDOC"] for key in ("keep", "delete", "orphan", "manual", "cat_excl") for r in classified[key]}
+    folder_iddocs = {
+        r["IDDOC"]
+        for key in ("keep", "delete", "orphan", "manual", "cat_excl")
+        for r in classified[key]
+    }
     try:
         existing_iddocs = {
-            r.IDDOC for r in
-            spark.table(TARGET_PROCESSED_FILES_TABLE).filter(F.col("IDDOC").isNotNull()).select("IDDOC").distinct().collect()
+            r.IDDOC
+            for r in spark.table(TARGET_PROCESSED_FILES_TABLE)
+            .filter(f.col("IDDOC").isNotNull())
+            .select("IDDOC")
+            .distinct()
+            .collect()
         }
     except Exception:
         existing_iddocs = set()
-    all_skipped += [{
-        "IDDOC": iddoc, "source_path": None, "source_file_name": None, "ref": None, "titre": None,
-        "categorie": None, "parse_status": "SKIPPED_SOURCE_REMOVED", "removal_reason": "NOT_IN_VOLUME_LISTING",
-        "is_in_rag": False, "is_filtered_by_date": False, "ingestion_run_id": run_id,
-        "ingestion_timestamp": run_ts, "job_run_id": job_run_id,
-    } for iddoc in existing_iddocs - folder_iddocs - set(known_iddocs)]
+    all_skipped += [
+        {
+            "IDDOC": iddoc,
+            "source_path": None,
+            "source_file_name": None,
+            "ref": None,
+            "titre": None,
+            "categorie": None,
+            "parse_status": "SKIPPED_SOURCE_REMOVED",
+            "removal_reason": "NOT_IN_VOLUME_LISTING",
+            "is_in_rag": False,
+            "is_filtered_by_date": False,
+            "ingestion_run_id": run_id,
+            "ingestion_timestamp": run_ts,
+            "job_run_id": job_run_id,
+        }
+        for iddoc in existing_iddocs - folder_iddocs - set(known_iddocs)
+    ]
 
     if not all_skipped:
         logger.info("Nothing to log into parsed_documents.")
         return
     if not table_exists(TARGET_PROCESSED_FILES_TABLE):
-        logger.warning(f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet - run create_proj_chunks (FULL) first. "
-                       f"No write performed.")
+        logger.warning(
+            f"{TARGET_PROCESSED_FILES_TABLE} does not exist yet - run create_proj_chunks (FULL) first. "
+            f"No write performed."
+        )
         return
 
     reclassified = {r["IDDOC"] for r in all_skipped if r.get("IDDOC") is not None}
     try:
         if reclassified:
-            spark.sql(f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} WHERE IDDOC IN ({_id_list(reclassified)})")
-        write_table(spark.createDataFrame(all_skipped), TARGET_PROCESSED_FILES_TABLE, "append", merge_schema=True)
+            spark.sql(
+                f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} WHERE IDDOC IN ({_id_list(reclassified)})"
+            )
+        write_table(
+            spark.createDataFrame(all_skipped),
+            TARGET_PROCESSED_FILES_TABLE,
+            "append",
+            merge_schema=True,
+        )
     except Exception as exc:
         logger.error(f"Error writing parsed_documents (run {run_id}): {exc}")
         raise
 
     logger.info(f"{TARGET_PROCESSED_FILES_TABLE} updated ({run_id}):")
-    for status in ("SKIPPED_REF_OUT_OF_SCOPE", "SKIPPED_IDDOC_NOT_FOUND", "SKIPPED_REF_MANUAL",
-                   "SKIPPED_SOURCE_REMOVED", "SKIPPED_CATEGORY_EXCLUDED"):
-        logger.info(f"   {status:<27}: {sum(1 for r in all_skipped if r['parse_status'] == status)}")
+    for status in (
+        "SKIPPED_REF_OUT_OF_SCOPE",
+        "SKIPPED_IDDOC_NOT_FOUND",
+        "SKIPPED_REF_MANUAL",
+        "SKIPPED_SOURCE_REMOVED",
+        "SKIPPED_CATEGORY_EXCLUDED",
+    ):
+        logger.info(
+            f"   {status:<27}: {sum(1 for r in all_skipped if r['parse_status'] == status)}"
+        )
 
 
 def archive_condition() -> Column:
@@ -369,8 +453,11 @@ def archive_condition() -> Column:
 
     :return: condition that is true for the documents published before the cutoff, except the date-exempt ones.
     """
-    return (F.col("doc_date").isNotNull() & (F.col("doc_date") < F.lit(DOC_DATE_CUTOFF).try_cast("date"))
-            & ~F.coalesce(F.col("date_exempt"), F.lit(False)))
+    return (
+        f.col("doc_date").isNotNull()
+        & (f.col("doc_date") < f.lit(DOC_DATE_CUTOFF).try_cast("date"))
+        & ~f.coalesce(f.col("date_exempt"), f.lit(False))
+    )
 
 
 def build_manifest(rows_keep) -> DataFrame:
@@ -388,24 +475,29 @@ def build_manifest(rows_keep) -> DataFrame:
     if len(by_iddoc) < len(rows_keep):
         seen = Counter(r["IDDOC"] for r in rows_keep)
         both = sorted(r["name"] for r in rows_keep if seen[r["IDDOC"]] > 1)
-        logger.warning(f"{len(rows_keep) - len(by_iddoc)} IDDOC(s) found in two root folders, the D_ folder is kept: {both}")
+        logger.warning(
+            f"{len(rows_keep) - len(by_iddoc)} IDDOC(s) found in two root folders, the D_ folder is kept: {both}"
+        )
         rows_keep = list(by_iddoc.values())
 
     df_keep = spark.createDataFrame(
         [(r["IDDOC"], r["ref"], r["titre"], r["categorie"]) for r in rows_keep],
-        schema=StructType([
-            StructField("IDDOC", LongType()), StructField("ref", StringType()),
-            StructField("titre", StringType()), StructField("categorie", StringType()),
-        ]),
+        schema=StructType(
+            [
+                StructField("IDDOC", LongType()),
+                StructField("ref", StringType()),
+                StructField("titre", StringType()),
+                StructField("categorie", StringType()),
+            ]
+        ),
     )
 
-    df_revisions = read_revisions(spark).filter(F.col("document_revision_ID").isNotNull())
-    df_dates = (
-        df_revisions
-        .select(F.col("document_revision_ID").alias("IDDOC"), F.col("published_date").try_cast("date").alias("doc_date"),
-                F.col("document_index").try_cast("string").alias("indice"))
-        .dropDuplicates(["IDDOC"])
-    )
+    df_revisions = read_revisions(spark).filter(f.col("document_revision_ID").isNotNull())
+    df_dates = df_revisions.select(
+        f.col("document_revision_ID").alias("IDDOC"),
+        f.col("published_date").try_cast("date").alias("doc_date"),
+        f.col("document_index").try_cast("string").alias("indice"),
+    ).dropDuplicates(["IDDOC"])
 
     try:
         df_hierarchy = spark.table(DIVISION_REFERENCE_TABLE).drop("division_source")
@@ -414,33 +506,33 @@ def build_manifest(rows_keep) -> DataFrame:
             f"{DIVISION_REFERENCE_TABLE} not found - run create_proj_category_reference before create_proj_parse_manifest. ({exc})"
         )
 
-    df_iddoc_type = (
-        df_revisions
-        .select(F.col("document_revision_ID").alias("IDDOC"), F.col("document_type").alias("type_document"))
-        .dropDuplicates(["IDDOC"])
-    )
+    df_iddoc_type = df_revisions.select(
+        f.col("document_revision_ID").alias("IDDOC"), f.col("document_type").alias("type_document")
+    ).dropDuplicates(["IDDOC"])
 
     df_manifest = (
-        df_keep
-        .join(df_dates, on="IDDOC", how="left")
-        .join(F.broadcast(df_hierarchy), on="IDDOC", how="left")
-        .join(F.broadcast(df_iddoc_type), on="IDDOC", how="left")
-        .withColumn("division", F.coalesce(F.col("division"), F.lit("ALL")))
-        .withColumn("date_exempt", F.coalesce(F.col("date_exempt"), F.lit(False)))
-        .withColumn("langue", F.lit("fr-FR"))
-        .withColumn("auteur", F.lit(None).try_cast(StringType()))
+        df_keep.join(df_dates, on="IDDOC", how="left")
+        .join(f.broadcast(df_hierarchy), on="IDDOC", how="left")
+        .join(f.broadcast(df_iddoc_type), on="IDDOC", how="left")
+        .withColumn("division", f.coalesce(f.col("division"), f.lit("ALL")))
+        .withColumn("date_exempt", f.coalesce(f.col("date_exempt"), f.lit(False)))
+        .withColumn("langue", f.lit("fr-FR"))
+        .withColumn("auteur", f.lit(None).try_cast(StringType()))
     )
 
     # Pre-cutoff documents stay in the manifest (3_parse builds their notice chunk from it); only the
     # ARCHIVE_MAX_DOCS most recent get parse_content=True, and 3_parse never scans the others.
     is_archive = archive_condition()
-    archive_rank = F.row_number().over(Window.partitionBy(is_archive).orderBy(F.desc("doc_date"), F.desc("IDDOC")))
+    archive_rank = f.row_number().over(
+        Window.partitionBy(is_archive).orderBy(f.desc("doc_date"), f.desc("IDDOC"))
+    )
     return (
-        df_manifest
-        .withColumn("_archive_rank", archive_rank)
+        df_manifest.withColumn("_archive_rank", archive_rank)
         .withColumn(
             "parse_content",
-            ~is_archive | F.lit(ARCHIVE_MAX_DOCS < 0) | (F.col("_archive_rank") <= F.lit(ARCHIVE_MAX_DOCS)),
+            ~is_archive
+            | f.lit(ARCHIVE_MAX_DOCS < 0)
+            | (f.col("_archive_rank") <= f.lit(ARCHIVE_MAX_DOCS)),
         )
         .drop("_archive_rank")
     )
@@ -455,43 +547,10 @@ def write_manifest(df_manifest) -> None:
     ensure_primary_key(PARSE_MANIFEST_TABLE, ["IDDOC"])
     df_written = spark.table(PARSE_MANIFEST_TABLE)
     is_archive = archive_condition()
-    logger.info(f"parse_manifest written: {df_written.count()} IDDOCs in scope ({PARSE_MANIFEST_TABLE})")
+    logger.info(
+        f"parse_manifest written: {df_written.count()} IDDOCs in scope ({PARSE_MANIFEST_TABLE})"
+    )
     logger.info(
         f"   pre-{DOC_DATE_CUTOFF} : {df_written.filter(is_archive).count()} | allowed to be parsed : "
-        f"{df_written.filter(is_archive & F.col('parse_content')).count()} (PARSING_ARCHIVE_MAX_DOCS={ARCHIVE_MAX_DOCS})"
+        f"{df_written.filter(is_archive & f.col('parse_content')).count()} (PARSING_ARCHIVE_MAX_DOCS={ARCHIVE_MAX_DOCS})"
     )
-
-
-def delete_out_of_scope_folders(rows_delete, dry_run) -> None:
-    """Remove the out-of-scope root folders from the volume; a dry run only counts them.
-
-    Only the prod pipeline deletes: every environment reads the same source volume, so a delete from another environment
-    would remove the documents the prod pipeline reads.
-
-    :param rows_delete: Items to remove, dicts with a ``path`` key.
-    :param dry_run: True only counts the items.
-    """
-    if dry_run:
-        logger.info(f"[DRY RUN] {len(rows_delete)} items would be deleted.")
-        logger.info("  -> Set the dry_run widget to false to actually delete.")
-        return
-    if PIPELINE_WRITE_ENV != "prod":
-        logger.warning(f"{len(rows_delete)} items not deleted: the source volume is shared and only the prod pipeline "
-                       f"deletes from it (this run writes to {PIPELINE_WRITE_ENV}).")
-        return
-    if not rows_delete:
-        logger.info("Nothing to delete.")
-        return
-
-    logger.info(f"Deleting {len(rows_delete)} items...")
-    deleted = errors = 0
-    for row in rows_delete:
-        try:
-            dbutils.fs.rm(row["path"], recurse=True)
-            deleted += 1
-            if deleted % 50 == 0 or deleted == len(rows_delete):
-                logger.info(f"  {deleted}/{len(rows_delete)} deleted")
-        except Exception as exc:
-            logger.warning(f"  Error on {row['path']}: {exc}")
-            errors += 1
-    logger.info(f"Done: {deleted} deleted, {errors} errors")

@@ -4,6 +4,13 @@ Cible : `prod` (profil CLI `qualibot-prod`). Rien ici ne déploie : le déploiem
 
 Le catalogue `prod_landingzone.intraqual` (source Intraqual) ne se touche pas.
 
+## Ressources PROD
+
+| Quoi | Lien / commande |
+|---|---|
+| App `qualibot` (utilisateurs) | https://qualibot-1210945332048776.aws.databricksapps.com |
+| App — état | `databricks apps get qualibot --profile qualibot-prod` |
+
 ## 0. État de départ (lecture seule, profil `qualibot-prod`)
 
 ```powershell
@@ -19,6 +26,17 @@ Attendu : `prod_proj` existe ou non. Si l'ancien schéma `prod_landingzone.quali
 ## 0.1 Politique de cluster « S » de PROD — fait (2026-10-15)
 
 Identifiant `001C199A8D85FE35` confirmé sur le workspace prod (`databricks cluster-policies get 001C199A8D85FE35 --profile qualibot-prod`) : politique S attendue (`activity-type` = `prod-job`, `cluster-policy` = `S`, `SPOT_WITH_FALLBACK` fixé avec `first_on_demand` minimum 1, `auto:latest-lts`, nœud `.xlarge`). Aucune action à faire.
+
+## 0.2 Remise à zéro avant la bascule (décidée 2026-10-22, à faire avant l'étape 6)
+
+Garde : l'app `qualibot`, le projet Lakebase `qualibot` (+ rôles, schéma), le endpoint Vector Search `qualibot`, les volumes `docling_models` et `doc_compare` (tarball LibreOffice), `prod_landingzone.intraqual`. Supprime : jobs, agents/endpoints liés, index, tables de `prod_proj.qualibot`, schéma `prod_landingzone.qualibot`, données d'usage Lakebase. Scripts : `runbooks/scripts/prod_cleanup/`.
+
+1. Inventaire (2026-10-22, profil `PROD`) : jobs à supprimer = `qualibot-provision-knowledge-assistant-qualibot-prod` et `D_1_qualibot-parsing-pipeline-qualibot-prod` (les jobs `*intraqual*` ne sont pas à nous) ; endpoints `ka-3315943a-endpoint`, `ka-5d35f4d5-endpoint`, `ka-88a4da35-endpoint`, `ka-c9dbc4db-endpoint` ; l'endpoint Vector Search `qualibot` n'existe pas sur PROD ; `prod_proj.qualibot` n'existe pas ; les 4 volumes (`doc_compare`, `docling_models`, `images`, `test`) ne sont que dans `prod_landingzone.qualibot`.
+2. Notebook `drop_prod_objects` lancé par le SP prod (`b82d3b5a-b633-4738-8dde-68bb2142cb02`) : phase `prepare` (crée `prod_proj.qualibot` + volumes, copie `docling_models` et `doc_compare`), puis phase `drop`, chacune en `dry_run=true` puis `false`.
+2b. Créer l'endpoint Vector Search `qualibot` sur PROD (absent).
+3. `reset_prod_lakebase.py` : comptage, puis `--apply`.
+4. Valeurs à ajouter dans `utils/deploy/target_env.json` pour `prod` avant le déploiement : `SOFFICE_ARCHIVE_VOLUME_PATH`, puis `CHAT_MLFLOW_EXPERIMENT_ID` une fois `create_chat_experiment_prod` lancé.
+5. Droits de l'étape 5 à passer par un `jobs submit` en SP prod, pas en SQL à la main.
 
 ## 1. Catalogue et schéma `prod_proj` (admin metastore, seulement si absent)
 

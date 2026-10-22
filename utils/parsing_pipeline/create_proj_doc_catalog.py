@@ -37,6 +37,44 @@
 
 # MAGIC %md
 # MAGIC # Configuration
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Widgets
+# MAGIC The environments, the quality bypass and the debug mode are widgets: the job passes them as base parameters,
+# MAGIC and the notebook copies them to the environment that `config` reads when it is imported.
+
+
+# COMMAND ----------
+
+import os
+
+dbutils.widgets.removeAll()
+
+dbutils.widgets.text("pipeline_write_env", "", "Environment the tables are written to: dev, uat or prod")
+dbutils.widgets.text("pipeline_read_env", "", "Environment of the tables another task of this job wrote (empty: pipeline_write_env)")
+dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference tables (Intraqual data asset)")
+dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
+dbutils.widgets.text("debug", "false")
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
+    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
+PIPELINE_READ_ENV = dbutils.widgets.get("pipeline_read_env") or PIPELINE_WRITE_ENV
+DEBUG = dbutils.widgets.get("debug").lower() == "true"
+LOG_LEVEL = dbutils.widgets.get("log_level")
+
+# config reads the environment when it is imported, so the widget values are copied there first.
+os.environ["PIPELINE_WRITE_ENV"] = PIPELINE_WRITE_ENV
+os.environ["PIPELINE_READ_ENV"] = dbutils.widgets.get("pipeline_read_env")
+os.environ["REFERENCE_READ_ENV"] = dbutils.widgets.get("reference_read_env")
+os.environ["BYPASS_QUALITY_CHECKS"] = dbutils.widgets.get("bypass_quality_checks")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Config Standard Package Imports
 
 # COMMAND ----------
@@ -74,22 +112,14 @@ from leap_utils.common import logger as log_utils
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Widgets
+# MAGIC ### Job parameters
 # MAGIC This task is serverless: no `PIPELINE_WRITE_ENV` environment variable, so the Lakebase target and the write environment come from the job parameters. `lakebase_database` may list several databases, comma-separated; empty means nothing to do.
 
 # COMMAND ----------
 
-dbutils.widgets.removeAll()
-
-dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-LOG_LEVEL = dbutils.widgets.get("log_level")
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-dbutils.widgets.text("pipeline_write_env", "")
-PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
 
-if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
-    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
 dbutils.widgets.text("lakebase_project_id", "qualibot")
 LAKEBASE_PROJECT_ID = dbutils.widgets.get("lakebase_project_id")
 dbutils.widgets.text("lakebase_branch", "production")
@@ -97,13 +127,17 @@ LAKEBASE_BRANCH = dbutils.widgets.get("lakebase_branch")
 dbutils.widgets.text("lakebase_endpoint", "primary")
 LAKEBASE_ENDPOINT = dbutils.widgets.get("lakebase_endpoint")
 dbutils.widgets.text("lakebase_database", "")
-LAKEBASE_DATABASES = [d.strip() for d in dbutils.widgets.get("lakebase_database").split(",") if d.strip()]
+LAKEBASE_DATABASES = [
+    d.strip() for d in dbutils.widgets.get("lakebase_database").split(",") if d.strip()
+]
 
 if not LAKEBASE_DATABASES:
     logger.info("No lakebase_database parameter: nothing to do.")
     dbutils.notebook.exit("no_lakebase_database")
 
-logger.info(f"Target: {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASES}, source {PIPELINE_WRITE_ENV}_proj.qualibot")
+logger.info(
+    f"Target: {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASES}, source {PIPELINE_WRITE_ENV}_proj.qualibot"
+)
 
 # COMMAND ----------
 
@@ -118,8 +152,8 @@ INTRAQUAL_REF_URL_BASE = "https://intraqual.lat.corp/intraqual_prod/identificati
 # Never let a broken upstream run empty the app's catalog.
 MIN_KEEP_RATIO = 0.5
 
-MANIFEST_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest"
-CHUNKS_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks"
+MANIFEST_TABLE = f"{PIPELINE_READ_ENV}_proj.qualibot.parse_manifest"
+CHUNKS_TABLE = f"{PIPELINE_READ_ENV}_proj.qualibot.chunks"
 
 # COMMAND ----------
 
@@ -149,8 +183,15 @@ for table in (MANIFEST_TABLE, CHUNKS_TABLE):
 # COMMAND ----------
 
 catalog_rows = [
-    (r["ref"], r["title"], INTRAQUAL_REF_URL_BASE + r["ref"].replace(" ", "%20"), r["division"], bool(r["in_chat"]),
-     (r["revision"] or "").strip() or None, r["doc_date"])
+    (
+        r["ref"],
+        r["title"],
+        INTRAQUAL_REF_URL_BASE + r["ref"].replace(" ", "%20"),
+        r["division"],
+        bool(r["in_chat"]),
+        (r["revision"] or "").strip() or None,
+        r["doc_date"],
+    )
     for r in spark.sql(f"""
         SELECT trim(m.ref) AS ref, first(m.titre, true) AS title, first(m.division, true) AS division,
                max(c.REF IS NOT NULL) AS in_chat,
@@ -236,6 +277,7 @@ def connect(database) -> psycopg2.extensions.connection:
     logger.info(f"Connected to {lakebase_host}/{database} as {username}")
     return conn
 
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -261,8 +303,10 @@ for database in LAKEBASE_DATABASES:
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
-            cur.execute("SELECT count(*) FROM information_schema.columns "
-                        "WHERE table_name = 'doc_catalog' AND column_name IN ('revision', 'doc_date')")
+            cur.execute(
+                "SELECT count(*) FROM information_schema.columns "
+                "WHERE table_name = 'doc_catalog' AND column_name IN ('revision', 'doc_date')"
+            )
             with_revision = cur.fetchone()[0] == 2
             if not with_revision:
                 # Only the table's owner may add columns: this notebook's identity when it created the table.
@@ -277,8 +321,10 @@ for database in LAKEBASE_DATABASES:
                     cur.execute("ROLLBACK TO SAVEPOINT add_revision")
                     cur.execute("SELECT tableowner FROM pg_tables WHERE tablename = 'doc_catalog'")
                     owner = cur.fetchone()[0]
-                    logger.warning(f"{database}.doc_catalog: cannot add revision/doc_date as {username} "
-                                   f"(table owner: {owner}): {str(exc).strip()}")
+                    logger.warning(
+                        f"{database}.doc_catalog: cannot add revision/doc_date as {username} "
+                        f"(table owner: {owner}): {str(exc).strip()}"
+                    )
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS catalog_metadata (
                     id              INTEGER PRIMARY KEY DEFAULT 1,
@@ -290,17 +336,30 @@ for database in LAKEBASE_DATABASES:
             cur.execute("SELECT count(*) FROM doc_catalog")
             before = cur.fetchone()[0]
             if before and len(catalog_rows) < MIN_KEEP_RATIO * before:
-                raise RuntimeError(f"{database}.doc_catalog: {len(catalog_rows)} documents now vs {before} "
-                                   f"before — refusing to shrink it by more than half (check {MANIFEST_TABLE})")
+                raise RuntimeError(
+                    f"{database}.doc_catalog: {len(catalog_rows)} documents now vs {before} "
+                    f"before — refusing to shrink it by more than half (check {MANIFEST_TABLE})"
+                )
             cur.execute("DELETE FROM doc_catalog")
             if with_revision:
-                execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat, revision, doc_date) "
-                                    "VALUES %s", catalog_rows, page_size=1000)
+                execute_values(
+                    cur,
+                    "INSERT INTO doc_catalog (ref, title, url, division, in_chat, revision, doc_date) "
+                    "VALUES %s",
+                    catalog_rows,
+                    page_size=1000,
+                )
             else:
-                logger.warning(f"{database}.doc_catalog has no revision/doc_date columns: catalog written without "
-                               "them (start the app once, or add them as the table owner)")
-                execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat) VALUES %s",
-                               [r[:5] for r in catalog_rows], page_size=1000)
+                logger.warning(
+                    f"{database}.doc_catalog has no revision/doc_date columns: catalog written without "
+                    "them (start the app once, or add them as the table owner)"
+                )
+                execute_values(
+                    cur,
+                    "INSERT INTO doc_catalog (ref, title, url, division, in_chat) VALUES %s",
+                    [r[:5] for r in catalog_rows],
+                    page_size=1000,
+                )
             cur.execute("""
                 INSERT INTO catalog_metadata (id, documents_as_of, updated_at)
                 VALUES (1, CURRENT_DATE, NOW())
@@ -308,6 +367,8 @@ for database in LAKEBASE_DATABASES:
                     documents_as_of = EXCLUDED.documents_as_of,
                     updated_at      = EXCLUDED.updated_at
             """)
-        logger.info(f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, documents_as_of=today")
+        logger.info(
+            f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, documents_as_of=today"
+        )
     finally:
         conn.close()

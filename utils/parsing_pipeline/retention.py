@@ -1,4 +1,5 @@
 """Which checkpoint snapshots to drop."""
+
 import re
 from datetime import datetime
 

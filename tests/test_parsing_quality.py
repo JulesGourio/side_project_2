@@ -135,8 +135,8 @@ def test_check_dataframe_passes_clean_data_and_only_warns_on_amber(spark, gx):
 
 
 def test_try_cast_returns_null_instead_of_raising_on_a_bad_value(spark):
-    from pyspark.sql import functions as F
+    from pyspark.sql import functions as f
 
     df = spark.createDataFrame([("12",), ("abc",)], "v string")
-    out = df.select(F.col("v").try_cast("bigint").alias("n"), F.col("v").try_cast("date").alias("d")).collect()
+    out = df.select(f.col("v").try_cast("bigint").alias("n"), f.col("v").try_cast("date").alias("d")).collect()
     assert [r.n for r in out] == [12, None] and [r.d for r in out] == [None, None]

@@ -10,18 +10,30 @@ from itertools import chain
 from typing import List
 
 from pyspark.sql import Column, DataFrame
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 from pyspark.sql import types as T
 from pyspark.sql.window import Window, WindowSpec
 
 from config import ENRICHMENT_COLS
 
 FORMAT_PRIORITIES = {
-    "docx": 1, "pdf": 2, "docm": 3, "doc": 4, "html": 5,
-    "pptx": 6, "ppt": 7, "txt": 8, "xml": 9,
-    "xlsx": 10, "xls": 11, "xlsm": 12, "xlsb": 13,
+    "docx": 1,
+    "pdf": 2,
+    "docm": 3,
+    "doc": 4,
+    "html": 5,
+    "pptx": 6,
+    "ppt": 7,
+    "txt": 8,
+    "xml": 9,
+    "xlsx": 10,
+    "xls": 11,
+    "xlsm": 12,
+    "xlsb": 13,
     # Must stay listed here or these formats are silently excluded.
-    "rtf": 14, "odt": 15, "ods": 16,
+    "rtf": 14,
+    "odt": 15,
+    "ods": 16,
 }
 UNSUPPORTED_PRIORITY = 99
 
@@ -39,13 +51,13 @@ def iddoc_column(path_col: str = "source_path", name_col: str = "source_file_nam
     :param name_col: Column with the file name.
     :return: IDDOC as bigint, null when no id is found.
     """
-    folder_id = F.regexp_extract(F.col(path_col), r"/[dD]m?_(\d+)/", 1)
-    file_id = F.regexp_extract(F.col(name_col), r"^[dD]m?_(\d+)", 1)
-    raw_num = F.regexp_extract(F.col(name_col), r"^(\d+)", 1)
-    return F.coalesce(
-        F.nullif(folder_id, F.lit("")),
-        F.nullif(file_id, F.lit("")),
-        F.nullif(raw_num, F.lit("")),
+    folder_id = f.regexp_extract(f.col(path_col), r"/[dD]m?_(\d+)/", 1)
+    file_id = f.regexp_extract(f.col(name_col), r"^[dD]m?_(\d+)", 1)
+    raw_num = f.regexp_extract(f.col(name_col), r"^(\d+)", 1)
+    return f.coalesce(
+        f.nullif(folder_id, f.lit("")),
+        f.nullif(file_id, f.lit("")),
+        f.nullif(raw_num, f.lit("")),
     ).try_cast("bigint")
 
 
@@ -63,19 +75,23 @@ def extract_iddoc_from_name(name: str) -> int | None:
 
 
 # --- Distributed file scan (metadata only) ---
-_EMPTY_META_SCHEMA = T.StructType([
-    T.StructField("source_path", T.StringType()),
-    T.StructField("source_file_size_bytes", T.LongType()),
-    T.StructField("source_modification_time", T.TimestampType()),
-    T.StructField("source_file_name", T.StringType()),
-    T.StructField("source_file_extension", T.StringType()),
-    T.StructField("source_folder_path", T.StringType()),
-    T.StructField("IDDOC", T.LongType()),
-])
-_EMPTY_CONTENT_SCHEMA = T.StructType([
-    T.StructField("source_path", T.StringType()),
-    T.StructField("content", T.BinaryType()),
-])
+_EMPTY_META_SCHEMA = T.StructType(
+    [
+        T.StructField("source_path", T.StringType()),
+        T.StructField("source_file_size_bytes", T.LongType()),
+        T.StructField("source_modification_time", T.TimestampType()),
+        T.StructField("source_file_name", T.StringType()),
+        T.StructField("source_file_extension", T.StringType()),
+        T.StructField("source_folder_path", T.StringType()),
+        T.StructField("IDDOC", T.LongType()),
+    ]
+)
+_EMPTY_CONTENT_SCHEMA = T.StructType(
+    [
+        T.StructField("source_path", T.StringType()),
+        T.StructField("content", T.BinaryType()),
+    ]
+)
 
 
 def scan_volume_paths(spark, paths: List[str]) -> tuple[DataFrame, DataFrame]:
@@ -98,22 +114,24 @@ def scan_volume_paths(spark, paths: List[str]) -> tuple[DataFrame, DataFrame]:
     df_files_raw = spark.read.format("binaryFile").option("recursiveFileLookup", "true").load(paths)
 
     df_meta_raw = (
-        df_files_raw
-        .select(
-            F.col("path").alias("source_path"),
-            F.col("length").try_cast("long").alias("source_file_size_bytes"),
-            F.col("modificationTime").alias("source_modification_time"),
+        df_files_raw.select(
+            f.col("path").alias("source_path"),
+            f.col("length").try_cast("long").alias("source_file_size_bytes"),
+            f.col("modificationTime").alias("source_modification_time"),
         )
-        .withColumn("source_file_name", F.element_at(F.split(F.col("source_path"), "/"), -1))
-        .withColumn("source_file_extension", F.lower(F.regexp_extract(F.col("source_file_name"), r"\.([^.]+)$", 1)))
-        .withColumn("source_folder_path", F.regexp_replace(F.col("source_path"), r"/[^/]+$", ""))
+        .withColumn("source_file_name", f.element_at(f.split(f.col("source_path"), "/"), -1))
+        .withColumn(
+            "source_file_extension",
+            f.lower(f.regexp_extract(f.col("source_file_name"), r"\.([^.]+)$", 1)),
+        )
+        .withColumn("source_folder_path", f.regexp_replace(f.col("source_path"), r"/[^/]+$", ""))
         .filter(
-            ~F.lower(F.col("source_file_name")).isin([t.lower() for t in TRASH_FILES_BLACKLIST])
-            & ~F.col("source_file_name").startswith("~")
+            ~f.lower(f.col("source_file_name")).isin([t.lower() for t in TRASH_FILES_BLACKLIST])
+            & ~f.col("source_file_name").startswith("~")
         )
         .withColumn("IDDOC", iddoc_column())
     )
-    return df_meta_raw, df_files_raw.select(F.col("path").alias("source_path"), "content")
+    return df_meta_raw, df_files_raw.select(f.col("path").alias("source_path"), "content")
 
 
 # --- Ranking and selection ---
@@ -123,8 +141,10 @@ def _priority_window() -> WindowSpec:
     :return: window that orders the candidates of one IDDOC.
     """
     return Window.partitionBy("IDDOC").orderBy(
-        F.col("is_dm_file").asc(), F.col("ext_priority").asc(),
-        F.col("source_modification_time").desc(), F.col("source_path").asc(),
+        f.col("is_dm_file").asc(),
+        f.col("ext_priority").asc(),
+        f.col("source_modification_time").desc(),
+        f.col("source_path").asc(),
     )
 
 
@@ -136,13 +156,18 @@ def rank_candidates(df_meta_raw) -> DataFrame:
     :param df_meta_raw: File metadata, from ``scan_volume_paths``.
     :return: candidate files that have an IDDOC, with the rank columns.
     """
-    mapping_expr = F.create_map([F.lit(x) for x in chain(*FORMAT_PRIORITIES.items())])
+    mapping_expr = f.create_map([f.lit(x) for x in chain(*FORMAT_PRIORITIES.items())])
     return (
-        df_meta_raw.filter(F.col("IDDOC").isNotNull())
-        .withColumn("ext_priority", F.coalesce(mapping_expr[F.col("source_file_extension")], F.lit(UNSUPPORTED_PRIORITY)))
-        .withColumn("is_dm_file", F.when(F.col("source_file_name").rlike(r"^[dD]m_"), 1).otherwise(0))
-        .withColumn("priority_rank", F.row_number().over(_priority_window()))
-        .withColumn("files_count_for_iddoc", F.count("*").over(Window.partitionBy("IDDOC")))
+        df_meta_raw.filter(f.col("IDDOC").isNotNull())
+        .withColumn(
+            "ext_priority",
+            f.coalesce(mapping_expr[f.col("source_file_extension")], f.lit(UNSUPPORTED_PRIORITY)),
+        )
+        .withColumn(
+            "is_dm_file", f.when(f.col("source_file_name").rlike(r"^[dD]m_"), 1).otherwise(0)
+        )
+        .withColumn("priority_rank", f.row_number().over(_priority_window()))
+        .withColumn("files_count_for_iddoc", f.count("*").over(Window.partitionBy("IDDOC")))
     )
 
 
@@ -158,20 +183,24 @@ def select_best_files(df_matched_full, df_business_meta) -> DataFrame:
     :param df_business_meta: Business metadata with an ``IDDOC`` column.
     """
     df_sel = (
-        df_matched_full.filter(F.col("ext_priority") < UNSUPPORTED_PRIORITY)
-        .withColumn("_supported_rank", F.row_number().over(_priority_window()))
-        .filter(F.col("_supported_rank") == 1)
+        df_matched_full.filter(f.col("ext_priority") < UNSUPPORTED_PRIORITY)
+        .withColumn("_supported_rank", f.row_number().over(_priority_window()))
+        .filter(f.col("_supported_rank") == 1)
         .drop("_supported_rank", *RANK_HELPER_COLS)
     )
 
     biz_cols = [c for c in ENRICHMENT_COLS if c in df_business_meta.columns]
     df_biz = df_business_meta.select("IDDOC", *biz_cols).dropDuplicates(["IDDOC"])
-    df_sel = df_sel.join(F.broadcast(df_biz), on="IDDOC", how="left").filter(F.col("ref").isNotNull())
+    df_sel = df_sel.join(f.broadcast(df_biz), on="IDDOC", how="left").filter(
+        f.col("ref").isNotNull()
+    )
 
     # The string columns and doc_date exist even when the manifest lacks them.
     for c in ENRICHMENT_COLS:
         if c not in df_sel.columns:
-            df_sel = df_sel.withColumn(c, F.lit(None).try_cast("date" if c == "doc_date" else "string"))
+            df_sel = df_sel.withColumn(
+                c, f.lit(None).try_cast("date" if c == "doc_date" else "string")
+            )
     return df_sel
 
 
@@ -184,9 +213,8 @@ def attach_content(df_selected, df_content, ingestion_run_id: str) -> DataFrame:
     :return: selected files with their bytes, SHA-256 and ingestion columns.
     """
     return (
-        df_selected
-        .join(df_content, on="source_path", how="inner")
-        .withColumn("document_sha256", F.sha2(F.col("content"), 256))
-        .withColumn("ingestion_run_id", F.lit(ingestion_run_id))
-        .withColumn("ingestion_timestamp", F.current_timestamp())
+        df_selected.join(df_content, on="source_path", how="inner")
+        .withColumn("document_sha256", f.sha2(f.col("content"), 256))
+        .withColumn("ingestion_run_id", f.lit(ingestion_run_id))
+        .withColumn("ingestion_timestamp", f.current_timestamp())
     )

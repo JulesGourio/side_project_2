@@ -17,7 +17,7 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `1_categories`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_INTRAQUAL_GOLD}.document_revisions_intraqual`, `category_ancestors_intraqual` (Intraqual data asset; read by `categories.build_division_reference`, last write time read by the freshness guard)
+# MAGIC - `{REFERENCE_READ_ENV}_gold.quality_system.document_revisions_intraqual`, `category_ancestors_intraqual` (Intraqual data asset; read by `categories.build_division_reference`, last write time read by the freshness guard)
 # MAGIC - `{PARSING_DIVISION_ARCHIVE_TABLE}` (same function, disabled by default: empty)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
@@ -33,6 +33,44 @@
 
 # MAGIC %md
 # MAGIC # Configuration
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Widgets
+# MAGIC The environments, the quality bypass and the debug mode are widgets: the job passes them as base parameters,
+# MAGIC and the notebook copies them to the environment that `config` reads when it is imported.
+
+
+# COMMAND ----------
+
+import os
+
+dbutils.widgets.removeAll()
+
+dbutils.widgets.text("pipeline_write_env", "", "Environment the tables are written to: dev, uat or prod")
+dbutils.widgets.text("pipeline_read_env", "", "Environment of the tables another task of this job wrote (empty: pipeline_write_env)")
+dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference tables (Intraqual data asset)")
+dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
+dbutils.widgets.text("debug", "false")
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
+    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
+PIPELINE_READ_ENV = dbutils.widgets.get("pipeline_read_env") or PIPELINE_WRITE_ENV
+DEBUG = dbutils.widgets.get("debug").lower() == "true"
+LOG_LEVEL = dbutils.widgets.get("log_level")
+
+# config reads the environment when it is imported, so the widget values are copied there first.
+os.environ["PIPELINE_WRITE_ENV"] = PIPELINE_WRITE_ENV
+os.environ["PIPELINE_READ_ENV"] = dbutils.widgets.get("pipeline_read_env")
+os.environ["REFERENCE_READ_ENV"] = dbutils.widgets.get("reference_read_env")
+os.environ["BYPASS_QUALITY_CHECKS"] = dbutils.widgets.get("bypass_quality_checks")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Config Standard Package Imports
 # MAGIC The repository folder is added to `sys.path` because a job task does not do it for a notebook.
 
@@ -43,10 +81,12 @@ import sys
 
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
-sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(REPO_DIR))
+)  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
 sys.path.insert(0, REPO_DIR)
 
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 
 # COMMAND ----------
 
@@ -58,28 +98,17 @@ from pyspark.sql import functions as F
 
 import categories
 import tables
+
 tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from tables import ensure_primary_key, write_table
 from leap_utils.common import logger as log_utils
 
 from config import (
-    DIVISION_ARCHIVE_TABLE, DIVISION_REFERENCE_TABLE, INTRAQUAL_REQUIRED_TABLES, MAX_SOURCE_STALENESS_HOURS,
+    DIVISION_ARCHIVE_TABLE,
+    DIVISION_REFERENCE_TABLE,
+    INTRAQUAL_REQUIRED_TABLES,
+    MAX_SOURCE_STALENESS_HOURS,
 )
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Config Widgets
-# MAGIC This task takes no parameter: everything comes from the `PARSING_*` environment variables of the cluster.
-
-# COMMAND ----------
-
-dbutils.widgets.removeAll()
-
-dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-LOG_LEVEL = dbutils.widgets.get("log_level")
-dbutils.widgets.text("debug", "false")
-DEBUG = dbutils.widgets.get("debug").lower() == "true"
 
 # COMMAND ----------
 
@@ -113,7 +142,11 @@ logger.info(f"Archive     : {DIVISION_ARCHIVE_TABLE or '(disabled)'}")
 
 # COMMAND ----------
 
-source_ages = {} if MAX_SOURCE_STALENESS_HOURS <= 0 else categories.source_ages_hours(spark, INTRAQUAL_REQUIRED_TABLES)
+source_ages = (
+    {}
+    if MAX_SOURCE_STALENESS_HOURS <= 0
+    else categories.source_ages_hours(spark, INTRAQUAL_REQUIRED_TABLES)
+)
 
 # COMMAND ----------
 
@@ -134,9 +167,10 @@ df_reference = categories.build_division_reference(spark).cache()
 
 if DEBUG:
     (
-        df_reference.groupBy("division_source").count()
+        df_reference.groupBy("division_source")
+        .count()
         .withColumnRenamed("count", "n_iddocs")
-        .orderBy(F.desc("n_iddocs"))
+        .orderBy(f.desc("n_iddocs"))
         .show(truncate=False)
     )
 
@@ -156,7 +190,11 @@ else:
         logger.info(f"  {age if age is not None else '?':>6} h  {table}")
 
     _unreadable = [t for t, age in source_ages.items() if age is None]
-    _stale = [(t, age) for t, age in source_ages.items() if age is not None and age > MAX_SOURCE_STALENESS_HOURS]
+    _stale = [
+        (t, age)
+        for t, age in source_ages.items()
+        if age is not None and age > MAX_SOURCE_STALENESS_HOURS
+    ]
     if _unreadable or _stale:
         raise RuntimeError(
             f"Intraqual sources not fresh (threshold {MAX_SOURCE_STALENESS_HOURS}h) — "
@@ -174,12 +212,17 @@ else:
 
 # COMMAND ----------
 
-tables.check_dataframe(df_reference, "category_reference", [
-    tables.non_empty(),
-    tables.not_null("IDDOC"),
-    tables.unique("IDDOC"),
-    tables.not_null("division", mostly=0.99, severity=tables.AMBER),
-], logger)
+tables.check_dataframe(
+    df_reference,
+    "category_reference",
+    [
+        tables.non_empty(),
+        tables.not_null("IDDOC"),
+        tables.unique("IDDOC"),
+        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
+    ],
+    logger,
+)
 
 # COMMAND ----------
 

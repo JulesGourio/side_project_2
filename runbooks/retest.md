@@ -192,7 +192,7 @@ Les notebooks sont `create_proj_<asset>.py` et `update_proj_vector_indexes.py` d
 
 - [ ] Lancer le job complet une fois sur DEV (`1_categories` à `6_update_kb_metadata`) et lire les journaux de chaque tâche : aucune `NameError` sur `logger`.
 - [ ] `--only 1_categories` : `All sources fresh`, `category_reference` écrite.
-- [ ] `--only 2_manifest` : les compteurs `KEEP/DELETE/ORPHAN/...`, `parse_manifest written: N IDDOCs in scope`, `[DRY RUN] ... would be deleted`. Comparer N avec la valeur d'hier (`SELECT count(*) FROM dev_proj.qualibot.parse_manifest`). Garde-fou RED : la tâche échoue si `parse_manifest` est vide ou a un IDDOC en double.
+- [ ] `--only 2_manifest` : les compteurs `KEEP/DELETE/ORPHAN/...`, `parse_manifest written: N IDDOCs in scope`, `DELETE : N` (dossiers hors périmètre, conservés). Comparer N avec la valeur d'hier (`SELECT count(*) FROM dev_proj.qualibot.parse_manifest`). Garde-fou RED : la tâche échoue si `parse_manifest` est vide ou a un IDDOC en double.
 - [ ] `--only 5_sync_index` : garde-fou RED : la tâche échoue si `chunks_full` est vide (au premier run, vérifier).
 - [ ] `--only 4_describe_images` sur des tables à jour : `Nothing to describe`, `No new image chunks to inject`, ou la promotion des documents en attente.
 - [ ] Statuts `IMAGES_PENDING`, plafond de tentatives, disjoncteur : `runbooks/dev.md` Q3 à Q5 (requêtes de contrôle).
