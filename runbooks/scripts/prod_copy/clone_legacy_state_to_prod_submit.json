@@ -1,0 +1,16 @@
+{
+  "run_name": "qualibot-prod-clone-legacy-state",
+  "run_as": {
+    "service_principal_name": "b82d3b5a-b633-4738-8dde-68bb2142cb02"
+  },
+  "tasks": [
+    {
+      "task_key": "clone_legacy_state_to_prod",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/qualibot_prod_copy/clone_legacy_state_to_prod",
+        "base_parameters": { "dry_run": "true", "overwrite": "false" },
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}

@@ -1,8 +1,9 @@
 # Databricks notebook source
 # One-shot reset of the PROD Unity Catalog objects of QualiBOT. Submitted as the PROD job service principal.
 # Phase "prepare": creates prod_proj.qualibot and its volumes, copies docling_models and doc_compare from prod_landingzone.qualibot.
-# Phase "drop": drops the Vector Search indexes, the tables of prod_proj.qualibot (MLflow trace tables kept) and the schema
-# prod_landingzone.qualibot, only when the copied volumes are readable. prod_landingzone.intraqual is never touched.
+# Phase "drop": drops the Vector Search indexes and the tables of prod_proj.qualibot (MLflow trace tables kept), and the
+# schema prod_landingzone.qualibot only when drop_old_schema is true, all only when the copied volumes are readable.
+# prod_landingzone.intraqual is never touched.
 
 import logging
 
@@ -16,6 +17,8 @@ dbutils.widgets.dropdown("phase", "prepare", ["prepare", "drop"], "Phase")
 dbutils.widgets.dropdown("dry_run", "true", ["true", "false"], "Dry run (list only)")
 PHASE = dbutils.widgets.get("phase")
 DRY_RUN = dbutils.widgets.get("dry_run") == "true"
+dbutils.widgets.dropdown("drop_old_schema", "false", ["false", "true"], "Drop prod_landingzone.qualibot (its parsing state is cloned first)")
+DROP_OLD_SCHEMA = dbutils.widgets.get("drop_old_schema") == "true"
 
 OLD_SCHEMA = "prod_landingzone.qualibot"
 NEW_SCHEMA = "prod_proj.qualibot"
@@ -89,7 +92,10 @@ if PHASE == "drop":
         else:
             run(f"DROP TABLE IF EXISTS {NEW_SCHEMA}.`{row.tableName}`")
 
-    run(f"DROP SCHEMA IF EXISTS {OLD_SCHEMA} CASCADE")
+    if DROP_OLD_SCHEMA:
+        run(f"DROP SCHEMA IF EXISTS {OLD_SCHEMA} CASCADE")
+    else:
+        logger.info("kept: %s (drop_old_schema = false)", OLD_SCHEMA)
 
 # COMMAND ----------
 

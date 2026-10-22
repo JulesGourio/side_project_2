@@ -38,7 +38,9 @@ Garde : l'app `qualibot`, le projet Lakebase `qualibot` (+ rôles, schéma), le 
 4. Valeurs à ajouter dans `utils/deploy/target_env.json` pour `prod` avant le déploiement : `SOFFICE_ARCHIVE_VOLUME_PATH`, puis `CHAT_MLFLOW_EXPERIMENT_ID` une fois `create_chat_experiment_prod` lancé.
 5. Droits de l'étape 5 à passer par un `jobs submit` en SP prod, pas en SQL à la main.
 
-## 0.3 Remise à zéro de PROD puis copie du corpus de DEV (décidée 2026-10-22, pas à pas)
+## 0.3 Remise à zéro de PROD et reprise de son propre état de parsing (décidée 2026-10-22, pas à pas)
+
+Règle de cloisonnement (confirmée par la sonde P1, 2026-10-22) : PROD ne lit ni `dev_proj` ni `uat_proj` (« Catalog is not accessible in current workspace »), DEV et UAT n'écrivent pas vers l'avant et ne lisent pas vers l'arrière. Aucune table ne passe donc de DEV ou d'UAT à PROD. L'état de parsing de PROD est repris de l'ancien schéma `prod_landingzone.qualibot` (clone vers les nouveaux noms), comme l'UAT l'a fait depuis ses tables `_v1`. Le premier run `full` ne parse que les fichiers que cet ancien état ne contient pas ; le plafond `max_parse_files` arrête la tâche avant tout calcul GPU si l'état n'est pas reconnu. Supprimer l'ancien schéma avant ce clone obligerait à re-parser tout le corpus sur GPU (environ 20 h, comme l'UAT le 2026-10-16) : il n'est supprimé qu'à la fin (P8).
 
 Garde : l'app `qualibot` (son adresse ne change pas : le déploiement la met à jour sur place), le projet Lakebase `qualibot` (non touché : `reset_prod_lakebase.py` n'est lancé que sur décision explicite), `prod_landingzone.intraqual`, les volumes `docling_models` et `doc_compare`. Tout se lance par un compte de service PROD (`b82d3b5a-b633-4738-8dde-68bb2142cb02`), jamais en SQL personnel. Chaque script supprimant ou copiant démarre en simulation (`dry_run = true`) : lire ses logs avant de relancer en `false`.
 
@@ -56,8 +58,7 @@ databricks workspace import /Workspace/Shared/qualibot_prod_copy/probe_access --
 databricks jobs submit --json "@runbooks/scripts/prod_copy/probe_access_submit.json" --profile PROD
 ```
 
-- `READ OK  dev_proj.qualibot.chunks` : continuer avec P2 à P6.
-- `READ NO` : la copie passe par un export sur un volume lisible des deux côtés ; script à écrire, ne pas continuer sans lui.
+Résultat du 2026-10-22 : `READ NO` pour `dev_proj` et `uat_proj` (catalogues inaccessibles depuis le workspace PROD) ; `prod_proj` existe comme catalogue mais le schéma `prod_proj.qualibot` n'existe pas encore ; `prod_landingzone.qualibot` contient 13 tables (`_pipeline_checkpoint`, `category_reference`, `chunks`, `chunks_as_index`, `chunks_index`, `chunks_is_index`, `document_change_log`, `image_metadata`, `parse_manifest`, `parsing_run_health`, `processed_files`, `src_chunks_as`, `src_chunks_is`). La suite repart donc de ces tables.
 
 **P2. Anciens jobs et endpoints** (jobs `qualibot-provision-knowledge-assistant-qualibot-prod`, `D_1_qualibot-parsing-pipeline-qualibot-prod`, endpoints `ka-3315943a-endpoint`, `ka-5d35f4d5-endpoint`, `ka-88a4da35-endpoint`, `ka-c9dbc4db-endpoint`). Simulation, puis suppression en remplaçant `"dry_run": "true"` par `"false"` dans `drop_prod_legacy_submit.json` :
 
@@ -67,31 +68,43 @@ databricks workspace import /Workspace/Shared/qualibot_prod_cleanup/drop_prod_le
 databricks jobs submit --json "@runbooks/scripts/prod_cleanup/drop_prod_legacy_submit.json" --profile PROD
 ```
 
-**P3. Tables, index et ancien schéma** (`prod_proj.qualibot` : toutes les tables sauf `…_otel_*`, index, schéma `prod_landingzone.qualibot`). Ordre : phase `prepare` (crée le schéma et les volumes, copie `docling_models` et `doc_compare`) en simulation puis réelle, puis phase `drop` en simulation puis réelle. Les phases et `dry_run` se changent dans `base_parameters` de `drop_prod_objects_submit.json` :
+**P3. Préparer `prod_proj.qualibot`** : phase `prepare` (crée le schéma et les volumes `docling_models`, `doc_compare`, `images`, copie `docling_models` et `doc_compare` depuis l'ancien schéma). Simulation (paramètres du fichier : `phase = prepare`, `dry_run = true`), puis le même fichier avec `"dry_run": "false"` :
 
 ```powershell
 databricks workspace import /Workspace/Shared/qualibot_prod_cleanup/drop_prod_objects --file runbooks/scripts/prod_cleanup/drop_prod_objects.py --format SOURCE --language PYTHON --overwrite --profile PROD
 databricks jobs submit --json "@runbooks/scripts/prod_cleanup/drop_prod_objects_submit.json" --profile PROD
 ```
 
-**P4. Copie du corpus et de l'état de parsing de DEV** (`category_reference`, `parse_manifest`, `parsing_checkpoint`, `image_metadata`, `parsed_documents`, `chunks_archive`, `chunks`). Les chemins de volume stockés (`dev_proj`) sont réécrits en `prod_proj`, le nombre de lignes est contrôlé table par table. Simulation d'abord (paramètres par défaut), puis `"dry_run": "false"` dans `copy_tables_to_prod_submit.json` :
+La phase `drop` n'est pas lancée ici : elle supprimerait aussi les tables clonées en P4. Ne l'utiliser que pour repartir de zéro dans `prod_proj.qualibot`.
+
+**P4. Cloner l'état de parsing de l'ancien schéma** (`_pipeline_checkpoint` → `parsing_checkpoint`, `processed_files` → `parsed_documents`, `category_reference`, `parse_manifest`, `image_metadata`). `chunks` n'est pas cloné : le run le reconstruit. Les chemins de volume stockés sont réécrits en `prod_proj`, le nombre de lignes est contrôlé table par table. La simulation (paramètres par défaut) ne modifie rien et journalise les lignes, les documents distincts et les colonnes de chaque source ; puis `"dry_run": "false"` dans le fichier :
 
 ```powershell
-databricks workspace import /Workspace/Shared/qualibot_prod_copy/copy_tables_to_prod --file runbooks/scripts/prod_copy/copy_tables_to_prod.py --format SOURCE --language PYTHON --overwrite --profile PROD
-databricks jobs submit --json "@runbooks/scripts/prod_copy/copy_tables_to_prod_submit.json" --profile PROD
+databricks workspace import /Workspace/Shared/qualibot_prod_copy/clone_legacy_state_to_prod --file runbooks/scripts/prod_copy/clone_legacy_state_to_prod.py --format SOURCE --language PYTHON --overwrite --profile PROD
+databricks jobs submit --json "@runbooks/scripts/prod_copy/clone_legacy_state_to_prod_submit.json" --profile PROD
 ```
 
-Limite connue : les fichiers d'images restent dans le volume `images` de DEV ; le volume `images` de PROD démarre vide. Seule la reprise d'une image en échec les relit.
+Limite connue : si l'ancien volume d'images de PROD n'est pas copié, `volume_path` pointe sur des fichiers absents ; seule la reprise d'une image en échec les relit.
 
-**P5. Endpoint Vector Search** (absent sur PROD), puis modèles Docling depuis l'UAT (pipeline Bitbucket `sync-prod-data`, deux étapes, depuis `main`) :
+**P5. Endpoint Vector Search** (absent sur PROD) :
 
 ```powershell
 databricks vector-search-endpoints create-endpoint qualibot STANDARD --profile PROD
 ```
 
-**P6. Suite** : sections 4 à 6 et 9 ci-dessous (droits par le SP, valeurs de `target_env.json`, déploiement **sur accord explicite**). Après le déploiement, `databricks bundle run parsing_pipeline -t prod --profile PROD --params run_mode=rechunk` reconstruit `chunks` depuis le checkpoint copié, crée `prod_proj.qualibot.chunks_index`, le synchronise et remplit le catalogue de documents, sans re-parsing.
+Les modèles Docling viennent de l'ancien schéma (P3) ; la pipeline Bitbucket `sync-prod-data` (depuis `main`) les recopie depuis l'UAT si besoin.
 
-- [ ] P0 · [ ] P1 · [ ] P2 · [ ] P3 · [ ] P4 · [ ] P5 · [ ] P6
+**P6. Suite** : sections 4 à 6 et 9 ci-dessous (droits par le SP, valeurs de `target_env.json`, déploiement **sur accord explicite**).
+
+**P7. Premier run en PROD**, après le déploiement. Run `full` : il reconnaît les fichiers déjà parsés, ne parse que les manquants, reconstruit `chunks`, crée `prod_proj.qualibot.chunks_index`, le synchronise et remplit le catalogue de documents. Si la tâche s'arrête sur le plafond `[BUDGET]`, l'ancien état n'est pas reconnu : ne pas relever le plafond avant d'avoir lu le message `[RESUME]`.
+
+```powershell
+databricks bundle run parsing_pipeline -t prod --profile PROD --params run_mode=full
+```
+
+**P8. Suppression de l'ancien schéma**, seulement après validation complète de PROD (contrôles du bloc H de `uat.md`, avec `prod_proj`). Phase `drop` non lancée : ce script ne supprime l'ancien schéma que par la phase `drop` avec `drop_old_schema = true` et supprimerait aussi les tables de `prod_proj.qualibot`. À la place, supprimer l'ancien schéma avec un script dédié, à écrire à ce moment-là, nom par nom.
+
+- [x] P0 _(2026-10-22)_ · [x] P1 _(2026-10-22)_ · [ ] P2 · [ ] P3 · [ ] P4 · [ ] P5 · [ ] P6 · [ ] P7 · [ ] P8
 
 ## 1. Catalogue et schéma `prod_proj` (admin metastore, seulement si absent)
 

@@ -1,35 +1,31 @@
 # Databricks notebook source
-# One-shot, submitted as the PROD job service principal: copies the corpus and parsing state of one environment
-# (default dev) into prod_proj.qualibot, so the first PROD run neither parses nor describes anything again.
-# The volume paths stored in the tables are rewritten to prod_proj. The tables of the chat, of the comparison and of
-# Lakebase are never touched. A table that already exists is left as it is unless "overwrite" is true.
+# One-shot, submitted as the PROD job service principal: clones the parsing state of the former PROD schema
+# (prod_landingzone.qualibot) into prod_proj.qualibot under the new names, so the first run parses only the files that
+# the former state does not hold. The volume paths stored in the tables are rewritten to prod_proj. chunks is not copied:
+# the run rebuilds it from the checkpoint. A table that already exists is left as it is unless "overwrite" is true.
 
 import logging
 
-logger = logging.getLogger("copy_tables_to_prod")
+logger = logging.getLogger("clone_legacy_state_to_prod")
 logging.basicConfig(level=logging.INFO)
 
 dbutils.widgets.removeAll()
-dbutils.widgets.dropdown("source_env", "dev", ["dev", "uat"], "Environment to copy from")
-dbutils.widgets.dropdown("dry_run", "true", ["true", "false"], "Dry run (list only)")
+dbutils.widgets.dropdown("dry_run", "true", ["true", "false"], "Dry run (read and list only)")
 dbutils.widgets.dropdown("overwrite", "false", ["false", "true"], "Replace a table that already exists")
-SOURCE_ENV = dbutils.widgets.get("source_env")
 DRY_RUN = dbutils.widgets.get("dry_run") == "true"
 OVERWRITE = dbutils.widgets.get("overwrite") == "true"
 
-SOURCE_SCHEMA = f"{SOURCE_ENV}_proj.qualibot"
+SOURCE_SCHEMA = "prod_landingzone.qualibot"
 TARGET_SCHEMA = "prod_proj.qualibot"
-TABLES = [
-    "category_reference",
-    "parse_manifest",
-    "parsing_checkpoint",
-    "image_metadata",
-    "parsed_documents",
-    "chunks_archive",
-    "chunks",
-]
-SOURCE_PREFIX = f"/Volumes/{SOURCE_ENV}_proj/"
-TARGET_PREFIX = "/Volumes/prod_proj/"
+TABLES = {
+    "category_reference": "category_reference",
+    "parse_manifest": "parse_manifest",
+    "_pipeline_checkpoint": "parsing_checkpoint",
+    "image_metadata": "image_metadata",
+    "processed_files": "parsed_documents",
+}
+SOURCE_PREFIX = "/Volumes/prod_landingzone/qualibot/"
+TARGET_PREFIX = "/Volumes/prod_proj/qualibot/"
 
 failures = []
 
@@ -48,9 +44,9 @@ def table_exists(name: str) -> bool:
 
 
 def rewrite_paths(target: str) -> None:
-    """Point the volume paths stored in a copied table to prod_proj.
+    """Point the volume paths stored in a cloned table to prod_proj.
 
-    :param target: Fully qualified name of the copied table.
+    :param target: Fully qualified name of the cloned table.
     :return: None
     """
     columns = {field.name: field.dataType.simpleString() for field in spark.table(target).schema.fields}
@@ -74,19 +70,24 @@ def rewrite_paths(target: str) -> None:
 if not DRY_RUN:
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {TARGET_SCHEMA}")
 
-for table in TABLES:
-    source = f"{SOURCE_SCHEMA}.{table}"
-    target = f"{TARGET_SCHEMA}.{table}"
+for source_name, target_name in TABLES.items():
+    source = f"{SOURCE_SCHEMA}.{source_name}"
+    target = f"{TARGET_SCHEMA}.{target_name}"
     try:
-        source_rows = spark.table(source).count()
+        df = spark.table(source)
+        source_rows = df.count()
     except Exception as error:
         failures.append(source)
         logger.error("source not readable: %s: %s", source, str(error).splitlines()[0][:200])
         continue
+    extra = ""
+    if "IDDOC" in df.columns:
+        extra = f", {df.select('IDDOC').distinct().count()} distinct IDDOC"
+    logger.info("source %s: %d rows%s; columns: %s", source, source_rows, extra, df.columns)
     if table_exists(target) and not OVERWRITE:
         logger.info("left as it is (exists): %s", target)
         continue
-    logger.info("%s%s -> %s (%d rows)", "[dry run] " if DRY_RUN else "", source, target, source_rows)
+    logger.info("%s%s -> %s", "[dry run] " if DRY_RUN else "", source, target)
     if DRY_RUN:
         continue
     try:
@@ -94,11 +95,11 @@ for table in TABLES:
         rewrite_paths(target)
         target_rows = spark.table(target).count()
         if target_rows != source_rows:
-            raise RuntimeError(f"{target_rows} rows copied, {source_rows} in the source")
-        logger.info("copied: %s (%d rows)", target, target_rows)
+            raise RuntimeError(f"{target_rows} rows cloned, {source_rows} in the source")
+        logger.info("cloned: %s (%d rows)", target, target_rows)
     except Exception as error:
         failures.append(target)
-        logger.error("not copied: %s: %s", target, error)
+        logger.error("not cloned: %s: %s", target, error)
 
 if failures:
     raise RuntimeError(f"not done: {failures}")
