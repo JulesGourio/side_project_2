@@ -757,17 +757,22 @@ def run_docling_batches(df_to_parse, parse_count, parse_fn) -> None:
         (f.row_number().over(Window.orderBy("IDDOC", "source_path")) % f.lit(num_batches)).try_cast("int"),
     ).localCheckpoint()
 
+    parsed_total = 0
     for batch_idx in range(num_batches):
         df_batch = df_to_parse_batched.filter(f.col("_batch_idx") == batch_idx).drop("_batch_idx")
         batch_size = df_batch.count()
         if batch_size == 0:
             continue
+        parsed_total += batch_size
 
         logger.info(f"Batch {batch_idx + 1}/{num_batches} ({batch_size} files)...")
         bt0 = time.time()
         df_batch_parsed = parse_fn(df_batch, batch_size)
         write_table(df_batch_parsed, CHECKPOINT_TABLE, "append", merge_schema=True)
         logger.info(f"Batch {batch_idx + 1}/{num_batches} saved in {time.time() - bt0:.1f}s")
+
+    if parsed_total != parse_count:
+        raise RuntimeError(f"{parsed_total} files went through the batches, {parse_count} were to be parsed")
 
 
 def log_run_summary(df_to_parse, parse_count, elapsed) -> None:
