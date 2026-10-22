@@ -95,9 +95,11 @@ listed at the top of `config.py`.
   `document_revisions_intraqual` (the Intraqual data asset; `courant`, `etat` and `nonvisible` at source). Only the
   current revision of a validated, visible document enters the chain. `difftotale` is not part of the gate: the
   Intraqual portal shows documents with `difftotale = 0`.
-- **Division** (`categories.build_division_reference`): from the root of the main category (`AS -`, `IS -`, PROCESSES,
-  DIRECTIVE); under the process tree (`00-LATECOERE PROCESSES_One QMS`) a leaf category named `AS` or `IS` sets it,
-  and the other documents of that tree are `COMMUN`; any other root gives `AUTRE`.
+- **Division** (`categories.build_division_reference`), first match wins: root category PROCESSES or `AS -` gives `AS`;
+  `IS -` gives `IS`; root DIRECTIVE gives `DIRECTIVE`; a leaf category named `AS` or `IS` under the process tree
+  (`00-LATECOERE PROCESSES_One QMS`) gives that division; the other documents of that tree are `COMMUN`; anything else is
+  `AUTRE`. A document whose principal category or one of its ancestors is `ONE_QMS-5S` (IDCAT 3798) is excluded from the
+  manifest. The chat division filter `AS` or `IS` also returns `COMMUN` and `DIRECTIVE`.
 - **Manifest**: `2_manifest` keeps the in-scope documents, with their REF, title, revision (`indice`), date,
   category hierarchy, document type and `parse_content` flag. A category listed in `EXCLUDED_IDCATS` and a REF
   listed in `MANUAL_REF_EXCLUSIONS` are excluded.
