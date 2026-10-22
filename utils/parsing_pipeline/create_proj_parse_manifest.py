@@ -22,14 +22,14 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `2_manifest`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.category_reference`, `parsed_documents`
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.category_reference`, `parsed_documents`
 # MAGIC - `{REFERENCE_READ_ENV}_gold.quality_system.document_revisions_intraqual` (Intraqual data asset)
 # MAGIC - `{PARSING_VOLUME_ROOT_PATH}` volume listing
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parse_manifest`
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents` (skip rows)
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.chunks` / `chunks_archive` / `image_metadata` (stale-IDDOC pruning only)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest`
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsed_documents` (skip rows)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.chunks` / `chunks_archive` / `image_metadata` (stale-IDDOC pruning only)
 
 # COMMAND ----------
 

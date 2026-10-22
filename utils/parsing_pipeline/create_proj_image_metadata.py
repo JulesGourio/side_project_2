@@ -20,14 +20,14 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `4_describe_images`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.image_metadata`
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.chunks`, `chunks_archive` (text passages and max chunk index per IDDOC)
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents` (document metadata for the source prefix)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.image_metadata`
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.chunks`, `chunks_archive` (text passages and max chunk index per IDDOC)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsed_documents` (document metadata for the source prefix)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.image_metadata` (description and status columns)
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.chunks`, `chunks_archive` (image passages)
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.parsed_documents` (EMPTY_TEXT / IMAGES_PENDING -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all the images of a document are described)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.image_metadata` (description and status columns)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.chunks`, `chunks_archive` (image passages)
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsed_documents` (EMPTY_TEXT / IMAGES_PENDING -> SUCCESS / SKIPPED_EMPTY_IMAGES promotion, once all the images of a document are described)
 
 # COMMAND ----------
 
