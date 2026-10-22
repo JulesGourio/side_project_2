@@ -93,7 +93,7 @@ export function ChatView() {
             <>
               <span style={{ color: 'var(--color-border)' }}>·</span>
               <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                Documents as of {new Date(docsAsOf + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} (only documents after 2018 are taken into account)
+                Documents as of {new Date(docsAsOf + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} (only documents after 2016 are taken into account)
               </span>
             </>
           )}
