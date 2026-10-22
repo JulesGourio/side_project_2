@@ -543,6 +543,22 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Transmettre le tableau final du notebook (table `dev_proj.qualibot.chat_trace_scores`) et les lignes `failed` de « Quality Checks ».
   Quand les juges sont validés : baisser les échantillons (`TARGET_SAMPLE_RATES` dans `utils/evaluation/chat_scorers.py`) et activer le planning (PAUSED aujourd'hui).
 
+- [ ] **0.14bis Détail des traces** (2026-10-21, à faire) : messages envoyés à chaque modèle (réécriture, traduction, réponse) dans la
+  trace, temps avant le premier token et temps de génération par appel, tokens entrée/sortie par étape. Redéployer l'app DEV seule
+  (pas de changement de job, pas de changement de table) :
+
+  ```powershell
+  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+
+  Puis poser une question dans l'app DEV et ouvrir sa trace dans MLflow (`/Shared/Experiment/qualibot_chat_traces`). Attendu : le span
+  `answer` a un champ `messages` (le system prompt et le contexte), `time_to_first_token_ms`, `streaming_ms`, `tokens_per_second` ;
+  chaque `call_N` contient `time_to_first_token` et `generation` ; la racine a `input_tokens_total` et `output_tokens_total`.
+  Si la liaison aux prompts (tag `mlflow.linkedPrompts`) reste absente, lire dans les logs de l'app la ligne `prompt … differs from the
+  registered version` : elle indique qu'il faut relancer l'enregistrement des prompts (`databricks bundle run register_chat_prompts_dev -t dev --profile DEV`).
+
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
   - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, Les tables
     d'évaluation (`eval_*`, `eval_golden_questions`, `eval_synthetic_questions`, `eval_feedback_failures`) sont les défauts des notebooks :
@@ -986,7 +1002,63 @@ La tâche `sync_user_capabilities` du job `D_1_Qualibot_Lakebase_Export_To_Volum
 - Copier aussi les images du volume `uat_proj.qualibot.images` (seulement si un run de parsing DEV doit retravailler des images déjà extraites).
 - Ne pas toucher ici à `uat` ou `prod` : voir `runbooks/uat.md` (dont le bloc D, qui déploie la branche du chatbot en UAT) et `runbooks/prod.md`. Il faut d'abord que le DEV soit validé.
 
+### G. Le parsing lit le data asset Intraqual au lieu du bronze (code poussé le 2026-10-21, à faire)
+
+`1_categories`, `2_manifest` et `6_update_kb_metadata` lisent `prod_gold.quality_system.document_revisions_intraqual` et `category_ancestors_intraqual` (variable `intraqual_gold_catalog_schema`, env `PARSING_INTRAQUAL_GOLD`) au lieu de `prod_bronze.intraqual.gd_*_latest`. Les sorties (`category_reference`, `parse_manifest`) gardent le même schéma. Le garde-fou de fraîcheur lit la date d'écriture de ces deux tables (`DESCRIBE DETAIL`), plus `intraqual_ingestion_freshness_all`.
+
+1. Pousser le code, puis Bitbucket → Pipelines → Run pipeline → branche poussée → `deploy-dev-jobs`. Attendre qu'il soit vert.
+
+2. Relever la version actuelle de `category_reference` et de `parse_manifest` (SQL editor, lecture seule), à noter :
+
+```sql
+DESCRIBE HISTORY dev_proj.qualibot.category_reference LIMIT 1;
+DESCRIBE HISTORY dev_proj.qualibot.parse_manifest LIMIT 1;
+```
+
+3. Lancer les deux tâches (aucune suppression sur le volume : `dry_run` reste à `true`) :
+
+```powershell
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
+```
+
+4. Comparer avec la version notée (remplacer `<N>` par la version relevée en 2). Les deux requêtes doivent rendre 0 ligne, sauf documents modifiés dans Intraqual depuis :
+
+```sql
+SELECT 'avant' AS cote, * FROM (SELECT * FROM dev_proj.qualibot.category_reference VERSION AS OF <N> EXCEPT SELECT * FROM dev_proj.qualibot.category_reference)
+UNION ALL
+SELECT 'apres', * FROM (SELECT * FROM dev_proj.qualibot.category_reference EXCEPT SELECT * FROM dev_proj.qualibot.category_reference VERSION AS OF <N>);
+```
+
+```sql
+SELECT 'avant' AS cote, IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM (SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest VERSION AS OF <M> EXCEPT SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest)
+UNION ALL
+SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM (SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest EXCEPT SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest VERSION AS OF <M>);
+```
+
+(`<M>` : version de `parse_manifest` relevée en 2.)
+
+### H. Division COMMUN et exclusion de ONE_QMS-5S (code poussé le 2026-10-21, à faire)
+
+1. Déployer les jobs : Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-dev-jobs`.
+
+2. Lancer les deux tâches (`dry_run` reste à `true`) :
+
+```powershell
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
+```
+
+3. Contrôler (SQL editor DEV, lecture seule). Attendu : environ 4 900 à 5 100 documents, AS ≈ 1 950, COMMUN ≈ 2 800, IS ≈ 95, DIRECTIVE ≈ 40, AUTRE ≈ 250 :
+
+```sql
+SELECT division, count(*) AS documents FROM dev_proj.qualibot.parse_manifest GROUP BY division ORDER BY documents DESC;
+SELECT count(*) AS documents FROM dev_proj.qualibot.parse_manifest;
+```
+
 ## Fait
+
+- 2026-10-21 — Division COMMUN et exclusion de ONE_QMS-5S (section H) validées en DEV : `parse_manifest` = 5 242 documents (COMMUN 2 793, AS 1 953, AUTRE 249, sans division 110, IS 95, DIRECTIVE 42). Reste : reconstruire `chunks` et synchroniser l'index DEV pour que le chat utilise ces divisions.
 
 - Migration DEV : plan sans suppression (2026-10-16), app redéployée, historique DocCompare visible avec les documents (chemins corrigés à la copie et à chaque démarrage, confirmé 2026-10-16). Restent : point 7 (endpoint Sonnet, index) et le premier run du pipeline de parsing.
 - P1, P2, P4 : profil CLI, SP DEV, groupes visibles (2026-10-05).

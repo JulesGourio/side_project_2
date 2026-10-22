@@ -140,9 +140,8 @@ def build_image_metadata(target_iddocs, ingestion_run_id) -> DataFrame:
         logger.info(f"Image metadata kept from {TARGET_IMAGE_METADATA_TABLE}: {df_kept.count()} rows")
         return _with_attempt_columns(df_kept)
     df_full_pipeline = read_checkpoint_deduped()
-    # rechunk: only the documents in scope — the checkpoint also keeps superseded revisions.
-    if RUN_MODE in ("incremental", "rechunk"):
-        df_full_pipeline = df_full_pipeline.filter(F.col("IDDOC").isin(list(target_iddocs)))
+    # The checkpoint also keeps superseded revisions: only the documents in scope are used, in every run mode.
+    df_full_pipeline = df_full_pipeline.filter(F.col("IDDOC").isin(list(target_iddocs)))
     df_full_pipeline = with_fresh_business_metadata(df_full_pipeline)
 
     # Pre-cutoff documents are described too: their image chunks go to chunks_archive (4_describe_images).
@@ -386,9 +385,8 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
     :param revised_iddocs: IDDOCs whose revision changed.
     """
     df_full_pipeline = read_checkpoint_deduped()
-    # rechunk: only the documents in scope — the checkpoint also keeps superseded revisions.
-    if RUN_MODE in ("incremental", "rechunk"):
-        df_full_pipeline = df_full_pipeline.filter(F.col("IDDOC").isin(list(target_iddocs)))
+    # The checkpoint also keeps superseded revisions: only the documents in scope are used, in every run mode.
+    df_full_pipeline = df_full_pipeline.filter(F.col("IDDOC").isin(list(target_iddocs)))
     df_full_pipeline = with_fresh_business_metadata(df_full_pipeline)
     # Real language (REF suffix, else the text): the manifest's langue is always fr-FR.
     df_full_pipeline = df_full_pipeline.withColumn(
@@ -435,7 +433,7 @@ def build_processed_files_and_chunks(target_iddocs, df_image_metadata, job_run_i
             "ref", "titre", "type_document", "categorie", "langue", "auteur", "document_prefixes",
             "division", "niveau_plus_1", "niveau_plus_2", "niveau_plus_3",
             "niveau_plus_4", "niveau_plus_5", "niveau_plus_6",
-            "doc_date",   # publication date (gd_doc.dtdiff)
+            "doc_date",   # publication date (document_revisions_intraqual.published_date)
             "indice",     # revision key — detects a republished doc
             "ingestion_run_id", "ingestion_timestamp", "job_run_id",
             "parser_strategy", "parse_status", "error_trace", "parse_time_seconds",

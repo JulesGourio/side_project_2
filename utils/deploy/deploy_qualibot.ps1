@@ -67,9 +67,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "databricks bundle deploy failed (exit $LASTEXITCODE)" }
     } else {
         # Upload only: no terraform, so catalog and volume permissions stay untouched.
-        # --include forces target_config.env (gitignored); the excludes match the bundle's sync excludes.
+        # --include forces target_config.env and client/out (gitignored); the excludes match the bundle's sync excludes.
         & databricks sync . $SourceCodePath --profile $Profile `
             --include 'target_config.env' `
+            --include 'client/out/**' `
             --exclude 'client/src/**' `
             --exclude 'client/public/**' `
             --exclude 'client/node_modules/**' `

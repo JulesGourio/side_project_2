@@ -3,16 +3,13 @@
 import asyncio
 import copy
 import hashlib
-import io
 import json
 import logging
 import time
 import traceback
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, Tuple
+from dataclasses import dataclass, field
+from typing import Any, AsyncGenerator, Dict, List, Tuple
 
-from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
@@ -23,13 +20,14 @@ from server.services.compare.processors.factory import (
 )
 from server.services.infra.credentials import get_credentials
 from server.services.infra.lakebase import (
-    get_pool, store_error,
+    get_cached_analysis, store_analysis_cache, store_error,
     store_llm_request,
     update_llm_request_run, update_llm_request_usage,
 )
-from server.services.infra.user import require_compare
+from server.services.infra.tasks import spawn
+from server.services.infra.user import get_user_identity, rate_limit, require_compare
 from server.routers.compare.config import APP_VERSION, MAX_CONCURRENT_ANALYSES, get_config
-from server.routers.compare.common import _sanitize_filename, _validate_file
+from server.routers.compare.common import _validate_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -84,47 +82,30 @@ async def _error_stream(message: str) -> AsyncGenerator[str, None]:
     yield 'data: [DONE]\n\n'
 
 
-async def _get_cached_analysis(old_hash: str, new_hash: str, processor_version: str = '') -> dict | None:
-    """Return an existing messages row if hashes, app_version, and processor_version match.
+def _analysis_cache_version(job_cfg: Dict[str, Any], processor: Any, processor_version: str) -> str:
+    """Key part of the report cache: everything besides the files that shapes the report.
 
-    :param old_hash: SHA-256 of the previous revision.
-    :param new_hash: SHA-256 of the new revision.
-    :param processor_version: extraction method forced by the client, '' for the default.
-    :return: the row (``id``, ``analysis_text``, …), or None when there is none or the database is unavailable.
+    The prompt, the model, the extraction method and the chunking and generation settings are part of it, so changing
+    one of them never serves a report made with the old ones.
+
+    :param job_cfg: the compare settings (``get_config()``)
+    :param processor: the processor chosen for the file type, which carries the diff method
+    :param processor_version: extraction method forced by the client, '' for the default
+    :return: ``<APP_VERSION>:<hash of the settings>``
     """
-    if not old_hash or not new_hash:
-        return None
-    pool = get_pool()
-    if not pool:
-        return None
-    try:
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                '''
-                SELECT id, analysis_text, file_type, processing_method, processor_version,
-                       volume_session_path
-                FROM compare_messages
-                WHERE old_file_hash     = $1
-                  AND new_file_hash     = $2
-                  AND app_version       = $3
-                  AND COALESCE(processor_version, '') = $4
-                  AND analysis_text IS NOT NULL
-                  AND analysis_text != ''
-                ORDER BY created_at DESC
-                LIMIT 1
-                ''',
-                old_hash, new_hash, APP_VERSION, processor_version,
-            )
-        return dict(row) if row else None
-    except Exception as e:
-        logger.debug(f'Cache lookup failed: {e}')
-        return None
+    parts = [job_cfg['analysis_system_prompt'], job_cfg['analysis_endpoint'], str(getattr(processor, 'method', '')),
+             processor_version, str(job_cfg['max_tokens']), str(job_cfg['thinking_budget']),
+             str(job_cfg['temperature']), str(job_cfg['chunk_threshold_chars']), str(job_cfg['chunk_size_chars'])]
+    return f'{APP_VERSION}:{hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()[:16]}'
 
 
 async def _cached_stream(cached: dict) -> AsyncGenerator[str, None]:
     """Stream a cached analysis result (chunked for UX consistency).
 
-    :param cached: a ``compare_messages`` row from ``_get_cached_analysis``.
+    The event carries nobody's identifiers: the cached report belongs to no user, so the caller saves it as a new
+    result of their own.
+
+    :param cached: a row of ``analysis_cache``.
     """
     meta = json.dumps({
         'type': 'metadata',
@@ -132,8 +113,6 @@ async def _cached_stream(cached: dict) -> AsyncGenerator[str, None]:
         'method': cached.get('processing_method') or '',
         'processor_version': cached.get('processor_version') or '',
         'cached': True,
-        'message_id': cached['id'],
-        'session_path': cached.get('volume_session_path') or '',
     })
     yield f'data: {meta}\n\n'
     text: str = cached['analysis_text']
@@ -161,6 +140,15 @@ class _AnalysisJob:
     new_bytes: bytes
     old_hash: str
     new_hash: str
+    cache_version: str                # key of the report cache
+    user_id: str = ''                 # who asked, stored with the audit row
+
+
+@dataclass
+class _Report:
+    """The report as it is streamed: its text, and whether it may be kept for the next user with the same files."""
+    parts: List[str] = field(default_factory=list)
+    cacheable: bool = True
 
 
 def _error_response(message: str) -> StreamingResponse:
@@ -187,24 +175,6 @@ async def _read_uploads(old_file: UploadFile, new_file: UploadFile) -> Tuple[byt
     return old_bytes, new_bytes
 
 
-async def _upload_to_volume(upload_dir: str, old_name: str, old_bytes: bytes, new_name: str, new_bytes: bytes) -> None:
-    """Copy both files to the Unity Catalog volume in the background; a failure is logged, never raised.
-
-    :param upload_dir: session folder on the volume, created here.
-    :param old_name: name of the previous revision.
-    :param old_bytes: its content.
-    :param new_name: name of the new revision.
-    :param new_bytes: its content.
-    """
-    try:
-        w = WorkspaceClient()
-        await asyncio.to_thread(w.files.create_directory, upload_dir)
-        await asyncio.to_thread(w.files.upload, f'{upload_dir}/old_{_sanitize_filename(old_name)}', io.BytesIO(old_bytes), overwrite=True)
-        await asyncio.to_thread(w.files.upload, f'{upload_dir}/new_{_sanitize_filename(new_name)}', io.BytesIO(new_bytes), overwrite=True)
-    except Exception as upload_err:
-        logger.warning(f'Background volume upload failed: {upload_err}')
-
-
 async def _acquire_slot(req_id: str) -> AsyncGenerator[str, None]:
     """Wait for a free analysis slot, yielding a keepalive every 15 s so the gateway keeps the connection open.
 
@@ -223,6 +193,29 @@ async def _acquire_slot(req_id: str) -> AsyncGenerator[str, None]:
             yield ': keepalive\n\n'
 
 
+def _release_slot_when_idle(build_task: asyncio.Future | None) -> None:
+    """Free the analysis slot, once the thread that builds the messages has ended.
+
+    A browser that leaves does not stop that thread, so the slot stays taken until it returns.
+
+    :param build_task: the message-building task, None when it never started.
+    """
+    if build_task is None or build_task.done():
+        _analyze_semaphore.release()
+        return
+
+    def _release(task: asyncio.Future) -> None:
+        """Release the slot and mark the task's error as seen.
+
+        :param task: the finished building task.
+        """
+        if not task.cancelled():
+            task.exception()
+        _analyze_semaphore.release()
+
+    build_task.add_done_callback(_release)
+
+
 async def _keepalive_until_done(task: asyncio.Future, req_id: str) -> AsyncGenerator[str, None]:
     """Yield a keepalive every 10 s until ``task`` (the CPU-bound message building) is done.
 
@@ -239,7 +232,7 @@ async def _keepalive_until_done(task: asyncio.Future, req_id: str) -> AsyncGener
 
 
 def _track_llm_event(chunk: str, job: _AnalysisJob, run: Dict[str, Any], llm_request_id: int | None,
-                     t_llm: float) -> str:
+                     t_llm: float, report: _Report) -> str:
     """Record what an SSE chunk from the model says (first token, usage, error) and return the chunk to forward.
 
     :param chunk: one SSE line from the model stream.
@@ -247,6 +240,7 @@ def _track_llm_event(chunk: str, job: _AnalysisJob, run: Dict[str, Any], llm_req
     :param run: outcome and timings of the run, updated in place (``status``, ``first_token_ms``).
     :param llm_request_id: id of the ``llm_requests`` row, None if it was not saved.
     :param t_llm: ``time.monotonic()`` when the model stream started.
+    :param report: the report being streamed, which collects the text and notes whether it can be cached.
     :return: ``chunk``, or its public version (without the technical ``detail``) for an error event.
     """
     if not chunk.startswith('data: ') or '[DONE]' in chunk:
@@ -254,10 +248,14 @@ def _track_llm_event(chunk: str, job: _AnalysisJob, run: Dict[str, Any], llm_req
     try:
         event = json.loads(chunk[6:].strip())
         etype = event.get('type')
-        if etype == 'response.output_text.delta' and 'first_token_ms' not in run:
-            run['first_token_ms'] = _elapsed_ms(t_llm)
+        if etype == 'response.output_text.delta':
+            report.parts.append(event.get('delta', ''))
+            if 'first_token_ms' not in run:
+                run['first_token_ms'] = _elapsed_ms(t_llm)
+        elif etype == 'warning':
+            report.cacheable = False  # a cut or partial report is never replayed
         elif etype == 'usage':
-            asyncio.create_task(update_llm_request_usage(
+            spawn(update_llm_request_usage(
                 llm_request_id,
                 input_tokens=event.get('input_tokens', 0),
                 output_tokens=event.get('output_tokens', 0),
@@ -267,6 +265,7 @@ def _track_llm_event(chunk: str, job: _AnalysisJob, run: Dict[str, Any], llm_req
                 http_status=200,
             ))
         elif etype == 'error':
+            report.cacheable = False
             run['status'] = 'error'
             detail = event.get('detail') or event.get('error', '')
             chunk = _public_error_chunk(event)
@@ -283,7 +282,7 @@ def _track_llm_event(chunk: str, job: _AnalysisJob, run: Dict[str, Any], llm_req
                 upstream=job.endpoint,
                 context={'chunked_parts': run['chunked_parts'], 'elapsed_ms': _elapsed_ms(t_llm)},
             )
-            asyncio.create_task(update_llm_request_usage(
+            spawn(update_llm_request_usage(
                 llm_request_id,
                 http_status=event.get('http_status', 0),
                 error_type=event.get('error_type', 'LLMError'),
@@ -325,6 +324,8 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
     run['queue_wait_ms'] = _elapsed_ms(t_start)
 
     llm_request_id = None
+    report = _Report()
+    build_task: asyncio.Future | None = None
 
     try:
         # Building the messages is CPU-bound: it runs in a thread while keepalives hold the connection.
@@ -366,6 +367,7 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
             file_type=result.metadata.file_type,
             endpoint_name=job.endpoint,
             messages_json=json.dumps(_sanitize_messages(result.messages), ensure_ascii=False),
+            user_id=job.user_id,
         )
 
         # Large diffs are split into per-section chunks (map-reduce); one model call per chunk.
@@ -387,7 +389,9 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
 
         # Extraction-quality warnings (e.g. scanned PDF with no text layer)
         # — without this the user gets a silent, misleading "no changes".
-        for w in result.warnings + diff_truncation_warnings(result.messages):
+        warnings = result.warnings + diff_truncation_warnings(result.messages)
+        report.cacheable = not warnings  # the warning is not part of the text: a replay would lose it
+        for w in warnings:
             yield f'data: {json.dumps({"type": "warning", "warning": "extraction", "detail": w})}\n\n'
 
         if result.image_pairs:
@@ -414,9 +418,13 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
                 logger.warning(f'[{req_id}] Client disconnected during LLM streaming — aborting')
                 run['status'] = 'aborted'
                 return
-            yield _track_llm_event(chunk, job, run, llm_request_id, t_llm)
+            yield _track_llm_event(chunk, job, run, llm_request_id, t_llm, report)
 
         run['generation_ms'] = _elapsed_ms(t_llm)
+        if run['status'] == 'ok' and report.cacheable and report.parts:
+            spawn(store_analysis_cache(
+                job.old_hash, job.new_hash, job.cache_version, ''.join(report.parts), result.metadata.file_type,
+                result.metadata.method, job.processor_version))
         logger.info(f'[{req_id}] SSE stream complete')
 
     except (asyncio.CancelledError, GeneratorExit):
@@ -441,14 +449,14 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
         except Exception:
             pass  # client already gone
     finally:
-        _analyze_semaphore.release()
+        _release_slot_when_idle(build_task)
         if llm_request_id:
-            asyncio.create_task(update_llm_request_run(llm_request_id, total_ms=_elapsed_ms(t_start), **run))
+            spawn(update_llm_request_run(llm_request_id, total_ms=_elapsed_ms(t_start), **run))
             if answered.get('endpoint'):
-                asyncio.create_task(update_llm_request_usage(llm_request_id, endpoint_name=answered['endpoint']))
+                spawn(update_llm_request_usage(llm_request_id, endpoint_name=answered['endpoint']))
 
 
-@router.post('/compare/analyze', dependencies=[Depends(require_compare)])
+@router.post('/compare/analyze', dependencies=[Depends(require_compare), Depends(rate_limit)])
 async def analyze_documents(
     request: Request,
     old_file: UploadFile = File(...),
@@ -505,25 +513,21 @@ async def analyze_documents(
     new_hash = hashlib.sha256(new_bytes).hexdigest()
 
     pv = processor_version.strip()
-    cached = None if force_refresh.lower() == 'true' else await _get_cached_analysis(old_hash, new_hash, pv)
-    if cached:
-        logger.info(f'Cache hit for hashes {old_hash[:12]}…/{new_hash[:12]}… → messages.id={cached["id"]}')
-        return StreamingResponse(_cached_stream(cached), media_type='text/event-stream', headers=_SSE_HEADERS)
-
     processor = get_processor(old_name, method_override=pv or None)
     if not processor:
         return _error_response(f'Unsupported file type: "{get_extension(old_name)}"')
 
-    volume_path = cfg['volume_path'].rstrip('/')
-    if volume_path and not volume_path.startswith('TODO'):
-        session_id = datetime.now().strftime('%Y%m%d_%H%M%S%f')
-        asyncio.create_task(_upload_to_volume(
-            f'{volume_path}/.tmp/{session_id}', old_name, old_bytes, new_name, new_bytes))
+    cache_version = _analysis_cache_version(cfg, processor, pv)
+    cached = None if force_refresh.lower() == 'true' else await get_cached_analysis(old_hash, new_hash, cache_version)
+    if cached:
+        logger.info(f'Cache hit for hashes {old_hash[:12]}…/{new_hash[:12]}…')
+        return StreamingResponse(_cached_stream(cached), media_type='text/event-stream', headers=_SSE_HEADERS)
 
     job = _AnalysisJob(
         req_id=old_hash[:8] or 'nohash', host=host, token=token, endpoint=endpoint, cfg=cfg, processor=processor,
         processor_version=pv, old_name=old_name, new_name=new_name, old_bytes=old_bytes, new_bytes=new_bytes,
-        old_hash=old_hash, new_hash=new_hash,
+        old_hash=old_hash, new_hash=new_hash, cache_version=cache_version,
+        user_id=(await get_user_identity(request))['user_id'] or '',
     )
     # The response is returned at once so the SSE connection exists before any slow work; keepalive comments
     # (':keepalive') carry it through the gateway during long waits.

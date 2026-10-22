@@ -26,7 +26,8 @@ export function useChatSessions() {
   /** Returns whether the conversation was deleted. */
   const remove = useCallback(async (id: string): Promise<boolean> => {
     try {
-      await fetch(`/api/chat/sessions/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/chat/sessions/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(res.statusText);
       setSessions(prev => prev.filter(s => s.id !== id));
       return true;
     } catch {

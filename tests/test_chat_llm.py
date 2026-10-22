@@ -40,7 +40,7 @@ def _transport(monkeypatch, routes, calls=None):
             calls.append((endpoint, json.loads(request.content)))
         return routes[endpoint](request)
     monkeypatch.setattr(chat_llm, 'http_client',
-                        lambda timeout: httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout))
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
 
 def _events(endpoints, messages=MESSAGES, max_tokens=2000):
@@ -193,7 +193,7 @@ def test_chains(monkeypatch):
 def test_rewrite_falls_back_when_the_first_model_returns_nothing(monkeypatch):
     sent = []
 
-    async def _post(self, url, json=None, headers=None):
+    async def _post(self, url, json=None, headers=None, timeout=None):
         sent.append(url)
         content = '' if PRIMARY in url else 'FR: qualification CND\nEN: NDT qualification'
         return httpx.Response(200, json={'choices': [{'message': {'content': content}}]}, request=httpx.Request('POST', url))
@@ -209,7 +209,7 @@ def test_rewrite_falls_back_when_the_first_model_returns_nothing(monkeypatch):
 def test_vector_search_query_retried_on_503(monkeypatch):
     statuses = [503, 200]
 
-    async def _post(self, url, json=None, headers=None):
+    async def _post(self, url, json=None, headers=None, timeout=None):
         return httpx.Response(statuses.pop(0), json={}, request=httpx.Request('POST', url))
     monkeypatch.setattr(httpx.AsyncClient, 'post', _post)
     monkeypatch.setattr(asyncio, 'sleep', AsyncMock())
@@ -294,7 +294,7 @@ def test_no_claude_model_in_the_chatbot_config():
 def _post_recorder(monkeypatch, refuse=False):
     sent = []
 
-    async def post(self, url, json=None, headers=None):
+    async def post(self, url, json=None, headers=None, timeout=None):
         sent.append(dict(json))
         if refuse and 'reasoning_effort' in json:
             return httpx.Response(400, text='Unsupported parameter: reasoning_effort', request=httpx.Request('POST', url))

@@ -77,10 +77,9 @@ export function useAnalysisTrack(opts: TrackOptions) {
     reset();
     setRunning(true);
 
-    const [oldHash, newHash] = await Promise.all([computeFileHash(oldDoc.bytes), computeFileHash(newDoc.bytes)]);
-    opts.onHashes(oldHash, newHash);
-
     try {
+      const [oldHash, newHash] = await Promise.all([computeFileHash(oldDoc.bytes), computeFileHash(newDoc.bytes)]);
+      opts.onHashes(oldHash, newHash);
       const form = new FormData();
       form.append('old_file', docBlob(oldDoc), oldDoc.name);
       form.append('new_file', docBlob(newDoc), newDoc.name);

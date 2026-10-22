@@ -110,6 +110,35 @@ def _change(idx: int, *, section='', type_='', criticality='', before='', after=
     }
 
 
+def _split_body(heading: str, body: str, max_text_chars: int) -> List[str]:
+    """Plain text of a Markdown section, cut at line boundaries into parts that fit one change.
+
+    :param heading: heading of the section, which is prepended to every part and so counts in its length
+    :param body: Markdown body of the section
+    :param max_text_chars: longest text of one change, heading included
+    :return: the parts, in order (a single empty string for an empty body)
+    """
+    if not body.strip():
+        return ['']
+    budget = max(max_text_chars - len(heading) - 2, 200)
+    parts: List[str] = []
+    current = ''
+    for raw in body.split('\n'):
+        line = _strip_markdown(raw)
+        if not line:
+            continue
+        # A single line longer than the budget is cut into pieces.
+        pieces = [line[i:i + budget] for i in range(0, len(line), budget)]
+        for piece in pieces:
+            if current and len(current) + 1 + len(piece) > budget:
+                parts.append(current)
+                current = ''
+            current = f'{current} {piece}' if current else piece
+    if current:
+        parts.append(current)
+    return parts or ['']
+
+
 def extract_changes(changes_text: str, max_text_chars: int = 2000) -> Dict[str, Any]:
     """Numbered change list from an analysis output.
 
@@ -159,12 +188,12 @@ def extract_changes(changes_text: str, max_text_chars: int = 2000) -> Dict[str, 
     sections = [s.strip() for s in re.split(r'^##\s+', text, flags=re.M) if s.strip()]
     if len(sections) > 1 or text.lstrip().startswith('##'):
         changes = []
-        for i, block in enumerate(sections, start=1):
+        for block in sections:
             heading, _, body = block.partition('\n')
-            content = _strip_markdown(body) if body.strip() else ''
-            line = f'{heading.strip()}: {content}' if content else heading.strip()
-            changes.append(_change(i, section=heading.strip(), summary=content[:max_text_chars],
-                                   text=line[:max_text_chars]))
+            heading = heading.strip()
+            for content in _split_body(heading, body, max_text_chars):
+                line = f'{heading}: {content}' if content else heading
+                changes.append(_change(len(changes) + 1, section=heading, summary=content, text=line))
         return {'changes': changes, 'source': 'markdown'}
 
     return {'changes': [_change(1, summary=text[:max_text_chars], text=text[:max_text_chars])],

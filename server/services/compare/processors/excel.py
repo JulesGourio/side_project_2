@@ -1,4 +1,4 @@
-"""Excel processor (.xlsx / .xls) — three processing methods.
+"""Excel processor (.xlsx / .xlsm / .xls) — three processing methods.
 
 All three methods use the same cell-level unified diff preprocessing.
 They differ only in the system prompt sent to the LLM.
@@ -19,15 +19,32 @@ from server.services.compare.processors._diff_engines import SYSTEM_PROMPT_STAND
 logger = logging.getLogger(__name__)
 
 
-def _sheet_to_lines(ws) -> List[str]:
+def _cell_text(value: Any, formula: Any) -> str:
+    """Text of a cell: its value, followed by its formula in braces when it holds one.
+
+    :param value: cached value of the cell, None when empty
+    :param formula: content of the cell as stored in the file (a string starting with ``=`` for a formula)
+    :return: the cell text
+    """
+    text = str(value) if value is not None else ''
+    if isinstance(formula, str) and formula.startswith('='):
+        return f'{text} {{{formula}}}'
+    return text
+
+
+def _sheet_to_lines(ws, ws_formulas=None) -> List[str]:
     """Convert a worksheet to a list of tab-separated row strings.
 
-    :param ws: openpyxl worksheet, read-only
+    :param ws: openpyxl worksheet read for its values, read-only
+    :param ws_formulas: the same worksheet read without values (formulas as stored), None to show values only
     :return: one tab-separated string per row, trailing empty rows dropped
     """
     rows = []
-    for row in ws.iter_rows(values_only=True):
-        cells = [str(c) if c is not None else '' for c in row]
+    value_rows = ws.iter_rows(values_only=True)
+    formula_rows = ws_formulas.iter_rows(values_only=True) if ws_formulas is not None else None
+    for row in value_rows:
+        formulas = next(formula_rows, ()) if formula_rows is not None else ()
+        cells = [_cell_text(c, formulas[i] if i < len(formulas) else None) for i, c in enumerate(row)]
         rows.append('\t'.join(cells))
     while rows and not rows[-1].strip():
         rows.pop()
@@ -42,12 +59,13 @@ def _extract_xlsx(file_bytes: bytes) -> Tuple[List[str], str]:
     """
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    wb_formulas = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=False)
     lines: List[str] = []
     for name in wb.sheetnames:
-        ws = wb[name]
         lines.append(f'[Sheet: {name}]')
-        lines.extend(_sheet_to_lines(ws))
+        lines.extend(_sheet_to_lines(wb[name], wb_formulas[name]))
     wb.close()
+    wb_formulas.close()
     return lines, f'{len(wb.sheetnames)} sheet(s): {", ".join(wb.sheetnames)}'
 
 
@@ -73,6 +91,198 @@ def _extract_xls(file_bytes: bytes) -> Tuple[List[str], str]:
 
 
 _VOLATILE_COL_THRESHOLD = 0.50  # columns changing in >50% of matched rows are auto-excluded
+_VOLATILE_MIN_ROWS = 20         # a column is only judged recalculated from this many matched rows: a handful of edits is a change
+_MAX_EMPTY_KEY_RATIO = 0.05     # above this share of empty first-column cells the first column is no key
+_ROW_FIELDS_CHARS = 300         # an added or removed row is shown up to this many characters
+_CHANGE_CHARS = 200             # a changed cell is shown up to this many characters
+_CHANGES_PER_ROW = 10           # changed cells shown per modified row
+
+
+def _parse_sheets(lines: List[str]) -> List[Tuple[str, str, List[str]]]:
+    """Split workbook lines into sheets.
+
+    :param lines: workbook lines, a ``[Sheet: ...]`` marker before the rows of each sheet
+    :return: a list of ``(sheet marker, header line, data rows)``
+    """
+    result: List[Tuple[str, str, List[str]]] = []
+    sheet, header, data = '', '', []
+    for line in lines:
+        if line.startswith('[Sheet:'):
+            if sheet:
+                result.append((sheet, header, data))
+            sheet, header, data = line, '', []
+        elif not header and line.strip():
+            header = line
+        else:
+            data.append(line)
+    if sheet:
+        result.append((sheet, header, data))
+    return result
+
+
+def _parse_rows(rows: List[str]) -> Dict[str, List[str]] | None:
+    """Rows keyed by their first column; None when a key repeats or too many keys are empty.
+
+    :param rows: data rows of one sheet, tab-separated
+    :return: the cells of each row by key, or None
+    """
+    keyed: Dict[str, List[str]] = {}
+    empty = 0
+    for row in rows:
+        if not row.strip():
+            continue
+        cells = row.split('\t')
+        key = cells[0].strip()
+        if not key:
+            empty += 1
+            continue
+        if key in keyed:
+            return None  # duplicate key → can't use keyed diff
+        keyed[key] = cells
+    if rows and empty / max(len(rows), 1) > _MAX_EMPTY_KEY_RATIO:
+        return None  # too many empty keys
+    return keyed
+
+
+def _is_auto_increment(keys: List[str]) -> bool:
+    """True if the keys are sequential integers (1,2,3… or 0,1,2…) — row numbers, not identifiers.
+
+    :param keys: row keys of one sheet
+    :return: True when the keys are the row numbers 0 or 1, 2, 3...
+    """
+    try:
+        nums_sorted = sorted(int(k) for k in keys)
+        return (
+            nums_sorted[0] in (0, 1)
+            and all(nums_sorted[i] == nums_sorted[i - 1] + 1 for i in range(1, len(nums_sorted)))
+        )
+    except (ValueError, TypeError, IndexError):
+        return False
+
+
+def _column_name(headers: List[str], index: int) -> str:
+    """The header of a column, ``col_<index>`` when the sheet has none for it.
+
+    :param headers: header cells of the sheet
+    :param index: column index
+    :return: the column name
+    """
+    return headers[index] if index < len(headers) else f'col_{index}'
+
+
+def _cell(cells: List[str], index: int) -> str:
+    """A cell of a row, empty beyond the end of the row (a column added or dropped at the end).
+
+    :param cells: cells of the row
+    :param index: column index
+    :return: the cell text
+    """
+    return cells[index] if index < len(cells) else ''
+
+
+def _volatile_columns(old_rows: Dict[str, List[str]], new_rows: Dict[str, List[str]]) -> set:
+    """Columns that change in most of the rows present in both revisions (recalculated every cycle).
+
+    Needs ``_VOLATILE_MIN_ROWS`` matched rows: on fewer rows, a column changed everywhere is an edit, not a recalculation.
+
+    :param old_rows: rows of the old sheet by key
+    :param new_rows: rows of the new sheet by key
+    :return: the indexes of the volatile columns
+    """
+    common_keys = old_rows.keys() & new_rows.keys()
+    if len(common_keys) < _VOLATILE_MIN_ROWS:
+        return set()
+    col_change: Dict[int, int] = {}
+    for key in common_keys:
+        o, n = old_rows[key], new_rows[key]
+        for ci in range(max(len(o), len(n))):
+            if _cell(o, ci) != _cell(n, ci):
+                col_change[ci] = col_change.get(ci, 0) + 1
+    return {ci for ci, count in col_change.items() if count > len(common_keys) * _VOLATILE_COL_THRESHOLD}
+
+
+def _row_fields(cells: List[str], headers: List[str], volatile: set) -> str:
+    """The retained, non-empty cells of an added or removed row, as ``column: value`` pairs.
+
+    :param cells: cells of the row; the first is the key and is not repeated
+    :param headers: header cells of the sheet
+    :param volatile: indexes of the columns left out
+    :return: the pairs joined by `` | ``, cut to ``_ROW_FIELDS_CHARS`` characters
+    """
+    fields = [
+        f'{_column_name(headers, ci)}: {cells[ci]}'
+        for ci in range(len(cells))
+        if ci not in volatile and ci > 0 and cells[ci].strip()
+    ]
+    return ' | '.join(fields)[:_ROW_FIELDS_CHARS]
+
+
+def _modified_rows(old_rows: Dict[str, List[str]], new_rows: Dict[str, List[str]], headers: List[str],
+                   volatile: set) -> List[Tuple[str, List[str]]]:
+    """The rows present in both revisions whose retained cells changed.
+
+    :param old_rows: rows of the old sheet by key
+    :param new_rows: rows of the new sheet by key
+    :param headers: header cells of the sheet
+    :param volatile: indexes of the columns left out
+    :return: ``(key, ["column: 'old' → 'new'", ...])`` for each modified row, in key order
+    """
+    modified: List[Tuple[str, List[str]]] = []
+    for key in sorted(old_rows.keys() & new_rows.keys()):
+        o, n = old_rows[key], new_rows[key]
+        changes = [
+            f'{_column_name(headers, ci)}: {_cell(o, ci)!r} → {_cell(n, ci)!r}'
+            for ci in range(max(len(o), len(n)))
+            if ci not in volatile and _cell(o, ci) != _cell(n, ci)
+        ]
+        if changes:
+            modified.append((key, changes))
+    return modified
+
+
+def _sheet_diff(sheet: str, old_header: str, new_header: str, old_rows: Dict[str, List[str]],
+                new_rows: Dict[str, List[str]]) -> List[str]:
+    """The report lines of one sheet present in both workbooks.
+
+    :param sheet: the ``[Sheet: ...]`` marker
+    :param old_header: header line of the old sheet
+    :param new_header: header line of the new sheet
+    :param old_rows: rows of the old sheet by key
+    :param new_rows: rows of the new sheet by key
+    :return: the report lines
+    """
+    old_headers = old_header.split('\t') if old_header else []
+    # A column added at the end is named by the new header.
+    headers = old_headers + (new_header.split('\t')[len(old_headers):] if new_header else [])
+    added_keys = sorted(new_rows.keys() - old_rows.keys())
+    removed_keys = sorted(old_rows.keys() - new_rows.keys())
+    volatile = _volatile_columns(old_rows, new_rows)
+    volatile_names = [_column_name(headers, ci) for ci in sorted(volatile)]
+
+    out = [f'\n{sheet}', f'Key column: {headers[0] if headers else "col_0"}']
+    if new_header and new_header != old_header:
+        out.append(f'Header changed: {old_header.replace(chr(9), " | ")!r} → {new_header.replace(chr(9), " | ")!r}')
+    if volatile_names:
+        out.append(
+            'Auto-excluded columns (recalculated every update — not shown): '
+            + ', '.join(f'"{n}"' for n in volatile_names)
+        )
+    if added_keys:
+        out.append(f'\nADDED rows ({len(added_keys)}):')
+        out.extend(f'  + {key} | {_row_fields(new_rows[key], headers, volatile)}' for key in added_keys)
+    if removed_keys:
+        out.append(f'\nREMOVED rows ({len(removed_keys)}):')
+        out.extend(f'  - {key} | {_row_fields(old_rows[key], headers, volatile)}' for key in removed_keys)
+
+    modified = _modified_rows(old_rows, new_rows, headers, volatile)
+    if modified:
+        out.append(f'\nMODIFIED rows ({len(modified)} with changes in retained columns):')
+        for key, changes in modified:
+            out.append(f'  ~ {key}:')
+            out.extend(f'    {change[:_CHANGE_CHARS]}' for change in changes[:_CHANGES_PER_ROW])
+    if not added_keys and not removed_keys and not modified and not (new_header and new_header != old_header):
+        out.append('\nNo significant changes detected (only auto-calculated columns differ).')
+    return out
 
 
 def _build_diff_keyed(
@@ -96,164 +306,28 @@ def _build_diff_keyed(
     :param new_name: file name of the new workbook
     :return: the keyed diff, or None when the first column is not a usable key
     """
-    def _parse_sheets(lines: List[str]) -> List[Tuple[str, str, List[str]]]:
-        """Split lines into [(sheet_marker, header_row, [data_rows]), ...].
-
-        :param lines: workbook lines
-        :return: a list of ``(sheet marker, header line, data rows)``
-        """
-        result: List[Tuple[str, str, List[str]]] = []
-        sheet, header, data = '', '', []
-        for line in lines:
-            if line.startswith('[Sheet:'):
-                if sheet:
-                    result.append((sheet, header, data))
-                sheet, header, data = line, '', []
-            elif not header and line.strip():
-                header = line
-            else:
-                data.append(line)
-        if sheet:
-            result.append((sheet, header, data))
-        return result
-
-    blocks     = _parse_sheets(old_lines)
     new_blocks = _parse_sheets(new_lines)
-
+    old_blocks = _parse_sheets(old_lines)
     out_parts: List[str] = [f'--- {old_name}', f'+++ {new_name}']
 
-    for (sheet, old_header, old_data) in blocks:
+    for sheet, old_header, old_data in old_blocks:
         new_block = next((b for b in new_blocks if b[0] == sheet), None)
         if new_block is None:
             out_parts.append(f'\n{sheet}: sheet removed entirely')
             continue
-        _, _, new_data = new_block
-
-        headers = old_header.split('\t') if old_header else []
-
-        def _parse_rows(rows: List[str]) -> Dict[str, List[str]] | None:
-            """Rows keyed by their first column; None when a key repeats or too many keys are empty.
-
-            :param rows: data rows of one sheet, tab-separated
-            :return: the cells of each row by key, or None
-            """
-            d: Dict[str, List[str]] = {}
-            empty = 0
-            for row in rows:
-                if not row.strip():
-                    continue
-                cells = row.split('\t')
-                key = cells[0].strip()
-                if not key:
-                    empty += 1
-                    continue
-                if key in d:
-                    return None  # duplicate key → can't use keyed diff
-                d[key] = cells
-            if rows and empty / max(len(rows), 1) > 0.05:
-                return None  # too many empty keys
-            return d
-
-        def _is_auto_increment(keys: List[str]) -> bool:
-            """True if the keys are sequential integers (1,2,3… or 0,1,2…) — row numbers, not identifiers.
-
-            :param keys: row keys of one sheet
-            :return: True when the keys are the row numbers 0 or 1, 2, 3...
-            """
-            try:
-                nums = [int(k) for k in keys]
-                nums_sorted = sorted(nums)
-                return (
-                    nums_sorted[0] in (0, 1)
-                    and all(nums_sorted[i] == nums_sorted[i - 1] + 1 for i in range(1, len(nums_sorted)))
-                )
-            except (ValueError, TypeError):
-                return False
-
         old_rows = _parse_rows(old_data)
-        new_rows = _parse_rows(new_data)
+        new_rows = _parse_rows(new_block[2])
         if old_rows is None or new_rows is None:
             return None  # fall back: duplicate or too many empty keys
-
         # Fall back if first column is just sequential row numbers — keyed diff would misalign on insertions
-        if _is_auto_increment(list(old_rows.keys())) or _is_auto_increment(list(new_rows.keys())):
+        if _is_auto_increment(list(old_rows)) or _is_auto_increment(list(new_rows)):
             return None
+        out_parts.extend(_sheet_diff(sheet, old_header, new_block[1], old_rows, new_rows))
 
-        old_keys = set(old_rows)
-        new_keys = set(new_rows)
-        added_keys   = sorted(new_keys - old_keys)
-        removed_keys = sorted(old_keys - new_keys)
-        common_keys  = old_keys & new_keys
-
-        col_change: Dict[int, int] = {}
-        for key in common_keys:
-            o, n = old_rows[key], new_rows[key]
-            for ci in range(min(len(o), len(n))):
-                if o[ci] != n[ci]:
-                    col_change[ci] = col_change.get(ci, 0) + 1
-
-        volatile: set = {
-            ci for ci, cnt in col_change.items()
-            if cnt > len(common_keys) * _VOLATILE_COL_THRESHOLD
-        }
-        volatile_names = [
-            headers[ci] if ci < len(headers) else f'col_{ci}'
-            for ci in sorted(volatile)
-        ]
-
-        out_parts.append(f'\n{sheet}')
-        key_col = headers[0] if headers else 'col_0'
-        out_parts.append(f'Key column: {key_col}')
-        if volatile_names:
-            out_parts.append(
-                'Auto-excluded columns (recalculated every update — not shown): '
-                + ', '.join(f'"{n}"' for n in volatile_names)
-            )
-
-        if added_keys:
-            out_parts.append(f'\nADDED rows ({len(added_keys)}):')
-            for key in added_keys:
-                cells = new_rows[key]
-                fields = [
-                    f'{headers[ci] if ci < len(headers) else f"col_{ci}"}: {cells[ci]}'
-                    for ci in range(len(cells))
-                    if ci not in volatile and ci > 0 and cells[ci].strip()
-                ]
-                out_parts.append(f'  + {key} | ' + ' | '.join(fields)[:300])
-
-        if removed_keys:
-            out_parts.append(f'\nREMOVED rows ({len(removed_keys)}):')
-            for key in removed_keys:
-                cells = old_rows[key]
-                fields = [
-                    f'{headers[ci] if ci < len(headers) else f"col_{ci}"}: {cells[ci]}'
-                    for ci in range(len(cells))
-                    if ci not in volatile and ci > 0 and cells[ci].strip()
-                ]
-                out_parts.append(f'  - {key} | ' + ' | '.join(fields)[:300])
-
-        modified: List[Tuple[str, List[str]]] = []
-        for key in sorted(common_keys):
-            o, n = old_rows[key], new_rows[key]
-            changes = []
-            for ci in range(min(len(o), len(n))):
-                if ci in volatile:
-                    continue
-                if o[ci] != n[ci]:
-                    col_name = headers[ci] if ci < len(headers) else f'col_{ci}'
-                    changes.append(f'{col_name}: {o[ci]!r} → {n[ci]!r}')
-            if changes:
-                modified.append((key, changes))
-
-        if modified:
-            out_parts.append(f'\nMODIFIED rows ({len(modified)} with changes in retained columns):')
-            for key, changes in modified:
-                out_parts.append(f'  ~ {key}:')
-                for ch in changes[:10]:
-                    out_parts.append(f'    {ch[:200]}')
-
-        if not added_keys and not removed_keys and not modified:
-            out_parts.append('\nNo significant changes detected (only auto-calculated columns differ).')
+    old_sheets = {block[0] for block in old_blocks}
+    for sheet, _, new_data in new_blocks:
+        if sheet not in old_sheets:
+            out_parts.append(f'\n{sheet}: sheet added ({len([row for row in new_data if row.strip()])} rows)')
 
     return '\n'.join(out_parts) if len(out_parts) > 2 else '(No cell differences detected)'
 

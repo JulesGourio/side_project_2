@@ -19,6 +19,7 @@ from pyspark.sql import types as T
 
 import image_utils
 import selection
+from retention import snapshots_to_drop
 from format_parsers import strip_ooxml_bloat
 from tables import table_exists, write_table
 from leap_utils.common.logger import get_logger
@@ -26,6 +27,7 @@ from config import (
     PIPELINE_WRITE_ENV,
     BUSINESS_METADATA_COLS,
     CHECKPOINT_BATCH_SIZE,
+    CHECKPOINT_SNAPSHOT_KEEP_DAYS,
     CHECKPOINT_TABLE,
     EMPTY_SMALL_FILE_SIZE_BYTES,
     ENABLE_TIMING_TEST,
@@ -234,6 +236,26 @@ def make_parse_fn(cluster_parallelism) -> Callable[[DataFrame, int], DataFrame]:
     return parse
 
 
+def drop_old_checkpoint_snapshots(now: datetime, keep_days: int = CHECKPOINT_SNAPSHOT_KEEP_DAYS) -> None:
+    """Drop the checkpoint snapshots older than ``keep_days``; the most recent one is always kept.
+
+    :param now: current time
+    :param keep_days: age in days from which a snapshot is dropped
+    """
+    schema = f"{PIPELINE_WRITE_ENV}_proj.qualibot"
+    try:
+        names = [r["tableName"] for r in spark.sql(f"SHOW TABLES IN {schema} LIKE '_pipeline_checkpoint_*'").collect()]
+    except Exception as exc:
+        logger.warning(f"[SNAPSHOT] Could not list the checkpoint snapshots: {exc}")
+        return
+    for name in snapshots_to_drop(names, now, keep_days):
+        try:
+            spark.sql(f"DROP TABLE IF EXISTS {schema}.{name}")
+            logger.info(f"[SNAPSHOT] Dropped {schema}.{name}")
+        except Exception as exc:
+            logger.warning(f"[SNAPSHOT] Could not drop {schema}.{name}: {exc}")
+
+
 def snapshot_or_log_checkpoint(num_files) -> None:
     """Full run: shallow-clone the live checkpoint before it's overwritten.
     Incremental run: just log the current Delta version for manual
@@ -250,6 +272,7 @@ def snapshot_or_log_checkpoint(num_files) -> None:
             logger.info(f"[SNAPSHOT] {CHECKPOINT_TABLE} -> {snap_table}")
         except Exception:
             logger.info("[SNAPSHOT] No existing checkpoint to save.")
+        drop_old_checkpoint_snapshots(datetime.now())
     elif RUN_MODE == "incremental":
         try:
             hist = spark.sql(f"DESCRIBE HISTORY {CHECKPOINT_TABLE} LIMIT 1")
@@ -346,7 +369,7 @@ def setup_workers(repo_dir) -> int:
     :param repo_dir: Folder of the parsing modules, shipped to the executors.
     """
     import config as cfg
-    from utils import broadcast_config, configure, write_worker_config
+    from worker import broadcast_config, configure, write_worker_config
 
     for module in cfg.WORKER_MODULES:
         spark.sparkContext.addPyFile(os.path.join(repo_dir, module))

@@ -394,3 +394,18 @@ def test_several_edits_including_a_moved_and_modified_paragraph(make, read):
 def test_value_that_looks_like_a_heading_number_stays_visible():
     out = entries('Gap table\n2.5 mm maximum gap [Page 1]', 'Gap table\n3.5 mm maximum gap [Page 1]')
     assert out == ['MODIFIED [Page 1]: ~~2.5~~ **3.5** mm maximum gap']
+
+
+def test_a_sign_change_on_a_limit_is_a_substantive_change():
+    from server.services.compare.processors._diff_engines.text import is_substantive
+    assert is_substantive('Operating range -40 °C to 85 °C', 'Operating range 40 °C to 85 °C')
+    assert is_substantive('Tolerance 10^-3 mm', 'Tolerance 10^3 mm')
+    assert is_substantive('Offset +5 mm', 'Offset -5 mm')
+    assert not is_substantive('Reference NAS-410 applies', 'Reference NAS-410 applies')
+
+
+def test_a_malformed_xml_file_is_refused_instead_of_read_as_empty():
+    import pytest
+    from server.services.compare.processors.xml import _extract_xml
+    with pytest.raises(ValueError, match='not well formed'):
+        _extract_xml(b'<a><b></a>')

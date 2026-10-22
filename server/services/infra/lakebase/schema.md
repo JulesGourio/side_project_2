@@ -112,7 +112,7 @@ One row per turn. The columns of the first table are fixed; the others come from
 |---|---|---|
 | `answer_endpoint` | TEXT | model that answered (NULL: none) |
 | `llm_fallback` | BOOLEAN | answer given by the fallback model |
-| `llm_attempts` | JSONB | every call to a model: endpoint, outcome, HTTP status, seconds |
+| `llm_attempts` | JSONB | every call to a model: endpoint, outcome, HTTP status, seconds, seconds to the first text (`first_text_s`) |
 | `truncated` | BOOLEAN | output token limit reached |
 | `continuations` | INTEGER | number of resumptions after a cut |
 | `input_tokens` | INTEGER | input tokens of the answer |
@@ -150,6 +150,8 @@ One row per turn. The columns of the first table are fixed; the others come from
 | `rewrite_failed` | no model rewrote the query: search run with the question alone |
 | `rewrite_fallback` | rewrite done by the fallback model |
 | `vs_partial` | some Vector Search queries failed (`vs_calls_ok` < `vs_calls_expected`) |
+| `user_upsert_failed` | the `users` row could not be updated; the turn was saved anyway |
+| `session_not_owned` | the session id belongs to another user; nothing was saved |
 | `query_truncated` | a query longer than the Vector Search limit was cut before the call (`vs_calls[].truncated_from` gives its length) |
 | `rerank_refused` | the index refused the reranker: raw search only |
 | `no_passages` | no passage found |
@@ -303,6 +305,9 @@ One row per `/compare/analyze` analysis.
 | `generation_ms` | INTEGER | from the call to the end |
 | `total_ms` | INTEGER | total duration |
 | `chunked_parts` | INTEGER | number of parts (split into several calls; 0: one call) |
+| `user_id` | TEXT | user who ran the analysis (NULL for rows written before the column existed) |
+
+Index: `idx_llm_requests_user` (`user_id`).
 
 ## Impact search
 
@@ -397,6 +402,21 @@ Result of an impact search, reused for the same files (the "Re-run" action bypas
 | `result_json` | TEXT NOT NULL | full result |
 
 Index: `idx_impact_cache_hashes` (`old_file_hash`, `new_file_hash`, `app_version`).
+
+### `analysis_cache`
+
+Result of a comparison analysis, reused for the same two files. Written by the server only, never from a request body.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | SERIAL PK | identifier |
+| `created_at` | TIMESTAMPTZ | date |
+| `old_file_hash`, `new_file_hash` | TEXT NOT NULL | fingerprints of the two files |
+| `cache_version` | TEXT NOT NULL | app version, processor version and prompt version |
+| `analysis_text` | TEXT NOT NULL | analysis |
+| `file_type`, `processing_method`, `processor_version` | TEXT | how the analysis was produced |
+
+Index: `idx_analysis_cache_hashes` (`old_file_hash`, `new_file_hash`, `cache_version`).
 
 ### `summary_cache`
 
@@ -533,5 +553,9 @@ GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY n DESC;
 | `impact_document_results` | `idx_impact_document_results_request_id` (`request_id`) |
 | `impact_feedbacks` | `idx_impact_feedbacks_request_id` (`impact_request_id`) |
 | `impact_cache` | `idx_impact_cache_hashes` (`old_file_hash`, `new_file_hash`, `app_version`) |
+| `analysis_cache` | `idx_analysis_cache_hashes` (`old_file_hash`, `new_file_hash`, `cache_version`) |
+| `compare_messages` | `idx_compare_messages_user` (`user_id`, `created_at` DESC) |
+| `chat_sessions` | `idx_chat_sessions_user` (`user_id`, `updated_at` DESC) |
+| `chat_feedbacks` | `idx_chat_feedbacks_message` (`message_id`) |
 | `summary_cache` | `idx_summary_cache_hash` (`file_hash`, `app_version`) |
 | `users` | `users_email_idx` (`email`, unique, where it is not NULL) |

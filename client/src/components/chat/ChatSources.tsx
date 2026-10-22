@@ -1,5 +1,6 @@
 import { FileText } from 'lucide-react';
 import { Flag } from '@/components/shared/Flag';
+import { isSafeLink } from '@/components/shared/safeUrl';
 import { versionLabel, type Source } from './message';
 
 // Mirrors doc_catalog.py _canon(): groups the site/language variants of one document, for display only.
@@ -59,7 +60,7 @@ function SourceChip({ src, fallbackLabel }: { src: Source; fallbackLabel: string
     </span>
   );
 
-  return src.url ? (
+  return isSafeLink(src.url) ? (
     <a
       href={src.url}
       target="_blank"
@@ -93,7 +94,7 @@ function SourceChipGroup({ variants }: { variants: Source[] }) {
       {variants.filter(v => v.n != null).map(v => (
         <span key={`n-${v.n}`}>{chipNumberBadge(v.n!)}</span>
       ))}
-      {bare?.url ? (
+      {isSafeLink(bare?.url) ? (
         <a
           href={bare.url}
           target="_blank"
@@ -112,7 +113,7 @@ function SourceChipGroup({ variants }: { variants: Source[] }) {
         {flagVariants.map((v, j) => {
           const code = langCode(v.title || '');
           if (!code) return null;
-          return v.url ? (
+          return isSafeLink(v.url) ? (
             <a key={j} href={v.url} target="_blank" rel="noopener noreferrer" title={v.title} className="transition-transform hover:scale-125">
               <Flag code={code} />
             </a>

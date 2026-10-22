@@ -192,7 +192,7 @@ Les notebooks sont `create_proj_<asset>.py` et `update_proj_vector_indexes.py` d
 
 - [ ] Lancer le job complet une fois sur DEV (`1_categories` à `6_update_kb_metadata`) et lire les journaux de chaque tâche : aucune `NameError` sur `logger`.
 - [ ] `--only 1_categories` : `All sources fresh`, `category_reference` écrite.
-- [ ] `--only 2_manifest` : les compteurs `KEEP/DELETE/ORPHAN/...`, `parse_manifest written: N IDDOCs in scope`, `[DRY RUN] ... would be deleted`. Comparer N avec la valeur d'hier (`SELECT count(*) FROM dev_proj.qualibot.parse_manifest`). Garde-fou RED : la tâche échoue si `parse_manifest` est vide ou a un IDDOC en double.
+- [ ] `--only 2_manifest` : les compteurs `KEEP/DELETE/ORPHAN/...`, `parse_manifest written: N IDDOCs in scope`, `DELETE : N` (dossiers hors périmètre, conservés). Comparer N avec la valeur d'hier (`SELECT count(*) FROM dev_proj.qualibot.parse_manifest`). Garde-fou RED : la tâche échoue si `parse_manifest` est vide ou a un IDDOC en double.
 - [ ] `--only 5_sync_index` : garde-fou RED : la tâche échoue si `chunks_full` est vide (au premier run, vérifier).
 - [ ] `--only 4_describe_images` sur des tables à jour : `Nothing to describe`, `No new image chunks to inject`, ou la promotion des documents en attente.
 - [ ] Statuts `IMAGES_PENDING`, plafond de tentatives, disjoncteur : `runbooks/dev.md` Q3 à Q5 (requêtes de contrôle).
@@ -296,3 +296,83 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Onglet Comparaison : aperçu d'un PowerPoint de plusieurs diapositives. Toutes les diapositives s'affichent, dans l'ordre (avant : la première seulement). Sans LibreOffice sur l'app, l'aperçu de secours (texte positionné) s'affiche.
 - [ ] Aperçu d'un `.doc` avec des accents (é, à, ç) : le texte est lisible, pas de `�`.
 - [ ] Chat DEV : une question de plus de 20 000 caractères (long texte collé) répond ; la ligne de `chat_turns` a le code `query_truncated` dans `warnings`.
+
+## 2026-10-21 — revue de la PR Bitbucket 2, lot 3
+
+- [ ] Reconstruire le client (`client/out` est versionné) : `cd client; bun install; bun run build`, puis versionner `client/out`.
+- [ ] Déployer l'app DEV (pipeline Bitbucket `deploy-dev`).
+- [ ] Comparaison DEV : un classeur `.xlsm` est accepté, comparé, et son aperçu s'affiche.
+- [ ] Comparaison DEV : un `.docx` avec tableaux et images retournées, avant/après, donne le même rapport qu'avant (comparer avec un résultat enregistré).
+- [ ] Comparaison DEV : deux classeurs `.xlsx` dont l'un a une feuille sans ligne de données : un rapport s'affiche, pas d'erreur.
+- [ ] Résumé d'un document et recherche d'impact : réponses normales (les délais viennent maintenant de `services/*/config.py`).
+
+## 2026-10-21 — revue indépendante de la PR (correctifs de sécurité et de fiabilité)
+
+- [ ] Reconstruire le client seulement si `client/` a changé dans ton dépôt : `cd client; bun install; bun run build`.
+- [ ] Déployer l'app DEV (pipeline Bitbucket `deploy-dev`) ; au premier démarrage le schéma ajoute `analysis_cache` et 3 index (migration idempotente, verrou consultatif).
+- [ ] `/health` : le bloc Lakebase indique l'état ; redémarrer l'app pendant que Lakebase est en veille : l'app se reconnecte seule.
+- [ ] Aperçu PowerPoint / Word : fonctionne ; l'appel direct à `/api/preview` sans accès Comparaison est refusé.
+- [ ] Comparaison : charger un ancien historique (les sessions enregistrées avant ce déploiement se rechargent) ; `session_path` d'un autre utilisateur refusé (403).
+- [ ] Même paire de fichiers deux fois : la seconde analyse vient de `analysis_cache` (`cached: true`) et ne renvoie aucun identifiant d'un autre utilisateur.
+- [ ] Lien de partage d'un chat : lecture seule, vote du propriétaire seul ; ouvrir une session partagée dans le WebSocket avec son id ne l'écrit pas (`session_not_owned` dans `app_errors`).
+- [ ] Classeur `.xlsm`, colonnes ajoutées, feuille nouvelle, valeur −40 → 40 : chaque changement apparaît dans le rapport.
+- [ ] Parsing UAT en mode `full` : aucune révision remplacée ne revient dans `chunks` ; pas de nouveau `MISSING_CHUNKS` sur les révisions remplacées.
+- [ ] Chat DEV : question en français puis en anglais (premier message) : la réécriture/traduction répond, le journal du tour montre `databricks-gpt-6-luna` pour l'étape de réécriture (plus Gemini) ; comparer la latence du premier jeton avec l'ancienne.
+- [ ] Comparaison DEV : après une analyse, la ligne de `llm_requests` a `user_id` rempli (`SELECT user_id, created_at FROM llm_requests ORDER BY id DESC LIMIT 5`).
+- [ ] Pipeline `sync-prod-data` : ne copie plus que les modèles docling, plus aucun fichier Lakebase dans les artefacts.
+
+## 2026-10-21 — décisions de la revue (build du client au déploiement, dépendances figées, prompts de la comparaison)
+
+- [ ] Premier déploiement DEV par le pipeline `deploy-dev` : l'étape installe bun 1.4.2, construit `client/out` et l'app l'affiche (l'étape dure 1 à 2 minutes de plus). Si `client/out` manque dans les fichiers du bundle, l'app n'affiche plus l'interface : vérifier dans l'espace de travail que `client/out/index.html` existe.
+- [ ] Sur le PC de déploiement (`deploy_qualibot.ps1`), `client/out` reste produit par `bun run build` et envoyé (`--include 'client/out/**'`).
+- [ ] Onglet Comparaison : analyser deux fichiers, rafraîchir la page (les fichiers et le rapport reviennent), cliquer une entrée de l'historique (analyse, impact et fichiers se rechargent). Sept jours après la dernière écriture, le navigateur ne garde plus rien ; l'historique de la base reste.
+- [ ] Les six prompts de la comparaison viennent de `server/prompts/compare/` : lancer une analyse, un résumé de document (texte puis image) et une recherche d'impact ; les résultats sont comparables à ceux d'avant.
+- [ ] Chat DEV, langue : 10 questions courtes ou mélangées (FR/EN, une ligne, sigles seuls). La réponse est dans la langue de la question, ou celle demandée. Puis lancer `register_chat_prompts` (le fichier `base.md` a changé) pour que la version du prompt soit liée.
+- [ ] Pipeline `tests` (Bitbucket) : passe sans échec avec `requirements.txt` figé (pymupdf 1.28.0, comme `uv.lock` : avec la version 2.0, 3 tests de tableaux PDF échouent).
+- [ ] Démarrage de l'app : `start.sh` installe antiword (paquet fourni, sinon `apt`, sinon téléchargement https vérifié par SHA-256) ; un `.doc` s'aperçoit avec ses accents.
+- [ ] Parsing (si `leap_utils` est utilisé par le job) : lancer `create_proj_parse_manifest` ou la tâche la plus courte du job de parsing sur DEV pour vérifier que les imports `leap_utils` (11 modules conservés) fonctionnent.
+- [ ] Comparaison DEV, mode « comparatif » (moteur par sections) : un texte où « shall » devient « may » est maintenant rapporté comme changement (avant : ignoré). Vérifier sur un couple de PDF qui contient un tel changement.
+
+## 2026-10-21 — le parsing lit le data asset Intraqual (gold) au lieu du bronze
+
+- [ ] Section G de `uat.md` (déploiement des jobs, `1_categories`, `2_manifest`, comparaison de `category_reference` et `parse_manifest` avant / après : 0 ligne de différence attendue).
+- [ ] `1_categories` : le journal liste l'âge de `document_revisions_intraqual` et `category_ancestors_intraqual` ; une valeur de `parsing_max_source_staleness_hours` à `1` fait échouer la tâche avec la liste des tables périmées (puis remettre `36`).
+- [ ] Chat : la source d'un document AS et celle d'un document IS gardent leur division et leur catégorie.
+
+## 2026-10-21 — division COMMUN et exclusion de ONE_QMS-5S
+
+- [ ] Section H de `dev.md` (déploiement DEV, `1_categories`, `2_manifest`, répartition des divisions et du manifest).
+- [ ] Chat DEV en division AS puis IS : les réponses incluent des documents `COMMUN` ; sous ALL rien ne change (après `rechunk` et synchronisation de l'index).
+
+## 2026-10-21 — constats restants de la revue indépendante (client, serveur, recherche d'impact)
+
+- [ ] Déployer l'app DEV (le client est construit par le pipeline) puis ouvrir la console du navigateur : pas d'erreur de politique de sécurité (CSP) au chargement, les images du chat et les liens https des sources fonctionnent, un lien `http://` s'affiche sans lien.
+- [ ] Polices : l'interface utilise les polices du système (plus de Montserrat/Open Sans/JetBrains Mono) ; dire si l'apparence convient.
+- [ ] Historique : cliquer vite sur deux entrées A puis B : B reste affichée. « Nouveau chat » pendant le chargement d'une session : la nouvelle conversation reste.
+- [ ] Chat : arrêter le réseau pendant une réponse : après 2 minutes sans événement, le message « un peu fatigué » s'affiche. Les bulles d'erreur ne sont plus renvoyées au modèle au message suivant.
+- [ ] Fichier `.ppt` : converti et comparé (LibreOffice présent), sinon message clair demandant `.pptx`. Un `.docx` avec en-tête/pied de page et un `.pptx` avec notes : ces blocs apparaissent dans le rapport.
+- [ ] Recherche d'impact sur un rapport Markdown de plus de 40 puces : toutes les puces donnent une requête ; un résultat jugé impacté dont la citation n'est pas dans le texte apparaît en « à vérifier ».
+- [ ] Document découpé (rapport long) : pas de ligne « No significant changes » entre les vrais changements ; les changements restent sous la bonne section.
+- [ ] Limite de débit : 31 analyses en moins d'une minute avec le même compte donnent une réponse 429 générique à la 31ᵉ (`RATE_LIMIT_PER_MINUTE`, 0 = coupée).
+- [ ] Sans en-tête d'identité (appel direct hors proxy) : les routes d'historique répondent 401.
+- [ ] Alerte `chat_failure_rate` : son horaire est 03 h et 15 h (Europe/Paris) avec une fenêtre de 13 h ; elle reste en pause.
+- [ ] Chat DEV : couper temporairement le modèle de réécriture (ou simuler une panne) : la réponse arrive quand même, la ligne de `chat_turns` a le statut `degraded` et le code `rewrite_failed`.
+- [ ] `/docs`, `/redoc` et `/openapi.json` ne sont plus servis (variable `ENABLE_API_DOCS=true` pour les rétablir en développement).
+- [ ] Les alertes de job DEV et UAT arrivent à l'adresse partagée `LEAP_Databricks_Alert@latecoere.aero`.
+- [ ] Application DEV : les polices Montserrat (titres), Open Sans (texte) et JetBrains Mono (code) s'affichent comme avant, sans requête vers `fonts.googleapis.com` (onglet Réseau du navigateur).
+- [ ] Chat DEV, panne simulée de la réécriture : le journal du tour montre 2 recherches (une réordonnée de 36 passages, une brute de 12) pour un tour en mode bilingue, soit 48 candidats comme un tour normal.
+- [ ] UAT, après le déploiement : `christophe.pelissier` et `yosif.karapendov` accèdent encore à l'application seulement s'ils sont membres des groupes `Role-Project-LEAP-End-users-Qualibot-DocCompare` ou `...-ChatBot` ; sinon l'accès est coupé (voulu).
+
+## 2026-10-21 — parsing : tolérance aux pannes (constats L-21 et L-b12)
+
+- [ ] Déployer les jobs sur DEV (`deploy-dev-jobs`) et lancer un run incrémental du job de parsing : `bundle validate` accepte les `timeout_seconds` du job (48 h) et des tâches `1_categories`, `2_manifest`, `4_describe_images`, `5_sync_index`, `6_update_kb_metadata`.
+- [ ] Tâche `5_sync_index` : le journal montre le message d'attente de la synchronisation puis « done — indexed_rows … » seulement quand l'index revient à `ONLINE_NO_PENDING_UPDATE` (avant, elle concluait dès le premier sondage).
+- [ ] Tâche `4_describe_images` : une image PNG est décrite sans erreur de format (le type est lu dans le fichier).
+- [ ] Réparer un run (« Repair run » dans l'interface) après une réussite partielle : `document_change_log` ne gagne pas de ligne en double (`SELECT IDDOC, event_type, job_run_id, COUNT(*) FROM dev_proj.qualibot.document_change_log GROUP BY ALL HAVING COUNT(*) > 1` ne renvoie rien).
+- [ ] Run complet (`parsing_run_mode: full`, seulement quand c'est voulu) : les anciens `_pipeline_checkpoint_*` de plus de 30 jours disparaissent, le plus récent reste.
+
+## 2026-10-22 — arrêt d'un tour et types du moteur de chat
+
+- [ ] Chat DEV : cliquer sur « Stop » pendant une réponse, y compris pendant le temps de réflexion avant le premier mot. La réponse s'arrête, aucune nouvelle ligne de coût ne s'ajoute, et la ligne de `chat_turns` a le statut `aborted` et le code `client_disconnected` (`SELECT status, warnings, created_at FROM dev_proj.qualibot.chat_turns ORDER BY created_at DESC LIMIT 5` après un export).
+- [ ] Même test avec une question dans une langue qui demande la traduction du retour : l'arrêt est pris en compte immédiatement.
+- [ ] Une réponse complète se termine normalement (statut `ok`) : l'écoute de la fermeture du socket ne la coupe pas.

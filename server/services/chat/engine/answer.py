@@ -5,7 +5,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, List, Tuple
+from typing import AsyncGenerator, Dict, List, Tuple
 
 from server.services.chat import llm as chat_llm, prompts
 from server.services.chat.llm import sse_event
@@ -14,6 +14,7 @@ from server.services.chat.turn_log import TurnLog
 from server.services.chat.engine.citations import CitationStreamParser
 from server.services.chat.engine.retrieval import _clean_history, group_documents, retrieve_for_turn
 from server.services.chat.engine.search import ChatVsiError
+from server.services.chat.engine.types import AnswerFacts, AnswerUsage, DocumentPassages
 from server.services.chat.engine.config import answer_max_tokens, index_name, llm_endpoint, load_instructions, normalize_division, settings
 
 _STATUS_AFTER_S = 15.0         # a search or rewrite slower than this shows 'still searching'
@@ -57,7 +58,7 @@ def revision_note(ref: str, division: str | None = None) -> str:
     return f"{title} ({', '.join(parts)})" if parts else title
 
 
-def build_prompt(division: str, conversation: List[Dict[str, str]], documents: List[Tuple[str, Dict[str, Any]]],
+def build_prompt(division: str, conversation: List[Dict[str, str]], documents: List[Tuple[str, DocumentPassages]],
                  answer_language: str | None = None) -> List[Dict[str, str]]:
     """System instructions, then the conversation; the last turn carries the numbered documents
     before the question and the language reminder after it.
@@ -88,7 +89,7 @@ def _error_events(message: str, error_type: str, http_status: int = 0) -> List[s
             'data: [DONE]\n\n']
 
 
-def _record_prompt(log: TurnLog, division: str, documents: List[Tuple[str, Dict[str, Any]]],
+def _record_prompt(log: TurnLog, division: str, documents: List[Tuple[str, DocumentPassages]],
                    prompt: List[Dict[str, str]]) -> None:
     """Prompt facts on the turn, and each kept passage's place in the prompt.
 
@@ -108,7 +109,7 @@ def _record_prompt(log: TurnLog, division: str, documents: List[Tuple[str, Dict[
     })
 
 
-def _record_answer(log: TurnLog, chain: List[str], llm: Dict[str, Any], usage: Dict[str, Any],
+def _record_answer(log: TurnLog, chain: List[str], llm: AnswerFacts, usage: AnswerUsage,
                    parser: CitationStreamParser) -> None:
     """What the answer model did, and which documents the answer cites.
 
@@ -201,11 +202,12 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
                 div, found['index'], found['fr_query'], found['en_query'], len(rows), len(documents), trace_id)
 
     parser = CitationStreamParser(documents)
-    usage: Dict[str, Any] = {}
-    llm: Dict[str, Any] = {}
+    usage: AnswerUsage = {}
+    llm: AnswerFacts = {}
     chain = chat_llm.answer_chain(llm_endpoint())
     prompt = build_prompt(div, conversation, documents, answer_language)
     _record_prompt(log, div, documents, prompt)
+    log.model_io['answer'] = {'messages': prompt}
     llm_started = time.monotonic()
     log.starts_ms['answer'] = log.elapsed_ms()
 

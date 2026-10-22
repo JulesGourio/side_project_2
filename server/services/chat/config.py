@@ -8,6 +8,12 @@ import re
 from pathlib import Path
 
 
+# --- Chat socket ---
+
+# Origins allowed to open the chat WebSocket, comma-separated (for example the app's own URL); empty = any origin.
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv('CHAT_ALLOWED_ORIGINS', '').split(',') if o.strip()]
+
+
 # --- Translation bridge (translation_bridge.py) ---
 
 TRANSLATE_BRIDGE_ENABLED = os.getenv('CHAT_TRANSLATE_BRIDGE_ENABLED', 'false').lower() == 'true'

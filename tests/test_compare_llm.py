@@ -38,8 +38,8 @@ class FakeService:
         self.calls = []
         monkeypatch.setattr(compare_llm, 'http_client', self.http_client)
 
-    def http_client(self, timeout):
-        return httpx.AsyncClient(timeout=timeout, transport=httpx.MockTransport(self._handle))
+    def http_client(self):
+        return httpx.AsyncClient(transport=httpx.MockTransport(self._handle))
 
     def _handle(self, request):
         endpoint = request.url.path.split('/serving-endpoints/')[1].split('/invocations')[0]

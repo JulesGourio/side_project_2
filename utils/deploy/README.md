@@ -47,7 +47,7 @@ Writes one `export NAME='value'` line per key of the target, with LF line ending
 unknown target stops with the list of targets.
 
 `target_env.json` holds one object per target. The keys differ per target: the volume paths, the index names, the chat
-rewrite endpoint, the MLflow experiment, `CHAT_TRANSLATE_ONLY`, and `CAPS_BYPASS` (on `dev` only).
+rewrite endpoint, the MLflow experiment, `CHAT_TRANSLATE_ONLY` (off in `app.yaml`, on in every target), and `CAPS_BYPASS` (on `dev` only).
 
 ## Rules
 

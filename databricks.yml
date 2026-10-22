@@ -51,12 +51,11 @@ variables:
   parsing_images_volume:
     description: "Volume of <pipeline_write_env>_proj.qualibot the parsing pipeline extracts images to"
     default: "images"
-  intraqual_bronze_catalog_schema:
+  intraqual_gold_catalog_schema:
     description: >-
-      catalog.schema of the Intraqual bronze materialized views (gd_*_latest) —
-      the pipeline's real metadata source. prod_bronze became official on
-      2026-07-27; dev_bronze had stopped refreshing on 2026-07-21.
-    default: "prod_bronze.intraqual"
+      catalog.schema of the Intraqual data asset tables (document_revisions_intraqual,
+      category_ancestors_intraqual) — the pipeline's metadata source.
+    default: "prod_gold.quality_system"
   intraqual_suffix:
     description: "Suffix for Intraqual tables (empty by default)"
     default: ""
@@ -73,8 +72,8 @@ variables:
     default: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
   parsing_max_source_staleness_hours:
     description: >-
-      00b fails the run if an Intraqual source table hasn't been refreshed within
-      this window. 0 disables the check (catch-up run on a stalled ingestion).
+      1_categories fails the run if an Intraqual data asset table hasn't been written within
+      this window. 0 disables the check (catch-up run on a stalled data asset).
     default: "36"
   parsing_vector_search_indexes:
     description: >-
@@ -136,6 +135,7 @@ variables:
 sync:
   include:
     - "target_config.env"        # gitignored but must reach the workspace (per-env overrides)
+    - "client/out/**"            # gitignored: the frontend is built at deployment and served by the app
   exclude:
     - "~$*"                      # Excel/Word lock files (Windows, file open in Office)
     - "client/src/**"            # frontend source — only built output (client/out) is needed
@@ -184,7 +184,7 @@ resources:
 targets:
   # ---------------------------------------------------------------------------
   # DEV target: full copy of uat in the DEV workspace.
-  # Own app, Lakebase project, Vector Search endpoint and dev_proj.qualibot tables, loaded from a UAT snapshot by a one-shot submit (runbooks/scripts/dev_copy/).
+  # Own app, Lakebase project, Vector Search endpoint and dev_proj.qualibot tables, loaded from a UAT snapshot by a one-shot submit.
   # Every new schedule is PAUSED. run_as is the DEV service principal: job-runner-sa-uat is UAT-scoped and silently ignored here.
   # The in-app group check is off for this target only: CAPS_BYPASS in utils/deploy/target_env.json.
   # ---------------------------------------------------------------------------
@@ -275,7 +275,7 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
-      # The volumes of dev_proj.qualibot are created by the first deploy; their data is loaded by the one-shot copy (runbooks/scripts/dev_copy/).
+      # The volumes of dev_proj.qualibot are created by the first deploy; their data is loaded by the one-shot copy.
       schemas:
         qualibot_proj_schema:
           catalog_name: ${var.pipeline_write_env}_proj
@@ -314,7 +314,7 @@ targets:
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP (stop/start jobs)
               level: CAN_MANAGE
           # No UC volume binding on this target: it would grant USE CATALOG on dev_proj to the app SP, which a human deployer cannot do.
-          # The SP gets its grants from the one-shot grant (runbooks/scripts/grants/).
+          # The SP gets its grants from a one-shot grant job.
     variables:
       app_name: "qualibot"
       pipeline_write_env: dev
@@ -324,7 +324,7 @@ targets:
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Same prod sources as UAT.
-      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
+      intraqual_gold_catalog_schema: "prod_gold.quality_system"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
       parsing_offline_models_path: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
@@ -455,10 +455,6 @@ targets:
               level: CAN_USE
             - user_name: "jules.gourio.external@latecoere.aero"
               level: CAN_MANAGE
-            - user_name: "christophe.pelissier@latecoere.aero"
-              level: CAN_USE
-            - user_name: "yosif.karapendov@latecoere.aero"
-              level: CAN_USE
             - service_principal_name: "3e5cd4e5-f765-4760-b974-ee7715258b39"  # job-runner-sa-uat
               level: CAN_MANAGE
           resources:
@@ -472,9 +468,9 @@ targets:
       pipeline_write_env: uat
       alerts_warehouse_id: "5890912c31867b77"
       parsing_num_workers: "4"
-      parsing_run_mode: "rechunk"
-      # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_bronze through the shared metastore.
-      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
+      parsing_run_mode: "incremental"
+      # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_gold through the shared metastore.
+      intraqual_gold_catalog_schema: "prod_gold.quality_system"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
       parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
@@ -483,7 +479,7 @@ targets:
       parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
       # chunks_full is built, but chunks_full_index is not in parsing_vector_search_indexes, so it is neither created nor synced.
       parsing_build_chunks_full: "true"
-      parsing_schedule_pause: "PAUSED"
+      parsing_schedule_pause: "UNPAUSED"
       # Same Lakebase database the deployed qualibot-uat app itself reads/writes
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "uat-job"
@@ -558,6 +554,8 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
+          lifecycle:
+            prevent_destroy: true
         # CoreDev group: full access through DATABRICKS_SUPERUSER membership.
         coredev:
           role_id: "coredev"
@@ -606,11 +604,11 @@ targets:
       alerts_warehouse_id: "03054ddc44b7f902"
       parsing_num_workers: "8"
       parsing_run_mode: "incremental"
-      intraqual_bronze_catalog_schema: "prod_bronze.intraqual"
+      intraqual_gold_catalog_schema: "prod_gold.quality_system"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       job_activity_tag: "prod-job"
-      # PAUSED until promoted on explicit decision.
-      lakebase_export_schedule_pause: "PAUSED"
+      # The PROD export copies the PROD Lakebase to prod_proj.qualibot twice a day: the chat alerts read those copies.
+      lakebase_export_schedule_pause: "UNPAUSED"
       lakebase_import_to_delta: "true"
       job_cluster_policy_id_S: "001C199A8D85FE35"
       parsing_offline_models_path: "/Volumes/prod_proj/qualibot/docling_models"

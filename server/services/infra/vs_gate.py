@@ -21,6 +21,8 @@ from typing import Any, Dict, Tuple
 
 import httpx
 
+from server.services.infra.http_clients import shared_client
+
 logger = logging.getLogger(__name__)
 
 _RETRYABLE = {429, 500, 502, 503, 504}
@@ -94,8 +96,7 @@ async def post(host: str, token: str, index: str, payload: Dict[str, Any], timeo
             if sem is not None:
                 await sem.acquire()
             try:
-                async with httpx.AsyncClient(timeout=timeout_s) as client:
-                    resp = await client.post(url, json=payload, headers=headers)
+                resp = await shared_client('vector_search').post(url, json=payload, headers=headers, timeout=timeout_s)
             finally:
                 if sem is not None:
                     sem.release()

@@ -6,6 +6,9 @@ const WS_PATH = '/api/chat/ws';
 /** The only failure text a user sees (same as the server's TIRED_MESSAGE): the cause is logged server-side. */
 export const TIRED_MESSAGE = 'Qualibot is a bit tired right now. Please wait a moment and try again.';
 
+/** A turn that streams nothing (no delta, status or outcome) for this long is given up. */
+const INACTIVITY_TIMEOUT_MS = 120_000;
+
 /** A socket that fails before the question was sent is opened again this many times. */
 const CONNECT_RETRIES = 2;
 
@@ -34,10 +37,24 @@ export function streamChat(
     let sent = false;
     let settled = false;
 
-    const finish = () => { settled = true; resolve(); };
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const clearWatchdog = () => { if (watchdog !== undefined) clearTimeout(watchdog); };
+    const armWatchdog = () => {
+      clearWatchdog();
+      watchdog = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { ws.close(); } catch { /* ignore */ }
+        callbacks.onError(TIRED_MESSAGE);
+        resolve();
+      }, INACTIVITY_TIMEOUT_MS);
+    };
+
+    const finish = () => { settled = true; clearWatchdog(); resolve(); };
     // Nothing reached the server yet: open a new socket instead of failing the turn.
     const retryConnect = () => {
       settled = true;
+      clearWatchdog();
       setTimeout(() => {
         if (signal.aborted) { resolve(); return; }
         streamChat(messages, sessionId, division, callbacks, signal, attempt + 1).then(resolve);
@@ -52,9 +69,12 @@ export function streamChat(
 
     signal.addEventListener('abort', () => {
       settled = true;
+      clearWatchdog();
       try { ws.close(); } catch { /* ignore */ }
       resolve();
     });
+
+    armWatchdog();
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ messages, session_id: sessionId, division }));
@@ -62,6 +82,7 @@ export function streamChat(
     };
 
     ws.onmessage = (event) => {
+      if (!settled) armWatchdog();
       try {
         const parsed = JSON.parse(event.data as string);
         if (parsed.type === 'delta') {

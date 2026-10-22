@@ -1,3 +1,0 @@
-# Ignore pre-built frontend assets — these are minified third-party libraries,
-# not source code, and may contain patterns that look like secrets (false positives).
-client/out/
