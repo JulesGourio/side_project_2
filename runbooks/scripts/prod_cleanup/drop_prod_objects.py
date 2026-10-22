@@ -20,7 +20,7 @@ DRY_RUN = dbutils.widgets.get("dry_run") == "true"
 OLD_SCHEMA = "prod_landingzone.qualibot"
 NEW_SCHEMA = "prod_proj.qualibot"
 COPIED_VOLUMES = ["docling_models", "doc_compare"]
-EMPTY_VOLUMES = ["images", "test"]
+EMPTY_VOLUMES = ["images"]
 
 w = WorkspaceClient()
 failures = []
