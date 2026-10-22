@@ -25,7 +25,7 @@ Times are in `Europe/Brussels` (the schedules of the apps and of the pipeline); 
 | Job name | Resource key | Target | Trigger |
 |---|---|---|---|
 | `D_1_Qualibot_Parsing_Pipeline` | `parsing_pipeline` | `dev`, `uat`, `prod` | `dev`: `parsing_schedule_cron` (04:00), `PAUSED`; UAT and PROD: manual |
-| `D_1_Qualibot_Lakebase_Export_To_Volume` | `lakebase_export` | `dev`, `uat`, `prod` | 02:00 and 14:00 (`lakebase_export_schedule_pause`): `PAUSED` on `dev`, `UNPAUSED` on `uat` and `prod`. The Delta load (`lakebase_import_to_delta`) is `false` on `dev` and `true` on `uat` and `prod` in `databricks.yml` |
+| `D_1_Qualibot_Lakebase_Export_To_Volume` | `lakebase_export` | `dev`, `uat`, `prod` | 02:00 and 14:00 (`lakebase_export_schedule_pause`): `PAUSED` on `dev`, `UNPAUSED` on `uat` and `prod`. The Delta load (`lakebase_import_to_delta`) is `true` on each target in `databricks.yml` |
 | `Z_2_Qualibot_Create_Chat_Experiment` | `create_chat_experiment_<target>` | `dev`, `uat`, `prod` | manual |
 | `Z_3_Qualibot_Register_Chat_Prompts` | `register_chat_prompts_<target>` | `dev`, `uat`, `prod` | manual |
 | `D_2_Qualibot_Score_Chat_Traces` | `score_chat_traces_<target>` | `dev`, `uat`, `prod` | 02:30, `PAUSED` |

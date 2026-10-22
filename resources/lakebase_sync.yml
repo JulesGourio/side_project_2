@@ -2,7 +2,7 @@
 # Delta tables of <env>_proj.qualibot. One job for dev, uat and prod: the environment comes from pipeline_write_env.
 #
 # The job is declared once at the root; each target at the end names the service principal it runs as (run_as). The schedule is lakebase_export_schedule_pause,
-# the Delta load is lakebase_import_to_delta (off on DEV, whose schema holds Delta copies of the UAT tables).
+# the Delta load is lakebase_import_to_delta. Each target loads the Lakebase of its own environment into its own <env>_proj.qualibot.
 # The task sync_user_capabilities runs alongside: it writes the visitors' groups to users, read by the app's access
 # check; the job identity needs SELECT on system.access.audit.
 
