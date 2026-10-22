@@ -9,6 +9,7 @@ All tunables come from config.py.
 
 import asyncio
 import base64
+import hashlib
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Set
 
@@ -30,6 +31,7 @@ class _EmptyAnswer(Exception):
 @dataclass
 class _Spend:
     """Tokens of one image over all its attempts; the failed ones are also kept apart."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     failed_input_tokens: int = 0
@@ -96,6 +98,34 @@ def one_per_image(rows: List[dict]) -> List[dict]:
     return unique
 
 
+def image_mime_type(image_bytes: bytes) -> str:
+    """Media type of an image from its first bytes, as sent in a ``data:`` URL.
+
+    :param image_bytes: content of the image file
+    :return: ``image/png``, ``image/gif``, ``image/webp`` or, for anything else, ``image/jpeg``
+    """
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def description_cache_key(prompt: str, image_bytes: bytes) -> str:
+    """Key of a description: the image and everything the model is told about it.
+
+    :param prompt: text of the request (context, division, category, label)
+    :param image_bytes: content of the image file
+    :return: hexadecimal SHA-256 of the prompt and the image
+    """
+    digest = hashlib.sha256(prompt.encode("utf-8"))
+    digest.update(b"\x00")
+    digest.update(image_bytes)
+    return digest.hexdigest()
+
+
 def _escape_braces(text: str) -> str:
     """Braces doubled so the text cannot interfere with `str.format`.
 
@@ -104,7 +134,9 @@ def _escape_braces(text: str) -> str:
     return text.replace("{", "{{").replace("}", "}}")
 
 
-def build_llm_prompt(context_text: str, division: str = "", category: str = "", label: str = "") -> str:
+def build_llm_prompt(
+    context_text: str, division: str = "", category: str = "", label: str = ""
+) -> str:
     """Vision prompt of an image (an OCR prompt for a scanned page); the nearby text is only a domain hint.
 
     :param context_text: Text around the image in the document.
@@ -114,8 +146,11 @@ def build_llm_prompt(context_text: str, division: str = "", category: str = "", 
     """
     ctx = (context_text or "").replace(" [...image...] ", " ").strip()[:1200]
     template = PDF_PAGE_OCR_PROMPT if label == "scanned_page" else IMAGE_DESCRIPTION_PROMPT
-    return template.format(context=_escape_braces(ctx or "(none)"), division=_escape_braces(division or "unknown"),
-                           category=_escape_braces(category or "unknown"))
+    return template.format(
+        context=_escape_braces(ctx or "(none)"),
+        division=_escape_braces(division or "unknown"),
+        category=_escape_braces(category or "unknown"),
+    )
 
 
 def is_skip_response(text) -> bool:
@@ -132,6 +167,7 @@ class EndpointBreaker:
     One instance per run, shared by every chunk. A success resets the count. The images an open endpoint would have
     described stay PENDING for the next run.
     """
+
     __slots__ = ("_max", "_streak", "_open")
 
     def __init__(self, max_consecutive: int) -> None:
@@ -173,6 +209,7 @@ class _AsyncRateLimiter:
 
     One token is acquired per LLM call (and per retry) to honour the endpoint quota.
     """
+
     __slots__ = ("_rate", "_tokens", "_updated_at", "_lock")
 
     def __init__(self, rate_per_minute: float) -> None:
@@ -180,9 +217,9 @@ class _AsyncRateLimiter:
 
         :param rate_per_minute: Requests allowed per minute, on average.
         """
-        self._rate: float = rate_per_minute / 60.0   # tokens / second
+        self._rate: float = rate_per_minute / 60.0  # tokens / second
         self._tokens: float = 1.0
-        self._updated_at: float = 0.0                # set on first acquire
+        self._updated_at: float = 0.0  # set on first acquire
         self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
@@ -193,7 +230,9 @@ class _AsyncRateLimiter:
                 if self._updated_at == 0.0:
                     self._updated_at = now
                 # Capped at one minute of tokens.
-                self._tokens = min(self._rate * 60, self._tokens + (now - self._updated_at) * self._rate)
+                self._tokens = min(
+                    self._rate * 60, self._tokens + (now - self._updated_at) * self._rate
+                )
                 self._updated_at = now
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
@@ -202,8 +241,9 @@ class _AsyncRateLimiter:
             await asyncio.sleep(wait_s)
 
 
-def safe_requests_per_minute(itpm_budget: int, otpm_budget: int, qph_budget: int,
-                             avg_in: int, avg_out: int) -> float:
+def safe_requests_per_minute(
+    itpm_budget: int, otpm_budget: int, qph_budget: int, avg_in: int, avg_out: int
+) -> float:
     """Safe requests per minute: the minimum over the three quota axes (input tokens, output tokens, requests).
 
     The bottleneck is usually the output (low OTPM plus reasoning tokens). Always >= 1.
@@ -214,7 +254,9 @@ def safe_requests_per_minute(itpm_budget: int, otpm_budget: int, qph_budget: int
     :param avg_in: Average input tokens per image.
     :param avg_out: Average output tokens per image.
     """
-    return max(1.0, min(itpm_budget / max(1, avg_in), otpm_budget / max(1, avg_out), qph_budget / 60.0))
+    return max(
+        1.0, min(itpm_budget / max(1, avg_in), otpm_budget / max(1, avg_out), qph_budget / 60.0)
+    )
 
 
 def _error_text(exc: BaseException) -> str:
@@ -235,7 +277,9 @@ def _usage_of(resp) -> tuple[int, int]:
     usage = getattr(resp, "usage", None)
     if not usage:
         return 0, 0
-    return int(getattr(usage, "prompt_tokens", 0) or 0), int(getattr(usage, "completion_tokens", 0) or 0)
+    return int(getattr(usage, "prompt_tokens", 0) or 0), int(
+        getattr(usage, "completion_tokens", 0) or 0
+    )
 
 
 def _answer_of(resp, max_tokens: int) -> str:
@@ -254,14 +298,28 @@ def _answer_of(resp, max_tokens: int) -> str:
         _, out_tok = _usage_of(resp)
         # GPT-5 reasoning tokens can use up max_tokens with no visible content.
         if choice.finish_reason == "length":
-            raise _EmptyAnswer(f"max_tokens={max_tokens} exhausted by reasoning "
-                               f"(output_tokens={out_tok}, finish_reason=length)")
-        raise _EmptyAnswer(f"empty response (finish_reason={choice.finish_reason}, output_tokens={out_tok})")
+            raise _EmptyAnswer(
+                f"max_tokens={max_tokens} exhausted by reasoning "
+                f"(output_tokens={out_tok}, finish_reason=length)"
+            )
+        raise _EmptyAnswer(
+            f"empty response (finish_reason={choice.finish_reason}, output_tokens={out_tok})"
+        )
     return content
 
 
-async def _ask_endpoint(client, endpoint: str, messages, semaphore: asyncio.Semaphore, rate_limiter: _AsyncRateLimiter,
-                        max_tokens: int, temperature: float, max_retries: int, timeout: float, spend: _Spend) -> str:
+async def _ask_endpoint(
+    client,
+    endpoint: str,
+    messages,
+    semaphore: asyncio.Semaphore,
+    rate_limiter: _AsyncRateLimiter,
+    max_tokens: int,
+    temperature: float,
+    max_retries: int,
+    timeout: float,
+    spend: _Spend,
+) -> str:
     """One endpoint, up to `max_retries` attempts with backoff. Returns the text, or raises the last error.
 
     The tokens of every attempt that returned usage are added to `spend`, the unusable ones also to its failed part.
@@ -282,15 +340,20 @@ async def _ask_endpoint(client, endpoint: str, messages, semaphore: asyncio.Sema
     text = None
     async for attempt in AsyncRetrying(
         stop=stop_after_attempt(max_retries),
-        wait=wait_exponential(multiplier=2, min=_RETRY_WAIT_MIN_S, max=_RETRY_WAIT_MAX_S), reraise=True,
+        wait=wait_exponential(multiplier=2, min=_RETRY_WAIT_MIN_S, max=_RETRY_WAIT_MAX_S),
+        reraise=True,
     ):
         with attempt:
             # The token is acquired inside the retry loop so each retry waits for the bucket too: no 429 cascade.
             await rate_limiter.acquire()
             async with semaphore:
                 resp = await asyncio.wait_for(
-                    client.chat.completions.create(model=endpoint, messages=messages, max_tokens=max_tokens,
-                                                   temperature=temperature),
+                    client.chat.completions.create(
+                        model=endpoint,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    ),
                     timeout=timeout,
                 )
             in_tok, out_tok = _usage_of(resp)
@@ -317,10 +380,22 @@ def _settle(status: str, attempts: int, max_attempts: int | None) -> str:
     return status
 
 
-async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphore, endpoints: Sequence[str],
-                             max_tokens: int, temperature: float, max_retries: int, rate_limiter: _AsyncRateLimiter,
-                             breaker: EndpointBreaker, timeout: float = 90.0, rounds: int = 1,
-                             round_waits_s: Sequence[float] = (), max_attempts: int | None = None) -> dict:
+async def describe_one_image(
+    client,
+    row_data: dict,
+    semaphore: asyncio.Semaphore,
+    endpoints: Sequence[str],
+    max_tokens: int,
+    temperature: float,
+    max_retries: int,
+    rate_limiter: _AsyncRateLimiter,
+    breaker: EndpointBreaker,
+    timeout: float = 90.0,
+    rounds: int = 1,
+    round_waits_s: Sequence[float] = (),
+    max_attempts: int | None = None,
+    cache: Dict[str, dict] | None = None,
+) -> dict:
     """Describe one image: each endpoint in turn, `rounds` passes over the chain, `round_waits_s` before each later pass.
 
     Returns `row_data` plus description, status, the tokens spent (`input_tokens`, `output_tokens`, and the failed
@@ -343,9 +418,13 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
     :param rounds: Passes over the endpoint chain.
     :param round_waits_s: Seconds slept before each pass after the first.
     :param max_attempts: Attempts after which a still-pending image is FAILED_LIMIT; None for no limit.
+    :param cache: Descriptions already made, by ``description_cache_key``: an image with the same content and the same
+        request reuses its description without any call; None to describe every image.
     """
     spend = _Spend()
     other_failure = False
+    cache_key = ""
+    from_cache = False
 
     def result(description, status, last_error="", last_kind=None) -> dict:
         """Outcome of the image, as the row written back to the table.
@@ -367,6 +446,8 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
             "failed_input_tokens": spend.failed_input_tokens,
             "failed_output_tokens": spend.failed_output_tokens,
             "attempts": attempts,
+            "cache_key": cache_key,
+            "from_cache": from_cache,
             "last_error": last_error,
             "last_error_kind": last_kind if status in ("PENDING", "FAILED_LIMIT") else None,
         }
@@ -377,20 +458,42 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
 
     try:
         with open(row_data["volume_path"], "rb") as f:
-            image_b64 = base64.b64encode(f.read()).decode()
+            image_bytes = f.read()
+        image_b64 = base64.b64encode(image_bytes).decode()
     except Exception as e:
-        return result(None, "PENDING", last_error=f"failed to read image: {_error_text(e)}", last_kind="read_error")
+        return result(
+            None,
+            "PENDING",
+            last_error=f"failed to read image: {_error_text(e)}",
+            last_kind="read_error",
+        )
 
-    category_parts = [p for p in (row_data.get("niveau_plus_1", ""), row_data.get("niveau_plus_2", "")) if p]
-    messages = [{"role": "user", "content": [
-        {"type": "text", "text": build_llm_prompt(
-            row_data.get("context_text", ""),
-            division=row_data.get("division", ""),
-            category=" > ".join(category_parts),
-            label=row_data.get("label", ""),
-        )},
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
-    ]}]
+    category_parts = [
+        p for p in (row_data.get("niveau_plus_1", ""), row_data.get("niveau_plus_2", "")) if p
+    ]
+    prompt = build_llm_prompt(
+        row_data.get("context_text", ""),
+        division=row_data.get("division", ""),
+        category=" > ".join(category_parts),
+        label=row_data.get("label", ""),
+    )
+    cache_key = description_cache_key(prompt, image_bytes)
+    cached = (cache or {}).get(cache_key)
+    if cached and cached.get("description"):
+        from_cache = True
+        return result(cached["description"], cached["status"])
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{image_mime_type(image_bytes)};base64,{image_b64}"},
+                },
+            ],
+        }
+    ]
 
     last_error, last_kind = "", "no_endpoint"
     for round_no in range(max(1, rounds)):
@@ -399,11 +502,24 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
             await asyncio.sleep(wait_s)
         for endpoint in endpoints:
             if breaker.is_open(endpoint):
-                last_error, last_kind = f"{endpoint}: skipped, failing earlier in this run", "circuit_open"
+                last_error, last_kind = (
+                    f"{endpoint}: skipped, failing earlier in this run",
+                    "circuit_open",
+                )
                 continue
             try:
-                text = await _ask_endpoint(client, endpoint, messages, semaphore, rate_limiter, max_tokens,
-                                           temperature, max_retries, timeout, spend)
+                text = await _ask_endpoint(
+                    client,
+                    endpoint,
+                    messages,
+                    semaphore,
+                    rate_limiter,
+                    max_tokens,
+                    temperature,
+                    max_retries,
+                    timeout,
+                    spend,
+                )
             except Exception as e:
                 last_kind = error_kind(e)
                 last_error = f"{endpoint}: {_error_text(e)}"
@@ -417,10 +533,22 @@ async def describe_one_image(client, row_data: dict, semaphore: asyncio.Semaphor
     return result(None, "PENDING", last_error=last_error, last_kind=last_kind)
 
 
-async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, endpoints: Sequence[str], max_tokens: int,
-                              temperature: float, max_retries: int, max_concurrent: int, requests_per_minute: float,
-                              breaker: EndpointBreaker, rounds: int = 1, round_waits_s: Sequence[float] = (),
-                              max_attempts: int | None = None) -> List[dict]:
+async def describe_all_images(
+    rows: List[dict],
+    ws_host: str,
+    ws_token: str,
+    endpoints: Sequence[str],
+    max_tokens: int,
+    temperature: float,
+    max_retries: int,
+    max_concurrent: int,
+    requests_per_minute: float,
+    breaker: EndpointBreaker,
+    rounds: int = 1,
+    round_waits_s: Sequence[float] = (),
+    max_attempts: int | None = None,
+    cache: Dict[str, dict] | None = None,
+) -> List[dict]:
     """Describe all images concurrently, at most `max_concurrent` at a time and `requests_per_minute` on average.
 
     :param rows: Image rows to describe.
@@ -436,6 +564,7 @@ async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, end
     :param rounds: Passes over the endpoint chain.
     :param round_waits_s: Seconds slept before each pass after the first.
     :param max_attempts: Attempts after which a still-pending image is FAILED_LIMIT; None for no limit.
+    :param cache: Descriptions already made, by ``description_cache_key``; None to describe every image.
     """
     from openai import AsyncOpenAI
 
@@ -444,9 +573,24 @@ async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, end
     semaphore = asyncio.Semaphore(max_concurrent)
     try:
         results = await asyncio.gather(
-            *[describe_one_image(client, r, semaphore, endpoints, max_tokens, temperature, max_retries, rate_limiter,
-                                 breaker, rounds=rounds, round_waits_s=round_waits_s, max_attempts=max_attempts)
-              for r in rows],
+            *[
+                describe_one_image(
+                    client,
+                    r,
+                    semaphore,
+                    endpoints,
+                    max_tokens,
+                    temperature,
+                    max_retries,
+                    rate_limiter,
+                    breaker,
+                    rounds=rounds,
+                    round_waits_s=round_waits_s,
+                    max_attempts=max_attempts,
+                    cache=cache,
+                )
+                for r in rows
+            ],
             return_exceptions=True,
         )
     finally:
@@ -459,8 +603,17 @@ async def describe_all_images(rows: List[dict], ws_host: str, ws_token: str, end
     for row, res in zip(rows, results):
         if isinstance(res, Exception):
             attempts = int(row.get("attempts") or 0) + 1
-            res = {**row, "description": None, "status": _settle("PENDING", attempts, max_attempts),
-                   "input_tokens": 0, "output_tokens": 0, "failed_input_tokens": 0, "failed_output_tokens": 0,
-                   "attempts": attempts, "last_error": f"unexpected: {_error_text(res)}", "last_error_kind": "other"}
+            res = {
+                **row,
+                "description": None,
+                "status": _settle("PENDING", attempts, max_attempts),
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "failed_input_tokens": 0,
+                "failed_output_tokens": 0,
+                "attempts": attempts,
+                "last_error": f"unexpected: {_error_text(res)}",
+                "last_error_kind": "other",
+            }
         out.append(res)
     return out

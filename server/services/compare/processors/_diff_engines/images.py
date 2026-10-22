@@ -18,6 +18,8 @@ _PAIR_MAX_HAMMING     = 25     # max dhash distance to accept a pair as MODIFIED
 _PAIR_MAX_AHASH       = 15     # max ahash distance — second gate for DOCX pairing (content check)
 _IMG_MAX_DIM = 1024
 _IMG_JPEG_QUALITY = 65
+# Opens the note that tells the model (and, through factory.image_cap_warnings, the user) that images were dropped.
+IMAGE_CAP_MARKER = '[Images dropped:'
 _MAX_IMAGE_BLOCKS = 95          # the model API accepts at most 100 images/documents per request
 
 
@@ -368,12 +370,15 @@ def image_diff_blocks_dual(
         for b in blocks:
             if b.get('type') == 'image_url':
                 if seen >= _MAX_IMAGE_BLOCKS:
+                    # The label that introduces a dropped image goes with it.
+                    if capped and capped[-1].get('type') == 'text':
+                        capped.pop()
                     continue
                 seen += 1
             capped.append(b)
         capped.append({
             'type': 'text',
-            'text': f'\n[{img_count - _MAX_IMAGE_BLOCKS} additional image(s) omitted — API limit of {_MAX_IMAGE_BLOCKS} images per request reached.]',
+            'text': f'\n{IMAGE_CAP_MARKER} {img_count - _MAX_IMAGE_BLOCKS} additional image(s) omitted — limit of {_MAX_IMAGE_BLOCKS} images per request reached.]',
         })
         logger.warning('Image blocks capped: %d → %d', img_count, _MAX_IMAGE_BLOCKS)
         blocks = capped

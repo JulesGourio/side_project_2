@@ -4,15 +4,16 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 import httpx
 
 from server.services.infra import vs_gate
-from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS, _QUERY_TIMEOUT_S
+from server.services.infra.config import VECTOR_SEARCH_QUERY_TIMEOUT_S
+from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS
 from server.services.chat.turn_log import TurnLog, passage_title
 from server.services.chat.engine.config import raw_top_k, rerank_top_k
-from server.services.chat.engine.types import Hit, SearchRow
+from server.services.chat.engine.types import Hit, QueryPayload, SearchRow, VsFilters
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class ChatVsiError(Exception):
 
 # --- Vector Search ---
 
-async def _post_query(host: str, token: str, index: str, payload: Dict[str, Any]) -> httpx.Response:
+async def _post_query(host: str, token: str, index: str, payload: QueryPayload) -> httpx.Response:
     """One Vector Search query through the app-wide gate (``vs_gate``: at most
     ``VS_MAX_CONCURRENT_QUERIES`` in flight, retried on 429 / 5xx / timeout).
 
@@ -49,7 +50,7 @@ async def _post_query(host: str, token: str, index: str, payload: Dict[str, Any]
     :param payload: query body sent to the index
     :return: the HTTP response
     """
-    return await vs_gate.post(host, token, index, payload, _QUERY_TIMEOUT_S)
+    return await vs_gate.post(host, token, index, payload, VECTOR_SEARCH_QUERY_TIMEOUT_S)
 
 
 def _rows(resp: httpx.Response) -> List[SearchRow]:
@@ -68,7 +69,7 @@ class RerankUnavailable(Exception):
     """The index refused the reranker parameter."""
 
 
-async def _query(host: str, token: str, index: str, query_text: str, k: int, filters: Dict[str, Any],
+async def _query(host: str, token: str, index: str, query_text: str, k: int, filters: VsFilters,
                  rerank: bool) -> List[SearchRow]:
     """One HYBRID Vector Search query, with the reranker when asked.
 
@@ -83,7 +84,7 @@ async def _query(host: str, token: str, index: str, query_text: str, k: int, fil
     """
     if len(query_text) > _MAX_QUERY_CHARS:
         logger.warning('chat: query of %d characters cut to %d for Vector Search', len(query_text), _MAX_QUERY_CHARS)
-    payload: Dict[str, Any] = {'query_text': query_text[:_MAX_QUERY_CHARS], 'columns': _COLUMNS,
+    payload: QueryPayload = {'query_text': query_text[:_MAX_QUERY_CHARS], 'columns': _COLUMNS,
                                'num_results': k, 'query_type': 'HYBRID'}
     if filters:
         payload['filters_json'] = json.dumps(filters)
@@ -163,7 +164,7 @@ def _status_of(exc: BaseException) -> int:
     return exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else 0
 
 
-async def _recorded_query(host: str, token: str, index: str, filters: Dict[str, Any], log: TurnLog,
+async def _recorded_query(host: str, token: str, index: str, filters: VsFilters, log: TurnLog,
                           i: int | None, q: str, k: int, rerank: bool) -> List[SearchRow]:
     """One Vector Search call, recorded on the turn (query, mode, size, start, duration, outcome, hits).
 
@@ -198,7 +199,7 @@ async def _recorded_query(host: str, token: str, index: str, filters: Dict[str, 
     return rows
 
 
-def start_question_search(host: str, token: str, index: str, filters: Dict[str, Any], question: str,
+def start_question_search(host: str, token: str, index: str, filters: VsFilters, question: str,
                           log: TurnLog) -> 'asyncio.Task[List[SearchRow]]':
     """Starts the reranked search of the question as asked, now: the rewrite runs while it does, and ``search``
     (``first=``) picks the result up instead of querying again.
@@ -216,7 +217,7 @@ def start_question_search(host: str, token: str, index: str, filters: Dict[str, 
     return task
 
 
-async def search(host: str, token: str, index: str, queries: List[str], filters: Dict[str, Any],
+async def search(host: str, token: str, index: str, queries: List[str], filters: VsFilters,
                  raw_queries: List[str] | None = None, log: TurnLog | None = None,
                  rerank_k: int | None = None, raw_k: int | None = None,
                  first: 'asyncio.Task[List[SearchRow]] | None' = None) -> List[SearchRow]:
@@ -311,7 +312,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
 
 
 async def fetch_documents(host: str, token: str, index: str, query: str, refs: List[str], k: int,
-                          filters: Dict[str, Any], via: str = 'ref_lookup',
+                          filters: VsFilters, via: str = 'ref_lookup',
                           log: TurnLog | None = None) -> List[SearchRow]:
     """HYBRID search restricted to the given REFs (``via``: ref_lookup).
     Failures are logged, never raised.

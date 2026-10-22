@@ -22,6 +22,7 @@ export function useChatConversation(division: Division, onTurnSaved: () => void)
     setMessages(prev => prev.map(m => (m.id === id ? { ...m, ...patch } : m)));
 
   const newChat = useCallback(() => {
+    selectSeqRef.current++;
     if (streaming) abortRef.current?.abort();
     setSessionId(genSessionId());
     persistedRef.current = false;
@@ -87,7 +88,11 @@ export function useChatConversation(division: Division, onTurnSaved: () => void)
     setInput('');
     setStreaming(true);
 
-    const history = [...messages.map(m => ({ role: m.role, content: m.content })), { role: 'user', content: text }];
+    // Failed and stopped-empty turns are not part of the conversation the model should see.
+    const history = [
+      ...messages.filter(m => !m.error && m.content.trim()).map(m => ({ role: m.role, content: m.content })),
+      { role: 'user', content: text },
+    ];
     const controller = new AbortController();
     abortRef.current = controller;
     let accumulated = '';

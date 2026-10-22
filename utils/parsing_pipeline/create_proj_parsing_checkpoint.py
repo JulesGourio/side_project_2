@@ -7,8 +7,8 @@
 # MAGIC 1. **Scope** — the IDDOCs of the manifest to parse (incremental: the new and revised ones; full: all; rechunk: none)
 # MAGIC 2. **File selection** — scans the volume folders of the target IDDOCs and keeps the best candidate file per IDDOC
 # MAGIC 3. **Resume** — drops the files whose IDDOC already has a reusable checkpoint row for the same bytes, then stops the
-# MAGIC    task if more files are left than `parsing_max_parse_files`
-# MAGIC 4. **Routing** — Docling uses its GPU models on PDFs only: above `parsing_gpu_min_pdfs` PDFs, they are queued for
+# MAGIC    task if more files are left than `max_parse_files`
+# MAGIC 4. **Routing** — Docling uses its GPU models on PDFs only: above `GPU_MIN_PDFS` PDFs, they are queued for
 # MAGIC    the GPU task (`3b_parse_pdf`); otherwise everything is parsed here and the GPU cluster never starts
 # MAGIC 5. **Parsing** — Docling (docx, pptx, html, small PDF sets) or a format parser (doc, xls, ppt…), images saved to the volume
 # MAGIC
@@ -22,7 +22,7 @@
 # MAGIC **Inputs Data**
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest` (task `2_manifest`)
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_checkpoint` (resume), `parsed_documents` (incremental scope)
-# MAGIC - `{PARSING_VOLUME_ROOT_PATH}` (volume listing and binary content)
+# MAGIC - `{VOLUME_ROOT_PATH}` (volume listing and binary content)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_checkpoint` (one row per parsed file, appended)
@@ -79,6 +79,50 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Config Widgets
+# MAGIC The environments, the quality bypass and the debug mode are widgets: the job passes them as base parameters,
+# MAGIC and the notebook copies them to the environment that `config` reads when it is imported.
+
+
+# COMMAND ----------
+
+import os
+
+dbutils.widgets.removeAll()
+
+dbutils.widgets.text("pipeline_write_env", "", "Environment the tables are written to: dev, uat or prod")
+dbutils.widgets.text("pipeline_read_env", "", "Environment of the tables another task of this job wrote (empty: pipeline_write_env)")
+dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference tables (Intraqual data asset)")
+dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
+dbutils.widgets.text("debug", "false")
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full or rechunk")
+dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targeted run (empty: no filter)")
+dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
+dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
+dbutils.widgets.text("redescribe_all_images", "false", "true: describe every image again")
+
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
+    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
+PIPELINE_READ_ENV = dbutils.widgets.get("pipeline_read_env") or PIPELINE_WRITE_ENV
+DEBUG = dbutils.widgets.get("debug").lower() == "true"
+LOG_LEVEL = dbutils.widgets.get("log_level")
+
+# config reads the environment when it is imported, so the widget values are copied there first.
+os.environ["PIPELINE_WRITE_ENV"] = PIPELINE_WRITE_ENV
+os.environ["PIPELINE_READ_ENV"] = dbutils.widgets.get("pipeline_read_env")
+os.environ["REFERENCE_READ_ENV"] = dbutils.widgets.get("reference_read_env")
+os.environ["BYPASS_QUALITY_CHECKS"] = dbutils.widgets.get("bypass_quality_checks")
+os.environ["PARSING_RUN_MODE"] = dbutils.widgets.get("run_mode")
+os.environ["PARSING_PARSE_FILTER"] = dbutils.widgets.get("parse_filter")
+os.environ["PARSING_MAX_PARSE_FILES"] = dbutils.widgets.get("max_parse_files")
+os.environ["PARSING_MAX_SOURCE_STALENESS_HOURS"] = dbutils.widgets.get("max_source_staleness_hours")
+os.environ["PARSING_REDESCRIBE_ALL_IMAGES"] = dbutils.widgets.get("redescribe_all_images")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC The repository folder goes on `sys.path` for the driver, ahead of the repository root (`leap_utils`).
 
 # COMMAND ----------
@@ -103,6 +147,7 @@ import config as cfg
 import output_steps
 import parse_steps
 import tables
+
 tables.require_gx()
 from tables import table_exists, write_table
 from leap_utils.common import logger as log_utils
@@ -110,15 +155,11 @@ from leap_utils.common import logger as log_utils
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Widgets
+# MAGIC ### Job parameters
 # MAGIC The parent job run id is written on every row so the rows of the tasks of one run can be correlated.
 
 # COMMAND ----------
 
-dbutils.widgets.removeAll()
-
-dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-LOG_LEVEL = dbutils.widgets.get("log_level")
 dbutils.widgets.text("job_run_id", "", "Parent job run_id")
 parse_steps.set_job_run_id(dbutils.widgets.get("job_run_id"))
 
@@ -164,7 +205,9 @@ df_business_meta = spark.read.table(cfg.PARSE_MANIFEST_TABLE).cache()
 
 target_iddocs, revised_iddocs = parse_steps.resolve_parse_scope(df_business_meta)
 if cfg.RUN_MODE != "rechunk":
-    output_steps.log_document_changes(df_business_meta, target_iddocs, revised_iddocs, parse_steps.JOB_RUN_ID)
+    output_steps.log_document_changes(
+        df_business_meta, target_iddocs, revised_iddocs, parse_steps.JOB_RUN_ID
+    )
 
 # COMMAND ----------
 
@@ -210,8 +253,8 @@ parse_steps.snapshot_or_log_checkpoint(num_files)
 # MAGIC %md
 # MAGIC ## Tr. 2 - Resume, budget and routing
 # MAGIC A file whose IDDOC already has a reusable checkpoint row for the same bytes is not parsed again (the path does not
-# MAGIC matter). Above `parsing_max_parse_files` pending files the task stops here, before any parse. Then the PDFs go to
-# MAGIC the GPU task when there are more than `parsing_gpu_min_pdfs` of them.
+# MAGIC matter). Above `max_parse_files` pending files the task stops here, before any parse. Then the PDFs go to
+# MAGIC the GPU task when there are more than `GPU_MIN_PDFS` of them.
 
 # COMMAND ----------
 
@@ -233,7 +276,7 @@ else:
 
 # COMMAND ----------
 
-if df_cpu is not None and df_cpu.count() > 0:
+if df_cpu is not None and not df_cpu.isEmpty():
     parse_steps.cleanup_stale_image_folders(df_cpu)
     parse_steps.parse_pending_files(df_cpu, parse_steps.make_parse_fn(CLUSTER_PARALLELISM))
     parse_steps.show_failed_documents(df_business_meta)
@@ -249,16 +292,30 @@ if df_cpu is not None and df_cpu.count() > 0:
 # COMMAND ----------
 
 df_scope = parse_steps.build_run_scope(target_iddocs, revised_iddocs)
-tables.check_dataframe(df_scope, "parsing_run_scope", [
-    tables.not_null("IDDOC"), tables.unique("IDDOC"), tables.not_null("ingestion_run_id"),
-], logger)
+tables.check_dataframe(
+    df_scope,
+    "parsing_run_scope",
+    [
+        tables.not_null("IDDOC"),
+        tables.unique("IDDOC"),
+        tables.not_null("ingestion_run_id"),
+    ],
+    logger,
+)
 
 df_queue = df_gpu.drop("content") if df_gpu is not None else None
 if df_queue is not None:
-    tables.check_dataframe(df_queue, "parsing_gpu_queue", [
-        tables.not_null("source_path"), tables.unique("source_path"),
-        tables.not_null("IDDOC"), tables.not_null("document_sha256"),
-    ], logger)
+    tables.check_dataframe(
+        df_queue,
+        "parsing_gpu_queue",
+        [
+            tables.not_null("source_path"),
+            tables.unique("source_path"),
+            tables.not_null("IDDOC"),
+            tables.not_null("document_sha256"),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 

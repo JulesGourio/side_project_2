@@ -4,11 +4,11 @@
 # MAGIC
 # MAGIC **Description:**
 # MAGIC First link of the daily chain. Two roles:
-# MAGIC 1. **Freshness guard** — checks that the Intraqual source tables were refreshed by the `intraqual_ingestion` job within
+# MAGIC 1. **Freshness guard** — checks that the Intraqual data asset tables were last written within
 # MAGIC    `MAX_SOURCE_STALENESS_HOURS`. A stale source must **fail** the run: otherwise the pipeline recomputes a scope on stale
 # MAGIC    data and silently ships a partial index.
 # MAGIC 2. **Category consolidation** — `division` / `niveau_plus_1..N` per IDDOC into `category_reference`, from
-# MAGIC    `gd_doc_cat_latest` x `gd_cat_latest` (+ `DIVISION_ARCHIVE_TABLE` if enabled, empty by default).
+# MAGIC    `document_revisions_intraqual` x `category_ancestors_intraqual` (+ `DIVISION_ARCHIVE_TABLE` if enabled, empty by default).
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC The freshness guard fails the task after `category_reference` is built but before it is written, so a stale run leaves the previous table in place.
@@ -17,12 +17,11 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `1_categories`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{PARSING_INGESTION_FRESHNESS_TABLE}`
-# MAGIC - `{PARSING_INTRAQUAL_BRONZE}.gd_doc_cat_latest`, `gd_cat_latest` (read by `categories.build_division_reference`)
+# MAGIC - `{REFERENCE_READ_ENV}_gold.quality_system.document_revisions_intraqual`, `category_ancestors_intraqual` (Intraqual data asset; read by `categories.build_division_reference`, last write time read by the freshness guard)
 # MAGIC - `{PARSING_DIVISION_ARCHIVE_TABLE}` (same function, disabled by default: empty)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.category_reference`
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.category_reference`
 
 # COMMAND ----------
 
@@ -34,6 +33,54 @@
 
 # MAGIC %md
 # MAGIC # Configuration
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Widgets
+# MAGIC The environments, the quality bypass and the debug mode are widgets: the job passes them as base parameters,
+# MAGIC and the notebook copies them to the environment that `config` reads when it is imported.
+
+
+# COMMAND ----------
+
+import os
+
+dbutils.widgets.removeAll()
+
+dbutils.widgets.text("pipeline_write_env", "", "Environment the tables are written to: dev, uat or prod")
+dbutils.widgets.text("pipeline_read_env", "", "Environment of the tables another task of this job wrote (empty: pipeline_write_env)")
+dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference tables (Intraqual data asset)")
+dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
+dbutils.widgets.text("debug", "false")
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full or rechunk")
+dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targeted run (empty: no filter)")
+dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
+dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
+dbutils.widgets.text("redescribe_all_images", "false", "true: describe every image again")
+
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
+    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
+PIPELINE_READ_ENV = dbutils.widgets.get("pipeline_read_env") or PIPELINE_WRITE_ENV
+DEBUG = dbutils.widgets.get("debug").lower() == "true"
+LOG_LEVEL = dbutils.widgets.get("log_level")
+
+# config reads the environment when it is imported, so the widget values are copied there first.
+os.environ["PIPELINE_WRITE_ENV"] = PIPELINE_WRITE_ENV
+os.environ["PIPELINE_READ_ENV"] = dbutils.widgets.get("pipeline_read_env")
+os.environ["REFERENCE_READ_ENV"] = dbutils.widgets.get("reference_read_env")
+os.environ["BYPASS_QUALITY_CHECKS"] = dbutils.widgets.get("bypass_quality_checks")
+os.environ["PARSING_RUN_MODE"] = dbutils.widgets.get("run_mode")
+os.environ["PARSING_PARSE_FILTER"] = dbutils.widgets.get("parse_filter")
+os.environ["PARSING_MAX_PARSE_FILES"] = dbutils.widgets.get("max_parse_files")
+os.environ["PARSING_MAX_SOURCE_STALENESS_HOURS"] = dbutils.widgets.get("max_source_staleness_hours")
+os.environ["PARSING_REDESCRIBE_ALL_IMAGES"] = dbutils.widgets.get("redescribe_all_images")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Config Standard Package Imports
 # MAGIC The repository folder is added to `sys.path` because a job task does not do it for a notebook.
 
@@ -44,138 +91,126 @@ import sys
 
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
-sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(REPO_DIR))
+)  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
 sys.path.insert(0, REPO_DIR)
 
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Project Imports
+# MAGIC ## Config Function Imports
 # MAGIC `categories`, `tables` and `config` live next to this notebook.
 
 # COMMAND ----------
 
 import categories
 import tables
+
 tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from tables import ensure_primary_key, write_table
 from leap_utils.common import logger as log_utils
 
 from config import (
-    DIVISION_ARCHIVE_TABLE, DIVISION_REFERENCE_TABLE,
-    GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST, GD_TYPDOC_LATEST,
-    GD_UTILISATEUR_LATEST, INGESTION_FRESHNESS_TABLE, MAX_SOURCE_STALENESS_HOURS,
+    DIVISION_ARCHIVE_TABLE,
+    DIVISION_REFERENCE_TABLE,
+    INTRAQUAL_REQUIRED_TABLES,
+    MAX_SOURCE_STALENESS_HOURS,
 )
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Widgets
-# MAGIC This task takes no parameter: everything comes from the `PARSING_*` environment variables of the cluster.
+# MAGIC ## Config logger
+# MAGIC The logger is created once the widgets are read, so the level they give applies to every line after.
 
 # COMMAND ----------
 
-dbutils.widgets.removeAll()
-
-dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-LOG_LEVEL = dbutils.widgets.get("log_level")
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Config Constants
-# MAGIC The guard checks the five Intraqual tables the whole chain reads (documents, categories, document types, users). They are named once here so the guard and the logs agree.
+# MAGIC The guard checks the Intraqual data asset tables the whole chain reads (revisions and category ancestors). They are named once in `config.py` so the guard and the logs agree.
 
 # COMMAND ----------
 
 logger.info(f"Output      : {DIVISION_REFERENCE_TABLE}")
 logger.info(f"Archive     : {DIVISION_ARCHIVE_TABLE or '(disabled)'}")
 
-REQUIRED_SOURCES = [
-    GD_DOC_LATEST, GD_DOC_CAT_LATEST, GD_CAT_LATEST,
-    GD_TYPDOC_LATEST, GD_UTILISATEUR_LATEST,
-]
-
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Inputs
-# MAGIC ## Ingestion freshness table
-# MAGIC One row per Intraqual table with the time of its last refresh, written by the `intraqual_ingestion` job. It is read only to compute the age of the required tables.
-# MAGIC
-# MAGIC The category tables themselves are read inside `categories.build_division_reference()`, see Technical debt.
+# MAGIC ## Age of the source tables
+# MAGIC Hours since each required table was last written, read from the Delta table details. The Intraqual data asset rewrites them on every run, so their age is the age of the last successful run of that job.
 # MAGIC
 # MAGIC A `MAX_SOURCE_STALENESS_HOURS` of 0 disables the guard.
 
 # COMMAND ----------
 
-if MAX_SOURCE_STALENESS_HOURS <= 0:
-    df_fresh = None
-else:
-    df_fresh = (
-        spark.table(INGESTION_FRESHNESS_TABLE)
-        .filter(F.lower(F.col("table_name")).isin([t.lower() for t in REQUIRED_SOURCES]))
-        .select(
-            "table_name",
-            "last_update_time",
-            F.round(
-                (F.unix_timestamp(F.current_timestamp()) - F.unix_timestamp("last_update_time")) / 3600.0, 1
-            ).alias("age_hours"),
-        )
-        .orderBy(F.desc("age_hours"))
-    )
+source_ages = (
+    {}
+    if MAX_SOURCE_STALENESS_HOURS <= 0
+    else categories.source_ages_hours(spark, INTRAQUAL_REQUIRED_TABLES)
+)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Data Preparation
+# MAGIC #N/A
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Data Transformations
 # MAGIC ## Tr. 1 - Build category_reference
-# MAGIC One row per IDDOC with its `division` and `niveau_plus_1..N`, from the document-category and category tables (the archive table only fills the gaps when enabled). `division_source` says where each row was resolved, so the count per source is logged.
+# MAGIC One row per IDDOC with its `division` and `niveau_plus_1..N`, from the document-category and category tables (the archive table only fills the gaps when enabled). `division_source` says where each row was resolved, and, in debug mode, the count per source is shown.
 
 # COMMAND ----------
 
 df_reference = categories.build_division_reference(spark).cache()
 
-(
-    df_reference.groupBy("division_source").count()
-    .withColumnRenamed("count", "n_iddocs")
-    .orderBy(F.desc("n_iddocs"))
-    .show(truncate=False)
-)
+if DEBUG:
+    (
+        df_reference.groupBy("division_source")
+        .count()
+        .withColumnRenamed("count", "n_iddocs")
+        .orderBy(f.desc("n_iddocs"))
+        .show(truncate=False)
+    )
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC # Quality Checks
 # MAGIC ## Freshness guard (RED)
-# MAGIC A stale or missing source must fail the run before anything is written: otherwise the next tasks compute the scope on old data and the index silently misses documents. The message names the stale and the missing tables, since the usual cause is a failed `intraqual_ingestion` job.
+# MAGIC A stale or unreadable source must fail the run before anything is written: otherwise the next tasks compute the scope on old data and the index silently misses documents. The message names the stale and the unreadable tables, since the usual cause is a failed Intraqual data asset job.
 
 # COMMAND ----------
 
-if df_fresh is None:
+if MAX_SOURCE_STALENESS_HOURS <= 0:
     logger.info("Freshness guard disabled (MAX_SOURCE_STALENESS_HOURS <= 0).")
 else:
-    _rows = df_fresh.collect()
-    for r in _rows:
-        logger.info(f"  {r.age_hours:>6} h  {r.table_name}")
+    for table, age in source_ages.items():
+        logger.info(f"  {age if age is not None else '?':>6} h  {table}")
 
-    _seen = {r.table_name.lower() for r in _rows}
-    _absent = [t for t in REQUIRED_SOURCES if t.lower() not in _seen]
-    _stale = [(r.table_name, r.age_hours) for r in _rows if r.age_hours > MAX_SOURCE_STALENESS_HOURS]
-    if _absent or _stale:
+    _unreadable = [t for t, age in source_ages.items() if age is None]
+    _stale = [
+        (t, age)
+        for t, age in source_ages.items()
+        if age is not None and age > MAX_SOURCE_STALENESS_HOURS
+    ]
+    if _unreadable or _stale:
         raise RuntimeError(
             f"Intraqual sources not fresh (threshold {MAX_SOURCE_STALENESS_HOURS}h) — "
-            f"the `intraqual_ingestion` job likely failed.\n"
+            f"the Intraqual data asset job likely failed.\n"
             f"  Stale: {_stale or 'none'}\n"
-            f"  Missing from {INGESTION_FRESHNESS_TABLE}: {_absent or 'none'}"
+            f"  Missing or unreadable: {_unreadable or 'none'}"
         )
     logger.info(f"All sources fresh (< {MAX_SOURCE_STALENESS_HOURS}h).")
 
@@ -187,12 +222,17 @@ else:
 
 # COMMAND ----------
 
-tables.check_dataframe(df_reference, "category_reference", [
-    tables.non_empty(),
-    tables.not_null("IDDOC"),
-    tables.unique("IDDOC"),
-    tables.not_null("division", mostly=0.99, severity=tables.AMBER),
-], logger)
+tables.check_dataframe(
+    df_reference,
+    "category_reference",
+    [
+        tables.non_empty(),
+        tables.not_null("IDDOC"),
+        tables.unique("IDDOC"),
+        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
+    ],
+    logger,
+)
 
 # COMMAND ----------
 

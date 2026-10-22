@@ -24,7 +24,7 @@ python runbooks/scripts/lakebase/migrate_lakebase.py --env UAT
 |---|---|---|
 | `DEV` | `DEV` | `doccompare` |
 | `UAT` | `UAT` | `doccompare` |
-| `PROD` | `qualibot-prod` | `doccompare` |
+| `PROD` | `PROD` | `doccompare` |
 
 ## Inputs and outputs
 

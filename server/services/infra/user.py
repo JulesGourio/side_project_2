@@ -4,9 +4,13 @@ import asyncio
 import logging
 import os
 import time
-from typing import TypedDict
+from collections import deque
+from typing import Any, Mapping, TypedDict
 
 from fastapi import HTTPException, Request
+
+from server.routers.errors import TOO_MANY_REQUESTS
+from server.services.infra.config import RATE_LIMIT_PER_MINUTE
 
 
 class UserIdentity(TypedDict):
@@ -19,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _dev_user_cache: str | None = None
 _CAPS_TTL_S = int(os.getenv('CAPS_TTL_S', '600'))
+_CAPS_CACHE_MAX = 5000
 _caps_cache: dict[str, tuple[float, dict]] = {}
 
 # Allowed groups per feature; the sync job (utils/lakebase_sync/user_capabilities.py) tracks the same sets.
@@ -109,6 +114,17 @@ async def get_user_identity(request: Request) -> UserIdentity:
     return UserIdentity(user_id=clean_uid, workspace_id=workspace_id, email=None)
 
 
+def reject_anonymous(identity: Mapping[str, Any]) -> None:
+    """Refuse a caller with no user id, so no two anonymous callers share one history. Development, and the DEV
+    bypass, keep working without an identity header.
+
+    :param identity: ``get_user_identity`` result
+    :raises HTTPException: 401 when ``user_id`` is empty outside development
+    """
+    if not identity.get('user_id') and not (_is_dev() or _CAPS_BYPASS):
+        raise HTTPException(status_code=401, detail='User not identified')
+
+
 _OPEN_CAPS = {'can_chat': True, 'can_compare': True, 'groups': []}
 # A visitor the app permission lets in without any allowed group (members of an IdP group nested in ChatBot are in
 # neither source) gets the chat only: Compare stays with the groups that name it.
@@ -189,6 +205,22 @@ async def _remember_identity(forwarded: str, email: str, display_name: str) -> N
         logger.warning('Identity of %s not recorded: %s', forwarded, e)
 
 
+def _remember_caps(key: str, now: float, caps: dict) -> None:
+    """Cache the capabilities of a visitor, dropping expired entries and then the oldest ones past the size cap.
+
+    :param key: cache key of the visitor
+    :param now: ``time.monotonic()`` reading
+    :param caps: capabilities to keep for ``CAPS_TTL_S``
+    """
+    _caps_cache.pop(key, None)
+    if len(_caps_cache) >= _CAPS_CACHE_MAX:
+        for stale in [k for k, (expires, _) in _caps_cache.items() if expires <= now]:
+            del _caps_cache[stale]
+    while len(_caps_cache) >= _CAPS_CACHE_MAX:
+        del _caps_cache[next(iter(_caps_cache))]
+    _caps_cache[key] = (now + _CAPS_TTL_S, caps)
+
+
 async def get_capabilities(request: Request) -> dict:
     """Resolve {can_chat, can_compare, groups} for the current user.
 
@@ -252,9 +284,46 @@ async def get_capabilities(request: Request) -> dict:
     else:
         caps = dict(_DEFAULT_CAPS)
         logger.info('Capabilities %s: no allowed group found (%s) — chat only', key, '+'.join(sources))
-    _caps_cache[key] = (now + _CAPS_TTL_S, caps)
+    _remember_caps(key, now, caps)
     await _remember_identity(forwarded, email or header_email, display_name)
     return caps
+
+
+_rate_hits: dict[str, deque[float]] = {}
+_RATE_WINDOW_S = 60.0
+
+
+def _rate_limited(user_key: str, now: float, limit: int) -> bool:
+    """Count one request of a user in the last minute and say whether it exceeds the limit.
+
+    :param user_key: who is asking
+    :param now: ``time.monotonic()`` reading
+    :param limit: requests accepted per minute
+    :return: True when the request must be refused (a refused request is not counted)
+    """
+    hits = _rate_hits.setdefault(user_key, deque())
+    while hits and hits[0] <= now - _RATE_WINDOW_S:
+        hits.popleft()
+    if len(hits) >= limit:
+        return True
+    hits.append(now)
+    if len(_rate_hits) > _CAPS_CACHE_MAX:
+        for other in [k for k, v in _rate_hits.items() if not v or v[-1] <= now - _RATE_WINDOW_S]:
+            del _rate_hits[other]
+    return False
+
+
+async def rate_limit(request: Request) -> None:
+    """FastAPI dependency: 429 when the user sent more than ``RATE_LIMIT_PER_MINUTE`` model requests in the last minute.
+
+    :param request: incoming request
+    """
+    limit = RATE_LIMIT_PER_MINUTE
+    if limit <= 0:
+        return
+    key = request.headers.get('x-forwarded-user', '').strip() or 'anon'
+    if _rate_limited(key, time.monotonic(), limit):
+        raise HTTPException(status_code=429, detail=TOO_MANY_REQUESTS)
 
 
 async def require_chat(request: Request) -> None:

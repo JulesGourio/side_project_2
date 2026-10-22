@@ -23,13 +23,14 @@ def _extract_xml(xml_bytes: bytes) -> List[str]:
     the diff engine can track document-order position for Excel sorting.
 
     :param xml_bytes: content of the XML file
-    :return: the text lines, each with its ``[Item N]`` tag; empty when the XML does not parse
+    :return: the text lines, each with its ``[Item N]`` tag
+    :raises ValueError: when the XML is not well formed (a file read as empty would be reported as "no change")
     """
     try:
         root = ET.fromstring(xml_bytes)
     except ET.ParseError as e:
         logger.warning('XML parse error: %s', e)
-        return []
+        raise ValueError(f'The XML file is not well formed: {e}') from e
 
     lines: List[str] = []
     counter = [0]

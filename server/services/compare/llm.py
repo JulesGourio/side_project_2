@@ -26,6 +26,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Tuple
 import httpx
 
 from server.services.chat import llm as chat_llm
+from server.services.infra.http_clients import shared_client
 from server.services.infra.streaming import DEFAULT_CONNECT_TIMEOUT_S, DEFAULT_TIMEOUT_S, _cost_eur, _parse_text_delta, supports_temperature
 
 logger = logging.getLogger(__name__)
@@ -139,13 +140,13 @@ def _record_failure(endpoint: str, exc: LlmFailure, given_up: set) -> None:
         given_up.add(endpoint)
 
 
-def http_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
-    """Separate so tests can swap the transport.
+def http_client() -> httpx.AsyncClient:
+    """The client shared by every compare model call (separate so tests can swap the transport). Callers pass their
+    own timeout on each request.
 
-    :param timeout: httpx timeouts of the client
-    :return: a new async HTTP client
+    :return: the shared async HTTP client
     """
-    return httpx.AsyncClient(timeout=timeout)
+    return shared_client('compare_llm')
 
 
 def _sse(payload: Dict[str, Any]) -> str:
@@ -174,8 +175,9 @@ async def _post(host: str, token: str, endpoint: str, messages: List[Dict[str, A
     payload = chat_llm.build_payload(endpoint, messages, max_tokens, False)
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
     try:
-        async with http_client(httpx.Timeout(timeout_s)) as client:
-            resp = await client.post(f'{host}/serving-endpoints/{endpoint}/invocations', json=payload, headers=headers)
+        client = http_client()
+        resp = await client.post(f'{host}/serving-endpoints/{endpoint}/invocations', json=payload, headers=headers,
+                                 timeout=httpx.Timeout(timeout_s))
     except httpx.TimeoutException as exc:
         raise LlmFailure('timeout', str(exc)[:200]) from exc
     except httpx.HTTPError as exc:
@@ -234,6 +236,8 @@ async def complete_chain(host: str, token: str, endpoints: List[str], messages: 
                     logger.warning('compare_llm: answered by fallback %s (primary %s)', endpoint, chain[0])
                 return value, endpoint
             except LlmFailure as exc:
+                # Not an error yet: the failure is recorded and cools the endpoint, the next candidate is tried, and
+                # CompareLlmUnavailable is raised below only when none of them answers.
                 last = exc
                 _record_failure(endpoint, exc, given_up)
     detail = f'every endpoint failed ({", ".join(chain)}): {last}' if last else f'no endpoint tried ({", ".join(chain)})'
@@ -299,76 +303,77 @@ async def _stream_request(host: str, token: str, endpoint: str, messages: List[D
     if thinking:
         payload['thinking'] = {'type': 'adaptive'}
         payload['output_config'] = {'effort': THINKING_EFFORT}
-    # Temperature and top_p are mutually exclusive on these endpoints: only temperature is sent.
-    if supports_temperature(endpoint):
+    # Temperature and top_p are mutually exclusive on these endpoints: only temperature is sent. Extended thinking refuses a
+    # temperature other than the default, so a request that thinks sends none.
+    if supports_temperature(endpoint) and not thinking:
         payload['temperature'] = temperature
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
     timeout = httpx.Timeout(DEFAULT_TIMEOUT_S, connect=DEFAULT_CONNECT_TIMEOUT_S)
     try:
-        async with http_client(timeout) as client:
-            async with client.stream('POST', f'{host}/serving-endpoints/{endpoint}/invocations',
-                                     json=payload, headers=headers) as response:
-                if response.status_code != 200:
-                    body = (await response.aread()).decode('utf-8', errors='replace')
-                    raise chat_llm.failure_for_status(response, body)
-                queue: asyncio.Queue = asyncio.Queue()
+        client = http_client()
+        async with client.stream('POST', f'{host}/serving-endpoints/{endpoint}/invocations',
+                                 json=payload, headers=headers, timeout=timeout) as response:
+            if response.status_code != 200:
+                body = (await response.aread()).decode('utf-8', errors='replace')
+                raise chat_llm.failure_for_status(response, body)
+            queue: asyncio.Queue = asyncio.Queue()
 
-                async def _produce() -> None:
-                    try:
-                        async for piece in response.aiter_text():
-                            await queue.put(('chunk', piece))
-                    except Exception as exc:  # re-raised by the consumer below
-                        await queue.put(('error', exc))
-                    finally:
-                        await queue.put(('done', None))
-
-                producer = asyncio.ensure_future(_produce())
-                buffer = ''
+            async def _produce() -> None:
                 try:
-                    while True:
-                        try:
-                            kind, item = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
-                        except asyncio.TimeoutError:
-                            yield 'keepalive', None
-                            continue
-                        if kind == 'error':
-                            raise item
-                        if kind == 'done':
-                            return
-                        buffer += item
-                        while '\n' in buffer:
-                            line, buffer = buffer.split('\n', 1)
-                            line = line.strip()
-                            if not line.startswith('data: '):
-                                continue
-                            data = line[6:].strip()
-                            if data == '[DONE]':
-                                return
-                            try:
-                                chunk = json.loads(data)
-                            except json.JSONDecodeError:
-                                continue
-                            if not isinstance(chunk, dict):
-                                continue
-                            if chunk.get('error'):
-                                err = chunk['error']
-                                code = err.get('code') if isinstance(err, dict) else ''
-                                msg = err.get('message') if isinstance(err, dict) else str(err)
-                                raise LlmFailure('rate_limit' if str(code) == '429' else 'stream_error', str(msg)[:300])
-                            if chunk.get('usage'):
-                                u = chunk['usage']
-                                inp, out = u.get('prompt_tokens') or 0, u.get('completion_tokens') or 0
-                                yield 'usage', {'input_tokens': inp, 'output_tokens': out,
-                                                'thinking_tokens': (u.get('completion_tokens_details') or {}).get('reasoning_tokens') or 0,
-                                                'cost_eur': _cost_eur(endpoint, inp, out)}
-                            choices = chunk.get('choices') or []
-                            if choices and choices[0].get('finish_reason') == 'length':
-                                yield 'truncated', None
-                            text = _parse_text_delta(data)
-                            if text:
-                                yield 'text', text
+                    async for piece in response.aiter_text():
+                        await queue.put(('chunk', piece))
+                except Exception as exc:  # re-raised by the consumer below
+                    await queue.put(('error', exc))
                 finally:
-                    producer.cancel()
+                    await queue.put(('done', None))
+
+            producer = asyncio.ensure_future(_produce())
+            buffer = ''
+            try:
+                while True:
+                    try:
+                        kind, item = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_S)
+                    except asyncio.TimeoutError:
+                        yield 'keepalive', None
+                        continue
+                    if kind == 'error':
+                        raise item
+                    if kind == 'done':
+                        return
+                    buffer += item
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        if not line.startswith('data: '):
+                            continue
+                        data = line[6:].strip()
+                        if data == '[DONE]':
+                            return
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(chunk, dict):
+                            continue
+                        if chunk.get('error'):
+                            err = chunk['error']
+                            code = err.get('code') if isinstance(err, dict) else ''
+                            msg = err.get('message') if isinstance(err, dict) else str(err)
+                            raise LlmFailure('rate_limit' if str(code) == '429' else 'stream_error', str(msg)[:300])
+                        if chunk.get('usage'):
+                            u = chunk['usage']
+                            inp, out = u.get('prompt_tokens') or 0, u.get('completion_tokens') or 0
+                            yield 'usage', {'input_tokens': inp, 'output_tokens': out,
+                                            'thinking_tokens': (u.get('completion_tokens_details') or {}).get('reasoning_tokens') or 0,
+                                            'cost_eur': _cost_eur(endpoint, inp, out)}
+                        choices = chunk.get('choices') or []
+                        if choices and choices[0].get('finish_reason') == 'length':
+                            yield 'truncated', None
+                        text = _parse_text_delta(data)
+                        if text:
+                            yield 'text', text
+            finally:
+                producer.cancel()
     except LlmFailure:
         raise
     except httpx.TimeoutException as exc:

@@ -1,177 +1,127 @@
 """categories.py — category hierarchy, division reference and Qualibot scope of the Intraqual documents.
 
-Driver side, returns Spark DataFrames. Reproduces the category display of the Intraqual application by walking up
-`gd_cat.IDPERE` from each document's categories (`gd_doc_cat_latest`). Used by `1_categories` (category_reference),
-`2_manifest` (scope gate) and indirectly by `3_parse` through the category_reference table.
+Driver side, returns Spark DataFrames. Reads the revisions table of the Intraqual data asset
+(`document_revisions_intraqual`), which already carries each revision's main category, its root and the ordered
+category ids of its path, and rebuilds the category display of the Intraqual application from them. Used by
+`1_categories` (category_reference), `2_manifest` (scope gate) and indirectly by `3_parse` through the
+category_reference table.
 """
 
 from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 
 from config import (
+    DATE_EXEMPT_ROOT_IDCATS,
     DIVISION_ARCHIVE_TABLE,
+    DIVISION_REFERENCE_TABLE,
+    DOC_DATE_CUTOFF,
     DOC_SCOPE_FILTER,
-    GD_CAT_LATEST,
-    GD_DOC_CAT_LATEST,
-    GD_DOC_LATEST,
+    INTRAQUAL_CATEGORY_ANCESTORS_TABLE,
+    INTRAQUAL_REVISIONS_TABLE,
 )
 
-IDCAT_PROCESSES = 12       # "1 - PROCESSES / PROCESSUS" → belongs to AS
-IDCAT_AS = 3346            # "AS - Aerostructures"
-IDCAT_IS = 3284            # "IS - Interconnection Systems"
-IDCAT_DIRECTIVE = 962      # "0 - DIRECTIVE GROUPE LATECOERE"
-MAX_HIERARCHY_DEPTH = 7    # Levels 1 to 7 in gd_cat
+IDCAT_PROCESSES = 12  # "1 - PROCESSES / PROCESSUS" → belongs to AS
+IDCAT_AS = 3346  # "AS - Aerostructures"
+IDCAT_IS = 3284  # "IS - Interconnection Systems"
+IDCAT_DIRECTIVE = 962  # "0 - DIRECTIVE GROUPE LATECOERE"
+MAX_HIERARCHY_DEPTH = 7
 
 
-def normalize_cols_upper(df) -> DataFrame:
-    """Rename all DataFrame columns to UPPERCASE: the *_latest materialized views sometimes expose lowercase columns
-    (gd_doc_cat_latest: iddoc, idcat, principale) while the code expects the original gd_doc* schema.
-
-    :param df: Spark DataFrame whose columns may be lowercase.
-    :return: the same data with every column name in uppercase.
-    """
-    for c in df.columns:
-        if c != c.upper():
-            df = df.withColumnRenamed(c, c.upper())
-    return df
-
-
-# --- Category hierarchy builder (dynamic, from gd_cat + gd_doc_cat) ---
-def build_category_hierarchy(spark, idlg: int = 1, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
-    """Build a per-IDDOC category hierarchy by walking up gd_cat.IDPERE.
-
-    Returns a DataFrame with columns:
-        IDDOC, est_principale, division,
-        niveau_plus_1, niveau_plus_2, ..., niveau_plus_{max_depth-1}
-
-    Reproduces the logic of the Intraqual application for category display.
+def read_revisions(spark) -> DataFrame:
+    """Every revision of every Intraqual document, one row per ``document_revision_ID`` (the IDDOC).
 
     :param spark: Active Spark session.
-    :param idlg: IDLG value of gd_cat to keep; 1 by default.
-    :param max_depth: Number of category levels to walk up, the last output level is ``niveau_plus_{max_depth-1}``.
+    :return: the revisions table of the Intraqual data asset, with its own column names.
     """
-    # The IDPERE walk-up below self-joins gd_cat against itself, which Spark
-    # blocks by default for this MV type.
-    spark.conf.set("spark.databricks.remoteFiltering.blockSelfJoins", "false")
+    return spark.read.table(INTRAQUAL_REVISIONS_TABLE)
 
-    df_doc_cat = normalize_cols_upper(spark.read.table(GD_DOC_CAT_LATEST))
-    df_cat = normalize_cols_upper(spark.read.table(GD_CAT_LATEST)).filter(F.col("IDLG") == idlg)
 
-    df_doc_cat = df_doc_cat.withColumn(
-        "est_principale",
-        F.when(F.lower(F.col("PRINCIPALE")) == "oui", True).otherwise(False)
-    )
+def build_category_levels(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
+    """Name of the main category's ancestor at each level, one row per revision that has a main category.
 
-    df_hierarchy = (
-        df_doc_cat
-        .join(df_cat.select("IDCAT", "IDPERE", "NIVEAU", "NOMCAT"), on="IDCAT", how="inner")
+    :param spark: Active Spark session.
+    :param max_depth: Number of levels kept, from the root (level 1) down.
+    :return: DataFrame of ``IDDOC``, ``root_idcat``, ``leaf_nomcat`` (name of the category itself) and ``raw_niv1`` ..
+        ``raw_niv{max_depth}``; a level below the category's own depth is null.
+    """
+    df_path = (
+        read_revisions(spark)
+        .filter(f.col("category_ID").isNotNull() & f.col("category_ID_path").isNotNull())
         .select(
-            "IDDOC",
-            "est_principale",
-            F.col("IDCAT").alias("current_idcat"),
-            F.col("IDPERE").alias("current_idpere"),
-            F.array(F.struct(
-                F.col("NIVEAU").alias("niveau"),
-                F.col("NOMCAT").alias("nomcat"),
-                F.col("IDCAT").alias("idcat")
-            )).alias("categories")
+            f.col("document_revision_ID").alias("IDDOC"),
+            f.col("root_category_ID").alias("root_idcat"),
+            f.posexplode("category_ID_path").alias("pos", "idcat"),
+        )
+    )
+    df_names = (
+        spark.read.table(INTRAQUAL_CATEGORY_ANCESTORS_TABLE)
+        .select(
+            f.col("ancestor_category_ID").alias("idcat"),
+            f.col("ancestor_category_name").alias("nomcat"),
+        )
+        .dropDuplicates(["idcat"])
+    )
+    return (
+        df_path.join(f.broadcast(df_names), on="idcat", how="left")
+        .groupBy("IDDOC", "root_idcat")
+        .agg(
+            f.max_by("nomcat", "pos").alias("leaf_nomcat"),
+            *[
+                f.max(f.when(f.col("pos") == niv - 1, f.col("nomcat"))).alias(f"raw_niv{niv}")
+                for niv in range(1, max_depth + 1)
+            ],
         )
     )
 
-    for _ in range(max_depth - 1):
-        df_parent = df_cat.select(
-            F.col("IDCAT").alias("parent_idcat"),
-            F.col("IDPERE").alias("parent_idpere"),
-            F.col("NIVEAU").alias("parent_niveau"),
-            F.col("NOMCAT").alias("parent_nomcat")
-        )
 
-        df_hierarchy = (
-            df_hierarchy
-            .join(
-                df_parent,
-                (df_hierarchy["current_idpere"] == df_parent["parent_idcat"]) &
-                (df_hierarchy["current_idpere"] > 0),
-                how="left"
-            )
-            .withColumn(
-                "categories",
-                F.when(
-                    F.col("parent_idcat").isNotNull(),
-                    F.concat(
-                        F.col("categories"),
-                        F.array(F.struct(
-                            F.col("parent_niveau").alias("niveau"),
-                            F.col("parent_nomcat").alias("nomcat"),
-                            F.col("parent_idcat").alias("idcat")
-                        ))
-                    )
-                ).otherwise(F.col("categories"))
-            )
-            .withColumn("current_idcat", F.coalesce(F.col("parent_idcat"), F.col("current_idcat")))
-            .withColumn("current_idpere", F.coalesce(F.col("parent_idpere"), F.lit(0)))
-            .drop("parent_idcat", "parent_idpere", "parent_niveau", "parent_nomcat")
-        )
+def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
+    """Per-IDDOC division and displayed category levels, as the Intraqual application shows them.
 
-    df_hierarchy = df_hierarchy.withColumn(
-        "root_idcat",
-        F.expr("get(filter(categories, x -> x.niveau = 1), 0).idcat")
-    )
+    :param spark: Active Spark session.
+    :param max_depth: Number of levels walked; the last output level is ``niveau_plus_{max_depth-1}``.
+    :return: DataFrame of ``IDDOC``, ``division`` (``AS``, ``IS``, ``DIRECTIVE`` or ``GROUP``: shared by the divisions),
+        ``niveau_plus_1`` .. ``niveau_plus_{max_depth-1}`` and ``date_exempt`` (true when the document is indexed
+        whatever its date).
+    """
+    df = build_category_levels(spark, max_depth)
 
-    # Derive division from root category name (dynamic, not hardcoded IDs)
-    root_nomcat_col = F.expr("get(filter(categories, x -> x.niveau = 1), 0).nomcat")
-    df_hierarchy = df_hierarchy.withColumn("_root_nomcat", root_nomcat_col)
-    df_hierarchy = df_hierarchy.withColumn(
+    df = df.withColumn(
         "division",
         # PROCESSES has no "AS -" prefix in its raw name despite belonging to division AS.
-        F.when(F.col("root_idcat") == IDCAT_PROCESSES, F.lit("AS"))
-         .when(F.col("_root_nomcat").startswith("AS -"), F.lit("AS"))
-         .when(F.col("_root_nomcat").startswith("IS -"), F.lit("IS"))
-         .when(F.col("root_idcat") == IDCAT_DIRECTIVE, F.lit("DIRECTIVE"))
-         .otherwise(F.lit("AUTRE"))
-    ).drop("_root_nomcat")
-
-    for niv in range(1, max_depth + 1):
-        df_hierarchy = df_hierarchy.withColumn(
-            f"raw_niv{niv}",
-            F.expr(f"get(filter(categories, x -> x.niveau = {niv}), 0).nomcat")
-        )
-
-    # Format niveau_plus_1 per application logic
-    df_hierarchy = df_hierarchy.withColumn(
-        "niveau_plus_1",
-        F.when(
-            F.col("root_idcat") == IDCAT_PROCESSES,
-            F.lit("AS - PROCESSES / PROCESSUS")
-        ).when(
-            F.col("root_idcat") == IDCAT_AS,
-            F.concat(F.lit("AS - "), F.regexp_replace(F.col("raw_niv2"), r"^\d+\s*-\s*", ""))
-        ).when(
-            F.col("root_idcat") == IDCAT_IS,
-            F.lit("IS - Interconnection Systems")
-        ).when(
-            F.col("root_idcat") == IDCAT_DIRECTIVE,
-            F.col("raw_niv1")
-        ).otherwise(F.col("raw_niv1"))
+        f.when(f.col("root_idcat") == IDCAT_PROCESSES, f.lit("AS"))
+        .when(f.col("raw_niv1").startswith("AS -"), f.lit("AS"))
+        .when(f.col("raw_niv1").startswith("IS -"), f.lit("IS"))
+        .when(f.col("root_idcat") == IDCAT_DIRECTIVE, f.lit("DIRECTIVE"))
+        # Outside those roots, a leaf category named after the division marks the document.
+        .when(f.upper(f.trim(f.col("leaf_nomcat"))) == "AS", f.lit("AS"))
+        .when(f.upper(f.trim(f.col("leaf_nomcat"))) == "IS", f.lit("IS"))
+        .otherwise(f.lit("GROUP")),
     )
 
-    # Format deeper levels with offset for AS root
+    df = df.withColumn(
+        "niveau_plus_1",
+        f.when(f.col("root_idcat") == IDCAT_PROCESSES, f.lit("AS - PROCESSES / PROCESSUS"))
+        .when(
+            f.col("root_idcat") == IDCAT_AS,
+            f.concat(f.lit("AS - "), f.regexp_replace(f.col("raw_niv2"), r"^\d+\s*-\s*", "")),
+        )
+        .when(f.col("root_idcat") == IDCAT_IS, f.lit("IS - Interconnection Systems"))
+        .otherwise(f.col("raw_niv1")),
+    )
+
+    # Under the AS root the displayed levels are shifted by one: the "AS - Aerostructures" level is folded into niveau_plus_1.
     for output_niv in range(2, max_depth):
-        df_hierarchy = df_hierarchy.withColumn(
+        df = df.withColumn(
             f"niveau_plus_{output_niv}",
-            F.when(
-                F.col("root_idcat") == IDCAT_AS,
-                F.col(f"raw_niv{output_niv + 1}")
-            ).otherwise(
-                F.col(f"raw_niv{output_niv}")
-            )
+            f.when(f.col("root_idcat") == IDCAT_AS, f.col(f"raw_niv{output_niv + 1}")).otherwise(
+                f.col(f"raw_niv{output_niv}")
+            ),
         )
 
-    hierarchy_cols = ["IDDOC", "est_principale", "division"] + \
-                     [f"niveau_plus_{niv}" for niv in range(1, max_depth)]
-    raw_cols = [f"raw_niv{niv}" for niv in range(1, max_depth + 1)]
-
-    return df_hierarchy.select(*hierarchy_cols).drop(*[c for c in raw_cols if c in df_hierarchy.columns])
+    df = df.withColumn("date_exempt", f.col("root_idcat").isin(*sorted(DATE_EXEMPT_ROOT_IDCATS)))
+    return df.select(
+        "IDDOC", "division", *[f"niveau_plus_{niv}" for niv in range(1, max_depth)], "date_exempt"
+    )
 
 
 def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
@@ -182,27 +132,27 @@ def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
 
     :param spark: Active Spark session.
     :param max_depth: Number of category levels, as in ``build_category_hierarchy``.
-    :return: one row per IDDOC with its division and ``niveau_plus_*`` columns.
+    :return: one row per IDDOC with its division, ``niveau_plus_*``, ``date_exempt`` and ``division_source``.
     """
     niveau_cols = [f"niveau_plus_{niv}" for niv in range(1, max_depth)]
 
     df_live = (
         build_category_hierarchy(spark, max_depth=max_depth)
-        .filter(F.col("est_principale") == True)
         .dropDuplicates(["IDDOC"])
-        .select("IDDOC", "division", *niveau_cols)
-        .withColumn("division_source", F.lit("live_hierarchy"))
+        .select("IDDOC", "division", *niveau_cols, "date_exempt")
+        .withColumn("division_source", f.lit("live_hierarchy"))
     )
     if not (DIVISION_ARCHIVE_TABLE or "").strip():
         return df_live
 
     df_archive = (
         spark.table(DIVISION_ARCHIVE_TABLE)
-        .filter(F.col("division").isNotNull())
+        .filter(f.col("division").isNotNull())
         .select("IDDOC", "division", *niveau_cols)
         .dropDuplicates(["IDDOC"])
         .join(df_live.select("IDDOC"), on="IDDOC", how="left_anti")
-        .withColumn("division_source", F.lit("archive_fallback"))
+        .withColumn("date_exempt", f.lit(False))
+        .withColumn("division_source", f.lit("archive_fallback"))
     )
 
     return df_live.unionByName(df_archive)
@@ -216,13 +166,62 @@ def load_scope_docs(spark) -> DataFrame:
     :return: DataFrame of IDDOC, ref and titre, one row per document in scope.
     """
     return (
-        normalize_cols_upper(spark.read.table(GD_DOC_LATEST))
-        .filter(F.expr(DOC_SCOPE_FILTER))
-        .filter(F.col("IDDOC").isNotNull())
+        read_revisions(spark)
+        .filter(f.expr(DOC_SCOPE_FILTER))
+        .filter(f.col("document_revision_ID").isNotNull())
         .select(
-            F.col("IDDOC"),
-            F.col("REF").alias("ref"),
-            F.col("TITRE").alias("titre"),
+            f.col("document_revision_ID").alias("IDDOC"),
+            f.col("document_reference").alias("ref"),
+            f.col("document_title").alias("titre"),
         )
         .dropDuplicates(["IDDOC"])
+    )
+
+
+def source_ages_hours(spark, tables) -> dict[str, float | None]:
+    """Hours since each table was last written.
+
+    :param spark: Active Spark session.
+    :param tables: Full names of the tables to check.
+    :return: table name to its age in hours; ``None`` when the table is missing or has no write time.
+    """
+    ages = {}
+    for table in tables:
+        try:
+            row = (
+                spark.sql(f"DESCRIBE DETAIL {table}")
+                .select(
+                    f.round(
+                        (f.unix_timestamp(f.current_timestamp()) - f.unix_timestamp("lastModified"))
+                        / 3600.0,
+                        1,
+                    ).alias("age")
+                )
+                .first()
+            )
+            ages[table] = row["age"] if row else None
+        except Exception:
+            ages[table] = None
+    return ages
+
+
+def with_archive_flag(spark, df: DataFrame) -> DataFrame:
+    """Add ``is_archive``: published before DOC_DATE_CUTOFF and not under a date-exempt root category.
+
+    :param spark: Active Spark session.
+    :param df: Rows with ``IDDOC`` and ``doc_date`` (null = recent).
+    :return: the same rows with a boolean ``is_archive`` column.
+    """
+    df_exempt = spark.table(DIVISION_REFERENCE_TABLE).select(
+        "IDDOC", f.col("date_exempt").alias("_date_exempt")
+    )
+    before_cutoff = f.col("doc_date").isNotNull() & (
+        f.col("doc_date") < f.lit(DOC_DATE_CUTOFF).try_cast("date")
+    )
+    return (
+        df.join(f.broadcast(df_exempt), on="IDDOC", how="left")
+        .withColumn(
+            "is_archive", before_cutoff & ~f.coalesce(f.col("_date_exempt"), f.lit(False))
+        )
+        .drop("_date_exempt")
     )

@@ -1,0 +1,120 @@
+resources:
+  jobs:
+    quality_intraqual_data_asset_job:
+      name: D_2_Quality_Intraqual_Data_Asset
+
+      description: Quality data asset for Intraqual - Silver then Gold from the bronze Intraqual tables.
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      notification_settings:
+        no_alert_for_canceled_runs: true
+
+      schedule:
+        quartz_cron_expression: 0 30 4 * * ?
+        timezone_id: Europe/Brussels
+        pause_status: PAUSED
+
+      job_clusters:
+        - job_cluster_key: intraqual_cluster
+          new_cluster:
+            num_workers: 0
+            data_security_mode: SINGLE_USER
+            policy_id: ${var.job_cluster_policy_id_S}
+            apply_policy_default_values: true
+
+      tasks:
+        - task_key: Setup_cluster
+          notebook_task:
+            notebook_path: unity_catalog/Utils/Jobs/Setup cluster
+            source: GIT
+          job_cluster_key: intraqual_cluster
+
+        - task_key: 1-Create_Silver_Intraqual_Documents
+          depends_on:
+            - task_key: Setup_cluster
+          notebook_task:
+            notebook_path: data_asset/quality/intraqual/create_silver_intraqual_documents
+            source: GIT
+          job_cluster_key: intraqual_cluster
+
+        - task_key: 1-Create_Silver_Intraqual_Categories
+          depends_on:
+            - task_key: Setup_cluster
+          notebook_task:
+            notebook_path: data_asset/quality/intraqual/create_silver_intraqual_categories
+            source: GIT
+          job_cluster_key: intraqual_cluster
+
+        - task_key: 1-Create_Silver_Intraqual_References
+          depends_on:
+            - task_key: Setup_cluster
+          notebook_task:
+            notebook_path: data_asset/quality/intraqual/create_silver_intraqual_references
+            source: GIT
+          job_cluster_key: intraqual_cluster
+
+        - task_key: 1-Create_Silver_Intraqual_Document_Details
+          depends_on:
+            - task_key: Setup_cluster
+          notebook_task:
+            notebook_path: data_asset/quality/intraqual/create_silver_intraqual_document_details
+            source: GIT
+          job_cluster_key: intraqual_cluster
+
+        - task_key: 2-Create_Gold_Intraqual_Documents
+          depends_on:
+            - task_key: 1-Create_Silver_Intraqual_Documents
+            - task_key: 1-Create_Silver_Intraqual_Categories
+            - task_key: 1-Create_Silver_Intraqual_References
+            - task_key: 1-Create_Silver_Intraqual_Document_Details
+            - task_key: 2-Create_Gold_Intraqual_Document_Categories
+          notebook_task:
+            notebook_path: data_asset/quality/intraqual/create_gold_intraqual_documents
+            source: GIT
+          job_cluster_key: intraqual_cluster
+
+        - task_key: 2-Create_Gold_Intraqual_Document_Categories
+          depends_on:
+            - task_key: 1-Create_Silver_Intraqual_Documents
+            - task_key: 1-Create_Silver_Intraqual_Categories
+          notebook_task:
+            notebook_path: data_asset/quality/intraqual/create_gold_intraqual_document_categories
+            source: GIT
+          job_cluster_key: intraqual_cluster
+
+        - task_key: 2-Create_Gold_Intraqual_Document_Relations
+          depends_on:
+            - task_key: 1-Create_Silver_Intraqual_Documents
+            - task_key: 1-Create_Silver_Intraqual_References
+            - task_key: 1-Create_Silver_Intraqual_Document_Details
+          notebook_task:
+            notebook_path: data_asset/quality/intraqual/create_gold_intraqual_document_relations
+            source: GIT
+          job_cluster_key: intraqual_cluster
+
+      git_source:
+        git_url: https://bitbucket.org/latecoere/leap-dbx-repository
+        git_provider: bitbucketCloud
+        git_branch: ${var.data_asset_git_branch}
+
+      parameters:
+        - name: pipeline_read_env
+          default: ${var.pipeline_read_env}
+        - name: pipeline_write_env
+          default: ${var.pipeline_write_env}
+        - name: reference_read_env
+          default: ${var.data_asset_reference_read_env}
+
+      queue:
+        enabled: true
+
+      run_as:
+        service_principal_name: ${var.my_dbx_service_principal}
+
+      tags:
+        activity-type: ${var.pipeline_write_env}-job
+        data-asset-domain: quality
+        data-asset-group: da-intraqual
+        job-purpose: data-asset

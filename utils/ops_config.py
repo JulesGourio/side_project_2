@@ -11,7 +11,7 @@ from typing import Any
 # ── Databricks CLI profiles ────────────────────────────────────────────────────
 PROFILE_DEV  = "DEV"
 PROFILE_UAT  = "UAT"
-PROFILE_PROD = "qualibot-prod"
+PROFILE_PROD = "PROD"
 
 # ── Lakebase environments ──────────────────────────────────────────────────────
 # Host and user are resolved at connect time (lakebase_connect_with); the token must come from the workspace of the
@@ -35,31 +35,6 @@ LAKEBASE_PROJECTS: dict[str, dict] = {
     "DEV": {"project_id": "qualibot",  "branch": "production", "endpoint": "primary", "database": "doccompare"},
     "PROD": {"project_id": "qualibot", "branch": "production", "endpoint": "primary", "database": "doccompare"},
 }
-
-# ── Lakebase UAT -> PROD data migration (export_lakebase_to_json.py / import_lakebase_from_json.py) ─
-MIGRATE_TO_PROD_TABLES_TO_SKIP = {
-    "llm_requests",      # too large, not useful to carry over
-}
-# FK-safe order: parents before children. Any table not listed here is copied
-# afterwards, in the source's own listing order (safe default for tables with
-# no incoming FK from another migrated table).
-MIGRATE_TO_PROD_TABLE_ORDER = [
-    "users",
-    "compare_messages",
-    "chat_sessions",
-    "chat_messages",       # FK -> chat_sessions
-    "chat_turns",          # FK -> chat_messages
-    "chat_retrieved_chunks",  # FK -> chat_turns
-    "compare_feedbacks",   # FK -> compare_messages
-    "chat_feedbacks",      # FK -> chat_messages, chat_sessions
-    "impact_requests",
-    "impact_document_results",  # FK -> impact_requests
-    "impact_feedbacks",         # FK -> impact_requests, compare_messages
-    "impact_cache",
-    "summary_cache",
-    "app_errors",
-    "catalog_metadata",
-]
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 

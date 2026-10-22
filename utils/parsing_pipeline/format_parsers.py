@@ -29,9 +29,18 @@ from worker import _cfg, logger, normalize_text
 TEXTLIKE_EXTENSIONS = {"csv", "json", "tsv"}
 
 _FORMAT_MAP_NAMES: Dict[str, str] = {
-    ".pdf":  "PDF", ".docx": "DOCX", ".docm": "DOCX", ".pptx": "PPTX",
-    ".xlsx": "XLSX", ".xlsm": "XLSX", ".xlsb": "XLSX", ".html": "HTML",
-    ".htm":  "HTML", ".xml":  "HTML", ".md":   "MD", ".txt":  "MD",
+    ".pdf": "PDF",
+    ".docx": "DOCX",
+    ".docm": "DOCX",
+    ".pptx": "PPTX",
+    ".xlsx": "XLSX",
+    ".xlsm": "XLSX",
+    ".xlsb": "XLSX",
+    ".html": "HTML",
+    ".htm": "HTML",
+    ".xml": "HTML",
+    ".md": "MD",
+    ".txt": "MD",
 }
 
 
@@ -47,8 +56,13 @@ def patch_worker_env() -> None:
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     n_threads = "2" if _cfg("USE_GPU", fallback=False) else "1"
-    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
-                "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    for var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
         os.environ[var] = n_threads
 
 
@@ -61,16 +75,22 @@ def _import_docling() -> dict[str, Any]:
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import (
-        PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice,
+        PdfPipelineOptions,
+        AcceleratorOptions,
+        AcceleratorDevice,
     )
 
     mods = {
-        "DocumentConverter": DocumentConverter, "PdfFormatOption": PdfFormatOption,
-        "InputFormat": InputFormat, "PdfPipelineOptions": PdfPipelineOptions,
-        "AcceleratorOptions": AcceleratorOptions, "AcceleratorDevice": AcceleratorDevice,
+        "DocumentConverter": DocumentConverter,
+        "PdfFormatOption": PdfFormatOption,
+        "InputFormat": InputFormat,
+        "PdfPipelineOptions": PdfPipelineOptions,
+        "AcceleratorOptions": AcceleratorOptions,
+        "AcceleratorDevice": AcceleratorDevice,
     }
     try:
         from docling.datamodel.pipeline_options import TableFormerMode
+
         mods["TableFormerMode"] = TableFormerMode
     except Exception:
         mods["TableFormerMode"] = None
@@ -78,11 +98,16 @@ def _import_docling() -> dict[str, Any]:
     if _cfg("USE_GPU", fallback=False):
         try:
             import torch
+
             if torch.cuda.is_available():
                 props = torch.cuda.get_device_properties(0)
-                total = props.total_mem / (1024 ** 3) if hasattr(props, "total_mem") else 0.0
-                logger.info("GPU: %s | %.1f GB | CUDA %s",
-                            torch.cuda.get_device_name(0), total, torch.version.cuda)
+                total = props.total_mem / (1024**3) if hasattr(props, "total_mem") else 0.0
+                logger.info(
+                    "GPU: %s | %.1f GB | CUDA %s",
+                    torch.cuda.get_device_name(0),
+                    total,
+                    torch.version.cuda,
+                )
             else:
                 logger.warning("USE_GPU=True but CUDA unavailable — falling back to CPU")
         except Exception as e:
@@ -144,28 +169,39 @@ def _get_converter(input_format, do_ocr: bool | None = None, timings: dict | Non
     if dl["TableFormerMode"] is not None:
         try:
             opts.table_structure_options.mode = (
-                dl["TableFormerMode"].FAST if table_mode == "fast" else dl["TableFormerMode"].ACCURATE
+                dl["TableFormerMode"].FAST
+                if table_mode == "fast"
+                else dl["TableFormerMode"].ACCURATE
             )
         except Exception as e:
             logger.warning("Could not set TableFormerMode=%s: %s", table_mode, str(e)[:120])
 
     if use_gpu:
-        opts.accelerator_options = dl["AcceleratorOptions"](num_threads=4, device=dl["AcceleratorDevice"].CUDA)
+        opts.accelerator_options = dl["AcceleratorOptions"](
+            num_threads=4, device=dl["AcceleratorDevice"].CUDA
+        )
     else:
-        opts.accelerator_options = dl["AcceleratorOptions"](num_threads=1, device=dl["AcceleratorDevice"].CPU)
+        opts.accelerator_options = dl["AcceleratorOptions"](
+            num_threads=1, device=dl["AcceleratorDevice"].CPU
+        )
 
     format_options = {}
     if input_format == dl["InputFormat"].PDF:
         backend = None
         try:
-            from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend as backend  # faster text layer
+            from docling.backend.pypdfium2_backend import (
+                PyPdfiumDocumentBackend as backend,
+            )  # faster text layer
         except ImportError:
             try:
-                from docling.backend.docling_parse_backend import DoclingParseDocumentBackend as backend
+                from docling.backend.docling_parse_backend import (
+                    DoclingParseDocumentBackend as backend,
+                )
             except ImportError:
                 backend = None
         format_options[dl["InputFormat"].PDF] = (
-            dl["PdfFormatOption"](pipeline_options=opts, backend=backend) if backend
+            dl["PdfFormatOption"](pipeline_options=opts, backend=backend)
+            if backend
             else dl["PdfFormatOption"](pipeline_options=opts)
         )
 
@@ -186,7 +222,7 @@ def safe_decode(raw_bytes: bytes, encodings: List[str] | None = None) -> str:
     """
     if not raw_bytes:
         return ""
-    for enc in (encodings or ["utf-8", "utf-8-sig", "cp1252", "latin-1"]):
+    for enc in encodings or ["utf-8", "utf-8-sig", "cp1252", "latin-1"]:
         try:
             return raw_bytes.decode(enc)
         except (UnicodeDecodeError, LookupError):
@@ -229,13 +265,23 @@ def _convert_doc_antiword(doc_path: Path) -> Tuple[Path | None, str | None]:
             env["ANTIWORDHOME"] = antiword_share
         result = subprocess.run(
             [antiword_bin, "-m", "UTF-8.txt", "-w", "0", str(doc_path)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            check=False, env=env, timeout=120,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=env,
+            timeout=120,
         )
         if result.returncode != 0 or not result.stdout.strip():
             return None, f"exit={result.returncode} stderr={(result.stderr or '')[:300]}"
-        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", encoding="utf-8",
-                                          delete=False, prefix=f"{doc_path.stem}_antiword_")
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".md",
+            encoding="utf-8",
+            delete=False,
+            prefix=f"{doc_path.stem}_antiword_",
+        )
         tmp.write(result.stdout)
         tmp.close()
         return Path(tmp.name), None
@@ -252,6 +298,7 @@ def _convert_rtf(content: bytes) -> Tuple[str | None, str | None]:
     """
     try:
         from striprtf.striprtf import rtf_to_text
+
         text = rtf_to_text(content.decode("utf-8", errors="replace"))
         return (text, None) if text and text.strip() else (None, "striprtf returned no text")
     except Exception as e:
@@ -278,8 +325,10 @@ def _convert_odt(content: bytes, suffix: str) -> Tuple[str | None, str | None]:
             for sheet in doc.spreadsheet.getElementsByType(Table):
                 lines.append(f"## {sheet.getAttribute('name') or 'Sheet'}")
                 for row in sheet.getElementsByType(TableRow):
-                    cells = [" ".join(str(p) for p in cell.getElementsByType(P)).strip()
-                             for cell in row.getElementsByType(TableCell)]
+                    cells = [
+                        " ".join(str(p) for p in cell.getElementsByType(P)).strip()
+                        for cell in row.getElementsByType(TableCell)
+                    ]
                     if any(cells):
                         lines.append("\t".join(cells))
         else:
@@ -310,8 +359,12 @@ def _convert_xls(content: bytes) -> Tuple[str | None, str | None]:
         wb = xlrd.open_workbook(str(tmp_path))
         lines = []
         for sheet in wb.sheets():
-            rows = chunking.sheet_lines([[sheet.cell_value(rx, cx) for cx in range(sheet.ncols)]
-                                         for rx in range(sheet.nrows)])
+            rows = chunking.sheet_lines(
+                [
+                    [sheet.cell_value(rx, cx) for cx in range(sheet.ncols)]
+                    for rx in range(sheet.nrows)
+                ]
+            )
             if rows:
                 lines.append(f"## {sheet.name}\n" + "\n".join(rows))
         text = "\n\n".join(lines)
@@ -326,7 +379,9 @@ def _convert_xls(content: bytes) -> Tuple[str | None, str | None]:
 
 
 # --- Core parsing ---
-def parse_with_docling(content: bytes, extension: str, timings: dict | None = None) -> Dict[str, Any]:
+def parse_with_docling(
+    content: bytes, extension: str, timings: dict | None = None
+) -> Dict[str, Any]:
     """Route raw bytes to the right parser by extension. Returns a dict with
     text / parser_error / parser_strategy / parse_time_seconds / _docling_doc.
     If ``timings`` is provided it is filled with per-step durations.
@@ -363,7 +418,9 @@ def parse_with_docling(content: bytes, extension: str, timings: dict | None = No
     if timings is not None:
         timings["docling_import_seconds"] = float(time.perf_counter() - t_imp)
     if input_format is None:
-        return _err(start, ext, f"Unsupported format: {ext}", strategy=f"unsupported:{ext.lstrip('.')}")
+        return _err(
+            start, ext, f"Unsupported format: {ext}", strategy=f"unsupported:{ext.lstrip('.')}"
+        )
 
     return _parse_via_docling(content, ext, input_format, start, timings)
 
@@ -394,9 +451,11 @@ def _err(start, ext, msg, strategy=None) -> Dict[str, Any]:
     :param strategy: Parser strategy; defaults to ``docling_error:<ext>``.
     """
     return {
-        "text": "", "parser_error": msg,
+        "text": "",
+        "parser_error": msg,
         "parser_strategy": strategy or f"docling_error:{ext.lstrip('.')}",
-        "parse_time_seconds": float(time.perf_counter() - start), "_docling_doc": None,
+        "parse_time_seconds": float(time.perf_counter() - start),
+        "_docling_doc": None,
     }
 
 
@@ -407,6 +466,7 @@ def _export_markdown(doc) -> str:
     """
     try:
         from docling_core.types.doc.document import ImageRefMode
+
         return doc.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)
     except (ImportError, AttributeError, TypeError):
         return doc.export_to_markdown()
@@ -415,8 +475,21 @@ def _export_markdown(doc) -> str:
 # --- Pre-clean OOXML zips (.docx/.docm/.pptx/.pptm) before the size gate. ---
 _OOXML_EMBEDDING_MARKER = "/embeddings/"
 _MEDIA_JUNK_EXTS = {
-    ".mp4", ".avi", ".mov", ".wmv", ".mpg", ".mpeg", ".m4v", ".flv", ".mkv", ".asf",
-    ".mp3", ".wav", ".m4a", ".wma", ".aac",
+    ".mp4",
+    ".avi",
+    ".mov",
+    ".wmv",
+    ".mpg",
+    ".mpeg",
+    ".m4v",
+    ".flv",
+    ".mkv",
+    ".asf",
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".wma",
+    ".aac",
 }
 _MEDIA_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 _RECOMPRESS_MAX_DIM = 1600
@@ -431,6 +504,7 @@ def _recompress_image_bytes(data: bytes) -> bytes:
     """
     try:
         from PIL import Image
+
         img = Image.open(io.BytesIO(data))
         img.load()
         fmt = img.format or "PNG"
@@ -511,7 +585,11 @@ def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, 
 
         # OCR fallback: re-parse scanned PDFs that yielded (near) no text.
         ocr_failure_detail = None
-        if (not md_text or len(md_text) < 20) and ext == ".pdf" and _cfg("GPU_OCR_FALLBACK", fallback=False):
+        if (
+            (not md_text or len(md_text) < 20)
+            and ext == ".pdf"
+            and _cfg("GPU_OCR_FALLBACK", fallback=False)
+        ):
             t_ocr = time.perf_counter()
             try:
                 ocr_conv = _get_converter(input_format, do_ocr=True)
@@ -520,9 +598,13 @@ def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, 
                 if timings is not None:
                     timings["ocr_fallback_seconds"] = float(time.perf_counter() - t_ocr)
                 if len(ocr_md) > len(md_text):
-                    return {"text": ocr_md, "parser_error": None if ocr_md else "Empty after OCR",
-                            "parser_strategy": "docling+ocr:pdf",
-                            "parse_time_seconds": float(time.perf_counter() - start), "_docling_doc": ocr_doc}
+                    return {
+                        "text": ocr_md,
+                        "parser_error": None if ocr_md else "Empty after OCR",
+                        "parser_strategy": "docling+ocr:pdf",
+                        "parse_time_seconds": float(time.perf_counter() - start),
+                        "_docling_doc": ocr_doc,
+                    }
             except Exception as e:
                 if timings is not None:
                     timings["ocr_fallback_seconds"] = float(time.perf_counter() - t_ocr)
@@ -532,12 +614,18 @@ def _parse_via_docling(content, ext, input_format, start, timings) -> Dict[str, 
         if md_text:
             parser_error = None
         elif ocr_failure_detail:
-            parser_error = f"Empty after Docling conversion; OCR fallback also failed: {ocr_failure_detail}"
+            parser_error = (
+                f"Empty after Docling conversion; OCR fallback also failed: {ocr_failure_detail}"
+            )
         else:
             parser_error = "Empty after Docling conversion"
-        return {"text": md_text, "parser_error": parser_error,
-                "parser_strategy": f"docling:{ext.lstrip('.')}",
-                "parse_time_seconds": float(time.perf_counter() - start), "_docling_doc": doc}
+        return {
+            "text": md_text,
+            "parser_error": parser_error,
+            "parser_strategy": f"docling:{ext.lstrip('.')}",
+            "parse_time_seconds": float(time.perf_counter() - start),
+            "_docling_doc": doc,
+        }
     except Exception as e:
         if ext in {".xlsx", ".xlsm", ".xlsb"}:
             fallback = parse_xlsx_openpyxl(content, start, ext.lstrip("."))
@@ -570,9 +658,13 @@ def _parse_textlike(content: bytes, ext: str, start: float) -> Dict[str, Any]:
         except Exception:
             pass
     decoded = normalize_text(decoded)
-    return {"text": decoded, "parser_error": None if decoded else "Empty",
-            "parser_strategy": f"textlike:{ext.lstrip('.')}",
-            "parse_time_seconds": float(round(time.perf_counter() - start, 2)), "_docling_doc": None}
+    return {
+        "text": decoded,
+        "parser_error": None if decoded else "Empty",
+        "parser_strategy": f"textlike:{ext.lstrip('.')}",
+        "parse_time_seconds": float(round(time.perf_counter() - start, 2)),
+        "_docling_doc": None,
+    }
 
 
 def _parse_doc_antiword(content: bytes, start: float) -> Dict[str, Any]:
@@ -593,15 +685,24 @@ def _parse_doc_antiword(content: bytes, start: float) -> Dict[str, Any]:
     try:
         md_path, err_reason = _convert_doc_antiword(tmp_doc)
         if md_path is None:
-            return {"text": "", "parser_error": f"antiword conversion failed: {err_reason}",
-                    "parser_strategy": "antiword_failed:doc",
-                    "parse_time_seconds": float(round(time.perf_counter() - start, 2)), "_docling_doc": None}
+            return {
+                "text": "",
+                "parser_error": f"antiword conversion failed: {err_reason}",
+                "parser_strategy": "antiword_failed:doc",
+                "parse_time_seconds": float(round(time.perf_counter() - start, 2)),
+                "_docling_doc": None,
+            }
         try:
             with open(str(md_path), "r", encoding="utf-8") as f:
                 text = normalize_text(f.read())
             strategy = "antiword:doc" if text else "antiword_empty:doc"
-            return {"text": text, "parser_error": None, "parser_strategy": strategy,
-                    "parse_time_seconds": float(round(time.perf_counter() - start, 2)), "_docling_doc": None}
+            return {
+                "text": text,
+                "parser_error": None,
+                "parser_strategy": strategy,
+                "parse_time_seconds": float(round(time.perf_counter() - start, 2)),
+                "_docling_doc": None,
+            }
         finally:
             try:
                 os.unlink(str(md_path))
@@ -622,20 +723,33 @@ def _parse_rtf(content: bytes, start: float) -> Dict[str, Any]:
     """
     text, err_reason = _convert_rtf(content)
     if not text or not text.strip():
-        return {"text": "", "parser_error": f"RTF conversion failed: {err_reason}",
-                "parser_strategy": "striprtf_failed:rtf",
-                "parse_time_seconds": float(round(time.perf_counter() - start, 2)), "_docling_doc": None}
+        return {
+            "text": "",
+            "parser_error": f"RTF conversion failed: {err_reason}",
+            "parser_strategy": "striprtf_failed:rtf",
+            "parse_time_seconds": float(round(time.perf_counter() - start, 2)),
+            "_docling_doc": None,
+        }
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", encoding="utf-8", delete=False)
     tmp.write(text)
     tmp.close()
     try:
         doc = _get_converter(_get_docling()["InputFormat"].MD).convert(tmp.name).document
-        return {"text": normalize_text(doc.export_to_markdown()), "parser_error": None,
-                "parser_strategy": "striprtf+docling:rtf",
-                "parse_time_seconds": float(round(time.perf_counter() - start, 2)), "_docling_doc": doc}
+        return {
+            "text": normalize_text(doc.export_to_markdown()),
+            "parser_error": None,
+            "parser_strategy": "striprtf+docling:rtf",
+            "parse_time_seconds": float(round(time.perf_counter() - start, 2)),
+            "_docling_doc": doc,
+        }
     except Exception:
-        return {"text": normalize_text(text), "parser_error": None, "parser_strategy": "striprtf_raw:rtf",
-                "parse_time_seconds": float(round(time.perf_counter() - start, 2)), "_docling_doc": None}
+        return {
+            "text": normalize_text(text),
+            "parser_error": None,
+            "parser_strategy": "striprtf_raw:rtf",
+            "parse_time_seconds": float(round(time.perf_counter() - start, 2)),
+            "_docling_doc": None,
+        }
     finally:
         try:
             os.unlink(tmp.name)
@@ -652,9 +766,13 @@ def _parse_odf(content: bytes, ext: str, start: float) -> Dict[str, Any]:
     """
     raw_text, err_reason = _convert_odt(content, ext)
     text = normalize_text(raw_text or "")
-    return {"text": text, "parser_error": None if text else f"ODF conversion failed: {err_reason}",
-            "parser_strategy": f"odfpy:{ext.lstrip('.')}",
-            "parse_time_seconds": float(round(time.perf_counter() - start, 2)), "_docling_doc": None}
+    return {
+        "text": text,
+        "parser_error": None if text else f"ODF conversion failed: {err_reason}",
+        "parser_strategy": f"odfpy:{ext.lstrip('.')}",
+        "parse_time_seconds": float(round(time.perf_counter() - start, 2)),
+        "_docling_doc": None,
+    }
 
 
 def parse_xls(content: bytes, start: float) -> Dict[str, Any]:
@@ -666,9 +784,13 @@ def parse_xls(content: bytes, start: float) -> Dict[str, Any]:
     """
     raw_text, err_reason = _convert_xls(content)
     text = normalize_text(raw_text or "")
-    return {"text": text, "parser_error": None if text else f"XLS conversion failed: {err_reason}",
-            "parser_strategy": "xlrd:xls",
-            "parse_time_seconds": float(round(time.perf_counter() - start, 2)), "_docling_doc": None}
+    return {
+        "text": text,
+        "parser_error": None if text else f"XLS conversion failed: {err_reason}",
+        "parser_strategy": "xlrd:xls",
+        "parse_time_seconds": float(round(time.perf_counter() - start, 2)),
+        "_docling_doc": None,
+    }
 
 
 def _parse_xlsb_pyxlsb(content: bytes, start: float) -> Dict[str, Any]:
@@ -680,6 +802,7 @@ def _parse_xlsb_pyxlsb(content: bytes, start: float) -> Dict[str, Any]:
     """
     try:
         import pyxlsb
+
         all_text = []
         with pyxlsb.open_workbook(io.BytesIO(content)) as wb:
             for sheet_name in wb.sheets:
@@ -688,13 +811,21 @@ def _parse_xlsb_pyxlsb(content: bytes, start: float) -> Dict[str, Any]:
                     if rows:
                         all_text.append(f"## {sheet_name}\n" + "\n".join(rows))
         text = normalize_text("\n\n".join(all_text))
-        return {"text": text, "parser_error": None if text else "xlsb empty (pyxlsb extraction)",
-                "parser_strategy": "pyxlsb:xlsb" if text else "pyxlsb_empty:xlsb",
-                "parse_time_seconds": float(time.perf_counter() - start), "_docling_doc": None}
+        return {
+            "text": text,
+            "parser_error": None if text else "xlsb empty (pyxlsb extraction)",
+            "parser_strategy": "pyxlsb:xlsb" if text else "pyxlsb_empty:xlsb",
+            "parse_time_seconds": float(time.perf_counter() - start),
+            "_docling_doc": None,
+        }
     except Exception as e:
-        return {"text": "", "parser_error": f"pyxlsb conversion failed: {_exc_detail(e)}",
-                "parser_strategy": "pyxlsb_failed:xlsb",
-                "parse_time_seconds": float(time.perf_counter() - start), "_docling_doc": None}
+        return {
+            "text": "",
+            "parser_error": f"pyxlsb conversion failed: {_exc_detail(e)}",
+            "parser_strategy": "pyxlsb_failed:xlsb",
+            "parse_time_seconds": float(time.perf_counter() - start),
+            "_docling_doc": None,
+        }
 
 
 def parse_xlsx_openpyxl(content: bytes, start: float, ext: str = "xlsx") -> Dict[str, Any]:
@@ -711,6 +842,7 @@ def parse_xlsx_openpyxl(content: bytes, start: float, ext: str = "xlsx") -> Dict
     # --- Attempt 1: openpyxl ---
     try:
         from openpyxl import load_workbook
+
         wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
         all_text = []
         for sheet_name in wb.sheetnames:
@@ -721,8 +853,13 @@ def parse_xlsx_openpyxl(content: bytes, start: float, ext: str = "xlsx") -> Dict
         wb.close()
         text = normalize_text("\n\n".join(all_text))
         if text:
-            return {"text": text, "parser_error": None, "parser_strategy": "openpyxl:xlsx",
-                    "parse_time_seconds": float(time.perf_counter() - start), "_docling_doc": None}
+            return {
+                "text": text,
+                "parser_error": None,
+                "parser_strategy": "openpyxl:xlsx",
+                "parse_time_seconds": float(time.perf_counter() - start),
+                "_docling_doc": None,
+            }
     except Exception:
         pass
 
@@ -740,8 +877,9 @@ def parse_xlsx_openpyxl(content: bytes, start: float, ext: str = "xlsx") -> Dict
                 shared_strings = []
 
         all_text = []
-        sheet_files = sorted(n for n in zfh.namelist()
-                             if n.startswith("xl/worksheets/sheet") and n.endswith(".xml"))
+        sheet_files = sorted(
+            n for n in zfh.namelist() if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")
+        )
         for sheet_idx, sheet_path in enumerate(sheet_files, 1):
             try:
                 sheet_root = ET.fromstring(zfh.read(sheet_path))
@@ -755,7 +893,9 @@ def parse_xlsx_openpyxl(content: bytes, start: float, ext: str = "xlsx") -> Dict
                     if v_elem is not None and v_elem.text:
                         if cell.get("t", "") == "s" and v_elem.text.isdigit():
                             idx = int(v_elem.text)
-                            row_vals.append(shared_strings[idx] if 0 <= idx < len(shared_strings) else "")
+                            row_vals.append(
+                                shared_strings[idx] if 0 <= idx < len(shared_strings) else ""
+                            )
                         else:
                             row_vals.append(v_elem.text)
                     else:
@@ -768,10 +908,18 @@ def parse_xlsx_openpyxl(content: bytes, start: float, ext: str = "xlsx") -> Dict
                     all_text.append(f"## Sheet {sheet_idx}\n" + "\n".join(lines))
         zfh.close()
         text = normalize_text("\n\n".join(all_text))
-        return {"text": text, "parser_error": None if text else "xlsx empty (XML extraction)",
-                "parser_strategy": "xml_raw:xlsx",
-                "parse_time_seconds": float(time.perf_counter() - start), "_docling_doc": None}
+        return {
+            "text": text,
+            "parser_error": None if text else "xlsx empty (XML extraction)",
+            "parser_strategy": "xml_raw:xlsx",
+            "parse_time_seconds": float(time.perf_counter() - start),
+            "_docling_doc": None,
+        }
     except Exception as e:
-        return {"text": "", "parser_error": f"xlsx all fallbacks failed: {str(e)[:200]}",
-                "parser_strategy": "xlsx_failed:xlsx",
-                "parse_time_seconds": float(time.perf_counter() - start), "_docling_doc": None}
+        return {
+            "text": "",
+            "parser_error": f"xlsx all fallbacks failed: {str(e)[:200]}",
+            "parser_strategy": "xlsx_failed:xlsx",
+            "parse_time_seconds": float(time.perf_counter() - start),
+            "_docling_doc": None,
+        }

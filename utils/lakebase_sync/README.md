@@ -1,7 +1,7 @@
 # lakebase_sync
 
 Scripts that take the data out of the Lakebase database of the application (to a volume, or as JSON Lines files) and
-load it elsewhere: Delta tables of DEV and of UAT, and the Lakebase database of PROD. The connection settings shared
+load it elsewhere: Delta tables of `<env>_proj.qualibot`, and the Lakebase database of PROD (JSON import, Bitbucket step). The connection settings shared
 with the other folders (CLI profiles, Lakebase projects, databases per environment, table order) are in
 [`ops_config.py`](../ops_config.py).
 
@@ -15,22 +15,8 @@ One-shot migrations and one-off table copies are run by hand and never deployed.
 | `import_lakebase_tables_to_delta_job.py` | Notebook: loads every table of the staging folder (chat, compare, impact search, users, caches, request logs, errors) into a Delta table of the same name in `<env>_proj.qualibot`. Does nothing when its `ENABLED` parameter is not `true` | Task `import_lakebase_tables_to_delta` of `lakebase_export`, after the export |
 | `sync_user_capabilities_job.py` | Notebook: reads the latest add/remove event per (visitor, tracked group) in `system.access.audit` and writes `groups`, `can_chat`, `can_compare` and `groups_synced_at` to `users`; the app's access check reads them. For each (visitor, group) the audit wins; pairs older than the audit's retention keep the stored value. `DRY_RUN=true` only logs the result. The job identity needs SELECT on `system.access.audit` | Task `sync_user_capabilities` of `lakebase_export`, alongside the export |
 | `user_capabilities.py` | Module of that notebook: tracked groups, audit query, merge and write | Imported by `sync_user_capabilities_job.py` |
-| `export_lakebase_to_json.py` | CLI: exports every table of a database to JSON Lines | Bitbucket step "Sync prod data (1/2)" |
-| `import_lakebase_from_json.py` | CLI: imports these files into a database | Bitbucket step "Sync prod data (2/2)" |
 
 The jobs are defined in [`resources/lakebase_sync.yml`](../../resources/lakebase_sync.yml).
-
-## Command-line scripts
-
-Run from the repository root, with a Databricks CLI profile whose token comes from the workspace that hosts the database:
-
-```
-python utils/lakebase_sync/export_lakebase_to_json.py --profile <cli-profile> [--database doccompare] [--out-dir staging/lakebase]
-python utils/lakebase_sync/import_lakebase_from_json.py --profile <cli-profile> [--database doccompare] [--in-dir staging/lakebase]
-```
-
-`--profile` is required. The export reads the source database and writes one `<table>.json` per table into the
-output folder. The import reads the same files from the input folder.
 
 ## Notebook parameters
 
@@ -42,8 +28,7 @@ output folder. The import reads the same files from the input folder.
   `ENABLED`. It reads `/Volumes/<CATALOG>/<SCHEMA>/<VOLUME_NAME>/lakebase_export`, loads every exported table and skips a table
   with 0 rows. Each table it writes gets the property `lakebase_export = true` (the six chat tables, loaded before it existed,
   are exempt): a Delta table of the same name that does not carry it is left untouched and the task fails at the end with
-  its name. The job passes `ENABLED` from `lakebase_import_to_delta`: `false` on DEV, whose `dev_proj.qualibot` holds Delta copies of
-  the UAT tables made by `copy_Lakebase_tables.py`.
+  its name. The job passes `ENABLED` from `lakebase_import_to_delta` of its target. Each target imports only the Lakebase of its own environment.
 
 ## Lakebase environments
 
@@ -53,16 +38,12 @@ The environments known by `ops_config.py`:
 |---|---|---|---|
 | `UAT` | `UAT` | `doccompare` | Database of the UAT application |
 | `DEV` | `DEV` | `doccompare` | Database of the DEV application |
-| `PROD` | `qualibot-prod` | `doccompare` | Database of the PROD application |
+| `PROD` | `PROD` | `doccompare` | Database of the PROD application |
 
-All four use the Lakebase project `qualibot`, branch `production`, endpoint `primary`.
+All three use the Lakebase project `qualibot`, branch `production`, endpoint `primary`.
 
 ## Rules
 
-- `import_lakebase_from_json.py` replaces the contents of each imported table. For each table it runs a `DELETE` and an
-  `INSERT` in one transaction, so a failure rolls back the whole import. It is the UAT-to-PROD copy.
-- The import order is `MIGRATE_TO_PROD_TABLE_ORDER` in `ops_config.py`: parent tables first. Tables missing from that list
-  come after, in the order of the export. `llm_requests` is never exported to PROD (`MIGRATE_TO_PROD_TABLES_TO_SKIP`).
-- The import writes the `id` values as they are and sets each table's `id` sequence to the maximum imported value.
+- Each environment's export copies its own Lakebase to its own `<env>_proj.qualibot`. The only copy between environments is the UAT-to-PROD pair of Bitbucket steps "Sync prod data", started by hand.
   Without it, the next insert of the application would reuse an imported id.
 - The JSON files hold user data (questions, answers, identifiers). They stay in the staging folders and volumes.

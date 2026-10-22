@@ -1,0 +1,16 @@
+{
+  "run_name": "qualibot-prod-cleanup",
+  "run_as": {
+    "service_principal_name": "b82d3b5a-b633-4738-8dde-68bb2142cb02"
+  },
+  "tasks": [
+    {
+      "task_key": "drop_prod_objects",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/qualibot_prod_cleanup/drop_prod_objects",
+        "base_parameters": { "phase": "prepare", "dry_run": "true" },
+        "source": "WORKSPACE"
+      }
+    }
+  ]
+}

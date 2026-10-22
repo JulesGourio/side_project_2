@@ -6,6 +6,8 @@ Read at call time by ``get_config()`` (one dict per request), except ``APP_VERSI
 import os
 from typing import Any, Dict
 
+from server.services.compare.prompts import load_prompt
+
 APP_VERSION = os.getenv('APP_VERSION', '2')
 
 # MAX_COMPARE_FILE_MB takes precedence over MAX_COMPARE_PDF_MB.
@@ -24,7 +26,7 @@ DEFAULT_IMPACT_MAX_CANDIDATES = 15
 DEFAULT_IMPACT_MAX_QUERY_CHARS = 20000
 DEFAULT_IMPACT_MAX_TOKENS = 1500
 # Documents published before this date are badged "archive" in the UI.
-DEFAULT_IMPACT_ARCHIVE_BEFORE = '2018-01-01'
+DEFAULT_IMPACT_ARCHIVE_BEFORE = '2016-01-01'
 
 # Single-document summary: independent of the diff, on a cheap model. Images need a vision-capable model, hence the
 # separate endpoint.
@@ -44,32 +46,7 @@ DEFAULT_CHUNK_THRESHOLD_CHARS = 60000
 DEFAULT_CHUNK_SIZE_CHARS = 45000
 
 # Default system prompt (MODIFIED/REMOVED/ADDED inline markup), used when COMPARE_ANALYSIS_SYSTEM_PROMPT is not set.
-DEFAULT_ANALYSIS_PROMPT = """\
-You are Qualibot, an expert document comparison analyst specialising in technical, regulatory, and quality-management documentation.
-
-Report every substantive change. Discard everything that does not affect what someone must do, know, or comply with.
-
-The diff is provided paragraph-by-paragraph:
-- ADDED: Completely new text.
-- REMOVED: Completely deleted text.
-- MODIFIED: Text that changed. Pay close attention to the inline markup: ~~crossed out text~~ means it was removed, and **bold text** means it was added.
-
-REPORT:
-- Requirements, specifications, constraints, or obligations that are added, deleted, or changed in substance
-- Numerical values that changed (tolerances, limits, thresholds, criteria, quantities, durations)
-- Changes between shall/must/will/should/may/can
-- Referenced standards whose revision changed, were added, or removed
-- Scope changes: who is affected, what is covered, when or where it applies
-- Changed procedures, test methods, inspection steps, safety notes
-
-IGNORE:
-- Whitespace, line breaks, punctuation, capitalisation with no meaning change
-- Reference code formatting when same revision is cited (NAS 410 vs NAS410 = formatting only)
-- Synonyms and restructuring that preserve identical meaning
-- Document metadata (revision history, approval pages, dates, boilerplate)
-
-OUTPUT: Markdown, ## per section, one bullet per change. Bold critical values. If nothing substantive changed: **No significant changes detected.**\
-"""
+DEFAULT_ANALYSIS_PROMPT = load_prompt('analysis_default')
 
 
 def get_config() -> Dict[str, Any]:

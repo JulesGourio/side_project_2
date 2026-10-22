@@ -11,6 +11,7 @@ Parent: [services](../README.md).
 |---|---|
 | `user.py` | The identity from the request headers (`get_user_identity`). The capabilities (`get_capabilities`): a live group check on the visitor's token, cached per visitor. The FastAPI dependencies `require_chat` and `require_compare`. The workspace URL |
 | `credentials.py` | `get_credentials`: host and token from the environment, then from the SDK's own authentication, then the forwarded token of the request |
+| `config.py` | Settings of the shared services: the Vector Search query timeout and the limits of the impact search judge (fan-out, retries, passages per candidate, token budget) |
 | `vector_search.py` | The impact search (`run_impact_search`): one query per change, grouping per document, one judge call per candidate, the event stream, the display order. Also the constants and the JSON parsing used by the chat search |
 | `vs_gate.py` | `post`: every Vector Search query of the app goes through it, with a cap on the queries in flight and retries |
 | `doc_catalog.py` | The document catalog, read from the Lakebase table `doc_catalog` and reloaded every `DOC_CATALOG_REFRESH_S` seconds: REF lookup, titles, revisions, dates, language variants, `augment_sources`, `with_document_info` |
@@ -38,6 +39,14 @@ Parent: [services](../README.md).
 - The catalog stays empty until the first load of the parsing pipeline has written its table. The functions that read it
   then return nothing: no REF is resolved, no source chip is added.
 - Capabilities are cached per visitor for `CAPS_TTL_S` (default 600 s).
+
+## Access to indexed documents
+
+Chat and impact search query Vector Search with the service principal of the app, not with the token of the visitor
+(which is only a fallback). Unity Catalog grants are therefore not applied per user: every visitor allowed into the chat
+reaches every passage of the index, and what a visitor can see is decided by what the parsing pipeline puts in it. The
+division filter (AS / IS) narrows the search but is not a permission. The REF links of the catalog cover the whole
+parsing scope, including documents that are not in the chat index, so a link opens the document in the Intraqual portal.
 
 ## See also
 

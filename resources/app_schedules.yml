@@ -33,7 +33,7 @@ targets:
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP: the deploy runs as this SP, which updates jobs created by a person
               level: CAN_MANAGE
           run_as:
-            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
           tasks:
             - task_key: stop_apps
               notebook_task:
@@ -78,7 +78,7 @@ targets:
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP: the deploy runs as this SP, which updates jobs created by a person
               level: CAN_MANAGE
           run_as:
-            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
           tasks:
             - task_key: stop_app
               notebook_task:
@@ -123,7 +123,7 @@ targets:
             - service_principal_name: "fde6ff28-739f-4a41-b61e-604a298c8478"  # DEV job SP: the deploy runs as this SP, which updates jobs created by a person
               level: CAN_MANAGE
           run_as:
-            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
           tasks:
             - task_key: start_app
               notebook_task:

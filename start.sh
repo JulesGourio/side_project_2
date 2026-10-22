@@ -27,21 +27,18 @@ if ! command -v antiword &>/dev/null; then
         (cd "$T" && apt-get download antiword 2>/dev/null)
     fi
 
-    # 3. Fall back to direct .deb download if needed
+    # 3. Fall back to a direct .deb download (https, checked against its SHA-256) if needed
     if ! ls "$T"/antiword*.deb &>/dev/null; then
-        [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ] && URLS=(
-            "http://archive.ubuntu.com/ubuntu/pool/universe/a/antiword/antiword_0.37-16_amd64.deb"
-            "http://archive.ubuntu.com/ubuntu/pool/universe/a/antiword/antiword_0.37-15build1_amd64.deb"
-            "https://deb.debian.org/debian/pool/main/a/antiword/antiword_0.37-15+b1_amd64.deb"
-        )
-        [ "$ARCH" = "aarch64" ] && URLS=(
-            "http://ports.ubuntu.com/ubuntu-ports/pool/universe/a/antiword/antiword_0.37-16_arm64.deb"
-            "http://ports.ubuntu.com/ubuntu-ports/pool/universe/a/antiword/antiword_0.37-15build1_arm64.deb"
-        )
-        for URL in "${URLS[@]:-}"; do
-            curl -fsSL --max-time 20 "$URL" -o "$T/antiword.deb" 2>/dev/null && break
-            rm -f "$T/antiword.deb"
-        done
+        if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
+            URL="https://archive.ubuntu.com/ubuntu/pool/universe/a/antiword/antiword_0.37-16_amd64.deb"
+            SHA256="b62117f65ccca2ececa9be365ab1276d94df37fa0635217c3ec068927cf17c83"
+            if curl -fsSL --max-time 20 "$URL" -o "$T/antiword.deb" 2>/dev/null \
+                    && [ "$(sha256sum "$T/antiword.deb" | cut -d' ' -f1)" = "$SHA256" ]; then
+                :
+            else
+                rm -f "$T/antiword.deb"
+            fi
+        fi
     fi
 
     DEB=$(ls "$T"/antiword*.deb 2>/dev/null | head -1)

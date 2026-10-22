@@ -12,6 +12,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   ppt: 'application/vnd.ms-powerpoint',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
   xls: 'application/vnd.ms-excel',
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
   gif: 'image/gif', webp: 'image/webp',
@@ -22,7 +23,7 @@ export const SUPPORTED_EXTENSIONS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif',
   'docx', 'doc',
   'pptx', 'ppt',
-  'xlsx', 'xls',
+  'xlsx', 'xlsm', 'xls',
   'xml',
 ]);
 
@@ -35,6 +36,7 @@ export const FILE_ACCEPT = [
   'application/vnd.ms-powerpoint',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
+  'application/vnd.ms-excel.sheet.macroEnabled.12',
   ...Array.from(SUPPORTED_EXTENSIONS, ext => `.${ext}`),
 ].join(',');
 

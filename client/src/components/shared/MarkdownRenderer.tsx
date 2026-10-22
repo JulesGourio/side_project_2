@@ -2,15 +2,9 @@ import React from "react";
 import { Copy, Check } from "lucide-react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import {
-  Prism as SyntaxHighlighter,
-  SyntaxHighlighterProps,
-} from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { isSafeImage, isSafeLink } from "./safeUrl";
 
-// Type workaround for the syntax highlighter with React 18
-const SyntaxHighlighterComponent =
-  SyntaxHighlighter as unknown as React.ComponentType<SyntaxHighlighterProps>;
+const CodeHighlighter = React.lazy(() => import("./CodeHighlighter"));
 
 function CodeBlock({ language, value }: { language: string; value: string }) {
   const [copied, setCopied] = React.useState(false);
@@ -42,23 +36,11 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
           )}
         </button>
       </div>
-      <SyntaxHighlighterComponent
-        language={language || "text"}
-        style={oneDark}
-        customStyle={{
-          margin: 0,
-          borderRadius: "0.75rem",
-          fontSize: "0.875rem",
-          lineHeight: "1.6",
-          padding: "1rem",
-          background: "rgba(15, 23, 42, 0.8)",
-        }}
-        showLineNumbers={value.split("\n").length > 3}
-        wrapLines={true}
-        wrapLongLines={false}
+      <React.Suspense
+        fallback={<pre className="m-0 rounded-xl p-4 text-sm overflow-x-auto">{value}</pre>}
       >
-        {value}
-      </SyntaxHighlighterComponent>
+        <CodeHighlighter language={language} value={value} />
+      </React.Suspense>
       {language && (
         <div className="absolute left-3 top-2 text-xs font-medium text-[var(--color-text-muted)] opacity-60">
           {language}
@@ -135,8 +117,12 @@ export function MarkdownRenderer({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        // The default sanitizer strips unknown protocols, which would drop the cite:n links.
-        urlTransform={(url) => (url.startsWith("cite:") ? url : defaultUrlTransform(url))}
+        // The default sanitizer strips unknown protocols, which would drop the cite:n links and inline images.
+        urlTransform={(url, key) => {
+          if (url.startsWith("cite:")) return url;
+          if (key === "src" && isSafeImage(url) && url.startsWith("data:")) return url;
+          return defaultUrlTransform(url);
+        }}
         components={{
           h1: ({ children }) => (
             <h1
@@ -226,14 +212,15 @@ export function MarkdownRenderer({
                   {Number.isNaN(n) ? "?" : n}
                 </sup>
               );
-              return cite?.url ? (
-                <a href={cite.url} target="_blank" rel="noopener noreferrer" title={tip} className="no-underline">
+              return isSafeLink(cite?.url) ? (
+                <a href={cite!.url} target="_blank" rel="noopener noreferrer" title={tip} className="no-underline">
                   {badge}
                 </a>
               ) : (
                 <span title={tip} className="cursor-default">{badge}</span>
               );
             }
+            if (!isSafeLink(href)) return <span>{children}</span>;
             return (
               <a
                 href={href}
@@ -245,6 +232,13 @@ export function MarkdownRenderer({
               </a>
             );
           },
+
+          img: ({ src, alt }) =>
+            isSafeImage(src) ? (
+              <img src={src} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" className="max-w-full h-auto" />
+            ) : (
+              <span>{alt}</span>
+            ),
 
           code: ({ className, children, ...props }: any) => {
             const match = /language-(\w+)/.exec(className || "");

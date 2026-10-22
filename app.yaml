@@ -38,8 +38,8 @@ env:
   - name: CHAT_REWRITE_FALLBACK_ENDPOINTS
     value: "databricks-gpt-5-6-luna"
   # "on": the first message of a conversation, in French or English, is only translated into the other language (one short call, no rewrite,
-  # nothing expanded) and searched with two queries of CHAT_PAIR_* passages. Off by default: it drops the acronym and synonym expansions
-  # of the bilingual rewrite. Follow-ups and other languages always use the rewrite.
+  # nothing expanded) and searched with two queries of CHAT_PAIR_* passages. The app default is off because it drops the acronym and
+  # synonym expansions of the bilingual rewrite; every target of utils/deploy/target_env.json turns it on. Follow-ups and other languages always use the rewrite.
   - name: CHAT_TRANSLATE_ONLY
     value: "off"
   - name: CHAT_PAIR_RERANK_TOP_K

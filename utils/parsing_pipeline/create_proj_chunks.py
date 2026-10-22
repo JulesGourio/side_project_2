@@ -20,7 +20,7 @@
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest` (task `2_manifest`), `category_reference` (task `1_categories`)
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_checkpoint` (tasks `3_parse` and `3b_parse_pdf`)
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.image_metadata` (keeps the rows already described across a rebuild)
-# MAGIC - `{PARSING_VOLUME_ROOT_PATH}` (the folders of the failed IDDOCs, for the retry)
+# MAGIC - `{VOLUME_ROOT_PATH}` (the folders of the failed IDDOCs, for the retry)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsed_documents`
@@ -76,6 +76,50 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Config Widgets
+# MAGIC The environments, the quality bypass and the debug mode are widgets: the job passes them as base parameters,
+# MAGIC and the notebook copies them to the environment that `config` reads when it is imported.
+
+
+# COMMAND ----------
+
+import os
+
+dbutils.widgets.removeAll()
+
+dbutils.widgets.text("pipeline_write_env", "", "Environment the tables are written to: dev, uat or prod")
+dbutils.widgets.text("pipeline_read_env", "", "Environment of the tables another task of this job wrote (empty: pipeline_write_env)")
+dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference tables (Intraqual data asset)")
+dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
+dbutils.widgets.text("debug", "false")
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full or rechunk")
+dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targeted run (empty: no filter)")
+dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
+dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
+dbutils.widgets.text("redescribe_all_images", "false", "true: describe every image again")
+
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
+    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
+PIPELINE_READ_ENV = dbutils.widgets.get("pipeline_read_env") or PIPELINE_WRITE_ENV
+DEBUG = dbutils.widgets.get("debug").lower() == "true"
+LOG_LEVEL = dbutils.widgets.get("log_level")
+
+# config reads the environment when it is imported, so the widget values are copied there first.
+os.environ["PIPELINE_WRITE_ENV"] = PIPELINE_WRITE_ENV
+os.environ["PIPELINE_READ_ENV"] = dbutils.widgets.get("pipeline_read_env")
+os.environ["REFERENCE_READ_ENV"] = dbutils.widgets.get("reference_read_env")
+os.environ["BYPASS_QUALITY_CHECKS"] = dbutils.widgets.get("bypass_quality_checks")
+os.environ["PARSING_RUN_MODE"] = dbutils.widgets.get("run_mode")
+os.environ["PARSING_PARSE_FILTER"] = dbutils.widgets.get("parse_filter")
+os.environ["PARSING_MAX_PARSE_FILES"] = dbutils.widgets.get("max_parse_files")
+os.environ["PARSING_MAX_SOURCE_STALENESS_HOURS"] = dbutils.widgets.get("max_source_staleness_hours")
+os.environ["PARSING_REDESCRIBE_ALL_IMAGES"] = dbutils.widgets.get("redescribe_all_images")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC The repository folder goes on `sys.path` for the driver, ahead of the repository root (`leap_utils`).
 
 # COMMAND ----------
@@ -101,21 +145,18 @@ import build_steps
 import output_steps
 import parse_steps
 import tables
+
 tables.require_gx()
 from leap_utils.common import logger as log_utils
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Widgets
+# MAGIC ### Job parameters
 # MAGIC The parent job run id must match the one `3_parse` wrote in the run scope.
 
 # COMMAND ----------
 
-dbutils.widgets.removeAll()
-
-dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-LOG_LEVEL = dbutils.widgets.get("log_level")
 dbutils.widgets.text("job_run_id", "", "Parent job run_id")
 parse_steps.set_job_run_id(dbutils.widgets.get("job_run_id"))
 
@@ -185,7 +226,9 @@ else:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    df_image_metadata = build_steps.build_image_metadata(target_iddocs, parse_steps.INGESTION_RUN_ID)
+    df_image_metadata = build_steps.build_image_metadata(
+        target_iddocs, parse_steps.INGESTION_RUN_ID
+    )
 
 # COMMAND ----------
 
@@ -196,8 +239,10 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    df_processed_files, df_chunks_all, df_chunks_archive = build_steps.build_processed_files_and_chunks(
-        target_iddocs, df_image_metadata, parse_steps.JOB_RUN_ID, revised_iddocs
+    df_processed_files, df_chunks_all, df_chunks_archive = (
+        build_steps.build_processed_files_and_chunks(
+            target_iddocs, df_image_metadata, parse_steps.JOB_RUN_ID, revised_iddocs
+        )
     )
 
 # COMMAND ----------
@@ -223,13 +268,18 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    tables.check_dataframe(df_processed_files, "parsed_documents", [
-        tables.not_null("IDDOC"),
-        tables.unique("IDDOC"),
-        tables.not_null("parse_status"),
-        tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
-        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
-    ], logger)
+    tables.check_dataframe(
+        df_processed_files,
+        "parsed_documents",
+        [
+            tables.not_null("IDDOC"),
+            tables.unique("IDDOC"),
+            tables.not_null("parse_status"),
+            tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
+            tables.not_null("division", mostly=0.99, severity=tables.AMBER),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 
@@ -240,15 +290,20 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    tables.check_dataframe(df_chunks_all.unionByName(df_chunks_archive), "chunks", [
-        tables.not_null("chunk_id"),
-        tables.unique("chunk_id"),
-        tables.not_null("IDDOC"),
-        tables.not_null("REF"),
-        tables.not_null("chunk_text"),
-        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
-        tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
-    ], logger)
+    tables.check_dataframe(
+        df_chunks_all.unionByName(df_chunks_archive),
+        "chunks",
+        [
+            tables.not_null("chunk_id"),
+            tables.unique("chunk_id"),
+            tables.not_null("IDDOC"),
+            tables.not_null("REF"),
+            tables.not_null("chunk_text"),
+            tables.not_null("division", mostly=0.99, severity=tables.AMBER),
+            tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 
@@ -259,12 +314,17 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    tables.check_dataframe(df_image_metadata, "image_metadata", [
-        tables.not_null("IDDOC"),
-        tables.not_null("image_id"),
-        tables.unique("IDDOC", "image_id"),
-        tables.not_null("volume_path", mostly=0.95, severity=tables.AMBER),
-    ], logger)
+    tables.check_dataframe(
+        df_image_metadata,
+        "image_metadata",
+        [
+            tables.not_null("IDDOC"),
+            tables.not_null("image_id"),
+            tables.unique("IDDOC", "image_id"),
+            tables.not_null("volume_path", mostly=0.95, severity=tables.AMBER),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 
@@ -276,7 +336,12 @@ if HAS_TARGET_IDDOCS:
 
 if HAS_TARGET_IDDOCS:
     output_steps.write_outputs(
-        df_processed_files, df_chunks_all, df_chunks_archive, df_image_metadata, parse_steps.JOB_RUN_ID, revised_iddocs
+        df_processed_files,
+        df_chunks_all,
+        df_chunks_archive,
+        df_image_metadata,
+        parse_steps.JOB_RUN_ID,
+        revised_iddocs,
     )
 else:
     logger.info("No target IDDOCs - nothing to write.")

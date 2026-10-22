@@ -9,14 +9,27 @@
 # The deploy steps call utils/deploy/bitbucket_deploy.sh (one line each): every environment
 # has deploy-<env> (bundle + app restart) and deploy-<env>-jobs (bundle only).
 #
-# Custom pipelines are triggered by hand. A push to main runs the UAT deployment, then
-# offers the PROD deployment as a manual step.
+# Custom pipelines are triggered by hand. The UAT and PROD pipelines run the test suite first (a failing test stops the deployment);
+# PROD refuses to deploy from a branch other than main. A push to main triggers nothing for now.
 # =============================================================================
 
 image: python:3.11-slim
 
 definitions:
   steps:
+    # -----------------------------------------------------------------------
+    # Test suite. It runs before every PROD deployment and can be triggered alone (tests).
+    # -----------------------------------------------------------------------
+    - step: &tests
+        name: Run the test suite
+        clone:
+          depth: 1
+        script:
+          # requirements.txt first: the tests run on the versions the app installs.
+          - pip install -q -r requirements.txt
+          - pip install -q -e ".[dev]"
+          - python -m pytest -q tests
+
     # -----------------------------------------------------------------------
     # DEV: target dev, profile job-runner-sa-dev (DEV service principal
     # fde6ff28-739f-4a41-b61e-604a298c8478). Copy of the UAT data in the DEV workspace.
@@ -257,6 +270,7 @@ definitions:
         clone:
           depth: 1
         script:
+          - test "$BITBUCKET_BRANCH" = "main" || { echo "PROD is deployed from the main branch only." >&2; exit 1; }
           - bash utils/deploy/bitbucket_deploy.sh prod app
 
     # -----------------------------------------------------------------------
@@ -268,10 +282,11 @@ definitions:
         clone:
           depth: 1
         script:
+          - test "$BITBUCKET_BRANCH" = "main" || { echo "PROD is deployed from the main branch only." >&2; exit 1; }
           - bash utils/deploy/bitbucket_deploy.sh prod jobs
 
     # -----------------------------------------------------------------------
-    # Copies the docling models volume and the Lakebase data from UAT to PROD, in two steps.
+    # Copies the docling models volume from UAT to PROD, in two steps. Lakebase data never leaves its environment.
     # Staging files pass between the steps as pipeline artifacts.
     # -----------------------------------------------------------------------
     - step: &export-from-uat
@@ -282,7 +297,6 @@ definitions:
         script:
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
           - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          - pip install -q psycopg2-binary databricks-sdk
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
               echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'UAT')." >&2
@@ -296,7 +310,6 @@ definitions:
             EOF
           - chmod 600 "$HOME/.databrickscfg"
           - databricks fs cp -r dbfs:/Volumes/uat_proj/qualibot/docling_models staging/docling_models --profile job-runner-sa-uat
-          - python3 utils/lakebase_sync/export_lakebase_to_json.py --profile job-runner-sa-uat --out-dir staging/lakebase
         artifacts:
           - staging/**
 
@@ -306,9 +319,9 @@ definitions:
         clone:
           depth: 1
         script:
+          - test "$BITBUCKET_BRANCH" = "main" || { echo "PROD is deployed from the main branch only." >&2; exit 1; }
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
           - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          - pip install -q psycopg2-binary databricks-sdk
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
               echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'Production')." >&2
@@ -322,7 +335,6 @@ definitions:
             EOF
           - chmod 600 "$HOME/.databrickscfg"
           - databricks fs cp -r staging/docling_models dbfs:/Volumes/prod_proj/qualibot/docling_models --overwrite --profile job-runner-sa-prod
-          - python3 utils/lakebase_sync/import_lakebase_from_json.py --profile job-runner-sa-prod --in-dir staging/lakebase
 
 pipelines:
   # Manual triggers (UAT first, then PROD).
@@ -346,12 +358,18 @@ pipelines:
     unbind-dev-test-volume:
       - step: *unbind-dev-test-volume
     deploy-uat:
+      - step: *tests
       - step: *deploy-uat
     deploy-uat-jobs:
+      - step: *tests
       - step: *deploy-uat-jobs
+    tests:
+      - step: *tests
     deploy-prod:
+      - step: *tests
       - step: *deploy-prod
     deploy-prod-jobs:
+      - step: *tests
       - step: *deploy-prod-jobs
     sync-prod-data:
       - step: *export-from-uat

@@ -11,6 +11,8 @@ build/
 # Node
 client/node_modules/
 client/.vite/
+# Built at deployment (bun run build); the sync rules of databricks.yml and the deploy script include it.
+client/out/
 
 # Scratch export artifacts:
 # reproducible, and too large for Databricks Apps' 10MB per-file deploy limit.
@@ -93,3 +95,4 @@ utils/deploy/.intraqual_profile/
 # Local MLflow output (tracking store and runs)
 mlruns/
 mlflow.db
+.delivery/

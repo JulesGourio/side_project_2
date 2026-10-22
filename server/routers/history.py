@@ -9,10 +9,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.services.infra.lakebase import get_pool, upsert_user
-from server.services.infra.user import get_user_identity, get_workspace_url, require_compare
+from server.services.infra.user import get_user_identity, get_workspace_url, reject_anonymous, require_compare
 # One definition: a row written with another default than the one the cache
 # lookup reads with would never be found again.
 from server.routers.compare.config import APP_VERSION
+from server.routers.errors import INTERNAL_ERROR
 
 # What a JSON response can hold; `_serialize` stringifies anything else.
 JsonScalar = str | int | float | bool | None
@@ -20,10 +21,29 @@ JsonScalar = str | int | float | bool | None
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_UNAVAILABLE = JSONResponse(
-    {'error': 'History not available (LAKEBASE_PROJECT_ID not configured)', 'available': False},
-    status_code=503,
-)
+def _unavailable() -> JSONResponse:
+    """Build the response returned when the history store is not configured.
+
+    :return: a new 503 response (responses are not shared between requests)
+    """
+    return JSONResponse(
+        {'error': 'History not available (LAKEBASE_PROJECT_ID not configured)', 'available': False},
+        status_code=503,
+    )
+
+
+async def _caller(request: Request) -> dict:
+    """The caller's identity, refused with a 401 when there is none (outside development).
+
+    :param request: the incoming request.
+    :return: ``{'user_id', 'workspace_id', 'email'}``; an empty ``user_id`` only in development.
+    """
+    try:
+        identity = dict(await get_user_identity(request))
+    except Exception:
+        identity = {'user_id': '', 'workspace_id': None, 'email': None}
+    reject_anonymous(identity)
+    return identity
 
 
 class SaveComparisonRequest(BaseModel):
@@ -73,31 +93,36 @@ def _serialize(row: Mapping[str, Any]) -> dict[str, JsonScalar]:
 async def save_comparison(body: SaveComparisonRequest, request: Request) -> dict | JSONResponse:
     """Save a finished comparison in the caller's history.
 
-    :param body: the compared files, the analysis and the timings/tokens of the run.
+    :param body: the compared files, the analysis and the timings of the run; the token counts and the cost it may carry
+        are ignored, they come from the ``llm_requests`` row of the caller.
     :param request: the incoming request, for the caller's identity.
     :return: the saved row's id (``messages_id``), or an error response (503 without database, 500 on a failed save).
     """
     pool = get_pool()
     if not pool:
-        return _UNAVAILABLE
+        return _unavailable()
 
-    try:
-        identity = await get_user_identity(request)
-    except Exception:
-        identity = {'user_id': '', 'email': None}
+    identity = await _caller(request)
     user_id = identity['user_id']
     workspace_url = get_workspace_url()
 
     try:
         async with pool.acquire() as conn:
             # Denormalized from llm_requests, so messages alone shows the model that produced the comparison.
+            # Usage numbers come from the caller's own llm_requests row, never from the request body.
             endpoint_name = None
+            usage: Mapping[str, Any] = {}
+            llm_request_id = None
             if body.llm_request_id is not None:
-                endpoint_row = await conn.fetchrow(
-                    'SELECT endpoint_name FROM llm_requests WHERE id = $1',
-                    body.llm_request_id,
+                usage_row = await conn.fetchrow(
+                    'SELECT endpoint_name, input_tokens, output_tokens, thinking_tokens, total_tokens, cost_eur '
+                    'FROM llm_requests WHERE id = $1 AND user_id = $2',
+                    body.llm_request_id, user_id,
                 )
-                endpoint_name = endpoint_row['endpoint_name'] if endpoint_row else None
+                if usage_row:
+                    usage = usage_row
+                    endpoint_name = usage_row['endpoint_name']
+                    llm_request_id = body.llm_request_id
 
             row = await conn.fetchrow(
                 '''
@@ -128,13 +153,13 @@ async def save_comparison(body: SaveComparisonRequest, request: Request) -> dict
                 body.processor_version,
                 body.ttft_s,
                 body.generation_s,
-                body.input_tokens,
-                body.output_tokens,
-                body.thinking_tokens,
-                body.total_tokens,
-                body.cost_eur,
+                usage.get('input_tokens'),
+                usage.get('output_tokens'),
+                usage.get('thinking_tokens'),
+                usage.get('total_tokens'),
+                usage.get('cost_eur'),
                 APP_VERSION,
-                body.llm_request_id,
+                llm_request_id,
                 endpoint_name,
             )
 
@@ -152,7 +177,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request) -> dict
         return result
     except Exception as e:
         logger.error(f'Failed to save comparison: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.put('/history/{comparison_id}/impact', dependencies=[Depends(require_compare)], response_model=None)
@@ -172,11 +197,8 @@ async def save_comparison_impact(
     """
     pool = get_pool()
     if not pool:
-        return _UNAVAILABLE
-    try:
-        identity = await get_user_identity(request)
-    except Exception:
-        identity = {'user_id': '', 'email': None}
+        return _unavailable()
+    identity = await _caller(request)
     try:
         async with pool.acquire() as conn:
             updated = await conn.fetchval(
@@ -188,7 +210,7 @@ async def save_comparison_impact(
         return {'success': True}
     except Exception as e:
         logger.error(f'Failed to save impact result: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.get('/history', dependencies=[Depends(require_compare)], response_model=None)
@@ -203,10 +225,7 @@ async def list_comparisons(request: Request, limit: int = 20, offset: int = 0) -
     pool = get_pool()
     if not pool:
         return {'comparisons': [], 'total': 0, 'available': False}
-    try:
-        identity = await get_user_identity(request)
-    except Exception:
-        identity = {'user_id': '', 'email': None}
+    identity = await _caller(request)
     user_id = identity['user_id']
     limit, offset = max(1, min(limit, 100)), max(0, offset)
     try:
@@ -230,7 +249,7 @@ async def list_comparisons(request: Request, limit: int = 20, offset: int = 0) -
         return {'comparisons': [_serialize(r) for r in rows], 'total': total, 'available': True}
     except Exception as e:
         logger.error(f'Failed to list comparisons: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.get('/history/{comparison_id}', dependencies=[Depends(require_compare)], response_model=None)
@@ -243,11 +262,8 @@ async def get_comparison(comparison_id: int, request: Request) -> dict | JSONRes
     """
     pool = get_pool()
     if not pool:
-        return _UNAVAILABLE
-    try:
-        identity = await get_user_identity(request)
-    except Exception:
-        identity = {'user_id': '', 'email': None}
+        return _unavailable()
+    identity = await _caller(request)
     user_id = identity['user_id']
     try:
         async with pool.acquire() as conn:
@@ -261,4 +277,4 @@ async def get_comparison(comparison_id: int, request: Request) -> dict | JSONRes
         return _serialize(row)
     except Exception as e:
         logger.error(f'Failed to get comparison {comparison_id}: {e}')
-        return JSONResponse({'error': str(e)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)

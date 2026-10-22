@@ -13,11 +13,13 @@ from pydantic import BaseModel
 
 from server.services.chat import mlflow_turns
 from server.services.infra.lakebase import get_pool, upsert_user
+from server.services.infra.tasks import spawn
 from server.services.infra.user import get_workspace_url, require_chat
 from server.routers.chat.helpers import (
-    _identity_or_anonymous, _stored_sources,
+    _identified, _stored_sources,
 )
 from server.routers.chat.persistence import _upsert_session
+from server.routers.errors import INTERNAL_ERROR
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,9 +52,10 @@ async def chat_feedback(body: ChatFeedbackRequest, request: Request) -> dict | J
     """Save a thumbs up / down on an assistant message and copy it to its MLflow trace.
 
     :param body: the vote (anything but ``up`` or ``down`` is refused with a 422 before the route runs), an optional
-        comment, and the message and session it is about.
+        comment, and the message and session it is about; the message must belong to one of the caller's sessions.
     :param request: the incoming request, for the caller's identity.
-    :return: ``{'success': True, 'id', 'vote'}``, or an error response (503 without database, 500 on a failed save).
+    :return: ``{'success': True, 'id', 'vote'}``, or an error response (404 unknown message, 503 without database,
+        500 on a failed save).
     """
     pool = get_pool()
     if not pool:
@@ -61,13 +64,17 @@ async def chat_feedback(body: ChatFeedbackRequest, request: Request) -> dict | J
             status_code=503,
         )
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
     workspace_id = identity.get('workspace_id')
     workspace_url = get_workspace_url()
 
     try:
         async with pool.acquire() as conn:
+            if body.message_id is not None and not await conn.fetchval(
+                    'SELECT 1 FROM chat_messages m JOIN chat_sessions s ON s.id = m.session_id'
+                    ' WHERE m.id = $1 AND s.user_id = $2', body.message_id, user_id):
+                return JSONResponse({'error': 'Message not found'}, status_code=404)
             row = await conn.fetchrow(
                 '''
                 INSERT INTO chat_feedbacks (message_id, session_id, user_id, workspace_id, workspace_url, vote, comment)
@@ -84,12 +91,12 @@ async def chat_feedback(body: ChatFeedbackRequest, request: Request) -> dict | J
             )
             mlflow_trace_id = await _turn_trace_id(conn, body.message_id)
         if mlflow_trace_id:
-            asyncio.get_running_loop().create_task(asyncio.to_thread(
+            spawn(asyncio.to_thread(
                 mlflow_turns.log_vote, mlflow_trace_id, body.vote, body.comment or '', user_id))
         return {'success': True, 'id': row['id'], 'vote': row['vote']}
     except Exception as exc:
         logger.error('Chat feedback save failed: %s', exc)
-        return JSONResponse({'error': str(exc)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.get('/chat/sessions', dependencies=[Depends(require_chat)], response_model=None)
@@ -103,7 +110,7 @@ async def list_sessions(request: Request) -> dict | JSONResponse:
     if not pool:
         return {'sessions': [], 'available': False}
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
 
     try:
@@ -151,14 +158,14 @@ async def get_session(session_id: str, request: Request) -> dict | JSONResponse:
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
 
     try:
         async with pool.acquire() as conn:
             # Scoped to the caller's own sessions; shared conversations are served through the share_token below.
             session = await conn.fetchrow(
-                'SELECT id, name, created_at FROM chat_sessions WHERE id = $1 AND user_id = $2',
+                'SELECT id, name, created_at FROM chat_sessions WHERE id = $1 AND user_id = $2 AND deleted = FALSE',
                 session_id, user_id,
             )
             if not session:
@@ -190,7 +197,7 @@ async def get_session(session_id: str, request: Request) -> dict | JSONResponse:
         }
     except Exception as exc:
         logger.error('Get session failed: %s', exc)
-        return JSONResponse({'error': str(exc)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.delete('/chat/sessions/{session_id}', dependencies=[Depends(require_chat)], response_model=None)
@@ -205,7 +212,7 @@ async def delete_session(session_id: str, request: Request) -> dict | JSONRespon
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
 
     try:
@@ -231,7 +238,7 @@ async def delete_session(session_id: str, request: Request) -> dict | JSONRespon
         return {'success': True}
     except Exception as exc:
         logger.error('Delete session failed: %s', exc)
-        return JSONResponse({'error': str(exc)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.post('/chat/sessions/{session_id}/share', dependencies=[Depends(require_chat)], response_model=None)
@@ -247,7 +254,7 @@ async def share_session(session_id: str, request: Request) -> dict | JSONRespons
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
 
     try:
@@ -268,7 +275,7 @@ async def share_session(session_id: str, request: Request) -> dict | JSONRespons
         return {'share_token': token}
     except Exception as exc:
         logger.error('Share session failed: %s', exc)
-        return JSONResponse({'error': str(exc)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.get('/chat/shared/{share_token}', dependencies=[Depends(require_chat)], response_model=None)
@@ -286,7 +293,7 @@ async def get_shared_session(share_token: str, request: Request) -> dict | JSONR
     try:
         async with pool.acquire() as conn:
             session = await conn.fetchrow(
-                'SELECT id, name, created_at FROM chat_sessions'
+                'SELECT id, user_id, name, created_at FROM chat_sessions'
                 ' WHERE share_token = $1 AND deleted = FALSE',
                 share_token,
             )
@@ -295,30 +302,31 @@ async def get_shared_session(share_token: str, request: Request) -> dict | JSONR
             msgs = await conn.fetch(
                 '''
                 SELECT m.id, m.role, m.content, m.created_at, m.sources_json,
-                       f.vote AS feedback_vote, f.comment AS feedback_comment
+                       f.vote AS feedback_vote
                 FROM chat_messages m
                 LEFT JOIN LATERAL (
-                    SELECT vote, comment FROM chat_feedbacks
-                    WHERE message_id = m.id ORDER BY created_at DESC LIMIT 1
+                    SELECT vote FROM chat_feedbacks
+                    WHERE message_id = m.id AND user_id = $2 ORDER BY created_at DESC LIMIT 1
                 ) f ON TRUE
                 WHERE m.session_id = $1 AND m.deleted = FALSE AND m.status = 'ok'
                 ORDER BY m.created_at ASC
                 ''',
-                session['id'],
+                session['id'], session['user_id'],
             )
 
         def _feedback_for(m) -> dict | None:
-            """The thumbs vote and comment on a message.
+            """The owner's thumbs vote on a message; the comment stays private.
 
-            :param m: a ``chat_messages`` row joined with its latest feedback.
-            :return: ``{'vote', 'comment'}``, or None when the message has no vote.
+            :param m: a ``chat_messages`` row joined with the owner's latest vote.
+            :return: ``{'vote', 'comment'}`` with no comment, or None when the owner gave no vote.
             """
             if not m['feedback_vote']:
                 return None
-            return {'vote': m['feedback_vote'], 'comment': m['feedback_comment']}
+            return {'vote': m['feedback_vote'], 'comment': None}
 
         return {
-            'id': session['id'],
+            # The opaque token stands for the id: a viewer must never learn the id of the owner's conversation.
+            'id': share_token,
             'name': session['name'],
             'created_at': session['created_at'].isoformat(),
             'messages': [
@@ -335,7 +343,7 @@ async def get_shared_session(share_token: str, request: Request) -> dict | JSONR
         }
     except Exception as exc:
         logger.error('Get shared session failed: %s', exc)
-        return JSONResponse({'error': str(exc)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)
 
 
 @router.post('/chat/shared/{share_token}/duplicate', dependencies=[Depends(require_chat)], response_model=None)
@@ -351,7 +359,7 @@ async def duplicate_shared_session(share_token: str, request: Request) -> dict |
     if not pool:
         return JSONResponse({'error': 'Database not configured'}, status_code=503)
 
-    identity = await _identity_or_anonymous(request)
+    identity = await _identified(request)
     user_id = identity['user_id']
     workspace_id = identity.get('workspace_id')
     workspace_url = get_workspace_url()
@@ -393,4 +401,4 @@ async def duplicate_shared_session(share_token: str, request: Request) -> dict |
         return {'session_id': new_session_id}
     except Exception as exc:
         logger.error('Duplicate shared session failed: %s', exc)
-        return JSONResponse({'error': str(exc)}, status_code=500)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=500)

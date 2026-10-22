@@ -9,9 +9,8 @@ import pytest
 
 PARSING = os.path.join(os.path.dirname(__file__), "..", "utils", "parsing_pipeline")
 sys.path.insert(0, PARSING)
-for key, value in {"PIPELINE_WRITE_ENV": "dev", "PARSING_INTRAQUAL_BRONZE": "bronze.sch",
-                   "PARSING_VOLUME_ROOT_PATH": "/Volumes/c/s/root", "PARSING_VOLUME_BASE_PATH": "/Volumes/c/s/img",
-                   "PARSING_OFFLINE_MODELS": "/models"}.items():
+for key, value in {"PIPELINE_WRITE_ENV": "dev", "REFERENCE_READ_ENV": "ref",
+                   "PARSING_IMAGES_VOLUME": "img"}.items():
     os.environ.setdefault(key, value)
 
 pyspark = pytest.importorskip("pyspark")
@@ -75,14 +74,14 @@ def spark():
 
 def _files(spark, names):
     """Candidate files as the scan returns them: (folder, name, extension, IDDOC, mtime in seconds)."""
-    from pyspark.sql import functions as F
+    from pyspark.sql import functions as f
 
     rows = [(f"/Volumes/c/s/root/{folder}/{name}", 100, name, ext, f"/Volumes/c/s/root/{folder}", iddoc, mtime)
             for folder, name, ext, iddoc, mtime in names]
     df = spark.createDataFrame(
         rows, "source_path string, source_file_size_bytes long, source_file_name string, source_file_extension string, "
               "source_folder_path string, IDDOC long, _mtime int")
-    return df.withColumn("source_modification_time", F.col("_mtime").cast("timestamp")).drop("_mtime")
+    return df.withColumn("source_modification_time", f.col("_mtime").cast("timestamp")).drop("_mtime")
 
 
 def test_iddoc_column_prefers_the_folder_then_the_file_then_a_bare_number(spark):

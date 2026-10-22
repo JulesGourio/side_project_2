@@ -24,40 +24,50 @@ import re
 import unicodedata
 from typing import Any, Callable, Dict, List, Sequence, Tuple
 
-Path = Tuple[Tuple[int, str], ...]          # ((level, title), ...)
+Path = Tuple[Tuple[int, str], ...]  # ((level, title), ...)
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 # A table-of-contents line: dot leaders then a page number (also inside a markdown table cell).
 _DOT_LEADER_RE = re.compile(r"(\.{4,}|…{2,}|_{4,})\s*\d+\s*(\||$)", re.MULTILINE)
 # "1. Purpose 3", "6.1 Awareness 5": a numbered heading followed by its page number, no leaders.
 _NUMBERED_PAGE_RE = re.compile(r"^\s*\d+(\.\d+)*\.?\s+\S.{0,90}?\s\d{1,3}\s*$", re.MULTILINE)
-_TOC_TITLE_RE = re.compile(r"\b(sommaire|table des mati[eè]res|contents|table of contents|obsah|съдържание)\b",
-                           re.IGNORECASE)
+_TOC_TITLE_RE = re.compile(
+    r"\b(sommaire|table des mati[eè]res|contents|table of contents|obsah|съдържание)\b",
+    re.IGNORECASE,
+)
 # Section titles of front matter: revision history, approval circuit.
 _FRONT_TITLE_RE = re.compile(
     r"(historique|suivi des (modifications|[ée]volutions|r[ée]visions)|follow-up of modifications|"
     r"revision history|changes? history|circuit de validation|validation circuit|written by|approved by)",
-    re.IGNORECASE)
+    re.IGNORECASE,
+)
 # Marks of the Intraqual cover block (cartouche): each distinct one found counts once.
-_FRONT_MARKS = [re.compile(p, re.IGNORECASE) for p in (
-    r"circuit de validation|validation circuit|circuito de validaci",
-    r"r[ée]daction\s*/|written by|[ée]crit par|escrito por",
-    r"validated by|valid[ée] par|validado por|checked by|v[ée]rifi[ée] par",
-    r"approved by|approuv[ée] par|approbation|aprobado por",
-    r"confidentialit|dgl-1056|s02p02",
-    r"type de document\s*:|document type\s*:",
-    r"document of reference workflow|circuit du document de r[ée]f[ée]rence",
-    r"langue de r[ée]f[ée]rence|referential language",
-    r"documents? associ[ée]s|associated documents|part 21g|part 145",
-    r"diffusion [ée]lectronique|validation [ée]lectronique|electronic release",
-    r"historique des|suivi des (modifications|[ée]volutions)|change history|follow-up of modifications|"
-    r"\|\s*\**\s*(indice|revision|rev)\b",
-)]
+_FRONT_MARKS = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"circuit de validation|validation circuit|circuito de validaci",
+        r"r[ée]daction\s*/|written by|[ée]crit par|escrito por",
+        r"validated by|valid[ée] par|validado por|checked by|v[ée]rifi[ée] par",
+        r"approved by|approuv[ée] par|approbation|aprobado por",
+        r"confidentialit|dgl-1056|s02p02",
+        r"type de document\s*:|document type\s*:",
+        r"document of reference workflow|circuit du document de r[ée]f[ée]rence",
+        r"langue de r[ée]f[ée]rence|referential language",
+        r"documents? associ[ée]s|associated documents|part 21g|part 145",
+        r"diffusion [ée]lectronique|validation [ée]lectronique|electronic release",
+        r"historique des|suivi des (modifications|[ée]volutions)|change history|follow-up of modifications|"
+        r"\|\s*\**\s*(indice|revision|rev)\b",
+    )
+]
 # A line where the real content starts after the cover block: summary, purpose, scope, contents.
 _CONTENT_START_RE = re.compile(
     r"^\W{0,6}(r[ée]sum[ée]|summary|objet|purpose|but\b|domaine d.application|scope|sommaire|"
-    r"table of contents|table des mati[eè]res|introduction|1\s*[.)-]?\s+[A-ZÉ])", re.IGNORECASE)
-FRONT_ZONE_CHARS = 8000          # cover blocks are only looked for at the top of the document
+    r"table of contents|table des mati[eè]res|introduction|1\s*[.)-]?\s+[A-ZÉ])",
+    re.IGNORECASE,
+)
+FRONT_ZONE_CHARS = 8000  # cover blocks are only looked for at the top of the document
+
+
 def default_count_tokens(text: str) -> int:
     """Token estimate (3.5 characters per token) used when no tokenizer is given.
 
@@ -73,7 +83,9 @@ def _is_table(block: str) -> bool:
     :param block: Block of Markdown text.
     """
     lines = block.split("\n")
-    return len(lines) >= 2 and all(l.lstrip().startswith("|") for l in lines[:2]) and "---" in lines[1]
+    return (
+        len(lines) >= 2 and all(l.lstrip().startswith("|") for l in lines[:2]) and "---" in lines[1]
+    )
 
 
 def markdown_blocks(text: str) -> List[Dict[str, Any]]:
@@ -112,7 +124,9 @@ def markdown_blocks(text: str) -> List[Dict[str, Any]]:
 
 
 # --- Oversized blocks ---
-def _split_text(text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]) -> List[str]:
+def _split_text(
+    text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]
+) -> List[str]:
     """Split on line breaks, then sentences, then spaces, then hard cuts.
 
     :param text: Text to split.
@@ -141,10 +155,12 @@ def _split_text(text: str, max_tokens: int, max_chars: int, count: Callable[[str
         if len(out) > 1:
             return [piece for o in out for piece in _split_text(o, max_tokens, max_chars, count)]
     step = max(1, max_chars)
-    return [text[i:i + step] for i in range(0, len(text), step)]
+    return [text[i : i + step] for i in range(0, len(text), step)]
 
 
-def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]) -> List[str]:
+def _split_table(
+    text: str, max_tokens: int, max_chars: int, count: Callable[[str], int]
+) -> List[str]:
     """Split a Markdown table by rows into pieces within the token and character limits, repeating the header in each.
 
     :param text: Markdown table, its header in the first two lines.
@@ -168,8 +184,15 @@ def _split_table(text: str, max_tokens: int, max_chars: int, count: Callable[[st
     if len(cur) > 2:
         out.append("\n".join(cur))
     # A single row over the limits is cut as text.
-    return [piece for o in out for piece in
-            (_split_text(o, max_tokens, max_chars, count) if count(o) > max_tokens or len(o) > max_chars else [o])]
+    return [
+        piece
+        for o in out
+        for piece in (
+            _split_text(o, max_tokens, max_chars, count)
+            if count(o) > max_tokens or len(o) > max_chars
+            else [o]
+        )
+    ]
 
 
 # --- Blocks -> passages ---
@@ -217,7 +240,7 @@ def _render(blocks: List[Dict[str, Any]], overlap: str = "") -> Tuple[str, Path]
     shown: Path | None = common
     for b in blocks:
         if b["path"] != shown and len(b["path"]) > len(common):
-            lines.append(f"[{_path_label(b['path'][len(common):])}]")
+            lines.append(f"[{_path_label(b['path'][len(common) :])}]")
         shown = b["path"]
         lines.append(b["text"])
     return "\n\n".join(lines), common
@@ -249,7 +272,7 @@ def _tail(text: str, max_chars: int) -> str:
             out = cand
     if not out:
         cut = text[-max_chars:]
-        out = "…" + cut[cut.find(" ") + 1:] if " " in cut else cut
+        out = "…" + cut[cut.find(" ") + 1 :] if " " in cut else cut
     return out
 
 
@@ -269,7 +292,7 @@ def block_kind(text: str, path: Path, in_front_zone: bool) -> str:
     if leaders >= 3 or (toc_named and (leaders + numbered) >= 3):
         return "toc"
     first = text.strip().split("\n", 1)[0].strip("*_#[]: ")
-    if _TOC_TITLE_RE.fullmatch(first) and len(text) < 2500:      # "SOMMAIRE\n1.PURPOSE3\n2.SCOPE3"
+    if _TOC_TITLE_RE.fullmatch(first) and len(text) < 2500:  # "SOMMAIRE\n1.PURPOSE3\n2.SCOPE3"
         return "toc"
     if _FRONT_TITLE_RE.search(titles):
         return "front"
@@ -286,7 +309,10 @@ def _split_cover_block(text: str) -> List[str]:
     """
     lines = text.split("\n")
     for i, line in enumerate(lines[1:], 1):
-        if _CONTENT_START_RE.match(line.strip()) and sum(1 for m in _FRONT_MARKS if m.search("\n".join(lines[:i]))) >= 2:
+        if (
+            _CONTENT_START_RE.match(line.strip())
+            and sum(1 for m in _FRONT_MARKS if m.search("\n".join(lines[:i]))) >= 2
+        ):
             head, rest = "\n".join(lines[:i]).strip(), "\n".join(lines[i:]).strip()
             return [p for p in (head, rest) if p]
     return [text]
@@ -311,7 +337,9 @@ def _settle_kinds(blocks: List[Dict[str, Any]]) -> None:
     i = 0
     while i < len(blocks):
         j = i
-        while j < len(blocks) and len(blocks[j]["text"]) < 200 and _toc_lines(blocks[j]["text"]) >= 1:
+        while (
+            j < len(blocks) and len(blocks[j]["text"]) < 200 and _toc_lines(blocks[j]["text"]) >= 1
+        ):
             j += 1
         named = i < len(blocks) and _TOC_TITLE_RE.search(" ".join(t for _, t in blocks[i]["path"]))
         if j - i >= 3 or (named and j > i):
@@ -322,18 +350,32 @@ def _settle_kinds(blocks: List[Dict[str, Any]]) -> None:
         for k, b in enumerate(blocks):
             if b["kind"] != "content" or not b.get("zone"):
                 continue
-            near = any(0 <= n < len(blocks) and blocks[n]["kind"] == "front" for n in (k - 1, k + 1))
+            near = any(
+                0 <= n < len(blocks) and blocks[n]["kind"] == "front" for n in (k - 1, k + 1)
+            )
             marks = sum(1 for m in _FRONT_MARKS if m.search(b["text"]))
-            if near and (marks >= 1 or len(b["text"].strip("*_# ")) < 60) and not _CONTENT_START_RE.match(b["text"].strip()):
+            if (
+                near
+                and (marks >= 1 or len(b["text"].strip("*_# ")) < 60)
+                and not _CONTENT_START_RE.match(b["text"].strip())
+            ):
                 b["kind"] = "front"
 
 
 _KIND_TYPE = {"toc": "toc", "front": "front_matter"}
 
 
-def chunk_markdown(text: str, *, min_tokens: int = 250, target_tokens: int = 500, max_tokens: int = 1000,
-                   max_chars: int = 4000, overlap_ratio: float = 0.12, chars_per_token: float = 3.5,
-                   count_tokens: Callable[[str], int] = default_count_tokens) -> List[Dict[str, Any]]:
+def chunk_markdown(
+    text: str,
+    *,
+    min_tokens: int = 250,
+    target_tokens: int = 500,
+    max_tokens: int = 1000,
+    max_chars: int = 4000,
+    overlap_ratio: float = 0.12,
+    chars_per_token: float = 3.5,
+    count_tokens: Callable[[str], int] = default_count_tokens,
+) -> List[Dict[str, Any]]:
     """Passages of a markdown document: dicts with chunk_index, chunk_text, chunk_char_count,
     chunk_token_count, chunk_content_type, metadata (Header N -> title).
 
@@ -356,14 +398,23 @@ def chunk_markdown(text: str, *, min_tokens: int = 250, target_tokens: int = 500
         in_zone = seen_chars < FRONT_ZONE_CHARS
         parts = _split_cover_block(b["text"]) if in_zone and not b["table"] else [b["text"]]
         for part in parts:
-            raw.append({"path": b["path"], "text": part, "table": b["table"], "zone": seen_chars < FRONT_ZONE_CHARS,
-                        "kind": block_kind(part, b["path"], seen_chars < FRONT_ZONE_CHARS)})
+            raw.append(
+                {
+                    "path": b["path"],
+                    "text": part,
+                    "table": b["table"],
+                    "zone": seen_chars < FRONT_ZONE_CHARS,
+                    "kind": block_kind(part, b["path"], seen_chars < FRONT_ZONE_CHARS),
+                }
+            )
             seen_chars += len(part)
     _settle_kinds(raw)
     blocks: List[Dict[str, Any]] = []
     for b in raw:
         if count(b["text"]) > target_tokens or len(b["text"]) > target_chars:
-            split = (_split_table if b["table"] else _split_text)(b["text"], target_tokens, target_chars, count)
+            split = (_split_table if b["table"] else _split_text)(
+                b["text"], target_tokens, target_chars, count
+            )
             blocks.extend({**b, "text": s} for s in split if s.strip())
         else:
             blocks.append(b)
@@ -386,7 +437,9 @@ def chunk_markdown(text: str, *, min_tokens: int = 250, target_tokens: int = 500
         if sum(count(b["text"]) for b in g) < tiny and i < len(groups) - 1:
             carry = g
             continue
-        if sum(count(b["text"]) for b in g) < tiny and merged:   # tiny last section: joins the previous one
+        if (
+            sum(count(b["text"]) for b in g) < tiny and merged
+        ):  # tiny last section: joins the previous one
             merged[-1].extend(g)
             continue
         merged.append(g)
@@ -408,8 +461,12 @@ def chunk_markdown(text: str, *, min_tokens: int = 250, target_tokens: int = 500
         cur: List[Dict[str, Any]] = []
         cur_tok = cur_chars = 0
         for b in g:
-            if cur and (cur_tok >= target_tokens or cur_tok + b["_tok"] > max_tokens
-                        or cur_chars + 2 + len(b["text"]) > max_chars or b["kind"] != cur[-1]["kind"]):
+            if cur and (
+                cur_tok >= target_tokens
+                or cur_tok + b["_tok"] > max_tokens
+                or cur_chars + 2 + len(b["text"]) > max_chars
+                or b["kind"] != cur[-1]["kind"]
+            ):
                 packs.append(cur)
                 cur, cur_tok, cur_chars = [], 0, 0
             cur.append(b)
@@ -428,17 +485,25 @@ def chunk_markdown(text: str, *, min_tokens: int = 250, target_tokens: int = 500
         for pack in packs:
             kind = pack[0]["kind"]
             # Overlap only between content passages: never carry a cover line into the summary.
-            overlap = _tail(prev_last, overlap_chars) if prev_last and kind == prev_kind == "content" else ""
+            overlap = (
+                _tail(prev_last, overlap_chars)
+                if prev_last and kind == prev_kind == "content"
+                else ""
+            )
             if overlap and overlap == pack[0]["text"]:
                 overlap = ""
             body, common = _render(pack, overlap)
             tables = sum(1 for b in pack if b["table"])
             base = "table" if tables == len(pack) else "mixed" if tables else "text"
-            out.append({
-                "chunk_text": body, "chunk_char_count": len(body), "chunk_token_count": count(body),
-                "chunk_content_type": _KIND_TYPE.get(kind, base),
-                "metadata": {f"Header {lvl}": title for lvl, title in common},
-            })
+            out.append(
+                {
+                    "chunk_text": body,
+                    "chunk_char_count": len(body),
+                    "chunk_token_count": count(body),
+                    "chunk_content_type": _KIND_TYPE.get(kind, base),
+                    "metadata": {f"Header {lvl}": title for lvl, title in common},
+                }
+            )
             prev_last, prev_kind = pack[-1]["text"], kind
     for i, c in enumerate(out):
         c["chunk_index"] = i
@@ -446,7 +511,16 @@ def chunk_markdown(text: str, *, min_tokens: int = 250, target_tokens: int = 500
 
 
 # --- Language of a document ---
-_SUFFIX_LANG = {"FR": "fr", "EN": "en", "GB": "en", "BG": "bg", "CZ": "cs", "MX": "es", "ES": "es", "BR": "pt"}
+_SUFFIX_LANG = {
+    "FR": "fr",
+    "EN": "en",
+    "GB": "en",
+    "BG": "bg",
+    "CZ": "cs",
+    "MX": "es",
+    "ES": "es",
+    "BR": "pt",
+}
 _STOP = {
     "fr": " le la les des du est et pour dans une sur par avec que qui ce sont aux ".split(),
     "en": " the and of to is for in on with that by are this be as from ".split(),
@@ -508,9 +582,12 @@ def sheet_lines(rows: Sequence[Sequence[Any]]) -> List[str]:
     h = header_row_index(rows)
     out = [" ".join(v for v in r if v) for r in rows[:h]]
     headers = rows[h]
-    for r in rows[h + 1:]:
-        parts = [f"{(headers[j] if j < len(headers) and headers[j] else f'col{j + 1}')}: {v}"
-                 for j, v in enumerate(r) if v]
+    for r in rows[h + 1 :]:
+        parts = [
+            f"{(headers[j] if j < len(headers) and headers[j] else f'col{j + 1}')}: {v}"
+            for j, v in enumerate(r)
+            if v
+        ]
         if parts:
             out.append("- " + ", ".join(parts))
     return out
@@ -529,7 +606,9 @@ def _norm(s: str) -> str:
     return re.sub(r"\W+", " ", s).strip()
 
 
-def image_anchor(context_text: str, chunks: Sequence[Tuple[int, str, Dict[str, str]]]) -> Tuple[int, Dict[str, str]] | None:
+def image_anchor(
+    context_text: str, chunks: Sequence[Tuple[int, str, Dict[str, str]]]
+) -> Tuple[int, Dict[str, str]] | None:
     """(chunk_index, headers) of the text passage where the image sits, found by the text just
     before the image (else just after) that Docling stored in image_metadata.context_text.
 
@@ -554,7 +633,9 @@ def image_anchor(context_text: str, chunks: Sequence[Tuple[int, str, Dict[str, s
     return None
 
 
-def image_passage_body(description: str, captions: Sequence[str] = (), headers: Dict[str, str] | None = None) -> str:
+def image_passage_body(
+    description: str, captions: Sequence[str] = (), headers: Dict[str, str] | None = None
+) -> str:
     """Description of an image with the section it sits in and its caption, which the vision
     prompt keeps out of the description itself.
 
@@ -571,8 +652,12 @@ def image_passage_body(description: str, captions: Sequence[str] = (), headers: 
     return ("\n".join(lines) + "\n\n" if lines else "") + (description or "").strip()
 
 
-def split_long_description(text: str, max_chars: int = 4000, max_tokens: int = 1000,
-                           count_tokens: Callable[[str], int] = default_count_tokens) -> List[str]:
+def split_long_description(
+    text: str,
+    max_chars: int = 4000,
+    max_tokens: int = 1000,
+    count_tokens: Callable[[str], int] = default_count_tokens,
+) -> List[str]:
     """A long transcription (scanned page) cut into passages; the first line (the
     '# [TYPE] what the page is' summary) is repeated at the top of each part.
 
@@ -590,8 +675,14 @@ def split_long_description(text: str, max_chars: int = 4000, max_tokens: int = 1
     room = max(500, max_chars - len(head) - 2)
     parts = []
     for block in [p for p in re.split(r"\n\s*\n", body) if p.strip()]:
-        if parts and len(parts[-1]) + 2 + len(block) <= room and count_tokens(parts[-1] + block) <= max_tokens:
+        if (
+            parts
+            and len(parts[-1]) + 2 + len(block) <= room
+            and count_tokens(parts[-1] + block) <= max_tokens
+        ):
             parts[-1] += "\n\n" + block
         else:
-            parts.extend(_split_text(block, max_tokens, room, count_tokens) if len(block) > room else [block])
+            parts.extend(
+                _split_text(block, max_tokens, room, count_tokens) if len(block) > room else [block]
+            )
     return [(head + "\n\n" + p) if head else p for p in parts]

@@ -1,0 +1,51 @@
+# Lines added to platform/asset_bundle/intraqual_ingestion/databricks.yml (excerpt, not the whole file).
+variables:
+  job_cluster_policy_id_M:
+    description: "Cluster policy ID (taille M) pour le job cluster classique (Z_0 init)"
+    default: "0005321E892BF7D2"  # dev
+  job_cluster_policy_id_S:
+    description: "Cluster policy id (S) du cluster du job data-asset D_2"
+    default: "001E30C26BD479FE"  # dev
+  data_asset_git_branch:
+    description: "Branche Git utilisee par le job data-asset D_2 (tasks source GIT)"
+    default: feature/intraqual_data_asset
+  data_asset_reference_read_env:
+    description: >
+      Env des tables de reference lues par le job data-asset D_2 (headers_others).
+      Toujours prod : les headers_intraqual_* sont portes par prod_bronze. Distinct de
+      reference_read_env, qui sert de suffixe de bucket cote ingestion.
+    default: prod
+  aws_instance_profile_arn:
+    description: "Instance profile ARN pour les job clusters classiques"
+    default: "arn:aws:iam::512505875250:instance-profile/databricks-workspace-stack-access-data-buckets"  # dev
+
+targets:
+  dev:
+    variables:
+      my_dbx_service_principal: fde6ff28-739f-4a41-b61e-604a298c8478
+      notification_email: patrice.puntis@latecoere.aero
+      job_cluster_policy_id_M: 0005321E892BF7D2
+      job_cluster_policy_id_S: 001E30C26BD479FE
+      data_asset_git_branch: feature/intraqual_data_asset
+      data_asset_reference_read_env: prod
+      aws_instance_profile_arn: arn:aws:iam::512505875250:instance-profile/databricks-workspace-stack-access-data-buckets
+
+  uat:
+    variables:
+      my_dbx_service_principal: 3e5cd4e5-f765-4760-b974-ee7715258b39
+      notification_email: patrice.puntis@latecoere.aero
+      job_cluster_policy_id_M: 0006C8EAD0AC0F37
+      job_cluster_policy_id_S: 000E7559CADE5290
+      data_asset_git_branch: main
+      data_asset_reference_read_env: prod
+      aws_instance_profile_arn: arn:aws:iam::760394329341:instance-profile/databricks-workspace-stack-uat-access-data-buckets
+
+  prod:
+    variables:
+      my_dbx_service_principal: b82d3b5a-b633-4738-8dde-68bb2142cb02
+      notification_email: leap_databricks_alert@latecoere.aero
+      job_cluster_policy_id_M: 000D029BB8A5436E
+      job_cluster_policy_id_S: 001C199A8D85FE35
+      data_asset_git_branch: main
+      data_asset_reference_read_env: prod
+      aws_instance_profile_arn: arn:aws:iam::952338794904:instance-profile/databricks-workspace-stack-access-data-buckets

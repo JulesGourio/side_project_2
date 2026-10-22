@@ -1,9 +1,8 @@
 # Export of the Lakebase tables of the app to the staging volume of the environment, then load of the exported tables as
 # Delta tables of <env>_proj.qualibot. One job for dev, uat and prod: the environment comes from pipeline_write_env.
 #
-# The job is declared once at the root. The targets at the end only override run_as: the DEV service principal is the
-# default, and the UAT and PROD targets run as their own service principal. The schedule is lakebase_export_schedule_pause,
-# the Delta load is lakebase_import_to_delta (off on DEV, whose schema holds Delta copies of the UAT tables).
+# The job is declared once at the root; each target at the end names the service principal it runs as (run_as). The schedule is lakebase_export_schedule_pause,
+# the Delta load is lakebase_import_to_delta. Each target loads the Lakebase of its own environment into its own <env>_proj.qualibot.
 # The task sync_user_capabilities runs alongside: it writes the visitors' groups to users, read by the app's access
 # check; the job identity needs SELECT on system.access.audit.
 
@@ -31,9 +30,6 @@ resources:
           level: CAN_MANAGE
         - group_name: "Role-Project-LEAP-CoreDev"
           level: CAN_MANAGE
-      # DEV service principal by default; the targets at the end of this file override it.
-      run_as:
-        service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
       tasks:
         # Serverless: classic job compute cannot reach the Lakebase private endpoint.
         - task_key: export_lakebase_to_volume
@@ -89,6 +85,13 @@ resources:
         pause_status: ${var.lakebase_export_schedule_pause}
 
 targets:
+  dev:
+    resources:
+      jobs:
+        lakebase_export:
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
+
   uat:
     resources:
       jobs:

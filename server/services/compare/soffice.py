@@ -36,6 +36,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# The extension comes from an uploaded file name and becomes part of a path: letters and digits only.
+_SAFE_SUFFIX = re.compile(r'^\.[A-Za-z0-9]{1,8}$')
 _CONVERT_TIMEOUT_S = int(os.getenv('SOFFICE_CONVERT_TIMEOUT_S', '180'))
 
 # soffice is single-document-per-invocation here (isolated profiles), but each
@@ -64,6 +66,22 @@ def _extract_root() -> Path:
         stem = re.sub(r'[^A-Za-z0-9._-]', '_', archive.rsplit('/', 1)[-1]).removesuffix('.tar.gz')
         return base / stem
     return base
+
+
+_CACHE_MAX_FILES = 200
+
+
+def _prune_cache(directory: Path) -> None:
+    """Keep the most recently written PDFs of the cache and delete the rest.
+
+    :param directory: cache directory
+    """
+    try:
+        files = sorted(directory.glob('*.pdf'), key=lambda f: f.stat().st_mtime, reverse=True)
+        for old in files[_CACHE_MAX_FILES:]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        pass  # cache is best-effort
 
 
 def _cache_dir() -> Path:
@@ -116,6 +134,7 @@ def _extract_archive_from_volume(volume_path: str) -> Path:
     from databricks.sdk import WorkspaceClient
 
     root = _extract_root()
+    # Written last: its absence means a previous extraction was interrupted and the tree cannot be trusted.
     marker = root / '.extract_complete'
     if marker.exists():
         binary = _find_binary_in_tree(root)
@@ -124,6 +143,7 @@ def _extract_archive_from_volume(volume_path: str) -> Path:
         # Marker without binary — corrupted; start over.
         shutil.rmtree(root, ignore_errors=True)
 
+    # Start from an empty folder: leftovers of an interrupted extraction would mix with the new files.
     if root.exists():
         shutil.rmtree(root, ignore_errors=True)
     root.mkdir(parents=True, exist_ok=True)
@@ -133,6 +153,7 @@ def _extract_archive_from_volume(volume_path: str) -> Path:
     w = WorkspaceClient()
     resp = w.files.download(volume_path)
     archive_path = root / 'archive.tar.gz'
+    # Streamed to disk in 8 MB blocks: the archive is large and must not sit in memory.
     with open(archive_path, 'wb') as f:
         shutil.copyfileobj(resp.contents, f, length=8 * 1024 * 1024)
     logger.info(
@@ -140,10 +161,11 @@ def _extract_archive_from_volume(volume_path: str) -> Path:
         archive_path.stat().st_size / 1e6, time.monotonic() - started,
     )
 
+    # The archive is the operator's own file on the volume, not user input, so its member paths are trusted.
     with tarfile.open(archive_path, 'r:gz') as tar:
         tar.extractall(root)
-    archive_path.unlink(missing_ok=True)
-    _mark_executable(root)
+    archive_path.unlink(missing_ok=True)  # frees the disk space of the temp dir
+    _mark_executable(root)  # the executable bits do not survive every archive tool
 
     binary = _find_binary_in_tree(root)
     if not binary:
@@ -290,6 +312,9 @@ def convert_docx_to_pdf(docx_bytes: bytes, timeout_s: int = _CONVERT_TIMEOUT_S, 
     :param suffix: file extension of the document, with or without the dot
     :return: the PDF bytes
     """
+    suffix = suffix if suffix.startswith('.') else '.' + suffix
+    if not _SAFE_SUFFIX.match(suffix):
+        raise SofficeConversionError(f'unsupported file extension {suffix!r}')
     digest = hashlib.sha256(docx_bytes).hexdigest()
     cached = _cache_dir() / f'{digest}.pdf'
     if cached.is_file() and cached.stat().st_size > 0:
@@ -300,7 +325,7 @@ def convert_docx_to_pdf(docx_bytes: bytes, timeout_s: int = _CONVERT_TIMEOUT_S, 
     with _convert_semaphore:
         with tempfile.TemporaryDirectory(prefix='soffice_job_') as tmp:
             tmp_path = Path(tmp)
-            src = tmp_path / f'input{suffix if suffix.startswith(".") else "." + suffix}'
+            src = tmp_path / f'input{suffix}'
             src.write_bytes(docx_bytes)
             # Isolated profile per invocation — allows concurrent soffice
             # processes and avoids the shared-profile lock file entirely.
@@ -338,6 +363,7 @@ def convert_docx_to_pdf(docx_bytes: bytes, timeout_s: int = _CONVERT_TIMEOUT_S, 
     try:
         tmp_cache.write_bytes(pdf_bytes)
         tmp_cache.replace(cached)
+        _prune_cache(cached.parent)
     except OSError:
         pass  # cache is best-effort
     return pdf_bytes

@@ -197,7 +197,8 @@ def _is_retryable(exc: BaseException) -> bool:
     return isinstance(exc, httpx.TransportError)
 
 
-async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: int) -> str:
+async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: int,
+                    record: Dict[str, Any] | None = None) -> str:
     """TRANSLATE_ENDPOINT, then each of TRANSLATE_FALLBACK_ENDPOINTS; raises the last error.
 
     :param system: system prompt
@@ -205,12 +206,13 @@ async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: i
     :param host: Databricks workspace URL
     :param token: Databricks access token
     :param max_tokens: output budget
+    :param record: dict filled with the messages, the endpoint and the token counts of the call, None to skip
     :return: the text of the first endpoint that answers
     """
     last: Exception | None = None
     for endpoint in dict.fromkeys([TRANSLATE_ENDPOINT] + TRANSLATE_FALLBACK_ENDPOINTS):
         try:
-            text = await _call_endpoint(endpoint, system, user, host, token, max_tokens)
+            text = await _call_endpoint(endpoint, system, user, host, token, max_tokens, record)
         except Exception as exc:  # noqa: BLE001 — next endpoint
             logger.warning('translation_bridge: %s failed (%s)', endpoint, exc)
             last = exc
@@ -227,7 +229,8 @@ async def _call_llm(system: str, user: str, host: str, token: str, max_tokens: i
     retry=retry_if_exception(_is_retryable),
     reraise=True,
 )
-async def _call_endpoint(endpoint: str, system: str, user: str, host: str, token: str, max_tokens: int) -> str:
+async def _call_endpoint(endpoint: str, system: str, user: str, host: str, token: str, max_tokens: int,
+                         record: Dict[str, Any] | None = None) -> str:
     """One call to a serving endpoint, retried on 429, 5xx and network errors.
 
     :param endpoint: serving endpoint name
@@ -236,6 +239,7 @@ async def _call_endpoint(endpoint: str, system: str, user: str, host: str, token
     :param host: Databricks workspace URL
     :param token: Databricks access token
     :param max_tokens: output budget
+    :param record: dict filled with the messages sent and, once the call answers, the endpoint and the token counts; None to skip
     :return: the text of the reply
     """
     url = f'{host}/serving-endpoints/{endpoint}/invocations'
@@ -249,10 +253,15 @@ async def _call_endpoint(endpoint: str, system: str, user: str, host: str, token
     }
     if supports_temperature(endpoint):
         payload['temperature'] = 0.0
+    if record is not None:
+        record['messages'] = payload['messages']
     client = _get_http_client()
     resp = await client.post(url, headers=headers, json=payload)
     resp.raise_for_status()
     data = resp.json()
+    if record is not None:
+        usage = data.get('usage') or {}
+        record.update(endpoint=endpoint, input_tokens=usage.get('prompt_tokens'), output_tokens=usage.get('completion_tokens'))
     content = data['choices'][0]['message']['content']
     if isinstance(content, list):
         content = ''.join(b.get('text', '') for b in content if isinstance(b, dict))
@@ -269,13 +278,15 @@ _DETECT_TRANSLATE_SYSTEM = (
 )
 
 
-async def translate_question_to_en(question: str, host: str, token: str) -> tuple[str, TranslationContext]:
+async def translate_question_to_en(question: str, host: str, token: str,
+                                   record: Dict[str, Any] | None = None) -> tuple[str, TranslationContext]:
     """Return (english_question, context). No-ops (and no network call) when
     the question is already French/English by the fast local check.
 
     :param question: question in any language
     :param host: Databricks workspace URL
     :param token: Databricks access token
+    :param record: dict filled with the messages, endpoint and token counts of the model call; None to skip
     :return: ``(english_question, context)``; the question itself when no translation was needed
     """
     guess = fast_lang_guess(question)
@@ -283,7 +294,7 @@ async def translate_question_to_en(question: str, host: str, token: str) -> tupl
         return question, TranslationContext(guess, guess, needs_translation=False)
 
     try:
-        raw = await _call_llm(_DETECT_TRANSLATE_SYSTEM, question, host, token, max_tokens=400)
+        raw = await _call_llm(_DETECT_TRANSLATE_SYSTEM, question, host, token, max_tokens=400, record=record)
     except Exception as exc:
         logger.warning('translation_bridge: detect/translate LLM call failed, using original text: %s', exc)
         return question, TranslationContext('unknown', 'the original language', needs_translation=False,
@@ -306,7 +317,8 @@ async def translate_question_to_en(question: str, host: str, token: str) -> tupl
     return en_text, TranslationContext(lang_code or 'unknown', det.get('lang_name', 'the original language'), needs_translation=True)
 
 
-async def translate_answer_back(answer: str, ctx: TranslationContext, host: str, token: str) -> str:
+async def translate_answer_back(answer: str, ctx: TranslationContext, host: str, token: str,
+                                record: Dict[str, Any] | None = None) -> str:
     """Translate the answer back to the question's language. No-op when
     the question didn't need bridging AND the answer isn't a confident
     language mismatch — see _answer_language_mismatch for why the fr/en case
@@ -316,6 +328,7 @@ async def translate_answer_back(answer: str, ctx: TranslationContext, host: str,
     :param ctx: context returned by ``translate_question_to_en``
     :param host: Databricks workspace URL
     :param token: Databricks access token
+    :param record: dict filled with the messages, endpoint and token counts of the model call; None to skip
     :return: the answer in the question's language, or the original text when it was not translated
     """
     if not answer.strip():
@@ -334,7 +347,7 @@ async def translate_answer_back(answer: str, ctx: TranslationContext, host: str,
     # token) plus a margin, so a long answer is not cut at the end of its translation.
     max_tokens = min(16000, max(4000, len(answer) // 2 + 3000))
     try:
-        translated = await _call_llm(system, answer, host, token, max_tokens=max_tokens)
+        translated = await _call_llm(system, answer, host, token, max_tokens=max_tokens, record=record)
     except Exception as exc:
         logger.warning('translation_bridge: answer translation failed, returning original text: %s', exc)
         ctx.answer_error = f'{type(exc).__name__}: {exc}'

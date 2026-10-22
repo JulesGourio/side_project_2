@@ -1,22 +1,24 @@
 import { useEffect, useState } from 'react';
 import { ChatView } from '@/components/chat/ChatView';
+import { AccessCheckFailed } from '@/components/shared/AccessCheckFailed';
 import { AccessDenied } from '@/components/shared/AccessDenied';
-import { getAppConfig, getUserMe } from '@/lib/config';
+import { getAppConfig } from '@/lib/config';
+import { useUserMe } from '@/lib/useUserMe';
 
 export function ChatPage() {
-  const [state, setState] = useState<{ chatEnabled: boolean; canChat: boolean } | null>(null);
+  const { state: me, retry } = useUserMe();
+  const [chatEnabled, setChatEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
-    Promise.all([getAppConfig(), getUserMe()]).then(([cfg, me]) =>
-      setState({ chatEnabled: cfg.chat?.enabled ?? true, canChat: me.can_chat }),
-    );
+    getAppConfig().then((cfg) => setChatEnabled(cfg.chat?.enabled ?? true));
   }, []);
 
-  if (state === null) return null;
+  if (me.status === 'failed') return <AccessCheckFailed onRetry={retry} />;
+  if (me.status === 'loading' || chatEnabled === null) return null;
 
-  if (!state.canChat) return <AccessDenied feature="Chat" />;
+  if (!me.canChat) return <AccessDenied feature="Chat" />;
 
-  if (!state.chatEnabled) {
+  if (!chatEnabled) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center">
         <div

@@ -11,6 +11,7 @@ loads are in [prompts](../../../prompts/README.md).
 | Module | Content |
 |---|---|
 | `__init__.py` | The public names of the package (`stream_chat`, `retrieve_for_turn`, `settings`, ...) |
+| `types.py` | The shapes of the dicts the engine passes around: `SearchRow`, `Hit`, `PassageRecord`, `DocumentPassages` |
 | `config.py` | Settings read from the `CHAT_*` environment at call time. The division filter (`ALL`, `AS`, `IS`). `settings()`, recorded on each turn. The system instructions (`division_prompt`, `load_instructions`, cached). The patterns that strip company and document-type words from a rewrite (`NOISE_PHRASES`) |
 | `queries.py` | Translation of an opening message (`translate_query`), the bilingual rewrite (`rewrite_queries`), `split_bilingual`, `strip_added_noise`, `opening_language` |
 | `search.py` | The Vector Search calls of a turn: reranked and raw HYBRID queries, merge by best rank, lookups filtered by REF, and the early search of the question (`start_question_search`) |
@@ -38,7 +39,8 @@ loads are in [prompts](../../../prompts/README.md).
   or `over_cap`.
 - The rewrite drops the company and document-type words that the conversation does not use (`strip_added_noise`).
 - The prompt gets the date sent with the question. The engine removes that `[Date: …]` prefix before searching.
-- The prompt forbids a closing list of sources. The sources shown are built from the `[n]` markers and the catalog.
+- The sources shown as chips are built from the `[n]` markers and the catalog. The system prompt (`base.md`) asks the model to end
+  an answer with a table of the documents it used (REF, title, version, status, division), written from the documents list.
 - Documents are filtered by `division` in the single index. `ALL` applies no filter.
 - The citation parser holds back a partial marker at the end of a chunk until the next chunk decides what it is.
 

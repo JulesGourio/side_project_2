@@ -25,15 +25,12 @@ Command-line scripts run from the repository root:
 
 ```
 python utils/deploy/render_target_config_env.py <dev|uat|prod> [output_path]
-python utils/lakebase_sync/export_lakebase_to_json.py --profile <cli-profile> [--database doccompare] [--out-dir staging/lakebase]
-python utils/lakebase_sync/import_lakebase_from_json.py --profile <cli-profile> [--database doccompare] [--in-dir staging/lakebase]
 python utils/evaluation/check_vision_endpoints.py --profile <cli-profile> --images <folder> [--endpoints <a,b>] [--question <text>] [--timeout 120]
 python utils/evaluation/create_chat_experiment.py --profile <cli-profile> --app qualibot --experiment <path> [--uc-schema <catalog.schema> --warehouse-id <id>] [--managers <group,group>]
 python utils/evaluation/register_chat_prompts.py --profile <cli-profile> --schema <catalog.schema> --experiment <path> [--app-root <folder>]
 ```
 
 - `render_target_config_env.py` writes `target_config.env` (default path) with one `export` line per setting.
-- `export_lakebase_to_json.py` and `import_lakebase_from_json.py` default to the database `doccompare` and to the folder `staging/lakebase`.
 - `check_vision_endpoints.py` exits with 0 when every request was answered, 1 when one failed, 2 on a bad folder or an empty list.
 - `create_chat_experiment.py` and `register_chat_prompts.py` run as Python tasks of the job without `--profile`.
   `register_chat_prompts.py` needs `--app-root` inside a job, where it runs through `exec` and has no `__file__`.
@@ -56,11 +53,7 @@ PowerShell, from the repository root:
 
 ## Rules
 
-- The Lakebase copies to PROD replace the rows of each table of the target database: `import_lakebase_from_json.py`
-  runs one `DELETE` and one `INSERT` per table in a single transaction, so a failure rolls back the whole import.
-- The import writes the `id` values as they are and sets each table's sequence to its maximum `id`.
-- The tables of `MIGRATE_TO_PROD_TABLES_TO_SKIP` (`llm_requests`) are not copied to PROD. The other tables are copied in
-  the order of `MIGRATE_TO_PROD_TABLE_ORDER`, parents first.
+- Lakebase data goes from UAT to PROD only through the two Bitbucket steps "Sync prod data" (export from UAT, then import to PROD), started by hand. No other step copies it between environments.
 - The exported files hold user data (questions, answers, identifiers). They stay in the staging folders and volumes.
 - The grant jobs cover the volumes, the indexes, the tables and the project schemas. They never grant on serving
   endpoints: every workspace user already queries them.

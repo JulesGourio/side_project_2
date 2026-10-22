@@ -3,7 +3,7 @@
 # Daily chain, each phase on the cluster that suits it:
 #   1_categories, 2_manifest : freshness guard, category_reference, scope and parse_manifest -> small CPU (shared by both)
 #   3_parse                  : scope, selection, resume, parse of every non-PDF format (and of a few PDFs)  -> CPU (S policy)
-#   3b_needs_gpu             : condition: more than parsing_gpu_min_pdfs PDFs left for the GPU
+#   3b_needs_gpu             : condition: more than GPU_MIN_PDFS PDFs left for the GPU
 #   3b_parse_pdf             : Docling on the queued PDFs (layout and table models)          -> GPU (g4dn), only when needed
 #   3c_chunks                : retry, chunking, quality checks, table writes                 -> CPU (the cluster of 3_parse)
 #   4_describe_images        : vision LLM image description                                  -> small CPU (bound by the rate limiter)
@@ -14,14 +14,13 @@
 # Without 5_sync_index, new chunks are never queryable (Delta Sync indexes are TRIGGERED).
 #
 # Variables (databricks.yml, per target): parsing_gpu_node_type, parsing_describe_node_type, parsing_parse_cpu_node_type,
-# parsing_num_workers, parsing_gpu_min_pdfs, parsing_max_parse_files,
+# parsing_num_workers, GPU_MIN_PDFS, max_parse_files,
 # parsing_vector_search_indexes, parsing_schedule_cron, parsing_schedule_pause, parsing_lakebase_database.
 # PARSING_* env vars (spark_env_vars below) carry catalog, volumes and run mode.
 #
 # Every schedule stays PAUSED until explicitly promoted.
 #
-# The job is declared once at the root. The targets at the end only override run_as: the DEV service principal
-# is the default, and the UAT and PROD targets run as their own service principal.
+# The job is declared once at the root; each target at the end names the service principal it runs as (run_as).
 
 resources:
   jobs:
@@ -32,8 +31,20 @@ resources:
 
       # One run at a time: the parse tasks hand over through parsing_run_scope and parsing_gpu_queue, rewritten by each run.
       max_concurrent_runs: 1
+      # Run-time choices, changed per run ("Run now with different parameters"); not bundle variables.
+      parameters:
+        - name: run_mode
+          default: "incremental"
+        - name: parse_filter
+          default: ""
+        - name: max_parse_files
+          default: "500"
+        - name: max_source_staleness_hours
+          default: "36"
+        - name: redescribe_all_images
+          default: "false"
+      timeout_seconds: 172800   # 48 h: a run never holds the single concurrent slot longer
 
-      # DEV service principal by default; the targets at the end of this file override it.
       queue:
         enabled: true
       email_notifications:
@@ -41,11 +52,8 @@ resources:
           - ${var.notification_email}
       notification_settings:
         no_alert_for_canceled_runs: true
-      run_as:
-        service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478
 
       tags:
-        project: Qualibot
         activity-type: ${var.job_activity_tag}
         ingestion-system: intraqual_ingestion
         job-purpose: project
@@ -78,15 +86,8 @@ resources:
             custom_tags:
               ResourceClass: SingleNode
             spark_env_vars:
-              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
-              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
-              PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-              PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
-              PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
-              PARSING_MAX_SOURCE_STALENESS_HOURS: ${var.parsing_max_source_staleness_hours}
+              PARSING_IMAGES_VOLUME: ${var.parsing_images_volume}
               PARSING_ARCHIVE_MAX_DOCS: ${var.parsing_archive_max_docs}
-              PARSING_USE_GPU:          "false"
 
         # ── CPU cluster for the parse and the chunk build (3_parse, 3c_chunks) ──
         # Docling on CPU for docx / pptx / html (no GPU model) and for the few PDFs of a daily run; the S policy allows
@@ -107,18 +108,7 @@ resources:
             custom_tags:
               ResourceClass: SingleNode
             spark_env_vars:
-              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
-              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
-              PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-              PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
-              PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
-              PARSING_RUN_MODE:         ${var.parsing_run_mode}
-              PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
-              PARSING_MAX_PARSE_FILES:  ${var.parsing_max_parse_files}
-              PARSING_GPU_MIN_PDFS:     ${var.parsing_gpu_min_pdfs}
-              PARSING_ARCHIVE_NOTICES_IN_RAG: ${var.parsing_archive_notices_in_rag}
-              PARSING_USE_GPU:          "false"
+              PARSING_IMAGES_VOLUME: ${var.parsing_images_volume}
               USE_TF:                 "0"
               TRANSFORMERS_NO_TF:     "1"
               TF_CPP_MIN_LOG_LEVEL:   "3"
@@ -147,17 +137,7 @@ resources:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.databricks.delta.autoCompact.enabled: "true"
             spark_env_vars:
-              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
-              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
-              PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-              PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
-              PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
-              PARSING_RUN_MODE:         ${var.parsing_run_mode}
-              PARSING_PARSE_FILTER:     ${var.parsing_parse_filter}
-              PARSING_MAX_PARSE_FILES:  ${var.parsing_max_parse_files}
-              PARSING_ARCHIVE_NOTICES_IN_RAG: ${var.parsing_archive_notices_in_rag}
-              PARSING_USE_GPU:          "true"
+              PARSING_IMAGES_VOLUME: ${var.parsing_images_volume}
               # Set before the interpreter starts.
               USE_TF:                 "0"
               TRANSFORMERS_NO_TF:     "1"
@@ -183,27 +163,30 @@ resources:
             custom_tags:
               ResourceClass: SingleNode
             spark_env_vars:
-              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_BRONZE: ${var.intraqual_bronze_catalog_schema}
-              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
-              PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
-              PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
-              PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
-              PARSING_RUN_MODE:         ${var.parsing_run_mode}
-              PARSING_REDESCRIBE_ALL_IMAGES: ${var.parsing_redescribe_all_images}
-              PARSING_USE_GPU:          "false"
+              PARSING_IMAGES_VOLUME: ${var.parsing_images_volume}
 
       tasks:
         - task_key: "1_categories"
-          description: "Intraqual source freshness guard + build category_reference"
+          timeout_seconds: 3600
+          description: "Intraqual data asset freshness guard + build category_reference"
           job_cluster_key: meta_cpu_cluster
           notebook_task:
             notebook_path: ../utils/parsing_pipeline/create_proj_category_reference.py
             source: WORKSPACE
+            base_parameters:
+              run_mode: "{{job.parameters.run_mode}}"
+              parse_filter: "{{job.parameters.parse_filter}}"
+              max_parse_files: "{{job.parameters.max_parse_files}}"
+              max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
+              redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
           libraries:
             - pypi: {package: "packaging"}
 
         - task_key: "2_manifest"
+          timeout_seconds: 7200
           description: "Qualibot scope -> parsed_documents exclusions + parse_manifest"
           depends_on:
             - task_key: "1_categories"
@@ -212,8 +195,14 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_parse_manifest.py
             source: WORKSPACE
             base_parameters:
-              # dry_run=true is mandatory on a scheduled run: scope depends on courant/etat, which change on every revision.
-              dry_run: "true"
+              run_mode: "{{job.parameters.run_mode}}"
+              parse_filter: "{{job.parameters.parse_filter}}"
+              max_parse_files: "{{job.parameters.max_parse_files}}"
+              max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
+              redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               job_run_id: "{{job.run_id}}"
           libraries:
             - pypi: {package: "packaging"}
@@ -221,6 +210,8 @@ resources:
 
         - task_key: "3_parse"
           description: "Scope, selection, resume, parse of the non-PDF formats and of a few PDFs (CPU)"
+          # Bounds a full corpus parse; the job holds its single slot until the task stops.
+          timeout_seconds: 86400
           depends_on:
             - task_key: "2_manifest"
           job_cluster_key: parse_cpu_cluster
@@ -228,10 +219,18 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_parsing_checkpoint.py
             source: WORKSPACE
             base_parameters:
+              run_mode: "{{job.parameters.run_mode}}"
+              parse_filter: "{{job.parameters.parse_filter}}"
+              max_parse_files: "{{job.parameters.max_parse_files}}"
+              max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
+              redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               job_run_id: "{{job.run_id}}"
           # No cluster library: Docling and its parsers are installed by the %pip cells of the notebook (S policy, standard runtime).
 
-        # The GPU cluster starts only when 3_parse left more than parsing_gpu_min_pdfs PDFs for it.
+        # The GPU cluster starts only when 3_parse left more than GPU_MIN_PDFS PDFs for it.
         - task_key: "3b_needs_gpu"
           depends_on:
             - task_key: "3_parse"
@@ -242,6 +241,7 @@ resources:
 
         - task_key: "3b_parse_pdf"
           description: "Docling on the PDFs queued by 3_parse (GPU, only when needed)"
+          timeout_seconds: 43200
           depends_on:
             - task_key: "3b_needs_gpu"
               outcome: "true"
@@ -250,6 +250,14 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_parsing_checkpoint_gpu.py
             source: WORKSPACE
             base_parameters:
+              run_mode: "{{job.parameters.run_mode}}"
+              parse_filter: "{{job.parameters.parse_filter}}"
+              max_parse_files: "{{job.parameters.max_parse_files}}"
+              max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
+              redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               job_run_id: "{{job.run_id}}"
           libraries:
             - pypi: {package: "packaging"}
@@ -275,6 +283,7 @@ resources:
         # Joins the two branches: the condition is false (no GPU task) or the GPU task succeeded. A failed GPU task stops here.
         - task_key: "3c_chunks"
           description: "Retry, chunking, quality checks and table writes from the parse checkpoint (CPU)"
+          timeout_seconds: 21600
           depends_on:
             - task_key: "3b_needs_gpu"
               outcome: "false"
@@ -285,10 +294,19 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_chunks.py
             source: WORKSPACE
             base_parameters:
+              run_mode: "{{job.parameters.run_mode}}"
+              parse_filter: "{{job.parameters.parse_filter}}"
+              max_parse_files: "{{job.parameters.max_parse_files}}"
+              max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
+              redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               job_run_id: "{{job.run_id}}"
           # No cluster library: Docling and its parsers are installed by the %pip cells of the notebook (S policy, standard runtime).
 
         - task_key: "4_describe_images"
+          timeout_seconds: 43200
           description: "Vision LLM image descriptions + image chunks injection (CPU, rate-limited)"
           depends_on:
             - task_key: "3c_chunks"
@@ -297,8 +315,14 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_image_metadata.py
             source: WORKSPACE
             base_parameters:
-              # Tried in order after the primary PARSING_LLM_ENDPOINT; each must accept image input.
-              llm_fallback_endpoints: "databricks-gpt-5-6-luna"
+              run_mode: "{{job.parameters.run_mode}}"
+              parse_filter: "{{job.parameters.parse_filter}}"
+              max_parse_files: "{{job.parameters.max_parse_files}}"
+              max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
+              redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
           libraries:
             - pypi: {package: "openai"}
             - pypi: {package: "tenacity"}
@@ -306,6 +330,7 @@ resources:
             - pypi: {package: "packaging"}
 
         - task_key: "5_sync_index"
+          timeout_seconds: 10800
           description: "Sync Vector Search indexes on the rewritten chunk tables (creating one first if it doesn't exist yet)"
           depends_on:
             - task_key: "4_describe_images"
@@ -314,6 +339,13 @@ resources:
             notebook_path: ../utils/parsing_pipeline/update_proj_vector_indexes.py
             source: WORKSPACE
             base_parameters:
+              run_mode: "{{job.parameters.run_mode}}"
+              parse_filter: "{{job.parameters.parse_filter}}"
+              max_parse_files: "{{job.parameters.max_parse_files}}"
+              max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
+              redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               pipeline_write_env: ${var.pipeline_write_env}
               indexes: ${var.parsing_vector_search_indexes}
               wait_minutes: "45"
@@ -326,6 +358,7 @@ resources:
             - pypi: {package: "databricks-sdk>=0.118.0"}
 
         - task_key: "6_update_kb_metadata"
+          timeout_seconds: 3600
           description: "Rewrite the document catalog and bump catalog_metadata (Lakebase) now the chain succeeded end to end"
           depends_on:
             - task_key: "5_sync_index"
@@ -333,6 +366,13 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_doc_catalog.py
             source: WORKSPACE
             base_parameters:
+              run_mode: "{{job.parameters.run_mode}}"
+              parse_filter: "{{job.parameters.parse_filter}}"
+              max_parse_files: "{{job.parameters.max_parse_files}}"
+              max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
+              redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               pipeline_write_env: ${var.pipeline_write_env}
               lakebase_project_id: "qualibot"
               lakebase_branch: "production"
@@ -350,7 +390,7 @@ resources:
               - databricks-sdk>=0.118.0
               - packaging
 
-      # Daily at night: upstream Intraqual ingestion lands during the day, and 1_categories fails explicitly if sources are older than
+      # Daily at night: the upstream Intraqual data asset lands during the day, and 1_categories fails explicitly if sources are older than
       # `parsing_max_source_staleness_hours`.
       schedule:
         quartz_cron_expression: ${var.parsing_schedule_cron}
@@ -358,6 +398,26 @@ resources:
         pause_status: ${var.parsing_schedule_pause}
 
 targets:
+  dev:
+    resources:
+      jobs:
+        parsing_pipeline:
+          name: "D_1_Qualibot_Parsing_Pipeline"
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
+          # Temporary DEV values while the parsing is finished on DEV: a full run and a higher parse ceiling.
+          parameters:
+            - name: run_mode
+              default: "full"
+            - name: parse_filter
+              default: ""
+            - name: max_parse_files
+              default: "1000"
+            - name: max_source_staleness_hours
+              default: "36"
+            - name: redescribe_all_images
+              default: "false"
+
   uat:
     resources:
       jobs:

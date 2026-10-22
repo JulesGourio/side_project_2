@@ -543,6 +543,22 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Transmettre le tableau final du notebook (table `dev_proj.qualibot.chat_trace_scores`) et les lignes `failed` de « Quality Checks ».
   Quand les juges sont validés : baisser les échantillons (`TARGET_SAMPLE_RATES` dans `utils/evaluation/chat_scorers.py`) et activer le planning (PAUSED aujourd'hui).
 
+- [ ] **0.14bis Détail des traces** (2026-10-21, à faire) : messages envoyés à chaque modèle (réécriture, traduction, réponse) dans la
+  trace, temps avant le premier token et temps de génération par appel, tokens entrée/sortie par étape. Redéployer l'app DEV seule
+  (pas de changement de job, pas de changement de table) :
+
+  ```powershell
+  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+  ```
+
+  Puis poser une question dans l'app DEV et ouvrir sa trace dans MLflow (`/Shared/Experiment/qualibot_chat_traces`). Attendu : le span
+  `answer` a un champ `messages` (le system prompt et le contexte), `time_to_first_token_ms`, `streaming_ms`, `tokens_per_second` ;
+  chaque `call_N` contient `time_to_first_token` et `generation` ; la racine a `input_tokens_total` et `output_tokens_total`.
+  Si la liaison aux prompts (tag `mlflow.linkedPrompts`) reste absente, lire dans les logs de l'app la ligne `prompt … differs from the
+  registered version` : elle indique qu'il faut relancer l'enregistrement des prompts (`databricks bundle run register_chat_prompts_dev -t dev --profile DEV`).
+
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
   - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, Les tables
     d'évaluation (`eval_*`, `eval_golden_questions`, `eval_synthetic_questions`, `eval_feedback_failures`) sont les défauts des notebooks :
@@ -997,7 +1013,113 @@ Un visiteur admis par la permission de l'app mais dans aucun groupe reconnu (mem
 - Copier aussi les images du volume `uat_proj.qualibot.images` (seulement si un run de parsing DEV doit retravailler des images déjà extraites).
 - Ne pas toucher ici à `uat` ou `prod` : voir `runbooks/uat.md` (dont le bloc D, qui déploie la branche du chatbot en UAT) et `runbooks/prod.md`. Il faut d'abord que le DEV soit validé.
 
+### G. Le parsing lit le data asset Intraqual au lieu du bronze (code poussé le 2026-10-21, à faire)
+
+`1_categories`, `2_manifest` et `6_update_kb_metadata` lisent `prod_gold.quality_system.document_revisions_intraqual` et `category_ancestors_intraqual` (variable `intraqual_gold_catalog_schema`, env `PARSING_INTRAQUAL_GOLD`) au lieu de `prod_bronze.intraqual.gd_*_latest`. Les sorties (`category_reference`, `parse_manifest`) gardent le même schéma. Le garde-fou de fraîcheur lit la date d'écriture de ces deux tables (`DESCRIBE DETAIL`), plus `intraqual_ingestion_freshness_all`.
+
+1. Pousser le code, puis Bitbucket → Pipelines → Run pipeline → branche poussée → `deploy-dev-jobs`. Attendre qu'il soit vert.
+
+2. Relever la version actuelle de `category_reference` et de `parse_manifest` (SQL editor, lecture seule), à noter :
+
+```sql
+DESCRIBE HISTORY dev_proj.qualibot.category_reference LIMIT 1;
+DESCRIBE HISTORY dev_proj.qualibot.parse_manifest LIMIT 1;
+```
+
+3. Lancer les deux tâches (aucune suppression sur le volume : `dry_run` reste à `true`) :
+
+```powershell
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
+databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
+```
+
+4. Comparer avec la version notée (remplacer `<N>` par la version relevée en 2). Les deux requêtes doivent rendre 0 ligne, sauf documents modifiés dans Intraqual depuis :
+
+```sql
+SELECT 'avant' AS cote, * FROM (SELECT * FROM dev_proj.qualibot.category_reference VERSION AS OF <N> EXCEPT SELECT * FROM dev_proj.qualibot.category_reference)
+UNION ALL
+SELECT 'apres', * FROM (SELECT * FROM dev_proj.qualibot.category_reference EXCEPT SELECT * FROM dev_proj.qualibot.category_reference VERSION AS OF <N>);
+```
+
+```sql
+SELECT 'avant' AS cote, IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM (SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest VERSION AS OF <M> EXCEPT SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest)
+UNION ALL
+SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM (SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest EXCEPT SELECT IDDOC, ref, titre, type_document, indice, doc_date, division, niveau_plus_1 FROM dev_proj.qualibot.parse_manifest VERSION AS OF <M>);
+```
+
+(`<M>` : version de `parse_manifest` relevée en 2.)
+
+### H. Périmètre officiel One QMS, division GROUP, date 2016 (code poussé le 2026-10-22, à faire)
+
+Périmètre : racines 3870 (One QMS), 948 (AS - PROGRAMS / PROGRAMMES), 3209 (AS - TECHNICAL INSTRUCTIONS), documents du 2016-01-01 ou après. `ONE_QMS-5S` (obsolètes, à classer), PROCESSES, formation, VA, directive et organigramme sortent. Divisions : AS, IS, GROUP (DIRECTIVE n'existe plus dans le périmètre). Le mode du job est `full` et le plafond de fichiers à parser 1000 dans `databricks.yml` (cible `dev`), temporairement.
+
+1. Déployer : Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-dev-jobs`.
+2. Lancer : `databricks jobs run-now 362367007936662 --profile DEV`
+3. Contrôler (SQL editor DEV) :
+
+```sql
+SELECT division, count(*) AS documents FROM dev_proj.qualibot.parse_manifest GROUP BY division ORDER BY documents DESC;
+SELECT division, count(DISTINCT IDDOC) AS documents FROM dev_proj.qualibot.chunks GROUP BY division ORDER BY documents DESC;
+SELECT count(*) AS documents_a_plusieurs_divisions FROM (SELECT IDDOC FROM dev_proj.qualibot.chunks GROUP BY IDDOC HAVING count(DISTINCT division) > 1);
+```
+Attendu : environ 3 840 documents dans `chunks` (One QMS 2 556, work instructions 1 014, programmes 270), divisions AS, IS, GROUP seulement, 0 document à plusieurs divisions.
+4. Reconstruire l'index (section I), puis remettre les valeurs par défaut du bloc `dev` du fichier `resources/parsing_pipeline.job.yml` (`run_mode` à `incremental`, `max_parse_files` à `500`), puis redéployer. Pour un run ponctuel, le paramètre se change au lancement, sans redéploiement.
+
+### I. Reconstruire l'index DEV après un changement de schéma de `chunks` (2026-10-22, à faire après contrôle de `chunks`)
+
+La synchronisation échoue avec `DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA` (la colonne `chunk_id` est passée en non nulle entre deux versions). Le remède est de supprimer l'index et de le recréer (environ 1 h, sans recherche dans le chat DEV pendant ce temps) :
+
+```powershell
+databricks workspace import /Workspace/Shared/qualibot_dev_index/rebuild_chunks_index --file runbooks/scripts/dev_index/rebuild_chunks_index.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json "@runbooks/scripts/dev_index/rebuild_chunks_index_submit.json" --profile DEV
+```
+
+Attendu : `done: dev_proj.qualibot.chunks_index rebuilt`, autant de lignes indexées que dans `chunks`.
+
+### J. Modèles Docling au même chemin sur DEV (2026-10-22, à faire AVANT le déploiement des jobs DEV)
+
+Les jobs lisent les modèles dans `/Volumes/<env>_proj/qualibot/docling_models`, dans tous les environnements. Sur DEV les fichiers sont dans `docling_models/docling_models`. Le script de `runbooks/scripts/dev_models/` les remonte d'un niveau, sans écraser, en simulation par défaut.
+
+Dans un terminal, à la racine du dépôt (profil CLI DEV, le notebook est lancé par le SP DEV) :
+
+```powershell
+databricks workspace import /Workspace/Shared/qualibot_dev_models/move_docling_models --file runbooks/scripts/dev_models/move_docling_models.py --language PYTHON --format SOURCE --overwrite --profile DEV
+databricks jobs submit --json "@runbooks/scripts/dev_models/move_docling_models_dry_submit.json" --profile DEV
+databricks jobs submit --json "@runbooks/scripts/dev_models/move_docling_models_submit.json" --profile DEV
+```
+
+La première soumission ne déplace rien : vérifier la liste affichée dans les logs de la tâche. La seconde déplace. Ensuite lancer le pipeline Bitbucket `deploy-dev-jobs` (étape « Deploy jobs and notebooks to DEV, app untouched (dev) »).
+
+### K. Lancer le parsing DEV complet avec ses paramètres (2026-10-22, à faire après J et `deploy-dev-jobs`)
+
+Le job n'a plus de variables de bundle pour le mode et le plafond : ce sont des paramètres du run, par défaut `incremental` et `500`. Le parsing complet de DEV demande `full` et un plafond de 1000 :
+
+```powershell
+'{"job_parameters":{"run_mode":"full","max_parse_files":"1000"}}' | Out-File -Encoding ascii -NoNewline run_params.json
+databricks jobs run-now 362367007936662 --profile DEV --json "@run_params.json"
+```
+
+### X. Import Lakebase DEV → `dev_proj.qualibot` (à faire, poussé le 2026-10-22)
+
+Le réglage DEV est `lakebase_import_to_delta: "true"`. Le job exporte le Lakebase DEV puis charge les tables Delta `dev_proj.qualibot` depuis cet export. Chaque cible ne lit que son propre Lakebase. Quatre copies UAT (`compare_messages`, `compare_feedbacks`, `analysis_cache`, `catalog_metadata`) n'ont pas la propriété `lakebase_export` : l'étape X.1 la leur pose, pour que l'import les remplace.
+
+Ordre des commandes (PowerShell, depuis la racine du dépôt, profil `DEV`) :
+
+```powershell
+databricks bundle deploy -t dev --profile DEV
+databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/mark_dev_copies_owned --file runbooks/scripts/dev_copy/mark_dev_copies_owned.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json @runbooks/scripts/dev_copy/mark_dev_copies_owned_submit.json --profile DEV
+databricks bundle run lakebase_export -t dev --profile DEV
+```
+
+- `bundle deploy -t dev` met à jour les jobs DEV (réglage `true`). Le pipeline Bitbucket `deploy-dev-jobs` fait la même chose si tu préfères.
+- `jobs submit` lance le marquage des quatre tables, avec l'identité du SP DEV. Attendre `SUCCESS` dans l'interface Jobs avant la suite.
+- `bundle run lakebase_export` lance l'export puis l'import DEV (le job tourne déjà avec le SP DEV). Vérifier dans l'interface Jobs que les deux tâches sont `SUCCESS`.
+
 ## Fait
+
+- 2026-10-21 — Division COMMUN et exclusion de ONE_QMS-5S (section H) validées en DEV : `parse_manifest` = 5 242 documents (COMMUN 2 793, AS 1 953, AUTRE 249, sans division 110, IS 95, DIRECTIVE 42). Reste : reconstruire `chunks` et synchroniser l'index DEV pour que le chat utilise ces divisions.
 
 - Migration DEV : plan sans suppression (2026-10-16), app redéployée, historique DocCompare visible avec les documents (chemins corrigés à la copie et à chaque démarrage, confirmé 2026-10-16). Restent : point 7 (endpoint Sonnet, index) et le premier run du pipeline de parsing.
 - P1, P2, P4 : profil CLI, SP DEV, groupes visibles (2026-10-05).

@@ -26,7 +26,7 @@ python utils/deploy/render_target_config_env.py <dev|uat|prod> [output_path]
 |---|---|---|---|
 | `dev` | `dev` | `qualibot` | `DEV` |
 | `uat` (default) | `uat` | `qualibot` | `UAT` |
-| `prod` | `prod` | `qualibot` | `qualibot-prod` |
+| `prod` | `prod` | `qualibot` | `PROD` |
 
 ## What the script does
 
@@ -47,14 +47,14 @@ Writes one `export NAME='value'` line per key of the target, with LF line ending
 unknown target stops with the list of targets.
 
 `target_env.json` holds one object per target. The keys differ per target: the volume paths, the index names, the chat
-rewrite endpoint, the MLflow experiment, `CHAT_TRANSLATE_ONLY`, and `CAPS_BYPASS` (on `dev` only).
+rewrite endpoint, the MLflow experiment, `CHAT_TRANSLATE_ONLY` (off in `app.yaml`, on in every target), and `CAPS_BYPASS` (allowed on `dev` only; `dev` sets `false`).
 
 ## Rules
 
 - A key that a target does not set keeps the value of `app.yaml`.
 - The index keys `CHAT_INDEX` and `COMPARE_IMPACT_INDEX` are set for `dev`, `uat` and `prod`, and point at the
   project schema of that environment. Index names carry no version suffix. No `CHAT_ENDPOINT*` key is set.
-- `CAPS_BYPASS` turns off the group check for every visitor, so it is `true` on `dev` only.
+- `CAPS_BYPASS=true` turns off the group check for every visitor. It is allowed on `dev` only, and `dev` currently sets `false`.
 - `render_target_config_env.py` writes LF. A CRLF line ending would add a `\r` to every value.
 - Deploying `uat` or `prod` needs an explicit approval.
 - The guards of `target_env.json` are in `tests/test_deploy_config.py` (see [`tests/README.md`](../../tests/README.md)).

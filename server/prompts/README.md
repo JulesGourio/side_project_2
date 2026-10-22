@@ -36,10 +36,22 @@ uses the prompts is in [services/chat/engine](../services/chat/engine/README.md)
   version only when the hash matches. What varies between the divisions is in `DIVISION_NAMES`, in `engine/config.py`.
 - A prompt is edited in its file only. A trace links a registered prompt version only when the file's hash equals the
   registered hash. After an edit, the registration job runs again (`utils/evaluation/register_chat_prompts.py`).
-- The compare prompts are not in this folder. The default analysis prompt is a constant of `routers/compare/config.py`,
-  overridden by `COMPARE_ANALYSIS_SYSTEM_PROMPT`. The summary prompts are in `services/compare/summarize.py`, the diff
-  prompts in `services/compare/processors/_diff_engines/prompts.py`, and the impact judge prompt in
-  `services/infra/vector_search.py`. All of them are Python constants.
+
+## Compare prompts
+
+The prompts of the document comparison are files under `compare/`, read by `load_prompt(name)` in
+[services/compare/prompts.py](../services/compare/prompts.py) (cached, returned exactly as stored: no stripping, so the
+files have no trailing newline). None has a placeholder: the text is sent as is, and the braces in `impact_judge.md` and
+`analysis_structured.md` are literal JSON.
+
+| File | Loaded by | Used when |
+|---|---|---|
+| `compare/analysis_default.md` | `routers/compare/config.py` (`DEFAULT_ANALYSIS_PROMPT`) | The comparative method, when `COMPARE_ANALYSIS_SYSTEM_PROMPT` is not set (the variable overrides the file) |
+| `compare/analysis_standard.md` | `processors/_diff_engines/prompts.py` (`SYSTEM_PROMPT_STANDARD`) | The standard method: paragraph diff, Markdown output |
+| `compare/analysis_structured.md` | `processors/_diff_engines/prompts.py` (`SYSTEM_PROMPT_STRUCTURED`) | The structured method: paragraph diff, JSON array output |
+| `compare/summary.md` | `services/compare/summarize.py` (`SUMMARY_SYSTEM_PROMPT`) | Summary of one document's text |
+| `compare/summary_image.md` | `services/compare/summarize.py` (`SUMMARY_IMAGE_SYSTEM_PROMPT`) | Description of one image |
+| `compare/impact_judge.md` | `services/infra/vector_search.py` (`_JUDGE_SYSTEM_PROMPT`) | Impact search: the verdict on one candidate document |
 
 ## See also
 

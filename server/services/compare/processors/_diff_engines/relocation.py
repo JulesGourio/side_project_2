@@ -24,6 +24,11 @@ _ARTIFACT_MERGED_MIN_WORDS = 1
 _ARTIFACT_MERGED_MIN_RATIO = 3.0
 # Above this many (old x new) occurrences of the same text the exact-match DP is skipped for index-wise pairing.
 _DUP_ALIGN_MAX_CELLS = 250_000
+# High bar on purpose, and a long verbatim run is also required: scattered boilerplate phrasing alone can cover
+# much of a block.
+_RELOCATION_COVERAGE_THRESHOLD = 0.75
+_RELOCATION_MIN_RUN_WORDS = 8
+_STRIKETHROUGH_RE = re.compile(r'~~(.+?)~~', re.S)
 
 
 def _align_duplicates(
@@ -33,8 +38,6 @@ def _align_duplicates(
     n_new: int,
 ) -> Tuple[List[Dict[str, Any]], Set[int]]:
     """Pair equal-text blocks order-preservingly, minimising position drift.
-
-    Returns (unmatched_olds, unmatched_new_idxs).
 
     :param olds: old blocks with the same text, in order
     :param news: new blocks with the same text, in order
@@ -51,23 +54,7 @@ def _align_duplicates(
 
     po = [o['idx'] / n_old for o in olds]
     pn = [n['idx'] / n_new for n in news]
-
-    # cost[i][j] = min total drift aligning olds[i:] with news[j:], skipping the
-    # surplus on whichever side is longer.
-    INF = float('inf')
-    cost = [[INF] * (k + 1) for _ in range(m + 1)]
-    for i in range(m + 1):
-        cost[i][k] = 0.0 if i == m else INF  # every old must be paired or skipped below
-    for j in range(k + 1):
-        cost[m][j] = 0.0
-    for i in range(m - 1, -1, -1):
-        for j in range(k - 1, -1, -1):
-            best = cost[i][j + 1]
-            if k - j >= m - i:
-                best = min(best, cost[i + 1][j])
-            best = min(best, abs(po[i] - pn[j]) + cost[i + 1][j + 1])
-            cost[i][j] = best
-        cost[i][k] = INF
+    cost = _drift_cost_table(po, pn)
 
     unmatched_olds: List[Dict[str, Any]] = []
     unmatched_new: Set[int] = set()
@@ -85,6 +72,31 @@ def _align_duplicates(
     unmatched_olds.extend(olds[i:])
     unmatched_new.update(n['idx'] for n in news[j:])
     return unmatched_olds, unmatched_new
+
+
+def _drift_cost_table(po: List[float], pn: List[float]) -> List[List[float]]:
+    """Minimum total position drift of an order-preserving pairing, for every pair of suffixes.
+
+    ``cost[i][j]`` is the best total drift for pairing ``po[i:]`` with ``pn[j:]``: each old position is paired with a
+    later new position than the previous pair, and the surplus on the longer side is skipped. The table is filled from
+    the ends, so the pairing is read forwards from ``cost[0][0]``. Greedy nearest-position pairing would mis-pair
+    as soon as an occurrence is inserted early in one revision.
+
+    :param po: fractional positions of the old occurrences, in order
+    :param pn: fractional positions of the new occurrences, in order
+    :return: the ``(len(po) + 1) x (len(pn) + 1)`` table; ``inf`` where an old occurrence would be left unpaired
+    """
+    m, k = len(po), len(pn)
+    inf = float('inf')
+    cost = [[inf] * (k + 1) for _ in range(m + 1)]
+    cost[m] = [0.0] * (k + 1)  # no old left: the remaining new ones are surplus
+    for i in range(m - 1, -1, -1):
+        for j in range(k - 1, -1, -1):
+            best = cost[i][j + 1]                     # skip new j
+            if k - j >= m - i:
+                best = min(best, cost[i + 1][j])      # skip old i, only while the new side can still cover the rest
+            cost[i][j] = min(best, abs(po[i] - pn[j]) + cost[i + 1][j + 1])
+    return cost
 
 
 def _position_index(items: List[Dict[str, Any]], n_total: int) -> Dict[str, List[float]]:
@@ -217,11 +229,6 @@ def _drop_merged_cells(
         kept.append(item)
     return kept, dropped
 
-# High bar on purpose, and a long verbatim run is also required: scattered boilerplate phrasing alone can cover
-# much of a block.
-_RELOCATION_COVERAGE_THRESHOLD = 0.75
-_RELOCATION_MIN_RUN_WORDS = 8
-_STRIKETHROUGH_RE = re.compile(r'~~(.+?)~~', re.S)
 
 
 class _RelocationIndex:
