@@ -314,6 +314,6 @@ Quality checks (`tables.py`, Great Expectations through `leap_utils`): a RED fai
   and waits for `ONLINE_NO_PENDING_UPDATE`.
 - **Change log.** A repaired run keeps its job run id; `document_change_log` does not repeat the changes it already holds
   for that run.
-- **Checkpoint snapshots.** A full run drops the `_pipeline_checkpoint_<timestamp>` snapshots older than 30 days, keeping the
-  most recent one.
+- **Checkpoint snapshots.** A full run clones the checkpoint to `_pipeline_checkpoint_<timestamp>` and drops the older snapshots,
+  keeping only the one it just took.
 - **Image descriptions.** The media type sent to the vision model (PNG, JPEG, GIF or WebP) is read from the file.

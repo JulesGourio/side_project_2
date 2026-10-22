@@ -216,7 +216,7 @@ ENABLE_TIMING_TEST = True
 
 # --- Resilience -- batch checkpointing & per-file timeout ---
 CHECKPOINT_BATCH_SIZE = 100  # Write to Delta every N files (crash-safe)
-CHECKPOINT_SNAPSHOT_KEEP_DAYS = 30  # a full run keeps its checkpoint snapshot this long
+CHECKPOINT_SNAPSHOT_KEEP_DAYS = 0  # a full run keeps only the most recent checkpoint snapshot
 CHECKPOINT_ORPHAN_KEEP_DAYS = (
     180  # a document out of scope keeps its parse result this long, in case it comes back
 )
