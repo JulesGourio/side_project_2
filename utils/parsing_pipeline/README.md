@@ -47,15 +47,17 @@ Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config
 
 | Task | Notebook | Compute | Writes |
 |---|---|---|---|
-| `1_categories` | `create_proj_category_reference.py` | single-node CPU | `category_reference` |
-| `2_manifest` | `create_proj_parse_manifest.py` | single-node CPU | `parse_manifest`, `parsed_documents` (skip rows), pruning in the passage and image tables |
+| `1_categories` | `create_proj_category_reference.py` | single-node CPU (S policy, `meta_cpu_cluster`) | `category_reference` |
+| `2_manifest` | `create_proj_parse_manifest.py` | single-node CPU (S policy, `meta_cpu_cluster`) | `parse_manifest`, `parsed_documents` (skip rows), pruning in the passage and image tables |
 | `3_parse` | `create_proj_parsing_checkpoint.py` | single-node CPU (S policy, `parse_cpu_cluster`) | `parsing_checkpoint` (non-PDF formats, and the PDFs when at most `parsing_gpu_min_pdfs`), `parsing_run_scope`, `parsing_gpu_queue`, `document_change_log`, task value `pdfs_for_gpu` |
 | `3b_needs_gpu` | condition `pdfs_for_gpu > 0` | none | — |
 | `3b_parse_pdf` | `create_proj_parsing_checkpoint_gpu.py` | GPU, only when the condition is true | `parsing_checkpoint` (the queued PDFs) |
-| `3c_chunks` | `create_proj_chunks.py` | the CPU cluster of `3_parse` (after the `false` branch of the condition or `3b_parse_pdf`, `run_if: AT_LEAST_ONE_SUCCESS`) | `parsing_checkpoint` (retries), `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health` |
-| `4_describe_images` | `create_proj_image_metadata.py` | CPU | `image_metadata`, image passages in `chunks` and `chunks_archive`, `parsed_documents` |
-| `5_sync_index` | `update_proj_vector_indexes.py` | classic CPU (`meta_cpu_cluster`, GX on `chunks_full`) | `chunks_full`, Vector Search indexes |
+| `3c_chunks` | `create_proj_chunks.py` | the CPU cluster of `3_parse` (S policy, `parse_cpu_cluster`; after the `false` branch of the condition or `3b_parse_pdf`, `run_if: AT_LEAST_ONE_SUCCESS`) | `parsing_checkpoint` (retries), `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health` |
+| `4_describe_images` | `create_proj_image_metadata.py` | CPU (S policy, `describe_cpu_cluster`) | `image_metadata`, image passages in `chunks` and `chunks_archive`, `parsed_documents` |
+| `5_sync_index` | `update_proj_vector_indexes.py` | CPU (S policy, `meta_cpu_cluster`, GX on `chunks_full`) | `chunks_full`, Vector Search indexes |
 | `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata` (Lakebase) |
+
+Every classic cluster of the job takes the CORE Job Compute S policy (`job_cluster_policy_id_S`). The only cluster without a policy is the GPU cluster of `3b_parse_pdf`: its runtime (GPU ML) is not in the S policy allowlist. The tasks on serverless have no cluster.
 
 Each task depends on the previous one. Only PDFs use Docling's GPU models (layout, tables): docx, pptx and html go
 through Docling's simple pipeline, and doc / xls / ppt / rtf / odt through format parsers, all on CPU. A daily run
