@@ -323,6 +323,7 @@ targets:
       lakebase_tables_to_skip: "doc_catalog,impact_cache,impact_document_results,impact_feedbacks,impact_requests,llm_requests,summary_cache,users"
       parsing_num_workers: "4"
       parsing_run_mode: "full"
+      parsing_max_parse_files: "1000"
       # Same prod sources as UAT.
       intraqual_gold_catalog_schema: "prod_gold.quality_system"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
