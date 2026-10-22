@@ -212,8 +212,6 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_parse_manifest.py
             source: WORKSPACE
             base_parameters:
-              # dry_run=true is mandatory on a scheduled run: scope depends on courant/etat, which change on every revision.
-              dry_run: "true"
               job_run_id: "{{job.run_id}}"
           libraries:
             - pypi: {package: "packaging"}

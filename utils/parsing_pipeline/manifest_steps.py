@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from datetime import datetime
 
-from databricks.sdk.runtime import dbutils, spark
+from databricks.sdk.runtime import spark
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType
@@ -205,7 +205,7 @@ def classify_root_folders(root_items, scope_iddocs, iddoc_to_ref, iddoc_to_titre
             rows["keep"].append(known)
 
     logger.info(f"KEEP   : {len(rows['keep']):>5}")
-    logger.info(f"DELETE : {len(rows['delete']):>5}  (out of scope - deleted only if dry_run=false)")
+    logger.info(f"DELETE : {len(rows['delete']):>5}  (out of scope - kept on the volume, not parsed)")
     logger.info(f"ORPHAN : {len(rows['orphan']):>5}  (unknown IDDOC - kept, excluded from parsing)")
     logger.info(f"SKIP   : {len(rows['skip']):>5}  (non-conforming names - untouched)")
     logger.info(f"MANUAL : {len(rows['manual']):>5}  (REF in MANUAL_REF_EXCLUSIONS)")
@@ -451,29 +451,3 @@ def write_manifest(df_manifest) -> None:
     )
 
 
-def delete_out_of_scope_folders(rows_delete, dry_run) -> None:
-    """Remove the out-of-scope root folders from the volume; a dry run only counts them.
-
-    :param rows_delete: Items to remove, dicts with a ``path`` key.
-    :param dry_run: True only counts the items.
-    """
-    if dry_run:
-        logger.info(f"[DRY RUN] {len(rows_delete)} items would be deleted.")
-        logger.info("  -> Set the dry_run widget to false to actually delete.")
-        return
-    if not rows_delete:
-        logger.info("Nothing to delete.")
-        return
-
-    logger.info(f"Deleting {len(rows_delete)} items...")
-    deleted = errors = 0
-    for row in rows_delete:
-        try:
-            dbutils.fs.rm(row["path"], recurse=True)
-            deleted += 1
-            if deleted % 50 == 0 or deleted == len(rows_delete):
-                logger.info(f"  {deleted}/{len(rows_delete)} deleted")
-        except Exception as exc:
-            logger.warning(f"  Error on {row['path']}: {exc}")
-            errors += 1
-    logger.info(f"Done: {deleted} deleted, {errors} errors")

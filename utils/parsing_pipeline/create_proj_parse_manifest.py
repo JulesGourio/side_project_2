@@ -19,8 +19,8 @@
 # MAGIC   `ARCHIVE_MAX_DOCS` most recent get `parse_content=True`; `3_parse` routes those to `chunks_archive` (impact search only).
 # MAGIC
 # MAGIC **Highlighted complexities:**
-# MAGIC Physical deletion of out-of-scope folders only happens when `dry_run` is `false`. The cleanup of derived tables (stale chunks, image metadata)
-# MAGIC always runs, because it only removes indexed content, not source files.
+# MAGIC Out-of-scope folders stay on the volume and are never parsed. The cleanup of derived tables (stale chunks, image metadata)
+# MAGIC removes the indexed content of those documents.
 # MAGIC
 # MAGIC **Intended Pipeline**
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `2_manifest`)
@@ -94,8 +94,6 @@ spark.conf.set("spark.databricks.remoteFiltering.blockSelfJoins", "false")
 
 # MAGIC %md
 # MAGIC ## Config Widgets
-# MAGIC `dry_run` protects the **volume**: out-of-scope folders are only deleted when it is `false`. The cleanup of derived tables (stale chunks, image metadata) always runs, because it removes indexed content, not source files.
-# MAGIC
 # MAGIC `job_run_id` is written on every `parsed_documents` row so `3_parse` rows and these rows can be correlated.
 
 # COMMAND ----------
@@ -106,13 +104,11 @@ dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "erro
 LOG_LEVEL = dbutils.widgets.get("log_level")
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-dbutils.widgets.dropdown("dry_run", "true", ["true", "false"], "dry_run: false to actually delete the out-of-scope folders")
 dbutils.widgets.text("job_run_id", "", "Parent job run_id (correlates with 3_parse's parsed_documents rows)")
 
-dry_run = dbutils.widgets.get("dry_run").lower() == "true"
 JOB_RUN_ID = dbutils.widgets.get("job_run_id") or None
 
-logger.info(f"Mode: {'DRY RUN (nothing will be deleted)' if dry_run else 'ACTUAL DELETION'} | volume={VOLUME_ROOT_PATH}")
+logger.info(f"Volume: {VOLUME_ROOT_PATH}")
 logger.info(f"Scope: {DOC_SCOPE_FILTER} | excluded categories: {sorted(EXCLUDED_IDCATS)}")
 
 # COMMAND ----------
@@ -304,7 +300,7 @@ df_manifest = manifest_steps.build_manifest(classified["keep"]).cache()
 if classified["delete"]:
     display(spark.createDataFrame(classified["delete"]).orderBy("reason", "ref"))
 else:
-    logger.info("Nothing to delete - the volume is already clean.")
+    logger.info("No out-of-scope folder on the volume.")
 
 if classified["orphan"]:
     logger.info(f"{len(classified['orphan'])} ORPHAN folders kept on the volume but excluded from parsing")
@@ -339,14 +335,3 @@ tables.check_dataframe(df_manifest, "parse_manifest", [
 # COMMAND ----------
 
 manifest_steps.write_manifest(df_manifest)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Delete out-of-scope folders
-# MAGIC Only when `dry_run` is `false`.
-
-# COMMAND ----------
-
-manifest_steps.delete_out_of_scope_folders(classified["delete"], dry_run)
-
