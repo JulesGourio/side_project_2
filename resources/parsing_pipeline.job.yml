@@ -74,8 +74,6 @@ resources:
             custom_tags:
               ResourceClass: SingleNode
             spark_env_vars:
-              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              REFERENCE_READ_ENV:       ${var.reference_read_env}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
@@ -102,8 +100,6 @@ resources:
             custom_tags:
               ResourceClass: SingleNode
             spark_env_vars:
-              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              REFERENCE_READ_ENV:       ${var.reference_read_env}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
@@ -141,8 +137,6 @@ resources:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.databricks.delta.autoCompact.enabled: "true"
             spark_env_vars:
-              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              REFERENCE_READ_ENV:       ${var.reference_read_env}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
@@ -176,8 +170,6 @@ resources:
             custom_tags:
               ResourceClass: SingleNode
             spark_env_vars:
-              PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              REFERENCE_READ_ENV:       ${var.reference_read_env}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
@@ -193,6 +185,10 @@ resources:
           notebook_task:
             notebook_path: ../utils/parsing_pipeline/create_proj_category_reference.py
             source: WORKSPACE
+            base_parameters:
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
           libraries:
             - pypi: {package: "packaging"}
 
@@ -206,6 +202,9 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_parse_manifest.py
             source: WORKSPACE
             base_parameters:
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               job_run_id: "{{job.run_id}}"
           libraries:
             - pypi: {package: "packaging"}
@@ -222,6 +221,9 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_parsing_checkpoint.py
             source: WORKSPACE
             base_parameters:
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               job_run_id: "{{job.run_id}}"
           # No cluster library: Docling and its parsers are installed by the %pip cells of the notebook (S policy, standard runtime).
 
@@ -245,6 +247,9 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_parsing_checkpoint_gpu.py
             source: WORKSPACE
             base_parameters:
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               job_run_id: "{{job.run_id}}"
           libraries:
             - pypi: {package: "packaging"}
@@ -281,6 +286,9 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_chunks.py
             source: WORKSPACE
             base_parameters:
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               job_run_id: "{{job.run_id}}"
           # No cluster library: Docling and its parsers are installed by the %pip cells of the notebook (S policy, standard runtime).
 
@@ -294,6 +302,9 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_image_metadata.py
             source: WORKSPACE
             base_parameters:
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               # Tried in order after the primary PARSING_LLM_ENDPOINT; each must accept image input.
               llm_fallback_endpoints: "databricks-gpt-5-6-luna"
           libraries:
@@ -312,6 +323,8 @@ resources:
             notebook_path: ../utils/parsing_pipeline/update_proj_vector_indexes.py
             source: WORKSPACE
             base_parameters:
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               pipeline_write_env: ${var.pipeline_write_env}
               indexes: ${var.parsing_vector_search_indexes}
               wait_minutes: "45"
@@ -332,6 +345,8 @@ resources:
             notebook_path: ../utils/parsing_pipeline/create_proj_doc_catalog.py
             source: WORKSPACE
             base_parameters:
+              pipeline_read_env: ${var.pipeline_write_env}
+              reference_read_env: ${var.reference_read_env}
               pipeline_write_env: ${var.pipeline_write_env}
               lakebase_project_id: "qualibot"
               lakebase_branch: "production"

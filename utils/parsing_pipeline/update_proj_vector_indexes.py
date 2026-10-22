@@ -17,7 +17,7 @@
 # MAGIC - Qualibot Parsing Pipeline — Daily (task `5_sync_index`)
 # MAGIC
 # MAGIC **Inputs Data**
-# MAGIC - `{pipeline_write_env}_proj.qualibot.chunks` and `chunks_archive` — only to refresh `chunks_full`
+# MAGIC - `{pipeline_read_env}_proj.qualibot.chunks` and `chunks_archive` (written by the parse tasks) — only to refresh `chunks_full`
 # MAGIC - The Vector Search indexes named by `indexes`: comma-separated, empty = nothing to do
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
@@ -36,6 +36,44 @@
 
 # MAGIC %md
 # MAGIC # Configuration
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Config Widgets
+# MAGIC The environments, the quality bypass and the debug mode are widgets: the job passes them as base parameters,
+# MAGIC and the notebook copies them to the environment that `config` reads when it is imported.
+
+
+# COMMAND ----------
+
+import os
+
+dbutils.widgets.removeAll()
+
+dbutils.widgets.text("pipeline_write_env", "", "Environment the tables are written to: dev, uat or prod")
+dbutils.widgets.text("pipeline_read_env", "", "Environment of the tables another task of this job wrote (empty: pipeline_write_env)")
+dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference tables (Intraqual data asset)")
+dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
+dbutils.widgets.text("debug", "false")
+dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+
+PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
+if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
+    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
+PIPELINE_READ_ENV = dbutils.widgets.get("pipeline_read_env") or PIPELINE_WRITE_ENV
+DEBUG = dbutils.widgets.get("debug").lower() == "true"
+LOG_LEVEL = dbutils.widgets.get("log_level")
+
+# config reads the environment when it is imported, so the widget values are copied there first.
+os.environ["PIPELINE_WRITE_ENV"] = PIPELINE_WRITE_ENV
+os.environ["PIPELINE_READ_ENV"] = dbutils.widgets.get("pipeline_read_env")
+os.environ["REFERENCE_READ_ENV"] = dbutils.widgets.get("reference_read_env")
+os.environ["BYPASS_QUALITY_CHECKS"] = dbutils.widgets.get("bypass_quality_checks")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Config Standard Package Imports
 
 # COMMAND ----------
@@ -77,28 +115,19 @@ from leap_utils.common import logger as log_utils
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Config Widgets
+# MAGIC ### Job parameters
 # MAGIC This task runs on the classic CPU cluster of the chain and does not import `config.py`, so everything comes from the job parameters. `indexes` falls back on `PARSING_VECTOR_SEARCH_INDEXES` when it is empty.
 # MAGIC
 # MAGIC The endpoint, embedding model, catalog and suffix are only read when an index has to be created.
 
 # COMMAND ----------
 
-dbutils.widgets.removeAll()
-
-dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-LOG_LEVEL = dbutils.widgets.get("log_level")
-dbutils.widgets.text("debug", "false")
-DEBUG = dbutils.widgets.get("debug").lower() == "true"
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
 dbutils.widgets.text(
     "pipeline_write_env", "", "Environment the tables are written to: dev, uat or prod"
 )
-PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
 
-if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
-    raise ValueError(f"pipeline_write_env must be dev, uat or prod, got {PIPELINE_WRITE_ENV!r}")
 dbutils.widgets.text("indexes", "", "Vector Search indexes (comma-separated)")
 dbutils.widgets.text("wait_minutes", "45", "Max wait for sync completion (minutes, 0 = don't wait)")
 # Only used to auto-create a missing index (this task has no PARSING_* env vars).
@@ -142,14 +171,14 @@ REFRESH_CHUNKS_FULL = BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES
 chunk_sources = [
     t
     for t in (
-        f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks",
-        f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_archive",
+        f"{PIPELINE_READ_ENV}_proj.qualibot.chunks",
+        f"{PIPELINE_READ_ENV}_proj.qualibot.chunks_archive",
     )
     if REFRESH_CHUNKS_FULL and table_exists(t)
 ]
 if REFRESH_CHUNKS_FULL and not chunk_sources:
     raise RuntimeError(
-        f"chunks_full requested but neither chunks nor chunks_archive exists in {PIPELINE_WRITE_ENV}_proj.qualibot"
+        f"chunks_full requested but neither chunks nor chunks_archive exists in {PIPELINE_READ_ENV}_proj.qualibot"
     )
 
 # COMMAND ----------

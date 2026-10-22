@@ -20,7 +20,8 @@ Quality checks, two levels: RED (the task stops, nothing is written) and AMBER (
 """
 
 import logging
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Sequence, Tuple
 
 from leap_utils.common.logger import get_logger
@@ -371,6 +372,17 @@ def require_gx() -> None:
     from leap_utils.common.validation import gx_validation  # noqa: F401
 
 
+def _with_bypass(checks: Sequence["Check"]) -> List["Check"]:
+    """Checks to run: when the bypass is on, RED checks become AMBER.
+
+    :param checks: Checks as the notebook declares them.
+    :return: the checks, RED turned into AMBER when the environment sets BYPASS_QUALITY_CHECKS to true.
+    """
+    if os.environ.get("BYPASS_QUALITY_CHECKS", "false").lower() != "true":
+        return list(checks)
+    return [replace(c, severity=AMBER) if c.severity == RED else c for c in checks]
+
+
 def check_dataframe(
     df, table: str, checks: Sequence[Check], logger: logging.Logger | None = None
 ) -> None:
@@ -383,6 +395,7 @@ def check_dataframe(
     :param checks: Checks to run.
     :param logger: Logger for the messages; the module logger when None.
     """
+    checks = _with_bypass(checks)
     from great_expectations.dataset import SparkDFDataset
     from leap_utils.common.validation import gx_validation
 
@@ -429,6 +442,7 @@ def check_rows(
     :param checks: Checks to run.
     :param logger: Logger for the messages; the module logger when None.
     """
+    checks = _with_bypass(checks)
     results = evaluate(checks, stats_from_rows(rows, checks))
     report(table, results, logger)
     return results

@@ -45,7 +45,7 @@ Les règles de qualibot priment quand elles diffèrent de LEAP. Chaque écart es
 | E1 | Important | Actions Spark hors `DEBUG` : `.show()` non gardé, `.count()` servant un log | §2.3 | `debug` ajouté, garde `if DEBUG:` | **Traité** (2 gardes, 1 `count` retiré, 1 `count() > 0` → `isEmpty()`) |
 | E2 | Important | `.collect()` : cinq appels dans trois notebooks | §2.3 | Le helper `collect_column_in_list` a été retiré de `leap_utils` (commit `96780e0`) | **Clos sans changement** : chaque `.collect()` restant sert une valeur Python |
 | E3 | Important | Dépendances épinglées à deux endroits (notebooks `%pip` et `libraries` du YAML), dérive d'OpenCV 4.11 / 4.12 | §2.5 | Une liste de pins unique et un test | **Ouvert** |
-| E4 | Important | Widgets standard absents ; environnement lu à deux endroits | §2.4 | Deux chemins documentés, défaut `dev` supprimé, `debug` ajouté | **Traité** (règle à inscrire dans CLAUDE.md, E13) |
+| E4 | Important | Environnements lus par variables de cluster, sans widgets ; pas de `pipeline_read_env` ni de bypass | §2.4 | Option B : widgets `pipeline_write_env`, `pipeline_read_env`, `reference_read_env`, `bypass_quality_checks`, `debug` ; passés en paramètres de tâche | **Traité** (validation sur DEV requise) |
 | E5 | Important | UUID de service principal en dur dans les cibles (28 + 4) | §3.1 | Variable `dbx_service_principal` par cible | **Ouvert** |
 | E6 | Important | Valeurs de pipeline en dur dans le YAML | §3.1 | Variables dans `databricks.yml` | **Ouvert** |
 | E7 | Important | Cluster GPU `parse_gpu_cluster` sans policy | §3.1 | Demande d'une policy GPU-ML | **Ouvert** (demande à l'administrateur) |
@@ -118,18 +118,25 @@ Les autres `.count()` restent, parce qu'ils décident d'une branche ou d'un budg
 
 Aucune de ces listes ne peut être remplacée par un calcul Spark sans réécrire la logique qui la consomme.
 
-### 2.4 Widgets et environnement (E4) — traité
+### 2.4 Widgets et environnement (E4) — traité (option B)
 
-**Décision.** Le pipeline a deux chemins, et chacun est fixé :
+**Décision.** Comme le notebook de référence LEAP, les environnements sont des widgets, déclarés en tête de `# Configuration`, avant les imports :
 
-- Les tâches `1_categories` à `4_describe_images` lisent `PIPELINE_WRITE_ENV` dans l'environnement du cluster (`config.py:36`).
-- `5_sync_index` (`update_proj_vector_indexes.py`) et `6_update_kb_metadata` (`create_proj_doc_catalog.py`, serverless, sans variable d'environnement) reçoivent `pipeline_write_env` par `base_parameters`, lu dans un widget.
+- `pipeline_write_env` : écritures (`{pipeline_write_env}_proj.qualibot.<table>`). Pas de défaut : une valeur absente arrête le notebook.
+- `pipeline_read_env` : tables écrites par une autre tâche du job. Vide = `pipeline_write_env`.
+- `reference_read_env` : données de référence (Intraqual), `prod` par défaut dans les trois cibles.
+- `bypass_quality_checks` : `true` transforme les contrôles RED en AMBER (reprise ou debug).
+- `debug` et `log_level`.
+
+**Pourquoi en tête.** `config` lit l'environnement à l'import. Le notebook recopie donc les widgets dans l'environnement avant tout import local. Dans les deux notebooks qui redémarrent Python (`create_proj_chunks.py`, `create_proj_parsing_checkpoint.py`), le bloc est placé après `restartPython()` : le redémarrage efface l'environnement et les variables, pas les widgets.
+
+**Passage par le job.** Chaque tâche notebook reçoit les trois environnements en `base_parameters` (`resources/parsing_pipeline.job.yml`). Les clusters ne portent plus `PIPELINE_WRITE_ENV` ni `REFERENCE_READ_ENV`.
 
 **Changements.**
-
-- Le défaut `dev` des deux widgets est supprimé. Un paramètre manquant ne peut plus écrire en DEV sans erreur : le notebook s'arrête avec `ValueError` si la valeur n'est pas `dev`, `uat` ou `prod`.
-- Le widget `debug` est ajouté dans `create_proj_category_reference.py` et `update_proj_vector_indexes.py` (il pilote les gardes E1).
-- `pipeline_read_env` n'est pas ajouté : le pipeline n'écrit ni ne lit de table d'un autre environnement que `PIPELINE_WRITE_ENV`. `reference_read_env` est ajouté, pour la source Intraqual (voir §3.3). Pas de widget : ce sont des variables de cluster, comme `PIPELINE_WRITE_ENV`.
+- `config.py` : `PIPELINE_READ_ENV` (repli sur l'écriture) ; la source Intraqual est `f"{REFERENCE_READ_ENV}_gold.quality_system"`.
+- `tables.py` : `_with_bypass` transforme les RED en AMBER quand la variable `BYPASS_QUALITY_CHECKS` est à `true` ; appliqué dans `check_dataframe` et `check_rows`.
+- `create_proj_doc_catalog.py` et `update_proj_vector_indexes.py` lisent les tables des `parse_manifest`, `chunks` et `chunks_archive` (écrites par d'autres tâches) avec `PIPELINE_READ_ENV`. Les écritures et les index restent sur `PIPELINE_WRITE_ENV`.
+- Un test (`tests/test_parsing_env_names.py`) garde ces noms et l'ordre des widgets.
 
 ### 2.5 Dépendances (E3) — ouvert
 
@@ -204,14 +211,10 @@ Aucune de ces listes ne peut être remplacée par un calcul Spark sans réécrir
 
 ## 4 ter. Environnement : les noms des variables
 
-Question posée : le pipeline doit-il utiliser partout `PIPELINE_WRITE_ENV`, `PIPELINE_READ_ENV` et `REFERENCE_READ_ENV` comme le template ?
-
-- `PIPELINE_WRITE_ENV` : déjà le nom du template, utilisé partout pour les écritures.
-- `REFERENCE_READ_ENV` : ajouté pour la source Intraqual, qui est une donnée de référence d'un autre asset. Le template LEAP l'utilise déjà pour ce cas (`reference_read_env`, `prod` par défaut, `leap_utils/data_asset/table_utils.py` en fait autant pour les taux de change).
-- `PIPELINE_READ_ENV` : non ajouté. Le pipeline ne lit aucune table d'un autre environnement que la sienne ; une variable sans usage serait du bruit.
-- Les `PARSING_*` restants (`PARSING_RUN_MODE`, `PARSING_LLM_*`, etc.) sont des réglages du projet, pas des environnements. Les renommer en noms génériques n'apporterait rien.
-- Le catalogue Intraqual était écrit en dur par cible (`prod_gold.quality_system`), et une variable `PARSING_INTRAQUAL_SUFFIX` était passée au cluster sans être lue. Les deux sont supprimées ; `databricks.yml` ne garde que `reference_read_env`.
-- Garde : `tests/test_parsing_env_names.py` vérifie que chaque cluster reçoit `PIPELINE_WRITE_ENV` et `REFERENCE_READ_ENV`, qu'aucune des variables retirées ne revient, et que la source se dérive bien de `REFERENCE_READ_ENV`.
+- `PIPELINE_WRITE_ENV`, `PIPELINE_READ_ENV`, `REFERENCE_READ_ENV` : mêmes noms que le guide LEAP (`pipeline_write_env`, `pipeline_read_env`, `reference_read_env` en widgets).
+- `PIPELINE_READ_ENV` est lu uniquement pour les tables écrites par une autre tâche du job. Dans le reste du pipeline (écritures, index, tables relues par la même tâche), `PIPELINE_WRITE_ENV`.
+- Les `PARSING_*` restants (`PARSING_RUN_MODE`, `PARSING_LLM_*`, etc.) sont des réglages du projet, pas des environnements.
+- Le catalogue Intraqual n'est plus écrit en dur par cible. `PARSING_INTRAQUAL_GOLD` et `PARSING_INTRAQUAL_SUFFIX` sont supprimés.
 
 ## 5. Documentation et CI
 
@@ -250,7 +253,7 @@ Question posée : le pipeline doit-il utiliser partout `PIPELINE_WRITE_ENV`, `PI
 
 ## 9. Actions restantes
 
-**Fait dans cette passe** : E1, E4, E7 bis, E9 à E12, E14, E15 (documenté), E16 (non retenu), E18, E19 ; E2 clos sans changement.
+**Fait** : E1, E4 (option B), E7 bis, E9 à E12, E14, E15 (documenté), E16 (non retenu), E18, E19, E20 (partiel), E21 ; E2 clos sans changement.
 
 **À faire, par ordre**
 

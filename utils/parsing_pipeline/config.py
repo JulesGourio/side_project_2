@@ -36,6 +36,8 @@ def _require_env(key) -> str:
 # --- Environment, schema, paths ---
 # dev, uat or prod: the tables are written to <PIPELINE_WRITE_ENV>_proj.qualibot.<table>.
 PIPELINE_WRITE_ENV = _require_env("PIPELINE_WRITE_ENV")
+# Tables another task of the job wrote are read here; empty means the write environment.
+PIPELINE_READ_ENV = _os.environ.get("PIPELINE_READ_ENV") or PIPELINE_WRITE_ENV
 
 # Intraqual data asset (quality_system) is a reference table, read in the reference environment like the others.
 REFERENCE_READ_ENV = _require_env("REFERENCE_READ_ENV")
