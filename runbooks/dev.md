@@ -1056,6 +1056,17 @@ SELECT division, count(*) AS documents FROM dev_proj.qualibot.parse_manifest GRO
 SELECT count(*) AS documents FROM dev_proj.qualibot.parse_manifest;
 ```
 
+### I. Reconstruire l'index DEV après un changement de schéma de `chunks` (2026-10-22, à faire après contrôle de `chunks`)
+
+La synchronisation échoue avec `DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA` (la colonne `chunk_id` est passée en non nulle entre deux versions). Le remède est de supprimer l'index et de le recréer (environ 1 h, sans recherche dans le chat DEV pendant ce temps) :
+
+```powershell
+databricks workspace import /Workspace/Shared/qualibot_dev_index/rebuild_chunks_index --file runbooks/scripts/dev_index/rebuild_chunks_index.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json "@runbooks/scripts/dev_index/rebuild_chunks_index_submit.json" --profile DEV
+```
+
+Attendu : `done: dev_proj.qualibot.chunks_index rebuilt`, autant de lignes indexées que dans `chunks`.
+
 ## Fait
 
 - 2026-10-21 — Division COMMUN et exclusion de ONE_QMS-5S (section H) validées en DEV : `parse_manifest` = 5 242 documents (COMMUN 2 793, AS 1 953, AUTRE 249, sans division 110, IS 95, DIRECTIVE 42). Reste : reconstruire `chunks` et synchroniser l'index DEV pour que le chat utilise ces divisions.
