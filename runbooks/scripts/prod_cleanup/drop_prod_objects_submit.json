@@ -8,7 +8,7 @@
       "task_key": "drop_prod_objects",
       "notebook_task": {
         "notebook_path": "/Workspace/Shared/qualibot_prod_cleanup/drop_prod_objects",
-        "base_parameters": { "dry_run": "true" },
+        "base_parameters": { "phase": "prepare", "dry_run": "true" },
         "source": "WORKSPACE"
       }
     }
