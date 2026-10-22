@@ -110,6 +110,9 @@ async def get_user_identity(request: Request) -> UserIdentity:
 
 
 _OPEN_CAPS = {'can_chat': True, 'can_compare': True, 'groups': []}
+# A visitor the app permission lets in without any allowed group (members of an IdP group nested in ChatBot are in
+# neither source) gets the chat only: Compare stays with the groups that name it.
+_DEFAULT_CAPS = {'can_chat': True, 'can_compare': False, 'groups': []}
 
 
 def _caps_from_groups(groups: set[str]) -> dict:
@@ -144,12 +147,13 @@ async def _stored_groups(user_id: str, email: str) -> set[str] | None:
 
     :param user_id: numeric Databricks id of the visitor
     :param email: e-mail of the visitor, empty when unknown
-    :return: the stored groups, or None when the job never computed them or Lakebase is unavailable
+    :return: the stored groups, or None when the job never computed them
+    :raises RuntimeError: when Lakebase is unavailable
     """
     from server.services.infra import lakebase
     pool = lakebase.get_pool()
     if not pool:
-        return None
+        raise RuntimeError('Lakebase pool unavailable')
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             'SELECT groups FROM users WHERE groups_synced_at IS NOT NULL AND (user_id = $1 OR email = $2)',
@@ -190,8 +194,9 @@ async def get_capabilities(request: Request) -> dict:
 
     The groups are the union of the users table, written by the sync job from the account audit log (account-level
     groups), and SCIM /Me on the visitor's own token (groups attached to the workspace). No allowed group found grants
-    everything: the Databricks app permission already decides who reaches the app, the groups only narrow it, and a
-    visitor in a group only through another group is in neither source. The result is cached for CAPS_TTL_S.
+    the chat only: the Databricks app permission already decides who reaches the app, and a visitor in a group only
+    through another group is in neither source. The result is cached for CAPS_TTL_S, except when the users table could
+    not be read: that visitor gets both features, uncached, so an outage never withdraws Compare.
 
     CAPS_BYPASS=true short-circuits and grants everything (DEV only).
 
@@ -214,10 +219,12 @@ async def get_capabilities(request: Request) -> dict:
     header_email = request.headers.get('x-forwarded-email', '').strip()
     groups: set[str] = set()
     sources: list[str] = []
+    table_read = True
     try:
         stored = await _stored_groups(forwarded.split('@', 1)[0], header_email)
     except Exception as e:
         stored = None
+        table_read = False
         logger.warning('Capabilities %s: users table not read (%s)', key, e)
     if stored is not None:
         groups |= stored
@@ -237,10 +244,14 @@ async def get_capabilities(request: Request) -> dict:
     if caps['groups']:
         logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s) groups=%s', key, caps['can_chat'],
                     caps['can_compare'], '+'.join(sources), caps['groups'])
+    elif not table_read:
+        logger.warning('Capabilities %s: no allowed group found and users table not read (%s) — granting all, uncached',
+                       key, '+'.join(sources) or 'no source')
+        await _remember_identity(forwarded, email or header_email, display_name)
+        return dict(_OPEN_CAPS)
     else:
-        caps = dict(_OPEN_CAPS)
-        logger.warning('Capabilities %s: no allowed group found (%s) — granting all (fail-open)', key,
-                       '+'.join(sources) or 'no source')
+        caps = dict(_DEFAULT_CAPS)
+        logger.info('Capabilities %s: no allowed group found (%s) — chat only', key, '+'.join(sources))
     _caps_cache[key] = (now + _CAPS_TTL_S, caps)
     await _remember_identity(forwarded, email or header_email, display_name)
     return caps

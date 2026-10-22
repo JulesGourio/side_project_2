@@ -38,7 +38,7 @@ Branche : **`feature/chat-vsi-merged-on-impact-search`**. Pas de PR ; le zip à 
 | Corpus | copie UAT → DEV via le volume `uat_proj.qualibot.staging` : chunks et état du pipeline. **Aucun run complet du parsing** |
 | Phase archive avant 2018 | ignorée en DEV (plafond 0, fiches hors RAG, pas de `chunks_full`) |
 | Vector Search | endpoint `qualibot`, embeddings `databricks-qwen3-embedding-0-6b` |
-| Contrôle par groupe (can_chat / can_compare) | désactivé en DEV seulement (`CAPS_BYPASS=true`, `utils/deploy/target_env.json`) |
+| Contrôle par groupe (can_chat / can_compare) | actif (`CAPS_BYPASS=false`, `utils/deploy/target_env.json`) ; sans groupe reconnu : Chat seulement |
 | Accès à l'app | groupes de l'UAT, plus les utilisateurs déclarés dans le bundle (`databricks.yml`, `resources/*.yml`), plus le SP DEV |
 | Plannings | tous en PAUSED |
 | Bitbucket | pipelines manuelles `deploy-dev` / `deploy-dev-jobs`, environnement de déploiement **Development** |
@@ -976,6 +976,17 @@ La tâche `sync_user_capabilities` du job `D_1_Qualibot_Lakebase_Export_To_Volum
 - [x] **W4. Écriture** : `databricks bundle run -t dev lakebase_export --profile DEV --only sync_user_capabilities`
 - [x] **W5. Contrôle Lakebase DEV** (base `doccompare`) : `SELECT email, can_chat, can_compare, groups, groups_synced_at FROM users WHERE groups_synced_at IS NOT NULL ORDER BY email;`
 - [x] **W6. Logs de l'app** après une visite : `databricks apps logs qualibot --profile DEV | Select-String "Capabilities"` → `(TABLE+SCIM) groups=[…]`.
+
+### W7. Sans groupe reconnu : Chat seulement (2026-10-22, à faire)
+
+Un visiteur admis par la permission de l'app mais dans aucun groupe reconnu (membres d'un groupe IdP imbriqué dans ChatBot) a le Chat, pas Compare. Lakebase illisible : accès complet, non mis en cache.
+
+- [ ] **W7.1 Avant** : sur Lakebase DEV (base `doccompare`), vérifier que tous les utilisateurs Compare attendus y sont :
+  ```sql
+  SELECT email, groups, groups_synced_at FROM users WHERE can_compare AND groups_synced_at IS NOT NULL ORDER BY email;
+  ```
+- [ ] **W7.2 Déploiement** : Bitbucket → Pipelines → Run pipeline → branche `claude/sharp-mayer-uqwx8x` → `deploy-dev`.
+- [ ] **W7.3 Contrôle** : visite par un membre du groupe imbriqué, puis `databricks apps logs qualibot --profile DEV | Select-String "Capabilities"` → `no allowed group found (TABLE+SCIM) — chat only` ; un membre DocCompare → `can_compare=True`.
 
 ### Plus tard — non fait, sur décision
 

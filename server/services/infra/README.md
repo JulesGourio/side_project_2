@@ -25,8 +25,9 @@ Parent: [services](../README.md).
 - The groups are the union of `users.groups` (rows with `groups_synced_at` set, written by the sync job task
   `utils/lakebase_sync/sync_user_capabilities_job.py` from the account audit log; the only source for the account-level
   groups) and SCIM `Me` on the visitor's token (groups attached to the workspace). No allowed group found grants
-  everything: the Databricks app permission already decides who reaches the app, and a visitor in a group only through
-  another group is in neither source. The result, open or not, is cached for `CAPS_TTL_S`.
+  the chat only: the Databricks app permission already decides who reaches the app, and a visitor in a group only
+  through another group is in neither source; Compare stays with the groups that name it. The result is cached for
+  `CAPS_TTL_S`. When the `users` table cannot be read, both features are granted, uncached.
   The group names are the constants of `user.py`.
 - `CAPS_BYPASS=true` grants both capabilities to every visitor. `tests/test_deploy_config.py` keeps it off outside DEV.
 - When `ENV` is unset, `_is_dev()` is true. A request without an `x-forwarded-user` header then gets both capabilities,

@@ -490,16 +490,29 @@ def test_workspace_groups_from_scim_are_enough_without_a_table_row():
     assert caps == {'can_chat': True, 'can_compare': True, 'groups': [_COREDEV]}
 
 
-def test_no_allowed_group_found_grants_all_and_is_cached():
-    """A visitor in a group only through another group is in neither source: the app permission already filters."""
+def test_no_allowed_group_found_grants_the_chat_only_and_is_cached():
+    """A visitor in a group only through another group is in neither source: the app permission let them in."""
     from server.services.infra import user as user_mod
 
-    for stored, scim in ((None, ({'users'}, '', '')), (set(), RuntimeError('Unauthorized access to Org')),
-                         (RuntimeError('lakebase down'), RuntimeError('unauthorized'))):
+    for stored, scim in ((None, ({'users'}, '', '')), (set(), RuntimeError('Unauthorized access to Org'))):
         caps = _run_caps(stored=stored, scim=scim)
-        assert caps['can_chat'] and caps['can_compare']
+        assert caps == {'can_chat': True, 'can_compare': False, 'groups': []}
         assert 'visitor@example.com' in user_mod._caps_cache
     user_mod._caps_cache.clear()
+
+
+def test_unreadable_users_table_grants_all_uncached():
+    """A Lakebase outage must not withdraw Compare from its members."""
+    from server.services.infra import user as user_mod
+
+    caps = _run_caps(stored=RuntimeError('lakebase down'), scim=RuntimeError('unauthorized'))
+    assert caps['can_chat'] and caps['can_compare']
+    assert 'visitor@example.com' not in user_mod._caps_cache
+
+
+def test_unreadable_users_table_still_honours_scim_groups():
+    caps = _run_caps(stored=RuntimeError('lakebase down'), scim=({_COREDEV}, '', ''))
+    assert caps == {'can_chat': True, 'can_compare': True, 'groups': [_COREDEV]}
 
 
 def test_no_token_still_reads_the_table():
@@ -548,8 +561,8 @@ def test_stored_groups_ignore_rows_the_job_never_computed():
         assert asyncio.run(user_mod._stored_groups('999', '')) is None
     assert 'groups_synced_at IS NOT NULL' in queries[0][0]
     assert queries[1][1] == ('999', None)
-    with patch.object(lakebase, 'get_pool', return_value=None):
-        assert asyncio.run(user_mod._stored_groups('12345', '')) is None
+    with patch.object(lakebase, 'get_pool', return_value=None), pytest.raises(RuntimeError):
+        asyncio.run(user_mod._stored_groups('12345', ''))
 
 
 def test_chat_route_returns_403_without_capability(client):

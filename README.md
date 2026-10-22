@@ -102,9 +102,12 @@ The check joins two sources. The `users` table holds the groups written by the t
 which are account-level groups not attached to the workspaces. The SCIM `Me` endpoint, read with
 the visitor's token, gives the groups attached to the workspace (`CoreDev`, `CoreAdmin`). The result
 is cached for `CAPS_TTL_S` seconds (600 by default). When no allowed group is found in either source,
-both features are granted, because the Databricks app permission already filters who reaches the
-app and a visitor who is in a group only through another group appears in neither source; this is
-logged as a warning. `CAPS_BYPASS=true` opens both
+the chat is granted and the comparison is not: the Databricks app permission already filters who
+reaches the app, and a visitor who is in a group only through another group (for example an
+IdP-managed group nested in `Qualibot-ChatBot`) appears in neither source. The comparison stays
+with the groups that name it. When the `users` table cannot be read (Lakebase unavailable), both
+features are granted and the result is not cached, so an outage never withdraws the comparison;
+this is logged as a warning. `CAPS_BYPASS=true` opens both
 features to every visitor; it is set on the DEV target only. In development (`ENV=development`),
 a request without the identity header is accepted.
 
