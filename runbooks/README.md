@@ -20,7 +20,7 @@ The operator runbooks (`dev.md`, `uat.md`, `prod.md`, `retest.md`) are written i
 - Every manual step gives all its commands in full, in order (PowerShell, `databricks bundle run`, SQL). A step never refers to another step without repeating its commands.
 - A step marked "on approval" is never run without an explicit go-ahead.
 - Status: `[ ]` to do; `[x]` done and confirmed by the operator, with the confirmation date written after it.
-- CLI profiles: `DEV` (DEV), `UAT` (UAT), `qualibot-prod` (PROD). `migrate_lakebase.py` accepts the environments `DEV`, `UAT` and `PROD`.
+- CLI profiles: `DEV` (DEV), `UAT` (UAT), `PROD` (PROD). `migrate_lakebase.py` accepts the environments `DEV`, `UAT` and `PROD`.
 - The application and pipeline objects (tables, volumes, Vector Search indexes) live in `<env>_proj.qualibot`, with the same names in every environment. The Intraqual catalog (`prod_landingzone.intraqual`) is not modified by these runbooks.
 
 ## Where to find an operation

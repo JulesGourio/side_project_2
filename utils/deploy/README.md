@@ -26,7 +26,7 @@ python utils/deploy/render_target_config_env.py <dev|uat|prod> [output_path]
 |---|---|---|---|
 | `dev` | `dev` | `qualibot` | `DEV` |
 | `uat` (default) | `uat` | `qualibot` | `UAT` |
-| `prod` | `prod` | `qualibot` | `qualibot-prod` |
+| `prod` | `prod` | `qualibot` | `PROD` |
 
 ## What the script does
 

@@ -11,7 +11,7 @@ from typing import Any
 # ── Databricks CLI profiles ────────────────────────────────────────────────────
 PROFILE_DEV  = "DEV"
 PROFILE_UAT  = "UAT"
-PROFILE_PROD = "qualibot-prod"
+PROFILE_PROD = "PROD"
 
 # ── Lakebase environments ──────────────────────────────────────────────────────
 # Host and user are resolved at connect time (lakebase_connect_with); the token must come from the workspace of the

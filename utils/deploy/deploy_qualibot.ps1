@@ -14,7 +14,7 @@ $ErrorActionPreference = 'Stop'
 $Targets = @{
     dev        = @{ Target = 'dev';               AppName = 'qualibot';           Profile = 'DEV' }
     uat        = @{ Target = 'uat';               AppName = 'qualibot';           Profile = 'UAT' }
-    prod       = @{ Target = 'prod';              AppName = 'qualibot';           Profile = 'qualibot-prod' }
+    prod       = @{ Target = 'prod';              AppName = 'qualibot';           Profile = 'PROD' }
 }
 
 if (-not $Targets.ContainsKey($AppEnv)) {

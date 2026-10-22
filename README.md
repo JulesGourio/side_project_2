@@ -173,7 +173,7 @@ bun run build
 |---|---|---|---|---|
 | `dev` | `dev` | `qualibot` | `DEV` | `dbc-c623749d-731b` |
 | `uat` | `uat` | `qualibot` | `UAT` | `dbc-3a17bfce-9e88` |
-| `prod` | `prod` | `qualibot` | `qualibot-prod` | `dbc-77b87d5a-6bcb` |
+| `prod` | `prod` | `qualibot` | `PROD` | `dbc-77b87d5a-6bcb` |
 
 The full host names are in `databricks.yml`. The CLI profile of the target must be authenticated.
 

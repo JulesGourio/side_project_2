@@ -39,7 +39,7 @@ The environments known by `ops_config.py`:
 |---|---|---|---|
 | `UAT` | `UAT` | `doccompare` | Database of the UAT application |
 | `DEV` | `DEV` | `doccompare` | Database of the DEV application |
-| `PROD` | `qualibot-prod` | `doccompare` | Database of the PROD application |
+| `PROD` | `PROD` | `doccompare` | Database of the PROD application |
 
 All four use the Lakebase project `qualibot`, branch `production`, endpoint `primary`.
 
