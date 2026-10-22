@@ -21,7 +21,7 @@
 # MAGIC - `{PARSING_DIVISION_ARCHIVE_TABLE}` (same function, disabled by default: empty)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
-# MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.category_reference`
+# MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.category_reference`
 
 # COMMAND ----------
 
