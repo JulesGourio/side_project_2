@@ -91,15 +91,15 @@ listed at the top of `config.py`.
 
 ## Documents and scope
 
-- **Scope gate** (`DOC_SCOPE_FILTER`): `revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false` on
-  `document_revisions_intraqual` (the Intraqual data asset; `courant`, `etat` and `nonvisible` at source). Only the
-  current revision of a validated, visible document enters the chain. `difftotale` is not part of the gate: the
-  Intraqual portal shows documents with `difftotale = 0`.
-- **Division** (`categories.build_division_reference`), first match wins: root category PROCESSES or `AS -` gives `AS`;
-  `IS -` gives `IS`; root DIRECTIVE gives `DIRECTIVE`; a leaf category named `AS` or `IS` under the process tree
-  (`00-LATECOERE PROCESSES_One QMS`) gives that division; the other documents of that tree are `COMMUN`; anything else is
-  `AUTRE`. A document whose principal category or one of its ancestors is `ONE_QMS-5S` (IDCAT 3798) is excluded from the
-  manifest. The chat division filter `AS` or `IS` also returns `COMMUN` and `DIRECTIVE`.
+- **Scope gate** (`DOC_SCOPE_FILTER`): `revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false` and a root
+  category in `SCOPE_ROOT_IDCATS` (One QMS processes, AS programs, AS work instructions), on `document_revisions_intraqual`
+  (the Intraqual data asset; `courant`, `etat` and `nonvisible` at source). Only the current revision of a validated,
+  visible document of those roots enters the chain. `difftotale` is not part of the gate: the Intraqual portal shows
+  documents with `difftotale = 0`.
+- **Division** (`categories.build_division_reference`): from the root of the main category (`AS -`, `IS -`, PROCESSES,
+  DIRECTIVE); under the process tree (`00-LATECOERE PROCESSES_One QMS`) a leaf category named `AS` or `IS` sets it,
+  and every other document is `GROUP` (shared by the divisions). Documents published before `DOC_DATE_CUTOFF`
+  (2016-01-01) go to `chunks_archive` except under the date-exempt roots (`DATE_EXEMPT_ROOT_IDCATS`, none today).
 - **Manifest**: `2_manifest` keeps the in-scope documents, with their REF, title, revision (`indice`), date,
   category hierarchy, document type and `parse_content` flag. A category listed in `EXCLUDED_IDCATS` and a REF
   listed in `MANUAL_REF_EXCLUSIONS` are excluded.

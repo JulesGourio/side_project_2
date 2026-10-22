@@ -1038,23 +1038,32 @@ SELECT 'apres', IDDOC, ref, titre, type_document, indice, doc_date, division, ni
 
 (`<M>` : version de `parse_manifest` relevée en 2.)
 
-### H. Division COMMUN et exclusion de ONE_QMS-5S (code poussé le 2026-10-21, à faire)
+### H. Périmètre officiel One QMS, division GROUP, date 2016 (code poussé le 2026-10-22, à faire)
 
-1. Déployer les jobs : Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-dev-jobs`.
+Périmètre : racines 3870 (One QMS), 948 (AS - PROGRAMS / PROGRAMMES), 3209 (AS - TECHNICAL INSTRUCTIONS), documents du 2016-01-01 ou après. `ONE_QMS-5S` (obsolètes, à classer), PROCESSES, formation, VA, directive et organigramme sortent. Divisions : AS, IS, GROUP (DIRECTIVE n'existe plus dans le périmètre). Le mode du job est `full` et le plafond de fichiers à parser 1000 dans `databricks.yml` (cible `dev`), temporairement.
 
-2. Lancer les deux tâches (`dry_run` reste à `true`) :
-
-```powershell
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 1_categories
-databricks bundle run parsing_pipeline -t dev --profile DEV --only 2_manifest
-```
-
-3. Contrôler (SQL editor DEV, lecture seule). Attendu : environ 4 900 à 5 100 documents, AS ≈ 1 950, COMMUN ≈ 2 800, IS ≈ 95, DIRECTIVE ≈ 40, AUTRE ≈ 250 :
+1. Déployer : Bitbucket → Pipelines → Run pipeline → branche `claude/intraqual-data-asset` → `deploy-dev-jobs`.
+2. Lancer : `databricks jobs run-now 362367007936662 --profile DEV`
+3. Contrôler (SQL editor DEV) :
 
 ```sql
 SELECT division, count(*) AS documents FROM dev_proj.qualibot.parse_manifest GROUP BY division ORDER BY documents DESC;
-SELECT count(*) AS documents FROM dev_proj.qualibot.parse_manifest;
+SELECT division, count(DISTINCT IDDOC) AS documents FROM dev_proj.qualibot.chunks GROUP BY division ORDER BY documents DESC;
+SELECT count(*) AS documents_a_plusieurs_divisions FROM (SELECT IDDOC FROM dev_proj.qualibot.chunks GROUP BY IDDOC HAVING count(DISTINCT division) > 1);
 ```
+Attendu : environ 3 840 documents dans `chunks` (One QMS 2 556, work instructions 1 014, programmes 270), divisions AS, IS, GROUP seulement, 0 document à plusieurs divisions.
+4. Reconstruire l'index (section I), puis retirer `parsing_max_parse_files` et remettre `parsing_run_mode: "incremental"` dans le bloc `dev` de `databricks.yml`, puis redéployer.
+
+### I. Reconstruire l'index DEV après un changement de schéma de `chunks` (2026-10-22, à faire après contrôle de `chunks`)
+
+La synchronisation échoue avec `DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA` (la colonne `chunk_id` est passée en non nulle entre deux versions). Le remède est de supprimer l'index et de le recréer (environ 1 h, sans recherche dans le chat DEV pendant ce temps) :
+
+```powershell
+databricks workspace import /Workspace/Shared/qualibot_dev_index/rebuild_chunks_index --file runbooks/scripts/dev_index/rebuild_chunks_index.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json "@runbooks/scripts/dev_index/rebuild_chunks_index_submit.json" --profile DEV
+```
+
+Attendu : `done: dev_proj.qualibot.chunks_index rebuilt`, autant de lignes indexées que dans `chunks`.
 
 ### X. Import Lakebase DEV → `dev_proj.qualibot` (à faire, poussé le 2026-10-22)
 

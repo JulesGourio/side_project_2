@@ -9,6 +9,7 @@ Priority for every parameter: env var > explicit override in notebook > this def
 
 import datetime as _dt
 import os as _os
+import sys as _sys
 
 
 def _env(key, default) -> str:
@@ -24,13 +25,18 @@ def _env(key, default) -> str:
 def _require_env(key) -> str:
     """Return env var; raise if unset — no environment-specific default.
 
+    The job's environments are set on the driver by the notebook. The Python workers of the executors import the
+    worker modules, hence this one, without them: they only need the constants that do not depend on an environment.
+
     :param key: Name of the environment variable.
-    :return: value of the variable, never empty.
+    :return: value of the variable, never empty on the driver; empty on an executor's Python worker when unset.
     """
     val = _os.environ.get(key)
-    if not val:
-        raise RuntimeError(f"{key} must be set (see resources/parsing_pipeline.job.yml)")
-    return val
+    if val:
+        return val
+    if "pyspark.worker" in _sys.modules:
+        return ""
+    raise RuntimeError(f"{key} must be set (see resources/parsing_pipeline.job.yml)")
 
 
 # --- Environment, schema, paths ---
@@ -59,10 +65,14 @@ INTRAQUAL_REQUIRED_TABLES = [INTRAQUAL_REVISIONS_TABLE, INTRAQUAL_CATEGORY_ANCES
 MAX_SOURCE_STALENESS_HOURS = int(_env("PARSING_MAX_SOURCE_STALENESS_HOURS", "36"))
 
 # --- Qualibot perimeter (scope gate) ---
+# Root categories of the documents Qualibot indexes: 00-LATECOERE PROCESSES_One QMS, AS - PROGRAMS / PROGRAMMES and
+# AS - TECHNICAL INSTRUCTIONS (work instructions, "documents métier").
+SCOPE_ROOT_IDCATS = {3870, 948, 3209}
 # Columns of INTRAQUAL_REVISIONS_TABLE. The full-diffusion flag is not part of the gate: the portal shows those documents too.
 DOC_SCOPE_FILTER = _env(
     "PARSING_DOC_SCOPE_FILTER",
-    "revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false",
+    "revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false "
+    f"AND root_category_ID IN ({', '.join(str(i) for i in sorted(SCOPE_ROOT_IDCATS))})",
 )
 
 # --- Optional fallback (disabled by default) ---
@@ -153,7 +163,7 @@ WORKER_MODULES = (
 # Docs before this date are parsed like the others but their chunks go to
 # TARGET_CHUNK_TABLE_ARCHIVE instead of the RAG chunk tables (parsed_documents:
 # is_filtered_by_date=True, is_in_rag=False). An unknown date counts as recent.
-DOC_DATE_CUTOFF = _env("PARSING_DOC_DATE_CUTOFF", "2018-01-01")
+DOC_DATE_CUTOFF = _env("PARSING_DOC_DATE_CUTOFF", "2016-01-01")
 _dt.date.fromisoformat(
     DOC_DATE_CUTOFF
 )  # fails at import on a malformed value: the steps cast it to a date literal
@@ -183,8 +193,11 @@ ARCHIVE_NOTICE_MARKER = "ARCHIVED DOCUMENT — CONTENT NOT INDEXED"
 MANUAL_REF_EXCLUSIONS = set()
 
 # --- Category exclusion ---
-# Documents whose principal category, or one of its ancestors, is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by create_proj_parse_manifest.py.
-EXCLUDED_IDCATS = {3798}  # ONE_QMS-5S
+# Documents whose principal category is listed are skipped as SKIPPED_CATEGORY_EXCLUDED by create_proj_parse_manifest.py.
+EXCLUDED_IDCATS: set[int] = set()
+
+# Documents under these root categories are indexed whatever their date (DOC_DATE_CUTOFF does not apply to them).
+DATE_EXEMPT_ROOT_IDCATS: set[int] = set()
 
 # --- Empty + small file auto-exclusion ---
 # Zero-text + small file = blank stub -> skipped permanently; zero-text above this size stays ERROR for review.

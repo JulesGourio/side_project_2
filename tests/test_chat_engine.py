@@ -288,7 +288,7 @@ def test_three_queries_reranked_and_raw(monkeypatch):
 
 def test_division_is_a_filter_on_the_single_index(monkeypatch):
     _, m = _run(monkeypatch, division='is')
-    assert all(json.loads(p['filters_json']) == {'division': ['IS', 'COMMUN', 'DIRECTIVE']} for p in m['sent'])
+    assert all(json.loads(p['filters_json']) == {'division': ['IS', 'GROUP']} for p in m['sent'])
     assert engine.division_filter('XX') == {} and engine.division_filter(None) == {}
 
 

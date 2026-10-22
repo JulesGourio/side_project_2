@@ -11,7 +11,10 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as f
 
 from config import (
+    DATE_EXEMPT_ROOT_IDCATS,
     DIVISION_ARCHIVE_TABLE,
+    DIVISION_REFERENCE_TABLE,
+    DOC_DATE_CUTOFF,
     DOC_SCOPE_FILTER,
     INTRAQUAL_CATEGORY_ANCESTORS_TABLE,
     INTRAQUAL_REVISIONS_TABLE,
@@ -21,7 +24,6 @@ IDCAT_PROCESSES = 12  # "1 - PROCESSES / PROCESSUS" → belongs to AS
 IDCAT_AS = 3346  # "AS - Aerostructures"
 IDCAT_IS = 3284  # "IS - Interconnection Systems"
 IDCAT_DIRECTIVE = 962  # "0 - DIRECTIVE GROUPE LATECOERE"
-IDCAT_PROCESS_TREE = 3870  # "00-LATECOERE PROCESSES_One QMS": processes shared by the divisions
 MAX_HIERARCHY_DEPTH = 7
 
 
@@ -77,7 +79,9 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
 
     :param spark: Active Spark session.
     :param max_depth: Number of levels walked; the last output level is ``niveau_plus_{max_depth-1}``.
-    :return: DataFrame of ``IDDOC``, ``division`` and ``niveau_plus_1`` .. ``niveau_plus_{max_depth-1}``.
+    :return: DataFrame of ``IDDOC``, ``division`` (``AS``, ``IS``, ``DIRECTIVE`` or ``GROUP``: shared by the divisions),
+        ``niveau_plus_1`` .. ``niveau_plus_{max_depth-1}`` and ``date_exempt`` (true when the document is indexed
+        whatever its date).
     """
     df = build_category_levels(spark, max_depth)
 
@@ -88,11 +92,10 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
         .when(f.col("raw_niv1").startswith("AS -"), f.lit("AS"))
         .when(f.col("raw_niv1").startswith("IS -"), f.lit("IS"))
         .when(f.col("root_idcat") == IDCAT_DIRECTIVE, f.lit("DIRECTIVE"))
-        # Under the process tree a leaf category named after the division marks the document.
+        # Outside those roots, a leaf category named after the division marks the document.
         .when(f.upper(f.trim(f.col("leaf_nomcat"))) == "AS", f.lit("AS"))
         .when(f.upper(f.trim(f.col("leaf_nomcat"))) == "IS", f.lit("IS"))
-        .when(f.col("root_idcat") == IDCAT_PROCESS_TREE, f.lit("COMMUN"))
-        .otherwise(f.lit("AUTRE")),
+        .otherwise(f.lit("GROUP")),
     )
 
     df = df.withColumn(
@@ -115,7 +118,10 @@ def build_category_hierarchy(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
             ),
         )
 
-    return df.select("IDDOC", "division", *[f"niveau_plus_{niv}" for niv in range(1, max_depth)])
+    df = df.withColumn("date_exempt", f.col("root_idcat").isin(*sorted(DATE_EXEMPT_ROOT_IDCATS)))
+    return df.select(
+        "IDDOC", "division", *[f"niveau_plus_{niv}" for niv in range(1, max_depth)], "date_exempt"
+    )
 
 
 def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
@@ -126,14 +132,14 @@ def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
 
     :param spark: Active Spark session.
     :param max_depth: Number of category levels, as in ``build_category_hierarchy``.
-    :return: one row per IDDOC with its division and ``niveau_plus_*`` columns.
+    :return: one row per IDDOC with its division, ``niveau_plus_*``, ``date_exempt`` and ``division_source``.
     """
     niveau_cols = [f"niveau_plus_{niv}" for niv in range(1, max_depth)]
 
     df_live = (
         build_category_hierarchy(spark, max_depth=max_depth)
         .dropDuplicates(["IDDOC"])
-        .select("IDDOC", "division", *niveau_cols)
+        .select("IDDOC", "division", *niveau_cols, "date_exempt")
         .withColumn("division_source", f.lit("live_hierarchy"))
     )
     if not (DIVISION_ARCHIVE_TABLE or "").strip():
@@ -145,6 +151,7 @@ def build_division_reference(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> Dat
         .select("IDDOC", "division", *niveau_cols)
         .dropDuplicates(["IDDOC"])
         .join(df_live.select("IDDOC"), on="IDDOC", how="left_anti")
+        .withColumn("date_exempt", f.lit(False))
         .withColumn("division_source", f.lit("archive_fallback"))
     )
 
@@ -196,3 +203,25 @@ def source_ages_hours(spark, tables) -> dict[str, float | None]:
         except Exception:
             ages[table] = None
     return ages
+
+
+def with_archive_flag(spark, df: DataFrame) -> DataFrame:
+    """Add ``is_archive``: published before DOC_DATE_CUTOFF and not under a date-exempt root category.
+
+    :param spark: Active Spark session.
+    :param df: Rows with ``IDDOC`` and ``doc_date`` (null = recent).
+    :return: the same rows with a boolean ``is_archive`` column.
+    """
+    df_exempt = spark.table(DIVISION_REFERENCE_TABLE).select(
+        "IDDOC", f.col("date_exempt").alias("_date_exempt")
+    )
+    before_cutoff = f.col("doc_date").isNotNull() & (
+        f.col("doc_date") < f.lit(DOC_DATE_CUTOFF).try_cast("date")
+    )
+    return (
+        df.join(f.broadcast(df_exempt), on="IDDOC", how="left")
+        .withColumn(
+            "is_archive", before_cutoff & ~f.coalesce(f.col("_date_exempt"), f.lit(False))
+        )
+        .drop("_date_exempt")
+    )
