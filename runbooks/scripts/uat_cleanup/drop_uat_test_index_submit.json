@@ -1,0 +1,25 @@
+{
+  "run_name": "qualibot-uat-drop-test-index",
+  "run_as": {
+    "service_principal_name": "3e5cd4e5-f765-4760-b974-ee7715258b39"
+  },
+  "tasks": [
+    {
+      "task_key": "drop_uat_test_index",
+      "environment_key": "sdk_env",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/qualibot_uat_cleanup/drop_uat_test_index",
+        "source": "WORKSPACE"
+      }
+    }
+  ],
+  "environments": [
+    {
+      "environment_key": "sdk_env",
+      "spec": {
+        "environment_version": "2",
+        "dependencies": ["databricks-sdk>=0.118.0"]
+      }
+    }
+  ]
+}
