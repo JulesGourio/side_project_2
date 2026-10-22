@@ -58,5 +58,4 @@ prerelease = "allow"
 [tool.ruff]
 src = ["server"]
 line-length = 100
-indent-width = 2
-fix = true
+indent-width = 4

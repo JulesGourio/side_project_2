@@ -50,10 +50,12 @@ import sys
 
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
-sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(REPO_DIR))
+)  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
 sys.path.insert(0, REPO_DIR)
 
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 
 # COMMAND ----------
 
@@ -67,6 +69,7 @@ import config as cfg
 import describe_steps
 import llm_describe
 import tables
+
 tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from worker import configure
 from leap_utils.common import logger as log_utils
@@ -101,9 +104,13 @@ LOG_LEVEL = dbutils.widgets.get("log_level")
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
 dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])
-REBUILD_IMAGE_CHUNKS = dbutils.widgets.get("rebuild_image_chunks") == "true" or cfg.REDESCRIBE_ALL_IMAGES
+REBUILD_IMAGE_CHUNKS = (
+    dbutils.widgets.get("rebuild_image_chunks") == "true" or cfg.REDESCRIBE_ALL_IMAGES
+)
 
-dbutils.widgets.text("llm_fallback_endpoints", cfg.LLM_FALLBACK_ENDPOINTS, "Fallback endpoints (comma-separated)")
+dbutils.widgets.text(
+    "llm_fallback_endpoints", cfg.LLM_FALLBACK_ENDPOINTS, "Fallback endpoints (comma-separated)"
+)
 LLM_FALLBACK_ENDPOINTS = dbutils.widgets.get("llm_fallback_endpoints")
 
 # COMMAND ----------
@@ -115,7 +122,9 @@ LLM_FALLBACK_ENDPOINTS = dbutils.widgets.get("llm_fallback_endpoints")
 # COMMAND ----------
 
 configure(
-    VOLUME_BASE_PATH=cfg.VOLUME_BASE_PATH, USE_TIKTOKEN=cfg.USE_TIKTOKEN, CHARS_PER_TOKEN=cfg.CHARS_PER_TOKEN,
+    VOLUME_BASE_PATH=cfg.VOLUME_BASE_PATH,
+    USE_TIKTOKEN=cfg.USE_TIKTOKEN,
+    CHARS_PER_TOKEN=cfg.CHARS_PER_TOKEN,
 )
 
 try:
@@ -125,8 +134,10 @@ except Exception:
 WS_HOST = spark.conf.get("spark.databricks.workspaceUrl")
 
 LLM_ENDPOINTS = llm_describe.endpoint_chain(cfg.LLM_MODEL_ENDPOINT, LLM_FALLBACK_ENDPOINTS)
-logger.info(f"RUN_MODE={cfg.RUN_MODE} | Endpoints={' -> '.join(LLM_ENDPOINTS)} | concurrency={cfg.LLM_MAX_CONCURRENT} | "
-            f"batch={cfg.LLM_BATCH_SIZE or 'ALL'}")
+logger.info(
+    f"RUN_MODE={cfg.RUN_MODE} | Endpoints={' -> '.join(LLM_ENDPOINTS)} | concurrency={cfg.LLM_MAX_CONCURRENT} | "
+    f"batch={cfg.LLM_BATCH_SIZE or 'ALL'}"
+)
 
 # COMMAND ----------
 
@@ -148,10 +159,15 @@ if cfg.REDESCRIBE_ALL_IMAGES:
 df_pending = describe_steps.pending_images()
 pending_count = df_pending.count()
 
-status_counts = {r["status"]: r["cnt"] for r in df_pending.groupBy("status").agg(F.count("*").alias("cnt")).collect()}
+status_counts = {
+    r["status"]: r["cnt"]
+    for r in df_pending.groupBy("status").agg(f.count("*").alias("cnt")).collect()
+}
 n_pending = status_counts.get("PENDING", 0)
 n_retry = status_counts.get("ERROR", 0)
-logger.info(f"Images to process: {pending_count} total ({n_pending} new PENDING + {n_retry} ERROR retries)")
+logger.info(
+    f"Images to process: {pending_count} total ({n_pending} new PENDING + {n_retry} ERROR retries)"
+)
 if pending_count == 0:
     logger.info("Nothing to do - no PENDING or ERROR images.")
 
@@ -167,7 +183,10 @@ if pending_count == 0:
 batched = bool(cfg.LLM_BATCH_SIZE) and pending_count > cfg.LLM_BATCH_SIZE
 df_to_process = df_pending.limit(cfg.LLM_BATCH_SIZE) if batched else df_pending
 rows_to_process = [r.asDict() for r in df_to_process.collect()]
-logger.info(f"Batch: {len(rows_to_process)} images ({n_pending} new + {n_retry} retries)" + (f" | batched from {pending_count}" if batched else ""))
+logger.info(
+    f"Batch: {len(rows_to_process)} images ({n_pending} new + {n_retry} retries)"
+    + (f" | batched from {pending_count}" if batched else "")
+)
 
 # COMMAND ----------
 
@@ -179,7 +198,9 @@ logger.info(f"Batch: {len(rows_to_process)} images ({n_pending} new + {n_retry} 
 
 # COMMAND ----------
 
-describe_steps.describe_images(rows_to_process, WS_HOST, WS_TOKEN, LLM_ENDPOINTS, use_cache=not cfg.REDESCRIBE_ALL_IMAGES)
+describe_steps.describe_images(
+    rows_to_process, WS_HOST, WS_TOKEN, LLM_ENDPOINTS, use_cache=not cfg.REDESCRIBE_ALL_IMAGES
+)
 
 # COMMAND ----------
 
@@ -210,14 +231,19 @@ else:
 # COMMAND ----------
 
 if described_count > 0:
-    tables.check_dataframe(df_image_chunks, "image chunks", [
-        tables.not_null("chunk_id"),
-        tables.unique("chunk_id"),
-        tables.not_null("IDDOC"),
-        tables.not_null("REF"),
-        tables.not_null("chunk_text"),
-        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
-    ], logger)
+    tables.check_dataframe(
+        df_image_chunks,
+        "image chunks",
+        [
+            tables.not_null("chunk_id"),
+            tables.unique("chunk_id"),
+            tables.not_null("IDDOC"),
+            tables.not_null("REF"),
+            tables.not_null("chunk_text"),
+            tables.not_null("division", mostly=0.99, severity=tables.AMBER),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 
@@ -249,9 +275,11 @@ describe_steps.promote_documents_awaiting_images()
 # COMMAND ----------
 
 display(
-    spark.table(describe_steps.IMAGE_TABLE).groupBy("status").agg(
-        F.count("*").alias("count"),
-        F.sum("input_tokens").alias("total_input_tokens"),
-        F.sum("output_tokens").alias("total_output_tokens"),
+    spark.table(describe_steps.IMAGE_TABLE)
+    .groupBy("status")
+    .agg(
+        f.count("*").alias("count"),
+        f.sum("input_tokens").alias("total_input_tokens"),
+        f.sum("output_tokens").alias("total_output_tokens"),
     )
 )

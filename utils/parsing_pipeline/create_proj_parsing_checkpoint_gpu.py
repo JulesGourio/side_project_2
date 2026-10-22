@@ -59,7 +59,7 @@ REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
 sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))
 sys.path.insert(0, REPO_DIR)
 
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 
 # COMMAND ----------
 
@@ -72,6 +72,7 @@ from pyspark.sql import functions as F
 import config as cfg
 import parse_steps
 import tables
+
 tables.require_gx()
 from leap_utils.common import logger as log_utils
 
@@ -157,10 +158,19 @@ else:
 # COMMAND ----------
 
 df_written = spark.table(cfg.CHECKPOINT_TABLE).filter(
-    (F.col("ingestion_run_id") == parse_steps.INGESTION_RUN_ID) & (F.col("source_file_extension") == "pdf"))
-tables.check_dataframe(df_written, "parsing_checkpoint (GPU PDFs)", [
-    tables.not_null("IDDOC"), tables.not_null("document_sha256"), tables.not_null("parse_status"),
-], logger)
+    (f.col("ingestion_run_id") == parse_steps.INGESTION_RUN_ID)
+    & (f.col("source_file_extension") == "pdf")
+)
+tables.check_dataframe(
+    df_written,
+    "parsing_checkpoint (GPU PDFs)",
+    [
+        tables.not_null("IDDOC"),
+        tables.not_null("document_sha256"),
+        tables.not_null("parse_status"),
+    ],
+    logger,
+)
 
 # COMMAND ----------
 

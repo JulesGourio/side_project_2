@@ -16,14 +16,25 @@ import pandas as pd
 
 from pyspark.sql import Column
 from pyspark.sql import types as T
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 from pyspark.sql.functions import pandas_udf
 
-from config import IMG_SKIP_MAX_DIM, IMG_SKIP_MIN_SIDE, LLM_OCR_MAX_PAGES, LLM_OCR_TEXT_THRESHOLD, PARSE_TIMEOUT_SECONDS
+from config import (
+    IMG_SKIP_MAX_DIM,
+    IMG_SKIP_MIN_SIDE,
+    LLM_OCR_MAX_PAGES,
+    LLM_OCR_TEXT_THRESHOLD,
+    PARSE_TIMEOUT_SECONDS,
+)
 from format_parsers import parse_with_docling, parse_xls, parse_xlsx_openpyxl, patch_worker_env
 from image_fallbacks import (
-    fallback_parse_docx, fallback_parse_pptx, fallback_parse_ppt_ole, render_pdf_pages_for_llm_ocr,
-    image_record, image_target_path, save_image_to_volume,
+    fallback_parse_docx,
+    fallback_parse_pptx,
+    fallback_parse_ppt_ole,
+    render_pdf_pages_for_llm_ocr,
+    image_record,
+    image_target_path,
+    save_image_to_volume,
 )
 from worker import _cfg, count_tokens, ensure_config
 
@@ -31,28 +42,32 @@ logger = logging.getLogger(__name__)
 
 
 # --- Spark schemas ---
-IMAGE_METADATA_SCHEMA = T.StructType([
-    T.StructField("image_id", T.IntegerType(), True),
-    T.StructField("page_no", T.IntegerType(), True),
-    T.StructField("label", T.StringType(), True),
-    T.StructField("area_ratio", T.FloatType(), True),
-    T.StructField("captions", T.ArrayType(T.StringType()), True),
-    T.StructField("context_text", T.StringType(), True),
-    T.StructField("volume_path", T.StringType(), True),
-    T.StructField("image_width", T.IntegerType(), True),
-    T.StructField("image_height", T.IntegerType(), True),
-])
+IMAGE_METADATA_SCHEMA = T.StructType(
+    [
+        T.StructField("image_id", T.IntegerType(), True),
+        T.StructField("page_no", T.IntegerType(), True),
+        T.StructField("label", T.StringType(), True),
+        T.StructField("area_ratio", T.FloatType(), True),
+        T.StructField("captions", T.ArrayType(T.StringType()), True),
+        T.StructField("context_text", T.StringType(), True),
+        T.StructField("volume_path", T.StringType(), True),
+        T.StructField("image_width", T.IntegerType(), True),
+        T.StructField("image_height", T.IntegerType(), True),
+    ]
+)
 
 IMAGE_ARRAY_SCHEMA = T.ArrayType(IMAGE_METADATA_SCHEMA)
 
-FULL_PARSE_SCHEMA = T.StructType([
-    T.StructField("text", T.StringType(), True),
-    T.StructField("parser_error", T.StringType(), True),
-    T.StructField("parser_strategy", T.StringType(), True),
-    T.StructField("parse_time_seconds", T.FloatType(), True),
-    T.StructField("images", IMAGE_ARRAY_SCHEMA, True),
-    T.StructField("timings", T.MapType(T.StringType(), T.FloatType()), True),
-])
+FULL_PARSE_SCHEMA = T.StructType(
+    [
+        T.StructField("text", T.StringType(), True),
+        T.StructField("parser_error", T.StringType(), True),
+        T.StructField("parser_strategy", T.StringType(), True),
+        T.StructField("parse_time_seconds", T.FloatType(), True),
+        T.StructField("images", IMAGE_ARRAY_SCHEMA, True),
+        T.StructField("timings", T.MapType(T.StringType(), T.FloatType()), True),
+    ]
+)
 
 
 # --- Image helpers ---
@@ -71,8 +86,7 @@ def _get_pil_image(pic, doc) -> Any:
     :param doc: Docling document that holds the picture.
     :return: PIL image, or None when neither way works.
     """
-    for fn in (lambda: pic.get_image(doc=doc),
-               lambda: pic.image.pil_image if pic.image else None):
+    for fn in (lambda: pic.get_image(doc=doc), lambda: pic.image.pil_image if pic.image else None):
         try:
             img = fn()
             if img is not None:
@@ -113,8 +127,9 @@ def _resolve_caption(doc, ref) -> str | None:
     return None
 
 
-def _get_image_context(page_texts: list, page_no, bbox, caption_crefs: set,
-                       max_tokens: int = 250) -> str:
+def _get_image_context(
+    page_texts: list, page_no, bbox, caption_crefs: set, max_tokens: int = 250
+) -> str:
     """Build before/after textual context around an image, token-budgeted.
 
     :param page_texts: Text items of the page.
@@ -130,10 +145,14 @@ def _get_image_context(page_texts: list, page_no, bbox, caption_crefs: set,
         texts = [t for t in page_texts if getattr(t, "self_ref", None) not in caption_crefs]
         if not texts:
             return ""
-        above = sorted([t for t in texts if t.prov[0].bbox.b <= img_mid_y],
-                       key=lambda t: t.prov[0].bbox.b, reverse=True)
-        below = sorted([t for t in texts if t.prov[0].bbox.t > img_mid_y],
-                       key=lambda t: t.prov[0].bbox.t)
+        above = sorted(
+            [t for t in texts if t.prov[0].bbox.b <= img_mid_y],
+            key=lambda t: t.prov[0].bbox.b,
+            reverse=True,
+        )
+        below = sorted(
+            [t for t in texts if t.prov[0].bbox.t > img_mid_y], key=lambda t: t.prov[0].bbox.t
+        )
 
         def accumulate(sorted_texts, limit) -> list[str]:
             """Take texts in order while they fit the token limit; the first one is always taken.
@@ -148,7 +167,8 @@ def _get_image_context(page_texts: list, page_no, bbox, caption_crefs: set,
                 tc = count_tokens(s)
                 if toks + tc > limit and toks > 0:
                     break
-                acc.append(s); toks += tc
+                acc.append(s)
+                toks += tc
             return acc
 
         half = max_tokens // 2
@@ -164,9 +184,14 @@ def _get_image_context(page_texts: list, page_no, bbox, caption_crefs: set,
 
 
 # --- Image extraction from a Docling document ---
-def extract_images_from_doc(doc, doc_id: str, volume_base_path: str,
-                            min_area_ratio: float, max_repeat: int,
-                            timings: dict | None = None) -> List[Dict[str, Any]]:
+def extract_images_from_doc(
+    doc,
+    doc_id: str,
+    volume_base_path: str,
+    min_area_ratio: float,
+    max_repeat: int,
+    timings: dict | None = None,
+) -> List[Dict[str, Any]]:
     """Save the pictures of a Docling document to the volume and return one metadata dict per image (page, label, caption, nearby text, area ratio); images that are too small (min_area_ratio) or repeated more than max_repeat times are skipped.
 
     :param doc: Docling document.
@@ -224,7 +249,9 @@ def extract_images_from_doc(doc, doc_id: str, volume_base_path: str,
         captions = [txt for c in pic.captions for txt in [_resolve_caption(doc, c)] if txt]
 
         t0 = time.perf_counter()
-        context_text = _get_image_context(texts_by_page.get(page_no, []), page_no, bbox, caption_crefs)
+        context_text = _get_image_context(
+            texts_by_page.get(page_no, []), page_no, bbox, caption_crefs
+        )
         t_ctx_total += time.perf_counter() - t0
 
         image_id = len(manifest)
@@ -238,10 +265,19 @@ def extract_images_from_doc(doc, doc_id: str, volume_base_path: str,
                 logger.warning("Failed to save image to volume: %s", str(e)[:200])
             t_vol_total += time.perf_counter() - t0
 
-        manifest.append(image_record(
-            image_id, page_no, pic.label.value if hasattr(pic.label, "value") else str(pic.label), area_ratio,
-            captions, context_text, volume_path, img_w, img_h,
-        ))
+        manifest.append(
+            image_record(
+                image_id,
+                page_no,
+                pic.label.value if hasattr(pic.label, "value") else str(pic.label),
+                area_ratio,
+                captions,
+                context_text,
+                volume_path,
+                img_w,
+                img_h,
+            )
+        )
 
     if timings is not None:
         timings["context_extraction_seconds"] = float(t_ctx_total)
@@ -265,20 +301,29 @@ def image_status_col(volume_path, width, height) -> Column:
     :param height: Column with the image height in pixels.
     :return: status column: ``EXTRACTION_FAILED``, ``SKIPPED_DECORATIVE`` or ``PENDING``.
     """
-    largest = F.greatest(F.coalesce(width, F.lit(0)), F.coalesce(height, F.lit(0)))
-    smallest = F.least(F.coalesce(width, F.lit(0)), F.coalesce(height, F.lit(0)))
-    decorative = (largest < F.lit(IMG_SKIP_MAX_DIM)) | (smallest < F.lit(IMG_SKIP_MIN_SIDE))
+    largest = f.greatest(f.coalesce(width, f.lit(0)), f.coalesce(height, f.lit(0)))
+    smallest = f.least(f.coalesce(width, f.lit(0)), f.coalesce(height, f.lit(0)))
+    decorative = (largest < f.lit(IMG_SKIP_MAX_DIM)) | (smallest < f.lit(IMG_SKIP_MIN_SIDE))
     return (
-        F.when(volume_path.isNull(), F.lit("EXTRACTION_FAILED"))
-         .when(decorative, F.lit("SKIPPED_DECORATIVE"))
-         .otherwise(F.lit("PENDING"))
+        f.when(volume_path.isNull(), f.lit("EXTRACTION_FAILED"))
+        .when(decorative, f.lit("SKIPPED_DECORATIVE"))
+        .otherwise(f.lit("PENDING"))
     )
 
 
-_TIMING_KEYS = ("docling_import_seconds", "docling_load_seconds", "tmp_file_write_seconds",
-                "docling_convert_seconds", "markdown_export_seconds",
-                "ocr_fallback_seconds", "image_hashing_seconds", "context_extraction_seconds", "volume_write_seconds",
-                "pdf_page_render_seconds", "total_seconds")
+_TIMING_KEYS = (
+    "docling_import_seconds",
+    "docling_load_seconds",
+    "tmp_file_write_seconds",
+    "docling_convert_seconds",
+    "markdown_export_seconds",
+    "ocr_fallback_seconds",
+    "image_hashing_seconds",
+    "context_extraction_seconds",
+    "volume_write_seconds",
+    "pdf_page_render_seconds",
+    "total_seconds",
+)
 
 
 class _ParseTimeout:
@@ -287,6 +332,7 @@ class _ParseTimeout:
     No-op if SIGALRM is unavailable (e.g. Windows) or seconds<=0. Prevents a
     pathological file (giant PDF/xlsx) from blocking a Spark task for hours.
     """
+
     def __init__(self, seconds: int):
         """Store the timeout and whether SIGALRM can enforce it.
 
@@ -339,18 +385,35 @@ def _fallback_or_error(fb: Dict[str, Any] | None, ext_lower: str, timings: dict)
     :return: result of the UDF for this file.
     """
     if fb:
-        return {"text": fb["text"], "parser_error": None, "parser_strategy": fb["parser_strategy"],
-                "parse_time_seconds": fb["parse_time_seconds"], "images": fb["images"], "timings": timings}
-    return {"text": "", "parser_error": f"fallback_failed:{ext_lower}", "parser_strategy": "fallback_failed",
-            "parse_time_seconds": 0.0, "images": [], "timings": timings}
+        return {
+            "text": fb["text"],
+            "parser_error": None,
+            "parser_strategy": fb["parser_strategy"],
+            "parse_time_seconds": fb["parse_time_seconds"],
+            "images": fb["images"],
+            "timings": timings,
+        }
+    return {
+        "text": "",
+        "parser_error": f"fallback_failed:{ext_lower}",
+        "parser_strategy": "fallback_failed",
+        "parse_time_seconds": 0.0,
+        "images": [],
+        "timings": timings,
+    }
 
 
 @pandas_udf(FULL_PARSE_SCHEMA)
-def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Series,
-                                 doc_id_series: pd.Series, volume_path_series: pd.Series,
-                                 min_area_ratio_series: pd.Series, max_repeat_series: pd.Series,
-                                 enable_timing_series: pd.Series,
-                                 xml_only_series: pd.Series) -> pd.DataFrame:
+def parse_and_extract_images_udf(
+    content_series: pd.Series,
+    ext_series: pd.Series,
+    doc_id_series: pd.Series,
+    volume_path_series: pd.Series,
+    min_area_ratio_series: pd.Series,
+    max_repeat_series: pd.Series,
+    enable_timing_series: pd.Series,
+    xml_only_series: pd.Series,
+) -> pd.DataFrame:
     """Pandas UDF run on the executors: parse each document (Docling, or a fallback by format) and extract its images, one result per row.
 
     :param content_series: Document bytes.
@@ -369,12 +432,25 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
     results = []
 
     for content, ext, doc_id, vol_path, min_ar, max_rep, xml_only in zip(
-        content_series, ext_series, doc_id_series,
-        volume_path_series, min_area_ratio_series, max_repeat_series, xml_only_series,
+        content_series,
+        ext_series,
+        doc_id_series,
+        volume_path_series,
+        min_area_ratio_series,
+        max_repeat_series,
+        xml_only_series,
     ):
         if content is None:
-            results.append({"text": "", "parser_error": "No Content", "parser_strategy": "none",
-                            "parse_time_seconds": 0.0, "images": [], "timings": {}})
+            results.append(
+                {
+                    "text": "",
+                    "parser_error": "No Content",
+                    "parser_strategy": "none",
+                    "parse_time_seconds": 0.0,
+                    "images": [],
+                    "timings": {},
+                }
+            )
             continue
 
         doc_id_str = str(doc_id) if doc_id is not None else "unknown"
@@ -394,7 +470,9 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
 
         # Docling does not read binary .ppt — go straight to the OLE heuristic fallback.
         if ext_lower == "ppt":
-            fb = fallback_parse_ppt_ole(bytes(content), doc_id_str, vol_base, min_ar_val, max_rep_val)
+            fb = fallback_parse_ppt_ole(
+                bytes(content), doc_id_str, vol_base, min_ar_val, max_rep_val
+            )
             results.append(_fallback_or_error(fb, ext_lower, timings))
             continue
 
@@ -408,19 +486,32 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
                     res = parse_xls(bytes(content), time.perf_counter())
                     docling_doc = None
                 else:
-                    res = parse_with_docling(content, str(ext), timings=(timings if enable_timing else None))
+                    res = parse_with_docling(
+                        content, str(ext), timings=(timings if enable_timing else None)
+                    )
                     docling_doc = res.pop("_docling_doc", None)
         except TimeoutError as e:
-            results.append({"text": "", "parser_error": str(e), "parser_strategy": "timeout",
-                            "parse_time_seconds": float(PARSE_TIMEOUT_SECONDS), "images": [], "timings": {}})
+            results.append(
+                {
+                    "text": "",
+                    "parser_error": str(e),
+                    "parser_strategy": "timeout",
+                    "parse_time_seconds": float(PARSE_TIMEOUT_SECONDS),
+                    "images": [],
+                    "timings": {},
+                }
+            )
             continue
         images = []
 
         if docling_doc is not None:
             try:
                 images = extract_images_from_doc(
-                    docling_doc, doc_id=doc_id_str, volume_base_path=vol_base,
-                    min_area_ratio=min_ar_val, max_repeat=max_rep_val,
+                    docling_doc,
+                    doc_id=doc_id_str,
+                    volume_base_path=vol_base,
+                    min_area_ratio=min_ar_val,
+                    max_repeat=max_rep_val,
                     timings=(timings if enable_timing else None),
                 )
             except Exception as e:
@@ -438,18 +529,27 @@ def parse_and_extract_images_udf(content_series: pd.Series, ext_series: pd.Serie
                 fb = fb_fn(bytes(content), doc_id_str, vol_base, min_ar_val, max_rep_val)
                 if fb:
                     if fb.get("text"):
-                        res.update(text=fb["text"], parser_error=None,
-                                   parser_strategy=fb["parser_strategy"],
-                                   parse_time_seconds=fb["parse_time_seconds"])
+                        res.update(
+                            text=fb["text"],
+                            parser_error=None,
+                            parser_strategy=fb["parser_strategy"],
+                            parse_time_seconds=fb["parse_time_seconds"],
+                        )
                     if fb.get("images"):
                         images = fb["images"]
 
         # Last resort: Docling left near-nothing on this PDF — render pages and queue them for LLM-OCR instead of failing the document.
         # Gated on "not images": a page render duplicates whatever a real extracted image already
         # shows, so only fall back here when Docling found no embedded images to begin with.
-        if ext_lower == "pdf" and not images and len((res.get("text") or "").strip()) < LLM_OCR_TEXT_THRESHOLD:
+        if (
+            ext_lower == "pdf"
+            and not images
+            and len((res.get("text") or "").strip()) < LLM_OCR_TEXT_THRESHOLD
+        ):
             t_render = time.perf_counter()
-            page_images = render_pdf_pages_for_llm_ocr(bytes(content), doc_id_str, vol_base, LLM_OCR_MAX_PAGES)
+            page_images = render_pdf_pages_for_llm_ocr(
+                bytes(content), doc_id_str, vol_base, LLM_OCR_MAX_PAGES
+            )
             if enable_timing:
                 timings["pdf_page_render_seconds"] = float(time.perf_counter() - t_render)
             if page_images:

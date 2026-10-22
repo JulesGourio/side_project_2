@@ -23,7 +23,7 @@
 # MAGIC
 # MAGIC **Inputs Data**
 # MAGIC - `{PARSING_WRITE_ENV}_proj.qualibot.category_reference`, `parsed_documents`
-# MAGIC - `{PARSING_INTRAQUAL_GOLD}.document_revisions_intraqual` (Intraqual data asset)
+# MAGIC - `{REFERENCE_READ_ENV}_gold.quality_system.document_revisions_intraqual` (Intraqual data asset)
 # MAGIC - `{PARSING_VOLUME_ROOT_PATH}` volume listing
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
@@ -52,10 +52,12 @@ import sys
 
 _ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
 REPO_DIR = "/Workspace" + os.path.dirname(_ctx.notebookPath().get())
-sys.path.insert(0, os.path.dirname(os.path.dirname(REPO_DIR)))  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
+sys.path.insert(
+    0, os.path.dirname(os.path.dirname(REPO_DIR))
+)  # leap_utils/; inserted first so that REPO_DIR (its own `utils` module) stays ahead
 sys.path.insert(0, REPO_DIR)
 
-from pyspark.sql import functions as F
+from pyspark.sql import functions as f
 
 # COMMAND ----------
 
@@ -68,6 +70,7 @@ from pyspark.sql import functions as F
 import categories
 import manifest_steps
 import tables
+
 tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
 from leap_utils.common import logger as log_utils
 
@@ -96,7 +99,9 @@ LOG_LEVEL = dbutils.widgets.get("log_level")
 
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-dbutils.widgets.text("job_run_id", "", "Parent job run_id (correlates with 3_parse's parsed_documents rows)")
+dbutils.widgets.text(
+    "job_run_id", "", "Parent job run_id (correlates with 3_parse's parsed_documents rows)"
+)
 
 JOB_RUN_ID = dbutils.widgets.get("job_run_id") or None
 
@@ -171,11 +176,15 @@ all_rows = manifest_steps.doc_rows()
 _EXCLUDED_IDS_SQL = ", ".join(str(i) for i in sorted(EXCLUDED_IDCATS))
 df_main_cat = (
     categories.read_revisions(spark)
-    .filter(F.col("category_ID").isNotNull())
-    .select(F.col("document_revision_ID").alias("IDDOC"),
-            F.coalesce(F.expr(f"get(array_intersect(category_ID_path, array({_EXCLUDED_IDS_SQL})), 0)"),
-                       F.col("category_ID")).alias("IDCAT"),
-            F.col("category_name").alias("NOMCAT"))
+    .filter(f.col("category_ID").isNotNull())
+    .select(
+        f.col("document_revision_ID").alias("IDDOC"),
+        f.coalesce(
+            f.expr(f"get(array_intersect(category_ID_path, array({_EXCLUDED_IDS_SQL})), 0)"),
+            f.col("category_ID"),
+        ).alias("IDCAT"),
+        f.col("category_name").alias("NOMCAT"),
+    )
     .dropDuplicates(["IDDOC"])
 )
 
@@ -291,8 +300,15 @@ else:
     logger.info("No out-of-scope folder on the volume.")
 
 if classified["orphan"]:
-    logger.info(f"{len(classified['orphan'])} ORPHAN folders kept on the volume but excluded from parsing")
-    display(spark.createDataFrame([(r["IDDOC"], r["name"]) for r in classified["orphan"]], schema="IDDOC long, name string").orderBy("IDDOC"))
+    logger.info(
+        f"{len(classified['orphan'])} ORPHAN folders kept on the volume but excluded from parsing"
+    )
+    display(
+        spark.createDataFrame(
+            [(r["IDDOC"], r["name"]) for r in classified["orphan"]],
+            schema="IDDOC long, name string",
+        ).orderBy("IDDOC")
+    )
 
 for r in classified["skip"]:
     logger.info(f"Ignored folder (non-conforming name): {r['name']} ({r['path']})")
@@ -305,13 +321,18 @@ for r in classified["skip"]:
 
 # COMMAND ----------
 
-tables.check_dataframe(df_manifest, "parse_manifest", [
-    tables.non_empty(),
-    tables.not_null("IDDOC"),
-    tables.unique("IDDOC"),
-    tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
-    tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
-], logger)
+tables.check_dataframe(
+    df_manifest,
+    "parse_manifest",
+    [
+        tables.non_empty(),
+        tables.not_null("IDDOC"),
+        tables.unique("IDDOC"),
+        tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
+        tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
+    ],
+    logger,
+)
 
 # COMMAND ----------
 

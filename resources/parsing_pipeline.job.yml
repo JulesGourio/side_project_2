@@ -75,8 +75,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
-              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
+              REFERENCE_READ_ENV:       ${var.reference_read_env}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
@@ -104,8 +103,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
-              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
+              REFERENCE_READ_ENV:       ${var.reference_read_env}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
@@ -144,8 +142,7 @@ resources:
               spark.databricks.delta.autoCompact.enabled: "true"
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
-              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
+              REFERENCE_READ_ENV:       ${var.reference_read_env}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}
@@ -180,8 +177,7 @@ resources:
               ResourceClass: SingleNode
             spark_env_vars:
               PIPELINE_WRITE_ENV:       ${var.pipeline_write_env}
-              PARSING_INTRAQUAL_GOLD:   ${var.intraqual_gold_catalog_schema}
-              PARSING_INTRAQUAL_SUFFIX: ${var.intraqual_suffix}
+              REFERENCE_READ_ENV:       ${var.reference_read_env}
               PARSING_VOLUME_ROOT_PATH: ${var.intraqual_volume_root}
               PARSING_VOLUME_BASE_PATH: /Volumes/${var.pipeline_write_env}_proj/qualibot/${var.parsing_images_volume}
               PARSING_OFFLINE_MODELS:   ${var.parsing_offline_models_path}

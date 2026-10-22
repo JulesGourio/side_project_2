@@ -51,14 +51,9 @@ variables:
   parsing_images_volume:
     description: "Volume of <pipeline_write_env>_proj.qualibot the parsing pipeline extracts images to"
     default: "images"
-  intraqual_gold_catalog_schema:
-    description: >-
-      catalog.schema of the Intraqual data asset tables (document_revisions_intraqual,
-      category_ancestors_intraqual) — the pipeline's metadata source.
-    default: "prod_gold.quality_system"
-  intraqual_suffix:
-    description: "Suffix for Intraqual tables (empty by default)"
-    default: ""
+  reference_read_env:
+    description: "Environment of the reference tables the pipeline reads (Intraqual data asset quality_system): prod in every target"
+    default: "prod"
   intraqual_volume_root:
     description: "Volume path containing the raw Intraqual D_XXXXX document folders"
     default: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
@@ -324,7 +319,7 @@ targets:
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Same prod sources as UAT.
-      intraqual_gold_catalog_schema: "prod_gold.quality_system"
+      reference_read_env: "prod"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
       parsing_offline_models_path: "/Volumes/dev_proj/qualibot/docling_models/docling_models"
@@ -470,7 +465,7 @@ targets:
       parsing_num_workers: "4"
       parsing_run_mode: "incremental"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_gold through the shared metastore.
-      intraqual_gold_catalog_schema: "prod_gold.quality_system"
+      reference_read_env: "prod"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
       parsing_offline_models_path: "/Volumes/uat_proj/qualibot/docling_models"
@@ -604,7 +599,7 @@ targets:
       alerts_warehouse_id: "03054ddc44b7f902"
       parsing_num_workers: "8"
       parsing_run_mode: "incremental"
-      intraqual_gold_catalog_schema: "prod_gold.quality_system"
+      reference_read_env: "prod"
       intraqual_volume_root: "/Volumes/prod_landingzone/intraqual/intraqual_documents"
       job_activity_tag: "prod-job"
       # The PROD export copies the PROD Lakebase to prod_proj.qualibot twice a day: the chat alerts read those copies.

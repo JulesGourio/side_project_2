@@ -103,6 +103,7 @@ import config as cfg
 import output_steps
 import parse_steps
 import tables
+
 tables.require_gx()
 from tables import table_exists, write_table
 from leap_utils.common import logger as log_utils
@@ -164,7 +165,9 @@ df_business_meta = spark.read.table(cfg.PARSE_MANIFEST_TABLE).cache()
 
 target_iddocs, revised_iddocs = parse_steps.resolve_parse_scope(df_business_meta)
 if cfg.RUN_MODE != "rechunk":
-    output_steps.log_document_changes(df_business_meta, target_iddocs, revised_iddocs, parse_steps.JOB_RUN_ID)
+    output_steps.log_document_changes(
+        df_business_meta, target_iddocs, revised_iddocs, parse_steps.JOB_RUN_ID
+    )
 
 # COMMAND ----------
 
@@ -249,16 +252,30 @@ if df_cpu is not None and not df_cpu.isEmpty():
 # COMMAND ----------
 
 df_scope = parse_steps.build_run_scope(target_iddocs, revised_iddocs)
-tables.check_dataframe(df_scope, "parsing_run_scope", [
-    tables.not_null("IDDOC"), tables.unique("IDDOC"), tables.not_null("ingestion_run_id"),
-], logger)
+tables.check_dataframe(
+    df_scope,
+    "parsing_run_scope",
+    [
+        tables.not_null("IDDOC"),
+        tables.unique("IDDOC"),
+        tables.not_null("ingestion_run_id"),
+    ],
+    logger,
+)
 
 df_queue = df_gpu.drop("content") if df_gpu is not None else None
 if df_queue is not None:
-    tables.check_dataframe(df_queue, "parsing_gpu_queue", [
-        tables.not_null("source_path"), tables.unique("source_path"),
-        tables.not_null("IDDOC"), tables.not_null("document_sha256"),
-    ], logger)
+    tables.check_dataframe(
+        df_queue,
+        "parsing_gpu_queue",
+        [
+            tables.not_null("source_path"),
+            tables.unique("source_path"),
+            tables.not_null("IDDOC"),
+            tables.not_null("document_sha256"),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 

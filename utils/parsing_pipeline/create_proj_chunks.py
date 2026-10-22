@@ -101,6 +101,7 @@ import build_steps
 import output_steps
 import parse_steps
 import tables
+
 tables.require_gx()
 from leap_utils.common import logger as log_utils
 
@@ -185,7 +186,9 @@ else:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    df_image_metadata = build_steps.build_image_metadata(target_iddocs, parse_steps.INGESTION_RUN_ID)
+    df_image_metadata = build_steps.build_image_metadata(
+        target_iddocs, parse_steps.INGESTION_RUN_ID
+    )
 
 # COMMAND ----------
 
@@ -196,8 +199,10 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    df_processed_files, df_chunks_all, df_chunks_archive = build_steps.build_processed_files_and_chunks(
-        target_iddocs, df_image_metadata, parse_steps.JOB_RUN_ID, revised_iddocs
+    df_processed_files, df_chunks_all, df_chunks_archive = (
+        build_steps.build_processed_files_and_chunks(
+            target_iddocs, df_image_metadata, parse_steps.JOB_RUN_ID, revised_iddocs
+        )
     )
 
 # COMMAND ----------
@@ -223,13 +228,18 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    tables.check_dataframe(df_processed_files, "parsed_documents", [
-        tables.not_null("IDDOC"),
-        tables.unique("IDDOC"),
-        tables.not_null("parse_status"),
-        tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
-        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
-    ], logger)
+    tables.check_dataframe(
+        df_processed_files,
+        "parsed_documents",
+        [
+            tables.not_null("IDDOC"),
+            tables.unique("IDDOC"),
+            tables.not_null("parse_status"),
+            tables.not_null("ref", mostly=0.99, severity=tables.AMBER),
+            tables.not_null("division", mostly=0.99, severity=tables.AMBER),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 
@@ -240,15 +250,20 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    tables.check_dataframe(df_chunks_all.unionByName(df_chunks_archive), "chunks", [
-        tables.not_null("chunk_id"),
-        tables.unique("chunk_id"),
-        tables.not_null("IDDOC"),
-        tables.not_null("REF"),
-        tables.not_null("chunk_text"),
-        tables.not_null("division", mostly=0.99, severity=tables.AMBER),
-        tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
-    ], logger)
+    tables.check_dataframe(
+        df_chunks_all.unionByName(df_chunks_archive),
+        "chunks",
+        [
+            tables.not_null("chunk_id"),
+            tables.unique("chunk_id"),
+            tables.not_null("IDDOC"),
+            tables.not_null("REF"),
+            tables.not_null("chunk_text"),
+            tables.not_null("division", mostly=0.99, severity=tables.AMBER),
+            tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 
@@ -259,12 +274,17 @@ if HAS_TARGET_IDDOCS:
 # COMMAND ----------
 
 if HAS_TARGET_IDDOCS:
-    tables.check_dataframe(df_image_metadata, "image_metadata", [
-        tables.not_null("IDDOC"),
-        tables.not_null("image_id"),
-        tables.unique("IDDOC", "image_id"),
-        tables.not_null("volume_path", mostly=0.95, severity=tables.AMBER),
-    ], logger)
+    tables.check_dataframe(
+        df_image_metadata,
+        "image_metadata",
+        [
+            tables.not_null("IDDOC"),
+            tables.not_null("image_id"),
+            tables.unique("IDDOC", "image_id"),
+            tables.not_null("volume_path", mostly=0.95, severity=tables.AMBER),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 
@@ -276,7 +296,12 @@ if HAS_TARGET_IDDOCS:
 
 if HAS_TARGET_IDDOCS:
     output_steps.write_outputs(
-        df_processed_files, df_chunks_all, df_chunks_archive, df_image_metadata, parse_steps.JOB_RUN_ID, revised_iddocs
+        df_processed_files,
+        df_chunks_all,
+        df_chunks_archive,
+        df_image_metadata,
+        parse_steps.JOB_RUN_ID,
+        revised_iddocs,
     )
 else:
     logger.info("No target IDDOCs - nothing to write.")

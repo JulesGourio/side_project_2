@@ -97,13 +97,17 @@ LAKEBASE_BRANCH = dbutils.widgets.get("lakebase_branch")
 dbutils.widgets.text("lakebase_endpoint", "primary")
 LAKEBASE_ENDPOINT = dbutils.widgets.get("lakebase_endpoint")
 dbutils.widgets.text("lakebase_database", "")
-LAKEBASE_DATABASES = [d.strip() for d in dbutils.widgets.get("lakebase_database").split(",") if d.strip()]
+LAKEBASE_DATABASES = [
+    d.strip() for d in dbutils.widgets.get("lakebase_database").split(",") if d.strip()
+]
 
 if not LAKEBASE_DATABASES:
     logger.info("No lakebase_database parameter: nothing to do.")
     dbutils.notebook.exit("no_lakebase_database")
 
-logger.info(f"Target: {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASES}, source {PIPELINE_WRITE_ENV}_proj.qualibot")
+logger.info(
+    f"Target: {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASES}, source {PIPELINE_WRITE_ENV}_proj.qualibot"
+)
 
 # COMMAND ----------
 
@@ -149,8 +153,15 @@ for table in (MANIFEST_TABLE, CHUNKS_TABLE):
 # COMMAND ----------
 
 catalog_rows = [
-    (r["ref"], r["title"], INTRAQUAL_REF_URL_BASE + r["ref"].replace(" ", "%20"), r["division"], bool(r["in_chat"]),
-     (r["revision"] or "").strip() or None, r["doc_date"])
+    (
+        r["ref"],
+        r["title"],
+        INTRAQUAL_REF_URL_BASE + r["ref"].replace(" ", "%20"),
+        r["division"],
+        bool(r["in_chat"]),
+        (r["revision"] or "").strip() or None,
+        r["doc_date"],
+    )
     for r in spark.sql(f"""
         SELECT trim(m.ref) AS ref, first(m.titre, true) AS title, first(m.division, true) AS division,
                max(c.REF IS NOT NULL) AS in_chat,
@@ -236,6 +247,7 @@ def connect(database) -> psycopg2.extensions.connection:
     logger.info(f"Connected to {lakebase_host}/{database} as {username}")
     return conn
 
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -261,8 +273,10 @@ for database in LAKEBASE_DATABASES:
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
-            cur.execute("SELECT count(*) FROM information_schema.columns "
-                        "WHERE table_name = 'doc_catalog' AND column_name IN ('revision', 'doc_date')")
+            cur.execute(
+                "SELECT count(*) FROM information_schema.columns "
+                "WHERE table_name = 'doc_catalog' AND column_name IN ('revision', 'doc_date')"
+            )
             with_revision = cur.fetchone()[0] == 2
             if not with_revision:
                 # Only the table's owner may add columns: this notebook's identity when it created the table.
@@ -277,8 +291,10 @@ for database in LAKEBASE_DATABASES:
                     cur.execute("ROLLBACK TO SAVEPOINT add_revision")
                     cur.execute("SELECT tableowner FROM pg_tables WHERE tablename = 'doc_catalog'")
                     owner = cur.fetchone()[0]
-                    logger.warning(f"{database}.doc_catalog: cannot add revision/doc_date as {username} "
-                                   f"(table owner: {owner}): {str(exc).strip()}")
+                    logger.warning(
+                        f"{database}.doc_catalog: cannot add revision/doc_date as {username} "
+                        f"(table owner: {owner}): {str(exc).strip()}"
+                    )
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS catalog_metadata (
                     id              INTEGER PRIMARY KEY DEFAULT 1,
@@ -290,17 +306,30 @@ for database in LAKEBASE_DATABASES:
             cur.execute("SELECT count(*) FROM doc_catalog")
             before = cur.fetchone()[0]
             if before and len(catalog_rows) < MIN_KEEP_RATIO * before:
-                raise RuntimeError(f"{database}.doc_catalog: {len(catalog_rows)} documents now vs {before} "
-                                   f"before — refusing to shrink it by more than half (check {MANIFEST_TABLE})")
+                raise RuntimeError(
+                    f"{database}.doc_catalog: {len(catalog_rows)} documents now vs {before} "
+                    f"before — refusing to shrink it by more than half (check {MANIFEST_TABLE})"
+                )
             cur.execute("DELETE FROM doc_catalog")
             if with_revision:
-                execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat, revision, doc_date) "
-                                    "VALUES %s", catalog_rows, page_size=1000)
+                execute_values(
+                    cur,
+                    "INSERT INTO doc_catalog (ref, title, url, division, in_chat, revision, doc_date) "
+                    "VALUES %s",
+                    catalog_rows,
+                    page_size=1000,
+                )
             else:
-                logger.warning(f"{database}.doc_catalog has no revision/doc_date columns: catalog written without "
-                               "them (start the app once, or add them as the table owner)")
-                execute_values(cur, "INSERT INTO doc_catalog (ref, title, url, division, in_chat) VALUES %s",
-                               [r[:5] for r in catalog_rows], page_size=1000)
+                logger.warning(
+                    f"{database}.doc_catalog has no revision/doc_date columns: catalog written without "
+                    "them (start the app once, or add them as the table owner)"
+                )
+                execute_values(
+                    cur,
+                    "INSERT INTO doc_catalog (ref, title, url, division, in_chat) VALUES %s",
+                    [r[:5] for r in catalog_rows],
+                    page_size=1000,
+                )
             cur.execute("""
                 INSERT INTO catalog_metadata (id, documents_as_of, updated_at)
                 VALUES (1, CURRENT_DATE, NOW())
@@ -308,6 +337,8 @@ for database in LAKEBASE_DATABASES:
                     documents_as_of = EXCLUDED.documents_as_of,
                     updated_at      = EXCLUDED.updated_at
             """)
-        logger.info(f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, documents_as_of=today")
+        logger.info(
+            f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, documents_as_of=today"
+        )
     finally:
         conn.close()
