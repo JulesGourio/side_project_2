@@ -18,11 +18,8 @@ OVERWRITE = dbutils.widgets.get("overwrite") == "true"
 SOURCE_SCHEMA = "prod_landingzone.qualibot"
 TARGET_SCHEMA = "prod_proj.qualibot"
 TABLES = {
-    "category_reference": "category_reference",
-    "parse_manifest": "parse_manifest",
     "_pipeline_checkpoint": "parsing_checkpoint",
     "image_metadata": "image_metadata",
-    "processed_files": "parsed_documents",
 }
 SOURCE_PREFIX = "/Volumes/prod_landingzone/qualibot/"
 TARGET_PREFIX = "/Volumes/prod_proj/qualibot/"
