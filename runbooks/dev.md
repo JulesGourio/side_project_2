@@ -1067,9 +1067,21 @@ Attendu : `done: dev_proj.qualibot.chunks_index rebuilt`, autant de lignes index
 
 ### X. Import Lakebase DEV → `dev_proj.qualibot` (à faire, poussé le 2026-10-22)
 
-Le réglage DEV est `lakebase_import_to_delta: "true"` : le job exporte le Lakebase DEV puis charge les tables Delta `dev_proj.qualibot` depuis cet export. Chaque cible ne lit que son propre Lakebase.
+Le réglage DEV est `lakebase_import_to_delta: "true"`. Le job exporte le Lakebase DEV puis charge les tables Delta `dev_proj.qualibot` depuis cet export. Chaque cible ne lit que son propre Lakebase. Quatre copies UAT (`compare_messages`, `compare_feedbacks`, `analysis_cache`, `catalog_metadata`) n'ont pas la propriété `lakebase_export` : l'étape X.1 la leur pose, pour que l'import les remplace.
 
-À faire par toi, dans Bitbucket : lancer le pipeline custom `deploy-dev-jobs` (branche `claude/sharp-mayer-uqwx8x`). Il déploie les jobs DEV. Aucun job n'est lancé.
+Ordre des commandes (PowerShell, depuis la racine du dépôt, profil `DEV`) :
+
+```powershell
+databricks bundle deploy -t dev --profile DEV
+databricks workspace mkdirs /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy --profile DEV
+databricks workspace import /Users/jules.gourio.external@latecoere.aero/qualibot_dev_copy/mark_dev_copies_owned --file runbooks/scripts/dev_copy/mark_dev_copies_owned.py --format SOURCE --language PYTHON --overwrite --profile DEV
+databricks jobs submit --json @runbooks/scripts/dev_copy/mark_dev_copies_owned_submit.json --profile DEV
+databricks bundle run lakebase_export -t dev --profile DEV
+```
+
+- `bundle deploy -t dev` met à jour les jobs DEV (réglage `true`). Le pipeline Bitbucket `deploy-dev-jobs` fait la même chose si tu préfères.
+- `jobs submit` lance le marquage des quatre tables, avec l'identité du SP DEV. Attendre `SUCCESS` dans l'interface Jobs avant la suite.
+- `bundle run lakebase_export` lance l'export puis l'import DEV (le job tourne déjà avec le SP DEV). Vérifier dans l'interface Jobs que les deux tâches sont `SUCCESS`.
 
 ## Fait
 
