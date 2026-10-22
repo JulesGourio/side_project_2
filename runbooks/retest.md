@@ -369,7 +369,7 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Tâche `5_sync_index` : le journal montre le message d'attente de la synchronisation puis « done — indexed_rows … » seulement quand l'index revient à `ONLINE_NO_PENDING_UPDATE` (avant, elle concluait dès le premier sondage).
 - [ ] Tâche `4_describe_images` : une image PNG est décrite sans erreur de format (le type est lu dans le fichier).
 - [ ] Réparer un run (« Repair run » dans l'interface) après une réussite partielle : `document_change_log` ne gagne pas de ligne en double (`SELECT IDDOC, event_type, job_run_id, COUNT(*) FROM dev_proj.qualibot.document_change_log GROUP BY ALL HAVING COUNT(*) > 1` ne renvoie rien).
-- [ ] Run complet (`parsing_run_mode: full`, seulement quand c'est voulu) : les anciens `_pipeline_checkpoint_*` de plus de 30 jours disparaissent, le plus récent reste.
+- [ ] Run complet (paramètre de job `run_mode` = `full`, seulement quand c'est voulu) : les anciens `_pipeline_checkpoint_*` de plus de 30 jours disparaissent, le plus récent reste.
 
 ## 2026-10-22 — arrêt d'un tour et types du moteur de chat
 

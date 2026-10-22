@@ -13,7 +13,16 @@ PARSING = os.path.join(ROOT, "utils", "parsing_pipeline")
 JOB = os.path.join(ROOT, "resources", "parsing_pipeline.job.yml")
 ENVIRONMENT_WIDGETS = ("pipeline_write_env", "pipeline_read_env", "reference_read_env", "bypass_quality_checks",
                        "debug", "log_level")
-RETIRED = ("PARSING_INTRAQUAL_GOLD", "PARSING_INTRAQUAL_SUFFIX", "PIPELINE_WRITE_ENV", "REFERENCE_READ_ENV")
+RETIRED = (
+    "PARSING_INTRAQUAL_GOLD", "PARSING_INTRAQUAL_SUFFIX", "PARSING_VOLUME_ROOT_PATH", "PARSING_VOLUME_BASE_PATH",
+    "PARSING_OFFLINE_MODELS", "PARSING_GPU_MIN_PDFS", "PARSING_ARCHIVE_NOTICES_IN_RAG", "PARSING_USE_GPU",
+    "PARSING_MAX_PARSE_FILES", "PARSING_PARSE_FILTER", "PARSING_RUN_MODE", "PARSING_REDESCRIBE_ALL_IMAGES",
+    "PARSING_MAX_SOURCE_STALENESS_HOURS", "PARSING_DOC_DATE_CUTOFF", "PARSING_DOC_SCOPE_FILTER",
+    "PARSING_LLM_ENDPOINT", "PARSING_LLM_FALLBACK_ENDPOINTS", "PARSING_DIVISION_REFERENCE_TABLE",
+    "PARSING_PARSE_MANIFEST_TABLE", "PARSING_INTRAQUAL_REVISIONS_TABLE",
+)
+# Variables a cluster may still set: the images volume name and the archive cap.
+KEPT_ON_CLUSTERS = {"PARSING_IMAGES_VOLUME", "PARSING_ARCHIVE_MAX_DOCS"}
 
 
 def _job():
@@ -40,6 +49,21 @@ def test_clusters_do_not_carry_the_environments_any_more():
         env_vars = cluster["new_cluster"].get("spark_env_vars", {})
         for name in RETIRED:
             assert name not in env_vars, f"{cluster['job_cluster_key']} still sets {name}"
+        for name in env_vars:
+            if name.startswith("PARSING_"):
+                assert name in KEPT_ON_CLUSTERS, f"{cluster['job_cluster_key']} sets {name}"
+
+
+def test_run_time_choices_are_job_parameters_passed_to_every_notebook_task():
+    job = _job()
+    declared = {p["name"] for p in job["parameters"]}
+    assert declared == {"run_mode", "parse_filter", "max_parse_files", "max_source_staleness_hours",
+                        "redescribe_all_images"}
+    for task in job["tasks"]:
+        notebook = task.get("notebook_task")
+        if notebook:
+            for name in declared:
+                assert notebook["base_parameters"][name] == "{{job.parameters." + name + "}}", task["task_key"]
 
 
 def test_the_retired_intraqual_and_cluster_variables_are_gone():
@@ -60,8 +84,7 @@ def test_every_notebook_declares_the_environment_widgets():
 
 def test_the_intraqual_source_is_read_in_the_reference_environment():
     env = {**os.environ, "PIPELINE_WRITE_ENV": "dev", "REFERENCE_READ_ENV": "prod",
-           "PARSING_VOLUME_ROOT_PATH": "/Volumes/c/s/root", "PARSING_VOLUME_BASE_PATH": "/Volumes/c/s/img",
-           "PARSING_OFFLINE_MODELS": "/models", "PYTHONPATH": os.pathsep.join([PARSING, os.path.abspath(ROOT)])}
+           "PARSING_IMAGES_VOLUME": "img", "PYTHONPATH": os.pathsep.join([PARSING, os.path.abspath(ROOT)])}
     out = subprocess.run([sys.executable, "-c",
                           "import config; print(config.INTRAQUAL_GOLD_CATALOG_SCHEMA); "
                           "print(config.INTRAQUAL_REVISIONS_TABLE); print(config.PIPELINE_READ_ENV)"],
@@ -82,3 +105,17 @@ def test_bypass_turns_red_checks_into_amber(monkeypatch):
     assert [c.severity for c in tables._with_bypass(checks)] == [tables.RED, tables.AMBER]
     monkeypatch.setenv("BYPASS_QUALITY_CHECKS", "true")
     assert [c.severity for c in tables._with_bypass(checks)] == [tables.AMBER, tables.AMBER]
+
+
+def test_paths_come_from_the_environment_and_the_fixed_source():
+    env = {**os.environ, "PIPELINE_WRITE_ENV": "uat", "REFERENCE_READ_ENV": "prod", "PARSING_IMAGES_VOLUME": "images",
+           "PYTHONPATH": os.pathsep.join([PARSING, os.path.abspath(ROOT)])}
+    out = subprocess.run([sys.executable, "-c",
+                          "import config as c; print(c.VOLUME_BASE_PATH); print(c.OFFLINE_MODELS_DIR); "
+                          "print(c.VOLUME_ROOT_PATH); print(c.DIVISION_REFERENCE_TABLE); print(c.DOC_DATE_CUTOFF)"],
+                         env=env, capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert out.stdout.split() == [
+        "/Volumes/uat_proj/qualibot/images", "/Volumes/uat_proj/qualibot/docling_models",
+        "/Volumes/prod_landingzone/intraqual/intraqual_documents", "uat_proj.qualibot.category_reference",
+        "2016-01-01"]

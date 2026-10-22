@@ -1052,7 +1052,7 @@ SELECT division, count(DISTINCT IDDOC) AS documents FROM dev_proj.qualibot.chunk
 SELECT count(*) AS documents_a_plusieurs_divisions FROM (SELECT IDDOC FROM dev_proj.qualibot.chunks GROUP BY IDDOC HAVING count(DISTINCT division) > 1);
 ```
 Attendu : environ 3 840 documents dans `chunks` (One QMS 2 556, work instructions 1 014, programmes 270), divisions AS, IS, GROUP seulement, 0 document à plusieurs divisions.
-4. Reconstruire l'index (section I), puis retirer `parsing_max_parse_files` et remettre `parsing_run_mode: "incremental"` dans le bloc `dev` de `databricks.yml`, puis redéployer.
+4. Reconstruire l'index (section I), puis remettre les valeurs par défaut du bloc `dev` du fichier `resources/parsing_pipeline.job.yml` (`run_mode` à `incremental`, `max_parse_files` à `500`), puis redéployer. Pour un run ponctuel, le paramètre se change au lancement, sans redéploiement.
 
 ### I. Reconstruire l'index DEV après un changement de schéma de `chunks` (2026-10-22, à faire après contrôle de `chunks`)
 
@@ -1064,6 +1064,20 @@ databricks jobs submit --json "@runbooks/scripts/dev_index/rebuild_chunks_index_
 ```
 
 Attendu : `done: dev_proj.qualibot.chunks_index rebuilt`, autant de lignes indexées que dans `chunks`.
+
+### J. Modèles Docling au même chemin sur DEV (2026-10-22, à faire AVANT le déploiement des jobs DEV)
+
+Les jobs lisent les modèles dans `/Volumes/<env>_proj/qualibot/docling_models`, dans tous les environnements. Sur DEV les fichiers sont dans `docling_models/docling_models`. Le script de `runbooks/scripts/dev_models/` les remonte d'un niveau, sans écraser, en simulation par défaut.
+
+Dans un terminal, à la racine du dépôt (profil CLI DEV, le notebook est lancé par le SP DEV) :
+
+```powershell
+databricks workspace import /Workspace/Shared/qualibot_dev_models/move_docling_models --file runbooks/scripts/dev_models/move_docling_models.py --language PYTHON --format SOURCE --overwrite --profile DEV
+databricks jobs submit --json "@runbooks/scripts/dev_models/move_docling_models_dry_submit.json" --profile DEV
+databricks jobs submit --json "@runbooks/scripts/dev_models/move_docling_models_submit.json" --profile DEV
+```
+
+La première soumission ne déplace rien : vérifier la liste affichée dans les logs de la tâche. La seconde déplace. Ensuite lancer le pipeline Bitbucket `deploy-dev-jobs` (étape « Deploy jobs and notebooks to DEV, app untouched (dev) »).
 
 ### X. Import Lakebase DEV → `dev_proj.qualibot` (à faire, poussé le 2026-10-22)
 

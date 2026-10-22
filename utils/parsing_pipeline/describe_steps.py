@@ -265,7 +265,7 @@ def describe_images(rows, ws_host, ws_token, endpoints, use_cache: bool = True) 
     # Without an endpoint every image would stay PENDING with no error: a missing setting must fail the run instead.
     if not endpoints:
         raise ValueError(
-            "No LLM endpoint: set PARSING_LLM_ENDPOINT (primary) or llm_fallback_endpoints."
+            "No LLM endpoint: set LLM_MODEL_ENDPOINT or LLM_FALLBACK_ENDPOINTS in config.py."
         )
 
     nest_asyncio.apply()

@@ -419,7 +419,7 @@ Le job n'existe que sur `uat`. `bundle deploy` seul met à jour le job et ses no
 
   ```sql
   -- manifeste : vieux documents connus, aucun autorisé au parsing
-  SELECT doc_date < '2018-01-01' AS avant_2018, parse_content, count(*)
+  SELECT doc_date < '2016-01-01' AS avant_2016, parse_content, count(*)
   FROM uat_proj.qualibot.parse_manifest GROUP BY 1, 2;
 
   -- fiches : une par vieux document, texte à relire
@@ -454,11 +454,11 @@ Le job n'existe que sur `uat`. `bundle deploy` seul met à jour le job et ses no
   -- 100 documents autorisés (les plus récents d'avant 2018)
   SELECT count(*), min(doc_date), max(doc_date)
   FROM uat_proj.qualibot.parse_manifest
-  WHERE doc_date < '2018-01-01' AND parse_content;
+  WHERE doc_date < '2016-01-01' AND parse_content;
 
   -- résultat du parsing de ces 100 documents
   SELECT parse_status, count(*) FROM uat_proj.qualibot.parsed_documents
-  WHERE doc_date < '2018-01-01' GROUP BY parse_status;
+  WHERE doc_date < '2016-01-01' GROUP BY parse_status;
 
   -- chunks d'archive produits
   SELECT count(DISTINCT IDDOC) AS docs, count(*) AS chunks
@@ -470,7 +470,7 @@ Le job n'existe que sur `uat`. `bundle deploy` seul met à jour le job et ses no
        + (SELECT count(*) FROM uat_proj.qualibot.chunks_archive) AS attendu;
 
   -- aucun vieux document dans la table du chatbot (doit renvoyer 0)
-  SELECT count(*) FROM uat_proj.qualibot.chunks WHERE doc_date < '2018-01-01';
+  SELECT count(*) FROM uat_proj.qualibot.chunks WHERE doc_date < '2016-01-01';
   ```
 
 - [ ] **B6. Transmettre les résultats** (durée du run, statuts en erreur, qualité des fiches). Décision ensuite sur le bloc D.
@@ -509,7 +509,7 @@ Chaque point est indépendant et demande une modification de la configuration : 
 
 - [ ] **D3. Règle « documents archivés » dans le chatbot** (avant D4) : la section « Archived documents » de `server/prompts/chat/system/base.md` doit être relue et validée. Toute modification est faite dans le code, puis l'app est redéployée.
 
-- [ ] **D4. Mettre les fiches dans l'index du chatbot** (après D3 et D5) : passer `parsing_archive_notices_in_rag` à `true` pour `uat` ; `bundle deploy` + un run les ajoutent à `chunks` et l'index se synchronise. Tester ensuite dans le chatbot :
+- [ ] **D4. Fiches d'archive dans le chatbot : abandonné (décision du 2026-10-22)**. Les archives alimentent la recherche d'impact seulement ; rien des archives n'entre dans le RAG. Ce point sera repris quand Intraqual aura évolué. Tests du chatbot, à ignorer :
   - demander un vieux document par sa référence : il le signale, dit que le contenu n'est pas disponible, renvoie à Intraqual (lien sous la réponse) ;
   - poser une question sans rapport : aucune fiche citée.
 
@@ -554,9 +554,10 @@ Chaque point est indépendant et demande une modification de la configuration : 
   - [ ] **D5.4. Re-découper le corpus dans `chunks`** (aucun re-parsing GPU : les fichiers déjà parsés sont relus depuis `parsing_checkpoint` ; les passages d'image sont reconstruits depuis les descriptions existantes, sans appel LLM). Copier le zip de cette branche, puis :
 
     ```powershell
-    databricks bundle deploy -t uat --profile UAT --var="parsing_run_mode=full"
-    databricks bundle run parsing_pipeline -t uat --profile UAT
+    databricks bundle deploy -t uat --profile UAT
+    databricks bundle run parsing_pipeline -t uat --profile UAT --params run_mode=full
     ```
+    Le mode est un paramètre de job : le run prend `run_mode=full`, aucun déploiement pour ce run.
 
     Le run écrit `chunks`, `chunks_archive`, `parsed_documents`, puis crée l'index `uat_proj.qualibot.chunks_index` et le synchronise (embedding complet, environ 1 h ; si la tâche s'arrête avant, la synchronisation continue côté serveur). Attendre `ONLINE`. Sa dernière tâche remplit aussi le catalogue des documents de l'app (table Lakebase `doc_catalog` de `doccompare` : REF, titre, lien).
 

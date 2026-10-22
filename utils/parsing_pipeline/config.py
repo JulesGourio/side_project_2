@@ -51,13 +51,9 @@ INTRAQUAL_GOLD_CATALOG_SCHEMA = f"{REFERENCE_READ_ENV}_gold.quality_system"
 _G = INTRAQUAL_GOLD_CATALOG_SCHEMA
 
 # One row per document revision (document_revision_ID is the IDDOC), with its main category, path and document type.
-INTRAQUAL_REVISIONS_TABLE = _env(
-    "PARSING_INTRAQUAL_REVISIONS_TABLE", f"{_G}.document_revisions_intraqual"
-)
+INTRAQUAL_REVISIONS_TABLE = f"{_G}.document_revisions_intraqual"
 # One row per category and ancestor: gives the name of every category of a path.
-INTRAQUAL_CATEGORY_ANCESTORS_TABLE = _env(
-    "PARSING_INTRAQUAL_CATEGORY_ANCESTORS_TABLE", f"{_G}.category_ancestors_intraqual"
-)
+INTRAQUAL_CATEGORY_ANCESTORS_TABLE = f"{_G}.category_ancestors_intraqual"
 
 # The daily job fails the run if one of these tables was last written longer ago than the threshold, instead of
 # silently indexing a partial corpus.
@@ -69,28 +65,26 @@ MAX_SOURCE_STALENESS_HOURS = int(_env("PARSING_MAX_SOURCE_STALENESS_HOURS", "36"
 # AS - TECHNICAL INSTRUCTIONS (work instructions, "documents métier").
 SCOPE_ROOT_IDCATS = {3870, 948, 3209}
 # Columns of INTRAQUAL_REVISIONS_TABLE. The full-diffusion flag is not part of the gate: the portal shows those documents too.
-DOC_SCOPE_FILTER = _env(
-    "PARSING_DOC_SCOPE_FILTER",
+DOC_SCOPE_FILTER = (
     "revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false "
-    f"AND root_category_ID IN ({', '.join(str(i) for i in sorted(SCOPE_ROOT_IDCATS))})",
+    f"AND root_category_ID IN ({', '.join(str(i) for i in sorted(SCOPE_ROOT_IDCATS))})"
 )
 
 # --- Optional fallback (disabled by default) ---
 # Empty = disabled.
-DIVISION_ARCHIVE_TABLE = _env("PARSING_DIVISION_ARCHIVE_TABLE", "")
-DIVISION_REFERENCE_TABLE = _env(
-    "PARSING_DIVISION_REFERENCE_TABLE", f"{PIPELINE_WRITE_ENV}_proj.qualibot.category_reference"
-)
+DIVISION_ARCHIVE_TABLE = ""
+DIVISION_REFERENCE_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.category_reference"
 
 # Pre-computed by create_proj_parse_manifest — avoids querying the Intraqual tables directly here.
-PARSE_MANIFEST_TABLE = _env(
-    "PARSING_PARSE_MANIFEST_TABLE", f"{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest"
-)
+PARSE_MANIFEST_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest"
 
 # Volumes
-VOLUME_ROOT_PATH = _require_env("PARSING_VOLUME_ROOT_PATH")
-VOLUME_BASE_PATH = _require_env("PARSING_VOLUME_BASE_PATH")
-OFFLINE_MODELS_DIR = _require_env("PARSING_OFFLINE_MODELS")
+# Raw Intraqual documents: the source is the prod landing zone in every environment.
+VOLUME_ROOT_PATH = "/Volumes/prod_landingzone/intraqual/intraqual_documents"
+# The images volume name is a bundle variable; the path is in the write environment's project schema.
+VOLUME_BASE_PATH = f"/Volumes/{PIPELINE_WRITE_ENV}_proj/qualibot/{_require_env('PARSING_IMAGES_VOLUME')}"
+# Docling and embedding models, same path in every environment.
+OFFLINE_MODELS_DIR = f"/Volumes/{PIPELINE_WRITE_ENV}_proj/qualibot/docling_models"
 
 # Relative to REPO_DIR (utils/parsing_pipeline/, two levels below the repo root that holds third_party/).
 ANTIWORD_BIN_RELATIVE = "../../third_party/antiword/bin/antiword"
@@ -121,7 +115,7 @@ GPU_QUEUE_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_gpu_queue"
 
 # Above this many PDFs left to parse, 3_parse hands them to the GPU task; at or below, it parses them on CPU and the
 # GPU cluster never starts. Only PDFs use Docling's GPU models (layout, tables): docx / pptx / html do not.
-GPU_MIN_PDFS = int(_env("PARSING_GPU_MIN_PDFS", "").strip() or "30")
+GPU_MIN_PDFS = 30
 
 # Column groups shared by the steps: the document metadata of parse_manifest, the category hierarchy of
 # category_reference, and what a selected file is enriched with.
@@ -163,7 +157,7 @@ WORKER_MODULES = (
 # Docs before this date are parsed like the others but their chunks go to
 # TARGET_CHUNK_TABLE_ARCHIVE instead of the RAG chunk tables (parsed_documents:
 # is_filtered_by_date=True, is_in_rag=False). An unknown date counts as recent.
-DOC_DATE_CUTOFF = _env("PARSING_DOC_DATE_CUTOFF", "2016-01-01")
+DOC_DATE_CUTOFF = "2016-01-01"
 _dt.date.fromisoformat(
     DOC_DATE_CUTOFF
 )  # fails at import on a malformed value: the steps cast it to a date literal
@@ -175,13 +169,8 @@ ARCHIVE_MAX_DOCS = int(_env("PARSING_ARCHIVE_MAX_DOCS", "0") or "0")
 
 # One metadata-only "notice" chunk per pre-cutoff document (REF, title, revision,
 # date — no content), rebuilt on every run into TARGET_ARCHIVE_NOTICE_TABLE.
-# Copied into the RAG chunk tables (chatbot indexes) only when ARCHIVE_NOTICES_IN_RAG is on.
+# Archives feed the impact search only: their notices never enter the RAG chunk tables.
 TARGET_ARCHIVE_NOTICE_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.archive_notices"
-ARCHIVE_NOTICES_IN_RAG = _env("PARSING_ARCHIVE_NOTICES_IN_RAG", "false").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-)
 # Also hardcoded in update_proj_vector_indexes.py (which does not import config.py) and matched
 # by ARCHIVE_NOTICE_MARKER in server/services/infra/vector_search.py.
 ARCHIVE_NOTICE_CONTENT_TYPE = "archive_notice"
@@ -241,7 +230,7 @@ DEDUPLICATE_CHUNKS = True
 
 
 # --- Docling engine settings ---
-# USE_GPU: explicit override via PARSING_USE_GPU, else auto-detected (nvidia-smi).
+# USE_GPU: detected from the hardware of the cluster (nvidia-smi).
 def _detect_gpu() -> bool:
     """True when nvidia-smi exists and runs."""
     import shutil as _sh, subprocess as _sp
@@ -255,8 +244,7 @@ def _detect_gpu() -> bool:
         return False
 
 
-_use_gpu_env = _os.environ.get("PARSING_USE_GPU")
-USE_GPU = (_use_gpu_env.strip().lower() in ("1", "true", "yes")) if _use_gpu_env else _detect_gpu()
+USE_GPU = _detect_gpu()
 DO_OCR = False
 # Docling's own EasyOCR re-parse is off; scanned pages go through the LLM-OCR fallback below.
 GPU_OCR_FALLBACK = False
@@ -295,12 +283,12 @@ REDESCRIBE_ALL_IMAGES = _env("PARSING_REDESCRIBE_ALL_IMAGES", "false").strip().l
     "true",
     "yes",
 )
-LLM_MODEL_ENDPOINT = _env("PARSING_LLM_ENDPOINT", "databricks-gpt-6-luna")
+LLM_MODEL_ENDPOINT = "databricks-gpt-6-luna"
 LLM_MAX_TOKENS = 5000  # GPT-5 reasoning tokens need headroom beyond the visible output
 LLM_TEMPERATURE = 1.0  # gpt-5 family: temperature=1 only
 LLM_MAX_RETRIES = 5  # per endpoint and per pass
 # Tried in order after the primary, comma-separated. An endpoint that rejects images is skipped after a few failures in a row.
-LLM_FALLBACK_ENDPOINTS = _env("PARSING_LLM_FALLBACK_ENDPOINTS", "databricks-gpt-5-6-luna")
+LLM_FALLBACK_ENDPOINTS = "databricks-gpt-5-6-luna"
 # Passes over the endpoint chain; the waits are slept before the second and the following passes.
 LLM_ROUNDS = int(_env("PARSING_LLM_ROUNDS", "2"))
 LLM_ROUND_WAITS_S = (5.0, 15.0, 30.0)

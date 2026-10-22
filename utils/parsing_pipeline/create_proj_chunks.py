@@ -20,7 +20,7 @@
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parse_manifest` (task `2_manifest`), `category_reference` (task `1_categories`)
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_checkpoint` (tasks `3_parse` and `3b_parse_pdf`)
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.image_metadata` (keeps the rows already described across a rebuild)
-# MAGIC - `{PARSING_VOLUME_ROOT_PATH}` (the folders of the failed IDDOCs, for the retry)
+# MAGIC - `{VOLUME_ROOT_PATH}` (the folders of the failed IDDOCs, for the retry)
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{PIPELINE_WRITE_ENV}_proj.qualibot.parsed_documents`
@@ -93,6 +93,11 @@ dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference
 dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
 dbutils.widgets.text("debug", "false")
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
+dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full or rechunk")
+dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targeted run (empty: no filter)")
+dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
+dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
+dbutils.widgets.text("redescribe_all_images", "false", "true: describe every image again")
 
 PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
 if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
@@ -106,6 +111,11 @@ os.environ["PIPELINE_WRITE_ENV"] = PIPELINE_WRITE_ENV
 os.environ["PIPELINE_READ_ENV"] = dbutils.widgets.get("pipeline_read_env")
 os.environ["REFERENCE_READ_ENV"] = dbutils.widgets.get("reference_read_env")
 os.environ["BYPASS_QUALITY_CHECKS"] = dbutils.widgets.get("bypass_quality_checks")
+os.environ["PARSING_RUN_MODE"] = dbutils.widgets.get("run_mode")
+os.environ["PARSING_PARSE_FILTER"] = dbutils.widgets.get("parse_filter")
+os.environ["PARSING_MAX_PARSE_FILES"] = dbutils.widgets.get("max_parse_files")
+os.environ["PARSING_MAX_SOURCE_STALENESS_HOURS"] = dbutils.widgets.get("max_source_staleness_hours")
+os.environ["PARSING_REDESCRIBE_ALL_IMAGES"] = dbutils.widgets.get("redescribe_all_images")
 
 # COMMAND ----------
 

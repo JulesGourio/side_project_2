@@ -49,7 +49,7 @@ Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config
 |---|---|---|---|
 | `1_categories` | `create_proj_category_reference.py` | single-node CPU (S policy, `meta_cpu_cluster`) | `category_reference` |
 | `2_manifest` | `create_proj_parse_manifest.py` | single-node CPU (S policy, `meta_cpu_cluster`) | `parse_manifest`, `parsed_documents` (skip rows), pruning in the passage and image tables |
-| `3_parse` | `create_proj_parsing_checkpoint.py` | single-node CPU (S policy, `parse_cpu_cluster`) | `parsing_checkpoint` (non-PDF formats, and the PDFs when at most `parsing_gpu_min_pdfs`), `parsing_run_scope`, `parsing_gpu_queue`, `document_change_log`, task value `pdfs_for_gpu` |
+| `3_parse` | `create_proj_parsing_checkpoint.py` | single-node CPU (S policy, `parse_cpu_cluster`) | `parsing_checkpoint` (non-PDF formats, and the PDFs when at most `GPU_MIN_PDFS`), `parsing_run_scope`, `parsing_gpu_queue`, `document_change_log`, task value `pdfs_for_gpu` |
 | `3b_needs_gpu` | condition `pdfs_for_gpu > 0` | none | — |
 | `3b_parse_pdf` | `create_proj_parsing_checkpoint_gpu.py` | GPU, only when the condition is true | `parsing_checkpoint` (the queued PDFs) |
 | `3c_chunks` | `create_proj_chunks.py` | the CPU cluster of `3_parse` (S policy, `parse_cpu_cluster`; after the `false` branch of the condition or `3b_parse_pdf`, `run_if: AT_LEAST_ONE_SUCCESS`) | `parsing_checkpoint` (retries), `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health` |
@@ -62,32 +62,33 @@ Every classic cluster of the job takes the CORE Job Compute S policy (`job_clust
 Each task depends on the previous one. Only PDFs use Docling's GPU models (layout, tables): docx, pptx and html go
 through Docling's simple pipeline, and doc / xls / ppt / rtf / odt through format parsers, all on CPU. A daily run
 (0 to a few new PDFs) parses everything in `3_parse` and never starts the GPU cluster; a rebuild with more than
-`parsing_gpu_min_pdfs` (30) PDFs hands them to `3b_parse_pdf`. The parse tasks hand over through `parsing_run_scope`
+`GPU_MIN_PDFS` (30) PDFs hands them to `3b_parse_pdf`. The parse tasks hand over through `parsing_run_scope`
 (the IDDOCs of the run, refused by `3c_chunks` if another job run wrote it) and `parsing_gpu_queue`, so the job runs
 one run at a time. The parse notebooks pin an `opencv-python-headless` older than 4.13 (4.13 aborts on the runtime's OpenSSL) in a `%pip` cell: 4.11.0.86 on the CPU tasks (the standard runtime keeps numpy 1; 4.12 needs numpy 2), 4.12.0.88 on the GPU task. It replaces the
 OpenCV build that Docling pulls in, which fails on the GPU runtime and without a display library.
 
 ## Settings
 
-The job sets the environment variables read by `config.py`. The main ones, with their defaults in `config.py`:
+Environments: widgets passed by the job to every notebook task (`pipeline_write_env`, `pipeline_read_env`, `reference_read_env`).
+Table and volume paths are built from them. `pipeline_read_env` is read for the tables another task of the job wrote.
 
-| Variable | Default | Effect |
+Run-time choices: job parameters of `D_1_Qualibot_Parsing_Pipeline`, changed at launch ("Run now with different parameters"):
+
+| Parameter | Default | Effect |
 |---|---|---|
-| `PARSING_RUN_MODE` | `incremental` | `incremental`, `full` (reparse everything, the checkpoint is cloned first) or `rechunk` (rebuild the tables from the checkpoint, no volume scan, no parsing) |
-| `PARSING_PARSE_FILTER` | empty | Comma-separated IDDOCs: restricts the run to them |
-| `PIPELINE_WRITE_ENV` | job variable `pipeline_write_env` | `dev`, `uat` or `prod`: the tables are written to `<env>_proj.qualibot` |
-| `PARSING_MAX_SOURCE_STALENESS_HOURS` | `36` | Freshness guard of `1_categories`; `0` disables it |
-| `PARSING_DOC_DATE_CUTOFF` | `2018-01-01` | Date below which a document is archived |
-| `PARSING_ARCHIVE_MAX_DOCS` | `0` | Number of archived documents parsed, most recent first; `-1` for all |
-| `PARSING_ARCHIVE_NOTICES_IN_RAG` | `false` | Copies the archive notices into `chunks` |
-| `PARSING_VECTOR_SEARCH_INDEXES` | empty | Indexes synced by `5_sync_index` (widget `indexes` takes precedence) |
-| `PARSING_LLM_ENDPOINT` | `databricks-gpt-6-luna` | Vision model of `4_describe_images` |
-| `PARSING_LLM_FALLBACK_ENDPOINTS` | `databricks-gpt-5-6-luna` | Comma-separated endpoints tried after the primary |
-| `PARSING_LLM_BATCH_SIZE` | `6000` | Images described per run |
-| `PARSING_IMAGE_MAX_ATTEMPTS` | `10` | Attempts before an image is set aside as `FAILED_LIMIT` |
+| `run_mode` | `incremental` | `incremental`, `full` (reparse everything, the checkpoint is cloned first) or `rechunk` (rebuild from the checkpoint, no scan, no parse) |
+| `parse_filter` | empty | Comma-separated IDDOCs: restricts the run to them |
+| `max_parse_files` | `500` | Most files one run may parse; `0` = no ceiling |
+| `max_source_staleness_hours` | `36` | Freshness guard of `1_categories`; `0` disables it |
+| `redescribe_all_images` | `false` | `true`: describe every image again |
 
-The other variables (volumes, catalog and schema, GPU, rate budgets, chunk sizes, OCR thresholds) are
-listed at the top of `config.py`.
+Bundle variables (per target): `parsing_archive_max_docs`, `parsing_images_volume` (the name of the images volume),
+`parsing_num_workers`, the node types, the schedule and the Vector Search indexes.
+
+Constants of `config.py` (not variables): the document cutoff (`DOC_DATE_CUTOFF`, `2016-01-01`), the scope filter, the
+Intraqual source volume, the GPU threshold, the LLM endpoints (`LLM_MODEL_ENDPOINT`, `LLM_FALLBACK_ENDPOINTS`), and the
+tuning values (volumes of models, chunk sizes, OCR thresholds, rate budgets), which are still read from `PARSING_*`
+variables with the defaults listed at the top of `config.py`.
 
 ## Documents and scope
 
@@ -113,11 +114,12 @@ listed at the top of `config.py`.
 - **Volume folders** are classified by `2_manifest`: `KEEP` (parsed), `DELETE` (out of scope), `ORPHAN` (IDDOC
   unknown in `document_revisions_intraqual`, kept on the volume, not parsed), `SKIP` (name not `D_<IDDOC>` or `Dm_<IDDOC>`), `MANUAL`,
   `CAT_EXCL`.
-- **Archive**: a document published before `PARSING_DOC_DATE_CUTOFF` is parsed like the others, but its passages go
+- **Archive**: a document published before `DOC_DATE_CUTOFF` is parsed like the others, but its passages go
   to `chunks_archive` and never to `chunks`. `parsed_documents.is_filtered_by_date` is `true` for these. A document
   without date counts as recent. `archive_notices` holds one passage per archived document (REF, title, revision,
-  type, date and a statement that the content is not indexed), rebuilt on every run; it reaches `chunks` only when
-  `PARSING_ARCHIVE_NOTICES_IN_RAG` is `true`.
+  type, date and a statement that the content is not indexed), rebuilt on every run and removed from `chunks`.
+  Archives feed the impact search only: nothing from them reaches the RAG (decided 2026-10-22). The cutoff is
+  the constant `DOC_DATE_CUTOFF` of `config.py`, `2016-01-01`.
 - **Empty folder**: an in-scope IDDOC whose folder has no parseable file is recorded as `SKIPPED_EMPTY_FOLDER`.
 
 ### Statuses of `parsed_documents` (one row per IDDOC)
@@ -276,9 +278,9 @@ Tables (schema `<env>_proj.qualibot`, the same names in every environment):
 | `parsing_run_health`, `document_change_log` | One row per run; one row per new or revised document (monitoring) |
 | `rag_exclusions`, `parsing_retry_temp` | Working tables |
 
-Volumes: the Intraqual documents (`PARSING_VOLUME_ROOT_PATH`, read, one folder per IDDOC named `D_<IDDOC>` or
-`Dm_<IDDOC>`; `2_manifest` may delete out-of-scope folders), the images (`PARSING_VOLUME_BASE_PATH`) and the
-offline models (`PARSING_OFFLINE_MODELS`).
+Volumes: the Intraqual documents (the Intraqual volume constant `VOLUME_ROOT_PATH`, read, one folder per IDDOC named `D_<IDDOC>` or
+`Dm_<IDDOC>`; `2_manifest` may delete out-of-scope folders), the images (the images path `VOLUME_BASE_PATH`) and the
+offline models (the models path `OFFLINE_MODELS_DIR`).
 
 Quality checks (`tables.py`, Great Expectations through `leap_utils`): a RED failure stops the task before anything is written. An AMBER failure is logged. `6_update_kb_metadata` runs on serverless, where GX is not available: its checks run in Python (`check_rows`). The CPU clusters get GX from their S policy; the GPU cluster of `3_parse` has no policy and declares `great_expectations==0.18.22` as a task library. Every notebook calls `quality.require_gx()` in its import cell: on 2026-10-16 a UAT `3_parse` without GX failed on `ModuleNotFoundError: great_expectations` at its quality checks, after 20 h of parsing.
 

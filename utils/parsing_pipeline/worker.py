@@ -45,11 +45,11 @@ for _noisy in (
 
 # --- Configuration ---
 # _DEFAULTS is the worker fallback; the notebook injects the real config via configure().
-_DEFAULT_VOLUME_BASE_PATH = os.environ.get("PARSING_VOLUME_BASE_PATH")
+_DEFAULT_VOLUME_BASE_PATH = None
 
 _DEFAULTS: Dict[str, Any] = {
     # None (not a hardcoded path) if unset, so a bad fallback fails loudly downstream.
-    "OFFLINE_MODELS_DIR": os.environ.get("PARSING_OFFLINE_MODELS"),
+    "OFFLINE_MODELS_DIR": None,
     "ANTIWORD_BIN": None,
     "ANTIWORD_SHARE_DIR": None,
     "VOLUME_BASE_PATH": _DEFAULT_VOLUME_BASE_PATH,
@@ -142,8 +142,11 @@ def ensure_config() -> None:
     except Exception:
         pass
     try:
-        # A cluster env var, visible in every process unlike CONFIG.
-        volume_base = os.environ.get("PARSING_VOLUME_BASE_PATH")
+        from pyspark.sql import SparkSession
+
+        # Set by the driver in setup_workers, visible in every Python worker like the config JSON above.
+        _spark = SparkSession.getActiveSession()
+        volume_base = _spark.conf.get("app.parsing.volume_base_path", "") if _spark else ""
         vol_cfg = (
             os.path.join(volume_base, "_parsing_config.json")
             if volume_base

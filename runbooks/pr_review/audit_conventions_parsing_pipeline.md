@@ -213,7 +213,7 @@ Aucune de ces listes ne peut être remplacée par un calcul Spark sans réécrir
 
 - `PIPELINE_WRITE_ENV`, `PIPELINE_READ_ENV`, `REFERENCE_READ_ENV` : mêmes noms que le guide LEAP (`pipeline_write_env`, `pipeline_read_env`, `reference_read_env` en widgets).
 - `PIPELINE_READ_ENV` est lu uniquement pour les tables écrites par une autre tâche du job. Dans le reste du pipeline (écritures, index, tables relues par la même tâche), `PIPELINE_WRITE_ENV`.
-- Les `PARSING_*` restants (`PARSING_RUN_MODE`, `PARSING_LLM_*`, etc.) sont des réglages du projet, pas des environnements.
+- Les `PARSING_*` restants sont les réglages de découpage, de LLM et de budget, plus `PARSING_ARCHIVE_MAX_DOCS` et `PARSING_IMAGES_VOLUME`. Les paramètres de run sont des paramètres de job ; les chemins et noms de tables sont dérivés des environnements.
 - Le catalogue Intraqual n'est plus écrit en dur par cible. `PARSING_INTRAQUAL_GOLD` et `PARSING_INTRAQUAL_SUFFIX` sont supprimés.
 
 ## 5. Documentation et CI
