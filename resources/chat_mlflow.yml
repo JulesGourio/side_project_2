@@ -273,7 +273,7 @@ targets:
               level: CAN_MANAGE
           parameters:
             - name: dry_run
-              default: "true"
+              default: "false"
           tasks:
             - task_key: score_chat_traces
               notebook_task:
@@ -296,7 +296,7 @@ targets:
           schedule:
             quartz_cron_expression: "0 30 2 * * ?"
             timezone_id: "Europe/Brussels"
-            pause_status: PAUSED
+            pause_status: UNPAUSED
 
   prod:
     resources:

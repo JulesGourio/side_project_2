@@ -22,6 +22,37 @@ Nettoyage du code à rejouer : `runbooks/retest.md` (DEV d'abord).
 
 A et B sont indépendants et peuvent se faire dans n'importe quel ordre. D ne se fait qu'après B, étape par étape, sur décision explicite.
 
+## État au 23/10/2026 — ce qui reste (checklist unique)
+
+Fait et confirmé par l'utilisateur : index `chunks_index` `ONLINE`, bascule du chatbot (D5), rechunk, tests de l'app, app en service pour tous les utilisateurs, endpoint `databricks-claude-sonnet-5-5`. Les blocs A, B, C et D1 à D4 ne sont plus suivis ici : ils concernaient la branche `audit/doc-compare`, hors périmètre. Branches de travail : `claude/sharp-mayer-uqwx8x` et `claude/intraqual-data-asset` (la seconde est fusionnée dans la première le 2026-10-23, sans conflit). Le mode du planning n'est plus `rechunk` : `run_mode` est un paramètre du job, défaut `incremental`, sans surcharge UAT.
+
+Plannings UAT dans le code (2026-10-23) : parsing quotidien `UNPAUSED`, export Lakebase `UNPAUSED`, arrêt/démarrage week-end `UNPAUSED`, alertes SQL `UNPAUSED` (`alerts_pause_status` ajouté pour `uat`), scoring des traces `UNPAUSED` (`dry_run` à `false` par défaut en UAT). Rien de tout cela n'est actif tant que `deploy-uat-jobs` n'a pas tourné.
+
+- [ ] **K1. Récupérer la branche et la pousser vers Bitbucket** (PowerShell, racine du dépôt) :
+
+  ```powershell
+  git status --short
+  git fetch origin claude/sharp-mayer-uqwx8x
+  git checkout claude/sharp-mayer-uqwx8x
+  git reset --hard origin/claude/sharp-mayer-uqwx8x
+  git log --oneline -3
+  git push bitbucket claude/sharp-mayer-uqwx8x
+  ```
+
+- [ ] **K2. Déployer les jobs (active les plannings)** : Bitbucket → Pipelines → Run pipeline → branche `claude/sharp-mayer-uqwx8x` → `deploy-uat-jobs`. Attendre qu'il soit vert. Ensuite, vérifier :
+
+  ```powershell
+  databricks bundle summary -t uat --profile UAT
+  databricks jobs list --profile UAT -o json | ConvertFrom-Json | Where-Object { $_.settings.schedule -ne $null } | ForEach-Object { "$($_.settings.name) : $($_.settings.schedule.pause_status)" }
+  ```
+
+  Attendu : aucune ligne `PAUSED` pour les jobs UAT. Les alertes `job_failures` demandent SELECT sur `system.lakeflow` pour le SP UAT : à faire par un admin du metastore (jamais depuis l'éditeur SQL d'un utilisateur sans droit).
+
+- [ ] **K3. Bloc G** (le parsing lit le data asset Intraqual) : étapes 2 à 4 du bloc G ci-dessous.
+- [ ] **K4. Bloc H** (périmètre officiel, date 2016, correctif des lots) : étapes 3 à 6 du bloc H ci-dessous (l'étape 1 et l'étape 2 sont couvertes par K1 et K2).
+- [ ] **K5. Bloc I** (ménage) : envoyer le résultat de la requête, puis suppression nom par nom.
+- [ ] **K6. Bloc J** (droits, chat seul en cas de panne de `users`) : DEV puis UAT.
+
 ## À faire
 
 ### 0. Migration vers `uat_proj.qualibot`
@@ -830,7 +861,7 @@ DESCRIBE HISTORY uat_proj.qualibot.chunks LIMIT 10;
 
 ### F. Après le run complet de E2.8 (2026-10-21) — contrôles, planning, doublons
 
-Statut : F1 `[x] (2026-10-21)` : le run complet (job run `884840682425994`, mode `rechunk`) est en SUCCESS, `chunks` écrasé en `Overwrite` (v21), 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents ; index `ready` = `true` (137187 lignes), job run `884840682425994` démarré le 2026-10-19 23:35 UTC. F2 `[ ]` (déploiement du planning en `incremental` / `UNPAUSED`). F3 `[x] (2026-10-21)` (jobs en double supprimés ; le contrôle ne liste plus que deux jobs système `[2748374992560664]` et `[4171178917767011] Metric Backfill Computation Job`, créés par Databricks pour d'autres expériences que `258804869957724` : à ne pas supprimer). F4 / F5 : voir les statuts de l'étape 0 et de D5. Le job `D_1_Qualibot_Parsing_Pipeline` (id `762813135325407`) a réussi. `databricks.yml` passe `uat` en `parsing_schedule_pause: "UNPAUSED"` et `parsing_run_mode: "incremental"` (le mode `rechunk` ne parse aucun nouveau document : il ne convient pas au planning quotidien).
+Statut : F1 `[x] (2026-10-21)` : le run complet (job run `884840682425994`, mode `rechunk`) est en SUCCESS, `chunks` écrasé en `Overwrite` (v21), 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents ; index `ready` = `true` (137187 lignes), job run `884840682425994` démarré le 2026-10-19 23:35 UTC. F2 `[ ]` (déploiement du planning, repris par K2). F3 `[x] (2026-10-21)` (jobs en double supprimés ; le contrôle ne liste plus que deux jobs système `[2748374992560664]` et `[4171178917767011] Metric Backfill Computation Job`, créés par Databricks pour d'autres expériences que `258804869957724` : à ne pas supprimer). F4 / F5 : voir les statuts de l'étape 0 et de D5. Le job `D_1_Qualibot_Parsing_Pipeline` (id `762813135325407`) a réussi. `databricks.yml` passe `uat` en `parsing_schedule_pause: "UNPAUSED"` et `parsing_run_mode: "incremental"` (le mode `rechunk` ne parse aucun nouveau document : il ne convient pas au planning quotidien).
 
 **F1 — Contrôles du run (PowerShell, profil `UAT`)** : `<RUN_ID>` est l'identifiant affiché par `run-now` (sinon : `databricks jobs list-runs --job-id 762813135325407 --limit 3 --profile UAT`).
 

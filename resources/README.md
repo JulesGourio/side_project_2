@@ -24,11 +24,11 @@ Times are in `Europe/Brussels` (the schedules of the apps and of the pipeline); 
 
 | Job name | Resource key | Target | Trigger |
 |---|---|---|---|
-| `D_1_Qualibot_Parsing_Pipeline` | `parsing_pipeline` | `dev`, `uat`, `prod` | `dev`: `parsing_schedule_cron` (04:00), `PAUSED`; UAT and PROD: manual |
+| `D_1_Qualibot_Parsing_Pipeline` | `parsing_pipeline` | `dev`, `uat`, `prod` | `parsing_schedule_cron` (04:00): `PAUSED` on `dev` and `prod`, `UNPAUSED` on `uat` |
 | `D_1_Qualibot_Lakebase_Export_To_Volume` | `lakebase_export` | `dev`, `uat`, `prod` | 02:00 and 14:00 (`lakebase_export_schedule_pause`): `PAUSED` on `dev`, `UNPAUSED` on `uat` and `prod`. The Delta load (`lakebase_import_to_delta`) is `true` on each target in `databricks.yml` |
 | `Z_2_Qualibot_Create_Chat_Experiment` | `create_chat_experiment_<target>` | `dev`, `uat`, `prod` | manual |
 | `Z_3_Qualibot_Register_Chat_Prompts` | `register_chat_prompts_<target>` | `dev`, `uat`, `prod` | manual |
-| `D_2_Qualibot_Score_Chat_Traces` | `score_chat_traces_<target>` | `dev`, `uat`, `prod` | 02:30, `PAUSED` |
+| `D_2_Qualibot_Score_Chat_Traces` | `score_chat_traces_<target>` | `dev`, `uat`, `prod` | 02:30: `PAUSED` on `dev` and `prod`, `UNPAUSED` on `uat` (`dry_run` false) |
 | `D_1_Qualibot_Apps_Stop_Nightly_Dev` | `apps_stop_nightly_dev` | `dev` | 21:00 every day, `UNPAUSED` |
 | `W_1_Qualibot_Stop_Weekend_Dev` / `W_1_Qualibot_Start_Weekend_Dev` | `qualibot_stop_weekend_dev` / `qualibot_start_weekend_dev` | `dev` | Friday 21:00 / Monday 07:00, `PAUSED` |
 | `W_1_Qualibot_Stop_Weekend_Uat` / `W_1_Qualibot_Start_Weekend_Uat` | `qualibot_stop_weekend_uat` / `qualibot_start_weekend_uat` | `uat` | Friday 21:00 / Monday 07:00, `UNPAUSED` |
@@ -44,7 +44,7 @@ The job names carry no target suffix: a target gets its own workspace or its own
 - Job parameters (`{{job.parameters.*}}`) are declared per job: `dry_run` (default `true`) on the scoring jobs,
   `overwrite` (default `false`) on the DEV copy, `app_service_principal` on the app grant job, and `service_principal`,
   `catalog`, `schema_name`, `volume_name`, `volume_permission` on the volume grant job.
-- The alerts read `<pipeline_write_env>_proj.qualibot` on the warehouse of their target. `alerts_pause_status` (default `PAUSED`) switches them on per target. `job_failures` needs SELECT on `system.lakeflow`, granted by a metastore admin. `chat_failure_rate`, `new_error_kinds` and `chat_degraded_turns` read Delta copies of the chatbot tables, which the UAT and PROD exports fill: on DEV they report a missing table.
-- The scoring jobs are `PAUSED`. The parsing job's schedule takes its pause state from `parsing_schedule_pause`.
+- The alerts read `<pipeline_write_env>_proj.qualibot` on the warehouse of their target. `alerts_pause_status` (default `PAUSED`) switches them on per target (`UNPAUSED` on `uat`). `job_failures` needs SELECT on `system.lakeflow`, granted by a metastore admin. `chat_failure_rate`, `new_error_kinds` and `chat_degraded_turns` read Delta copies of the chatbot tables, which the UAT and PROD exports fill: on DEV they report a missing table.
+- The scoring jobs are `PAUSED` except on `uat`. The parsing job's schedule takes its pause state from `parsing_schedule_pause`.
 - `run_as` is set per job. Most jobs run as a service principal.
 - Tests of the bundle files and of the job names: [`tests/README.md`](../tests/README.md).
