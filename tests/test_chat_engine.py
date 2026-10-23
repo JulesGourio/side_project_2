@@ -429,11 +429,21 @@ def _candidates_asked(sent):
     return sum(p['num_results'] for p in sent)
 
 
+async def _rewrite_down(*args, **kwargs):
+    """Rewrite call that fails after one turn of the event loop, as a call over the network does."""
+    fut = asyncio.get_running_loop().create_future()
+    asyncio.get_running_loop().call_soon(fut.set_result, None)
+    await fut
+    raise RuntimeError('all rewrite models down')
+
+
 def test_a_degraded_bilingual_turn_asks_as_many_candidates_as_a_normal_one(monkeypatch):
     _, normal = _run(monkeypatch)
-    _, degraded = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
-    assert _candidates_asked(degraded['sent']) == _candidates_asked(normal['sent']) == 48
-    assert len(degraded['sent']) == 2
+    _, degraded = _run(monkeypatch, rewrite=_rewrite_down)
+    abandoned, searched = degraded['sent'][0], degraded['sent'][1:]     # the early search is sent first, then dropped
+    assert abandoned['num_results'] == 12 and 'reranker' in abandoned
+    assert _candidates_asked(searched) == _candidates_asked(normal['sent']) == 48
+    assert len(searched) == 2
 
 
 def test_a_degraded_translate_turn_asks_as_many_candidates_as_a_normal_one(monkeypatch):
