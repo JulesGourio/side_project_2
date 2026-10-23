@@ -27,7 +27,7 @@ _CAPS_CACHE_MAX = 5000
 _caps_cache: dict[str, tuple[float, dict]] = {}
 
 # Allowed groups per feature; the sync job (utils/lakebase_sync/user_capabilities.py) tracks the same sets.
-_CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
+_CAPS_CHAT_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-LATECOERE-User-Internal', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_COMPARE_GROUPS = {'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin'}
 _CAPS_ALL_GROUPS = _CAPS_CHAT_GROUPS | _CAPS_COMPARE_GROUPS
 

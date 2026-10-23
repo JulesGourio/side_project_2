@@ -12,7 +12,8 @@ from typing import Any, Iterable
 logger = logging.getLogger(__name__)
 
 CAPS_CHAT_GROUPS = frozenset({
-    'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin',
+    'Role-Project-LEAP-End-users-Qualibot-ChatBot', 'Role-LATECOERE-User-Internal',
+    'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin',
 })
 CAPS_COMPARE_GROUPS = frozenset({
     'Role-Project-LEAP-End-users-Qualibot-DocCompare', 'Role-Project-LEAP-CoreDev', 'Role-Project-LEAP-CoreAdmin',

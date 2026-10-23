@@ -94,7 +94,7 @@ the visitor (on-behalf-of-user token), whether the visitor belongs to one of the
 | Feature | Account groups |
 |---|---|
 | Comparison | `Role-Project-LEAP-End-users-Qualibot-DocCompare`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
-| Chat | `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
+| Chat | `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `Role-LATECOERE-User-Internal`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
 
 The check joins two sources. The `users` table holds the groups written by the task
 `sync_user_capabilities` of the `lakebase_user_capabilities` job (every two hours), from the account audit log
