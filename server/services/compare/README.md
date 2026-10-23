@@ -31,6 +31,7 @@ Parent: [services](../README.md). The routes that call these services are in [ro
   `SOFFICE_ARCHIVE_VOLUME_PATH`, then the well-known system paths.
 - A structured analysis is parsed back from its JSON for the Excel export. The parser tries several fallbacks before it
   gives up.
+- A failing analysis endpoint is never ignored: the failure is logged, the endpoint is rested, the next candidate of the chain is tried, and `CompareLlmUnavailable` is raised only when none answers.
 
 ## See also
 

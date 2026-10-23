@@ -31,6 +31,7 @@ Parent: [services](../README.md). The route that calls these services is [router
   missing. Creation and prompt registration run as jobs (`utils/evaluation`).
 - Scoring runs outside the turn, in `utils/evaluation/chat_scorers.py`. The trace export has a 10-second limit and
   never raises into the turn.
+- The issue severities `INFO`, `WARNING` and `ERROR` of `turn_log.py` are the vocabulary of the turn log, imported by the WebSocket route, the engine and the Lakebase writer. They are not per-target settings, so they are not in a settings module.
 
 ## See also
 

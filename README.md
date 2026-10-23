@@ -244,6 +244,10 @@ Choices that look like gaps when read in isolation. Each is deliberate.
 | Compare prompts | Files in `server/prompts/compare/`, like the chat prompts | A prompt is never a string in Python. |
 | Image descriptions | Reused only for the same image with the same context text; redescribing all images rebuilds the passages | The description depends on its context. |
 | Impact search | A compared document may exclude itself from the results; changes that fit in no query are listed in the result and shown to the user | The listed ones are the only changes not looked up. |
+| Exported data | The export copies every Lakebase table, chat text and share tokens included, to Delta tables of `<env>_proj.qualibot` twice a day; `lakebase_tables_to_skip` leaves tables out; there is no unshare | The copy feeds the usage dashboard and the alerts; access to the schema is governed by Unity Catalog. |
+| Documents seen by the chat | Every chat user can retrieve any document of the index | The index holds the in-scope corpus of Intraqual; there are no per-document permissions. |
+| Group of the whole company | `Role-LATECOERE-User-Internal` is one of the chat groups: its members are read from the audit log by the capabilities job and get the chat only | A company-wide rollout goes through one group. |
+| Failed files | A file that fails to parse is retried at each run | A fix of the code or of the file lets it through; the cost is small. |
 | Archive documents | Feed the impact search only, never the chat | Older documents are not applicable guidance. |
 | Parsing schedule in PROD | Runs daily at 04:00 from the first deployment of the PROD jobs | The PROD parsing state is prepared before that deployment, and `max_parse_files` caps a run that would start from nothing. |
 | PROD export of Lakebase | Scheduled with PROD | The PROD alerts read the Delta copy. |
@@ -252,8 +256,13 @@ Choices that look like gaps when read in isolation. Each is deliberate.
 | Dependencies | Pinned in `requirements.txt`; `leap_utils` reduced to the modules in use | Reproducible deployments. |
 | Continuous integration | The tests block UAT and PROD deployments; OIDC authentication is planned | OIDC needs a Databricks account administrator. |
 
-Planned, not done: tables inside DOCX headers and footers are not compared yet; they mostly hold revision
-tables and boilerplate, not the content that matters, so this can wait.
+## Known limits and planned work
+
+- **Deployment authentication**: the pipelines use one long-lived token per environment. OIDC is planned (it needs a Databricks account administrator). The Bitbucket environment `Production` is restricted to `main` once the pipelines are validated; until then the check is in the pipeline file.
+- **Usage dashboard of DEV**: it still reads older tables.
+- **GPU cluster**: it has no cluster policy, because the CORE Job Compute S policy has no GPU-ML runtime.
+- **Parsing**: an image that disappears from a file whose IDDOC did not change keeps its row and its passage (a revision gets a new IDDOC, so this needs a file replaced in place); see the parsing README.
+- **DOCX comparison**: tables inside headers and footers are not compared; they mostly hold revision tables and boilerplate.
 
 ## Documentation
 

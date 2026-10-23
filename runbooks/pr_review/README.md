@@ -12,10 +12,10 @@
 
 | Statut | Yann | Logan | Logan v3 | Jules | Total |
 |---|---|---|---|---|---|
-| Fait | 52 | 42 | 29 | 1 | 124 |
+| Fait | 53 | 42 | 29 | 1 | 125 |
 | Partiel | 0 | 4 | 0 | 0 | 4 |
 | Ouvert | 0 | 0 | 1 | 0 | 1 |
-| En attente de Yann | 10 | 0 | 0 | 0 | 10 |
+| En attente de Yann | 9 | 0 | 0 | 0 | 9 |
 | Décision de Jules | 0 | 0 | 0 | 0 | 0 |
 | **Total** | **62** | **46** | **30** | **1** | **139** |
 
@@ -195,7 +195,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 |---|---|---|---|---|
 | L-19 | Logan · `useChatConversation.ts:90`, `helpers.py:84-92`, `queries.py:25` | [Moyenne] Tours en échec renvoyés au modèle comme historique (ils comptent, et transforment une première question en « suivi » donc coupent la voie traduction seule) ; fenêtre de N−1 messages … | — | Un « Stop » ou un onglet fermé met fin au tour tout de suite, à n'importe quelle étape (écoute de la fermeture du socket, tâche annulée, tour enregistré `aborted`), y compris quand la traduction retient la réponse ; le serveur ne continue plus à produire ni à payer. Le client n'envoie plus les bulles d'erreur au modèle. Logan v3 : voir N-15 (fait).<br>**Fait** |
 | Y-2 <sub>885059913</sub> | Yann · `README.md:84` | « Switch to 6 Luna » | **D'accord** : les cibles surchargent la réécriture (voir L-25).<br>Proposition : Choisir un modèle et aligner les docs. | Pont de traduction, jugement et résumé de la comparaison (texte et images) sur `databricks-gpt-6-luna` ; repli `databricks-gpt-5-6-luna` (chat : `app.yaml` ; comparaison : l'autre modèle, `compare_chain`). Réécriture du chat : voir point 4. …<br>**Fait** |
-| Y-5 <sub>885070557</sub> | Yann · `language_reminder_named.md:1` | « Pas compris pourquoi deux » | **Désaccord** : deux cas distincts (langue détectée / non détectée), documenté. | D'accord avec Logan. Un seul fichier changerait la formulation du cas « inconnu », donc le comportement mesuré. Raison écrite dans `server/prompts/README.md`. Attend Yann : pas de changement, réponse non acceptée.<br>**En attente de Yann** |
+| Y-5 <sub>885070557</sub> | Yann · `language_reminder_named.md:1` | « Pas compris pourquoi deux » | **Désaccord** : deux cas distincts (langue détectée / non détectée), documenté. | Les deux fichiers de rappel de langue sont fusionnés en un seul (`language_reminder.md`).<br>**Fait** |
 | Y-6 <sub>885071187</sub> | Yann · `language_reminder_named.md:1` | « Plutôt un fichier de config .py » | **Désaccord** : les `.md` sont enregistrés dans le registre de prompts et éditables sans code. | Règle du projet : un prompt du chat est un fichier (le hash lie la version enregistrée à la trace). Ce qui varie va en config Python (voir Y-7). Attend Yann : pas de changement, réponse non acceptée.<br>**En attente de Yann** |
 | Y-7 <sub>885138943</sub> | Yann · `as.md:1` | « Variabiliser pour réutiliser le même texte entre IS/AS » | **D'accord** : texte répété, un gabarit `{division}` ; garder en `.md`.<br>Proposition : Un gabarit + bloc d'ordre propre à AS. | `as.md` et `is.md` remplacés par `system/division.md` (gabarit rempli par `division_prompt()` et `DIVISION_NAMES` de `engine/config.py`) ; règle QP puis MI dans `as_reference_ordering.md`. …<br>**Fait** |
 | Y-8 <sub>885138148</sub> | Yann · `base.md:2` | « Un petit langdetect en amont ? » | **En partie** : existe déjà (fastText) ; bloc réductible à une ligne de repli.<br>Proposition : Ramener le bloc « langue » à une ligne. | Bloc « langue » de `base.md` ramené à deux lignes (réponse dans la langue de la question sauf demande contraire ; citation dans la langue d'origine avec traduction). Détection fastText et rappel nommé déjà en place. …<br>**Fait** |
@@ -453,14 +453,13 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 ## Reste à faire et points à vérifier
 
-Établi le 2026-10-23. Le code est testé en local mais rien n'a tourné sur Databricks. Une remarque n'est `Fait` que si elle est traitée ou tranchée par Jules ; voici toutes les autres (15 lignes : 10 En attente de Yann, 4 Partiel, 1 Ouvert).
+Établi le 2026-10-23. Le code est testé en local mais rien n'a tourné sur Databricks. Une remarque n'est `Fait` que si elle est traitée ou tranchée par Jules ; voici toutes les autres (14 lignes : 9 En attente de Yann, 4 Partiel, 1 Ouvert).
 
 ### Remarques de Yann sans accord (En attente de Yann)
 
 | # | Problème | Ce qu'il faut |
 |---|---|---|
 | Y-1 | Yann veut exclure le dossier `.vscode`, j'ai gardé `tasks.json`. | Yann accepte, ou `tasks.json` sort aussi. |
-| Y-5 | Il ne voit pas pourquoi il y a deux fichiers de rappel de langue. | Yann accepte la raison, ou on fusionne et on mesure. |
 | Y-6 | Il veut un fichier de config `.py`, j'ai gardé les `.md`. | Yann accepte la règle « un prompt = un fichier ». |
 | Y-31 | Il veut un `TypedDict`, j'ai mis un dict typé. | Yann accepte, ou un `TypedDict` par forme de ligne. |
 | Y-34 | J'ai compris « un module de réglages s'appelle `config` ». | Yann confirme ce qu'il voulait. |

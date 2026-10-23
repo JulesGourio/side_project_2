@@ -45,6 +45,7 @@ Parent: [server](../README.md).
   `app_errors`.
 - The saved-comparison routes and the chat session routes answer only the caller's own rows, except a shared chat
   conversation, which is read by its token.
+- `history._serialize` returns `dict[str, JsonScalar]`, not a `TypedDict`: it serialises any row of a `SELECT *` and of column lists chosen by the caller, so its keys are not fixed.
 
 ## See also
 

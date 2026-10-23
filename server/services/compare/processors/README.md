@@ -43,6 +43,7 @@ An unknown method is handled as `standard`. The Excel and image processors and t
   typed-in values is always compared. A sheet present in one workbook only is reported with its columns and its first
   30 rows. When the first
   column is not a unique key, the diff is a line-level unified diff instead.
+- Extensions are read in lower case: `.PDF` is handled like `.pdf`.
 - Known limit: tables inside the headers and footers of a DOCX file are not read (their paragraphs are). The version and
   date of a document are in paragraphs, so the comparison keeps them. Those tables are mostly revision tables and
   boilerplate; reading them is a planned extension that can wait.

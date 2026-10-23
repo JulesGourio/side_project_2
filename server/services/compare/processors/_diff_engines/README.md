@@ -27,6 +27,7 @@ Parent: [processors](../README.md).
 - A change between two modal verbs is substantive when the verbs fall in different obligation groups (mandatory,
   permissive, advisory). A change inside one group is not.
 - Two images are the same when their hashes are close. A finer 16 by 16 hash confirms the identity of a pair.
+- The relocation of moved blocks (`relocation.py`) aligns them with a dynamic-programming cost table (`_drift_cost_table`), bounded by `_DUP_ALIGN_MAX_CELLS`: a greedy pairing is wrong as soon as a block is inserted early in the document.
 
 ## See also
 
