@@ -34,7 +34,7 @@ def _fmt(path: str, line: int, func: str) -> str:
     :param func: name of the function
     :return: the origin as a string
     """
-    return f'{os.path.relpath(os.path.abspath(path), _ROOT)}:{line} in {func}'
+    return f'{os.path.relpath(os.path.abspath(path), _ROOT).replace(os.sep, "/")}:{line} in {func}'
 
 
 def from_exception(exc: BaseException | None) -> str:
