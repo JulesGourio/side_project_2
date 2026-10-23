@@ -206,10 +206,10 @@ MAX_PARSE_FILES = int(_env("PARSING_MAX_PARSE_FILES", "").strip() or "500")
 
 # =============================================================================
 # Scope filter (None = all IDDOCs, list = specific)
-# Overridable via PARSING_PARSE_FILTER="123,456" for a targeted (test) run.
+# Overridable via PARSING_PARSE_FILTER="123,456" (or "123;456") for a targeted (test) run.
 # =============================================================================
 PARSE_FILTER = [
-    int(x) for x in _env("PARSING_PARSE_FILTER", "").split(",") if x.strip().isdigit()
+    int(x) for x in _env("PARSING_PARSE_FILTER", "").replace(";", ",").split(",") if x.strip().isdigit()
 ] or None
 
 # --- Feature flags ---

@@ -307,6 +307,16 @@ describe_steps.promote_documents_awaiting_images()
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Restore the documents whose passages are their images
+# MAGIC The ghost guard of `3c_chunks` flags a document without any passage as `MISSING_CHUNKS` before its images are described. Once the image passages exist, the document is `SUCCESS` again, so the next run does not parse it for nothing.
+
+# COMMAND ----------
+
+describe_steps.restore_documents_with_passages()
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Summary
 
 # COMMAND ----------

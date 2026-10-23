@@ -732,6 +732,28 @@ def write_image_chunks(df_image_chunks) -> None:
     logger.info(f"CDF enabled on {TARGET_CHUNK_TABLE}")
 
 
+def restore_documents_with_passages() -> None:
+    """Documents flagged MISSING_CHUNKS go back to SUCCESS once a passage exists for them.
+
+    A document whose content is in its images has no text passage when the ghost guard runs; its image passages are
+    written afterwards by this task.
+    """
+    n_flagged = spark.table(TARGET_PROCESSED_FILES_TABLE).filter(f.col("parse_status") == "MISSING_CHUNKS").count()
+    if n_flagged == 0:
+        logger.info("No document flagged MISSING_CHUNKS.")
+        return
+    spark.sql(
+        f"""
+        UPDATE {TARGET_PROCESSED_FILES_TABLE}
+        SET parse_status = 'SUCCESS'
+        WHERE parse_status = 'MISSING_CHUNKS'
+          AND IDDOC IN (SELECT DISTINCT IDDOC FROM {TARGET_CHUNK_TABLE})
+        """
+    )
+    n_left = spark.table(TARGET_PROCESSED_FILES_TABLE).filter(f.col("parse_status") == "MISSING_CHUNKS").count()
+    logger.info(f"{n_flagged - n_left} document(s) restored to SUCCESS; {n_left} still without a passage.")
+
+
 def promote_documents_awaiting_images() -> None:
     """Documents without text that wait for their images move on once no image of them is left to describe.
 

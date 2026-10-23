@@ -77,7 +77,7 @@ Run-time choices: job parameters of `D_1_Qualibot_Parsing_Pipeline`, changed at 
 | Parameter | Default | Effect |
 |---|---|---|
 | `run_mode` | `incremental` | `incremental`, `full` (reparse everything, the checkpoint is cloned first) or `rechunk` (rebuild from the checkpoint, no scan, no parse) |
-| `parse_filter` | empty | Comma-separated IDDOCs: restricts the run to them |
+| `parse_filter` | empty | IDDOCs separated by commas or semicolons: restricts the run to them |
 | `max_parse_files` | `500` | Most files one run may parse; `0` = no ceiling |
 | `max_source_staleness_hours` | `36` | Freshness guard of `1_categories`; `0` disables it |
 | `redescribe_all_images` | `false` | `true`: describe every image again |

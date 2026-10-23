@@ -391,3 +391,5 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 ## 2026-10-23 — configuration des exécuteurs du parsing
 
 - `worker.write_worker_config` expédie le fichier de configuration avec `SparkContext.addFile`, `worker.ensure_config` le lit avec `SparkFiles.get` : les parseurs de formats (`.doc` par antiword, OCR…) retrouvent leurs réglages sur les exécuteurs. À retester en DEV : lancer le parsing en incrémental, les trois `.doc` (NS-1606, MI-13769, NF-10348) passent de `ERROR` à `SUCCESS` (`parser_strategy = antiword:doc`).
+- Documents `MISSING_CHUNKS` dont les passages sont des images : `describe_steps.restore_documents_with_passages` les remet en `SUCCESS` après la description des images (tâche `4_describe_images`). À retester : après un run, `SELECT count(*) FROM parsed_documents WHERE parse_status = 'MISSING_CHUNKS'` ne garde que les documents sans aucun passage.
+- `parse_filter` accepte des IDDOC séparés par des virgules ou des points-virgules (la commande `bundle run --params` coupe sur les virgules).
