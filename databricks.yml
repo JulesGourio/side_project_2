@@ -281,7 +281,7 @@ targets:
       alerts_warehouse_id: "13eff4a6095513cb"
       alerts_workspace_id: "2865348338307293"
       lakebase_import_to_delta: "true"
-      lakebase_tables_to_skip: "doc_catalog,impact_cache,impact_document_results,impact_feedbacks,impact_requests,llm_requests,summary_cache,users"
+      lakebase_tables_to_skip: "doc_catalog,impact_cache,impact_document_results,impact_feedbacks,impact_requests,llm_requests,summary_cache,users,messages,feedbacks,errors,knowledge_base_metadata"
       parsing_num_workers: "4"
       # Same prod sources as UAT.
       reference_read_env: "prod"
