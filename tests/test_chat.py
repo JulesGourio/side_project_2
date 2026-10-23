@@ -506,12 +506,12 @@ def test_no_allowed_group_found_grants_the_chat_only_and_is_cached():
     user_mod._caps_cache.clear()
 
 
-def test_unreadable_users_table_grants_all_uncached():
-    """A Lakebase outage must not withdraw Compare from its members."""
+def test_unreadable_users_table_grants_the_chat_only_uncached():
+    """A Lakebase outage opens the chat to the visitor, never Compare to someone without a group."""
     from server.services.infra import user as user_mod
 
     caps = _run_caps(stored=RuntimeError('lakebase down'), scim=RuntimeError('unauthorized'))
-    assert caps['can_chat'] and caps['can_compare']
+    assert caps == {'can_chat': True, 'can_compare': False, 'groups': []}
     assert 'visitor@example.com' not in user_mod._caps_cache
 
 

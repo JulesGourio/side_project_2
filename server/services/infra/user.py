@@ -228,7 +228,7 @@ async def get_capabilities(request: Request) -> dict:
     groups), and SCIM /Me on the visitor's own token (groups attached to the workspace). No allowed group found grants
     the chat only: the Databricks app permission already decides who reaches the app, and a visitor in a group only
     through another group is in neither source. The result is cached for CAPS_TTL_S, except when the users table could
-    not be read: that visitor gets both features, uncached, so an outage never withdraws Compare.
+    not be read: a visitor with no allowed group in SCIM gets the chat only, uncached, so an outage opens Compare to nobody.
 
     CAPS_BYPASS=true short-circuits and grants everything (DEV only).
 
@@ -277,10 +277,10 @@ async def get_capabilities(request: Request) -> dict:
         logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s) groups=%s', key, caps['can_chat'],
                     caps['can_compare'], '+'.join(sources), caps['groups'])
     elif not table_read:
-        logger.warning('Capabilities %s: no allowed group found and users table not read (%s) — granting all, uncached',
+        logger.warning('Capabilities %s: no allowed group found and users table not read (%s) — chat only, uncached',
                        key, '+'.join(sources) or 'no source')
         await _remember_identity(forwarded, email or header_email, display_name)
-        return dict(_OPEN_CAPS)
+        return dict(_DEFAULT_CAPS)
     else:
         caps = dict(_DEFAULT_CAPS)
         logger.info('Capabilities %s: no allowed group found (%s) — chat only', key, '+'.join(sources))

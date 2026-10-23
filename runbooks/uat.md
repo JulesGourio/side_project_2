@@ -1163,8 +1163,27 @@ Candidats (anciens noms remplacés par `app_errors`, `compare_messages`, `compar
 
 - [ ] Résultat de la requête reçu, liste de suppression écrite et validée.
 
+### J. Droits : en cas de panne de la table `users`, chat seul (code poussé, à déployer)
+
+Code : `server/services/infra/user.py` (`get_capabilities`). Une panne de Lakebase, sans groupe trouvé dans SCIM, n'ouvre plus Compare : le visiteur a le chat seul, sans cache. Un membre dont le seul groupe est un groupe de compte (DocCompare) perd Compare pendant la panne : c'est le compromis accepté.
+
+Étapes à faire par vous, dans cet ordre (PowerShell, depuis la racine du dépôt) :
+
+```powershell
+# 1. DEV d'abord
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
+```
+
+Contrôle sur DEV : ouvrir l'app avec un visiteur sans groupe, les logs doivent afficher `no allowed group found … — chat only`, et une panne simulée (sans `users`) doit afficher `chat only, uncached`, jamais `granting all`.
+
+```powershell
+# 2. UAT : seulement après votre accord explicite
+.\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
+```
+
 ## Fait
 
+- 2026-10-23 — Code `get_capabilities` : panne de la table `users` sans groupe SCIM = chat seul (au lieu de chat et Compare). Tests `tests/test_chat.py` à jour, suite verte (715 passés). Déploiement DEV/UAT : à faire (section J).
 - 2026-10-22 — `chunks_index_test` supprimé en UAT (index, table de réécriture ; sa vue et son journal partent avec l'index).
 - 2026-10-21 — 37 documents `MISSING_CHUNKS` (171 passages au total) : documents presque sans texte (30 caractères, 5 images) flaggés par la garde `flag_ghost_documents` avant l'ajout des passages d'images ; 1970 passages sans `division` (30 documents listés, dont `UDA-00-053`, `TDA7-00-046`, `FDAQL-2851`). À surveiller après le premier run quotidien ; aucune action.
 - 2026-10-21 — E2 terminé : run complet `D_1_Qualibot_Parsing_Pipeline` (job run `884840682425994`, mode `rechunk`) en SUCCESS, `chunks` écrasé en `Overwrite` (v21) sans changement de schéma, 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents (7583 avec révision, 7576 avec date). Étapes 0.3, 0.5, 0.7, C1, C2 et E1 confirmées.
