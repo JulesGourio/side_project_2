@@ -83,7 +83,7 @@ variables:
     description: "PAUSED: the Lakebase export job (D_1_Qualibot_Lakebase_Export_To_Volume) does not run on its schedule. UNPAUSED: it runs at 02:00 and 14:00 (Europe/Brussels)."
     default: "PAUSED"
   lakebase_import_to_delta:
-    description: "true: the export job also loads every exported table as a Delta table of <pipeline_write_env>_proj.qualibot. false on DEV, whose schema holds Delta copies of the UAT tables."
+    description: "true: the export job also loads every exported table as a Delta table of <pipeline_write_env>_proj.qualibot."
     default: "false"
   lakebase_tables_to_skip:
     description: "Comma-separated Lakebase tables the export job leaves out. Empty: every table is exported."
@@ -281,7 +281,7 @@ targets:
       alerts_warehouse_id: "13eff4a6095513cb"
       alerts_workspace_id: "2865348338307293"
       lakebase_import_to_delta: "true"
-      lakebase_tables_to_skip: "doc_catalog,impact_cache,impact_document_results,impact_feedbacks,impact_requests,llm_requests,summary_cache,users,messages,feedbacks,errors,knowledge_base_metadata"
+      lakebase_tables_to_skip: "messages,feedbacks,errors,knowledge_base_metadata"
       parsing_num_workers: "4"
       # Same prod sources as UAT.
       reference_read_env: "prod"
