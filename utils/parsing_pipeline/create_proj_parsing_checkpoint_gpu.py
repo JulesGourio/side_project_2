@@ -91,6 +91,18 @@ os.environ["PARSING_REDESCRIBE_ALL_IMAGES"] = dbutils.widgets.get("redescribe_al
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC The pinned OpenCV must run against the installed NumPy before the parse starts: a mismatch fails here, not hours into the run.
+
+# COMMAND ----------
+
+import cv2
+import numpy
+
+cv2.cvtColor(numpy.zeros((2, 2, 3), numpy.uint8), cv2.COLOR_BGR2GRAY)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC The repository folder goes on `sys.path` for the driver, ahead of the repository root (`leap_utils`).
 
 # COMMAND ----------

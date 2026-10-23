@@ -251,8 +251,8 @@ Déploiement (accord explicite de Jules)
 - [ ] Premier démarrage : `/api/health` renvoie `"lakebase": "ready"` ; le schéma Lakebase est créé.
 
 Après le déploiement
-- [ ] Export Lakebase de PROD : un premier lancement à la main, puis les copies Delta de `prod_proj.qualibot` ; alertes du chat : les dé-pauser (`alerts_pause_status`) quand les copies existent.
-- [ ] Parsing de PROD : planning toujours `PAUSED` ; quelques runs manuels en incrémental validés, puis `parsing_schedule_pause: "UNPAUSED"` pour `prod` dans `databricks.yml` (même cadence qu'UAT, 4 h) et un redéploiement des jobs.
+- [ ] Export Lakebase de PROD : planning actif dès le déploiement des jobs (02:00 et 14:00) ; alertes de PROD actives dès le déploiement (décidé le 2026-10-23, mail à `LEAP_Databricks_Alert@latecoere.aero`). Les alertes du chat lisent les copies Delta : elles sont sans données avant le premier export ; lancer l'export à la main juste après le déploiement : `databricks bundle run lakebase_export -t prod --profile PROD`. L'alerte `job_failures` a besoin du SELECT sur `system.lakeflow` (administrateur du metastore).
+- [ ] Parsing de PROD : planning (04:00) `UNPAUSED` dès le déploiement des jobs (décidé le 2026-10-23). Avant le déploiement des jobs, l'état de parsing de PROD doit être repris (section 0.3, étapes P…) sinon le premier run part de zéro ; `max_parse_files` plafonne un run, et `GPU_MIN_PDFS` décide si le GPU démarre. Surveiller le premier run.
 - [ ] Aucune donnée de chat ne vient d'UAT : le pipeline `sync-prod-data` ne copie que les modèles docling.
 - [ ] Parcours de test complet sur l'application PROD (chat, comparaison, aperçus, partage, historique).
 - [ ] OIDC à la place du jeton longue durée (plus tard, avec un administrateur de compte Databricks).

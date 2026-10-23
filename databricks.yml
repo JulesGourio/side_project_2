@@ -290,6 +290,9 @@ targets:
       parsing_vector_search_indexes: "dev_proj.qualibot.chunks_index"
       # PAUSED on purpose — unpause only on explicit decision.
       parsing_schedule_pause: "PAUSED"
+      alerts_pause_status: "UNPAUSED"
+      # The DEV app checks groups (CAPS_BYPASS off) and its alerts read the Delta copies of its own Lakebase.
+      lakebase_export_schedule_pause: "UNPAUSED"
       parsing_lakebase_database: "doccompare"
       job_activity_tag: "dev-job"
       notification_email: "jules.gourio.external@latecoere.aero"
@@ -574,6 +577,8 @@ targets:
       parsing_num_workers: "8"
       reference_read_env: "prod"
       job_activity_tag: "prod-job"
+      parsing_schedule_pause: "UNPAUSED"
+      alerts_pause_status: "UNPAUSED"
       # The PROD export copies the PROD Lakebase to prod_proj.qualibot twice a day: the chat alerts read those copies.
       lakebase_export_schedule_pause: "UNPAUSED"
       lakebase_import_to_delta: "true"

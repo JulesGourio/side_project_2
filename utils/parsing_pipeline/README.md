@@ -124,6 +124,7 @@ variables with the defaults listed at the top of `config.py`.
   type, date and a statement that the content is not indexed), rebuilt on every run and removed from `chunks`.
   Archives feed the impact search only: nothing from them reaches the RAG (decided 2026-10-22). The cutoff is
   the constant `DOC_DATE_CUTOFF` of `config.py`, `2016-01-01`.
+- **Known limits**: a rank-2 retry runs again on every `full` run for a file that still fails. An image that disappears from a file whose IDDOC did not change (a file replaced in place) keeps its row in `image_metadata` and its passage; a revision gets a new IDDOC and its image rows are cleared first, so this needs an in-place replacement.
 - **Empty folder**: an in-scope IDDOC whose folder has no parseable file is recorded as `SKIPPED_EMPTY_FOLDER`. The
   status is cleared on every run, so the folder is scanned again; the document is logged as `NEW` in
   `document_change_log` once, never again while its folder stays empty.

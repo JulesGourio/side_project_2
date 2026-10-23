@@ -245,7 +245,7 @@ Choices that look like gaps when read in isolation. Each is deliberate.
 | Image descriptions | Reused only for the same image with the same context text; redescribing all images rebuilds the passages | The description depends on its context. |
 | Impact search | A compared document may exclude itself from the results; changes that fit in no query are listed in the result and shown to the user | The listed ones are the only changes not looked up. |
 | Archive documents | Feed the impact search only, never the chat | Older documents are not applicable guidance. |
-| Parsing schedule in PROD | Stays paused until manual runs are validated | The first runs are watched. |
+| Parsing schedule in PROD | Runs daily at 04:00 from the first deployment of the PROD jobs | The PROD parsing state is prepared before that deployment, and `max_parse_files` caps a run that would start from nothing. |
 | PROD export of Lakebase | Scheduled with PROD | The PROD alerts read the Delta copy. |
 | Job-failure alert | Counts only the jobs of the workspace of its target (`alerts_workspace_id`) | The system tables are shared by the metastore. |
 | Staging volume | Declared in the bundle for every target | The volume is part of the deployed state. |
