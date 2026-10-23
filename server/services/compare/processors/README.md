@@ -39,10 +39,11 @@ An unknown method is handled as `standard`. The Excel and image processors and t
 - The extraction warnings (a near-empty text layer, documents that do not match) reach the user as well as the model.
 - The text processors add a visual block for the images they found. The XML processor has no images.
 - The Excel diff matches rows on their first column. A column that changes in more than half of the matched rows is
-  left out as volatile (an auto-calculated column). When the first column is not a unique key, the diff is a line-level
-  unified diff instead.
+  left out as volatile (an auto-calculated column); the excluded columns are listed in the report. When the first
+  column is not a unique key, the diff is a line-level unified diff instead.
+- Known limit: tables inside the headers and footers of a DOCX file are not read (their paragraphs are). The version and
+  date of a document are in paragraphs, so the comparison keeps them. Reading those tables is a planned extension.
 
-Hmm — "Its unchanged cells are not sent" — I haven't verified. Let me remove that line. I'll edit before finishing.
 
 ## See also
 

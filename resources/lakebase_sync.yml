@@ -3,8 +3,9 @@
 #
 # The job is declared once at the root; each target at the end names the service principal it runs as (run_as). The schedule is lakebase_export_schedule_pause,
 # the Delta load is lakebase_import_to_delta. Each target loads the Lakebase of its own environment into its own <env>_proj.qualibot.
-# The task sync_user_capabilities runs alongside: it writes the visitors' groups to users, read by the app's access
-# check; the job identity needs SELECT on system.access.audit.
+# The job lakebase_user_capabilities runs every two hours: it writes the visitors' groups to users, read by the app's
+# access check; the job identity needs SELECT on system.access.audit. A group removal reaches the app within about two
+# hours plus the capabilities cache (CAPS_TTL_S).
 
 resources:
   jobs:
@@ -60,8 +61,43 @@ resources:
               VOLUME_NAME: "staging"
               ENABLED: ${var.lakebase_import_to_delta}
           environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+            dependencies:
+              - psycopg2-binary
+              - databricks-sdk>=0.118.0
+      schedule:
+        quartz_cron_expression: "0 0 2,14 * * ?"
+        timezone_id: "Europe/Brussels"
+        pause_status: ${var.lakebase_export_schedule_pause}
+
+    lakebase_user_capabilities:
+      name: "D_2_Qualibot_User_Capabilities_Sync"
+      queue:
+        enabled: true
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      notification_settings:
+        no_alert_for_canceled_runs: true
+      description: "Group membership of the visitors (system.access.audit) -> users.groups / can_chat / can_compare, read by the app"
+      max_concurrent_runs: 1
+      tags:
+        activity-type: ${var.job_activity_tag}
+        job-purpose: platform
+        project-name: qualibot
+        project: Qualibot
+      permissions:
+        - group_name: "Role-Project-LEAP-CoreAdmin"
+          level: CAN_MANAGE
+        - group_name: "Role-Project-LEAP-CoreDev"
+          level: CAN_MANAGE
+      tasks:
+        # Serverless: classic job compute cannot reach the Lakebase private endpoint.
         - task_key: sync_user_capabilities
-          description: "Group membership of the visitors (system.access.audit) -> users.groups / can_chat / can_compare, read by the app"
+          description: "Group membership of the visitors (system.access.audit) -> users.groups / can_chat / can_compare"
           notebook_task:
             notebook_path: ../utils/lakebase_sync/sync_user_capabilities_job.py
             source: WORKSPACE
@@ -80,7 +116,7 @@ resources:
               - psycopg2-binary
               - databricks-sdk>=0.118.0
       schedule:
-        quartz_cron_expression: "0 0 2,14 * * ?"
+        quartz_cron_expression: "0 0 0/2 * * ?"
         timezone_id: "Europe/Brussels"
         pause_status: ${var.lakebase_export_schedule_pause}
 
@@ -91,6 +127,9 @@ targets:
         lakebase_export:
           run_as:
             service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
+        lakebase_user_capabilities:
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
 
   uat:
     resources:
@@ -98,10 +137,16 @@ targets:
         lakebase_export:
           run_as:
             service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39  # job-runner-sa-uat
+        lakebase_user_capabilities:
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39  # job-runner-sa-uat
 
   prod:
     resources:
       jobs:
         lakebase_export:
+          run_as:
+            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02  # job-runner-sa-prod
+        lakebase_user_capabilities:
           run_as:
             service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02  # job-runner-sa-prod

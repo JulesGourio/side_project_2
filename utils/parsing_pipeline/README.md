@@ -124,7 +124,9 @@ variables with the defaults listed at the top of `config.py`.
   type, date and a statement that the content is not indexed), rebuilt on every run and removed from `chunks`.
   Archives feed the impact search only: nothing from them reaches the RAG (decided 2026-10-22). The cutoff is
   the constant `DOC_DATE_CUTOFF` of `config.py`, `2016-01-01`.
-- **Empty folder**: an in-scope IDDOC whose folder has no parseable file is recorded as `SKIPPED_EMPTY_FOLDER`.
+- **Empty folder**: an in-scope IDDOC whose folder has no parseable file is recorded as `SKIPPED_EMPTY_FOLDER`. The
+  status is cleared on every run, so the folder is scanned again; the document is logged as `NEW` in
+  `document_change_log` once, never again while its folder stays empty.
 
 ### Statuses of `parsed_documents` (one row per IDDOC)
 
@@ -271,7 +273,7 @@ Tables (schema `<env>_proj.qualibot`, the same names in every environment):
 | Table | Content |
 |---|---|
 | `parse_manifest` | In-scope documents of the day, one row per IDDOC |
-| `parsed_documents` | One row per IDDOC: status, file retained, parser, error, `is_in_rag`, `is_filtered_by_date` |
+| `parsed_documents` | One row per IDDOC: status, file retained, parser, error, `is_in_rag`, `is_filtered_by_date`. A `full` or `rechunk` run replaces the rows of the documents it processed and keeps the others (skipped documents included) |
 | `parsing_checkpoint` | Result of each file attempted; read by every step of `3_parse` |
 | `chunks` | Chat passages (text and images), all divisions |
 | `chunks_archive` | Passages of documents published before the cutoff |

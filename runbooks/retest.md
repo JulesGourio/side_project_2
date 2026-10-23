@@ -376,3 +376,12 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Chat DEV : cliquer sur « Stop » pendant une réponse, y compris pendant le temps de réflexion avant le premier mot. La réponse s'arrête, aucune nouvelle ligne de coût ne s'ajoute, et la ligne de `chat_turns` a le statut `aborted` et le code `client_disconnected` (`SELECT status, warnings, created_at FROM dev_proj.qualibot.chat_turns ORDER BY created_at DESC LIMIT 5` après un export).
 - [ ] Même test avec une question dans une langue qui demande la traduction du retour : l'arrêt est pris en compte immédiatement.
 - [ ] Une réponse complète se termine normalement (statut `ok`) : l'écoute de la fermeture du socket ne la coupe pas.
+
+## 2026-10-23 — décisions de la revue de code
+
+- `parsed_documents` : un run `full`/`rechunk` remplace les lignes des documents traités et garde les autres (DEV, bloc Z3).
+- `document_change_log` : un IDDOC est `NEW` une seule fois (DEV, bloc Z3).
+- Job `lakebase_user_capabilities` (toutes les 2 h) séparé de l'export (DEV bloc Z2, UAT bloc K).
+- Bandeau « changes not searched » de la recherche d'impact (DEV bloc Z4).
+- Alerte `job_failures` filtrée par `alerts_workspace_id`; volume `staging` déclaré pour UAT (liaison K2) et PROD.
+- `app.yaml` : la variable `COMPARE_ANALYSIS_SYSTEM_PROMPT` est supprimée (le prompt par défaut est le fichier `analysis_default.md`).

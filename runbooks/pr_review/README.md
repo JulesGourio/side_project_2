@@ -12,11 +12,11 @@
 
 | Statut | Yann | Logan | Logan v3 | Jules | Total |
 |---|---|---|---|---|---|
-| Fait | 52 | 39 | 19 | 1 | 111 |
-| Partiel | 0 | 7 | 2 | 0 | 9 |
-| Ouvert | 0 | 0 | 6 | 0 | 6 |
+| Fait | 52 | 40 | 23 | 1 | 116 |
+| Partiel | 0 | 6 | 3 | 0 | 9 |
+| Ouvert | 0 | 0 | 4 | 0 | 4 |
 | En attente de Yann | 10 | 0 | 0 | 0 | 10 |
-| Décision de Jules | 0 | 0 | 3 | 0 | 3 |
+| Décision de Jules | 0 | 0 | 0 | 0 | 0 |
 | **Total** | **62** | **46** | **30** | **1** | **139** |
 
 ## Décisions de Jules (2026-10-21 et 2026-10-22) et leurs raisons
@@ -51,6 +51,17 @@
 | Coloration du code (R7) | Chargée à la demande | Première page ~510 Ko au lieu de 1,14 Mo. |
 | Tableau de bord DEV (R8) | Plus tard, non fait | « Je le ferai plus tard, garde en non fait. » |
 | OIDC et environnement `Production` (R9) | Plus tard | Demande un administrateur de compte Databricks ; restriction après validation. |
+| `parsed_documents` en run complet (N-8) | Fusion par IDDOC (option a), 2026-10-23 | Les lignes `SKIPPED` ne disparaissent plus. |
+| Dossiers vides (N-10) | NEW une seule fois dans le journal (option C), A plus tard | Supprime le faux signal sans risque. |
+| Droits utilisateurs (N-12) | Job séparé toutes les 2 h ; retrait de groupe en environ 2 h accepté | « On ne retire presque jamais les accès volontairement. » |
+| Chat ouvert à tous (N-5) | Accepté ; le filtre est la permission de l'app | « Le filtre de permission est déjà largement suffisant. » |
+| Origine PROD (N-5) | `https://qualibot-1210945332048776.aws.databricksapps.com` | Adresse lue sur l'app PROD (arrêtée). |
+| Changements non cherchés (N-13) | Avis dans l'interface ; plafond de 2000 caractères gardé | Pas d'impact silencieux. |
+| Volume `staging` (N-b3) | Déclaré partout (option c) ; liaison UAT par pipeline | À documenter à fond dans les tâches UAT. |
+| Alerte d'échec de job (N-b4) | Filtre par espace de travail | Identifiants fournis par Jules. |
+| Rôle Lakebase de PROD (N-b2) | En dur après création de l'app PROD, annoncé | À faire plus tard. |
+| Prompt inline d'`app.yaml` (L-25) | Supprimé | Un seul endroit : les fichiers de prompts. |
+| Tableaux DOCX des en-têtes (N-b13) | Plus tard ; limite notée dans le README des processeurs | Risque faible. |
 
 ## Contexte
 
@@ -85,7 +96,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | L-4 | Logan · `analyze.py:68-117`, `history.py:63-120` | [Haute] Cache d'analyse alimenté par `POST /history` (corps de requête) : un texte planté est servi aux autres, avec l'id et le chemin du premier utilisateur. | Écrire le cache côté serveur en fin de flux réussi (table à part) ; ne jamais renvoyer l'identifiant d'un autre. | D'accord. Table `analysis_cache` écrite par le serveur seul ; plus d'identifiant d'un autre utilisateur dans le résultat en cache. Logan v3 : corrigé.<br>**Fait** |
 | L-5 | Logan · `sessions.py:283`, `ws.py:80`, `persistence.py:15-26` | [Haute] Le lien de partage donne l'id réel de session ; le WebSocket accepte n'importe quel `session_id` et l'`upsert` ne vérifie pas le propriétaire : on écrit dans la conversation d'un autre. | `DO UPDATE … WHERE user_id = EXCLUDED.user_id`, compter les lignes affectées, ne plus renvoyer l'id. | D'accord. Vue partagée avec le jeton comme id, `upsert` conditionné au propriétaire, `session_not_owned` enregistré. Logan v3 : corrigé.<br>**Fait** |
 | L-13 | Logan · `sessions.py:43-83,141,264-270`, `feedback.py:23-112` | [Moyenne] Feedback non lié au votant (ids SERIAL énumérables) ; la vue partagée montre les commentaires privés ; `get_session` ne filtre pas `deleted`. | — | Vote accepté seulement sur un message de l'utilisateur ; vue partagée = vote du propriétaire seul ; sessions supprimées exclues. Logan v3 : corrigé.<br>**Fait** |
-| L-14 | Logan · `ws.py:63-67,79-81` | [Moyenne] Contrôle d'accès du WebSocket fail-open, pas de contrôle d'Origin, entrée non validée (rôle `system`, taille illimitée, message sans contenu). | — | Échec = refus ; rôles et taille validés (`_clean_messages`) ; contrôle d'origine configuré pour DEV et UAT (`CHAT_ALLOWED_ORIGINS` de `target_env.json`, adresses exactes des apps). Reste : PROD, à renseigner quand l'app PROD existe (le profil `PROD` de Jules répond aujourd'hui avec l'app DEV, à vérifier). Logan v3 : voir N-5 (reste : origine PROD).<br>**Partiel** |
+| L-14 | Logan · `ws.py:63-67,79-81` | [Moyenne] Contrôle d'accès du WebSocket fail-open, pas de contrôle d'Origin, entrée non validée (rôle `system`, taille illimitée, message sans contenu). | — | Échec = refus ; rôles et taille validés (`_clean_messages`) ; contrôle d'origine configuré pour DEV et UAT (`CHAT_ALLOWED_ORIGINS` de `target_env.json`, adresses exactes des apps). PROD renseigné le 2026-10-23 (`https://qualibot-1210945332048776.aws.databricksapps.com`, lu par `databricks apps list --profile PROD`). Logan v3 : voir N-5.<br>**Fait** |
 | L-15 | Logan · `credentials.py:9-30`, `doc_catalog.py:246-314` | [Moyenne] Tout utilisateur du chat atteint tout document indexé (compte de service) ; les puces du catalogue ignorent `in_chat` et la division. | Documenter comme contrôle accepté. | Voulu par Jules : le contrôle d'accès par l'index est accepté et écrit (`server/services/infra/README.md`) ; les liens REF du catalogue couvrent tout le périmètre de parsing exprès. Logan v3 : le trouve encore non documenté ; N-5 élargit le public concerné (contrôle accepté et écrit).<br>**Fait** |
 | L-b1 | Logan · exports, historique, config, sessions, volume, feedback, impact, aperçu | [Basse] `str(exc)` renvoyé au navigateur (chemins de volume, erreurs SQL). | Réponse générique comme le gestionnaire global. | Réponse générique `INTERNAL_ERROR` sur ces routes ; le détail va dans les logs.<br>**Fait** |
 | L-b2 | Logan · client (Markdown) | [Basse] Exfiltration par injection de prompt : images Markdown vers un hôte quelconque, pas de CSP, liens non limités à https. | N'autoriser que des hôtes connus. | D'accord, à faire côté client (reconstruire `client/out`). (Liens https seulement, images de l'origine ou `data:` seulement, en-tête CSP + nosniff + referrer-policy (`server/app.py`).)<br>**Fait** |
@@ -95,7 +106,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | L-b11 | Logan · middleware identité | [Basse] Historique anonyme partagé (`user_id = ''`) sans en-tête d'identité. | — | Non atteignable derrière le proxy ; à refuser quand même si l'en-tête manque. (Sans identité, les routes d'historique, de sessions et de feedback répondent 401 (sauf en dev).)<br>**Fait** |
 | L-b17 | Logan · tests | [Basse] Chemins de sécurité sans test (propriété `load`/`save-*`, réutilisation de `session_id`, aperçu, tout le client). | — | Tests ajoutés pour la propriété des sessions, la réutilisation de `session_id`, l'aperçu protégé et la reconnexion Lakebase (`test_chat.py`, `test_compare_audit.py`, `test_lakebase_connection.py`). Reste : le code client n'a aucun test. (Aussi testés : en-têtes de sécurité, limite de débit.)<br>**Partiel** |
 | N-1 | Logan v3 · `history.py:56,150`, `compare/common.py:80-105` | [Haute] `POST /history` enregistre `volume_session_path` tel que le client l'envoie : on nomme le dossier ancien d'un collègue, puis `load` et `save-*` le lisent et l'écrasent. | Accepter le chemin seulement sous la racine de l'utilisateur. | Chemin enregistré seulement sous la racine de l'appelant, ou si une ligne de l'appelant nomme déjà ce chemin exact (`..` refusé) ; sinon NULL et avertissement.<br>**Fait** |
-| N-5 | Logan v3 · `user.py:126-129,275-289`, `ws.py:74-78,95` | [Haute] Accès au chat passé de « refus par défaut » à « ouvert » (`_DEFAULT_CAPS`) ; WebSocket ouvert si la recherche des droits échoue, sans identité, et sans contrôle d'origine en PROD. | Décider si le chat est ouvert à tous et l'écrire avec L-15 ; WebSocket fermé par défaut ; origine PROD ; refuser l'anonyme. | WebSocket refusé si la recherche des droits échoue, appelant sans identité refusé hors dev, origine vide = tout refusé hors dev ; reste : origine PROD et confirmation du chat ouvert à tous (voir Détails).<br>**Partiel** |
+| N-5 | Logan v3 · `user.py:126-129,275-289`, `ws.py:74-78,95` | [Haute] Accès au chat passé de « refus par défaut » à « ouvert » (`_DEFAULT_CAPS`) ; WebSocket ouvert si la recherche des droits échoue, sans identité, et sans contrôle d'origine en PROD. | Décider si le chat est ouvert à tous et l'écrire avec L-15 ; WebSocket fermé par défaut ; origine PROD ; refuser l'anonyme. | WebSocket refusé si la recherche des droits échoue, appelant sans identité refusé hors dev, origine vide = tout refusé hors dev. Décidé par Jules (2026-10-23) : chat ouvert à tout utilisateur de l'app, le filtre est la permission de l'app (documenté dans le README racine, « Design decisions »). Origine PROD renseignée : `https://qualibot-1210945332048776.aws.databricksapps.com`<br>**Fait** |
 | N-7 | Logan v3 · limiteur, `ws.py`, routes d'aperçu | [Moyenne] La limite de débit ne couvre pas les routes coûteuses : WebSocket du chat et les deux routes d'aperçu. | — | La limite couvre aussi le WebSocket du chat et les deux routes d'aperçu.<br>**Fait** |
 | N-b7 | Logan v3 · `server/app.py` | [Basse] En-têtes de sécurité absents des réponses 500 ; `frame-ancestors 'self'` bloque toute intégration dans Teams. | — | Le gestionnaire d'erreur pose les en-têtes de sécurité.<br>**Fait** |
 
@@ -115,9 +126,9 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | N-2 | Logan v3 · `parse_steps.py:269-279` | [Haute] Un petit fichier dont le parseur a planté (ou un PDF scanné en attente d'OCR) devient `SKIPPED_EMPTY_SMALL_FILE`, statut terminal : le document quitte le chat sans bruit. | Tester `parser_error` d'abord ; exclure `pending_llm_ocr` du saut des petits fichiers. | Le statut teste `parser_error` en premier ; un résultat de stratégie `pending_llm_ocr` n'est jamais le saut des petits fichiers (`decisions.py`).<br>**Fait** |
 | N-3 | Logan v3 · `parse_steps.py:342-356`, `build_steps.py:48-81` | [Haute] Un nouveau parse en échec ramène l'ancien texte `SUCCESS`, estampillé de la révision courante : le chat cite l'ancien contenu. | Dédoublonner sur la dernière ligne du sha sélectionné ; préférer SUCCESS dans le même sha seulement. | Variante plus étroite : la déduplication classe par sha égal à celui de la dernière tentative, puis SUCCESS, puis horodatage ; le sha exact sélectionné n'est pas connu de la tâche de chunking.<br>**Fait** |
 | N-4 | Logan v3 · `manifest_steps.py:102-166`, `create_proj_parse_manifest.py` | [Haute] Une lecture de périmètre partielle ou vide supprime chunks, métadonnées d'images et documents parsés avant tout contrôle. | Arrêter la tâche si le périmètre baisse trop par rapport au manifeste précédent. | Garde `PARSING_MAX_SCOPE_DROP_PCT` (30 par défaut, 0 = coupée, seulement si le manifeste précédent a au moins 100 documents) : la tâche s'arrête avant toute suppression.<br>**Fait** |
-| N-8 | Logan v3 · `output_steps.py:210-213` | [Moyenne] Les modes `full` et `rechunk` écrasent `parsed_documents` avec les seules lignes des cibles : les lignes SKIPPED disparaissent et le tableau de bord est faux. | Fusionner au lieu d'écraser. | Choix de Jules. (a) fusion sur IDDOC : les lignes SUCCESS hors périmètre ne sont plus nettoyées par effet de bord, les lignes des non-cibles survivent, évolution de schéma. (b) garder l'écrasement et rajouter les lignes SKIPPED existantes des IDDOC absents du nouveau tableau : sémantique actuelle gardée, tableau de bord corrigé. Recommandation : b.<br>**Décision de Jules** |
+| N-8 | Logan v3 · `output_steps.py:210-213` | [Moyenne] Les modes `full` et `rechunk` écrasent `parsed_documents` avec les seules lignes des cibles : les lignes SKIPPED disparaissent et le tableau de bord est faux. | Fusionner au lieu d'écraser. | Décidé par Jules (2026-10-23) : option a. Un run `full`/`rechunk` remplace les lignes des IDDOC traités (suppression puis ajout) et garde les autres ; le nettoyage des IDDOC hors périmètre reste fait à l'étape 1b du manifeste. Non testé sur Databricks.<br>**Fait** |
 | N-9 | Logan v3 · `parsing_pipeline.job.yml:409-411`, `build_steps.py` | [Moyenne] En mode full, une révision remplacée encore dans le manifeste est reconstruite en SUCCESS avec chunks, puis élaguée le lendemain. | Exclure ce statut des cibles dans tous les modes. | Les documents `SKIPPED_SUPERSEDED_REVISION` sont exclus des cibles dans tous les modes (le manifeste les marque de nouveau ; N-8 décide si un run complet garde ces lignes).<br>**Fait** |
-| N-10 | Logan v3 · `manifest_steps.py:44-51` | [Moyenne] `SKIPPED_EMPTY_FOLDER` est effacé à chaque run : nouveau scan chaque jour et faux NEW dans `document_change_log`. | — | Choix de Jules. A : effacer seulement si le dossier a changé (nouvelle colonne, date de dossier fiable). B : garder la ligne et lister le dossier à chaque run pour l'effacer. C : garder l'effacement quotidien et ne plus journaliser NEW pour un document déjà SKIPPED_EMPTY_FOLDER et de nouveau vide. Recommandation : C maintenant, A plus tard.<br>**Décision de Jules** |
+| N-10 | Logan v3 · `manifest_steps.py:44-51` | [Moyenne] `SKIPPED_EMPTY_FOLDER` est effacé à chaque run : nouveau scan chaque jour et faux NEW dans `document_change_log`. | — | Décidé par Jules (2026-10-23) : option C. Un IDDOC n'est journalisé NEW qu'une fois dans `document_change_log` ; l'effacement quotidien de `SKIPPED_EMPTY_FOLDER` continue. Non testé sur Databricks.<br>**Fait** |
 | N-b5 | Logan v3 · parsing (essai de rang 2, métadonnées d'images) | [Basse] Chaque run complet reparse un fichier en échec et relance l'essai de rang 2 ; la fusion des métadonnées d'images ne supprime jamais les images disparues. | — | À voir à l'exécution, avec L-21.<br>**Ouvert** |
 | N-b6 | Logan v3 · tâche GPU du parsing | [Basse] opencv 4.12 épinglé à côté d'une bibliothèque `numpy<2` : échec possible au démarrage (plausible). | — | À vérifier à l'exécution sur le cluster GPU.<br>**Ouvert** |
 
@@ -137,7 +148,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | L-b8 | Logan · `store_error`, votes, uploads | [Basse] `create_task` sans référence : tâches perdables. | Garder une référence. | `spawn()` garde une référence aux tâches ; `store_error` reste synchrone (règle du projet).<br>**Fait** |
 | L-b9 | Logan · rafraîchissement du jeton Lakebase | [Basse] `await old_pool.close()` peut être bloqué par une requête bloquée. | — | D'accord (délai maximal à poser). (Fermeture du pool bornée à 30 s puis `terminate()`.)<br>**Fait** |
 | Y-50 <sub>885860006</sub> | Yann · `llm.py:236` | « C'est normal d'ignorer ? » | **Pas jugé** | Ce n'est pas ignoré : échec journalisé, modèle mis en pause, suivant essayé, `CompareLlmUnavailable` levée si aucun ne répond. Commentaire ajouté. Attend Yann : réponse et commentaire, pas de changement de logique.<br>**En attente de Yann** |
-| N-12 | Logan v3 · `lakebase_sync.yml:63-74` | [Moyenne] `sync_user_capabilities` tourne dans le job d'export deux fois par jour : jusqu'à 12 h plus le cache pour appliquer le retrait d'un groupe (job DEV en pause). | Un job à part, plus fréquent. | Choix de Jules : un job à part avec un planning plus fréquent (par exemple toutes les heures) ; fréquence à choisir.<br>**Décision de Jules** |
+| N-12 | Logan v3 · `lakebase_sync.yml:63-74` | [Moyenne] `sync_user_capabilities` tourne dans le job d'export deux fois par jour : jusqu'à 12 h plus le cache pour appliquer le retrait d'un groupe (job DEV en pause). | Un job à part, plus fréquent. | Décidé par Jules (2026-10-23) : job `D_2_Qualibot_User_Capabilities_Sync` séparé, toutes les 2 h ; le délai de retrait d'un groupe (environ 2 h plus le cache) est accepté et documenté (README racine). Non testé sur Databricks.<br>**Fait** |
 | N-b9 | Logan v3 · sessions, feedback de la comparaison | [Basse] Suppression et duplication de session hors transaction ; commentaire de feedback sans limite de taille. | — | Suppression et duplication dans une transaction ; commentaire plafonné à 2000 caractères (422 au-delà).<br>**Fait** |
 
 **Détails**
@@ -167,7 +178,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | Y-60 <sub>885862314</sub> | Yann · `relocation.py:58` | « Double boucle. Pas moyen de mieux faire ? » | **Pas jugé** | Non pour l'algorithme (table de programmation dynamique, le glouton se trompe dès qu'un bloc est inséré tôt ; coût borné par `_DUP_ALIGN_MAX_CELLS`). Mieux pour la lecture : `_drift_cost_table` avec docstring. … Attend Yann : algorithme gardé, seulement documenté.<br>**En attente de Yann** |
 | Y-61 <sub>885865732</sub> | Yann · `excel.py:64` | « Split » (`_build_diff_keyed`, 170 lignes) | **Pas jugé** | Coupée en `_parse_sheets`, `_parse_rows`, `_is_auto_increment`, `_column_name`, `_volatile_columns`, `_row_fields`, `_modified_rows`, `_sheet_diff`. Identique sur 400 tirages, sauf un `IndexError` corrigé (feuille sans ligne). Tests ajoutés.<br>**Fait** |
 | N-6 | Logan v3 · `xml.py:36-55` | [Haute] Les attributs XML ne sont jamais comparés (`<limit min="-40" max="85"/>` : « aucun changement »). | Une ligne `tag@attr=valeur` par attribut, ordre stable. | Une ligne `tag@attr=valeur` par attribut, triée.<br>**Fait** |
-| N-13 | Logan v3 · `impact_queries.py:231-257` | [Moyenne] Passé `max_queries`, les groupes fusionnés sont coupés : un changement listé peut manquer du texte cherché ; le budget de 20 000 caractères vaut aussi pour un seul changement. | — | Groupes fusionnés découpés par taille ; ceux qui ne tiennent toujours pas sont listés (`left_out`, événement `changes_not_searched`, avertissement `app_errors`) ; requête d'un changement plafonnée à 2000 caractères (texte complet gardé). Question : afficher un avis dans l'interface (le client n'affiche pas `changes_not_searched`).<br>**Fait** |
+| N-13 | Logan v3 · `impact_queries.py:231-257` | [Moyenne] Passé `max_queries`, les groupes fusionnés sont coupés : un changement listé peut manquer du texte cherché ; le budget de 20 000 caractères vaut aussi pour un seul changement. | — | Groupes fusionnés découpés par taille ; ceux qui ne tiennent pas sont listés (`left_out`, événement `changes_not_searched`, avertissement `app_errors`) ; requête d'un changement plafonnée à 2000 caractères (texte complet gardé, plafond conservé). Décidé par Jules (2026-10-23) : avis dans l'interface, ajouté dans la carte « Impacted Docs ».<br>**Fait** |
 | N-14 | Logan v3 · `analyze.py:85-99` | [Moyenne] Clé de cache d'analyse sans le prompt de la méthode utilisée, clé d'impact sans le prompt du juge ; réponse d'un modèle de repli mise en cache comme normale. | Hacher le prompt réellement envoyé ; ne pas cacher le repli. | Clé d'analyse = hachage du prompt réellement envoyé pour la méthode ; clé d'impact avec le prompt du juge ; réponses d'un endpoint de repli non mises en cache.<br>**Fait** |
 | N-16 | Logan v3 · `excel.py:183-201` | [Moyenne] Colonnes Excel comparées par position : une colonne insérée exclut toutes celles de droite sur les feuilles de 20 lignes ou plus. | Aligner par nom d'en-tête quand ils diffèrent. | Quand les en-têtes diffèrent, colonnes appariées par nom d'en-tête (colonnes ajoutées et retirées listées) ; comparaison par position gardée si identiques.<br>**Fait** |
 | N-b8 | Logan v3 · `soffice.py` | [Basse] Une découverte de LibreOffice en échec n'est pas mémorisée : chaque requête relance la sonde (jusqu'à 120 s). | — | Une découverte en échec est mémorisée 5 minutes.<br>**Fait** |
@@ -273,13 +284,13 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | L-b13 | Logan · `client/out`, `.gitleaksignore` | [Basse] `client/out` versionné, jamais reconstruit par la CI, exclu du scan de secrets. | Construire au déploiement. | Fait : voir Y-3 (construit au déploiement, plus versionné).<br>**Fait** |
 | L-b16 | Logan · `databricks.yml`, YAML des jobs | [Basse] Identités individuelles (dont un compte externe) nommées en dur. | Groupes et variables. | Adresse d'alerte des jobs DEV/UAT conservée sur `jules.gourio.external` (décision de Jules) ; `christophe.pelissier` et `yosif.karapendov` retirés des droits de l'app UAT (vérifié : tous deux ont can_chat par les groupes) ; compte de déploiement de Jules et système de droits Lakebase conservés.<br>**Fait** |
 | N-b1 | Logan v3 · `runbooks/pr_review/comments/*` | [Basse] Vidages des commentaires de la PR commités (~46 Ko), avec le nom du relecteur et des liens internes. | Les retirer et ignorer le dossier. | Dossier ajouté à `.gitignore` ; les fichiers déjà commités demandent `git rm --cached` dans le dépôt de Jules.<br>**Partiel** |
-| N-b2 | Logan v3 · `databricks.yml:500-508` | [Basse] Rôle Lakebase de PROD : identifiant du SP de l'app interpolé avec `prevent_destroy` ; une recréation forcée serait bloquée et ferait échouer le déploiement (plausible). | — | Mettre l'identifiant du SP de l'app en dur une fois l'app PROD créée ; inscrit dans la liste PROD.<br>**Ouvert** |
-| N-b3 | Logan v3 · `lakebase_sync.yml`, `databricks.yml` | [Basse] Volume de transit non déclaré pour UAT et PROD : l'export le crée à l'exécution (droit CREATE VOLUME), hors du bundle. | — | Le déclarer pourrait entrer en conflit avec le volume UAT existant dans l'état du bundle ; à décider.<br>**Ouvert** |
-| N-b4 | Logan v3 · `alerts.yml` | [Basse] L'alerte d'échec de job lit `system.lakeflow` sans filtre `workspace_id` : sur un metastore partagé, chaque environnement alerte sur tous (plausible). | — | Il faut les identifiants d'espace de travail par cible : DEV 2865348338307293, UAT 3155144190025826, PROD inconnu.<br>**Ouvert** |
+| N-b2 | Logan v3 · `databricks.yml:500-508` | [Basse] Rôle Lakebase de PROD : identifiant du SP de l'app interpolé avec `prevent_destroy` ; une recréation forcée serait bloquée et ferait échouer le déploiement (plausible). | — | Décidé par Jules (2026-10-23) : mettre l'identifiant du SP de l'app en dur une fois l'app PROD déployée ; inscrit dans la liste PROD et annoncé dans le README racine.<br>**Ouvert** |
+| N-b3 | Logan v3 · `lakebase_sync.yml`, `databricks.yml` | [Basse] Volume de transit non déclaré pour UAT et PROD : l'export le crée à l'exécution (droit CREATE VOLUME), hors du bundle. | — | Décidé par Jules (2026-10-23) : le volume est déclaré pour UAT et PROD. UAT : il faut le lier à l'état du bundle avec le pipeline `bind-uat-staging` avant le prochain déploiement ; PROD : créé par le premier déploiement. Non exécuté.<br>**Partiel** |
+| N-b4 | Logan v3 · `alerts.yml` | [Basse] L'alerte d'échec de job lit `system.lakeflow` sans filtre `workspace_id` : sur un metastore partagé, chaque environnement alerte sur tous (plausible). | — | Filtre `workspace_id` ajouté (`alerts_workspace_id` : DEV 2865348338307293, UAT 3155144190025826, PROD 1210945332048776 déduit de l'adresse de l'app PROD, à confirmer avec `databricks apps get qualibot --profile PROD` une fois le profil corrigé).<br>**Partiel** |
 | N-b10 | Logan v3 · `bitbucket-pipelines.yml` | [Basse] Deux messages d'erreur du pipeline encore en français. | — | Messages en anglais.<br>**Fait** |
 | N-b11 | Logan v3 · `audit.py` `store_error` | [Basse] L'écriture d'erreur part dans une tâche sans référence forte. | — | La tâche passe par `spawn` (référence conservée jusqu'à la fin).<br>**Fait** |
 | N-b12 | Logan v3 · `analyze.py` | [Basse] `str(e)` renvoyé à l'utilisateur. | — | Message générique ; la cause va dans `app_errors`.<br>**Fait** |
-| N-b13 | Logan v3 · tableaux DOCX | [Basse] Les tableaux dans les en-têtes et pieds de page DOCX sont toujours ignorés. | Les lire. | Pas traité.<br>**Ouvert** |
+| N-b13 | Logan v3 · tableaux DOCX | [Basse] Les tableaux dans les en-têtes et pieds de page DOCX sont toujours ignorés. | Les lire. | Décidé par Jules (2026-10-23) : laissé pour plus tard ; limite connue notée dans le README des processeurs de comparaison.<br>**Ouvert** |
 | N-b14 | Logan v3 · droits de l'app | [Basse] Compte externe avec CAN_MANAGE. | Le retirer. | Jules a décidé de le garder.<br>**Fait** |
 
 **Détails**
@@ -296,7 +307,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 - **L-28** — Position (suite) : `.mcp.json` absent de ce dépôt. Pas de `uv.lock` dans ce dépôt : dépendances indirectes non verrouillées.
 - **L-9** — Logan v3 : fait : CLI épinglée dans chaque étape Bitbucket via `utils/deploy/install_databricks_cli.sh`, installateur de Bun lancé depuis un fichier, étape de tests qui installe les dépendances épinglées en dernier, `deploy_qualibot.ps1 -AppEnv prod` refuse de tourner hors `main`, erreurs traduites. Reste : la vérification de branche est dans le yml que la branche peut modifier (restriction de l'environnement `Production` après validation), OIDC.
 - **L-20** — Logan v3 : les six alertes sont en pause sur toutes les cibles ; celles d'UAT ont été dé-pausées depuis par un autre changement.
-- **L-25** — Logan v3 : fait pour la documentation et `APP_VERSION` (tous les défauts à 1.4.1). Question : le prompt inline d'`app.yaml` ne s'applique que si la méthode est `comparative` ; toutes les cibles tournent en `standard`, donc le modèle reçoit `analysis_standard.md` / `analysis_structured.md` : le supprimer ou le garder ?
+- **L-25** — Logan v3 : fait pour la documentation et `APP_VERSION` (tous les défauts à 1.4.1). Décidé par Jules (2026-10-23) : le prompt inline d'`app.yaml` est supprimé (la variable reste une surcharge possible).
 - **L-28** — Logan v3 : reste : bibliothèques de jobs non épinglées ; le `uv.lock` périmé est celui du dépôt de Jules.
 
 ### H. Client et interface
@@ -460,20 +471,9 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 ### Décision de Jules
 
-| # | Problème | Options |
-|---|---|---|
-| N-8 | Un run `full` ou `rechunk` écrase `parsed_documents` et perd les lignes SKIPPED. | (a) fusion sur IDDOC (risques : les lignes SUCCESS hors périmètre ne sont plus nettoyées par effet de bord, les lignes des non-cibles survivent, évolution de schéma) ; (b) garder l'écrasement et rajouter les lignes SKIPPED des IDDOC absents du nouveau tableau (sémantique actuelle gardée, tableau de bord corrigé). Recommandation : b. |
-| N-10 | `SKIPPED_EMPTY_FOLDER` est effacé à chaque run : nouveau scan quotidien et faux NEW dans `document_change_log`. | A : effacer seulement si le dossier a changé (nouvelle colonne, date de dossier fiable) ; B : garder la ligne et lister le dossier à chaque run pour l'effacer ; C : garder l'effacement quotidien et ne plus journaliser NEW pour un document déjà vide au run précédent. Recommandation : C maintenant, A plus tard. |
-| N-12 | La synchro des droits utilisateurs tourne dans le job d'export, deux fois par jour (jusqu'à 12 h plus le cache pour retirer un groupe ; job DEV en pause). | Un job à part avec un planning plus fréquent (par exemple toutes les heures) ; choisir la fréquence. |
+Questions ouvertes :
 
-Questions ouvertes (pas des lignes du tableau, mais une réponse de Jules est attendue) :
-
-- **N-13** : afficher un avis dans l'interface quand des changements ne sont pas cherchés (le client n'affiche pas l'événement `changes_not_searched`) ?
-- **N-13** : le plafond de 2000 caractères par requête d'un changement convient-il ?
-- **L-25** : le prompt inline d'`app.yaml` ne s'applique qu'à la méthode `comparative` ; toutes les cibles tournent en `standard`. Le supprimer ou le garder ?
-- **N-5 / L-14** : adresse de l'app PROD pour `CHAT_ALLOWED_ORIGINS`, et confirmation que le chat ouvert à tous les utilisateurs de l'app (`_DEFAULT_CAPS`) est un contrôle accepté, comme L-15.
-- **L-6** : règle pour les colonnes modifiées dans plus de la moitié des lignes (aujourd'hui écartées, nom seul listé) et pour une feuille ajoutée (aujourd'hui « sheet added (N rows) »).
-- **N-b3** : déclarer le volume de transit pour UAT et PROD dans le bundle (risque de conflit avec le volume UAT existant dans l'état du bundle), ou le laisser créé à l'exécution.
+- **L-6** : règle pour les colonnes modifiées dans plus de la moitié des lignes (aujourd'hui écartées, nom seul listé) et pour une feuille ajoutée (aujourd'hui « sheet added (N rows) ») : explication détaillée donnée à Jules le 2026-10-23, réponse attendue.
 
 ### Partiel
 
@@ -481,22 +481,22 @@ Questions ouvertes (pas des lignes du tableau, mais une réponse de Jules est at
 |---|---|---|
 | L-6 | Colonne modifiée dans plus de la moitié des lignes (feuilles de 20 lignes ou plus) encore écartée ; feuille ajoutée peu détaillée. | Décision de Jules sur la règle. |
 | L-9 | Jeton longue durée ; la vérification de branche est dans le yml que la branche peut modifier ; `Production` pas encore limité à `main`. | OIDC (administrateur de compte), puis restriction après validation (Jules : plus tard). |
-| L-14 | Le contrôle d'origine du WebSocket n'est pas configuré en PROD. | Voir N-5. |
 | L-20 | Le tableau de bord DEV lit d'anciennes tables figées ; l'export PROD attend les droits de son principal de service. | Changer ses sources (Jules : plus tard) ; donner les droits avant le déploiement PROD. |
 | L-21 | Cluster GPU sans politique, planning PROD en pause, la fusion d'une nouvelle description ne supprime jamais les anciens passages d'images. | Quelques runs manuels validés, puis dé-pauser (Jules : plus tard) ; le reste à regarder à l'exécution. |
 | L-28 | Bibliothèques des jobs non épinglées ; `uv.lock` périmé. | Épingler les bibliothèques des jobs ; le `uv.lock` est celui du dépôt de Jules. |
 | L-b17 | Le code client n'a aucun test automatique. | Ajouter des tests client, ou accepter. |
-| N-5 | Origine WebSocket de PROD non renseignée ; chat ouvert à tous = choix à confirmer. | Renseigner `CHAT_ALLOWED_ORIGINS` quand l'app PROD existe ; confirmer avec L-15. |
 | N-b1 | Les vidages de commentaires déjà commités restent dans le dépôt. | `git rm --cached` dans le dépôt de Jules. |
+| N-b3 | Volume `staging` déclaré ; liaison UAT non faite. | Pipeline `bind-uat-staging`, puis `plan-uat`. |
+| N-b4 | Filtre `workspace_id` ajouté ; identifiant PROD déduit de l'adresse de l'app. | Confirmer l'identifiant PROD avec `databricks apps get qualibot --profile PROD`. |
 
 ### Ouvert
 
 | # | Problème | Ce qu'il faut |
 |---|---|---|
-| N-b2 | Rôle Lakebase de PROD : identifiant du SP interpolé avec `prevent_destroy`. | Mettre l'identifiant du SP de l'app en dur une fois l'app PROD créée. |
-| N-b3 | Volume de transit non déclaré pour UAT et PROD. | Décider (voir les questions). |
-| N-b13 | Tableaux DOCX des en-têtes/pieds de page ignorés. | Les lire. |
-| N-b4 | L'alerte d'échec de job lit `system.lakeflow` sans filtre `workspace_id`. | Identifiants d'espace de travail par cible (DEV 2865348338307293, UAT 3155144190025826, PROD à trouver). |
+| N-b2 | Rôle Lakebase de PROD : identifiant du SP interpolé avec `prevent_destroy`. | Mettre l'identifiant du SP de l'app en dur une fois l'app PROD déployée (décidé). |
+
+| N-b13 | Tableaux DOCX des en-têtes/pieds de page ignorés. | Les lire (plus tard, décidé). |
+
 | N-b5 | Nouvel essai de rang 2 à chaque run complet ; images disparues jamais supprimées. | À voir à l'exécution, avec L-21. |
 | N-b6 | opencv 4.12 à côté de `numpy<2` sur la tâche GPU. | À vérifier à l'exécution sur le cluster GPU. |
 

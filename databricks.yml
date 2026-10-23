@@ -11,6 +11,8 @@ variables:
   app_name:
     default: "qualibot"
     description: "Unique name for the Databricks App"
+  alerts_workspace_id:
+    description: "Workspace id of the target; the job-failure alert only counts the jobs of this workspace"
   alerts_warehouse_id:
     description: "SQL warehouse that runs the Databricks SQL alerts of resources/alerts.yml (one per target)."
   alerts_pause_status:
@@ -277,6 +279,7 @@ targets:
       app_name: "qualibot"
       pipeline_write_env: dev
       alerts_warehouse_id: "13eff4a6095513cb"
+      alerts_workspace_id: "2865348338307293"
       lakebase_import_to_delta: "true"
       lakebase_tables_to_skip: "doc_catalog,impact_cache,impact_document_results,impact_feedbacks,impact_requests,llm_requests,summary_cache,users"
       parsing_num_workers: "4"
@@ -395,6 +398,12 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
+        # Lakebase export of the UAT app (lakebase_export, resources/lakebase_sync.yml).
+        qualibot_staging:
+          catalog_name: ${var.pipeline_write_env}_proj
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
+          name: staging
+          volume_type: MANAGED
       apps:
         doc-compare:
           # Declared explicitly: once present, this block is the full desired state, so a deploy cannot reset the live ACL silently.
@@ -421,6 +430,7 @@ targets:
       app_name: "qualibot"
       pipeline_write_env: uat
       alerts_warehouse_id: "5890912c31867b77"
+      alerts_workspace_id: "3155144190025826"
       parsing_num_workers: "4"
       # Prod sources (refreshed daily), not uat_*: the UAT workspace reads prod_gold through the shared metastore.
       reference_read_env: "prod"
@@ -542,6 +552,12 @@ targets:
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
+        # Lakebase export of the PROD app (lakebase_export, resources/lakebase_sync.yml).
+        qualibot_staging:
+          catalog_name: ${var.pipeline_write_env}_proj
+          schema_name: ${resources.schemas.qualibot_proj_schema.name}
+          name: staging
+          volume_type: MANAGED
       apps:
         doc-compare:
           resources:
@@ -554,6 +570,7 @@ targets:
       app_name: "qualibot"
       pipeline_write_env: prod
       alerts_warehouse_id: "03054ddc44b7f902"
+      alerts_workspace_id: "1210945332048776"
       parsing_num_workers: "8"
       reference_read_env: "prod"
       job_activity_tag: "prod-job"

@@ -97,7 +97,7 @@ the visitor (on-behalf-of-user token), whether the visitor belongs to one of the
 | Chat | `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` |
 
 The check joins two sources. The `users` table holds the groups written by the task
-`sync_user_capabilities` of the Lakebase export job, from the account audit log
+`sync_user_capabilities` of the `lakebase_user_capabilities` job (every two hours), from the account audit log
 (`system.access.audit`): it is the only source for `Qualibot-ChatBot` and `Qualibot-DocCompare`,
 which are account-level groups not attached to the workspaces. The SCIM `Me` endpoint, read with
 the visitor's token, gives the groups attached to the workspace (`CoreDev`, `CoreAdmin`). The result
@@ -105,9 +105,13 @@ is cached for `CAPS_TTL_S` seconds (600 by default). When no allowed group is fo
 the chat is granted and the comparison is not: the Databricks app permission already filters who
 reaches the app, and a visitor who is in a group only through another group (for example an
 IdP-managed group nested in `Qualibot-ChatBot`) appears in neither source. The comparison stays
-with the groups that name it. When the `users` table cannot be read (Lakebase unavailable), both
+with the groups that name it. Opening the chat to every visitor of the app is a project choice: the app permission
+(`CAN_USE`) is the filter and is kept to the end-user groups. When the `users` table cannot be read (Lakebase unavailable), both
 features are granted and the result is not cached, so an outage never withdraws the comparison;
-this is logged as a warning. `CAPS_BYPASS=true` opens both
+this is logged as a warning. The chat WebSocket is the exception: it refuses the connection when the group lookup fails,
+when the visitor has no identity (outside development) and when its origin is not in `CHAT_ALLOWED_ORIGINS` (an empty list
+refuses every origin outside development). A group removal reaches the app within about two hours plus the cache; access
+is almost never withdrawn on purpose, so this delay is accepted. `CAPS_BYPASS=true` opens both
 features to every visitor; it is allowed on the DEV target only, and DEV currently runs with the group check on. In development (`ENV=development`),
 a request without the identity header is accepted.
 
@@ -219,6 +223,37 @@ The application's Lakebase tables are `compare_messages`, `compare_feedbacks`, `
 `analysis_cache`, `summary_cache`, `chat_sessions`, `chat_messages`, `chat_feedbacks`, `chat_turns`,
 `chat_retrieved_chunks`, `doc_catalog`, `catalog_metadata` and `users`. The application creates
 and completes this schema at startup. Column reference: [server/services/infra/lakebase/schema.md](server/services/infra/lakebase/schema.md).
+
+## Design decisions
+
+Choices that look like gaps when read in isolation. Each is deliberate.
+
+| Subject | Decision | Reason |
+|---|---|---|
+| Chat access | Open to every visitor of the app; the app permission (`CAN_USE`) is the filter | Many users belong to the chat group only through another group, which neither the audit log nor SCIM reports. A deny-by-default rule would lock them out. The comparison stays restricted to its groups. |
+| Group removals | Reach the app within about two hours (job `lakebase_user_capabilities`) plus the cache | Access is almost never withdrawn on purpose. |
+| Accounts with `CAN_MANAGE` on the app | Named accounts of the maintainers are kept in the bundle | They operate the app. |
+| Lakebase between environments | Never copied from one environment to another | Each environment exports its own Lakebase. Share tokens stay per environment. |
+| Personal data | `user_id` is stored with each request; no purge; the browser keeps its local storage 7 days | The history is kept in Databricks. |
+| Frontend build | `client/out` is built at deployment, never committed | The build cannot drift from the source. |
+| Interactive API documentation | Disabled | Not needed. |
+| Web fonts | Shipped with the client build (Fontsource) | No call to a third-party font service. |
+| Answer sources | Every answer that used documents ends with a table of them | Longer answers are accepted. |
+| Failed query rewrite | The turn continues with the question as asked and the same number of candidates | A rewrite failure does not stop the answer. |
+| Compare prompts | Files in `server/prompts/compare/`, like the chat prompts | A prompt is never a string in Python. |
+| Image descriptions | Reused only for the same image with the same context text; redescribing all images rebuilds the passages | The description depends on its context. |
+| Impact search | A compared document may exclude itself from the results; changes that fit in no query are listed in the result and shown to the user | The listed ones are the only changes not looked up. |
+| Archive documents | Feed the impact search only, never the chat | Older documents are not applicable guidance. |
+| Parsing schedule in PROD | Stays paused until manual runs are validated | The first runs are watched. |
+| PROD export of Lakebase | Scheduled with PROD | The PROD alerts read the Delta copy. |
+| Job-failure alert | Counts only the jobs of the workspace of its target (`alerts_workspace_id`) | The system tables are shared by the metastore. |
+| Staging volume | Declared in the bundle for every target | The volume is part of the deployed state. |
+| Dependencies | Pinned in `requirements.txt`; `leap_utils` reduced to the modules in use | Reproducible deployments. |
+| Continuous integration | The tests block UAT and PROD deployments; OIDC authentication is planned | OIDC needs a Databricks account administrator. |
+
+Planned, not done: the PROD Lakebase
+role takes the application's service principal id as a literal once the application exists (the role is protected
+against deletion); tables inside DOCX headers are not compared yet.
 
 ## Documentation
 

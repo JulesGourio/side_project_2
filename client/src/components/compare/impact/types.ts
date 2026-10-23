@@ -53,6 +53,8 @@ export interface ImpactResult {
   candidates: number;
   queries_used: number;
   queries_failed: number;
+  // Change ids that fit in no search query and were not looked up.
+  changes_not_searched?: string[];
   no_changes?: boolean;
   cached?: boolean;
   // 'structured' = change ids match the Change Table rows (C3 = row 3).

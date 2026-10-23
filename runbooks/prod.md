@@ -218,17 +218,35 @@ Le job `lakebase_export` de PROD tourne maintenant sur son horaire (02:00 et 14:
 
 `prevent_destroy` est posé sur le rôle `app-service-principal` de PROD. Si l'application PROD est recréée avec un nouveau principal de service, le déploiement refuse de remplacer le rôle : mettre alors le nouvel identifiant en dur dans `postgres_role` comme pour UAT.
 
+## 11. Revue de code du 2026-10-23 — ce qui est fait dans le code et ce qui reste
+
+Fait dans le code : adresse de l'application PROD dans `CHAT_ALLOWED_ORIGINS` (`https://qualibot-1210945332048776.aws.databricksapps.com`, lue par `databricks apps list --profile PROD`, application `STOPPED`) ; `alerts_workspace_id` de PROD = `1210945332048776` (identifiant déduit de l'adresse de l'application, comme pour DEV et UAT : à confirmer par la commande ci-dessous) ; volume `staging` déclaré pour PROD (créé par le premier déploiement) ; job `D_2_Qualibot_User_Capabilities_Sync` (toutes les 2 h, SP PROD).
+
+À faire :
+1. Corriger le profil CLI `PROD` : dans `C:\Users\L0041770\.databrickscfg`, la section `[PROD]` contient `workspace_id = 2865348338307293` (celui de DEV) alors que l'hôte est celui de PROD. Mettre `workspace_id = 1210945332048776` (ou supprimer la ligne), puis :
+
+```powershell
+databricks auth describe --profile PROD
+databricks apps get qualibot --profile PROD
+```
+
+La seconde commande doit afficher l'URL `https://qualibot-1210945332048776.aws.databricksapps.com`. Si l'identifiant d'espace de travail affiché est différent de `1210945332048776`, me le donner : `alerts_workspace_id` de PROD (databricks.yml) et l'adresse ci-dessus sont à corriger.
+2. Rôle Lakebase `app-service-principal` de PROD : mettre l'identifiant du principal de service de l'application PROD en dur dans `postgres_role` (section 10) une fois l'application PROD déployée. Décidé : à faire, pas avant.
+3. Volume `staging` : aucune liaison (il n'existe pas en PROD), le premier `deploy-prod` le crée. Si `prod_proj.qualibot.staging` existe déjà au moment du déploiement, lancer d'abord (SP PROD) `databricks bundle deployment bind qualibot_staging prod_proj.qualibot.staging -t prod -p job-runner-sa-prod --auto-approve`.
+4. Droits : le SP de PROD doit avoir SELECT sur `system.access.audit` pour le job `D_2_Qualibot_User_Capabilities_Sync` (comme en UAT).
+5. Confirmer que `CAN_USE` de l'application PROD est limité aux groupes `Role-Project-LEAP-End-users-Qualibot-ChatBot` et `...-DocCompare` : le chat est ouvert à tout visiteur de l'application (décision de Jules).
+
 ## Checklist de mise en production (à cocher dans l'ordre, rien n'est déployé tant que tout n'est pas validé)
 
 Établie le 2026-10-22. Les commandes de chaque ligne sont dans les sections 0 à 10 ci-dessus ; les actions ci-dessous sont celles qu'on ne doit pas oublier.
 
 Avant tout
 - [ ] DEV puis UAT validés avec la checklist de test complète (chat, comparaison, aperçus, base de données, parsing).
-- [ ] Le profil CLI `PROD` de Jules répond aujourd'hui avec l'application DEV (même identifiant d'app, chemin `/Workspace/.bundle/qualibot/dev/files`) : corriger son hôte, puis `databricks apps get qualibot --profile PROD` doit montrer l'application PROD.
+- [ ] Profil CLI `PROD` de Jules : l'hôte est celui de PROD (application `qualibot` STOPPED vue le 2026-10-23) mais `workspace_id` de la section `[PROD]` est celui de DEV : le corriger (section 11).
 - [ ] Pipeline Bitbucket `tests` vert sur `main`.
 
 Configuration à compléter une fois l'application PROD créée
-- [ ] Adresse de l'application PROD dans `utils/deploy/target_env.json` (`CHAT_ALLOWED_ORIGINS`, adresse exacte `https://qualibot-<id>.aws.databricksapps.com`).
+- [x] Adresse de l'application PROD dans `utils/deploy/target_env.json` (`CHAT_ALLOWED_ORIGINS`) : renseignée le 2026-10-23 (`https://qualibot-1210945332048776.aws.databricksapps.com`) ; vérifier avec `databricks apps get qualibot --profile PROD` quand le profil est corrigé (section 11).
 - [ ] Identifiant du principal de service de l'application PROD en dur dans `postgres_role` du rôle Lakebase `app-service-principal` de PROD (comme UAT), `prevent_destroy` reste posé.
 - [ ] `CHAT_MLFLOW_EXPERIMENT_ID` de PROD dans `target_env.json` après la création de l'expérience (section 6).
 - [ ] Droits du principal de service de PROD : volumes `doc_compare`, `images`, `staging`, schéma `prod_proj.qualibot`, index, lecture du Lakebase de PROD, SELECT sur `system.access.audit` (par le pipeline Bitbucket de PROD, jamais en SQL personnel).

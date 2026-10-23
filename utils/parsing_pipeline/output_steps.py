@@ -170,6 +170,13 @@ def log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_ru
             .distinct()
         )
         df_log = df_log.join(df_logged, on=["IDDOC", "event_type", "job_run_id"], how="left_anti")
+        # An IDDOC is NEW once: a document whose empty folder is rescanned every run is not new again.
+        df_already_new = (
+            spark.table(TARGET_CHANGE_LOG_TABLE).filter(f.col("event_type") == "NEW").select("IDDOC").distinct()
+        )
+        df_log = df_log.join(
+            df_already_new.withColumn("_already_new", f.lit(True)), on="IDDOC", how="left"
+        ).filter(~((f.col("event_type") == "NEW") & f.col("_already_new").isNotNull())).drop("_already_new")
     except Exception:
         logger.info(
             f"[CHANGE LOG] No existing {TARGET_CHANGE_LOG_TABLE} to check for repeated rows."
@@ -186,6 +193,21 @@ def log_document_changes(df_business_meta, target_iddocs, revised_iddocs, job_ru
     )
 
 
+def _replace_processed_rows(df_processed_files) -> None:
+    """Replace the ``parsed_documents`` rows of the IDDOCs in ``df_processed_files``; the other rows are kept.
+
+    :param df_processed_files: Documents of this run, one row each.
+    """
+    if table_exists(TARGET_PROCESSED_FILES_TABLE):
+        df_processed_files.select("IDDOC").distinct().createOrReplaceTempView("_processed_iddocs")
+        spark.sql(
+            f"DELETE FROM {TARGET_PROCESSED_FILES_TABLE} WHERE IDDOC IN (SELECT IDDOC FROM _processed_iddocs)"
+        )
+        write_table(df_processed_files, TARGET_PROCESSED_FILES_TABLE, "append", merge_schema=True)
+    else:
+        write_table(df_processed_files, TARGET_PROCESSED_FILES_TABLE, "overwrite", overwrite_schema=True)
+
+
 def write_outputs(
     df_processed_files,
     df_chunks_all,
@@ -194,8 +216,9 @@ def write_outputs(
     job_run_id,
     revised_iddocs=frozenset(),
 ) -> None:
-    """Write parsed_documents/chunks/image_metadata — overwrite on a full or
-    rechunk run, append (+ MERGE for image_metadata) on an incremental run.
+    """Write parsed_documents/chunks/image_metadata — on a full or rechunk run the chunk and image tables are
+    overwritten and parsed_documents rows are replaced per IDDOC; on an incremental run rows are appended
+    (+ MERGE for image_metadata).
 
     :param df_processed_files: Documents of this run, one row each, for ``parsed_documents``.
     :param df_chunks_all: Chunks for the chat table.
@@ -208,9 +231,7 @@ def write_outputs(
     spark.conf.set("spark.databricks.delta.autoCompact.enabled", "true")
 
     if RUN_MODE in ("full", "rechunk"):
-        write_table(
-            df_processed_files, TARGET_PROCESSED_FILES_TABLE, "overwrite", overwrite_schema=True
-        )
+        _replace_processed_rows(df_processed_files)
         logger.info(f"Wrote {TARGET_PROCESSED_FILES_TABLE}")
 
         overwrite_rows(df_chunks_all, TARGET_CHUNK_TABLE)

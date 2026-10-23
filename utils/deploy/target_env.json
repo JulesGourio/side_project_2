@@ -29,6 +29,7 @@
     "COMPARE_IMPACT_INDEX": "prod_proj.qualibot.chunks_index",
     "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_traces",
     "CHAT_TRANSLATE_ONLY": "on",
+    "CHAT_ALLOWED_ORIGINS": "https://qualibot-1210945332048776.aws.databricksapps.com",
     "CHAT_MLFLOW_WAREHOUSE_ID": "03054ddc44b7f902"
   }
 }

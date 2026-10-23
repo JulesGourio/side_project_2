@@ -119,7 +119,7 @@ The stream is NDJSON, one event per line:
 
 | Event | Content |
 |---|---|
-| `plan` | List of changes, number of candidates, queries used or failed |
+| `plan` | List of changes, number of candidates, queries used or failed, `changes_not_searched` (ids of the changes that fit in no query) |
 | `document` | One judged document, shown as soon as it is ready |
 | `done` | Consumption, duration, impact request id |
 | `error` | Error, which stops the search |
@@ -131,6 +131,10 @@ The stream is NDJSON, one event per line:
 highlighted) or "by change" (only the changes that touch a document). Clicking a
 change such as "C12" in the passages scrolls the change table to the matching row,
 when that table is displayed.
+
+**Changes not searched**: when `changes_not_searched` is not empty, the card shows a notice naming those changes: their
+impacts may be missing. The query of one change is capped at 2000 characters (the full text stays in the change list);
+changes that still do not fit in `COMPARE_IMPACT_MAX_QUERIES` queries are the ones listed.
 
 **"Archive" badge**: shown for a document published before the archive cutoff (the
 `archive` field of the server result).

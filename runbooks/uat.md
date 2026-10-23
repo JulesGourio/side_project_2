@@ -1212,6 +1212,37 @@ Contrôle sur DEV : ouvrir l'app avec un visiteur sans groupe, les logs doivent 
 .\utils\deploy\deploy_qualibot.ps1 -AppEnv uat
 ```
 
+### K. Revue de code du 2026-10-23 : volume `staging`, job des droits, alerte (code poussé, à faire)
+
+Contexte : le volume `staging` d'UAT existe déjà (créé par l'export à l'exécution) mais n'était pas déclaré dans le bundle ; il l'est maintenant, il faut donc le lier à l'état du bundle avant le prochain déploiement (sinon le déploiement essaie de le recréer et échoue). La synchronisation des droits est sortie du job d'export : nouveau job `D_2_Qualibot_User_Capabilities_Sync` (toutes les 2 h). L'alerte d'échec de job ne compte plus que les jobs de son espace de travail (`alerts_workspace_id`, UAT = 3155144190025826).
+
+K1. Vérifier que le volume existe (lecture seule) :
+
+```powershell
+databricks volumes read uat_proj.qualibot.staging --profile UAT
+```
+
+Si la commande répond « does not exist » : sauter K2 (le déploiement créera le volume).
+
+K2. Lier le volume à l'état du bundle (pipeline Bitbucket, SP UAT, rien ne change dans Databricks). Dans Bitbucket : Pipelines > Run pipeline > branche DEV > pipeline personnalisé `bind-uat-staging`. Puis le plan :
+
+Pipeline personnalisé `plan-uat` (même écran). Le plan ne doit proposer aucune création de `staging`.
+
+K3. Déploiement des jobs (sur accord explicite uniquement) : pipeline `deploy-uat-jobs`. Il crée le job `D_2_Qualibot_User_Capabilities_Sync` (UAT, toutes les 2 h, run_as SP UAT) et retire la tâche `sync_user_capabilities` du job `D_1_Qualibot_Lakebase_Export_To_Volume`.
+
+K4. Premier lancement et contrôle :
+
+```powershell
+databricks bundle run lakebase_user_capabilities -t uat --profile UAT
+databricks bundle run lakebase_export -t uat --profile UAT
+```
+
+Contrôles : le job des droits réussit (le SP UAT a SELECT sur `system.access.audit`) ; après l'export, `ls /Volumes/uat_proj/qualibot/staging/lakebase_export` ne contient que les JSON des tables exportées ; les tables Delta de `uat_proj.qualibot` gardent leurs droits (l'import utilise `CREATE OR REPLACE TABLE`).
+
+K5. Alerte `job_failures` : déployée avec le plan, vérifier au premier déclenchement qu'elle ne compte que les jobs d'UAT.
+
+Statut : à faire (non confirmé par Jules).
+
 ## Fait
 
 - 2026-10-23 — Code `get_capabilities` : panne de la table `users` sans groupe SCIM = chat seul (au lieu de chat et Compare). Tests `tests/test_chat.py` à jour, suite verte (715 passés). Déploiement DEV/UAT : à faire (section J).

@@ -240,6 +240,21 @@ definitions:
           - databricks bundle deployment bind qualibot-history projects/qualibot -t uat -p job-runner-sa-uat --auto-approve
 
     # -----------------------------------------------------------------------
+    # UAT, one-off: record the existing staging volume in the bundle state, so that the next deploy does not try to create
+    # it. State only: nothing changes in Databricks. Run plan-uat afterwards.
+    # -----------------------------------------------------------------------
+    - step: &bind-uat-staging
+        name: Bind the existing UAT staging volume to the bundle state (uat)
+        deployment: uat
+        clone:
+          depth: 1
+        script:
+          - bash utils/deploy/bitbucket_deploy.sh uat setup
+          - python3 utils/deploy/render_target_config_env.py uat
+          - databricks bundle validate -t uat -p job-runner-sa-uat
+          - databricks bundle deployment bind qualibot_staging uat_proj.qualibot.staging -t uat -p job-runner-sa-uat --auto-approve
+
+    # -----------------------------------------------------------------------
     # UAT: target uat, profile job-runner-sa-uat.
     # -----------------------------------------------------------------------
     - step: &deploy-uat
@@ -355,6 +370,8 @@ pipelines:
       - step: *uat-state-fix
     bind-uat-lakebase:
       - step: *bind-uat-lakebase
+    bind-uat-staging:
+      - step: *bind-uat-staging
     unbind-dev-test-volume:
       - step: *unbind-dev-test-volume
     deploy-uat:

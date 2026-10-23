@@ -110,9 +110,11 @@ def store_error(*, exc: BaseException | None = None, **kwargs: Any) -> asyncio.T
         kwargs['stack_trace'] = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     kwargs.setdefault('origin', error_origin.from_exception(exc) or error_origin.from_stack_trace(
         kwargs.get('stack_trace', '')) or error_origin.caller(1))
+    write = _write_error(_error_row(**kwargs))
     try:
-        return spawn(_write_error(_error_row(**kwargs)))
+        return spawn(write)
     except RuntimeError:                   # no event loop (scripts, tests)
+        write.close()
         return None
 
 

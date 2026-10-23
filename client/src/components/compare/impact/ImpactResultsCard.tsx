@@ -104,6 +104,12 @@ export function ImpactResultsCard({ result, isLoading, error, accentColor, expor
                     </span>
                   ))}
                 </div>
+                {(result.changes_not_searched?.length ?? 0) > 0 && (
+                  <p className="text-xs" style={{ color: 'var(--color-error)' }}>
+                    {result.changes_not_searched!.length} change{result.changes_not_searched!.length > 1 ? 's were' : ' was'} not searched
+                    ({result.changes_not_searched!.join(', ')}): too many changes for one search. Impacts of these changes may be missing.
+                  </p>
+                )}
                 {(result.excluded_refs.length > 0 || notSearched.length > 0) && (
                   <p className="text-xs text-[var(--color-text-muted)]">
                     {result.excluded_refs.length > 0 && <>Compared document left out: {result.excluded_refs.join(', ')}. </>}

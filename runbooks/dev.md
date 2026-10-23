@@ -1117,6 +1117,23 @@ databricks bundle run lakebase_export -t dev --profile DEV
 - `jobs submit` lance le marquage des quatre tables, avec l'identité du SP DEV. Attendre `SUCCESS` dans l'interface Jobs avant la suite.
 - `bundle run lakebase_export` lance l'export puis l'import DEV (le job tourne déjà avec le SP DEV). Vérifier dans l'interface Jobs que les deux tâches sont `SUCCESS`.
 
+### Z. Revue de code du 2026-10-23 : à tester en DEV (poussé, à faire)
+
+Z1. Déploiement : mettre à jour le dépôt, `databricks bundle validate --target dev --profile DEV`, commit, `git push origin DEV`, attendre les pipelines `tests` puis `deploy-dev`.
+
+Z2. Nouveau job des droits (en pause sur DEV) et export :
+
+```powershell
+databricks bundle run lakebase_user_capabilities -t dev --profile DEV
+databricks bundle run lakebase_export -t dev --profile DEV
+```
+
+Contrôles : le job `D_2_Qualibot_User_Capabilities_Sync` réussit ; le job `D_1_Qualibot_Lakebase_Export_To_Volume` n'a plus que deux tâches (export, import) ; dans l'interface, le dossier `lakebase_export` du volume `staging` ne contient que les JSON des tables exportées ; les tables Delta gardent leurs droits.
+
+Z3. Parsing : `databricks bundle run parsing_pipeline -t dev --profile DEV` avec `run_mode=full` sur peu de documents. Contrôles : `parsed_documents` garde les lignes `SKIPPED_*` des documents non traités par le run ; `document_change_log` ne reçoit pas de nouvelle ligne `NEW` pour un document déjà journalisé (en particulier `SKIPPED_EMPTY_FOLDER`).
+
+Z4. Application : recherche d'impact avec beaucoup de changements (plus que `COMPARE_IMPACT_MAX_QUERIES`) : un message rouge « N changes were not searched » apparaît dans la carte « Impacted Docs ».
+
 ## Fait
 
 - 2026-10-21 — Division COMMUN et exclusion de ONE_QMS-5S (section H) validées en DEV : `parse_manifest` = 5 242 documents (COMMUN 2 793, AS 1 953, AUTRE 249, sans division 110, IS 95, DIRECTIVE 42). Reste : reconstruire `chunks` et synchroniser l'index DEV pour que le chat utilise ces divisions.
