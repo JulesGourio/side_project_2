@@ -38,7 +38,7 @@ OUTPUT_DIR = f"/Volumes/{OUTPUT_VOLUME_CATALOG}/{OUTPUT_VOLUME_SCHEMA}/{OUTPUT_V
 
 
 sys.path.insert(0, os.path.dirname(os.getcwd()))
-from ops_config import json_serializer, lakebase_connect_with
+from ops_config import json_serializer, lakebase_connect_with, stale_export_files
 
 spark.sql(
     f"CREATE VOLUME IF NOT EXISTS `{OUTPUT_VOLUME_CATALOG}`.`{OUTPUT_VOLUME_SCHEMA}`.`{OUTPUT_VOLUME_NAME}`"
@@ -74,6 +74,7 @@ try:
     logger.info(f"Export Lakebase {LAKEBASE_PROJECT_ID}/{LAKEBASE_BRANCH}/{LAKEBASE_DATABASE} -> {OUTPUT_DIR}")
     logger.info(f"{len(tables)} table(s) found")
 
+    exported_tables = set()
     for schema, table in tables:
         if table in TABLES_TO_SKIP:
             logger.info(f"  {schema}.{table}... skipped (TABLES_TO_SKIP)")
@@ -90,7 +91,13 @@ try:
                     json.dumps(row, ensure_ascii=False, default=json_serializer) + "\n"
                 )
 
+        exported_tables.add(table)
         logger.info(f"  {schema}.{table}: {len(rows)} row(s) -> {out_file}")
+
+    # After a complete export only: a table skipped or dropped since an earlier run must not be imported from its old file.
+    for stale in stale_export_files(os.listdir(OUTPUT_DIR), exported_tables):
+        os.remove(f"{OUTPUT_DIR}/{stale}")
+        logger.info(f"  {stale}: removed, no table of this export wrote it")
 finally:
     conn.close()
 

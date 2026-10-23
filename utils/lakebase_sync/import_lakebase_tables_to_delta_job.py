@@ -108,13 +108,13 @@ for entry in source_files:
         logger.info(f"  {table}... skipped (0 rows)")
         continue
 
-    # Drop and recreate: overwriteSchema alone fails when a column is all NULL in one export and typed in the next
-    # (DELTA_FAILED_TO_MERGE_FIELDS).
-    spark.sql(f"DROP TABLE IF EXISTS {target_table}")
-    df.write.format("delta").mode("overwrite").option(
-        "overwriteSchema", "true"
-    ).saveAsTable(target_table)
-    spark.sql(f"ALTER TABLE {target_table} SET TBLPROPERTIES ('{OWNER_PROPERTY}' = 'true')")
+    # CREATE OR REPLACE takes the schema of this export (overwriteSchema alone fails when a column is all NULL in one
+    # export and typed in the next) and keeps the table, its grants and its history, which a drop would lose.
+    df.createOrReplaceTempView("_lakebase_import_source")
+    spark.sql(
+        f"CREATE OR REPLACE TABLE {target_table} USING DELTA "
+        f"TBLPROPERTIES ('{OWNER_PROPERTY}' = 'true') AS SELECT * FROM _lakebase_import_source"
+    )
     loaded_tables += 1
     logger.info(f"  {table}: {row_count} row(s) -> {TARGET_CATALOG}.{TARGET_SCHEMA}.{table}")
 

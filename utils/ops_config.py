@@ -36,6 +36,17 @@ LAKEBASE_PROJECTS: dict[str, dict] = {
     "PROD": {"project_id": "qualibot", "branch": "production", "endpoint": "primary", "database": "doccompare"},
 }
 
+def stale_export_files(existing: list[str], exported_tables: set[str]) -> list[str]:
+    """Files of the export folder that no table of this export wrote.
+
+    :param existing: file names found in the export folder
+    :param exported_tables: tables written by this export (``<table>.json``)
+    :return: the ``.json`` file names to delete, a table skipped or dropped since the last export included
+    """
+    keep = {f"{t}.json" for t in exported_tables}
+    return sorted(f for f in existing if f.endswith(".json") and f not in keep)
+
+
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 def lakebase_connect_with(w, project_id: str, branch: str, endpoint: str, database: str) -> Any:

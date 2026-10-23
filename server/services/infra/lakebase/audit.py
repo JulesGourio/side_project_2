@@ -7,6 +7,7 @@ import traceback
 from typing import Any, Dict, List
 
 from server.services.infra import error_origin
+from server.services.infra.tasks import spawn
 from server.services.infra.lakebase import connection
 from server.services.infra.lakebase.columns import CHAT_CHUNK_COLUMNS, CHAT_TURN_COLUMNS, CHAT_TURN_TIMINGS, _db_value, _placeholders
 
@@ -110,7 +111,7 @@ def store_error(*, exc: BaseException | None = None, **kwargs: Any) -> asyncio.T
     kwargs.setdefault('origin', error_origin.from_exception(exc) or error_origin.from_stack_trace(
         kwargs.get('stack_trace', '')) or error_origin.caller(1))
     try:
-        return asyncio.get_running_loop().create_task(_write_error(_error_row(**kwargs)))
+        return spawn(_write_error(_error_row(**kwargs)))
     except RuntimeError:                   # no event loop (scripts, tests)
         return None
 
