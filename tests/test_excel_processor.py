@@ -59,12 +59,25 @@ def test_added_removed_and_modified_rows_are_reported_by_key():
     assert "~ B:" in report and "Value: '2' → '9'" in report
 
 
-def test_a_column_recalculated_in_most_of_many_rows_is_left_out():
-    old = [f'K{i}\tx\t{i}' for i in range(25)]
-    new = [f'K{i}\tx\t{i + 100}' for i in range(25)]
+def test_a_formula_column_recalculated_in_most_of_many_rows_is_left_out():
+    old = [f'K{i}\tx\t{i} {{=B{i}*2}}' for i in range(25)]
+    new = [f'K{i}\tx\t{i + 100} {{=B{i}*2}}' for i in range(25)]
     report = _diff(old, new)
     assert 'Auto-excluded columns' in report and '"Rank"' in report
     assert 'No significant changes detected' in report
+
+
+def test_a_date_column_rewritten_in_most_of_many_rows_is_left_out():
+    old = [f'K{i}\tx\t2026-01-{i + 1:02d}' for i in range(25)]
+    new = [f'K{i}\tx\t2026-02-{i + 1:02d}' for i in range(25)]
+    assert 'Auto-excluded columns' in _diff(old, new)
+
+
+def test_a_column_of_typed_in_values_changed_in_most_rows_is_reported():
+    old = [f'K{i}\tx\t{i}' for i in range(25)]
+    new = [f'K{i}\tx\t{i + 100}' for i in range(25)]
+    report = _diff(old, new)
+    assert 'Auto-excluded' not in report and "Rank: '3' → '103'" in report and report.count('  ~ ') == 25
 
 
 def test_a_column_changed_in_a_few_rows_is_reported_not_excluded():
@@ -84,6 +97,7 @@ def test_a_sheet_present_only_in_the_new_workbook_is_reported():
     report = excel._build_diff_keyed(
         HEADER + ['A\t1\t1'], HEADER + ['A\t1\t1', '[Sheet: Extra]', 'Ref\tValue', 'B\t2'], 'old', 'new')
     assert '[Sheet: Extra]: sheet added (1 rows)' in report
+    assert 'Columns: Ref | Value' in report and 'B | 2' in report
 
 
 def test_a_sheet_without_data_rows_gives_a_report_instead_of_failing():
@@ -97,7 +111,7 @@ def test_the_diff_falls_back_when_the_first_column_is_no_key():
 
 def test_a_removed_sheet_is_reported():
     report = excel._build_diff_keyed(HEADER + ['A\t1\t1'], ['[Sheet: Other]', 'Ref\tValue', 'A\t1'], 'a', 'b')
-    assert '[Sheet: S]: sheet removed entirely' in report
+    assert '[Sheet: S]: sheet removed (1 rows)' in report and 'A | 1 | 1' in report
 
 
 def test_a_value_that_looks_like_a_formula_is_exported_as_text():
@@ -157,7 +171,8 @@ def test_a_genuinely_recalculated_column_is_still_excluded_after_alignment():
     old = _sheet(['Ref', 'Value', 'Rank'], _thirty_rows(('Value', 'Rank')))
     new_rows = [[r[0], f'x{n}', r[1], r[2]] for n, r in enumerate(_thirty_rows(('Value', 'Rank')))]
     new_rows = [[r[0], r[1], r[2]] for r in new_rows]
-    new = _sheet(['Ref', 'Extra', 'Rank'], [[r[0], 'e', f'changed{n}'] for n, r in enumerate(new_rows)])
+    new = _sheet(['Ref', 'Extra', 'Rank'], [[r[0], 'e', f'{n} {{=B{n}+1}}'] for n, r in enumerate(new_rows)])
+    old = _sheet(['Ref', 'Value', 'Rank'], [[r[0], r[1], f'{n + 9} {{=B{n}+1}}'] for n, r in enumerate(_thirty_rows(('Value', 'Rank')))])
     report = excel._build_diff_keyed(old, new, 'old.xlsx', 'new.xlsx')
     assert 'Auto-excluded columns' in report and '"Rank"' in report
 

@@ -11,6 +11,7 @@ comparative: external system prompt from app config.
 import difflib
 import io
 import logging
+import re
 from typing import Any, Dict, List, Tuple
 
 from server.services.compare.processors.base import BaseProcessor, ProcessMetadata, ProcessResult
@@ -93,6 +94,8 @@ def _extract_xls(file_bytes: bytes) -> Tuple[List[str], str]:
 _VOLATILE_COL_THRESHOLD = 0.50  # columns changing in >50% of matched rows are auto-excluded
 _VOLATILE_MIN_ROWS = 20         # a column is only judged recalculated from this many matched rows: a handful of edits is a change
 _MAX_EMPTY_KEY_RATIO = 0.05     # above this share of empty first-column cells the first column is no key
+_ADDED_SHEET_ROWS = 30          # rows of a sheet present in one workbook only that are shown
+_DATE_CELL = re.compile(r'^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$')
 _ROW_FIELDS_CHARS = 300         # an added or removed row is shown up to this many characters
 _CHANGE_CHARS = 200             # a changed cell is shown up to this many characters
 _CHANGES_PER_ROW = 10           # changed cells shown per modified row
@@ -180,10 +183,21 @@ def _cell(cells: List[str], index: int) -> str:
     return cells[index] if index < len(cells) else ''
 
 
-def _volatile_columns(old_rows: Dict[str, List[str]], new_rows: Dict[str, List[str]]) -> set:
-    """Columns that change in most of the rows present in both revisions (recalculated every cycle).
+def _is_derived_cell(cell: str) -> bool:
+    """True if the cell is computed (a formula) or a date, the cells a recalculation rewrites.
 
-    Needs ``_VOLATILE_MIN_ROWS`` matched rows: on fewer rows, a column changed everywhere is an edit, not a recalculation.
+    :param cell: cell text, a formula being shown as ``value {=formula}``
+    :return: whether the cell is a formula or a date
+    """
+    text = cell.strip()
+    return '{=' in text or bool(_DATE_CELL.match(text))
+
+
+def _volatile_columns(old_rows: Dict[str, List[str]], new_rows: Dict[str, List[str]]) -> set:
+    """Columns recalculated every cycle: formulas or dates that change in most of the rows present in both revisions.
+
+    Needs ``_VOLATILE_MIN_ROWS`` matched rows. A column of typed-in values is never left out, however many of its cells
+    change: that is an edit.
 
     :param old_rows: rows of the old sheet by key
     :param new_rows: rows of the new sheet by key
@@ -192,13 +206,37 @@ def _volatile_columns(old_rows: Dict[str, List[str]], new_rows: Dict[str, List[s
     common_keys = old_rows.keys() & new_rows.keys()
     if len(common_keys) < _VOLATILE_MIN_ROWS:
         return set()
-    col_change: Dict[int, int] = {}
+    changed: Dict[int, int] = {}
+    derived: Dict[int, int] = {}
     for key in common_keys:
         o, n = old_rows[key], new_rows[key]
         for ci in range(max(len(o), len(n))):
-            if _cell(o, ci) != _cell(n, ci):
-                col_change[ci] = col_change.get(ci, 0) + 1
-    return {ci for ci, count in col_change.items() if count > len(common_keys) * _VOLATILE_COL_THRESHOLD}
+            old_cell, new_cell = _cell(o, ci), _cell(n, ci)
+            if old_cell != new_cell:
+                changed[ci] = changed.get(ci, 0) + 1
+                if _is_derived_cell(new_cell) and _is_derived_cell(old_cell):
+                    derived[ci] = derived.get(ci, 0) + 1
+    return {ci for ci, count in changed.items()
+            if count > len(common_keys) * _VOLATILE_COL_THRESHOLD and derived.get(ci, 0) > count * _VOLATILE_COL_THRESHOLD}
+
+
+def _sheet_preview(sheet: str, status: str, header: str, data: List[str]) -> List[str]:
+    """The report lines of a sheet present in one workbook only: its columns and its first rows.
+
+    :param sheet: the ``[Sheet: ...]`` marker
+    :param status: ``added`` or ``removed``
+    :param header: header line of the sheet, empty when it has none
+    :param data: data rows of the sheet
+    :return: the report lines
+    """
+    rows = [row for row in data if row.strip()]
+    out = [f'\n{sheet}: sheet {status} ({len(rows)} rows)']
+    if header:
+        out.append('Columns: ' + header.replace('\t', ' | '))
+    out.extend(f'  {row.replace(chr(9), " | ")[:_ROW_FIELDS_CHARS]}' for row in rows[:_ADDED_SHEET_ROWS])
+    if len(rows) > _ADDED_SHEET_ROWS:
+        out.append(f'  ... {len(rows) - _ADDED_SHEET_ROWS} more rows')
+    return out
 
 
 def _row_fields(cells: List[str], headers: List[str], volatile: set) -> str:
@@ -328,7 +366,7 @@ def _sheet_diff(sheet: str, old_header: str, new_header: str, old_rows: Dict[str
         out.append('Columns removed: ' + ', '.join(f'"{n}"' for n in removed_cols))
     if volatile_names:
         out.append(
-            'Auto-excluded columns (recalculated every update — not shown): '
+            'Auto-excluded columns (formulas or dates recalculated every update — not shown): '
             + ', '.join(f'"{n}"' for n in volatile_names)
         )
     if added_keys:
@@ -358,8 +396,8 @@ def _build_diff_keyed(
     - Rows are re-sorted between versions (different weekly ranking)
     - Some columns auto-recalculate every update cycle (leadtime, delta, etc.)
 
-    Columns that change in more than 50% of matched rows are treated as volatile
-    (auto-calculated) and excluded from the diff — only structural changes remain.
+    Formula or date columns that change in more than 50% of matched rows are treated as volatile
+    (auto-calculated) and excluded from the diff; columns of typed-in values are always compared.
 
     Returns None if the first column is not a usable unique key (duplicates or
     >5% empty values), in which case the caller should fall back to unified_diff.
@@ -377,7 +415,7 @@ def _build_diff_keyed(
     for sheet, old_header, old_data in old_blocks:
         new_block = next((b for b in new_blocks if b[0] == sheet), None)
         if new_block is None:
-            out_parts.append(f'\n{sheet}: sheet removed entirely')
+            out_parts.extend(_sheet_preview(sheet, 'removed', old_header, old_data))
             continue
         old_rows = _parse_rows(old_data)
         new_rows = _parse_rows(new_block[2])
@@ -389,9 +427,9 @@ def _build_diff_keyed(
         out_parts.extend(_sheet_diff(sheet, old_header, new_block[1], old_rows, new_rows))
 
     old_sheets = {block[0] for block in old_blocks}
-    for sheet, _, new_data in new_blocks:
+    for sheet, new_header, new_data in new_blocks:
         if sheet not in old_sheets:
-            out_parts.append(f'\n{sheet}: sheet added ({len([row for row in new_data if row.strip()])} rows)')
+            out_parts.extend(_sheet_preview(sheet, 'added', new_header, new_data))
 
     return '\n'.join(out_parts) if len(out_parts) > 2 else '(No cell differences detected)'
 

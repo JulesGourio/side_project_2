@@ -12,9 +12,9 @@
 
 | Statut | Yann | Logan | Logan v3 | Jules | Total |
 |---|---|---|---|---|---|
-| Fait | 52 | 40 | 23 | 1 | 116 |
-| Partiel | 0 | 6 | 3 | 0 | 9 |
-| Ouvert | 0 | 0 | 4 | 0 | 4 |
+| Fait | 52 | 41 | 26 | 1 | 120 |
+| Partiel | 0 | 5 | 1 | 0 | 6 |
+| Ouvert | 0 | 0 | 3 | 0 | 3 |
 | En attente de Yann | 10 | 0 | 0 | 0 | 10 |
 | Décision de Jules | 0 | 0 | 0 | 0 | 0 |
 | **Total** | **62** | **46** | **30** | **1** | **139** |
@@ -59,7 +59,8 @@
 | Changements non cherchés (N-13) | Avis dans l'interface ; plafond de 2000 caractères gardé | Pas d'impact silencieux. |
 | Volume `staging` (N-b3) | Déclaré partout (option c) ; liaison UAT par pipeline | À documenter à fond dans les tâches UAT. |
 | Alerte d'échec de job (N-b4) | Filtre par espace de travail | Identifiants fournis par Jules. |
-| Rôle Lakebase de PROD (N-b2) | En dur après création de l'app PROD, annoncé | À faire plus tard. |
+| Rôle Lakebase de PROD (N-b2) | En dur, 42ba83dd-… (app PROD existante) | Fait le 2026-10-23. |
+| Colonnes Excel écartées (L-6) | Option c : formules et dates seulement ; aperçu des feuilles ajoutées | Un changement massif de valeurs saisies ne doit pas être masqué. |
 | Prompt inline d'`app.yaml` (L-25) | Supprimé | Un seul endroit : les fichiers de prompts. |
 | Tableaux DOCX des en-têtes (N-b13) | Plus tard ; limite notée dans le README des processeurs | Risque faible. |
 
@@ -159,7 +160,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 | # | Origine · Fichier | Critique | Avis et proposition de Logan | Ma position · Statut |
 |---|---|---|---|---|
-| L-6 | Logan · `excel.py:99-105,155-166`, `text.py:14,180`, `xml.py:25-56` | [Haute] Le diff perd de vrais changements : colonnes Excel « volatiles », feuilles et colonnes ajoutées, en-têtes, signes perdus (−40 → 40), XML malformé = « aucun changement », formules non lues. | Exclure une colonne seulement avec ≥ 20 lignes et la lister ; feuilles nouvelles ; capturer `[-+−±]?` ; erreur visible sur XML. | Formules lues : chaque cellule s'affiche `<valeur en cache> {=formule}` (`excel.py`), une formule modifiée à valeur égale est rapportée ; test ajouté. Colonne exclue seulement avec ≥ 20 lignes et listée, feuilles et colonnes nouvelles, en-têtes, signes, XML malformé = erreur visible. Logan v3 : voir Détails.<br>**Partiel** |
+| L-6 | Logan · `excel.py:99-105,155-166`, `text.py:14,180`, `xml.py:25-56` | [Haute] Le diff perd de vrais changements : colonnes Excel « volatiles », feuilles et colonnes ajoutées, en-têtes, signes perdus (−40 → 40), XML malformé = « aucun changement », formules non lues. | Exclure une colonne seulement avec ≥ 20 lignes et la lister ; feuilles nouvelles ; capturer `[-+−±]?` ; erreur visible sur XML. | Formules lues : chaque cellule s'affiche `<valeur en cache> {=formule}`, une formule modifiée à valeur égale est rapportée. Décidé par Jules (2026-10-23, option c) : seules les colonnes de formules ou de dates recalculées (plus de la moitié de ≥ 20 lignes) sont écartées et listées ; une colonne de valeurs saisies est toujours comparée ; une feuille ajoutée ou supprimée est rapportée avec ses colonnes et ses 30 premières lignes. En-têtes, signes, XML malformé = erreur visible. Tests ajoutés.<br>**Fait** |
 | L-16 | Logan · `impact_queries.py:81-132,165-172`, `impact.py:179-181,226`, `vector_search.py:456,473-482` | [Moyenne] Recherche d'impact : sections coupées à 2000 caractères, runs partiels mis en cache, citation inventée = quand même « impacté », auto-exclusion par REF seulement. | Garde `queries_failed > 0` sur le cache (voir Y-23). | Décidé par Jules (R4 a) : on accepte. L'ancienne version peut ressortir en tête si le nom du fichier ne contient pas sa REF ; elle se reconnaît à sa référence. Sections longues découpées, citation inventée classée « à vérifier ». Logan v3 : voir N-13 (fait) ; auto-exclusion acceptée (R4).<br>**Fait** |
 | L-17 | Logan · `chunked_analysis.py:29-53,274-277` | [Moyenne] Gros documents découpés : lignes « aucun changement » entre les vrais changements, titre collé en fin de ligne, titres de section perdus, Excel jamais découpé (600 000 caractères en un appel). | — | Lignes « aucun changement » retirées à la fusion, titres séparés, titre repris dans les parties suivantes, diffs Excel découpés. Logan v3 : corrigé pour le Markdown ; les parties Excel suivantes perdent encore le contexte de feuille (basse).<br>**Fait** |
 | L-18 | Logan · `analyze.py:70-100`, `summarize.py:57`, `impact.py:45-56` | [Moyenne] Clés de cache sans prompt, modèle ni réglages. | Faire comme `_impact_cache_version`. | `_analysis_cache_version` et `_summary_cache_version` ajoutées. Logan v3 : voir N-14 (fait).<br>**Fait** |
@@ -284,13 +285,13 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | L-b13 | Logan · `client/out`, `.gitleaksignore` | [Basse] `client/out` versionné, jamais reconstruit par la CI, exclu du scan de secrets. | Construire au déploiement. | Fait : voir Y-3 (construit au déploiement, plus versionné).<br>**Fait** |
 | L-b16 | Logan · `databricks.yml`, YAML des jobs | [Basse] Identités individuelles (dont un compte externe) nommées en dur. | Groupes et variables. | Adresse d'alerte des jobs DEV/UAT conservée sur `jules.gourio.external` (décision de Jules) ; `christophe.pelissier` et `yosif.karapendov` retirés des droits de l'app UAT (vérifié : tous deux ont can_chat par les groupes) ; compte de déploiement de Jules et système de droits Lakebase conservés.<br>**Fait** |
 | N-b1 | Logan v3 · `runbooks/pr_review/comments/*` | [Basse] Vidages des commentaires de la PR commités (~46 Ko), avec le nom du relecteur et des liens internes. | Les retirer et ignorer le dossier. | Dossier ajouté à `.gitignore` ; les fichiers déjà commités demandent `git rm --cached` dans le dépôt de Jules.<br>**Partiel** |
-| N-b2 | Logan v3 · `databricks.yml:500-508` | [Basse] Rôle Lakebase de PROD : identifiant du SP de l'app interpolé avec `prevent_destroy` ; une recréation forcée serait bloquée et ferait échouer le déploiement (plausible). | — | Décidé par Jules (2026-10-23) : mettre l'identifiant du SP de l'app en dur une fois l'app PROD déployée ; inscrit dans la liste PROD et annoncé dans le README racine.<br>**Ouvert** |
-| N-b3 | Logan v3 · `lakebase_sync.yml`, `databricks.yml` | [Basse] Volume de transit non déclaré pour UAT et PROD : l'export le crée à l'exécution (droit CREATE VOLUME), hors du bundle. | — | Décidé par Jules (2026-10-23) : le volume est déclaré pour UAT et PROD. UAT : il faut le lier à l'état du bundle avec le pipeline `bind-uat-staging` avant le prochain déploiement ; PROD : créé par le premier déploiement. Non exécuté.<br>**Partiel** |
-| N-b4 | Logan v3 · `alerts.yml` | [Basse] L'alerte d'échec de job lit `system.lakeflow` sans filtre `workspace_id` : sur un metastore partagé, chaque environnement alerte sur tous (plausible). | — | Filtre `workspace_id` ajouté (`alerts_workspace_id` : DEV 2865348338307293, UAT 3155144190025826, PROD 1210945332048776 déduit de l'adresse de l'app PROD, à confirmer avec `databricks apps get qualibot --profile PROD` une fois le profil corrigé).<br>**Partiel** |
+| N-b2 | Logan v3 · `databricks.yml:500-508` | [Basse] Rôle Lakebase de PROD : identifiant du SP de l'app interpolé avec `prevent_destroy` ; une recréation forcée serait bloquée et ferait échouer le déploiement (plausible). | — | Rôle Lakebase de PROD : `postgres_role` en dur (`42ba83dd-3098-4d90-b2d2-a5df7d8beb1c`, `service_principal_client_id` de l'app PROD existante lu le 2026-10-23), `prevent_destroy` gardé.<br>**Fait** |
+| N-b3 | Logan v3 · `lakebase_sync.yml`, `databricks.yml` | [Basse] Volume de transit non déclaré pour UAT et PROD : l'export le crée à l'exécution (droit CREATE VOLUME), hors du bundle. | — | Décidé par Jules (2026-10-23) : le volume `staging` est déclaré pour UAT et PROD dans `databricks.yml`. Le code est complet ; la liaison à l'état du bundle d'UAT est une étape de déploiement (pipeline `bind-uat-staging`) qui précède le prochain déploiement d'UAT.<br>**Fait** |
+| N-b4 | Logan v3 · `alerts.yml` | [Basse] L'alerte d'échec de job lit `system.lakeflow` sans filtre `workspace_id` : sur un metastore partagé, chaque environnement alerte sur tous (plausible). | — | Filtre `workspace_id` ajouté (`alerts_workspace_id` : DEV 2865348338307293, UAT 3155144190025826, PROD 1210945332048776, identifiants fournis par Jules ; PROD vu dans l'adresse de l'app). Les alertes sont déployées en pause.<br>**Fait** |
 | N-b10 | Logan v3 · `bitbucket-pipelines.yml` | [Basse] Deux messages d'erreur du pipeline encore en français. | — | Messages en anglais.<br>**Fait** |
 | N-b11 | Logan v3 · `audit.py` `store_error` | [Basse] L'écriture d'erreur part dans une tâche sans référence forte. | — | La tâche passe par `spawn` (référence conservée jusqu'à la fin).<br>**Fait** |
 | N-b12 | Logan v3 · `analyze.py` | [Basse] `str(e)` renvoyé à l'utilisateur. | — | Message générique ; la cause va dans `app_errors`.<br>**Fait** |
-| N-b13 | Logan v3 · tableaux DOCX | [Basse] Les tableaux dans les en-têtes et pieds de page DOCX sont toujours ignorés. | Les lire. | Décidé par Jules (2026-10-23) : laissé pour plus tard ; limite connue notée dans le README des processeurs de comparaison.<br>**Ouvert** |
+| N-b13 | Logan v3 · tableaux DOCX | [Basse] Les tableaux dans les en-têtes et pieds de page DOCX sont toujours ignorés. | Les lire. | Décidé par Jules (2026-10-23) : peut attendre ; ces tableaux contiennent surtout du bruit (révisions, texte standard) et pas le contenu intéressant. Limite connue notée dans le README des processeurs.<br>**Ouvert** |
 | N-b14 | Logan v3 · droits de l'app | [Basse] Compte externe avec CAN_MANAGE. | Le retirer. | Jules a décidé de le garder.<br>**Fait** |
 
 **Détails**
@@ -452,7 +453,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 ## Reste à faire et points à vérifier
 
-Établi le 2026-10-23. Le code est testé en local mais rien n'a tourné sur Databricks. Une remarque n'est `Fait` que si elle est traitée ou tranchée par Jules ; voici toutes les autres (28 lignes : 10 En attente de Yann, 3 Décision de Jules, 9 Partiel, 6 Ouvert), plus les questions ci-dessous.
+Établi le 2026-10-23. Le code est testé en local mais rien n'a tourné sur Databricks. Une remarque n'est `Fait` que si elle est traitée ou tranchée par Jules ; voici toutes les autres (19 lignes : 10 En attente de Yann, 6 Partiel, 3 Ouvert).
 
 ### Remarques de Yann sans accord (En attente de Yann)
 
@@ -471,32 +472,24 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 ### Décision de Jules
 
-Questions ouvertes :
-
-- **L-6** : règle pour les colonnes modifiées dans plus de la moitié des lignes (aujourd'hui écartées, nom seul listé) et pour une feuille ajoutée (aujourd'hui « sheet added (N rows) ») : explication détaillée donnée à Jules le 2026-10-23, réponse attendue.
+Aucune question ouverte.
 
 ### Partiel
 
 | # | Problème | Ce qu'il faut |
 |---|---|---|
-| L-6 | Colonne modifiée dans plus de la moitié des lignes (feuilles de 20 lignes ou plus) encore écartée ; feuille ajoutée peu détaillée. | Décision de Jules sur la règle. |
 | L-9 | Jeton longue durée ; la vérification de branche est dans le yml que la branche peut modifier ; `Production` pas encore limité à `main`. | OIDC (administrateur de compte), puis restriction après validation (Jules : plus tard). |
 | L-20 | Le tableau de bord DEV lit d'anciennes tables figées ; l'export PROD attend les droits de son principal de service. | Changer ses sources (Jules : plus tard) ; donner les droits avant le déploiement PROD. |
 | L-21 | Cluster GPU sans politique, planning PROD en pause, la fusion d'une nouvelle description ne supprime jamais les anciens passages d'images. | Quelques runs manuels validés, puis dé-pauser (Jules : plus tard) ; le reste à regarder à l'exécution. |
 | L-28 | Bibliothèques des jobs non épinglées ; `uv.lock` périmé. | Épingler les bibliothèques des jobs ; le `uv.lock` est celui du dépôt de Jules. |
 | L-b17 | Le code client n'a aucun test automatique. | Ajouter des tests client, ou accepter. |
 | N-b1 | Les vidages de commentaires déjà commités restent dans le dépôt. | `git rm --cached` dans le dépôt de Jules. |
-| N-b3 | Volume `staging` déclaré ; liaison UAT non faite. | Pipeline `bind-uat-staging`, puis `plan-uat`. |
-| N-b4 | Filtre `workspace_id` ajouté ; identifiant PROD déduit de l'adresse de l'app. | Confirmer l'identifiant PROD avec `databricks apps get qualibot --profile PROD`. |
 
 ### Ouvert
 
 | # | Problème | Ce qu'il faut |
 |---|---|---|
-| N-b2 | Rôle Lakebase de PROD : identifiant du SP interpolé avec `prevent_destroy`. | Mettre l'identifiant du SP de l'app en dur une fois l'app PROD déployée (décidé). |
-
 | N-b13 | Tableaux DOCX des en-têtes/pieds de page ignorés. | Les lire (plus tard, décidé). |
-
 | N-b5 | Nouvel essai de rang 2 à chaque run complet ; images disparues jamais supprimées. | À voir à l'exécution, avec L-21. |
 | N-b6 | opencv 4.12 à côté de `numpy<2` sur la tâche GPU. | À vérifier à l'exécution sur le cluster GPU. |
 

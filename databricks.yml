@@ -502,13 +502,13 @@ targets:
             - DATABRICKS_SUPERUSER
           # Adopt the role if it already exists on the branch instead of failing.
           replace_existing: true
-        # The app connects as its own service principal: grant it its own role. The SP client id is referenced from the app resource, so it is right per environment.
+        # The app connects as its own service principal: grant it its own role. postgres_role is hardcoded: an interpolated app SP id is unknown after apply, which would recreate this immutable role on unrelated app changes.
         app-service-principal:
           # role_id is a Databricks resource identifier (RFC1123, starts with a letter), not the SP UUID; the SP identity is postgres_role.
           role_id: "app-doc-compare-sp"
           parent: "projects/qualibot/branches/production"
           identity_type: SERVICE_PRINCIPAL
-          postgres_role: ${resources.apps.doc-compare.service_principal_client_id}
+          postgres_role: "42ba83dd-3098-4d90-b2d2-a5df7d8beb1c"  # qualibot-prod app SP client id
           attributes:
             createdb: true
             createrole: false

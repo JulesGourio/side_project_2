@@ -38,11 +38,14 @@ An unknown method is handled as `standard`. The Excel and image processors and t
   end of the report is missing.
 - The extraction warnings (a near-empty text layer, documents that do not match) reach the user as well as the model.
 - The text processors add a visual block for the images they found. The XML processor has no images.
-- The Excel diff matches rows on their first column. A column that changes in more than half of the matched rows is
-  left out as volatile (an auto-calculated column); the excluded columns are listed in the report. When the first
+- The Excel diff matches rows on their first column. A column of formulas or dates that changes in more than half of
+  the matched rows (sheets of at least 20 rows) is left out as recalculated and listed in the report; a column of
+  typed-in values is always compared. A sheet present in one workbook only is reported with its columns and its first
+  30 rows. When the first
   column is not a unique key, the diff is a line-level unified diff instead.
 - Known limit: tables inside the headers and footers of a DOCX file are not read (their paragraphs are). The version and
-  date of a document are in paragraphs, so the comparison keeps them. Reading those tables is a planned extension.
+  date of a document are in paragraphs, so the comparison keeps them. Those tables are mostly revision tables and
+  boilerplate; reading them is a planned extension that can wait.
 
 
 ## See also

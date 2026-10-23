@@ -106,9 +106,9 @@ the chat is granted and the comparison is not: the Databricks app permission alr
 reaches the app, and a visitor who is in a group only through another group (for example an
 IdP-managed group nested in `Qualibot-ChatBot`) appears in neither source. The comparison stays
 with the groups that name it. Opening the chat to every visitor of the app is a project choice: the app permission
-(`CAN_USE`) is the filter and is kept to the end-user groups. When the `users` table cannot be read (Lakebase unavailable), both
-features are granted and the result is not cached, so an outage never withdraws the comparison;
-this is logged as a warning. The chat WebSocket is the exception: it refuses the connection when the group lookup fails,
+(`CAN_USE`) is the filter and is kept to the end-user groups. A visitor whose groups were read and include only the comparison group gets the comparison and no chat.
+When the `users` table cannot be read (Lakebase unavailable) and SCIM gives no allowed group, the chat is granted, the
+comparison is not, and the result is not cached; this is logged as a warning. The chat WebSocket is the exception: it refuses the connection when the group lookup fails,
 when the visitor has no identity (outside development) and when its origin is not in `CHAT_ALLOWED_ORIGINS` (an empty list
 refuses every origin outside development). A group removal reaches the app within about two hours plus the cache; access
 is almost never withdrawn on purpose, so this delay is accepted. `CAPS_BYPASS=true` opens both
@@ -251,9 +251,8 @@ Choices that look like gaps when read in isolation. Each is deliberate.
 | Dependencies | Pinned in `requirements.txt`; `leap_utils` reduced to the modules in use | Reproducible deployments. |
 | Continuous integration | The tests block UAT and PROD deployments; OIDC authentication is planned | OIDC needs a Databricks account administrator. |
 
-Planned, not done: the PROD Lakebase
-role takes the application's service principal id as a literal once the application exists (the role is protected
-against deletion); tables inside DOCX headers are not compared yet.
+Planned, not done: tables inside DOCX headers and footers are not compared yet; they mostly hold revision
+tables and boilerplate, not the content that matters, so this can wait.
 
 ## Documentation
 
