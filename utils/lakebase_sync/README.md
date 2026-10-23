@@ -1,7 +1,7 @@
 # lakebase_sync
 
-Scripts that take the data out of the Lakebase database of the application (to a volume, or as JSON Lines files) and
-load it elsewhere: Delta tables of `<env>_proj.qualibot`, and the Lakebase database of PROD (JSON import, Bitbucket step). The connection settings shared
+Scripts that take the data out of the Lakebase database of the application (to a volume, as JSON Lines files) and
+load it as Delta tables of `<env>_proj.qualibot`; the visitors' groups are synchronised by a separate job. The connection settings shared
 with the other folders (CLI profiles, Lakebase projects, databases per environment, table order) are in
 [`ops_config.py`](../ops_config.py).
 

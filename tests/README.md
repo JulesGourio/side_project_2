@@ -10,6 +10,7 @@ Parent: [root README](../README.md).
 - From the repository root: `python -m pytest -q tests`. `pyproject.toml` sets `testpaths = ["tests"]`. There is no
   `conftest.py`, `pytest.ini` or `setup.cfg`. `pytest` is in the `dev` extra of `pyproject.toml`.
 - The tests import `server` and `tests` from the root, so run them from there.
+- The client has its own tests in `client/tests/`, run with `bun test tests` from `client/` (no dependency to install): the safe-URL rules, the chat history sent to the server and the 7-day expiry of the browser storage. The test step of the CI runs them after pytest.
 - Some modules skip as a whole when an optional package is missing: `pytest.importorskip` for `mlflow`, `sqlalchemy`,
   `alembic` (`test_chat_scorers.py`, `test_register_chat_prompts.py`), `mlflow` (`test_mlflow_turns.py`), `tenacity`
   (`test_parsing_describe.py`) and `pyspark` (`test_parsing_selection.py`, and one test of `test_parsing_quality.py`).

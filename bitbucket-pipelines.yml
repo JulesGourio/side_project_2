@@ -29,6 +29,8 @@ definitions:
           - pip install -q -e ".[dev]"
           - pip install -q -r requirements.txt
           - python -m pytest -q tests
+          - bash utils/deploy/install_bun.sh
+          - (cd client && bun test tests)
 
     # -----------------------------------------------------------------------
     # DEV: target dev, profile job-runner-sa-dev (DEV service principal

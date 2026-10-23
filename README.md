@@ -166,12 +166,13 @@ The suite is in `tests/` (`testpaths` in `pyproject.toml`). Calls to Databricks 
 endpoints are replaced by fakes. Spark-based tests are skipped when pyspark or a JVM is missing,
 and tests that need a local sample (`test_prompt/`, git-ignored) are skipped when it is absent.
 
-The frontend is checked by lint and build:
+The frontend is checked by lint, build and unit tests:
 
 ```
 cd client
 bun run lint
 bun run build
+bun test tests
 ```
 
 ## Deployment

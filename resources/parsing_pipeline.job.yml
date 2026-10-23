@@ -386,9 +386,9 @@ resources:
           spec:
             environment_version: "2"
             dependencies:
-              - psycopg2-binary
-              - databricks-sdk>=0.118.0
-              - packaging
+              - psycopg2-binary==2.9.10
+              - databricks-sdk==0.120.0
+              - packaging==25.0
 
       # Daily at night: the upstream Intraqual data asset lands during the day, and 1_categories fails explicitly if sources are older than
       # `parsing_max_source_staleness_hours`.

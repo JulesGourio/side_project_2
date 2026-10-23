@@ -52,8 +52,8 @@ targets:
               spec:
                 environment_version: "2"
                 dependencies:
-                  - mlflow[databricks]>=3.11.1
-                  - databricks-sdk>=0.118.0
+                  - mlflow[databricks]==3.14.0
+                  - databricks-sdk==0.120.0
 
         register_chat_prompts_dev:
           name: "Z_3_Qualibot_Register_Chat_Prompts"
@@ -98,7 +98,7 @@ targets:
               spec:
                 environment_version: "2"
                 dependencies:
-                  - mlflow[databricks]>=3.11.1
+                  - mlflow[databricks]==3.14.0
 
         score_chat_traces_dev:
           name: "D_2_Qualibot_Score_Chat_Traces"
@@ -146,7 +146,7 @@ targets:
               spec:
                 environment_version: "2"
                 dependencies:
-                  - mlflow[databricks]>=3.11.1
+                  - mlflow[databricks]==3.14.0
           schedule:
             quartz_cron_expression: "0 30 2 * * ?"
             timezone_id: "Europe/Brussels"
@@ -200,8 +200,8 @@ targets:
               spec:
                 environment_version: "2"
                 dependencies:
-                  - mlflow[databricks]>=3.11.1
-                  - databricks-sdk>=0.118.0
+                  - mlflow[databricks]==3.14.0
+                  - databricks-sdk==0.120.0
 
         register_chat_prompts_uat:
           name: "Z_3_Qualibot_Register_Chat_Prompts"
@@ -244,7 +244,7 @@ targets:
               spec:
                 environment_version: "2"
                 dependencies:
-                  - mlflow[databricks]>=3.11.1
+                  - mlflow[databricks]==3.14.0
 
         score_chat_traces_uat:
           name: "D_2_Qualibot_Score_Chat_Traces"
@@ -292,7 +292,7 @@ targets:
               spec:
                 environment_version: "2"
                 dependencies:
-                  - mlflow[databricks]>=3.11.1
+                  - mlflow[databricks]==3.14.0
           schedule:
             quartz_cron_expression: "0 30 2 * * ?"
             timezone_id: "Europe/Brussels"
@@ -346,8 +346,8 @@ targets:
               spec:
                 environment_version: "2"
                 dependencies:
-                  - mlflow[databricks]>=3.11.1
-                  - databricks-sdk>=0.118.0
+                  - mlflow[databricks]==3.14.0
+                  - databricks-sdk==0.120.0
 
         register_chat_prompts_prod:
           name: "Z_3_Qualibot_Register_Chat_Prompts"
@@ -390,7 +390,7 @@ targets:
               spec:
                 environment_version: "2"
                 dependencies:
-                  - mlflow[databricks]>=3.11.1
+                  - mlflow[databricks]==3.14.0
 
         score_chat_traces_prod:
           name: "D_2_Qualibot_Score_Chat_Traces"
@@ -438,7 +438,7 @@ targets:
               spec:
                 environment_version: "2"
                 dependencies:
-                  - mlflow[databricks]>=3.11.1
+                  - mlflow[databricks]==3.14.0
           schedule:
             quartz_cron_expression: "0 30 2 * * ?"
             timezone_id: "Europe/Brussels"

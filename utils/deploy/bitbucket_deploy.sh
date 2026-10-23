@@ -65,13 +65,8 @@ if [ "$MODE" = setup ]; then
 fi
 
 # The frontend is not versioned: it is built here, and the bundle sync ships client/out (a deploy that lacked it would delete it from the app's files).
-# Bun is pinned so that the build tool does not change between two deployments; the installer is downloaded to a file, then run.
-BUN_VERSION="1.4.2"
-if ! command -v bun >/dev/null; then
-    curl -fsSL https://bun.sh/install -o /tmp/bun_install.sh
-    bash /tmp/bun_install.sh "bun-v${BUN_VERSION}"
-    export PATH="$HOME/.bun/bin:$PATH"
-fi
+# Bun is pinned (utils/deploy/bun_version.txt) so that the build tool does not change between two deployments.
+bash utils/deploy/install_bun.sh
 (cd client && bun install --frozen-lockfile && bun run build)
 
 python3 utils/deploy/render_target_config_env.py "$ENV_NAME"

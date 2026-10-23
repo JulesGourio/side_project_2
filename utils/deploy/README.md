@@ -10,6 +10,8 @@ Parent: [`utils/`](../README.md). The root [README](../../README.md) describes t
 |---|---|---|
 | `deploy_qualibot.ps1` | Builds the frontend, renders `target_config.env`, uploads the code (or deploys the bundle with `-Infra`), starts the app when it is stopped, and deploys it | PowerShell, from the repository root |
 | `bitbucket_deploy.sh` | One Bitbucket step: writes the profile of an environment from its `DATABRICKS_TOKEN`, then validates and deploys the bundle (`app` also restarts the app, `jobs` does not, `setup` only writes the profile). The table of environments (bundle target, profile, default host) is in the script | Bitbucket, `bash utils/deploy/bitbucket_deploy.sh <dev\|uat\|prod> <app\|jobs\|setup>` |
+| `install_databricks_cli.sh` | Installs the Databricks CLI at the version in `databricks_cli_version.txt` | Bitbucket, run by `bitbucket_deploy.sh` and by the one-off steps |
+| `install_bun.sh` | Installs Bun at the version in `bun_version.txt` from the release archive, after checking its SHA-256 | Bitbucket, run by `bitbucket_deploy.sh` and by the test step |
 | `render_target_config_env.py` | Writes the settings of one target as `export NAME='value'` lines | CLI, run by `bitbucket_deploy.sh` and by hand |
 | `target_env.json` | The app's settings per target, the only source of these values | Read by both files above |
 

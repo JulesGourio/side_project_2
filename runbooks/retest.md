@@ -385,3 +385,5 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - Bandeau « changes not searched » de la recherche d'impact (DEV bloc Z4).
 - Alerte `job_failures` filtrée par `alerts_workspace_id`; volume `staging` déclaré pour UAT (liaison K2) et PROD.
 - `app.yaml` : la variable `COMPARE_ANALYSIS_SYSTEM_PROMPT` est supprimée (le prompt par défaut est le fichier `analysis_default.md`).
+- Bibliothèques des jobs figées (`databricks-sdk==0.120.0`, `mlflow[databricks]==3.14.0`, `psycopg2-binary==2.9.10`, `packaging==25.0`) : au prochain déploiement des jobs, lancer un job de chaque famille (export Lakebase, droits, parsing 1_categories, MLflow) et vérifier que l'installation des bibliothèques réussit.
+- Bun installé depuis l'archive de la version `utils/deploy/bun_version.txt` : premier `deploy-dev` après la mise à jour (étape « Run the test suite » puis build).
