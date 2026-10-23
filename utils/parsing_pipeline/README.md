@@ -109,6 +109,10 @@ variables with the defaults listed at the top of `config.py`.
   of statuses `SUCCESS`, `ERROR`, `EMPTY_TEXT` and `IMAGES_PENDING`. When several in-scope IDDOCs share a REF,
   only the newest revision (highest `indice`, then highest IDDOC) keeps its passages. The `parsed_documents`
   rows of the other IDDOCs stay, so they are not parsed again.
+- **Scope guard**: before any deletion, `2_manifest` compares the documents of the new scope with those of the
+  previous `parse_manifest`. If the scope shrank by more than `PARSING_MAX_SCOPE_DROP_PCT` percent (default `30`,
+  `0` turns the guard off) and the previous manifest had at least 100 documents, the task fails with both numbers
+  and deletes nothing. A deliberate large reduction is accepted by setting the variable to `0` for that run.
 - **Pruning**: the pruning of derived rows runs on every run. Out-of-scope folders are never deleted from the volume:
   they stay there and are not parsed.
 - **Volume folders** are classified by `2_manifest`: `KEEP` (parsed), `DELETE` (out of scope), `ORPHAN` (IDDOC

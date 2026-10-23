@@ -15,10 +15,11 @@ from fastapi.responses import StreamingResponse
 
 from server.services.compare.chunked_analysis import split_messages_for_chunking, stream_analysis_chunked
 from server.services.compare.llm import TIRED_MESSAGE, stream_analysis
+from server.services.compare.prompts import load_prompt
 from server.services.compare.processors.factory import (
     diff_truncation_warnings, file_type_of, get_extension, get_processor,
 )
-from server.services.infra.credentials import get_credentials
+from server.services.infra.credentials import get_credentials_async
 from server.services.infra.lakebase import (
     get_cached_analysis, store_analysis_cache, store_error,
     store_llm_request,
@@ -82,18 +83,33 @@ async def _error_stream(message: str) -> AsyncGenerator[str, None]:
     yield 'data: [DONE]\n\n'
 
 
+def _prompt_sent(job_cfg: Dict[str, Any], processor: Any) -> str:
+    """The system prompt the processor puts before the diff for its method.
+
+    :param job_cfg: the compare settings (``get_config()``)
+    :param processor: the processor chosen for the file type
+    :return: the structured prompt, the comparative prompt of the settings, or the standard prompt
+    """
+    method = getattr(processor, 'method', '')
+    if method == 'structured':
+        return load_prompt('analysis_structured')
+    if method == 'comparative':
+        return job_cfg['analysis_system_prompt']
+    return load_prompt('analysis_standard')
+
+
 def _analysis_cache_version(job_cfg: Dict[str, Any], processor: Any, processor_version: str) -> str:
     """Key part of the report cache: everything besides the files that shapes the report.
 
-    The prompt, the model, the extraction method and the chunking and generation settings are part of it, so changing
-    one of them never serves a report made with the old ones.
+    The prompt sent for the method in use, the model, the extraction method and the chunking and generation settings
+    are part of it, so changing one of them never serves a report made with the old ones.
 
     :param job_cfg: the compare settings (``get_config()``)
     :param processor: the processor chosen for the file type, which carries the diff method
     :param processor_version: extraction method forced by the client, '' for the default
     :return: ``<APP_VERSION>:<hash of the settings>``
     """
-    parts = [job_cfg['analysis_system_prompt'], job_cfg['analysis_endpoint'], str(getattr(processor, 'method', '')),
+    parts = [_prompt_sent(job_cfg, processor), job_cfg['analysis_endpoint'], str(getattr(processor, 'method', '')),
              processor_version, str(job_cfg['max_tokens']), str(job_cfg['thinking_budget']),
              str(job_cfg['temperature']), str(job_cfg['chunk_threshold_chars']), str(job_cfg['chunk_size_chars'])]
     return f'{APP_VERSION}:{hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()[:16]}'
@@ -356,7 +372,7 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
                 stage='build',
                 context={'processor_version': job.processor_version, 'build_ms': run['build_ms']},
             )
-            yield f'data: {json.dumps({"type": "error", "error": f"File processing failed: {e}"})}\n\n'
+            yield f'data: {json.dumps({"type": "error", "error": TIRED_MESSAGE})}\n\n'
             yield 'data: [DONE]\n\n'
             return
 
@@ -421,7 +437,9 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
             yield _track_llm_event(chunk, job, run, llm_request_id, t_llm, report)
 
         run['generation_ms'] = _elapsed_ms(t_llm)
-        if run['status'] == 'ok' and report.cacheable and report.parts:
+        # A report written by a fallback model is not stored under the key of the configured model.
+        by_primary = answered.get('endpoint') in (None, job.endpoint)
+        if run['status'] == 'ok' and report.cacheable and report.parts and by_primary:
             spawn(store_analysis_cache(
                 job.old_hash, job.new_hash, job.cache_version, ''.join(report.parts), result.metadata.file_type,
                 result.metadata.method, job.processor_version))
@@ -489,7 +507,7 @@ async def analyze_documents(
     if not endpoint:
         return _error_response('COMPARE_ANALYSIS_ENDPOINT not configured in app.yaml')
 
-    host, token = get_credentials(request)
+    host, token = await get_credentials_async(request)
     if not host or not token:
         return _error_response('Missing Databricks credentials')
 

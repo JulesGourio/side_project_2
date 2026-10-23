@@ -14,6 +14,7 @@ from pyspark.sql import functions as f
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 from categories import read_revisions
+from decisions import scope_dropped_too_much
 from tables import ensure_primary_key, table_exists, write_table
 from leap_utils.common.logger import get_logger
 from config import (
@@ -24,6 +25,7 @@ from config import (
     DOC_DATE_CUTOFF,
     EXCLUDED_IDCATS,
     MANUAL_REF_EXCLUSIONS,
+    MAX_SCOPE_DROP_PCT,
     PARSE_MANIFEST_TABLE,
     TARGET_CHUNK_TABLE,
     TARGET_CHUNK_TABLE_ARCHIVE,
@@ -118,6 +120,24 @@ def find_stale_iddocs(df_scope_docs) -> list[int]:
     except Exception as exc:
         logger.info(f"No existing {TARGET_PROCESSED_FILES_TABLE} to prune against ({exc}).")
         return []
+
+
+def check_scope_not_shrunk(current: int) -> None:
+    """Stop the task, before any deletion, when the scope is much smaller than the previous manifest.
+
+    :param current: number of documents in the new scope
+    :raises RuntimeError: when the drop exceeds ``MAX_SCOPE_DROP_PCT`` percent of a manifest of 100 documents or more
+    """
+    if not table_exists(PARSE_MANIFEST_TABLE):
+        return
+    previous = spark.table(PARSE_MANIFEST_TABLE).select("IDDOC").distinct().count()
+    if scope_dropped_too_much(previous, current, MAX_SCOPE_DROP_PCT):
+        raise RuntimeError(
+            f"The scope has {current} document(s) against {previous} in the previous manifest, a drop of more "
+            f"than {MAX_SCOPE_DROP_PCT}%: nothing was deleted. Check the source tables, or set "
+            f"PARSING_MAX_SCOPE_DROP_PCT to 0 to accept the new scope."
+        )
+    logger.info(f"Scope guard passed: {current} document(s) against {previous} in the previous manifest.")
 
 
 def prune_stale_content(stale_iddocs) -> None:

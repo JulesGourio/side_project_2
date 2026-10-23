@@ -14,21 +14,24 @@ def _events(body: str) -> list:
     return [line[6:] for line in body.splitlines() if line.startswith('data: ')]
 
 
-def _post(monkeypatch, llm_chunks, warnings=('scanned PDF',)):
+def _post(monkeypatch, llm_chunks, warnings=('scanned PDF',), answered_by=None, method='standard'):
     """Run one analysis with a fake processor and a fake model stream; return (response text, mocks)."""
     monkeypatch.setenv('COMPARE_ANALYSIS_ENDPOINT', 'databricks-test')
     monkeypatch.setenv('CAPS_BYPASS', 'true')
+    monkeypatch.setattr('server.services.infra.user.RATE_LIMIT_PER_MINUTE', 0)
     result = SimpleNamespace(
         messages=[{'role': 'user', 'content': 'diff'}], warnings=list(warnings), image_pairs=[],
-        metadata=SimpleNamespace(file_type='docx', method='standard'))
+        metadata=SimpleNamespace(file_type='docx', method=method))
     processor = SimpleNamespace(build_messages=lambda *a: result)
 
     async def fake_stream(*args, **kwargs):
+        if answered_by:
+            kwargs['info']['endpoint'] = answered_by
         for chunk in llm_chunks:
             yield chunk
 
     mocks = SimpleNamespace(run=AsyncMock(), usage=AsyncMock(), store=AsyncMock(return_value=7), cache=AsyncMock())
-    with patch.object(analyze, 'get_credentials', return_value=('https://host', 'tok')), \
+    with patch.object(analyze, 'get_credentials_async', new=AsyncMock(return_value=('https://host', 'tok'))), \
             patch.object(analyze, 'get_user_identity', AsyncMock(return_value={'user_id': 'u1', 'workspace_id': None, 'email': None})), \
             patch.object(analyze, 'get_processor', return_value=processor), \
             patch.object(analyze, 'get_cached_analysis', AsyncMock(return_value=None)), \
@@ -38,14 +41,13 @@ def _post(monkeypatch, llm_chunks, warnings=('scanned PDF',)):
             patch.object(analyze, 'update_llm_request_run', mocks.run), \
             patch.object(analyze, 'update_llm_request_usage', mocks.usage):
         client = TestClient(app_module.app)
-        response = client.post('/api/compare/analyze', files={'old_file': ('a.docx', b'old'),
-                                                               'new_file': ('b.docx', b'new')})
+        response = client.post('/api/compare/analyze', files={'old_file': ('a.docx', b'old'), 'new_file': ('b.docx', b'new')})
     return response, mocks
 
 
-def _post_clean(monkeypatch, llm_chunks, warnings=()):
+def _post_clean(monkeypatch, llm_chunks, warnings=(), answered_by=None):
     """``_post`` with a processor that reports no extraction warning."""
-    return _post(monkeypatch, llm_chunks, warnings)
+    return _post(monkeypatch, llm_chunks, warnings, answered_by)
 
 
 def test_a_successful_analysis_streams_metadata_warnings_and_text(monkeypatch):
@@ -97,7 +99,65 @@ def test_the_cache_version_follows_the_prompt_the_model_and_the_method():
            'temperature': 0.0, 'chunk_threshold_chars': 10, 'chunk_size_chars': 5}
     processor = SimpleNamespace(method='standard')
     base = analyze._analysis_cache_version(cfg, processor, '')
-    assert analyze._analysis_cache_version({**cfg, 'analysis_system_prompt': 'other'}, processor, '') != base
+    comparative = SimpleNamespace(method='comparative')
+    assert analyze._analysis_cache_version({**cfg, 'analysis_system_prompt': 'other'}, comparative, '') \
+        != analyze._analysis_cache_version(cfg, comparative, '')
     assert analyze._analysis_cache_version({**cfg, 'analysis_endpoint': 'other'}, processor, '') != base
     assert analyze._analysis_cache_version(cfg, SimpleNamespace(method='structured'), '') != base
     assert analyze._analysis_cache_version(cfg, processor, '') == base
+
+
+def test_a_report_by_the_configured_endpoint_is_cached(monkeypatch):
+    delta = 'data: ' + json.dumps({'type': 'response.output_text.delta', 'delta': 'Report.'}) + '\n\n'
+    _, mocks = _post_clean(monkeypatch, [delta, 'data: [DONE]\n\n'], answered_by='databricks-test')
+    mocks.cache.assert_awaited_once()
+
+
+def test_a_report_by_a_fallback_endpoint_is_not_cached(monkeypatch):
+    delta = 'data: ' + json.dumps({'type': 'response.output_text.delta', 'delta': 'Report.'}) + '\n\n'
+    response, mocks = _post_clean(monkeypatch, [delta, 'data: [DONE]\n\n'], answered_by='databricks-other')
+    assert 'Report.' in response.text
+    mocks.cache.assert_not_awaited()
+
+
+def test_a_processing_failure_does_not_show_its_detail_to_the_browser(monkeypatch):
+    monkeypatch.setenv('COMPARE_ANALYSIS_ENDPOINT', 'databricks-test')
+    monkeypatch.setenv('CAPS_BYPASS', 'true')
+    monkeypatch.setattr('server.services.infra.user.RATE_LIMIT_PER_MINUTE', 0)
+
+    def broken(*args):
+        raise RuntimeError('secret /internal/path')
+
+    processor = SimpleNamespace(build_messages=broken)
+    with patch.object(analyze, 'get_credentials_async', new=AsyncMock(return_value=('https://host', 'tok'))), \
+            patch.object(analyze, 'get_user_identity', AsyncMock(return_value={'user_id': 'u1', 'workspace_id': None, 'email': None})), \
+            patch.object(analyze, 'get_processor', return_value=processor), \
+            patch.object(analyze, 'get_cached_analysis', AsyncMock(return_value=None)), \
+            patch.object(analyze, 'store_llm_request', AsyncMock(return_value=7)), \
+            patch.object(analyze, 'update_llm_request_run', AsyncMock()), \
+            patch.object(analyze, 'update_llm_request_usage', AsyncMock()):
+        response = TestClient(app_module.app).post(
+            '/api/compare/analyze',
+            files={'old_file': ('a.docx', b'old'), 'new_file': ('b.docx', b'new')})
+    assert 'secret' not in response.text and analyze.TIRED_MESSAGE in response.text
+
+
+def test_the_cache_version_follows_the_prompt_sent_for_the_method(monkeypatch):
+    cfg = {'analysis_system_prompt': 'comparative text', 'analysis_endpoint': 'e', 'max_tokens': 1,
+           'thinking_budget': 0, 'temperature': 0.0, 'chunk_threshold_chars': 10, 'chunk_size_chars': 5}
+    standard, structured = SimpleNamespace(method='standard'), SimpleNamespace(method='structured')
+    comparative = SimpleNamespace(method='comparative')
+    prompts = {'analysis_standard': 'S1', 'analysis_structured': 'T1'}
+    monkeypatch.setattr(analyze, 'load_prompt', lambda name: prompts[name])
+    base_std = analyze._analysis_cache_version(cfg, standard, '')
+    base_str = analyze._analysis_cache_version(cfg, structured, '')
+    base_cmp = analyze._analysis_cache_version(cfg, comparative, '')
+    prompts['analysis_standard'] = 'S2'
+    assert analyze._analysis_cache_version(cfg, standard, '') != base_std
+    assert analyze._analysis_cache_version(cfg, structured, '') == base_str
+    prompts['analysis_structured'] = 'T2'
+    assert analyze._analysis_cache_version(cfg, structured, '') != base_str
+    assert analyze._analysis_cache_version(cfg, comparative, '') == base_cmp
+    assert analyze._analysis_cache_version({**cfg, 'analysis_system_prompt': 'other'}, comparative, '') != base_cmp
+    assert analyze._analysis_cache_version({**cfg, 'analysis_system_prompt': 'other'}, standard, '') \
+        == analyze._analysis_cache_version(cfg, standard, '')

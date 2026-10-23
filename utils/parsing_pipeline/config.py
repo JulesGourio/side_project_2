@@ -59,6 +59,9 @@ INTRAQUAL_CATEGORY_ANCESTORS_TABLE = f"{_G}.category_ancestors_intraqual"
 # silently indexing a partial corpus.
 INTRAQUAL_REQUIRED_TABLES = [INTRAQUAL_REVISIONS_TABLE, INTRAQUAL_CATEGORY_ANCESTORS_TABLE]
 MAX_SOURCE_STALENESS_HOURS = int(_env("PARSING_MAX_SOURCE_STALENESS_HOURS", "36"))
+# 2_manifest stops before any deletion when the scope has shrunk by more than this percentage compared with the
+# previous manifest (a partial source read); 0 turns the guard off.
+MAX_SCOPE_DROP_PCT = int(_env("PARSING_MAX_SCOPE_DROP_PCT", "30"))
 
 # --- Qualibot perimeter (scope gate) ---
 # Root categories of the documents Qualibot indexes: 00-LATECOERE PROCESSES_One QMS, AS - PROGRAMS / PROGRAMMES and

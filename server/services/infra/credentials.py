@@ -1,5 +1,6 @@
 """Databricks host and token the app uses to call serving endpoints and Vector Search."""
 
+import asyncio
 import logging
 import os
 from functools import lru_cache
@@ -47,3 +48,12 @@ def get_credentials(request) -> tuple[str, str]:
     if not token:
         token = request.headers.get('x-forwarded-access-token', '')
     return host, token
+
+
+async def get_credentials_async(request) -> tuple[str, str]:
+    """``get_credentials`` run in a worker thread: the SDK's token refresh is a blocking HTTP call.
+
+    :param request: ``Request`` or ``WebSocket``, read for its headers
+    :return: ``(host, token)``, empty strings when none is found
+    """
+    return await asyncio.to_thread(get_credentials, request)

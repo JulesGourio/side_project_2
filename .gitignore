@@ -96,3 +96,6 @@ utils/deploy/.intraqual_profile/
 mlruns/
 mlflow.db
 .delivery/
+
+# Reviewer comment dumps (tooling artifacts)
+runbooks/pr_review/comments/

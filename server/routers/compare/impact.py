@@ -14,7 +14,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from server.services.compare.impact_queries import changes_to_queries
-from server.services.infra.credentials import get_credentials
+from server.services.compare.prompts import load_prompt
+from server.services.infra.credentials import get_credentials_async
 from server.services.infra.lakebase import (
     get_cached_impact_result, store_error,
     store_impact_cache, store_impact_request,
@@ -46,14 +47,14 @@ def _impact_cache_version(changes_text: str, cfg: Dict[str, Any]) -> str:
     """Cache discriminator stored in impact_cache.app_version.
 
     The file hashes alone do not determine an impact search: the change source (Change Table or Change Summary)
-    and the impact index both change the result, so they are part of the key.
+    and the impact index both change the result, so they are part of the key, as are the judge endpoint and prompt.
 
     :param changes_text: the change list the search starts from.
     :param cfg: the compare settings (``get_config()``).
     """
     parts = [changes_text.strip(), cfg['impact_index'], cfg['impact_endpoint'],
              str(cfg['impact_max_queries']), str(cfg['impact_per_query_results']),
-             str(cfg['impact_max_candidates'])]
+             str(cfg['impact_max_candidates']), load_prompt('impact_judge')]
     return f'{APP_VERSION}:{hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()[:16]}'
 
 
@@ -203,6 +204,13 @@ async def _impact_events(run: _ImpactSearch, request: Request, token: str,
             run.warn('VectorSearchPartial', 'search',
                      f"{plan['queries_failed']}/{plan.get('queries_used')} Vector Search queries failed",
                      run.index_name, queries_used=plan.get('queries_used'), queries_failed=plan['queries_failed'])
+        left_out = extracted.get('left_out') or []
+        if left_out:
+            plan['changes_not_searched'] = left_out
+            first = {**first, 'changes_not_searched': left_out}
+            run.warn('ChangesNotSearched', 'search',
+                     f'{len(left_out)} changes left out: the queries are full', run.index_name,
+                     change_ids=left_out, max_queries=run.cfg['impact_max_queries'])
         yield _ndjson(first)
         async for event in stream:
             if event['type'] == 'document':
@@ -248,6 +256,8 @@ async def _impact_events(run: _ImpactSearch, request: Request, token: str,
 
     # A result is kept only when it is complete: a failed query or judge call would be replayed to every later user.
     complete = not plan.get('queries_failed') and not any(d.get('status') == 'error' for d in documents)
+    # Judgments by a fallback model are not stored under the key of the configured one.
+    complete = complete and set(run.judge_info.get('endpoints') or []) <= {run.llm_endpoint}
     if run.old_hash and run.new_hash and complete:
         spawn(store_impact_cache(
             run.old_hash, run.new_hash, cache_version,
@@ -289,7 +299,7 @@ async def find_impacted_documents(body: ImpactRequest, request: Request) -> Resp
         if cached is not None and 'changes' in cached:
             return StreamingResponse(_replay_events(cached), media_type='application/x-ndjson')
 
-    host, token = get_credentials(request)
+    host, token = await get_credentials_async(request)
     if not host or not token:
         return JSONResponse({'error': 'Missing Databricks credentials'}, status_code=400)
 

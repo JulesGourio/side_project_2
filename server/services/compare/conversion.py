@@ -30,6 +30,9 @@ _ANTIWORD_UTF8 = ['-m', 'UTF-8.txt']
 _ANTIWORD_TIMEOUT_S = 30
 # The raw OLE scan returns every printable run it finds; the cap keeps the text of a noisy file bounded.
 _OLEFILE_MAX_RUNS = 400
+# Last line of the text of a .doc cut at _OLEFILE_MAX_RUNS fragments: it tells the reader that the end is missing.
+DOC_TRUNCATED_NOTE = (f'[Only the first {_OLEFILE_MAX_RUNS} text fragments of this .doc file were read: the rest of '
+                      'the document is not shown. Save it as .docx for the full text.]')
 _PPT_CONVERT_TIMEOUT_S = 180
 _SLIDE_DPI = 96
 # A presentation is rendered as one image per slide, embedded in the preview page.
@@ -151,7 +154,8 @@ def _olefile_extract(doc_bytes: bytes, filename: str) -> str | None:
 
     :param doc_bytes: content of the .doc file
     :param filename: file name, for the logs
-    :return: the text runs joined by newlines, at most ``_OLEFILE_MAX_RUNS`` of them; None when none is found
+    :return: the text runs joined by newlines, at most ``_OLEFILE_MAX_RUNS`` of them and then ``DOC_TRUNCATED_NOTE``
+        when more were found; None when none is found
     """
     try:
         ole = olefile.OleFileIO(io.BytesIO(doc_bytes))
@@ -196,7 +200,8 @@ def _olefile_extract(doc_bytes: bytes, filename: str) -> str | None:
 
     if len(results) > _OLEFILE_MAX_RUNS:
         logger.warning('olefile: %d text runs found in %s, keeping the first %d', len(results), filename, _OLEFILE_MAX_RUNS)
-    return '\n'.join(results[:_OLEFILE_MAX_RUNS])
+        return '\n'.join([*results[:_OLEFILE_MAX_RUNS], DOC_TRUNCATED_NOTE])
+    return '\n'.join(results)
 
 
 # --- .docx → HTML body fragment via mammoth ---

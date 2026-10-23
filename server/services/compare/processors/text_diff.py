@@ -21,11 +21,24 @@ from server.services.compare.processors._diff_engines import (
     section_canonical_diff,
     truncate_diff,
 )
+from server.services.compare.conversion import DOC_TRUNCATED_NOTE
 from server.services.compare.processors.base import BaseProcessor, ProcessMetadata, ProcessResult
 
 logger = logging.getLogger(__name__)
 
 Images = Dict[str, Dict[str, Any]]
+
+
+def _without_doc_note(text: str) -> Tuple[str, bool]:
+    """The text without the line that marks a cut .doc, so that line is never diffed.
+
+    :param text: text extracted from one file
+    :return: ``(text, True)`` when the cut-document line was present
+    """
+    lines = text.split('\n')
+    if DOC_TRUNCATED_NOTE not in lines:
+        return text, False
+    return '\n'.join(line for line in lines if line != DOC_TRUNCATED_NOTE), True
 
 
 class TextDiffProcessor(BaseProcessor):
@@ -108,8 +121,13 @@ class TextDiffProcessor(BaseProcessor):
         logger.info('%s [%s]: %s — %s → %s', type(self).__name__, method_name,
                     'section canonical diff' if comparative else 'paragraph semantic diff', old_name, new_name)
         old_text, new_text, old_images, new_images = self.extract(old_bytes, old_name, new_bytes, new_name)
+        old_text, old_cut = _without_doc_note(old_text)
+        new_text, new_cut = _without_doc_note(new_text)
         warn = self.warn_comparative if comparative else self.warn_paragraph
         warnings = extraction_warnings(old_text, new_text) if warn else []
+        warnings += [f'The {label} .doc file is too long to be read in full: only its first text fragments were '
+                     'compared. Changes further down are missing from this report.'
+                     for label, cut in (('OLD', old_cut), ('NEW', new_cut)) if cut]
 
         if comparative:
             diff_text, filtered = section_canonical_diff(old_text, new_text)

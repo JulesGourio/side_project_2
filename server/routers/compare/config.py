@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 from server.services.compare.prompts import load_prompt
 
-APP_VERSION = os.getenv('APP_VERSION', '2')
+APP_VERSION = os.getenv('APP_VERSION', '1.4.1')
 
 # MAX_COMPARE_FILE_MB takes precedence over MAX_COMPARE_PDF_MB.
 MAX_FILE_BYTES = int(os.getenv('MAX_COMPARE_FILE_MB') or os.getenv('MAX_COMPARE_PDF_MB') or '20') * 1024 * 1024
@@ -53,6 +53,8 @@ def get_config() -> Dict[str, Any]:
     """The compare settings for one request.
 
     :return: the endpoints, the volume path, and the limits of the analysis, the impact search and the summary.
+        ``temperature`` is sent only to the endpoints that accept one (``supports_temperature``): it is not sent to
+        claude-sonnet-5-5, so ``COMPARE_TEMPERATURE`` has no effect on it.
     :raises ValueError: when ``COMPARE_ENABLED`` is not ``true``.
     """
     if os.getenv('COMPARE_ENABLED', 'true').lower() != 'true':

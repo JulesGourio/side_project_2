@@ -39,7 +39,7 @@ logger.info(f'Starting in {env} mode')
 # Log critical env vars at startup to detect misconfiguration early
 _volume_path = os.getenv('COMPARE_VOLUME_PATH', '')
 _lakebase_id = os.getenv('LAKEBASE_PROJECT_ID', '')
-_app_version  = os.getenv('APP_VERSION', '1')
+_app_version  = os.getenv('APP_VERSION', '1.4.1')
 logger.info(f'COMPARE_VOLUME_PATH = {_volume_path!r}')
 logger.info(f'LAKEBASE_PROJECT_ID  = {_lakebase_id!r}')
 logger.info(f'APP_VERSION          = {_app_version!r}')
@@ -145,7 +145,8 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
       exc=exc,
       user_message='Internal server error',
   )
-  return JSONResponse(status_code=500, content={'error': 'Internal server error'})
+  # The server-error layer answers outside the middleware stack, so the headers are set here too.
+  return JSONResponse(status_code=500, content={'error': 'Internal server error'}, headers=SECURITY_HEADERS)
 
 API_PREFIX = '/api'
 app.include_router(health.router, prefix=API_PREFIX, tags=['health'])

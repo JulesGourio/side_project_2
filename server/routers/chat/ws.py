@@ -7,10 +7,11 @@ import os
 import traceback
 from typing import Tuple
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from server.services.chat import mlflow_turns
 from server.services.chat.engine import normalize_division, stream_chat
+from server.routers.errors import TOO_MANY_REQUESTS
 from server.services.chat.llm import TIRED_MESSAGE
 from server.services.chat.config import ALLOWED_ORIGINS, TRANSLATE_BRIDGE_ENABLED
 from server.services.chat.translation_bridge import (
@@ -19,10 +20,10 @@ from server.services.chat.translation_bridge import (
     translate_question_to_en,
 )
 from server.services.chat.turn_log import INFO, TurnLog
-from server.services.infra.credentials import get_credentials
+from server.services.infra.credentials import get_credentials_async
 from server.services.infra.doc_catalog import augment_sources, with_document_info
 from server.services.infra.lakebase import get_pool, store_chat_turn, store_error
-from server.services.infra.user import get_capabilities, get_workspace_url
+from server.services.infra.user import _is_dev, check_rate_limit, get_capabilities, get_workspace_url, reject_anonymous
 from server.routers.chat.helpers import (
     _apply_citation_markers, _clean_messages, _identity_or_anonymous, _number_sources,
     _trim_history, _valid_session_id, _with_today_date,
@@ -51,7 +52,8 @@ async def chat_ws(websocket: WebSocket) -> None:
 
     # A browser always sends its Origin: when origins are listed, a page of another site cannot open this socket.
     origin = websocket.headers.get('origin', '')
-    if ALLOWED_ORIGINS and origin not in ALLOWED_ORIGINS:
+    # With no list, any origin is accepted in development and none elsewhere.
+    if origin not in ALLOWED_ORIGINS if ALLOWED_ORIGINS else not _is_dev():
         logger.warning('chat [ws]: connection from origin %r refused', origin)
         await websocket.close()
         return
@@ -61,7 +63,7 @@ async def chat_ws(websocket: WebSocket) -> None:
         await websocket.close()
         return
 
-    host, token = get_credentials(websocket)  # type: ignore[arg-type]
+    host, token = await get_credentials_async(websocket)
     if not host or not token:
         logger.error('chat [ws]: no Databricks host/token for the app')
         store_error(endpoint=route, error_type='MissingCredentials', stage='ws',
@@ -73,10 +75,24 @@ async def chat_ws(websocket: WebSocket) -> None:
     # Chat access control — WebSockets can't return an HTTP 403, so check here.
     try:
         caps = await get_capabilities(websocket)  # type: ignore[arg-type]
-    except Exception:
-        caps = {'can_chat': True}
-    if not caps.get('can_chat', True):
+    except Exception as exc:
+        logger.error('chat [ws]: capability lookup failed, access refused: %s', exc)
+        caps = {'can_chat': False}
+    if not caps.get('can_chat', False):
         await websocket.send_json({'type': 'error', 'error': 'Chat access not granted'})
+        await websocket.close()
+        return
+
+    identity = await _identity_or_anonymous(websocket)
+    try:
+        reject_anonymous(identity)
+    except HTTPException:
+        await websocket.send_json({'type': 'error', 'error': 'User not identified'})
+        await websocket.close()
+        return
+
+    if check_rate_limit(websocket.headers.get('x-forwarded-user', '')):
+        await websocket.send_json({'type': 'error', 'error': TOO_MANY_REQUESTS})
         await websocket.close()
         return
 
@@ -92,7 +108,6 @@ async def chat_ws(websocket: WebSocket) -> None:
     division = str(data.get('division') or 'ALL').upper()
     endpoint = f'chat-{normalize_division(division).lower()}'
 
-    identity = await _identity_or_anonymous(websocket)
     user_id = identity['user_id']
     workspace_id = identity.get('workspace_id')
     workspace_url = get_workspace_url()

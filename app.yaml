@@ -126,6 +126,8 @@ env:
     value: "4000"
   - name: COMPARE_THINKING_EFFORT
     value: "medium"
+  # Sent only to the endpoints that accept a temperature, and not when the call thinks. Not sent to claude-sonnet-5-5
+  # (the current analysis endpoint), nor to the other Sonnet / Opus 5 and GPT-5.6 / GPT-6 endpoints: it has no effect on them.
   - name: COMPARE_TEMPERATURE
     value: "0.0"
   # Map-reduce for very large documents: a diff body above the threshold is split at section boundaries into chunks of at most CHUNK_SIZE chars,

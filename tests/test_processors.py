@@ -109,7 +109,7 @@ def _xml(lines: list[str]) -> bytes:
     :param lines: element texts
     :return: XML bytes
     """
-    body = ''.join(f'<item id="{i}"><name>{line}</name></item>' for i, line in enumerate(lines))
+    body = ''.join(f'<item><name>{line}</name></item>' for line in lines)
     return f'<?xml version="1.0"?><root>{body}</root>'.encode()
 
 

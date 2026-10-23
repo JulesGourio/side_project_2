@@ -6,7 +6,7 @@ from typing import Literal
 import asyncpg
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server.services.infra.lakebase import get_pool
 from server.services.infra.user import get_user_identity, get_workspace_url, reject_anonymous, require_compare
@@ -30,7 +30,7 @@ async def _owns(conn: asyncpg.Connection, table: str, row_id: int, user_id: str)
 
 class FeedbackRequest(BaseModel):
     vote: Literal['up', 'down']
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=2000)
     message_id: int | None = None
 
 
@@ -81,7 +81,7 @@ async def submit_feedback(body: FeedbackRequest, request: Request) -> dict | JSO
 
 class ImpactFeedbackRequest(BaseModel):
     vote: Literal['up', 'down']
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=2000)
     impact_request_id: int | None = None
     message_id: int | None = None
     old_file_hash: str | None = None

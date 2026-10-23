@@ -44,19 +44,7 @@ esac
 # Bitbucket runs this from the clone root; the bundle and the render script are relative to it.
 cd "$(dirname "$0")/../.."
 
-# The CLI version is read from utils/deploy/databricks_cli_version.txt (one line, e.g. 0.280.0); an empty file installs the latest release.
-CLI_VERSION="$(tr -d '[:space:]' < utils/deploy/databricks_cli_version.txt 2>/dev/null || true)"
-if ! command -v databricks >/dev/null; then
-    apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
-    if [ -n "$CLI_VERSION" ]; then
-        curl -fsSL "https://github.com/databricks/cli/releases/download/v${CLI_VERSION}/databricks_cli_${CLI_VERSION}_linux_amd64.zip" -o /tmp/databricks_cli.zip
-        unzip -q -o /tmp/databricks_cli.zip -d /usr/local/bin databricks
-        chmod +x /usr/local/bin/databricks
-    else
-        echo "WARNING: no pinned Databricks CLI version (utils/deploy/databricks_cli_version.txt is empty): installing the latest." >&2
-        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-    fi
-fi
+bash utils/deploy/install_databricks_cli.sh
 databricks version
 
 if [ -z "${DATABRICKS_TOKEN:-}" ]; then
@@ -77,9 +65,11 @@ if [ "$MODE" = setup ]; then
 fi
 
 # The frontend is not versioned: it is built here, and the bundle sync ships client/out (a deploy that lacked it would delete it from the app's files).
+# Bun is pinned so that the build tool does not change between two deployments; the installer is downloaded to a file, then run.
 BUN_VERSION="1.4.2"
 if ! command -v bun >/dev/null; then
-    curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
+    curl -fsSL https://bun.sh/install -o /tmp/bun_install.sh
+    bash /tmp/bun_install.sh "bun-v${BUN_VERSION}"
     export PATH="$HOME/.bun/bin:$PATH"
 fi
 (cd client && bun install --frozen-lockfile && bun run build)

@@ -203,6 +203,16 @@ def test_impact_cache_key_depends_on_changes_and_index():
     assert base != _impact_cache_version('[{"section": "4.3"}]', {**cfg, 'impact_index': 'cat.sch.chunks_full_index'})
 
 
+def test_impact_cache_key_depends_on_the_judge_prompt(monkeypatch):
+    from server.routers.compare import impact
+    cfg = {'impact_index': 'i', 'impact_endpoint': 'judge',
+           'impact_max_queries': 30, 'impact_per_query_results': 40, 'impact_max_candidates': 15}
+    monkeypatch.setattr(impact, 'load_prompt', lambda name: 'judge prompt v1')
+    before = impact._impact_cache_version('changes', cfg)
+    monkeypatch.setattr(impact, 'load_prompt', lambda name: 'judge prompt v2')
+    assert impact._impact_cache_version('changes', cfg) != before
+
+
 @pytest.mark.parametrize('text', [
     '**Aucun changement significatif détecté.**',
     'Aucune modification significative détectée.',

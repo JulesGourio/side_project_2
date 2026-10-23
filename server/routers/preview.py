@@ -15,7 +15,7 @@ from pptx import Presentation
 from server.routers.compare.common import _validate_file
 from server.services.compare.conversion import doc_to_text, docx_to_html_body, pptx_to_slide_images
 from server.services.compare.soffice import SofficeUnavailable, convert_docx_to_pdf
-from server.services.infra.user import require_compare
+from server.services.infra.user import rate_limit, require_compare
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,7 +27,7 @@ except ImportError:
     _ALIGN_MAP = {}
 
 
-@router.post('/preview', response_class=HTMLResponse, dependencies=[Depends(require_compare)])
+@router.post('/preview', response_class=HTMLResponse, dependencies=[Depends(require_compare), Depends(rate_limit)])
 async def preview_document(file: UploadFile = File(...)) -> HTMLResponse:
     """An HTML preview of an office document.
 
@@ -63,7 +63,7 @@ def _render_preview(content: bytes, mime: str, name: str) -> HTMLResponse:
     return HTMLResponse('<p>Preview not available for this file type.</p>', status_code=400)
 
 
-@router.post('/preview/pdf', dependencies=[Depends(require_compare)])
+@router.post('/preview/pdf', dependencies=[Depends(require_compare), Depends(rate_limit)])
 async def preview_document_pdf(file: UploadFile = File(...)) -> Response:
     """Exact-layout preview: convert an office document (docx/doc/pptx/xlsx)
     to PDF through headless LibreOffice (server/services/compare/soffice.py). Returns

@@ -22,6 +22,14 @@ if (-not $Targets.ContainsKey($AppEnv)) {
     exit 1
 }
 
+if ($AppEnv -eq 'prod') {
+    $Branch = (& git rev-parse --abbrev-ref HEAD).Trim()
+    if ($Branch -ne 'main') {
+        Write-Host "PROD is deployed from the main branch only (current branch: $Branch)." -ForegroundColor Red
+        exit 1
+    }
+}
+
 $Target  = $Targets[$AppEnv].Target
 $AppName = $Targets[$AppEnv].AppName
 $Profile = $Targets[$AppEnv].Profile

@@ -25,9 +25,9 @@ definitions:
         clone:
           depth: 1
         script:
-          # requirements.txt first: the tests run on the versions the app installs.
-          - pip install -q -r requirements.txt
+          # requirements.txt last: the tests run on the versions the app installs, not on newer ones pulled in by the dev extras.
           - pip install -q -e ".[dev]"
+          - pip install -q -r requirements.txt
           - python -m pytest -q tests
 
     # -----------------------------------------------------------------------
@@ -65,7 +65,7 @@ definitions:
           depth: 1
         script:
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
-          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - bash utils/deploy/install_databricks_cli.sh
           - databricks version
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
@@ -111,7 +111,7 @@ definitions:
           depth: 1
         script:
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
-          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - bash utils/deploy/install_databricks_cli.sh
           - databricks version
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
@@ -140,7 +140,7 @@ definitions:
           depth: 1
         script:
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
-          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - bash utils/deploy/install_databricks_cli.sh
           - databricks version
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
@@ -170,7 +170,7 @@ definitions:
           depth: 1
         script:
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
-          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - bash utils/deploy/install_databricks_cli.sh
           - databricks version
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
@@ -205,7 +205,7 @@ definitions:
           depth: 1
         script:
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
-          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - bash utils/deploy/install_databricks_cli.sh
           - databricks version
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
@@ -296,10 +296,10 @@ definitions:
           depth: 1
         script:
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
-          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - bash utils/deploy/install_databricks_cli.sh
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
-              echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'UAT')." >&2
+              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'uat')." >&2
               exit 1
             fi
           - |
@@ -321,10 +321,10 @@ definitions:
         script:
           - test "$BITBUCKET_BRANCH" = "main" || { echo "PROD is deployed from the main branch only." >&2; exit 1; }
           - apt-get update -qq && apt-get install -y -qq curl unzip >/dev/null
-          - curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          - bash utils/deploy/install_databricks_cli.sh
           - |
             if [ -z "$DATABRICKS_TOKEN" ]; then
-              echo "ERREUR: variable DATABRICKS_TOKEN absente (environnement Bitbucket 'Production')." >&2
+              echo "ERROR: DATABRICKS_TOKEN is missing (Bitbucket environment 'production')." >&2
               exit 1
             fi
           - |

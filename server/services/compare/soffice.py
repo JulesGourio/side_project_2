@@ -47,6 +47,10 @@ _convert_semaphore = threading.Semaphore(int(os.getenv('SOFFICE_MAX_CONCURRENT',
 _discovery_lock = threading.Lock()
 _discovered_path: str | None = None
 _discovery_error: str | None = None
+# A failed discovery (a download, a probe of up to 120 s) is not retried by every request: it is remembered this long.
+_DISCOVERY_RETRY_S = 300.0
+_discovery_failed_at: float | None = None
+_clock = time.monotonic
 _engine_version: str | None = None
 
 
@@ -245,13 +249,24 @@ def _subprocess_env(binary: str | None = None) -> dict:
 
 
 def find_soffice() -> str:
-    """Resolve (once per process) the soffice binary path. Raises SofficeUnavailable."""
-    global _discovered_path, _discovery_error, _engine_version
+    """Resolve (once per process) the soffice binary path.
+
+    A failed discovery is remembered for ``_DISCOVERY_RETRY_S`` seconds: during that time the same error is raised
+    without probing again.
+
+    :return: the path of the soffice binary
+    :raises SofficeUnavailable: when no usable binary was found
+    """
+    global _discovered_path, _discovery_error, _engine_version, _discovery_failed_at
     if _discovered_path:
         return _discovered_path
     with _discovery_lock:
         if _discovered_path:
             return _discovered_path
+        if _discovery_failed_at is not None:
+            if _clock() - _discovery_failed_at < _DISCOVERY_RETRY_S:
+                raise SofficeUnavailable(_discovery_error or 'LibreOffice discovery failed')
+            _discovery_failed_at = None
 
         errors = []
 
@@ -284,6 +299,7 @@ def find_soffice() -> str:
         if not candidates:
             errors.append('no soffice binary found (set SOFFICE_PATH or SOFFICE_ARCHIVE_VOLUME_PATH)')
             _discovery_error = '; '.join(errors)
+            _discovery_failed_at = _clock()
             raise SofficeUnavailable(_discovery_error)
 
         try:
@@ -291,10 +307,12 @@ def find_soffice() -> str:
         except SofficeUnavailable as e:
             errors.append(str(e))
             _discovery_error = '; '.join(errors)
+            _discovery_failed_at = _clock()
             raise SofficeUnavailable(_discovery_error)
 
         _discovered_path = str(candidates[0])
         _discovery_error = None
+        _discovery_failed_at = None
         logger.info('soffice: using %s (%s)', _discovered_path, _engine_version)
         return _discovered_path
 

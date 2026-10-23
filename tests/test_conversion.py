@@ -120,7 +120,9 @@ def test_olefile_text_is_bounded_and_logged(monkeypatch, caplog):
     monkeypatch.setattr(conversion, '_OLEFILE_MAX_RUNS', 4)
     with caplog.at_level('WARNING'):
         text = conversion._olefile_extract(b'doc', 'a.doc')
-    assert len(text.split('\n')) == 4 and 'keeping the first 4' in caplog.text
+    lines = text.split('\n')
+    assert len(lines) == 5 and lines[-1] == conversion.DOC_TRUNCATED_NOTE and 'keeping the first 4' in caplog.text
+    assert conversion.DOC_TRUNCATED_NOTE not in '\n'.join(lines[:4])
 
 
 def test_olefile_gives_nothing_for_a_file_that_is_not_ole():

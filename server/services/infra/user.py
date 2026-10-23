@@ -37,6 +37,10 @@ _CAPS_BYPASS = os.getenv('CAPS_BYPASS', 'false').strip().lower() == 'true'
 
 
 def _is_dev() -> bool:
+    """Whether the app runs in development (``ENV=development``).
+
+    :return: True in development.
+    """
     return os.getenv('ENV', 'production') == 'development'
 
 
@@ -313,16 +317,24 @@ def _rate_limited(user_key: str, now: float, limit: int) -> bool:
     return False
 
 
+def check_rate_limit(user_key: str) -> bool:
+    """Count one model request of a user against ``RATE_LIMIT_PER_MINUTE``.
+
+    :param user_key: the proxy's user header value, empty for an unidentified caller.
+    :return: True when the request exceeds the limit and must be refused.
+    """
+    limit = RATE_LIMIT_PER_MINUTE
+    if limit <= 0:
+        return False
+    return _rate_limited(user_key.strip() or 'anon', time.monotonic(), limit)
+
+
 async def rate_limit(request: Request) -> None:
     """FastAPI dependency: 429 when the user sent more than ``RATE_LIMIT_PER_MINUTE`` model requests in the last minute.
 
     :param request: incoming request
     """
-    limit = RATE_LIMIT_PER_MINUTE
-    if limit <= 0:
-        return
-    key = request.headers.get('x-forwarded-user', '').strip() or 'anon'
-    if _rate_limited(key, time.monotonic(), limit):
+    if check_rate_limit(request.headers.get('x-forwarded-user', '')):
         raise HTTPException(status_code=429, detail=TOO_MANY_REQUESTS)
 
 

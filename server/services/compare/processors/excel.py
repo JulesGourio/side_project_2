@@ -240,9 +240,53 @@ def _modified_rows(old_rows: Dict[str, List[str]], new_rows: Dict[str, List[str]
     return modified
 
 
+def _header_names(header: str) -> List[str]:
+    """The column names of a header line, ``col_<index>`` for an empty one.
+
+    :param header: tab-separated header line, empty when the sheet has none
+    :return: one name per column
+    """
+    return [h.strip() or f'col_{i}' for i, h in enumerate(header.split('\t'))] if header else []
+
+
+def _align_columns(old_header: str, new_header: str, old_rows: Dict[str, List[str]],
+                   new_rows: Dict[str, List[str]]) -> Tuple[List[str], List[str], List[str], Dict[str, List[str]], Dict[str, List[str]]] | None:
+    """Match the columns of two different headers by name.
+
+    The key column must stay first and every name must be unique, otherwise the rows cannot be matched by name. A
+    header that only gains columns at the end needs no matching.
+
+    :param old_header: header line of the old sheet
+    :param new_header: header line of the new sheet
+    :param old_rows: rows of the old sheet by key
+    :param new_rows: rows of the new sheet by key
+    :return: ``(names of the columns in both, names only in the new header, names only in the old header, old rows,
+             new rows)``, the rows reduced to the common columns; None when the columns cannot or need not be matched
+             by name
+    """
+    old_names, new_names = _header_names(old_header), _header_names(new_header)
+    if not old_names or not new_names or old_names[0] != new_names[0]:
+        return None
+    if len(set(old_names)) != len(old_names) or len(set(new_names)) != len(new_names):
+        return None
+    if new_names[:len(old_names)] == old_names:
+        return None  # columns only added at the end: by position they are compared cell by cell
+    common = [n for n in old_names if n in new_names]
+    old_at = [old_names.index(n) for n in common]
+    new_at = [new_names.index(n) for n in common]
+    added = [n for n in new_names if n not in old_names]
+    removed = [n for n in old_names if n not in new_names]
+    old_proj = {k: [_cell(r, i) for i in old_at] for k, r in old_rows.items()}
+    new_proj = {k: [_cell(r, i) for i in new_at] for k, r in new_rows.items()}
+    return common, added, removed, old_proj, new_proj
+
+
 def _sheet_diff(sheet: str, old_header: str, new_header: str, old_rows: Dict[str, List[str]],
                 new_rows: Dict[str, List[str]]) -> List[str]:
     """The report lines of one sheet present in both workbooks.
+
+    When the headers differ, the columns are matched by name (a column inserted in the middle does not shift the
+    others); identical headers, or headers that cannot be matched by name, are compared by position.
 
     :param sheet: the ``[Sheet: ...]`` marker
     :param old_header: header line of the old sheet
@@ -251,17 +295,37 @@ def _sheet_diff(sheet: str, old_header: str, new_header: str, old_rows: Dict[str
     :param new_rows: rows of the new sheet by key
     :return: the report lines
     """
-    old_headers = old_header.split('\t') if old_header else []
-    # A column added at the end is named by the new header.
-    headers = old_headers + (new_header.split('\t')[len(old_headers):] if new_header else [])
+    header_changed = bool(new_header) and new_header != old_header
+    aligned = _align_columns(old_header, new_header, old_rows, new_rows) if header_changed and old_header else None
+    added_cols: List[str] = []
+    removed_cols: List[str] = []
+    if aligned:
+        headers, added_cols, removed_cols, old_cmp, new_cmp = aligned
+    else:
+        old_headers = old_header.split('\t') if old_header else []
+        # A column added at the end is named by the new header.
+        headers = old_headers + (new_header.split('\t')[len(old_headers):] if new_header else [])
+        old_cmp, new_cmp = old_rows, new_rows
     added_keys = sorted(new_rows.keys() - old_rows.keys())
     removed_keys = sorted(old_rows.keys() - new_rows.keys())
-    volatile = _volatile_columns(old_rows, new_rows)
+    volatile = _volatile_columns(old_cmp, new_cmp)
     volatile_names = [_column_name(headers, ci) for ci in sorted(volatile)]
+    # Added and removed rows are shown with their own header, so the volatile columns are found there by name.
+    if aligned:
+        new_volatile = {i for i, n in enumerate(_header_names(new_header)) if n in volatile_names}
+        old_volatile = {i for i, n in enumerate(_header_names(old_header)) if n in volatile_names}
+        new_row_headers, old_row_headers = _header_names(new_header), _header_names(old_header)
+    else:
+        new_volatile = old_volatile = volatile
+        new_row_headers = old_row_headers = headers
 
     out = [f'\n{sheet}', f'Key column: {headers[0] if headers else "col_0"}']
-    if new_header and new_header != old_header:
+    if header_changed:
         out.append(f'Header changed: {old_header.replace(chr(9), " | ")!r} → {new_header.replace(chr(9), " | ")!r}')
+    if added_cols:
+        out.append('Columns added: ' + ', '.join(f'"{n}"' for n in added_cols))
+    if removed_cols:
+        out.append('Columns removed: ' + ', '.join(f'"{n}"' for n in removed_cols))
     if volatile_names:
         out.append(
             'Auto-excluded columns (recalculated every update — not shown): '
@@ -269,18 +333,18 @@ def _sheet_diff(sheet: str, old_header: str, new_header: str, old_rows: Dict[str
         )
     if added_keys:
         out.append(f'\nADDED rows ({len(added_keys)}):')
-        out.extend(f'  + {key} | {_row_fields(new_rows[key], headers, volatile)}' for key in added_keys)
+        out.extend(f'  + {key} | {_row_fields(new_rows[key], new_row_headers, new_volatile)}' for key in added_keys)
     if removed_keys:
         out.append(f'\nREMOVED rows ({len(removed_keys)}):')
-        out.extend(f'  - {key} | {_row_fields(old_rows[key], headers, volatile)}' for key in removed_keys)
+        out.extend(f'  - {key} | {_row_fields(old_rows[key], old_row_headers, old_volatile)}' for key in removed_keys)
 
-    modified = _modified_rows(old_rows, new_rows, headers, volatile)
+    modified = _modified_rows(old_cmp, new_cmp, headers, volatile)
     if modified:
         out.append(f'\nMODIFIED rows ({len(modified)} with changes in retained columns):')
         for key, changes in modified:
             out.append(f'  ~ {key}:')
             out.extend(f'    {change[:_CHANGE_CHARS]}' for change in changes[:_CHANGES_PER_ROW])
-    if not added_keys and not removed_keys and not modified and not (new_header and new_header != old_header):
+    if not added_keys and not removed_keys and not modified and not header_changed:
         out.append('\nNo significant changes detected (only auto-calculated columns differ).')
     return out
 

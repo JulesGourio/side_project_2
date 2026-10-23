@@ -251,3 +251,38 @@ def test_impact_excel_has_one_row_per_passage():
     assert wb['Passages'].max_row == 3
     assert wb['Documents'].max_row == 2
     assert wb['Passages']['H2'].value.startswith('C1: 4.3 Torque')
+
+
+def _rows(n, text_len=50, section=None):
+    return json.dumps([{'section': section or f'S{i}', 'type': 'Value', 'criticality': 'medium',
+                        'before': 'a' * text_len, 'after': 'b' * text_len, 'rationale': ''} for i in range(n)])
+
+
+def test_merged_queries_stay_within_the_limit_and_hold_every_change():
+    result = changes_to_queries(_rows(12), max_queries=3, max_query_chars=500)
+    assert len(result['queries']) <= 3 and result['left_out'] == []
+    assert all(len(q['text']) <= 500 for q in result['queries'])
+    assert sorted(i for q in result['queries'] for i in q['change_ids']) == sorted(c['id'] for c in result['changes'])
+    for q in result['queries']:
+        for cid in q['change_ids']:
+            change = next(c for c in result['changes'] if c['id'] == cid)
+            assert change['text'] in q['text']
+
+
+def test_changes_that_cannot_fit_are_reported_as_left_out():
+    result = changes_to_queries(_rows(10, text_len=100), max_queries=2, max_query_chars=400)
+    searched = [i for q in result['queries'] for i in q['change_ids']]
+    assert len(result['queries']) == 2 and result['left_out']
+    assert sorted(searched + result['left_out']) == sorted(c['id'] for c in result['changes'])
+    assert not set(searched) & set(result['left_out'])
+    assert all(len(q['text']) <= 400 for q in result['queries'])
+
+
+def test_no_change_is_left_out_when_everything_fits():
+    assert changes_to_queries(_rows(5))['left_out'] == []
+
+
+def test_one_long_change_is_capped_in_its_query_but_kept_whole_in_the_record():
+    result = changes_to_queries(_rows(1, text_len=3000), max_query_chars=20000, max_change_chars=500)
+    assert len(result['queries'][0]['text']) == 500
+    assert len(result['changes'][0]['text']) > 5000 and result['changes'][0]['before'] == 'a' * 3000

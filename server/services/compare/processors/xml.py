@@ -18,7 +18,8 @@ def _extract_xml(xml_bytes: bytes) -> List[str]:
     """Walk the XML tree depth-first and return text lines.
 
     Extracts both element.text (before first child) and element.tail
-    (after closing tag, belonging to parent). Skips whitespace-only content.
+    (after closing tag, belonging to parent), and one ``tag@attribute=value``
+    line per attribute, in attribute-name order. Skips whitespace-only content.
     Each non-empty text node is tagged with a trailing [Item N] counter so
     the diff engine can track document-order position for Excel sorting.
 
@@ -40,6 +41,9 @@ def _extract_xml(xml_bytes: bytes) -> List[str]:
 
         :param element: XML element to walk
         """
+        for name in sorted(element.attrib):
+            counter[0] += 1
+            lines.append(f'{element.tag}@{name}={element.attrib[name]} [Item {counter[0]}]')
         text = (element.text or '').strip()
         if text:
             counter[0] += 1

@@ -10,7 +10,7 @@ from pathlib import Path
 
 # --- Chat socket ---
 
-# Origins allowed to open the chat WebSocket, comma-separated (for example the app's own URL); empty = any origin.
+# Origins allowed to open the chat WebSocket, comma-separated (for example the app's own URL); empty = any origin in development, none elsewhere.
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv('CHAT_ALLOWED_ORIGINS', '').split(',') if o.strip()]
 
 

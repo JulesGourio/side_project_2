@@ -35,6 +35,15 @@ def client():
             yield c
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limit():
+    """Each test starts with an empty rate-limit window: the sockets of the whole module share one anonymous key."""
+    from server.services.infra import user
+    user._rate_hits.clear()
+    yield
+    user._rate_hits.clear()
+
+
 def _engine_stream(*events):
     async def _gen(*args, **kwargs):
         for e in events:
@@ -63,7 +72,7 @@ def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=Tru
         patch('server.routers.chat.ws.get_capabilities', new=AsyncMock(return_value=caps or {'can_chat': True})),
         patch('server.routers.chat.helpers.get_user_identity', new=AsyncMock(
             return_value={'user_id': 'u1', 'workspace_id': None, 'email': 'u1@example.com'})),
-        patch('server.routers.chat.ws.get_credentials', return_value=('https://host', 'tok')),
+        patch('server.routers.chat.ws.get_credentials_async', new=AsyncMock(return_value=('https://host', 'tok'))),
         patch('server.routers.chat.ws.get_pool', return_value=pool),
         patch('server.routers.chat.ws._save_turn', save_turn),
         patch('server.routers.chat.ws.store_chat_turn', store_turn),
@@ -191,7 +200,7 @@ def test_missing_credentials_show_the_tired_message_and_log_the_cause(client):
     store = MagicMock()
     with (
         patch('server.routers.chat.ws.CHAT_ENABLED', True),
-        patch('server.routers.chat.ws.get_credentials', return_value=('', '')),
+        patch('server.routers.chat.ws.get_credentials_async', new=AsyncMock(return_value=('', ''))),
         patch('server.routers.chat.ws.store_error', store),
     ):
         with client.websocket_connect('/api/chat/ws') as ws:
@@ -237,3 +246,56 @@ def test_a_stop_while_the_answer_is_hidden_by_the_translation_still_ends_the_tur
     received, mocks = _talk(client, pool=MagicMock(), engine=MagicMock(side_effect=_silent), leave_after=1)
     assert received[0]['type'] == 'ping' and state['closed']
     assert (_logged_turn(mocks).args[0].status, _logged_turn(mocks).args[0].error, _logged_turn(mocks).args[0].codes) == ('aborted', {}, ['client_disconnected'])
+
+
+def test_capability_lookup_failure_refuses_the_socket(client):
+    with (
+        patch('server.routers.chat.ws.get_credentials_async', new=AsyncMock(return_value=('https://host', 'tok'))),
+        patch('server.routers.chat.ws.get_capabilities', new=AsyncMock(side_effect=RuntimeError('boom'))),
+    ):
+        with client.websocket_connect('/api/chat/ws') as ws:
+            assert ws.receive_json() == {'type': 'error', 'error': 'Chat access not granted'}
+
+
+def test_anonymous_caller_outside_development_gets_an_error_event(client):
+    identity = {'user_id': '', 'workspace_id': None, 'email': None}
+    with (
+        patch('server.services.infra.user._is_dev', return_value=False),
+        patch('server.services.infra.user._CAPS_BYPASS', False),
+        patch('server.routers.chat.ws.get_credentials_async', new=AsyncMock(return_value=('https://host', 'tok'))),
+        patch('server.routers.chat.ws.get_capabilities', new=AsyncMock(return_value={'can_chat': True})),
+        patch('server.routers.chat.ws._identity_or_anonymous', new=AsyncMock(return_value=identity)),
+    ):
+        with client.websocket_connect('/api/chat/ws') as ws:
+            assert ws.receive_json() == {'type': 'error', 'error': 'User not identified'}
+
+
+def test_empty_origin_list_refuses_every_origin_outside_development(client):
+    with (
+        patch('server.routers.chat.ws.ALLOWED_ORIGINS', []),
+        patch('server.routers.chat.ws._is_dev', return_value=False),
+    ):
+        with client.websocket_connect('/api/chat/ws', headers={'origin': 'https://evil.example'}) as ws:
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+
+
+def test_empty_origin_list_accepts_in_development_and_a_set_list_is_exact(client):
+    received, _ = _talk(client)
+    assert received[-1]['type'] == 'done'
+    with patch('server.routers.chat.ws.ALLOWED_ORIGINS', ['https://app.example']):
+        with client.websocket_connect('/api/chat/ws', headers={'origin': 'https://other.example'}) as ws:
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+
+
+def test_over_the_rate_limit_the_socket_gets_an_error_event_and_closes(client):
+    with (
+        patch('server.routers.chat.ws.get_credentials_async', new=AsyncMock(return_value=('https://host', 'tok'))),
+        patch('server.routers.chat.ws.get_capabilities', new=AsyncMock(return_value={'can_chat': True})),
+        patch('server.routers.chat.ws.check_rate_limit', return_value=True),
+    ):
+        with client.websocket_connect('/api/chat/ws') as ws:
+            assert ws.receive_json() == {'type': 'error', 'error': 'Too many requests, try again in a minute.'}
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()

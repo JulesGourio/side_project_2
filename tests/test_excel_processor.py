@@ -121,3 +121,49 @@ def test_a_plain_value_is_read_without_braces():
     from server.services.compare.processors.excel import _extract_xlsx
     lines, _ = _extract_xlsx(_workbook([['Name', 'Total'], ['A', 5]]))
     assert lines == ['[Sheet: Data]', 'Name\tTotal', 'A\t5']
+
+
+def _sheet(header, rows):
+    return ['[Sheet: S]', '\t'.join(header)] + ['\t'.join(str(c) for c in r) for r in rows]
+
+
+def _thirty_rows(columns=('Value', 'Rank', 'Note')):
+    return [[f'K{i:02d}'] + [f'{c}{i}' for c in columns] for i in range(30)]
+
+
+def test_a_column_inserted_in_the_middle_does_not_shift_the_other_columns():
+    old = _sheet(['Ref', 'Value', 'Rank', 'Note'], _thirty_rows())
+    new_rows = [[r[0], r[1], f'new{n}', r[2], r[3]] for n, r in enumerate(_thirty_rows())]
+    new_rows[4][3] = 'Rank-changed'
+    new = _sheet(['Ref', 'Value', 'Extra', 'Rank', 'Note'], new_rows)
+    report = excel._build_diff_keyed(old, new, 'old.xlsx', 'new.xlsx')
+    assert 'Columns added: "Extra"' in report
+    assert 'Auto-excluded' not in report
+    assert "~ K04:" in report and "Rank: 'Rank4' → 'Rank-changed'" in report
+    assert report.count('  ~ ') == 1
+
+
+def test_a_removed_column_is_reported_and_the_others_still_compared():
+    old = _sheet(['Ref', 'Value', 'Rank', 'Note'], _thirty_rows())
+    new_rows = [[r[0], r[2], r[3]] for r in _thirty_rows()]
+    new_rows[2][2] = 'Note-changed'
+    new = _sheet(['Ref', 'Rank', 'Note'], new_rows)
+    report = excel._build_diff_keyed(old, new, 'old.xlsx', 'new.xlsx')
+    assert 'Columns removed: "Value"' in report and 'Auto-excluded' not in report
+    assert "Note: 'Note2' → 'Note-changed'" in report and report.count('  ~ ') == 1
+
+
+def test_a_genuinely_recalculated_column_is_still_excluded_after_alignment():
+    old = _sheet(['Ref', 'Value', 'Rank'], _thirty_rows(('Value', 'Rank')))
+    new_rows = [[r[0], f'x{n}', r[1], r[2]] for n, r in enumerate(_thirty_rows(('Value', 'Rank')))]
+    new_rows = [[r[0], r[1], r[2]] for r in new_rows]
+    new = _sheet(['Ref', 'Extra', 'Rank'], [[r[0], 'e', f'changed{n}'] for n, r in enumerate(new_rows)])
+    report = excel._build_diff_keyed(old, new, 'old.xlsx', 'new.xlsx')
+    assert 'Auto-excluded columns' in report and '"Rank"' in report
+
+
+def test_identical_headers_keep_the_positional_comparison():
+    old = _sheet(['Ref', 'Value'], [['A', 1], ['B', 2]])
+    new = _sheet(['Ref', 'Value'], [['A', 1], ['B', 3]])
+    report = excel._build_diff_keyed(old, new, 'old.xlsx', 'new.xlsx')
+    assert "Value: '2' → '3'" in report and 'Columns added' not in report

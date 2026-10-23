@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { TIRED_MESSAGE, streamChat } from './chatStream';
 import { stripDivision, type Division } from './division';
 import type { Message, Source } from './message';
+import { buildHistory } from './history';
 
 const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 const genSessionId = () => (typeof crypto !== 'undefined' && crypto.randomUUID
@@ -59,7 +60,7 @@ export function useChatConversation(division: Division, onTurnSaved: () => void)
   const stop = useCallback(() => {
     abortRef.current?.abort();
     setStreaming(false);
-    setMessages(prev => prev.map(m => (m.streaming ? { ...m, streaming: false } : m)));
+    setMessages(prev => prev.map(m => (m.streaming ? { ...m, streaming: false, stopped: true } : m)));
   }, []);
 
   const share = useCallback(async () => {
@@ -88,11 +89,7 @@ export function useChatConversation(division: Division, onTurnSaved: () => void)
     setInput('');
     setStreaming(true);
 
-    // Failed and stopped-empty turns are not part of the conversation the model should see.
-    const history = [
-      ...messages.filter(m => !m.error && m.content.trim()).map(m => ({ role: m.role, content: m.content })),
-      { role: 'user', content: text },
-    ];
+    const history = buildHistory(messages, text);
     const controller = new AbortController();
     abortRef.current = controller;
     let accumulated = '';

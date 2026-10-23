@@ -16,7 +16,7 @@ from server.services.compare.processors.factory import (
 from server.services.compare.llm import TIRED_MESSAGE
 from server.services.compare import summarize as summarize_service
 from server.services.compare.summarize import summarize_image, summarize_text
-from server.services.infra.credentials import get_credentials
+from server.services.infra.credentials import get_credentials_async
 from server.services.infra.lakebase import (
     get_cached_summary, store_error,
     store_summary_cache,
@@ -105,7 +105,7 @@ async def summarize_document(
             'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0, 'cost_eur': 0.0},
         }
 
-    host, token = get_credentials(request)
+    host, token = await get_credentials_async(request)
     if not host or not token:
         return JSONResponse({'error': 'Missing Databricks credentials'}, status_code=400)
 

@@ -23,6 +23,8 @@ export interface Message {
   dbId?: number;
   sessionId?: string;
   error?: boolean;
+  /** The user stopped the answer before its end: the text is partial and is not sent back as history. */
+  stopped?: boolean;
   sources?: Source[];
   /** Only populated on the shared read-only view: the owner's vote, never editable by a viewer. */
   feedback?: Feedback | null;

@@ -20,6 +20,7 @@ from pyspark.sql import types as T
 
 import image_utils
 import selection
+from decisions import PENDING_OCR_PREFIX, exclude_statuses
 from retention import snapshots_to_drop
 from format_parsers import strip_ooxml_bloat
 from tables import table_exists, write_table
@@ -46,6 +47,7 @@ from config import (
     VOLUME_BASE_PATH,
     VOLUME_ROOT_PATH,
     IMAGES_PENDING,
+    SUPERSEDED_REVISION,
     TERMINAL_STATUSES,
 )
 
@@ -79,6 +81,25 @@ def set_job_run_id(job_run_id) -> None:
     """
     global JOB_RUN_ID
     JOB_RUN_ID = job_run_id or None
+
+
+def _superseded_iddocs() -> set:
+    """IDDOCs recorded as a superseded revision, which no run mode targets.
+
+    :return: the IDDOCs, empty when ``parsed_documents`` does not exist or cannot be read
+    """
+    try:
+        return {
+            r.IDDOC
+            for r in spark.table(TARGET_PROCESSED_FILES_TABLE)
+            .filter(f.col("parse_status") == SUPERSEDED_REVISION)
+            .select("IDDOC")
+            .distinct()
+            .collect()
+        }
+    except Exception as exc:
+        logger.warning(f"[SCOPE] Superseded revisions not read ({exc}); none excluded.")
+        return set()
 
 
 def resolve_parse_scope(df_business_meta) -> tuple[set, set]:
@@ -155,6 +176,15 @@ def resolve_parse_scope(df_business_meta) -> tuple[set, set]:
         )
 
     pending_iddocs = manifest_iddocs - (already_done_iddocs - revised_iddocs)
+    superseded = _superseded_iddocs()
+    if superseded:
+        before = len(pending_iddocs)
+        pending_iddocs = exclude_statuses(
+            pending_iddocs, {i: SUPERSEDED_REVISION for i in superseded}, {SUPERSEDED_REVISION}
+        )
+        logger.info(
+            f"[SCOPE] {before - len(pending_iddocs)} superseded revision(s) left out of the targets."
+        )
     if isinstance(PARSE_FILTER, (list, tuple, set)):
         target_iddocs = pending_iddocs & set(PARSE_FILTER)
     else:
@@ -266,15 +296,18 @@ def make_parse_fn(cluster_parallelism) -> Callable[[DataFrame, int], DataFrame]:
         df_parsed = _with_parse_result(df.repartition(partitions), xml_fallback_col).drop(
             "_xml_fallback_only"
         )
+        text_empty = f.length(f.trim(f.col("document_text"))) == 0
+        small_skip = (
+            text_empty
+            & (f.col("source_file_size_bytes") <= EMPTY_SMALL_FILE_SIZE_BYTES)
+            & ~f.coalesce(f.col("parser_strategy").startswith(PENDING_OCR_PREFIX), f.lit(False))
+        )
+        # Same rule as decisions.parse_status.
         return df_parsed.withColumn(
             "parse_status",
-            f.when(
-                (f.length(f.trim(f.col("document_text"))) == 0)
-                & (f.col("source_file_size_bytes") <= EMPTY_SMALL_FILE_SIZE_BYTES),
-                f.lit("SKIPPED_EMPTY_SMALL_FILE"),
-            )
-            .when(f.col("parser_error").isNotNull(), f.lit("ERROR"))
-            .when(f.length(f.trim(f.col("document_text"))) == 0, f.lit("EMPTY_TEXT"))
+            f.when(f.col("parser_error").isNotNull(), f.lit("ERROR"))
+            .when(small_skip, f.lit("SKIPPED_EMPTY_SMALL_FILE"))
+            .when(text_empty, f.lit("EMPTY_TEXT"))
             .otherwise(f.lit("SUCCESS")),
         )
 
@@ -339,21 +372,30 @@ def snapshot_or_log_checkpoint(num_files) -> None:
 
 def read_checkpoint_deduped(columns=None) -> DataFrame:
     """Read parsing_checkpoint with exactly one row per IDDOC — dedup by
-    IDDOC (not source_path), preferring SUCCESS then the most recent attempt.
+    IDDOC (not source_path): the rows of the bytes of the latest attempt first, then SUCCESS, then the most recent
+    attempt, so a SUCCESS of other bytes never stands in for a failed parse of the current ones.
 
     `columns`: only these (plus the dedup keys), so a caller that needs a few columns does not sort every document text.
 
     :param columns: Columns to read besides the dedup keys, or None for all of them.
     """
+    by_time = Window.partitionBy("IDDOC").orderBy(f.desc("ingestion_timestamp"))
     w = Window.partitionBy("IDDOC").orderBy(
+        f.when(f.col("document_sha256").eqNullSafe(f.col("_latest_sha")), 0).otherwise(1),
         f.when(f.col("parse_status") == "SUCCESS", 0).otherwise(1),
         f.desc("ingestion_timestamp"),
     )
     df = spark.table(CHECKPOINT_TABLE)
     if columns:
-        keys = ["IDDOC", "parse_status", "ingestion_timestamp"]
+        keys = ["IDDOC", "parse_status", "ingestion_timestamp", "document_sha256"]
         df = df.select(*keys, *[c for c in columns if c not in keys])
-    return df.withColumn("_rn", f.row_number().over(w)).filter(f.col("_rn") == 1).drop("_rn")
+    # Same rule as decisions.pick_checkpoint_row.
+    return (
+        df.withColumn("_latest_sha", f.first("document_sha256").over(by_time))
+        .withColumn("_rn", f.row_number().over(w))
+        .filter(f.col("_rn") == 1)
+        .drop("_rn", "_latest_sha")
+    )
 
 
 def _reusable_checkpoint_rows() -> DataFrame:

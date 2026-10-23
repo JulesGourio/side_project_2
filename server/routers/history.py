@@ -1,6 +1,7 @@
 """History endpoints — save and retrieve comparison records from Lakebase."""
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
@@ -8,6 +9,7 @@ from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from server.routers.compare.common import _is_within_volume, user_session_root
 from server.services.infra.lakebase import get_pool, upsert_user
 from server.services.infra.user import get_user_identity, get_workspace_url, reject_anonymous, require_compare
 # One definition: a row written with another default than the one the cache
@@ -67,6 +69,31 @@ class SaveComparisonRequest(BaseModel):
     llm_request_id: int | None = None
 
 
+async def _accepted_session_path(conn: Any, user_id: str, requested: str | None) -> str | None:
+    """The session folder a saved comparison may name: the caller's own, never a colleague's.
+
+    :param conn: an acquired Lakebase connection.
+    :param user_id: the caller.
+    :param requested: the folder sent by the client.
+    :return: ``requested`` when it is under the caller's own root or already named by one of the caller's saved
+        comparisons (folders created before the per-user root), else ``None``.
+    """
+    if not requested:
+        return None
+    volume_path = os.getenv('COMPARE_VOLUME_PATH', '').rstrip('/')
+    if volume_path.startswith('TODO'):
+        volume_path = ''
+    if volume_path and user_id and _is_within_volume(requested, user_session_root(volume_path, user_id)):
+        return requested
+    already_owned = await conn.fetchval(
+        'SELECT 1 FROM compare_messages WHERE user_id = $1 AND volume_session_path = $2 LIMIT 1',
+        user_id, requested)
+    if already_owned:
+        return requested
+    logger.warning('history: session folder %r is not under the caller\'s root, not stored', requested)
+    return None
+
+
 def _serialize(row: Mapping[str, Any]) -> dict[str, JsonScalar]:
     """A database row as a JSON-ready dict.
 
@@ -124,6 +151,8 @@ async def save_comparison(body: SaveComparisonRequest, request: Request) -> dict
                     endpoint_name = usage_row['endpoint_name']
                     llm_request_id = body.llm_request_id
 
+            session_path = await _accepted_session_path(conn, user_id, body.volume_session_path)
+
             row = await conn.fetchrow(
                 '''
                 INSERT INTO compare_messages
@@ -147,7 +176,7 @@ async def save_comparison(body: SaveComparisonRequest, request: Request) -> dict
                 body.new_file_hash,
                 body.analysis_text,
                 body.impact_text,
-                body.volume_session_path,
+                session_path,
                 body.file_type,
                 body.processing_method,
                 body.processor_version,

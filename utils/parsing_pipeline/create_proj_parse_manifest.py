@@ -266,10 +266,11 @@ logger.info(f"{len(iddoc_to_cat)} IDDOCs with a principal category")
 # MAGIC %md
 # MAGIC # Data Transformations
 # MAGIC ## Tr. 1 - Remove stale derived content
-# MAGIC A new revision gets a new IDDOC. When the old IDDOC leaves scope, its rows in `chunks`, `chunks_archive`, `image_metadata` and `parsed_documents` are deleted so the index stops serving it. Its parse result in `parsing_checkpoint` is kept for `CHECKPOINT_ORPHAN_KEEP_DAYS` days (a document that comes back is not parsed again), then deleted.
+# MAGIC A new revision gets a new IDDOC. When the old IDDOC leaves scope, its rows in `chunks`, `chunks_archive`, `image_metadata` and `parsed_documents` are deleted so the index stops serving it. Before any deletion the task stops if the scope shrank by more than `PARSING_MAX_SCOPE_DROP_PCT` percent against the previous manifest. Its parse result in `parsing_checkpoint` is kept for `CHECKPOINT_ORPHAN_KEEP_DAYS` days (a document that comes back is not parsed again), then deleted.
 
 # COMMAND ----------
 
+manifest_steps.check_scope_not_shrunk(len(scope_iddocs))
 manifest_steps.prune_stale_content(stale_iddocs)
 manifest_steps.prune_old_checkpoint_rows(df_scope_docs)
 

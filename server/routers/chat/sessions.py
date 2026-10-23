@@ -225,16 +225,17 @@ async def delete_session(session_id: str, request: Request) -> dict | JSONRespon
             if not owned:
                 return JSONResponse({'error': 'Session not found'}, status_code=404)
             # Soft-delete: flag the session and its messages so a trace is kept for audit.
-            await conn.execute(
-                'UPDATE chat_messages SET deleted = TRUE, deleted_at = NOW()'
-                ' WHERE session_id = $1 AND deleted = FALSE',
-                session_id,
-            )
-            await conn.execute(
-                'UPDATE chat_sessions SET deleted = TRUE, deleted_at = NOW()'
-                ' WHERE id = $1 AND deleted = FALSE',
-                session_id,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    'UPDATE chat_messages SET deleted = TRUE, deleted_at = NOW()'
+                    ' WHERE session_id = $1 AND deleted = FALSE',
+                    session_id,
+                )
+                await conn.execute(
+                    'UPDATE chat_sessions SET deleted = TRUE, deleted_at = NOW()'
+                    ' WHERE id = $1 AND deleted = FALSE',
+                    session_id,
+                )
         return {'success': True}
     except Exception as exc:
         logger.error('Delete session failed: %s', exc)
@@ -382,22 +383,23 @@ async def duplicate_shared_session(share_token: str, request: Request) -> dict |
                 session['id'],
             )
 
-            new_session_id = str(uuid.uuid4())
-            await upsert_user(
-                conn, user_id=user_id, workspace_id=workspace_id,
-                email=identity.get('email'), workspace_url=workspace_url or None,
-            )
-            await _upsert_session(conn, new_session_id, user_id, workspace_id, workspace_url, session['name'])
-            for m in msgs:
-                await conn.execute(
-                    '''
-                    INSERT INTO chat_messages
-                        (session_id, user_id, workspace_id, workspace_url, role, content, sources_json, status)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, 'ok')
-                    ''',
-                    new_session_id, user_id, workspace_id, workspace_url,
-                    m['role'], m['content'], m['sources_json'],
+            async with conn.transaction():
+                new_session_id = str(uuid.uuid4())
+                await upsert_user(
+                    conn, user_id=user_id, workspace_id=workspace_id,
+                    email=identity.get('email'), workspace_url=workspace_url or None,
                 )
+                await _upsert_session(conn, new_session_id, user_id, workspace_id, workspace_url, session['name'])
+                for m in msgs:
+                    await conn.execute(
+                        '''
+                        INSERT INTO chat_messages
+                            (session_id, user_id, workspace_id, workspace_url, role, content, sources_json, status)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, 'ok')
+                        ''',
+                        new_session_id, user_id, workspace_id, workspace_url,
+                        m['role'], m['content'], m['sources_json'],
+                    )
         return {'session_id': new_session_id}
     except Exception as exc:
         logger.error('Duplicate shared session failed: %s', exc)

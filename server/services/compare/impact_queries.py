@@ -16,6 +16,9 @@ from typing import Any, Dict, List
 
 from server.services.infra.vector_search import _parse_json_array
 
+# Longest part of one change put in a query: a long text dilutes the embedding.
+DEFAULT_CHANGE_QUERY_CHARS = 2000
+
 _CRIT_ORDER = {'high': 0, 'medium': 1, 'low': 2}
 
 # Equivalence phrase of the analysis prompts; their French, Spanish and German renderings must match too.
@@ -200,17 +203,38 @@ def extract_changes(changes_text: str, max_text_chars: int = 2000) -> Dict[str, 
             'source': 'raw'}
 
 
+def _pack(changes: List[Dict[str, Any]], max_query_chars: int) -> List[List[Dict[str, Any]]]:
+    """Cut a change sequence into consecutive groups whose query text fits max_query_chars.
+
+    :param changes: changes in order, each with its query text in ``query_text`` (at most max_query_chars long)
+    :param max_query_chars: maximum length of the joined text of one group
+    :return: the groups, in order
+    """
+    groups: List[List[Dict[str, Any]]] = []
+    size = 0
+    for c in changes:
+        cost = len(c['query_text']) + 1
+        if not groups or size + cost > max_query_chars:
+            groups.append([])
+            size = 0
+        groups[-1].append(c)
+        size += cost
+    return groups
+
+
 def _group_by_section(changes: List[Dict[str, Any]], max_queries: int, max_query_chars: int) -> List[List[Dict[str, Any]]]:
-    """Pack changes into at most max_queries groups, same-section changes together.
+    """Pack changes into groups, same-section changes together.
 
     Changes of one section describe the same part of the document, so one
     query for them stays focused; a section too long for one query is split.
-    Only if there are still too many groups are neighbouring sections merged.
+    Only if there are still more than max_queries groups are neighbouring
+    sections merged, and a merged group is split again rather than cut when
+    its text exceeds max_query_chars.
 
-    :param changes: searched changes, in priority order
-    :param max_queries: maximum number of groups
+    :param changes: searched changes, in priority order, each with its query text in ``query_text``
+    :param max_queries: number of groups to aim for
     :param max_query_chars: maximum length of the text of one group
-    :return: the groups, each a list of changes
+    :return: the groups, each a list of changes (more than max_queries when they cannot all fit)
     """
     groups: List[List[Dict[str, Any]]] = []
     by_section: Dict[str, List[Dict[str, Any]]] = {}
@@ -218,43 +242,54 @@ def _group_by_section(changes: List[Dict[str, Any]], max_queries: int, max_query
     for c in changes:
         key = c['section'].strip().lower()
         group = by_section.get(key) if key else None
-        if group is None or sizes[id(group)] + len(c['text']) > max_query_chars:
+        if group is None or sizes[id(group)] + len(c['query_text']) + 1 > max_query_chars:
             group = []
             groups.append(group)
             sizes[id(group)] = 0
             if key:
                 by_section[key] = group
         group.append(c)
-        sizes[id(group)] += len(c['text']) + 1
+        sizes[id(group)] += len(c['query_text']) + 1
     if len(groups) <= max_queries:
         return groups
     size = -(-len(groups) // max_queries)
-    return [[c for g in groups[i:i + size] for c in g] for i in range(0, len(groups), size)]
+    merged = [g for i in range(0, len(groups), size)
+              for g in _pack([c for grp in groups[i:i + size] for c in grp], max_query_chars)]
+    if len(merged) <= max_queries:
+        return merged
+    return _pack([c for grp in groups for c in grp], max_query_chars)
 
 
-def changes_to_queries(changes_text: str, max_queries: int = 30, max_query_chars: int = 2000) -> Dict[str, Any]:
+def changes_to_queries(changes_text: str, max_queries: int = 30, max_query_chars: int = 2000,
+                       max_change_chars: int = DEFAULT_CHANGE_QUERY_CHARS) -> Dict[str, Any]:
     """extract_changes() plus the vector-search queries, each {'text', 'change_ids'}.
 
     One query per searched change. Past max_queries, changes are grouped by
-    section instead (see _group_by_section) so every change is still searched
-    with a focused query — none is dropped.
+    section instead (see _group_by_section), each query staying within
+    max_query_chars. When even that cannot hold every change in max_queries
+    queries, the lowest-priority changes are not searched and their ids are
+    returned in ``left_out``.
 
     :param changes_text: output of the analysis, as for ``extract_changes``
     :param max_queries: maximum number of queries
     :param max_query_chars: maximum length of the text of one query
-    :return: the ``extract_changes`` result with its ``queries``
+    :param max_change_chars: longest part of one change used in a query; the change record keeps its full text
+    :return: the ``extract_changes`` result with its ``queries`` and ``left_out`` (ids of the searched changes that no query holds)
     """
     extracted = extract_changes(changes_text, max_query_chars)
+    cap = max(1, min(max_change_chars, max_query_chars))
     searched = sorted(
         (c for c in extracted['changes'] if c['searched']),
         key=lambda c: _CRIT_ORDER.get(c['criticality'], 1),
     )
-    if len(searched) <= max_queries:
-        groups = [[c] for c in searched]
+    items = [{**c, 'query_text': c['text'][:cap]} for c in searched]
+    if len(items) <= max_queries:
+        groups = [[c] for c in items]
     else:
-        groups = _group_by_section(searched, max_queries, max_query_chars)
+        groups = _group_by_section(items, max_queries, max_query_chars)
+    left_out = [c['id'] for g in groups[max_queries:] for c in g]
     queries = [
-        {'text': '\n'.join(c['text'] for c in g)[:max_query_chars], 'change_ids': [c['id'] for c in g]}
-        for g in groups
+        {'text': '\n'.join(c['query_text'] for c in g), 'change_ids': [c['id'] for c in g]}
+        for g in groups[:max_queries]
     ]
-    return {**extracted, 'queries': queries}
+    return {**extracted, 'queries': queries, 'left_out': left_out}

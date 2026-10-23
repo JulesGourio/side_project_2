@@ -45,7 +45,7 @@ _CONNECT_TIMEOUT_S = float(os.getenv('LAKEBASE_CONNECT_TIMEOUT_S', '5'))
 
 
 def app_version() -> str:
-    return os.getenv('APP_VERSION', '2')
+    return os.getenv('APP_VERSION', '1.4.1')
 
 
 def _cfg() -> dict:
