@@ -12,9 +12,9 @@
 
 | Statut | Yann | Logan | Logan v3 | Jules | Total |
 |---|---|---|---|---|---|
-| Fait | 52 | 42 | 28 | 1 | 123 |
+| Fait | 52 | 42 | 29 | 1 | 124 |
 | Partiel | 0 | 4 | 0 | 0 | 4 |
-| Ouvert | 0 | 0 | 2 | 0 | 2 |
+| Ouvert | 0 | 0 | 1 | 0 | 1 |
 | En attente de Yann | 10 | 0 | 0 | 0 | 10 |
 | Décision de Jules | 0 | 0 | 0 | 0 | 0 |
 | **Total** | **62** | **46** | **30** | **1** | **139** |
@@ -130,7 +130,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 | N-8 | Logan v3 · `output_steps.py:210-213` | [Moyenne] Les modes `full` et `rechunk` écrasent `parsed_documents` avec les seules lignes des cibles : les lignes SKIPPED disparaissent et le tableau de bord est faux. | Fusionner au lieu d'écraser. | Décidé par Jules (2026-10-23) : option a. Un run `full`/`rechunk` remplace les lignes des IDDOC traités (suppression puis ajout) et garde les autres ; le nettoyage des IDDOC hors périmètre reste fait à l'étape 1b du manifeste. Non testé sur Databricks.<br>**Fait** |
 | N-9 | Logan v3 · `parsing_pipeline.job.yml:409-411`, `build_steps.py` | [Moyenne] En mode full, une révision remplacée encore dans le manifeste est reconstruite en SUCCESS avec chunks, puis élaguée le lendemain. | Exclure ce statut des cibles dans tous les modes. | Les documents `SKIPPED_SUPERSEDED_REVISION` sont exclus des cibles dans tous les modes (le manifeste les marque de nouveau ; N-8 décide si un run complet garde ces lignes).<br>**Fait** |
 | N-10 | Logan v3 · `manifest_steps.py:44-51` | [Moyenne] `SKIPPED_EMPTY_FOLDER` est effacé à chaque run : nouveau scan chaque jour et faux NEW dans `document_change_log`. | — | Décidé par Jules (2026-10-23) : option C. Un IDDOC n'est journalisé NEW qu'une fois dans `document_change_log` ; l'effacement quotidien de `SKIPPED_EMPTY_FOLDER` continue. Non testé sur Databricks.<br>**Fait** |
-| N-b5 | Logan v3 · parsing (essai de rang 2, métadonnées d'images) | [Basse] Chaque run complet reparse un fichier en échec et relance l'essai de rang 2 ; la fusion des métadonnées d'images ne supprime jamais les images disparues. | — | À voir à l'exécution, avec L-21.<br>**Ouvert** |
+| N-b5 | Logan v3 · parsing (essai de rang 2, métadonnées d'images) | [Basse] Chaque run complet reparse un fichier en échec et relance l'essai de rang 2 ; la fusion des métadonnées d'images ne supprime jamais les images disparues. | — | Décidé par Jules (2026-10-23, option a) : accepté. Un fichier qui échoue est réessayé à chaque run (coût négligeable, 4 fichiers en erreur sur plus de 3 800) ; une image disparue d'un fichier dont l'IDDOC n'a pas changé garde sa ligne. Limites notées dans le README du parsing.<br>**Fait** |
 | N-b6 | Logan v3 · tâche GPU du parsing | [Basse] opencv 4.12 épinglé à côté d'une bibliothèque `numpy<2` : échec possible au démarrage (plausible). | — | Contrôle ajouté au début de la tâche GPU : OpenCV est importé et exécuté avec le NumPy installé avant le parsing ; une incompatibilité échoue tout de suite. Vérification réelle au prochain run GPU.<br>**Fait** |
 
 **Détails**
@@ -453,7 +453,7 @@ commentaires s'ajoutent en bas du tableau de leur thème.
 
 ## Reste à faire et points à vérifier
 
-Établi le 2026-10-23. Le code est testé en local mais rien n'a tourné sur Databricks. Une remarque n'est `Fait` que si elle est traitée ou tranchée par Jules ; voici toutes les autres (16 lignes : 10 En attente de Yann, 4 Partiel, 2 Ouvert).
+Établi le 2026-10-23. Le code est testé en local mais rien n'a tourné sur Databricks. Une remarque n'est `Fait` que si elle est traitée ou tranchée par Jules ; voici toutes les autres (15 lignes : 10 En attente de Yann, 4 Partiel, 1 Ouvert).
 
 ### Remarques de Yann sans accord (En attente de Yann)
 
@@ -488,7 +488,6 @@ Aucune question ouverte.
 | # | Problème | Ce qu'il faut |
 |---|---|---|
 | N-b13 | Tableaux DOCX des en-têtes/pieds de page ignorés. | Les lire (plus tard, décidé). |
-| N-b5 | Nouvel essai de rang 2 à chaque run complet ; images disparues jamais supprimées. | À voir à l'exécution, avec L-21. |
 
 ### À vérifier après déploiement (non éprouvé sur Databricks)
 
