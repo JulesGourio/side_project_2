@@ -231,7 +231,7 @@ Choices that look like gaps when read in isolation. Each is deliberate.
 
 | Subject | Decision | Reason |
 |---|---|---|
-| Chat access | Open to every visitor of the app; the app permission (`CAN_USE`) is the filter | Many users belong to the chat group only through another group, which neither the audit log nor SCIM reports. A deny-by-default rule would lock them out. The comparison stays restricted to its groups. |
+| Chat access | Open to every visitor of the app; the app permission (`CAN_USE`) is the filter | Many users belong to the chat group only through another group, which neither the audit log nor SCIM reports. A deny-by-default rule would lock them out. The comparison stays restricted to its groups. A group nested in the chat group (for a company-wide rollout) works the same way: its members get the chat at their first visit, and their name and e-mail are recorded then; listing the members of a nested group before they visit is planned. |
 | Group removals | Reach the app within about two hours (job `lakebase_user_capabilities`) plus the cache | Access is almost never withdrawn on purpose. |
 | Accounts with `CAN_MANAGE` on the app | Named accounts of the maintainers are kept in the bundle | They operate the app. |
 | Lakebase between environments | Never copied from one environment to another | Each environment exports its own Lakebase. Share tokens stay per environment. |

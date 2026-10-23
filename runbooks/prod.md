@@ -229,6 +229,10 @@ Fait dans le code : adresse de l'application PROD dans `CHAT_ALLOWED_ORIGINS` (`
 4. Droits : le SP de PROD doit avoir SELECT sur `system.access.audit` pour le job `D_2_Qualibot_User_Capabilities_Sync` (comme en UAT).
 5. Confirmer que `CAN_USE` de l'application PROD est limité aux groupes `Role-Project-LEAP-End-users-Qualibot-ChatBot` et `...-DocCompare` : le chat est ouvert à tout visiteur de l'application (décision de Jules).
 
+## 12. Groupe imbriqué `Role-LATECOERE-User-Internal` (mise en production massive, décidé le 2026-10-23)
+
+Ce groupe est dans le groupe ChatBot : ses membres ont le chat par les droits par défaut (aucun groupe suivi trouvé = chat seul), la comparaison reste réservée aux appartenances directes. Leur nom et leur e-mail sont enregistrés dans `users` à leur première visite ; avant cela ils n'ont aucune ligne. Plus tard : lister les membres du groupe imbriqué avant leur première visite (demande un accès administrateur de compte au SCIM des groupes ; le principal de service du job ne l'a pas). Pour le tableau de bord, la ligne au nom du groupe (`email` qui commence par `Role-`) n'est pas une personne.
+
 ## Checklist de mise en production (à cocher dans l'ordre, rien n'est déployé tant que tout n'est pas validé)
 
 Établie le 2026-10-22. Les commandes de chaque ligne sont dans les sections 0 à 10 ci-dessus ; les actions ci-dessous sont celles qu'on ne doit pas oublier.
