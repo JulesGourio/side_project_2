@@ -492,6 +492,10 @@ Aucune question ouverte.
 
 ### À vérifier après déploiement (non éprouvé sur Databricks)
 
+- Parsing (2026-10-23) : les exécuteurs reçoivent la configuration par `SparkContext.addFile` ; les trois `.doc` en erreur (antiword) doivent passer en `SUCCESS` ; les documents `MISSING_CHUNKS` ayant des passages d'image repassent en `SUCCESS` après `4_describe_images`.
+- Export Lakebase de DEV : `users`, `llm_requests`, `doc_catalog`, `impact_*` exportés ; les quatre anciens noms ne le sont plus.
+- Groupe imbriqué `Role-LATECOERE-User-Internal` suivi comme groupe du chat dans le job des droits (4 524 lignes écrites en DEV).
+
 - Pipeline Bitbucket : téléchargement de la CLI 1.20.0, installation de bun, construction du client.
 - Politique de sécurité (CSP) : aucune violation dans la console ; l'app s'affiche (y compris en iframe si la plateforme l'utilise, `frame-ancestors 'self'`).
 - Réécriture en panne : la recherche de secours demande 36 (ou 32) passages réordonnés ; la limite du réordonnanceur n'est pas vérifiée.
