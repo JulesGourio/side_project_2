@@ -387,3 +387,7 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - `app.yaml` : la variable `COMPARE_ANALYSIS_SYSTEM_PROMPT` est supprimée (le prompt par défaut est le fichier `analysis_default.md`).
 - Bibliothèques des jobs figées (`databricks-sdk==0.120.0`, `mlflow[databricks]==3.14.0`, `psycopg2-binary==2.9.10`, `packaging==25.0`) : au prochain déploiement des jobs, lancer un job de chaque famille (export Lakebase, droits, parsing 1_categories, MLflow) et vérifier que l'installation des bibliothèques réussit.
 - Bun installé depuis l'archive de la version `utils/deploy/bun_version.txt` : premier `deploy-dev` après la mise à jour (étape « Run the test suite » puis build).
+
+## 2026-10-23 — configuration des exécuteurs du parsing
+
+- `worker.write_worker_config` expédie le fichier de configuration avec `SparkContext.addFile`, `worker.ensure_config` le lit avec `SparkFiles.get` : les parseurs de formats (`.doc` par antiword, OCR…) retrouvent leurs réglages sur les exécuteurs. À retester en DEV : lancer le parsing en incrémental, les trois `.doc` (NS-1606, MI-13769, NF-10348) passent de `ERROR` à `SUCCESS` (`parser_strategy = antiword:doc`).

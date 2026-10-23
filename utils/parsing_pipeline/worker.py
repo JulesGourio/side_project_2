@@ -1,8 +1,8 @@
 """worker.py — runtime shared by the driver and the executors: logger, worker configuration, token counting, and the
 Spark helpers (chunk text, REF url, pandas UDFs).
 
-`configure()` runs on the driver; the workers restore CONFIG with `ensure_config()` (broadcast, then spark.conf JSON,
-then a JSON file on the volume) or fall back to `_DEFAULTS`. Format parsing lives in `format_parsers.py`,
+`configure()` runs on the driver; the workers restore CONFIG with `ensure_config()` (broadcast, then the settings file
+shipped with SparkContext.addFile, then spark.conf JSON, then a JSON file on the volume) or fall back to `_DEFAULTS`. Format parsing lives in `format_parsers.py`,
 passage splitting in `chunking.py`.
 """
 
@@ -81,6 +81,9 @@ _DEFAULTS: Dict[str, Any] = {
 
 CONFIG: Dict[str, Any] = {}
 
+# File name of the settings copy that the driver ships to the executors (SparkContext.addFile).
+_WORKER_CONFIG_NAME = "_parsing_config.json"
+
 
 def configure(**kwargs) -> None:
     """Set run configuration from the notebook. Call on the driver before parsing.
@@ -118,6 +121,10 @@ def write_worker_config(spark_session) -> str:
     with open(path, "w") as fh:
         json.dump(CONFIG, fh)
     try:
+        spark_session.sparkContext.addFile(path)
+    except Exception as exc:
+        logger.warning("Worker config not shipped to the executors (%s): they read the volume copy", exc)
+    try:
         spark_session.conf.set("app.parsing.config_json", json.dumps(CONFIG))
     except Exception:
         pass
@@ -132,6 +139,16 @@ def ensure_config() -> None:
     if _CONFIG_BROADCAST is not None:
         CONFIG.update(_CONFIG_BROADCAST.value)
         return
+    try:
+        from pyspark import SparkFiles
+
+        shipped = SparkFiles.get(_WORKER_CONFIG_NAME)
+        if os.path.isfile(shipped):
+            with open(shipped) as fh:
+                CONFIG.update(json.load(fh))
+            return
+    except Exception:
+        pass
     try:
         from pyspark.sql import SparkSession
 
