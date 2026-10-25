@@ -28,6 +28,41 @@ Fait et confirmé par l'utilisateur : index `chunks_index` `ONLINE`, bascule du 
 
 Plannings UAT dans le code (2026-10-23) : parsing quotidien `UNPAUSED`, export Lakebase `UNPAUSED`, arrêt/démarrage week-end `UNPAUSED`, alertes SQL `UNPAUSED` (`alerts_pause_status` ajouté pour `uat`), scoring des traces `UNPAUSED` (`dry_run` à `false` par défaut en UAT). Rien de tout cela n'est actif tant que `deploy-uat-jobs` n'a pas tourné.
 
+## Bloc R — Recalage de l'UAT sur DEV (ouvert le 2026-10-25, rien de fait)
+
+But : l'UAT reprend le code de la branche `claude/sharp-mayer-uqwx8x` et l'état de parsing de DEV (`parsing_checkpoint`, `parsed_documents`, `image_metadata`, `parse_manifest`, `category_reference`), pour que le prochain run ne traite que les quelques documents que DEV n'a pas parsés. Les tables `chunks` et l'index `chunks_index` ne sont pas copiés : le run les reconstruit.
+
+Écarts relevés entre `dev` et `uat` dans `databricks.yml` (2026-10-25) : aucun écart de configuration n'est dû à une dérive. `parsing_build_chunks_full` (`true` sur UAT, `false` sur DEV) et le planning (`UNPAUSED` sur UAT, `PAUSED` sur DEV) sont voulus. `parsing_archive_max_docs` vaut `0` sur les deux (UAT hérite du défaut). Le vrai écart est donc le code déployé et l'état des tables, pas la configuration.
+
+- [ ] **R1. Mettre en pause le planning quotidien UAT** (UI UAT → Jobs → le job de parsing `qualibot` → *Pause*). Le bloc D5.1 fait déjà cette étape ; ne pas la refaire si elle est déjà en pause.
+- [ ] **R2. Pousser le code** (fait par la machine de déploiement, sur la branche `claude/sharp-mayer-uqwx8x`), puis Bitbucket → Pipelines → Run pipeline → branche `claude/sharp-mayer-uqwx8x` → `deploy-uat-jobs`. Attendre qu'il soit vert.
+- [ ] **R3. Importer le notebook de copie dans l'espace UAT** (machine de déploiement) :
+
+  ```powershell
+  databricks workspace mkdirs /Workspace/Shared/qualibot_oneshot --profile UAT
+  databricks workspace import /Workspace/Shared/qualibot_oneshot/copy_dev_state_to_uat `
+    --file runbooks\scripts\uat_sync\copy_dev_state_to_uat.py --format SOURCE --language PYTHON --overwrite --profile UAT
+  ```
+
+- [ ] **R4. Lancer la copie, en tant que le SP UAT** (`run_as` `job-runner-sa-uat` dans le fichier de soumission). Elle échoue avant toute écriture si le SP ne peut pas lire `dev_proj.qualibot` :
+
+  ```powershell
+  databricks jobs submit --json "@runbooks/scripts/uat_sync/copy_dev_state_to_uat_submit.json" --profile UAT
+  ```
+
+  Le notebook sauvegarde d'abord les tables UAT actuelles sous `<table>_before_dev_sync` (conservées telles quelles si la copie est relancée), copie les cinq tables de DEV, réécrit les chemins `/Volumes/dev_proj/` en `/Volumes/uat_proj/`, puis vérifie les nombres de lignes contre DEV.
+- [ ] **R5. Relancer le run complet UAT, sans re-parsing GPU** : UI UAT → Jobs → `qualibot` → *Run now* avec `run_mode` = `full`. Ce mode lit le checkpoint copié, ne parse que les fichiers sans ligne réutilisable, puis reconstruit `chunks`, `chunks_archive` et synchronise `chunks_index`. Attendre que l'index soit `ONLINE` (≈ 1 h).
+- [ ] **R6. Revenir au mode quotidien** : Jobs → `qualibot` → *Resume* (le planning repart).
+- [ ] **R7. Contrôles** (éditeur SQL UAT, lecture seule) :
+
+  ```sql
+  SELECT COUNT(*) AS checkpoint_rows FROM uat_proj.qualibot.parsing_checkpoint;
+  SELECT COUNT(*) AS rows_with_dev_path FROM uat_proj.qualibot.parsing_checkpoint WHERE CAST(images AS STRING) LIKE '%/Volumes/dev_proj/%';
+  ```
+
+  Attendu : le premier nombre égal à celui de DEV, le second à `0`. Les autres tables copiées sont contrôlées par le notebook lui-même (sortie du run, ligne `[CHECK]`).
+- [ ] **R8. Suppression des sauvegardes** (quelques jours plus tard, sur accord) : `DROP TABLE uat_proj.qualibot.<table>_before_dev_sync` pour chacune des cinq tables.
+
 - [ ] **K1. Récupérer la branche et la pousser vers Bitbucket** (PowerShell, racine du dépôt) :
 
   ```powershell
