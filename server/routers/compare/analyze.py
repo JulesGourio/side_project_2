@@ -27,6 +27,7 @@ from server.services.infra.lakebase import (
 )
 from server.services.infra.tasks import spawn
 from server.services.infra.user import get_user_identity, rate_limit, require_compare
+from server.routers.errors import INTERNAL_ERROR
 from server.routers.compare.config import APP_VERSION, MAX_CONCURRENT_ANALYSES, get_config
 from server.routers.compare.common import _validate_file
 
@@ -513,8 +514,11 @@ async def analyze_documents(
 
     try:
         old_bytes, new_bytes = await _read_uploads(old_file, new_file)
-    except Exception as e:
+    except ValueError as e:
         return _error_response(str(e))
+    except Exception as exc:
+        logger.warning('analyze: uploads not read: %s', exc)
+        return _error_response(INTERNAL_ERROR)
 
     old_name = old_file.filename or 'old_document'
     new_name = new_file.filename or 'new_document'

@@ -56,8 +56,11 @@ async def save_to_volume(
         new_bytes = await new_file.read()
         _validate_file(old_file, old_bytes)
         _validate_file(new_file, new_bytes)
-    except Exception as e:
+    except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
+    except Exception as exc:
+        logger.warning('save: uploads not read: %s', exc)
+        return JSONResponse({'error': INTERNAL_ERROR}, status_code=400)
 
     user_id = (await get_user_identity(request))['user_id']
     if not user_id:
