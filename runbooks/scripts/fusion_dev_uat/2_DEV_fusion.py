@@ -29,6 +29,7 @@ APPLY = True  # False: prints the plan only
 CHECKPOINT = f"{SCHEMA}.parsing_checkpoint"
 IMAGES = f"{SCHEMA}.image_metadata"
 PROCESSED = f"{SCHEMA}.parsed_documents"
+MANIFEST = f"{SCHEMA}.parse_manifest"
 KEY = ["IDDOC", "document_sha256"]
 
 # COMMAND ----------
@@ -152,8 +153,12 @@ if APPLY and switched_ids:
     df_img = df_other_img.join(switched, "IDDOC", "left_semi").select(*img_schema.fieldNames())
     rewrite_paths(df_img, img_schema).write.format("delta").mode("append").saveAsTable(IMAGES)
 
-    # parsed_documents: rows of the switched IDDOCs removed, so the next incremental run rebuilds their chunks only
-    spark.sql(f"DELETE FROM {PROCESSED} WHERE IDDOC IN (SELECT IDDOC FROM _merge_switched)")
+    # parsed_documents: rows of the switched IDDOCs in scope removed, so the next incremental run rebuilds their chunks
+    # only; out-of-scope rows stay, the run's pruning needs them to drop their old chunks
+    spark.sql(
+        f"DELETE FROM {PROCESSED} WHERE IDDOC IN (SELECT IDDOC FROM _merge_switched) "
+        f"AND IDDOC IN (SELECT IDDOC FROM {MANIFEST})"
+    )
 
     dbutils.fs.put(f"dbfs:{IMAGES_LIST_FILE}", "\n".join(str(i) for i in switched_ids), overwrite=True)
 
