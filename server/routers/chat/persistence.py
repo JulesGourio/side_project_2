@@ -41,6 +41,26 @@ async def _upsert_session(conn: asyncpg.Connection, session_id: str, user_id: st
     return status.endswith(' 1')
 
 
+async def session_of_another_user(pool: asyncpg.Pool | None, session_id: str, user_id: str) -> bool:
+    """Whether the conversation id already belongs to another user.
+
+    :param pool: the Lakebase pool, None when Lakebase is unavailable.
+    :param session_id: id of the conversation sent by the browser.
+    :param user_id: the caller.
+    :return: True when a session of that id exists with another owner; False when it is the caller's, does not exist,
+        or cannot be read (the save then checks the owner again and writes nothing into another user's session).
+    """
+    if pool is None:
+        return False
+    try:
+        async with pool.acquire() as conn:
+            owner = await conn.fetchval('SELECT user_id FROM chat_sessions WHERE id = $1', session_id)
+    except Exception as exc:
+        logger.warning('chat: owner of session %s not read: %s', session_id, exc)
+        return False
+    return owner is not None and owner != user_id
+
+
 async def _save_turn(
     pool: asyncpg.Pool,
     session_id: str,

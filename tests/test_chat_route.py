@@ -60,7 +60,7 @@ OK_EVENTS = (
 )
 
 
-def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=True, leave_after=None):
+def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=True, leave_after=None, foreign=False):
     """One WebSocket turn with everything external mocked; returns (messages, mocks)."""
     engine = engine or MagicMock(side_effect=_engine_stream(*OK_EVENTS))
     save_turn = AsyncMock(return_value=(41, 42))
@@ -74,6 +74,7 @@ def _talk(client, division='ALL', caps=None, pool=None, engine=None, enabled=Tru
             return_value={'user_id': 'u1', 'workspace_id': None, 'email': 'u1@example.com'})),
         patch('server.routers.chat.ws.get_credentials_async', new=AsyncMock(return_value=('https://host', 'tok'))),
         patch('server.routers.chat.ws.get_pool', return_value=pool),
+        patch('server.routers.chat.ws.session_of_another_user', new=AsyncMock(return_value=foreign)),
         patch('server.routers.chat.ws._save_turn', save_turn),
         patch('server.routers.chat.ws.store_chat_turn', store_turn),
         patch('server.routers.chat.ws.augment_sources', side_effect=lambda content, sources: sources),
@@ -299,3 +300,26 @@ def test_over_the_rate_limit_the_socket_gets_an_error_event_and_closes(client):
             assert ws.receive_json() == {'type': 'error', 'error': 'Too many requests, try again in a minute.'}
             with pytest.raises(WebSocketDisconnect):
                 ws.receive_json()
+
+
+def test_a_session_of_another_user_is_refused_before_the_engine_runs(client):
+    engine = MagicMock(side_effect=_engine_stream(*OK_EVENTS))
+    received, mocks = _talk(client, engine=engine, foreign=True)
+    assert received == [{'type': 'error', 'error': 'Conversation not found'}]
+    engine.assert_not_called()
+    mocks['save_turn'].assert_not_called()
+
+
+@pytest.mark.parametrize('owner,expected', [('u2', True), ('u1', False), (None, False)])
+def test_session_owner_lookup(owner, expected):
+    from server.routers.chat.persistence import session_of_another_user
+
+    conn = MagicMock()
+    conn.fetchval = AsyncMock(return_value=owner)
+    acquire = MagicMock()
+    acquire.__aenter__ = AsyncMock(return_value=conn)
+    acquire.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire.return_value = acquire
+    assert asyncio.run(session_of_another_user(pool, 's1', 'u1')) is expected
+    assert asyncio.run(session_of_another_user(None, 's1', 'u1')) is False

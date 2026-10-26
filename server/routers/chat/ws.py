@@ -28,7 +28,7 @@ from server.routers.chat.helpers import (
     _apply_citation_markers, _clean_messages, _identity_or_anonymous, _number_sources,
     _trim_history, _valid_session_id, _with_today_date,
 )
-from server.routers.chat.persistence import _save_turn
+from server.routers.chat.persistence import _save_turn, session_of_another_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -111,6 +111,12 @@ async def chat_ws(websocket: WebSocket) -> None:
     user_id = identity['user_id']
     workspace_id = identity.get('workspace_id')
     workspace_url = get_workspace_url()
+
+    if await session_of_another_user(get_pool(), session_id, user_id):
+        logger.warning('chat [ws]: session %s belongs to another user, turn refused (user=%s)', session_id, user_id)
+        await websocket.send_json({'type': 'error', 'error': 'Conversation not found'})
+        await websocket.close()
+        return
 
     user_content = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), '')
     logger.info('chat turn [ws]: division=%s endpoint=%s session=%s user=%s msgs=%d q=%r trace_id=%s',
