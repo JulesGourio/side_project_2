@@ -49,7 +49,8 @@ Suite de tests : 780 réussis, 0 échec (local).
 |---|---|
 | Chat ouvert à tout visiteur de l'app (C1 bis, H5) | Choix de Jules, confirmé le 2026-10-26 malgré la revue v4 |
 | Jeton longue durée de la CI → OIDC ; « Production » limité à `main` | Reporté par Jules |
-| Bibliothèques des clusters du parsing sans version ; `uv.lock` du dépôt de Jules | À faire : relever les versions d'un run réussi |
+| Bibliothèques des clusters du parsing | Figées le 2026-10-26 sur les versions relevées par Jules sur un 16.4 (sauf `numpy<2` et `pydantic` de la tâche GPU, autre runtime) |
+| `uv.lock` du dépôt de Jules | `uv lock` bloqué par le proxy (certificat) : relancer avec `--native-tls` |
 | Cluster GPU sans politique | Aucune version GPU dans la politique S |
 | Tableau de bord DEV sur d'anciennes tables | Reporté par Jules |
 | Tableaux DOCX des en-têtes et pieds de page | Reporté par Jules |

@@ -55,7 +55,7 @@
 
 # COMMAND ----------
 
-%pip install -q "numpy<2" "pandas>=2.1.4,<3" "pydantic>=2.10.3,<3" docling==2.140.0 docling-core==2.102.0 langchain-text-splitters tiktoken striprtf odfpy lxml olefile pyxlsb openai tenacity
+%pip install -q numpy==1.26.4 pandas==2.3.3 pydantic==2.14.1 docling==2.140.0 docling-core==2.102.0 langchain-text-splitters==1.1.3 tiktoken==0.14.0 striprtf==0.0.35 odfpy==1.4.1 lxml==6.1.3 olefile==0.47 pyxlsb==1.0.10 openai==3.37.0 tenacity==8.2.2
 
 # COMMAND ----------
 
