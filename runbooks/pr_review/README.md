@@ -527,3 +527,9 @@ N-1 à N-16 et les constats bas de la v3 relus dans le code : corrigés comme d�
   (`decisions.filter_would_empty_tables`, test ajouté).
 
 Suite de tests : 776 réussis, 15 ignorés (local, sans `fasttext-wheel` qui ne se construit pas sur Python 3.13) ; `check_docstrings.py` : 0 problème.
+
+## Revue v4 (2026-10-26)
+
+Relue constat par constat : C1, C2, H1 à H6 et N7 à N16 sont corrigés sur cette branche ; la v4 cite `server/routers/chat.py`,
+supprimé le 2026-10-13, et recopie les lignes de la v3. C2 renforcé le 2026-10-26 : un `session_id` d'un autre utilisateur est
+refusé avant le tour. Détail, preuves et vérification de `main` : `revue_v4.md`.
