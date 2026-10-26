@@ -20,7 +20,7 @@ from pyspark.sql import types as T
 
 import image_utils
 import selection
-from decisions import PENDING_OCR_PREFIX, exclude_statuses
+from decisions import PENDING_OCR_PREFIX, exclude_statuses, filter_would_empty_tables
 from retention import snapshots_to_drop
 from format_parsers import strip_ooxml_bloat
 from tables import table_exists, write_table
@@ -111,6 +111,12 @@ def resolve_parse_scope(df_business_meta) -> tuple[set, set]:
 
     :param df_business_meta: Business metadata of the manifest, with ``IDDOC`` and ``parse_content``.
     """
+    if filter_would_empty_tables(RUN_MODE, PARSE_FILTER):
+        raise ValueError(
+            f"run_mode={RUN_MODE} with parse_filter={PARSE_FILTER}: this mode rewrites the chunk and image tables "
+            f"from the targeted documents only, so every other document would leave the index. Use run_mode "
+            f"incremental with parse_filter, or run {RUN_MODE} without parse_filter."
+        )
     # parse_content=False: pre-cutoff document beyond ARCHIVE_MAX_DOCS (notice chunk only).
     df_parseable = (
         df_business_meta.filter(f.col("parse_content"))

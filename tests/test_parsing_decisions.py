@@ -1,4 +1,5 @@
-"""Pure decisions of the parsing pipeline: parse status, checkpoint row choice, superseded targets, scope guard."""
+"""Pure decisions of the parsing pipeline: parse status, checkpoint row choice, superseded targets, scope guard,
+filter guard."""
 import os
 import sys
 
@@ -8,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils", "parsi
 
 from decisions import (  # noqa: E402
     exclude_statuses,
+    filter_would_empty_tables,
     parse_status,
     pick_checkpoint_row,
     scope_dropped_too_much,
@@ -77,3 +79,18 @@ def test_superseded_revisions_are_never_targets() -> None:
 )
 def test_scope_guard(previous, current, pct, expected) -> None:
     assert scope_dropped_too_much(previous, current, pct) is expected
+
+
+@pytest.mark.parametrize(
+    "mode,parse_filter,expected",
+    [
+        ("full", [123], True),
+        ("rechunk", [123, 456], True),
+        ("incremental", [123], False),
+        ("full", None, False),
+        ("rechunk", None, False),
+        ("full", [], False),
+    ],
+)
+def test_filter_guard(mode, parse_filter, expected) -> None:
+    assert filter_would_empty_tables(mode, parse_filter) is expected

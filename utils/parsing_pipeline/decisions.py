@@ -75,3 +75,16 @@ def scope_dropped_too_much(previous: int, current: int, max_drop_pct: int) -> bo
     if max_drop_pct <= 0 or previous < 100:
         return False
     return (previous - current) * 100 > previous * max_drop_pct
+
+
+def filter_would_empty_tables(run_mode: str, parse_filter: list[int] | None) -> bool:
+    """Whether a run would rewrite the whole chunk and image tables from only the filtered documents.
+
+    A ``full`` or ``rechunk`` run overwrites ``chunks``, ``chunks_archive`` and ``image_metadata`` with the documents
+    it targets; with a ``parse_filter`` those are the filtered IDDOCs only, and every other document leaves the index.
+
+    :param run_mode: ``incremental``, ``full`` or ``rechunk``
+    :param parse_filter: IDDOCs the run is restricted to, None when it is not restricted
+    :return: True when the run must be refused
+    """
+    return run_mode in ("full", "rechunk") and bool(parse_filter)
