@@ -64,13 +64,18 @@ MAX_SOURCE_STALENESS_HOURS = int(_env("PARSING_MAX_SOURCE_STALENESS_HOURS", "36"
 MAX_SCOPE_DROP_PCT = int(_env("PARSING_MAX_SCOPE_DROP_PCT", "30"))
 
 # --- Qualibot perimeter (scope gate) ---
-# Root categories of the documents Qualibot indexes: 00-LATECOERE PROCESSES_One QMS, AS - PROGRAMS / PROGRAMMES and
-# AS - TECHNICAL INSTRUCTIONS (work instructions, "documents métier").
-SCOPE_ROOT_IDCATS = {3870, 948, 3209}
+# Root categories of the documents Qualibot indexes: 00-LATECOERE PROCESSES_One QMS, AS - PROGRAMS / PROGRAMMES,
+# AS - TECHNICAL INSTRUCTIONS (work instructions, "documents métier"), AS - PROCESSES / PROCESSUS and
+# 0 - DIRECTIVE GROUPE LATECOERE.
+SCOPE_ROOT_IDCATS = {3870, 948, 3209, 12, 962}
+# Categories indexed wherever they sit in the tree: the two "To be classified" folders of ONE_QMS-5S hold live
+# documents; the rest of that root (Obsolete Documents) stays out.
+SCOPE_SUB_IDCATS = {3967, 4006}
 # Columns of INTRAQUAL_REVISIONS_TABLE. The full-diffusion flag is not part of the gate: the portal shows those documents too.
 DOC_SCOPE_FILTER = (
     "revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false "
-    f"AND root_category_ID IN ({', '.join(str(i) for i in sorted(SCOPE_ROOT_IDCATS))})"
+    f"AND (root_category_ID IN ({', '.join(str(i) for i in sorted(SCOPE_ROOT_IDCATS))}) "
+    f"OR exists(category_ID_path, x -> x IN ({', '.join(str(i) for i in sorted(SCOPE_SUB_IDCATS))})))"
 )
 
 # --- Optional fallback (disabled by default) ---

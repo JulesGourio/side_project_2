@@ -93,7 +93,9 @@ variables with the defaults listed at the top of `config.py`.
 ## Documents and scope
 
 - **Scope gate** (`DOC_SCOPE_FILTER`): `revision_status_code = 1 AND lifecycle_state_code = 7 AND is_hidden = false` and a root
-  category in `SCOPE_ROOT_IDCATS` (One QMS processes, AS programs, AS work instructions), on `document_revisions_intraqual`
+  category in `SCOPE_ROOT_IDCATS` (One QMS processes, AS programs, AS work instructions, AS processes, group directives)
+  or a category in `SCOPE_SUB_IDCATS` anywhere in the path (the two "To be classified" folders of ONE_QMS-5S; its
+  Obsolete Documents stay out), on `document_revisions_intraqual`
   (the Intraqual data asset; `courant`, `etat` and `nonvisible` at source). Only the current revision of a validated,
   visible document of those roots enters the chain. `difftotale` is not part of the gate: the Intraqual portal shows
   documents with `difftotale = 0`.
