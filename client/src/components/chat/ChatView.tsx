@@ -116,7 +116,7 @@ export function ChatView() {
 
         <div className="flex-1 overflow-y-auto py-4">
           {chat.messages.length === 0 ? (
-            <WelcomeState title={CHAT_TITLE} onPrompt={p => chat.send(p)} />
+            <WelcomeState title={CHAT_TITLE} />
           ) : (
             <>
               {chat.messages.map(msg => (

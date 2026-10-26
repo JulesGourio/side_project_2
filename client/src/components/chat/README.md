@@ -22,7 +22,7 @@ persistence) lives in `server/routers/chat/` and `server/services/chat/`.
 | `ChatFeedback.tsx` | Thumbs up / down vote with an optional comment; read-only version |
 | `DownloadMenu.tsx` | Export of the answer or the conversation as Markdown or PDF |
 | `chatExport.ts` | Builds the Markdown and the PDF sections from the messages |
-| `WelcomeState.tsx` | Start screen of an empty conversation, with suggested questions |
+| `WelcomeState.tsx` | Start screen of an empty conversation |
 
 Pages that use this folder:
 [`ChatPage.tsx`](../../pages/ChatPage.tsx) (route `/chat`) and

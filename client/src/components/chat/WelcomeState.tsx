@@ -1,13 +1,6 @@
 import { MessageSquare } from 'lucide-react';
 
-const SUGGESTED_PROMPTS = [
-  'What documents reference the NDT/NDI qualification requirements?',
-  'Which procedures must be updated when a supplier changes their process?',
-  'List the key quality standards applicable to composite part manufacturing.',
-  'What is the approval process for deviations from engineering specifications?',
-];
-
-export function WelcomeState({ title, onPrompt }: { title: string; onPrompt: (p: string) => void }) {
+export function WelcomeState({ title }: { title: string }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-8 px-6">
       <div className="text-center space-y-4 max-w-lg">
@@ -24,18 +17,6 @@ export function WelcomeState({ title, onPrompt }: { title: string; onPrompt: (p:
           Ask questions about your document knowledge base (Intraqual). The assistant can retrieve relevant
           information and identify impacted documents.
         </p>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-lg mt-2">
-        {SUGGESTED_PROMPTS.map(prompt => (
-          <button
-            key={prompt}
-            onClick={() => onPrompt(prompt)}
-            className="text-left px-4 py-3 rounded-xl border text-sm leading-snug transition-all cursor-pointer border-[var(--color-border)] text-[var(--color-text-primary)] bg-[var(--color-bg-secondary)] hover:border-[var(--color-accent-primary)] hover:bg-[var(--color-bg-tertiary)]"
-          >
-            {prompt}
-          </button>
-        ))}
       </div>
 
       <div className="max-w-xl mt-6 px-4 text-center">
