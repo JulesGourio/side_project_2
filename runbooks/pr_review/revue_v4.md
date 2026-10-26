@@ -47,7 +47,7 @@ Suite de tests : 780 réussis, 0 échec (local).
 
 | Sujet | Statut |
 |---|---|
-| Chat ouvert à tout visiteur de l'app (C1 bis, H5) | Choix de Jules ; la revue le juge bloquant pour PROD |
+| Chat ouvert à tout visiteur de l'app (C1 bis, H5) | Choix de Jules, confirmé le 2026-10-26 malgré la revue v4 |
 | Jeton longue durée de la CI → OIDC ; « Production » limité à `main` | Reporté par Jules |
 | Bibliothèques des clusters du parsing sans version ; `uv.lock` du dépôt de Jules | À faire : relever les versions d'un run réussi |
 | Cluster GPU sans politique | Aucune version GPU dans la politique S |
