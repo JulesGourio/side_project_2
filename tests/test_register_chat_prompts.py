@@ -35,7 +35,7 @@ def test_registers_every_prompt_once(script):
     script.register('chat_test', 'chat')
     script.register('chat_test', 'chat')                                       # second run: nothing new
     for key in prompts.FILES:
-        found = mlflow.genai.load_prompt(f'prompts:/{prompts.registry_name("chat_test", key)}@deployed')
+        found = mlflow.genai.load_prompt(f'prompts:/{prompts.registry_name("chat_test", key)}@deployed', cache_ttl_seconds=0)
         assert found.version == 1 and found.tags['sha'] == prompts.digest(key)
         assert found.template == prompts.read(key)
     experiment = mlflow.get_experiment_by_name('chat')
@@ -64,8 +64,8 @@ def test_a_changed_file_gets_a_new_version(script, tmp_path, monkeypatch):
     prompts.read.cache_clear()
     try:
         script.register('chat_test', 'chat')
-        found = mlflow.genai.load_prompt(f'prompts:/{prompts.registry_name("chat_test", "rewrite")}@deployed')
-        other = mlflow.genai.load_prompt(f'prompts:/{prompts.registry_name("chat_test", "system_base")}@deployed')
+        found = mlflow.genai.load_prompt(f'prompts:/{prompts.registry_name("chat_test", "rewrite")}@deployed', cache_ttl_seconds=0)
+        other = mlflow.genai.load_prompt(f'prompts:/{prompts.registry_name("chat_test", "system_base")}@deployed', cache_ttl_seconds=0)
     finally:
         prompts.read.cache_clear()
     assert found.version == 2 and found.template == 'Rewrite differently.'

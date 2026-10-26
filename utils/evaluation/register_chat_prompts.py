@@ -56,7 +56,8 @@ def register(schema: str, experiment: str) -> None:
     mlflow.set_experiment(experiment_id=found.experiment_id)           # prompts register and load under it
     for key in prompts.FILES:
         name, text, sha = prompts.registry_name(schema, key), prompts.read(key), prompts.digest(key)
-        current = mlflow.genai.load_prompt(f'prompts:/{name}@deployed', allow_missing=True, link_to_model=False)
+        current = mlflow.genai.load_prompt(f'prompts:/{name}@deployed', allow_missing=True, link_to_model=False,
+                                            cache_ttl_seconds=0)
         if current is not None and (current.tags or {}).get('sha') == sha:
             version = current.version
             logger.info('%s: version %s already matches the file', name, version)
