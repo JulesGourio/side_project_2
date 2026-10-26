@@ -1,0 +1,24 @@
+# Databricks notebook source
+# One-shot. Workspace DEV. Identity: your own account (no job runner needed).
+# Rights needed: SELECT on dev_proj.qualibot.parsing_checkpoint and dev_proj.qualibot.image_metadata, WRITE VOLUME on dev_proj.qualibot.staging.
+# Read-only on the tables. Writes a parquet snapshot of both for the DEV + UAT merge (see README.md next to this file).
+
+# COMMAND ----------
+
+SCHEMA = "dev_proj.qualibot"
+OUTPUT_DIR = "/Volumes/dev_proj/qualibot/staging/merge_export/dev"
+TABLES = ["parsing_checkpoint", "image_metadata"]
+
+# COMMAND ----------
+
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {SCHEMA}.staging")
+for table in TABLES:
+    path = f"{OUTPUT_DIR}/{table}"
+    df = spark.table(f"{SCHEMA}.{table}")
+    n_source = df.count()
+    df.write.format("parquet").mode("overwrite").save(path)
+    n_written = spark.read.format("parquet").load(path).count()
+    if n_written != n_source:
+        raise RuntimeError(f"{table}: {n_written} rows written, {n_source} in the table")
+    dbutils.fs.put(f"dbfs:{OUTPUT_DIR}/rows_{table}.txt", str(n_written), overwrite=True)
+    print(f"OK {table}: {n_written} rows -> {path}")
