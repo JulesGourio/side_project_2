@@ -1,25 +1,25 @@
 # Databricks notebook source
 # F1 · Inventaire des acronymes et codes (étape 1 de runbooks/retrieval/README.md)
-# LECTURE SEULE, DEV uniquement : aucune écriture, aucun accès Lakebase (on lit les copies Delta dev_proj.qualibot).
-# Droits : ton compte suffit (lecture sur dev_proj.qualibot), pas besoin du job runner.
-# Mode d'emploi : chaque bloc entre "# COMMAND ----------" est une cellule, à exécuter dans l'ordre.
-# Résultat à me renvoyer : le texte imprimé par les cellules 4, 5 et 6 (copier-coller).
+# LECTURE SEULE : aucune écriture. Droits : ton compte suffit (lecture sur l'environnement), pas de job runner.
+# Corpus = tous les documents parsés (parsing_checkpoint, une ligne par IDDOC, SUCCESS en priorité), sans scope.
+# Deux passes, même notebook :
+#   1. ENV = "dev" : cellules 1 à 5 (corpus + référentiel REF)
+#   2. ENV = "uat" : cellules 1, 2, 3, 6 (questions réelles du chatbot UAT, vs graphies du corpus UAT)
+# Mode d'emploi : chaque bloc entre "# COMMAND ----------" est une cellule, dans l'ordre.
+# Résultat à me renvoyer : le texte imprimé par chaque passe (copier-coller).
 
 # COMMAND ----------
-# Cellule 1 · paramètres (en dur)
+# Cellule 1 · paramètres (en dur) : mettre ENV = "dev" pour la passe 1, puis ENV = "uat" pour la passe 2
 
-from functools import reduce
-
-from pyspark.sql import DataFrame
+from pyspark.sql import Window
 from pyspark.sql import functions as F
 
-CHUNKS = "dev_proj.qualibot.chunks"
-CATALOG = "dev_proj.qualibot.doc_catalog"
-CHAT_TURNS = "dev_proj.qualibot.chat_turns"
-GOLDEN = "dev_proj.qualibot.eval_golden_questions"
-FEEDBACK = "dev_proj.qualibot.eval_feedback_failures"
+ENV = "dev"   # "dev" ou "uat"
+CHECKPOINT = f"{ENV}_proj.qualibot.parsing_checkpoint"
+CATALOG = f"{ENV}_proj.qualibot.doc_catalog"
+CHAT_TURNS = f"{ENV}_proj.qualibot.chat_turns"
 TOP_N = 200   # lignes affichées par tableau
-MIN_OCC = 2   # une forme vue une seule fois dans les chunks n'est pas inventoriée
+MIN_OCC = 2   # une forme vue une seule fois dans le corpus n'est pas inventoriée
 
 # COMMAND ----------
 # Cellule 2 · motifs. Chaque motif est une catégorie ; on ratisse large, le tri se fait après.
@@ -36,7 +36,7 @@ PATTERNS = {
     "numero_pointe": r"(?<![0-9.])[0-9]{1,3}(?:\.[0-9]{1,3}){2,}(?![0-9.])",
 }
 
-# Mots courants en majuscules : ce sont des faux positifs probables parmi les sigles.
+# Mots courants en majuscules : faux positifs probables parmi les sigles.
 STOPLIST = {"OK", "NON", "OUI", "ET", "OU", "DE", "LE", "LA", "LES", "UN", "UNE", "DU", "DES", "EN", "AU", "AUX",
             "SI", "CE", "QUE", "QUI", "EST", "PAR", "POUR", "SUR", "DANS", "AND", "THE", "FOR", "NOT", "ALL", "ANY",
             "AT", "BY", "IN", "IS", "OF", "OR", "TO", "NO", "YES", "PDF", "NA", "RAS", "TBD", "ID", "FR"}
@@ -60,33 +60,27 @@ def agg(tok_df, min_occ=MIN_OCC):
             .where(F.col("occ") >= min_occ))
 
 
-def src_chunks():
-    cols = spark.table(CHUNKS).columns
-    doc_col = "ref" if "ref" in cols else "source_file_name"
-    return (spark.table(CHUNKS).where(F.col("chunk_text").isNotNull())
-            .select(F.col(doc_col).alias("doc"), F.col("chunk_text").alias("txt")))
+def src_corpus():
+    """Un texte par IDDOC : la ligne SUCCESS la plus récente, sinon la plus récente."""
+    df = spark.table(CHECKPOINT).where(F.col("document_text").isNotNull())
+    rank = F.when(F.col("parse_status") == "SUCCESS", 0).otherwise(1)
+    w = Window.partitionBy("IDDOC").orderBy(rank, F.desc("ingestion_timestamp"))
+    return (df.withColumn("_rn", F.row_number().over(w)).where("_rn = 1")
+            .select(F.col("IDDOC").cast("string").alias("doc"), F.col("document_text").alias("txt")))
 
 
 def src_questions():
-    parts = []
-    for table, col in [(CHAT_TURNS, "question"), (GOLDEN, "inputs"), (FEEDBACK, "question")]:
-        try:
-            df = spark.table(table)
-        except Exception as e:
-            print(f"ABSENT : {table} ({str(e)[:120]})")
-            continue
-        parts.append(df.select(
-            F.concat(F.lit(table + "#"), F.monotonically_increasing_id().cast("string")).alias("doc"),
-            F.regexp_replace(F.col(col).cast("string"), r"\[Division:[^\]]*\]", " ").alias("txt")))
-    if not parts:
-        raise RuntimeError("aucune table de questions lisible")
-    return reduce(DataFrame.unionByName, parts)
+    """Questions réelles tapées dans le chat de cet environnement."""
+    df = spark.table(CHAT_TURNS).where(F.col("question").isNotNull())
+    return df.select(
+        F.concat(F.lit("turn#"), F.col("id").cast("string")).alias("doc"),
+        F.regexp_replace(F.col("question"), r"\[Division:[^\]]*\]", " ").alias("txt"))
 
 # COMMAND ----------
-# Cellule 4 · section A : références officielles (doc_catalog) et leurs graphies dans les chunks
+# Cellule 4 · section A : référentiel REF (doc_catalog) et leurs graphies dans le corpus. Passe ENV = "dev".
 
-chunks = src_chunks().cache()
-print(f"chunks : {chunks.count()}")
+corpus = src_corpus().cache()
+print(f"[{ENV}] documents parsés : {corpus.count()}")
 
 cat = spark.table(CATALOG).select("ref").where("ref IS NOT NULL").cache()
 print(f"\n=== A. Catalogue : {cat.count()} REF ===")
@@ -96,7 +90,7 @@ print("préfixes :", "  ".join(f"{r['prefixe']}={r['count']}" for r in pref))
 print("exemples :", " | ".join(r["ref"] for r in cat.limit(15).collect()))
 
 refs_k = cat.withColumn("cle", F.upper(F.regexp_replace("ref", "[^A-Za-z0-9]", "")))
-codes_tok = tokens(chunks, PATTERNS["code_chiffres"]).unionByName(tokens(chunks, PATTERNS["reference_segments"]))
+codes_tok = tokens(corpus, PATTERNS["code_chiffres"]).unionByName(tokens(corpus, PATTERNS["reference_segments"]))
 hits = (codes_tok.withColumn("cle", F.upper(F.regexp_replace("tok", "[^A-Za-z0-9]", "")))
         .join(F.broadcast(refs_k), "cle")
         .groupBy("ref")
@@ -114,10 +108,10 @@ for r in hits.where("variante > 0").orderBy(F.desc("variante")).limit(TOP_N).col
     print(f"{r['ref']}\t{r['exact']}\t{r['variante']}\t{' | '.join(r['formes_variantes'][:3])}")
 
 # COMMAND ----------
-# Cellule 5 · section B : tous les candidats des chunks, par catégorie
+# Cellule 5 · section B : tous les candidats du corpus, par catégorie. Passe ENV = "dev".
 
 for label, pattern in PATTERNS.items():
-    rows = agg(tokens(chunks, pattern)).orderBy(F.desc("occ")).limit(TOP_N).collect()
+    rows = agg(tokens(corpus, pattern)).orderBy(F.desc("occ")).limit(TOP_N).collect()
     print(f"\n=== B. {label} : top {len(rows)} (occ >= {MIN_OCC}) ===")
     for r in rows:
         print(f"{r['cle']}\t{r['occ']}\t{r['docs']}\t{len(r['formes'])} formes\t{' | '.join(r['formes'][:4])}")
@@ -126,17 +120,19 @@ for label, pattern in PATTERNS.items():
         print(f"\nfaux positifs probables (mots courants) dans ce top : {len(fp)} → {' '.join(fp)}")
 
 # COMMAND ----------
-# Cellule 6 · section C : codes tapés par les utilisateurs (chat, golden, feedback) vs graphie des chunks
+# Cellule 6 · section C : codes tapés dans le chat (chat_turns) vs graphie du corpus. Passe ENV = "uat".
+# Lancer UNIQUEMENT dans un notebook UAT (ENV = "uat" en cellule 1). Cellules 1, 2, 3 puis 6 ; corpus lu ici aussi.
 
+corpus = src_corpus().cache()
 qsrc = src_questions().cache()
-print(f"\nquestions (chat + golden + feedback) : {qsrc.count()}")
+print(f"[{ENV}] questions du chat : {qsrc.count()} · documents parsés : {corpus.count()}")
 
 for label in ["code_chiffres", "reference_segments", "sigle"]:
     qa = agg(tokens(qsrc, PATTERNS[label]), min_occ=1)
-    ca = (agg(tokens(chunks, PATTERNS[label]), min_occ=1)
-          .select("cle", F.col("occ").alias("occ_chunks"), F.col("formes").alias("formes_chunks")))
+    ca = (agg(tokens(corpus, PATTERNS[label]), min_occ=1)
+          .select("cle", F.col("occ").alias("occ_corpus"), F.col("formes").alias("formes_corpus")))
     rows = qa.join(ca, "cle", "left").orderBy(F.desc("occ")).limit(TOP_N).collect()
-    print(f"\n=== C. {label} : top {len(rows)} (cle | questions | docs questions | formes tapées | formes dans les chunks) ===")
+    print(f"\n=== C. {label} : top {len(rows)} (cle | questions | formes tapées | formes dans le corpus) ===")
     for r in rows:
-        fc = " | ".join(r["formes_chunks"][:3]) if r["formes_chunks"] else "ABSENT des chunks"
+        fc = " | ".join(r["formes_corpus"][:3]) if r["formes_corpus"] else "ABSENT du corpus"
         print(f"{r['cle']}\t{r['occ']}\t{r['docs']}\t{' | '.join(r['formes'][:3])}\t{fc}")
