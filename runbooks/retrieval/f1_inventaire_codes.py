@@ -166,3 +166,125 @@ print(f"écrit dans {TARGET} : {ENVS}")
 for r in (spark.table(TARGET).groupBy("env", "section", "categorie").count()
           .orderBy("env", "section", "categorie").collect()):
     print(f"{r['env']}\t{r['section']}\t{r['categorie']}\t{r['count']}")
+
+# COMMAND ----------
+# Cellule 5 · graphiques à partir de la table (lecture seule)
+
+import matplotlib.pyplot as plt
+import pandas as pd
+from matplotlib.patches import Patch
+
+PALETTE = {"dev": "#1f5aa6", "uat": "#d9822b"}   # bleu et orange : paire distinguable en daltonisme
+INK, MUTED, GRID = "#1f2933", "#6b7280", "#e5e7eb"
+TOP = 20
+STOPLIST = {"OK", "NON", "OUI", "ET", "OU", "DE", "LE", "LA", "LES", "UN", "UNE", "DU", "DES", "EN", "AU", "AUX",
+            "SI", "CE", "QUE", "QUI", "EST", "PAR", "POUR", "SUR", "DANS", "AND", "THE", "FOR", "NOT", "ALL", "ANY",
+            "AT", "BY", "IN", "IS", "OF", "OR", "TO", "NO", "YES", "PDF", "NA", "RAS", "TBD", "ID", "FR"}
+
+inv = spark.table(TARGET).toPandas()
+ENVS_PRESENT = [e for e in ["dev", "uat"] if e in set(inv["env"])]
+
+
+def style(ax, title, xlabel):
+    """Met un axe en style sobre : titre à gauche, grille horizontale légère, sans cadre.
+
+    :param ax: axe matplotlib
+    :param title: titre du graphique
+    :param xlabel: libellé de l'axe horizontal
+    :return: None
+    """
+    ax.set_title(title, loc="left", fontsize=13, fontweight="bold", color=INK, pad=12)
+    ax.set_xlabel(xlabel, color=MUTED, fontsize=10)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(GRID)
+    ax.xaxis.grid(True, color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
+    ax.tick_params(colors=INK, length=0, labelsize=9)
+
+
+def top_rows(section, categorie, env, value="occ"):
+    """Les TOP lignes d'une section, catégorie et environnement, triées par valeur décroissante.
+
+    :param section: nom de la section
+    :param categorie: nom de la catégorie
+    :param env: environnement (dev ou uat)
+    :param value: colonne de tri
+    :return: DataFrame des lignes retenues, plus grande valeur en premier
+    """
+    rows = inv[(inv.section == section) & (inv.categorie == categorie) & (inv.env == env)]
+    return rows.sort_values(value, ascending=False).head(TOP)
+
+
+def panels(n_env):
+    """Crée une figure avec un panneau par environnement.
+
+    :param n_env: nombre d'environnements à afficher
+    :return: figure et liste d'axes
+    """
+    fig, axes = plt.subplots(1, n_env, figsize=(7 * n_env, 7), squeeze=False)
+    return fig, list(axes[0])
+
+
+# Vue d'ensemble : lignes par section et environnement
+counts = inv.groupby(["section", "env"]).size().unstack("env").reindex(columns=ENVS_PRESENT).fillna(0)
+fig, ax = plt.subplots(figsize=(10, 4.5))
+x = range(len(counts.index))
+width = 0.38
+for i, env in enumerate(ENVS_PRESENT):
+    offset = (i - (len(ENVS_PRESENT) - 1) / 2) * width
+    ax.bar([p + offset for p in x], counts[env], width=width * 0.92, color=PALETTE[env], label=env.upper())
+    for p, v in zip(x, counts[env]):
+        ax.text(p + offset, v, f"{int(v):,}", ha="center", va="bottom", fontsize=8, color=MUTED)
+ax.set_xticks(list(x))
+ax.set_xticklabels(counts.index, color=INK)
+style(ax, "Lignes de l'inventaire par section", "")
+ax.xaxis.grid(False)
+ax.yaxis.grid(True, color=GRID, linewidth=0.8)
+ax.set_ylabel("lignes", color=MUTED, fontsize=10)
+ax.legend(frameon=False, fontsize=9)
+fig.tight_layout()
+plt.show()
+
+# Section A : REF du catalogue, citations exactes et sous une autre graphie
+fig, axes = panels(len(ENVS_PRESENT))
+for ax, env in zip(axes, ENVS_PRESENT):
+    d = top_rows("A_reference", "reference", env, "occ_corpus").iloc[::-1]
+    ax.barh(d.cle, d.occ, color=PALETTE[env], height=0.7, edgecolor="white", linewidth=0.5)
+    ax.barh(d.cle, d.occ_corpus, left=d.occ, color=PALETTE[env], alpha=0.35, height=0.7,
+            edgecolor="white", linewidth=0.5)
+    ax.legend(handles=[Patch(color=PALETTE[env], label="citation exacte"),
+                       Patch(color=PALETTE[env], alpha=0.35, label="autre graphie")],
+              frameon=False, fontsize=9, loc="lower right")
+    style(ax, f"{env.upper()} · REF citées sous une autre graphie", "nombre de citations")
+fig.tight_layout()
+plt.show()
+
+# Section B : candidats du corpus, par motif
+for categorie in ["code_chiffres", "reference_segments", "sigle"]:
+    fig, axes = panels(len(ENVS_PRESENT))
+    for ax, env in zip(axes, ENVS_PRESENT):
+        d = top_rows("B_corpus", categorie, env)
+        if categorie == "sigle":
+            d = d[~d.cle.isin(STOPLIST)]
+        d = d.iloc[::-1]
+        ax.barh(d.cle, d.occ, color=PALETTE[env], height=0.7, edgecolor="white", linewidth=0.5)
+        for y, v in enumerate(d.occ):
+            ax.text(v, y, f" {int(v):,}", va="center", fontsize=8, color=MUTED)
+        style(ax, f"{env.upper()} · {categorie}", "occurrences dans le corpus")
+    fig.tight_layout()
+    plt.show()
+
+# Section C : codes tapés dans le chat, en gris quand ils sont absents du corpus
+fig, axes = panels(len(ENVS_PRESENT))
+for ax, env in zip(axes, ENVS_PRESENT):
+    rows = inv[(inv.section == "C_questions") & (inv.env == env)]
+    d = rows.sort_values("occ", ascending=False).head(TOP).iloc[::-1]
+    colors = [PALETTE[env] if pd.notna(v) else MUTED for v in d.occ_corpus]
+    ax.barh(d.cle, d.occ, color=colors, height=0.7, edgecolor="white", linewidth=0.5)
+    ax.legend(handles=[Patch(color=PALETTE[env], label="présent dans le corpus"),
+                       Patch(color=MUTED, label="absent du corpus")],
+              frameon=False, fontsize=9, loc="lower right")
+    style(ax, f"{env.upper()} · codes tapés dans le chat", "questions")
+fig.tight_layout()
+plt.show()

@@ -24,7 +24,7 @@ Règles : tests et lectures en **DEV** ; notebooks à paramètres en dur (ou pip
 ### 1. Inventaire des acronymes et codes — aujourd'hui (F1)
 Objectif : savoir quoi normaliser avant d'écrire une regex.
 
-**Lancer** : [f1_inventaire_codes.py](f1_inventaire_codes.py) dans un notebook DEV. Le découper aux lignes `# COMMAND ----------` (une cellule par bloc), lancer dans l'ordre. Il lit DEV et UAT (`ENVS = ["dev", "uat"]` ; `["uat"]` ou `["dev"]` pour une seule passe) et écrit `dev_proj.qualibot.f1_inventaire_codes` (colonne `env`, sections `A_reference`, `B_corpus`, `C_questions`). Cellule 4 = contrôle du nombre de lignes par env, section et catégorie.
+**Lancer** : [f1_inventaire_codes.py](f1_inventaire_codes.py) dans un notebook DEV. Le découper aux lignes `# COMMAND ----------` (une cellule par bloc), lancer dans l'ordre. Il lit DEV et UAT (`ENVS = ["dev", "uat"]` ; `["uat"]` ou `["dev"]` pour une seule passe) et écrit `dev_proj.qualibot.f1_inventaire_codes` (colonne `env`, sections `A_reference`, `B_corpus`, `C_questions`). Cellule 4 = contrôle du nombre de lignes par env, section et catégorie. Cellule 5 = graphiques (vue d'ensemble, REF à graphie variable, top codes par motif, codes du chat absents du corpus), en DEV et UAT côte à côte.
 
 **Motifs de tokenisation** (cellule 1) :
 - `code_chiffres` : lettres (2 à 8) + chiffres, casse ignorée, tiret ou underscore facultatif (`ST-1027`, `st1027`, `AS9100`, `DO-160`).
