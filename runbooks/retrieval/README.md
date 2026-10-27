@@ -27,11 +27,31 @@ Objectif : savoir quoi normaliser avant d'écrire une regex.
 **Lancer** : [f1_inventaire_codes.py](f1_inventaire_codes.py) dans un notebook DEV. Le découper aux lignes `# COMMAND ----------` (une cellule par bloc), lancer dans l'ordre. Il lit DEV et UAT (`ENVS = ["dev", "uat"]` ; `["uat"]` ou `["dev"]` pour une seule passe) et écrit `dev_proj.qualibot.f1_inventaire_codes` (colonne `env`, sections `A_reference`, `B_corpus`, `C_questions`). Cellule 4 = contrôle du nombre de lignes par env, section et catégorie. Cellule 5 = graphiques (vue d'ensemble, REF à graphie variable, top codes par motif, codes du chat absents du corpus), en DEV et UAT côte à côte.
 
 **Extraction** (cellule 1, sans seuil de longueur) : un token = un bloc de lettres et chiffres relié au suivant par `-`, `_`, `/` ou `.` (`ST-1027`, `MI-1413_FR`, `INAQ/560`, `4.2.1`) ; une séquence = un token suivi de nombres séparés par des espaces (`IAQ 20 00 04`, `BAC 5423`). Catégories (triées après extraction) : `code_lettres_chiffres`, `sequence_espace`, `sigle` (majuscules, 2 lettres ou plus), `casse_mixte` (`eFNC`, `PIRs`), `nombre_compose` (`4.2.1`). Écartés : nombres seuls, mots en minuscules, mots capitalisés. La colonne `structures` donne la forme (`A-9` pour `ST-1027`) pour trier les graphies.\n\n- [x] Notebook, lecture seule : sur le corpus parsé (`parsing_checkpoint`, tous les fichiers, sans scope), extraire tous les tokens « code » (lettres+chiffres, avec tiret/espace/underscore) et les acronymes MAJUSCULES, avec fréquence, nb de docs, graphies variantes. → [f1_inventaire_codes.py](f1_inventaire_codes.py) (cellules 4 à 6)
-- [ ] **A. Références des docs Intraqual** : la liste officielle des `REF` (`doc_catalog` / `parse_manifest`) donne les préfixes (ST, SF, QR, …) et leur forme exacte ; mesurer combien de citations dans les chunks sont écrites autrement que la REF.
-- [ ] **B. Les autres, ratisser très large** : sigles (DOA, AIDS…), normes et standards aéronautiques (ISO, EN, AS, NADCAP, DO-…), références clients (Airbus), références internes à espaces ou points (`IAQ 20 00 04`, `1.2.3`), codes pièce/plan, noms propres en majuscules. Classer : code à chiffres / référence à segments / sigle sans chiffres / mot courant en majuscules (faux positifs). Les motifs ne sont pas supposés : on part des tokens réellement présents (n-grammes MAJUSCULES+chiffres, segments séparés par espace/tiret/point/slash) et on regarde ce qui ressort.
-- [ ] **C. Vraies questions d'utilisateurs** : même extraction sur les questions réelles du chat UAT (`chat_turns`) : quels codes/sigles les gens tapent, avec quelle graphie. Écart entre la graphie de la question et celle du chunk = le cas à corriger. Ces questions nourrissent aussi le jeu d'éval (étape 5, priorité plus basse qu'ici).
-- [ ] Sortie : tableau top 200 par catégorie, 30 faux positifs, graphies question vs chunk, décision par catégorie (regex, liste/glossaire, rien).
+- [x] **A. Références des docs Intraqual** : la liste officielle des `REF` (`doc_catalog` / `parse_manifest`) donne les préfixes (ST, SF, QR, …) et leur forme exacte ; mesurer combien de citations dans les chunks sont écrites autrement que la REF.
+- [x] **B. Les autres, ratisser très large** : sigles (DOA, AIDS…), normes et standards aéronautiques (ISO, EN, AS, NADCAP, DO-…), références clients (Airbus), références internes à espaces ou points (`IAQ 20 00 04`, `1.2.3`), codes pièce/plan, noms propres en majuscules. Classer : code à chiffres / référence à segments / sigle sans chiffres / mot courant en majuscules (faux positifs). Les motifs ne sont pas supposés : on part des tokens réellement présents (n-grammes MAJUSCULES+chiffres, segments séparés par espace/tiret/point/slash) et on regarde ce qui ressort.
+- [x] **C. Vraies questions d'utilisateurs** : même extraction sur les questions réelles du chat UAT (`chat_turns`) : quels codes/sigles les gens tapent, avec quelle graphie. Écart entre la graphie de la question et celle du chunk = le cas à corriger. Ces questions nourrissent aussi le jeu d'éval (étape 5, priorité plus basse qu'ici).
+- [x] Sortie : tableau top 200 par catégorie, 30 faux positifs, graphies question vs chunk, décision par catégorie (regex, liste/glossaire, rien).
   *Validation : tu relis le tableau ; on fige les catégories traitées par regex (étape 2-3) et celles renvoyées au glossaire (Further).*
+
+**Résultats F1 (run du 2026-10-27, analyse Genie sur `dev_proj.qualibot.f1_inventaire_codes` ; 6 049 documents DEV, 6 218 UAT)**
+
+| Constat | Chiffres | Décision |
+|---|---|---|
+| REF du catalogue citées sous la forme exacte | UAT 2 863 / 5 708 ; DEV 2 288 / 4 589 | rien à faire |
+| REF citées autrement (espaces, casse, points) ou avec suffixe collé (`MI-1413_FR`) | UAT 381 et 369 ; DEV 344 et 291 | **regex** (étape 2-3) |
+| REF jamais citées dans `document_text` | UAT 2 672 ; 2 084 ont pourtant leur document dans le checkpoint | rien : chaque chunk commence par `[Source: <REF> | Title: …]` (`worker.source_prefixed_text`, `EMBED_SOURCE_PREFIX`), la REF y est déjà |
+| Variantes réelles trouvées dans le texte | `MI -1058`, `MI - 1365`, `QTP 01-174`, `IF2.03.08_CZ`, `LDB IT 243`, `LAT 215.300.00/55` | **regex** : séparateur précédé ou suivi d'espaces (0 à 3), `.` `/` `-` `_` équivalents, casse ignorée, préfixes pris dans le catalogue |
+| Suffixe de langue dans les questions (`Q0697MI_FR`, `NF-10149_Fr`, `MM-1059_BG`) | 6 des 65 codes absents du corpus | **regex** : suffixe de langue facultatif côté query |
+| Fautes de frappe (`Q0126P`, `ALUMUNIUM`) | 3 sur 65 | rien |
+| Code voisin d'un autre à un chiffre près (`NS-1717`, `MI-13663`, `QTR-01-247`) | ~25 sur 65 | rien : répondre « inconnu », ne pas rediriger |
+| `sigle` (DOA, EUR, NA…) | ~50 % de bruit (mots courants, en-têtes) | **glossaire** (Further), classer par nombre de documents et non par occurrences |
+| `casse_mixte` | 85 % d'occurrences dans un seul document (`Contrat-cadrePoste`) | rien / glossaire (`eFNC`, `BoM`) |
+| `nombre_compose` | dates `AAAAMMJJ` 65 %, `1.54` et `15.4` fusionnés si on retire les points | rien ; ne jamais retirer les séparateurs d'un nombre |
+| `code_lettres_chiffres` : bruit `COL1…COL28`, `OA21`, `OC20` | 26 % des occurrences | exclure ces préfixes de la normalisation |
+| Familles non captées | `§ 6` (1 556 docs), `Rev A`/`Issue C` (360), `P/N` (75), `B.P.` (790), `LdB P-103` (116), `EC-7210 B` (65) | `LdB` : ajouter au préfixes ; `B.P.` : glossaire ; le reste : Further |
+| Clés de plusieurs catégories | `A0` et `A.Arsicaud` ; `IF20308` = `IF 2.03.08` = `IF 20308` | fusionner seulement les préfixes connus du catalogue |
+
+Règle retenue pour l'étape 2-3 : détecter `préfixe connu (catalogue) + séparateurs et espaces facultatifs + chiffres + suffixe de langue facultatif`, et ne rien normaliser sinon.
 
 ### 2. Preprocess de la query (BM25) — Mer.-Jeu. (F2)
 - [ ] Fonction pure `normalize_codes(text)` : `ST-1027` → `ST1027` (forme de la table d'inventaire, pas de regex devinée). Une seule définition importée par l'app et le pipeline.
