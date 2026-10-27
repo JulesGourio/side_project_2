@@ -24,7 +24,13 @@ Règles : tests et lectures en **DEV** ; notebooks à paramètres en dur (ou pip
 ### 1. Inventaire des acronymes et codes — aujourd'hui (F1)
 Objectif : savoir quoi normaliser avant d'écrire une regex.
 
-**À faire (Jules)** : dans un notebook, copie chaque bloc de [f1_inventaire_codes.py](f1_inventaire_codes.py) (séparé par `# COMMAND ----------`) dans une cellule, dans l'ordre. Lecture seule, tes droits suffisent. Passe 1 en **DEV** avec `ENV = "dev"` (cellules 1 à 5), passe 2 en **UAT** avec `ENV = "uat"` (cellules 1, 2, 3, 6). Renvoie-moi le texte imprimé par chaque passe. Si une table est `ABSENT`, dis-le-moi.
+**Lancer** : [f1_inventaire_codes.py](f1_inventaire_codes.py) dans un notebook DEV. Le découper aux lignes `# COMMAND ----------` (une cellule par bloc), lancer dans l'ordre. Il lit DEV et UAT (`ENVS = ["dev", "uat"]` ; `["uat"]` ou `["dev"]` pour une seule passe) et écrit `dev_proj.qualibot.f1_inventaire_codes` (colonne `env`, sections `A_reference`, `B_corpus`, `C_questions`). Cellule 4 = contrôle du nombre de lignes par env, section et catégorie.
+
+**Motifs de tokenisation** (cellule 1) :
+- `code_chiffres` : lettres (2 à 8) + chiffres, casse ignorée, tiret ou underscore facultatif (`ST-1027`, `st1027`, `AS9100`, `DO-160`).
+- `reference_segments` : lettres + segments numériques séparés par espace, point, slash ou tiret (`IAQ 20 00 04`, `ISO 9001`, `ST-1027-01`).
+- `sigle` : 2 à 8 majuscules sans chiffre (`DOA`, `AIDS`) ; les mots courants sont des faux positifs probables.
+- `numero_pointe` : 3 nombres ou plus séparés par des points (`4.10.2`).
 
 - [x] Notebook, lecture seule : sur le corpus parsé (`parsing_checkpoint`, tous les fichiers, sans scope), extraire tous les tokens « code » (lettres+chiffres, avec tiret/espace/underscore) et les acronymes MAJUSCULES, avec fréquence, nb de docs, graphies variantes. → [f1_inventaire_codes.py](f1_inventaire_codes.py) (cellules 4 à 6)
 - [ ] **A. Références des docs Intraqual** : la liste officielle des `REF` (`doc_catalog` / `parse_manifest`) donne les préfixes (ST, SF, QR, …) et leur forme exacte ; mesurer combien de citations dans les chunks sont écrites autrement que la REF.

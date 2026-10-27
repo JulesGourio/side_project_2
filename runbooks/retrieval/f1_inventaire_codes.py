@@ -1,8 +1,7 @@
 # Databricks notebook source
-# F1 · Inventaire des acronymes et codes → table dev_proj.qualibot.f1_inventaire_codes (colonne env)
-# À lancer dans le notebook DEV : la lecture DEV peut lire DEV, UAT et PROD. Lecture seule sur les tables source.
-# ENVS = ["dev", "uat"] fait les deux passes ; ["uat"] ou ["dev"] ne fait qu'une passe (les autres lignes restent).
-# Droits : ton compte (lecture des environnements, écriture et création dans dev_proj.qualibot), pas de job runner.
+# Inventaire des acronymes et codes : tokens du corpus parsé, référentiel REF et questions du chat,
+# écrits dans dev_proj.qualibot.f1_inventaire_codes (colonne env).
+# Lecture seule sur <env>_proj.qualibot pour chaque env de ENVS ; seule la table cible est écrite.
 # Sections : A_reference (REF du catalogue et leurs graphies), B_corpus (candidats du corpus),
 # C_questions (codes tapés dans le chat, avec leur graphie dans le corpus).
 
