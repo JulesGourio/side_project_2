@@ -1285,3 +1285,19 @@ Statut : à faire (non confirmé par Jules).
 - 2026-10-21 — 37 documents `MISSING_CHUNKS` (171 passages au total) : documents presque sans texte (30 caractères, 5 images) flaggés par la garde `flag_ghost_documents` avant l'ajout des passages d'images ; 1970 passages sans `division` (30 documents listés, dont `UDA-00-053`, `TDA7-00-046`, `FDAQL-2851`). À surveiller après le premier run quotidien ; aucune action.
 - 2026-10-21 — E2 terminé : run complet `D_1_Qualibot_Parsing_Pipeline` (job run `884840682425994`, mode `rechunk`) en SUCCESS, `chunks` écrasé en `Overwrite` (v21) sans changement de schéma, 137187 lignes = `chunks_full`, QM-1041 absent, `doc_catalog` 7583 documents (7583 avec révision, 7576 avec date). Étapes 0.3, 0.5, 0.7, C1, C2 et E1 confirmées.
 - 2026-10-19 — E2, étapes 3 à 7 : `chunks_index` reconstruit par le compte de service (nouveau pipeline `c10bcd69-bfbc-4625-b94a-ebc7a81858b9`, « Index creation succeeded »), `indexed_row_count` = 137187 = lignes de `chunks`, QM-1041 n'apparaît plus dans les sources du chat. Restent : étapes 1 et 2 (déploiement du code corrigé, à confirmer) et 8 (run complet, test du correctif).
+
+## Recherche exacte des codes (2026-10-27, commit 99864ff)
+
+- [ ] **K1. Colonnes de `chat_turns`** (Lakebase UAT, éditeur SQL, par Jules, propriétaire de la table) :
+  ```sql
+  ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS named_codes TEXT[];
+  ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS code_passages INTEGER;
+  ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS code_lookup_ms INTEGER;
+  ```
+- [ ] **K2. Déploiement** : Bitbucket `bind-uat-staging` (une fois), `deploy-uat-jobs`, `deploy-uat`.
+- [ ] **K3. Tâche 6 seule** :
+  ```powershell
+  '{"job_id":762813135325407,"only":["6_update_kb_metadata"]}' | Out-File -Encoding ascii "$env:TEMP\run6.json"
+  databricks jobs run-now --json "@$env:TEMP\run6.json" --profile UAT
+  ```
+- [ ] **K4. Contrôle** (Lakebase) : `SELECT code, chunk_ids FROM chunk_codes WHERE code IN ('SF-1027', 'AS9102');` puis la question « Dans quel document se trouve SF-1027 ? » doit citer Q0102QP_GB.
