@@ -2,8 +2,20 @@
 # Inventaire des acronymes et codes : tokens du corpus parsé, référentiel REF et questions du chat,
 # écrits dans dev_proj.qualibot.f1_inventaire_codes (colonne env).
 # Lecture seule sur <env>_proj.qualibot pour chaque env de ENVS ; seule la table cible est écrite.
-# Sections : A_reference (REF du catalogue et leurs graphies), B_corpus (candidats du corpus),
-# C_questions (codes tapés dans le chat, avec leur graphie dans le corpus).
+#
+# Sections :
+#   A_reference : une ligne par REF du catalogue. occ = citations exactes de la REF dans le corpus,
+#                 occ_autre_graphie = citations de la même REF écrites autrement (espace, tiret, casse).
+#   B_corpus    : une ligne par clé (code, segments, sigle, numéro pointé) présente dans le corpus.
+#                 occ = occurrences, docs = documents qui la contiennent.
+#   C_questions : une ligne par clé tapée dans le chat. occ = questions qui la contiennent, docs = questions,
+#                 occ_corpus = occurrences de la même clé dans le corpus, formes_corpus = leurs graphies.
+#
+# Colonnes communes :
+#   formes             : graphies exactes vues dans la source de la ligne (triées).
+#   nb_refs            : nombre de REF distinctes du corpus qui citent la clé (sections B et C).
+#   refs_source        : les 10 REF qui citent le plus la clé, avec le nombre de documents, "REF (n)".
+#   urls_source        : lien Intraqual de chacune de ces REF.
 
 # COMMAND ----------
 # Cellule 1 · paramètres et motifs
@@ -17,85 +29,134 @@ from pyspark.sql import functions as F
 ENVS = ["dev", "uat"]   # environnements à inventorier : ["dev", "uat"], ["dev"] ou ["uat"]
 TARGET = "dev_proj.qualibot.f1_inventaire_codes"
 MIN_OCC = 2   # occurrences minimum dans le corpus pour une clé de la section B
+INTRAQUAL_BASE = "https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref="
 
+# Motifs appliqués au texte des documents et des questions, en casse exacte sauf indication contraire.
 PATTERNS = {
+    # Code à chiffres : 2 à 8 lettres, tiret ou underscore facultatif, au moins 2 chiffres, puis des segments
+    # numériques facultatifs séparés par - _ / . et une lettre finale facultative. Casse ignorée.
+    # Matche ST-1027, st1027, SF_1027, AS9100, DO-160, QR-1005-02, ST1027a.
+    # Ne matche pas une date (pas de lettres) ni un mot suivi d'un nombre séparé par un espace.
     "code_chiffres": r"(?i)(?<![a-z0-9])[a-z]{2,8}[-_]?[0-9]{2,}(?:[-_/.][0-9]+)*[a-z]?(?![a-z0-9])",
+    # Référence à segments, majuscules seulement. Deux formes :
+    #   - des lettres (2 ou plus) suivies de segments numériques séparés par un espace : IAQ 20 00 04, ISO 9001 ;
+    #   - des lettres suivies d'au moins deux segments séparés par espace, point, slash ou tiret : ST-1027-01, 12/34/56.
+    # Ne matche pas ST-1027 seul (un seul segment : couvert par code_chiffres).
     "reference_segments": r"(?<![A-Za-z0-9])[A-Z]{2,}[0-9]*(?: [0-9]{1,4})+(?![A-Za-z0-9])"
                           r"|(?<![A-Za-z0-9])[A-Z]{2,}[0-9]*(?:[ ./-][0-9]{1,4}){2,}(?![A-Za-z0-9])",
+    # Sigle : 2 à 8 majuscules, sans chiffre ni lettre collée. Matche DOA, AIDS, NADCAP, mais aussi des mots
+    # en capitales (OK, NON) : ces faux positifs sont écartés à la lecture des graphiques.
     "sigle": r"(?<![A-Za-z0-9])[A-Z]{2,8}(?![A-Za-z0-9])",
+    # Numéro pointé : 3 blocs de 1 à 3 chiffres séparés par des points : 4.10.2.
+    # Matche aussi des adresses IP et des numéros de version à trois niveaux.
     "numero_pointe": r"(?<![0-9.])[0-9]{1,3}(?:\.[0-9]{1,3}){2,}(?![0-9.])",
+}
+
+TYPES = {
+    "cle": "string", "ref_catalogue": "string", "occ": "long", "docs": "long",
+    "formes": "array<string>", "occ_corpus": "long", "formes_corpus": "array<string>",
+    "occ_autre_graphie": "long", "formes_autre_graphie": "array<string>",
+    "nb_refs": "long", "refs_source": "array<string>", "urls_source": "array<string>",
 }
 
 # COMMAND ----------
 # Cellule 2 · fonctions (aucune écriture)
 
 
-def tokens(src, pattern):
-    """Une ligne par occurrence du motif dans la colonne txt, avec la source doc.
+def with_cle(tok_df):
+    """Ajoute la clé normalisée : majuscules, sans tiret, espace, point ni slash.
 
-    :param src: DataFrame aux colonnes doc et txt
+    :param tok_df: DataFrame aux colonnes doc, doc_ref et tok
+    :return: même DataFrame avec la colonne cle
+    """
+    return tok_df.withColumn("cle", F.upper(F.regexp_replace("tok", "[^A-Za-z0-9]", "")))
+
+
+def tokens(src, pattern):
+    """Une ligne par occurrence du motif dans la colonne txt.
+
+    :param src: DataFrame aux colonnes doc, doc_ref et txt
     :param pattern: expression régulière (syntaxe Java)
-    :return: DataFrame aux colonnes doc et tok
+    :return: DataFrame aux colonnes doc, doc_ref et tok
     """
     pat = pattern.replace("\\", "\\\\")
-    return src.select("doc", F.explode(F.expr(f"regexp_extract_all(txt, '{pat}', 0)")).alias("tok"))
+    return src.select("doc", "doc_ref",
+                      F.explode(F.expr(f"regexp_extract_all(txt, '{pat}', 0)")).alias("tok"))
 
 
-def agg(tok_df, min_occ=MIN_OCC):
-    """Une ligne par clé normalisée (majuscules, sans tiret, espace, point ni slash).
+def keyed(tok_df, min_occ=MIN_OCC):
+    """Statistiques par clé, avec les REF qui la citent et leurs liens Intraqual.
 
-    :param tok_df: DataFrame aux colonnes doc et tok
+    :param tok_df: DataFrame aux colonnes doc, doc_ref et tok
     :param min_occ: occurrences minimum pour garder la clé
-    :return: DataFrame aux colonnes cle, occ, docs et formes (graphies vues, triées)
+    :return: DataFrame aux colonnes cle, occ, docs, formes, nb_refs, refs_source, urls_source
     """
-    return (tok_df.withColumn("cle", F.upper(F.regexp_replace("tok", "[^A-Za-z0-9]", "")))
-            .groupBy("cle")
-            .agg(F.count("*").alias("occ"), F.countDistinct("doc").alias("docs"),
-                 F.array_sort(F.collect_set("tok")).alias("formes"))
-            .where(F.col("occ") >= min_occ))
+    t = with_cle(tok_df)
+    stats = (t.groupBy("cle")
+             .agg(F.count("*").alias("occ"), F.countDistinct("doc").alias("docs"),
+                  F.array_sort(F.collect_set("tok")).alias("formes"))
+             .where(F.col("occ") >= min_occ))
+    per_ref = (t.where(F.col("doc_ref").isNotNull())
+               .groupBy("cle", "doc_ref").agg(F.countDistinct("doc").alias("n"))
+               .groupBy("cle")
+               .agg(F.sort_array(F.collect_list(F.struct("n", "doc_ref")), asc=False).alias("s"),
+                    F.count("doc_ref").alias("nb_refs")))
+    refs = per_ref.select(
+        "cle", "nb_refs",
+        F.transform(F.slice("s", 1, 10),
+                    lambda x: F.concat(x["doc_ref"], F.lit(" ("), x["n"].cast("string"), F.lit(")")))
+        .alias("refs_source"),
+        F.transform(F.slice("s", 1, 10),
+                    lambda x: F.concat(F.lit(INTRAQUAL_BASE), F.regexp_replace(x["doc_ref"], " ", "%20")))
+        .alias("urls_source"))
+    return stats.join(refs, "cle", "left")
 
 
-def shape(df, env, section, categorie):
-    """Ramène un DataFrame de clés aux colonnes de la table.
+def conform(df, env, section, categorie):
+    """Ramène un DataFrame aux colonnes de la table ; une colonne absente de la section est nulle.
 
-    :param df: DataFrame aux colonnes cle, ref_catalogue, occ, docs, formes, occ_corpus, formes_corpus
+    :param df: DataFrame de la section
     :param env: environnement source (dev ou uat)
     :param section: nom de la section (A_reference, B_corpus, C_questions)
-    :param categorie: nom du motif ou de la catégorie de référence
+    :param categorie: motif ou catégorie de référence
     :return: DataFrame aux colonnes de la table
     """
-    return df.select(
-        F.lit(env).alias("env"), F.lit(section).alias("section"), F.lit(categorie).alias("categorie"),
-        "cle", "ref_catalogue", F.col("occ").cast("long"), F.col("docs").cast("long"), "formes",
-        F.col("occ_corpus").cast("long"), "formes_corpus", F.current_timestamp().alias("date_run"))
+    cols = [F.col(c).cast(t).alias(c) if c in df.columns else F.lit(None).cast(t).alias(c)
+            for c, t in TYPES.items()]
+    return df.select(F.lit(env).alias("env"), F.lit(section).alias("section"),
+                     F.lit(categorie).alias("categorie"), *cols,
+                     F.current_timestamp().alias("date_run"))
 
 
 def src_corpus(env):
-    """Un texte par IDDOC du parsing_checkpoint de l'environnement : la ligne SUCCESS la plus récente, sinon la plus récente.
+    """Un texte par IDDOC du parsing_checkpoint : la ligne SUCCESS la plus récente, sinon la plus récente.
 
     :param env: environnement (dev ou uat)
-    :return: DataFrame aux colonnes doc et txt
+    :return: DataFrame aux colonnes doc, doc_ref et txt
     """
     df = spark.table(f"{env}_proj.qualibot.parsing_checkpoint").where(F.col("document_text").isNotNull())
     rank = F.when(F.col("parse_status") == "SUCCESS", 0).otherwise(1)
     w = Window.partitionBy("IDDOC").orderBy(rank, F.desc("ingestion_timestamp"))
     return (df.withColumn("_rn", F.row_number().over(w)).where("_rn = 1")
-            .select(F.col("IDDOC").cast("string").alias("doc"), F.col("document_text").alias("txt")))
+            .select(F.col("IDDOC").cast("string").alias("doc"),
+                    F.col("ref").cast("string").alias("doc_ref"),
+                    F.col("document_text").alias("txt")))
 
 
 def src_questions(env):
     """Questions tapées dans le chat de l'environnement, sans le préfixe de division.
 
     :param env: environnement (dev ou uat)
-    :return: DataFrame aux colonnes doc et txt, vide si la table n'est pas lisible
+    :return: DataFrame aux colonnes doc, doc_ref (nul) et txt ; vide si la table n'est pas lisible
     """
     try:
         df = spark.table(f"{env}_proj.qualibot.chat_turns").where(F.col("question").isNotNull())
     except Exception as e:
         print(f"[{env}] chat_turns illisible : {str(e)[:160]}")
-        return spark.createDataFrame([], "doc string, txt string")
+        return spark.createDataFrame([], "doc string, doc_ref string, txt string")
     return df.select(
         F.concat(F.lit("turn#"), F.col("id").cast("string")).alias("doc"),
+        F.lit(None).cast("string").alias("doc_ref"),
         F.regexp_replace(F.col("question"), r"\[Division:[^\]]*\]", " ").alias("txt"))
 
 
@@ -110,40 +171,40 @@ def build(env):
     print(f"[{env}] documents parsés : {corpus.count()} · questions du chat : {qsrc.count()}")
     frames = []
 
-    # Section A : chaque REF du catalogue, citations exactes (occ) et sous une autre graphie (occ_corpus)
+    # Section A : chaque REF du catalogue, citations exactes et citations sous une autre graphie
     cat = spark.table(f"{env}_proj.qualibot.doc_catalog").select("ref").where("ref IS NOT NULL")
     refs_k = cat.withColumn("cle", F.upper(F.regexp_replace("ref", "[^A-Za-z0-9]", "")))
     codes_tok = tokens(corpus, PATTERNS["code_chiffres"]).unionByName(tokens(corpus, PATTERNS["reference_segments"]))
-    hits = (codes_tok.withColumn("cle", F.upper(F.regexp_replace("tok", "[^A-Za-z0-9]", "")))
+    hits = (with_cle(codes_tok)
             .join(F.broadcast(refs_k), "cle")
             .groupBy("ref")
             .agg(F.sum(F.when(F.col("tok") == F.col("ref"), 1).otherwise(0)).alias("exact"),
-                 F.sum(F.when(F.col("tok") != F.col("ref"), 1).otherwise(0)).alias("variante"),
-                 F.array_sort(F.collect_set(F.when(F.col("tok") != F.col("ref"), F.col("tok")))).alias("formes_variantes")))
+                 F.sum(F.when(F.col("tok") != F.col("ref"), 1).otherwise(0)).alias("occ_autre_graphie"),
+                 F.array_sort(F.collect_set(F.when(F.col("tok") != F.col("ref"), F.col("tok"))))
+                 .alias("formes_autre_graphie")))
     a = (cat.join(hits, "ref", "left")
          .select(F.col("ref").alias("cle"), F.col("ref").alias("ref_catalogue"),
-                 F.coalesce("exact", F.lit(0)).alias("occ"), F.lit(None).cast("long").alias("docs"),
-                 F.coalesce("formes_variantes", F.array().cast("array<string>")).alias("formes"),
-                 F.coalesce("variante", F.lit(0)).alias("occ_corpus"),
-                 F.lit(None).cast("array<string>").alias("formes_corpus")))
-    frames.append(shape(a, env, "A_reference", "reference"))
+                 F.coalesce("exact", F.lit(0)).alias("occ"),
+                 F.coalesce("occ_autre_graphie", F.lit(0)).alias("occ_autre_graphie"),
+                 F.coalesce("formes_autre_graphie", F.array().cast("array<string>")).alias("formes_autre_graphie"),
+                 F.lit(1).alias("nb_refs"),
+                 F.array(F.col("ref")).alias("refs_source"),
+                 F.array(F.concat(F.lit(INTRAQUAL_BASE), F.regexp_replace("ref", " ", "%20"))).alias("urls_source")))
+    frames.append(conform(a, env, "A_reference", "reference"))
 
     # Section B : candidats du corpus, par motif
     for label, pattern in PATTERNS.items():
-        b = agg(tokens(corpus, pattern)).select(
-            "cle", F.lit(None).cast("string").alias("ref_catalogue"), "occ", "docs", "formes",
-            F.lit(None).cast("long").alias("occ_corpus"), F.lit(None).cast("array<string>").alias("formes_corpus"))
-        frames.append(shape(b, env, "B_corpus", label))
+        b = keyed(tokens(corpus, pattern))
+        frames.append(conform(b, env, "B_corpus", label))
 
-    # Section C : codes tapés dans le chat (occ = questions) et leur graphie dans le corpus (occ_corpus)
+    # Section C : codes des questions, avec leur présence dans le corpus et les REF qui les citent
     for label in ["code_chiffres", "reference_segments", "sigle"]:
-        qa = agg(tokens(qsrc, PATTERNS[label]), min_occ=1)
-        ca = agg(tokens(corpus, PATTERNS[label]), min_occ=1).select(
-            "cle", F.col("occ").alias("occ_corpus"), F.col("formes").alias("formes_corpus"))
-        c = qa.join(ca, "cle", "left").select(
-            "cle", F.lit(None).cast("string").alias("ref_catalogue"), "occ", "docs", "formes",
-            "occ_corpus", "formes_corpus")
-        frames.append(shape(c, env, "C_questions", label))
+        qa = keyed(tokens(qsrc, PATTERNS[label]), min_occ=1).select("cle", "occ", "docs", "formes")
+        ca = keyed(tokens(corpus, PATTERNS[label]), min_occ=1).select(
+            "cle", F.col("occ").alias("occ_corpus"), F.col("formes").alias("formes_corpus"),
+            "nb_refs", "refs_source", "urls_source")
+        c = qa.join(ca, "cle", "left")
+        frames.append(conform(c, env, "C_questions", label))
 
     return reduce(DataFrame.unionByName, frames)
 
@@ -246,12 +307,12 @@ ax.legend(frameon=False, fontsize=9)
 fig.tight_layout()
 plt.show()
 
-# Section A : REF du catalogue, citations exactes et sous une autre graphie
+# Section A : REF du catalogue, citations exactes et citations sous une autre graphie
 fig, axes = panels(len(ENVS_PRESENT))
 for ax, env in zip(axes, ENVS_PRESENT):
-    d = top_rows("A_reference", "reference", env, "occ_corpus").iloc[::-1]
+    d = top_rows("A_reference", "reference", env, "occ_autre_graphie").iloc[::-1]
     ax.barh(d.cle, d.occ, color=PALETTE[env], height=0.7, edgecolor="white", linewidth=0.5)
-    ax.barh(d.cle, d.occ_corpus, left=d.occ, color=PALETTE[env], alpha=0.35, height=0.7,
+    ax.barh(d.cle, d.occ_autre_graphie, left=d.occ, color=PALETTE[env], alpha=0.35, height=0.7,
             edgecolor="white", linewidth=0.5)
     ax.legend(handles=[Patch(color=PALETTE[env], label="citation exacte"),
                        Patch(color=PALETTE[env], alpha=0.35, label="autre graphie")],
