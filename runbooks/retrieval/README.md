@@ -51,14 +51,22 @@ Objectif : savoir quoi normaliser avant d'écrire une regex.
 | Familles non captées | `§ 6` (1 556 docs), `Rev A`/`Issue C` (360), `P/N` (75), `B.P.` (790), `LdB P-103` (116), `EC-7210 B` (65) | `LdB` : ajouter au préfixes ; `B.P.` : glossaire ; le reste : Further |
 | Clés de plusieurs catégories | `A0` et `A.Arsicaud` ; `IF20308` = `IF 2.03.08` = `IF 20308` | fusionner seulement les préfixes connus du catalogue |
 
-Règle retenue pour l'étape 2-3 : détecter `préfixe connu (catalogue) + séparateurs et espaces facultatifs + chiffres + suffixe de langue facultatif`, et ne rien normaliser sinon.
+### 1b. Familles de codes : couvrir tout l'inventaire (F1, en cours)
+Méthode : chaque clé de l'inventaire reçoit une famille (code voulu, sigle, bruit) ; on relit ce qui reste (`residu`), on ajoute ou corrige une règle, on relance, jusqu'à ce que le résidu ne soit plus que du bruit. Aucune regex de normalisation avant.
 
-### 2. Preprocess de la query (BM25) — Mer.-Jeu. (F2)
-- [x] Module pur [code_keys.py](../../server/services/chat/engine/code_keys.py) : `CodeKeys(refs).normalize(text)` écrit `ST-1027` en `ST1027` (clé égale à `doc_catalog.canon_ref`). Les préfixes, les lettres attachées (`Q0375MI`) et le suffixe de langue sont appris des REF du catalogue, rien n'est deviné ; un code d'un préfixe inconnu n'est pas touché. `annotate(text)` ajoute `[clé]` pour l'étape 3 (idempotent), `PP_VERSION` versionne la règle.
-- [x] Tests [test_code_keys.py](../../tests/test_code_keys.py) : espaces autour du séparateur, `.` `/` `_`, tirets unicode, casse, suffixe de langue, faux positifs (dates, pages, `cost 1027`, `Q 1 2024`), égalité avec `canon_ref`.
-- [ ] Routage : BM25 ← `C'est quoi ST1027` ; embeddings ← `C'est quoi ST-1027` (inchangé). Pas branché : une clé n'aide la recherche par mot clé que si les chunks la contiennent (étape 3), et la séparation des deux textes dépend du test 1 de l'étape 4.
-  *Limites connues : `QIS-46A-352` (lettre au milieu des chiffres) et `LdB IT-243` avec indice séparé ne sont pas couverts ; les REF du catalogue vivant remplacent la liste d'essai des tests.*
-  *Validation : faux positifs sur 200 vraies questions (`chat_turns`).*
+**Lancer** : [f2_familles_codes.py](f2_familles_codes.py) dans un notebook DEV (tes droits suffisent : lecture de `dev_proj`/`uat_proj`, écriture de `dev_proj.qualibot.f2_familles_codes` seulement). Cellules 1 à 6 dans l'ordre. Cellule 4 = couverture par famille, cellule 5 = résidu par préfixe puis clé par clé, cellule 6 = familles des clés tapées dans le chat.
+
+Les REF ne sont plus décrites par des formes : la famille vient du **catalogue lui-même** (clé de la REF, REF sans langue, sans premier mot, début de REF, REF + suffixe, même signature qu'une REF). `QIS-46A-352`, `LdB IT-243`, `IAQ 04 04 05`, `PR/LAT/506`, `FD_AQL_2193`, `IF2.03.10_GB` sont couverts par construction (testé en local).
+
+- [x] Notebook des familles, testé en local sur un mini-inventaire.
+- [ ] Tour 1 : tu lances, tu me renvoies les cellules 4, 5 et 6 ; je range les préfixes du résidu (`NORME_PREFIXES` / `BRUIT_PREFIXES`) ou j'ajoute une règle.
+- [ ] Tours suivants jusqu'à résidu = bruit pur.
+  *Validation : résidu relu, plus aucun code voulu dedans, aucune clé du chat en bruit.*
+
+### 2. Preprocess de la query (BM25) — après 1b (F2)
+- [ ] Normalisation par dictionnaire : les clés des familles `annoter` (catalogue + codes voulus). Dans un texte, les blocs de lettres et chiffres voisins (séparés par `- _ / .` ou des espaces) sont recollés et gardés quand la clé obtenue est dans le dictionnaire (la plus longue gagne) ; la clé est **ajoutée** à côté (`SF-1027 [SF1027]`), rien n'est remplacé. Aucune forme de code n'est devinée. (Le premier essai par préfixes appris, qui laissait `QIS-46A-352` de côté, est retiré.)
+- [ ] Tests sur tous les exemples réels de l'inventaire (une ligne par famille), faux positifs sur 200 vraies questions (`chat_turns`).
+- [ ] Routage : BM25 ← question annotée ; embeddings ← question brute. Dépend du test 1 de l'étape 4.
 
 ### 3. Preprocess des documents — Mer.-Jeu. (F2)
 - [ ] Même fonction sur les chunks : `ST-1027` → `ST-1027 [ST1027]`. Résultat dans une **nouvelle colonne** (`chunk_text_pp`), `chunk_text` brut intact (c'est lui qui part en génération).
