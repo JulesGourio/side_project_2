@@ -17,7 +17,7 @@ Règles : tests et lectures en **DEV** ; notebooks à paramètres en dur (ou pip
 | Lun.-Mar. | 7. Vérification + PROD | F6 |
 | TBD | Further steps | — |
 
-**Ordre critique** : le scoring (5) mesure tout le reste, mais il est planifié vendredi. Je propose de **préparer le jeu d'éval dès F1** (c'est lui qui prouve que 2-3-4 aident) et de le coder en parallèle ; sinon on découvre vendredi que le preprocess n'a rien amélioré. À valider.
+**Ordre critique** (validé : jeu d'éval en parallèle, avec de vraies questions d'utilisateurs ; priorité aujourd'hui = inventaire) : le scoring (5) mesure tout le reste, mais il est planifié vendredi. Je propose de **préparer le jeu d'éval dès F1** (c'est lui qui prouve que 2-3-4 aident) et de le coder en parallèle ; sinon on découvre vendredi que le preprocess n'a rien amélioré. À valider.
 
 ## Étapes
 
@@ -25,8 +25,9 @@ Règles : tests et lectures en **DEV** ; notebooks à paramètres en dur (ou pip
 Objectif : savoir quoi normaliser avant d'écrire une regex.
 - [ ] Notebook DEV, lecture seule : sur `dev_proj.qualibot.chunks`, extraire tous les tokens « code » (lettres+chiffres, avec tiret/espace/underscore) et les acronymes MAJUSCULES, avec fréquence, nb de docs, graphies variantes.
 - [ ] **A. Références des docs Intraqual** : la liste officielle des `REF` (`doc_catalog` / `parse_manifest`) donne les préfixes (ST, SF, QR, …) et leur forme exacte ; mesurer combien de citations dans les chunks sont écrites autrement que la REF.
-- [ ] **B. Les autres** : normes et clients (Airbus AIDS, ISO, EN, AS9100, DO-…), sigles métier, sigles de plan/pièces. Classer : code à chiffres / sigle sans chiffres / mot courant en majuscules (faux positifs).
-- [ ] Sortie : tableau top 200 par catégorie + 30 exemples de faux positifs + décision par catégorie (regex, liste/glossaire, rien).
+- [ ] **B. Les autres, ratisser très large** : sigles (DOA, AIDS…), normes et standards aéronautiques (ISO, EN, AS, NADCAP, DO-…), références clients (Airbus), références internes à espaces ou points (`IAQ 20 00 04`, `1.2.3`), codes pièce/plan, noms propres en majuscules. Classer : code à chiffres / référence à segments / sigle sans chiffres / mot courant en majuscules (faux positifs). Les motifs ne sont pas supposés : on part des tokens réellement présents (n-grammes MAJUSCULES+chiffres, segments séparés par espace/tiret/point/slash) et on regarde ce qui ressort.
+- [ ] **C. Vraies questions d'utilisateurs** : même extraction sur les questions réelles (`chat_turns`, jeu golden d'origine, `eval_feedback_failures`) : quels codes/sigles les gens tapent, avec quelle graphie. Écart entre la graphie de la question et celle du chunk = le cas à corriger. Ces questions nourrissent aussi le jeu d'éval (étape 5, priorité plus basse qu'ici).
+- [ ] Sortie : tableau top 200 par catégorie, 30 faux positifs, graphies question vs chunk, décision par catégorie (regex, liste/glossaire, rien).
   *Validation : tu relis le tableau ; on fige les catégories traitées par regex (étape 2-3) et celles renvoyées au glossaire (Further).*
 
 ### 2. Preprocess de la query (BM25) — Mer.-Jeu. (F2)
@@ -76,6 +77,4 @@ Deux colonnes : embeddings sur `chunk_text` brut, BM25 sur `chunk_text_pp`.
 **Ta réponse 3 (`chunk_codes`)** : il extrait les codes des chunks (Lakebase) et ajoute les passages qui les citent. Jamais testé par toi : je le garde hors du chemin critique, on le mesure en baseline à l'étape 5, puis on décide : garder, étendre ou retirer.
 
 ## Restent ouvertes
-1. Ordre critique : OK pour préparer le jeu d'éval dès aujourd'hui en parallèle de l'inventaire ?
-2. Étape 4 test 1 : si l'index à 2 colonnes est refusé, tu préfères 1 colonne (`chunk_text_pp`, embeddings aussi sur le texte pp) ou 2 index + RRF ?
-3. Étape 1 : tu as une liste de sigles clients/normes à inclure (Airbus AIDS, …) ou je pars de ce que je trouve dans les chunks ?
+2. Étape 4 (à instruire quand on y sera, sans impact sur l'étape 1) : si l'index à 2 colonnes est refusé, 1 colonne (`chunk_text_pp`) ou 2 index + RRF ? Je ferai les recherches à ce moment-là.
