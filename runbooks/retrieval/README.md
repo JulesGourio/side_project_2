@@ -23,7 +23,10 @@ Règles : tests et lectures en **DEV** ; notebooks à paramètres en dur (ou pip
 
 ### 1. Inventaire des acronymes et codes — aujourd'hui (F1)
 Objectif : savoir quoi normaliser avant d'écrire une regex.
-- [ ] Notebook DEV, lecture seule : sur `dev_proj.qualibot.chunks`, extraire tous les tokens « code » (lettres+chiffres, avec tiret/espace/underscore) et les acronymes MAJUSCULES, avec fréquence, nb de docs, graphies variantes.
+
+**À faire (Jules)** : ouvrir un notebook DEV, copier chaque bloc de [f1_inventaire_codes.py](f1_inventaire_codes.py) (séparé par `# COMMAND ----------`) dans une cellule, dans l'ordre, et me renvoyer le texte des cellules 4, 5 et 6. Lecture seule, paramètres en dur, tes droits suffisent (pas de job runner). Si une table est marquée `ABSENT`, dis-le-moi, je corrige.
+
+- [x] Notebook DEV, lecture seule : sur `dev_proj.qualibot.chunks`, extraire tous les tokens « code » (lettres+chiffres, avec tiret/espace/underscore) et les acronymes MAJUSCULES, avec fréquence, nb de docs, graphies variantes. → [f1_inventaire_codes.py](f1_inventaire_codes.py) (cellules 4 à 6)
 - [ ] **A. Références des docs Intraqual** : la liste officielle des `REF` (`doc_catalog` / `parse_manifest`) donne les préfixes (ST, SF, QR, …) et leur forme exacte ; mesurer combien de citations dans les chunks sont écrites autrement que la REF.
 - [ ] **B. Les autres, ratisser très large** : sigles (DOA, AIDS…), normes et standards aéronautiques (ISO, EN, AS, NADCAP, DO-…), références clients (Airbus), références internes à espaces ou points (`IAQ 20 00 04`, `1.2.3`), codes pièce/plan, noms propres en majuscules. Classer : code à chiffres / référence à segments / sigle sans chiffres / mot courant en majuscules (faux positifs). Les motifs ne sont pas supposés : on part des tokens réellement présents (n-grammes MAJUSCULES+chiffres, segments séparés par espace/tiret/point/slash) et on regarde ce qui ressort.
 - [ ] **C. Vraies questions d'utilisateurs** : même extraction sur les questions réelles (`chat_turns`, jeu golden d'origine, `eval_feedback_failures`) : quels codes/sigles les gens tapent, avec quelle graphie. Écart entre la graphie de la question et celle du chunk = le cas à corriger. Ces questions nourrissent aussi le jeu d'éval (étape 5, priorité plus basse qu'ici).
