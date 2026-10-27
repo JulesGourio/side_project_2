@@ -54,9 +54,10 @@ Objectif : savoir quoi normaliser avant d'écrire une regex.
 Règle retenue pour l'étape 2-3 : détecter `préfixe connu (catalogue) + séparateurs et espaces facultatifs + chiffres + suffixe de langue facultatif`, et ne rien normaliser sinon.
 
 ### 2. Preprocess de la query (BM25) — Mer.-Jeu. (F2)
-- [ ] Fonction pure `normalize_codes(text)` : `ST-1027` → `ST1027` (forme de la table d'inventaire, pas de regex devinée). Une seule définition importée par l'app et le pipeline.
-- [ ] Tests unitaires : tirets unicode, `ST 1027`, `st-1027`, faux positifs (dates, pages, normes).
-- [ ] Routage : BM25 ← `C'est quoi ST1027` ; embeddings ← `C'est quoi ST-1027` (inchangé).
+- [x] Module pur [code_keys.py](../../server/services/chat/engine/code_keys.py) : `CodeKeys(refs).normalize(text)` écrit `ST-1027` en `ST1027` (clé égale à `doc_catalog.canon_ref`). Les préfixes, les lettres attachées (`Q0375MI`) et le suffixe de langue sont appris des REF du catalogue, rien n'est deviné ; un code d'un préfixe inconnu n'est pas touché. `annotate(text)` ajoute `[clé]` pour l'étape 3 (idempotent), `PP_VERSION` versionne la règle.
+- [x] Tests [test_code_keys.py](../../tests/test_code_keys.py) : espaces autour du séparateur, `.` `/` `_`, tirets unicode, casse, suffixe de langue, faux positifs (dates, pages, `cost 1027`, `Q 1 2024`), égalité avec `canon_ref`.
+- [ ] Routage : BM25 ← `C'est quoi ST1027` ; embeddings ← `C'est quoi ST-1027` (inchangé). Pas branché : une clé n'aide la recherche par mot clé que si les chunks la contiennent (étape 3), et la séparation des deux textes dépend du test 1 de l'étape 4.
+  *Limites connues : `QIS-46A-352` (lettre au milieu des chiffres) et `LdB IT-243` avec indice séparé ne sont pas couverts ; les REF du catalogue vivant remplacent la liste d'essai des tests.*
   *Validation : faux positifs sur 200 vraies questions (`chat_turns`).*
 
 ### 3. Preprocess des documents — Mer.-Jeu. (F2)
