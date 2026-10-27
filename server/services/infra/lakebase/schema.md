@@ -27,6 +27,7 @@ A new column is added in `schema.py`, or in `columns.py` for the chat tables. A 
 | `users` | user known to the app | `infra/lakebase/users.py` |
 | `catalog_metadata` | "documents up to date as of" date (one row, `id = 1`) | entered by hand; read by `routers/config.py` |
 | `doc_catalog` | document catalog: reference, title, link, revision, date | pipeline task `6_update_kb_metadata`; read by `infra/doc_catalog.py` |
+| `chunk_codes` | codes cited in the passages, with the passages citing them | pipeline task `6_update_kb_metadata`; read by `chat/engine/codes.py` |
 
 **Chat join keys**:
 - `trace_id` (`chat-` followed by 32 hexadecimal characters): present in `chat_turns`, `chat_retrieved_chunks`, `app_errors` and `chat_messages`.
@@ -96,6 +97,8 @@ One row per turn. The columns of the first table are fixed; the others come from
 | Column | Type | Meaning |
 |---|---|---|
 | `named_refs` | TEXT[] | references (REF) named in the conversation, looked up in addition |
+| `named_codes` | TEXT[] | codes named in the question (other than the named REFs), looked up in `chunk_codes` |
+| `code_passages` | INTEGER | passages citing those codes, fetched in addition |
 | `vs_calls_expected` | INTEGER | Vector Search queries planned |
 | `vs_calls_ok` | INTEGER | Vector Search queries that succeeded |
 | `rerank_ok` | BOOLEAN | the reranker answered |
@@ -137,6 +140,7 @@ One row per turn. The columns of the first table are fixed; the others come from
 | `rewrite_ms` | rewrite |
 | `search_ms` | Vector Search |
 | `ref_lookup_ms` | lookup of the named references |
+| `code_lookup_ms` | lookup of the passages citing the named codes |
 | `queue_wait_ms` | wait for a generation slot (`CHAT_MAX_CONCURRENT_ANSWERS`) |
 | `generation_ms` | answer generation, retries included |
 | `translate_back_ms` | translation of the answer |
@@ -179,7 +183,7 @@ One row per passage retrieved for a turn, with its text. The table keeps the pas
 | `prompt_rank` | INTEGER | order in the prompt (passages passed only) |
 | `doc_number` | INTEGER | `[n]` number of its document in the prompt |
 | `cited` | BOOLEAN | its document is cited by the answer |
-| `source` | TEXT | `search` (found by the search) or `ref_lookup` (brought by the reference lookup) |
+| `source` | TEXT | `search` (found by the search), `ref_lookup` (brought by the reference lookup) or `code_lookup` (cites a code of the question) |
 | `hits` | JSONB | every query that found the passage: `q`, `via`, `rank`, `score` |
 | `best_score` | DOUBLE PRECISION | best score |
 | `chunk_id` | TEXT | passage identifier in the index |
@@ -451,7 +455,7 @@ One row per error or warning. The warnings of a chat turn are written with the t
 | `stack_trace` | TEXT | call stack (4,000 characters at most) |
 | `llm_request_id` | INTEGER | `llm_requests.id` concerned |
 | `severity` | TEXT NOT NULL, default `error` | `error` (the request failed) or `warning` (it went on, degraded) |
-| `stage` | TEXT | step that failed. Chat: `translate_in`, `rewrite`, `search`, `ref_lookup`, `llm`, `translate_back`, `persist`, `ws`. Comparison: `build`, `llm`, `stream` (analysis); `search`, `judge` (impact). Any other route: `unhandled` |
+| `stage` | TEXT | step that failed. Chat: `translate_in`, `rewrite`, `search`, `ref_lookup`, `code_lookup`, `llm`, `translate_back`, `persist`, `ws`. Comparison: `build`, `llm`, `stream` (analysis); `search`, `judge` (impact). Any other route: `unhandled` |
 | `http_status` | INTEGER | HTTP status |
 | `upstream` | TEXT | Vector Search index or model endpoint called |
 | `trace_id` | TEXT | `trace_id` of the chat turn |
@@ -514,6 +518,15 @@ Catalog of the documents in the search scope. Rewritten by pipeline task `6_upda
 | `doc_date` | DATE | publication date of the revision |
 
 The columns `revision` and `doc_date` are added by the app when it owns the table; otherwise by pipeline task 6. The app gives them to the model with each document and shows them on the source chips.
+
+### `chunk_codes`
+
+Codes cited in the passages of the chat index (form, part, standard or document numbers such as `SF-1027`). Rewritten by pipeline task `6_update_kb_metadata` in the same transaction as `doc_catalog`, from the `chunks` table; owned by the task's identity and read by the app (`server/services/chat/engine/codes.py`) for each question that names a code.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `code` | TEXT PK | code, upper case |
+| `chunk_ids` | TEXT[] NOT NULL | passages (`chunk_id` of the index) that cite it, at most 30 |
 
 ## Control queries
 

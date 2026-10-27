@@ -9,6 +9,9 @@
 # MAGIC    links of the REFs cited in an answer, titles in impact search, revision and date given to the answer model with each document.
 # MAGIC 2. `catalog_metadata.documents_as_of` (today's date) and `updated_at` (now): the "documents as of" date shown in the chat UI toolbar
 # MAGIC    (`GET /config/knowledge-base-date`).
+# MAGIC 3. `chunk_codes` rewritten from `chunks`: each code cited in the passages (form, part, standard or document number such as
+# MAGIC    `SF-1027`) with the passages that cite it. The chat looks up the codes of a question there, since the hybrid search splits
+# MAGIC    `SF-1027` into `SF` and `1027` (`server/services/chat/engine/codes.py`).
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC Lakebase is a Postgres endpoint, not Unity Catalog: unreachable from classic job compute over its private endpoint, so this task has no
@@ -25,6 +28,7 @@
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{lakebase_database}.doc_catalog` (Lakebase/Postgres, full rewrite in one transaction)
 # MAGIC - `{lakebase_database}.catalog_metadata` (Lakebase/Postgres, id=1 single row)
+# MAGIC - `{lakebase_database}.chunk_codes` (Lakebase/Postgres, full rewrite in the same transaction)
 
 # COMMAND ----------
 
@@ -106,6 +110,7 @@ sys.path.insert(0, REPO_DIR)
 
 # COMMAND ----------
 
+import codes
 import tables
 from tables import table_exists
 
@@ -206,6 +211,17 @@ logger.info(f"{len(catalog_rows)} documents in scope, {n_in_chat} with passages 
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Tr. 2 - Codes cited in the passages
+# MAGIC One row per code (upper case) with the passages that cite it, for the codes cited by at most `codes.CODE_MAX_CHUNKS` passages: a code found everywhere points at no passage in particular. The header line of each chunk is left out, otherwise every chunk would cite its own REF.
+
+# COMMAND ----------
+
+code_rows = [(r["code"], list(r["chunk_ids"])) for r in codes.chunk_codes(spark.table(CHUNKS_TABLE)).collect()]
+logger.info(f"{len(code_rows)} codes cited in the passages (at most {codes.CODE_MAX_CHUNKS} passages each)")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Quality Checks
 # MAGIC ## Pre-condition: parsing tables exist
 # MAGIC The two tables are checked first: a missing table fails here by name.
@@ -233,6 +249,25 @@ tables.check_rows(
         tables.unique("ref"),
         tables.not_null("title", mostly=0.99, severity=tables.AMBER),
         tables.not_null("division", mostly=0.99, severity=tables.AMBER),
+    ],
+    logger,
+)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## chunk_codes rows
+# MAGIC `code` is the primary key of `chunk_codes` (RED). No code at all in a non-empty `chunks` means the extraction broke (AMBER: the chat then only loses the code lookup).
+
+# COMMAND ----------
+
+tables.check_rows(
+    [{"code": r[0]} for r in code_rows],
+    f"chunk_codes (from {CHUNKS_TABLE})",
+    [
+        tables.non_empty(severity=tables.AMBER),
+        tables.not_null("code"),
+        tables.unique("code"),
     ],
     logger,
 )
@@ -291,10 +326,10 @@ def connect(database) -> psycopg2.extensions.connection:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Rewrite doc_catalog, then bump documents_as_of and updated_at
+# MAGIC ## Rewrite doc_catalog and chunk_codes, then bump documents_as_of and updated_at
 # MAGIC Both tables are created by the app's startup migration (`server/services/infra/lakebase/schema.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by whichever of the app and this notebook owns the table; when neither has done it yet, the catalog is written without them and the warning names the owner.
 # MAGIC
-# MAGIC The catalog is replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `catalog_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
+# MAGIC `chunk_codes` belongs to this notebook's identity (the app only reads it) and is created here. The catalog and the codes are replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `catalog_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
 
 # COMMAND ----------
 
@@ -371,6 +406,14 @@ for database in LAKEBASE_DATABASES:
                     page_size=1000,
                 )
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS chunk_codes (
+                    code      TEXT PRIMARY KEY,
+                    chunk_ids TEXT[] NOT NULL
+                )
+            """)
+            cur.execute("DELETE FROM chunk_codes")
+            execute_values(cur, "INSERT INTO chunk_codes (code, chunk_ids) VALUES %s", code_rows, page_size=5000)
+            cur.execute("""
                 INSERT INTO catalog_metadata (id, documents_as_of, updated_at)
                 VALUES (1, CURRENT_DATE, NOW())
                 ON CONFLICT (id) DO UPDATE SET
@@ -378,7 +421,8 @@ for database in LAKEBASE_DATABASES:
                     updated_at      = EXCLUDED.updated_at
             """)
         logger.info(
-            f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, documents_as_of=today"
+            f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, chunk_codes {len(code_rows)} codes, "
+            "documents_as_of=today"
         )
     finally:
         conn.close()
