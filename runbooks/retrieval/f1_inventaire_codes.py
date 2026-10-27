@@ -30,6 +30,7 @@
 # COMMAND ----------
 # Cellule 1 · paramètres et motifs
 
+import time
 from functools import reduce
 
 from pyspark.sql import DataFrame
@@ -210,11 +211,14 @@ def space_ref_counts(corpus, cat):
         print(f"{len(refs)} REF avec espace : non comptées (MAX_SPACE_REFS = {MAX_SPACE_REFS})")
         refs = []
     counts = {}
-    for k in range(0, len(refs), 200):
-        batch = refs[k:k + 200]
+    print(f"REF contenant un espace : {len(refs)}")
+    for k in range(0, len(refs), 50):
+        t0 = time.time()
+        batch = refs[k:k + 50]
         row = corpus.agg(*[F.sum(F.when(F.instr(F.col("txt"), r) > 0, 1).otherwise(0)).alias(f"c{j}")
                            for j, r in enumerate(batch)]).collect()[0]
         counts.update({r: int(row[f"c{j}"] or 0) for j, r in enumerate(batch)})
+        print(f"  REF avec espace {k + len(batch)}/{len(refs)} ({time.time() - t0:.0f} s)")
     return spark.createDataFrame(list(counts.items()), "ref string, occ_espace long")
 
 
@@ -268,7 +272,9 @@ def build(env):
     qsrc = src_questions(env).cache()
     print(f"[{env}] documents parsés : {corpus.count()} · questions du chat : {qsrc.count()}")
 
+    t0 = time.time()
     corpus_stats = keyed(classified(corpus)).cache()
+    print(f"[{env}] B : {corpus_stats.count()} clés ({time.time() - t0:.0f} s)")
     b = corpus_stats.where(F.col("occ") >= MIN_OCC)
 
     # Les questions sont rapprochées du corpus par la clé seule : la même clé peut y avoir une autre catégorie
@@ -281,8 +287,12 @@ def build(env):
     q = keyed(classified(qsrc)).select("categorie", "cle", "occ", "docs", "formes", "structures")
     c = q.join(by_cle, "cle", "left")
 
+    t0 = time.time()
+    a = section_a(env, corpus).cache()
+    print(f"[{env}] A : {a.count()} REF ({time.time() - t0:.0f} s)")
+
     return reduce(DataFrame.unionByName, [
-        section_a(env, corpus),
+        a,
         conform(b, env, "B_corpus"),
         conform(c, env, "C_questions"),
     ])
