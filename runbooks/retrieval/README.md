@@ -77,4 +77,4 @@ Deux colonnes : embeddings sur `chunk_text` brut, BM25 sur `chunk_text_pp`.
 **Ta réponse 3 (`chunk_codes`)** : il extrait les codes des chunks (Lakebase) et ajoute les passages qui les citent. Jamais testé par toi : je le garde hors du chemin critique, on le mesure en baseline à l'étape 5, puis on décide : garder, étendre ou retirer.
 
 ## Restent ouvertes
-2. Étape 4 (à instruire quand on y sera, sans impact sur l'étape 1) : si l'index à 2 colonnes est refusé, 1 colonne (`chunk_text_pp`) ou 2 index + RRF ? Je ferai les recherches à ce moment-là.
+1. Étape 4 (à instruire quand on y sera, sans impact sur l'étape 1) : si l'index à 2 colonnes est refusé, 1 colonne (`chunk_text_pp`) ou 2 index + RRF ? Je ferai les recherches à ce moment-là.
