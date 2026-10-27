@@ -1,102 +1,81 @@
-# Plan : améliorer le retrieval (codes type ST-1027)
+# Plan : améliorer le retrieval (acronymes, codes type ST-1027)
 
-Un seul fichier. Cases à cocher = avancement. **Validation** = ce que tu me renvoies avant de passer à la suite.
-Règles : tu exécutes tout toi-même (notebook, paramètres en dur, dis si le runner SP est requis) ; **l'index utilisé par l'app ne change pas** (on construit un index parallèle, bascule à part et sur go explicite) ; UAT utilisé en semaine → écritures UAT en dehors des heures ou sur tables `_test`.
+Un seul fichier. `- [ ]` = avancement. **Validation** = ce que tu me renvoies avant la suite.
+Règles : tests et lectures en **DEV** ; notebooks à paramètres en dur (ou pipeline propre), je dis à chaque fois job runner ou tes droits (index → job runner) ; l'index de l'app ne change pas avant la bascule (index parallèle, go explicite).
 
-**Liens utiles**
-[search.py](../../server/services/chat/engine/search.py) (requête HYBRID l.87, colonne `chunk_text`) ·
-[retrieval.py](../../server/services/chat/engine/retrieval.py) ·
-[codes.py](../../server/services/chat/engine/codes.py) (recherche exacte `chunk_codes`, existe déjà) ·
-[retrieval_eval.py](../../utils/evaluation/retrieval_eval.py) (éval retrieval existante, à réutiliser) ·
-[rebuild_chunks_index.py](../scripts/uat_index/rebuild_chunks_index.py) (création d'index) ·
-Diagnostic SF-1027 (autre fil) : [sf1027/README.md](../sf1027/README.md) → **ne pas refaire**, on part de son verdict.
+**Liens** : [search.py](../../server/services/chat/engine/search.py) (HYBRID l.87) · [retrieval.py](../../server/services/chat/engine/retrieval.py) · [codes.py](../../server/services/chat/engine/codes.py) (regex de codes + `chunk_codes`, point de départ, à refaire) · [retrieval_eval.py](../../utils/evaluation/retrieval_eval.py) (éval existante) · [rebuild_chunks_index.py](../scripts/uat_index/rebuild_chunks_index.py) · diagnostic SF-1027 : [sf1027/README.md](../sf1027/README.md) (autre fil, ne pas refaire).
 
-## Découpage en fils
+## Calendrier
 
-| Fil | Étapes | Dépend de |
+| Quand | Étape | Fil |
 |---|---|---|
-| F0 | Verdict SF-1027 + figer le jeu d'éval | (fil sf1027) |
-| F1 | Éval retrieval MRR / Recall@10 (notebook) | F0 |
-| F2 | Preprocess query + docs (regex) | F0 |
-| F3 | Nouvel index parallèle (preprocessed / brut) | F2 |
-| F4 | Éval A/B + top_k optimal | F1, F3 |
-| F5 | MLflow | F1, F4 |
-| F6 | Bascule index (go explicite) | F4 |
-| Plus tard | Lemmatisation, réécriture LLM + RRF | F6 |
+| **Aujourd'hui (mar.)** | 1. Inventaire des acronymes/codes | F1 |
+| Mer.-Jeu. | 2. Preprocess query · 3. Preprocess docs | F2 |
+| Jeu.-Ven. | 4. Architecture d'index | F3 |
+| Ven. | 5. Scoring MRR / Recall@10 (notebook puis MLflow) | F4 |
+| Ven.-Lun. | 6. top_k optimal | F5 |
+| Lun.-Mar. | 7. Vérification + PROD | F6 |
+| TBD | Further steps | — |
 
-F1 d'abord : sans mesure on ne sait pas si F2/F3 améliorent.
+**Ordre critique** : le scoring (5) mesure tout le reste, mais il est planifié vendredi. Je propose de **préparer le jeu d'éval dès F1** (c'est lui qui prouve que 2-3-4 aident) et de le coder en parallèle ; sinon on découvre vendredi que le preprocess n'a rien amélioré. À valider.
 
-## Étapes de base
+## Étapes
 
-### 0. Prérequis
-- [ ] Verdict du fil SF-1027 (BM25 coupe-t-il au tiret ? FULL_TEXT `SF1027` OK vs `SF-1027` KO ?)
-  *Validation : tableau final du notebook collé ici.*
-- [ ] Jeu d'éval figé : tables `eval_golden_questions` / `eval_synthetic_questions` + 20-30 questions « codes » ajoutées à la main (ST-1027, SF-1027, etc.) avec chunks/docs attendus.
-  *Validation : nb de questions par source, et par type (code / texte libre).*
+### 1. Inventaire des acronymes et codes — aujourd'hui (F1)
+Objectif : savoir quoi normaliser avant d'écrire une regex.
+- [ ] Notebook DEV, lecture seule : sur `dev_proj.qualibot.chunks`, extraire tous les tokens « code » (lettres+chiffres, avec tiret/espace/underscore) et les acronymes MAJUSCULES, avec fréquence, nb de docs, graphies variantes.
+- [ ] **A. Références des docs Intraqual** : la liste officielle des `REF` (`doc_catalog` / `parse_manifest`) donne les préfixes (ST, SF, QR, …) et leur forme exacte ; mesurer combien de citations dans les chunks sont écrites autrement que la REF.
+- [ ] **B. Les autres** : normes et clients (Airbus AIDS, ISO, EN, AS9100, DO-…), sigles métier, sigles de plan/pièces. Classer : code à chiffres / sigle sans chiffres / mot courant en majuscules (faux positifs).
+- [ ] Sortie : tableau top 200 par catégorie + 30 exemples de faux positifs + décision par catégorie (regex, liste/glossaire, rien).
+  *Validation : tu relis le tableau ; on fige les catégories traitées par regex (étape 2-3) et celles renvoyées au glossaire (Further).*
 
-### 1. Scoring du retrieval (en premier)
-- [ ] Notebook : pour chaque question, rang du 1er chunk pertinent → **MRR** = moyenne de 1/rang ; **Recall@10** = pertinents dans le top 10 / total pertinents.
-  Base : [retrieval_eval.py](../../utils/evaluation/retrieval_eval.py) (mesure déjà « doc attendu dans les passages »). À ajouter : MRR et Recall@10 au niveau chunk, par source et par type de question.
-- [ ] Baseline mesurée sur l'index actuel (UAT, lecture seule).
-  *Validation : MRR et Recall@10 baseline, global + « questions avec code ».*
+### 2. Preprocess de la query (BM25) — Mer.-Jeu. (F2)
+- [ ] Fonction pure `normalize_codes(text)` : `ST-1027` → `ST1027` (forme de la table d'inventaire, pas de regex devinée). Une seule définition importée par l'app et le pipeline.
+- [ ] Tests unitaires : tirets unicode, `ST 1027`, `st-1027`, faux positifs (dates, pages, normes).
+- [ ] Routage : BM25 ← `C'est quoi ST1027` ; embeddings ← `C'est quoi ST-1027` (inchangé).
+  *Validation : faux positifs sur 200 vraies questions (`chat_turns`).*
 
-### 2. Preprocess de la query (BM25)
-- [ ] Fonction pure `normalize_codes(text)` : regex `\b([A-Za-z]{1,5})[-‐‑‒–—\s]?(\d{2,6})\b` → `ST_1027`. Une seule source de vérité, importée par l'app et par le pipeline.
-- [ ] Tests unitaires (tirets unicode, `ST 1027`, `st-1027`, faux positifs : dates, « page 12 », normes ISO).
-- [ ] Qui reçoit quoi : BM25 ← `C'est quoi ST_1027` ; embeddings ← `C'est quoi ST-1027` (inchangé).
-  *Validation : liste des faux positifs trouvés sur un échantillon de 200 vraies questions.*
+### 3. Preprocess des documents — Mer.-Jeu. (F2)
+- [ ] Même fonction sur les chunks : `ST-1027` → `ST-1027 [ST1027]`. Résultat dans une **nouvelle colonne** (`chunk_text_pp`), `chunk_text` brut intact (c'est lui qui part en génération).
+- [ ] Où : dans le pipeline (`3c_chunks`), version de la regex stockée (`pp_version`) pour recalculer seulement ce qui change.
+  *Validation : nb de chunks modifiés, 10 exemples avant/après.*
 
-### 3. Preprocess des documents
-- [ ] Même regex côté chunks : `ST-1027` → `ST-1027 [ST_1027]` (graphie d'origine conservée pour les embeddings).
-- [ ] Nouvelle colonne `chunk_text_pp` dans une table **`chunks_pp`** (copie de `chunks`, pas de modif de `chunks`), calculée dans le pipeline de parsing.
-- [ ] Test sur table `_test` UAT, hors heures ouvrées.
-  *Validation : nb de chunks modifiés, 10 exemples avant/après, volumétrie.*
+### 4. Architecture d'index — Jeu.-Ven. (F3)
+Deux colonnes : embeddings sur `chunk_text` brut, BM25 sur `chunk_text_pp`.
+- [ ] **Test 1 (bloquant)** : en DEV, un index Delta Sync à embeddings auto-gérés (`embedding_vector_column`, vecteurs calculés sur `chunk_text`) accepte-t-il une requête HYBRID dont la partie mot-clé porte sur `chunk_text_pp` ? Sinon : retrieval sur une seule colonne (`chunk_text_pp`) ou **2 index fusionnés par RRF** (embeddings brut + BM25 pp) — le RRF est de toute façon prévu plus tard.
+- [ ] Calcul des embeddings : endpoint d'embedding actuel en batch dans le pipeline (coût et durée à mesurer sur DEV, 85k chunks).
+- [ ] Nouvel index parallèle en DEV (job runner), `search.py` paramétré par nom d'index et colonnes ; l'index de l'app reste le même.
+  *Validation : résultat du test 1, index ONLINE, requête test `ST1027` OK.*
 
-### 4. Nouvelle architecture d'index
-- [ ] Nouvel index Delta Sync **parallèle** sur `chunks_pp` (ex. `chunks_pp_index`), colonne vectorisée = partie preprocessed, colonne renvoyée = `chunk_text` brut pour la génération.
-- [ ] Adapter `_COLUMNS`/`_RERANK_COLUMNS` dans [search.py](../../server/services/chat/engine/search.py) derrière un paramètre d'index (l'app garde l'ancien tant qu'on ne bascule pas).
-- [ ] Vérifier droits SP de l'app sur le nouvel index (grants).
-  *Validation : index ONLINE, `indexed_row_count` = lignes de `chunks_pp`, requête test OK.*
+### 5. Scoring du retrieval — Ven. (F4, jeu d'éval préparé dès F1)
+- [ ] Jeu d'éval à refaire : ressortir les notebooks qui génèrent `eval_golden_questions` / `eval_synthetic_questions`, les améliorer, y ajouter des questions « codes » ; vérité terrain = **chunk exact**.
+- [ ] Notebook : **MRR** = moyenne de 1/rang du 1er chunk pertinent ; **Recall@10** = pertinents dans le top 10 / pertinents. Niveau chunk. Base : [retrieval_eval.py](../../utils/evaluation/retrieval_eval.py).
+- [ ] Puis MLflow : un run par config (index, regex `pp_version`, top_k), métriques + échecs en artefact.
+  *Validation : baseline (index actuel) vs nouvel index, global et « questions avec code ».*
 
-### 5. Éval A/B + top_k optimal
-- [ ] Notebook : baseline vs index preprocessed, mêmes questions.
-- [ ] Balayage top_k ∈ {5, 8, 10, 15, 20, 30} (et rerank/raw : voir `rerank_top_k` / `raw_top_k` dans [config.py](../../server/services/chat/engine/config.py)) : MRR, Recall@k, taille du contexte (tokens), latence.
-- [ ] Choix du top_k = plus petit k où Recall@k plafonne.
-  *Validation : courbe/tableau Recall@k vs k, k retenu.*
+### 6. top_k optimal — Ven.-Lun. (F5)
+- [ ] Balayage k ∈ {5, 8, 10, 15, 20, 30} (et rerank/raw, cf. `CHAT_RERANK_TOP_K` / `CHAT_RAW_TOP_K`) : Recall@k, tokens de contexte, latence. k = plus petit k où Recall@k plafonne.
+  *Validation : tableau Recall@k vs k.*
 
-### 6. MLflow
-- [ ] Même fonction de scoring, un run MLflow par config (index, top_k, regex version) : params + MRR/Recall@10 + artefact des échecs.
-- [ ] Décision d'avant-bascule prise sur MLflow.
-  *Validation : lien de l'experiment, comparaison de 2 runs.*
+### 7. Vérification + PROD — Lun.-Mar. (F6)
+- [ ] DEV → UAT (hors heures, UAT utilisé en semaine) → PROD en dernier ; bascule de l'index sur **ton go**, ancien index gardé pour retour arrière.
 
-### 7. Bascule (sur go explicite uniquement)
-- [ ] DEV → test → UAT (hors heures) → PROD en dernier.
-- [ ] Index de l'app inchangé jusqu'à ce go ; plan de retour arrière (garder l'ancien index).
+## Further steps (notés)
+- Lemmatisation / stemming des chunks et de la query. — TBD
+- Réécriture de la query par LLM (décomposition + contexte) + RRF. — TBD
+- Meilleure gestion des acronymes : glossaire + définitions (alimenté par l'inventaire de l'étape 1). — TBD
 
-## Plus tard (noté, pas détaillé)
-- Lemmatisation / stemming des chunks et de la query.
-- Réécriture de la query par LLM (décomposition, ajout de contexte) + RRF pour fusionner les résultats.
+## Réponses à tes questions
 
-## Questions à clarifier
+**Framework / LangChain ?** Non, je recommande de ne pas en ajouter. Le chat appelle déjà Vector Search en REST, le rerank, le RRF (une quinzaine de lignes) et le preprocess sont du code simple et testé, et LangChain imposerait de réécrire le moteur sans rien apporter sur ce qu'on mesure. MLflow suffit pour l'éval et le suivi. À revoir seulement pour la réécriture LLM (Further).
 
-**Architecture**
-1. **Un seul texte pour BM25 ET embeddings** : en Delta Sync managé, la colonne vectorisée sert aux deux (HYBRID Databricks, analyseur non paramétrable). `ST-1027 [ST_1027]` sera donc aussi embeddé. Acceptable ? Sinon : embeddings auto-gérés (vecteurs précalculés sur le texte brut + texte preprocessed pour BM25) = refonte plus lourde. Ton schéma « embeddings gardent ST-1027 » implique cette 2e option : tu veux vraiment ça ?
-2. Autre piste moins lourde : ne **pas** toucher aux chunks, juste réécrire la query (`ST-1027 ST_1027` ajoutés) → à tester d'abord dans F0, peut suffire.
-3. [codes.py](../../server/services/chat/engine/codes.py) / `chunk_codes` (recherche exacte) fait déjà une partie du travail : on le garde en complément ou il est remplacé ?
-4. Pipeline : où mettre le preprocess des docs (parsing, chunking, ou vue SQL entre `chunks` et l'index) ? Impact sur les runs incrémentaux (re-calcul de tout `chunks_pp` ?).
-5. Faut-il versionner la regex (colonne `pp_version`) pour savoir quels chunks recalculer quand on la change ?
+**Ta réponse 7 (sigles sans chiffres, ex. DOA, AIDS)** : pas de regex de fusion, car `DOA` n'a pas de variante tiret à réparer. Ils vont dans le glossaire (Further) : sigle → définition, ajoutée à la query et/ou aux chunks. L'étape 1 chiffre combien il y en a.
 
-**Périmètre des codes**
-6. Quels formats exacts : `ST-1027`, `SF-1027`, autres préfixes ? Codes avec lettres après (`ST-1027A`), avec points (`1.2.3`) ? Liste exhaustive des préfixes ?
-7. Que faire des acronymes sans chiffres (`DOA`, `MOE`) : même traitement ?
+**Ta réponse 5 (une ou plusieurs regex)** : une regex de **détection** générique (comme `CODE_PATTERN` de [codes.py](../../server/services/chat/engine/codes.py)) + une petite liste de **préfixes connus** issue de l'inventaire pour éviter les faux positifs (dates, normes). Un seul module, une constante `PP_VERSION`.
 
-**Évaluation**
-8. Qui fournit les questions de vérité terrain (golden) ? Combien au minimum ? « Chunk pertinent » = chunk exact ou n'importe quel chunk du bon document ?
-9. MRR/Recall@10 au niveau chunk ou document ? Avec ou sans reranker ?
-10. Éval sur DEV ou UAT ? (UAT = bon corpus mais utilisé en semaine ; lecture seule OK ?)
+**Ta réponse 3 (`chunk_codes`)** : il extrait les codes des chunks (Lakebase) et ajoute les passages qui les citent. Jamais testé par toi : je le garde hors du chemin critique, on le mesure en baseline à l'étape 5, puis on décide : garder, étendre ou retirer.
 
-**Exécution / contraintes**
-11. Runner SP nécessaire pour créer l'index dans le catalog UAT, ou tes droits suffisent ?
-12. Fenêtre de création/sync d'index UAT acceptable (hors heures, week-end) ?
-13. MLflow : experiment dans quel workspace/chemin ? Le notebook doit tourner sur quel cluster (ML runtime) ?
-14. Rework : OK pour toucher `search.py` et le pipeline de parsing (merge dans sharp-mayer, pas de PR) ?
+## Restent ouvertes
+1. Ordre critique : OK pour préparer le jeu d'éval dès aujourd'hui en parallèle de l'inventaire ?
+2. Étape 4 test 1 : si l'index à 2 colonnes est refusé, tu préfères 1 colonne (`chunk_text_pp`, embeddings aussi sur le texte pp) ou 2 index + RRF ?
+3. Étape 1 : tu as une liste de sigles clients/normes à inclure (Airbus AIDS, …) ou je pars de ce que je trouve dans les chunks ?
