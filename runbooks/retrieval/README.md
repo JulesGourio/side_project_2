@@ -60,7 +60,8 @@ Les REF ne sont plus décrites par des formes : la famille vient du **catalogue 
 
 - [x] Notebook des familles, testé en local sur un mini-inventaire.
 - [x] Tour 1 (2026-10-28) : résidu 151 k clés / 22 % des documents. Règles ajoutées : mot + petit nombre (`LEVEL 2`, `F 1`), codes à segments (`BAC 5578`, `NE 40-012`, `STM-0002396`), nombre + code (`2024-T3`), puces (`3.P`), URL et fichiers, REF au milieu d'une graphie (`PRO_Q0014NF_EN`, `MI-13991Table`), codes collés (`IS0024879M`, déjà un seul mot). Corrigé : `ref_sans_premier_mot` et la REF sans indice ne donnent plus `VALIDATION`, `EN`, `43`.
-  Constat : `SF-1027` n'est pas une REF du catalogue UAT (même forme que `SF-1029`) et n'est cité que dans 1 document parsé.
+  `SF-1027` est cité dans 1 seul document parsé UAT (ce n'est pas une REF du catalogue) : c'est ce document que la question « dans quel document cite-t-on SF-1027 » doit remonter. Cas type à réussir, quel que soit le nombre de documents.
+  Règle de sécurité : une famille « bruit » veut dire seulement « pas de clé ajoutée » ; le texte reste indexé comme aujourd'hui, donc un code classé bruit à tort n'est jamais moins bien trouvé qu'aujourd'hui, il n'est juste pas amélioré.
 - [ ] Tour 2 : tu relances les cellules 1 à 6, tu me renvoies 4, 5 et 6.
 - [ ] Tours suivants jusqu'à résidu = bruit pur.
   *Validation : résidu relu, plus aucun code voulu dedans, aucune clé du chat en bruit.*
