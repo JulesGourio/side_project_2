@@ -295,7 +295,7 @@ if not INDEXES:
 
 # MAGIC %md
 # MAGIC ## Create any missing index, then read its status
-# MAGIC An index in `indexes` that does not exist is created (this task runs as the environment's owning service principal, which already holds the grants for it), then every index is read to log its source table and indexed rows before the sync, with a warning when it does not embed `chunk_preprocessed`.
+# MAGIC An index in `indexes` that does not exist is created (this task runs as the environment's owning service principal, which already holds the grants for it), then every index is read to log its source table and indexed rows before the sync, noting when it embeds another column than the one it is built for.
 
 # COMMAND ----------
 
@@ -308,21 +308,28 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-# Only these index/source pairs are auto-created; any other index in `indexes` is synced but never created (its source
+# Only these indexes are auto-created; any other index in `indexes` is synced but never created (its source
 # table is unknown).
-KNOWN_SOURCE_TABLE = {
-    f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_index": f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks",
-    FULL_INDEX: FULL_TABLE,
+# Each entry gives the source table and the column the index embeds: `chunks_preprocessed_index` is built on the same table as
+# `chunks_index`, so both can be compared side by side.
+KNOWN_INDEX = {
+    f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_index": (f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks", INDEXED_TEXT_COLUMN),
+    f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_preprocessed_index": (
+        f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks",
+        "chunk_preprocessed",
+    ),
+    FULL_INDEX: (FULL_TABLE, INDEXED_TEXT_COLUMN),
 }
 
 w = WorkspaceClient()
 
 
-def _create_index(name, source_table) -> None:
+def _create_index(name, source_table, text_column) -> None:
     """Create a Delta Sync index on a source table and wait until it leaves PROVISIONING.
 
     :param name: Full name of the index, ``catalog.schema.name``.
     :param source_table: Full name of the table the index is built from.
+    :param text_column: Column the index embeds.
     """
     logger.info(
         f"{name}: not found -- creating (endpoint={VECTOR_SEARCH_ENDPOINT}, source={source_table})..."
@@ -337,7 +344,7 @@ def _create_index(name, source_table) -> None:
             pipeline_type=PipelineType.TRIGGERED,
             embedding_source_columns=[
                 EmbeddingSourceColumn(
-                    name=INDEXED_TEXT_COLUMN, embedding_model_endpoint_name=EMBEDDING_MODEL
+                    name=text_column, embedding_model_endpoint_name=EMBEDDING_MODEL
                 )
             ],
             # The embeddings the index computes are written back to a Delta table: another environment can copy them
@@ -365,22 +372,23 @@ for name in INDEXES:
     try:
         idx = w.vector_search_indexes.get_index(index_name=name)
     except NotFound:
-        source_table = KNOWN_SOURCE_TABLE.get(name)
+        source_table, text_column = KNOWN_INDEX.get(name, (None, None))
         if not source_table:
             raise RuntimeError(
                 f"{name}: index doesn't exist and isn't one of the pipeline-managed indexes -- "
                 f"can't auto-create it (unknown source table)."
             )
-        _create_index(name, source_table)
+        _create_index(name, source_table, text_column)
         created.add(name)
         idx = w.vector_search_indexes.get_index(index_name=name)
 
     src = idx.delta_sync_index_spec.source_table if idx.delta_sync_index_spec else "?"
     embedded = [c.name for c in (idx.delta_sync_index_spec.embedding_source_columns or [])] if idx.delta_sync_index_spec else []
-    if embedded and INDEXED_TEXT_COLUMN not in embedded:
-        logger.warning(
-            f"{name} embeds {embedded}, not {INDEXED_TEXT_COLUMN}: the reference codes of the passages are searched in "
-            f"one spelling only. Delete the index after a rechunk run; this task creates it again."
+    expected_column = KNOWN_INDEX.get(name, (None, INDEXED_TEXT_COLUMN))[1]
+    if embedded and expected_column not in embedded:
+        logger.info(
+            f"{name} embeds {embedded}, not {expected_column}: the reference codes of the passages are searched in "
+            f"one spelling only. To switch it, delete the index after a rechunk run; this task creates it again."
         )
     rows = idx.status.indexed_row_count if idx.status else None
     before[name] = rows
