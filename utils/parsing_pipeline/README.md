@@ -273,10 +273,12 @@ variables with the defaults listed at the top of `config.py`.
 
 - The indexes come from the widget `indexes`, or from `PARSING_VECTOR_SEARCH_INDEXES` when it is empty. An empty
   list syncs nothing.
-- Only `chunks_index` and `chunks_full_index` are created by this task, on the endpoint named by the widget
-  `vector_search_endpoint` (default `qualibot`), with the embedding model of the widget `embedding_model`, on
-  `chunk_text`, primary key `chunk_id`, pipeline type `TRIGGERED`. Any other index in the list is synced only.
-- A test index on `chunk_preprocessed` (same `chunks` table) is created and synced by `utils/vector_search/create_test_index.py`, outside the job.
+- `chunks_index`, `chunks_text_index` and `chunks_full_index` are created by this task, on the endpoint named by the
+  widget `vector_search_endpoint` (default `qualibot`), with the embedding model of the widget `embedding_model`,
+  primary key `chunk_id`, pipeline type `TRIGGERED`. `chunks_index` and `chunks_full_index` embed `chunk_preprocessed`;
+  `chunks_text_index` (same `chunks` table) embeds `chunk_text`, for comparison. Any other index in the list is synced only.
+- An index that embeds another column is synced as it is, with a warning: an index cannot change its embedded column,
+  it must be deleted and created again.
 - The task triggers each sync, then waits for it, up to `wait_minutes` (45). A failed or offline index raises an error.
   A sync still running at the end of the wait is reported, not failed.
 - `chunks_full` holds `chunks` and `chunks_archive` (every document whatever its date, for the impact search). It

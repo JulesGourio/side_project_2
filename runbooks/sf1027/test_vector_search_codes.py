@@ -17,11 +17,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 from databricks.sdk import WorkspaceClient
+from pyspark.sql import functions as F
 
-INDEX = 'uat_proj.qualibot.chunks_index'
+INDEXES = ['uat_proj.qualibot.chunks_index', 'uat_proj.qualibot.chunks_text_index']   # ignored when absent
 CHUNKS = 'uat_proj.qualibot.chunks'
 CODE_REGEX = r'(?i)SF[\s\-‐‑‒–—_]?1027'     # every spelling of the code
-VARIANTS = ['SF-1027', 'SF 1027', 'SF1027', 'sf-1027', "c'est quoi SF-1027 ?", 'Dans quel document se trouve SF-1027 ?']
+VARIANTS = ['SF-1027 [SF1027]',      # what the app sends after its query normalization
+            'SF-1027', 'SF 1027', 'SF1027', 'sf-1027', "c'est quoi SF-1027 ?", 'Dans quel document se trouve SF-1027 ?']
 METHODS = ['ANN', 'HYBRID', 'HYBRID+RERANK', 'FULL_TEXT']              # HYBRID+RERANK = what the chat sends
 TOP = 50
 COLUMNS = ['chunk_id', 'IDDOC', 'REF', 'division', 'semantic_headers', 'chunk_text']
@@ -34,9 +36,9 @@ def headers() -> dict:
     return {**w.config.authenticate(), 'Content-Type': 'application/json'}
 
 
-def query(payload: dict) -> list:
+def query(payload: dict, index: str) -> list:
     """One Vector Search query; returns rows as dicts, raises with the server message on refusal."""
-    r = httpx.post(f'{HOST}/api/2.0/vector-search/indexes/{INDEX}/query', headers=headers(), json=payload, timeout=60)
+    r = httpx.post(f'{HOST}/api/2.0/vector-search/indexes/{index}/query', headers=headers(), json=payload, timeout=60)
     if r.status_code != 200:
         raise RuntimeError(f'{r.status_code} {r.text[:200]}')
     d = r.json()
@@ -46,16 +48,34 @@ def query(payload: dict) -> list:
 # COMMAND ----------
 
 # 1. Target chunks: every chunk of the table that cites the code, whatever the spelling.
-rows = [r.asDict() for r in spark.table(CHUNKS).filter(f"chunk_text RLIKE '{CODE_REGEX}'")
-        .select('chunk_id', 'IDDOC', 'REF').collect()]
+# (Column.rlike: a SQL string literal would eat the backslashes of the regex.)
+hit = spark.table(CHUNKS).filter(F.col('chunk_text').rlike(CODE_REGEX))
+rows = [r.asDict() for r in hit.select('chunk_id', 'IDDOC', 'REF').collect()]
 TARGETS = {r['chunk_id']: r for r in rows}
 print(f'{len(TARGETS)} target chunks in the table:')
 for r in rows:
     print('  ', r['chunk_id'], r['REF'], r['IDDOC'])
-for r in spark.table(CHUNKS).filter(f"chunk_text RLIKE '{CODE_REGEX}'").select('chunk_id', 'chunk_text').limit(8).collect():
-    m = re.search(r'.{0,50}' + CODE_REGEX + r'.{0,50}', r['chunk_text'], re.S)
-    print('  >', r['chunk_id'], repr(m.group(0)) if m else '')
 assert TARGETS, 'No chunk cites the code: nothing to find (parsing problem, not search).'
+
+# Does the table carry the preprocessed text, and what do the indexes embed?
+cols = spark.table(CHUNKS).columns
+print('chunk_preprocessed column in chunks:', 'chunk_preprocessed' in cols)
+if 'chunk_preprocessed' in cols:
+    for r in hit.select('chunk_id', 'chunk_preprocessed').limit(3).collect():
+        m = re.search(r'.{0,40}SF.{0,3}1027.{0,60}', r['chunk_preprocessed'] or '', re.S)
+        print('  ', r['chunk_id'], repr(m.group(0)) if m else 'canonical form ABSENT:', (r['chunk_preprocessed'] or '')[:80] if not m else '')
+    n_null = spark.table(CHUNKS).filter(F.col('chunk_preprocessed').isNull()).count()
+    print('chunks with null chunk_preprocessed:', n_null)
+LIVE = []
+for ix in INDEXES:
+    r = httpx.get(f'{HOST}/api/2.0/vector-search/indexes/{ix}', headers=headers(), timeout=30)
+    if r.status_code != 200:
+        print(ix, '-> absent')
+        continue
+    d = r.json()
+    emb = [c['name'] for c in d.get('delta_sync_index_spec', {}).get('embedding_source_columns', [])]
+    print(ix, '-> embeds', emb, '| status', d.get('status', {}).get('detailed_state'), '| rows', d.get('status', {}).get('indexed_row_count'))
+    LIVE.append(ix)
 
 # COMMAND ----------
 
@@ -64,7 +84,7 @@ indexed = {}
 for cid in TARGETS:
     try:
         got = query({'query_text': 'SF-1027', 'columns': COLUMNS, 'num_results': 1, 'query_type': 'ANN',
-                     'filters_json': json.dumps({'chunk_id': [cid]})})
+                     'filters_json': json.dumps({'chunk_id': [cid]})}, INDEXES[0])
         indexed[cid] = bool(got)
     except Exception as exc:
         indexed[cid] = f'error: {exc}'
@@ -86,36 +106,37 @@ def payload(method: str, text: str) -> dict:
 
 
 def run(job):
-    method, text = job
+    ix, method, text = job
     try:
-        res = query(payload(method, text))
+        res = query(payload(method, text), ix)
     except Exception as exc:
-        return method, text, None, str(exc)
-    return method, text, res, None
+        return ix, method, text, None, str(exc)
+    return ix, method, text, res, None
 
 
-jobs = [(m, v) for m in METHODS for v in VARIANTS]
+jobs = [(ix, m, v) for ix in LIVE for m in METHODS for v in VARIANTS]
 with ThreadPoolExecutor(max_workers=4) as ex:
     results = list(ex.map(run, jobs))
 
 summary = []
-for method, text, res, err in results:
+for ix, method, text, res, err in results:
+    name = ix.split('.')[-1]
     if err:
-        summary.append((method, text, 'refused', err[:80]))
+        summary.append((name, method, text, 'refused', err[:80]))
         continue
     ranks = [i + 1 for i, r in enumerate(res) if r['chunk_id'] in TARGETS]
-    summary.append((method, text, ranks[0] if ranks else f'> {len(res)}', f'{len(ranks)}/{len(TARGETS)} targets'))
+    summary.append((name, method, text, ranks[0] if ranks else f'> {len(res)}', f'{len(ranks)}/{len(TARGETS)} targets'))
 
-print(f"{'method':<14}{'query':<42}{'first rank':<12}found")
+print(f"{'index':<20}{'method':<14}{'query':<42}{'first rank':<12}found")
 for s in summary:
-    print(f'{s[0]:<14}{s[1]:<42}{str(s[2]):<12}{s[3]}')
+    print(f'{s[0]:<20}{s[1]:<14}{s[2]:<42}{str(s[3]):<12}{s[4]}')
 
 # COMMAND ----------
 
 # 4. What comes back instead (HYBRID+RERANK, the chat's own query on the plain code): REF and first 90 characters.
-for method, text, res, err in results:
+for ix, method, text, res, err in results:
     if method == 'HYBRID+RERANK' and text in ('SF-1027', "c'est quoi SF-1027 ?") and res:
-        print(f'--- {method} | {text}')
+        print(f'--- {ix.split(".")[-1]} | {method} | {text}')
         for i, r in enumerate(res, 1):
             flag = 'TARGET' if r['chunk_id'] in TARGETS else '      '
             print(f"{i:>2} {flag} {r['REF']:<16}{re.sub(chr(10), ' ', r['chunk_text'])[:90]}")
@@ -123,13 +144,14 @@ for method, text, res, err in results:
 # COMMAND ----------
 
 # 5. Verdict.
-def first(method, text):
-    for s in summary:
-        if s[0] == method and s[1] == text:
-            return s[2]
+def first(index, method, text):
+    for r in summary:
+        if (r[0], r[1], r[2]) == (index, method, text):
+            return r[3]
 
-print('Targets in the index        :', all(v is True for v in indexed.values()))
-print('FULL_TEXT  SF-1027 / SF1027 :', first('FULL_TEXT', 'SF-1027'), '/', first('FULL_TEXT', 'SF1027'))
-print('ANN        SF-1027          :', first('ANN', 'SF-1027'))
-print('HYBRID     SF-1027 / SF1027 :', first('HYBRID', 'SF-1027'), '/', first('HYBRID', 'SF1027'))
-print('Chat query (RERANK) question:', first('HYBRID+RERANK', "c'est quoi SF-1027 ?"))
+print('Targets in the first index :', all(v is True for v in indexed.values()))
+for ix in LIVE:
+    n = ix.split('.')[-1]
+    print(f'{n}: FULL_TEXT SF-1027 / SF1027 =', first(n, 'FULL_TEXT', 'SF-1027'), '/', first(n, 'FULL_TEXT', 'SF1027'),
+          '| HYBRID normalized =', first(n, 'HYBRID', 'SF-1027 [SF1027]'),
+          '| chat (RERANK) question =', first(n, 'HYBRID+RERANK', "c'est quoi SF-1027 ?"))

@@ -51,4 +51,23 @@ Lecture du verdict :
 - Aucune méthode ne la trouve mais le filtre `chunk_id` oui → c'est un problème de classement, pas d'indexation.
 - Le filtre `chunk_id` ne la trouve pas → chunk absent de l'index (index en retard, sync à voir).
 
-Colle-moi la sortie (tableau final) et je propose le correctif. Pistes déjà identifiées si BM25 est confirmé : requête réécrite avec la graphie sans tiret (`SF1027`) en plus de l'originale ; `chunk_codes` couvre déjà le cas exact une fois la tâche 6 relancée (runbook UAT, K1 à K4).
+Colle-moi le tableau final. Pistes déjà identifiées si BM25 est confirmé : requête réécrite avec la graphie sans tiret (`SF1027`) en plus de l'originale ; `chunk_codes` couvre déjà le cas exact une fois la tâche 6 relancée (runbook UAT, K1 à K4).
+
+## 3. Index : classique = `chunk_preprocessed`, `chunks_text_index` à côté (texte brut)
+
+État constaté dans le code : l'app normalise bien les requêtes (`SF-1027` devient `SF-1027 [SF1027]`, `search.py` l.87), mais le pipeline avait été remis sur `chunk_text` : l'index UAT n'embarque donc pas la forme canonique, la requête normalisée n'a rien à rattraper. Un index ne peut pas changer de colonne : il faut le supprimer puis le recréer.
+
+Corrigé dans le code (`update_proj_vector_indexes.py`, `databricks.yml` DEV et UAT) : `chunks_index` et `chunks_full_index` embarquent `chunk_preprocessed`, `chunks_text_index` (même table) embarque `chunk_text`. Le test `create_test_index.py` est supprimé.
+
+**Sans relancer tout le pipeline** (une seule tâche, une seule attente de cluster) :
+1. Déployer les jobs UAT (Bitbucket `deploy-uat-jobs`) pour que la tâche connaisse la nouvelle liste d'index.
+2. Notebook [`rebuild_indexes.py`](./rebuild_indexes.py) : cellules 1-2 vérifient que `chunks` porte `chunk_preprocessed` partout (sinon rechunk d'abord) ; **la cellule 3 supprime `chunks_index`** → le chat n'a plus de recherche jusqu'à l'étape 3 (≈ 1 h). À faire hors heures d'usage (UAT utilisé en semaine).
+3. Tâche seule, qui recrée les deux index en SP puis les synchronise :
+```powershell
+'{"job_id":762813135325407,"only":["5_sync_index"]}' | Out-File -Encoding ascii "$env:TEMP\run5.json"
+databricks jobs run-now --json "@$env:TEMP\run5.json" --profile UAT
+```
+4. Tâche `6_update_kb_metadata` seule (même commande avec `"only":["6_update_kb_metadata"]`) pour `doc_references` (questions « quels documents citent X »).
+5. Relancer [`test_vector_search_codes.py`](./test_vector_search_codes.py) : il compare `chunks_index` et `chunks_text_index`.
+
+Pour éviter la coupure : ne fais pas la cellule 3 ; dis-le moi et je mets le classique sous un nouveau nom avec bascule de `CHAT_INDEX` (redémarrage de l'app).
