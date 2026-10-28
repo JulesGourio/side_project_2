@@ -29,7 +29,11 @@ Pour **ajouter/retirer une categorie** : modifier `SCOPE_ROOT_IDCATS` / `SCOPE_S
 
 [inventaire_filtres_uat.py](inventaire_filtres_uat.py), lecture seule, tes droits suffisent. Colle les sorties des cellules 1 a 5 : statuts du manifest, statuts de parsing, docs avant 2016 par annee, categories des docs indexes.
 
-## 3. Questions
+## 3. Requetes : docs dans le scope mais filtres
+
+[requetes_hors_scope.py](requetes_hors_scope.py), lecture seule, tes droits suffisent (SELECT sur `prod_gold.quality_system` et `uat_proj.qualibot`). 9 cellules : vivants hors categories (par racine, par categorie, exemples), avant 2016 (par annee, par racine, exemples), date inconnue, filtre de statut, docs du scope absents de `parsed_documents`, exclusions manuelles.
+
+## 4. Questions
 
 1. Quelles categories ajouter / retirer (IDCAT ou nom) ?
 2. Date : garder 2016-01-01, autre valeur, ou parser aussi une partie des archives (`ARCHIVE_MAX_DOCS`) ?
