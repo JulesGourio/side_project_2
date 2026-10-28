@@ -331,3 +331,55 @@ for fr, en in PLAIN:
     a = {r['chunk_id'] for r in run_app(fr, en, [], 'A')}
     b = {r['chunk_id'] for r in run_app(fr, en, [], 'B')}
     print(f'{len(a & b) / max(1, len(a)):.2f}  {fr}')
+
+# COMMAND ----------
+
+# J. Same benchmark, the code written in the question the way users type it (cell H used the documents' spelling).
+#    The app adds ' [CODE]' after a code written another way than its canonical form; a glued code gets nothing.
+def spellings(code: str, spelled: str) -> dict:
+    """The ways a user writes a code.
+
+    :param code: canonical form (SF1027)
+    :param spelled: spelling of the documents (SF-1027)
+    :return: {name: text}
+    """
+    m = re.match(r'([A-Z]+)(\d.*)', code)
+    out = {'documents': spelled, 'glued': code, 'glued lower': code.lower()}
+    if m:
+        out['space'] = f'{m.group(1)} {m.group(2)}'
+    return out
+
+
+def spelled_case(job: tuple) -> tuple:
+    """One benchmark case with a given spelling.
+
+    :param job: (code, template index, option, spelling name)
+    :return: (code, template, option, spelling, rank or None, passages)
+    """
+    code, t, option, sname = job
+    spelled, targets = CASES[code]
+    text = spellings(code, spelled).get(sname)
+    if text is None:
+        return code, t, option, sname, 'n/a', 0
+    norm = (lambda q: q.replace(text, f'{text} [{code}]')) if text != code else (lambda q: q)
+    try:
+        rows = run_app(norm(TEMPLATES[t][0].format(c=text)), norm(TEMPLATES[t][1].format(c=text)), [code], option)
+        return code, t, option, sname, rank(rows, targets), len(rows)
+    except Exception as exc:  # noqa: BLE001
+        return code, t, option, sname, 'refused', 0
+
+
+SPELLINGS = ['documents', 'glued', 'glued lower', 'space']
+OPTS_J = ['A', 'D', 'E', 'F']
+jobs = [(c, t, o, s) for c in BENCH for t in range(len(TEMPLATES)) for o in OPTS_J for s in SPELLINGS]
+with ThreadPoolExecutor(max_workers=4) as ex:
+    res_j = list(ex.map(spelled_case, jobs))
+print(f"{'spelling':<14}" + ''.join(f'{o:>12}' for o in OPTS_J) + '   (found / cases)')
+for s in SPELLINGS:
+    cells = []
+    for o in OPTS_J:
+        rs = [r for r in res_j if r[2] == o and r[3] == s and r[4] != 'n/a']
+        cells.append(f"{sum(isinstance(r[4], int) for r in rs)}/{len(rs)}")
+    print(f'{s:<14}' + ''.join(f'{c:>12}' for c in cells))
+print('\nSF1027 by spelling, option A (3 shapes):', {s: [r[4] for r in res_j if r[0] == CODE and r[2] == 'A' and r[3] == s] for s in SPELLINGS})
+print('codes missed by A, glued:', sorted({r[0] for r in res_j if r[2] == 'A' and r[3] == 'glued' and r[4] is None}))

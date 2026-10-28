@@ -33,6 +33,12 @@ Notebook : [`etude_dev.py`](./etude_dev.py). Import dans un notebook DEV, « Run
 | E | code canonique répété 3 fois dans la requête | questions avec code seulement |
 | F | embedding de la question entière + mots-clés = codes seuls | questions avec code seulement (si l'API l'accepte) |
 
+**Résultats du 28/10 (1er passage)** :
+- Les deux tours SF-1027 du journal datent du 26/10, avant la reconstruction des index du 28/10. Aujourd'hui, ces mêmes requêtes sortent en **rang 1** (question FR et traduction EN). La copie Delta du journal s'arrête au 26/10 : ton essai du soir n'y est pas.
+- Côté mots-clés, `SF1027` ne pèse que 5 points, autant que deux mots courants. `SF-1027 [SF1027]` pèse plus, parce que `SF` et `1027` comptent en plus. Une question qui écrit le code collé (`SF1027`) n'a pas ce renfort : c'était ton essai du soir.
+- Sur 25 codes × 3 formes de question : A (app actuelle) 70/75, B 73/75 mais change 11 à 54 % des passages des questions sans code (rejetée), C 70/75, **D, E, F 75/75**. E (code répété) ne coûte aucun appel.
+- Cellule J ajoutée : même mesure avec le code écrit collé, en minuscules ou avec un espace.
+
 Le tableau final donne pour chaque option : cas trouvés, cas en top 5, position médiane, passages envoyés au modèle (coût en tokens), appels Vector Search. On choisira ensemble à partir de ces chiffres.
 
 ---
