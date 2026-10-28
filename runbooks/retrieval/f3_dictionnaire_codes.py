@@ -146,8 +146,9 @@ class CodeKeys:
         Inside a longer chain of separated parts, only keys of 5 characters or more count (never ``A01`` in
         ``PTD-TEST-6-A-01``). A number never stops at a decimal point (never ``T31`` in ``T3 1,2``). A gap with a
         space joins only digits or words of at most 4 letters ending in upper case (``BAC 5578``, ``LdB IT-243``;
-        never ``of 10`` or ``STRUCTURE 1000``) and never ends on a word (never ``NAS1789 - NUT``). A code without digits has 3 letters
-        or more, in upper case, joined by separators without spaces (``E.A.S.A``; never ``A/B`` or ``SAP`` alone).
+        never ``of 10`` or ``STRUCTURE 1000``) and never ends on a word (never ``NAS1789 - NUT``). A code without
+        digits has 3 letters or more, in upper case, joined by separators without spaces (``E.A.S.A``; never ``A/B``
+        or ``SAP`` alone).
 
         :param text: question or passage
         :return: the codes found, with their position in the text and the key written for them
@@ -331,13 +332,13 @@ display(hits.where(~F.col("written").rlike("[0-9]")).groupBy("pattern_id", "toke
 
 # MAGIC %md
 # MAGIC ## Codes of the corpus not found in the passages
-# MAGIC Codes classified `CANONICAL_TOKEN` and cited in DEV documents, whose token the matcher finds in no DEV passage, by number of documents. Expected: documents outside the chat scope (the inventory reads every parsed document, the passages only the documents in scope). Anything else is a code the matcher misses.
+# MAGIC Codes classified `CANONICAL_TOKEN` and cited in DEV documents, whose token the matcher finds in no DEV passage, by number of documents. Separated acronyms are left out: written plainly (`SAP`) they are already their token. Expected: documents outside the chat scope (the inventory reads every parsed document, the passages only the documents in scope). Anything else is a code the matcher misses.
 
 # COMMAND ----------
 
 found_tokens = found.select("token").distinct()
 display(spark.table(PATTERNS).where((F.col("env") == "dev") & (F.col("treatment") == "CANONICAL_TOKEN")
-                                    & (F.col("document_count") > 0))
+                                    & (F.col("pattern_id") != "ACR-02") & (F.col("document_count") > 0))
         .join(found_tokens, F.col("canonical_token") == F.col("token"), "left_anti")
         .select("pattern_id", "code_key", "canonical_token", F.slice("spellings", 1, 6).alias("spellings"),
                 "document_count", F.slice("top_documents", 1, 3).alias("top_documents"))
@@ -347,12 +348,13 @@ display(spark.table(PATTERNS).where((F.col("env") == "dev") & (F.col("treatment"
 
 # MAGIC %md
 # MAGIC ## Codes left as they are
-# MAGIC Codes cited in DEV documents that get no token (`KEEP_AS_IS`, `GLOSSARY_CANDIDATE`), plain numbers and glued codes aside, by number of documents. A code that should get a token in this list means an exclusion pattern is too wide.
+# MAGIC Codes cited in DEV documents that get no token (`KEEP_AS_IS`), plain numbers, glued codes and letters-only words aside (the code patterns notebook lists those), by number of documents. A code that should get a token in this list means an exclusion pattern is too wide.
 
 # COMMAND ----------
 
 display(spark.table(PATTERNS).where((F.col("env") == "dev") & (F.col("treatment") != "CANONICAL_TOKEN")
-                                    & ~F.col("pattern_id").isin("NUM-01", "GLU-01") & (F.col("document_count") > 0))
+                                    & ~F.col("pattern_id").isin("NUM-01", "GLU-01", "ACR-01", "EXC-13")
+                                    & (F.col("document_count") > 0))
         .select("pattern_id", "code_key", F.slice("spellings", 1, 6).alias("spellings"), "document_count")
         .orderBy(F.desc("document_count")).limit(500))
 

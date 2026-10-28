@@ -8,7 +8,7 @@
 # MAGIC
 # MAGIC | | |
 # MAGIC | --- | --- |
-# MAGIC | Reads | `dev_proj.qualibot.f1_inventaire_codes` (code inventory), `<env>_proj.qualibot.doc_catalog` for each environment of `ENVS` |
+# MAGIC | Reads | `dev_proj.qualibot.f1_inventaire_codes` (code inventory), `<env>_proj.qualibot.doc_catalog` and `<env>_proj.qualibot.chunks` (case of the letters-only words) for each environment of `ENVS` |
 # MAGIC | Writes | `dev_proj.qualibot.f2_familles_codes` (one row per code and environment) and `dev_proj.qualibot.f3_cles_codes` (the dictionary of match keys), both rewritten |
 # MAGIC | Rights | the user's own (read on DEV and UAT, write on the DEV analysis table) |
 # MAGIC
@@ -37,7 +37,7 @@
 # MAGIC | catalogue key | key of a catalogue REF, with and without its language suffix (`FR` `EN` `GB` `MX` `BG` `CZ` `BR` `ES`), and without its final letters | `MI-1413_FR` → `MI1413FR`, `MI1413`; `QIS-46A-352 A` → `QIS46A352` |
 # MAGIC | ambiguous key | catalogue key that leads to several REFs with different tokens: it maps to itself | `Q0087QP` (`Q0087QP-EG`, `Q0087QP-G`), `QIS45D008` (revisions `A` and `B`) |
 # MAGIC | canonical token | for a REF, its catalogue key without language suffix; for an ambiguous key, the key; otherwise the key | `Q0697MI_FR` → `Q0697MI` |
-# MAGIC | code spelling | a spelling that names a code, not a word of running text: an upper-case word of 2 letters or more that is not a common word, an upper-case letter glued to a digit, or a separator `-` `_` `/` `.` next to a letter | `MEP 10-069`, `B1`, `tool_8660197`; not `de 2`, `Inspect 100`, `O 180`, `OF 9` |
+# MAGIC | code spelling | a spelling that names a code, not a word of running text: an upper-case word of 2 letters or more that is not a common word, an upper-case letter glued to a digit, or a separator `-` `_` `/` `.` next to a letter | `MEP 10-069`, `B1`, `Tool_8660197`; not `de 2`, `Inspect 100`, `O 180`, `OF 9` |
 # MAGIC
 # MAGIC A code is linked to a catalogue REF when its key is a catalogue key, or when one slice of a spelling is the key of a catalogue REF (`MI-13991` in `MI-13991Table 3`, `QP-2086` in `QP-2086-Software`). The longest such slice wins. That slice is the **match key**: the part of the text the matcher recognises and follows with the token. A REF is never linked through a part of it: `IT-243` alone is not `LdB IT-243`, `P100` is not `LdB P-100`.
 
@@ -75,8 +75,8 @@
 # MAGIC
 # MAGIC | ID | Pattern | Regex or condition | Captures | Examples | Treatment |
 # MAGIC | --- | --- | --- | --- | --- | --- |
-# MAGIC | `ACR-02` | Separated acronym | spelling, case-sensitive: `^[A-Z]([./][A-Z]){2,}\.?$`; key not a common word (`EXC-13`) | one acronym of 3 letters or more written letter by letter with dots or slashes; two letters (`A/B`, `Y/N`, `I.E`) are mostly pairs and ranges, and two acronyms joined by a slash (`NDT/NDI`) are two words already: both stay `ACR-01` | `E.A.S.A`, `N.D.T`, `M.O.E`, `T.V.A` | `CANONICAL_TOKEN` (`[EASA]`) |
-# MAGIC | `ACR-01` | Acronym | key: `^[A-Z]+$`, 6 letters at most, not a common word (`EXC-13`); `glossary_key` gives the singular of a plural (`KPIS` → `KPI`) | letters-only words in upper case or mixed case (`eFNC` → `EFNC`) | `DOA`, `EASA`, `NADCAP`, `PFMEA` | `GLOSSARY_CANDIDATE` |
+# MAGIC | `ACR-02` | Separated acronym | spelling, case-sensitive: `^[A-Z](\.[A-Z]){2,}\.?$`; key not a common word (`EXC-13`) nor one letter repeated (`E.E.E`) | one acronym of 3 letters or more written letter by letter with dots; letters joined by slashes (`A/B/C`, `M/C/T/J/N`) are lists, two letters (`A/B`, `I.E`) are pairs and ranges, and two acronyms joined by a slash (`NDT/NDI`) are two words already: all stay `ACR-01` | `E.A.S.A`, `N.D.T`, `M.O.E`, `T.V.A` | `CANONICAL_TOKEN` (`[EASA]`) |
+# MAGIC | `ACR-01` | Acronym | key: `^[A-Z]+$`, 6 letters at most, not a common word (`EXC-13`); `glossary_key` gives the singular of a plural whose singular is also a key (`KPIS` → `KPI`; never `AIRBUS` → `AIRBU`) | letters-only words in upper case or mixed case (`eFNC` → `EFNC`) | `DOA`, `EASA`, `NADCAP`, `PFMEA` | `GLOSSARY_CANDIDATE` |
 # MAGIC | `UNL-01` | Unlisted REF | a slice, language suffix removed, has the signature of a catalogue REF (leading letters, then at least one digit), and the rest of the key holds 3 characters at most, or the slice starts the spelling and holds a separator (`MI-13991` in `MI-13991Table 3`); never a slice inside a longer code (`F05703` in `STD-0003415-F05703A`) | REFs cited but absent from the catalogue: obsolete, other site, typo | `SF-1027` (as `SF-1029`), `NS-1717`, `MI-13663`, `PAQ 10 03` | `CANONICAL_TOKEN` |
 # MAGIC | `TRM-01` | Method or term | key in `TERMS` | quality methods and drawing types written with a digit | `8D`, `5S`, `3D`, `2D` | `CANONICAL_TOKEN` |
 # MAGIC | `MAT-01` | Material or alloy | key: `^([0-9]{4}T[0-9]+$\|[0-9]{3}PH$\|TA[0-9]+V\|TI[0-9]\|[XZ][0-9]+C[RN])` | aluminium tempers, steels, titanium alloys | `2024-T3`, `7175-T7351`, `15-5PH`, `TA6V`, `Ti-6Al-4V`, `Z6CNU17-04` | `CANONICAL_TOKEN` |
@@ -88,7 +88,7 @@
 # MAGIC | `IDN-01` | Segmented identifier | one spelling: `^[A-Z][A-Za-z0-9]*([-_/. ]{1,3}[A-Za-z0-9]+)+$` with 3 consecutive digits, and two upper-case letters in a row or a separator `-` `_` `/` `.` | internal numbers, tools, lots, drawings | `STM-0002396`, `HAR-998`, `MEP 10-069`, `IN.ME.L269` | `CANONICAL_TOKEN` |
 # MAGIC | `PN-01` | Part number | key: `^[A-Z][0-9]{7,}$` | part numbers written as one letter and digits | `L0025939`, `V53123000000` | `CANONICAL_TOKEN` |
 # MAGIC | `GLU-01` | Glued code | no spelling contains a separator | part and serial numbers written as one word | `IS0024879M`, `S02P02`, `F04641A` | `KEEP_AS_IS` (already one token) |
-# MAGIC | `OTH-01` | Other code | letters and digits matched by no other pattern, 20 characters at most | long tail: labels, tool references, mixed spellings | `C3-Fill`, `tool_8660197`, `BOE_BACC65CR3PN` | `CANONICAL_TOKEN` |
+# MAGIC | `OTH-01` | Other code | letters and digits matched by no other pattern, 20 characters at most | long tail: labels, tool references, mixed spellings | `C3-Fill`, `BOE_BACC65CR3PN`, `FORM 1` | `CANONICAL_TOKEN` |
 
 # COMMAND ----------
 
@@ -99,9 +99,9 @@
 # MAGIC
 # MAGIC | ID | Pattern | Regex or condition | Source in documents | Examples |
 # MAGIC | --- | --- | --- | --- | --- |
-# MAGIC | `EXC-13` | Common word in upper case | letters-only key in `COMMON_WORDS` (function words in French, English, Spanish, Portuguese and frequent document words), or of 7 letters or more | titles and headers in upper case | `DE`, `BY`, `DES`, `VALIDATION`, `DOCUMENTS`, `LATECOERE` |
+# MAGIC | `EXC-13` | Common word in upper case | letters-only key in `COMMON_WORDS` (function words in French, English, Spanish, Portuguese and frequent document words), of 7 letters or more, or written as a word (`Scope`, `scope`) in 20 % of its passage occurrences or more (`lower_share`); acronyms are written in upper case | titles and headers in upper case, in any language | `DE`, `BY`, `DES`, `VALIDATION`, `SCOPE`, `OBJECT`, `AIRBUS`, `OBSAH` |
 # MAGIC | `NUM-01` | Number only | key: `^[0-9]+$` | section numbers, decimals, dates | `4.2.1`, `6.1`, `24032022` |
-# MAGIC | `EXC-11` | Word and number in running text | every spelling: `^[A-Za-z]+ +[0-9]`, and none starts with an upper-case word of 2 letters or more other than a word of `STOPWORDS`; aircraft of `ACF-01` excepted | a word of running text, in any case, followed by a number | `de 2`, `of 9`, `OF 9`, `TO 100`, `Inspect 100`, `O 180`, `en 2021`, `a 905`, `part 1/4`, `Division 3000` |
+# MAGIC | `EXC-11` | Word and number in running text | every spelling `^[A-Za-z]+ +[0-9]` or in lower case, and none starts with an upper-case word of 2 letters or more other than a word of `STOPWORDS`; or a word of `COMMON_WORDS` glued to 1 or 2 digits; aircraft of `ACF-01` excepted | a word of running text, in any case, followed by a number | `de 2`, `of 9`, `OF 9`, `TO 100`, `Inspect 100`, `O 180`, `en 2021`, `a 905`, `part 1/4`, `Grain 180`, `ET5`, `LA1`, `OF25` |
 # MAGIC | `EXC-09` | URL, path or file name | one spelling: `^https?`, `^www\.`, `\.(aspx?\|local\|corp\|com\|net\|org\|html?\|pdf\|docx?\|xlsx?\|pptx?\|png\|jpe?g\|txt\|csv)($\|[/.?#])`, or a lower-case `/path/` | links, file references | `prtouintraqual1/intraqual/identification.aspx`, `20LBG_B.pdf` |
 # MAGIC | `EXC-01` | Table column label | key: `^(COL\|OA\|OC)[0-9]+$` | spreadsheet headers | `COL6`, `OA21`, `OC20` |
 # MAGIC | `EXC-02` | Heading number glued to a word | key: `^[0-9]+[A-Z]{3,}` | tables of contents | `2SCOPE4`, `1OBJECT4`, `11REFERENCE` |
@@ -113,14 +113,15 @@
 # MAGIC | `EXC-06` | Date with month name | one spelling: a month name of `MONTHS` (French, English, Spanish, Portuguese, full or abbreviated) not followed by a letter, up to 3 separators, a digit | dates | `July 2024`, `Jan/31/2024`, `JANVIER2018`; not `MARKING8`, `MAINTENANCE50`, `JANTX1N5554` |
 # MAGIC | `EXC-07` | Word and small number | key `^[A-Z]{3,}[0-9]{1,2}$`, or every spelling `^[A-Za-z]{3,}[-_/. ]{0,3}[0-9]{1,2}([-_/. ]{1,3}[0-9]{1,2})*$`, the word not the leading letters of a catalogue REF; or a short code of `SHC-01` never written glued or with a hyphen | levels, steps, figures, tables, document parts | `LEVEL 2`, `NIVEAU 3`, `TABLE 1/1`, `Figure 13`, `PART 1`, `PARTIE 3`, `B 2` |
 # MAGIC | `EXC-12` | Long concatenation | key longer than 20 characters | table cells run together | `101A002SL001D9251276`, `5000D92515131000AB` |
+# MAGIC | `EXC-14` | Lower-case label | no spelling has an upper-case letter | shape names and labels of office files | `x0000_t75`, `x0000_s2052` |
 # MAGIC
 # MAGIC **Not excluded on purpose.** A standard glued to a heading number (`4179NAS410`, `9001ISO14001`) stays `EXC-02`: the matcher appends tokens to whole words only, so a token for the standard inside such a word would never be written.
 # MAGIC
 # MAGIC ## Evaluation order
 # MAGIC
-# MAGIC First match wins: `REF-01` … `REF-99`, `EXC-13`, `ACR-02`, `ACR-01`, `NUM-01`, the Part 21 subparts `21G` and `21J` (`REG-01`), `EXC-11`, `UNL-01`, `EXC-09`, `EXC-01`, `EXC-02`, `TRM-01`, `EXC-03`, `EXC-04`, `EXC-10`, `EXC-08`, `MAT-01`, `EXC-05`, `EXC-06`, `STD-01`, `REG-01`, `ACF-01`, `SAP-01`, `SHC-01`, `EXC-07`, `EXC-12`, `IDN-01`, `PN-01`, `GLU-01`, `OTH-01`.
+# MAGIC First match wins: `REF-01` … `REF-99`, `EXC-13`, `ACR-02`, `ACR-01`, `NUM-01`, the Part 21 subparts `21G` and `21J` (`REG-01`), `EXC-11`, `UNL-01`, `EXC-09`, `EXC-01`, `EXC-02`, `TRM-01`, `EXC-03`, `EXC-04`, `EXC-10`, `EXC-08`, `MAT-01`, `EXC-05`, `EXC-06`, `STD-01`, `REG-01`, `ACF-01`, `SAP-01`, `SHC-01`, `EXC-07`, `EXC-12`, `EXC-14`, `IDN-01`, `PN-01`, `GLU-01`, `OTH-01`.
 # MAGIC
-# MAGIC Catalogue REFs come before every exclusion. Running text (`EXC-11`) comes before the unlisted REFs and every code pattern, so that no common word followed by a number becomes a code. The Part 21 subparts come before the units and list items so that `21G` and `21J` stay codes, the terms of `TRM-01` before the units so that `8D` stays one, materials before the list items so that `15-5PH` stays one, `EXC-07` and `EXC-12` before the catch-all patterns `IDN-01` and `OTH-01`.
+# MAGIC Catalogue REFs come before every exclusion. Running text (`EXC-11`) comes before the unlisted REFs and every code pattern, so that no common word followed by a number becomes a code. The Part 21 subparts come before the units and list items so that `21G` and `21J` stay codes, the terms of `TRM-01` before the units so that `8D` stays one, materials before the list items so that `15-5PH` stays one, `EXC-07`, `EXC-12` and `EXC-14` before the catch-all patterns `IDN-01` and `OTH-01`.
 # MAGIC
 # MAGIC ## Output table `dev_proj.qualibot.f2_familles_codes`
 # MAGIC
@@ -138,6 +139,7 @@
 # MAGIC | `family_ref` | string | `UNL-01` only: one catalogue REF with the same signature, never the document of the code |
 # MAGIC | `intraqual_url` | string | Intraqual link of `catalogue_ref` |
 # MAGIC | `glossary_key` | string | `ACR-01` and `ACR-02` only: the acronym, singular for a plural (`KPIS` → `KPI`) |
+# MAGIC | `lower_share` | double | letters-only keys: share of their passage occurrences written as a word (`Scope`, `scope`); null when absent from the passages |
 # MAGIC | `document_count` | long | parsed documents citing the code |
 # MAGIC | `question_count` | long | chat questions citing the code |
 # MAGIC | `top_documents` | array&lt;string&gt; | the 10 document REFs citing it most, `REF (n)` |
@@ -239,11 +241,13 @@ COMMON_WORDS = sorted(set(STOPWORDS) | {
     "REF", "REV", "REVUE", "SITE", "LIEU", "PIECE", "PART", "PARTS", "LOT", "LOTS", "FIN", "END", "VIA", "PLAN",
     "PLANS", "ZONE", "ZONES", "AIR", "SANS", "SOUS", "LORS", "AFIN", "ETC", "CF", "VS", "PRO", "RAS", "NB", "OBS"})
 ACR_MAX_LETTERS = 6
+# Share of the passage occurrences of a letters-only key written as a word (Scope, scope) above which it is a word.
+WORD_MIN_LOWER_SHARE = 0.2
 UNL_MAX_EXTRA = 3
 MAX_CODE_LENGTH = 20
 
 RX = {
-    "ACR-02": r"^[A-Z]([./][A-Z]){2,}\.?$",
+    "ACR-02": r"^[A-Z](\.[A-Z]){2,}\.?$",
     "ACR-01": r"^[A-Z]+$",
     "NUM-01": r"^[0-9]+$",
     "EXC-11": r"^[A-Za-z]+ +[0-9]",
@@ -283,12 +287,14 @@ PATTERNS = [
     *[(i, name, rx, "CANONICAL_TOKEN") for i, name, rx in REF_FORMATS],
     (*REF_OTHER, "CANONICAL_TOKEN"),
     ("EXC-13", "Common word in upper case",
-     f"letters-only key in COMMON_WORDS or of {ACR_MAX_LETTERS + 1} letters or more", "KEEP_AS_IS"),
+     f"letters-only key in COMMON_WORDS, of {ACR_MAX_LETTERS + 1} letters or more, or written as a word in "
+     f"{WORD_MIN_LOWER_SHARE:.0%} of its passage occurrences or more", "KEEP_AS_IS"),
     ("ACR-02", "Separated acronym", f"spelling, case-sensitive: {RX['ACR-02']}", "CANONICAL_TOKEN"),
     ("ACR-01", "Acronym", f"{RX['ACR-01']}, {ACR_MAX_LETTERS} letters at most", "GLOSSARY_CANDIDATE"),
     ("NUM-01", "Number only", RX["NUM-01"], "KEEP_AS_IS"),
     ("EXC-11", "Word and number in running text",
-     f"every spelling: {RX['EXC-11']}, none {RX['EXC-11-code']} other than a stop word; ACF-01 excepted",
+     f"every spelling {RX['EXC-11']} or in lower case, none {RX['EXC-11-code']} other than a stop word; or a "
+     "common word glued to 1 or 2 digits; ACF-01 excepted",
      "KEEP_AS_IS"),
     ("UNL-01", "Unlisted REF",
      f"signature of a catalogue REF: leading letters, 9 per digit, A per letter; at most {UNL_MAX_EXTRA} other "
@@ -317,6 +323,7 @@ PATTERNS = [
      f"{RX['EXC-07']} or every spelling {RX['EXC-07-spelling']}, word not a REF prefix; or SHC-01 never glued",
      "KEEP_AS_IS"),
     ("EXC-12", "Long concatenation", f"key longer than {MAX_CODE_LENGTH} characters", "KEEP_AS_IS"),
+    ("EXC-14", "Lower-case label", "no spelling has an upper-case letter", "KEEP_AS_IS"),
     ("IDN-01", "Segmented identifier",
      f"one spelling: {RX['IDN-01']}, with 3 consecutive digits and {RX['IDN-01-code']}", "CANONICAL_TOKEN"),
     ("PN-01", "Part number", RX["PN-01"], "CANONICAL_TOKEN"),
@@ -471,6 +478,20 @@ def inventory(env: str) -> DataFrame:
                     "top_documents"))
 
 
+def word_share(env: str, keys: DataFrame) -> DataFrame:
+    """Share of the passage occurrences of each key written as a word, in title case or lower case.
+
+    :param env: environment (dev or uat)
+    :param keys: DataFrame with the column code_key, letters-only keys
+    :return: DataFrame with the columns code_key and lower_share (0 to 1; a key absent from the passages has no row)
+    """
+    words = (spark.table(f"{env}_proj.qualibot.chunks")
+             .select(F.explode(F.expr(r"regexp_extract_all(chunk_text, '[A-Za-z]{2,}', 0)")).alias("w"))
+             .select(F.upper("w").alias("code_key"), F.col("w").rlike("^[A-Z]?[a-z]+$").alias("lower")))
+    return (words.join(F.broadcast(keys), "code_key", "left_semi")
+            .groupBy("code_key").agg(F.avg(F.col("lower").cast("double")).alias("lower_share")))
+
+
 def classify(env: str) -> DataFrame:
     """Pattern, treatment and canonical token of every key of an environment, before the dictionary is applied.
 
@@ -507,6 +528,10 @@ def classify(env: str) -> DataFrame:
                     .select(F.regexp_extract("key", "^([A-Z]+)", 1).alias("p")).where("p <> ''").distinct().collect()]
     acronyms = k.where(F.col("code_key").rlike(RX["ACR-01"])).select(F.col("code_key").alias("singular"),
                                                                      F.lit(True).alias("singular_known"))
+    shares = word_share(env, k.where(F.col("code_key").rlike(RX["ACR-01"])).select("code_key"))
+    # A word glued to a small number (ET5, LA1, OF25) is running text, whatever its case.
+    glued_word = F.regexp_extract(F.col("code_key"), "^([A-Z]+)[0-9]{1,2}$", 1).isin(COMMON_WORDS)
+    lower_only = "^[^A-Z]*$"
 
     key = F.col("code_key")
     prefix = F.regexp_extract(key, "^([A-Z]*)", 1)
@@ -522,17 +547,21 @@ def classify(env: str) -> DataFrame:
           .join(in_ref, "code_key", "left")
           .join(unlisted, "code_key", "left")
           .withColumn("singular", F.expr("substring(code_key, 1, length(code_key) - 1)"))
-          .join(acronyms, "singular", "left"))
+          .join(acronyms, "singular", "left")
+          .join(shares, "code_key", "left"))
 
     pattern = (F.when(F.col("fmt").isNotNull(), F.col("fmt"))
                .when(F.col("slice_fmt").isNotNull(), F.col("slice_fmt"))
-               .when(key.rlike(RX["ACR-01"]) & (key.isin(COMMON_WORDS) | (F.length(key) > ACR_MAX_LETTERS)),
+               .when(key.rlike(RX["ACR-01"]) & (key.isin(COMMON_WORDS) | (F.length(key) > ACR_MAX_LETTERS)
+                                                | (F.coalesce("lower_share", F.lit(0.0)) >= WORD_MIN_LOWER_SHARE)),
                      "EXC-13")
-               .when(some(RX["ACR-02"]) & key.rlike(RX["ACR-01"]), "ACR-02")
+               .when(some(RX["ACR-02"]) & key.rlike(RX["ACR-01"]) & ~key.rlike(r"^(.)\1+$"), "ACR-02")
                .when(key.rlike(RX["ACR-01"]), "ACR-01")
                .when(key.rlike(RX["NUM-01"]), "NUM-01")
                .when(key.isin(PART21_SUBPARTS), "REG-01")
-               .when(every(RX["EXC-11"]) & ~code_spaced & ~is_aircraft, "EXC-11")
+               .when(~is_aircraft & (glued_word | (F.forall("spellings", lambda s: s.rlike(RX["EXC-11"])
+                                                                          | s.rlike(lower_only))
+                                                   & some(RX["EXC-11"]) & ~code_spaced)), "EXC-11")
                .when(F.col("unl_ref").isNotNull(), "UNL-01")
                .when(some(RX["EXC-09"]), "EXC-09")
                .when(key.rlike(RX["EXC-01"]), "EXC-01")
@@ -555,6 +584,7 @@ def classify(env: str) -> DataFrame:
                      | (~prefix.isin(ref_prefixes) & (key.rlike(RX["EXC-07"]) | every(RX["EXC-07-spelling"]))),
                      "EXC-07")
                .when(F.length(key) > MAX_CODE_LENGTH, "EXC-12")
+               .when(every(lower_only), "EXC-14")
                .when(F.exists("spellings", lambda s: s.rlike(RX["IDN-01"]) & s.rlike("[0-9]{3}")
                               & s.rlike(RX["IDN-01-code"])), "IDN-01")
                .when(key.rlike(RX["PN-01"]), "PN-01")
@@ -566,7 +596,7 @@ def classify(env: str) -> DataFrame:
     catalogue_ref = F.when(from_catalogue, F.col("cat_ref")).when(is_ref, F.col("slice_ref"))
     candidate_refs = F.when(from_catalogue & F.col("cat_ref").isNull(), F.col("cat_refs"))
     plural = (key.endswith("S") & (F.length(key) >= 4)
-              & (F.col("singular_known").isNotNull() | some("[A-Z]s$")))
+              & F.col("singular_known").isNotNull())
     glossary_key = F.when(pid.startswith("ACR-"), F.when(plural, F.col("singular")).otherwise(key))
     canonical = (F.when(F.col("treatment") != "CANONICAL_TOKEN", F.lit(None))
                  .when(from_catalogue, F.col("cat_canonical"))
@@ -590,6 +620,7 @@ def classify(env: str) -> DataFrame:
                            F.concat(F.lit(INTRAQUAL_BASE), F.regexp_replace("catalogue_ref", " ", "%20")))
                     .alias("intraqual_url"),
                     glossary_key.alias("glossary_key"),
+                    F.when(key.rlike(RX["ACR-01"]), F.col("lower_share")).alias("lower_share"),
                     "document_count", "question_count", "top_documents"))
 
 

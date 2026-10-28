@@ -96,8 +96,9 @@ class CodeKeys:
         Inside a longer chain of separated parts, only keys of 5 characters or more count (never ``A01`` in
         ``PTD-TEST-6-A-01``). A number never stops at a decimal point (never ``T31`` in ``T3 1,2``). A gap with a
         space joins only digits or words of at most 4 letters ending in upper case (``BAC 5578``, ``LdB IT-243``;
-        never ``of 10`` or ``STRUCTURE 1000``) and never ends on a word (never ``NAS1789 - NUT``). A code without digits has 3 letters
-        or more, in upper case, joined by separators without spaces (``E.A.S.A``; never ``A/B`` or ``SAP`` alone).
+        never ``of 10`` or ``STRUCTURE 1000``) and never ends on a word (never ``NAS1789 - NUT``). A code without
+        digits has 3 letters or more, in upper case, joined by separators without spaces (``E.A.S.A``; never ``A/B``
+        or ``SAP`` alone).
 
         :param text: question or passage
         :return: the codes found, with their position in the text and the key written for them
