@@ -7,7 +7,7 @@ from typing import Any, Dict, List, TypedDict
 class Hit(TypedDict):
     """One way a chunk was found by a query of the turn."""
     q: int | None          # index of the query in the turn's queries, None for a lookup by REF
-    via: str               # rerank, raw, code_lookup or ref_lookup
+    via: str               # rerank, raw or ref_lookup
     rank: int              # position in that query's results, from 0
     score: float | None
 

@@ -10,7 +10,7 @@ from server.services.chat.turn_log import TurnLog, passage_date
 from server.services.chat.engine.queries import opening_language, rewrite_queries, translate_query
 from server.services.chat.engine.references import cited_codes_asked, exact_citations
 from server.services.chat.engine.types import DocumentPassages, PassageRecord, RetrievalResult, SearchRow
-from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search, search_codes, start_question_search
+from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search, start_question_search
 from server.services.chat.engine.config import (
     division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on, raw_top_k, rerank_top_k,
 )
@@ -19,8 +19,6 @@ from utils.parsing_pipeline.code_normalization import canonical_codes, normalize
 logger = logging.getLogger(__name__)
 
 _REF_LOOKUP_MAX = 6              # REFs (language variants included) filtered on
-_MAX_CODES_SEARCHED = 5          # codes searched alone in one turn
-_CODE_LOOKUP_K = 8               # passages fetched for the codes named alone
 _REF_LOOKUP_K = 8                # passages fetched from the named documents
 _CITING_LOOKUP_DOCS = 10         # most recent documents citing an asked code whose passages are fetched
 _CITING_LOOKUP_K = 20            # passages fetched from them
@@ -228,11 +226,6 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         over_cap: List[SearchRow] = []
         if max_search_passages():
             rows, over_cap = rows[:max_search_passages()], rows[max_search_passages():]
-        codes = list(dict.fromkeys(c for q in queries for c in canonical_codes(q, accept_lowercase=True)))[:_MAX_CODES_SEARCHED]
-        if codes:
-            with log.timed('code_lookup'):
-                found = await search_codes(host, token, index, codes, filters, _CODE_LOOKUP_K, log=log)
-            rows = _merge_by_rank([found, rows])
         if named:
             with log.timed('ref_lookup'):
                 found = await fetch_documents(host, token, index, question, named, _REF_LOOKUP_K, filters,
