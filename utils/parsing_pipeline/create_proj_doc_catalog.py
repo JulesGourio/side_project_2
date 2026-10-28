@@ -3,15 +3,14 @@
 # MAGIC # PROJ DOC_CATALOG
 # MAGIC
 # MAGIC **Description:**
-# MAGIC Last link of the daily chain. Two writes to Lakebase:
+# MAGIC Last link of the daily chain. Three writes to Lakebase:
 # MAGIC 1. `doc_catalog` rewritten from `parse_manifest` (every document in scope: REF, title, division, link, current revision and its date) and
 # MAGIC    `chunks` (`in_chat` = the document has passages in the chat index). The app reads it every 30 min (`server/services/infra/doc_catalog.py`):
 # MAGIC    links of the REFs cited in an answer, titles in impact search, revision and date given to the answer model with each document.
-# MAGIC 2. `catalog_metadata.documents_as_of` (today's date) and `updated_at` (now): the "documents as of" date shown in the chat UI toolbar
+# MAGIC 2. `doc_references` rewritten from the `cited_codes` of `chunks`: for each reference code, the documents whose passages cite it. The app
+# MAGIC    reads it every 30 min (`server/services/infra/doc_references.py`) to answer "which documents cite X?" with the complete list.
+# MAGIC 3. `catalog_metadata.documents_as_of` (today's date) and `updated_at` (now): the "documents as of" date shown in the chat UI toolbar
 # MAGIC    (`GET /config/knowledge-base-date`).
-# MAGIC 3. `chunk_codes` rewritten from `chunks`: each code cited in the passages (form, part, standard or document number such as
-# MAGIC    `SF-1027`) with the passages that cite it. The chat looks up the codes of a question there, since the hybrid search splits
-# MAGIC    `SF-1027` into `SF` and `1027` (`server/services/chat/engine/codes.py`).
 # MAGIC
 # MAGIC **Highlighted complexities:**
 # MAGIC Lakebase is a Postgres endpoint, not Unity Catalog: unreachable from classic job compute over its private endpoint, so this task has no
@@ -27,8 +26,8 @@
 # MAGIC
 # MAGIC **Output Tables (Pipeline)**
 # MAGIC - `{lakebase_database}.doc_catalog` (Lakebase/Postgres, full rewrite in one transaction)
+# MAGIC - `{lakebase_database}.doc_references` (Lakebase/Postgres, full rewrite in the same transaction)
 # MAGIC - `{lakebase_database}.catalog_metadata` (Lakebase/Postgres, id=1 single row)
-# MAGIC - `{lakebase_database}.chunk_codes` (Lakebase/Postgres, full rewrite in the same transaction)
 
 # COMMAND ----------
 
@@ -36,6 +35,7 @@
 # MAGIC # Technical debt
 # MAGIC - The Intraqual host of the REF link is written here and in `worker.intraqual_ref_url`: change both together.
 # MAGIC - With several target databases the rewrite is one transaction per database, not one across all of them.
+# MAGIC - `doc_references` is empty for the passages written before the `cited_codes` column, until a `rechunk` run.
 
 # COMMAND ----------
 
@@ -110,7 +110,6 @@ sys.path.insert(0, REPO_DIR)
 
 # COMMAND ----------
 
-import codes
 import tables
 from tables import table_exists
 
@@ -211,13 +210,29 @@ logger.info(f"{len(catalog_rows)} documents in scope, {n_in_chat} with passages 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Tr. 2 - Codes cited in the passages
-# MAGIC One row per code (upper case) with the passages that cite it, for the codes cited by at most `codes.CODE_MAX_CHUNKS` passages: a code found everywhere points at no passage in particular. The header line of each chunk is left out, otherwise every chunk would cite its own REF.
+# MAGIC ## Tr. 2 - Documents citing each code
+# MAGIC One row per (code, citing document): the codes come from the `cited_codes` of the passages (canonical forms, the passage's own document left out, see `code_normalization.py`), and `passages` counts the passages of the document that cite it. The chat reads this table for "which documents cite X?": a similarity search can never promise the complete list. Archive notices cite nothing. Before the first run that writes `cited_codes` the column does not exist and the table is not written.
 
 # COMMAND ----------
 
-code_rows = [(r["code"], list(r["chunk_ids"])) for r in codes.chunk_codes(spark.table(CHUNKS_TABLE)).collect()]
-logger.info(f"{len(code_rows)} codes cited in the passages (at most {codes.CODE_MAX_CHUNKS} passages each)")
+HAS_CITED_CODES = table_exists(CHUNKS_TABLE) and "cited_codes" in spark.table(CHUNKS_TABLE).columns
+reference_rows = []
+if HAS_CITED_CODES:
+    reference_rows = [
+        (r["cited_code"], r["citing_ref"], r["division"], int(r["passages"]))
+        for r in spark.sql(f"""
+            SELECT code AS cited_code, trim(REF) AS citing_ref, first(division, true) AS division, count(*) AS passages
+            FROM {CHUNKS_TABLE} LATERAL VIEW explode(split(cited_codes, ' ')) cited AS code
+            WHERE code <> '' AND REF IS NOT NULL AND trim(REF) <> ''
+              AND NOT (chunk_content_type <=> 'archive_notice')
+            GROUP BY code, trim(REF)
+        """).collect()
+    ]
+    logger.info(
+        f"{len(reference_rows)} (code, citing document) pairs, {len({r[0] for r in reference_rows})} codes cited"
+    )
+else:
+    logger.warning(f"{CHUNKS_TABLE} has no cited_codes column yet: doc_references is not written")
 
 # COMMAND ----------
 
@@ -256,21 +271,22 @@ tables.check_rows(
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## chunk_codes rows
-# MAGIC `code` is the primary key of `chunk_codes` (RED). No code at all in a non-empty `chunks` means the extraction broke (AMBER: the chat then only loses the code lookup).
+# MAGIC ## doc_references rows
+# MAGIC (`cited_code`, `citing_ref`) is the primary key of `doc_references`: a null or a duplicate fails the insert (RED).
 
 # COMMAND ----------
 
-tables.check_rows(
-    [{"code": r[0]} for r in code_rows],
-    f"chunk_codes (from {CHUNKS_TABLE})",
-    [
-        tables.non_empty(severity=tables.AMBER),
-        tables.not_null("code"),
-        tables.unique("code"),
-    ],
-    logger,
-)
+if HAS_CITED_CODES:
+    tables.check_rows(
+        [{"cited_code": r[0], "citing_ref": r[1]} for r in reference_rows],
+        f"doc_references (from {CHUNKS_TABLE})",
+        [
+            tables.not_null("cited_code"),
+            tables.not_null("citing_ref"),
+            tables.unique("cited_code", "citing_ref"),
+        ],
+        logger,
+    )
 
 # COMMAND ----------
 
@@ -326,10 +342,10 @@ def connect(database) -> psycopg2.extensions.connection:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Rewrite doc_catalog and chunk_codes, then bump documents_as_of and updated_at
+# MAGIC ## Rewrite doc_catalog and doc_references, then bump documents_as_of and updated_at
 # MAGIC Both tables are created by the app's startup migration (`server/services/infra/lakebase/schema.py`); `CREATE TABLE IF NOT EXISTS` here only covers a database the app has not opened yet. The `revision` / `doc_date` columns are added by whichever of the app and this notebook owns the table; when neither has done it yet, the catalog is written without them and the warning names the owner.
 # MAGIC
-# MAGIC `chunk_codes` belongs to this notebook's identity (the app only reads it) and is created here. The catalog and the codes are replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `catalog_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
+# MAGIC The catalog is replaced in one transaction, so the app never reads a half-written table, and the write is refused if it would shrink the catalog by more than half. `doc_references` is replaced in the same transaction; when it would shrink by more than half it is left as it is, with a warning, and the catalog is still written. `catalog_metadata` is a single row (`id = 1`); `ON CONFLICT DO UPDATE` makes the bump idempotent.
 
 # COMMAND ----------
 
@@ -405,14 +421,33 @@ for database in LAKEBASE_DATABASES:
                     [r[:5] for r in catalog_rows],
                     page_size=1000,
                 )
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS chunk_codes (
-                    code      TEXT PRIMARY KEY,
-                    chunk_ids TEXT[] NOT NULL
-                )
-            """)
-            cur.execute("DELETE FROM chunk_codes")
-            execute_values(cur, "INSERT INTO chunk_codes (code, chunk_ids) VALUES %s", code_rows, page_size=5000)
+            refs_before = None
+            if HAS_CITED_CODES:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS doc_references (
+                        cited_code TEXT NOT NULL,
+                        citing_ref TEXT NOT NULL,
+                        division   TEXT,
+                        passages   INTEGER NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        PRIMARY KEY (cited_code, citing_ref)
+                    )
+                """)
+                cur.execute("SELECT count(*) FROM doc_references")
+                refs_before = cur.fetchone()[0]
+                if refs_before and len(reference_rows) < MIN_KEEP_RATIO * refs_before:
+                    logger.warning(
+                        f"{database}.doc_references: {len(reference_rows)} rows now vs {refs_before} before — "
+                        f"kept as it is (check the cited_codes of {CHUNKS_TABLE})"
+                    )
+                else:
+                    cur.execute("DELETE FROM doc_references")
+                    execute_values(
+                        cur,
+                        "INSERT INTO doc_references (cited_code, citing_ref, division, passages) VALUES %s",
+                        reference_rows,
+                        page_size=1000,
+                    )
             cur.execute("""
                 INSERT INTO catalog_metadata (id, documents_as_of, updated_at)
                 VALUES (1, CURRENT_DATE, NOW())
@@ -421,8 +456,8 @@ for database in LAKEBASE_DATABASES:
                     updated_at      = EXCLUDED.updated_at
             """)
         logger.info(
-            f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, chunk_codes {len(code_rows)} codes, "
-            "documents_as_of=today"
+            f"{database}: doc_catalog {before} -> {len(catalog_rows)} documents, "
+            f"doc_references {refs_before} -> {len(reference_rows) if HAS_CITED_CODES else None} rows, documents_as_of=today"
         )
     finally:
         conn.close()

@@ -28,6 +28,7 @@ from server.services.infra.config import (
 )
 from server.services.infra.doc_catalog import canon_ref, other_language_refs, site_code, site_flag, title_for_ref
 from server.services.infra.streaming import _cost_eur
+from utils.parsing_pipeline.code_normalization import normalize_query
 
 logger = logging.getLogger(__name__)
 
@@ -165,11 +166,12 @@ async def _fetch_chunks(host: str, token: str, index_name: str, query_text: str,
     :param host: Databricks workspace URL
     :param token: Databricks access token
     :param index_name: full name of the Vector Search index
-    :param query_text: text of the change searched for
+    :param query_text: text of the change searched for; each reference code gets its canonical form, the spelling
+        the index also has (``SF-1027`` -> ``SF-1027 [SF1027]``)
     :param num_results: number of rows asked
     :return: the rows, archive notices left out
     """
-    payload = {'query_text': query_text, 'columns': _COLUMNS, 'num_results': num_results, 'query_type': 'HYBRID'}
+    payload = {'query_text': normalize_query(query_text), 'columns': _COLUMNS, 'num_results': num_results, 'query_type': 'HYBRID'}
     # Through the app-wide gate shared with the chat (vs_gate: bounded concurrency, 429 retries).
     resp = await vs_gate.post(host, token, index_name, payload, VECTOR_SEARCH_QUERY_TIMEOUT_S)
     resp.raise_for_status()

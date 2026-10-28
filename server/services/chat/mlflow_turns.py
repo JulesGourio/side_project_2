@@ -13,7 +13,6 @@ Traces upload in MLflow's own background queue, so the call is local and short.
     │   ├─ rewrite                  LLM: messages, FR + EN search queries (model, tokens, cost)
     │   ├─ search                   the Vector Search calls, one span each (query, rerank / raw, results, duration)
     │   ├─ ref_lookup               REFs named in the conversation
-    │   ├─ code_lookup              codes named in the question, passages citing them verbatim
     │   └─ passages_sent            RETRIEVER: the passages' full text, prompt order (what the judges read)
     ├─ answer                       LLM: messages, tokens, cost, time to first token, streaming time, tokens/s, truncation, fallback
     │   ├─ queue_wait               wait for a free answer slot
@@ -33,7 +32,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import threading
 import time
 from typing import Any, Dict, List, Tuple
@@ -45,7 +43,7 @@ from server.services.chat.config import (
 )
 from server.services.chat import translation_bridge
 from server.services.infra.doc_catalog import document_info
-from server.services.chat.turn_log import passage_title
+from server.services.chat.turn_log import passage_date, passage_title
 
 logger = logging.getLogger(__name__)
 
@@ -174,19 +172,6 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
 
 
-_DATE_RE = re.compile(r'Date de diffusion:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|inconnue)')
-
-
-def _passage_date(chunk_text: str | None) -> str:
-    """Diffusion date from the passage's ``[Source: …]`` prefix (what the answer model reads).
-
-    :param chunk_text: passage text, None allowed
-    :return: the date as ``YYYY-MM-DD``, ``inconnue`` when the source says so, or an empty string
-    """
-    found = _DATE_RE.search((chunk_text or '')[:600])
-    return found.group(1) if found else ''
-
-
 def _vs_call_label(call: Dict[str, Any]) -> str:
     """Label of a Vector Search call span: ``q1 rerank``, ``q2 raw``… (``q-`` when it belongs to no query).
 
@@ -206,7 +191,7 @@ def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     docs: Dict[str, Dict[str, Any]] = {}
     for p in sent:
         d = docs.setdefault(p.get('ref') or '', {'n': p.get('doc_number'), 'ref': p.get('ref'), 'title': passage_title(p.get('chunk_text')),
-                                                'date': _passage_date(p.get('chunk_text')),
+                                                'date': passage_date(p.get('chunk_text')),
                                                 'revision': document_info(p.get('ref') or '').get('revision'),
                                                 'passages': 0, 'best_score': None, 'found_by': set(),
                                                 'cited': bool(p.get('cited'))})
@@ -436,9 +421,6 @@ def _write_trace(log: Any, name: str) -> str | None:
         if 'ref_lookup' in timings:
             child(retrieval, 'ref_lookup', SpanType.CHAIN, starts.get('ref_lookup', start), timings['ref_lookup'],
                   inputs=data.get('named_refs'))
-        if 'code_lookup' in timings:
-            child(retrieval, 'code_lookup', SpanType.CHAIN, starts.get('code_lookup', start), timings['code_lookup'],
-                  inputs=data.get('named_codes'), outputs={'passages': data.get('code_passages')})
         child(retrieval, 'passages_sent', SpanType.RETRIEVER, start + timings['retrieval'], 0,
               inputs={'question': data.get('question'), 'fr_query': data.get('fr_query')},
               outputs=[_document(p) for p in sent],

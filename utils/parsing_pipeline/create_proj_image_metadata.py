@@ -263,7 +263,7 @@ else:
 # MAGIC %md
 # MAGIC # Quality Checks
 # MAGIC ## Image passages
-# MAGIC `chunk_id` is the key of the MERGE and of the Vector Search index: a duplicate fails the MERGE and a null breaks the sync (RED). A passage without `IDDOC`, `REF` or text cannot be served (RED); `division` is expected on 99 % of them (AMBER). The passages are cached here, so the write below does not compute them again.
+# MAGIC `chunk_id` is the key of the MERGE and of the Vector Search index: a duplicate fails the MERGE and a null breaks the sync (RED). A passage without `IDDOC`, `REF` or text cannot be served, nor indexed without `chunk_preprocessed`, nor listed as citing a document without `cited_codes` (RED); `division` is expected on 99 % of them (AMBER). The passages are cached here, so the write below does not compute them again.
 
 # COMMAND ----------
 
@@ -277,6 +277,8 @@ if described_count > 0:
             tables.not_null("IDDOC"),
             tables.not_null("REF"),
             tables.not_null("chunk_text"),
+            tables.not_null("chunk_preprocessed"),
+            tables.not_null("cited_codes"),
             tables.not_null("division", mostly=0.99, severity=tables.AMBER),
         ],
         logger,

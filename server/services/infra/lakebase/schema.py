@@ -656,6 +656,20 @@ async def _apply_schema(pool: asyncpg.Pool) -> None:
             logger.warning('doc_catalog: %s not added by the app (%s) — parsing task '
                            '6_update_kb_metadata adds them when it owns the table', '/'.join(c for c, _ in missing), e)
 
+        # ── doc_references ────────────────────────────────────────────────────
+        # For each reference code (canonical form, e.g. SF1027), the documents whose passages cite it. Rewritten by parsing
+        # task 6_update_kb_metadata after each daily run; read by services/infra/doc_references.py ("which documents cite X?").
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS doc_references (
+                cited_code TEXT NOT NULL,
+                citing_ref TEXT NOT NULL,
+                division   TEXT,
+                passages   INTEGER NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (cited_code, citing_ref)
+            )
+        ''')
+
         # ── chat_feedbacks ────────────────────────────────────────────────────
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS chat_feedbacks (

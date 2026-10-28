@@ -10,9 +10,10 @@ engine in [services/chat/engine](../../services/chat/engine/README.md).
 
 | Module | Content |
 |---|---|
-| `__init__.py` | Mounts `ws` and `sessions`. Re-exports the helpers that `utils/evaluation` uses to rebuild what a turn feeds the engine |
+| `__init__.py` | Mounts `ws`, `sessions` and `citations`. Re-exports the helpers that `utils/evaluation` uses to rebuild what a turn feeds the engine |
 | `ws.py` | `/chat/ws`: one turn, from the access check to the turn log |
 | `sessions.py` | `POST /chat/feedback`, `GET /chat/sessions`, `GET` and `DELETE /chat/sessions/{id}`, `POST /chat/sessions/{id}/share`, `GET /chat/shared/{token}`, `POST /chat/shared/{token}/duplicate` |
+| `citations.py` | `GET /chat/citations/{code}.csv`: the full list of the documents citing a code (CSV, `;`, UTF-8 with BOM), linked by an answer whose list is cut |
 | `helpers.py` | Pure functions: the division prefix, the window of past messages (`CHAT_MAX_HISTORY_TOKENS`, a token budget estimated from the text length), the `[Date: …]` prefix, the citation markers, the stored source chips |
 | `persistence.py` | `_save_turn`: the session row, the user and assistant messages, and their source chips (JSON) |
 

@@ -14,6 +14,7 @@ from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS
 from server.services.chat.turn_log import TurnLog, passage_title
 from server.services.chat.engine.config import raw_top_k, rerank_top_k
 from server.services.chat.engine.types import Hit, QueryPayload, SearchRow, VsFilters
+from utils.parsing_pipeline.code_normalization import normalize_query
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +77,14 @@ async def _query(host: str, token: str, index: str, query_text: str, k: int, fil
     :param host: Databricks workspace URL
     :param token: Databricks access token
     :param index: full name of the Vector Search index
-    :param query_text: text searched, cut to ``_MAX_QUERY_CHARS`` characters (a warning is logged when it is)
+    :param query_text: text searched, cut to ``_MAX_QUERY_CHARS`` characters (a warning is logged when it is); each
+        reference code gets its canonical form, the spelling the index also has (``SF-1027`` -> ``SF-1027 [SF1027]``)
     :param k: number of results asked
     :param filters: Vector Search filters, empty for none
     :param rerank: whether the reranker orders the results
     :return: the rows of the response
     """
+    query_text = normalize_query(query_text)
     if len(query_text) > _MAX_QUERY_CHARS:
         logger.warning('chat: query of %d characters cut to %d for Vector Search', len(query_text), _MAX_QUERY_CHARS)
     payload: QueryPayload = {'query_text': query_text[:_MAX_QUERY_CHARS], 'columns': _COLUMNS,
@@ -309,32 +312,6 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
     return _merge_by_rank([_merge_by_rank(ok_part) for ok_part in (
         [r for r in results[:n] if not isinstance(r, BaseException)],
         [r for r in results[n:] if not isinstance(r, BaseException)]) if ok_part])
-
-
-async def fetch_chunks(host: str, token: str, index: str, query: str, chunk_ids: List[str], filters: VsFilters,
-                       via: str = 'code_lookup', log: TurnLog | None = None) -> List[SearchRow]:
-    """HYBRID search restricted to the given passages (``via``: code_lookup), ranked against the question.
-    Failures are logged, never raised.
-
-    :param host: Databricks workspace URL
-    :param token: Databricks access token
-    :param index: full name of the Vector Search index
-    :param query: question text, used to rank the passages
-    :param chunk_ids: passages the results are restricted to
-    :param filters: other Vector Search filters
-    :param via: label recorded on the hits
-    :param log: turn log that records a failure, optional
-    :return: the rows, or an empty list when the lookup failed
-    """
-    try:
-        return _tag(await _query(host, token, index, query, len(chunk_ids), {**filters, 'chunk_id': chunk_ids},
-                                 rerank=False), None, via)
-    except Exception as exc:  # noqa: BLE001 — the turn goes on without the lookup
-        logger.warning('chat: passage lookup on %s failed: %s', index, exc)
-        if log is not None:
-            log.issue(f'{via}_failed', via, f'{len(chunk_ids)} passages: {exc}', error_type=type(exc).__name__,
-                      http_status=_status_of(exc), upstream=index, context={'chunk_ids': chunk_ids}, exc=exc)
-        return []
 
 
 async def fetch_documents(host: str, token: str, index: str, query: str, refs: List[str], k: int,

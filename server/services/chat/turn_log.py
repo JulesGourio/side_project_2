@@ -31,6 +31,7 @@ ERROR = 'error'
 
 
 _TITLE_RE = re.compile(r'Title:\s*(.*?)\s*\|')
+_DATE_RE = re.compile(r'Date de diffusion:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|inconnue)')
 
 
 def passage_title(chunk_text: str | None) -> str:
@@ -40,6 +41,16 @@ def passage_title(chunk_text: str | None) -> str:
     :return: the title, or an empty string when the prefix has none
     """
     found = _TITLE_RE.search((chunk_text or '')[:400])
+    return found.group(1) if found else ''
+
+
+def passage_date(chunk_text: str | None) -> str:
+    """Diffusion date from the passage's ``[Source: …]`` prefix (what the answer model reads).
+
+    :param chunk_text: passage text, None allowed
+    :return: the date as ``YYYY-MM-DD``, ``inconnue`` when the source says so, or an empty string
+    """
+    found = _DATE_RE.search((chunk_text or '')[:600])
     return found.group(1) if found else ''
 
 

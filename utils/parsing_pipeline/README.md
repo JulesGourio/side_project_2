@@ -35,10 +35,11 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 | `image_utils.py` | Parsing UDF of `3_parse`: Docling or fallback, image extraction, volume save |
 | `image_fallbacks.py` | Text and images of the files Docling does not read: DOCX and PPTX (XML), binary PPT (OLE), scanned PDF pages; writes of the images to the volume (path check) |
 | `chunking.py` | Splits a Markdown document into passages (sections, tables, provenance prefix) |
+| `code_normalization.py` | One spelling for the reference codes (`SF-1027` -> `SF-1027 [SF1027]`), the same on the passages (`chunk_preprocessed`) and on the app's search queries; the codes a passage cites (`cited_codes`); the code families generated from the catalog REFs |
 | `tables.py` | The only Delta write layer (`save_table`, `merge_into`, from `leap_utils`), and the quality checks of the tables: RED and AMBER levels, Great Expectations, REF consistency of the passages with `parse_manifest` (AMBER) |
 | `worker.py` | Runtime shared by the driver and the workers: configuration broadcast, token counting, chunking UDFs |
 
-The modules listed in `config.WORKER_MODULES` (`chunking`, `worker`, `format_parsers`, `image_fallbacks`, `image_utils`, `config`) are shipped to the Spark workers; the others run on the driver.
+The modules listed in `config.WORKER_MODULES` (`chunking`, `code_normalization`, `worker`, `format_parsers`, `image_fallbacks`, `image_utils`, `config`) are shipped to the Spark workers; the others run on the driver.
 
 Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config.py`, `selection.py`,
 `index_state.py`, `retention.py` and the image description in `llm_describe.py`.
@@ -55,7 +56,7 @@ Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config
 | `3c_chunks` | `create_proj_chunks.py` | the CPU cluster of `3_parse` (S policy, `parse_cpu_cluster`; after the `false` branch of the condition or `3b_parse_pdf`, `run_if: AT_LEAST_ONE_SUCCESS`) | `parsing_checkpoint` (retries), `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health` |
 | `4_describe_images` | `create_proj_image_metadata.py` | CPU (S policy, `describe_cpu_cluster`) | `image_metadata`, image passages in `chunks` and `chunks_archive`, `parsed_documents` |
 | `5_sync_index` | `update_proj_vector_indexes.py` | CPU (S policy, `meta_cpu_cluster`, GX on `chunks_full`) | `chunks_full`, Vector Search indexes |
-| `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata`, `chunk_codes` (Lakebase) |
+| `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata` (Lakebase) |
 
 Every classic cluster of the job takes the CORE Job Compute S policy (`job_cluster_policy_id_S`). The only cluster without a policy is the GPU cluster of `3b_parse_pdf`: its runtime (GPU ML) is not in the S policy allowlist. The tasks on serverless have no cluster.
 
@@ -204,6 +205,16 @@ variables with the defaults listed at the top of `config.py`.
 - Duplicate passages of one IDDOC (same text hash) are removed. The text of `<!-- image -->` and
   `<!-- formula-not-decoded -->` placeholders is removed before chunking.
 - `chunk_id` is `<IDDOC>-<NNNNNN>` (chunk index plus one, six digits). The archive notice is `<IDDOC>-000000`.
+- `chunk_preprocessed` is `chunk_text` with the canonical form of each reference code after it
+  (`code_normalization.py`): `SF-1027`, `SF1027`, `SF 1027` and `SF-1027_BG` all get `[SF1027]`. The indexes embed and
+  search this column; the app answers from `chunk_text`. The app rewrites its search queries with the same rules, so a
+  question matches a passage whatever spelling each uses. The code families (prefix, digits, number groups) are
+  generated from the catalog REFs: `python code_normalization.py <file with one REF per line>` writes the
+  `CODE_FAMILIES` block. Codes that are not catalog REFs go in `EXTRA_PATTERNS`, by hand. A change to either list
+  needs a `rechunk` run, then a sync of the indexes.
+- `cited_codes` lists the codes a passage cites, canonical forms separated by spaces, without its `[Source: …]` line
+  and without the codes of its own document (`code_normalization.cited_codes`). Task `6_update_kb_metadata` builds
+  `doc_references` from it.
 - The language of a document comes from its REF suffix (`_FR`, `_GB`, ...); without a suffix, from stop words.
 
 ## Image descriptions (`4_describe_images`)
@@ -246,7 +257,10 @@ variables with the defaults listed at the top of `config.py`.
   list syncs nothing.
 - Only `chunks_index` and `chunks_full_index` are created by this task, on the endpoint named by the widget
   `vector_search_endpoint` (default `qualibot`), with the embedding model of the widget `embedding_model`, on
-  `chunk_text`, primary key `chunk_id`, pipeline type `TRIGGERED`. Any other index in the list is synced only.
+  `chunk_preprocessed`, primary key `chunk_id`, pipeline type `TRIGGERED`. Any other index in the list is synced only.
+- An index that embeds another column (created before `chunk_preprocessed`) is synced as it is, with a warning. To
+  move it: run the job with `run_mode=rechunk` (every passage gets `chunk_preprocessed`), delete the index, and the
+  next run of this task creates it on `chunk_preprocessed`.
 - The task triggers each sync, then waits for it, up to `wait_minutes` (45). A failed or offline index raises an error.
   A sync still running at the end of the wait is reported, not failed.
 - `chunks_full` holds `chunks` and `chunks_archive` (every document whatever its date, for the impact search). It
@@ -267,13 +281,12 @@ variables with the defaults listed at the top of `config.py`.
   is written without them and a warning names the owner.
 - `catalog_metadata` (single row, `id = 1`) receives `documents_as_of` = today and `updated_at`. The chat shows
   `documents_as_of` in its toolbar.
-- The application reloads `doc_catalog` every 30 minutes (`server/services/infra/doc_catalog.py`).
-- `chunk_codes` is rebuilt in the same transaction from `chunks` (`codes.py`): each code cited in the passages (a form,
-  part, standard or document number such as `SF-1027`, upper case) with the passages that cite it, for the codes cited
-  by at most 30 passages. The header line of each chunk is left out, otherwise every chunk would cite its own REF. The
-  chat looks up the codes of a question there: the hybrid search splits `SF-1027` into `SF` and `1027`, so a passage
-  that cites the code exactly can rank below passages that share only one part. The table belongs to the notebook's
-  identity; the app only reads it.
+- `doc_references` is rebuilt in the same transaction from the `cited_codes` of `chunks`: one row per (code, citing
+  REF), with the number of its passages that cite the code. The chat answers "which documents cite X?" from it, with
+  the complete list. When the new table has fewer than half the rows of the current one it is kept as it is, with a
+  warning, and the catalog is still written. Before the first run that writes `cited_codes` it is not written.
+- The application reloads `doc_catalog` and `doc_references` every 30 minutes (`server/services/infra/doc_catalog.py`,
+  `server/services/infra/doc_references.py`).
 
 ## Tables, volumes and checks
 
@@ -304,12 +317,11 @@ Quality checks (`tables.py`, Great Expectations through `leap_utils`): a RED fai
 | `category_reference` | Not empty; `IDDOC` not null and unique (RED); `division` on 99 % of the rows (AMBER) |
 | `parse_manifest` | Not empty; `IDDOC` not null and unique (RED); `ref` and `titre` on 99 % (AMBER) |
 | `parsed_documents` | `IDDOC` not null and unique; `parse_status` not null (RED); `ref` and `division` on 99 % (AMBER) |
-| `chunks` and `chunks_archive` | `chunk_id` not null and unique across both; `IDDOC`, `REF`, `chunk_text` not null (RED); `division` and `titre` on 99 % (AMBER) |
-| image passages | `chunk_id` not null and unique; `IDDOC`, `REF`, `chunk_text` not null (RED); `division` on 99 % (AMBER) |
+| `chunks` and `chunks_archive` | `chunk_id` not null and unique across both; `IDDOC`, `REF`, `chunk_text`, `chunk_preprocessed`, `cited_codes` not null (RED); `division` and `titre` on 99 % (AMBER) |
+| image passages | `chunk_id` not null and unique; `IDDOC`, `REF`, `chunk_text`, `chunk_preprocessed`, `cited_codes` not null (RED); `division` on 99 % (AMBER) |
 | `image_metadata` | `(IDDOC, image_id)` not null and unique (RED); `volume_path` on 95 % (AMBER) |
 | `doc_catalog` | Not empty; `ref` not null and unique (RED); `title` and `division` on 99 % (AMBER) |
-| `chunk_codes` | `code` not null and unique (RED); not empty (AMBER) |
-| `chunks_full` | Not empty; `chunk_id` not null and unique; `chunk_text` not null (RED) |
+| `chunks_full` | Not empty; `chunk_id` not null and unique; `chunk_text` not null (RED); `chunk_preprocessed` not null (AMBER: empty on the rows written before it, until a `rechunk` run) |
 
 `tables.check_ref_mapping` compares the REF of each passage with `parse_manifest` and logs the mismatches (AMBER).
 

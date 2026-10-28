@@ -17,6 +17,7 @@ loads are in [prompts](../../../prompts/README.md).
 | `search.py` | The Vector Search calls of a turn: reranked and raw HYBRID queries, merge by best rank, lookups filtered by REF, and the early search of the question (`start_question_search`) |
 | `retrieval.py` | `retrieve_for_turn`: everything before the answer. Named documents, one language per document, the passage records |
 | `answer.py` | `stream_chat`: the answer stream. `build_prompt`, the revision note of each document, the language reminder, the answer's log record |
+| `references.py` | "Which documents cite X?": `cited_codes_asked` (a code and a citing word in the question), `exact_citations` (the complete list from `doc_references`), `exact_citations_block` (what the answer model gets: every document up to `LIST_ALL_MAX`, beyond the most recent ones, the breakdown by division and the CSV link) |
 | `citations.py` | `CitationStreamParser`: strips the `[n]` markers from the stream and records their positions. `parse_citations` is the whole-text version |
 
 ## How a turn runs
@@ -26,7 +27,11 @@ loads are in [prompts](../../../prompts/README.md).
 2. The queries are the question and its French and English versions, without duplicates. Raw searches run on the
    queries named by `CHAT_RAW_ON`.
 3. The REFs named in the question and in the earlier messages are looked up with a REF filter, using the catalog.
-4. `one_language_per_document` keeps the best-ranked language variant of each document.
+   When the question asks which documents cite a code, the documents citing it come from `doc_references` (the complete
+   list, not a search), and the passages of the most recent ones are looked up with a REF filter (`citation_lookup`).
+4. `one_language_per_document` keeps one language variant of each document: the one whose passages cite a reference
+   code of the question, else the most recently published (another language may be an older revision), else the one
+   in the question's language, else the best ranked.
 5. `build_prompt` numbers the documents `[1]`, `[2]`... and gives each one its revision and date. The passages come before
    the question. `stream_answer` (in `services/chat/llm.py`) streams the model's answer. `CitationStreamParser` replaces
    the `[n]` markers by `⟦n⟧` positions and numbers the sources in order of first appearance.
@@ -39,6 +44,9 @@ loads are in [prompts](../../../prompts/README.md).
   or `over_cap`.
 - The rewrite drops the company and document-type words that the conversation does not use (`strip_added_noise`).
 - The prompt gets the date sent with the question. The engine removes that `[Date: …]` prefix before searching.
+- Every text sent to Vector Search gets the canonical form of its reference codes (`SF-1027` -> `SF-1027 [SF1027]`,
+  `utils/parsing_pipeline/code_normalization.py`), the spelling the index also has: a question matches a passage
+  whatever spelling each uses. The question shown to the model and stored in the history is not changed.
 - The sources shown as chips are built from the `[n]` markers and the catalog. The system prompt (`base.md`) asks the model to end
   an answer with a table of the documents it used (REF, title, version, status, division), written from the documents list.
 - Documents are filtered by `division` in the single index. `ALL` applies no filter.

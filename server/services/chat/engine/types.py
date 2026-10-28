@@ -1,13 +1,13 @@
 """Shapes of the dicts the chat engine passes around: search rows, hits, passage records, grouped documents, the
 Vector Search filter and request body, what the retrieval returns and what the answer call reports."""
 
-from typing import Any, List, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 
 class Hit(TypedDict):
     """One way a chunk was found by a query of the turn."""
-    q: int | None          # index of the query in the turn's queries, None for a lookup (REF or code)
-    via: str               # rerank, raw, ref_lookup or code_lookup
+    q: int | None          # index of the query in the turn's queries, None for a lookup by REF
+    via: str               # rerank, raw or ref_lookup
     rank: int              # position in that query's results, from 0
     score: float | None
 
@@ -82,6 +82,7 @@ class RetrievalResult(TypedDict):
     named: List[str]
     index: str
     log: Any               # the TurnLog of the turn
+    exact_citations: Dict[str, Any]   # "which documents cite X?": canonical code -> (code as written, citing documents)
 
 
 class AnswerUsage(TypedDict, total=False):

@@ -12,9 +12,10 @@ Parent: [services](../README.md).
 | `user.py` | The identity from the request headers (`get_user_identity`). The capabilities (`get_capabilities`): a live group check on the visitor's token, cached per visitor. The FastAPI dependencies `require_chat` and `require_compare`. The workspace URL |
 | `credentials.py` | `get_credentials`: host and token from the environment, then from the SDK's own authentication, then the forwarded token of the request |
 | `config.py` | Settings of the shared services: the Vector Search query timeout and the limits of the impact search judge (fan-out, retries, passages per candidate, token budget) |
-| `vector_search.py` | The impact search (`run_impact_search`): one query per change, grouping per document, one judge call per candidate, the event stream, the display order. Also the constants and the JSON parsing used by the chat search |
+| `vector_search.py` | The impact search (`run_impact_search`): one query per change (its reference codes in canonical form too, `code_normalization`), grouping per document, one judge call per candidate, the event stream, the display order. Also the constants and the JSON parsing used by the chat search |
 | `vs_gate.py` | `post`: every Vector Search query of the app goes through it, with a cap on the queries in flight and retries |
 | `doc_catalog.py` | The document catalog, read from the Lakebase table `doc_catalog` and reloaded every `DOC_CATALOG_REFRESH_S` seconds: REF lookup, titles, revisions, dates, language variants, `augment_sources`, `with_document_info` |
+| `doc_references.py` | The documents citing each reference code, read from the Lakebase table `doc_references` and reloaded every `DOC_CATALOG_REFRESH_S` seconds: `citing_documents` (division filter, most recent first), `loaded` |
 | `streaming.py` | The prices of the endpoints and the cost in EUR, the parsing of the text deltas, the endpoints that refuse a temperature |
 | `error_origin.py` | The origin of an error (`path:line in function`: the deepest frame of this repository) and the fingerprint that groups identical errors |
 | [`lakebase/`](lakebase/README.md) | Lakebase: pool, schema, request logs, caches, users |

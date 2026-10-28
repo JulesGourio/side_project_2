@@ -285,7 +285,7 @@ if HAS_TARGET_IDDOCS:
 
 # MAGIC %md
 # MAGIC ## chunks (and chunks_archive)
-# MAGIC `chunk_id` is the primary key of the Vector Search index: a null or a duplicate breaks the sync (RED), checked across `chunks` and `chunks_archive` together. A chunk without `IDDOC`, `REF` or text cannot be served (RED). The search filters on `division` and shows `titre`: expected on 99 % of the passages (AMBER).
+# MAGIC `chunk_id` is the primary key of the Vector Search index: a null or a duplicate breaks the sync (RED), checked across `chunks` and `chunks_archive` together. A chunk without `IDDOC`, `REF` or text cannot be served, nor indexed without `chunk_preprocessed`, nor listed as citing a document without `cited_codes` (RED). The search filters on `division` and shows `titre`: expected on 99 % of the passages (AMBER).
 
 # COMMAND ----------
 
@@ -299,6 +299,8 @@ if HAS_TARGET_IDDOCS:
             tables.not_null("IDDOC"),
             tables.not_null("REF"),
             tables.not_null("chunk_text"),
+            tables.not_null("chunk_preprocessed"),
+            tables.not_null("cited_codes"),
             tables.not_null("division", mostly=0.99, severity=tables.AMBER),
             tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
         ],

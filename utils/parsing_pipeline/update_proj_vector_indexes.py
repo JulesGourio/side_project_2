@@ -31,6 +31,7 @@
 # MAGIC # Technical debt
 # MAGIC - The `archive_notice` content type is filtered out of `chunks_full` here and in `config.py` (`ARCHIVE_NOTICE_CONTENT_TYPE`): change both together.
 # MAGIC - Only `chunks_index` and `chunks_full_index` are created automatically; any other index listed in `indexes` is synced but never created, since its source table is unknown.
+# MAGIC - The indexes embed and search `chunk_preprocessed`. An index created before that column keeps embedding `chunk_text` (a warning says so): it must be deleted after a `rechunk` run, and this task creates it again.
 
 # COMMAND ----------
 
@@ -175,6 +176,8 @@ for n in INDEXES:
 # COMMAND ----------
 
 FULL_INDEX = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_full_index"
+# chunk_text with the canonical form of each reference code (code_normalization): the column the indexes embed and search.
+INDEXED_TEXT_COLUMN = "chunk_preprocessed"
 FULL_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_full"
 REFRESH_CHUNKS_FULL = BUILD_CHUNKS_FULL or FULL_INDEX in INDEXES
 
@@ -220,7 +223,7 @@ if REFRESH_CHUNKS_FULL:
 # MAGIC %md
 # MAGIC # Quality Checks
 # MAGIC ## chunks_full
-# MAGIC The MERGE below deletes every `chunks_full` row missing from the source: an empty source would empty the table and its index (RED). `chunk_id` is the primary key of the index (RED).
+# MAGIC The MERGE below deletes every `chunks_full` row missing from the source: an empty source would empty the table and its index (RED). `chunk_id` is the primary key of the index (RED). `chunk_preprocessed` is the column the index embeds: it is empty on the rows written before it existed, until a `rechunk` run (AMBER).
 
 # COMMAND ----------
 
@@ -233,6 +236,7 @@ if REFRESH_CHUNKS_FULL:
             tables.not_null("chunk_id"),
             tables.unique("chunk_id"),
             tables.not_null("chunk_text"),
+            tables.not_null(INDEXED_TEXT_COLUMN, severity=tables.AMBER),
         ],
         logger,
     )
@@ -290,7 +294,7 @@ if not INDEXES:
 
 # MAGIC %md
 # MAGIC ## Create any missing index, then read its status
-# MAGIC An index in `indexes` that does not exist is created (this task runs as the environment's owning service principal, which already holds the grants for it), then every index is read to log its source table and indexed rows before the sync.
+# MAGIC An index in `indexes` that does not exist is created (this task runs as the environment's owning service principal, which already holds the grants for it), then every index is read to log its source table and indexed rows before the sync, with a warning when it does not embed `chunk_preprocessed`.
 
 # COMMAND ----------
 
@@ -332,7 +336,7 @@ def _create_index(name, source_table) -> None:
             pipeline_type=PipelineType.TRIGGERED,
             embedding_source_columns=[
                 EmbeddingSourceColumn(
-                    name="chunk_text", embedding_model_endpoint_name=EMBEDDING_MODEL
+                    name=INDEXED_TEXT_COLUMN, embedding_model_endpoint_name=EMBEDDING_MODEL
                 )
             ],
             # The embeddings the index computes are written back to a Delta table: another environment can copy them
@@ -371,6 +375,12 @@ for name in INDEXES:
         idx = w.vector_search_indexes.get_index(index_name=name)
 
     src = idx.delta_sync_index_spec.source_table if idx.delta_sync_index_spec else "?"
+    embedded = [c.name for c in (idx.delta_sync_index_spec.embedding_source_columns or [])] if idx.delta_sync_index_spec else []
+    if embedded and INDEXED_TEXT_COLUMN not in embedded:
+        logger.warning(
+            f"{name} embeds {embedded}, not {INDEXED_TEXT_COLUMN}: the reference codes of the passages are searched in "
+            f"one spelling only. Delete the index after a rechunk run; this task creates it again."
+        )
     rows = idx.status.indexed_row_count if idx.status else None
     before[name] = rows
     logger.info(
