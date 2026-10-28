@@ -69,10 +69,14 @@ Les REF ne sont plus décrites par des formes : la famille vient du **catalogue 
 - [ ] Tours suivants jusqu'à résidu = bruit pur.
   *Validation : résidu relu, plus aucun code voulu dedans, aucune clé du chat en bruit.*
 
-### 2. Preprocess de la query (BM25) — après 1b (F2)
-- [ ] Normalisation par dictionnaire : les clés des familles `annoter` (catalogue + codes voulus). Dans un texte, les blocs de lettres et chiffres voisins (séparés par `- _ / .` ou des espaces) sont recollés et gardés quand la clé obtenue est dans le dictionnaire (la plus longue gagne) ; la clé est **ajoutée** à côté (`SF-1027 [SF1027]`), rien n'est remplacé. Aucune forme de code n'est devinée. (Le premier essai par préfixes appris, qui laissait `QIS-46A-352` de côté, est retiré.)
-- [ ] Tests sur tous les exemples réels de l'inventaire (une ligne par famille), faux positifs sur 200 vraies questions (`chat_turns`).
-- [ ] Routage : BM25 ← question annotée ; embeddings ← question brute. Dépend du test 1 de l'étape 4.
+### 2. Recollage des codes (query et documents) — en cours (F2)
+**Deux étages, pas de grosse regex de codes.** Hors ligne, les 23 règles ciblées de [f2_familles_codes.py](f2_familles_codes.py) décident quelles clés entrent dans le dictionnaire. À la volée, un seul mécanisme générique, [code_keys.py](../../server/services/chat/engine/code_keys.py) : découpe en morceaux (`[A-Za-z]+|[0-9]+`), recollage des morceaux voisins (rien, ou 0 à 3 espaces autour de 1-2 séparateurs, ou 1 à 3 espaces), garde de la suite la plus longue présente dans le dictionnaire, clé ajoutée après le mot (`SF-1027 [SF1027]`). Toutes les graphies d'une REF donnent la même clé, sans suffixe de langue (`IT-243` et `LdB IT-243` → `LDBIT243`).
+
+**Lancer** : [f3_dictionnaire_codes.py](f3_dictionnaire_codes.py) dans un notebook DEV, après avoir relancé `f2_familles_codes.py` (nouvelle colonne `cle_base`). Tes droits suffisent ; il écrit seulement `dev_proj.qualibot.f3_cles_codes`. Cellule 3 = dictionnaire par famille, cellule 4 = passages DEV annotés par famille, cellule 5 = exemples avant/après, cellule 6 = questions du chat UAT avant/après.
+
+- [x] Mécanisme + tests sur les graphies réelles ([test_code_keys.py](../../tests/test_code_keys.py) : `SF 1027`, `MI - 1365`, `IF2.03.08_CZ`, `LDB IT 243`, `PR/LAT/506`, `FD_AQL_2193`, `QIS-46A-352-a`, `IAQ 04 04 05`, `Q0697MI_FR`, `TDA8 - 00/027`, `MI-13991Table`… et rien sur `LEVEL 2`, `XSF-1027`, `SF-10273`). Testé en local avec Spark.
+- [ ] Tu lances f2 puis f3 et me renvoies les cellules 3 à 6. *Validation : exemples avant/après relus, aucune annotation absurde dans les questions.*
+- [ ] Routage : BM25 ← question annotée ; embeddings ← question brute. Dépend du test 1 de l'étape 4. Rien n'est branché dans l'app.
 
 ### 3. Preprocess des documents — Mer.-Jeu. (F2)
 - [ ] Même fonction sur les chunks : `ST-1027` → `ST-1027 [ST1027]`. Résultat dans une **nouvelle colonne** (`chunk_text_pp`), `chunk_text` brut intact (c'est lui qui part en génération).

@@ -36,7 +36,7 @@
 # MAGIC | 22 | `code_colle` | aucune graphie n'a de séparateur : déjà un seul mot pour le BM25 | `IS0024879M`, `F7X` | rien |
 # MAGIC | 23 | `residu` | tout le reste, à relire pour y trouver du bruit | `TA6V`, `Partie-145.A.90` | annoter |
 # MAGIC
-# MAGIC **Colonnes de la table** : `env`, `cle`, `famille`, `action`, `ref` (REF qui a donné la famille), `prefixe` (lettres de tête), `signature`, `a_separateur` (une graphie contient `-` `_` `/` `.` ou espace), `docs` (documents du corpus), `q_docs` (questions du chat), `occ`, `categories`, `formes` (graphies du corpus et du chat), `refs_source`, `urls_source`, `date_run`.
+# MAGIC **Colonnes de la table** : `env`, `cle`, `famille`, `action`, `ref` (REF qui a donné la famille), `cle_base` (la suite de morceaux reconnue : `MI13991` pour `MI-13991Table 3`, `Q0697MI` pour `Q0697MI_FR` ; sinon la clé), `prefixe` (lettres de tête), `signature`, `a_separateur` (une graphie contient `-` `_` `/` `.` ou espace), `docs` (documents du corpus), `q_docs` (questions du chat), `occ`, `categories`, `formes` (graphies du corpus et du chat), `refs_source`, `urls_source`, `date_run`.
 
 # COMMAND ----------
 # Cellule 1 · paramètres
@@ -196,10 +196,12 @@ def familles(env):
                 .select("cle", canon("m").alias("s"), sans_langue("m").alias("sl"))
                 .distinct().cache())
     variante = (morceaux.join(F.broadcast(refs_entieres), "s")
-                .groupBy("cle").agg(F.min("ref_v").alias("ref_v")))
-    hors_cat = (morceaux.select("cle", signature("sl").alias("signature"))
+                .groupBy("cle").agg(F.max_by(F.struct("ref_v", "s"), F.length("s")).alias("v"))
+                .select("cle", "v.ref_v", F.col("v.s").alias("base_v")))
+    hors_cat = (morceaux.select("cle", "sl", signature("sl").alias("signature"))
                 .join(F.broadcast(sig_cat), "signature")
-                .groupBy("cle").agg(F.min("ref_s").alias("ref_s")))
+                .groupBy("cle").agg(F.max_by(F.struct("ref_s", "sl"), F.length("sl")).alias("h"))
+                .select("cle", "h.ref_s", F.col("h.sl").alias("base_s")))
 
     c = F.col("cle")
     lettres = c.rlike("[A-Z]")
@@ -250,7 +252,11 @@ def familles(env):
     action = F.when(F.col("famille") == "code_colle", "rien").otherwise(action)
     return (df.withColumn("famille", famille).withColumn("action", action)
             .select(F.lit(env).alias("env"), "cle", "famille", "action",
-                    F.coalesce("ref_c", "ref_v", "ref_s").alias("ref"), "prefixe", "signature", "a_separateur",
+                    F.coalesce("ref_c", "ref_v", "ref_s").alias("ref"),
+                    F.when(F.col("famille") == "ref_variante", F.col("base_v"))
+                    .when(F.col("famille") == "ref_hors_catalogue", F.col("base_s"))
+                    .otherwise(c).alias("cle_base"),
+                    "prefixe", "signature", "a_separateur",
                     "docs", "q_docs", "occ", "categories", "formes", "refs_source", "urls_source",
                     F.current_timestamp().alias("date_run")))
 
