@@ -65,9 +65,9 @@ MAX_SCOPE_DROP_PCT = int(_env("PARSING_MAX_SCOPE_DROP_PCT", "30"))
 
 # --- Qualibot perimeter (scope gate) ---
 # Root categories of the documents Qualibot indexes: 00-LATECOERE PROCESSES_One QMS, AS - PROGRAMS / PROGRAMMES,
-# AS - TECHNICAL INSTRUCTIONS (work instructions, "documents métier"), AS - PROCESSES / PROCESSUS and
-# 0 - DIRECTIVE GROUPE LATECOERE.
-SCOPE_ROOT_IDCATS = {3870, 948, 3209, 12, 962}
+# AS - TECHNICAL INSTRUCTIONS (work instructions, "documents métier"), AS - PROCESSES / PROCESSUS,
+# 0 - DIRECTIVE GROUPE LATECOERE, TRAINING (3208), VA (4001) and ORGANIZATION (3867).
+SCOPE_ROOT_IDCATS = {3870, 948, 3209, 12, 962, 3208, 4001, 3867}
 # Categories indexed wherever they sit in the tree: the two "To be classified" folders of ONE_QMS-5S hold live
 # documents; the rest of that root (Obsolete Documents) stays out.
 SCOPE_SUB_IDCATS = {3967, 4006}
@@ -194,7 +194,7 @@ MANUAL_REF_EXCLUSIONS = set()
 EXCLUDED_IDCATS: set[int] = set()
 
 # Documents under these root categories are indexed whatever their date (DOC_DATE_CUTOFF does not apply to them).
-DATE_EXEMPT_ROOT_IDCATS: set[int] = set()
+DATE_EXEMPT_ROOT_IDCATS: set[int] = SCOPE_ROOT_IDCATS | {3798}
 
 # --- Empty + small file auto-exclusion ---
 # Zero-text + small file = blank stub -> skipped permanently; zero-text above this size stays ERROR for review.
