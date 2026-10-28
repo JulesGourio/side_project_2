@@ -111,6 +111,7 @@ sys.path.insert(0, REPO_DIR)
 
 # COMMAND ----------
 
+import code_normalization
 import tables
 from tables import table_exists
 
@@ -288,6 +289,23 @@ if HAS_CITED_CODES:
         ],
         logger,
     )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Code normalization catalog
+# MAGIC The passages and the questions are normalised with the catalog generated into `code_normalization.py`. A REF in scope that this catalog does not know is still found when it has the shape of a known family, but a REF of a new format is not: the module must be regenerated from the current catalog, then the chunks rebuilt (`run_mode=rechunk`). AMBER: the run goes on.
+
+# COMMAND ----------
+
+unknown_refs = code_normalization.catalog_drift(r[0] for r in catalog_rows)
+if unknown_refs:
+    logger.warning(
+        f"AMBER code normalization (version {code_normalization.NORMALIZATION_VERSION}): {len(unknown_refs)} of "
+        f"{len(catalog_rows)} REFs unknown to its catalog, e.g. {', '.join(unknown_refs[:20])}"
+    )
+else:
+    logger.info(f"Code normalization (version {code_normalization.NORMALIZATION_VERSION}) knows every REF")
 
 # COMMAND ----------
 

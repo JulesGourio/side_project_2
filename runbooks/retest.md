@@ -393,3 +393,10 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - `worker.write_worker_config` expédie le fichier de configuration avec `SparkContext.addFile`, `worker.ensure_config` le lit avec `SparkFiles.get` : les parseurs de formats (`.doc` par antiword, OCR…) retrouvent leurs réglages sur les exécuteurs. À retester en DEV : lancer le parsing en incrémental, les trois `.doc` (NS-1606, MI-13769, NF-10348) passent de `ERROR` à `SUCCESS` (`parser_strategy = antiword:doc`).
 - Documents `MISSING_CHUNKS` dont les passages sont des images : `describe_steps.restore_documents_with_passages` les remet en `SUCCESS` après la description des images (tâche `4_describe_images`). À retester : après un run, `SELECT count(*) FROM parsed_documents WHERE parse_status = 'MISSING_CHUNKS'` ne garde que les documents sans aucun passage.
 - `parse_filter` accepte des IDDOC séparés par des virgules ou des points-virgules (la commande `bundle run --params` coupe sur les virgules).
+
+## 2026-10-28 — normalisation des codes (version 2)
+
+- `code_normalization.py` change `chunk_preprocessed` et `cited_codes` : en DEV, lancer le parsing avec `run_mode=rechunk`, puis `5_sync_index`, puis `6_update_kb_metadata` (`doc_references`). Vérifier dans le log de `6_update_kb_metadata` la ligne « Code normalization (version 2) knows every REF » (sinon AMBER avec la liste des REF inconnues).
+- Le chat et la recherche d'impact réécrivent les requêtes avec le même module : poser « dans quel document cite-t-on SF-1027 ? » et « sf 1027 » en DEV.
+- `doc_catalog._canon` (app) : même forme canonique que le module (translittération, plusieurs suffixes de langue retirés) ; vérifier les chips de sources et les liens REF sur `ŘLCZ-07/18` et `INE028_FR_EN`.
+

@@ -35,7 +35,7 @@ Each notebook is a task; the modules next to them hold the logic. The notebooks 
 | `image_utils.py` | Parsing UDF of `3_parse`: Docling or fallback, image extraction, volume save |
 | `image_fallbacks.py` | Text and images of the files Docling does not read: DOCX and PPTX (XML), binary PPT (OLE), scanned PDF pages; writes of the images to the volume (path check) |
 | `chunking.py` | Splits a Markdown document into passages (sections, tables, provenance prefix) |
-| `code_normalization.py` | One spelling for the reference codes (`SF-1027` -> `SF-1027 [SF1027]`), the same on the passages (`chunk_preprocessed`) and on the app's search queries; the codes a passage cites (`cited_codes`); the code families generated from the catalog REFs |
+| `code_normalization.py` | One spelling for the codes (`SF-1027` -> `SF-1027 [SF1027]`), the same on the passages (`chunk_preprocessed`) and on the app's search queries; the codes a passage cites (`cited_codes`); the catalog block generated from the `doc_catalog` REFs and its generator |
 | `tables.py` | The only Delta write layer (`save_table`, `merge_into`, from `leap_utils`), and the quality checks of the tables: RED and AMBER levels, Great Expectations, REF consistency of the passages with `parse_manifest` (AMBER) |
 | `worker.py` | Runtime shared by the driver and the workers: configuration broadcast, token counting, chunking UDFs |
 
@@ -205,13 +205,30 @@ variables with the defaults listed at the top of `config.py`.
 - Duplicate passages of one IDDOC (same text hash) are removed. The text of `<!-- image -->` and
   `<!-- formula-not-decoded -->` placeholders is removed before chunking.
 - `chunk_id` is `<IDDOC>-<NNNNNN>` (chunk index plus one, six digits). The archive notice is `<IDDOC>-000000`.
-- `chunk_preprocessed` is `chunk_text` with the canonical form of each reference code after it
-  (`code_normalization.py`): `SF-1027`, `SF1027`, `SF 1027` and `SF-1027_BG` all get `[SF1027]`. The indexes embed and
-  search this column; the app answers from `chunk_text`. The app rewrites its search queries with the same rules, so a
-  question matches a passage whatever spelling each uses. The code families (prefix, digits, number groups) are
-  generated from the catalog REFs: `python code_normalization.py <file with one REF per line>` writes the
-  `CODE_FAMILIES` block. Codes that are not catalog REFs go in `EXTRA_PATTERNS`, by hand. A change to either list
-  needs a `rechunk` run, then a sync of the indexes.
+- `chunk_preprocessed` is `chunk_text` with the canonical form of each code after the identifier that holds it
+  (`code_normalization.py`): `SF-1027`, `SF1027`, `SF 1027`, `sf‑1027` and `SF-1027_BG` all get `[SF1027]`,
+  `MI-13991Table` gets `[MI13991]`. The indexes embed and search this column; the app answers from `chunk_text`. The
+  app rewrites its search queries with the same rules, so a question matches a passage whatever spelling each uses.
+  Three matchers find the codes:
+  - the catalog: every key of a catalog REF, in any spelling (separators, spaces, Unicode dashes, case, diacritics:
+    `MI - 1365`, `Q0697MI_FR`, `LdB IT-243`, `19 --058`, `ŘLCZ-07/18`). The canonical form is the REF without
+    separators and language suffixes, the key of the document catalog; a key that one REF completes takes that REF
+    (`QIS-46A-352` -> `QIS46A352A`), a key several REFs share is its own form (`777F`);
+  - the REF shapes, for REFs the catalog does not have (obsolete, other site, typing error): prefix-number families,
+    site codes (`Q0256MI`), lettres de branchement (never without `LdB`), programme phases, IF instructions (never a
+    date or a decimal after `IF`); a shape is kept when it has the signature of a catalog REF (`SF-1027` like `SF-1029`);
+  - `EXTRA_PATTERNS`, written by hand, for codes that are not REFs: standards (`EN 9100`, `NAS1789`; never a year
+    after `EN`), ATA chapters, aircraft, EASA parts and specifications, alloys, acronyms written with dots
+    (`E.A.S.A`), SAP transactions, part numbers, `8-D`.
+
+  A code never starts inside a word or a decimal number, never ends on a word after a space (`STRUCTURE 1000`), and a
+  short code inside a longer chain (`A30` in `145.A.30`) is ignored. In a question a prefix in lower case followed by a
+  space is a code too (`sf 1027`), except the prefixes that are also words (`if 2`, `go 2024`).
+  The catalog block of the module (`CODE_FAMILIES`, site letters and types, LdB types, phases, keys, signatures) is
+  generated from the REFs of `doc_catalog`: `python code_normalization.py <file with one REF per line>` rewrites it in
+  place. Task `6_update_kb_metadata` warns (AMBER) when `doc_catalog` has REFs the block does not know. Any change to
+  the module (block, patterns, rules) bumps `NORMALIZATION_VERSION` and needs a `rechunk` run, then a sync of the
+  indexes.
 - `cited_codes` lists the codes a passage cites, canonical forms separated by spaces, without its `[Source: …]` line
   and without the codes of its own document (`code_normalization.cited_codes`). Task `6_update_kb_metadata` builds
   `doc_references` from it.
