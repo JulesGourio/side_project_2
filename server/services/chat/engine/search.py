@@ -339,3 +339,34 @@ async def fetch_documents(host: str, token: str, index: str, query: str, refs: L
             log.issue(f'{via}_failed', via, f'{refs}: {exc}', error_type=type(exc).__name__,
                       http_status=_status_of(exc), upstream=index, context={'refs': refs}, exc=exc)
         return []
+
+
+async def search_codes(host: str, token: str, index: str, codes: List[str], filters: VsFilters, k: int,
+                       log: TurnLog | None = None) -> List[SearchRow]:
+    """Reranked search of the reference codes alone: with the rest of the question around it, the common words weigh
+    more than a rare code in the keyword side. Failures are logged, never raised.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index: full name of the Vector Search index
+    :param codes: canonical codes (``SF1027``) named by the question, searched as one query
+    :param filters: Vector Search filters, empty for none
+    :param k: passages fetched
+    :param log: turn log that records the call and a failure, optional
+    :return: the rows, tagged ``code_lookup``; an empty list when there is no code or the search failed
+    """
+    if not codes:
+        return []
+    log = log if log is not None else TurnLog()
+    text = ' '.join(codes)
+    try:
+        try:
+            rows = await _recorded_query(host, token, index, filters, log, None, text, k, True)
+        except RerankUnavailable:
+            rows = await _recorded_query(host, token, index, filters, log, None, text, k, False)
+        return _tag(rows, None, 'code_lookup')
+    except Exception as exc:  # noqa: BLE001 — the turn goes on without the lookup
+        logger.warning('chat: code lookup %s on %s failed: %s', codes, index, exc)
+        log.issue('code_lookup_failed', 'code_lookup', f'{codes}: {exc}', error_type=type(exc).__name__,
+                  http_status=_status_of(exc), upstream=index, context={'codes': codes}, exc=exc)
+        return []

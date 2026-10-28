@@ -161,6 +161,7 @@
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS search_ms INTEGER",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS ref_lookup_ms INTEGER",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS citation_lookup_ms INTEGER",
+  "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS code_lookup_ms INTEGER",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS queue_wait_ms INTEGER",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS first_token_ms INTEGER",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS generation_ms INTEGER",

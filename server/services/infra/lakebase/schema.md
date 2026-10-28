@@ -140,6 +140,7 @@ One row per turn. The columns of the first table are fixed; the others come from
 | `search_ms` | Vector Search |
 | `ref_lookup_ms` | lookup of the named references |
 | `citation_lookup_ms` | passages of the documents citing a code asked |
+| `code_lookup_ms` | search of the codes named by the question, alone |
 | `queue_wait_ms` | wait for a generation slot (`CHAT_MAX_CONCURRENT_ANSWERS`) |
 | `generation_ms` | answer generation, retries included |
 | `translate_back_ms` | translation of the answer |
@@ -182,7 +183,7 @@ One row per passage retrieved for a turn, with its text. The table keeps the pas
 | `prompt_rank` | INTEGER | order in the prompt (passages passed only) |
 | `doc_number` | INTEGER | `[n]` number of its document in the prompt |
 | `cited` | BOOLEAN | its document is cited by the answer |
-| `source` | TEXT | `search` (found by the search), `ref_lookup` (brought by the reference lookup) or `citation_lookup` (a document citing a code asked) |
+| `source` | TEXT | `search` (found by the search), `ref_lookup` (brought by the reference lookup), `code_lookup` (brought by the search of the codes alone) or `citation_lookup` (a document citing a code asked) |
 | `hits` | JSONB | every query that found the passage: `q`, `via`, `rank`, `score` |
 | `best_score` | DOUBLE PRECISION | best score |
 | `chunk_id` | TEXT | passage identifier in the index |
