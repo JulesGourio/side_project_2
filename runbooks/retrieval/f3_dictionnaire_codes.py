@@ -18,14 +18,14 @@
 # MAGIC | --- | --- | --- | --- |
 # MAGIC | `MTC-01` | Split into pieces | `[A-Za-z]+\|[0-9]+` | `Q0375MI` → `Q`, `0375`, `MI` |
 # MAGIC | `MTC-02` | Gap allowed between two pieces | nothing; or up to 3 spaces, one or two separators (`-`, unicode dashes, `_`, `/`, `.`), up to 3 spaces; or 1 to 3 spaces | `MI - 1365`, `IAQ 04 04 05`, `19 --058`, `TDA8 - 00/027` |
-# MAGIC | `MTC-02b` | Words next to a space | a gap holding a space joins only digits or upper-case words of at most 4 letters, and the code never ends on a word after a space; a tight separator joins any case | `BAC 5578`, `sf-1027`; never `of 10`, `Le 23`, `R30 Develop`, `STRUCTURE 1000`, `NASM21059 - NUT` |
+# MAGIC | `MTC-02b` | Words next to a space | a gap holding a space joins only digits or words of at most 4 letters ending in upper case, and the code never ends on a word after a space; a tight separator joins any case | `BAC 5578`, `LdB IT-243`, `sf-1027`; never `of 10`, `Le 23`, `R30 Develop`, `STRUCTURE 1000`, `NASM21059 - NUT` |
 # MAGIC | `MTC-02c` | Codes without digits | 3 letters or more, upper case, a separator without spaces in every gap | `E.A.S.A`, `N.D.T`, `M.O.E`; never `A/B`, `N/A`, `y a`, `e.g`, `SAP` in `Regles_SAP_controle` |
 # MAGIC | `MTC-02d` | Decimal numbers | a number never starts or stops at a decimal point or comma | never `T31` in `T3 1,2`, `R0` in `R 0,55`, `DA9` in `DA 9.10` |
 # MAGIC | `MTC-03` | Start | at the start of a word | nothing in `XSF-1027` |
 # MAGIC | `MTC-03b` | Inside a chain | a code preceded or followed by another part joined by `-` `_` `/` `.` needs a key of 5 characters or more | `IP-025/Installation`, `GO-1585-B`; never `A01` in `PTD-TEST-6-A-01`, `A30` in `145.A.30`, `V20` in `Rev2025.11_v2.0` |
 # MAGIC | `MTC-04` | End | at the end of a word, or between a digit and a glued word of letters when the code holds a separator | `MI-13991` in `MI-13991Table`; never `F7` in `F7XC5355`, `A2` in `A2PFACT` |
 # MAGIC | `MTC-05` | Choice | the longest run of at most 12 pieces whose glued key is in the dictionary | `QIS-46A-352 A` rather than `QIS-46A-352` |
-# MAGIC | `MTC-06` | One token per document | every match key maps to one canonical token | `IT-243` and `LdB IT-243` → `LDBIT243`; `Q0697MI_FR` → `Q0697MI` |
+# MAGIC | `MTC-06` | One token per document | every match key maps to one canonical token; a key that could expand to several REFs maps to itself, and a REF is never matched through a part of it | `LdB IT-243` and `LDB-IT-243` → `LDBIT243`, `IT-243` alone gets no `LDBIT243`; `Q0697MI_FR` → `Q0697MI`; `Q0087QP` → `Q0087QP` (`Q0087QP-EG` and `Q0087QP-G` exist) |
 # MAGIC | `MTC-07` | Output | token appended after the word, in brackets; nothing added when the word already is the token; a second pass adds nothing | `SF-1027` → `SF-1027 [SF1027]`; `SF1027` unchanged |
 
 # COMMAND ----------
@@ -65,7 +65,7 @@ from typing import Iterable, Mapping, NamedTuple
 
 # --- matcher: start ---
 # Bump when the matching or the key changes: stored annotations are recomputed for the new version.
-PP_VERSION = 3
+PP_VERSION = 4
 
 # A piece is letters only or digits only (Q0375MI gives Q, 0375, MI).
 _PIECE = re.compile(r'[A-Za-z]+|[0-9]+')
@@ -106,12 +106,12 @@ def _word_end(text: str, pos: int) -> int:
 
 
 def _strong(piece: str) -> bool:
-    """Whether a piece may sit next to a gap with a space: digits, or a short word in upper case.
+    """Whether a piece may sit next to a gap with a space: digits, or a short word ending in upper case.
 
     :param piece: letters only or digits only
-    :return: True for ``1027`` or ``BAC``, False for ``of``, ``Part`` or ``STRUCTURE``
+    :return: True for ``1027``, ``BAC`` or ``LdB``, False for ``of``, ``Part`` or ``STRUCTURE``
     """
-    return piece.isdigit() or (piece.isupper() and len(piece) <= _MAX_WORD_NEXT_TO_SPACE)
+    return piece.isdigit() or (piece[-1].isupper() and len(piece) <= _MAX_WORD_NEXT_TO_SPACE)
 
 
 def _inside_number(text: str, pos: int) -> bool:
@@ -145,8 +145,8 @@ class CodeKeys:
         letters when the code holds a separator (``MI-13991`` in ``MI-13991Table``, never ``F7`` in ``F7XC5355``).
         Inside a longer chain of separated parts, only keys of 5 characters or more count (never ``A01`` in
         ``PTD-TEST-6-A-01``). A number never stops at a decimal point (never ``T31`` in ``T3 1,2``). A gap with a
-        space joins only upper-case words of at most 4 letters or digits (``BAC 5578``; never ``of 10`` or
-        ``STRUCTURE 1000``) and never ends on a word (never ``NAS1789 - NUT``). A code without digits has 3 letters
+        space joins only digits or words of at most 4 letters ending in upper case (``BAC 5578``, ``LdB IT-243``;
+        never ``of 10`` or ``STRUCTURE 1000``) and never ends on a word (never ``NAS1789 - NUT``). A code without digits has 3 letters
         or more, in upper case, joined by separators without spaces (``E.A.S.A``; never ``A/B`` or ``SAP`` alone).
 
         :param text: question or passage

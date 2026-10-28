@@ -53,7 +53,7 @@ import sys
 import time
 from functools import reduce
 
-from pyspark.sql import DataFrame
+from pyspark.sql import Column, DataFrame
 from pyspark.sql import Window
 from pyspark.sql import functions as F
 
@@ -97,7 +97,7 @@ def with_key(tok_df: DataFrame) -> DataFrame:
     return tok_df.withColumn("cle", F.upper(F.regexp_replace("tok", "[^A-Za-z0-9]", "")))
 
 
-def shape(col):
+def shape(col: Column | str) -> Column:
     """Shape of a token: runs of upper-case letters give A, lower-case letters a, digits 9; separators kept.
 
     :param col: column holding the token

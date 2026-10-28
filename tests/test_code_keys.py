@@ -24,7 +24,8 @@ CK = CodeKeys(KEYS)
     ('QTP 01-174', 'QTP01174'),
     ('IF2.03.08_CZ', 'IF20308CZ'),
     ('IF 2.03.08', 'IF20308'),
-    ('LdB IT-243', 'IT243'),
+    ('LdB IT-243', 'LDBIT243'),
+    ('LdB-IT-243', 'LDBIT243'),
     ('LDB IT 243', 'LDBIT243'),
     ('PR/LAT/506', 'PRLAT506'),
     ('FD_AQL_2193', 'FDAQL2193'),
@@ -121,8 +122,8 @@ def test_question_and_passage_share_the_key() -> None:
 
 def test_one_key_per_document() -> None:
     """Spellings mapped to one key give that key."""
-    ck = CodeKeys({'LDBIT243': 'LDBIT243', 'IT243': 'LDBIT243', 'Q0697MIFR': 'Q0697MI', 'Q0697MI': 'Q0697MI'})
-    assert [m.key for m in ck.find('IT-243 et LdB IT 243')] == ['LDBIT243', 'LDBIT243']
+    ck = CodeKeys({'LDBIT243': 'LDBIT243', 'Q0697MIFR': 'Q0697MI', 'Q0697MI': 'Q0697MI'})
+    assert [m.key for m in ck.find('LDB-IT-243 et LdB IT 243, puis IT-243 seul')] == ['LDBIT243', 'LDBIT243']
     assert ck.annotate('Q0697MI_FR') == 'Q0697MI_FR [Q0697MI]'
 
 
