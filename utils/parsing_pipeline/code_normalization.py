@@ -25,7 +25,6 @@ import re
 import sys
 import unicodedata
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
@@ -402,8 +401,7 @@ def canonical(code: str) -> str:
     return _NON_ALNUM_RE.sub("", _fold(code)).upper()
 
 
-@lru_cache(maxsize=2)
-def _compiled(query: bool) -> Tuple[Tuple[CodePattern, Pattern], ...]:
+def _compile(query: bool) -> Tuple[Tuple[CodePattern, Pattern], ...]:
     """``CODE_PATTERNS`` compiled for passages or for questions.
 
     :param query: compile for questions (patterns with ``lowercase_in_query`` ignore the case)
@@ -411,6 +409,9 @@ def _compiled(query: bool) -> Tuple[Tuple[CodePattern, Pattern], ...]:
     """
     return tuple((p, re.compile(p.regex, re.VERBOSE | (re.IGNORECASE if query and p.lowercase_in_query else 0)))
                  for p in CODE_PATTERNS)
+
+
+_COMPILED: Dict[bool, Tuple[Tuple[CodePattern, Pattern], ...]] = {False: _compile(False), True: _compile(True)}
 
 
 def _word_end(text: str, pos: int) -> int:
@@ -467,7 +468,7 @@ def match_codes(text: str, accept_lowercase: bool = False) -> List[CodeMatch]:
         return []
     folded = _fold(text)
     found = []
-    for rank, (pattern, regex) in enumerate(_compiled(accept_lowercase)):
+    for rank, (pattern, regex) in enumerate(_COMPILED[accept_lowercase]):
         for m in regex.finditer(folded):
             code = canonical(m.group("code"))
             if len(code) >= pattern.min_length and _accepted(folded, m.start(), m.end("code"), code,

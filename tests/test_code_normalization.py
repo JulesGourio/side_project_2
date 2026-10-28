@@ -180,3 +180,14 @@ def test_the_impact_search_searches_the_canonical_form_of_the_codes(monkeypatch)
     sent = _capture_payloads(monkeypatch)
     asyncio.run(vector_search._fetch_chunks('https://h', 't', 'idx', 'NS-10441 ajoutée', 5))
     assert sent[0]['query_text'] == 'NS-10441 [NS10441] ajoutée'
+
+
+def test_the_preview_notebook_holds_the_same_code():
+    root = os.path.join(os.path.dirname(__file__), '..')
+    with open(os.path.join(root, 'utils', 'parsing_pipeline', 'code_normalization.py'), encoding='utf-8') as fh:
+        module = fh.read()
+    with open(os.path.join(root, 'runbooks', 'retrieval', 'f3_dictionnaire_codes.py'), encoding='utf-8') as fh:
+        notebook = fh.read()
+    start, end = '# --- code normalization: start ---\n', '# --- code normalization: end ---\n'
+    copied = notebook[notebook.index(start) + len(start):notebook.index(end)]
+    assert copied == module[module.index('import re\n'):module.index('\n\nif __name__')].rstrip() + '\n'
