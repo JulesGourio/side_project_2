@@ -9,11 +9,8 @@ from server.services.infra.doc_catalog import _catalog, canon_ref, document_info
 from server.services.chat.turn_log import TurnLog, passage_date
 from server.services.chat.engine.queries import opening_language, rewrite_queries, translate_query
 from server.services.chat.engine.references import cited_codes_asked, exact_citations
-from server.services.chat.engine.types import DocumentPassages, PassageRecord, RetrievalResult, SearchRow, VsFilters
-from server.services.chat.engine.codes import chunk_ids_citing, codes_in
-from server.services.chat.engine.search import (
-    _merge_by_rank, fetch_chunks, fetch_documents, search, start_question_search,
-)
+from server.services.chat.engine.types import DocumentPassages, PassageRecord, RetrievalResult, SearchRow
+from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search, start_question_search
 from server.services.chat.engine.config import (
     division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on, raw_top_k, rerank_top_k,
 )
@@ -150,30 +147,6 @@ def _passage(row: SearchRow, position: int, drop_reason: str = '') -> PassageRec
             'semantic_headers': row.get('semantic_headers'), 'chunk_text': row.get('chunk_text')}
 
 
-async def _passages_citing(host: str, token: str, index: str, question: str, codes: List[str], filters: VsFilters,
-                           log: TurnLog) -> List[SearchRow]:
-    """Passages that cite the codes of the question verbatim; empty when none or when the lookup fails.
-
-    :param host: Databricks workspace URL
-    :param token: Databricks access token
-    :param index: full name of the Vector Search index
-    :param question: the question, used to rank the passages
-    :param codes: codes named in the question
-    :param filters: Vector Search filters of the turn (division)
-    :param log: turn log that records a failure
-    :return: the passages, ranked against the question
-    """
-    try:
-        ids = await chunk_ids_citing(codes)
-    except Exception as exc:  # noqa: BLE001 — the turn goes on without the lookup
-        logger.warning('chat: code lookup %s failed: %s', codes, exc)
-        log.issue('code_lookup_failed', 'code_lookup', f'{codes}: {exc}', error_type=type(exc).__name__,
-                  upstream='chunk_codes', context={'codes': codes}, exc=exc)
-        return []
-    log.data['code_passages'] = len(ids)
-    return await fetch_chunks(host, token, index, question, ids, filters, log=log) if ids else []
-
-
 async def retrieve_for_turn(host: str, token: str, division: str, conversation: List[Dict[str, str]],
                             log: TurnLog | None = None) -> RetrievalResult:
     """The passages handed to the LLM for the last user turn of ``conversation`` (already
@@ -228,9 +201,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         # REFs named in the question first, then in the earlier turns (a follow-up often names no REF itself).
         earlier_turns = '\n'.join(m['content'] for m in conversation[:-1])
         named = await asyncio.to_thread(_refs_named_in_turns, question, earlier_turns)
-        codes = codes_in(question, exclude=named)
-        log.data.update({'index_name': index, 'fr_query': fr_query, 'en_query': en_query, 'named_refs': named,
-                         'named_codes': codes})
+        log.data.update({'index_name': index, 'fr_query': fr_query, 'en_query': en_query, 'named_refs': named})
 
         by_name = {'question': question, 'fr': fr_query, 'en': en_query}
         raw_texts: List[str] = []
@@ -254,14 +225,11 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         over_cap: List[SearchRow] = []
         if max_search_passages():
             rows, over_cap = rows[:max_search_passages()], rows[max_search_passages():]
-        lookups: List[List[SearchRow]] = []
         if named:
             with log.timed('ref_lookup'):
-                lookups.append(await fetch_documents(host, token, index, question, named, _REF_LOOKUP_K, filters,
-                                                     via='ref_lookup', log=log))
-        if codes:
-            with log.timed('code_lookup'):
-                lookups.append(await _passages_citing(host, token, index, question, codes, filters, log))
+                found = await fetch_documents(host, token, index, question, named, _REF_LOOKUP_K, filters,
+                                              via='ref_lookup', log=log)
+            rows = _merge_by_rank([found, rows])
 
         # "Which documents cite X?": the complete list comes from doc_references; the search adds where they cite it.
         exact = exact_citations(cited_codes_asked(question), division)
@@ -270,10 +238,9 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             citing = list(dict.fromkeys(d['ref'] for _, docs in exact.values() for d in docs))[:_CITING_LOOKUP_DOCS]
             if citing:
                 with log.timed('citation_lookup'):
-                    lookups.append(await fetch_documents(host, token, index, question, citing, _CITING_LOOKUP_K, filters,
-                                                         via='citation_lookup', log=log))
-        if lookups:
-            rows = _merge_by_rank(lookups + [rows])
+                    found = await fetch_documents(host, token, index, question, citing, _CITING_LOOKUP_K, filters,
+                                                  via='citation_lookup', log=log)
+                rows = _merge_by_rank([found, rows])
         candidates = rows
         rows = one_language_per_document(rows, canonical_codes(question, accept_lowercase=True), language)
 

@@ -56,7 +56,7 @@ Unit tests in `tests/` cover `chunking.py`, `tables.py`, the statuses of `config
 | `3c_chunks` | `create_proj_chunks.py` | the CPU cluster of `3_parse` (S policy, `parse_cpu_cluster`; after the `false` branch of the condition or `3b_parse_pdf`, `run_if: AT_LEAST_ONE_SUCCESS`) | `parsing_checkpoint` (retries), `parsed_documents`, `chunks`, `chunks_archive`, `archive_notices`, `image_metadata`, `parsing_run_health` |
 | `4_describe_images` | `create_proj_image_metadata.py` | CPU (S policy, `describe_cpu_cluster`) | `image_metadata`, image passages in `chunks` and `chunks_archive`, `parsed_documents` |
 | `5_sync_index` | `update_proj_vector_indexes.py` | CPU (S policy, `meta_cpu_cluster`, GX on `chunks_full`) | `chunks_full`, Vector Search indexes |
-| `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata`, `chunk_codes` (Lakebase) |
+| `6_update_kb_metadata` | `create_proj_doc_catalog.py` | serverless | `doc_catalog`, `catalog_metadata` (Lakebase) |
 
 Every classic cluster of the job takes the CORE Job Compute S policy (`job_cluster_policy_id_S`). The only cluster without a policy is the GPU cluster of `3b_parse_pdf`: its runtime (GPU ML) is not in the S policy allowlist. The tasks on serverless have no cluster.
 
@@ -281,12 +281,6 @@ variables with the defaults listed at the top of `config.py`.
   is written without them and a warning names the owner.
 - `catalog_metadata` (single row, `id = 1`) receives `documents_as_of` = today and `updated_at`. The chat shows
   `documents_as_of` in its toolbar.
-- `chunk_codes` is rebuilt in the same transaction from `chunks` (`codes.py`): each code cited in the passages (a form,
-  part, standard or document number such as `SF-1027`, upper case) with the passages that cite it, for the codes cited
-  by at most 30 passages. The header line of each chunk is left out, otherwise every chunk would cite its own REF. The
-  chat looks up the codes of a question there: the hybrid search splits `SF-1027` into `SF` and `1027`, so a passage
-  that cites the code exactly can rank below passages that share only one part. The table belongs to the notebook's
-  identity; the app only reads it.
 - `doc_references` is rebuilt in the same transaction from the `cited_codes` of `chunks`: one row per (code, citing
   REF), with the number of its passages that cite the code. The chat answers "which documents cite X?" from it, with
   the complete list. When the new table has fewer than half the rows of the current one it is kept as it is, with a
@@ -327,7 +321,6 @@ Quality checks (`tables.py`, Great Expectations through `leap_utils`): a RED fai
 | image passages | `chunk_id` not null and unique; `IDDOC`, `REF`, `chunk_text`, `chunk_preprocessed`, `cited_codes` not null (RED); `division` on 99 % (AMBER) |
 | `image_metadata` | `(IDDOC, image_id)` not null and unique (RED); `volume_path` on 95 % (AMBER) |
 | `doc_catalog` | Not empty; `ref` not null and unique (RED); `title` and `division` on 99 % (AMBER) |
-| `chunk_codes` | `code` not null and unique (RED); not empty (AMBER) |
 | `chunks_full` | Not empty; `chunk_id` not null and unique; `chunk_text` not null (RED); `chunk_preprocessed` not null (AMBER: empty on the rows written before it, until a `rechunk` run) |
 
 `tables.check_ref_mapping` compares the REF of each passage with `parse_manifest` and logs the mismatches (AMBER).
