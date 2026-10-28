@@ -15,13 +15,14 @@ from typing import Iterable, Mapping, NamedTuple
 # The block between the matcher markers is embedded as is in the DEV preview notebook; a test keeps both equal.
 # --- matcher: start ---
 # Bump when the matching or the key changes: stored annotations are recomputed for the new version.
-PP_VERSION = 1
+PP_VERSION = 2
 
 # A piece is letters only or digits only (Q0375MI gives Q, 0375, MI).
 _PIECE = re.compile(r'[A-Za-z]+|[0-9]+')
 # Gap allowed between two pieces of one code: nothing, up to 3 spaces around one or two separators (hyphens,
 # unicode dashes, _ / .), or 1 to 3 spaces alone (IAQ 04 04 05, MI - 1365, 19 --058).
 _GAP = re.compile(r'(?:[  ]{0,3}[-‐‑−–—_/.]{1,2}[  ]{0,3}|[  ]{1,3})?')
+_SPACE = re.compile(r'[ \u00a0]')
 # Longest code, in pieces (IF20037_DLV-31-5207 has 6).
 _MAX_PIECES = 12
 
@@ -46,6 +47,15 @@ def _word_end(text: str, pos: int) -> int:
     return pos
 
 
+def _strong(piece: str) -> bool:
+    """Whether a piece may sit next to a gap with a space: digits, or letters in upper case.
+
+    :param piece: letters only or digits only
+    :return: True for ``1027`` or ``BAC``, False for ``of`` or ``Part``
+    """
+    return piece.isdigit() or piece.isupper()
+
+
 class CodeKeys:
     """Finds the known codes of a text and their glued key."""
 
@@ -62,8 +72,10 @@ class CodeKeys:
     def find(self, text: str) -> list[CodeMatch]:
         """Known codes of the text, left to right, without overlap.
 
-        A code starts at the start of a word; it ends at the end of a word or between a digit and a glued letter
-        (``MI-13991`` in ``MI-13991Table``).
+        A code starts at the start of a word. It ends at the end of a word, or between a digit and a glued word of
+        letters when the code holds a separator (``MI-13991`` in ``MI-13991Table``, never ``F7`` in ``F7XC5355``).
+        A gap with a space joins only upper-case letters or digits (``BAC 5578``, never ``of 10``), and a run without
+        digits is upper case with a separator in every gap (``E.A.S.A``, ``N/A``, never ``y a``).
 
         :param text: question or passage
         :return: the codes found, with their position in the text and the key written for them
@@ -79,14 +91,28 @@ class CodeKeys:
                 continue
             best = None
             key = ''
+            has_digit = has_separator = space_only = False
+            letters_upper = True
             for j in range(i, min(i + _MAX_PIECES, len(pieces))):
-                if j > i and not _GAP.fullmatch(text, pieces[j - 1][1], pieces[j][0]):
-                    break
-                key += text[pieces[j][0]:pieces[j][1]].upper()
+                piece = text[pieces[j][0]:pieces[j][1]]
+                if j > i:
+                    gap = text[pieces[j - 1][1]:pieces[j][0]]
+                    if not _GAP.fullmatch(gap):
+                        break
+                    previous = text[pieces[j - 1][0]:pieces[j - 1][1]]
+                    if _SPACE.search(gap) and not (_strong(previous) and _strong(piece)):
+                        break
+                    has_separator = has_separator or bool(gap.strip())
+                    space_only = space_only or (bool(gap) and not gap.strip())
+                has_digit = has_digit or piece.isdigit()
+                letters_upper = letters_upper and (piece.isdigit() or piece.isupper())
+                key += piece.upper()
                 end = pieces[j][1]
                 at_word_end = end == len(text) or not text[end].isalnum()
-                digit_to_letter = not at_word_end and text[end - 1].isdigit() and text[end].isalpha()
-                if (at_word_end or digit_to_letter) and key in self.keys:
+                digit_to_letter = (not at_word_end and piece.isdigit() and has_separator
+                                   and text[end:_word_end(text, end)].isalpha())
+                letters_ok = has_digit or j == i or (letters_upper and not space_only)
+                if (at_word_end or digit_to_letter) and letters_ok and key in self.keys:
                     best = (j, end, self.keys[key])
             if best:
                 j, end, k = best

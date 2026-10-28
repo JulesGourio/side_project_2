@@ -24,7 +24,7 @@ CK = CodeKeys(KEYS)
     ('QTP 01-174', 'QTP01174'),
     ('IF2.03.08_CZ', 'IF20308CZ'),
     ('IF 2.03.08', 'IF20308'),
-    ('LdB IT-243', 'LDBIT243'),
+    ('LdB IT-243', 'IT243'),
     ('LDB IT 243', 'LDBIT243'),
     ('PR/LAT/506', 'PRLAT506'),
     ('FD_AQL_2193', 'FDAQL2193'),
@@ -62,6 +62,34 @@ def test_leaves_other_text_alone(text: str) -> None:
     """
     keys = [m.key for m in CK.find(text)]
     assert 'SF1027' not in keys and keys in ([], ['2024T3'])
+
+
+@pytest.mark.parametrize('text, key', [
+    ('F7XC535556349NUE', 'F7'), ('A2PFACT', 'A2'), ('o8svjqyBWk', 'O8'), ('F38050A', 'F38050'),
+    ('il y a un tableau', 'YA'), ('les SG&A de LMXI', 'ADE'), ('e.g. BAPS', 'EG'), ('lines of 10 holes', 'OF10'),
+    ('Le 23/01/2018', 'LE23'), ('R30 Develop Process', 'R30DEVELOP'), ('Plan – 787', 'PLAN787'),
+    ('Level 2 Level 3', 'LEVEL2LEVEL3'), ('Rc 23', 'RC23'),
+])
+def test_no_token_on_words(text: str, key: str) -> None:
+    """Common words next to a number or a letter, and short codes glued inside a longer word, give nothing.
+
+    :param text: text without a code
+    :param key: key in the dictionary that the text must not give
+    """
+    assert CodeKeys([key]).find(text) == []
+
+
+@pytest.mark.parametrize('text, key', [
+    ('E.A.S.A', 'EASA'), ('N/A', 'NA'), ('NDT/NDI', 'NDTNDI'), ('BPL/SBR', 'BPLSBR'), ('OF 10', 'OF10'),
+    ('MI-13991Table', 'MI13991'), ('QM-1031Quality', 'QM1031'),
+])
+def test_separated_codes_and_upper_case(text: str, key: str) -> None:
+    """Separated acronyms, upper-case codes and a delimited code glued to a word give their key.
+
+    :param text: text that cites the code
+    :param key: expected key
+    """
+    assert [m.key for m in CodeKeys([key]).find(text)] == [key]
 
 
 def test_annotates_without_changing_the_text() -> None:
