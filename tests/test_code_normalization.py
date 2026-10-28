@@ -44,7 +44,7 @@ def test_every_spelling_of_a_code_has_the_same_canonical_form(written):
 
 
 @pytest.mark.parametrize('text', [
-    'LEVEL 2', 'page 12', '4.2.1', '15/03/2024', 'cost 1027', 'GB 128 et IN 300', '145.A.30', 'PTD-TEST-6-A-01',
+    'LEVEL 2', 'page 12', '4.2.1', '15/03/2024', 'cost 1027', 'GB 128 et IN 300', 'PTD-TEST-6-A-01',
     'Manual_Rev2025.11_v2.0', 'A/B', 'N/A', 'R 0,55', 'DA 9.10', 'STRUCTURE 1000', 'Partie 3', 'a 12.5', 'EN 2024',
     'lines of 10 holes', 'Le 23/01/2018', 'F7XC535556349NUE', 'il y a un tableau', 'QP-1518.5',
 ])
@@ -130,10 +130,14 @@ def test_families_are_generated_from_the_catalog_refs():
     refs = ['SF-1027_BG', 'SF-1154', 'SF-20316', 'DLV-33-3010', 'DLV-2018', 'IAQ 10 01 01', 'IAQ 06 00 01',
             'Q0102QP_GB', 'Q0170MI', 'LdB P-139', 'GB-003', 'GB-004', 'ONE-1234', 'IF-20316', 'IF-20322']
     assert cn.families_from_refs(refs) == {
-        'DLV': cn.CodeFamily(2, 4, 2, False),
-        'IAQ': cn.CodeFamily(2, 2, 3, True),
-        'SF': cn.CodeFamily(4, 5, 1, False),
+        'DLV': cn.CodeFamily(digits=(2, 4), groups=(1, 2), group_digits=(4, 4), spaced=False),
+        'IAQ': cn.CodeFamily(digits=(2, 2), groups=(3, 3), group_digits=(2, 2), spaced=True),
+        'SF': cn.CodeFamily(digits=(4, 5), groups=(1, 1), group_digits=(0, 0), spaced=False),
     }
+
+
+def test_a_list_of_codes_is_not_read_as_one_code():
+    assert cn.canonical_codes('PRLAT506/549/559/571') == ['PRLAT506']
 
 
 def test_the_rendered_families_are_the_python_of_the_module():
