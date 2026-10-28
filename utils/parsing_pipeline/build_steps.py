@@ -438,8 +438,8 @@ def _dedupe_and_limit_chunks(df_chunks) -> DataFrame:
         )
         after_count = df_chunks.count()
         logger.info(
-            f"[DEDUP] Removed {before_count - after_count} duplicate chunks intra-IDDOC "
-            f"({before_count} -> {after_count})"
+            f"[DEDUP] {before_count - after_count} duplicate chunks dropped inside their own document "
+            f"({before_count} -> {after_count}). Expected."
         )
 
     # Same body in BOILERPLATE_MIN_DOCS+ documents (legal mentions, standard approval blocks): marked, not deleted, so
@@ -489,8 +489,8 @@ def _dedupe_and_limit_chunks(df_chunks) -> DataFrame:
         truncated = before_limit - after_limit
         if truncated > 0:
             logger.info(
-                f"[LIMIT] {truncated} spreadsheet chunks truncated "
-                f"(max {MAX_CHUNKS_SPREADSHEET}/file, {before_limit} -> {after_limit})"
+                f"[LIMIT] Each spreadsheet keeps its first {MAX_CHUNKS_SPREADSHEET} chunks; {truncated} further chunks "
+                f"are left out ({before_limit} -> {after_limit}). Expected: a few very large workbooks account for most of them."
             )
 
     return df_chunks.drop(
