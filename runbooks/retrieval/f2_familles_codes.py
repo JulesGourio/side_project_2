@@ -3,8 +3,10 @@
 # C_questions) reçoit une famille, dans l'ordre des règles ci-dessous ; la première qui s'applique gagne.
 # Écrit dans dev_proj.qualibot.f2_familles_codes. Lecture seule ailleurs (doc_catalog de chaque env de ENVS).
 #
-# But : qu'il ne reste dans la famille "residu" que du bruit pur. Le résidu est trié par documents et regroupé par
-# préfixe (cellule 5) ; un préfixe relu va dans NORME_PREFIXES (code voulu) ou BRUIT_PREFIXES, puis on relance.
+# Règle de sécurité : "annoter" ajoute la clé collée à côté du texte (SF-1027 [SF1027]), sans rien remplacer.
+# "rien" laisse le texte indexé comme il l'est. Toute clé qu'aucune règle de bruit ne reconnaît est annotée
+# (famille residu) : un code n'est jamais oublié, au pire une clé inutile est ajoutée. Le résidu (cellule 5) sert à
+# repérer le bruit qu'il est inutile d'annoter ; la cellule 6 montre les clés du chat classées en bruit.
 #
 # Une graphie est découpée en morceaux devant chaque séparateur (- _ / . espace) et entre un chiffre et une lettre
 # qui le suit (MI-13991Table donne MI, -13991, Table). Un "morceau suivi" = plusieurs morceaux consécutifs.
@@ -28,17 +30,20 @@
 #   bruit_sommaire        numéro collé à un mot de 3 lettres ou plus (2SCOPE4, 11REFERENCE, 821PROCESS) -> rien
 #   bruit_unite           nombre suivi d'une unité ou d'un ordinal de UNITES (5MM, 60KHZ, 1ST, 3D)      -> rien
 #   bruit_dimension       nombres reliés par X (125X80, 10X20X5)                                        -> rien
-#   bruit_puce            numéro + séparateur + une ou deux lettres (3.P, 1-b, 5-P)                     -> rien
+#   bruit_puce            clé = numéro + une ou deux lettres (3.P, 1-b, 5-P, 10P)                       -> rien
+#   bruit_date            mois suivi d'un nombre (July 2024, Jan/31/2024, Feb-07-2027)                  -> rien
+#   code_court            une ou deux lettres + un ou deux chiffres (B1, R30, D1, A0)                    -> annoter
 #   code_norme_piece      préfixe de NORME_PREFIXES (EN 9100, PART 21, CS 25, NAS1149C0332R)            -> annoter
-#   bruit_mot_petit_nombre  clé = lettres + un ou deux chiffres, ou toutes les graphies = mot + nombres d'un ou
-#                         deux chiffres (LEVEL 2, Level1-Limited, TABLE 1/1, STEP 3, F 1, B4, Figure 13) -> rien
+#   bruit_mot_petit_nombre  mot de 3 lettres ou plus + un ou deux chiffres, ou toutes les graphies = mot de 3
+#                         lettres ou plus + nombres d'un ou deux chiffres (LEVEL 2, Level1-Limited, TABLE 1/1,
+#                         STEP 3, Figure 13), sauf préfixe de REF du catalogue (DLV-31)                -> rien
 #   code_segmente         une graphie commence par des majuscules, a un séparateur et 3 chiffres à la suite
 #                         (BAC 5578, NE 40-012, STM-0002396, IAPS 01-02-003, A 320, IN.ME.L269)        -> annoter
 #   code_tete_chiffres    nombre + séparateur + lettres et chiffres mêlés (2024-T3, 15-5PH)             -> annoter
 #   bruit_mot_nombre      séquence mot + nombre jamais écrite collée (protection 999, type 7280)        -> rien
 #   code_colle            aucune graphie n'a de séparateur : déjà un seul mot pour la recherche par mot
 #                         clé (IS0024879M, F7X, LATE4000, 800VU)                                       -> rien
-#   residu                tout le reste : à relire                                                        -> a_classer
+#   residu                tout le reste, annoté par défaut ; à relire pour y trouver du bruit             -> annoter
 #
 # Colonnes : env, cle, famille, action, ref (REF du catalogue qui a donné la famille), prefixe (lettres de tête),
 # signature, a_separateur (une graphie contient - _ / . ou espace), docs (documents du corpus), q_docs (questions),
@@ -74,6 +79,9 @@ UNITES = ["MM", "CM", "DM", "M", "KM", "UM", "ML", "CL", "L", "MG", "G", "KG", "
 SEP = "[-_/. ]"
 # Coupe d'une graphie en morceaux : devant chaque séparateur et entre un chiffre et la lettre qui le suit.
 COUPE = "(?=[-_/. ])|(?<=[0-9])(?=[A-Za-z])"
+# Mois (français, anglais) suivi d'un nombre : une date.
+MOIS = (r"(?i)^(jan|janv|fe[bv]|fevr|mar|mars|apr|avr|may|mai|jun|juin|jul|juil|aug|aou|sep|sept|oct|nov|dec)"
+        r"[a-z]*[ ./-]{0,3}[0-9]")
 # Adresse, chemin ou nom de fichier.
 URL_FICHIER = (r"(?i)(^https?|^www\.|\.(aspx?|local|corp|com|net|org|html?|pdf|docx?|xlsx?|pptx?|png|jpe?g|txt|csv)"
                r"($|[/.?#])|(?-i:/[a-z]{2,}/))")
@@ -210,6 +218,9 @@ def familles(env):
     toutes = lambda motif: F.forall("formes", lambda f: f.rlike(motif))
     une = lambda motif: F.exists("formes", lambda f: f.rlike(motif))
     unites = "|".join(sorted(set(UNITES), key=len, reverse=True))
+    # Lettres de tête des REF du catalogue : un mot qui en fait partie n'est jamais du bruit (DLV-31).
+    prefixes_ref = [r["p"] for r in cat.where("famille = 'ref_catalogue'")
+                    .select(F.regexp_extract("cle", "^([A-Z]+)", 1).alias("p")).where("p <> ''").distinct().collect()]
 
     df = (k.join(cat.select("cle", F.col("famille").alias("fam_cat"), F.col("ref").alias("ref_c")), "cle", "left")
           .join(variante, "cle", "left")
@@ -229,19 +240,23 @@ def familles(env):
                .when(c.rlike("^[0-9]+[A-Z]{3,}"), "bruit_sommaire")
                .when(c.rlike(f"^[0-9]+({unites})$"), "bruit_unite")
                .when(c.rlike("^[0-9]+(X[0-9]+)+$"), "bruit_dimension")
-               .when(toutes("^[0-9]{1,3}[-_/. ]{1,3}[A-Za-z]{1,2}$"), "bruit_puce")
+               .when(c.rlike("^[0-9]{1,3}[A-Z]{1,2}$"), "bruit_puce")
+               .when(une(MOIS), "bruit_date")
                .when(F.col("prefixe").isin(NORME_PREFIXES), "code_norme_piece")
-               .when(c.rlike("^[A-Z]+[0-9]{1,2}$")
-                     | toutes(r"^[A-Za-z]+[-_/. ]{0,3}[0-9]{1,2}([-_/. ]{1,3}[0-9]{1,2})*$"), "bruit_mot_petit_nombre")
+               .when(c.rlike("^[A-Z]{1,2}[0-9]{1,2}$"), "code_court")
+               .when(~F.col("prefixe").isin(prefixes_ref)
+                     & (c.rlike("^[A-Z]{3,}[0-9]{1,2}$")
+                        | toutes(r"^[A-Za-z]{3,}[-_/. ]{0,3}[0-9]{1,2}([-_/. ]{1,3}[0-9]{1,2})*$")),
+                     "bruit_mot_petit_nombre")
                .when(une(r"^[A-Z][A-Z0-9]*([-_/. ]{1,3}[A-Za-z0-9]+)+$") & une("[0-9]{3}") & une(SEP),
                      "code_segmente")
                .when(une("^[0-9]+[-_/. ]([A-Za-z]+[0-9]|[0-9]+[A-Za-z])"), "code_tete_chiffres")
                .when(toutes(r"^[A-Za-z]+ [0-9]"), "bruit_mot_nombre")
                .when(~F.col("a_separateur"), "code_colle")
                .otherwise("residu"))
-    action = (F.when(F.col("famille").startswith("ref_") | F.col("famille").startswith("code_"), "annoter")
+    action = (F.when(F.col("famille").startswith("ref_") | F.col("famille").startswith("code_")
+                     | (F.col("famille") == "residu"), "annoter")
               .when(F.col("famille") == "sigle", "glossaire")
-              .when(F.col("famille") == "residu", "a_classer")
               .otherwise("rien"))
     action = F.when(F.col("famille") == "code_colle", "rien").otherwise(action)
     return (df.withColumn("famille", famille).withColumn("action", action)

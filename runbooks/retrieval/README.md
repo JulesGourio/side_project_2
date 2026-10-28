@@ -62,7 +62,9 @@ Les REF ne sont plus décrites par des formes : la famille vient du **catalogue 
 - [x] Tour 1 (2026-10-28) : résidu 151 k clés / 22 % des documents. Règles ajoutées : mot + petit nombre (`LEVEL 2`, `F 1`), codes à segments (`BAC 5578`, `NE 40-012`, `STM-0002396`), nombre + code (`2024-T3`), puces (`3.P`), URL et fichiers, REF au milieu d'une graphie (`PRO_Q0014NF_EN`, `MI-13991Table`), codes collés (`IS0024879M`, déjà un seul mot). Corrigé : `ref_sans_premier_mot` et la REF sans indice ne donnent plus `VALIDATION`, `EN`, `43`.
   `SF-1027` est cité dans 1 seul document parsé UAT (ce n'est pas une REF du catalogue) : c'est ce document que la question « dans quel document cite-t-on SF-1027 » doit remonter. Cas type à réussir, quel que soit le nombre de documents.
   Règle de sécurité : une famille « bruit » veut dire seulement « pas de clé ajoutée » ; le texte reste indexé comme aujourd'hui, donc un code classé bruit à tort n'est jamais moins bien trouvé qu'aujourd'hui, il n'est juste pas amélioré.
-- [ ] Tour 2 : tu relances les cellules 1 à 6, tu me renvoies 4, 5 et 6.
+- [x] Tour 2 (2026-10-28) : résidu 40 k clés / 2,9 % des documents (matériaux `TA6V`, outillage `tool_…`, libellés `C3-Fill`, dates, `Partie-145.A.90`). Décision : le résidu est **annoté par défaut** (rien ne peut être oublié, au pire une clé inutile). Ajouts : `code_court` (`B1`, `R30`, `D1` : tapés dans le chat, annotés), `bruit_date`, puce sur la clé (`3P`) ; le bruit « mot + petit nombre » exige un mot de 3 lettres ou plus qui n'est pas un préfixe de REF.
+- [ ] Tour 3 : tu relances, tu me renvoies 4, 5 et 6 ; on vérifie que la cellule 6 n'a plus de vrai code en bruit.
+- [ ] Trou connu de l'inventaire, réglé à l'étape 2 : un code écrit avec des espaces autour du séparateur (`MI - 1365`, `SF - 1027`) n'est pas une clé de l'inventaire ; le recollage de l'étape 2 tolère ces espaces et sera testé sur ces cas.
 - [ ] Tours suivants jusqu'à résidu = bruit pur.
   *Validation : résidu relu, plus aucun code voulu dedans, aucune clé du chat en bruit.*
 
