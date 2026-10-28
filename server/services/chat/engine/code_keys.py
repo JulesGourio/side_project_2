@@ -12,7 +12,8 @@ longest run wins. The original text is never changed.
 import re
 from typing import Iterable, Mapping, NamedTuple
 
-# --- code_keys: start (copied as is into runbooks/retrieval/f3_dictionnaire_codes.py, a test checks it) ---
+# The block between the matcher markers is embedded as is in the DEV preview notebook; a test keeps both equal.
+# --- matcher: start ---
 # Bump when the matching or the key changes: stored annotations are recomputed for the new version.
 PP_VERSION = 1
 
@@ -119,4 +120,4 @@ class CodeKeys:
             last = end
         out.append(text[last:])
         return ''.join(out)
-# --- code_keys: end ---
+# --- matcher: end ---

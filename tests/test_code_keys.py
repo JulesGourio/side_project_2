@@ -94,7 +94,7 @@ def test_one_key_per_document() -> None:
 def test_runbook_notebook_has_the_same_code() -> None:
     """The DEV notebook embeds the same matcher as the module."""
     root = Path(__file__).resolve().parent.parent
-    block = re.compile(r'# --- code_keys: start.*?# --- code_keys: end ---', re.S)
+    block = re.compile(r'# --- matcher: start ---.*?# --- matcher: end ---', re.S)
     module = block.search((root / 'server/services/chat/engine/code_keys.py').read_text(encoding='utf-8')).group(0)
     notebook = block.search((root / 'runbooks/retrieval/f3_dictionnaire_codes.py').read_text(encoding='utf-8'))
     assert notebook is not None and notebook.group(0) == module

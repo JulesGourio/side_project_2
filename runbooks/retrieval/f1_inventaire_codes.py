@@ -1,35 +1,55 @@
 # Databricks notebook source
-# Inventaire des acronymes et codes : tokens du corpus parsé, référentiel REF et questions du chat,
-# écrits dans dev_proj.qualibot.f1_inventaire_codes (colonne env).
-# Lecture seule sur <env>_proj.qualibot pour chaque env de ENVS ; seule la table cible est écrite.
-#
-# Principe : l'extraction est large et sans seuil de longueur. Tout bloc de lettres et chiffres relié par
-# - _ / . est un token ; le classement en catégories et la forme du token (colonne structures) servent à trier
-# ensuite, rien n'est écarté à l'extraction sauf les nombres seuls, les mots en minuscules et les mots capitalisés.
-#
-# Sections :
-#   A_reference : une ligne par REF du catalogue.
-#                 occ = citations exactes de la REF, occ_autre_graphie = même REF écrite autrement (espace, tiret,
-#                 casse), occ_prefixe = REF suivie d'un suffixe collé par - _ / . (ex. MI-1413_FR).
-#                 Une REF qui contient un espace est comptée en documents contenant la chaîne exacte (occ).
-#   B_corpus    : une ligne par clé trouvée dans les documents. categorie = code_lettres_chiffres, sequence_espace,
-#                 sigle, casse_mixte ou nombre_compose. occ = occurrences, docs = documents.
-#   C_questions : une ligne par clé tapée dans le chat. occ = occurrences dans les questions, docs = questions,
-#                 occ_corpus = occurrences de la même clé dans le corpus (NULL = absente du corpus),
-#                 formes_corpus = leurs graphies.
-#
-# Colonnes communes :
-#   cle         : token en majuscules, sans séparateur (ST-1027, st1027 et ST 1027 donnent ST1027).
-#   formes      : graphies exactes vues dans la source de la ligne.
-#   structures  : forme des graphies, A = majuscules, a = minuscules, 9 = chiffres, séparateurs conservés
-#                 (ST-1027 donne A-9, Q0375MI donne A9A, eFNC donne aA).
-#   nb_refs     : nombre de REF distinctes du corpus qui contiennent la clé.
-#   refs_source : les 10 REF qui contiennent le plus la clé, avec le nombre de documents, "REF (n)".
-#   urls_source : lien Intraqual de chacune de ces REF.
+# MAGIC %md
+# MAGIC # Code inventory
+# MAGIC
+# MAGIC Lists every code-like token of the parsed documents, of the document catalogue and of the chat questions, with how often and how it is spelled. The output feeds the code pattern analysis; nothing is filtered here except plain numbers and ordinary words.
+# MAGIC
+# MAGIC | | |
+# MAGIC | --- | --- |
+# MAGIC | Reads | `<env>_proj.qualibot.parsing_checkpoint` (one text per document), `<env>_proj.qualibot.doc_catalog`, `<env>_proj.qualibot.chat_turns`, for each environment of `ENVS` |
+# MAGIC | Writes | `dev_proj.qualibot.f1_inventaire_codes`, rows of the environments of `ENVS` replaced |
+# MAGIC | Rights | the user's own (read on DEV and UAT, write on the DEV analysis table) |
 
 # COMMAND ----------
-# Cellule 1 · paramètres et motifs
 
+# MAGIC %md
+# MAGIC ## Extraction regexes
+# MAGIC
+# MAGIC | ID | Regex | Captures | Examples | Not captured |
+# MAGIC | --- | --- | --- | --- | --- |
+# MAGIC | `TOKEN` | `(?<![A-Za-z0-9])[A-Za-z0-9]+(?:[-_/.][A-Za-z0-9]+)*(?![A-Za-z0-9])` | A run of letters and digits, joined to the next run by one `-`, `_`, `/` or `.`; no length bound | `ST-1027`, `MI-1413_FR`, `INAQ/560`, `4.2.1`, `Q0375MI` | the final dot of a sentence |
+# MAGIC | `SEQUENCE` | `(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*(?:[-_/.][A-Za-z0-9]+)*(?: [0-9]+(?:[-_/.][0-9]+)*)+(?![A-Za-z0-9])` | A token starting with a letter, followed by one or more numbers separated by single spaces | `IAQ 20 00 04`, `BAC 5423`, `ISO 9001`, `QTP 01-174`, `mars 2026` | `MI - 1365` (spaces around the dash) |
+# MAGIC
+# MAGIC ## Token categories
+# MAGIC
+# MAGIC | Category | Rule | Examples |
+# MAGIC | --- | --- | --- |
+# MAGIC | `code_lettres_chiffres` | letters and digits | `ST-1027`, `Q0375MI`, `A320` |
+# MAGIC | `nombre_compose` | digits and separators only | `4.2.1`, `05-02-011` |
+# MAGIC | `sigle` | at least 2 letters, all upper case, no digit | `DOA`, `E.A.S.A` |
+# MAGIC | `casse_mixte` | at least one lower-case and two upper-case letters, no digit | `eFNC`, `PIRs` |
+# MAGIC | `sequence_espace` | matched by `SEQUENCE` | `IAQ 04 04 05` |
+# MAGIC | discarded | plain numbers, lower-case words, capitalised words, single capitals | `1027`, `rapport`, `Annexe`, `A` |
+# MAGIC
+# MAGIC ## Output columns
+# MAGIC
+# MAGIC | Column | Content |
+# MAGIC | --- | --- |
+# MAGIC | `env`, `section` | environment; `A_reference` (one row per catalogue REF), `B_corpus` (one row per key of the documents), `C_questions` (one row per key of the questions) |
+# MAGIC | `categorie`, `cle` | token category; key = upper case, separators removed (`ST-1027`, `st1027` and `ST 1027` give `ST1027`) |
+# MAGIC | `occ`, `docs` | occurrences; documents (`B`) or questions (`C`); for `A`, exact citations of the REF |
+# MAGIC | `formes`, `structures` | spellings seen; their shape, `A` upper case, `a` lower case, `9` digits (`ST-1027` gives `A-9`) |
+# MAGIC | `occ_autre_graphie`, `formes_autre_graphie` | `A` only: citations of the REF spelled differently (space, dash, case) |
+# MAGIC | `occ_prefixe`, `formes_prefixe` | `A` only: citations of the REF followed by a glued suffix (`MI-1413_FR`) |
+# MAGIC | `occ_corpus`, `formes_corpus` | `C` only: occurrences and spellings of the same key in the documents, null when absent |
+# MAGIC | `nb_refs`, `refs_source`, `urls_source` | number of document REFs containing the key; the 10 main ones as `REF (n)`; their Intraqual links |
+
+# COMMAND ----------
+
+# Parameters
+
+import logging
+import sys
 import time
 from functools import reduce
 
@@ -37,22 +57,15 @@ from pyspark.sql import DataFrame
 from pyspark.sql import Window
 from pyspark.sql import functions as F
 
-ENVS = ["dev", "uat"]   # environnements à inventorier : ["dev", "uat"], ["dev"] ou ["uat"]
+ENVS = ["dev", "uat"]   # ["dev", "uat"], ["dev"] or ["uat"]
 TARGET = "dev_proj.qualibot.f1_inventaire_codes"
-MIN_OCC = 1   # occurrences minimum dans le corpus pour une clé de la section B
-MAX_SPACE_REFS = 2000   # au-delà, les REF contenant un espace ne sont pas comptées
+MIN_OCC = 1   # minimum occurrences in the documents for a key of section B
+MAX_SPACE_REFS = 2000   # above this number, catalogue REFs containing a space are not counted
 INTRAQUAL_BASE = "https://intraqual.lat.corp/intraqual_prod/identification.aspx?ref="
 
-# Token : bloc de lettres et chiffres, relié au suivant par un seul - _ / . (ST-1027, MI-1413_FR, INAQ/560, 4.2.1).
-# Aucune longueur minimale ou maximale. Le séparateur final (point de fin de phrase) n'est pas inclus.
 TOKEN = r"(?<![A-Za-z0-9])[A-Za-z0-9]+(?:[-_/.][A-Za-z0-9]+)*(?![A-Za-z0-9])"
-# Séquence avec espaces : un token commençant par une lettre suivi d'un ou plusieurs nombres séparés par un espace
-# (IAQ 20 00 04, BAC 5423, ISO 9001). Les dates et les mots suivis d'un nombre (mars 2026) en font partie : ils sont
-# triés ensuite avec la colonne structures.
 SEQUENCE = (r"(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*(?:[-_/.][A-Za-z0-9]+)*"
             r"(?: [0-9]+(?:[-_/.][0-9]+)*)+(?![A-Za-z0-9])")
-
-CATEGORIES = ["code_lettres_chiffres", "sequence_espace", "sigle", "casse_mixte", "nombre_compose"]
 
 TYPES = {
     "cle": "string", "ref_catalogue": "string", "occ": "long", "docs": "long",
@@ -63,50 +76,52 @@ TYPES = {
     "nb_refs": "long", "refs_source": "array<string>", "urls_source": "array<string>",
 }
 
+logger = logging.getLogger("code_inventory")
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
+
 # COMMAND ----------
-# Cellule 2 · fonctions (aucune écriture)
+
+# Functions (no write)
 
 
-def with_cle(tok_df):
-    """Ajoute la clé normalisée : majuscules, sans tiret, espace, point, slash ni underscore.
+def with_key(tok_df: DataFrame) -> DataFrame:
+    """Adds the key of each token: upper case, without any character other than letters and digits.
 
-    :param tok_df: DataFrame avec une colonne tok
-    :return: même DataFrame avec la colonne cle
+    :param tok_df: DataFrame with a column tok
+    :return: the same DataFrame with a column cle
     """
     return tok_df.withColumn("cle", F.upper(F.regexp_replace("tok", "[^A-Za-z0-9]", "")))
 
 
-def structure(col):
-    """Forme d'un token : A = majuscules, a = minuscules, 9 = chiffres, séparateurs conservés.
+def shape(col):
+    """Shape of a token: runs of upper-case letters give A, lower-case letters a, digits 9; separators kept.
 
-    :param col: colonne contenant le token
-    :return: colonne de la forme
+    :param col: column holding the token
+    :return: column of the shape
     """
     return F.regexp_replace(F.regexp_replace(F.regexp_replace(col, "[A-Z]+", "A"), "[a-z]+", "a"), "[0-9]+", "9")
 
 
-def tokens(src, pattern):
-    """Une ligne par occurrence du motif dans la colonne txt.
+def tokens(src: DataFrame, pattern: str) -> DataFrame:
+    """One row per match of the pattern in the column txt.
 
-    :param src: DataFrame aux colonnes doc, doc_ref et txt
-    :param pattern: expression régulière (syntaxe Java)
-    :return: DataFrame aux colonnes doc, doc_ref et tok
+    :param src: DataFrame with the columns doc, doc_ref and txt
+    :param pattern: regular expression, Java syntax
+    :return: DataFrame with the columns doc, doc_ref and tok
     """
     pat = pattern.replace("\\", "\\\\")
-    return src.select("doc", "doc_ref",
-                      F.explode(F.expr(f"regexp_extract_all(txt, '{pat}', 0)")).alias("tok"))
+    return src.select("doc", "doc_ref", F.explode(F.expr(f"regexp_extract_all(txt, '{pat}', 0)")).alias("tok"))
 
 
-def classified(src):
-    """Tokens et séquences d'une source, avec leur catégorie et leur structure.
+def classified(src: DataFrame) -> DataFrame:
+    """Tokens and sequences of a source with their category and shape; uncategorised tokens are dropped.
 
-    Catégories : code_lettres_chiffres (lettres et chiffres), nombre_compose (chiffres et séparateurs seulement),
-    sigle (au moins 2 lettres, toutes en majuscules), casse_mixte (au moins une minuscule et 2 majuscules),
-    sequence_espace (token et nombres séparés par des espaces). Les nombres seuls, les mots en minuscules,
-    les mots capitalisés et les majuscules isolées n'ont pas de catégorie et sont écartés.
-
-    :param src: DataFrame aux colonnes doc, doc_ref et txt
-    :return: DataFrame aux colonnes doc, doc_ref, tok, categorie et forme
+    :param src: DataFrame with the columns doc, doc_ref and txt
+    :return: DataFrame with the columns doc, doc_ref, tok, categorie and forme
     """
     t = F.col("tok")
     letters = F.length(F.regexp_replace(t, "[^A-Za-z]", ""))
@@ -121,16 +136,16 @@ def classified(src):
                           .when((letters > 0) & ~has_digit & has_lower & (n_upper >= 2), "casse_mixte"))
               .where(F.col("categorie").isNotNull()))
     seq = tokens(src, SEQUENCE).withColumn("categorie", F.lit("sequence_espace"))
-    return simple.unionByName(seq).withColumn("forme", structure(F.col("tok")))
+    return simple.unionByName(seq).withColumn("forme", shape(F.col("tok")))
 
 
-def keyed(tok_df):
-    """Statistiques par catégorie et clé, avec les REF qui contiennent la clé et leurs liens Intraqual.
+def keyed(tok_df: DataFrame) -> DataFrame:
+    """Statistics per category and key, with the document REFs containing the key and their Intraqual links.
 
-    :param tok_df: DataFrame aux colonnes doc, doc_ref, tok, categorie et forme
-    :return: DataFrame aux colonnes categorie, cle, occ, docs, formes, structures, nb_refs, refs_source, urls_source
+    :param tok_df: DataFrame with the columns doc, doc_ref, tok, categorie and forme
+    :return: DataFrame with the columns categorie, cle, occ, docs, formes, structures, nb_refs, refs_source, urls_source
     """
-    t = with_cle(tok_df)
+    t = with_key(tok_df)
     stats = (t.groupBy("categorie", "cle")
              .agg(F.count("*").alias("occ"), F.countDistinct("doc").alias("docs"),
                   F.array_sort(F.collect_set("tok")).alias("formes"),
@@ -151,14 +166,14 @@ def keyed(tok_df):
     return stats.join(refs, ["categorie", "cle"], "left")
 
 
-def conform(df, env, section, categorie=None):
-    """Ramène un DataFrame aux colonnes de la table ; une colonne absente de la section est nulle.
+def conform(df: DataFrame, env: str, section: str, categorie: str | None = None) -> DataFrame:
+    """Brings a DataFrame to the columns of the table; a column the section does not have is null.
 
-    :param df: DataFrame de la section
-    :param env: environnement source (dev ou uat)
-    :param section: nom de la section (A_reference, B_corpus, C_questions)
-    :param categorie: catégorie fixe de la section, ou None pour utiliser la colonne categorie de df
-    :return: DataFrame aux colonnes de la table
+    :param df: DataFrame of the section
+    :param env: source environment (dev or uat)
+    :param section: section name (A_reference, B_corpus, C_questions)
+    :param categorie: fixed category of the section, or None to keep the column categorie of df
+    :return: DataFrame with the columns of the table
     """
     cols = [F.col(c).cast(t).alias(c) if c in df.columns else F.lit(None).cast(t).alias(c)
             for c, t in TYPES.items()]
@@ -167,11 +182,11 @@ def conform(df, env, section, categorie=None):
                      *cols, F.current_timestamp().alias("date_run"))
 
 
-def src_corpus(env):
-    """Un texte par IDDOC du parsing_checkpoint : la ligne SUCCESS la plus récente, sinon la plus récente.
+def corpus_source(env: str) -> DataFrame:
+    """One text per document of parsing_checkpoint: the latest SUCCESS row, else the latest row.
 
-    :param env: environnement (dev ou uat)
-    :return: DataFrame aux colonnes doc, doc_ref et txt
+    :param env: environment (dev or uat)
+    :return: DataFrame with the columns doc, doc_ref and txt
     """
     df = spark.table(f"{env}_proj.qualibot.parsing_checkpoint").where(F.col("document_text").isNotNull())
     rank = F.when(F.col("parse_status") == "SUCCESS", 0).otherwise(1)
@@ -182,16 +197,16 @@ def src_corpus(env):
                     F.col("document_text").alias("txt")))
 
 
-def src_questions(env):
-    """Questions tapées dans le chat de l'environnement, sans le préfixe de division.
+def question_source(env: str) -> DataFrame:
+    """Questions typed in the chat of the environment, without the division prefix.
 
-    :param env: environnement (dev ou uat)
-    :return: DataFrame aux colonnes doc, doc_ref (nul) et txt ; vide si la table n'est pas lisible
+    :param env: environment (dev or uat)
+    :return: DataFrame with the columns doc, doc_ref (null) and txt; empty when the table cannot be read
     """
     try:
         df = spark.table(f"{env}_proj.qualibot.chat_turns").where(F.col("question").isNotNull())
     except Exception as e:
-        print(f"[{env}] chat_turns illisible : {str(e)[:160]}")
+        logger.warning("[%s] chat_turns not readable: %s", env, str(e)[:160])
         return spark.createDataFrame([], "doc string, doc_ref string, txt string")
     return df.select(
         F.concat(F.lit("turn#"), F.col("id").cast("string")).alias("doc"),
@@ -199,39 +214,39 @@ def src_questions(env):
         F.regexp_replace(F.col("question"), r"\[Division:[^\]]*\]", " ").alias("txt"))
 
 
-def space_ref_counts(corpus, cat):
-    """Documents contenant la chaîne exacte de chaque REF du catalogue qui contient un espace.
+def space_ref_counts(corpus: DataFrame, cat: DataFrame) -> DataFrame:
+    """Documents containing the exact string of each catalogue REF that contains a space.
 
-    :param corpus: DataFrame aux colonnes doc, doc_ref et txt
-    :param cat: DataFrame de la colonne ref du catalogue
-    :return: DataFrame aux colonnes ref et occ_espace
+    :param corpus: DataFrame with the columns doc, doc_ref and txt
+    :param cat: DataFrame of the catalogue column ref
+    :return: DataFrame with the columns ref and occ_espace
     """
     refs = [r["ref"] for r in cat.where(F.col("ref").contains(" ")).collect()]
     if len(refs) > MAX_SPACE_REFS:
-        print(f"{len(refs)} REF avec espace : non comptées (MAX_SPACE_REFS = {MAX_SPACE_REFS})")
+        logger.warning("%d REFs with a space: not counted (MAX_SPACE_REFS = %d)", len(refs), MAX_SPACE_REFS)
         refs = []
     counts = {}
-    print(f"REF contenant un espace : {len(refs)}")
+    logger.info("REFs with a space: %d", len(refs))
     for k in range(0, len(refs), 50):
         t0 = time.time()
         batch = refs[k:k + 50]
         row = corpus.agg(*[F.sum(F.when(F.instr(F.col("txt"), r) > 0, 1).otherwise(0)).alias(f"c{j}")
                            for j, r in enumerate(batch)]).collect()[0]
         counts.update({r: int(row[f"c{j}"] or 0) for j, r in enumerate(batch)})
-        print(f"  REF avec espace {k + len(batch)}/{len(refs)} ({time.time() - t0:.0f} s)")
+        logger.info("  REFs with a space %d/%d (%.0f s)", k + len(batch), len(refs), time.time() - t0)
     return spark.createDataFrame(list(counts.items()), "ref string, occ_espace long")
 
 
-def section_a(env, corpus):
-    """Une ligne par REF du catalogue : citations exactes, autre graphie, suffixe collé.
+def section_a(env: str, corpus: DataFrame) -> DataFrame:
+    """One row per catalogue REF: exact citations, other spellings, glued suffix.
 
-    :param env: environnement (dev ou uat)
-    :param corpus: DataFrame aux colonnes doc, doc_ref et txt
-    :return: DataFrame de la section A, aux colonnes de la table
+    :param env: environment (dev or uat)
+    :param corpus: DataFrame with the columns doc, doc_ref and txt
+    :return: DataFrame of section A with the columns of the table
     """
     cat = spark.table(f"{env}_proj.qualibot.doc_catalog").select("ref").where("ref IS NOT NULL")
     refs_k = cat.withColumn("cle", F.upper(F.regexp_replace("ref", "[^A-Za-z0-9]", "")))
-    # Chaque token portant un chiffre est comparé aux REF en entier et à chacun de ses débuts coupés sur un séparateur
+    # A token with a digit is compared with the REFs whole and cut before each separator, to see glued suffixes.
     parts = F.split("tok", "(?=[-_/.])")
     exp = (tokens(corpus, TOKEN).where(F.col("tok").rlike("[0-9]"))
            .withColumn("parts", parts)
@@ -262,47 +277,45 @@ def section_a(env, corpus):
     return conform(a, env, "A_reference", "reference")
 
 
-def build(env):
-    """Construit les lignes des trois sections pour un environnement.
+def build(env: str) -> DataFrame:
+    """Rows of the three sections for one environment.
 
-    :param env: environnement (dev ou uat)
-    :return: DataFrame aux colonnes de la table
+    :param env: environment (dev or uat)
+    :return: DataFrame with the columns of the table
     """
-    corpus = src_corpus(env).cache()
-    qsrc = src_questions(env).cache()
-    print(f"[{env}] documents parsés : {corpus.count()} · questions du chat : {qsrc.count()}")
+    corpus = corpus_source(env).cache()
+    qsrc = question_source(env).cache()
+    logger.info("[%s] parsed documents: %d, chat questions: %d", env, corpus.count(), qsrc.count())
 
     t0 = time.time()
     corpus_stats = keyed(classified(corpus)).cache()
-    print(f"[{env}] B : {corpus_stats.count()} clés ({time.time() - t0:.0f} s)")
+    logger.info("[%s] section B: %d keys (%.0f s)", env, corpus_stats.count(), time.time() - t0)
     b = corpus_stats.where(F.col("occ") >= MIN_OCC)
 
-    # Les questions sont rapprochées du corpus par la clé seule : la même clé peut y avoir une autre catégorie
-    # (ST 1027 dans une question, ST-1027 dans un document).
-    by_cle = (corpus_stats.groupBy("cle")
+    # Questions join the documents on the key alone: one key can have another category there (ST 1027 / ST-1027).
+    by_key = (corpus_stats.groupBy("cle")
               .agg(F.sum("occ").alias("occ_corpus"),
                    F.array_sort(F.array_distinct(F.flatten(F.collect_list("formes")))).alias("formes_corpus"),
                    F.max_by(F.struct("nb_refs", "refs_source", "urls_source"), "occ").alias("r"))
               .select("cle", "occ_corpus", "formes_corpus", "r.nb_refs", "r.refs_source", "r.urls_source"))
     q = keyed(classified(qsrc)).select("categorie", "cle", "occ", "docs", "formes", "structures")
-    c = q.join(by_cle, "cle", "left")
+    c = q.join(by_key, "cle", "left")
 
     t0 = time.time()
     a = section_a(env, corpus).cache()
-    print(f"[{env}] A : {a.count()} REF ({time.time() - t0:.0f} s)")
+    logger.info("[%s] section A: %d REFs (%.0f s)", env, a.count(), time.time() - t0)
 
-    return reduce(DataFrame.unionByName, [
-        a,
-        conform(b, env, "B_corpus"),
-        conform(c, env, "C_questions"),
-    ])
+    return reduce(DataFrame.unionByName, [a, conform(b, env, "B_corpus"), conform(c, env, "C_questions")])
 
 # COMMAND ----------
-# Cellule 3 · écriture : remplace les lignes des environnements de ENVS dans la table
 
-parts = [build(env) for env in ENVS]
-out = reduce(DataFrame.unionByName, parts)
-# Une table écrite par une version précédente de ce notebook (sans la colonne structures) est recréée.
+# MAGIC %md
+# MAGIC ## Build
+# MAGIC Replaces the rows of the environments of `ENVS`; the rows of the other environment are kept. About 40 minutes for DEV and UAT together.
+
+# COMMAND ----------
+
+out = reduce(DataFrame.unionByName, [build(env) for env in ENVS])
 if spark.catalog.tableExists(TARGET) and "structures" not in spark.table(TARGET).columns:
     spark.sql(f"DROP TABLE {TARGET}")
 if spark.catalog.tableExists(TARGET):
@@ -311,138 +324,14 @@ if spark.catalog.tableExists(TARGET):
     out.write.mode("append").option("mergeSchema", "true").saveAsTable(TARGET)
 else:
     out.write.mode("overwrite").saveAsTable(TARGET)
-print(f"écrit dans {TARGET} : {ENVS}")
+logger.info("written to %s: %s", TARGET, ENVS)
 
 # COMMAND ----------
-# Cellule 4 · contrôle : nombre de lignes par environnement, section et catégorie
 
-for r in (spark.table(TARGET).groupBy("env", "section", "categorie").count()
-          .orderBy("env", "section", "categorie").collect()):
-    print(f"{r['env']}\t{r['section']}\t{r['categorie']}\t{r['count']}")
+# MAGIC %md
+# MAGIC ## Row counts
+# MAGIC Rows per environment, section and category.
 
 # COMMAND ----------
-# Cellule 5 · graphiques à partir de la table (lecture seule)
 
-import matplotlib.pyplot as plt
-import pandas as pd
-from matplotlib.patches import Patch
-
-PALETTE = {"dev": "#1f5aa6", "uat": "#d9822b"}   # bleu et orange : paire distinguable en daltonisme
-INK, MUTED, GRID = "#1f2933", "#6b7280", "#e5e7eb"
-TOP = 20
-STOPLIST = {"OK", "NON", "OUI", "ET", "OU", "DE", "LE", "LA", "LES", "UN", "UNE", "DU", "DES", "EN", "AU", "AUX",
-            "SI", "CE", "QUE", "QUI", "EST", "PAR", "POUR", "SUR", "DANS", "AND", "THE", "FOR", "NOT", "ALL", "ANY",
-            "AT", "BY", "IN", "IS", "OF", "OR", "TO", "NO", "YES", "PDF", "NA", "RAS", "TBD", "ID", "FR"}
-
-inv = spark.table(TARGET).toPandas()
-ENVS_PRESENT = [e for e in ["dev", "uat"] if e in set(inv["env"])]
-
-
-def style(ax, title, xlabel):
-    """Met un axe en style sobre : titre à gauche, grille horizontale légère, sans cadre.
-
-    :param ax: axe matplotlib
-    :param title: titre du graphique
-    :param xlabel: libellé de l'axe horizontal
-    :return: None
-    """
-    ax.set_title(title, loc="left", fontsize=13, fontweight="bold", color=INK, pad=12)
-    ax.set_xlabel(xlabel, color=MUTED, fontsize=10)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(GRID)
-    ax.xaxis.grid(True, color=GRID, linewidth=0.8)
-    ax.set_axisbelow(True)
-    ax.tick_params(colors=INK, length=0, labelsize=9)
-
-
-def top_rows(section, categorie, env, value="occ"):
-    """Les TOP lignes d'une section, catégorie et environnement, triées par valeur décroissante.
-
-    :param section: nom de la section
-    :param categorie: nom de la catégorie
-    :param env: environnement (dev ou uat)
-    :param value: colonne de tri
-    :return: DataFrame des lignes retenues, plus grande valeur en premier
-    """
-    rows = inv[(inv.section == section) & (inv.categorie == categorie) & (inv.env == env)]
-    return rows.sort_values(value, ascending=False).head(TOP)
-
-
-def panels(n_env):
-    """Crée une figure avec un panneau par environnement.
-
-    :param n_env: nombre d'environnements à afficher
-    :return: figure et liste d'axes
-    """
-    fig, axes = plt.subplots(1, n_env, figsize=(7 * n_env, 7), squeeze=False)
-    return fig, list(axes[0])
-
-
-# Vue d'ensemble : lignes par section et environnement
-counts = inv.groupby(["section", "env"]).size().unstack("env").reindex(columns=ENVS_PRESENT).fillna(0)
-fig, ax = plt.subplots(figsize=(10, 4.5))
-x = range(len(counts.index))
-width = 0.38
-for i, env in enumerate(ENVS_PRESENT):
-    offset = (i - (len(ENVS_PRESENT) - 1) / 2) * width
-    ax.bar([p + offset for p in x], counts[env], width=width * 0.92, color=PALETTE[env], label=env.upper())
-    for p, v in zip(x, counts[env]):
-        ax.text(p + offset, v, f"{int(v):,}", ha="center", va="bottom", fontsize=8, color=MUTED)
-ax.set_xticks(list(x))
-ax.set_xticklabels(counts.index, color=INK)
-style(ax, "Lignes de l'inventaire par section", "")
-ax.xaxis.grid(False)
-ax.yaxis.grid(True, color=GRID, linewidth=0.8)
-ax.set_ylabel("lignes", color=MUTED, fontsize=10)
-ax.legend(frameon=False, fontsize=9)
-fig.tight_layout()
-plt.show()
-
-# Section A : REF du catalogue, citations exactes, autre graphie et suffixe collé
-fig, axes = panels(len(ENVS_PRESENT))
-for ax, env in zip(axes, ENVS_PRESENT):
-    rows = inv[(inv.section == "A_reference") & (inv.env == env)].copy()
-    rows["hors_exact"] = rows.occ_autre_graphie.fillna(0) + rows.occ_prefixe.fillna(0)
-    d = rows.sort_values("hors_exact", ascending=False).head(TOP).iloc[::-1]
-    ax.barh(d.cle, d.occ, color=PALETTE[env], height=0.7, edgecolor="white", linewidth=0.5)
-    ax.barh(d.cle, d.occ_autre_graphie, left=d.occ, color=PALETTE[env], alpha=0.5, height=0.7,
-            edgecolor="white", linewidth=0.5)
-    ax.barh(d.cle, d.occ_prefixe, left=d.occ + d.occ_autre_graphie, color=PALETTE[env], alpha=0.25,
-            height=0.7, edgecolor="white", linewidth=0.5)
-    ax.legend(handles=[Patch(color=PALETTE[env], label="citation exacte"),
-                       Patch(color=PALETTE[env], alpha=0.5, label="autre graphie"),
-                       Patch(color=PALETTE[env], alpha=0.25, label="suffixe collé (_FR…)")],
-              frameon=False, fontsize=9, loc="lower right")
-    style(ax, f"{env.upper()} · REF citées autrement que sous leur forme exacte", "nombre de citations")
-fig.tight_layout()
-plt.show()
-
-# Section B : candidats du corpus, par catégorie
-for categorie in ["code_lettres_chiffres", "sequence_espace", "sigle", "casse_mixte", "nombre_compose"]:
-    fig, axes = panels(len(ENVS_PRESENT))
-    for ax, env in zip(axes, ENVS_PRESENT):
-        d = top_rows("B_corpus", categorie, env)
-        if categorie == "sigle":
-            d = d[~d.cle.isin(STOPLIST)]
-        d = d.iloc[::-1]
-        ax.barh(d.cle, d.occ, color=PALETTE[env], height=0.7, edgecolor="white", linewidth=0.5)
-        for y, v in enumerate(d.occ):
-            ax.text(v, y, f" {int(v):,}", va="center", fontsize=8, color=MUTED)
-        style(ax, f"{env.upper()} · {categorie}", "occurrences dans le corpus")
-    fig.tight_layout()
-    plt.show()
-
-# Section C : codes tapés dans le chat, en gris quand ils sont absents du corpus
-fig, axes = panels(len(ENVS_PRESENT))
-for ax, env in zip(axes, ENVS_PRESENT):
-    rows = inv[(inv.section == "C_questions") & (inv.env == env)]
-    d = rows.sort_values("occ", ascending=False).head(TOP).iloc[::-1]
-    colors = [PALETTE[env] if pd.notna(v) else MUTED for v in d.occ_corpus]
-    ax.barh(d.cle, d.occ, color=colors, height=0.7, edgecolor="white", linewidth=0.5)
-    ax.legend(handles=[Patch(color=PALETTE[env], label="présent dans le corpus"),
-                       Patch(color=MUTED, label="absent du corpus")],
-              frameon=False, fontsize=9, loc="lower right")
-    style(ax, f"{env.upper()} · codes tapés dans le chat", "questions")
-fig.tight_layout()
-plt.show()
+display(spark.table(TARGET).groupBy("env", "section", "categorie").count().orderBy("env", "section", "categorie"))

@@ -1,52 +1,64 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Dictionnaire des codes et annotation
+# MAGIC # Canonical token preview
 # MAGIC
-# MAGIC **Deux étages, jamais une grosse regex de codes.**
+# MAGIC Applies the dictionary of match keys to the DEV passages and to the UAT chat questions, and shows the text before and after. Nothing is written: the passages and the index stay as they are.
 # MAGIC
-# MAGIC 1. **Hors ligne, des règles ciblées** (notebook `f2_familles_codes`) : 23 petites règles, une par famille, rangent chaque clé de l'inventaire en *code à annoter* ou *bruit*. Elles ne servent qu'à décider **quelles clés entrent dans le dictionnaire**.
-# MAGIC 2. **À la volée, un seul mécanisme générique** (`code_keys.py`, copié en cellule 2) : le texte est coupé en morceaux (lettres seules ou chiffres seuls), les morceaux voisins sont recollés, et une suite n'est gardée que si sa clé est **dans le dictionnaire**. La plus longue gagne. La clé est ajoutée après le mot (`SF-1027 [SF1027]`), le texte n'est jamais modifié. Même traitement pour les passages et pour la question.
+# MAGIC | | |
+# MAGIC | --- | --- |
+# MAGIC | Reads | `dev_proj.qualibot.f3_cles_codes` (dictionary, written by the code patterns notebook), `dev_proj.qualibot.chunks`, `uat_proj.qualibot.chat_turns` |
+# MAGIC | Writes | nothing |
+# MAGIC | Rights | the user's own |
 # MAGIC
-# MAGIC | Traitement | Où | Regex | Rôle |
-# MAGIC |---|---|---|---|
-# MAGIC | Découpe en morceaux | `code_keys.py` | `[A-Za-z]+\|[0-9]+` | `Q0375MI` donne `Q`, `0375`, `MI` |
-# MAGIC | Écart permis entre morceaux | `code_keys.py` | rien, ou 0 à 3 espaces autour de 1 ou 2 séparateurs (`-` tirets unicode `_` `/` `.`), ou 1 à 3 espaces | `MI - 1365`, `IAQ 04 04 05`, `19 --058`, `TDA8 - 00/027` |
-# MAGIC | Début et fin d'un code | `code_keys.py` | début de mot ; fin de mot, ou entre un chiffre et une lettre collés | `MI-13991` dans `MI-13991Table` ; rien dans `XSF-1027` |
-# MAGIC | Choix | `code_keys.py` | aucune : recherche dans le dictionnaire, la plus longue gagne | `QIS-46A-352 A` plutôt que `QIS-46A-352` |
-# MAGIC | Contenu du dictionnaire | ce notebook, cellule 3 | familles `annoter` de `f2_familles_codes` + REF du catalogue (DEV et UAT) | REF, normes, pièces, codes courts, résidu |
+# MAGIC ## Matching rules
 # MAGIC
-# MAGIC Écritures : `dev_proj.qualibot.f3_cles_codes` (le dictionnaire) seulement. Lectures : `f2_familles_codes`, `doc_catalog` DEV et UAT, `dev_proj.qualibot.chunks`, `uat_proj.qualibot.chat_turns`. Tes droits suffisent.
+# MAGIC Codes are found in the text by one generic matcher and a dictionary lookup: no code regex is applied to the text. The code patterns only decide which keys enter the dictionary.
+# MAGIC
+# MAGIC | ID | Rule | Regex or condition | Example |
+# MAGIC | --- | --- | --- | --- |
+# MAGIC | `MTC-01` | Split into pieces | `[A-Za-z]+\|[0-9]+` | `Q0375MI` → `Q`, `0375`, `MI` |
+# MAGIC | `MTC-02` | Gap allowed between two pieces | nothing; or up to 3 spaces, one or two separators (`-`, unicode dashes, `_`, `/`, `.`), up to 3 spaces; or 1 to 3 spaces | `MI - 1365`, `IAQ 04 04 05`, `19 --058`, `TDA8 - 00/027` |
+# MAGIC | `MTC-03` | Start | at the start of a word | nothing in `XSF-1027` |
+# MAGIC | `MTC-04` | End | at the end of a word, or between a digit and a glued letter | `MI-13991` in `MI-13991Table` |
+# MAGIC | `MTC-05` | Choice | the longest run of at most 12 pieces whose glued key is in the dictionary | `QIS-46A-352 A` rather than `QIS-46A-352` |
+# MAGIC | `MTC-06` | One token per document | every match key maps to one canonical token | `IT-243` and `LdB IT-243` → `LDBIT243`; `Q0697MI_FR` → `Q0697MI` |
+# MAGIC | `MTC-07` | Output | token appended after the word, in brackets; nothing added when the word already is the token; a second pass adds nothing | `SF-1027` → `SF-1027 [SF1027]`; `SF1027` unchanged |
 
 # COMMAND ----------
 
-# Cellule 1 · paramètres
+# Parameters
+
+import logging
+import sys
 
 import pandas as pd
 from pyspark.sql import Window
 from pyspark.sql import functions as F
 
-FAMILLES = "dev_proj.qualibot.f2_familles_codes"
-CATALOGUES = ["dev_proj.qualibot.doc_catalog", "uat_proj.qualibot.doc_catalog"]
-CHUNKS = "dev_proj.qualibot.chunks"
+DICTIONARY = "dev_proj.qualibot.f3_cles_codes"
+PASSAGES = "dev_proj.qualibot.chunks"
 QUESTIONS = "uat_proj.qualibot.chat_turns"
-TARGET = "dev_proj.qualibot.f3_cles_codes"
-EXEMPLES = 5   # exemples avant / après par famille
-LANGUES = ["FR", "EN", "GB", "MX", "BG", "CZ", "BR", "ES"]   # suffixes retirés des REF, comme doc_catalog.canon_ref
+EXAMPLES = 5   # before / after examples per pattern
+
+logger = logging.getLogger("canonical_token_preview")
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Le mécanisme
-# MAGIC Copie exacte de `server/services/chat/engine/code_keys.py` (un test du dépôt vérifie que les deux sont identiques).
+# MAGIC ## Matcher
+# MAGIC The rules `MTC-01` to `MTC-07` in code. `find` returns the codes of a text with their token, `annotate` returns the text with the tokens appended.
 
 # COMMAND ----------
-
-# Cellule 2 · mécanisme d'annotation (copie de code_keys.py)
 
 import re
 from typing import Iterable, Mapping, NamedTuple
 
-# --- code_keys: start (copied as is into runbooks/retrieval/f3_dictionnaire_codes.py, a test checks it) ---
+# --- matcher: start ---
 # Bump when the matching or the key changes: stored annotations are recomputed for the new version.
 PP_VERSION = 1
 
@@ -153,135 +165,80 @@ class CodeKeys:
             last = end
         out.append(text[last:])
         return ''.join(out)
-# --- code_keys: end ---
+# --- matcher: end ---
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Le dictionnaire
-# MAGIC Une ligne par graphie reconnue (`cle`) avec la clé écrite pour elle (`cle_ecrite`), sa famille et la REF qui l'a donnée. Toutes les graphies d'une même REF donnent la même clé, sans suffixe de langue : `IT-243` et `LdB IT-243` donnent `LDBIT243`, `IF2.03.08_CZ` donne `IF20308`. Les REF du catalogue y sont toujours.
+# MAGIC ## Passages
+# MAGIC Every DEV passage goes through the matcher. First table: passages changed, distinct match keys and tokens appended, per pattern. A passage counts once per pattern it holds.
 
 # COMMAND ----------
 
-# Cellule 3 · dictionnaire : écrit dev_proj.qualibot.f3_cles_codes
+dictionary = spark.table(DICTIONARY)
+keys_b = spark.sparkContext.broadcast({r["match_key"]: r["canonical_token"]
+                                       for r in dictionary.select("match_key", "canonical_token").collect()})
+pattern_of = (dictionary.groupBy(F.col("canonical_token").alias("token"))
+              .agg(F.min("pattern_id").alias("pattern_id")))
+logger.info("dictionary: %d match keys", len(keys_b.value))
+
+SCHEMA = "id string, token string, written string, before string, after string"
 
 
-def cle(col):
-    """Clé collée : majuscules, lettres et chiffres seulement.
+def annotated(batches: Iterable[pd.DataFrame]) -> Iterable[pd.DataFrame]:
+    """Codes found in each text, with an extract before and after the token is appended.
 
-    :param col: colonne texte
-    :return: colonne de la clé
-    """
-    return F.upper(F.regexp_replace(col, "[^A-Za-z0-9]", ""))
-
-
-def sans_langue(col):
-    """Clé d'une REF sans son suffixe de langue (MI-1413_FR donne MI1413).
-
-    :param col: colonne de la REF
-    :return: colonne de la clé
-    """
-    return cle(F.regexp_replace(F.trim(col), f"(?i)[-_. ]+({'|'.join(LANGUES)})$", ""))
-
-
-# Une graphie reconnue (cle) donne une clé écrite (cle_ecrite) : toutes les graphies d'une même REF donnent la même,
-# sans suffixe de langue (IT243 et LDBIT243 donnent LDBIT243, IF20308CZ donne IF20308). prio 1 = catalogue.
-lignes = None
-for t in CATALOGUES:
-    r = spark.table(t).select("ref").where("ref IS NOT NULL")
-    r = (r.select(cle("ref").alias("cle"), "ref").unionByName(r.select(sans_langue("ref").alias("cle"), "ref"))
-         .select("cle", sans_langue("ref").alias("cle_ecrite"), F.lit("ref_catalogue").alias("famille"), "ref",
-                 F.lit(0).cast("long").alias("docs"), F.lit(0).cast("long").alias("q_docs"), F.lit(1).alias("prio")))
-    lignes = r if lignes is None else lignes.unionByName(r)
-f = spark.table(FAMILLES).where("action = 'annoter'")
-par_ref = F.col("famille").isin("ref_catalogue", "ref_sans_premier_mot", "ref_sans_indice", "ref_variante")
-fam = f.select(F.coalesce("cle_base", "cle").alias("cle"),
-               F.when(par_ref & F.col("ref").isNotNull(), sans_langue("ref"))
-               .otherwise(F.coalesce("cle_base", "cle")).alias("cle_ecrite"),
-               "famille", "ref", "docs", "q_docs", F.lit(2).alias("prio"))
-w = Window.partitionBy("cle").orderBy("prio", F.desc("docs"), "famille")
-dico = (lignes.unionByName(fam).where(F.length("cle") > 0)
-        .withColumn("_rn", F.row_number().over(w)).where("_rn = 1").drop("_rn", "prio")
-        .withColumn("date_run", F.current_timestamp()))
-dico.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(TARGET)
-dico = spark.table(TARGET)
-display(dico.groupBy("famille").agg(F.count("*").alias("cles"), F.sum("docs").alias("docs_cumules"))
-        .orderBy(F.desc("cles")))
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Application aux passages DEV
-# MAGIC Chaque passage de `chunks` passe par le mécanisme. Une ligne par code annoté : la clé, comment il est écrit, et l'extrait avant / après. Rien n'est écrit.
-
-# COMMAND ----------
-
-# Cellule 4 · annotation des passages (lecture seule)
-
-keys_b = spark.sparkContext.broadcast({r["cle"]: r["cle_ecrite"] for r in dico.select("cle", "cle_ecrite").collect()})
-famille_de = dico.groupBy(F.col("cle_ecrite").alias("cle")).agg(F.min("famille").alias("famille"))
-SCHEMA = "id string, cle string, ecrit string, avant string, apres string"
-
-
-def annoter(batches):
-    """Codes annotés de chaque texte, avec l'extrait avant et après annotation.
-
-    :param batches: lots pandas aux colonnes id et txt
-    :return: lots pandas aux colonnes de SCHEMA
+    :param batches: pandas batches with the columns id and txt
+    :return: pandas batches with the columns of SCHEMA, one row per code that gets a token
     """
     ck = CodeKeys(keys_b.value)
     for pdf in batches:
         rows = []
         for i, txt in zip(pdf["id"], pdf["txt"]):
             txt = txt or ""
-            annote = ck.annotate(txt)
-            if annote == txt:
-                continue
             for m in ck.find(txt):
-                avant = txt[max(0, m.start - 60):m.end + 40]
-                apres = ck.annotate(avant)
-                if apres != avant:
-                    rows.append((i, m.key, txt[m.start:m.end], avant, apres))
-        yield pd.DataFrame(rows, columns=["id", "cle", "ecrit", "avant", "apres"])
+                before = txt[max(0, m.start - 60):m.end + 40]
+                after = ck.annotate(before)
+                if after != before:
+                    rows.append((i, m.key, txt[m.start:m.end], before, after))
+        yield pd.DataFrame(rows, columns=["id", "token", "written", "before", "after"])
 
 
-chunks = spark.table(CHUNKS).select(F.col("chunk_id").cast("string").alias("id"), F.col("chunk_text").alias("txt"))
-hits = chunks.mapInPandas(annoter, SCHEMA).join(famille_de, "cle", "left").cache()
-total = chunks.count()
-touches = hits.select("id").distinct().count()
-print(f"passages DEV : {total} · annotés : {touches} ({100 * touches / max(total, 1):.1f} %)")
-display(hits.groupBy("famille").agg(F.countDistinct("id").alias("passages"), F.countDistinct("cle").alias("cles"),
-                                    F.count("*").alias("annotations"))
+passages = spark.table(PASSAGES).select(F.col("chunk_id").cast("string").alias("id"), F.col("chunk_text").alias("txt"))
+hits = passages.mapInPandas(annotated, SCHEMA).join(pattern_of, "token", "left").cache()
+total = passages.count()
+changed = hits.select("id").distinct().count()
+logger.info("DEV passages: %d, changed: %d (%.1f %%)", total, changed, 100 * changed / max(total, 1))
+display(hits.groupBy("pattern_id")
+        .agg(F.countDistinct("id").alias("passages"), F.countDistinct("token").alias("tokens"),
+             F.count("*").alias("appended"))
         .orderBy(F.desc("passages")))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Exemples avant / après
-# MAGIC Cinq exemples par famille (`EXEMPLES`), les clés les plus citées d'abord.
+# MAGIC ## Before and after, per pattern
+# MAGIC The most frequent tokens of each pattern, with one extract of a passage before and after.
 
 # COMMAND ----------
 
-# Cellule 5 · exemples avant / après par famille
-
-par_cle = hits.groupBy("famille", "cle").agg(F.count("*").alias("n"), F.first("ecrit").alias("ecrit"),
-                                              F.first("avant").alias("avant"), F.first("apres").alias("apres"))
-w = Window.partitionBy("famille").orderBy(F.desc("n"))
-display(par_cle.withColumn("rang", F.row_number().over(w)).where(F.col("rang") <= EXEMPLES)
-        .orderBy("famille", "rang").select("famille", "cle", "ecrit", "n", "avant", "apres"))
+per_token = hits.groupBy("pattern_id", "token").agg(F.count("*").alias("n"), F.first("written").alias("written"),
+                                                     F.first("before").alias("before"),
+                                                     F.first("after").alias("after"))
+w = Window.partitionBy("pattern_id").orderBy(F.desc("n"))
+display(per_token.withColumn("rank", F.row_number().over(w)).where(F.col("rank") <= EXAMPLES)
+        .orderBy("pattern_id", "rank").select("pattern_id", "token", "written", "n", "before", "after"))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Questions du chat UAT
-# MAGIC Toutes les questions où une clé est ajoutée, avant / après : c'est ce que recevra la recherche par mot clé. Rien n'est écrit.
+# MAGIC ## Chat questions
+# MAGIC Every UAT chat question that gets a token, before and after. A question must carry the same token as the passages that cite its code.
 
 # COMMAND ----------
-
-# Cellule 6 · annotation des questions du chat UAT (lecture seule)
 
 questions = (spark.table(QUESTIONS).where(F.col("question").isNotNull())
              .select(F.col("id").cast("string").alias("id"),
                      F.regexp_replace("question", r"\[Division:[^\]]*\]", " ").alias("txt")))
-q_hits = questions.mapInPandas(annoter, SCHEMA).join(famille_de, "cle", "left")
-display(q_hits.select("famille", "cle", "ecrit", "apres").orderBy("famille", "cle"))
+q_hits = questions.mapInPandas(annotated, SCHEMA).join(pattern_of, "token", "left")
+display(q_hits.select("pattern_id", "token", "written", "after").orderBy("pattern_id", "token"))
