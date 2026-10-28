@@ -287,8 +287,7 @@ targets:
       reference_read_env: "prod"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
       # Real tables, no suffix. One index serves the chat (division filter) and impact search.
-      # chunks_index embeds chunk_text, chunks_preprocessed_index embeds chunk_preprocessed: same chunks, compared side by side.
-      parsing_vector_search_indexes: "dev_proj.qualibot.chunks_index,dev_proj.qualibot.chunks_preprocessed_index"
+      parsing_vector_search_indexes: "dev_proj.qualibot.chunks_index"
       # PAUSED on purpose — unpause only on explicit decision.
       parsing_schedule_pause: "PAUSED"
       alerts_pause_status: "UNPAUSED"

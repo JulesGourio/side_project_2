@@ -275,10 +275,8 @@ variables with the defaults listed at the top of `config.py`.
   list syncs nothing.
 - Only `chunks_index` and `chunks_full_index` are created by this task, on the endpoint named by the widget
   `vector_search_endpoint` (default `qualibot`), with the embedding model of the widget `embedding_model`, on
-  `chunk_preprocessed`, primary key `chunk_id`, pipeline type `TRIGGERED`. Any other index in the list is synced only.
-- An index that embeds another column (created before `chunk_preprocessed`) is synced as it is, with a warning. To
-  move it: run the job with `run_mode=rechunk` (every passage gets `chunk_preprocessed`), delete the index, and the
-  next run of this task creates it on `chunk_preprocessed`.
+  `chunk_text`, primary key `chunk_id`, pipeline type `TRIGGERED`. Any other index in the list is synced only.
+- A test index on `chunk_preprocessed` (same `chunks` table) is created and synced by `utils/vector_search/create_test_index.py`, outside the job.
 - The task triggers each sync, then waits for it, up to `wait_minutes` (45). A failed or offline index raises an error.
   A sync still running at the end of the wait is reported, not failed.
 - `chunks_full` holds `chunks` and `chunks_archive` (every document whatever its date, for the impact search). It
