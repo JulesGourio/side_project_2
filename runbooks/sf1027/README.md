@@ -1,3 +1,42 @@
+# SF-1027 — étude approfondie (DEV), avant toute modification de l'app
+
+Notebook : [`etude_dev.py`](./etude_dev.py). Import dans un notebook DEV, « Run all », ~5 min. Lecture seule, **tes droits suffisent** (pas le SP). Rien n'est modifié, ni l'app ni les index. Colle-moi toute la sortie.
+
+**Déjà établi par ta sortie de `investigate_dev.py`** :
+1. Les deux index sont sains et donnent **exactement les mêmes rangs en FULL_TEXT**. Explication (doc Databricks) : le côté mots-clés couvre *toutes* les colonnes texte de l'index, donc `chunk_preprocessed` (avec `[SF1027]`) est cherché aussi par `chunks_text_index`. Le choix de la colonne n'agit que sur les embeddings.
+2. Les embeddings (ANN) ne trouvent **jamais** le chunk, quelle que soit la requête : pour un code, tout repose sur les mots-clés.
+3. La question française échoue **même en FULL_TEXT** (> 50), alors que `SF1027` seul est rang 1. Hypothèse : les mots de la question comptent comme des mots-clés et des chunks qui les contiennent passent devant.
+4. Point à trancher : l'app DEV a `CHAT_TRANSLATE_ONLY=on`. Pour un premier message, elle cherche la question **et sa traduction anglaise** (16 passages chacune). Or `Which documents cite SF-1027?` sort en rang 1 avec le reranker. Donc soit la vraie traduction était différente, soit le chunk a été retrouvé mais pas utilisé par la réponse. La cellule A le dit à partir du journal `chat_turns`.
+
+**Ce que mesure chaque cellule** :
+
+| Cellule | Question | Lecture |
+| --- | --- | --- |
+| A | Qu'a fait l'app pour tes questions SF-1027 ? | requêtes envoyées, et si le chunk a été retrouvé, envoyé au modèle, cité. Retrouvé mais pas cité : c'est la réponse, pas la recherche |
+| B | Où est le code dans le chunk ? | le reranker ne lit que les 2000 premiers caractères |
+| C | Comment les mots-clés sont découpés | `the` ≈ 0 et `les` élevé : analyseur anglais, les mots français comptent ; `SF-1027` ≈ `SF` + `1027` : le tiret coupe le code |
+| D | Rang exact du chunk (jusqu'à 1000) | et l'écart de score avec le 1er et le 16e |
+| E | Quel mot de la question enfonce le code | rang de `SF1027` + chaque mot, puis question moins chaque mot |
+| F | Qui prend la place du chunk | les 10 premiers résultats et les mots de la question qu'ils contiennent |
+| G | Le reranker voit-il plus que `num_results` ? | rangs à k = 12, 16, 50 |
+| H | **Options chiffrées** sur 25 codes rares × 3 formes de question | voir ci-dessous |
+| I | Effet de bord sur des questions sans code | 1.00 = mêmes passages qu'aujourd'hui |
+
+**Options testées en H** (simulées dans le notebook, l'app n'est pas touchée) :
+
+| | Option | Change le comportement pour |
+| --- | --- | --- |
+| A | l'app DEV aujourd'hui (référence) | — |
+| B | retirer les mots grammaticaux FR/EN des requêtes | **toutes** les questions (mesuré en I) |
+| C | + 1 requête « codes seuls » avec reranker, fusionnée par rang (pas forcée en tête) | questions avec code seulement |
+| D | idem C en FULL_TEXT (sans embeddings) | questions avec code seulement |
+| E | code canonique répété 3 fois dans la requête | questions avec code seulement |
+| F | embedding de la question entière + mots-clés = codes seuls | questions avec code seulement (si l'API l'accepte) |
+
+Le tableau final donne pour chaque option : cas trouvés, cas en top 5, position médiane, passages envoyés au modèle (coût en tokens), appels Vector Search. On choisira ensemble à partir de ces chiffres.
+
+---
+
 # SF-1027 introuvable dans le chat (UAT) — diagnostic en lecture seule
 
 Rien n'est modifié : ni `chunks`, ni `chunks_index`, ni l'app. Tes droits suffisent (pas le runner SP).
