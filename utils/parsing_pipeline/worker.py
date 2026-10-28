@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 import pandas as pd
 
 import chunking  # shipped with addPyFile, like this module
+import code_normalization  # shipped with addPyFile, like this module
 
 from pyspark.sql import Column
 from pyspark.sql import functions as f
@@ -363,6 +364,34 @@ def language_udf(text_series: pd.Series, ref_series: pd.Series) -> pd.Series:
     return pd.Series(
         [
             chunking.detect_language(str(t or ""), str(r or ""))
+            for t, r in zip(text_series, ref_series)
+        ]
+    )
+
+
+@pandas_udf(T.StringType())
+def preprocessed_text_udf(text_series: pd.Series) -> pd.Series:
+    """The text the indexes search (``chunk_preprocessed``): ``chunk_text`` with the canonical form of each reference
+    code appended (``code_normalization.normalize_codes``: ``SF-1027`` -> ``SF-1027 [SF1027]``).
+
+    :param text_series: Column of chunk texts, one per row.
+    :return: preprocessed text per row, null when the text is null.
+    """
+    return text_series.apply(lambda x: code_normalization.normalize_codes(str(x)) if pd.notna(x) else None)
+
+
+@pandas_udf(T.StringType())
+def cited_codes_udf(text_series: pd.Series, ref_series: pd.Series) -> pd.Series:
+    """The reference codes a passage cites (``cited_codes``): canonical forms separated by spaces, its own document
+    left out (``code_normalization.cited_codes``); an empty string when it cites none.
+
+    :param text_series: Column of chunk texts.
+    :param ref_series: Column of the REF of each chunk's document.
+    :return: the codes per row.
+    """
+    return pd.Series(
+        [
+            " ".join(code_normalization.cited_codes(str(t) if pd.notna(t) else "", str(r) if pd.notna(r) else ""))
             for t, r in zip(text_series, ref_series)
         ]
     )

@@ -755,6 +755,46 @@ def test_one_language_variant_is_kept_per_document():
     assert [r['REF'] for r in kept] == ['QP-1518_FR', 'MR-1465', 'QP-1518_FR']
 
 
+def _dated(cid, ref, date, body='FAI'):
+    return _row(cid, ref, f'[Source: {ref} | Title: FAI | Division: AS | Category: P | Date de diffusion: {date}]\n\n{body}')
+
+
+def test_the_language_variant_that_cites_a_code_of_the_question_is_kept():
+    # The Bulgarian variant is an older revision that does not cite SF-1027 yet, and it ranks first.
+    rows = [_dated('b1', 'Q0102QP_BG', '2025-09-16'), _dated('g1', 'Q0102QP_GB', '2025-01-01', 'awareness: SF-1027.'),
+            _dated('g2', 'Q0102QP_GB', '2025-01-01')]
+    kept = engine.retrieval.one_language_per_document(rows, ['SF1027'])
+    assert [r['chunk_id'] for r in kept] == ['g1', 'g2']
+
+
+def test_the_most_recent_language_variant_is_kept():
+    rows = [_dated('b1', 'Q0102QP_BG', '2025-09-16'), _dated('g1', 'Q0102QP_GB', '2025-11-14')]
+    assert [r['chunk_id'] for r in engine.retrieval.one_language_per_document(rows)] == ['g1']
+
+
+def test_the_variant_in_the_question_language_breaks_a_date_tie():
+    rows = [_dated('b1', 'QP-1518_BG', '2025-09-16'), _dated('f1', 'QP-1518_FR', '2025-09-16')]
+    assert [r['chunk_id'] for r in engine.retrieval.one_language_per_document(rows, language='fr')] == ['f1']
+    assert [r['chunk_id'] for r in engine.retrieval.one_language_per_document(rows)] == ['b1']
+
+
+def test_a_variant_without_date_falls_back_on_the_catalog(monkeypatch):
+    dates = {'QP-1518_FR': '2024-01-01', 'QP-1518_GB': '2026-01-01'}
+    monkeypatch.setattr(engine.retrieval, 'document_info', lambda ref: {'doc_date': dates[ref]})
+    rows = [_row('f1', 'QP-1518_FR'), _row('g1', 'QP-1518_GB')]
+    assert [r['chunk_id'] for r in engine.retrieval.one_language_per_document(rows)] == ['g1']
+
+
+def test_the_question_codes_choose_the_variant_sent_to_the_model(monkeypatch):
+    question = 'Dans quel document SF-1027 est cité ?'
+    rows = [_dated('b1', 'Q0102QP_BG', '2025-09-16'), _dated('g1', 'Q0102QP_GB', '2025-09-16', 'awareness: SF-1027.')]
+    _, m = _run(monkeypatch, messages=[{'role': 'user', 'content': question}], answer=lambda p: rows)
+    user_turn = m['prompt'][-1]['content']
+    assert 'Document Q0102QP_GB' in user_turn and 'Document Q0102QP_BG' not in user_turn
+    by_chunk = {p['chunk_id']: p for p in m['log'].passages}
+    assert by_chunk['b1']['drop_reason'] == 'other_language'
+
+
 def test_named_refs_are_deduplicated_in_order_of_appearance():
     class Catalog:
         def find_in_text(self, text):

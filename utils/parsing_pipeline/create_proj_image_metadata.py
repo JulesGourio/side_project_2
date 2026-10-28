@@ -66,6 +66,7 @@ dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targe
 dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
 dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
 dbutils.widgets.text("redescribe_all_images", "false", "true: describe every image again")
+dbutils.widgets.text("describe_images", "true", "false: skip this task (images are described by a later run)")
 
 PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
 if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
@@ -143,6 +144,10 @@ for _mod in cfg.WORKER_MODULES:
 # COMMAND ----------
 
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
+
+if dbutils.widgets.get("describe_images").strip().lower() == "false":
+    logger.info("describe_images=false: no image is described in this run, the pending images stay pending.")
+    dbutils.notebook.exit("skipped")
 
 dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])
 REBUILD_IMAGE_CHUNKS = (
@@ -263,7 +268,7 @@ else:
 # MAGIC %md
 # MAGIC # Quality Checks
 # MAGIC ## Image passages
-# MAGIC `chunk_id` is the key of the MERGE and of the Vector Search index: a duplicate fails the MERGE and a null breaks the sync (RED). A passage without `IDDOC`, `REF` or text cannot be served (RED); `division` is expected on 99 % of them (AMBER). The passages are cached here, so the write below does not compute them again.
+# MAGIC `chunk_id` is the key of the MERGE and of the Vector Search index: a duplicate fails the MERGE and a null breaks the sync (RED). A passage without `IDDOC`, `REF` or text cannot be served, nor indexed without `chunk_preprocessed`, nor listed as citing a document without `cited_codes` (RED); `division` is expected on 99 % of them (AMBER). The passages are cached here, so the write below does not compute them again.
 
 # COMMAND ----------
 
@@ -277,6 +282,8 @@ if described_count > 0:
             tables.not_null("IDDOC"),
             tables.not_null("REF"),
             tables.not_null("chunk_text"),
+            tables.not_null("chunk_preprocessed"),
+            tables.not_null("cited_codes"),
             tables.not_null("division", mostly=0.99, severity=tables.AMBER),
         ],
         logger,

@@ -98,6 +98,7 @@ dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targe
 dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
 dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
 dbutils.widgets.text("redescribe_all_images", "false", "true: describe every image again")
+dbutils.widgets.text("describe_images", "true", "false: skip the image description task (a later run describes the pending images)")
 
 PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
 if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
@@ -285,7 +286,7 @@ if HAS_TARGET_IDDOCS:
 
 # MAGIC %md
 # MAGIC ## chunks (and chunks_archive)
-# MAGIC `chunk_id` is the primary key of the Vector Search index: a null or a duplicate breaks the sync (RED), checked across `chunks` and `chunks_archive` together. A chunk without `IDDOC`, `REF` or text cannot be served (RED). The search filters on `division` and shows `titre`: expected on 99 % of the passages (AMBER).
+# MAGIC `chunk_id` is the primary key of the Vector Search index: a null or a duplicate breaks the sync (RED), checked across `chunks` and `chunks_archive` together. A chunk without `IDDOC`, `REF` or text cannot be served, nor indexed without `chunk_preprocessed`, nor listed as citing a document without `cited_codes` (RED). The search filters on `division` and shows `titre`: expected on 99 % of the passages (AMBER).
 
 # COMMAND ----------
 
@@ -299,6 +300,8 @@ if HAS_TARGET_IDDOCS:
             tables.not_null("IDDOC"),
             tables.not_null("REF"),
             tables.not_null("chunk_text"),
+            tables.not_null("chunk_preprocessed"),
+            tables.not_null("cited_codes"),
             tables.not_null("division", mostly=0.99, severity=tables.AMBER),
             tables.not_null("titre", mostly=0.99, severity=tables.AMBER),
         ],

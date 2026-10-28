@@ -3,11 +3,12 @@
 import asyncio
 import logging
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, Tuple
 
-from server.services.infra.doc_catalog import _catalog, canon_ref
-from server.services.chat.turn_log import TurnLog
+from server.services.infra.doc_catalog import _catalog, canon_ref, document_info, site_code
+from server.services.chat.turn_log import TurnLog, passage_date
 from server.services.chat.engine.queries import opening_language, rewrite_queries, translate_query
+from server.services.chat.engine.references import cited_codes_asked, exact_citations
 from server.services.chat.engine.types import DocumentPassages, PassageRecord, RetrievalResult, SearchRow, VsFilters
 from server.services.chat.engine.codes import chunk_ids_citing, codes_in
 from server.services.chat.engine.search import (
@@ -16,14 +17,19 @@ from server.services.chat.engine.search import (
 from server.services.chat.engine.config import (
     division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on, raw_top_k, rerank_top_k,
 )
+from utils.parsing_pipeline.code_normalization import canonical_codes
 
 logger = logging.getLogger(__name__)
 
 _REF_LOOKUP_MAX = 6              # REFs (language variants included) filtered on
 _REF_LOOKUP_K = 8                # passages fetched from the named documents
+_CITING_LOOKUP_DOCS = 10         # most recent documents citing an asked code whose passages are fetched
+_CITING_LOOKUP_K = 20            # passages fetched from them
 _DATE_PREFIX_RE = re.compile(r'^\[Date: \d{4}-\d{2}-\d{2}\]\n\n')
 # Inline citation markers the chat route bakes into stored answers (⟦n⟧) — present in history.
 _STORED_MARKER_RE = re.compile(r'⟦\d+⟧')
+# REF suffixes of a variant written in the question's language (opening_language: 'fr' or 'en').
+_LANGUAGE_SUFFIXES = {'fr': ('FR',), 'en': ('EN', 'GB')}
 
 
 # --- Conversation helpers ---
@@ -72,18 +78,43 @@ def _refs_named_in_turns(question: str, earlier_turns: str) -> List[str]:
     return list(dict.fromkeys(refs_named_in(question) + refs_named_in(earlier_turns)))[:_REF_LOOKUP_MAX]
 
 
-def one_language_per_document(rows: List[SearchRow]) -> List[SearchRow]:
-    """Only the passages of the best-ranked language variant of each document.
+def _variant_date(row: SearchRow) -> str:
+    """Diffusion date of a passage's document: the ``[Source: …]`` prefix, else the catalog.
+
+    :param row: search row with ``REF`` and ``chunk_text``
+    :return: ``YYYY-MM-DD``, or an empty string when unknown
+    """
+    date = passage_date(row.get('chunk_text'))
+    if date[:1].isdigit():
+        return date
+    return str(document_info(row['REF']).get('doc_date') or '')[:10]
+
+
+def one_language_per_document(rows: List[SearchRow], question_codes: Iterable[str] = (),
+                              language: str | None = None) -> List[SearchRow]:
+    """Only the passages of one language variant of each document (Q0102QP_GB or Q0102QP_BG, not both).
+
+    The variant kept is, in this order: the one whose passages cite a reference code of the question (the other
+    language may be an older revision that does not cite it yet), then the most recently published, then the one in
+    the question's language, then the best ranked.
 
     :param rows: passages in rank order
-    :return: the passages of the first-ranked language variant of each document
+    :param question_codes: canonical reference codes of the question (``code_normalization``)
+    :param language: language of the question, ``fr`` or ``en``; None when unknown
+    :return: the passages of the chosen variant of each document, in rank order
     """
-    best_variant: Dict[str, str] = {}
-    kept = []
-    for row in rows:
-        if best_variant.setdefault(canon_ref(row['REF']), row['REF']) == row['REF']:
-            kept.append(row)
-    return kept
+    codes = set(question_codes)
+    preferred = _LANGUAGE_SUFFIXES.get(language or '', ())
+    variants: Dict[str, Dict[str, Tuple]] = {}
+    for rank, row in enumerate(rows):
+        ref = row['REF']
+        cites = bool(codes & set(canonical_codes(row.get('chunk_text') or '')))
+        best = variants.setdefault(canon_ref(ref), {}).get(ref)
+        if best is None:
+            best = (False, _variant_date(row), site_code(ref) in preferred, -rank)
+        variants[canon_ref(ref)][ref] = (best[0] or cites,) + best[1:]
+    chosen = {canon: max(by_ref, key=by_ref.get) for canon, by_ref in variants.items()}
+    return [row for row in rows if chosen[canon_ref(row['REF'])] == row['REF']]
 
 
 def group_documents(rows: List[SearchRow]) -> List[Tuple[str, DocumentPassages]]:
@@ -157,7 +188,8 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
     :param division: normalised division code
     :param conversation: cleaned conversation, its last item the question
     :param log: turn log to fill, created when None
-    :return: dict with the question, the two queries, the passages sent, the REFs named, the index and the log
+    :return: dict with the question, the two queries, the passages sent, the REFs named, the index, the log and, for
+        a "which documents cite X?" question, the documents citing each code (``exact_citations``)
     """
     log = log if log is not None else TurnLog()
     with log.timed('retrieval'):
@@ -230,10 +262,20 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         if codes:
             with log.timed('code_lookup'):
                 lookups.append(await _passages_citing(host, token, index, question, codes, filters, log))
+
+        # "Which documents cite X?": the complete list comes from doc_references; the search adds where they cite it.
+        exact = exact_citations(cited_codes_asked(question), division)
+        if exact:
+            log.data['exact_citations'] = {code: len(docs) for code, (_, docs) in exact.items()}
+            citing = list(dict.fromkeys(d['ref'] for _, docs in exact.values() for d in docs))[:_CITING_LOOKUP_DOCS]
+            if citing:
+                with log.timed('citation_lookup'):
+                    lookups.append(await fetch_documents(host, token, index, question, citing, _CITING_LOOKUP_K, filters,
+                                                         via='citation_lookup', log=log))
         if lookups:
             rows = _merge_by_rank(lookups + [rows])
         candidates = rows
-        rows = one_language_per_document(rows)
+        rows = one_language_per_document(rows, canonical_codes(question, accept_lowercase=True), language)
 
         # Every passage retrieved, in retrieval order (the ones past the search cap last), kept or not.
         kept = {r['chunk_id'] for r in rows}
@@ -246,4 +288,4 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         if not rows:
             log.issue('no_passages', 'search', 'the search returned no passage', upstream=index)
     return {'question': question, 'fr_query': fr_query, 'en_query': en_query, 'rows': rows, 'named': named,
-            'index': index, 'log': log}
+            'index': index, 'log': log, 'exact_citations': exact}

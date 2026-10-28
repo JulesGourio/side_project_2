@@ -16,6 +16,7 @@ uses the prompts is in [services/chat/engine](../services/chat/engine/README.md)
 | `chat/system/as_reference_ordering.md` | `system_as_references` | `engine/config.py` (`division_prompt`) | Division `AS` only: the order of the references in a list (appended to the template) |
 | `chat/rewrite.md` | `rewrite` | `engine/queries.py` (`REWRITE_PROMPT`) | The bilingual search rewrite: follow-up messages and other or unsure languages |
 | `chat/translate_query.md` | `translate_query` | `engine/queries.py` (`translate_query`) | An opening message in French or English, when `CHAT_TRANSLATE_ONLY` is on |
+| `chat/exact_citations.md` | `exact_citations` | `engine/references.py` (`exact_citations_block`) | A question that asks which documents cite a code: the instructions before the complete list of the citing documents |
 | `chat/language_reminder.md` | `language_reminder` | `engine/answer.py` (`LANGUAGE_REMINDER`) | Appended to the last user message: the answer language, or the language of the question when it is not known |
 
 ## How they are read

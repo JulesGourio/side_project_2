@@ -154,6 +154,7 @@ ENRICHMENT_COLS = [
 # Modules the executors import (pandas UDFs); shipped with addPyFile by 3_parse and 4_describe_images.
 WORKER_MODULES = (
     "chunking.py",
+    "code_normalization.py",
     "worker.py",
     "format_parsers.py",
     "image_fallbacks.py",

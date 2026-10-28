@@ -101,6 +101,7 @@ dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targe
 dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
 dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
 dbutils.widgets.text("redescribe_all_images", "false", "true: describe every image again")
+dbutils.widgets.text("describe_images", "true", "false: skip the image description task (a later run describes the pending images)")
 
 PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
 if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):

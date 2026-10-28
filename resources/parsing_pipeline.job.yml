@@ -8,7 +8,7 @@
 #   3c_chunks                : retry, chunking, quality checks, table writes                 -> CPU (the cluster of 3_parse)
 #   4_describe_images        : vision LLM image description                                  -> small CPU (bound by the rate limiter)
 #   5_sync_index             : Vector Search index sync                                      -> small CPU (GX on chunks_full)
-#   6_update_kb_metadata     : Lakebase doc_catalog and catalog_metadata                     -> serverless, once the index sync succeeded
+#   6_update_kb_metadata     : Lakebase doc_catalog, doc_references and catalog_metadata     -> serverless, once the index sync succeeded
 #
 # The metadata tasks have their own cluster so it does not stay up through the whole GPU parse.
 # Without 5_sync_index, new chunks are never queryable (Delta Sync indexes are TRIGGERED).
@@ -43,6 +43,8 @@ resources:
           default: "36"
         - name: redescribe_all_images
           default: "false"
+        - name: describe_images
+          default: "true"
       timeout_seconds: 172800   # 48 h: a run never holds the single concurrent slot longer
 
       queue:
@@ -179,6 +181,7 @@ resources:
               max_parse_files: "{{job.parameters.max_parse_files}}"
               max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
               redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              describe_images: "{{job.parameters.describe_images}}"
               pipeline_write_env: ${var.pipeline_write_env}
               pipeline_read_env: ${var.pipeline_write_env}
               reference_read_env: ${var.reference_read_env}
@@ -200,6 +203,7 @@ resources:
               max_parse_files: "{{job.parameters.max_parse_files}}"
               max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
               redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              describe_images: "{{job.parameters.describe_images}}"
               pipeline_write_env: ${var.pipeline_write_env}
               pipeline_read_env: ${var.pipeline_write_env}
               reference_read_env: ${var.reference_read_env}
@@ -224,6 +228,7 @@ resources:
               max_parse_files: "{{job.parameters.max_parse_files}}"
               max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
               redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              describe_images: "{{job.parameters.describe_images}}"
               pipeline_write_env: ${var.pipeline_write_env}
               pipeline_read_env: ${var.pipeline_write_env}
               reference_read_env: ${var.reference_read_env}
@@ -255,6 +260,7 @@ resources:
               max_parse_files: "{{job.parameters.max_parse_files}}"
               max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
               redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              describe_images: "{{job.parameters.describe_images}}"
               pipeline_write_env: ${var.pipeline_write_env}
               pipeline_read_env: ${var.pipeline_write_env}
               reference_read_env: ${var.reference_read_env}
@@ -299,6 +305,7 @@ resources:
               max_parse_files: "{{job.parameters.max_parse_files}}"
               max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
               redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              describe_images: "{{job.parameters.describe_images}}"
               pipeline_write_env: ${var.pipeline_write_env}
               pipeline_read_env: ${var.pipeline_write_env}
               reference_read_env: ${var.reference_read_env}
@@ -320,6 +327,7 @@ resources:
               max_parse_files: "{{job.parameters.max_parse_files}}"
               max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
               redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              describe_images: "{{job.parameters.describe_images}}"
               pipeline_write_env: ${var.pipeline_write_env}
               pipeline_read_env: ${var.pipeline_write_env}
               reference_read_env: ${var.reference_read_env}
@@ -344,6 +352,7 @@ resources:
               max_parse_files: "{{job.parameters.max_parse_files}}"
               max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
               redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              describe_images: "{{job.parameters.describe_images}}"
               pipeline_read_env: ${var.pipeline_write_env}
               reference_read_env: ${var.reference_read_env}
               pipeline_write_env: ${var.pipeline_write_env}
@@ -371,6 +380,7 @@ resources:
               max_parse_files: "{{job.parameters.max_parse_files}}"
               max_source_staleness_hours: "{{job.parameters.max_source_staleness_hours}}"
               redescribe_all_images: "{{job.parameters.redescribe_all_images}}"
+              describe_images: "{{job.parameters.describe_images}}"
               pipeline_read_env: ${var.pipeline_write_env}
               reference_read_env: ${var.reference_read_env}
               pipeline_write_env: ${var.pipeline_write_env}
@@ -417,6 +427,8 @@ targets:
               default: "36"
             - name: redescribe_all_images
               default: "false"
+            - name: describe_images
+              default: "true"
 
   uat:
     resources:

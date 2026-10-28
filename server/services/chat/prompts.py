@@ -21,6 +21,7 @@ FILES: Dict[str, str] = {
     'rewrite': 'rewrite.md',
     'translate_query': 'translate_query.md',
     'language_reminder': 'language_reminder.md',
+    'exact_citations': 'exact_citations.md',
 }
 
 

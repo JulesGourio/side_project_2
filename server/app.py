@@ -20,6 +20,7 @@ from starlette.responses import Response
 from server import tracing  # noqa: F401 — sets up MLflow tracking URI
 from server.routers import chat, compare, config, exports, feedback, health, history, preview
 from server.services.infra.doc_catalog import catalog_refresher
+from server.services.infra.doc_references import references_refresher
 from server.services.infra.lakebase import get_pool, init_lakebase, shutdown_lakebase, store_error
 from server.services.chat.translation_bridge import shutdown_http_client as shutdown_translation_bridge
 from server.services.infra.http_clients import close_shared_clients
@@ -50,15 +51,18 @@ if not _volume_path:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-  """Open the Lakebase pool and start the document catalog refresher, then close both on shutdown.
+  """Open the Lakebase pool and start the document catalog and references refreshers, then close them on shutdown.
 
   :param app: the FastAPI application, unused here
   """
   await init_lakebase()
   # Document catalog (REF links, titles) from Lakebase, reloaded every 30 min.
   catalog_task = asyncio.create_task(catalog_refresher(get_pool))
+  # Documents citing each reference code ("which documents cite X?"), same cadence.
+  references_task = asyncio.create_task(references_refresher(get_pool))
   yield
   catalog_task.cancel()
+  references_task.cancel()
   await shutdown_lakebase()
   await shutdown_translation_bridge()
   await close_shared_clients()

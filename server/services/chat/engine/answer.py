@@ -12,6 +12,8 @@ from server.services.chat.llm import sse_event
 from server.services.infra.doc_catalog import document_info
 from server.services.chat.turn_log import TurnLog
 from server.services.chat.engine.citations import CitationStreamParser
+from server.services.chat.engine.references import exact_citations_block
+from server.services.chat.engine.references import exact_citations_block
 from server.services.chat.engine.retrieval import _clean_history, group_documents, retrieve_for_turn
 from server.services.chat.engine.search import ChatVsiError
 from server.services.chat.engine.types import AnswerFacts, AnswerUsage, DocumentPassages
@@ -59,18 +61,21 @@ def revision_note(ref: str, division: str | None = None) -> str:
 
 
 def build_prompt(division: str, conversation: List[Dict[str, str]], documents: List[Tuple[str, DocumentPassages]],
-                 answer_language: str | None = None) -> List[Dict[str, str]]:
-    """System instructions, then the conversation; the last turn carries the numbered documents
-    before the question and the language reminder after it.
+                 answer_language: str | None = None, exact_citations: str = '') -> List[Dict[str, str]]:
+    """System instructions, then the conversation; the last turn carries the numbered documents (and, for a "which
+    documents cite X?" question, the exact citation index) before the question and the language reminder after it.
 
     :param division: normalised division code: ``ALL``, ``AS`` or ``IS``
     :param conversation: cleaned conversation whose last item is the user question
     :param documents: passages grouped by document, as returned by ``group_documents``
     :param answer_language: name of the language the answer must use, or None
+    :param exact_citations: block of ``references.exact_citations_block``, empty for none
     :return: the messages for the answer model: system instructions, then the conversation
     """
     context = '\n\n'.join(f'[{i}] Document {ref}{revision_note(ref, d.get("division"))}\n' + '\n\n'.join(d['passages'])
                           for i, (ref, d) in enumerate(documents, 1))
+    if exact_citations:
+        context = f'{context}\n\n{exact_citations}'
     turns = [dict(m) for m in conversation]
     turns[-1]['content'] = f'Documents:\n\n{context}\n\n---\n\n{turns[-1]["content"]}'
     return with_language_reminder([{'role': 'system', 'content': load_instructions(division)}] + turns,
@@ -205,7 +210,10 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
     usage: AnswerUsage = {}
     llm: AnswerFacts = {}
     chain = chat_llm.answer_chain(llm_endpoint())
-    prompt = build_prompt(div, conversation, documents, answer_language)
+    exact = exact_citations_block(found.get('exact_citations') or {}, div)
+    if exact:
+        log.prompts.append('exact_citations')
+    prompt = build_prompt(div, conversation, documents, answer_language, exact)
     _record_prompt(log, div, documents, prompt)
     log.model_io['answer'] = {'messages': prompt}
     llm_started = time.monotonic()

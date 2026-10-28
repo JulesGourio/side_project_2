@@ -14,6 +14,7 @@ from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS
 from server.services.chat.turn_log import TurnLog, passage_title
 from server.services.chat.engine.config import raw_top_k, rerank_top_k
 from server.services.chat.engine.types import Hit, QueryPayload, SearchRow, VsFilters
+from utils.parsing_pipeline.code_normalization import normalize_query
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +77,14 @@ async def _query(host: str, token: str, index: str, query_text: str, k: int, fil
     :param host: Databricks workspace URL
     :param token: Databricks access token
     :param index: full name of the Vector Search index
-    :param query_text: text searched, cut to ``_MAX_QUERY_CHARS`` characters (a warning is logged when it is)
+    :param query_text: text searched, cut to ``_MAX_QUERY_CHARS`` characters (a warning is logged when it is); each
+        reference code gets its canonical form, the spelling the index also has (``SF-1027`` -> ``SF-1027 [SF1027]``)
     :param k: number of results asked
     :param filters: Vector Search filters, empty for none
     :param rerank: whether the reranker orders the results
     :return: the rows of the response
     """
+    query_text = normalize_query(query_text)
     if len(query_text) > _MAX_QUERY_CHARS:
         logger.warning('chat: query of %d characters cut to %d for Vector Search', len(query_text), _MAX_QUERY_CHARS)
     payload: QueryPayload = {'query_text': query_text[:_MAX_QUERY_CHARS], 'columns': _COLUMNS,

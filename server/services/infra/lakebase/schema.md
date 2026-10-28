@@ -28,6 +28,7 @@ A new column is added in `schema.py`, or in `columns.py` for the chat tables. A 
 | `catalog_metadata` | "documents up to date as of" date (one row, `id = 1`) | entered by hand; read by `routers/config.py` |
 | `doc_catalog` | document catalog: reference, title, link, revision, date | pipeline task `6_update_kb_metadata`; read by `infra/doc_catalog.py` |
 | `chunk_codes` | codes cited in the passages, with the passages citing them | pipeline task `6_update_kb_metadata`; read by `chat/engine/codes.py` |
+| `doc_references` | documents citing each reference code | pipeline task `6_update_kb_metadata`; read by `infra/doc_references.py` |
 
 **Chat join keys**:
 - `trace_id` (`chat-` followed by 32 hexadecimal characters): present in `chat_turns`, `chat_retrieved_chunks`, `app_errors` and `chat_messages`.
@@ -99,6 +100,7 @@ One row per turn. The columns of the first table are fixed; the others come from
 | `named_refs` | TEXT[] | references (REF) named in the conversation, looked up in addition |
 | `named_codes` | TEXT[] | codes named in the question (other than the named REFs), looked up in `chunk_codes` |
 | `code_passages` | INTEGER | passages citing those codes, fetched in addition |
+| `exact_citations` | JSONB | "which documents cite X?": for each code asked, the number of documents citing it (`doc_references`) |
 | `vs_calls_expected` | INTEGER | Vector Search queries planned |
 | `vs_calls_ok` | INTEGER | Vector Search queries that succeeded |
 | `rerank_ok` | BOOLEAN | the reranker answered |
@@ -141,6 +143,7 @@ One row per turn. The columns of the first table are fixed; the others come from
 | `search_ms` | Vector Search |
 | `ref_lookup_ms` | lookup of the named references |
 | `code_lookup_ms` | lookup of the passages citing the named codes |
+| `citation_lookup_ms` | passages of the documents citing a code asked |
 | `queue_wait_ms` | wait for a generation slot (`CHAT_MAX_CONCURRENT_ANSWERS`) |
 | `generation_ms` | answer generation, retries included |
 | `translate_back_ms` | translation of the answer |
@@ -183,7 +186,7 @@ One row per passage retrieved for a turn, with its text. The table keeps the pas
 | `prompt_rank` | INTEGER | order in the prompt (passages passed only) |
 | `doc_number` | INTEGER | `[n]` number of its document in the prompt |
 | `cited` | BOOLEAN | its document is cited by the answer |
-| `source` | TEXT | `search` (found by the search), `ref_lookup` (brought by the reference lookup) or `code_lookup` (cites a code of the question) |
+| `source` | TEXT | `search` (found by the search), `ref_lookup` (brought by the reference lookup), `code_lookup` (cites a code of the question) or `citation_lookup` (a document citing a code asked) |
 | `hits` | JSONB | every query that found the passage: `q`, `via`, `rank`, `score` |
 | `best_score` | DOUBLE PRECISION | best score |
 | `chunk_id` | TEXT | passage identifier in the index |
@@ -527,6 +530,17 @@ Codes cited in the passages of the chat index (form, part, standard or document 
 |---|---|---|
 | `code` | TEXT PK | code, upper case |
 | `chunk_ids` | TEXT[] NOT NULL | passages (`chunk_id` of the index) that cite it, at most 30 |
+### `doc_references`
+
+For each reference code, the documents whose passages cite it. Rewritten by pipeline task `6_update_kb_metadata` after each daily run, from the `cited_codes` column of the passages; read by the app, which reloads it every 30 minutes, to answer "which documents cite X?" with the complete list.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `cited_code` | TEXT NOT NULL | code in canonical form, e.g. `SF1027` (`utils/parsing_pipeline/code_normalization.py`) |
+| `citing_ref` | TEXT NOT NULL | REF of a document citing it; primary key (`cited_code`, `citing_ref`) |
+| `division` | TEXT | division of the citing document |
+| `passages` | INTEGER NOT NULL | passages of the document that cite the code |
+| `updated_at` | TIMESTAMPTZ NOT NULL | last write |
 
 ## Control queries
 

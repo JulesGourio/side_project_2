@@ -36,6 +36,7 @@ CHAT_TURN_COLUMNS: List[tuple] = [
     ('named_refs',            'TEXT[]'),             # REFs named in the conversation (REF lookup)
     ('named_codes',           'TEXT[]'),             # codes named in the question (code lookup, chunk_codes)
     ('code_passages',         'INTEGER'),            # passages citing those codes, fetched in addition
+    ('exact_citations',       'JSONB'),              # "which documents cite X?": {code: documents citing it} (doc_references)
     ('vs_calls_expected',     'INTEGER'),            # Vector Search queries of the main search
     ('vs_calls_ok',           'INTEGER'),
     ('rerank_ok',             'BOOLEAN'),
@@ -65,6 +66,7 @@ CHAT_TURN_COLUMNS: List[tuple] = [
 # Step durations (TurnLog.timings_ms), stored as <step>_ms INTEGER columns. first_token is
 # counted from the start of the turn (what the user waits); the others are the step itself.
 CHAT_TURN_TIMINGS = ('total', 'translate_in', 'retrieval', 'rewrite', 'search', 'ref_lookup', 'code_lookup',
+                     'citation_lookup',
                      'queue_wait', 'first_token', 'generation', 'translate_back', 'persist')
 
 # ── chat_retrieved_chunks: one row per passage retrieved for a turn ──
@@ -76,7 +78,7 @@ CHAT_CHUNK_COLUMNS: List[tuple] = [
     ('prompt_rank',       'INTEGER'),            # order in the prompt (kept only)
     ('doc_number',        'INTEGER'),            # [n] of its document in the prompt
     ('cited',             'BOOLEAN'),            # its document is cited by the answer
-    ('source',            'TEXT'),               # search | ref_lookup | code_lookup
+    ('source',            'TEXT'),               # search | ref_lookup | code_lookup | citation_lookup
     ('hits',              'JSONB'),              # [{q, via, rank, score}]: which query found it, where
     ('best_score',        'DOUBLE PRECISION'),
     ('chunk_id',          'TEXT'),

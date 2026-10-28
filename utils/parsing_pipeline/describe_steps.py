@@ -29,7 +29,7 @@ from llm_describe import (
     safe_requests_per_minute,
 )
 from tables import add_missing_columns, merge_into, table_exists, write_table
-from worker import intraqual_ref_url, token_count_udf
+from worker import cited_codes_udf, intraqual_ref_url, preprocessed_text_udf, token_count_udf
 from config import (
     PIPELINE_WRITE_ENV,
     CHARS_PER_TOKEN,
@@ -614,6 +614,8 @@ def build_image_chunks(df_described) -> DataFrame:
         .withColumns(
             {
                 "chunk_token_count": token_count_udf(f.col("chunk_text")),
+                "chunk_preprocessed": preprocessed_text_udf(f.col("chunk_text")),
+                "cited_codes": cited_codes_udf(f.col("chunk_text"), f.col("ref")),
                 # Part 1 keeps the plain image id (the anti-join in described_images_without_chunk relies on it);
                 # the next parts of a long transcription get -2, -3...
                 "chunk_id": f.when(f.col("part_no") == 1, image_id).otherwise(
@@ -643,6 +645,8 @@ def build_image_chunks(df_described) -> DataFrame:
             "chunk_id",
             "chunk_index",
             "chunk_text",
+            "chunk_preprocessed",
+            "cited_codes",
             "chunk_token_count",
             "chunk_content_type",
             "semantic_headers",

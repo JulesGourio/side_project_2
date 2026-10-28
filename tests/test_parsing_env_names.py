@@ -58,7 +58,7 @@ def test_run_time_choices_are_job_parameters_passed_to_every_notebook_task():
     job = _job()
     declared = {p["name"] for p in job["parameters"]}
     assert declared == {"run_mode", "parse_filter", "max_parse_files", "max_source_staleness_hours",
-                        "redescribe_all_images"}
+                        "redescribe_all_images", "describe_images"}
     for task in job["tasks"]:
         notebook = task.get("notebook_task")
         if notebook:

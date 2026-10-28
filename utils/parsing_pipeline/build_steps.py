@@ -402,6 +402,10 @@ def _build_chunks(df_full_pipeline, df_exclusions) -> DataFrame:
             ).alias("chunk_id"),
             f.col("c.chunk_index").alias("chunk_index"),
             f.col("_chunk_text_full").alias("chunk_text"),
+            # What the indexes search: chunk_text with the canonical form of each reference code (SF-1027 [SF1027]).
+            worker.preprocessed_text_udf(f.col("_chunk_text_full")).alias("chunk_preprocessed"),
+            # The codes the passage cites, its own document left out: the source of doc_references (task 6).
+            worker.cited_codes_udf(f.col("_chunk_text_full"), f.col("ref")).alias("cited_codes"),
             f.col("c.chunk_token_count").alias("chunk_token_count"),
             f.col("c.chunk_content_type").alias("chunk_content_type"),
             f.to_json(f.col("c.metadata")).alias("semantic_headers"),
@@ -708,6 +712,8 @@ def build_archive_notices(df_business_meta) -> DataFrame:
             f.concat(f.col("IDDOC").try_cast("string"), f.lit("-000000")).alias("chunk_id"),
             f.lit(-1).alias("chunk_index"),
             "chunk_text",
+            worker.preprocessed_text_udf(f.col("chunk_text")).alias("chunk_preprocessed"),
+            worker.cited_codes_udf(f.col("chunk_text"), f.col("ref")).alias("cited_codes"),
             worker.token_count_udf(f.col("chunk_text")).alias("chunk_token_count"),
             f.lit(ARCHIVE_NOTICE_CONTENT_TYPE).alias("chunk_content_type"),
             f.lit("{}").alias("semantic_headers"),

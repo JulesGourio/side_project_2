@@ -1,7 +1,7 @@
 """Shapes of the dicts the chat engine passes around: search rows, hits, passage records, grouped documents, the
 Vector Search filter and request body, what the retrieval returns and what the answer call reports."""
 
-from typing import Any, List, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 
 class Hit(TypedDict):
@@ -82,6 +82,7 @@ class RetrievalResult(TypedDict):
     named: List[str]
     index: str
     log: Any               # the TurnLog of the turn
+    exact_citations: Dict[str, Any]   # "which documents cite X?": canonical code -> (code as written, citing documents)
 
 
 class AnswerUsage(TypedDict, total=False):

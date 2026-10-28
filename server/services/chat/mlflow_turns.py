@@ -33,7 +33,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import threading
 import time
 from typing import Any, Dict, List, Tuple
@@ -45,7 +44,7 @@ from server.services.chat.config import (
 )
 from server.services.chat import translation_bridge
 from server.services.infra.doc_catalog import document_info
-from server.services.chat.turn_log import passage_title
+from server.services.chat.turn_log import passage_date, passage_title
 
 logger = logging.getLogger(__name__)
 
@@ -174,19 +173,6 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()[:12]
 
 
-_DATE_RE = re.compile(r'Date de diffusion:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|inconnue)')
-
-
-def _passage_date(chunk_text: str | None) -> str:
-    """Diffusion date from the passage's ``[Source: …]`` prefix (what the answer model reads).
-
-    :param chunk_text: passage text, None allowed
-    :return: the date as ``YYYY-MM-DD``, ``inconnue`` when the source says so, or an empty string
-    """
-    found = _DATE_RE.search((chunk_text or '')[:600])
-    return found.group(1) if found else ''
-
-
 def _vs_call_label(call: Dict[str, Any]) -> str:
     """Label of a Vector Search call span: ``q1 rerank``, ``q2 raw``… (``q-`` when it belongs to no query).
 
@@ -206,7 +192,7 @@ def _documents_summary(sent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     docs: Dict[str, Dict[str, Any]] = {}
     for p in sent:
         d = docs.setdefault(p.get('ref') or '', {'n': p.get('doc_number'), 'ref': p.get('ref'), 'title': passage_title(p.get('chunk_text')),
-                                                'date': _passage_date(p.get('chunk_text')),
+                                                'date': passage_date(p.get('chunk_text')),
                                                 'revision': document_info(p.get('ref') or '').get('revision'),
                                                 'passages': 0, 'best_score': None, 'found_by': set(),
                                                 'cited': bool(p.get('cited'))})
