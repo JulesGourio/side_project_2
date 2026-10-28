@@ -383,3 +383,101 @@ for s in SPELLINGS:
     print(f'{s:<14}' + ''.join(f'{c:>12}' for c in cells))
 print('\nSF1027 by spelling, option A (3 shapes):', {s: [r[4] for r in res_j if r[0] == CODE and r[2] == 'A' and r[3] == s] for s in SPELLINGS})
 print('codes missed by A, glued:', sorted({r[0] for r in res_j if r[2] == 'A' and r[3] == 'glued' and r[4] is None}))
+
+# COMMAND ----------
+
+# K. Other families of methods, on the same 300 questions (25 codes x 3 shapes x 4 spellings).
+#    Ranking methods (the whole app pipeline with one engine only):
+#      N1 = keywords only (FULL_TEXT) instead of HYBRID      N2 = meaning only (ANN) instead of HYBRID
+#    Exact-match methods (A + one extra reranked search of the question, k8, restricted to the passages that hold the
+#    code: the code decides WHICH passages, the question decides their order):
+#      G1 = Vector Search filter on the index column cited_codes        G2 = filter "chunk_preprocessed LIKE code"
+#      G3 = chunk ids read from chunks.cited_codes (a code -> passages lookup table, kept by the pipeline)
+#      G4 = REFs of the documents citing the code (doc_references, what the app does today for "which documents cite X")
+probe_rows, _ = vs({'query_text': 'SF1027', 'columns': ['chunk_id', 'cited_codes'], 'num_results': 1, 'query_type': 'FULL_TEXT'})
+print('cited_codes in the index:', probe_rows[0].get('cited_codes') if probe_rows else 'no row')
+FILTER_FORMS = {'G1': lambda c: {'cited_codes': [c]}, 'G2': lambda c: {'chunk_preprocessed LIKE': c}}
+for g, f in FILTER_FORMS.items():
+    try:
+        rows = vs({**body('SF1027', 'HYBRID', 5), 'filters_json': json.dumps(f(CODE))})[0]
+        print(g, 'accepted, rows:', [r['chunk_id'] for r in rows])
+    except Exception as exc:  # noqa: BLE001
+        print(g, 'refused:', str(exc)[:160])
+
+ch = spark.table(CHUNKS)
+LOOKUP = {}
+for c in BENCH:
+    rows = ch.filter(F.array_contains('cited_codes', c)).select('chunk_id', 'REF').collect()
+    LOOKUP[c] = (sorted({r.chunk_id for r in rows}), sorted({r.REF for r in rows}))
+print('lookup cited_codes -> chunks:', {c: len(v[0]) for c, v in LOOKUP.items()})
+print('targets without the code in cited_codes (own-document codes are left out by design):',
+      {c: len(CASES[c][1] - set(v[0])) for c, v in LOOKUP.items() if CASES[c][1] - set(v[0])})
+
+
+def run_k(fr: str, en: str, code: str, option: str) -> tuple:
+    """Passages of the app under a K option.
+
+    :param fr: French question, normalised
+    :param en: its translation, normalised
+    :param code: canonical code of the question
+    :param option: N1, N2, G1, G2, G3 or G4
+    :return: (merged passages, Vector Search calls)
+    """
+    if option in ('N1', 'N2'):
+        kind = 'FULL_TEXT' if option == 'N1' else 'ANN'
+        lists = []
+        for q in (fr, en):
+            try:
+                lists.append(vs({**body(q, kind, APP_K), 'reranker': RERANKER})[0])
+            except Exception:  # noqa: BLE001 — reranker refused with this query type: plain results
+                lists.append(vs(body(q, kind, APP_K))[0])
+        return merge([merge(lists), vs(body(fr, kind, APP_K))[0]]), 3
+    base = run_app(fr, en, [code], 'A')
+    ids, refs = LOOKUP[code]
+    flt = {'G1': lambda: FILTER_FORMS['G1'](code), 'G2': lambda: FILTER_FORMS['G2'](code),
+           'G3': lambda: {'chunk_id': ids}, 'G4': lambda: {'REF': refs}}[option]()
+    if option in ('G3', 'G4') and not ids:
+        return base, 3
+    extra = vs({**body(fr, 'RERANK', 8), 'filters_json': json.dumps(flt)})[0]
+    return merge([extra, base]), 4
+
+
+def k_case(job: tuple) -> tuple:
+    """One K case.
+
+    :param job: (code, template index, option, spelling name)
+    :return: (code, template, option, spelling, rank or None or 'refused', passages)
+    """
+    code, t, option, sname = job
+    spelled, targets = CASES[code]
+    text = spellings(code, spelled).get(sname)
+    if text is None:
+        return code, t, option, sname, 'n/a', 0
+    norm = (lambda q: q.replace(text, f'{text} [{code}]')) if text != code else (lambda q: q)
+    try:
+        rows, _ = run_k(norm(TEMPLATES[t][0].format(c=text)), norm(TEMPLATES[t][1].format(c=text)), code, option)
+        return code, t, option, sname, rank(rows, targets), len(rows)
+    except Exception as exc:  # noqa: BLE001
+        return code, t, option, sname, 'refused: ' + str(exc)[:60], 0
+
+
+OPTS_K = ['N1', 'N2', 'G1', 'G2', 'G3', 'G4']
+jobs = [(c, t, o, s) for c in BENCH for t in range(len(TEMPLATES)) for o in OPTS_K for s in SPELLINGS]
+with ThreadPoolExecutor(max_workers=4) as ex:
+    res_k = list(ex.map(k_case, jobs))
+print(f"\n{'spelling':<14}" + ''.join(f'{o:>10}' for o in ['A'] + OPTS_K) + '   (found / cases)')
+for s in SPELLINGS + ['ALL']:
+    cells = []
+    for o in ['A'] + OPTS_K:
+        src = res_j if o == 'A' else res_k
+        rs = [r for r in src if r[2] == o and (s == 'ALL' or r[3] == s) and r[4] != 'n/a']
+        ok = [r for r in rs if not isinstance(r[4], str)]
+        cells.append(f"{sum(isinstance(r[4], int) for r in ok)}/{len(ok)}" if ok else 'refused')
+    print(f'{s:<14}' + ''.join(f'{c:>10}' for c in cells))
+print('\nmedian position of the target when found / passages sent:')
+for o in OPTS_K:
+    pos = sorted(r[4] for r in res_k if r[2] == o and isinstance(r[4], int))
+    n = [r[5] for r in res_k if r[2] == o and not isinstance(r[4], str) and r[4] != 'n/a']
+    print(f"  {o}: {pos[len(pos) // 2] if pos else '-'} / {sum(n) / max(1, len(n)):.1f}")
+refusals = sorted({(r[2], r[4]) for r in res_k if isinstance(r[4], str) and r[4].startswith('refused')})
+print('refusals:', refusals[:6])

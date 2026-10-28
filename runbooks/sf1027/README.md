@@ -41,6 +41,8 @@ Notebook : [`etude_dev.py`](./etude_dev.py). Import dans un notebook DEV, « Run
 
 **Cellule J (28/10)** : avec le code écrit collé dans la question (`SF1027`), l'app actuelle (A) trouve 48/75 (SF-1027 raté 3/3) ; minuscules 73/75 ; espace 61/75. D, E et F : 75/75 pour chaque graphie. Cause : l'app n'ajoute `[CODE]` qu'à un code écrit autrement que sa forme collée, donc un code collé garde un seul mot-clé. Recommandation : E (forme collée répétée dans la requête), à mesurer d'abord sur les vraies questions (1, 2 ou 3 répétitions).
 
+**Cellule K** : autres familles de méthodes sur les 300 questions. Recherche à un seul moteur, mots-clés seuls (N1) ou sens seul (N2). Recherche par correspondance exacte du code : filtre sur `cited_codes` (G1), filtre `LIKE` (G2), passages lus dans la table (G3), documents citant le code (G4). Dans les quatre cas, le code choisit les passages et la question les ordonne.
+
 Le tableau final donne pour chaque option : cas trouvés, cas en top 5, position médiane, passages envoyés au modèle (coût en tokens), appels Vector Search. On choisira ensemble à partir de ces chiffres.
 
 ---
