@@ -467,7 +467,7 @@ def check_ref_mapping(spark, df_chunks, logger: logging.Logger) -> List[Result]:
     df_manifest = spark.table(PARSE_MANIFEST_TABLE).select(
         "IDDOC", f.col("ref").alias("manifest_ref")
     )
-    prefix_ref = f.regexp_extract("chunk_text", r"\[Source:\s*(\S+)\s", 1)
+    prefix_ref = f.regexp_extract("chunk_text", r"\[Source:\s*(.*?)\s*\|", 1)
     conditions = {
         "ref_differs_from_manifest": f.col("manifest_ref").isNotNull()
         & (f.col("REF") != f.col("manifest_ref")),
