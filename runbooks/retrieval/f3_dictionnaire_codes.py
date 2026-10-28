@@ -176,11 +176,11 @@ class CodeKeys:
 # COMMAND ----------
 
 dictionary = spark.table(DICTIONARY)
-keys_b = spark.sparkContext.broadcast({r["match_key"]: r["canonical_token"]
-                                       for r in dictionary.select("match_key", "canonical_token").collect()})
+# Plain dict captured by the function below: shared clusters refuse spark.sparkContext (no broadcast).
+KEYS = {r["match_key"]: r["canonical_token"] for r in dictionary.select("match_key", "canonical_token").collect()}
 pattern_of = (dictionary.groupBy(F.col("canonical_token").alias("token"))
               .agg(F.min("pattern_id").alias("pattern_id")))
-logger.info("dictionary: %d match keys", len(keys_b.value))
+logger.info("dictionary: %d match keys", len(KEYS))
 
 SCHEMA = "id string, token string, written string, before string, after string"
 
@@ -191,7 +191,7 @@ def annotated(batches: Iterable[pd.DataFrame]) -> Iterable[pd.DataFrame]:
     :param batches: pandas batches with the columns id and txt
     :return: pandas batches with the columns of SCHEMA, one row per code that gets a token
     """
-    ck = CodeKeys(keys_b.value)
+    ck = CodeKeys(KEYS)
     for pdf in batches:
         rows = []
         for i, txt in zip(pdf["id"], pdf["txt"]):
