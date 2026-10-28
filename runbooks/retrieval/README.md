@@ -59,7 +59,9 @@ Méthode : chaque clé de l'inventaire reçoit une famille (code voulu, sigle, b
 Les REF ne sont plus décrites par des formes : la famille vient du **catalogue lui-même** (clé de la REF, REF sans langue, sans premier mot, début de REF, REF + suffixe, même signature qu'une REF). `QIS-46A-352`, `LdB IT-243`, `IAQ 04 04 05`, `PR/LAT/506`, `FD_AQL_2193`, `IF2.03.10_GB` sont couverts par construction (testé en local).
 
 - [x] Notebook des familles, testé en local sur un mini-inventaire.
-- [ ] Tour 1 : tu lances, tu me renvoies les cellules 4, 5 et 6 ; je range les préfixes du résidu (`NORME_PREFIXES` / `BRUIT_PREFIXES`) ou j'ajoute une règle.
+- [x] Tour 1 (2026-10-28) : résidu 151 k clés / 22 % des documents. Règles ajoutées : mot + petit nombre (`LEVEL 2`, `F 1`), codes à segments (`BAC 5578`, `NE 40-012`, `STM-0002396`), nombre + code (`2024-T3`), puces (`3.P`), URL et fichiers, REF au milieu d'une graphie (`PRO_Q0014NF_EN`, `MI-13991Table`), codes collés (`IS0024879M`, déjà un seul mot). Corrigé : `ref_sans_premier_mot` et la REF sans indice ne donnent plus `VALIDATION`, `EN`, `43`.
+  Constat : `SF-1027` n'est pas une REF du catalogue UAT (même forme que `SF-1029`) et n'est cité que dans 1 document parsé.
+- [ ] Tour 2 : tu relances les cellules 1 à 6, tu me renvoies 4, 5 et 6.
 - [ ] Tours suivants jusqu'à résidu = bruit pur.
   *Validation : résidu relu, plus aucun code voulu dedans, aucune clé du chat en bruit.*
 

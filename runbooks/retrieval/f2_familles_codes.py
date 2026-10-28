@@ -4,30 +4,41 @@
 # Écrit dans dev_proj.qualibot.f2_familles_codes. Lecture seule ailleurs (doc_catalog de chaque env de ENVS).
 #
 # But : qu'il ne reste dans la famille "residu" que du bruit pur. Le résidu est trié par documents et regroupé par
-# préfixe (cellule 5) ; chaque préfixe relu va dans NORME_PREFIXES (code voulu) ou BRUIT_PREFIXES, puis on relance.
+# préfixe (cellule 5) ; un préfixe relu va dans NORME_PREFIXES (code voulu) ou BRUIT_PREFIXES, puis on relance.
+#
+# Une graphie est découpée en morceaux devant chaque séparateur (- _ / . espace) et entre un chiffre et une lettre
+# qui le suit (MI-13991Table donne MI, -13991, Table). Un "morceau suivi" = plusieurs morceaux consécutifs.
 #
 # Familles, dans l'ordre d'application (action = ce que fera la normalisation) :
-#   ref_catalogue        clé = REF du catalogue, avec ou sans suffixe de langue (QIS-46A-352 A, LdB IT-243,
-#                        IAQ 04 04 05, PROLAT_R40_FR, PR/LAT/506 = PRLAT506)                          -> annoter
-#   ref_sans_premier_mot clé = REF à espace sans son premier mot (IT-243 pour LdB IT-243)            -> annoter
-#   ref_tronquee         clé = début d'une REF coupé sur un séparateur, avec un chiffre
-#                        (QIS-46A-352 pour QIS-46A-352 A, DLV-31 pour DLV-31-5173)                    -> annoter
-#   ref_variante         une graphie commence par une REF suivie d'un séparateur
-#                        (MI-14019-1, QP-2086-Software, IF20037_DLV-31-5207-1Process)                 -> annoter
-#   sigle                lettres seulement (DOA, E.A.S.A)                                               -> glossaire
-#   nombre               chiffres seulement (4.2.1, dates)                                               -> rien
-#   ref_hors_catalogue   même signature qu'une REF du catalogue, suffixe de langue retiré : préfixe en toutes
-#                        lettres, puis 9 par chiffre et A par lettre (NS-1717 = NS9999 comme NS-1754 ;
-#                        Q0697MI_FR = Q9999AA comme Q0375MI)                                          -> annoter
-#   bruit_colonne        préfixe de BRUIT_PREFIXES suivi de chiffres seulement (COL12, OA21)             -> rien
-#   bruit_sommaire       numéro collé à un mot de 3 lettres ou plus (2SCOPE4, 11REFERENCE, 821PROCESS)  -> rien
-#   bruit_unite          nombre suivi d'une unité ou d'un ordinal de UNITES (5MM, 60KHZ, 1ST, 2ND)       -> rien
-#   bruit_dimension      nombres reliés par X (125X80, 10X20X5)                                         -> rien
-#   bruit_mot_nombre     séquence mot + nombre jamais écrite collée (Level 2, Figure 1, page 12)        -> rien
-#   code_norme_piece     préfixe de NORME_PREFIXES (EN9100, NAS1149C0332R, A320)                        -> annoter
-#   colle_doc_unique     écrit collé, sans séparateur, dans un seul document et jamais dans le chat :
-#                        déjà un seul mot pour la recherche par mot clé (lots, numéros de série)        -> rien
-#   residu               tout le reste : à relire                                                         -> a_classer
+#   ref_catalogue         clé = REF du catalogue, avec ou sans suffixe de langue (QIS-46A-352 A, IAQ 04 04 05,
+#                         PROLAT_R40_FR, PR/LAT/506 = PRLAT506)                                        -> annoter
+#   ref_sans_premier_mot  REF à espace sans son premier mot, quand le reste est lettres + séparateur + chiffres
+#                         (IT-243 pour LdB IT-243)                                                     -> annoter
+#   ref_sans_indice       REF sans sa dernière partie en lettres (QIS-46A-352 pour QIS-46A-352 A)        -> annoter
+#   ref_variante          une suite de morceaux d'une graphie est une REF (MI-14019-1, PRO_Q0014NF_EN,
+#                         MI-13991Table 3, DLV-31-5171iss)                                            -> annoter
+#   sigle                 lettres seulement (DOA, E.A.S.A)                                              -> glossaire
+#   code_norme_piece      clé de NORME_CLES (21J = Part 21 sous-partie J)                               -> annoter
+#   nombre                chiffres seulement (4.2.1, dates)                                              -> rien
+#   ref_hors_catalogue    une suite de morceaux, sans suffixe de langue, a la signature d'une REF : préfixe en
+#                         lettres, puis 9 par chiffre et A par lettre (NS-1717 = NS9999 comme NS-1754 ;
+#                         SF-1027 = SF9999 comme SF-1029)                                              -> annoter
+#   bruit_url_fichier     adresse, chemin ou nom de fichier (prtouintraqual1/intraqual/..., x.pdf)       -> rien
+#   bruit_colonne         préfixe de BRUIT_PREFIXES suivi de chiffres seulement (COL12, OA21)            -> rien
+#   bruit_sommaire        numéro collé à un mot de 3 lettres ou plus (2SCOPE4, 11REFERENCE, 821PROCESS) -> rien
+#   bruit_unite           nombre suivi d'une unité ou d'un ordinal de UNITES (5MM, 60KHZ, 1ST, 3D)      -> rien
+#   bruit_dimension       nombres reliés par X (125X80, 10X20X5)                                        -> rien
+#   bruit_puce            numéro + séparateur + une ou deux lettres (3.P, 1-b, 5-P)                     -> rien
+#   code_norme_piece      préfixe de NORME_PREFIXES (EN 9100, PART 21, CS 25, NAS1149C0332R)            -> annoter
+#   bruit_mot_petit_nombre  clé = lettres + un ou deux chiffres, ou toutes les graphies = mot + nombres d'un ou
+#                         deux chiffres (LEVEL 2, Level1-Limited, TABLE 1/1, STEP 3, F 1, B4, Figure 13) -> rien
+#   code_segmente         une graphie commence par des majuscules, a un séparateur et 3 chiffres à la suite
+#                         (BAC 5578, NE 40-012, STM-0002396, IAPS 01-02-003, A 320, IN.ME.L269)        -> annoter
+#   code_tete_chiffres    nombre + séparateur + lettres et chiffres mêlés (2024-T3, 15-5PH)             -> annoter
+#   bruit_mot_nombre      séquence mot + nombre jamais écrite collée (protection 999, type 7280)        -> rien
+#   code_colle            aucune graphie n'a de séparateur : déjà un seul mot pour la recherche par mot
+#                         clé (IS0024879M, F7X, LATE4000, 800VU)                                       -> rien
+#   residu                tout le reste : à relire                                                        -> a_classer
 #
 # Colonnes : env, cle, famille, action, ref (REF du catalogue qui a donné la famille), prefixe (lettres de tête),
 # signature, a_separateur (une graphie contient - _ / . ou espace), docs (documents du corpus), q_docs (questions),
@@ -48,8 +59,10 @@ LANGUES = ["FR", "EN", "GB", "MX", "BG", "CZ", "BR", "ES"]
 
 # Préfixes de codes voulus hors catalogue : normes, pièces, avions, vus dans les exemples de l'inventaire.
 NORME_PREFIXES = ["EN", "PREN", "ISO", "AS", "NAS", "MS", "ABS", "ASNA", "BACB", "NSA", "AITM", "AIPI", "AIPS",
-                  "IPDA", "PART", "A", "DO", "ARP", "AMS", "ASTM", "MIL", "DIN", "SAE", "BMS", "IPC", "IEC", "NF",
-                  "LN", "HST", "HL", "F7X", "CCR"]
+                  "IPDA", "PART", "DO", "ARP", "AMS", "ASTM", "MIL", "DIN", "SAE", "BMS", "IPC", "IEC", "NF",
+                  "LN", "HST", "HL", "CCR", "CS", "AMC"]
+# Clés voulues dont la forme ressemble à du bruit (Part 21 sous-parties J et G).
+NORME_CLES = ["21J", "21G"]
 # Préfixes de bruit : en-têtes de colonnes de tableaux, quand ils sont suivis de chiffres seulement.
 BRUIT_PREFIXES = ["COL", "OA", "OC"]
 # Unités et ordinaux qui suivent un nombre.
@@ -59,6 +72,11 @@ UNITES = ["MM", "CM", "DM", "M", "KM", "UM", "ML", "CL", "L", "MG", "G", "KG", "
           "ST", "ND", "RD", "TH", "ER", "ERE", "EME", "E", "IEME", "O", "A"]
 
 SEP = "[-_/. ]"
+# Coupe d'une graphie en morceaux : devant chaque séparateur et entre un chiffre et la lettre qui le suit.
+COUPE = "(?=[-_/. ])|(?<=[0-9])(?=[A-Za-z])"
+# Adresse, chemin ou nom de fichier.
+URL_FICHIER = (r"(?i)(^https?|^www\.|\.(aspx?|local|corp|com|net|org|html?|pdf|docx?|xlsx?|pptx?|png|jpe?g|txt|csv)"
+               r"($|[/.?#])|(?-i:/[a-z]{2,}/))")
 
 # COMMAND ----------
 # Cellule 2 · fonctions (aucune écriture)
@@ -95,6 +113,19 @@ def debuts(col):
                   ).otherwise(F.array().cast("array<string>"))
 
 
+def suites(col):
+    """Toutes les suites de morceaux consécutifs d'une graphie (PRO_Q0014NF_EN donne PRO, PRO_Q0014, Q0014NF, ...).
+
+    :param col: colonne de la graphie
+    :return: colonne tableau des suites, la graphie entière comprise
+    """
+    parts = F.split(col, COUPE)
+    n = F.size(parts)
+    return F.flatten(F.transform(
+        F.sequence(F.lit(1), n),
+        lambda i: F.transform(F.sequence(i, n), lambda j: F.array_join(F.slice(parts, i, j - i + 1), ""))))
+
+
 def signature(name):
     """Signature d'une clé : lettres de tête en clair, puis 9 par chiffre et A par lettre (Q0375MI donne Q9999AA).
 
@@ -113,15 +144,18 @@ def catalogue(env):
     :return: DataFrame aux colonnes cle, famille, ref et prio (1 = la plus forte)
     """
     cat = spark.table(f"{env}_proj.qualibot.doc_catalog").select("ref").where("ref IS NOT NULL").distinct()
+    code = F.col("cle").rlike("[A-Z]") & F.col("cle").rlike("[0-9]")
     entiere = cat.select(canon("ref").alias("cle"), "ref")
     sans_lg = cat.select(sans_langue("ref").alias("cle"), "ref")
-    premier_mot = (cat.where(F.col("ref").contains(" "))
-                   .select(sans_langue(F.regexp_replace("ref", r"^\S+\s+", "")).alias("cle"), "ref"))
-    tronquee = (cat.select("ref", F.explode(debuts(F.trim("ref"))).alias("d"))
-                .select(canon("d").alias("cle"), "ref").where(F.col("cle").rlike("[0-9]")))
+    reste = F.regexp_replace(F.trim("ref"), r"^\S+\s+", "")
+    premier_mot = (cat.where(F.trim("ref").contains(" ") & reste.rlike("^[A-Za-z]+[-_/.][0-9]"))
+                   .select(sans_langue(reste).alias("cle"), "ref").where(code))
+    indice = (cat.select("ref", F.explode(debuts(F.trim("ref"))).alias("d"))
+              .where(canon(F.expr("substring(trim(ref), length(d) + 1)")).rlike("^[A-Z]+$"))
+              .select(canon("d").alias("cle"), "ref").where(code))
     rows = (entiere.unionByName(sans_lg).withColumn("famille", F.lit("ref_catalogue")).withColumn("prio", F.lit(1))
             .unionByName(premier_mot.withColumn("famille", F.lit("ref_sans_premier_mot")).withColumn("prio", F.lit(2)))
-            .unionByName(tronquee.withColumn("famille", F.lit("ref_tronquee")).withColumn("prio", F.lit(3))))
+            .unionByName(indice.withColumn("famille", F.lit("ref_sans_indice")).withColumn("prio", F.lit(3))))
     w = Window.partitionBy("cle").orderBy("prio", "ref")
     return rows.where(F.length("cle") > 0).withColumn("_rn", F.row_number().over(w)).where("_rn = 1").drop("_rn")
 
@@ -154,56 +188,62 @@ def familles(env):
     """
     k = cles(env)
     cat = catalogue(env)
-    refs_entieres = cat.where("famille = 'ref_catalogue'").select(F.col("cle").alias("d"), F.col("ref").alias("ref_v"))
-    variante = (k.select("cle", F.explode("formes").alias("f"))
-                .select("cle", F.explode(debuts("f")).alias("d"))
-                .select("cle", canon("d").alias("d"))
-                .join(F.broadcast(refs_entieres), "d")
-                .groupBy("cle").agg(F.min("ref_v").alias("ref_v")))
+    refs_entieres = cat.where("famille = 'ref_catalogue'").select(F.col("cle").alias("s"), F.col("ref").alias("ref_v"))
     sig_cat = (cat.where("famille = 'ref_catalogue'")
                .select(signature("cle").alias("signature"), "ref")
                .where(F.col("signature").rlike("^[A-Z]+.*9"))
                .groupBy("signature").agg(F.min("ref").alias("ref_s")))
-    # Chaque graphie est comparée sans son suffixe de langue (Q0697MI_FR a la signature de Q0697MI).
-    hors_cat = (k.select("cle", F.explode("formes").alias("f"))
-                .select("cle", sans_langue("f").alias("sl"))
-                .select("cle", signature("sl").alias("signature"))
+    morceaux = (k.select("cle", F.explode("formes").alias("f"))
+                .select("cle", F.explode(suites("f")).alias("m"))
+                .where(F.col("m").rlike("[A-Za-z]") & F.col("m").rlike("[0-9]"))
+                .select("cle", canon("m").alias("s"), sans_langue("m").alias("sl"))
+                .distinct().cache())
+    variante = (morceaux.join(F.broadcast(refs_entieres), "s")
+                .groupBy("cle").agg(F.min("ref_v").alias("ref_v")))
+    hors_cat = (morceaux.select("cle", signature("sl").alias("signature"))
                 .join(F.broadcast(sig_cat), "signature")
                 .groupBy("cle").agg(F.min("ref_s").alias("ref_s")))
 
     c = F.col("cle")
-    prefixe = F.regexp_extract(c, "^([A-Z]*)", 1)
-    a_sep = F.exists("formes", lambda f: f.rlike(SEP))
     lettres = c.rlike("[A-Z]")
     chiffres = c.rlike("[0-9]")
-    only_seq = F.array_join("categories", ",") == "sequence_espace"
-    seq_jamais_collee = only_seq & F.forall("formes", lambda f: f.contains(" "))
-    mot_tete = F.forall("formes", lambda f: f.rlike(r"^[A-Za-z]+ "))
+    toutes = lambda motif: F.forall("formes", lambda f: f.rlike(motif))
+    une = lambda motif: F.exists("formes", lambda f: f.rlike(motif))
+    unites = "|".join(sorted(set(UNITES), key=len, reverse=True))
 
     df = (k.join(cat.select("cle", F.col("famille").alias("fam_cat"), F.col("ref").alias("ref_c")), "cle", "left")
           .join(variante, "cle", "left")
-          .withColumn("prefixe", prefixe)
-          .withColumn("signature", signature("cle"))
           .join(hors_cat, "cle", "left")
-          .withColumn("a_separateur", a_sep))
+          .withColumn("prefixe", F.regexp_extract(c, "^([A-Z]*)", 1))
+          .withColumn("signature", signature("cle"))
+          .withColumn("a_separateur", une(SEP)))
 
     famille = (F.when(F.col("fam_cat").isNotNull(), F.col("fam_cat"))
                .when(F.col("ref_v").isNotNull(), "ref_variante")
                .when(~chiffres, "sigle")
+               .when(c.isin(NORME_CLES), "code_norme_piece")
                .when(~lettres, "nombre")
-               .when(F.col("ref_s").isNotNull() & (F.length("prefixe") > 0), "ref_hors_catalogue")
+               .when(F.col("ref_s").isNotNull(), "ref_hors_catalogue")
+               .when(une(URL_FICHIER), "bruit_url_fichier")
                .when(c.rlike(f"^({'|'.join(BRUIT_PREFIXES)})[0-9]+$"), "bruit_colonne")
                .when(c.rlike("^[0-9]+[A-Z]{3,}"), "bruit_sommaire")
-               .when(c.rlike(f"^[0-9]+({'|'.join(sorted(set(UNITES), key=len, reverse=True))})$"), "bruit_unite")
+               .when(c.rlike(f"^[0-9]+({unites})$"), "bruit_unite")
                .when(c.rlike("^[0-9]+(X[0-9]+)+$"), "bruit_dimension")
-               .when(seq_jamais_collee & mot_tete & ~F.col("prefixe").isin(NORME_PREFIXES), "bruit_mot_nombre")
+               .when(toutes("^[0-9]{1,3}[-_/. ]{1,3}[A-Za-z]{1,2}$"), "bruit_puce")
                .when(F.col("prefixe").isin(NORME_PREFIXES), "code_norme_piece")
-               .when(~F.col("a_separateur") & (F.col("docs") <= 1) & (F.col("q_docs") == 0), "colle_doc_unique")
+               .when(c.rlike("^[A-Z]+[0-9]{1,2}$")
+                     | toutes(r"^[A-Za-z]+[-_/. ]{0,3}[0-9]{1,2}([-_/. ]{1,3}[0-9]{1,2})*$"), "bruit_mot_petit_nombre")
+               .when(une(r"^[A-Z][A-Z0-9]*([-_/. ]{1,3}[A-Za-z0-9]+)+$") & une("[0-9]{3}") & une(SEP),
+                     "code_segmente")
+               .when(une("^[0-9]+[-_/. ]([A-Za-z]+[0-9]|[0-9]+[A-Za-z])"), "code_tete_chiffres")
+               .when(toutes(r"^[A-Za-z]+ [0-9]"), "bruit_mot_nombre")
+               .when(~F.col("a_separateur"), "code_colle")
                .otherwise("residu"))
-    action = (F.when(F.col("famille").startswith("ref_") | (F.col("famille") == "code_norme_piece"), "annoter")
+    action = (F.when(F.col("famille").startswith("ref_") | F.col("famille").startswith("code_"), "annoter")
               .when(F.col("famille") == "sigle", "glossaire")
               .when(F.col("famille") == "residu", "a_classer")
               .otherwise("rien"))
+    action = F.when(F.col("famille") == "code_colle", "rien").otherwise(action)
     return (df.withColumn("famille", famille).withColumn("action", action)
             .select(F.lit(env).alias("env"), "cle", "famille", "action",
                     F.coalesce("ref_c", "ref_v", "ref_s").alias("ref"), "prefixe", "signature", "a_separateur",
