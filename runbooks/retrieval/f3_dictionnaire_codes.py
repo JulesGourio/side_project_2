@@ -40,7 +40,7 @@ from pyspark.sql import functions as F
 DICTIONARY = "dev_proj.qualibot.f3_cles_codes"
 PASSAGES = "dev_proj.qualibot.chunks"
 QUESTIONS = "uat_proj.qualibot.chat_turns"
-EXAMPLES = 5   # before / after examples per pattern
+EXAMPLES = 15   # before / after examples per pattern
 
 logger = logging.getLogger("canonical_token_preview")
 if not logger.handlers:
@@ -210,7 +210,7 @@ pattern_of = (dictionary.groupBy(F.col("canonical_token").alias("token"))
               .agg(F.min("pattern_id").alias("pattern_id")))
 logger.info("dictionary: %d match keys", len(KEYS))
 
-SCHEMA = "id string, token string, written string, before string, after string"
+SCHEMA = "id string, token string, written string, word string, cut boolean, before string, after string"
 
 
 def annotated(batches: Iterable[pd.DataFrame]) -> Iterable[pd.DataFrame]:
@@ -234,8 +234,12 @@ def annotated(batches: Iterable[pd.DataFrame]) -> Iterable[pd.DataFrame]:
                 right = txt.find(" ", end + 40)
                 before = txt[left:right if right >= 0 else len(txt)]
                 after = before[:end - left] + f" [{m.key}]" + before[end - left:]
-                rows.append((i, m.key, written, before, after))
-        yield pd.DataFrame(rows, columns=["id", "token", "written", "before", "after"])
+                w_left = max(txt.rfind(c, 0, m.start) for c in " \n\t") + 1
+                w_right = min([k for k in (txt.find(c, end) for c in " \n\t") if k >= 0] or [len(txt)])
+                word = txt[w_left:w_right]
+                cut = any(c.isalnum() for c in txt[w_left:m.start] + txt[end:w_right])
+                rows.append((i, m.key, written, word, cut, before, after))
+        yield pd.DataFrame(rows, columns=["id", "token", "written", "word", "cut", "before", "after"])
 
 
 passages = spark.table(PASSAGES).select(F.col("chunk_id").cast("string").alias("id"), F.col("chunk_text").alias("txt"))
@@ -262,6 +266,29 @@ per_token = hits.groupBy("pattern_id", "token").agg(F.count("*").alias("n"), F.f
 w = Window.partitionBy("pattern_id").orderBy(F.desc("n"))
 display(per_token.withColumn("rank", F.row_number().over(w)).where(F.col("rank") <= EXAMPLES)
         .orderBy("pattern_id", "rank").select("pattern_id", "token", "written", "n", "before", "after"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Codes cut inside a word
+# MAGIC Tokens appended to a code that is only part of a longer word (between two spaces): `SF-1154 [SF1154]-1_Fr`, `AMC1 145 [AMC1145].A.30`. One row per token and word, most frequent first.
+
+# COMMAND ----------
+
+display(hits.where("cut").groupBy("pattern_id", "token", "word").agg(F.count("*").alias("n"))
+        .orderBy(F.desc("n")).limit(500))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Codes without digits
+# MAGIC Every token appended to a code written without digits (acronyms with dots or slashes), with its spellings.
+
+# COMMAND ----------
+
+display(hits.where(~F.col("written").rlike("[0-9]")).groupBy("pattern_id", "token")
+        .agg(F.count("*").alias("n"), F.slice(F.array_sort(F.collect_set("written")), 1, 10).alias("spellings"))
+        .orderBy(F.desc("n")))
 
 # COMMAND ----------
 
