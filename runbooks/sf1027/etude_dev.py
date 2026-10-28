@@ -391,12 +391,12 @@ print('codes missed by A, glued:', sorted({r[0] for r in res_j if r[2] == 'A' an
 #      N1 = keywords only (FULL_TEXT) instead of HYBRID      N2 = meaning only (ANN) instead of HYBRID
 #    Exact-match methods (A + one extra reranked search of the question, k8, restricted to the passages that hold the
 #    code: the code decides WHICH passages, the question decides their order):
-#      G1 = Vector Search filter on the index column cited_codes        G2 = filter "chunk_preprocessed LIKE code"
+#      G1 = filter "cited_codes LIKE code" (codes separated by spaces)   G2 = filter "chunk_preprocessed LIKE code"
 #      G3 = chunk ids read from chunks.cited_codes (a code -> passages lookup table, kept by the pipeline)
 #      G4 = REFs of the documents citing the code (doc_references, what the app does today for "which documents cite X")
 probe_rows, _ = vs({'query_text': 'SF1027', 'columns': ['chunk_id', 'cited_codes'], 'num_results': 1, 'query_type': 'FULL_TEXT'})
 print('cited_codes in the index:', probe_rows[0].get('cited_codes') if probe_rows else 'no row')
-FILTER_FORMS = {'G1': lambda c: {'cited_codes': [c]}, 'G2': lambda c: {'chunk_preprocessed LIKE': c}}
+FILTER_FORMS = {'G1': lambda c: {'cited_codes LIKE': c}, 'G2': lambda c: {'chunk_preprocessed LIKE': c}}
 for g, f in FILTER_FORMS.items():
     try:
         rows = vs({**body('SF1027', 'HYBRID', 5), 'filters_json': json.dumps(f(CODE))})[0]
@@ -407,7 +407,7 @@ for g, f in FILTER_FORMS.items():
 ch = spark.table(CHUNKS)
 LOOKUP = {}
 for c in BENCH:
-    rows = ch.filter(F.array_contains('cited_codes', c)).select('chunk_id', 'REF').collect()
+    rows = ch.filter(F.array_contains(F.split(F.coalesce('cited_codes', F.lit('')), ' '), c)).select('chunk_id', 'REF').collect()
     LOOKUP[c] = (sorted({r.chunk_id for r in rows}), sorted({r.REF for r in rows}))
 print('lookup cited_codes -> chunks:', {c: len(v[0]) for c, v in LOOKUP.items()})
 print('targets without the code in cited_codes (own-document codes are left out by design):',
