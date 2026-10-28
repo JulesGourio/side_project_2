@@ -39,6 +39,8 @@ Notebook : [`etude_dev.py`](./etude_dev.py). Import dans un notebook DEV, « Run
 - Sur 25 codes × 3 formes de question : A (app actuelle) 70/75, B 73/75 mais change 11 à 54 % des passages des questions sans code (rejetée), C 70/75, **D, E, F 75/75**. E (code répété) ne coûte aucun appel.
 - Cellule J ajoutée : même mesure avec le code écrit collé, en minuscules ou avec un espace.
 
+**Cellule J (28/10)** : avec le code écrit collé dans la question (`SF1027`), l'app actuelle (A) trouve 48/75 (SF-1027 raté 3/3) ; minuscules 73/75 ; espace 61/75. D, E et F : 75/75 pour chaque graphie. Cause : l'app n'ajoute `[CODE]` qu'à un code écrit autrement que sa forme collée, donc un code collé garde un seul mot-clé. Recommandation : E (forme collée répétée dans la requête), à mesurer d'abord sur les vraies questions (1, 2 ou 3 répétitions).
+
 Le tableau final donne pour chaque option : cas trouvés, cas en top 5, position médiane, passages envoyés au modèle (coût en tokens), appels Vector Search. On choisira ensemble à partir de ces chiffres.
 
 ---
