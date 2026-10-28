@@ -69,6 +69,11 @@ def test_leaves_other_text_alone(text: str) -> None:
     ('il y a un tableau', 'YA'), ('les SG&A de LMXI', 'ADE'), ('e.g. BAPS', 'EG'), ('lines of 10 holes', 'OF10'),
     ('Le 23/01/2018', 'LE23'), ('R30 Develop Process', 'R30DEVELOP'), ('Plan – 787', 'PLAN787'),
     ('Level 2 Level 3', 'LEVEL2LEVEL3'), ('Rc 23', 'RC23'),
+    ('PTD-TESTDSD241204-6-A-01', 'A01'), ('145.A.30', 'A30'), ('ECL-G-46', 'G46'), ('Manual_Rev2025.11_v2.0', 'V20'),
+    ('2024 T3 1,2', 'T31'), ('R 0,55', 'R0'), ('DA 9.10', 'DA9'), ('000,0 FH', '0FH'),
+    ('STRUCTURE 1000', 'STRUCTURE1000'),
+    ('EMBRAER - 550', 'EMBRAER550'), ('NASM21059 - NUT', 'NASM21059NUT'), ('Regles_SAP_controle', 'SAP'),
+    ('A/B', 'AB'), ('X-Y', 'XY'), ('N/A', 'NA'), ('M . O . E', 'MOE'),
 ])
 def test_no_token_on_words(text: str, key: str) -> None:
     """Common words next to a number or a letter, and short codes glued inside a longer word, give nothing.
@@ -80,8 +85,10 @@ def test_no_token_on_words(text: str, key: str) -> None:
 
 
 @pytest.mark.parametrize('text, key', [
-    ('E.A.S.A', 'EASA'), ('N/A', 'NA'), ('NDT/NDI', 'NDTNDI'), ('BPL/SBR', 'BPLSBR'), ('OF 10', 'OF10'),
-    ('MI-13991Table', 'MI13991'), ('QM-1031Quality', 'QM1031'),
+    ('E.A.S.A', 'EASA'), ('N.D.T', 'NDT'), ('M.O.E', 'MOE'), ('OF 10', 'OF10'),
+    ('MI-13991Table', 'MI13991'), ('QM-1031Quality', 'QM1031'), ('IP-025/Installation', 'IP025'),
+    ('GO-1585-B', 'GO1585'), ('CR=11055/D/7X', '11055D7X'), ('IF20308_FR-annexe', 'IF20308'),
+    ('LTC-IN-E-045-F7X', 'INE045'), ('PAQ 04.05', 'PAQ0405'), ('IF 2.03.08.', 'IF20308'),
 ])
 def test_separated_codes_and_upper_case(text: str, key: str) -> None:
     """Separated acronyms, upper-case codes and a delimited code glued to a word give their key.

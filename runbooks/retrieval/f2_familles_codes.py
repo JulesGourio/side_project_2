@@ -71,7 +71,7 @@
 # MAGIC
 # MAGIC | ID | Pattern | Regex | Captures | Examples | Treatment |
 # MAGIC | --- | --- | --- | --- | --- | --- |
-# MAGIC | `ACR-02` | Separated acronym | spelling, case-sensitive: `^[A-Z]([./][A-Z])+\.?$` | one acronym written letter by letter with dots or slashes; two acronyms joined by a slash (`NDT/NDI`) are two words already and stay `ACR-01` | `E.A.S.A`, `B.P.`, `P/N`, `N.D.T` | `CANONICAL_TOKEN` (`[EASA]`) |
+# MAGIC | `ACR-02` | Separated acronym | spelling, case-sensitive: `^[A-Z]([./][A-Z]){2,}\.?$` | one acronym of 3 letters or more written letter by letter with dots or slashes; two letters (`A/B`, `Y/N`, `I.E`) are mostly pairs and ranges, and two acronyms joined by a slash (`NDT/NDI`) are two words already: both stay `ACR-01` | `E.A.S.A`, `N.D.T`, `M.O.E`, `T.V.A` | `CANONICAL_TOKEN` (`[EASA]`) |
 # MAGIC | `ACR-01` | Acronym | key: `^[A-Z]+$` | letters-only words in upper case: acronyms and upper-case common words | `DOA`, `EASA`, `NADCAP`, `LATECOERE` | `GLOSSARY_CANDIDATE` |
 # MAGIC | `UNL-01` | Unlisted REF | a slice, language suffix removed, has the signature of a catalogue REF (leading letters, then at least one digit) | REFs cited but absent from the catalogue: obsolete, other site, typo | `SF-1027` (as `SF-1029`), `NS-1717`, `MI-13663`, `PAQ 10 03` | `CANONICAL_TOKEN` |
 # MAGIC | `MAT-01` | Material or alloy | key: `^([0-9]{4}T[0-9]+$\|[0-9]{3}PH$\|TA[0-9]+V\|TI[0-9]\|[XZ][0-9]+C[RN])` | aluminium tempers, steels, titanium alloys | `2024-T3`, `7175-T7351`, `15-5PH`, `TA6V`, `Ti-6Al-4V`, `Z6CNU17-04` | `CANONICAL_TOKEN` |
@@ -98,14 +98,15 @@
 # MAGIC | `EXC-02` | Heading number glued to a word | key: `^[0-9]+[A-Z]{3,}` | tables of contents | `2SCOPE4`, `1OBJECT4`, `11REFERENCE` |
 # MAGIC | `EXC-03` | Measure unit or ordinal | key: `^[0-9]+(MM\|CM\|…\|ST\|ND\|RD\|TH\|ER\|EME\|E)$`, units of `UNITS` | quantities, ordinals | `5MM`, `60KHZ`, `3D`, `1ST`, `2ND` |
 # MAGIC | `EXC-04` | Dimension | key: `^[0-9]+(X[0-9]+)+$` | sizes | `125x80`, `76X254X1` |
-# MAGIC | `EXC-05` | List item | every spelling: `^[0-9]{1,3}[-_/. )]?[A-Za-z]{1,2}$` | numbered list bullets | `3.P`, `1-b`, `10P` |
+# MAGIC | `EXC-05` | List item or section | every spelling: `^([0-9]{1,3}[.)-]){0,3}[0-9]{1,3}[-_/. )]?[A-Za-z]{1,2}$` | numbered bullets and sections | `3.P`, `1-b`, `10P`, `5.3.Po`, `6.2.R` |
 # MAGIC | `EXC-06` | Date with month name | one spelling: month (French or English, abbreviated or not), up to 3 separators, a digit | dates | `July 2024`, `Jan/31/2024`, `JANVIER2018` |
 # MAGIC | `EXC-07` | Word and small number | key `^[A-Z]{3,}[0-9]{1,2}$`, or every spelling `^[A-Za-z]{3,}[-_/. ]{0,3}[0-9]{1,2}([-_/. ]{1,3}[0-9]{1,2})*$`; the word is not the leading letters of a catalogue REF | levels, steps, figures, tables | `LEVEL 2`, `NIVEAU 3`, `TABLE 1/1`, `Figure 13` |
-# MAGIC | `EXC-08` | Word and number, never glued | every spelling: `^[A-Za-z]+ [0-9]+$` | running text | `protection 999`, `inspect 100`, `rotated 180` |
+# MAGIC | `EXC-08` | Word and number, never glued | every spelling: `^[A-Za-z]+ +[0-9][0-9 ./,:-]*$`; one spelling has a word in lower case (`^[A-Za-z][a-z]+ `) or every word has 5 letters or more; regulations and aircraft (`Part 21`, `Boeing 787`) excepted | running text, dates after a word | `de 5`, `to 0`, `inspect 100`, `Le 12/11/2019`, `PROTECTION 999` |
+# MAGIC | `EXC-10` | Code and a separate number | every spelling: a word with letters and digits, then spaces and a word starting with a digit: `^(?=\S*[0-9])(?=\S*[A-Za-z])\S+ +[0-9]\S*$` | a code followed by a quantity or another code | `AMS5862 15-5PH`, `7475-T7351 2.500`, `6061-O 0.050`, `AMC1 145` |
 # MAGIC
 # MAGIC ## Evaluation order
 # MAGIC
-# MAGIC First match wins: `REF-01` … `REF-99`, `ACR-02`, `ACR-01`, `NUM-01`, the Part 21 subparts `21G` and `21J` (`REG-01`), `UNL-01`, `EXC-09`, `EXC-01` … `EXC-04`, `MAT-01`, `EXC-05`, `EXC-06`, `STD-01`, `REG-01`, `ACF-01`, `SHC-01`, `EXC-07`, `IDN-01`, `EXC-08`, `GLU-01`, `OTH-01`. The Part 21 subparts come before the units and list items so that `21G` and `21J` stay codes, materials before the list items so that `15-5PH` stays one; catalogue REFs and unlisted REFs come before every exclusion.
+# MAGIC First match wins: `REF-01` … `REF-99`, `ACR-02`, `ACR-01`, `NUM-01`, the Part 21 subparts `21G` and `21J` (`REG-01`), `UNL-01`, `EXC-09`, `EXC-01` … `EXC-04`, `EXC-10`, `EXC-08`, `MAT-01`, `EXC-05`, `EXC-06`, `STD-01`, `REG-01`, `ACF-01`, `SHC-01`, `EXC-07`, `IDN-01`, `GLU-01`, `OTH-01`. The Part 21 subparts come before the units and list items so that `21G` and `21J` stay codes, materials before the list items so that `15-5PH` stays one; catalogue REFs and unlisted REFs come before every exclusion.
 # MAGIC
 # MAGIC ## Output table `dev_proj.qualibot.f2_familles_codes`
 # MAGIC
@@ -192,7 +193,7 @@ PART21_SUBPARTS = ["21G", "21J"]
 MONTHS = "JAN|JANV|FE[BV]|FEVR|MAR|MARS|APR|AVR|MAY|MAI|JUN|JUIN|JUL|JUIL|AUG|AOU|SEP|SEPT|OCT|NOV|DEC"
 
 RX = {
-    "ACR-02": r"^[A-Z]([./][A-Z])+\.?$",
+    "ACR-02": r"^[A-Z]([./][A-Z]){2,}\.?$",
     "ACR-01": r"^[A-Z]+$",
     "NUM-01": r"^[0-9]+$",
     "EXC-09": (r"(?i)(^https?|^www\.|\.(aspx?|local|corp|com|net|org|html?|pdf|docx?|xlsx?|pptx?|png|jpe?g|txt|csv)"
@@ -202,7 +203,7 @@ RX = {
     "EXC-03": f"^[0-9]+({'|'.join(sorted(set(UNITS), key=len, reverse=True))})$",
     "EXC-04": r"^[0-9]+(X[0-9]+)+$",
     "MAT-01": r"^([0-9]{4}T[0-9]+$|[0-9]{3}PH$|TA[0-9]+V|TI[0-9]|[XZ][0-9]+C[RN])",
-    "EXC-05": r"^[0-9]{1,3}[-_/. )]?[A-Za-z]{1,2}$",
+    "EXC-05": r"^([0-9]{1,3}[.)-]){0,3}[0-9]{1,3}[-_/. )]?[A-Za-z]{1,2}$",
     "EXC-06": f"(?i)^({MONTHS})[a-z]*[ ./-]{{0,3}}[0-9]",
     "STD-01": f"^({'|'.join(STD_PREFIXES)})[0-9]",
     "REG-01": r"^(PART|PARTIE|CS|AMC)[0-9]|^21[GJ]$",
@@ -211,7 +212,8 @@ RX = {
     "EXC-07": r"^[A-Z]{3,}[0-9]{1,2}$",
     "EXC-07-spelling": r"^[A-Za-z]{3,}[-_/. ]{0,3}[0-9]{1,2}([-_/. ]{1,3}[0-9]{1,2})*$",
     "IDN-01": r"^[A-Z][A-Za-z0-9]*([-_/. ]{1,3}[A-Za-z0-9]+)+$",
-    "EXC-08": r"^[A-Za-z]+ [0-9]+$",
+    "EXC-08": r"^[A-Za-z]+ +[0-9][0-9 ./,:-]*$",
+    "EXC-10": r"^(?=\S*[0-9])(?=\S*[A-Za-z])\S+ +[0-9]\S*$",
     "GLU-01": r"[-_/. ]",
 }
 
@@ -228,6 +230,10 @@ PATTERNS = [
     ("EXC-02", "Heading number glued to a word", RX["EXC-02"], "KEEP_AS_IS"),
     ("EXC-03", "Measure unit or ordinal", RX["EXC-03"], "KEEP_AS_IS"),
     ("EXC-04", "Dimension", RX["EXC-04"], "KEEP_AS_IS"),
+    ("EXC-10", "Code and a separate number", f"every spelling: {RX['EXC-10']}", "KEEP_AS_IS"),
+    ("EXC-08", "Word and number, never glued",
+     f"every spelling: {RX['EXC-08']}, with a word in lower case or of 5 letters or more, not REG-01 or ACF-01",
+     "KEEP_AS_IS"),
     ("MAT-01", "Material or alloy", RX["MAT-01"], "CANONICAL_TOKEN"),
     ("EXC-05", "List item", f"every spelling: {RX['EXC-05']}", "KEEP_AS_IS"),
     ("EXC-06", "Date with month name", f"one spelling: {RX['EXC-06']}", "KEEP_AS_IS"),
@@ -238,7 +244,6 @@ PATTERNS = [
     ("EXC-07", "Word and small number",
      f"{RX['EXC-07']} or every spelling {RX['EXC-07-spelling']}, word not a REF prefix", "KEEP_AS_IS"),
     ("IDN-01", "Segmented identifier", f"one spelling: {RX['IDN-01']}, with 3 consecutive digits", "CANONICAL_TOKEN"),
-    ("EXC-08", "Word and number, never glued", f"every spelling: {RX['EXC-08']}", "KEEP_AS_IS"),
     ("GLU-01", "Glued code", "no spelling contains a separator", "KEEP_AS_IS"),
     ("OTH-01", "Other code", "letters and digits, no other pattern", "CANONICAL_TOKEN"),
 ]
@@ -286,16 +291,32 @@ def leading_cuts(col: Column | str) -> Column:
 
 
 def slices(col: Column | str) -> Column:
-    """Every run of consecutive pieces of a spelling, the whole spelling included.
+    """Every run of consecutive pieces of a spelling that the matcher can recognise, the whole spelling included.
+
+    A run that stops between a digit and a glued letter is kept only when it holds a separator, as in the matcher
+    (``MI-13991`` in ``MI-13991Table``, never ``F04641`` in ``F04641A``).
 
     :param col: column of the spelling
     :return: array column of the slices (``PRO_Q0014NF_EN`` gives ``PRO``, ``PRO_Q0014``, ``Q0014NF``, …)
     """
     parts = F.split(col, PIECE_CUT)
     n = F.size(parts)
-    return F.flatten(F.transform(
-        F.sequence(F.lit(1), n),
-        lambda i: F.transform(F.sequence(i, n), lambda j: F.array_join(F.slice(parts, i, j - i + 1), ""))))
+
+    def run(i: Column, j: Column) -> Column:
+        """Slice of the parts i to j, or null when it stops inside a glued word without a separator.
+
+        :param i: first part, from 1
+        :param j: last part
+        :return: column of the slice or null
+        """
+        joined = F.array_join(F.slice(parts, i, j - i + 1), "")
+        following = F.when(j < n, F.element_at(parts, j + 1)).otherwise(F.lit(""))
+        inside = following.rlike("^[A-Za-z]") & ~joined.rlike(f"{SEPARATOR}")
+        return F.when(~inside, joined)
+
+    every_run = F.flatten(F.transform(F.sequence(F.lit(1), n), lambda i: F.transform(F.sequence(i, n),
+                                                                                     lambda j: run(i, j))))
+    return F.filter(every_run, lambda x: x.isNotNull())
 
 
 def signature(name: str) -> Column:
@@ -416,6 +437,9 @@ def classify(env: str) -> DataFrame:
                .when(key.rlike(RX["EXC-02"]), "EXC-02")
                .when(key.rlike(RX["EXC-03"]), "EXC-03")
                .when(key.rlike(RX["EXC-04"]), "EXC-04")
+               .when(every(RX["EXC-10"]), "EXC-10")
+               .when(every(RX["EXC-08"]) & (some(r"^[A-Za-z][a-z]+ ") | every(r"^[A-Za-z]{5,} "))
+                     & ~key.rlike(RX["REG-01"]) & ~key.rlike(RX["ACF-01"]), "EXC-08")
                .when(key.rlike(RX["MAT-01"]), "MAT-01")
                .when(every(RX["EXC-05"]), "EXC-05")
                .when(some(RX["EXC-06"]), "EXC-06")
@@ -425,7 +449,6 @@ def classify(env: str) -> DataFrame:
                .when(key.rlike(RX["SHC-01"]), "SHC-01")
                .when(~prefix.isin(ref_prefixes) & (key.rlike(RX["EXC-07"]) | every(RX["EXC-07-spelling"])), "EXC-07")
                .when(some(RX["IDN-01"]) & some("[0-9]{3}"), "IDN-01")
-               .when(every(RX["EXC-08"]), "EXC-08")
                .when(~some(RX["GLU-01"]), "GLU-01")
                .otherwise("OTH-01"))
     catalogue_ref = (F.when(F.col("pattern_id").startswith("REF-"), F.coalesce("cat_ref", "slice_ref"))
