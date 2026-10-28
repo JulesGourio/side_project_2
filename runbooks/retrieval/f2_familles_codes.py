@@ -71,7 +71,7 @@
 # MAGIC
 # MAGIC | ID | Pattern | Regex | Captures | Examples | Treatment |
 # MAGIC | --- | --- | --- | --- | --- | --- |
-# MAGIC | `ACR-02` | Separated acronym | spelling, case-sensitive: `^[A-Z]{1,3}([./][A-Z]{1,3})+\.?$` | acronyms written with dots or slashes | `E.A.S.A`, `B.P.`, `P/N`, `N.D.T` | `CANONICAL_TOKEN` (`[EASA]`) |
+# MAGIC | `ACR-02` | Separated acronym | spelling, case-sensitive: `^[A-Z]([./][A-Z])+\.?$` | one acronym written letter by letter with dots or slashes; two acronyms joined by a slash (`NDT/NDI`) are two words already and stay `ACR-01` | `E.A.S.A`, `B.P.`, `P/N`, `N.D.T` | `CANONICAL_TOKEN` (`[EASA]`) |
 # MAGIC | `ACR-01` | Acronym | key: `^[A-Z]+$` | letters-only words in upper case: acronyms and upper-case common words | `DOA`, `EASA`, `NADCAP`, `LATECOERE` | `GLOSSARY_CANDIDATE` |
 # MAGIC | `UNL-01` | Unlisted REF | a slice, language suffix removed, has the signature of a catalogue REF (leading letters, then at least one digit) | REFs cited but absent from the catalogue: obsolete, other site, typo | `SF-1027` (as `SF-1029`), `NS-1717`, `MI-13663`, `PAQ 10 03` | `CANONICAL_TOKEN` |
 # MAGIC | `MAT-01` | Material or alloy | key: `^([0-9]{4}T[0-9]+$\|[0-9]{3}PH$\|TA[0-9]+V\|TI[0-9]\|[XZ][0-9]+C[RN])` | aluminium tempers, steels, titanium alloys | `2024-T3`, `7175-T7351`, `15-5PH`, `TA6V`, `Ti-6Al-4V`, `Z6CNU17-04` | `CANONICAL_TOKEN` |
@@ -192,7 +192,7 @@ PART21_SUBPARTS = ["21G", "21J"]
 MONTHS = "JAN|JANV|FE[BV]|FEVR|MAR|MARS|APR|AVR|MAY|MAI|JUN|JUIN|JUL|JUIL|AUG|AOU|SEP|SEPT|OCT|NOV|DEC"
 
 RX = {
-    "ACR-02": r"^[A-Z]{1,3}([./][A-Z]{1,3})+\.?$",
+    "ACR-02": r"^[A-Z]([./][A-Z])+\.?$",
     "ACR-01": r"^[A-Z]+$",
     "NUM-01": r"^[0-9]+$",
     "EXC-09": (r"(?i)(^https?|^www\.|\.(aspx?|local|corp|com|net|org|html?|pdf|docx?|xlsx?|pptx?|png|jpe?g|txt|csv)"

@@ -76,6 +76,9 @@ Refonte 2026-10-28 (proposition validée : [Code patterns — proposal](https://
 
 - [x] Mécanisme + tests sur les graphies réelles ([test_code_keys.py](../../tests/test_code_keys.py) : `SF 1027`, `MI - 1365`, `IF2.03.08_CZ`, `LDB IT 243`, `PR/LAT/506`, `FD_AQL_2193`, `QIS-46A-352-a`, `IAQ 04 04 05`, `Q0697MI_FR`, `TDA8 - 00/027`, `MI-13991Table`… et rien sur `LEVEL 2`, `XSF-1027`, `SF-10273`). Testé en local avec Spark.
 - [ ] Tu lances f2 puis f3 et me renvoies les cellules 3 à 6. *Validation : exemples avant/après relus, aucune annotation absurde dans les questions.*
+- [x] **Sigles reliés par `/` (`NDT/NDI`), décidé 2026-10-28.** Le jeton s'ajoute au texte sans rien remplacer (`NDT/NDI [NDTNDI]`) : `NDT` et `NDI` restent indexés, donc rien n'est raté, mais `NDTNDI` n'apporte rien. Le jeton est donc réservé aux sigles écrits lettre par lettre (`P/N`, `N/A`, `E.A.S.A`, `B.P.`, `N.D.T`, motif `ACR-02` = `^[A-Z]([./][A-Z])+\.?$`). `NDT/NDI`, `BPL/SBR`, `FAI/RPA` restent deux mots (`ACR-01`).
+  Idée de Jules : faire remplacer `/` par « et »/« and » par le LLM à l'étape de traduction de la question quand l'utilisateur voulait dire « et ». Pas nécessaire pour la recherche par mots-clés, qui coupe déjà sur `/` (la question `NDT/NDI` cherche `NDT` et `NDI`). Utile seulement si on mesure (étape 5) que les embeddings comprennent mieux « NDT et NDI » que `NDT/NDI`. À tester alors dans `translate_query.md` / `rewrite.md`, sur le jeu d'éval.
+- [ ] Tu relances f2 puis f3 et me renvoies : *Codes cut inside a word*, *Codes without digits*, *Codes of the corpus not found in the passages*, *Codes left as they are*. *Validation : plus aucun code voulu raté ni coupé.*
 - [ ] Routage : BM25 ← question annotée ; embeddings ← question brute. Dépend du test 1 de l'étape 4. Rien n'est branché dans l'app.
 
 ### 3. Preprocess des documents — Mer.-Jeu. (F2)

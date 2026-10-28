@@ -6,7 +6,7 @@
 # MAGIC
 # MAGIC | | |
 # MAGIC | --- | --- |
-# MAGIC | Reads | `dev_proj.qualibot.f3_cles_codes` (dictionary, written by the code patterns notebook), `dev_proj.qualibot.chunks`, `uat_proj.qualibot.chat_turns` |
+# MAGIC | Reads | `dev_proj.qualibot.f3_cles_codes` (dictionary) and `dev_proj.qualibot.f2_familles_codes` (patterns), written by the code patterns notebook, `dev_proj.qualibot.chunks`, `uat_proj.qualibot.chat_turns` |
 # MAGIC | Writes | nothing |
 # MAGIC | Rights | the user's own |
 # MAGIC
@@ -38,6 +38,7 @@ from pyspark.sql import Window
 from pyspark.sql import functions as F
 
 DICTIONARY = "dev_proj.qualibot.f3_cles_codes"
+PATTERNS = "dev_proj.qualibot.f2_familles_codes"
 PASSAGES = "dev_proj.qualibot.chunks"
 QUESTIONS = "uat_proj.qualibot.chat_turns"
 EXAMPLES = 15   # before / after examples per pattern
@@ -210,14 +211,16 @@ pattern_of = (dictionary.groupBy(F.col("canonical_token").alias("token"))
               .agg(F.min("pattern_id").alias("pattern_id")))
 logger.info("dictionary: %d match keys", len(KEYS))
 
-SCHEMA = "id string, token string, written string, word string, cut boolean, before string, after string"
+SCHEMA = ("id string, token string, written string, appended boolean, word string, cut boolean, before string, "
+          "after string")
 
 
 def annotated(batches: Iterable[pd.DataFrame]) -> Iterable[pd.DataFrame]:
-    """Codes of each text that get a token, with an extract before and after the token is appended.
+    """Codes found in each text, with an extract before and after the token is appended.
 
     :param batches: pandas batches with the columns id and txt
-    :return: pandas batches with the columns of SCHEMA, one row per token appended
+    :return: pandas batches with the columns of SCHEMA, one row per code found; appended is False when the code is
+        already written as its token
     """
     ck = CodeKeys(KEYS)
     for pdf in batches:
@@ -227,8 +230,7 @@ def annotated(batches: Iterable[pd.DataFrame]) -> Iterable[pd.DataFrame]:
             for m in ck.find(txt):
                 end = _word_end(txt, m.end)
                 written = txt[m.start:m.end]
-                if (written.upper() == m.key and end == m.end) or txt.startswith(f" [{m.key}]", end):
-                    continue
+                appended = not ((written.upper() == m.key and end == m.end) or txt.startswith(f" [{m.key}]", end))
                 # The extract runs from word boundary to word boundary, so no code in it is cut.
                 left = txt.rfind(" ", 0, max(0, m.start - 60)) + 1
                 right = txt.find(" ", end + 40)
@@ -238,12 +240,13 @@ def annotated(batches: Iterable[pd.DataFrame]) -> Iterable[pd.DataFrame]:
                 w_right = min([k for k in (txt.find(c, end) for c in " \n\t") if k >= 0] or [len(txt)])
                 word = txt[w_left:w_right]
                 cut = any(c.isalnum() for c in txt[w_left:m.start] + txt[end:w_right])
-                rows.append((i, m.key, written, word, cut, before, after))
-        yield pd.DataFrame(rows, columns=["id", "token", "written", "word", "cut", "before", "after"])
+                rows.append((i, m.key, written, appended, word, cut, before, after if appended else before))
+        yield pd.DataFrame(rows, columns=["id", "token", "written", "appended", "word", "cut", "before", "after"])
 
 
 passages = spark.table(PASSAGES).select(F.col("chunk_id").cast("string").alias("id"), F.col("chunk_text").alias("txt"))
-hits = passages.mapInPandas(annotated, SCHEMA).join(pattern_of, "token", "left").cache()
+found = passages.mapInPandas(annotated, SCHEMA).join(pattern_of, "token", "left").cache()
+hits = found.where("appended")
 total = passages.count()
 changed = hits.select("id").distinct().count()
 logger.info("DEV passages: %d, changed: %d (%.1f %%)", total, changed, 100 * changed / max(total, 1))
@@ -293,6 +296,35 @@ display(hits.where(~F.col("written").rlike("[0-9]")).groupBy("pattern_id", "toke
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Codes of the corpus not found in the passages
+# MAGIC Codes classified `CANONICAL_TOKEN` and cited in DEV documents, whose token the matcher finds in no DEV passage, by number of documents. Expected: documents outside the chat scope (the inventory reads every parsed document, the passages only the documents in scope). Anything else is a code the matcher misses.
+
+# COMMAND ----------
+
+found_tokens = found.select("token").distinct()
+display(spark.table(PATTERNS).where((F.col("env") == "dev") & (F.col("treatment") == "CANONICAL_TOKEN")
+                                    & (F.col("document_count") > 0))
+        .join(found_tokens, F.col("canonical_token") == F.col("token"), "left_anti")
+        .select("pattern_id", "code_key", "canonical_token", F.slice("spellings", 1, 6).alias("spellings"),
+                "document_count", F.slice("top_documents", 1, 3).alias("top_documents"))
+        .orderBy(F.desc("document_count")).limit(500))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Codes left as they are
+# MAGIC Codes cited in DEV documents that get no token (`KEEP_AS_IS`, `GLOSSARY_CANDIDATE`), plain numbers and glued codes aside, by number of documents. A code that should get a token in this list means an exclusion pattern is too wide.
+
+# COMMAND ----------
+
+display(spark.table(PATTERNS).where((F.col("env") == "dev") & (F.col("treatment") != "CANONICAL_TOKEN")
+                                    & ~F.col("pattern_id").isin("NUM-01", "GLU-01") & (F.col("document_count") > 0))
+        .select("pattern_id", "code_key", F.slice("spellings", 1, 6).alias("spellings"), "document_count")
+        .orderBy(F.desc("document_count")).limit(500))
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Chat questions
 # MAGIC Every UAT chat question that gets a token, before and after. A question must carry the same token as the passages that cite its code.
 
@@ -301,5 +333,5 @@ display(hits.where(~F.col("written").rlike("[0-9]")).groupBy("pattern_id", "toke
 questions = (spark.table(QUESTIONS).where(F.col("question").isNotNull())
              .select(F.col("id").cast("string").alias("id"),
                      F.regexp_replace("question", r"\[Division:[^\]]*\]", " ").alias("txt")))
-q_hits = questions.mapInPandas(annotated, SCHEMA).join(pattern_of, "token", "left")
+q_hits = questions.mapInPandas(annotated, SCHEMA).join(pattern_of, "token", "left").where("appended")
 display(q_hits.select("pattern_id", "token", "written", "after").orderBy("pattern_id", "token"))
