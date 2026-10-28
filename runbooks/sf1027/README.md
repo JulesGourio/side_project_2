@@ -43,6 +43,8 @@ Notebook : [`etude_dev.py`](./etude_dev.py). Import dans un notebook DEV, « Run
 
 **Cellule K** : autres familles de méthodes sur les 300 questions. Recherche à un seul moteur, mots-clés seuls (N1) ou sens seul (N2). Recherche par correspondance exacte du code : filtre sur `cited_codes` (G1), filtre `LIKE` (G2), passages lus dans la table (G3), documents citant le code (G4). Dans les quatre cas, le code choisit les passages et la question les ordonne.
 
+**Résultats cellule K (28/10)**, trouvés sur 300 questions : A (app actuelle) 252, N1 mots-clés seuls 272, N2 sens seul 80, **G1 300, G2 300, G3 300**, G4 295. Recommandation : **G2**. Quand la question nomme un code, une recherche de plus porte sur la question, filtrée `chunk_preprocessed LIKE <code>`. Les questions sans code ne changent pas, aucune table n'est ajoutée, et elle ne dépend pas de `cited_codes`, qui exclut les codes du document lui-même.
+
 Le tableau final donne pour chaque option : cas trouvés, cas en top 5, position médiane, passages envoyés au modèle (coût en tokens), appels Vector Search. On choisira ensemble à partir de ces chiffres.
 
 ---
