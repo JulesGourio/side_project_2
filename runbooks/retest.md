@@ -396,7 +396,6 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 
 ## 2026-10-28 — normalisation des codes (version 2)
 
-- `code_normalization.py` change `chunk_preprocessed` et `cited_codes` : en DEV, lancer le parsing avec `run_mode=rechunk`, puis `5_sync_index`, puis `6_update_kb_metadata` (`doc_references`). Vérifier dans le log de `6_update_kb_metadata` la ligne « Code normalization (version 2) knows every REF » (sinon AMBER avec la liste des REF inconnues).
+- `code_normalization.py` change `chunk_preprocessed` et `cited_codes` : en DEV, lancer le parsing avec `run_mode=rechunk`, puis `5_sync_index`, puis `6_update_kb_metadata` (`doc_references`). Vérifier dans le log de `6_update_kb_metadata` la ligne « Code normalization (version 2) reads every REF » (sinon AMBER avec les REF qu'aucun motif ne lit).
 - Le chat et la recherche d'impact réécrivent les requêtes avec le même module : poser « dans quel document cite-t-on SF-1027 ? » et « sf 1027 » en DEV.
-- `doc_catalog._canon` (app) : même forme canonique que le module (translittération, plusieurs suffixes de langue retirés) ; vérifier les chips de sources et les liens REF sur `ŘLCZ-07/18` et `INE028_FR_EN`.
 

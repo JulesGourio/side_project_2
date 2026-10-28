@@ -293,19 +293,19 @@ if HAS_CITED_CODES:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Code normalization catalog
-# MAGIC The passages and the questions are normalised with the catalog generated into `code_normalization.py`. A REF in scope that this catalog does not know is still found when it has the shape of a known family, but a REF of a new format is not: the module must be regenerated from the current catalog, then the chunks rebuilt (`run_mode=rechunk`). AMBER: the run goes on.
+# MAGIC ## Code normalization coverage
+# MAGIC The passages and the questions are normalised by the patterns of `code_normalization.py`. A REF in scope that no pattern reads is not normalised: a new REF format (a pattern to add) or a new prefix (`CODE_FAMILIES` to regenerate), then the chunks rebuilt (`run_mode=rechunk`). AMBER: the run goes on.
 
 # COMMAND ----------
 
-unknown_refs = code_normalization.catalog_drift(r[0] for r in catalog_rows)
-if unknown_refs:
+unread_refs = code_normalization.unmatched_refs(r[0] for r in catalog_rows)
+if unread_refs:
     logger.warning(
-        f"AMBER code normalization (version {code_normalization.NORMALIZATION_VERSION}): {len(unknown_refs)} of "
-        f"{len(catalog_rows)} REFs unknown to its catalog, e.g. {', '.join(unknown_refs[:20])}"
+        f"AMBER code normalization (version {code_normalization.NORMALIZATION_VERSION}): {len(unread_refs)} of "
+        f"{len(catalog_rows)} REFs read by no pattern, e.g. {', '.join(unread_refs[:20])}"
     )
 else:
-    logger.info(f"Code normalization (version {code_normalization.NORMALIZATION_VERSION}) knows every REF")
+    logger.info(f"Code normalization (version {code_normalization.NORMALIZATION_VERSION}) reads every REF")
 
 # COMMAND ----------
 

@@ -2,27 +2,17 @@
 # MAGIC %md
 # MAGIC # Canonical token preview
 # MAGIC
-# MAGIC Runs the code normalization of the parsing pipeline (`utils/parsing_pipeline/code_normalization.py`, the module that writes `chunk_preprocessed` and rewrites the chat queries) on the DEV passages and on the UAT chat questions, with the catalog of today, and shows the text before and after. Nothing is written: the passages and the index stay as they are.
+# MAGIC Runs the code normalization of the parsing pipeline (`utils/parsing_pipeline/code_normalization.py`, the module that writes `chunk_preprocessed` and rewrites the chat queries) on the DEV passages and on the UAT chat questions, and shows the text before and after. Nothing is written: the passages and the index stay as they are.
 # MAGIC
 # MAGIC | | |
 # MAGIC | --- | --- |
-# MAGIC | Reads | the module, from the repository folder holding this notebook or from the DEV bundle; `dev_proj.qualibot.doc_catalog` and `uat_proj.qualibot.doc_catalog` (REFs), `dev_proj.qualibot.chunks`, `uat_proj.qualibot.chat_turns`, `dev_proj.qualibot.f2_familles_codes` (code patterns, for the comparison) |
+# MAGIC | Reads | the module, from the repository folder holding this notebook or from the DEV bundle; `dev_proj.qualibot.doc_catalog` and `uat_proj.qualibot.doc_catalog` (REFs, for the coverage), `dev_proj.qualibot.chunks`, `uat_proj.qualibot.chat_turns`, `dev_proj.qualibot.f2_familles_codes` (code patterns, for the comparison) |
 # MAGIC | Writes | nothing |
 # MAGIC | Rights | the user's own |
 # MAGIC
 # MAGIC ## How the module finds a code
 # MAGIC
-# MAGIC Three matchers; of two overlapping codes the one starting first, then the longest, then the catalog one wins.
-# MAGIC
-# MAGIC | Matcher | Finds | Example |
-# MAGIC | --- | --- | --- |
-# MAGIC | `CATALOG` | a catalog REF in any spelling: pieces of letters or digits glued across separators and spaces, the longest run that is a catalog key | `MI - 1365`, `Q0697MI_FR`, `LdB IT-243`, `19 --058`, `ŘLCZ-07/18` |
-# MAGIC | `REF_SHAPE` | a REF absent from the catalog: the shape of a REF family (prefix and number groups, site codes, lettres de branchement, programme phases, IF), kept when it has the signature of a catalog REF | `SF-1027` (shape of `SF-1029`), `Q0256MI` |
-# MAGIC | `STD-01`, `ATA-01`, `ACF-01`, `REG-01`, `MAT-01`, `ACR-02`, `SAP-01`, `PN-01`, `TRM-01` | codes that are not REFs: standards, ATA chapters, aircraft, regulations, alloys, acronyms written with dots, SAP transactions, part numbers, quality methods | `EN 9100`, `ATA 52`, `A350-900`, `Part-145`, `2024-T3`, `E.A.S.A`, `MM-02`, `L523 77000`, `8-D` |
-# MAGIC
-# MAGIC The token is the REF without separators and without language suffix (`SF-1027_BG` → `SF1027`); a key that several REFs share is its own token (`777F`); a key that one REF completes takes that REF (`QIS-46A-352` → `QIS46A352A`). It is appended after the identifier holding the code (`MI-13991Table [MI13991]`, `IP-029-005 [IP029]`); nothing is added when the code is written as its token, and a second pass adds nothing.
-# MAGIC
-# MAGIC In a question, a prefix in lower case followed by a space is also a code (`sf 1027`), except the prefixes that are also words (`if 2`, `go 2024`, `le 23`).
+# MAGIC One table of named patterns (`CODE_PATTERNS`), each with the examples it must find and the texts it must leave alone; the first table below lists them. Of two overlapping codes the one starting first wins, then the longest, then the first pattern. The token is the code without separators, upper-cased, without diacritics and without its language or variant suffix (`SF-1027_BG` → `SF1027`, `QIS-46A-352 A` → `QIS46A352`). It is appended after the code, or after the word glued to it (`MI-13991Table [MI13991]`); nothing is added when the code is written as its token, and a second pass adds nothing. In a question, a REF in lower case is a code too (`sf 1027`), except the prefixes that are also words (`if 2`, `go 2024`, `le 23`).
 
 # COMMAND ----------
 
@@ -47,7 +37,7 @@ CATALOGS = ["dev_proj.qualibot.doc_catalog", "uat_proj.qualibot.doc_catalog"]
 PASSAGES = "dev_proj.qualibot.chunks"
 QUESTIONS = "uat_proj.qualibot.chat_turns"
 PATTERNS = "dev_proj.qualibot.f2_familles_codes"
-EXAMPLES = 15   # before / after examples per matcher
+EXAMPLES = 15   # before / after examples per pattern
 
 logger = logging.getLogger("canonical_token_preview")
 if not logger.handlers:
@@ -72,15 +62,19 @@ with open(module_path, encoding="utf-8") as fh:
     MODULE_SOURCE = fh.read()
 _spec = importlib.util.spec_from_file_location("code_normalization", module_path)
 cn = importlib.util.module_from_spec(_spec)
+sys.modules["code_normalization"] = cn
 _spec.loader.exec_module(cn)
-logger.info("module %s, NORMALIZATION_VERSION %s, generated catalog: %d keys, %d families",
-            module_path, cn.NORMALIZATION_VERSION, len(cn.CATALOG_CANONICAL), len(cn.CODE_FAMILIES))
+logger.info("module %s, NORMALIZATION_VERSION %s, %d patterns, %d families",
+            module_path, cn.NORMALIZATION_VERSION, len(cn.CODE_PATTERNS), len(cn.CODE_FAMILIES))
+display(spark.createDataFrame(
+    [(p.pattern_id, p.name, ", ".join(t for t, _ in p.examples), ", ".join(p.counter_examples)) for p in cn.CODE_PATTERNS],
+    "pattern_id string, name string, examples string, counter_examples string"))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Catalog of today
-# MAGIC The REFs of the DEV and UAT document catalogs. First table: the REFs that the catalog generated into the module does not know (an empty table means the module is up to date). The preview below runs on the catalog of today either way, so it shows what the passages get once the module is regenerated. Second table: every REF, one per line, to download (CSV) and send back to regenerate the module.
+# MAGIC ## Coverage of the catalog
+# MAGIC The REFs of the DEV and UAT document catalogs that no pattern reads from their first character, by shape (`A` letter, `9` digit). An empty table means every REF is normalised. A REF here is a new format (a pattern to add) or a new prefix (`CODE_FAMILIES` to regenerate).
 
 # COMMAND ----------
 
@@ -89,35 +83,25 @@ for table in CATALOGS:
     part = spark.table(table).select(F.trim("ref").alias("ref")).where("ref IS NOT NULL AND ref <> ''")
     refs_df = part if refs_df is None else refs_df.unionByName(part)
 REFS = sorted(r["ref"] for r in refs_df.distinct().collect())
-drift = cn.catalog_drift(REFS)
-logger.info("catalog of today: %d REFs, %d unknown to the module", len(REFS), len(drift))
-display(spark.createDataFrame([(r,) for r in drift] or [("",)], "ref string").where("ref <> ''"))
-
-# COMMAND ----------
-
-display(spark.createDataFrame([(r,) for r in REFS], "ref string"))
-
-# COMMAND ----------
-
-CATALOG = cn.catalog_from_refs(REFS)
-cn.use_catalog(CATALOG)
-# Plain types only for the executors: the module's own classes do not exist there before they load it.
-CATALOG_PLAIN = {**CATALOG, "families": {p: tuple(f) for p, f in CATALOG["families"].items()}}
-logger.info("preview catalog: %d keys, %d families, %d signatures, site letters %s, LdB types %s, phases %s",
-            len(CATALOG["canonical"]), len(CATALOG["families"]), len(CATALOG["signatures"]),
-            CATALOG["site_letters"], ",".join(CATALOG["ldb_types"]), ",".join(CATALOG["phase_prefixes"]))
+unread = cn.unmatched_refs(REFS)
+logger.info("catalog: %d REFs, %d read by no pattern", len(REFS), len(unread))
+display(spark.createDataFrame([(r,) for r in unread] or [("",)], "ref string").where("ref <> ''")
+        .withColumn("shape", F.regexp_replace(F.regexp_replace(F.upper("ref"), "[A-Z]", "A"), "[0-9]", "9"))
+        .groupBy("shape").agg(F.count("*").alias("refs"), F.slice(F.array_sort(F.collect_list("ref")), 1, 5)
+                              .alias("examples"))
+        .orderBy(F.desc("refs")))
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Passages
-# MAGIC Every DEV passage goes through the module. First table: passages changed, distinct tokens and tokens appended, per matcher. A passage counts once per matcher it holds.
+# MAGIC Every DEV passage goes through the module. First table: passages changed, distinct tokens and tokens appended, per pattern. A passage counts once per pattern it holds.
 
 # COMMAND ----------
 
-SCHEMA = ("id string, token string, matcher string, written string, appended boolean, word string, cut boolean, "
+SCHEMA = ("id string, token string, pattern_id string, written string, appended boolean, word string, cut boolean, "
           "before string, after string")
-COLUMNS = ["id", "token", "matcher", "written", "appended", "word", "cut", "before", "after"]
+COLUMNS = ["id", "token", "pattern_id", "written", "appended", "word", "cut", "before", "after"]
 
 
 def annotated(batches: Iterable[pd.DataFrame], query: bool) -> Iterable[pd.DataFrame]:
@@ -128,19 +112,19 @@ def annotated(batches: Iterable[pd.DataFrame], query: bool) -> Iterable[pd.DataF
     :return: pandas batches with the columns of SCHEMA, one row per code found; appended is False when the module
         adds nothing for that code
     """
-    module = types.ModuleType("code_normalization")
-    exec(compile(MODULE_SOURCE, MODULE, "exec"), module.__dict__)
-    module.use_catalog({**CATALOG_PLAIN, "families": {p: module.CodeFamily(*f)
-                                                      for p, f in CATALOG_PLAIN["families"].items()}})
+    module = sys.modules.get("code_normalization")
+    if module is None:
+        module = types.ModuleType("code_normalization")
+        sys.modules["code_normalization"] = module
+        exec(compile(MODULE_SOURCE, MODULE, "exec"), module.__dict__)
     for pdf in batches:
         rows = []
         for i, txt in zip(pdf["id"], pdf["txt"]):
             txt = txt or ""
-            normalized = module.normalize_codes(txt, accept_lowercase=query)
-            for start, end, token, matcher in module.explain_codes(txt, accept_lowercase=query):
-                stop = module._token_end(txt, end)
+            for start, end, token, pattern_id in module.match_codes(txt, accept_lowercase=query):
+                stop = module._word_end(txt, end)
                 written = txt[start:end]
-                appended = not ((written == token and stop == end) or token in module._brackets_after(txt, stop))
+                appended = not (txt[start:stop] == token or token in module._brackets_after(txt, stop))
                 # The extract runs from word boundary to word boundary, so no code in it is cut.
                 left = txt.rfind(" ", 0, max(0, start - 60)) + 1
                 right = txt.find(" ", stop + 40)
@@ -149,8 +133,7 @@ def annotated(batches: Iterable[pd.DataFrame], query: bool) -> Iterable[pd.DataF
                 w_left = max(txt.rfind(c, 0, start) for c in " \n\t") + 1
                 w_right = min([k for k in (txt.find(c, stop) for c in " \n\t") if k >= 0] or [len(txt)])
                 cut = any(c.isalnum() for c in txt[w_left:start] + txt[stop:w_right])
-                rows.append((i, token, matcher, written, appended and normalized != txt, txt[w_left:w_right], cut,
-                             before, after))
+                rows.append((i, token, pattern_id, written, appended, txt[w_left:w_right], cut, before, after))
         yield pd.DataFrame(rows, columns=COLUMNS)
 
 
@@ -160,7 +143,7 @@ hits = found.where("appended")
 total = passages.count()
 changed = hits.select("id").distinct().count()
 logger.info("DEV passages: %d, changed: %d (%.1f %%)", total, changed, 100 * changed / max(total, 1))
-display(hits.groupBy("matcher")
+display(hits.groupBy("pattern_id")
         .agg(F.countDistinct("id").alias("passages"), F.countDistinct("token").alias("tokens"),
              F.count("*").alias("appended"))
         .orderBy(F.desc("passages")))
@@ -168,26 +151,29 @@ display(hits.groupBy("matcher")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Before and after, per matcher
-# MAGIC The most frequent tokens of each matcher, with one extract of a passage before and after.
+# MAGIC ## Before and after, per pattern
+# MAGIC The most frequent tokens of each pattern, with one extract of a passage before and after.
 
 # COMMAND ----------
 
-per_token = hits.groupBy("matcher", "token").agg(F.count("*").alias("n"), F.first("written").alias("written"),
+per_token = hits.groupBy("pattern_id", "token").agg(F.count("*").alias("n"), F.first("written").alias("written"),
                                                  F.first("before").alias("before"), F.first("after").alias("after"))
-w = Window.partitionBy("matcher").orderBy(F.desc("n"))
+w = Window.partitionBy("pattern_id").orderBy(F.desc("n"))
 display(per_token.withColumn("rank", F.row_number().over(w)).where(F.col("rank") <= EXAMPLES)
-        .orderBy("matcher", "rank").select("matcher", "token", "written", "n", "before", "after"))
+        .orderBy("pattern_id", "rank").select("pattern_id", "token", "written", "n", "before", "after"))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Codes found by their shape only
-# MAGIC Every token of `REF_SHAPE`: codes that look like a catalog REF without being one (obsolete REF, other site, typing error). One row per token, most frequent first, with its spellings: a token here that is not a document code means a family is too wide.
+# MAGIC ## REF-shaped codes absent from the catalog
+# MAGIC Tokens of the REF patterns that are the token of no catalog REF: obsolete REFs, other sites, typing errors, or text that only looks like a REF. One row per token, most frequent first, with its spellings: a token here that is not a document code means a pattern is too wide.
 
 # COMMAND ----------
 
-display(hits.where(F.col("matcher") == "REF_SHAPE").groupBy("token")
+catalog_tokens = sorted({code for ref in REFS for code in cn.canonical_codes(ref)})
+display(hits.where(F.col("pattern_id").startswith("REF-"))
+        .join(spark.createDataFrame([(t,) for t in catalog_tokens], "token string"), "token", "left_anti")
+        .groupBy("pattern_id", "token")
         .agg(F.count("*").alias("n"), F.countDistinct("id").alias("passages"),
              F.slice(F.array_sort(F.collect_set("written")), 1, 8).alias("spellings"))
         .orderBy(F.desc("n")).limit(500))
@@ -200,7 +186,7 @@ display(hits.where(F.col("matcher") == "REF_SHAPE").groupBy("token")
 
 # COMMAND ----------
 
-display(hits.where("cut").groupBy("matcher", "token", "word").agg(F.count("*").alias("n"))
+display(hits.where("cut").groupBy("pattern_id", "token", "word").agg(F.count("*").alias("n"))
         .orderBy(F.desc("n")).limit(500))
 
 # COMMAND ----------
@@ -211,7 +197,7 @@ display(hits.where("cut").groupBy("matcher", "token", "word").agg(F.count("*").a
 
 # COMMAND ----------
 
-display(hits.where(~F.col("written").rlike("[0-9]")).groupBy("matcher", "token")
+display(hits.where(~F.col("written").rlike("[0-9]")).groupBy("pattern_id", "token")
         .agg(F.count("*").alias("n"), F.slice(F.array_sort(F.collect_set("written")), 1, 10).alias("spellings"))
         .orderBy(F.desc("n")))
 
@@ -244,7 +230,7 @@ wanted = (spark.table(PATTERNS).where((F.col("env") == "dev") & (F.col("treatmen
 classified = (spark.table(PATTERNS).where(F.col("env") == "dev")
               .groupBy(F.col("code_key").alias("token"))
               .agg(F.first("pattern_id").alias("pattern_id"), F.first("treatment").alias("treatment")))
-display(hits.join(wanted, "token", "left_anti").groupBy("matcher", "token")
+display(hits.join(wanted, "token", "left_anti").groupBy("pattern_id", "token")
         .agg(F.count("*").alias("n"), F.slice(F.array_sort(F.collect_set("written")), 1, 6).alias("spellings"),
              F.first("before").alias("before"))
         .join(classified, "token", "left").orderBy(F.desc("n")).limit(500))
@@ -262,4 +248,4 @@ questions = (spark.table(QUESTIONS).where(F.col("question").isNotNull())
                      F.regexp_replace("question", r"\[Division:[^\]]*\]", " ").alias("txt")))
 q_hits = questions.mapInPandas(lambda b: annotated(b, query=True), SCHEMA).where("appended")
 logger.info("UAT questions with a token: %d", q_hits.select("id").distinct().count())
-display(q_hits.select("matcher", "token", "written", "after").orderBy("matcher", "token"))
+display(q_hits.select("pattern_id", "token", "written", "after").orderBy("pattern_id", "token"))

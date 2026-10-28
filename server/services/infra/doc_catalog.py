@@ -13,8 +13,6 @@ import os
 import re
 from typing import Any, Dict, List
 
-from utils.parsing_pipeline.code_normalization import ref_canonical
-
 logger = logging.getLogger(__name__)
 
 _REFRESH_S = float(os.getenv('DOC_CATALOG_REFRESH_S', '1800'))
@@ -51,16 +49,17 @@ def _norm(ref: str) -> str:
 # A citation may spell a REF differently from the catalog (punctuation or suffix missing); canonicalizing both sides
 # the same way resolves it to the document's group.
 _LANG_SUFFIX_RE = re.compile(r'[-_. ]+(FR|EN|GB|MX|BG|CZ|BR|ES)$', re.IGNORECASE)
+_NON_ALNUM_RE = re.compile(r'[^A-Z0-9]')
 
 
 def _canon(ref: str) -> str:
-    """Canonical form of a REF: upper-cased, without diacritics, language suffixes and punctuation, the form the
-    passages and the questions carry in brackets.
+    """Canonical form of a REF: upper-cased, without its language suffix and punctuation.
 
     :param ref: REF in any spelling
     :return: the canonical key
     """
-    return ref_canonical(ref)
+    stripped = _LANG_SUFFIX_RE.sub('', ref.upper())
+    return _NON_ALNUM_RE.sub('', stripped)
 
 
 def canon_ref(ref: str) -> str:
