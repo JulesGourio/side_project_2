@@ -1,57 +1,46 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Inventaire des filtres, UAT (lecture seule)
-# MAGIC Droits de Jules suffisants (SELECT sur `uat_proj.qualibot`). Pas besoin du job runner. Aucune ecriture, l'index n'est pas touche.
-# MAGIC Colle les sorties des cellules 1 a 5 dans le fil.
+# MAGIC # Filtres du parsing, UAT (lecture seule)
+# MAGIC Tes droits suffisent (SELECT sur `uat_proj.qualibot`), pas besoin du job runner. Rien n'est ecrit, l'index n'est pas touche.
+# MAGIC Colle les sorties des cellules 1 a 5.
 
 # COMMAND ----------
 
-# Cellule 1 : colonnes de la table source de l'index + volumes
-CHUNKS = "uat_proj.qualibot.chunks"
-ARCHIVE = "uat_proj.qualibot.chunks_archive"
-spark.sql(f"DESCRIBE TABLE {CHUNKS}").show(60, False)
-for t in (CHUNKS, ARCHIVE):
-    try:
-        print(t, spark.table(t).count())
-    except Exception as e:
-        print(t, "indisponible:", str(e)[:120])
+# Cellule 1 : colonnes des tables clefs
+P = "uat_proj.qualibot"
+for t in ("parse_manifest", "parsed_documents", "category_reference"):
+    print("==", t)
+    spark.sql(f"DESCRIBE TABLE {P}.{t}").select("col_name", "data_type").show(60, False)
 
 # COMMAND ----------
 
-# Cellule 2 : division (le seul filtre de l'UI) et date
+# Cellule 2 : decision du manifest par statut (ce qui est parse, exclu, pourquoi)
+pm_cols = [r.col_name for r in spark.sql(f"DESCRIBE TABLE {P}.parse_manifest").collect()]
+print(pm_cols)
+for c in ("parse_status", "status", "parse_content", "is_archive"):
+    if c in pm_cols:
+        spark.sql(f"SELECT {c}, COUNT(*) docs FROM {P}.parse_manifest GROUP BY 1 ORDER BY 2 DESC").show(40, False)
+
+# COMMAND ----------
+
+# Cellule 3 : resultat du parsing (statut, RAG, date)
+pd_cols = [r.col_name for r in spark.sql(f"DESCRIBE TABLE {P}.parsed_documents").collect()]
+for c in ("status", "is_in_rag", "is_filtered_by_date"):
+    if c in pd_cols:
+        spark.sql(f"SELECT {c}, COUNT(*) docs FROM {P}.parsed_documents GROUP BY 1 ORDER BY 2 DESC").show(40, False)
+
+# COMMAND ----------
+
+# Cellule 4 : documents dates avant la coupure 2016-01-01, par annee
+if "doc_date" in pm_cols:
+    spark.sql(f"""SELECT year(doc_date) annee, COUNT(*) docs FROM {P}.parse_manifest
+                  WHERE doc_date < DATE'2016-01-01' GROUP BY 1 ORDER BY 1 DESC""").show(30, False)
+    spark.sql(f"SELECT COUNT(*) sans_date FROM {P}.parse_manifest WHERE doc_date IS NULL").show()
+
+# COMMAND ----------
+
+# Cellule 5 : categories des documents indexes (division x niveau 1 x niveau 2)
 spark.sql(f"""
-SELECT division, COUNT(DISTINCT IDDOC) docs, COUNT(*) chunks,
-       SUM(CASE WHEN doc_date IS NULL THEN 1 ELSE 0 END) chunks_sans_date,
-       MIN(doc_date) date_min, MAX(doc_date) date_max
-FROM {CHUNKS} GROUP BY division ORDER BY docs DESC""").show(50, False)
-
-spark.sql(f"""
-SELECT year(doc_date) annee, COUNT(DISTINCT IDDOC) docs
-FROM {CHUNKS} GROUP BY 1 ORDER BY 1""").show(60, False)
-
-# COMMAND ----------
-
-# Cellule 3 : categories (niveau_plus_*, dispo dans chunks ? sinon voir cellule 1)
-cols = [r.col_name for r in spark.sql(f"DESCRIBE TABLE {CHUNKS}").collect()]
-print([c for c in cols if c.startswith("niveau_plus")] or "pas de niveau_plus_* dans chunks")
-for c in ("niveau_plus_1", "niveau_plus_2"):
-    if c in cols:
-        spark.sql(f"""SELECT division, {c}, COUNT(DISTINCT IDDOC) docs
-                      FROM {CHUNKS} GROUP BY 1,2 ORDER BY docs DESC""").show(80, False)
-
-# COMMAND ----------
-
-# Cellule 4 : autres metadonnees filtrables
-for c in ("type_document", "langue", "chunk_content_type"):
-    if c in cols:
-        spark.sql(f"""SELECT {c}, COUNT(DISTINCT IDDOC) docs, COUNT(*) chunks
-                      FROM {CHUNKS} GROUP BY 1 ORDER BY docs DESC""").show(40, False)
-
-# COMMAND ----------
-
-# Cellule 5 : colonnes reellement exposees par l'index (lecture des metadonnees, pas de requete d'ecriture)
-from databricks.vector_search.client import VectorSearchClient
-idx = VectorSearchClient(disable_notice=True).get_index(index_name="uat_proj.qualibot.chunks_index")
-d = idx.describe()
-print({k: d.get(k) for k in ("name", "endpoint_name", "primary_key", "index_type")})
-print(d.get("delta_sync_index_spec", {}).get("source_table"), d.get("delta_sync_index_spec", {}).get("columns_to_sync"))
+SELECT c.division, c.niveau_plus_1, c.niveau_plus_2, COUNT(DISTINCT d.IDDOC) docs
+FROM {P}.parsed_documents d JOIN {P}.category_reference c USING (IDDOC)
+GROUP BY 1,2,3 ORDER BY docs DESC""").show(100, False)
