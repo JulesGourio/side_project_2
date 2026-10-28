@@ -1,53 +1,42 @@
 # Databricks notebook source
-# Familles de codes : chaque clé de l'inventaire dev_proj.qualibot.f1_inventaire_codes (sections B_corpus et
-# C_questions) reçoit une famille, dans l'ordre des règles ci-dessous ; la première qui s'applique gagne.
-# Écrit dans dev_proj.qualibot.f2_familles_codes. Lecture seule ailleurs (doc_catalog de chaque env de ENVS).
-#
-# Règle de sécurité : "annoter" ajoute la clé collée à côté du texte (SF-1027 [SF1027]), sans rien remplacer.
-# "rien" laisse le texte indexé comme il l'est. Toute clé qu'aucune règle de bruit ne reconnaît est annotée
-# (famille residu) : un code n'est jamais oublié, au pire une clé inutile est ajoutée. Le résidu (cellule 5) sert à
-# repérer le bruit qu'il est inutile d'annoter ; la cellule 6 montre les clés du chat classées en bruit.
-#
-# Une graphie est découpée en morceaux devant chaque séparateur (- _ / . espace) et entre un chiffre et une lettre
-# qui le suit (MI-13991Table donne MI, -13991, Table). Un "morceau suivi" = plusieurs morceaux consécutifs.
-#
-# Familles, dans l'ordre d'application (action = ce que fera la normalisation) :
-#   ref_catalogue         clé = REF du catalogue, avec ou sans suffixe de langue (QIS-46A-352 A, IAQ 04 04 05,
-#                         PROLAT_R40_FR, PR/LAT/506 = PRLAT506)                                        -> annoter
-#   ref_sans_premier_mot  REF à espace sans son premier mot, quand le reste est lettres + séparateur + chiffres
-#                         (IT-243 pour LdB IT-243)                                                     -> annoter
-#   ref_sans_indice       REF sans sa dernière partie en lettres (QIS-46A-352 pour QIS-46A-352 A)        -> annoter
-#   ref_variante          une suite de morceaux d'une graphie est une REF (MI-14019-1, PRO_Q0014NF_EN,
-#                         MI-13991Table 3, DLV-31-5171iss)                                            -> annoter
-#   sigle                 lettres seulement (DOA, E.A.S.A)                                              -> glossaire
-#   code_norme_piece      clé de NORME_CLES (21J = Part 21 sous-partie J)                               -> annoter
-#   nombre                chiffres seulement (4.2.1, dates)                                              -> rien
-#   ref_hors_catalogue    une suite de morceaux, sans suffixe de langue, a la signature d'une REF : préfixe en
-#                         lettres, puis 9 par chiffre et A par lettre (NS-1717 = NS9999 comme NS-1754 ;
-#                         SF-1027 = SF9999 comme SF-1029)                                              -> annoter
-#   bruit_url_fichier     adresse, chemin ou nom de fichier (prtouintraqual1/intraqual/..., x.pdf)       -> rien
-#   bruit_colonne         préfixe de BRUIT_PREFIXES suivi de chiffres seulement (COL12, OA21)            -> rien
-#   bruit_sommaire        numéro collé à un mot de 3 lettres ou plus (2SCOPE4, 11REFERENCE, 821PROCESS) -> rien
-#   bruit_unite           nombre suivi d'une unité ou d'un ordinal de UNITES (5MM, 60KHZ, 1ST, 3D)      -> rien
-#   bruit_dimension       nombres reliés par X (125X80, 10X20X5)                                        -> rien
-#   bruit_puce            clé = numéro + une ou deux lettres (3.P, 1-b, 5-P, 10P)                       -> rien
-#   bruit_date            mois suivi d'un nombre (July 2024, Jan/31/2024, Feb-07-2027)                  -> rien
-#   code_court            une ou deux lettres + un ou deux chiffres (B1, R30, D1, A0)                    -> annoter
-#   code_norme_piece      préfixe de NORME_PREFIXES (EN 9100, PART 21, CS 25, NAS1149C0332R)            -> annoter
-#   bruit_mot_petit_nombre  mot de 3 lettres ou plus + un ou deux chiffres, ou toutes les graphies = mot de 3
-#                         lettres ou plus + nombres d'un ou deux chiffres (LEVEL 2, Level1-Limited, TABLE 1/1,
-#                         STEP 3, Figure 13), sauf préfixe de REF du catalogue (DLV-31)                -> rien
-#   code_segmente         une graphie commence par des majuscules, a un séparateur et 3 chiffres à la suite
-#                         (BAC 5578, NE 40-012, STM-0002396, IAPS 01-02-003, A 320, IN.ME.L269)        -> annoter
-#   code_tete_chiffres    nombre + séparateur + lettres et chiffres mêlés (2024-T3, 15-5PH)             -> annoter
-#   bruit_mot_nombre      séquence mot + nombre jamais écrite collée (protection 999, type 7280)        -> rien
-#   code_colle            aucune graphie n'a de séparateur : déjà un seul mot pour la recherche par mot
-#                         clé (IS0024879M, F7X, LATE4000, 800VU)                                       -> rien
-#   residu                tout le reste, annoté par défaut ; à relire pour y trouver du bruit             -> annoter
-#
-# Colonnes : env, cle, famille, action, ref (REF du catalogue qui a donné la famille), prefixe (lettres de tête),
-# signature, a_separateur (une graphie contient - _ / . ou espace), docs (documents du corpus), q_docs (questions),
-# occ, categories, formes (graphies du corpus et du chat), refs_source, urls_source, date_run.
+# MAGIC %md
+# MAGIC # Familles de codes
+# MAGIC
+# MAGIC Chaque clé de l'inventaire `dev_proj.qualibot.f1_inventaire_codes` (sections `B_corpus` et `C_questions`) reçoit **une famille** : la première règle du tableau qui s'applique gagne. Résultat dans `dev_proj.qualibot.f2_familles_codes`. Lecture seule ailleurs (`doc_catalog` de chaque env de `ENVS`).
+# MAGIC
+# MAGIC **Règle de sécurité.** `annoter` ajoute la clé collée à côté du texte (`SF-1027 [SF1027]`), sans rien remplacer. `rien` laisse le texte indexé tel quel. Toute clé qu'aucune règle de bruit ne reconnaît est annotée (`residu`) : un code n'est jamais oublié, au pire une clé inutile est ajoutée.
+# MAGIC
+# MAGIC **Morceaux.** Une graphie est coupée devant chaque séparateur (`-` `_` `/` `.` espace) et entre un chiffre et la lettre qui le suit : `MI-13991Table` donne `MI`, `-13991`, `Table`. Une *suite* = plusieurs morceaux consécutifs.
+# MAGIC
+# MAGIC **Signature.** Lettres de tête en clair, puis `9` par chiffre et `A` par lettre : `Q0375MI` donne `Q9999AA`.
+# MAGIC
+# MAGIC | # | Famille | Règle | Exemples | Action |
+# MAGIC |---|---|---|---|---|
+# MAGIC | 1 | `ref_catalogue` | clé = REF du catalogue, avec ou sans suffixe de langue | `QIS-46A-352 A`, `IAQ 04 04 05`, `PROLAT_R40_FR`, `PR/LAT/506` | annoter |
+# MAGIC | 2 | `ref_sans_premier_mot` | REF à espace sans son premier mot, si le reste = lettres + séparateur + chiffres | `IT-243` (LdB IT-243) | annoter |
+# MAGIC | 3 | `ref_sans_indice` | REF sans sa dernière partie en lettres | `QIS-46A-352` (QIS-46A-352 A) | annoter |
+# MAGIC | 4 | `ref_variante` | une suite de morceaux d'une graphie est une REF | `MI-14019-1`, `PRO_Q0014NF_EN`, `MI-13991Table 3` | annoter |
+# MAGIC | 5 | `sigle` | lettres seulement | `DOA`, `E.A.S.A` | glossaire |
+# MAGIC | 6 | `code_norme_piece` | clé de `NORME_CLES` | `21J` (Part 21 sous-partie J) | annoter |
+# MAGIC | 7 | `nombre` | chiffres seulement | `4.2.1`, dates | rien |
+# MAGIC | 8 | `ref_hors_catalogue` | une suite de morceaux, sans suffixe de langue, a la signature d'une REF | `NS-1717` (comme NS-1754), `SF-1027` (comme SF-1029) | annoter |
+# MAGIC | 9 | `bruit_url_fichier` | adresse, chemin ou nom de fichier | `prtouintraqual1/intraqual/…`, `x.pdf` | rien |
+# MAGIC | 10 | `bruit_colonne` | préfixe de `BRUIT_PREFIXES` + chiffres seulement | `COL12`, `OA21` | rien |
+# MAGIC | 11 | `bruit_sommaire` | numéro collé à un mot de 3 lettres ou plus | `2SCOPE4`, `11REFERENCE` | rien |
+# MAGIC | 12 | `bruit_unite` | nombre + unité ou ordinal de `UNITES` | `5MM`, `60KHZ`, `1ST`, `3D` | rien |
+# MAGIC | 13 | `bruit_dimension` | nombres reliés par X | `125X80` | rien |
+# MAGIC | 14 | `code_tete_chiffres` | nombre + séparateur + lettres et chiffres mêlés | `2024-T3`, `15-5PH` | annoter |
+# MAGIC | 15 | `bruit_puce` | clé = numéro + une ou deux lettres | `3.P`, `1-b`, `10P` | rien |
+# MAGIC | 16 | `bruit_date` | mois + nombre | `July 2024`, `Jan/31/2024` | rien |
+# MAGIC | 17 | `code_norme_piece` | préfixe de `NORME_PREFIXES` | `EN 9100`, `PART 21`, `CS 25` | annoter |
+# MAGIC | 18 | `code_court` | une ou deux lettres + un ou deux chiffres | `B1`, `R30`, `D1` | annoter |
+# MAGIC | 19 | `bruit_mot_petit_nombre` | mot de 3 lettres ou plus + nombres d'un ou deux chiffres, sauf préfixe de REF | `LEVEL 2`, `TABLE 1/1`, `Figure 13` | rien |
+# MAGIC | 20 | `code_segmente` | commence par des majuscules, un séparateur, 3 chiffres à la suite | `BAC 5578`, `NE 40-012`, `STM-0002396`, `A 320` | annoter |
+# MAGIC | 21 | `bruit_mot_nombre` | mot + nombre, jamais écrit collé | `protection 999` | rien |
+# MAGIC | 22 | `code_colle` | aucune graphie n'a de séparateur : déjà un seul mot pour le BM25 | `IS0024879M`, `F7X` | rien |
+# MAGIC | 23 | `residu` | tout le reste, à relire pour y trouver du bruit | `TA6V`, `Partie-145.A.90` | annoter |
+# MAGIC
+# MAGIC **Colonnes de la table** : `env`, `cle`, `famille`, `action`, `ref` (REF qui a donné la famille), `prefixe` (lettres de tête), `signature`, `a_separateur` (une graphie contient `-` `_` `/` `.` ou espace), `docs` (documents du corpus), `q_docs` (questions du chat), `occ`, `categories`, `formes` (graphies du corpus et du chat), `refs_source`, `urls_source`, `date_run`.
 
 # COMMAND ----------
 # Cellule 1 · paramètres
@@ -240,6 +229,7 @@ def familles(env):
                .when(c.rlike("^[0-9]+[A-Z]{3,}"), "bruit_sommaire")
                .when(c.rlike(f"^[0-9]+({unites})$"), "bruit_unite")
                .when(c.rlike("^[0-9]+(X[0-9]+)+$"), "bruit_dimension")
+               .when(une("^[0-9]+[-_/. ]([A-Za-z]+[0-9]|[0-9]+[A-Za-z])"), "code_tete_chiffres")
                .when(c.rlike("^[0-9]{1,3}[A-Z]{1,2}$"), "bruit_puce")
                .when(une(MOIS), "bruit_date")
                .when(F.col("prefixe").isin(NORME_PREFIXES), "code_norme_piece")
@@ -250,7 +240,6 @@ def familles(env):
                      "bruit_mot_petit_nombre")
                .when(une(r"^[A-Z][A-Z0-9]*([-_/. ]{1,3}[A-Za-z0-9]+)+$") & une("[0-9]{3}") & une(SEP),
                      "code_segmente")
-               .when(une("^[0-9]+[-_/. ]([A-Za-z]+[0-9]|[0-9]+[A-Za-z])"), "code_tete_chiffres")
                .when(toutes(r"^[A-Za-z]+ [0-9]"), "bruit_mot_nombre")
                .when(~F.col("a_separateur"), "code_colle")
                .otherwise("residu"))
@@ -281,6 +270,12 @@ else:
 print(f"écrit dans {TARGET} : {ENVS}")
 
 # COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Couverture par famille
+# MAGIC Une ligne par env et famille : nombre de clés, documents cumulés, part des documents (`pct_docs`), clés tapées dans le chat (`cles_du_chat`), 8 exemples triés par documents.
+
+# COMMAND ----------
 # Cellule 4 · couverture : clés, documents cumulés et part du total par famille
 
 display(spark.sql(f"""
@@ -295,6 +290,12 @@ FROM {TARGET}
 GROUP BY env, famille, action
 ORDER BY env, action, docs_cumules DESC
 """))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Résidu
+# MAGIC Premier tableau : le résidu regroupé par préfixe (lettres de tête), trié par documents. Second tableau : clé par clé. Un préfixe de bruit va dans `BRUIT_PREFIXES`, un code voulu dans `NORME_PREFIXES`, puis on relance.
 
 # COMMAND ----------
 # Cellule 5 · résidu : par préfixe (à classer dans NORME_PREFIXES ou BRUIT_PREFIXES), puis clé par clé
@@ -318,6 +319,12 @@ WHERE famille = 'residu'
 ORDER BY docs DESC, q_docs DESC
 LIMIT 300
 """))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Clés du chat
+# MAGIC Toutes les clés tapées dans le chat (hors sigles), avec leur famille. Une clé du chat classée en bruit doit être relue : un vrai code n'y a pas sa place.
 
 # COMMAND ----------
 # Cellule 6 · contrôle : clés tapées dans le chat, avec leur famille (une clé du chat en bruit est une erreur)

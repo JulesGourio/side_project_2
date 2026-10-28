@@ -63,7 +63,8 @@ Les REF ne sont plus décrites par des formes : la famille vient du **catalogue 
   `SF-1027` est cité dans 1 seul document parsé UAT (ce n'est pas une REF du catalogue) : c'est ce document que la question « dans quel document cite-t-on SF-1027 » doit remonter. Cas type à réussir, quel que soit le nombre de documents.
   Règle de sécurité : une famille « bruit » veut dire seulement « pas de clé ajoutée » ; le texte reste indexé comme aujourd'hui, donc un code classé bruit à tort n'est jamais moins bien trouvé qu'aujourd'hui, il n'est juste pas amélioré.
 - [x] Tour 2 (2026-10-28) : résidu 40 k clés / 2,9 % des documents (matériaux `TA6V`, outillage `tool_…`, libellés `C3-Fill`, dates, `Partie-145.A.90`). Décision : le résidu est **annoté par défaut** (rien ne peut être oublié, au pire une clé inutile). Ajouts : `code_court` (`B1`, `R30`, `D1` : tapés dans le chat, annotés), `bruit_date`, puce sur la clé (`3P`) ; le bruit « mot + petit nombre » exige un mot de 3 lettres ou plus qui n'est pas un préfixe de REF.
-- [ ] Tour 3 : tu relances, tu me renvoies 4, 5 et 6 ; on vérifie que la cellule 6 n'a plus de vrai code en bruit.
+- [x] Tour 3 (2026-10-28) : cellule 6 propre (les clés du chat en bruit sont des morceaux d'URL, des unités `3D`/`8A` déjà collées, des numéros `01-02-003` dont le code entier `AIPI 01-02-003` est annoté). Corrigé : `15-5PH` repassait en puce. Notebook remis au propre : description et tableau des familles en cellule markdown, une cellule markdown avant chaque tableau.
+  *Validation : familles figées, on passe à l'étape 2.*
 - [ ] Trou connu de l'inventaire, réglé à l'étape 2 : un code écrit avec des espaces autour du séparateur (`MI - 1365`, `SF - 1027`) n'est pas une clé de l'inventaire ; le recollage de l'étape 2 tolère ces espaces et sera testé sur ces cas.
 - [ ] Tours suivants jusqu'à résidu = bruit pur.
   *Validation : résidu relu, plus aucun code voulu dedans, aucune clé du chat en bruit.*
