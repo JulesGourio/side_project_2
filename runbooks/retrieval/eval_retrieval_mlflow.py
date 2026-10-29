@@ -35,7 +35,7 @@
 # MAGIC questions, avoiding `Event loop is closed` and `bound to a different event loop`.
 # MAGIC
 # MAGIC **Output:** `{pipeline_write_env}_proj.qualibot.eval_retrieval_runs_golden`, one MLflow run per configuration and
-# MAGIC one comparison run of the first two configurations (Recall@K curve, MRR by language and by "question names a
+# MAGIC one comparison run per pair of configurations, 1st vs 2nd, 3rd vs 4th (Recall@K curve, MRR by language and by "question names a
 # MAGIC code", questions that improve or regress). This separate output table leaves previous V3 tables intact.
 
 # COMMAND ----------
@@ -921,9 +921,10 @@ log.info("Golden retrieval completed: execution=%s | fresh_rows=%d | paired=%d |
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Comparison of the first two configurations
-# MAGIC The first configuration of `indexes` is the reference, the second the candidate (for the benchmark: `chat` against
-# MAGIC `baseline`). Same paired questions as above. A question **improves** when the first expected document comes
+# MAGIC ## Comparison of the configurations, two by two
+# MAGIC The configurations of `indexes` are compared in pairs, in their order: the 1st (reference) with the 2nd
+# MAGIC (candidate), then the 3rd with the 4th (for the benchmark: `chat` against `baseline`, then `chat50` against
+# MAGIC `baseline50`). Same paired questions as above. A question **improves** when the first expected document comes
 # MAGIC earlier in the candidate, **regresses** when it comes later; a miss ranks after every document.
 # MAGIC Logged as one more MLflow run: Recall@K curve, MRR by language and by "question names a code", the questions
 # MAGIC that moved.
@@ -1049,10 +1050,12 @@ def moved_figure(moved: pd.DataFrame, labels: list[str], limit: int = 40) -> plt
     return fig
 
 
-if len(RUN) < 2 or not common_ids:
-    log.info("Comparison skipped: it needs two configurations with paired questions")
-else:
-    REF, CAND = RUN[0], RUN[1]
+def compare_pair(REF: str, CAND: str) -> None:
+    """Compare a candidate configuration with its reference: tables and figures shown, one MLflow comparison run.
+
+    :param REF: label of the reference configuration
+    :param CAND: label of the candidate configuration
+    """
     golden_by_id = {str(r["question_id"]): r.asDict() for r in golden_rows}
     frames = {label: paired[paired["config"] == label].sort_values("case_id").reset_index(drop=True)
               for label in (REF, CAND)}
@@ -1119,3 +1122,14 @@ else:
         for name, fig in figures.items():
             mlflow.log_figure(fig, f"figures/{name}")
     log.info("MLflow comparison run=%s", compare_run.info.run_id)
+
+# Configurations are compared two by two, in the order of `indexes`: 1st vs 2nd, 3rd vs 4th...
+PAIRS = [(RUN[i], RUN[i + 1]) for i in range(0, len(RUN) - 1, 2)]
+if not PAIRS or not common_ids:
+    log.info("Comparison skipped: it needs two configurations with paired questions")
+    PAIRS = []
+for reference, candidate in PAIRS:
+    display(pd.DataFrame([{"comparison": f"{candidate} vs {reference}"}]))
+    compare_pair(reference, candidate)
+# Figures still open at the end of a cell are drawn a second time by Databricks.
+plt.close("all")
