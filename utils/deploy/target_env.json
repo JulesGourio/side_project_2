@@ -25,6 +25,7 @@
   },
   "prod": {
     "COMPARE_VOLUME_PATH": "/Volumes/prod_proj/qualibot/doc_compare",
+    "SOFFICE_ARCHIVE_VOLUME_PATH": "/Volumes/prod_proj/qualibot/doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz",
     "CHAT_INDEX": "prod_proj.qualibot.chunks_index",
     "COMPARE_IMPACT_INDEX": "prod_proj.qualibot.chunks_index",
     "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_traces",
