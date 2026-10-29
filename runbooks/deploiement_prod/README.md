@@ -32,6 +32,22 @@ databricks fs ls dbfs:/Volumes/prod_landingzone/qualibot/docling_models --profil
 databricks fs ls dbfs:/Volumes/prod_landingzone/qualibot/doc_compare --profile PROD
 ```
 
+Contenu des volumes (ton profil, lecture seule). Antiword est livré avec le code (`third_party/antiword`), rien à garder pour lui dans un volume.
+
+```powershell
+databricks fs ls dbfs:/Volumes/prod_proj/qualibot/docling_models --profile PROD
+databricks fs ls dbfs:/Volumes/prod_landingzone/qualibot/docling_models --profile PROD
+databricks fs ls dbfs:/Volumes/uat_proj/qualibot/docling_models --profile UAT
+databricks fs ls dbfs:/Volumes/prod_proj/qualibot/doc_compare/libreoffice --profile PROD
+databricks fs ls dbfs:/Volumes/prod_landingzone/qualibot/doc_compare --profile PROD
+databricks fs ls dbfs:/Volumes/prod_landingzone/qualibot/test --profile PROD
+python utils/deploy/render_target_config_env.py prod
+databricks bundle summary -t prod --profile PROD
+databricks bundle plan -t prod --profile PROD
+```
+
+Attendu : `docling_models` de `prod_proj` rangé comme celui d'UAT (mêmes dossiers à la racine) ; `prod_proj/.../doc_compare/libreoffice/libreoffice-25.8.7-linux-x64-v3.tar.gz` présent (aperçu PDF exact de la comparaison). `summary` et `plan` ne changent rien ; s'ils sont refusés à ton compte, passer par `prod-state-check`.
+
 ## C. Réparer l'état du bundle (seulement si B dit `DESTRUCTIVE`)
 
 - [ ] Pipeline **`prod-state-fix`** (`main`). Il détache de l'état les 5 anciens objets de `prod_landingzone.qualibot` (rien n'est supprimé dans Databricks : schéma, tables et fichiers restent), lie ceux de `prod_proj.qualibot` qui existent déjà, et finit par le plan. Doit finir par `OK: no schema or volume is deleted or recreated.`
