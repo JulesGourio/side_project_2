@@ -358,7 +358,7 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - [ ] Alerte `chat_failure_rate` : son horaire est 03 h et 15 h (Europe/Paris) avec une fenêtre de 13 h ; elle reste en pause.
 - [ ] Chat DEV : couper temporairement le modèle de réécriture (ou simuler une panne) : la réponse arrive quand même, la ligne de `chat_turns` a le statut `degraded` et le code `rewrite_failed`.
 - [ ] `/docs`, `/redoc` et `/openapi.json` ne sont plus servis (variable `ENABLE_API_DOCS=true` pour les rétablir en développement).
-- [ ] Les alertes de job DEV et UAT arrivent à l'adresse partagée `LEAP_Databricks_Alert@latecoere.aero`.
+- [ ] Les alertes de job DEV, UAT et PROD arrivent à `jules.gourio.external@latecoere.aero` seul (aucune à `LEAP_Databricks_Alert`).
 - [ ] Application DEV : les polices Montserrat (titres), Open Sans (texte) et JetBrains Mono (code) s'affichent comme avant, sans requête vers `fonts.googleapis.com` (onglet Réseau du navigateur).
 - [ ] Chat DEV, panne simulée de la réécriture : le journal du tour montre 2 recherches (une réordonnée de 36 passages, une brute de 12) pour un tour en mode bilingue, soit 48 candidats comme un tour normal.
 - [ ] UAT, après le déploiement : `christophe.pelissier` et `yosif.karapendov` accèdent encore à l'application seulement s'ils sont membres des groupes `Role-Project-LEAP-End-users-Qualibot-DocCompare` ou `...-ChatBot` ; sinon l'accès est coupé (voulu).

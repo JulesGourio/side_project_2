@@ -90,7 +90,7 @@ variables:
     default: ""
   notification_email:
     description: "Recipient of the failure notifications of every job"
-    default: "LEAP_Databricks_Alert@latecoere.aero"
+    default: "jules.gourio.external@latecoere.aero"
 
 sync:
   include:
@@ -599,5 +599,4 @@ targets:
       parsing_lakebase_database: "doccompare"
       # 5_sync_index creates the index on its first run if it does not exist.
       parsing_vector_search_indexes: "prod_proj.qualibot.chunks_index"
-      # PROD alerts and job failures go to Jules only (decided 2026-10-29), not to LEAP_Databricks_Alert.
       notification_email: "jules.gourio.external@latecoere.aero"
