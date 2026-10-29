@@ -510,6 +510,8 @@ def build_processed_files_and_chunks(
     :param revised_iddocs: IDDOCs whose revision changed.
     """
     df_full_pipeline = read_checkpoint_deduped()
+    # The UDFs receive whole documents: the default Arrow batch (10000 rows) holds gigabytes of text in memory.
+    spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "16")
     # The checkpoint also keeps superseded revisions: only the documents in scope are used, in every run mode.
     df_full_pipeline = df_full_pipeline.filter(f.col("IDDOC").isin(list(target_iddocs)))
     df_full_pipeline = with_fresh_business_metadata(df_full_pipeline)
