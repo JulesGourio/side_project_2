@@ -114,6 +114,8 @@ Comparaison : **baseline** (aucune normalisation des codes, ni dans les document
   *Validation : baseline vs code_norm, global et « questions avec code ».*
 - [ ] `unknown_refs` : une question dont une REF attendue est aussi inconnue est cherchée mais exclue des scores.
 
+**Nouvelles questions pour le golden set** : [missed_terms_baseline.py](missed_terms_baseline.py). En DEV, « Run all » (~10 min), tes droits suffisent (écrit seulement `dev_proj.qualibot.eval_missed_terms`). Il tire 150 codes et 60 sigles cités par 1 à 3 documents. Chacun est posé en FR et en EN, tel qu'écrit dans les documents, à `chunks_baseline_index` (HYBRID + reranker). Un terme est raté si aucun de ses documents n'est dans les 10 premiers. Il donne aussi, pour info, le rang sur `chunks_index`. Colle-moi le tableau final : j'en tirerai une vingtaine de questions pour `GOLDEN_SET`.
+
 ### 6. top_k optimal — Ven.-Lun. (F5)
 - [ ] Balayage k ∈ {5, 8, 10, 15, 20, 30} (et rerank/raw, cf. `CHAT_RERANK_TOP_K` / `CHAT_RAW_TOP_K`) : Recall@k, tokens de contexte, latence. k = plus petit k où Recall@k plafonne.
   *Validation : tableau Recall@k vs k.*
