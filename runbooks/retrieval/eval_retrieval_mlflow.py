@@ -1,10 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Qualibot — Golden Retrieval Evaluation (simplified)
+# MAGIC # Qualibot — Golden Retrieval Evaluation with exact citations
 # MAGIC
 # MAGIC **Scope:** only `{pipeline_read_env}_proj.qualibot.eval_golden_retrieval`.
 # MAGIC Search uses the deployed Qualibot application code (translation bridge, history/date
 # MAGIC preparation, rewrite and Vector Search), without generating answers or using a judge.
+# MAGIC "Which documents cite X?" questions also get the complete list of citing documents, as in the app: the rows of
+# MAGIC `doc_references` are rebuilt from the `cited_codes` of `chunks`, the source the parsing task writes it from.
 # MAGIC
 # MAGIC **Relevance metrics on distinct document references in LLM-context order:**
 # MAGIC - **Recall@K**: share of annotated `expected_refs` present among the first K documents.
@@ -350,6 +352,23 @@ engine_path = os.path.realpath(inspect.getfile(engine))
 if not engine_path.startswith(os.path.realpath(APP) + os.sep):
     raise RuntimeError(f"Qualibot engine loaded from {engine_path}, expected {APP}")
 
+# The app reads doc_references from Lakebase; the same rows come from the cited_codes of chunks (parsing task 6).
+from server.services.infra import doc_references
+
+CHUNKS_TABLE = f"{READ_ENV}_proj.qualibot.chunks"
+reference_rows = [r.asDict() for r in spark.sql(f"""
+    SELECT code AS cited_code, trim(REF) AS citing_ref, first(division, true) AS division, count(*) AS passages
+    FROM {CHUNKS_TABLE} LATERAL VIEW explode(split(cited_codes, ' ')) cited AS code
+    WHERE code <> '' AND REF IS NOT NULL AND trim(REF) <> ''
+      AND NOT (chunk_content_type <=> 'archive_notice')
+    GROUP BY code, trim(REF)
+""").collect()]
+doc_references.set_references(reference_rows)
+if not doc_references.loaded():
+    raise RuntimeError(f"No cited_codes in {CHUNKS_TABLE}: the exact citations cannot be evaluated")
+DOC_REFERENCES = {"rows": len(reference_rows), "codes": len({r["cited_code"] for r in reference_rows})}
+log.info("doc_references from %s: %d rows, %d codes", CHUNKS_TABLE, DOC_REFERENCES["rows"], DOC_REFERENCES["codes"])
+
 SETTINGS = {}
 for label, cfg in CONFIGS.items():
     apply_config(cfg)
@@ -359,6 +378,7 @@ for label, cfg in CONFIGS.items():
         "settings": SETTINGS[label], "app_code": APP_FINGERPRINT,
         "bridge": TRANSLATE_BRIDGE_ENABLED, "runner": RUNNER_VERSION,
         "code_normalization": os.environ.get("EVAL_CODE_NORMALIZATION", "on"),
+        "doc_references": DOC_REFERENCES,
     })
 log.info("Configs: %s", {name: cfg["spec"] for name, cfg in CONFIGS.items()})
 
@@ -781,7 +801,7 @@ for name in RUN:
             "config": name, "index": CONFIGS[name]["index"],
             "spec": CONFIGS[name]["spec"], "ks": ",".join(map(str, KS)),
             "golden_table": GOLDEN_TABLE, "app_code_path": APP,
-            "rerun_existing": str(RERUN),
+            "rerun_existing": str(RERUN), "doc_references_rows": DOC_REFERENCES["rows"],
         })
         mlflow.log_dict(SETTINGS[name], "engine_settings.json")
         for metric in metric_columns + technical_columns:
