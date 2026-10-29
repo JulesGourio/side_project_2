@@ -97,13 +97,10 @@ if existing is None:
     logger.info(f"{BASELINE_INDEX}: created on {SOURCE_TABLE}, embeds {EMBEDDED_COLUMN}; its first sync is running")
 else:
     spec = existing.delta_sync_index_spec
-    synced = set(spec.columns_to_sync or [])
     embedded = [c.name for c in spec.embedding_source_columns or []]
     assert spec.source_table == SOURCE_TABLE, f"{BASELINE_INDEX} is built on {spec.source_table}, not {SOURCE_TABLE}"
     assert embedded == [EMBEDDED_COLUMN], f"{BASELINE_INDEX} embeds {embedded}, not {EMBEDDED_COLUMN}: delete it and run again"
-    assert synced and not (synced & FORBIDDEN_COLUMNS), (
-        f"{BASELINE_INDEX} syncs {sorted(synced) or 'every column'}: its keywords would see the canonical codes. "
-        "Delete it and run again.")
+    # The response does not list the synced columns; cell 4 proves them by querying chunk_preprocessed.
     try:
         w.vector_search_indexes.sync_index(index_name=BASELINE_INDEX)
         logger.info(f"{BASELINE_INDEX}: exists with the right spec, sync triggered")
