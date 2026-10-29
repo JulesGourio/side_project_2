@@ -481,3 +481,68 @@ for o in OPTS_K:
     print(f"  {o}: {pos[len(pos) // 2] if pos else '-'} / {sum(n) / max(1, len(n)):.1f}")
 refusals = sorted({(r[2], r[4]) for r in res_k if isinstance(r[4], str) and r[4].startswith('refused')})
 print('refusals:', refusals[:6])
+
+# COMMAND ----------
+
+# L. Fixed benchmark (the 50 codes drawn on 28/10 and 29/10, so runs can be compared) + why each method misses.
+#    Per code: passages holding it (table), passages listing it in cited_codes, what the LIKE filter returns from the
+#    index, rank of the code alone in keywords; then, code written glued, which methods find it.
+FIXED = ['SF1027', 'FORM557', 'DLV2046', 'MI1279', 'KSW5', 'IQ20572', 'GO1612', 'FORM409', 'QR1003', 'FORM059',
+         'UDA500050', 'NF10626', 'DLV21111', 'DLV20644', 'FORM227', 'IQ20193', 'IQ24585', 'Q0016QP', 'UDB700326',
+         'DLV20541', 'SF1016', 'IQ14468', 'QP62531', 'NF1050', 'IQ2023674', 'UDE400024', 'D52110840006', 'ADET0206',
+         'INP0024', 'IAQ043301', 'G05220983107', 'DGQT0830026', 'CO03', 'NS1788', 'BAPS151043', 'QP2141', 'MIT1239',
+         'AIPI0903001', 'AIPI0701023', 'BMS834', 'G05220879101', 'GO1246', 'NF10304', 'R1451234567001', 'AIPI0307002',
+         'P0234MI', 'FORM00513', 'NS1762', 'MIT1095']
+for c in FIXED:
+    if c not in CASES:
+        hit = pre.filter(F.col('chunk_preprocessed').contains(f'[{c}]') | F.col('chunk_preprocessed').rlike(rf'\b{c}\b')).collect()
+        spelled = c
+        for h in hit:
+            m = re.search(rf'(\S+) \[{c}\]', h.chunk_preprocessed or '')
+            cand = m and m.group(1).strip('()[],;:.')
+            if cand and re.sub(r'[^0-9A-Za-z]', '', cand).upper() == c:
+                spelled = cand
+                break
+        CASES[c] = (spelled, {h.chunk_id for h in hit})
+    if c not in LOOKUP:
+        rows = ch.filter(F.array_contains(F.split(F.coalesce('cited_codes', F.lit('')), ' '), c)).select('chunk_id', 'REF').collect()
+        LOOKUP[c] = (sorted({r.chunk_id for r in rows}), sorted({r.REF for r in rows}))
+FIXED = [c for c in FIXED if CASES[c][1]]
+
+OPTS_L = ['A', 'N1', 'E', 'G1', 'G2', 'G3', 'G4']
+
+
+def l_case(job: tuple) -> tuple:
+    """One case of the fixed benchmark.
+
+    :param job: (code, template index, option, spelling name)
+    :return: (code, template, option, spelling, rank or None or an error text)
+    """
+    code, t, option, sname = job
+    if option in ('A', 'E'):
+        r = spelled_case(job)
+    else:
+        r = k_case(job)
+    return r[:5]
+
+
+jobs = [(c, t, o, s) for c in FIXED for t in range(len(TEMPLATES)) for o in OPTS_L for s in ('documents', 'glued')]
+with ThreadPoolExecutor(max_workers=6) as ex:
+    res_l = list(ex.map(l_case, jobs))
+n_cases = len(FIXED) * len(TEMPLATES)
+print(f"{len(FIXED)} codes x {len(TEMPLATES)} shapes = {n_cases} questions per spelling\n")
+print(f"{'spelling':<12}" + ''.join(f'{o:>8}' for o in OPTS_L))
+for s in ('documents', 'glued'):
+    print(f'{s:<12}' + ''.join(f"{sum(isinstance(r[4], int) for r in res_l if r[2] == o and r[3] == s):>8}" for o in OPTS_L))
+
+print(f"\n{'code':<16}{'spelled':<18}{'tbl':>5}{'cited':>6}{'LIKE':>6}{'LIKE ok':>8}{'kw rank':>8}   glued, shapes found per method")
+for c in FIXED:
+    spelled, targets = CASES[c]
+    try:
+        like_rows = vs({**body(c, 'FULL_TEXT', 200), 'filters_json': json.dumps({'chunk_preprocessed LIKE': c})})[0]
+    except Exception:  # noqa: BLE001
+        like_rows = []
+    like_ok = len({r['chunk_id'] for r in like_rows} & targets)
+    kw = show(rank(vs(body(c, 'FULL_TEXT', 1000))[0], targets), 1000)
+    per = ' '.join(f"{o}:{sum(isinstance(r[4], int) for r in res_l if r[0] == c and r[2] == o and r[3] == 'glued')}" for o in OPTS_L)
+    print(f'{c:<16}{spelled[:17]:<18}{len(targets):>5}{len(LOOKUP[c][0]):>6}{len(like_rows):>6}{like_ok:>8}{kw:>8}   {per}')
