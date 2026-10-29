@@ -99,11 +99,21 @@ Deux colonnes : embeddings sur `chunk_text` brut, BM25 sur `chunk_text_pp`.
 - [ ] Nouvel index parallèle en DEV (job runner), `search.py` paramétré par nom d'index et colonnes ; l'index de l'app reste le même.
   *Validation : résultat du test 1, index ONLINE, requête test `ST1027` OK.*
 
-### 5. Scoring du retrieval — Ven. (F4, jeu d'éval préparé dès F1)
-- [ ] Jeu d'éval à refaire : ressortir les notebooks qui génèrent `eval_golden_questions` / `eval_synthetic_questions`, les améliorer, y ajouter des questions « codes » ; vérité terrain = **chunk exact**.
-- [ ] Notebook : **MRR** = moyenne de 1/rang du 1er chunk pertinent ; **Recall@10** = pertinents dans le top 10 / pertinents. Niveau chunk. Base : [retrieval_eval.py](../../utils/evaluation/retrieval_eval.py).
-- [ ] Puis MLflow : un run par config (index, regex `pp_version`, top_k), métriques + échecs en artefact.
-  *Validation : baseline (index actuel) vs nouvel index, global et « questions avec code ».*
+### 5. Scoring du retrieval — en cours (F4)
+Jeu d'éval : `dev_proj.qualibot.eval_golden_retrieval` (vérité terrain au niveau **document**, variantes de langue fusionnées).
+Comparaison : **baseline** (aucune normalisation des codes, ni dans les documents ni dans la requête) contre **code_norm** (l'app actuelle).
+
+**Lancer, dans l'ordre, en DEV :**
+1. [eval_baseline_index.py](eval_baseline_index.py) : crée `dev_proj.qualibot.chunks_baseline_index` sur `chunks`. Il embarque `chunk_text` et ne synchronise ni `chunk_preprocessed` ni `cited_codes` (la partie mots-clés cherche dans toutes les colonnes synchronisées, `chunks_text_index` voit donc les `[SF1027]`). Même endpoint et même modèle d'embedding que `chunks_index`. Ne touche ni `chunks` ni l'index de l'app. Tes droits si tu as `CREATE TABLE` sur `dev_proj.qualibot` et `CAN USE` sur l'endpoint (la cellule 2 s'arrête net sinon : il faut alors le job runner). La cellule 3 attend la fin de l'embedding. À relancer après chaque run de parsing DEV : il resynchronise.
+2. [eval_retrieval_mlflow.py](eval_retrieval_mlflow.py) : Run all, tes droits suffisent, n'écrit rien dans Unity Catalog. Expérience MLflow `/Shared/qualibot/retrieval_eval_dev` : un run parent (comparaison) et un run enfant par (recherche, version).
+   - Recherche `index` : 1 requête hybride + reranker, 50 passages → courbes recall@k et hit@k de k = 1 à 50.
+   - Recherche `app` : le vrai `retrieve_for_turn` importé du code déployé (`/Workspace/.bundle/qualibot/dev/files`). Pour la baseline, chaque étape de normalisation des codes de l'app est coupée en mémoire (requête, recherche des citations, choix de la variante de langue).
+   - Métriques : MRR, MRR@10, nDCG@10, recall@k, hit@k, all@k, rang médian, taux de ratés. Ventilées par langue, division, « question avec code » et nombre de documents attendus. Différences avec intervalle bootstrap à 95 %.
+   - Sorties : tables par question, listes des questions améliorées et dégradées, et 5 graphiques (courbes @k, MRR par tranche, rangs baseline contre code_norm, questions qui bougent, score du 1er passage des `no_document`).
+   - `RUN_PAIRWISE_JUDGE = True` (désactivé par défaut) : réponse de chaque version à partir de ses 8 premiers passages, jugée en pairwise dans les deux ordres par `databricks-gpt-5-6-luna`.
+- [ ] Tu lances 1 puis 2, et tu me renvoies le lien du run parent et la sortie des cellules de résumé (tableau `SUMMARY`, `DELTAS`).
+  *Validation : baseline vs code_norm, global et « questions avec code ».*
+- [ ] `unknown_refs` : traitement à décider (aujourd'hui gardées dans les attendus, `DROP_UNKNOWN_REFS = True` les retire).
 
 ### 6. top_k optimal — Ven.-Lun. (F5)
 - [ ] Balayage k ∈ {5, 8, 10, 15, 20, 30} (et rerank/raw, cf. `CHAT_RERANK_TOP_K` / `CHAT_RAW_TOP_K`) : Recall@k, tokens de contexte, latence. k = plus petit k où Recall@k plafonne.
