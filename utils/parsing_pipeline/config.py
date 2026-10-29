@@ -311,8 +311,9 @@ LLM_MAX_CONCURRENT = int(_env("PARSING_LLM_MAX_CONCURRENT", "24"))
 # Every endpoint of the chain describes images at the same time, each within its own quota; false: the fallbacks only
 # take the images the primary failed, under the primary's quota.
 LLM_PARALLEL_ENDPOINTS = _env("PARSING_LLM_PARALLEL_ENDPOINTS", "true").strip().lower() in ("1", "true", "yes")
-# Kept below the batch size at which the kernel becomes unstable.
-LLM_BATCH_SIZE = int(_env("PARSING_LLM_BATCH_SIZE", "6000"))
+# Images described per run. Progress is persisted every LLM_CHECKPOINT_CHUNK_SIZE and memory is bounded by LLM_MAX_CONCURRENT,
+# so the batch only sizes the driver-side list of rows; 12000 covers the 11441 pending images in one run (about 30 min).
+LLM_BATCH_SIZE = int(_env("PARSING_LLM_BATCH_SIZE", "12000"))
 
 # Persists progress periodically instead of one MERGE at the very end of a multi-hour run.
 LLM_CHECKPOINT_CHUNK_SIZE = int(_env("PARSING_LLM_CHECKPOINT_CHUNK_SIZE", "2000"))
