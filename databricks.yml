@@ -534,33 +534,44 @@ targets:
           membership_roles:
             - DATABRICKS_SUPERUSER
           replace_existing: true
+      # prevent_destroy on the schema and the volumes: a deploy that would delete or recreate them fails instead of prompting.
       schemas:
         qualibot_proj_schema:
           catalog_name: ${var.pipeline_write_env}_proj
           name: qualibot
+          lifecycle:
+            prevent_destroy: true
       volumes:
         qualibot_doc_compare:
           catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: doc_compare
           volume_type: MANAGED
+          lifecycle:
+            prevent_destroy: true
         qualibot_docling_models:
           catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: docling_models
           volume_type: MANAGED
+          lifecycle:
+            prevent_destroy: true
         # Written by the 3_parse task (PARSING_VOLUME_BASE_PATH). Created by the first deploy on prod_proj.
         qualibot_images:
           catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: images
           volume_type: MANAGED
+          lifecycle:
+            prevent_destroy: true
         # Lakebase export of the PROD app (lakebase_export, resources/lakebase_sync.yml).
         qualibot_staging:
           catalog_name: ${var.pipeline_write_env}_proj
           schema_name: ${resources.schemas.qualibot_proj_schema.name}
           name: staging
           volume_type: MANAGED
+          lifecycle:
+            prevent_destroy: true
       apps:
         doc-compare:
           resources:
@@ -587,3 +598,5 @@ targets:
       parsing_lakebase_database: "doccompare"
       # 5_sync_index creates the index on its first run if it does not exist.
       parsing_vector_search_indexes: "prod_proj.qualibot.chunks_index"
+      # PROD alerts and job failures go to Jules only (decided 2026-10-29), not to LEAP_Databricks_Alert.
+      notification_email: "jules.gourio.external@latecoere.aero"

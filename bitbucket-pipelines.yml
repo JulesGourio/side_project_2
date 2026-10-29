@@ -279,6 +279,19 @@ definitions:
           - bash utils/deploy/bitbucket_deploy.sh uat jobs
 
     # -----------------------------------------------------------------------
+    # PROD, one-off: detach the bundle state from prod_landingzone.qualibot (nothing is deleted in Databricks)
+    # and bind the prod_proj.qualibot objects that exist. Ends with a plan. Run deploy-prod-jobs afterwards.
+    # -----------------------------------------------------------------------
+    - step: &prod-state-fix
+        name: Detach the PROD bundle state from prod_landingzone (prod)
+        deployment: production
+        clone:
+          depth: 1
+        script:
+          - test "$BITBUCKET_BRANCH" = "main" || { echo "PROD is deployed from the main branch only." >&2; exit 1; }
+          - bash utils/deploy/prod_state_fix.sh
+
+    # -----------------------------------------------------------------------
     # PROD: target prod, profile job-runner-sa-prod.
     # -----------------------------------------------------------------------
     - step: &deploy-prod
@@ -384,6 +397,8 @@ pipelines:
       - step: *deploy-uat-jobs
     tests:
       - step: *tests
+    prod-state-fix:
+      - step: *prod-state-fix
     deploy-prod:
       - step: *tests
       - step: *deploy-prod

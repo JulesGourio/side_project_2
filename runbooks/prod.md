@@ -106,6 +106,12 @@ databricks bundle run parsing_pipeline -t prod --profile PROD --params run_mode=
 
 - [x] P0 _(2026-10-22)_ · [x] P1 _(2026-10-22)_ · [ ] P2 · [ ] P3 · [ ] P4 · [ ] P5 · [ ] P6 · [ ] P7 · [ ] P8
 
+## 0.4 Déploiement bloqué par « destructive actions » (2026-10-29, pipeline #195)
+
+Cause : l'état du bundle PROD suit encore les objets d'avant la refonte (`prod_landingzone.qualibot` : schéma `qualibot_schema`, volumes `doc_compare`, `docling_models`, `images`, `test`). Le code les déclare dans `prod_proj.qualibot` : le plan supprime l'ancien schéma et recrée les volumes (les fichiers des volumes managés seraient effacés). Ne jamais relancer avec `--auto-approve`.
+
+Correction (état seulement, rien n'est supprimé dans Databricks) : pipeline Bitbucket `prod-state-fix` sur `main` (`utils/deploy/prod_state_fix.sh`). Il détache les 5 anciennes clés, lie les objets de `prod_proj.qualibot` qui existent déjà, puis affiche le plan et échoue s'il reste une suppression ou une recréation. Ensuite `deploy-prod-jobs`. Le schéma et les volumes de PROD ont `prevent_destroy` : un déploiement qui voudrait les détruire échoue au lieu de demander.
+
 ## 1. Catalogue et schéma `prod_proj` (admin metastore, seulement si absent)
 
 Si `prod_proj` n'existe pas, un admin le crée (SQL, éditeur du workspace prod) :
@@ -251,7 +257,7 @@ Déploiement (accord explicite de Jules)
 - [ ] Premier démarrage : `/api/health` renvoie `"lakebase": "ready"` ; le schéma Lakebase est créé.
 
 Après le déploiement
-- [ ] Export Lakebase de PROD : planning actif dès le déploiement des jobs (02:00 et 14:00) ; alertes de PROD actives dès le déploiement (décidé le 2026-10-23, mail à `LEAP_Databricks_Alert@latecoere.aero`). Les alertes du chat lisent les copies Delta : elles sont sans données avant le premier export ; lancer l'export à la main juste après le déploiement : `databricks bundle run lakebase_export -t prod --profile PROD`. L'alerte `job_failures` a besoin du SELECT sur `system.lakeflow` (administrateur du metastore).
+- [ ] Export Lakebase de PROD : planning actif dès le déploiement des jobs (02:00 et 14:00) ; alertes de PROD actives dès le déploiement (décidé le 2026-10-23, mail à `jules.gourio.external@latecoere.aero` seul depuis le 2026-10-29, variable `notification_email` du target prod). Les alertes du chat lisent les copies Delta : elles sont sans données avant le premier export ; lancer l'export à la main juste après le déploiement : `databricks bundle run lakebase_export -t prod --profile PROD`. L'alerte `job_failures` a besoin du SELECT sur `system.lakeflow` (administrateur du metastore).
 - [ ] Parsing de PROD : planning (04:00) `UNPAUSED` dès le déploiement des jobs (décidé le 2026-10-23). Avant le déploiement des jobs, l'état de parsing de PROD doit être repris (section 0.3, étapes P…) sinon le premier run part de zéro ; `max_parse_files` plafonne un run, et `GPU_MIN_PDFS` décide si le GPU démarre. Surveiller le premier run.
 - [ ] Aucune donnée de chat ne vient d'UAT : le pipeline `sync-prod-data` ne copie que les modèles docling.
 - [ ] Parcours de test complet sur l'application PROD (chat, comparaison, aperçus, partage, historique).
