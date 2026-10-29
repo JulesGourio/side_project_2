@@ -859,6 +859,12 @@ def curve_figure(frames: dict) -> plt.Figure:
                     ax.annotate(f"{values[k - 1]:.0%}", (k, values[k - 1]),
                                 xytext=(5, 6 if color == COLOR["ref"] else -8), textcoords="offset points",
                                 va="center", fontsize=8, color=COLOR["text"])
+        # Past the number of documents the app sends, the curves cannot rise any more.
+        most_sent = max(len(refs(r)) for frame in frames.values() for r in frame["retrieved"])
+        if most_sent < max(KS):
+            ax.axvline(most_sent, color=COLOR["muted"], linewidth=1, linestyle=":")
+            ax.annotate(f"most documents sent: {most_sent}", (most_sent, 0.04), xytext=(4, 0),
+                        textcoords="offset points", fontsize=8, color=COLOR["muted"])
         ax.set_xscale("log")
         ax.set_xticks(KS)
         ax.set_xticklabels([str(k) for k in KS])
@@ -942,8 +948,9 @@ else:
     compare["has_code"] = compare["question"].map(lambda q: bool(find_codes(q, accept_lowercase=True)))
     for prefix, label in (("ref", REF), ("cand", CAND)):
         f = frames[label]
-        compare[f"{prefix}_rank"] = [first_rank(e, r) for e, r in zip(f["expected"], f["retrieved"])]
-        compare[f"{prefix}_rr"] = compare[f"{prefix}_rank"].map(lambda r: 1 / r if r else 0.0)
+        ranks = [first_rank(e, r) for e, r in zip(f["expected"], f["retrieved"])]
+        compare[f"{prefix}_rank"] = ranks
+        compare[f"{prefix}_rr"] = [1 / r if r else 0.0 for r in ranks]
         compare[f"{prefix}_recall_at_10"] = [score_at_k(e, r, 10)["recall_at_10"]
                                              for e, r in zip(f["expected"], f["retrieved"])]
         compare[f"{prefix}_top10"] = f["retrieved"].map(lambda r: refs(r)[:10])
