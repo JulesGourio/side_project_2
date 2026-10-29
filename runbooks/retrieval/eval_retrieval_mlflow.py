@@ -97,14 +97,43 @@ log.propagate = False
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Widgets
-# MAGIC `indexes`: `chat` for the app default, `test=catalog.schema.index` to change the
-# MAGIC Vector Search index, or `chat,test=catalog.schema.index` to compare them.
-# MAGIC Search-size options are still supported, for example `chat,wide|cap=100|rerank=60`.
-# MAGIC `topk=N` sets the passages of every query of a turn at once (`rerank`, `raw`, `pairrerank`, `pairraw`): an opening
-# MAGIC message in French or English is searched with the `pair*` sizes, a follow-up or another language with the others.
-# MAGIC `codenorm=off` runs the app without any code normalization (query, exact-citation lookup, language variant choice).
-# MAGIC Benchmark of the code normalization:
-# MAGIC `chat,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off`, optionally with `|topk=50` on both.
+# MAGIC | Widget | Default | Meaning |
+# MAGIC |---|---|---|
+# MAGIC | `pipeline_write_env` | `dev` | catalog of the results table `{env}_proj.qualibot.<results_table_name>` |
+# MAGIC | `pipeline_read_env` | `dev` | catalog of the golden table |
+# MAGIC | `app_code_env` | `dev` | app code loaded from `/Workspace/.bundle/qualibot/{env}/files` |
+# MAGIC | `app_code_path` | empty | another app code folder; wins over `app_code_env` |
+# MAGIC | `golden_table_name` | `eval_golden_retrieval` | golden questions |
+# MAGIC | `results_table_name` | `eval_retrieval_runs_golden` | one row per (configuration, question) and run |
+# MAGIC | `indexes` | `chat` | configurations to measure, see below |
+# MAGIC | `ks` | `1,3,5,10,20,50` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM) |
+# MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
+# MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval_golden` |
+# MAGIC | `rerun_existing` | `true` | `false` reuses the saved successful rows of an unchanged question, configuration and app code |
+# MAGIC | `debug` | `false` | logs the traceback of every failed attempt |
+# MAGIC
+# MAGIC `indexes`: comma-separated configurations, each `label[=catalog.schema.index][|option=value]...`.
+# MAGIC `chat` alone = the app as deployed (its `CHAT_INDEX` and search sizes). Options:
+# MAGIC
+# MAGIC | Option | Values | What it changes |
+# MAGIC |---|---|---|
+# MAGIC | `topk` | integer | every size below at once (`rerank`, `raw`, `pairrerank`, `pairraw`) |
+# MAGIC | `pairrerank` | integer | reranked passages per query of an opening message in French or English (`CHAT_PAIR_RERANK_TOP_K`) |
+# MAGIC | `pairraw` | integer | raw hybrid passages of that opening message (`CHAT_PAIR_RAW_TOP_K`) |
+# MAGIC | `rerank` | integer | reranked passages per query of a follow-up or another language (`CHAT_RERANK_TOP_K`) |
+# MAGIC | `raw` | integer | raw hybrid passages per query there, 0 = reranked only (`CHAT_RAW_TOP_K`) |
+# MAGIC | `rawon` | `question`, `fr`, `en`, joined by `+` | queries that also get a raw search (`CHAT_RAW_ON`) |
+# MAGIC | `cap` | integer, 0 = none | cap on the merged passages before the REF lookups (`CHAT_MAX_SEARCH_PASSAGES`) |
+# MAGIC | `translate` | `on`, `off` | opening message only translated (two queries) instead of rewritten (`CHAT_TRANSLATE_ONLY`) |
+# MAGIC | `rewrite` | endpoint name | model of the rewrite and of the translation (`CHAT_REWRITE_ENDPOINT`) |
+# MAGIC | `effort` | `off`, `minimal`, `low`, `medium`, `high` | reasoning effort of that model (`CHAT_REWRITE_REASONING_EFFORT`) |
+# MAGIC | `codenorm` | `on`, `off` | `off`: no code normalization at all in the app (query, exact-citation lookup, language variant choice) |
+# MAGIC
+# MAGIC Examples:
+# MAGIC - code normalization benchmark: `chat,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off`
+# MAGIC - the same, deeper: `chat|topk=50,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off|topk=50`
+# MAGIC - query side only, without the baseline index: `chat,query_only=dev_proj.qualibot.chunks_index|codenorm=off`
+# MAGIC - search sizes: `chat,wide|cap=100|rerank=60`
 
 # COMMAND ----------
 for name, default in [
