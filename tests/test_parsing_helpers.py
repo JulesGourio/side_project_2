@@ -10,7 +10,7 @@ PARSING_ENV = {"PIPELINE_WRITE_ENV": "dev", "REFERENCE_READ_ENV": "ref", "PARSIN
 for _key, _value in PARSING_ENV.items():
     os.environ.setdefault(_key, _value)
 
-from index_state import index_is_updating  # noqa: E402
+from index_state import index_is_updating, sync_settled  # noqa: E402
 from llm_describe import image_mime_type  # noqa: E402
 from retention import snapshot_age_days, snapshots_to_drop  # noqa: E402
 
@@ -45,3 +45,19 @@ def test_old_snapshots_are_dropped_but_the_latest_is_kept() -> None:
              "_pipeline_checkpoint_20261015_0300"]
     assert snapshots_to_drop(names, now, 30) == ["_pipeline_checkpoint_20260801_0300", "_pipeline_checkpoint_20260901_0300"]
     assert snapshots_to_drop(["_pipeline_checkpoint_20260101_0300"], now, 30) == []
+
+
+def test_a_settled_state_right_after_the_trigger_is_not_the_end_of_the_sync() -> None:
+    # The index still shows yesterday's state: not seen updating, rows differ from the table, grace not over.
+    assert not sync_settled(True, "ONLINE_NO_PENDING_UPDATE", 68808, 104000, False, 30, 600)
+
+
+def test_a_sync_is_over_once_its_update_was_seen_and_the_index_settled() -> None:
+    assert not sync_settled(True, "ONLINE_TRIGGERED_UPDATE", 70000, 104000, True, 60, 600)
+    assert sync_settled(True, "ONLINE_NO_PENDING_UPDATE", 104000, 104000, True, 900, 600)
+
+
+def test_a_sync_with_nothing_to_apply_ends_when_the_rows_match_or_after_the_grace() -> None:
+    assert sync_settled(True, "ONLINE_NO_PENDING_UPDATE", 68808, 68808, False, 30, 600)
+    assert sync_settled(True, "ONLINE_NO_PENDING_UPDATE", 68800, 68808, False, 600, 600)
+    assert not sync_settled(False, "ONLINE_NO_PENDING_UPDATE", 68808, 68808, True, 900, 600)

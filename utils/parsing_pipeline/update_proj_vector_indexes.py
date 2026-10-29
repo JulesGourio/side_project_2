@@ -111,7 +111,7 @@ sys.path.insert(0, REPO_DIR)
 import tables
 
 tables.require_gx()  # fails here, not after the work, on a cluster without Great Expectations
-from index_state import index_is_updating
+from index_state import index_is_updating, sync_settled
 from tables import add_missing_columns, merge_into, table_exists, write_table
 
 # COMMAND ----------
@@ -362,6 +362,7 @@ def _create_index(name, source_table, text_column) -> None:
 
 
 before = {}
+expected = {}
 created = set()
 skipped = set()
 for name in INDEXES:
@@ -388,8 +389,10 @@ for name in INDEXES:
         )
     rows = idx.status.indexed_row_count if idx.status else None
     before[name] = rows
+    expected[name] = spark.table(src).count() if src != "?" else None
     logger.info(
-        f"{name}\n    source={src}  indexed_rows={rows}  ready={idx.status.ready if idx.status else '?'}"
+        f"{name}\n    source={src} ({expected[name]} rows)  indexed_rows={rows}  "
+        f"ready={idx.status.ready if idx.status else '?'}"
     )
 
 INDEXES = [n for n in INDEXES if n not in skipped]
@@ -429,29 +432,42 @@ if failed:
 
 # MAGIC %md
 # MAGIC ## Wait for the syncs to finish
-# MAGIC Waits for each index to leave a syncing state so the job reflects the real outcome; a failed or offline index raises immediately instead of waiting out the timeout, and an index that stays on a failed update (it keeps serving its last good rows) raises after a few polls. `wait_minutes = 0` triggers and returns.
+# MAGIC Waits for each index to leave a syncing state so the job reflects the real outcome. Right after the trigger an index still shows its previous settled state: it counts as done only once its update was seen running, or it holds as many rows as its source table, or 10 minutes passed with nothing to apply. A failed or offline index raises immediately instead of waiting out the timeout, and an index that stays on a failed update (it keeps serving its last good rows) raises after a few polls. `wait_minutes = 0` triggers and returns.
 
 # COMMAND ----------
 
 FAILED_POLLS_BEFORE_ERROR = 3
+# An index keeps reporting its previous settled state for a moment after the trigger.
+START_GRACE_S = 10 * 60
 
 if WAIT_MINUTES <= 0:
     logger.info("Wait disabled — syncs triggered, state not verified.")
 else:
-    deadline = time.time() + WAIT_MINUTES * 60
+    started_at = time.time()
+    deadline = started_at + WAIT_MINUTES * 60
     pending = set(INDEXES)
     failed_polls = {name: 0 for name in INDEXES}
+    seen_updating = {name: name in created for name in INDEXES}
     while pending and time.time() < deadline:
         time.sleep(30)
         for name in sorted(pending):
             idx = w.vector_search_indexes.get_index(index_name=name)
             st = idx.status
             state = (getattr(st, "detailed_state", None) or "").upper() if st else ""
+            seen_updating[name] = seen_updating[name] or index_is_updating(state)
             # Must raise here, or a failed/offline sync waits out the timeout as "still running".
             if "FAILED" in state or "OFFLINE" in state:
                 msg = getattr(st, "message", None) or "no further detail from the SDK"
                 raise RuntimeError(f"{name}: sync failed (state={state}) — {msg}")
-            if st and st.ready and not index_is_updating(state):
+            if st and sync_settled(
+                bool(st.ready),
+                state,
+                st.indexed_row_count,
+                expected[name],
+                seen_updating[name],
+                time.time() - started_at,
+                START_GRACE_S,
+            ):
                 # A failed sync leaves the index ready on its last good state: only its message says so. The previous
                 # run's message lasts until the new update starts, hence several polls before raising.
                 message = getattr(st, "message", None) or ""
@@ -462,7 +478,14 @@ else:
                             f"{name}: sync failed, the index still serves its previous rows — {message}"
                         )
                     continue
-                logger.info(f"{name}: done — indexed_rows {before[name]} -> {st.indexed_row_count}")
+                logger.info(
+                    f"{name}: done — indexed_rows {before[name]} -> {st.indexed_row_count} "
+                    f"(source table: {expected[name]} rows)"
+                )
+                if expected[name] is not None and st.indexed_row_count != expected[name]:
+                    logger.warning(
+                        f"{name}: {st.indexed_row_count} indexed rows for {expected[name]} rows in the source table"
+                    )
                 pending.discard(name)
     if pending:
         # Not an error — sync keeps running server-side; the job's useful work is done.
