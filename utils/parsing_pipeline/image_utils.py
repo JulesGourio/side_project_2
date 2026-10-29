@@ -427,7 +427,7 @@ def parse_and_extract_images_udf(
     """
     # xml_only_series must stay a required positional column — pandas UDFs reject a default/... | None one.
     patch_worker_env()
-    ensure_config()
+    ensure_config(str(volume_path_series.iloc[0]) if len(volume_path_series) else None)
     enable_timing = bool(enable_timing_series.iloc[0]) if len(enable_timing_series) else False
     results = []
 

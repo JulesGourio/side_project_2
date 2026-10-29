@@ -133,8 +133,12 @@ def write_worker_config(spark_session) -> str:
     return path
 
 
-def ensure_config() -> None:
-    """Restore CONFIG on a worker (idempotent): broadcast → spark.conf → Volume JSON."""
+def ensure_config(volume_base_path: str | None = None) -> None:
+    """Restore CONFIG on a worker (idempotent): broadcast → shipped file → spark.conf → Volume JSON.
+
+    :param volume_base_path: Volume folder that holds the settings file, passed by the caller as a column value: a
+        Python worker has no Spark session to read it from.
+    """
     if CONFIG:
         return
     if _CONFIG_BROADCAST is not None:
@@ -159,6 +163,13 @@ def ensure_config() -> None:
             if cfg_json:
                 CONFIG.update(json.loads(cfg_json))
                 return
+    except Exception:
+        pass
+    try:
+        if volume_base_path:
+            with open(os.path.join(volume_base_path, _WORKER_CONFIG_NAME)) as fh:
+                CONFIG.update(json.load(fh))
+            return
     except Exception:
         pass
     try:
