@@ -124,8 +124,8 @@ while True:
         break
     if time.time() > deadline:
         raise TimeoutError(f"{BASELINE_INDEX}: {rows}/{SOURCE_ROWS} rows after {WAIT_MINUTES} min "
-                           f"({status.detailed_state}); run this cell again later")
-    logger.info(f"{BASELINE_INDEX}: {rows}/{SOURCE_ROWS} rows, {status.detailed_state}")
+                           f"({status.message}); run this cell again later")
+    logger.info(f"{BASELINE_INDEX}: {rows}/{SOURCE_ROWS} rows, {status.message}")
     time.sleep(60)
 
 # COMMAND ----------
