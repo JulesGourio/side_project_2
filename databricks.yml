@@ -287,7 +287,7 @@ targets:
       reference_read_env: "prod"
       # DEV's own volume (nested docling_models/ subfolder, unlike UAT's).
       # Real tables, no suffix. One index serves the chat (division filter) and impact search.
-      parsing_vector_search_indexes: "dev_proj.qualibot.chunks_index,dev_proj.qualibot.chunks_text_index"
+      parsing_vector_search_indexes: "dev_proj.qualibot.chunks_index"
       # PAUSED on purpose — unpause only on explicit decision.
       parsing_schedule_pause: "PAUSED"
       alerts_pause_status: "UNPAUSED"
@@ -440,7 +440,7 @@ targets:
       # UAT's own docling_models volume copy (no nested docling_models/ subfolder, unlike DEV).
       # Real tables, no suffix. Without the parsing state in these tables the daily run reparses the whole
       # corpus on GPU. One index serves the chat and impact search.
-      parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index,uat_proj.qualibot.chunks_text_index"
+      parsing_vector_search_indexes: "uat_proj.qualibot.chunks_index"
       # chunks_full is built, but chunks_full_index is not in parsing_vector_search_indexes, so it is neither created nor synced.
       parsing_build_chunks_full: "true"
       parsing_schedule_pause: "UNPAUSED"

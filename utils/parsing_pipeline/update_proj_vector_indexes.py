@@ -310,30 +310,21 @@ from databricks.sdk.service.vectorsearch import (
 
 # Only these indexes are auto-created; any other index in `indexes` is synced but never created (its source
 # table is unknown).
-# Each entry gives the source table, the column the index embeds and the columns it syncs (None = all).
-# `chunks_text_index` is the baseline of the retrieval benchmark: same chunks as `chunks_index`, without any canonical
-# code form. The keyword side of a hybrid query searches every synced text column, so it syncs neither
-# `chunk_preprocessed` nor `cited_codes`.
-BASELINE_INDEX = f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_text_index"
-BASELINE_COLUMNS = ["chunk_id", "IDDOC", "REF", "division", "url", "semantic_headers", "chunk_text"]
-CODE_COLUMNS = {INDEXED_TEXT_COLUMN, "cited_codes"}
+# Each entry gives the source table and the column the index embeds.
 KNOWN_INDEX = {
-    f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_index": (
-        f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks", INDEXED_TEXT_COLUMN, None),
-    BASELINE_INDEX: (f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks", "chunk_text", BASELINE_COLUMNS),
-    FULL_INDEX: (FULL_TABLE, INDEXED_TEXT_COLUMN, None),
+    f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks_index": (f"{PIPELINE_WRITE_ENV}_proj.qualibot.chunks", INDEXED_TEXT_COLUMN),
+    FULL_INDEX: (FULL_TABLE, INDEXED_TEXT_COLUMN),
 }
 
 w = WorkspaceClient()
 
 
-def _create_index(name, source_table, text_column, columns_to_sync) -> None:
+def _create_index(name, source_table, text_column) -> None:
     """Create a Delta Sync index on a source table and wait until it leaves PROVISIONING.
 
     :param name: Full name of the index, ``catalog.schema.name``.
     :param source_table: Full name of the table the index is built from.
     :param text_column: Column the index embeds.
-    :param columns_to_sync: Columns the index holds; None for every column of the table.
     """
     logger.info(
         f"{name}: not found -- creating (endpoint={VECTOR_SEARCH_ENDPOINT}, source={source_table})..."
@@ -346,7 +337,6 @@ def _create_index(name, source_table, text_column, columns_to_sync) -> None:
         delta_sync_index_spec=DeltaSyncVectorIndexSpecRequest(
             source_table=source_table,
             pipeline_type=PipelineType.TRIGGERED,
-            columns_to_sync=columns_to_sync,
             embedding_source_columns=[
                 EmbeddingSourceColumn(
                     name=text_column, embedding_model_endpoint_name=EMBEDDING_MODEL
@@ -376,33 +366,20 @@ created = set()
 for name in INDEXES:
     try:
         idx = w.vector_search_indexes.get_index(index_name=name)
-        synced = set(idx.delta_sync_index_spec.columns_to_sync or []) if idx.delta_sync_index_spec else set()
-        if name == BASELINE_INDEX and (not synced or synced & CODE_COLUMNS):
-            # The app never reads this index: rebuilding it costs one embedding run and nothing else.
-            logger.warning(
-                f"{name} syncs {sorted(synced) or 'every column'}: its keyword search sees the canonical code forms. "
-                f"Deleted, created again with {BASELINE_COLUMNS}."
-            )
-            w.vector_search_indexes.delete_index(index_name=name)
-            deadline = time.time() + 5 * 60
-            while time.time() < deadline:
-                w.vector_search_indexes.get_index(index_name=name)
-                time.sleep(15)
-            raise RuntimeError(f"{name}: still present 5 min after its deletion; run the task again")
     except NotFound:
-        source_table, text_column, columns_to_sync = KNOWN_INDEX.get(name, (None, None, None))
+        source_table, text_column = KNOWN_INDEX.get(name, (None, None))
         if not source_table:
             raise RuntimeError(
                 f"{name}: index doesn't exist and isn't one of the pipeline-managed indexes -- "
                 f"can't auto-create it (unknown source table)."
             )
-        _create_index(name, source_table, text_column, columns_to_sync)
+        _create_index(name, source_table, text_column)
         created.add(name)
         idx = w.vector_search_indexes.get_index(index_name=name)
 
     src = idx.delta_sync_index_spec.source_table if idx.delta_sync_index_spec else "?"
     embedded = [c.name for c in (idx.delta_sync_index_spec.embedding_source_columns or [])] if idx.delta_sync_index_spec else []
-    expected_column = KNOWN_INDEX.get(name, (None, INDEXED_TEXT_COLUMN, None))[1]
+    expected_column = KNOWN_INDEX.get(name, (None, INDEXED_TEXT_COLUMN))[1]
     if embedded and expected_column not in embedded:
         logger.info(
             f"{name} embeds {embedded}, not {expected_column}: the reference codes of the passages are searched in "

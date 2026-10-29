@@ -282,14 +282,10 @@ variables with the defaults listed at the top of `config.py`.
 
 - The indexes come from the widget `indexes`, or from `PARSING_VECTOR_SEARCH_INDEXES` when it is empty. An empty
   list syncs nothing.
-- `chunks_index`, `chunks_text_index` and `chunks_full_index` are created by this task, on the endpoint named by the
+- `chunks_index` and `chunks_full_index` are created by this task, on the endpoint named by the
   widget `vector_search_endpoint` (default `qualibot`), with the embedding model of the widget `embedding_model`,
-  primary key `chunk_id`, pipeline type `TRIGGERED`. `chunks_index` and `chunks_full_index` embed `chunk_preprocessed`;
-  `chunks_text_index` (same `chunks` table) is the baseline of the retrieval benchmark: it embeds `chunk_text` and syncs
-  only `chunk_id`, `IDDOC`, `REF`, `division`, `url`, `semantic_headers` and `chunk_text`. The keyword side of a hybrid
-  query searches every synced text column, so `chunk_preprocessed` and `cited_codes` are left out: no canonical code
-  form reaches it. A `chunks_text_index` that syncs one of them is deleted and created again by this task (the app
-  never reads it). Any other index in the list is synced only.
+  primary key `chunk_id`, pipeline type `TRIGGERED`. Both embed `chunk_preprocessed`. Any other index in the list is
+  synced only.
 - An index that embeds another column is synced as it is, with a warning: an index cannot change its embedded column,
   it must be deleted and created again.
 - The task triggers each sync, then waits for it, up to `wait_minutes` (45). A failed or offline index raises an error.
