@@ -588,7 +588,8 @@ targets:
       parsing_num_workers: "8"
       reference_read_env: "prod"
       job_activity_tag: "prod-job"
-      parsing_schedule_pause: "UNPAUSED"
+      # PAUSED until prod_proj.qualibot holds the parsing state imported from UAT: an empty state parses up to max_parse_files on GPU.
+      parsing_schedule_pause: "PAUSED"
       alerts_pause_status: "UNPAUSED"
       # The PROD export copies the PROD Lakebase to prod_proj.qualibot twice a day: the chat alerts read those copies.
       lakebase_export_schedule_pause: "UNPAUSED"

@@ -11,6 +11,7 @@ The operator runbooks (`dev.md`, `uat.md`, `prod.md`, `retest.md`) are written i
 | `dev.md` | DEV environment: copy of the UAT corpus into `dev_proj.qualibot`, deployment, indexes, evaluation, trace scoring, parsing pipeline |
 | `uat.md` | UAT environment: migration to `uat_proj.qualibot`, validation, going live, chatbot switch-over, activations after validation, removal of the former test target |
 | `prod.md` | PROD environment: `prod_proj.qualibot`, volumes, indexes, grants, deployment on explicit approval |
+| `deploiement_prod/` | Checklist cochable du déploiement PROD (état des lieux, réparation de l'état du bundle, deploy, données) |
 | `uat_bascule.md` | Checklist cochable de la bascule UAT (préparation, jobs, bascule de l'app, nettoyage) |
 | `retest.md` | What still has to be re-run or re-tested after the latest code changes, with the command and the status of each item |
 | `scripts/` | One-shot scripts: schema migrations, table copies, LibreOffice packaging, offline comparison report (see below) |

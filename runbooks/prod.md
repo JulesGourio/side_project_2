@@ -110,7 +110,7 @@ databricks bundle run parsing_pipeline -t prod --profile PROD --params run_mode=
 
 Cause : l'état du bundle PROD suit encore les objets d'avant la refonte (`prod_landingzone.qualibot` : schéma `qualibot_schema`, volumes `doc_compare`, `docling_models`, `images`, `test`). Le code les déclare dans `prod_proj.qualibot` : le plan supprime l'ancien schéma et recrée les volumes (les fichiers des volumes managés seraient effacés). Ne jamais relancer avec `--auto-approve`.
 
-Correction (état seulement, rien n'est supprimé dans Databricks) : pipeline Bitbucket `prod-state-fix` sur `main` (`utils/deploy/prod_state_fix.sh`). Il détache les 5 anciennes clés, lie les objets de `prod_proj.qualibot` qui existent déjà, puis affiche le plan et échoue s'il reste une suppression ou une recréation. Ensuite `deploy-prod-jobs`. Le schéma et les volumes de PROD ont `prevent_destroy` : un déploiement qui voudrait les détruire échoue au lieu de demander.
+Correction (état seulement, rien n'est supprimé dans Databricks) : pipeline Bitbucket `prod-state-fix` sur `main` (`utils/deploy/prod_state_fix.sh`). Il détache les 5 anciennes clés, lie les objets de `prod_proj.qualibot` qui existent déjà, puis affiche le plan et échoue s'il reste une suppression ou une recréation. Ensuite `deploy-prod-jobs`. Checklist complète : `deploiement_prod/README.md`. Le schéma et les volumes de PROD ont `prevent_destroy` : un déploiement qui voudrait les détruire échoue au lieu de demander.
 
 ## 1. Catalogue et schéma `prod_proj` (admin metastore, seulement si absent)
 

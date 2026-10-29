@@ -279,6 +279,17 @@ definitions:
           - bash utils/deploy/bitbucket_deploy.sh uat jobs
 
     # -----------------------------------------------------------------------
+    # PROD, read-only: bundle state, Unity Catalog objects, app and deploy plan. Changes nothing.
+    # -----------------------------------------------------------------------
+    - step: &prod-state-check
+        name: Check the PROD state, read-only (prod)
+        deployment: production
+        clone:
+          depth: 1
+        script:
+          - bash utils/deploy/prod_state_check.sh
+
+    # -----------------------------------------------------------------------
     # PROD, one-off: detach the bundle state from prod_landingzone.qualibot (nothing is deleted in Databricks)
     # and bind the prod_proj.qualibot objects that exist. Ends with a plan. Run deploy-prod-jobs afterwards.
     # -----------------------------------------------------------------------
@@ -397,6 +408,8 @@ pipelines:
       - step: *deploy-uat-jobs
     tests:
       - step: *tests
+    prod-state-check:
+      - step: *prod-state-check
     prod-state-fix:
       - step: *prod-state-fix
     deploy-prod:
