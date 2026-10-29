@@ -362,3 +362,57 @@ def test_another_context_for_the_same_image_is_described_again():
     client = FakeClient({"primary": [_resp("A different description.")]})
     other = _described_with_cache(client, cache, row=_row(context_text="Another page about wiring"))
     assert other["from_cache"] is False and other["description"] == "A different description." and client.calls
+
+
+def test_the_images_start_on_the_endpoints_in_proportion_to_their_rates():
+    chains = llm_describe.spread_chains(6, ["a", "b"], {"a": 200.0, "b": 100.0})
+    assert [c[0] for c in chains].count("a") == 4 and [c[0] for c in chains].count("b") == 2
+    assert all(sorted(c) == ["a", "b"] for c in chains)   # every chain keeps the other endpoint as fallback
+    assert [c[0] for c in chains[:3]] != ["a", "a", "a"]  # interleaved, not one block per endpoint
+
+
+def test_an_endpoint_without_rate_starts_no_image_but_stays_a_fallback():
+    chains = llm_describe.spread_chains(3, ["a", "b"], {"a": 0.0, "b": 50.0})
+    assert chains == [["b", "a"]] * 3
+
+
+def _fake_openai(monkeypatch, client):
+    async def close():
+        return None
+
+    client.close = close
+    fake_openai = types.ModuleType("openai")
+    fake_openai.AsyncOpenAI = lambda **kwargs: client
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+
+def test_with_one_quota_per_endpoint_both_endpoints_describe_images(monkeypatch):
+    client = FakeClient({"primary": [_resp("primary text")], "fallback": [_resp("fallback text")]})
+    _fake_openai(monkeypatch, client)
+    rows = [{**_row(), "image_id": i} for i in range(4)]
+    out = asyncio.run(llm_describe.describe_all_images(
+        rows, "host", "token", ["primary", "fallback"], 100, 1.0, 1,
+        {"primary": 2, "fallback": 2}, {"primary": 6_000_000, "fallback": 6_000_000}, EndpointBreaker(100)))
+    assert [r["status"] for r in out] == ["DONE"] * 4
+    assert sorted(client.calls) == ["fallback", "fallback", "primary", "primary"]
+
+
+def test_with_one_quota_per_endpoint_a_failing_endpoint_hands_its_images_to_the_other(monkeypatch):
+    client = FakeClient({"primary": [RuntimeError("500")], "fallback": [_resp("fallback text")]})
+    _fake_openai(monkeypatch, client)
+    rows = [{**_row(), "image_id": i} for i in range(4)]
+    out = asyncio.run(llm_describe.describe_all_images(
+        rows, "host", "token", ["primary", "fallback"], 100, 1.0, 1,
+        {"primary": 2, "fallback": 2}, {"primary": 6_000_000, "fallback": 6_000_000}, EndpointBreaker(100)))
+    assert [r["status"] for r in out] == ["DONE"] * 4
+    assert all(r["description"] == "fallback text" for r in out)
+
+
+def test_with_one_shared_quota_every_image_starts_on_the_primary(monkeypatch):
+    client = FakeClient({"primary": [_resp("primary text")], "fallback": [_resp("fallback text")]})
+    _fake_openai(monkeypatch, client)
+    rows = [{**_row(), "image_id": i} for i in range(3)]
+    out = asyncio.run(llm_describe.describe_all_images(
+        rows, "host", "token", ["primary", "fallback"], 100, 1.0, 1, 2, 6_000_000, EndpointBreaker(100)))
+    assert [r["status"] for r in out] == ["DONE"] * 3
+    assert client.calls == ["primary"] * 3

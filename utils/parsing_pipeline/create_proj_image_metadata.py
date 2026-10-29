@@ -66,7 +66,7 @@ dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targe
 dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
 dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
 dbutils.widgets.text("redescribe_all_images", "false", "true: describe every image again")
-dbutils.widgets.text("describe_images", "true", "false: skip this task (images are described by a later run)")
+dbutils.widgets.text("describe_images", "true", "false: no LLM call, the descriptions already made are still injected")
 
 PIPELINE_WRITE_ENV = dbutils.widgets.get("pipeline_write_env")
 if PIPELINE_WRITE_ENV not in ("dev", "uat", "prod"):
@@ -131,9 +131,11 @@ for _mod in cfg.WORKER_MODULES:
 
 # MAGIC %md
 # MAGIC ### Job parameters
+# MAGIC `describe_images = false` makes no LLM call: the `PENDING` images wait for a later run, but the images already described still get their passages (Tr. 2) and the documents waiting for them are still promoted.
+# MAGIC
 # MAGIC `rebuild_image_chunks = true` rewrites the passage of EVERY described image from its stored description (new section, caption, long transcriptions split), without any LLM call. It is on whenever `redescribe_all_images` is `true`, so new descriptions reach the index.
 # MAGIC
-# MAGIC The vision endpoints are constants of `config.py`: the primary `LLM_MODEL_ENDPOINT`, then `LLM_FALLBACK_ENDPOINTS`, tried in order. Each endpoint must take image input.
+# MAGIC The vision endpoints are constants of `config.py`: the primary `LLM_MODEL_ENDPOINT`, then `LLM_FALLBACK_ENDPOINTS`. With `LLM_PARALLEL_ENDPOINTS` they all describe images at once, each within its own quota (`LLM_FALLBACK_BUDGETS`) and as the fallback of the others; otherwise they are tried in order. Each endpoint must take image input.
 
 # COMMAND ----------
 
@@ -145,9 +147,12 @@ for _mod in cfg.WORKER_MODULES:
 
 logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_LEVEL])
 
-if dbutils.widgets.get("describe_images").strip().lower() == "false":
-    logger.info("describe_images=false: no image is described in this run, the pending images stay pending.")
-    dbutils.notebook.exit("skipped")
+DESCRIBE_IMAGES = dbutils.widgets.get("describe_images").strip().lower() != "false"
+if not DESCRIBE_IMAGES:
+    logger.info(
+        "describe_images=false: no LLM call in this run, the pending images stay pending; the images already "
+        "described are still injected as passages."
+    )
 
 dbutils.widgets.dropdown("rebuild_image_chunks", "false", ["false", "true"])
 REBUILD_IMAGE_CHUNKS = (
@@ -195,7 +200,8 @@ logger.info(
 
 # COMMAND ----------
 
-if cfg.REDESCRIBE_ALL_IMAGES:
+# Without descriptions in this run, a reset would leave every image pending and remove its passage.
+if cfg.REDESCRIBE_ALL_IMAGES and DESCRIBE_IMAGES:
     describe_steps.reset_images_to_pending()
 
 df_pending = describe_steps.pending_images()
@@ -224,7 +230,7 @@ if pending_count == 0:
 
 batched = bool(cfg.LLM_BATCH_SIZE) and pending_count > cfg.LLM_BATCH_SIZE
 df_to_process = df_pending.limit(cfg.LLM_BATCH_SIZE) if batched else df_pending
-rows_to_process = [r.asDict() for r in df_to_process.collect()]
+rows_to_process = [r.asDict() for r in df_to_process.collect()] if DESCRIBE_IMAGES else []
 logger.info(
     f"Batch: {len(rows_to_process)} images ({n_pending} new + {n_retry} retries)"
     + (f" | batched from {pending_count}" if batched else "")
@@ -240,9 +246,12 @@ logger.info(
 
 # COMMAND ----------
 
-describe_steps.describe_images(
-    rows_to_process, WS_HOST, WS_TOKEN, LLM_ENDPOINTS, use_cache=not cfg.REDESCRIBE_ALL_IMAGES
-)
+if DESCRIBE_IMAGES:
+    describe_steps.describe_images(
+        rows_to_process, WS_HOST, WS_TOKEN, LLM_ENDPOINTS, use_cache=not cfg.REDESCRIBE_ALL_IMAGES
+    )
+else:
+    logger.info(f"describe_images=false: {pending_count} images left to describe by a later run.")
 
 # COMMAND ----------
 

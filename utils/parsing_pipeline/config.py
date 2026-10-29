@@ -305,7 +305,11 @@ LLM_ROUND_WAITS_S = (5.0, 15.0, 30.0)
 LLM_BREAKER_FAILURES = int(_env("PARSING_LLM_BREAKER_FAILURES", "5"))
 # Runs in which an image is attempted before it is set aside as FAILED_LIMIT (a full run resets the count).
 IMAGE_MAX_ATTEMPTS = int(_env("PARSING_IMAGE_MAX_ATTEMPTS", "10"))
-LLM_MAX_CONCURRENT = 10  # Memory of the single-node m5d.xlarge caps the concurrency
+# Calls in flight per endpoint. The images read into memory are bounded by it (llm_describe), not by the chunk size.
+LLM_MAX_CONCURRENT = int(_env("PARSING_LLM_MAX_CONCURRENT", "10"))
+# Every endpoint of the chain describes images at the same time, each within its own quota; false: the fallbacks only
+# take the images the primary failed, under the primary's quota.
+LLM_PARALLEL_ENDPOINTS = _env("PARSING_LLM_PARALLEL_ENDPOINTS", "true").strip().lower() in ("1", "true", "yes")
 # Kept below the batch size at which the kernel becomes unstable.
 LLM_BATCH_SIZE = int(_env("PARSING_LLM_BATCH_SIZE", "6000"))
 
@@ -318,6 +322,14 @@ LLM_OTPM_BUDGET = int(
     _env("PARSING_LLM_OTPM_BUDGET", "100000")
 )  # real limit: 200,000 <- bottleneck
 LLM_QPH_BUDGET = int(_env("PARSING_LLM_QPH_BUDGET", "324000"))  # real limit: 360,000
+# Quota of each fallback endpoint; an endpoint not listed has the budgets above.
+LLM_FALLBACK_BUDGETS = {
+    "databricks-gpt-5-6-luna": {
+        "itpm": int(_env("PARSING_LLM_FALLBACK_ITPM_BUDGET", str(LLM_ITPM_BUDGET))),
+        "otpm": int(_env("PARSING_LLM_FALLBACK_OTPM_BUDGET", str(LLM_OTPM_BUDGET))),
+        "qph": int(_env("PARSING_LLM_FALLBACK_QPH_BUDGET", str(LLM_QPH_BUDGET))),
+    },
+}
 # Calibrated avg tokens/image, drives RPM_safe = min(budget/avg) across all three axes.
 LLM_AVG_INPUT_TOKENS = int(_env("PARSING_LLM_AVG_IN", "1050"))
 LLM_AVG_OUTPUT_TOKENS = int(_env("PARSING_LLM_AVG_OUT", "300"))

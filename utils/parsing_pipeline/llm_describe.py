@@ -1,7 +1,8 @@
 """llm_describe.py — asynchronous vision-LLM description of the extracted images (driver side).
 
 `describe_all_images` runs the images concurrently under a semaphore and a token-bucket rate limiter. An image goes
-through the endpoint chain (primary, then the fallbacks) for `rounds` passes. An endpoint that fails several images in a
+through the endpoint chain (primary, then the fallbacks) for `rounds` passes. Given one quota per endpoint, the images
+are spread over every endpoint at once, each endpoint within its own quota, the others as fallbacks. An endpoint that fails several images in a
 row is skipped for the rest of the run (`EndpointBreaker`). An image no endpoint described comes back PENDING with no
 description, so a later run describes it again. Nothing raises: failures are returned as results.
 All tunables come from config.py.
@@ -11,7 +12,7 @@ import asyncio
 import base64
 import hashlib
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Set
+from typing import Any, Dict, List, Sequence, Set
 
 from config import (
     IMAGE_DESCRIPTION_PROMPT,
@@ -50,6 +51,40 @@ def endpoint_chain(primary: str, fallbacks: str) -> List[str]:
         if endpoint and endpoint not in chain:
             chain.append(endpoint)
     return chain
+
+
+def spread_chains(count: int, endpoints: Sequence[str], weights: Dict[str, float]) -> List[List[str]]:
+    """One endpoint chain per image: the images start on the endpoints in proportion to their weights, interleaved,
+    and each chain then tries the other endpoints in their order.
+
+    :param count: Number of images.
+    :param endpoints: Endpoint names, in fallback order.
+    :param weights: Share of the images each endpoint starts, e.g. its requests per minute; a missing or non-positive
+        weight starts no image.
+    :return: ``count`` chains, each holding every endpoint once.
+    """
+    active = [e for e in endpoints if weights.get(e, 0) > 0] or list(endpoints[:1])
+    total = sum(weights.get(e, 1.0) for e in active)
+    credit = {e: 0.0 for e in active}
+    chains = []
+    for _ in range(count):
+        # Smooth weighted round robin: the same shares at every prefix of the list, not one block per endpoint.
+        for e in active:
+            credit[e] += weights.get(e, 1.0)
+        first = max(active, key=lambda e: credit[e])
+        credit[first] -= total
+        chains.append([first, *(e for e in endpoints if e != first)])
+    return chains
+
+
+def _of(value: Any, endpoint: str) -> Any:
+    """The entry of ``endpoint`` when ``value`` is a dict by endpoint, else ``value`` itself (shared by every endpoint).
+
+    :param value: One setting, or one setting per endpoint.
+    :param endpoint: Endpoint name.
+    :return: the setting that applies to the endpoint.
+    """
+    return value[endpoint] if isinstance(value, dict) else value
 
 
 def round_wait_s(round_no: int, waits: Sequence[float]) -> float:
@@ -407,12 +442,12 @@ async def describe_one_image(
 
     :param client: Async OpenAI client.
     :param row_data: Image row: IDDOC, image_id, volume_path, label, context and category columns.
-    :param semaphore: Limits the calls in flight.
+    :param semaphore: Limits the calls in flight: one for every endpoint, or a dict by endpoint.
     :param endpoints: Endpoint names, tried in order.
     :param max_tokens: Output token budget of each call.
     :param temperature: Sampling temperature.
     :param max_retries: Attempts per endpoint.
-    :param rate_limiter: Token bucket shared by the run.
+    :param rate_limiter: Token bucket shared by the run: one for every endpoint, or a dict by endpoint.
     :param breaker: Circuit breaker shared by the run.
     :param timeout: Seconds to wait for one call.
     :param rounds: Passes over the endpoint chain.
@@ -512,8 +547,8 @@ async def describe_one_image(
                     client,
                     endpoint,
                     messages,
-                    semaphore,
-                    rate_limiter,
+                    _of(semaphore, endpoint),
+                    _of(rate_limiter, endpoint),
                     max_tokens,
                     temperature,
                     max_retries,
@@ -541,8 +576,8 @@ async def describe_all_images(
     max_tokens: int,
     temperature: float,
     max_retries: int,
-    max_concurrent: int,
-    requests_per_minute: float,
+    max_concurrent: int | Dict[str, int],
+    requests_per_minute: float | Dict[str, float],
     breaker: EndpointBreaker,
     rounds: int = 1,
     round_waits_s: Sequence[float] = (),
@@ -551,6 +586,10 @@ async def describe_all_images(
 ) -> List[dict]:
     """Describe all images concurrently, at most `max_concurrent` at a time and `requests_per_minute` on average.
 
+    With both given per endpoint (dicts), every endpoint works at once within its own limits: the images start on
+    the endpoints in proportion to their requests per minute and fall back on the others. With single values, one
+    limit is shared by the whole chain and every image starts on the primary.
+
     :param rows: Image rows to describe.
     :param ws_host: Workspace host of the endpoints, without scheme.
     :param ws_token: Bearer token of the workspace.
@@ -558,8 +597,8 @@ async def describe_all_images(
     :param max_tokens: Output token budget of each call.
     :param temperature: Sampling temperature.
     :param max_retries: Attempts per endpoint.
-    :param max_concurrent: Calls in flight at once.
-    :param requests_per_minute: Requests allowed per minute, on average.
+    :param max_concurrent: Calls in flight at once: for the whole chain, or a dict by endpoint.
+    :param requests_per_minute: Requests allowed per minute, on average: for the whole chain, or a dict by endpoint.
     :param breaker: Circuit breaker shared by the run.
     :param rounds: Passes over the endpoint chain.
     :param round_waits_s: Seconds slept before each pass after the first.
@@ -568,29 +607,48 @@ async def describe_all_images(
     """
     from openai import AsyncOpenAI
 
-    rate_limiter = _AsyncRateLimiter(requests_per_minute)
+    if isinstance(requests_per_minute, dict) and isinstance(max_concurrent, dict):
+        rate_limiter = {e: _AsyncRateLimiter(requests_per_minute[e]) for e in endpoints}
+        semaphore = {e: asyncio.Semaphore(max_concurrent[e]) for e in endpoints}
+        chains = spread_chains(len(rows), endpoints, requests_per_minute)
+        in_flight = sum(max_concurrent[e] for e in endpoints)
+    else:
+        rate_limiter = _AsyncRateLimiter(_of(requests_per_minute, endpoints[0]))
+        semaphore = asyncio.Semaphore(_of(max_concurrent, endpoints[0]))
+        chains = [list(endpoints)] * len(rows)
+        in_flight = _of(max_concurrent, endpoints[0])
+    # An image is read into memory as soon as its coroutine starts: only a few more than the calls in flight are
+    # started at once, so the memory does not grow with the size of the chunk.
+    started = asyncio.Semaphore(2 * in_flight)
     client = AsyncOpenAI(api_key=ws_token, base_url=f"https://{ws_host}/serving-endpoints")
-    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def one(row: dict, chain: List[str]) -> dict:
+        """Describe one image once a start slot is free.
+
+        :param row: Image row.
+        :param chain: Endpoints of this image, in the order they are tried.
+        :return: the outcome of ``describe_one_image``.
+        """
+        async with started:
+            return await describe_one_image(
+                client,
+                row,
+                semaphore,
+                chain,
+                max_tokens,
+                temperature,
+                max_retries,
+                rate_limiter,
+                breaker,
+                rounds=rounds,
+                round_waits_s=round_waits_s,
+                max_attempts=max_attempts,
+                cache=cache,
+            )
+
     try:
         results = await asyncio.gather(
-            *[
-                describe_one_image(
-                    client,
-                    r,
-                    semaphore,
-                    endpoints,
-                    max_tokens,
-                    temperature,
-                    max_retries,
-                    rate_limiter,
-                    breaker,
-                    rounds=rounds,
-                    round_waits_s=round_waits_s,
-                    max_attempts=max_attempts,
-                    cache=cache,
-                )
-                for r in rows
-            ],
+            *[one(r, chain) for r, chain in zip(rows, chains)],
             return_exceptions=True,
         )
     finally:

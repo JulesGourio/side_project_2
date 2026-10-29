@@ -40,11 +40,13 @@ from config import (
     IMAGE_MAX_ATTEMPTS,
     LLM_BREAKER_FAILURES,
     LLM_CHECKPOINT_CHUNK_SIZE,
+    LLM_FALLBACK_BUDGETS,
     LLM_ITPM_BUDGET,
     LLM_MAX_CONCURRENT,
     LLM_MAX_RETRIES,
     LLM_MAX_TOKENS,
     LLM_OTPM_BUDGET,
+    LLM_PARALLEL_ENDPOINTS,
     LLM_QPH_BUDGET,
     LLM_ROUND_WAITS_S,
     LLM_ROUNDS,
@@ -269,18 +271,30 @@ def describe_images(rows, ws_host, ws_token, endpoints, use_cache: bool = True) 
         )
 
     nest_asyncio.apply()
-    # Throughput bounded by the endpoint quota; the output tokens per minute are the bottleneck.
-    rpm = safe_requests_per_minute(
-        LLM_ITPM_BUDGET,
-        LLM_OTPM_BUDGET,
-        LLM_QPH_BUDGET,
-        LLM_AVG_INPUT_TOKENS,
-        LLM_AVG_OUTPUT_TOKENS,
-    )
-    logger.info(
-        f"Rate limiter : {rpm:.0f} req/min  (ITPM<={LLM_ITPM_BUDGET:,}, OTPM<={LLM_OTPM_BUDGET:,}, "
-        f"QPH<={LLM_QPH_BUDGET:,})"
-    )
+    # Throughput bounded by each endpoint quota; the output tokens per minute are the bottleneck.
+    rpm_of = {}
+    for endpoint in endpoints:
+        budget = LLM_FALLBACK_BUDGETS.get(
+            endpoint, {"itpm": LLM_ITPM_BUDGET, "otpm": LLM_OTPM_BUDGET, "qph": LLM_QPH_BUDGET}
+        )
+        rpm_of[endpoint] = safe_requests_per_minute(
+            budget["itpm"], budget["otpm"], budget["qph"], LLM_AVG_INPUT_TOKENS, LLM_AVG_OUTPUT_TOKENS
+        )
+        logger.info(
+            f"Rate limiter : {endpoint} {rpm_of[endpoint]:.0f} req/min  (ITPM<={budget['itpm']:,}, "
+            f"OTPM<={budget['otpm']:,}, QPH<={budget['qph']:,})"
+        )
+    if LLM_PARALLEL_ENDPOINTS and len(endpoints) > 1:
+        rpm = rpm_of
+        concurrency = {e: LLM_MAX_CONCURRENT for e in endpoints}
+        logger.info(
+            f"Parallel     : every endpoint at once, {LLM_MAX_CONCURRENT} calls in flight each, images shared in "
+            f"proportion to the req/min above"
+        )
+    else:
+        rpm = rpm_of[endpoints[0]]
+        concurrency = LLM_MAX_CONCURRENT
+        logger.info(f"Sequential   : {LLM_MAX_CONCURRENT} calls in flight under the primary's quota")
     logger.info(
         f"Endpoints  : {' -> '.join(endpoints)}  ({LLM_ROUNDS} passes, waits {list(LLM_ROUND_WAITS_S)} s, "
         f"an endpoint skipped after {LLM_BREAKER_FAILURES} failed images in a row, "
@@ -314,7 +328,7 @@ def describe_images(rows, ws_host, ws_token, endpoints, use_cache: bool = True) 
                     max_tokens=LLM_MAX_TOKENS,
                     temperature=LLM_TEMPERATURE,
                     max_retries=LLM_MAX_RETRIES,
-                    max_concurrent=LLM_MAX_CONCURRENT,
+                    max_concurrent=concurrency,
                     requests_per_minute=rpm,
                     breaker=breaker,
                     rounds=LLM_ROUNDS,

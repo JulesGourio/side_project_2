@@ -82,6 +82,7 @@ Run-time choices: job parameters of `D_1_Qualibot_Parsing_Pipeline`, changed at 
 | `max_parse_files` | `500` | Most files one run may parse; `0` = no ceiling |
 | `max_source_staleness_hours` | `36` | Freshness guard of `1_categories`; `0` disables it |
 | `redescribe_all_images` | `false` | `true`: describe every image again |
+| `describe_images` | `true` | `false`: no model call in `4_describe_images`; the descriptions already made are still injected |
 
 Bundle variables (per target): `parsing_archive_max_docs`, `parsing_images_volume` (the name of the images volume),
 `parsing_num_workers`, the node types, the schedule and the Vector Search indexes.
@@ -245,10 +246,15 @@ variables with the defaults listed at the top of `config.py`.
 
 - The images with status `PENDING` or `ERROR` are described, at most `PARSING_LLM_BATCH_SIZE` per run. The
   others wait for the next run.
-- Each image goes through the endpoint chain: the primary endpoint, then the fallbacks. Each endpoint is tried
-  in `PARSING_LLM_ROUNDS` (2) passes, with waits of 5, 15 and 30 seconds between passes. Up to 10 calls run at
-  once, under a rate limiter. The limit is the smallest of the input-token, output-token and request budgets,
-  divided by the average tokens per image.
+- Every endpoint of the chain (the primary, then the fallbacks) describes images at the same time
+  (`PARSING_LLM_PARALLEL_ENDPOINTS`, on by default): the images start on the endpoints in proportion to their
+  request rate, and an image that fails on its endpoint goes to the others. Each endpoint has its own rate limiter
+  and up to `PARSING_LLM_MAX_CONCURRENT` (10) calls in flight. Its rate is the smallest of its input-token,
+  output-token and request budgets (`LLM_*_BUDGET` for the primary, `LLM_FALLBACK_BUDGETS` for the others), divided
+  by the average tokens per image. Each endpoint is tried in `PARSING_LLM_ROUNDS` (2) passes, with waits of 5, 15
+  and 30 seconds between passes. Only a few more images than the calls in flight are read into memory at once.
+- `describe_images = false` makes no model call: the `PENDING` images wait for a later run, the images already
+  described still get their passages and the documents waiting for them are promoted.
 - An endpoint that fails `PARSING_LLM_BREAKER_FAILURES` (5) images in a row is skipped for the rest of the run.
   A rate-limit error (429) counts neither as a failure of the endpoint nor as an attempt on the image.
 - An image no endpoint described stays `PENDING` with `attempts` and `last_error_kind` set. After
