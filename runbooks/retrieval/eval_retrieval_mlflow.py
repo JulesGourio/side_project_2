@@ -108,8 +108,8 @@ log.propagate = False
 # MAGIC | `indexes` | `chat` | configurations to measure, see below |
 # MAGIC | `ks` | `1,3,5,10,20,50` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM) |
 # MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
-# MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval_golden` |
-# MAGIC | `mlflow_eval_experiment` | empty | experiment of the evaluation runs (one per configuration, per-question scores); empty = `/Shared/qualibot/{write_env}_retrieval_eval_golden_runs` |
+# MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval_golden_v2` |
+# MAGIC | `mlflow_eval_experiment` | empty | experiment of the evaluation runs (one per configuration, per-question scores); empty = `/Shared/qualibot/{write_env}_retrieval_eval_golden_runs_v2` |
 # MAGIC | `rerun_existing` | `true` | `false` reuses the saved successful rows of an unchanged question, configuration and app code |
 # MAGIC | `debug` | `false` | logs the traceback of every failed attempt |
 # MAGIC
@@ -177,9 +177,9 @@ MAX_PARALLEL = max(1, int(dbutils.widgets.get("max_parallel")))
 RERUN = dbutils.widgets.get("rerun_existing") == "true"
 DEBUG = dbutils.widgets.get("debug") == "true"
 EXPERIMENT = (dbutils.widgets.get("mlflow_experiment").strip()
-              or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval_golden")
+              or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval_golden_v2")
 EVAL_EXPERIMENT = (dbutils.widgets.get("mlflow_eval_experiment").strip()
-                   or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval_golden_runs")
+                   or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval_golden_runs_v2")
 EXECUTION_ID = uuid.uuid4().hex
 log.info("Golden only | table=%s | results=%s | ks=%s | execution=%s",
          GOLDEN_TABLE, RESULTS_TABLE, KS, EXECUTION_ID)
