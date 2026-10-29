@@ -191,6 +191,10 @@ log.info("Golden only | table=%s | results=%s | ks=%s | execution=%s",
 # MAGIC The index and search parameters are overridden only **between configurations**.
 
 # COMMAND ----------
+# Settings left by a previous execution in this Python session must not leak into the base configuration.
+for name in [n for n in os.environ if n.startswith(("CHAT_", "EVAL_"))]:
+    del os.environ[name]
+
 with open(f"{APP}/app.yaml", encoding="utf-8-sig") as fp:
     for item in (yaml.safe_load(fp) or {}).get("env") or []:
         if "value" in item:
@@ -354,6 +358,7 @@ for label, cfg in CONFIGS.items():
         "index": cfg["index"], "overrides": cfg["overrides"],
         "settings": SETTINGS[label], "app_code": APP_FINGERPRINT,
         "bridge": TRANSLATE_BRIDGE_ENABLED, "runner": RUNNER_VERSION,
+        "code_normalization": os.environ.get("EVAL_CODE_NORMALIZATION", "on"),
     })
 log.info("Configs: %s", {name: cfg["spec"] for name, cfg in CONFIGS.items()})
 
