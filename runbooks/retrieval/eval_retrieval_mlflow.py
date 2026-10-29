@@ -417,6 +417,8 @@ if len({c["case_id"] for c in CASES}) != len(CASES):
 if not CASES:
     raise ValueError("No golden questions with expected_refs")
 ELIGIBLE = [c for c in CASES if c["score_eligible"]]
+# Version of the golden set: runs tagged with the same value were scored on the same questions and labels.
+GOLDEN_VERSION = fingerprint(sorted(c["case_fingerprint"] for c in CASES))[:12]
 if not ELIGIBLE:
     raise ValueError("No eligible golden questions: review unknown_refs/expected_refs")
 log.info("Golden: %d total | %d with expected refs | %d eligible | %d unknown conflicts",
@@ -766,7 +768,8 @@ for name in RUN:
 
     with mlflow.start_run(run_name=f"golden-retrieval-{name}-{run_label}") as active_run:
         mlflow.set_tags({
-            "eval": "retrieval", "source": "golden", "execution_id": EXECUTION_ID,
+            "eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
+            "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
             "runner": RUNNER_VERSION, "config_signature": CONFIGS[name]["signature"],
         })
         mlflow.log_params({
@@ -851,8 +854,9 @@ for name in RUN:
              "expectations": {"expected_refs": refs(r["expected"])}}
             for _, r in rows.iterrows()]
     row = summary[summary["config"] == name].iloc[0]
-    with mlflow.start_run(run_name=f"{name} ({CONFIGS[name]['spec']}) {run_label}") as eval_run:
-        mlflow.set_tags({"eval": "retrieval", "source": "golden", "execution_id": EXECUTION_ID,
+    with mlflow.start_run(run_name=f"{name} ({CONFIGS[name]['spec']}) golden {GOLDEN_VERSION[:6]} {run_label}") as eval_run:
+        mlflow.set_tags({"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
+            "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
                          "runner": RUNNER_VERSION, "config_signature": CONFIGS[name]["signature"]})
         mlflow.log_params({"config": name, "index": CONFIGS[name]["index"], "spec": CONFIGS[name]["spec"],
                            "ks": ",".join(map(str, KS)), "golden_table": GOLDEN_TABLE, "app_code_path": APP})
@@ -1066,7 +1070,8 @@ else:
     for column in ("expected", "ref_top10", "cand_top10"):
         export[column] = export[column].map(lambda values: ", ".join(values or []))
     with mlflow.start_run(run_name=f"golden-compare-{CAND}-vs-{REF}-{run_label}") as compare_run:
-        mlflow.set_tags({"eval": "retrieval", "source": "golden", "execution_id": EXECUTION_ID,
+        mlflow.set_tags({"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
+            "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
                          "runner": RUNNER_VERSION, "role": "comparison", "reference": REF, "candidate": CAND})
         mlflow.log_params({"reference": REF, "candidate": CAND, "reference_spec": CONFIGS[REF]["spec"],
                            "candidate_spec": CONFIGS[CAND]["spec"], "ks": ",".join(map(str, KS)),
