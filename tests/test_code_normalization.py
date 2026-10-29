@@ -188,9 +188,12 @@ def test_the_impact_search_searches_the_canonical_form_of_the_codes(monkeypatch)
 
 def test_the_preview_notebook_holds_the_same_code():
     root = os.path.join(os.path.dirname(__file__), '..')
+    notebook_path = os.path.join(root, 'runbooks', 'retrieval', 'f3_dictionnaire_codes.py')
+    if not os.path.exists(notebook_path):
+        pytest.skip('runbooks/ is not shipped with this copy of the repository')
     with open(os.path.join(root, 'utils', 'parsing_pipeline', 'code_normalization.py'), encoding='utf-8') as fh:
         module = fh.read()
-    with open(os.path.join(root, 'runbooks', 'retrieval', 'f3_dictionnaire_codes.py'), encoding='utf-8') as fh:
+    with open(notebook_path, encoding='utf-8') as fh:
         notebook = fh.read()
     start, end = '# --- code normalization: start ---\n', '# --- code normalization: end ---\n'
     copied = notebook[notebook.index(start) + len(start):notebook.index(end)]
