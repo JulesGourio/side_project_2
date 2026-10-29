@@ -7,7 +7,7 @@
 # MAGIC
 # MAGIC | Version | Index | Query |
 # MAGIC |---|---|---|
-# MAGIC | `baseline` | `chunks_baseline_index`: embeds `chunk_text`, no canonical code anywhere | the question as typed |
+# MAGIC | `baseline` | `chunks_text_index`: embeds `chunk_text`, syncs no canonical code column | the question as typed |
 # MAGIC | `code_norm` | `chunks_index` (the app's): embeds and searches `chunk_preprocessed` | `normalize_query` (`SF-1027 [SF1027]`) |
 # MAGIC
 # MAGIC Two ways of searching, each run for both versions:
@@ -26,7 +26,8 @@
 # MAGIC pairwise comparison of answers is off (`RUN_PAIRWISE_JUDGE`).
 # MAGIC
 # MAGIC Read only: writes nothing in Unity Catalog. Identity: your own rights (SELECT on the golden table, query on the two
-# MAGIC indexes, MLflow in `/Shared`). Run `eval_baseline_index.py` first. Run all, about 10 minutes for 100 questions.
+# MAGIC indexes, MLflow in `/Shared`). Both indexes are synced by the parsing task `5_sync_index`. Run all, about 10 minutes
+# MAGIC for 100 questions.
 
 # COMMAND ----------
 
@@ -37,7 +38,7 @@
 
 GOLDEN_TABLE = "dev_proj.qualibot.eval_golden_retrieval"
 NEW_INDEX = "dev_proj.qualibot.chunks_index"
-BASELINE_INDEX = "dev_proj.qualibot.chunks_baseline_index"
+BASELINE_INDEX = "dev_proj.qualibot.chunks_text_index"
 # Deployed app code: the new version's query normalization and the chat retrieval are imported from it.
 APP_CODE_PATH = "/Workspace/.bundle/qualibot/dev/files"
 APP_TARGET = "dev"
@@ -213,10 +214,10 @@ for name, idx in status.items():
     assert idx.status.ready, f"{name} is not ready"
 rows_new, rows_base = (status[NEW_INDEX].status.indexed_row_count, status[BASELINE_INDEX].status.indexed_row_count)
 assert rows_new == rows_base, (f"{NEW_INDEX} has {rows_new} rows and {BASELINE_INDEX} {rows_base}: "
-                               "run eval_baseline_index.py (it syncs the baseline) and start again")
+                               "run the parsing task 5_sync_index and start again")
 _base_synced = set(status[BASELINE_INDEX].delta_sync_index_spec.columns_to_sync or [])
 assert _base_synced and not _base_synced & {"chunk_preprocessed", "cited_codes"}, \
-    f"{BASELINE_INDEX} syncs the canonical code columns: rebuild it with eval_baseline_index.py"
+    f"{BASELINE_INDEX} syncs the canonical code columns: delete it, the parsing task 5_sync_index creates it again"
 INDEX_ROWS = rows_new
 
 # COMMAND ----------
