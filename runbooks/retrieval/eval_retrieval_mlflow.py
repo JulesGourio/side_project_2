@@ -50,7 +50,7 @@ APP = (dbutils.widgets.get("app_code_path").strip()
        or f"/Workspace/.bundle/qualibot/{dbutils.widgets.get('app_code_env')}/files").rstrip("/")
 
 # COMMAND ----------
-# MAGIC %pip install -q -r $APP/requirements.txt fastapi pyyaml "databricks-sdk>=0.102" "mlflow[databricks]>=3.4" tqdm
+# MAGIC %pip install -q -r $APP/requirements.txt fastapi pyyaml "databricks-sdk>=0.102" "mlflow[databricks]>=3.4" databricks-agents tqdm
 
 # COMMAND ----------
 dbutils.library.restartPython()
@@ -109,6 +109,7 @@ log.propagate = False
 # MAGIC | `ks` | `1,3,5,10,20,50` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM) |
 # MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
 # MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval_golden` |
+# MAGIC | `mlflow_eval_experiment` | empty | experiment of the evaluation runs (one per configuration, per-question scores); empty = `/Shared/qualibot/{write_env}_retrieval_eval_golden_runs` |
 # MAGIC | `rerun_existing` | `true` | `false` reuses the saved successful rows of an unchanged question, configuration and app code |
 # MAGIC | `debug` | `false` | logs the traceback of every failed attempt |
 # MAGIC
@@ -147,6 +148,7 @@ for name, default in [
     ("ks", "1,3,5,10,20,50"),
     ("max_parallel", "1"),
     ("mlflow_experiment", ""),
+    ("mlflow_eval_experiment", ""),
 ]:
     dbutils.widgets.text(name, default)
 for name, default, choices in [
@@ -176,6 +178,8 @@ RERUN = dbutils.widgets.get("rerun_existing") == "true"
 DEBUG = dbutils.widgets.get("debug") == "true"
 EXPERIMENT = (dbutils.widgets.get("mlflow_experiment").strip()
               or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval_golden")
+EVAL_EXPERIMENT = (dbutils.widgets.get("mlflow_eval_experiment").strip()
+                   or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval_golden_runs")
 EXECUTION_ID = uuid.uuid4().hex
 log.info("Golden only | table=%s | results=%s | ks=%s | execution=%s",
          GOLDEN_TABLE, RESULTS_TABLE, KS, EXECUTION_ID)
@@ -782,6 +786,86 @@ for name in RUN:
         mlflow.log_table(export, artifact_file="per_question.json")
     log.info("MLflow run=%s | config=%s | scored_questions=%d",
              active_run.info.run_id, name, row["n_questions"])
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## MLflow evaluation runs
+# MAGIC One evaluation run per configuration in `mlflow_eval_experiment`, on the same paired questions as the summary.
+# MAGIC Every metric is a scorer: the **Evaluation runs** page charts their means across runs, and a run opens on one
+# MAGIC row per question with its expected and retrieved documents and each score. The `golden/*` metrics and curves
+# MAGIC above are logged in the same run.
+
+# COMMAND ----------
+from mlflow.genai.scorers import scorer
+
+
+def metric_scorer(column: str):
+    """Scorer returning one metric of ``score_at_k`` for a question.
+
+    :param column: ``<metric>_at_<k>``, e.g. ``recall_at_10``
+    :return: MLflow scorer named after the column
+    """
+    k = int(column.rsplit("_", 1)[1])
+
+    def score(inputs: dict, outputs: dict, expectations: dict) -> float:
+        """Metric of one question.
+
+        :param inputs: the question
+        :param outputs: retrieved references in context order
+        :param expectations: expected references
+        :return: the metric value
+        """
+        return score_at_k(expectations["expected_refs"], outputs["retrieved"], k)[column]
+
+    return scorer(score, name=column)
+
+
+def output_scorer(field: str):
+    """Scorer returning a technical value stored in the outputs (documents, passages, latency).
+
+    :param field: key of ``outputs``
+    :return: MLflow scorer named after the field
+    """
+    def score(outputs: dict) -> float:
+        """Value of one question.
+
+        :param outputs: outputs of the question
+        :return: the value
+        """
+        return float(outputs[field])
+
+    return scorer(score, name=field)
+
+
+EVAL_SCORERS = ([metric_scorer(c) for c in metric_columns]
+                + [output_scorer(f) for f in ("n_docs", "n_passages", "latency_s")])
+client.workspace.mkdirs(EVAL_EXPERIMENT.rsplit("/", 1)[0])
+mlflow.set_experiment(EVAL_EXPERIMENT)
+for name in RUN:
+    rows = paired[paired["config"] == name]
+    if rows.empty:
+        continue
+    data = [{"inputs": {"question": r["question"], "case_id": r["case_id"], "division": r["division"]},
+             "outputs": {"retrieved": refs(r["retrieved"]), "n_docs": int(r["n_docs"]),
+                         "n_passages": int(r["n_passages"] or 0), "latency_s": float(r["latency_s"] or 0)},
+             "expectations": {"expected_refs": refs(r["expected"])}}
+            for _, r in rows.iterrows()]
+    row = summary[summary["config"] == name].iloc[0]
+    with mlflow.start_run(run_name=f"{name} ({CONFIGS[name]['spec']}) {run_label}") as eval_run:
+        mlflow.set_tags({"eval": "retrieval", "source": "golden", "execution_id": EXECUTION_ID,
+                         "runner": RUNNER_VERSION, "config_signature": CONFIGS[name]["signature"]})
+        mlflow.log_params({"config": name, "index": CONFIGS[name]["index"], "spec": CONFIGS[name]["spec"],
+                           "ks": ",".join(map(str, KS)), "golden_table": GOLDEN_TABLE, "app_code_path": APP})
+        mlflow.log_dict(SETTINGS[name], "engine_settings.json")
+        mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS)
+        for metric in metric_columns + technical_columns:
+            log_number(f"golden/{metric}", row[metric])
+        for k in KS:
+            for metric in ("recall", "mrr", "all_refs"):
+                if math.isfinite(float(row[f"{metric}_at_{k}"])):
+                    mlflow.log_metric(f"golden/{metric}_curve", float(row[f"{metric}_at_{k}"]), step=k)
+    log.info("MLflow evaluation run=%s | config=%s | questions=%d", eval_run.info.run_id, name, len(data))
+mlflow.set_experiment(EXPERIMENT)
 
 # COMMAND ----------
 # MAGIC %md
