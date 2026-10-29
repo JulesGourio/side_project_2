@@ -363,16 +363,17 @@ def _create_index(name, source_table, text_column) -> None:
 
 before = {}
 created = set()
+skipped = set()
 for name in INDEXES:
     try:
         idx = w.vector_search_indexes.get_index(index_name=name)
     except NotFound:
         source_table, text_column = KNOWN_INDEX.get(name, (None, None))
         if not source_table:
-            raise RuntimeError(
-                f"{name}: index doesn't exist and isn't one of the pipeline-managed indexes -- "
-                f"can't auto-create it (unknown source table)."
-            )
+            # An index deleted by hand may still be named by the run's parameters: the other indexes are synced anyway.
+            logger.warning(f"{name}: absent and not created by this task (unknown source table) -- skipped.")
+            skipped.add(name)
+            continue
         _create_index(name, source_table, text_column)
         created.add(name)
         idx = w.vector_search_indexes.get_index(index_name=name)
@@ -390,6 +391,10 @@ for name in INDEXES:
     logger.info(
         f"{name}\n    source={src}  indexed_rows={rows}  ready={idx.status.ready if idx.status else '?'}"
     )
+
+INDEXES = [n for n in INDEXES if n not in skipped]
+if not INDEXES:
+    raise RuntimeError("none of the indexes to sync exists")
 
 # COMMAND ----------
 
