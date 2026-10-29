@@ -416,3 +416,15 @@ def test_with_one_shared_quota_every_image_starts_on_the_primary(monkeypatch):
         rows, "host", "token", ["primary", "fallback"], 100, 1.0, 1, 2, 6_000_000, EndpointBreaker(100)))
     assert [r["status"] for r in out] == ["DONE"] * 3
     assert client.calls == ["primary"] * 3
+
+
+def test_a_costly_call_waits_for_as_many_tokens_as_it_takes():
+    async def scenario():
+        limiter = _AsyncRateLimiter(rate_per_minute=600)   # 10 tokens per second, one in the bucket at start
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        await limiter.acquire()            # the initial token
+        await limiter.acquire(cost=3.0)    # three more: about 0.3 s
+        return loop.time() - start
+    assert 0.2 < asyncio.run(scenario()) < 1.0
+

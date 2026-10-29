@@ -249,10 +249,13 @@ variables with the defaults listed at the top of `config.py`.
 - Every endpoint of the chain (the primary, then the fallbacks) describes images at the same time
   (`PARSING_LLM_PARALLEL_ENDPOINTS`, on by default): the images start on the endpoints in proportion to their
   request rate, and an image that fails on its endpoint goes to the others. Each endpoint has its own rate limiter
-  and up to `PARSING_LLM_MAX_CONCURRENT` (10) calls in flight. Its rate is the smallest of its input-token,
+  and up to `PARSING_LLM_MAX_CONCURRENT` (24) calls in flight. Its rate is the smallest of its input-token,
   output-token and request budgets (`LLM_*_BUDGET` for the primary, `LLM_FALLBACK_BUDGETS` for the others), divided
   by the average tokens per image. Each endpoint is tried in `PARSING_LLM_ROUNDS` (2) passes, with waits of 5, 15
   and 30 seconds between passes. Only a few more images than the calls in flight are read into memory at once.
+  Both endpoints have 1,000,000 input and 100,000 output tokens per minute and 360,000 requests per hour; the budgets
+  are 80 % of that, since the chat answers on `gpt-6-luna` too. A scanned page counts as
+  `PARSING_LLM_AVG_OCR_OUT / PARSING_LLM_AVG_OUT` images in the rate limiter (a full-page transcription is long).
 - `describe_images = false` makes no model call: the `PENDING` images wait for a later run, the images already
   described still get their passages and the documents waiting for them are promoted.
 - An endpoint that fails `PARSING_LLM_BREAKER_FAILURES` (5) images in a row is skipped for the rest of the run.

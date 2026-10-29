@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Sequence, Set
 
 from config import (
     IMAGE_DESCRIPTION_PROMPT,
+    LLM_AVG_OCR_OUTPUT_TOKENS,
+    LLM_AVG_OUTPUT_TOKENS,
     LLM_OCR_MAX_TOKENS,
     PDF_PAGE_OCR_PROMPT,
 )
@@ -257,8 +259,12 @@ class _AsyncRateLimiter:
         self._updated_at: float = 0.0  # set on first acquire
         self._lock = asyncio.Lock()
 
-    async def acquire(self) -> None:
-        """Block until one token is available, then consume it."""
+    async def acquire(self, cost: float = 1.0) -> None:
+        """Block until ``cost`` tokens are available, then consume them.
+
+        :param cost: Tokens the call takes: 1 for an average image, more for a call expected to answer at length.
+        """
+        cost = min(max(cost, 1.0), self._rate * 60)
         while True:
             async with self._lock:
                 now = asyncio.get_running_loop().time()
@@ -269,10 +275,10 @@ class _AsyncRateLimiter:
                     self._rate * 60, self._tokens + (now - self._updated_at) * self._rate
                 )
                 self._updated_at = now
-                if self._tokens >= 1.0:
-                    self._tokens -= 1.0
+                if self._tokens >= cost:
+                    self._tokens -= cost
                     return
-                wait_s = (1.0 - self._tokens) / self._rate
+                wait_s = (cost - self._tokens) / self._rate
             await asyncio.sleep(wait_s)
 
 
@@ -354,6 +360,7 @@ async def _ask_endpoint(
     max_retries: int,
     timeout: float,
     spend: _Spend,
+    cost: float = 1.0,
 ) -> str:
     """One endpoint, up to `max_retries` attempts with backoff. Returns the text, or raises the last error.
 
@@ -369,6 +376,7 @@ async def _ask_endpoint(
     :param max_retries: Attempts on this endpoint.
     :param timeout: Seconds to wait for one call.
     :param spend: Token tally of the image, updated in place.
+    :param cost: Rate-limiter tokens each attempt takes (see ``_AsyncRateLimiter.acquire``).
     """
     from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
 
@@ -380,7 +388,7 @@ async def _ask_endpoint(
     ):
         with attempt:
             # The token is acquired inside the retry loop so each retry waits for the bucket too: no 429 cascade.
-            await rate_limiter.acquire()
+            await rate_limiter.acquire(cost)
             async with semaphore:
                 resp = await asyncio.wait_for(
                     client.chat.completions.create(
@@ -488,8 +496,10 @@ async def describe_one_image(
         }
 
     # A full-page transcription runs longer than a short image description: it gets its own, larger budget.
+    cost = 1.0
     if row_data.get("label") == "scanned_page":
         max_tokens = max(max_tokens, LLM_OCR_MAX_TOKENS)
+        cost = LLM_AVG_OCR_OUTPUT_TOKENS / max(1, LLM_AVG_OUTPUT_TOKENS)
 
     try:
         with open(row_data["volume_path"], "rb") as f:
@@ -554,6 +564,7 @@ async def describe_one_image(
                     max_retries,
                     timeout,
                     spend,
+                    cost,
                 )
             except Exception as e:
                 last_kind = error_kind(e)

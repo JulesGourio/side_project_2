@@ -305,8 +305,9 @@ LLM_ROUND_WAITS_S = (5.0, 15.0, 30.0)
 LLM_BREAKER_FAILURES = int(_env("PARSING_LLM_BREAKER_FAILURES", "5"))
 # Runs in which an image is attempted before it is set aside as FAILED_LIMIT (a full run resets the count).
 IMAGE_MAX_ATTEMPTS = int(_env("PARSING_IMAGE_MAX_ATTEMPTS", "10"))
-# Calls in flight per endpoint. The images read into memory are bounded by it (llm_describe), not by the chunk size.
-LLM_MAX_CONCURRENT = int(_env("PARSING_LLM_MAX_CONCURRENT", "10"))
+# Calls in flight per endpoint: at about 8 s a call, 24 reach the request rate the output budget allows. The images read
+# into memory are bounded by it (llm_describe), not by the chunk size.
+LLM_MAX_CONCURRENT = int(_env("PARSING_LLM_MAX_CONCURRENT", "24"))
 # Every endpoint of the chain describes images at the same time, each within its own quota; false: the fallbacks only
 # take the images the primary failed, under the primary's quota.
 LLM_PARALLEL_ENDPOINTS = _env("PARSING_LLM_PARALLEL_ENDPOINTS", "true").strip().lower() in ("1", "true", "yes")
@@ -316,12 +317,11 @@ LLM_BATCH_SIZE = int(_env("PARSING_LLM_BATCH_SIZE", "6000"))
 # Persists progress periodically instead of one MERGE at the very end of a multi-hour run.
 LLM_CHECKPOINT_CHUNK_SIZE = int(_env("PARSING_LLM_CHECKPOINT_CHUNK_SIZE", "2000"))
 
-# Endpoint rate limits, budgeted below the real ceiling since other app features share it.
-LLM_ITPM_BUDGET = int(_env("PARSING_LLM_ITPM_BUDGET", "1000000"))  # real limit: 2,000,000
-LLM_OTPM_BUDGET = int(
-    _env("PARSING_LLM_OTPM_BUDGET", "100000")
-)  # real limit: 200,000 <- bottleneck
-LLM_QPH_BUDGET = int(_env("PARSING_LLM_QPH_BUDGET", "324000"))  # real limit: 360,000
+# Quota of each vision endpoint (gpt-6-luna and gpt-5-6-luna have the same: 1,000,000 ITPM, 100,000 OTPM, 360,000
+# requests per hour), budgeted at 80 %: the chat answers on gpt-6-luna too.
+LLM_ITPM_BUDGET = int(_env("PARSING_LLM_ITPM_BUDGET", "800000"))
+LLM_OTPM_BUDGET = int(_env("PARSING_LLM_OTPM_BUDGET", "80000"))  # the bottleneck
+LLM_QPH_BUDGET = int(_env("PARSING_LLM_QPH_BUDGET", "288000"))
 # Quota of each fallback endpoint; an endpoint not listed has the budgets above.
 LLM_FALLBACK_BUDGETS = {
     "databricks-gpt-5-6-luna": {
@@ -333,6 +333,9 @@ LLM_FALLBACK_BUDGETS = {
 # Calibrated avg tokens/image, drives RPM_safe = min(budget/avg) across all three axes.
 LLM_AVG_INPUT_TOKENS = int(_env("PARSING_LLM_AVG_IN", "1050"))
 LLM_AVG_OUTPUT_TOKENS = int(_env("PARSING_LLM_AVG_OUT", "300"))
+# Average output of a scanned page (a full-page transcription): it takes this many times an image's share of the
+# rate limiter, so the pages of scanned PDFs do not overrun the output budget.
+LLM_AVG_OCR_OUTPUT_TOKENS = int(_env("PARSING_LLM_AVG_OCR_OUT", "1500"))
 
 # --- Image filtering (deterministic — applied WITHOUT any LLM call) ---
 # Deliberately conservative — no filtering on a large width/height ratio.
