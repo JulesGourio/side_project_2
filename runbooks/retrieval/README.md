@@ -105,15 +105,14 @@ Comparaison : **baseline** (aucune normalisation des codes, ni dans les document
 
 **Lancer, dans l'ordre, en DEV :**
 1. [eval_baseline_index.py](eval_baseline_index.py) : crée `dev_proj.qualibot.chunks_baseline_index` sur `chunks`. Il embarque `chunk_text` et ne synchronise ni `chunk_preprocessed` ni `cited_codes` (la partie mots-clés cherche dans toutes les colonnes synchronisées). Même endpoint et même modèle d'embedding que `chunks_index`. Ne touche ni `chunks` ni l'index de l'app. Tes droits si tu as `CREATE TABLE` sur `dev_proj.qualibot` et `CAN USE` sur l'endpoint (la cellule 2 s'arrête net sinon : il faut alors le job runner). La cellule 3 attend la fin de l'embedding. Le pipeline ne le synchronise pas : relance ce notebook avant chaque benchmark (il resynchronise, seules les lignes changées sont ré-embarquées).
-2. [eval_retrieval_mlflow.py](eval_retrieval_mlflow.py) : Run all, tes droits suffisent, n'écrit rien dans Unity Catalog. Expérience MLflow `/Shared/qualibot/retrieval_eval_dev` : un run parent (comparaison) et un run enfant par (recherche, version).
-   - Recherche `index` : 1 requête hybride + reranker, 50 passages → courbes recall@k et hit@k de k = 1 à 50.
-   - Recherche `app` : le vrai `retrieve_for_turn` importé du code déployé (`/Workspace/.bundle/qualibot/dev/files`). Pour la baseline, chaque étape de normalisation des codes de l'app est coupée en mémoire (requête, recherche des citations, choix de la variante de langue).
-   - Métriques : MRR, MRR@10, nDCG@10, recall@k, hit@k, all@k, rang médian, taux de ratés. Ventilées par langue, division, « question avec code » et nombre de documents attendus. Différences avec intervalle bootstrap à 95 %.
-   - Sorties : tables par question, listes des questions améliorées et dégradées, et 5 graphiques (courbes @k, MRR par tranche, rangs baseline contre code_norm, questions qui bougent, score du 1er passage des `no_document`).
-   - `RUN_PAIRWISE_JUDGE = True` (désactivé par défaut) : réponse de chaque version à partir de ses 8 premiers passages, jugée en pairwise dans les deux ordres par `databricks-gpt-5-6-luna`.
-- [ ] Tu lances 1 puis 2, et tu me renvoies le lien du run parent et la sortie des cellules de résumé (tableau `SUMMARY`, `DELTAS`).
+2. [eval_retrieval_mlflow.py](eval_retrieval_mlflow.py) : widgets, tes droits suffisent (écrit seulement `dev_proj.qualibot.eval_retrieval_runs_golden`). Il passe par le vrai `retrieve_for_turn` de l'app déployée.
+   - Widget `indexes` pour le benchmark : `chat,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off`. `codenorm=off` coupe toute la normalisation des codes de l'app pour cette config (requête, recherche des citations, choix de la variante de langue).
+   - `topk=N` règle d'un coup les passages de chaque requête (`rerank`, `raw`, `pairrerank`, `pairraw`), par exemple `chat|topk=50,baseline=…|codenorm=off|topk=50`. K = documents distincts envoyés au LLM.
+   - Widget `ks` (`1,3,5,10,20,50`) : Recall@K, MRR@K et AllRefs@K, aussi loggés avec K en step (courbe dans MLflow). Un run MLflow par config, plus un run de comparaison des deux premières (courbe, MRR par langue et « question avec code », questions améliorées et dégradées).
+   - Sans `chunks_baseline_index`, `chat,query_only=dev_proj.qualibot.chunks_index|codenorm=off` mesure seulement la part « requête » de la normalisation.
+- [ ] Tu lances 1 puis 2, et tu me renvoies le lien du run de comparaison MLflow et le tableau `summary`.
   *Validation : baseline vs code_norm, global et « questions avec code ».*
-- [ ] `unknown_refs` : traitement à décider (aujourd'hui gardées dans les attendus, `DROP_UNKNOWN_REFS = True` les retire).
+- [ ] `unknown_refs` : une question dont une REF attendue est aussi inconnue est cherchée mais exclue des scores.
 
 ### 6. top_k optimal — Ven.-Lun. (F5)
 - [ ] Balayage k ∈ {5, 8, 10, 15, 20, 30} (et rerank/raw, cf. `CHAT_RERANK_TOP_K` / `CHAT_RAW_TOP_K`) : Recall@k, tokens de contexte, latence. k = plus petit k où Recall@k plafonne.
