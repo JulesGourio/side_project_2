@@ -9,7 +9,7 @@ except ImportError:
     import psycopg2
 from databricks.sdk import WorkspaceClient
 
-DRY_RUN = True
+DRY_RUN = False
 SRC = "/Volumes/prod_proj/qualibot/staging/lakebase_to_prod"
 BRANCH = "projects/qualibot/branches/production"
 DB = "doccompare"
@@ -109,11 +109,16 @@ try:
         if n != manifest[t]:
             problems.append(f"{t}: {n} lignes après écriture, {manifest[t]} attendues")
         print(f"{t:24}{n:8}{manifest[t]:8}  {(last or '')[:16]}")
-    for t in ("compare_messages", "chat_messages", "impact_requests"):
-        cur.execute(f"SELECT count(*) FROM \"{t}\" x WHERE x::text LIKE '%%uat_proj%%'")
+    for t in TABLES:
+        cur.execute(f"SELECT count(*) FROM \"{t}\" x WHERE x::text LIKE '%%/Volumes/uat_proj/%%'")
         n = cur.fetchone()[0]
         if n:
-            problems.append(f"{t}: {n} lignes pointent encore vers uat_proj")
+            problems.append(f"{t}: {n} lignes pointent encore vers /Volumes/uat_proj/")
+    for t in ("compare_messages", "chat_messages", "impact_requests"):
+        cur.execute(f"SELECT DISTINCT j.key, left(j.value, 90) FROM \"{t}\" x, jsonb_each_text(to_jsonb(x)) j "
+                    f"WHERE j.value LIKE '%%uat_proj%%' LIMIT 5")
+        for key, val in cur.fetchall():
+            print(f"info {t}.{key} (texte, pas un fichier) : {val}")
     for t in legacy:
         cur.execute(f'SELECT count(*) FROM "{t}"')
         print(f"ancienne table {t}: {cur.fetchone()[0]} ligne(s)")
