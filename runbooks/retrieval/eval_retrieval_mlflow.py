@@ -984,8 +984,11 @@ def output_scorer(field: str):
     return scorer(score, name=field)
 
 
-EVAL_SCORERS = ([metric_scorer(c) for c in metric_columns]
-                + [output_scorer(f) for f in ("n_docs", "n_passages", "latency_s")])
+# The evaluation page shows one column per scorer: only the headline metrics, the full set stays in golden/*.
+HEADLINE_METRICS = [c for c in metric_columns
+                    if c in {f"recall_at_{k}" for k in (1, 3, 5, 10, 20)} | {"mrr_at_10", "all_refs_at_5", "all_refs_at_10"}]
+EVAL_SCORERS = ([metric_scorer(c) for c in HEADLINE_METRICS]
+                + [output_scorer(f) for f in ("n_docs", "latency_s")])
 client.workspace.mkdirs(EVAL_EXPERIMENT.rsplit("/", 1)[0])
 mlflow.set_experiment(EVAL_EXPERIMENT)
 for name in RUN:
@@ -998,7 +1001,7 @@ for name in RUN:
              "expectations": {"expected_refs": refs(r["expected"])}}
             for _, r in rows.iterrows()]
     row = summary[summary["config"] == name].iloc[0]
-    with mlflow.start_run(run_name=f"{name} ({CONFIGS[name]['spec']}) golden {GOLDEN_VERSION[:6]} {run_label}") as eval_run:
+    with mlflow.start_run(run_name=f"{name} {run_label}") as eval_run:
         mlflow.set_tags({"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
             "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
                          "runner": RUNNER_VERSION, "config_signature": CONFIGS[name]["signature"]})
