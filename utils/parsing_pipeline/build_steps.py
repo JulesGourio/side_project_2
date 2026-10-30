@@ -5,7 +5,6 @@ Driver-side only: nothing here is shipped to the executors.
 """
 
 from databricks.sdk.runtime import spark
-from pyspark import StorageLevel
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as f
 
@@ -14,13 +13,15 @@ import image_utils
 import worker
 from parse_steps import read_checkpoint_deduped
 from leap_utils.common.logger import get_logger
-from tables import table_exists
+from tables import table_exists, write_table
 from config import (
     ARCHIVE_NOTICE_CONTENT_TYPE,
     ARCHIVE_NOTICE_MARKER,
     BOILERPLATE_MIN_DOCS,
     BUSINESS_METADATA_COLS,
     CHARS_PER_TOKEN,
+    CHUNKING_PARTITIONS,
+    CHUNKS_TEMP_TABLE,
     CLEAN_FORMULA_ARTIFACTS,
     CLEAN_IMAGE_PLACEHOLDERS,
     DEDUPLICATE_CHUNKS,
@@ -362,7 +363,9 @@ def _build_chunks(df_full_pipeline, df_exclusions) -> DataFrame:
         )
         logger.info("[CLEAN] Removed '<!-- formula-not-decoded -->' artefacts from document_text")
 
-    df_for_chunking = df_for_chunking.withColumn("url", worker.intraqual_ref_url(f.col("ref")))
+    df_for_chunking = df_for_chunking.repartition(CHUNKING_PARTITIONS, "IDDOC").withColumn(
+        "url", worker.intraqual_ref_url(f.col("ref"))
+    )
     # Normalised body (section line, case, spaces folded): finds the same passage in many documents.
     body_key = f.sha2(
         f.trim(
@@ -615,8 +618,12 @@ def build_processed_files_and_chunks(
 
     df_processed_files, df_exclusions = _apply_date_and_rag_filters(df_processed_files)
 
-    # Persisted: the chunking UDF is the expensive part, and every count/filter/write below would rerun it.
-    df_chunks = _build_chunks(df_full_pipeline, df_exclusions).persist(StorageLevel.MEMORY_AND_DISK)
+    # Written to a Delta table, not cached: a full run holds the whole corpus, too large for the driver's heap, and
+    # every count/filter/write below would otherwise rerun the chunking UDFs.
+    write_table(
+        _build_chunks(df_full_pipeline, df_exclusions), CHUNKS_TEMP_TABLE, "overwrite", overwrite_schema=True
+    )
+    df_chunks = spark.table(CHUNKS_TEMP_TABLE)
 
     # True only for a spreadsheet that has more passages than the cap.
     df_over_cap = (

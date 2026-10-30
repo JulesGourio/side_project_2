@@ -116,6 +116,10 @@ TARGET_CHANGE_LOG_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.document_change_l
 CHECKPOINT_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_checkpoint"
 RAG_EXCLUSION_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.rag_exclusions"
 RETRY_TEMP_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_retry_temp"
+# Scratch table of 3c_chunks: the chunk rows are written once here, then counted, deduplicated and split from disk.
+CHUNKS_TEMP_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_chunks_temp"
+# Partitions of the chunking step: a handful of whole documents per task keeps each task's memory small.
+CHUNKING_PARTITIONS = 512
 # Hand-over between the parse tasks of one run (overwritten by 3_parse): the IDDOCs in scope (3c_chunks rebuilds
 # them), and the PDFs left for the GPU task.
 RUN_SCOPE_TABLE = f"{PIPELINE_WRITE_ENV}_proj.qualibot.parsing_run_scope"
