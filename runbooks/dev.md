@@ -1134,6 +1134,25 @@ Z3. Parsing : `databricks bundle run parsing_pipeline -t dev --profile DEV` avec
 
 Z4. Application : recherche d'impact avec beaucoup de changements (plus que `COMPARE_IMPACT_MAX_QUERIES`) : un message rouge « N changes were not searched » apparaît dans la carte « Impacted Docs ».
 
+### AA. Document sans catégorie : MI-17993 / MI-13793 en DEV (poussé ce2e5bd, à faire)
+
+AA1. Déploiement : importer le code du commit `ce2e5bd` dans le dépôt déployé, puis lancer le pipeline Bitbucket `deploy-dev-jobs`.
+
+AA2. Run ciblé (le job tourne sous le SP DEV ; `25531` = IDDOC courant de MI-13793, à remplacer par celui de MI-17993 si c'est ce document) :
+
+```powershell
+databricks jobs run-now --profile DEV --json '{"job_id":362367007936662,"job_parameters":{"run_mode":"incremental","parse_filter":"25531","describe_images":"true","redescribe_all_images":"false"}}'
+```
+
+IDDOC de MI-17993 :
+
+```sql
+SELECT document_revision_ID FROM prod_gold.quality_system.document_revisions_intraqual
+WHERE document_reference = 'MI-17993' AND revision_status_code = 1
+```
+
+AA3. Refaire le sync des index DEV. Les 26 documents courants sans catégorie qui ont un historique dans le périmètre entrent dans le périmètre à tout run suivant ; `parse_filter` vide les parse tous.
+
 ## Fait
 
 - 2026-10-21 — Division COMMUN et exclusion de ONE_QMS-5S (section H) validées en DEV : `parse_manifest` = 5 242 documents (COMMUN 2 793, AS 1 953, AUTRE 249, sans division 110, IS 95, DIRECTIVE 42). Reste : reconstruire `chunks` et synchroniser l'index DEV pour que le chat utilise ces divisions.
