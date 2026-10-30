@@ -6,6 +6,7 @@
 # COMMAND ----------
 
 import logging
+import os
 import time
 
 logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
@@ -47,8 +48,6 @@ row = spark.sql(
 if row is None:
     raise ValueError(f"IDDOC {IDDOC} not found in document_revisions_intraqual")
 logger.info(f"IDDOC {IDDOC}: {row.asDict()}")
-import os
-
 if os.environ.get("PARSING_IMAGES_VOLUME") != "images":
     raise RuntimeError("Cluster env var PARSING_IMAGES_VOLUME=images is missing: set it in the cluster Spark config and restart")
 
@@ -62,6 +61,9 @@ for step in STEPS:
 
 # COMMAND ----------
 
-for table, key in [("parse_manifest", "IDDOC"), ("parsed_documents", "IDDOC"), ("chunks", "IDDOC"), ("image_metadata", "IDDOC")]:
-    count = spark.sql(f"SELECT COUNT(*) AS n FROM {PIPELINE_ENV}_proj.qualibot.{table} WHERE {key} = {IDDOC}").first().n
-    logger.info(f"{table}: {count} rows for IDDOC {IDDOC}")
+for table in ["parse_manifest", "parsed_documents", "chunks", "image_metadata"]:
+    try:
+        count = spark.sql(f"SELECT COUNT(*) AS n FROM {PIPELINE_ENV}_proj.qualibot.{table} WHERE IDDOC = {IDDOC}").first().n
+        logger.info(f"{table}: {count} rows for IDDOC {IDDOC}")
+    except Exception as error:
+        logger.warning(f"{table}: count failed ({type(error).__name__})")
