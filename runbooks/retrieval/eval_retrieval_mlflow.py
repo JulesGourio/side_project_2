@@ -16,8 +16,9 @@
 # MAGIC **Outputs**
 # MAGIC - Delta table `{pipeline_write_env}_proj.qualibot.<results_table_name>`: one row per configuration and question.
 # MAGIC - MLflow experiment `mlflow_experiment`: one evaluation run per configuration (one row per question, its
-# MAGIC   documents and scores) and one `overview-<date>` run comparing every configuration with the first one
-# MAGIC   (scoreboard, recall curves, rank per question, MRR by slice, questions that moved).
+# MAGIC   documents and scores).
+# MAGIC - The comparison of every configuration (scoreboard, recall curves, rank per question, MRR by slice, questions
+# MAGIC   that moved) is shown at the end of the notebook.
 
 # COMMAND ----------
 # MAGIC %md
@@ -848,9 +849,12 @@ if not success.empty and int(success["n_docs"].max()) < max(KS):
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## MLflow evaluation runs
-# MAGIC One run per configuration, named after it, on the paired questions. The **Evaluation runs** page shows one
-# MAGIC column per headline score (bar chart icon: one bar per configuration); a run opens on one row per question with
-# MAGIC its expected and retrieved documents. The full set of K values is in the overview run below.
+# MAGIC One run per configuration, named after it, on the paired questions, and no other run.
+# MAGIC - **Runs > Table**: one row per configuration. Parameters `top_k`, `brute`, `fusion`, `bm25`, `codes`; metrics
+# MAGIC   `recall_05`, `recall_10`, `recall_all`, `allrefs_10`, `allrefs_all`, `mrr`, `p95_s`, `docs`, `chars`.
+# MAGIC - **Runs > Chart**, charts `recall_by_k` and `allrefs_by_k`: one line per configuration, K on the x axis (step),
+# MAGIC   K up to the documents the configuration sends.
+# MAGIC - A run opens on one row per question with its expected and retrieved documents and its scores.
 
 # COMMAND ----------
 from mlflow.genai.scorers import scorer
@@ -871,7 +875,6 @@ def log_number(key: str, value) -> None:
 
 client.workspace.mkdirs(EXPERIMENT.rsplit("/", 1)[0])
 mlflow.set_experiment(EXPERIMENT)
-run_label = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
 metric_columns = [f"{metric}_at_{k}" for k in KS_ALL for metric in ("recall", "mrr", "all_refs")]
 
 
@@ -914,10 +917,45 @@ def output_scorer(field: str):
     return scorer(score, name=field)
 
 
-# The evaluation page shows one column per scorer: only the headline scores; every K is in the overview run.
+# The evaluation page shows one column per scorer: only the headline scores.
 HEADLINE_METRICS = [c for c in metric_columns
                     if c in {f"recall_at_{k}" for k in (1, 3, 5, 10, 20)}
                     | {"all_refs_at_5", "all_refs_at_10", "recall_at_all", "mrr_at_all", "all_refs_at_all"}]
+
+
+def config_params(name: str) -> dict[str, str]:
+    """Search settings of a configuration as short MLflow parameters, for the runs table.
+
+    :param name: configuration label
+    :return: ``top_k`` (first message / other turns), ``brute``, ``fusion``, ``bm25``, ``codes``, ``index``
+    """
+    env = {**{k: v for k, v in BASE_SEARCH_ENV.items() if v is not None}, **CONFIGS[name]["overrides"]}
+    raw = max(int(env.get("CHAT_PAIR_RAW_TOP_K") or 0), int(env.get("CHAT_RAW_TOP_K") or 0))
+    return {
+        "top_k": f"{env.get('CHAT_PAIR_RERANK_TOP_K', '?')}/{env.get('CHAT_RERANK_TOP_K', '?')}",
+        "brute": "on" if raw else "off",
+        "fusion": env.get("EVAL_MERGE", "best"),
+        "bm25": f"split {env['EVAL_SPLIT_BM25']}" if env.get("EVAL_SPLIT_BM25") else "hybrid",
+        "codes": env.get("EVAL_CODE_NORMALIZATION", "on"),
+        "index": CONFIGS[name]["index"],
+    }
+
+
+def log_config_metrics(row: pd.Series) -> None:
+    """Short scalar metrics for the runs table, and Recall / AllRefs against K as steps for the line charts.
+
+    :param row: the configuration's row of ``summary``
+    """
+    for key, column in (("recall_05", "recall_at_5"), ("recall_10", "recall_at_10"), ("recall_all", "recall_at_all"),
+                        ("allrefs_10", "all_refs_at_10"), ("allrefs_all", "all_refs_at_all"), ("mrr", "mrr_at_all"),
+                        ("p95_s", "search_p95_s"), ("docs", "n_docs"), ("passages", "n_passages"),
+                        ("chars", "chars"), ("success_fraction", "success_fraction")):
+        if column in row:
+            log_number(key, row[column])
+    for k in KS:
+        if not pd.isna(row["n_docs"]) and k <= row["n_docs"]:
+            mlflow.log_metric("recall_by_k", float(row[f"recall_at_{k}"]), step=k)
+            mlflow.log_metric("allrefs_by_k", float(row[f"all_refs_at_{k}"]), step=k)
 
 
 def eval_scorers(sent: float) -> list:
@@ -945,12 +983,10 @@ for name in RUN:
         mlflow.set_tags({"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
             "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
                          "runner": RUNNER_VERSION, "config_signature": CONFIGS[name]["signature"]})
-        mlflow.log_params({"config": name, "index": CONFIGS[name]["index"], "spec": CONFIGS[name]["spec"],
-                           "ks": ",".join(map(str, KS)), "golden_table": GOLDEN_TABLE, "app_code_path": APP})
+        mlflow.log_params({**config_params(name), "spec": CONFIGS[name]["spec"], "golden_table": GOLDEN_TABLE})
         mlflow.log_dict(SETTINGS[name], "engine_settings.json")
         mlflow.genai.evaluate(data=data, scorers=eval_scorers(row["n_docs"]))
-        for metric in ("search_p95_s", "chars", "n_passages", "success_fraction"):
-            log_number(metric, row[metric])
+        log_config_metrics(row)
     log.info("MLflow evaluation run=%s | config=%s | questions=%d", eval_run.info.run_id, name, len(data))
 
 # COMMAND ----------
@@ -985,9 +1021,6 @@ log.info("Golden retrieval completed: execution=%s | fresh_rows=%d | paired=%d |
 # MAGIC - **Rank per question**: rank of the first expected document for each question (rows) and configuration (columns); `-` = missed.
 # MAGIC - **MRR by slice**: language of the question and "the question names a code".
 # MAGIC - **Moved questions**: per configuration, the questions whose first expected document comes earlier or later than in the reference.
-# MAGIC
-# MAGIC Everything is also logged in one MLflow run `overview-<date>` (tag `role = overview`, artifacts `scoreboard.json`,
-# MAGIC `ranks.json`, `moved.json`, `figures/`).
 
 # COMMAND ----------
 import matplotlib.pyplot as plt
@@ -1223,29 +1256,10 @@ else:
               if not moved.empty else pd.DataFrame())
 
     display(styled(board))
-    figures = {"recall_curves.png": curve_figure(), "rank_per_question.png": rank_figure(ranks),
-               "mrr_by_slice.png": slice_fig}
-    for fig in figures.values():
+    for fig in (curve_figure(), rank_figure(ranks), slice_fig):
         display(fig)
     if not counts.empty:
         display(counts.reset_index())
         display(moved.drop(columns="delta_rr"))
-
-    export_ranks = ranks.copy()
-    export_ranks["expected"] = export_ranks["expected"].map(lambda values: ", ".join(values or []))
-    with mlflow.start_run(run_name=f"overview-{run_label}") as overview_run:
-        mlflow.set_tags({"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
-                         "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
-                         "runner": RUNNER_VERSION, "role": "overview", "reference": REFERENCE})
-        mlflow.log_params({"configs": ",".join(RUN), "reference": REFERENCE, "ks": ",".join(map(str, KS)),
-                           "golden_table": GOLDEN_TABLE, "indexes": INDEXES[:500]})
-        mlflow.log_table(board, artifact_file="scoreboard.json")
-        mlflow.log_table(export_ranks, artifact_file="ranks.json")
-        mlflow.log_table(slices, artifact_file="slices.json")
-        if not moved.empty:
-            mlflow.log_table(moved, artifact_file="moved.json")
-        for name, fig in figures.items():
-            mlflow.log_figure(fig, f"figures/{name}")
-    log.info("MLflow overview run=%s", overview_run.info.run_id)
 # Figures still open at the end of a cell are drawn a second time by Databricks.
 plt.close("all")
