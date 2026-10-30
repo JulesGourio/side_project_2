@@ -132,6 +132,7 @@ log.propagate = False
 # MAGIC | `effort` | `off`, `minimal`, `low`, `medium`, `high` | reasoning effort of that model (`CHAT_REWRITE_REASONING_EFFORT`) |
 # MAGIC | `codenorm` | `on`, `off` | `off`: no code normalization at all in the app (query, exact-citation lookup, language variant choice) |
 # MAGIC | `merge` | `best`, `flat`, `rrf` | how the result lists of the Vector Search queries are merged (REF and citation lookups unchanged). `best` = the app: reranked lists merged by best rank, then that list merged with the raw lists, position against position. `flat` = every list (reranked FR, reranked EN, raw) merged in one step by best rank. `rrf` = each passage scores the sum of `weight / (60 + rank)` over the lists that found it |
+# MAGIC | `bm25weight` | number from 0 to 1 | the raw searches (not reranked, not the REF lookups) become two queries, `ANN` (embeddings) and `FULL_TEXT` (BM25), 50 results each, merged by `weight / (60 + rank)` with this weight on BM25 and 1 - weight on the embeddings; Databricks `HYBRID` weighs both the same |
 # MAGIC | `rawweight` | number > 0, default 1 | weight of the raw lists in `flat` (a raw rank counts as rank / weight) and `rrf`; reranked lists weigh 1 |
 # MAGIC
 # MAGIC Examples:
@@ -139,6 +140,7 @@ log.propagate = False
 # MAGIC - the same, deeper: `chat|topk=50,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off|topk=50`
 # MAGIC - query side only, without the baseline index: `chat,query_only=dev_proj.qualibot.chunks_index|codenorm=off`
 # MAGIC - search sizes: `chat,wide|cap=100|rerank=60`
+# MAGIC - BM25 weight of the raw search: `chat20|topk=20,bm25w07|topk=20|bm25weight=0.7`
 # MAGIC - merge of the result lists: `chat,flat|merge=flat,flathalf|merge=flat|rawweight=0.5,rrf|merge=rrf,rrfhalf|merge=rrf|rawweight=0.5`
 
 # COMMAND ----------
@@ -231,6 +233,7 @@ SIZE_KEYS = {
     "codenorm": "EVAL_CODE_NORMALIZATION",
     "merge": "EVAL_MERGE",
     "rawweight": "EVAL_RAW_WEIGHT",
+    "bm25weight": "EVAL_BM25_WEIGHT",
 }
 TOPK_KEYS = ["CHAT_RERANK_TOP_K", "CHAT_RAW_TOP_K", "CHAT_PAIR_RERANK_TOP_K", "CHAT_PAIR_RAW_TOP_K"]
 BASE_SEARCH_ENV = {env_name: os.environ.get(env_name) for env_name in SIZE_KEYS.values()}
@@ -267,6 +270,7 @@ def parse_configs(raw: str) -> dict[str, dict]:
                 value in {"off", "low", "minimal", "medium", "high"} if key == "effort" else
                 value in {"best", "flat", "rrf"} if key == "merge" else
                 bool(re.fullmatch(r"\d+(\.\d+)?", value)) and float(value) > 0 if key == "rawweight" else
+                bool(re.fullmatch(r"\d+(\.\d+)?", value)) and float(value) <= 1 if key == "bm25weight" else
                 bool(value) if key == "rewrite" else value.isdigit()
             )
             if not valid:
@@ -358,6 +362,57 @@ def eval_merge_by_rank(lists: list) -> list:
     return merged
 
 
+QUERY_ORIGINAL = {}   # "query" -> app function, filled once the engine is imported
+BM25_DEPTH = 50
+
+
+async def eval_query(host: str, token: str, index: str, query_text: str, k: int, filters: dict,
+                     rerank: bool) -> list:
+    """Stand-in for the app's Vector Search query: the app's query unless ``bm25weight`` applies.
+
+    With ``EVAL_BM25_WEIGHT`` set, a raw search (no reranker, not restricted to REFs) is an ``ANN`` and a
+    ``FULL_TEXT`` query of ``BM25_DEPTH`` results each, merged by weighted reciprocal rank.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index: full name of the Vector Search index
+    :param query_text: text searched
+    :param k: number of results kept
+    :param filters: Vector Search filters, empty for none
+    :param rerank: whether the reranker orders the results
+    :return: the rows, best first, ``score`` = the weighted reciprocal rank
+    """
+    weight = os.environ.get("EVAL_BM25_WEIGHT")
+    if rerank or not weight or "REF" in (filters or {}):
+        return await QUERY_ORIGINAL["query"](host, token, index, query_text, k, filters, rerank=rerank)
+    bm25 = float(weight)
+    text = engine_search.normalize_query(query_text)[:engine_search._MAX_QUERY_CHARS]
+
+    async def one(query_type: str) -> list:
+        """One query of the given type.
+
+        :param query_type: ``ANN`` or ``FULL_TEXT``
+        :return: the rows, best first
+        """
+        payload = {"query_text": text, "columns": engine_search._COLUMNS, "num_results": max(k, BM25_DEPTH),
+                   "query_type": query_type}
+        if filters:
+            payload["filters_json"] = json.dumps(filters)
+        resp = await engine_search._post_query(host, token, index, payload)
+        resp.raise_for_status()
+        return engine_search._rows(resp)
+
+    ann, full_text = await asyncio.gather(one("ANN"), one("FULL_TEXT"))
+    score, rows = {}, {}
+    for part, part_weight in ((ann, 1 - bm25), (full_text, bm25)):
+        for rank, row in enumerate(part):
+            cid = row["chunk_id"]
+            rows.setdefault(cid, row)
+            score[cid] = score.get(cid, 0.0) + part_weight / (RRF_K + rank + 1)
+    best = sorted(rows, key=lambda cid: -score[cid])[:k]
+    return [{**rows[cid], "score": score[cid]} for cid in best]
+
+
 def fingerprint(value) -> str:
     data = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
@@ -407,6 +462,8 @@ CODE_NORMALIZATION_STEPS.update({
 
 MERGE_ORIGINAL["merge_by_rank"] = engine_search._merge_by_rank
 engine_search._merge_by_rank = eval_merge_by_rank
+QUERY_ORIGINAL["query"] = engine_search._query
+engine_search._query = eval_query
 
 if not hasattr(engine, "retrieve_for_turn"):
     raise RuntimeError(f"Missing engine.retrieve_for_turn in {APP}")
