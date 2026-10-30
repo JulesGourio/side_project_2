@@ -78,7 +78,7 @@ Attendu : `docling_models` de `prod_proj` rangé comme celui d'UAT (mêmes dossi
 - [ ] 1. Run de parsing `full` terminé (Repair run de `3c_chunks` et des tâches suivantes) : `5_sync_index` crée `prod_proj.qualibot.chunks_index`. Si `6_update_kb_metadata` échoue sur la base Lakebase `doccompare` absente : faire l'étape 6, puis Repair run de `6_update_kb_metadata`.
 - [ ] 2. Workflows > `D_1_Qualibot_Lakebase_Export_To_Volume` > Run now.
 - [ ] 3. Workflows > `Z_2_Qualibot_Create_Chat_Experiment` > Run now, puis `Z_3_Qualibot_Register_Chat_Prompts` > Run now. Envoyer à Claude l'identifiant d'expérience du log de `Z_2` : il va dans `utils/deploy/target_env.json` (`CHAT_MLFLOW_EXPERIMENT_ID` de `prod`).
-- [ ] 4. Droits de l'app PROD : [3_prod_grant_app.py](3_prod_grant_app.py), compte de service PROD (Workflows > Create job > tâche notebook = ce notebook > Run as = `b82d3b5a-b633-4738-8dde-68bb2142cb02` > Run now). À relancer après l'étape 1 si le log dit `index grant still to do`.
+- [ ] 4. Droits de l'app PROD, après l'étape 1 (index créé) : seul `SELECT` sur `prod_proj.qualibot.chunks_index` manque ; le volume `doc_compare` (avec `USE CATALOG` / `USE SCHEMA`) est donné par `deploy-prod`, les tables de traces MLflow par `Z_2`. [3_prod_grant_app.py](3_prod_grant_app.py), compte de service PROD (Workflows > Create job > tâche notebook = ce notebook > Run as = `b82d3b5a-b633-4738-8dde-68bb2142cb02` > Run now), ou à la main plus tard par un administrateur : `GRANT SELECT ON TABLE prod_proj.qualibot.chunks_index TO \`42ba83dd-3098-4d90-b2d2-a5df7d8beb1c\`;`
 - [ ] 5. Administrateur du metastore (pas le compte de service), éditeur SQL de PROD :
   ```sql
   GRANT USE CATALOG ON CATALOG system TO `b82d3b5a-b633-4738-8dde-68bb2142cb02`;

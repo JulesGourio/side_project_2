@@ -2,9 +2,10 @@
 # One-shot. Workspace PROD. Identity: the PROD job runner (service principal b82d3b5a-b633-4738-8dde-68bb2142cb02),
 # which holds the grant rights on prod_proj; your own account does not (Workflows > Create job > task notebook = this
 # notebook > Run as = that service principal > Run now).
-# Gives the PROD app's service principal read access to prod_proj.qualibot and to the chat index. Grants only, never
-# revokes; every statement is idempotent. The index grant is skipped while 5_sync_index has not created the index:
-# run this notebook again after the first parsing run.
+# Gives the PROD app's service principal SELECT on the chat index, the one access the deploy does not give: the
+# doc_compare volume (with USE CATALOG / USE SCHEMA) comes from the app's volume resource in databricks.yml, the MLflow
+# trace tables from Z_2_Qualibot_Create_Chat_Experiment. The images volume is not read by the app. Grants only, never
+# revokes; every statement is idempotent. Run it once 5_sync_index has created the index.
 
 # COMMAND ----------
 
@@ -19,8 +20,6 @@ INDEX = "prod_proj.qualibot.chunks_index"
 STATEMENTS = [
     f"GRANT USE CATALOG ON CATALOG prod_proj TO `{APP_SP}`",
     f"GRANT USE SCHEMA ON SCHEMA {SCHEMA} TO `{APP_SP}`",
-    f"GRANT READ VOLUME, WRITE VOLUME ON VOLUME {SCHEMA}.doc_compare TO `{APP_SP}`",
-    f"GRANT READ VOLUME ON VOLUME {SCHEMA}.images TO `{APP_SP}`",
 ]
 
 # COMMAND ----------
