@@ -131,12 +131,15 @@ log.propagate = False
 # MAGIC | `rewrite` | endpoint name | model of the rewrite and of the translation (`CHAT_REWRITE_ENDPOINT`) |
 # MAGIC | `effort` | `off`, `minimal`, `low`, `medium`, `high` | reasoning effort of that model (`CHAT_REWRITE_REASONING_EFFORT`) |
 # MAGIC | `codenorm` | `on`, `off` | `off`: no code normalization at all in the app (query, exact-citation lookup, language variant choice) |
+# MAGIC | `merge` | `best`, `flat`, `rrf` | how the result lists of the Vector Search queries are merged (REF and citation lookups unchanged). `best` = the app: reranked lists merged by best rank, then that list merged with the raw lists, position against position. `flat` = every list (reranked FR, reranked EN, raw) merged in one step by best rank. `rrf` = each passage scores the sum of `weight / (60 + rank)` over the lists that found it |
+# MAGIC | `rawweight` | number > 0, default 1 | weight of the raw lists in `flat` (a raw rank counts as rank / weight) and `rrf`; reranked lists weigh 1 |
 # MAGIC
 # MAGIC Examples:
 # MAGIC - code normalization benchmark: `chat,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off`
 # MAGIC - the same, deeper: `chat|topk=50,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off|topk=50`
 # MAGIC - query side only, without the baseline index: `chat,query_only=dev_proj.qualibot.chunks_index|codenorm=off`
 # MAGIC - search sizes: `chat,wide|cap=100|rerank=60`
+# MAGIC - merge of the result lists: `chat,flat|merge=flat,flathalf|merge=flat|rawweight=0.5,rrf|merge=rrf,rrfhalf|merge=rrf|rawweight=0.5`
 
 # COMMAND ----------
 for name, default in [
@@ -226,6 +229,8 @@ SIZE_KEYS = {
     "rewrite": "CHAT_REWRITE_ENDPOINT",
     "effort": "CHAT_REWRITE_REASONING_EFFORT",
     "codenorm": "EVAL_CODE_NORMALIZATION",
+    "merge": "EVAL_MERGE",
+    "rawweight": "EVAL_RAW_WEIGHT",
 }
 TOPK_KEYS = ["CHAT_RERANK_TOP_K", "CHAT_RAW_TOP_K", "CHAT_PAIR_RERANK_TOP_K", "CHAT_PAIR_RAW_TOP_K"]
 BASE_SEARCH_ENV = {env_name: os.environ.get(env_name) for env_name in SIZE_KEYS.values()}
@@ -260,6 +265,8 @@ def parse_configs(raw: str) -> dict[str, dict]:
                 if key == "rawon" else
                 value in {"on", "off"} if key in ("translate", "codenorm") else
                 value in {"off", "low", "minimal", "medium", "high"} if key == "effort" else
+                value in {"best", "flat", "rrf"} if key == "merge" else
+                bool(re.fullmatch(r"\d+(\.\d+)?", value)) and float(value) > 0 if key == "rawweight" else
                 bool(value) if key == "rewrite" else value.isdigit()
             )
             if not valid:
@@ -297,6 +304,58 @@ def set_code_normalization(enabled: bool) -> None:
              "cited_codes_asked": lambda *a, **k: []}
     for (module, attribute), original in CODE_NORMALIZATION_STEPS.items():
         setattr(module, attribute, original if enabled else no_op[attribute])
+
+
+MERGE_ORIGINAL = {}   # "merge_by_rank" -> app function, filled once the engine is imported
+RRF_K = 60
+
+
+class QueryLists(list):
+    """A group of result lists merged by the app, with the lists it came from."""
+
+    parts: list
+
+
+def weighted_merge(parts: list) -> list:
+    """Merge result lists by ``EVAL_MERGE`` (``flat`` or ``rrf``), the raw lists weighted by ``EVAL_RAW_WEIGHT``.
+
+    :param parts: ``(rows, via)`` pairs, rows in rank order, via ``rerank`` or ``raw``
+    :return: one row per chunk (hits of every copy kept), best first; ties keep the app's order
+    """
+    mode = os.environ.get("EVAL_MERGE", "best")
+    raw_weight = float(os.environ.get("EVAL_RAW_WEIGHT") or 1)
+    rows = MERGE_ORIGINAL["merge_by_rank"]([part for part, _ in parts])
+    score = {}
+    for part, via in parts:
+        weight = raw_weight if via == "raw" else 1.0
+        for rank, row in enumerate(part):
+            cid = row["chunk_id"]
+            if mode == "rrf":
+                score[cid] = score.get(cid, 0.0) + weight / (RRF_K + rank + 1)
+            else:
+                score[cid] = max(score.get(cid, float("-inf")), -rank / weight)
+    return sorted(rows, key=lambda row: -score[row["chunk_id"]])
+
+
+def eval_merge_by_rank(lists: list) -> list:
+    """Stand-in for the app's merge of the Vector Search results: the app's merge for ``merge=best``.
+
+    The app merges the reranked lists, then the raw lists, then both groups. The first two calls keep their
+    lists; the last one merges all of them at once with ``weighted_merge``.
+
+    :param lists: result lists in rank order, or the groups returned by the first calls
+    :return: one row per chunk, best first
+    """
+    original = MERGE_ORIGINAL["merge_by_rank"]
+    if os.environ.get("EVAL_MERGE", "best") == "best":
+        return original(lists)
+    if lists and all(isinstance(group, QueryLists) for group in lists):
+        return weighted_merge([part for group in lists for part in group.parts])
+    parts = [(list(rows), (rows[0].get("_hits") or [{}])[0].get("via", "rerank") if rows else "rerank")
+             for rows in lists]
+    merged = QueryLists(original(lists))
+    merged.parts = parts
+    return merged
 
 
 def fingerprint(value) -> str:
@@ -345,6 +404,9 @@ CODE_NORMALIZATION_STEPS.update({
     (engine_retrieval, "canonical_codes"): engine_retrieval.canonical_codes,
     (engine_retrieval, "cited_codes_asked"): engine_retrieval.cited_codes_asked,
 })
+
+MERGE_ORIGINAL["merge_by_rank"] = engine_search._merge_by_rank
+engine_search._merge_by_rank = eval_merge_by_rank
 
 if not hasattr(engine, "retrieve_for_turn"):
     raise RuntimeError(f"Missing engine.retrieve_for_turn in {APP}")
