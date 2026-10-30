@@ -76,7 +76,7 @@ Attendu : `docling_models` de `prod_proj` rangé comme celui d'UAT (mêmes dossi
 ## F. Mise en service (dans l'ordre)
 
 - [ ] 1. Run de parsing `full` terminé (Repair run de `3c_chunks` et des tâches suivantes) : `5_sync_index` crée `prod_proj.qualibot.chunks_index`. Si `6_update_kb_metadata` échoue sur la base Lakebase `doccompare` absente : faire l'étape 6, puis Repair run de `6_update_kb_metadata`.
-- [ ] 1b. Conversations et historique d'UAT vers le Lakebase PROD, après le premier démarrage de l'app PROD (étape 6, qui crée les tables) et avant l'étape 2 : [copie_lakebase_uat_vers_prod.py](copie_lakebase_uat_vers_prod.py).
+- [x] _(2026-10-30, 16:42 : export UAT de 16:09, comptes identiques sur les 13 tables)_ 1b. Conversations et historique d'UAT vers le Lakebase PROD, après le premier démarrage de l'app PROD (étape 6, qui crée les tables) et avant l'étape 2 : [copie_lakebase_uat_vers_prod.py](copie_lakebase_uat_vers_prod.py).
   ```powershell
   python runbooks/deploiement_prod/copie_lakebase_uat_vers_prod.py
   python runbooks/deploiement_prod/copie_lakebase_uat_vers_prod.py --apply
