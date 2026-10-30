@@ -8,6 +8,8 @@
     "CAPS_BYPASS": "false",
     "CHAT_MLFLOW_EXPERIMENT": "/Shared/Experiment/qualibot_chat_traces",
     "CHAT_TRANSLATE_ONLY": "on",
+    "CHAT_RAW_TOP_K": "0",
+    "CHAT_PAIR_RAW_TOP_K": "0",
     "CHAT_ALLOWED_ORIGINS": "https://qualibot-2865348338307293.aws.databricksapps.com",
     "CHAT_MLFLOW_WAREHOUSE_ID": "13eff4a6095513cb",
     "CHAT_MLFLOW_EXPERIMENT_ID": "3049939644482707"
