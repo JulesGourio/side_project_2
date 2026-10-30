@@ -73,15 +73,26 @@ Attendu : `docling_models` de `prod_proj` rangé comme celui d'UAT (mêmes dossi
      Attendu : `manifest.json` et `tables`.
   3. PROD, **compte de service PROD** : [2_prod_import_depuis_uat.py](2_prod_import_depuis_uat.py) (Workflows > Create job > tâche notebook = ce notebook > Run as = `b82d3b5a-b633-4738-8dde-68bb2142cb02` > Run now). Le log compare les lignes à l'export.
 
-## F. Après le deploy
+## F. Mise en service (dans l'ordre)
 
-- [ ] Export Lakebase : Workflows > `D_1_Qualibot_Lakebase_Export_To_Volume` > Run now (les alertes du chat lisent ses copies).
-- [ ] Jobs MLflow : Workflows > `Z_2_Qualibot_Create_Chat_Experiment` > Run now, puis `Z_3_Qualibot_Register_Chat_Prompts` > Run now.
-- [ ] Alertes : SQL > Alerts, les 6 alertes `qualibot` ont pour seul abonné `jules.gourio.external@latecoere.aero`.
-- [ ] Parsing, premier run : Workflows > `D_1_Qualibot_Parsing_Pipeline` > Run now (paramètres par défaut, `incremental`). S'il s'arrête sur `[BUDGET]`, l'état n'est pas reconnu : ne pas relever `max_parse_files`, envoyer le log.
-- [ ] Planning du parsing : dans [databricks.yml](../../databricks.yml), target `prod`, `parsing_schedule_pause: "UNPAUSED"`, puis **`deploy-prod-jobs`**.
+- [ ] 1. Run de parsing `full` terminé (Repair run de `3c_chunks` et des tâches suivantes) : `5_sync_index` crée `prod_proj.qualibot.chunks_index`. Si `6_update_kb_metadata` échoue sur la base Lakebase `doccompare` absente : faire l'étape 6, puis Repair run de `6_update_kb_metadata`.
+- [ ] 2. Workflows > `D_1_Qualibot_Lakebase_Export_To_Volume` > Run now.
+- [ ] 3. Workflows > `Z_2_Qualibot_Create_Chat_Experiment` > Run now, puis `Z_3_Qualibot_Register_Chat_Prompts` > Run now. Envoyer à Claude l'identifiant d'expérience du log de `Z_2` : il va dans `utils/deploy/target_env.json` (`CHAT_MLFLOW_EXPERIMENT_ID` de `prod`).
+- [ ] 4. Droits de l'app PROD : [3_prod_grant_app.py](3_prod_grant_app.py), compte de service PROD (Workflows > Create job > tâche notebook = ce notebook > Run as = `b82d3b5a-b633-4738-8dde-68bb2142cb02` > Run now). À relancer après l'étape 1 si le log dit `index grant still to do`.
+- [ ] 5. Administrateur du metastore (pas le compte de service), éditeur SQL de PROD :
+  ```sql
+  GRANT USE CATALOG ON CATALOG system TO `b82d3b5a-b633-4738-8dde-68bb2142cb02`;
+  GRANT USE SCHEMA ON SCHEMA system.access TO `b82d3b5a-b633-4738-8dde-68bb2142cb02`;
+  GRANT SELECT ON TABLE system.access.audit TO `b82d3b5a-b633-4738-8dde-68bb2142cb02`;
+  GRANT USE SCHEMA ON SCHEMA system.lakeflow TO `b82d3b5a-b633-4738-8dde-68bb2142cb02`;
+  GRANT SELECT ON SCHEMA system.lakeflow TO `b82d3b5a-b633-4738-8dde-68bb2142cb02`;
+  ```
+  Sans eux : pas de synchronisation des groupes (`D_2_Qualibot_User_Capabilities_Sync`) ni d'alerte `job_failures`.
+- [ ] 6. App : recopier `utils/deploy/target_env.json` (avec l'identifiant de l'étape 3), puis pipeline **`deploy-prod`** (`main`) : redéploie les jobs (planning du parsing actif, 04:00) et redémarre l'app.
+- [ ] 7. Contrôle : `https://qualibot-1210945332048776.aws.databricksapps.com/api/health` renvoie `"lakebase": "ready"` ; une question au chat avec sources, une comparaison docx avec l'aperçu PDF exact, une recherche d'impact.
+- [ ] 8. Alertes : SQL > Alerts, les 6 alertes `Qualibot - …` ont pour seul abonné `jules.gourio.external@latecoere.aero`.
+- [ ] 9. Bitbucket : Repository settings > Deployments > `Production` : déploiement limité à la branche `main`.
 
 ## G. Plus tard
 
-- [ ] App PROD : pipeline **`deploy-prod`** (redéploie et redémarre l'app), sur décision.
 - [ ] Ancien schéma `prod_landingzone.qualibot` : supprimé à la main seulement après validation complète de PROD (tables d'abord, volumes ensuite après contrôle de leur contenu).
