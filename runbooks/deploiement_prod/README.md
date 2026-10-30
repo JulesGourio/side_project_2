@@ -4,10 +4,10 @@ Tout se lance depuis Bitbucket sur `main` (compte de service PROD `b82d3b5a-…`
 
 ## A. Recopier le code dans Bitbucket (`main`)
 
-- [ ] [databricks.yml](../../databricks.yml)
-- [ ] [bitbucket-pipelines.yml](../../bitbucket-pipelines.yml)
-- [ ] [utils/deploy/prod_state_check.sh](../../utils/deploy/prod_state_check.sh) (nouveau)
-- [ ] [utils/deploy/prod_state_fix.sh](../../utils/deploy/prod_state_fix.sh) (nouveau)
+- [x] [databricks.yml](../../databricks.yml) _(2026-10-29)_
+- [x] [bitbucket-pipelines.yml](../../bitbucket-pipelines.yml)
+- [x] [utils/deploy/prod_state_check.sh](../../utils/deploy/prod_state_check.sh) (nouveau)
+- [x] [utils/deploy/prod_state_fix.sh](../../utils/deploy/prod_state_fix.sh) (nouveau)
 
 Ce que change `databricks.yml` en PROD : alertes et échecs de jobs envoyés à `jules.gourio.external@latecoere.aero` seul ; `prevent_destroy` sur le schéma et les volumes ; parsing quotidien `PAUSED` tant que l'état de parsing n'est pas importé (étape E).
 
@@ -50,7 +50,7 @@ Attendu : `docling_models` de `prod_proj` rangé comme celui d'UAT (mêmes dossi
 
 ## C. Réparer l'état du bundle (seulement si B dit `DESTRUCTIVE`)
 
-- [ ] Pipeline **`prod-state-fix`** (`main`). Il détache de l'état les 5 anciens objets de `prod_landingzone.qualibot` (rien n'est supprimé dans Databricks : schéma, tables et fichiers restent), lie ceux de `prod_proj.qualibot` qui existent déjà, et finit par le plan. Doit finir par `OK: no schema or volume is deleted or recreated.`
+- [x] _(2026-10-30, plan local : 0 delete, 0 recreate)_ Pipeline **`prod-state-fix`** (`main`). Il détache de l'état les 5 anciens objets de `prod_landingzone.qualibot` (rien n'est supprimé dans Databricks : schéma, tables et fichiers restent), lie ceux de `prod_proj.qualibot` qui existent déjà, et finit par le plan. Doit finir par `OK: no schema or volume is deleted or recreated.`
 - [ ] Relancer **`prod-state-check`** : verdict `OK`.
 
 ## D. Déployer les jobs (app non touchée)
@@ -59,7 +59,7 @@ Attendu : `docling_models` de `prod_proj` rangé comme celui d'UAT (mêmes dossi
 
 ## E. Données PROD
 
-- [ ] Modèles Docling : si `prod_proj/qualibot/docling_models` est vide (sortie B, section 3), pipeline **`sync-prod-data`** (`main`).
+- [x] _(2026-10-29 : modèles présents dans prod_proj, rien à copier)_ Modèles Docling : si `prod_proj/qualibot/docling_models` est vide (sortie B, section 3), pipeline **`sync-prod-data`** (`main`).
 - [ ] État de parsing (évite de re-parser tout le corpus sur GPU) :
   1. UAT, ton compte : importer et lancer [1_uat_export_pour_prod.py](1_uat_export_pour_prod.py) (hors run de parsing UAT).
   2. Ta machine :
