@@ -202,45 +202,24 @@ async def _recorded_query(host: str, token: str, index: str, filters: VsFilters,
     return rows
 
 
-def start_question_search(host: str, token: str, index: str, filters: VsFilters, question: str,
-                          log: TurnLog) -> 'asyncio.Task[List[SearchRow]]':
-    """Starts the reranked search of the question as asked, now: the rewrite runs while it does, and ``search``
-    (``first=``) picks the result up instead of querying again.
-
-    :param host: Databricks workspace URL
-    :param token: Databricks access token
-    :param index: full name of the Vector Search index
-    :param filters: Vector Search filters, empty for none
-    :param question: the question as asked, without its date line
-    :param log: turn log that records the call
-    :return: task that resolves to the reranked rows of the question
-    """
-    task = asyncio.ensure_future(_recorded_query(host, token, index, filters, log, 0, question, rerank_top_k(), True))
-    task.add_done_callback(lambda t: t.cancelled() or t.exception())      # Read the exception so an unused failure is not logged.
-    return task
-
-
 async def search(host: str, token: str, index: str, queries: List[str], filters: VsFilters,
                  raw_queries: List[str] | None = None, log: TurnLog | None = None,
-                 rerank_k: int | None = None, raw_k: int | None = None,
-                 first: 'asyncio.Task[List[SearchRow]] | None' = None) -> List[SearchRow]:
+                 rerank_k: int | None = None, raw_k: int | None = None) -> List[SearchRow]:
     """Reranked top k for every query + raw top k for ``raw_queries`` (default: every query),
     merged by best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
     if everything failed. Without raw passages (``raw_top_k() == 0``), a refused reranker falls
-    back to the raw search with the reranked size. ``first``: the reranked search of ``queries[0]``, already
-    started by ``start_question_search`` (same size).
+    back to the raw search with the reranked size.
 
     :param host: Databricks workspace URL
     :param token: Databricks access token
     :param index: full name of the Vector Search index
-    :param queries: queries searched with the reranker; the first one is the question
+    :param queries: queries searched with the reranker
     :param filters: Vector Search filters, empty for none
     :param raw_queries: queries also searched without the reranker, None for every query
     :param log: turn log to fill, created when None
     :param rerank_k: passages kept per reranked query, None for CHAT_RERANK_TOP_K
     :param raw_k: passages kept per raw query, None for CHAT_RAW_TOP_K; 0 skips the raw searches
-    :param first: task of the reranked question search started earlier, used instead of a new call
     :return: the merged rows, best rank first
     """
     log = log if log is not None else TurnLog()
@@ -270,7 +249,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
         if not rerank_ok:
             return [] if raw_k else _tag(await call(i, q, rerank_k, False), i, 'raw')
         try:
-            return _tag(await (first if first is not None and i == 0 else call(i, q, rerank_k, True)), i, 'rerank')
+            return _tag(await call(i, q, rerank_k, True), i, 'rerank')
         except RerankUnavailable as exc:
             if rerank_ok:
                 log.issue('rerank_refused', 'search', f'raw search only: {exc}', upstream=index, exc=exc)

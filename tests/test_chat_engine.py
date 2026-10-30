@@ -5,7 +5,7 @@ Coverage:
     '[' that is not a marker, no citation, incomplete marker at end of stream; equivalence
     with the whole-text parse on synthetic answers (bold, lists, tables, code spans, accents,
     trailing markers) over every split position and several chunk sizes
-  - search: three queries, reranked and raw on the French rewrite, merged by rank, division filter, partial
+  - search: the two rewrites, reranked, and raw on the French rewrite, merged by rank, division filter, partial
     failures tolerated, reranker refused -> raw only, REF lookup first,
     one language per document
   - stream_chat contract: deltas without markers, sources + citations, one metadata event
@@ -273,13 +273,13 @@ def test_happy_path_contract(monkeypatch):
     assert meta['trace_id'].startswith('chat-')
 
 
-def test_three_queries_reranked_and_raw(monkeypatch):
+def test_the_two_rewrites_reranked_and_raw(monkeypatch):
     _, m = _run(monkeypatch)
     texts = [p['query_text'] for p in m['sent']]
-    assert sorted(set(texts)) == sorted([QUESTION, 'qualification CND', 'NDT qualification'])
+    assert sorted(set(texts)) == sorted(['qualification CND', 'NDT qualification'])     # not the question as asked
     reranked = [p for p in m['sent'] if 'reranker' in p]
     raw = [p for p in m['sent'] if 'reranker' not in p]
-    assert len(reranked) == 3 and all(p['num_results'] == 12 for p in reranked)
+    assert len(reranked) == 2 and all(p['num_results'] == 12 for p in reranked)
     assert reranked[0]['reranker']['parameters']['columns_to_rerank'] == ['REF', 'semantic_headers', 'chunk_text']
     assert [p['query_text'] for p in raw] == ['qualification CND']               # raw on the French rewrite only
     assert all(p['num_results'] == 12 and p['query_type'] == 'HYBRID' for p in raw)
@@ -324,7 +324,7 @@ def test_reranked_only_sends_no_raw_query(monkeypatch):
     monkeypatch.setenv('CHAT_RERANK_TOP_K', '8')
     events, m = _run(monkeypatch)
     assert 'error' not in _types(events)
-    assert len(m['sent']) == 3 and all('reranker' in p and p['num_results'] == 8 for p in m['sent'])
+    assert len(m['sent']) == 2 and all('reranker' in p and p['num_results'] == 8 for p in m['sent'])
 
 
 def test_raw_search_on_every_query_when_asked(monkeypatch):
@@ -332,6 +332,7 @@ def test_raw_search_on_every_query_when_asked(monkeypatch):
     _, m = _run(monkeypatch)
     raw = [p['query_text'] for p in m['sent'] if 'reranker' not in p]
     assert sorted(raw) == sorted([QUESTION, 'qualification CND', 'NDT qualification'])
+    assert QUESTION not in [p['query_text'] for p in m['sent'] if 'reranker' in p]
 
 
 def test_failed_rewrite_searches_the_question_after_its_retries(monkeypatch):
@@ -440,10 +441,8 @@ async def _rewrite_down(*args, **kwargs):
 def test_a_degraded_bilingual_turn_asks_as_many_candidates_as_a_normal_one(monkeypatch):
     _, normal = _run(monkeypatch)
     _, degraded = _run(monkeypatch, rewrite=_rewrite_down)
-    abandoned, searched = degraded['sent'][0], degraded['sent'][1:]     # the early search is sent first, then dropped
-    assert abandoned['num_results'] == 12 and 'reranker' in abandoned
-    assert _candidates_asked(searched) == _candidates_asked(normal['sent']) == 48
-    assert len(searched) == 2
+    assert _candidates_asked(degraded['sent']) == _candidates_asked(normal['sent']) == 36
+    assert len(degraded['sent']) == 2 and {p['query_text'] for p in degraded['sent']} == {QUESTION}
 
 
 def test_a_degraded_translate_turn_asks_as_many_candidates_as_a_normal_one(monkeypatch):
@@ -538,41 +537,15 @@ def test_the_bilingual_rewrite_still_runs_otherwise(monkeypatch, code, history, 
     m['rewrite'].assert_called_once()
     assert 'Using the conversation for context' in m['rewrite'].call_args.args[3][0]['content']
     assert m['log'].data['rewrite_mode'] == 'rewrite' and m['log'].prompts[0] == 'rewrite'
-    assert sorted(p['num_results'] for p in m['sent']) == [12, 12, 12, 12]      # the default configuration
+    assert sorted(p['num_results'] for p in m['sent']) == [12, 12, 12]          # the default configuration
 
 
-def test_the_question_is_searched_while_the_rewrite_runs(monkeypatch):
-    # The rewrite cannot return before the question's reranked search has been sent: the overlap is checked by
-    # ordering, so the result does not depend on the speed of the machine.
-    question_sent = asyncio.Event()
-    order = []
-
-    def answer(p):
-        if 'reranker' in p and p['query_text'] == QUESTION:
-            order.append('question')
-            question_sent.set()
-        return DEFAULT_ROWS
-
-    async def rewrite(*args, **kwargs):
-        await asyncio.wait_for(question_sent.wait(), timeout=5)
-        order.append('rewrite')
-        return 'FR: qualification CND\nEN: NDT qualification', 'databricks-gpt-6-luna'
-
-    _, m = _run(monkeypatch, rewrite=rewrite, answer=answer)
-    assert order == ['question', 'rewrite']
-    assert len(m['sent']) == 4 and m['log'].data['vs_calls_expected'] == 4            # same four calls as without the overlap
-    assert sorted(p['num_results'] for p in m['sent']) == [12, 12, 12, 12]
-    assert m['log'].today == '2026-10-06'
-
-
-def test_a_failed_early_search_is_a_failed_query_like_any_other(monkeypatch):
-    seen = []
-
-    def answer(p):
-        seen.append(p)
-        return 500 if p['query_text'] == QUESTION and 'reranker' in p else DEFAULT_ROWS
-    _, m = _run(monkeypatch, answer=answer)
-    assert m['log'].data['vs_calls_ok'] == 3 and 'vs_partial' in m['log'].codes
+def test_another_language_searches_only_the_french_and_english_rewrites(monkeypatch):
+    _lang(monkeypatch, 'cs')
+    _, m = _run(monkeypatch)
+    reranked = [p['query_text'] for p in m['sent'] if 'reranker' in p]
+    assert sorted(reranked) == sorted(['qualification CND', 'NDT qualification'])
+    assert m['log'].data['vs_calls_expected'] == 3
 
 
 def test_rewrite_prompt_names_no_company_and_forbids_filler():
@@ -648,7 +621,7 @@ def test_turn_log_of_a_clean_turn(monkeypatch):
     d = log.data
     assert (d['fr_query'], d['en_query'], d['rewrite_ok'], d['rewrite_endpoint']) == \
         ('qualification CND', 'NDT qualification', True, 'databricks-gpt-6-luna')
-    assert (d['vs_calls_expected'], d['vs_calls_ok'], d['rerank_ok']) == (4, 4, True)
+    assert (d['vs_calls_expected'], d['vs_calls_ok'], d['rerank_ok']) == (3, 3, True)
     assert d['config']['rerank_top_k'] == 12 and d['index_name'] == 'cat.sch.chunks_index' and d['division'] == 'ALL'
     assert (d['passages_retrieved'], d['passages_sent'], d['documents_sent']) == (3, 3, 2)
     assert d['answer_endpoint'] == 'databricks-gpt-6-luna' and d['llm_fallback'] is False
@@ -660,7 +633,7 @@ def test_turn_log_of_a_clean_turn(monkeypatch):
     first = log.passages[0]
     assert (first['chunk_id'], first['ref'], first['kept'], first['cited'], first['doc_number'], first['source']) == \
         ('c1', 'QP-1518', True, True, 1, 'search')
-    assert {(h['q'], h['via']) for h in first['hits']} == {(q, 'rerank') for q in (0, 1, 2)} | {(1, 'raw')}
+    assert {(h['q'], h['via']) for h in first['hits']} == {(q, 'rerank') for q in (0, 1)} | {(0, 'raw')}
     assert [p['prompt_rank'] for p in log.passages] == [0, 2, 1]
     assert log.passages[1]['cited'] is False and log.passages[0]['chunk_text'] == 'passage 1'
 
@@ -669,9 +642,9 @@ def test_turn_log_partial_search_is_a_degraded_turn(monkeypatch):
     events, m = _run(monkeypatch, answer=lambda p: 503 if 'reranker' in p else DEFAULT_ROWS)
     log = m['log']
     assert 'error' not in _types(events)
-    assert (log.data['vs_calls_expected'], log.data['vs_calls_ok']) == (4, 1)
+    assert (log.data['vs_calls_expected'], log.data['vs_calls_ok']) == (3, 1)
     assert log.codes == ['vs_partial'] and log.issues[0]['http_status'] == 503
-    assert log.issues[0]['context']['failed'] == 3 and log.finish('ok') == 'degraded'
+    assert log.issues[0]['context']['failed'] == 2 and log.finish('ok') == 'degraded'
 
 
 def test_turn_log_reranker_refused(monkeypatch):
@@ -736,7 +709,7 @@ def test_instructions_ask_for_the_sources_table_without_unknown_versions():
 
 def test_a_query_over_the_vector_search_limit_is_cut_and_reported(monkeypatch):
     long_question = [{'role': 'user', 'content': 'procédure ' * 3000}]
-    events, m = _run(monkeypatch, messages=long_question)
+    events, m = _run(monkeypatch, messages=long_question, rewrite=RuntimeError('all rewrite models down'))
     log = m['log']
     assert 'query_truncated' in log.codes
     assert all(len(p['query_text']) <= 20000 for p in m['sent'])

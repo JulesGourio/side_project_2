@@ -10,7 +10,7 @@ from server.services.chat.turn_log import TurnLog, passage_date
 from server.services.chat.engine.queries import opening_language, rewrite_queries, translate_query
 from server.services.chat.engine.references import cited_codes_asked, exact_citations
 from server.services.chat.engine.types import DocumentPassages, PassageRecord, RetrievalResult, SearchRow
-from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search, start_question_search
+from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search
 from server.services.chat.engine.config import (
     division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on, raw_top_k, rerank_top_k,
 )
@@ -169,7 +169,6 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         index = index_name()
         filters = division_filter(division)
         question = _without_date(conversation[-1]['content'])
-        early = None
         today = _DATE_PREFIX_RE.match(conversation[-1]['content'])
         log.today = today.group(0).strip()[7:-1] if today else ''
         language = opening_language(conversation, question)
@@ -184,7 +183,6 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
             fr_query, en_query = (question, translated) if language == 'fr' else (translated, question)
             log.prompts.insert(0, 'translate_query')
         else:
-            early = start_question_search(host, token, index, filters, question, log)
             with log.timed('rewrite'):
                 try:
                     fr_query, en_query = await rewrite_queries(
@@ -193,8 +191,10 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
                     fr_query = en_query = question
                     degraded = True
             log.prompts.insert(0, 'rewrite')
-        queries = [question]
-        for q in (fr_query, en_query):
+        # A rewritten turn searches only its French and English rewrites: the question as asked is a follow-up that
+        # means nothing alone, a near copy of one rewrite, or a language the documents are not written in.
+        queries: List[str] = []
+        for q in ([question] if language else []) + [fr_query, en_query]:
             if q and q.casefold() not in {x.casefold() for x in queries}:
                 queries.append(q)
 
@@ -212,17 +212,13 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
                 raw_texts.append(text)
         sizes = {'rerank_k': pair_rerank_top_k(), 'raw_k': pair_raw_top_k()} if language and len(queries) == 2 else {}
         if degraded:
-            # One query stands for the three (or two) of a normal turn: it asks for as many candidates in all.
+            # One query stands for the two of a normal turn: it asks for as many candidates in all.
             if language:
                 sizes = {'rerank_k': 2 * pair_rerank_top_k(), 'raw_k': pair_raw_top_k() * max(1, len(raw_on()))}
             else:
-                sizes = {'rerank_k': 3 * rerank_top_k(), 'raw_k': raw_top_k() * max(1, len(raw_on()))}
-            if early is not None:   # started with the normal size
-                early.cancel()
-                await asyncio.gather(early, return_exceptions=True)
-                early = None
+                sizes = {'rerank_k': 2 * rerank_top_k(), 'raw_k': raw_top_k() * max(1, len(raw_on()))}
         with log.timed('search'):
-            rows = await search(host, token, index, queries, filters, raw_texts, log=log, first=early, **sizes)
+            rows = await search(host, token, index, queries, filters, raw_texts, log=log, **sizes)
         over_cap: List[SearchRow] = []
         if max_search_passages():
             rows, over_cap = rows[:max_search_passages()], rows[max_search_passages():]

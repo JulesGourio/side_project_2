@@ -14,7 +14,7 @@ loads are in [prompts](../../../prompts/README.md).
 | `types.py` | The shapes of the dicts the engine passes around: `SearchRow`, `Hit`, `PassageRecord`, `DocumentPassages` |
 | `config.py` | Settings read from the `CHAT_*` environment at call time. The division filter (`ALL`, `AS`, `IS`). `settings()`, recorded on each turn. The system instructions (`division_prompt`, `load_instructions`, cached). The patterns that strip company and document-type words from a rewrite (`NOISE_PHRASES`) |
 | `queries.py` | Translation of an opening message (`translate_query`), the bilingual rewrite (`rewrite_queries`), `split_bilingual`, `strip_added_noise`, `opening_language` |
-| `search.py` | The Vector Search calls of a turn: reranked and raw HYBRID queries, merge by best rank, lookups filtered by REF, and the early search of the question (`start_question_search`) |
+| `search.py` | The Vector Search calls of a turn: reranked and raw HYBRID queries, merge by best rank, lookups filtered by REF |
 | `retrieval.py` | `retrieve_for_turn`: everything before the answer. Named documents, one language per document, the passage records |
 | `answer.py` | `stream_chat`: the answer stream. `build_prompt`, the revision note of each document, the language reminder, the answer's log record |
 | `references.py` | "Which documents cite X?": `cited_codes_asked` (a code and a citing word in the question), `exact_citations` (the complete list from `doc_references`), `exact_citations_block` (what the answer model gets: every document up to `LIST_ALL_MAX`, beyond the most recent ones, the breakdown by division and the CSV link) |
@@ -23,9 +23,10 @@ loads are in [prompts](../../../prompts/README.md).
 ## How a turn runs
 
 1. `retrieve_for_turn` translates an opening message in French or English when `CHAT_TRANSLATE_ONLY` is on. Otherwise it
-   runs the bilingual rewrite, and the reranked search of the question as asked starts at once, alongside the rewrite.
-2. The queries are the question and its French and English versions, without duplicates. Raw searches run on the
-   queries named by `CHAT_RAW_ON`.
+   runs the bilingual rewrite.
+2. The queries are, for a translated message, the question and its translation; for a rewritten one, its French and
+   English rewrites only (a follow-up means nothing alone, and the documents are in French or English). Raw searches run
+   on the queries named by `CHAT_RAW_ON`.
 3. The REFs named in the question and in the earlier messages are looked up with a REF filter, using the catalog.
    When the question asks which documents cite a code, the documents citing it come from `doc_references` (the complete
    list, not a search), and the passages of the most recent ones are looked up with a REF filter (`citation_lookup`).
