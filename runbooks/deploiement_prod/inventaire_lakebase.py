@@ -1,8 +1,9 @@
-"""Read-only inventory of the PROD Lakebase database (conversations and history of the app). Run from the repo root:
+"""Read-only inventory of a Lakebase database (conversations and history of the app). Run from the repo root:
 
-    python runbooks/deploiement_prod/inventaire_lakebase_prod.py
+    python runbooks/deploiement_prod/inventaire_lakebase.py UAT
+    python runbooks/deploiement_prod/inventaire_lakebase.py PROD
 
-Uses the CLI profile PROD. The session is read-only: nothing can be written or deleted.
+Uses the CLI profile of that environment. The session is read-only: nothing can be written or deleted.
 For each table of the database: rows, first and last date, distinct users.
 """
 from __future__ import annotations
@@ -22,11 +23,13 @@ USER_COLUMNS = ("user_id", "user_email", "email", "user_name")
 
 
 def main() -> None:
-    """Log rows, date range and distinct users of every table of the PROD Lakebase database.
+    """Log rows, date range and distinct users of every table of the Lakebase database of the given environment.
 
     :return: None
     """
-    conn = lakebase_connect("PROD")
+    env = (sys.argv[1] if len(sys.argv) > 1 else "PROD").upper()
+    logger.info("Lakebase %s (read-only)", env)
+    conn = lakebase_connect(env)
     conn.set_session(readonly=True)
     try:
         with conn.cursor() as cur:
