@@ -1040,25 +1040,41 @@ log.info("Golden retrieval completed: execution=%s | fresh_rows=%d | paired=%d |
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Comparison of the configurations, two by two
-# MAGIC The configurations of `indexes` are compared in pairs, in their order: the 1st (reference) with the 2nd
-# MAGIC (candidate), then the 3rd with the 4th (for the benchmark: `chat` against `baseline`, then `chat50` against
-# MAGIC `baseline50`). Same paired questions as above. A question **improves** when the first expected document comes
-# MAGIC earlier in the candidate, **regresses** when it comes later; a miss ranks after every document.
-# MAGIC Logged as one more MLflow run: Recall@K curve, MRR by language and by "question names a code", the questions
-# MAGIC that moved.
+# MAGIC ## Comparison of every configuration
+# MAGIC Built from the configurations of `indexes` at each execution, on the same paired questions as above.
+# MAGIC The first configuration is the reference: the `Δ` columns and the moved questions compare every other one with it.
+# MAGIC - **Scoreboard**: one row per configuration (Recall@K, AllRefs@K, MRR, latency, context size).
+# MAGIC - **Recall@K curves**: every configuration on one chart.
+# MAGIC - **Rank per question**: rank of the first expected document for each question (rows) and configuration (columns); `-` = missed.
+# MAGIC - **MRR by slice**: language of the question and "the question names a code".
+# MAGIC - **Moved questions**: per configuration, the questions whose first expected document comes earlier or later than in the reference.
+# MAGIC
+# MAGIC Everything is also logged in one MLflow run `golden-overview-<date>` (tag `role = overview`, artifacts `scoreboard.json`,
+# MAGIC `ranks.json`, `moved.json`, `figures/`).
 
 # COMMAND ----------
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
 
-COLOR = {"ref": "#2a78d6", "cand": "#eb6834", "improved": "#0ca30c", "regressed": "#d03b3b", "same": "#8c8b87",
-         "grid": "#e1e0d9", "text": "#0b0b0b", "muted": "#52514e"}
+PALETTE = ["#2a78d6", "#eb6834", "#0ca30c", "#8a4fd0", "#d03b3b", "#1aa5a5", "#b8860b", "#52514e"]
+GRID, TEXT, MUTED = "#e1e0d9", "#0b0b0b", "#52514e"
 plt.rcParams.update({"axes.spines.top": False, "axes.spines.right": False, "axes.grid": True,
-                     "grid.color": COLOR["grid"], "grid.linewidth": 0.8, "axes.edgecolor": COLOR["muted"],
-                     "xtick.color": COLOR["muted"], "ytick.color": COLOR["muted"], "lines.linewidth": 2,
+                     "grid.color": GRID, "grid.linewidth": 0.8, "axes.edgecolor": MUTED,
+                     "xtick.color": MUTED, "ytick.color": MUTED, "lines.linewidth": 2,
                      "font.size": 10, "legend.frameon": False})
 K_CURVE = list(range(1, max(KS) + 1))
+K_MAIN = 10 if 10 in KS else max(KS)
+COLORS = {name: PALETTE[i % len(PALETTE)] for i, name in enumerate(RUN)}
+
+
+def reciprocal(rank) -> float:
+    """Reciprocal rank, 0 for a missed document.
+
+    :param rank: 1-based rank, None or NaN when missed
+    :return: 1 / rank, or 0
+    """
+    return 0.0 if rank is None or pd.isna(rank) else 1 / rank
 
 
 def first_rank(expected: list[str], retrieved: list[str]) -> int | None:
@@ -1072,183 +1088,221 @@ def first_rank(expected: list[str], retrieved: list[str]) -> int | None:
     return next((i for i, ref in enumerate(refs(retrieved), 1) if ref in relevant), None)
 
 
-def curve_figure(frames: dict) -> plt.Figure:
-    """Recall@K and AllRefs@K against K for each configuration (two panels, one y scale each).
+def scoreboard_table(reference: str) -> pd.DataFrame:
+    """One row per configuration: relevance at each K, latency, context size, and the deltas with the reference.
 
-    :param frames: configuration label -> its paired rows
+    :param reference: label of the reference configuration
+    :return: the scoreboard, configurations in the order of ``indexes``
+    """
+    rows = []
+    for name in RUN:
+        s = summary[summary["config"] == name].iloc[0]
+        row = {"config": name, "spec": CONFIGS[name]["spec"], "questions": int(s["n_questions"])}
+        row.update({f"Recall@{k}": s[f"recall_at_{k}"] for k in KS})
+        row.update({f"AllRefs@{k}": s[f"all_refs_at_{k}"] for k in KS if k in (5, K_MAIN)})
+        row[f"MRR@{max(KS)}"] = s[f"mrr_at_{max(KS)}"]
+        row.update({"p95 latency (s)": s["search_p95_s"], "documents": s["n_docs"], "passages": s["n_passages"],
+                    "characters": s["chars"]})
+        rows.append(row)
+    board = pd.DataFrame(rows)
+    ref = board[board["config"] == reference].iloc[0]
+    for column in (f"Recall@{min(5, max(KS))}", f"Recall@{K_MAIN}", f"MRR@{max(KS)}"):
+        if column in board:
+            board[f"Δ {column}"] = board[column] - ref[column]
+    return board
+
+
+def styled(board: pd.DataFrame):
+    """Scoreboard with percentages, deltas in green / red and the best value of each metric in bold.
+
+    :param board: output of ``scoreboard_table``
+    :return: pandas Styler
+    """
+    share = [c for c in board.columns if c.startswith(("Recall@", "AllRefs@"))]
+    delta = [c for c in board.columns if c.startswith("Δ")]
+    fmt = {c: "{:.1%}" for c in share}
+    fmt.update({c: "{:+.1%}" if "MRR" not in c else "{:+.3f}" for c in delta})
+    fmt.update({f"MRR@{max(KS)}": "{:.3f}", "p95 latency (s)": "{:.1f}", "documents": "{:.1f}",
+                "passages": "{:.1f}", "characters": "{:,.0f}"})
+
+    def sign(value: float) -> str:
+        """CSS color of a delta.
+
+        :param value: the delta
+        :return: CSS declaration
+        """
+        return "" if pd.isna(value) or abs(value) < 1e-9 else f"color: {'#0ca30c' if value > 0 else '#d03b3b'}"
+
+    style = (board.style.format(fmt).hide(axis="index")
+             .highlight_max(subset=share + [f"MRR@{max(KS)}"], props="font-weight: bold"))
+    return (style.map if hasattr(style, "map") else style.applymap)(sign, subset=delta)
+
+
+def ranks_table() -> pd.DataFrame:
+    """Rank of the first expected document per question (rows) and configuration (columns), None = missed.
+
+    :return: rows ``case_id``, ``question``, ``lang``, ``has_code``, ``expected`` and one column per configuration
+    """
+    golden_by_id = {str(r["question_id"]): r.asDict() for r in golden_rows}
+    base = paired[paired["config"] == RUN[0]][["case_id", "question", "expected"]].copy()
+    base["lang"] = base["case_id"].map(lambda c: str(golden_by_id.get(c, {}).get("lang") or "unknown").lower())
+    base["has_code"] = base["question"].map(lambda q: bool(find_codes(q, accept_lowercase=True)))
+    for name in RUN:
+        f = paired[paired["config"] == name].set_index("case_id")
+        base[name] = [first_rank(f.at[c, "expected"], f.at[c, "retrieved"]) for c in base["case_id"]]
+    return base.reset_index(drop=True)
+
+
+def curve_figure() -> plt.Figure:
+    """Recall@K and AllRefs@K against K, every configuration on the same two panels.
+
     :return: matplotlib figure
     """
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.2), sharex=True)
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.6), sharex=True)
     for ax, metric, title in [(axes[0], "recall", "Recall@K: share of expected documents in the first K"),
                               (axes[1], "all_refs", "AllRefs@K: every expected document in the first K")]:
-        for label, color in zip(frames, (COLOR["ref"], COLOR["cand"])):
-            values = [np.mean([score_at_k(e, r, k)[f"{metric}_at_{k}"]
-                               for e, r in zip(frames[label]["expected"], frames[label]["retrieved"])])
+        for name in RUN:
+            f = paired[paired["config"] == name]
+            values = [np.mean([score_at_k(e, r, k)[f"{metric}_at_{k}"] for e, r in zip(f["expected"], f["retrieved"])])
                       for k in K_CURVE]
-            ax.plot(K_CURVE, values, color=color, label=label, marker="o", markersize=3,
+            ax.plot(K_CURVE, values, color=COLORS[name], label=name, marker="o", markersize=3,
                     markevery=[k - 1 for k in KS])
-            for k in (10, max(KS)):
-                if k <= max(KS):
-                    ax.annotate(f"{values[k - 1]:.0%}", (k, values[k - 1]),
-                                xytext=(5, 6 if color == COLOR["ref"] else -8), textcoords="offset points",
-                                va="center", fontsize=8, color=COLOR["text"])
-        # Past the number of documents the app sends, the curves cannot rise any more.
-        most_sent = max(len(refs(r)) for frame in frames.values() for r in frame["retrieved"])
-        if most_sent < max(KS):
-            ax.axvline(most_sent, color=COLOR["muted"], linewidth=1, linestyle=":")
-            ax.annotate(f"most documents sent: {most_sent}", (most_sent, 0.04), xytext=(4, 0),
-                        textcoords="offset points", fontsize=8, color=COLOR["muted"])
         ax.set_xscale("log")
         ax.set_xticks(KS)
         ax.set_xticklabels([str(k) for k in KS])
         ax.minorticks_off()
         ax.set_ylim(0, 1.02)
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
-        ax.set_xlabel("K (distinct documents sent to the LLM, log scale)")
+        ax.set_xlabel("K (distinct documents, log scale)")
         ax.set_title(title, loc="left", fontsize=10)
-    fig.legend(*axes[0].get_legend_handles_labels(), loc="upper right", ncol=2)
-    fig.suptitle(f"{len(next(iter(frames.values())))} paired questions", x=0.01, ha="left", fontsize=11)
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="upper right", ncol=min(len(RUN), 5))
+    fig.suptitle(f"{len(common_ids)} paired questions", x=0.01, ha="left", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.9))
     return fig
 
 
-def slice_figure(table: pd.DataFrame, labels: list[str]) -> plt.Figure:
-    """MRR@max(K) per slice value, the two configurations side by side, n in the label.
+def rank_figure(ranks: pd.DataFrame) -> plt.Figure:
+    """Heatmap of the rank of the first expected document, questions hardest first, one column per configuration.
 
-    :param table: rows ``slice``, ``value``, ``n`` and one MRR column per configuration
-    :param labels: the two configuration labels
+    :param ranks: output of ``ranks_table``
     :return: matplotlib figure
     """
-    fig, ax = plt.subplots(figsize=(8, 0.42 * len(table) + 1.2))
+    missed = max(KS) + 1
+    values = ranks[RUN].astype(float).fillna(missed)
+    order = values.mean(axis=1).sort_values(ascending=False).index
+    values, labels = values.loc[order], ranks.loc[order, "question"]
+    cmap = LinearSegmentedColormap.from_list("rank", ["#0ca30c", "#f2c94c", "#eb6834", "#d03b3b"])
+    fig, ax = plt.subplots(figsize=(1.3 * len(RUN) + 6, 0.24 * len(values) + 1.6))
+    ax.imshow(np.log(values.to_numpy()), cmap=cmap, aspect="auto", vmin=0, vmax=np.log(missed))
+    for i in range(values.shape[0]):
+        for j in range(values.shape[1]):
+            rank = values.iat[i, j]
+            ax.text(j, i, "-" if rank >= missed else str(int(rank)), ha="center", va="center", fontsize=7,
+                    color="white" if rank >= 5 else TEXT)
+    ax.set_xticks(range(len(RUN)))
+    ax.set_xticklabels(RUN, rotation=30, ha="right")
+    ax.xaxis.tick_top()
+    ax.set_yticks(range(len(values)))
+    ax.set_yticklabels([(q[:80] + "…") if len(q) > 80 else q for q in labels], fontsize=7)
+    ax.grid(False)
+    ax.set_title("Rank of the first expected document (- = missed), hardest questions first", loc="left",
+                 fontsize=10, pad=40)
+    fig.tight_layout()
+    return fig
+
+
+def slice_figure(ranks: pd.DataFrame) -> tuple[plt.Figure, pd.DataFrame]:
+    """MRR per language and per "the question names a code", one bar per configuration.
+
+    :param ranks: output of ``ranks_table``
+    :return: the figure and its table (``slice``, ``value``, ``n`` and one MRR column per configuration)
+    """
+    rows = []
+    for column in ("lang", "has_code"):
+        for value, group in ranks.groupby(column):
+            row = {"slice": column, "value": str(value), "n": len(group)}
+            row.update({name: group[name].map(reciprocal).mean() for name in RUN})
+            rows.append(row)
+    table = pd.DataFrame(rows)
+    fig, ax = plt.subplots(figsize=(9, 0.5 * len(table) * max(1, len(RUN) / 2) + 1.2))
     y = np.arange(len(table))
-    for i, (label, color) in enumerate(zip(labels, (COLOR["ref"], COLOR["cand"]))):
-        bars = ax.barh(y + (i - 0.5) * 0.38, table[label], height=0.36, color=color, label=label,
-                       edgecolor="white", linewidth=1)
-        for bar, value in zip(bars, table[label]):
+    height = 0.8 / len(RUN)
+    for i, name in enumerate(RUN):
+        bars = ax.barh(y + (i - (len(RUN) - 1) / 2) * height, table[name], height=height * 0.95,
+                       color=COLORS[name], label=name)
+        for bar, value in zip(bars, table[name]):
             ax.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2, f"{value:.2f}", va="center",
-                    fontsize=8, color=COLOR["text"])
+                    fontsize=7, color=TEXT)
     ax.set_yticks(y)
     ax.set_yticklabels([f"{s} = {v}  (n={n})" for s, v, n in table[["slice", "value", "n"]].values])
     ax.invert_yaxis()
-    ax.set_xlim(0, 1.1)
+    ax.set_xlim(0, 1.12)
     ax.set_xlabel(f"MRR@{max(KS)}")
     ax.grid(axis="y", visible=False)
-    ax.legend(loc="lower right")
+    ax.legend(loc="lower right", fontsize=8)
     ax.set_title("MRR by language and by question naming a code", loc="left", fontsize=10)
     fig.tight_layout()
-    return fig
+    return fig, table
 
 
-def moved_figure(moved: pd.DataFrame, labels: list[str], limit: int = 40) -> plt.Figure | None:
-    """Reciprocal rank of each question that moved, reference to candidate (dumbbell), worst regression first.
+def moved_table(ranks: pd.DataFrame, reference: str) -> pd.DataFrame:
+    """Questions whose first expected document moved, per configuration against the reference, largest move first.
 
-    :param moved: comparison rows whose change is not ``same``
-    :param labels: the two configuration labels
-    :param limit: most questions drawn (the largest changes)
-    :return: matplotlib figure, None when no question moved
+    :param ranks: output of ``ranks_table``
+    :param reference: label of the reference configuration
+    :return: rows ``config``, ``change``, ``question``, ``expected``, reference rank, configuration rank
     """
+    rows = []
+    for name in RUN:
+        if name == reference:
+            continue
+        for _, r in ranks.iterrows():
+            delta = reciprocal(r[name]) - reciprocal(r[reference])
+            if abs(delta) > 1e-12:
+                rows.append({"config": name, "change": "improved" if delta > 0 else "regressed",
+                             "question": r["question"], "lang": r["lang"], "expected": ", ".join(r["expected"]),
+                             f"rank {reference}": r[reference], "rank": r[name], "delta_rr": delta})
+    moved = pd.DataFrame(rows)
     if moved.empty:
-        return None
-    moved = moved.reindex(moved["delta_rr"].abs().sort_values(ascending=False).index)[:limit]
-    moved = moved.sort_values("delta_rr", ascending=False)
-    fig, ax = plt.subplots(figsize=(10, 0.32 * len(moved) + 1.3))
-    y = np.arange(len(moved))
-    for i, (_, r) in enumerate(moved.iterrows()):
-        ax.plot([r["ref_rr"], r["cand_rr"]], [i, i], color=COLOR[r["change"]], zorder=1)
-    for column, label, color in (("ref_rr", labels[0], COLOR["ref"]), ("cand_rr", labels[1], COLOR["cand"])):
-        ax.scatter(moved[column], y, s=40, color=color, label=label, zorder=2, edgecolor="white", linewidth=1)
-    ax.set_yticks(y)
-    ax.set_yticklabels([(q[:70] + "…") if len(q) > 70 else q for q in moved["question"]], fontsize=8)
-    ax.set_xlim(-0.03, 1.03)
-    ax.set_xlabel("reciprocal rank of the first expected document (1 = first, 0 = missed)")
-    ax.grid(axis="y", visible=False)
-    ax.legend(loc="lower right", fontsize=8)
-    ax.set_title(f"Questions that moved: green = {labels[1]} better, red = {labels[1]} worse", loc="left",
-                 fontsize=10)
-    fig.tight_layout()
-    return fig
+        return moved
+    return moved.sort_values(["config", "delta_rr"], key=lambda s: s if s.name == "config" else -s.abs())
 
 
-def compare_pair(REF: str, CAND: str) -> None:
-    """Compare a candidate configuration with its reference: tables and figures shown, one MLflow comparison run.
+if not common_ids:
+    log.info("Comparison skipped: no paired question")
+else:
+    REFERENCE = RUN[0]
+    board = scoreboard_table(REFERENCE)
+    ranks = ranks_table()
+    slice_fig, slices = slice_figure(ranks)
+    moved = moved_table(ranks, REFERENCE)
+    counts = (moved.groupby(["config", "change"]).size().unstack(fill_value=0).reindex(RUN[1:]).fillna(0).astype(int)
+              if not moved.empty else pd.DataFrame())
 
-    :param REF: label of the reference configuration
-    :param CAND: label of the candidate configuration
-    """
-    golden_by_id = {str(r["question_id"]): r.asDict() for r in golden_rows}
-    frames = {label: paired[paired["config"] == label].sort_values("case_id").reset_index(drop=True)
-              for label in (REF, CAND)}
-    compare = frames[REF][["case_id", "question", "expected"]].copy()
-    compare["lang"] = compare["case_id"].map(lambda c: str(golden_by_id[c].get("lang") or "unknown").lower())
-    compare["has_code"] = compare["question"].map(lambda q: bool(find_codes(q, accept_lowercase=True)))
-    for prefix, label in (("ref", REF), ("cand", CAND)):
-        f = frames[label]
-        ranks = [first_rank(e, r) for e, r in zip(f["expected"], f["retrieved"])]
-        compare[f"{prefix}_rank"] = ranks
-        compare[f"{prefix}_rr"] = [1 / r if r else 0.0 for r in ranks]
-        compare[f"{prefix}_recall_at_10"] = [score_at_k(e, r, 10)["recall_at_10"]
-                                             for e, r in zip(f["expected"], f["retrieved"])]
-        compare[f"{prefix}_top10"] = f["retrieved"].map(lambda r: refs(r)[:10])
-    never = max(KS) + 10**6
-    ref_rank, cand_rank = compare["ref_rank"].fillna(never), compare["cand_rank"].fillna(never)
-    compare["change"] = np.where(cand_rank < ref_rank, "improved", np.where(cand_rank > ref_rank, "regressed", "same"))
-    compare["delta_rr"] = compare["cand_rr"] - compare["ref_rr"]
-
-    slices = []
-    for column in ("lang", "has_code"):
-        for value, group in compare.groupby(column):
-            slices.append({"slice": column, "value": str(value), "n": len(group),
-                           REF: group["ref_rr"].mean(), CAND: group["cand_rr"].mean()})
-    slices = pd.DataFrame(slices)
-    moved = compare[compare["change"] != "same"].sort_values("delta_rr")
-    log.info("%s vs %s: %d improved, %d regressed, %d same", CAND, REF, (compare["change"] == "improved").sum(),
-             (compare["change"] == "regressed").sum(), (compare["change"] == "same").sum())
-    display(slices.round(3))
-    display(moved[["change", "question", "lang", "has_code", "expected", "ref_rank", "cand_rank",
-                   "ref_top10", "cand_top10"]])
-
-    figures = {"recall_curve.png": curve_figure(frames), "mrr_by_slice.png": slice_figure(slices, [REF, CAND]),
-               "moved_questions.png": moved_figure(moved, [REF, CAND])}
-    figures = {name: fig for name, fig in figures.items() if fig is not None}
+    display(styled(board))
+    figures = {"recall_curves.png": curve_figure(), "rank_per_question.png": rank_figure(ranks),
+               "mrr_by_slice.png": slice_fig}
     for fig in figures.values():
         display(fig)
+    if not counts.empty:
+        display(counts.reset_index())
+        display(moved.drop(columns="delta_rr"))
 
-    export = compare.copy()
-    for column in ("expected", "ref_top10", "cand_top10"):
-        export[column] = export[column].map(lambda values: ", ".join(values or []))
-    with mlflow.start_run(run_name=f"golden-compare-{CAND}-vs-{REF}-{run_label}") as compare_run:
+    export_ranks = ranks.copy()
+    export_ranks["expected"] = export_ranks["expected"].map(lambda values: ", ".join(values or []))
+    with mlflow.start_run(run_name=f"golden-overview-{run_label}") as overview_run:
         mlflow.set_tags({"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
-            "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
-                         "runner": RUNNER_VERSION, "role": "comparison", "reference": REF, "candidate": CAND})
-        mlflow.log_params({"reference": REF, "candidate": CAND, "reference_spec": CONFIGS[REF]["spec"],
-                           "candidate_spec": CONFIGS[CAND]["spec"], "ks": ",".join(map(str, KS)),
-                           "golden_table": GOLDEN_TABLE})
-        for k in KS:
-            for metric in ("recall", "mrr", "all_refs"):
-                column = f"{metric}_at_{k}"
-                delta = frames[CAND][column].mean() - frames[REF][column].mean()
-                log_number(f"compare/delta_{column}", delta)
-                mlflow.log_metric(f"compare/delta_{metric}_curve", float(delta), step=k)
-        for change in ("improved", "regressed", "same"):
-            mlflow.log_metric(f"compare/{change}", int((compare["change"] == change).sum()))
-        for _, row in slices.iterrows():
-            key = re.sub(r"[^A-Za-z0-9_\-./]", "_", f"compare/slice.{row['slice']}.{row['value']}")
-            log_number(f"{key}.delta_mrr", row[CAND] - row[REF])
-        mlflow.log_table(export, artifact_file="comparison.json")
-        mlflow.log_table(export[export["change"] == "regressed"], artifact_file="regressed.json")
-        mlflow.log_table(export[export["change"] == "improved"], artifact_file="improved.json")
+                         "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
+                         "runner": RUNNER_VERSION, "role": "overview", "reference": REFERENCE})
+        mlflow.log_params({"configs": ",".join(RUN), "reference": REFERENCE, "ks": ",".join(map(str, KS)),
+                           "golden_table": GOLDEN_TABLE, "indexes": INDEXES[:500]})
+        mlflow.log_table(board, artifact_file="scoreboard.json")
+        mlflow.log_table(export_ranks, artifact_file="ranks.json")
         mlflow.log_table(slices, artifact_file="slices.json")
+        if not moved.empty:
+            mlflow.log_table(moved, artifact_file="moved.json")
         for name, fig in figures.items():
             mlflow.log_figure(fig, f"figures/{name}")
-    log.info("MLflow comparison run=%s", compare_run.info.run_id)
-
-# Configurations are compared two by two, in the order of `indexes`: 1st vs 2nd, 3rd vs 4th...
-PAIRS = [(RUN[i], RUN[i + 1]) for i in range(0, len(RUN) - 1, 2)]
-if not PAIRS or not common_ids:
-    log.info("Comparison skipped: it needs two configurations with paired questions")
-    PAIRS = []
-for reference, candidate in PAIRS:
-    display(pd.DataFrame([{"comparison": f"{candidate} vs {reference}"}]))
-    compare_pair(reference, candidate)
+    log.info("MLflow overview run=%s", overview_run.info.run_id)
 # Figures still open at the end of a cell are drawn a second time by Databricks.
 plt.close("all")
