@@ -10,6 +10,8 @@
 # MAGIC - **Recall@K**: share of the expected documents among the first K.
 # MAGIC - **MRR@K**: 1 / rank of the first expected document (0 when missed).
 # MAGIC - **AllRefs@K**: share of questions with every expected document among the first K.
+# MAGIC - **@all**: the same over every document the configuration sends. A K above the mean number of documents a
+# MAGIC   configuration sends is shown `n/a` (it would score the whole context again).
 # MAGIC
 # MAGIC **Outputs**
 # MAGIC - Delta table `{pipeline_write_env}_proj.qualibot.<results_table_name>`: one row per configuration and question.
@@ -87,7 +89,7 @@ log.propagate = False
 # MAGIC | `golden_table_name` | `eval_golden_retrieval` | golden questions |
 # MAGIC | `results_table_name` | `eval_retrieval_runs_golden` | one row per (configuration, question) and run |
 # MAGIC | `indexes` | `chat` | configurations to measure, see below |
-# MAGIC | `ks` | `1,3,5,10,20,50` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM) |
+# MAGIC | `ks` | `1,3,5,10,20` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM); the scoreboard adds the whole context and shows n/a for a K above the documents a configuration sends on average |
 # MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
 # MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval` |
 # MAGIC | `rerun_existing` | `true` | `false` reuses the saved successful rows of an unchanged question, configuration and app code |
@@ -109,12 +111,15 @@ log.propagate = False
 # MAGIC | `rewrite` | endpoint name | model of the rewrite and of the translation (`CHAT_REWRITE_ENDPOINT`) |
 # MAGIC | `effort` | `off`, `minimal`, `low`, `medium`, `high` | reasoning effort of that model (`CHAT_REWRITE_REASONING_EFFORT`) |
 # MAGIC | `codenorm` | `on`, `off` | `off`: no code normalization at all in the app (query, exact-citation lookup, language variant choice) |
+# MAGIC | `merge` | `best`, `rrf` | merge of the result lists of a turn (REF and citation lookups unchanged). `best` = the app: one row per passage at its best rank, lists interleaved rank by rank. `rrf` = each passage scores the sum of `1 / (60 + rank)` over the lists that found it, so a passage found by several queries comes first |
+# MAGIC | `split` | BM25 weight from 0 to 1 | each reranked HYBRID query becomes two reranked queries, `ANN` (embeddings) and `FULL_TEXT` (BM25), of k passages each, merged by `weight / (60 + BM25 rank) + (1 - weight) / (60 + embeddings rank)`, k kept |
 # MAGIC
 # MAGIC Examples:
 # MAGIC - code normalization benchmark: `chat,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off`
 # MAGIC - the same, deeper: `chat|topk=50,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off|topk=50`
 # MAGIC - query side only, without the baseline index: `chat,query_only=dev_proj.qualibot.chunks_index|codenorm=off`
 # MAGIC - search sizes: `chat,wide|cap=100|rerank=60`
+# MAGIC - merge and BM25 weight: `app|pairrerank=16|rerank=12,rrf|pairrerank=16|rerank=12|merge=rrf,r05|pairrerank=16|rerank=12|split=0.5`
 
 # COMMAND ----------
 for name, default in [
@@ -125,7 +130,7 @@ for name, default in [
     ("golden_table_name", "eval_golden_retrieval"),
     ("results_table_name", "eval_retrieval_runs_golden"),
     ("indexes", "chat"),
-    ("ks", "1,3,5,10,20,50"),
+    ("ks", "1,3,5,10,20"),
     ("max_parallel", "1"),
     ("mlflow_experiment", ""),
 ]:
@@ -152,6 +157,8 @@ INDEXES = dbutils.widgets.get("indexes").strip()
 KS = sorted({int(x.strip()) for x in dbutils.widgets.get("ks").split(",") if x.strip()})
 if not KS or any(x < 1 for x in KS):
     raise ValueError("ks must contain positive integers")
+# "all" = every document the configuration sends to the model.
+KS_ALL = [*KS, "all"]
 MAX_PARALLEL = max(1, int(dbutils.widgets.get("max_parallel")))
 RERUN = dbutils.widgets.get("rerun_existing") == "true"
 DEBUG = dbutils.widgets.get("debug") == "true"
@@ -201,6 +208,8 @@ SIZE_KEYS = {
     "rewrite": "CHAT_REWRITE_ENDPOINT",
     "effort": "CHAT_REWRITE_REASONING_EFFORT",
     "codenorm": "EVAL_CODE_NORMALIZATION",
+    "merge": "EVAL_MERGE",
+    "split": "EVAL_SPLIT_BM25",
 }
 TOPK_KEYS = ["CHAT_RERANK_TOP_K", "CHAT_RAW_TOP_K", "CHAT_PAIR_RERANK_TOP_K", "CHAT_PAIR_RAW_TOP_K"]
 BASE_SEARCH_ENV = {env_name: os.environ.get(env_name) for env_name in SIZE_KEYS.values()}
@@ -235,6 +244,8 @@ def parse_configs(raw: str) -> dict[str, dict]:
                 if key == "rawon" else
                 value in {"on", "off"} if key in ("translate", "codenorm") else
                 value in {"off", "low", "minimal", "medium", "high"} if key == "effort" else
+                value in {"best", "rrf"} if key == "merge" else
+                bool(re.fullmatch(r"(0(\.\d+)?|1(\.0+)?)", value)) if key == "split" else
                 bool(value) if key == "rewrite" else value.isdigit()
             )
             if not valid:
@@ -272,6 +283,101 @@ def set_code_normalization(enabled: bool) -> None:
              "cited_codes_asked": lambda *a, **k: []}
     for (module, attribute), original in CODE_NORMALIZATION_STEPS.items():
         setattr(module, attribute, original if enabled else no_op[attribute])
+
+
+RRF_K = 60
+SEARCH_ORIGINAL = {}   # "merge_by_rank" and "query" -> app functions, filled once the engine is imported
+
+
+class QueryLists(list):
+    """A group of result lists merged by the app, with the lists it came from."""
+
+    parts: list
+
+
+def rrf_merge(lists: list) -> list:
+    """Merge result lists by reciprocal rank fusion: a passage scores the sum of ``1 / (60 + rank)`` over its lists.
+
+    :param lists: result lists, each in rank order
+    :return: one row per chunk (hits of every copy kept), best score first; ties keep the app's order
+    """
+    rows = SEARCH_ORIGINAL["merge_by_rank"](lists)
+    score = {}
+    for part in lists:
+        for rank, row in enumerate(part):
+            score[row["chunk_id"]] = score.get(row["chunk_id"], 0.0) + 1 / (RRF_K + rank + 1)
+    return sorted(rows, key=lambda row: -score[row["chunk_id"]])
+
+
+def eval_merge_by_rank(lists: list) -> list:
+    """Stand-in for the app's merge of the Vector Search results: the app's merge unless ``merge=rrf``.
+
+    The app merges the reranked lists, then the raw lists, then both groups; with ``merge=rrf`` the last call
+    merges every list of the turn at once.
+
+    :param lists: result lists in rank order, or the groups returned by the first calls
+    :return: one row per chunk, best first
+    """
+    original = SEARCH_ORIGINAL["merge_by_rank"]
+    if os.environ.get("EVAL_MERGE", "best") != "rrf":
+        return original(lists)
+    if lists and all(isinstance(group, QueryLists) for group in lists):
+        return rrf_merge([part for group in lists for part in group.parts])
+    merged = QueryLists(original(lists))
+    merged.parts = [list(rows) for rows in lists]
+    return merged
+
+
+async def eval_query(host: str, token: str, index: str, query_text: str, k: int, filters: dict,
+                     rerank: bool) -> list:
+    """Stand-in for the app's Vector Search query: the app's query unless ``split`` applies.
+
+    With ``EVAL_SPLIT_BM25`` set, a reranked query (not a lookup restricted to REFs) is an ``ANN`` and a ``FULL_TEXT``
+    query, each reranked, of k results, merged by weighted reciprocal rank.
+
+    :param host: Databricks workspace URL
+    :param token: Databricks access token
+    :param index: full name of the Vector Search index
+    :param query_text: text searched
+    :param k: number of results kept
+    :param filters: Vector Search filters, empty for none
+    :param rerank: whether the reranker orders the results
+    :return: the rows, best first, ``score`` = the weighted reciprocal rank
+    """
+    weight = os.environ.get("EVAL_SPLIT_BM25")
+    if not rerank or not weight or "REF" in (filters or {}):
+        return await SEARCH_ORIGINAL["query"](host, token, index, query_text, k, filters, rerank=rerank)
+    bm25 = float(weight)
+    text = engine_search.normalize_query(query_text)[:engine_search._MAX_QUERY_CHARS]
+    reranker = {"model": getattr(engine_search, "_RERANKER_MODEL", "databricks_reranker"),
+                "parameters": {"columns_to_rerank": getattr(engine_search, "_RERANK_COLUMNS",
+                                                            ["REF", "semantic_headers", "chunk_text"])}}
+
+    async def one(query_type: str) -> list:
+        """One reranked query of the given type.
+
+        :param query_type: ``ANN`` or ``FULL_TEXT``
+        :return: the rows, best first
+        """
+        payload = {"query_text": text, "columns": engine_search._COLUMNS, "num_results": k,
+                   "query_type": query_type, "reranker": reranker}
+        if filters:
+            payload["filters_json"] = json.dumps(filters)
+        resp = await engine_search._post_query(host, token, index, payload)
+        if resp.status_code == 400 and "rerank" in resp.text.lower():
+            raise engine_search.RerankUnavailable(resp.text[:300])
+        resp.raise_for_status()
+        return engine_search._rows(resp)
+
+    ann, full_text = await asyncio.gather(one("ANN"), one("FULL_TEXT"))
+    score, rows = {}, {}
+    for part, part_weight in ((ann, 1 - bm25), (full_text, bm25)):
+        for rank, row in enumerate(part):
+            cid = row["chunk_id"]
+            rows.setdefault(cid, row)
+            score[cid] = score.get(cid, 0.0) + part_weight / (RRF_K + rank + 1)
+    best = sorted(rows, key=lambda cid: -score[cid])[:k]
+    return [{**rows[cid], "score": score[cid]} for cid in best]
 
 
 def fingerprint(value) -> str:
@@ -312,6 +418,10 @@ from server.services.chat.translation_bridge import translate_question_to_en
 from server.services.chat.engine import retrieval as engine_retrieval, search as engine_search
 from server.services.infra import vector_search as infra_vector_search
 from utils.parsing_pipeline.code_normalization import find_codes
+
+SEARCH_ORIGINAL.update({"merge_by_rank": engine_search._merge_by_rank, "query": engine_search._query})
+engine_search._merge_by_rank = eval_merge_by_rank
+engine_search._query = eval_query
 
 CODE_NORMALIZATION_STEPS.update({
     (engine_search, "normalize_query"): engine_search.normalize_query,
@@ -532,8 +642,8 @@ async def make_semaphore(limit: int):
 # MAGIC recomputed from the stored document ranking, so they do not require a new search.
 
 # COMMAND ----------
-def score_at_k(expected: list[str], retrieved: list[str], k: int) -> dict[str, float]:
-    top = refs(retrieved)[:k]
+def score_at_k(expected: list[str], retrieved: list[str], k: int | str) -> dict[str, float]:
+    top = refs(retrieved) if k == "all" else refs(retrieved)[:k]
     relevant = set(refs(expected))
     if not relevant:
         raise ValueError("Expected documents cannot be empty")
@@ -548,7 +658,7 @@ def score_at_k(expected: list[str], retrieved: list[str], k: int) -> dict[str, f
 
 def scores(expected: list[str], retrieved: list[str]) -> dict[str, float]:
     result = {}
-    for k in KS:
+    for k in KS_ALL:
         result.update(score_at_k(expected, retrieved, k))
     return result
 
@@ -696,7 +806,7 @@ case_scores = [
     scores(r["expected"], r["retrieved"]) if not r.get("error") else {}
     for r in EVAL_ROWS
 ]
-for k in KS:
+for k in KS_ALL:
     for metric in ("recall", "mrr", "all_refs"):
         column = f"{metric}_at_{k}"
         pdf[column] = [result.get(column, float("nan")) for result in case_scores]
@@ -722,7 +832,7 @@ for name in RUN:
         "n_passages": float(own["n_passages"].mean()) if not own.empty else float("nan"),
         "chars": float(own["chars"].mean()) if not own.empty else float("nan"),
     }
-    for k in KS:
+    for k in KS_ALL:
         for metric in ("recall", "mrr", "all_refs"):
             col = f"{metric}_at_{k}"
             row[col] = float(common[col].mean()) if not common.empty else float("nan")
@@ -762,16 +872,17 @@ def log_number(key: str, value) -> None:
 client.workspace.mkdirs(EXPERIMENT.rsplit("/", 1)[0])
 mlflow.set_experiment(EXPERIMENT)
 run_label = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-metric_columns = [f"{metric}_at_{k}" for k in KS for metric in ("recall", "mrr", "all_refs")]
+metric_columns = [f"{metric}_at_{k}" for k in KS_ALL for metric in ("recall", "mrr", "all_refs")]
 
 
 def metric_scorer(column: str):
     """Scorer returning one metric of ``score_at_k`` for a question.
 
-    :param column: ``<metric>_at_<k>``, e.g. ``recall_at_10``
+    :param column: ``<metric>_at_<k>``, e.g. ``recall_at_10`` or ``recall_at_all``
     :return: MLflow scorer named after the column
     """
-    k = int(column.rsplit("_", 1)[1])
+    suffix = column.rsplit("_", 1)[1]
+    k = suffix if suffix == "all" else int(suffix)
 
     def score(inputs: dict, outputs: dict, expectations: dict) -> float:
         """Metric of one question.
@@ -805,9 +916,21 @@ def output_scorer(field: str):
 
 # The evaluation page shows one column per scorer: only the headline scores; every K is in the overview run.
 HEADLINE_METRICS = [c for c in metric_columns
-                    if c in {f"recall_at_{k}" for k in (1, 3, 5, 10, 20)} | {"mrr_at_10", "all_refs_at_5", "all_refs_at_10"}]
-EVAL_SCORERS = ([metric_scorer(c) for c in HEADLINE_METRICS]
-                + [output_scorer(f) for f in ("n_docs", "latency_s")])
+                    if c in {f"recall_at_{k}" for k in (1, 3, 5, 10, 20)}
+                    | {"all_refs_at_5", "all_refs_at_10", "recall_at_all", "mrr_at_all", "all_refs_at_all"}]
+
+
+def eval_scorers(sent: float) -> list:
+    """Headline scorers of one configuration, without the K above the documents it sends.
+
+    :param sent: mean number of distinct documents the configuration sends
+    :return: MLflow scorers
+    """
+    kept = [c for c in HEADLINE_METRICS
+            if c.endswith("_all") or (not pd.isna(sent) and int(c.rsplit("_", 1)[1]) <= sent)]
+    return [metric_scorer(c) for c in kept] + [output_scorer(f) for f in ("n_docs", "latency_s")]
+
+
 for name in RUN:
     rows = paired[paired["config"] == name]
     if rows.empty:
@@ -825,7 +948,7 @@ for name in RUN:
         mlflow.log_params({"config": name, "index": CONFIGS[name]["index"], "spec": CONFIGS[name]["spec"],
                            "ks": ",".join(map(str, KS)), "golden_table": GOLDEN_TABLE, "app_code_path": APP})
         mlflow.log_dict(SETTINGS[name], "engine_settings.json")
-        mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS)
+        mlflow.genai.evaluate(data=data, scorers=eval_scorers(row["n_docs"]))
         for metric in ("search_p95_s", "chars", "n_passages", "success_fraction"):
             log_number(metric, row[metric])
     log.info("MLflow evaluation run=%s | config=%s | questions=%d", eval_run.info.run_id, name, len(data))
@@ -912,15 +1035,20 @@ def scoreboard_table(reference: str) -> pd.DataFrame:
     for name in RUN:
         s = summary[summary["config"] == name].iloc[0]
         row = {"config": name, "spec": CONFIGS[name]["spec"], "questions": int(s["n_questions"])}
-        row.update({f"Recall@{k}": s[f"recall_at_{k}"] for k in KS})
-        row.update({f"AllRefs@{k}": s[f"all_refs_at_{k}"] for k in KS if k in (5, K_MAIN)})
-        row[f"MRR@{max(KS)}"] = s[f"mrr_at_{max(KS)}"]
+        # A K above the documents the configuration sends would score the whole context again: n/a.
+        sent = s["n_docs"]
+        row.update({f"Recall@{k}": s[f"recall_at_{k}"] if k <= sent else float("nan") for k in KS})
+        row["Recall@all"] = s["recall_at_all"]
+        row.update({f"AllRefs@{k}": s[f"all_refs_at_{k}"] if k <= sent else float("nan")
+                    for k in KS if k in (5, K_MAIN)})
+        row["AllRefs@all"] = s["all_refs_at_all"]
+        row["MRR@all"] = s["mrr_at_all"]
         row.update({"p95 latency (s)": s["search_p95_s"], "documents": s["n_docs"], "passages": s["n_passages"],
                     "characters": s["chars"]})
         rows.append(row)
     board = pd.DataFrame(rows)
     ref = board[board["config"] == reference].iloc[0]
-    for column in (f"Recall@{min(5, max(KS))}", f"Recall@{K_MAIN}", f"MRR@{max(KS)}"):
+    for column in (f"Recall@{min(5, max(KS))}", f"Recall@{K_MAIN}", "Recall@all", "MRR@all"):
         if column in board:
             board[f"Δ {column}"] = board[column] - ref[column]
     return board
@@ -936,7 +1064,7 @@ def styled(board: pd.DataFrame):
     delta = [c for c in board.columns if c.startswith("Δ")]
     fmt = {c: "{:.1%}" for c in share}
     fmt.update({c: "{:+.1%}" if "MRR" not in c else "{:+.3f}" for c in delta})
-    fmt.update({f"MRR@{max(KS)}": "{:.3f}", "p95 latency (s)": "{:.1f}", "documents": "{:.1f}",
+    fmt.update({"MRR@all": "{:.3f}", "p95 latency (s)": "{:.1f}", "documents": "{:.1f}",
                 "passages": "{:.1f}", "characters": "{:,.0f}"})
 
     def sign(value: float) -> str:
@@ -947,8 +1075,8 @@ def styled(board: pd.DataFrame):
         """
         return "" if pd.isna(value) or abs(value) < 1e-9 else f"color: {'#0ca30c' if value > 0 else '#d03b3b'}"
 
-    style = (board.style.format(fmt).hide(axis="index")
-             .highlight_max(subset=share + [f"MRR@{max(KS)}"], props="font-weight: bold"))
+    style = (board.style.format(fmt, na_rep="n/a").hide(axis="index")
+             .highlight_max(subset=share + ["MRR@all"], props="font-weight: bold"))
     return (style.map if hasattr(style, "map") else style.applymap)(sign, subset=delta)
 
 
@@ -1001,7 +1129,8 @@ def rank_figure(ranks: pd.DataFrame) -> plt.Figure:
     :param ranks: output of ``ranks_table``
     :return: matplotlib figure
     """
-    missed = max(KS) + 1
+    observed = ranks[RUN].astype(float).max().max()
+    missed = int(max(max(KS), 0 if pd.isna(observed) else observed)) + 1
     values = ranks[RUN].astype(float).fillna(missed)
     order = values.mean(axis=1).sort_values(ascending=False).index
     values, labels = values.loc[order], ranks.loc[order, "question"]
@@ -1051,7 +1180,7 @@ def slice_figure(ranks: pd.DataFrame) -> tuple[plt.Figure, pd.DataFrame]:
     ax.set_yticklabels([f"{s} = {v}  (n={n})" for s, v, n in table[["slice", "value", "n"]].values])
     ax.invert_yaxis()
     ax.set_xlim(0, 1.12)
-    ax.set_xlabel(f"MRR@{max(KS)}")
+    ax.set_xlabel("MRR (whole context)")
     ax.grid(axis="y", visible=False)
     ax.legend(loc="lower right", fontsize=8)
     ax.set_title("MRR by language and by question naming a code", loc="left", fontsize=10)
