@@ -100,7 +100,9 @@ variables with the defaults listed at the top of `config.py`.
   Obsolete Documents stay out), on `document_revisions_intraqual`
   (the Intraqual data asset; `courant`, `etat` and `nonvisible` at source). Only the current revision of a validated,
   visible document of those roots enters the chain. `difftotale` is not part of the gate: the Intraqual portal shows
-  documents with `difftotale = 0`.
+  documents with `difftotale = 0`. A revision with no category takes the one of its closest earlier revision that had one
+  (`categories.inherit_missing_category`, column `category_inherited`); a revision that has a category keeps it, even if
+  the gate filters it out: the history is never searched for a better one.
 - **Division** (`categories.build_division_reference`): from the root of the main category (`AS -`, `IS -`, PROCESSES,
   DIRECTIVE); under the process tree (`00-LATECOERE PROCESSES_One QMS`) a leaf category named `AS` or `IS` sets it,
   and every other document is `GROUP` (shared by the divisions). Documents published before `DOC_DATE_CUTOFF`

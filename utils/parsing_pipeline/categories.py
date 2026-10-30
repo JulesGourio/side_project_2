@@ -8,6 +8,7 @@ category_reference table.
 """
 
 from pyspark.sql import DataFrame
+from pyspark.sql import Window
 from pyspark.sql import functions as f
 
 from config import (
@@ -27,13 +28,57 @@ IDCAT_DIRECTIVE = 962  # "0 - DIRECTIVE GROUPE LATECOERE"
 MAX_HIERARCHY_DEPTH = 7
 
 
+# Category columns of the revisions table, carried over together from the same earlier revision.
+_CATEGORY_COLUMNS = [
+    "category_ID",
+    "category_name",
+    "category_path",
+    "category_ID_path",
+    "root_category_ID",
+    "root_category_name",
+    "is_leaf_category",
+]
+
+
+def inherit_missing_category(df: DataFrame) -> DataFrame:
+    """Give a revision without category the one of the closest earlier revision of the same document that had one.
+
+    A revision that has a category keeps it, even if the scope filters it out: the history is never searched for a
+    better one. ``category_inherited`` flags the revisions whose category comes from an earlier revision.
+
+    :param df: Revisions table, one row per ``document_revision_ID``.
+    :return: ``df`` with the category columns filled where ``root_category_ID`` was null and an earlier revision had one.
+    """
+    columns = [c for c in _CATEGORY_COLUMNS if c in df.columns]
+    earlier_revisions = (
+        Window.partitionBy("document_reference")
+        .orderBy(f.col("document_revision_ID").asc())
+        .rowsBetween(Window.unboundedPreceding, -1)
+    )
+    last_categorised = f.last(
+        f.when(f.col("root_category_ID").isNotNull(), f.struct(*columns)), ignorenulls=True
+    ).over(earlier_revisions)
+    # The flag is a column of its own: the loop below overwrites root_category_ID, which the condition reads.
+    df = df.withColumn("_earlier_category", last_categorised).withColumn(
+        "category_inherited", f.col("root_category_ID").isNull() & f.col("_earlier_category").isNotNull()
+    )
+    for column in columns:
+        df = df.withColumn(
+            column,
+            f.when(f.col("category_inherited"), f.col(f"_earlier_category.{column}")).otherwise(f.col(column)),
+        )
+    return df.drop("_earlier_category")
+
+
 def read_revisions(spark) -> DataFrame:
     """Every revision of every Intraqual document, one row per ``document_revision_ID`` (the IDDOC).
+
+    A revision without category takes the one of its closest earlier revision that had one (`inherit_missing_category`).
 
     :param spark: Active Spark session.
     :return: the revisions table of the Intraqual data asset, with its own column names.
     """
-    return spark.read.table(INTRAQUAL_REVISIONS_TABLE)
+    return inherit_missing_category(spark.read.table(INTRAQUAL_REVISIONS_TABLE))
 
 
 def build_category_levels(spark, max_depth: int = MAX_HIERARCHY_DEPTH) -> DataFrame:
