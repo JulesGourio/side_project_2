@@ -1,42 +1,21 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Qualibot — Golden Retrieval Evaluation with exact citations
+# MAGIC # Qualibot — Golden Retrieval Evaluation
 # MAGIC
-# MAGIC **Scope:** only `{pipeline_read_env}_proj.qualibot.eval_golden_retrieval`.
-# MAGIC Search uses the deployed Qualibot application code (translation bridge, history/date
-# MAGIC preparation, rewrite and Vector Search), without generating answers or using a judge.
-# MAGIC "Which documents cite X?" questions also get the complete list of citing documents, as in the app: the rows of
-# MAGIC `doc_references` are rebuilt from the `cited_codes` of `chunks`, the source the parsing task writes it from.
+# MAGIC Runs every golden question of `{pipeline_read_env}_proj.qualibot.eval_golden_retrieval` through the search of the
+# MAGIC deployed app (`retrieve_for_turn`: translation or rewrite, Vector Search, REF and exact-citation lookups), once per
+# MAGIC configuration of the `indexes` widget. No answer is generated.
 # MAGIC
-# MAGIC **Relevance metrics on distinct document references in LLM-context order:**
-# MAGIC - **Recall@K**: share of annotated `expected_refs` present among the first K documents.
-# MAGIC - **MRR@K**: average reciprocal rank of the first annotated reference (0 if absent).
-# MAGIC - **AllRefs@K**: share of questions for which *all* annotated references appear in top K.
+# MAGIC **Scores** (distinct documents in the order sent to the LLM, paired questions only):
+# MAGIC - **Recall@K**: share of the expected documents among the first K.
+# MAGIC - **MRR@K**: 1 / rank of the first expected document (0 when missed).
+# MAGIC - **AllRefs@K**: share of questions with every expected document among the first K.
 # MAGIC
-# MAGIC **K:** `1, 3, 5, 10, 20, 50` (widget `ks`); each metric is also logged against K as an MLflow step, which
-# MAGIC draws the Recall@K curve in the run.
-# MAGIC
-# MAGIC **Technical metrics:** `search_p95_s`, `success_fraction`, `n_questions`,
-# MAGIC `n_docs`, `n_passages`, `chars`. The last three are logged as **averages per successful question**
-# MAGIC in MLflow and kept as exact counts in per-question results.
-# MAGIC
-# MAGIC Questions without `expected_refs` are skipped. Golden questions where an `unknown_ref`
-# MAGIC is also an `expected_ref` are retrieved and saved, but excluded from relevance scores.
-# MAGIC Only questions successfully evaluated by **every selected configuration** contribute to
-# MAGIC Recall/MRR/AllRefs, so comparisons remain paired. `success_fraction` and the technical
-# MAGIC averages are computed per configuration independently.
-# MAGIC
-# MAGIC **Important:** K refers to **distinct documents actually sent to the LLM**, not the
-# MAGIC Vector Search raw top K. If the application returns fewer than 50 documents, the
-# MAGIC `@50` metrics cannot improve beyond that available context. The notebook warns about it
-# MAGIC without silently modifying the production search parameters.
-# MAGIC
-# MAGIC The retrieval runs on a **single persistent asyncio event loop**, even with concurrent
-# MAGIC questions, avoiding `Event loop is closed` and `bound to a different event loop`.
-# MAGIC
-# MAGIC **Output:** `{pipeline_write_env}_proj.qualibot.eval_retrieval_runs_golden`, one MLflow run per configuration and
-# MAGIC one comparison run per pair of configurations, 1st vs 2nd, 3rd vs 4th (Recall@K curve, MRR by language and by "question names a
-# MAGIC code", questions that improve or regress). This separate output table leaves previous V3 tables intact.
+# MAGIC **Outputs**
+# MAGIC - Delta table `{pipeline_write_env}_proj.qualibot.<results_table_name>`: one row per configuration and question.
+# MAGIC - MLflow experiment `mlflow_experiment`: one evaluation run per configuration (one row per question, its
+# MAGIC   documents and scores) and one `overview-<date>` run comparing every configuration with the first one
+# MAGIC   (scoreboard, recall curves, rank per question, MRR by slice, questions that moved).
 
 # COMMAND ----------
 # MAGIC %md
@@ -110,8 +89,7 @@ log.propagate = False
 # MAGIC | `indexes` | `chat` | configurations to measure, see below |
 # MAGIC | `ks` | `1,3,5,10,20,50` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM) |
 # MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
-# MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval_golden_v2` |
-# MAGIC | `mlflow_eval_experiment` | empty | experiment of the evaluation runs (one per configuration, per-question scores); empty = `/Shared/qualibot/{write_env}_retrieval_eval_golden_runs_v2` |
+# MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval` |
 # MAGIC | `rerun_existing` | `true` | `false` reuses the saved successful rows of an unchanged question, configuration and app code |
 # MAGIC | `debug` | `false` | logs the traceback of every failed attempt |
 # MAGIC
@@ -131,17 +109,12 @@ log.propagate = False
 # MAGIC | `rewrite` | endpoint name | model of the rewrite and of the translation (`CHAT_REWRITE_ENDPOINT`) |
 # MAGIC | `effort` | `off`, `minimal`, `low`, `medium`, `high` | reasoning effort of that model (`CHAT_REWRITE_REASONING_EFFORT`) |
 # MAGIC | `codenorm` | `on`, `off` | `off`: no code normalization at all in the app (query, exact-citation lookup, language variant choice) |
-# MAGIC | `merge` | `best`, `flat`, `rrf` | how the result lists of the Vector Search queries are merged (REF and citation lookups unchanged). `best` = the app: reranked lists merged by best rank, then that list merged with the raw lists, position against position. `flat` = every list (reranked FR, reranked EN, raw) merged in one step by best rank. `rrf` = each passage scores the sum of `weight / (60 + rank)` over the lists that found it |
-# MAGIC | `bm25weight` | number from 0 to 1 | the raw searches (not reranked, not the REF lookups) become two queries, `ANN` (embeddings) and `FULL_TEXT` (BM25), 50 results each, merged by `weight / (60 + rank)` with this weight on BM25 and 1 - weight on the embeddings; Databricks `HYBRID` weighs both the same |
-# MAGIC | `rawweight` | number > 0, default 1 | weight of the raw lists in `flat` (a raw rank counts as rank / weight) and `rrf`; reranked lists weigh 1 |
 # MAGIC
 # MAGIC Examples:
 # MAGIC - code normalization benchmark: `chat,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off`
 # MAGIC - the same, deeper: `chat|topk=50,baseline=dev_proj.qualibot.chunks_baseline_index|codenorm=off|topk=50`
 # MAGIC - query side only, without the baseline index: `chat,query_only=dev_proj.qualibot.chunks_index|codenorm=off`
 # MAGIC - search sizes: `chat,wide|cap=100|rerank=60`
-# MAGIC - BM25 weight of the raw search: `chat20|topk=20,bm25w07|topk=20|bm25weight=0.7`
-# MAGIC - merge of the result lists: `chat,flat|merge=flat,flathalf|merge=flat|rawweight=0.5,rrf|merge=rrf,rrfhalf|merge=rrf|rawweight=0.5`
 
 # COMMAND ----------
 for name, default in [
@@ -155,7 +128,6 @@ for name, default in [
     ("ks", "1,3,5,10,20,50"),
     ("max_parallel", "1"),
     ("mlflow_experiment", ""),
-    ("mlflow_eval_experiment", ""),
 ]:
     dbutils.widgets.text(name, default)
 for name, default, choices in [
@@ -184,9 +156,7 @@ MAX_PARALLEL = max(1, int(dbutils.widgets.get("max_parallel")))
 RERUN = dbutils.widgets.get("rerun_existing") == "true"
 DEBUG = dbutils.widgets.get("debug") == "true"
 EXPERIMENT = (dbutils.widgets.get("mlflow_experiment").strip()
-              or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval_golden_v2")
-EVAL_EXPERIMENT = (dbutils.widgets.get("mlflow_eval_experiment").strip()
-                   or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval_golden_runs_v2")
+              or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval")
 EXECUTION_ID = uuid.uuid4().hex
 log.info("Golden only | table=%s | results=%s | ks=%s | execution=%s",
          GOLDEN_TABLE, RESULTS_TABLE, KS, EXECUTION_ID)
@@ -231,9 +201,6 @@ SIZE_KEYS = {
     "rewrite": "CHAT_REWRITE_ENDPOINT",
     "effort": "CHAT_REWRITE_REASONING_EFFORT",
     "codenorm": "EVAL_CODE_NORMALIZATION",
-    "merge": "EVAL_MERGE",
-    "rawweight": "EVAL_RAW_WEIGHT",
-    "bm25weight": "EVAL_BM25_WEIGHT",
 }
 TOPK_KEYS = ["CHAT_RERANK_TOP_K", "CHAT_RAW_TOP_K", "CHAT_PAIR_RERANK_TOP_K", "CHAT_PAIR_RAW_TOP_K"]
 BASE_SEARCH_ENV = {env_name: os.environ.get(env_name) for env_name in SIZE_KEYS.values()}
@@ -268,9 +235,6 @@ def parse_configs(raw: str) -> dict[str, dict]:
                 if key == "rawon" else
                 value in {"on", "off"} if key in ("translate", "codenorm") else
                 value in {"off", "low", "minimal", "medium", "high"} if key == "effort" else
-                value in {"best", "flat", "rrf"} if key == "merge" else
-                bool(re.fullmatch(r"\d+(\.\d+)?", value)) and float(value) > 0 if key == "rawweight" else
-                bool(re.fullmatch(r"\d+(\.\d+)?", value)) and float(value) <= 1 if key == "bm25weight" else
                 bool(value) if key == "rewrite" else value.isdigit()
             )
             if not valid:
@@ -308,109 +272,6 @@ def set_code_normalization(enabled: bool) -> None:
              "cited_codes_asked": lambda *a, **k: []}
     for (module, attribute), original in CODE_NORMALIZATION_STEPS.items():
         setattr(module, attribute, original if enabled else no_op[attribute])
-
-
-MERGE_ORIGINAL = {}   # "merge_by_rank" -> app function, filled once the engine is imported
-RRF_K = 60
-
-
-class QueryLists(list):
-    """A group of result lists merged by the app, with the lists it came from."""
-
-    parts: list
-
-
-def weighted_merge(parts: list) -> list:
-    """Merge result lists by ``EVAL_MERGE`` (``flat`` or ``rrf``), the raw lists weighted by ``EVAL_RAW_WEIGHT``.
-
-    :param parts: ``(rows, via)`` pairs, rows in rank order, via ``rerank`` or ``raw``
-    :return: one row per chunk (hits of every copy kept), best first; ties keep the app's order
-    """
-    mode = os.environ.get("EVAL_MERGE", "best")
-    raw_weight = float(os.environ.get("EVAL_RAW_WEIGHT") or 1)
-    rows = MERGE_ORIGINAL["merge_by_rank"]([part for part, _ in parts])
-    score = {}
-    for part, via in parts:
-        weight = raw_weight if via == "raw" else 1.0
-        for rank, row in enumerate(part):
-            cid = row["chunk_id"]
-            if mode == "rrf":
-                score[cid] = score.get(cid, 0.0) + weight / (RRF_K + rank + 1)
-            else:
-                score[cid] = max(score.get(cid, float("-inf")), -rank / weight)
-    return sorted(rows, key=lambda row: -score[row["chunk_id"]])
-
-
-def eval_merge_by_rank(lists: list) -> list:
-    """Stand-in for the app's merge of the Vector Search results: the app's merge for ``merge=best``.
-
-    The app merges the reranked lists, then the raw lists, then both groups. The first two calls keep their
-    lists; the last one merges all of them at once with ``weighted_merge``.
-
-    :param lists: result lists in rank order, or the groups returned by the first calls
-    :return: one row per chunk, best first
-    """
-    original = MERGE_ORIGINAL["merge_by_rank"]
-    if os.environ.get("EVAL_MERGE", "best") == "best":
-        return original(lists)
-    if lists and all(isinstance(group, QueryLists) for group in lists):
-        return weighted_merge([part for group in lists for part in group.parts])
-    parts = [(list(rows), (rows[0].get("_hits") or [{}])[0].get("via", "rerank") if rows else "rerank")
-             for rows in lists]
-    merged = QueryLists(original(lists))
-    merged.parts = parts
-    return merged
-
-
-QUERY_ORIGINAL = {}   # "query" -> app function, filled once the engine is imported
-BM25_DEPTH = 50
-
-
-async def eval_query(host: str, token: str, index: str, query_text: str, k: int, filters: dict,
-                     rerank: bool) -> list:
-    """Stand-in for the app's Vector Search query: the app's query unless ``bm25weight`` applies.
-
-    With ``EVAL_BM25_WEIGHT`` set, a raw search (no reranker, not restricted to REFs) is an ``ANN`` and a
-    ``FULL_TEXT`` query of ``BM25_DEPTH`` results each, merged by weighted reciprocal rank.
-
-    :param host: Databricks workspace URL
-    :param token: Databricks access token
-    :param index: full name of the Vector Search index
-    :param query_text: text searched
-    :param k: number of results kept
-    :param filters: Vector Search filters, empty for none
-    :param rerank: whether the reranker orders the results
-    :return: the rows, best first, ``score`` = the weighted reciprocal rank
-    """
-    weight = os.environ.get("EVAL_BM25_WEIGHT")
-    if rerank or not weight or "REF" in (filters or {}):
-        return await QUERY_ORIGINAL["query"](host, token, index, query_text, k, filters, rerank=rerank)
-    bm25 = float(weight)
-    text = engine_search.normalize_query(query_text)[:engine_search._MAX_QUERY_CHARS]
-
-    async def one(query_type: str) -> list:
-        """One query of the given type.
-
-        :param query_type: ``ANN`` or ``FULL_TEXT``
-        :return: the rows, best first
-        """
-        payload = {"query_text": text, "columns": engine_search._COLUMNS, "num_results": max(k, BM25_DEPTH),
-                   "query_type": query_type}
-        if filters:
-            payload["filters_json"] = json.dumps(filters)
-        resp = await engine_search._post_query(host, token, index, payload)
-        resp.raise_for_status()
-        return engine_search._rows(resp)
-
-    ann, full_text = await asyncio.gather(one("ANN"), one("FULL_TEXT"))
-    score, rows = {}, {}
-    for part, part_weight in ((ann, 1 - bm25), (full_text, bm25)):
-        for rank, row in enumerate(part):
-            cid = row["chunk_id"]
-            rows.setdefault(cid, row)
-            score[cid] = score.get(cid, 0.0) + part_weight / (RRF_K + rank + 1)
-    best = sorted(rows, key=lambda cid: -score[cid])[:k]
-    return [{**rows[cid], "score": score[cid]} for cid in best]
 
 
 def fingerprint(value) -> str:
@@ -460,10 +321,6 @@ CODE_NORMALIZATION_STEPS.update({
     (engine_retrieval, "cited_codes_asked"): engine_retrieval.cited_codes_asked,
 })
 
-MERGE_ORIGINAL["merge_by_rank"] = engine_search._merge_by_rank
-engine_search._merge_by_rank = eval_merge_by_rank
-QUERY_ORIGINAL["query"] = engine_search._query
-engine_search._query = eval_query
 
 if not hasattr(engine, "retrieve_for_turn"):
     raise RuntimeError(f"Missing engine.retrieve_for_turn in {APP}")
@@ -880,13 +737,21 @@ if not success.empty and int(success["n_docs"].max()) < max(KS):
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## MLflow: 3 relevance metrics x K + 6 technical metrics
-# MAGIC Each configuration gets one MLflow run. The same case-level ranking, latency and error
-# MAGIC information is also saved as an artifact (`per_question.json`). No additional KPI families,
-# MAGIC category/locale breakdowns or duplicate monitoring namespace.
+# MAGIC ## MLflow evaluation runs
+# MAGIC One run per configuration, named after it, on the paired questions. The **Evaluation runs** page shows one
+# MAGIC column per headline score (bar chart icon: one bar per configuration); a run opens on one row per question with
+# MAGIC its expected and retrieved documents. The full set of K values is in the overview run below.
 
 # COMMAND ----------
+from mlflow.genai.scorers import scorer
+
+
 def log_number(key: str, value) -> None:
+    """Log a metric unless it is missing or not finite.
+
+    :param key: metric name
+    :param value: metric value, None or NaN for none
+    """
     if value is None or pd.isna(value):
         return
     number = float(value)
@@ -897,53 +762,7 @@ def log_number(key: str, value) -> None:
 client.workspace.mkdirs(EXPERIMENT.rsplit("/", 1)[0])
 mlflow.set_experiment(EXPERIMENT)
 run_label = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-metric_columns = [f"{metric}_at_{k}" for k in KS
-                  for metric in ("recall", "mrr", "all_refs")]
-technical_columns = ["search_p95_s", "success_fraction", "n_questions", "n_docs", "n_passages", "chars"]
-
-for name in RUN:
-    row = summary[summary["config"] == name].iloc[0]
-    subset = pdf[pdf["config"] == name].copy()
-    export = subset[["case_id", "question", "expected", "unknown_overlap", "score_eligible",
-                     "retrieved", "n_docs", "n_passages", "chars", "latency_s", "error"]
-                    + metric_columns].copy()
-    for col in ["expected", "unknown_overlap", "retrieved"]:
-        export[col] = export[col].map(lambda values: ", ".join(values or []))
-
-    with mlflow.start_run(run_name=f"golden-retrieval-{name}-{run_label}") as active_run:
-        mlflow.set_tags({
-            "eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
-            "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
-            "runner": RUNNER_VERSION, "config_signature": CONFIGS[name]["signature"],
-        })
-        mlflow.log_params({
-            "config": name, "index": CONFIGS[name]["index"],
-            "spec": CONFIGS[name]["spec"], "ks": ",".join(map(str, KS)),
-            "golden_table": GOLDEN_TABLE, "app_code_path": APP,
-            "rerun_existing": str(RERUN), "doc_references_rows": DOC_REFERENCES["rows"],
-        })
-        mlflow.log_dict(SETTINGS[name], "engine_settings.json")
-        for metric in metric_columns + technical_columns:
-            log_number(f"golden/{metric}", row[metric])
-        for k in KS:
-            for metric in ("recall", "mrr", "all_refs"):
-                value = row[f"{metric}_at_{k}"]
-                if value is not None and math.isfinite(float(value)):
-                    mlflow.log_metric(f"golden/{metric}_curve", float(value), step=k)
-        mlflow.log_table(export, artifact_file="per_question.json")
-    log.info("MLflow run=%s | config=%s | scored_questions=%d",
-             active_run.info.run_id, name, row["n_questions"])
-
-# COMMAND ----------
-# MAGIC %md
-# MAGIC ## MLflow evaluation runs
-# MAGIC One evaluation run per configuration in `mlflow_eval_experiment`, on the same paired questions as the summary.
-# MAGIC Every metric is a scorer: the **Evaluation runs** page charts their means across runs, and a run opens on one
-# MAGIC row per question with its expected and retrieved documents and each score. The `golden/*` metrics and curves
-# MAGIC above are logged in the same run.
-
-# COMMAND ----------
-from mlflow.genai.scorers import scorer
+metric_columns = [f"{metric}_at_{k}" for k in KS for metric in ("recall", "mrr", "all_refs")]
 
 
 def metric_scorer(column: str):
@@ -984,13 +803,11 @@ def output_scorer(field: str):
     return scorer(score, name=field)
 
 
-# The evaluation page shows one column per scorer: only the headline metrics, the full set stays in golden/*.
+# The evaluation page shows one column per scorer: only the headline scores; every K is in the overview run.
 HEADLINE_METRICS = [c for c in metric_columns
                     if c in {f"recall_at_{k}" for k in (1, 3, 5, 10, 20)} | {"mrr_at_10", "all_refs_at_5", "all_refs_at_10"}]
 EVAL_SCORERS = ([metric_scorer(c) for c in HEADLINE_METRICS]
                 + [output_scorer(f) for f in ("n_docs", "latency_s")])
-client.workspace.mkdirs(EVAL_EXPERIMENT.rsplit("/", 1)[0])
-mlflow.set_experiment(EVAL_EXPERIMENT)
 for name in RUN:
     rows = paired[paired["config"] == name]
     if rows.empty:
@@ -1001,7 +818,7 @@ for name in RUN:
              "expectations": {"expected_refs": refs(r["expected"])}}
             for _, r in rows.iterrows()]
     row = summary[summary["config"] == name].iloc[0]
-    with mlflow.start_run(run_name=f"{name} {run_label}") as eval_run:
+    with mlflow.start_run(run_name=name) as eval_run:
         mlflow.set_tags({"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
             "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
                          "runner": RUNNER_VERSION, "config_signature": CONFIGS[name]["signature"]})
@@ -1009,25 +826,19 @@ for name in RUN:
                            "ks": ",".join(map(str, KS)), "golden_table": GOLDEN_TABLE, "app_code_path": APP})
         mlflow.log_dict(SETTINGS[name], "engine_settings.json")
         mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS)
-        for metric in metric_columns + technical_columns:
-            log_number(f"golden/{metric}", row[metric])
-        for k in KS:
-            for metric in ("recall", "mrr", "all_refs"):
-                if math.isfinite(float(row[f"{metric}_at_{k}"])):
-                    mlflow.log_metric(f"golden/{metric}_curve", float(row[f"{metric}_at_{k}"]), step=k)
+        for metric in ("search_p95_s", "chars", "n_passages", "success_fraction"):
+            log_number(metric, row[metric])
     log.info("MLflow evaluation run=%s | config=%s | questions=%d", eval_run.info.run_id, name, len(data))
-mlflow.set_experiment(EXPERIMENT)
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Summary and misses
+# MAGIC ## Expected documents missing from the top 10, and errors
 
 # COMMAND ----------
-display(summary.sort_values("config"))
-
-misses = paired[paired[f"recall_at_{KS[0]}"] < 1].copy()
+K_MISS = 10 if 10 in KS else max(KS)
+misses = paired[paired[f"recall_at_{K_MISS}"] < 1].copy()
 if not misses.empty:
-    k = KS[0]
+    k = K_MISS
     misses["missing_expected"] = misses.apply(
         lambda r: [ref for ref in r["expected"] if ref not in set(refs(r["retrieved"])[:k])], axis=1
     )
@@ -1052,7 +863,7 @@ log.info("Golden retrieval completed: execution=%s | fresh_rows=%d | paired=%d |
 # MAGIC - **MRR by slice**: language of the question and "the question names a code".
 # MAGIC - **Moved questions**: per configuration, the questions whose first expected document comes earlier or later than in the reference.
 # MAGIC
-# MAGIC Everything is also logged in one MLflow run `golden-overview-<date>` (tag `role = overview`, artifacts `scoreboard.json`,
+# MAGIC Everything is also logged in one MLflow run `overview-<date>` (tag `role = overview`, artifacts `scoreboard.json`,
 # MAGIC `ranks.json`, `moved.json`, `figures/`).
 
 # COMMAND ----------
@@ -1293,7 +1104,7 @@ else:
 
     export_ranks = ranks.copy()
     export_ranks["expected"] = export_ranks["expected"].map(lambda values: ", ".join(values or []))
-    with mlflow.start_run(run_name=f"golden-overview-{run_label}") as overview_run:
+    with mlflow.start_run(run_name=f"overview-{run_label}") as overview_run:
         mlflow.set_tags({"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
                          "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
                          "runner": RUNNER_VERSION, "role": "overview", "reference": REFERENCE})
