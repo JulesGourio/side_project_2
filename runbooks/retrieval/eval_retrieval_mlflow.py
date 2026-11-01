@@ -17,8 +17,9 @@
 # MAGIC - Delta table `{pipeline_write_env}_proj.qualibot.<results_table_name>`: one row per configuration and question.
 # MAGIC - MLflow experiment `mlflow_experiment`: one evaluation run per configuration (one row per question, its
 # MAGIC   documents and scores).
-# MAGIC - The comparison of every configuration (scoreboard, recall curves, rank per question, MRR by slice, questions
-# MAGIC   that moved) is shown at the end of the notebook.
+# MAGIC - At the end of the notebook: corpus and index check (expected documents absent from the chunks), key indicators
+# MAGIC   per configuration, recall curves, every expected document missed in the top 10 with its cause, rank per question
+# MAGIC   and MRR by slice.
 
 # COMMAND ----------
 # MAGIC %md
@@ -991,37 +992,13 @@ for name in RUN:
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Expected documents missing from the top 10, and errors
-
-# COMMAND ----------
-K_MISS = 10 if 10 in KS else max(KS)
-misses = paired[paired[f"recall_at_{K_MISS}"] < 1].copy()
-if not misses.empty:
-    k = K_MISS
-    misses["missing_expected"] = misses.apply(
-        lambda r: [ref for ref in r["expected"] if ref not in set(refs(r["retrieved"])[:k])], axis=1
-    )
-    display(misses[["config", "question", "expected", "missing_expected", f"recall_at_{k}"]]
-            .sort_values(["config", f"recall_at_{k}"]))
-
-error_rows = pdf[pdf["error"].notna()]
-if not error_rows.empty:
-    display(error_rows[["config", "question", "error"]])
-
-log.info("Golden retrieval completed: execution=%s | fresh_rows=%d | paired=%d | skipped=%d",
-         EXECUTION_ID, len(ALL_ROWS), len(common_ids), len(SKIPPED))
-
-# COMMAND ----------
-# MAGIC %md
-# MAGIC ## Comparison of every configuration
-# MAGIC Built from the configurations of `indexes` at each execution, on the same paired questions as above.
-# MAGIC The first configuration is the reference: the `Δ` columns and the moved questions compare every other one with it.
-# MAGIC - **Scoreboard**: one row per configuration (Recall@K, AllRefs@K, MRR, latency, context size).
-# MAGIC - **Recall@K curves**: every configuration on one chart.
-# MAGIC - **Rank per question**: rank of the first expected document for each question (rows) and configuration (columns); `-` = missed.
-# MAGIC - **MRR by slice**: language of the question and "the question names a code".
-# MAGIC - **Moved questions**: per configuration, the questions whose first expected document comes earlier or later than in the reference.
-
+# MAGIC ## Results
+# MAGIC 1. **Corpus and index**: an expected document absent from the chunks can never be found. It is a data gap, not a
+# MAGIC    search failure, and it explains most gaps between two environments.
+# MAGIC 2. **Key indicators**: one row per configuration, on the same questions.
+# MAGIC 3. **Recall curves**: share of the expected documents found in the first K.
+# MAGIC 4. **Every expected document missed in the top 10**: its rank in each configuration and the cause.
+# MAGIC 5. **Rank per question** and **MRR by language and by question naming a code**.
 # COMMAND ----------
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1058,47 +1035,142 @@ def first_rank(expected: list[str], retrieved: list[str]) -> int | None:
     return next((i for i, ref in enumerate(refs(retrieved), 1) if ref in relevant), None)
 
 
-def scoreboard_table(reference: str) -> pd.DataFrame:
-    """One row per configuration: relevance at each K, latency, context size, and the deltas with the reference.
 
-    :param reference: label of the reference configuration
-    :return: the scoreboard, configurations in the order of ``indexes``
+
+def field(row, key: str):
+    """Value of a golden row, whether it is a dict or a Spark row.
+
+    :param row: golden row
+    :param key: column name
+    :return: the value, None when the column is missing
+    """
+    return (row if isinstance(row, dict) else row.asDict()).get(key)
+
+
+GOLDEN_LANG = {str(field(r, "question_id")): str(field(r, "lang") or "unknown").lower() for r in golden_rows}
+
+corpus_refs = {canon_ref(r["ref"]) for r in spark.sql(
+    f"SELECT DISTINCT trim(REF) AS ref FROM {CHUNKS_TABLE} WHERE REF IS NOT NULL AND trim(REF) <> ''").collect()}
+corpus_refs -= {None, ""}
+chunk_rows = spark.table(CHUNKS_TABLE).count()
+expected_docs = sorted({ref for case in ELIGIBLE for ref in case["expected"]})
+absent_docs = [ref for ref in expected_docs if ref not in corpus_refs]
+
+
+def index_status(name: str) -> dict:
+    """State of a Vector Search index, read only.
+
+    :param name: full index name
+    :return: ``index``, ``ready``, ``indexed rows`` and the status message
+    """
+    try:
+        status = client.vector_search_indexes.get_index(name).status
+        return {"index": name, "ready": bool(status.ready), "indexed rows": status.indexed_row_count,
+                "chunks table rows": chunk_rows, "status": (status.message or "")[:150]}
+    except Exception as exc:
+        return {"index": name, "ready": False, "indexed rows": None, "chunks table rows": chunk_rows,
+                "status": f"{type(exc).__name__}: {str(exc)[:150]}"}
+
+
+display(pd.DataFrame([{
+    "chunks table": CHUNKS_TABLE,
+    "documents in the chunks": len(corpus_refs),
+    "expected documents": len(expected_docs),
+    "expected documents absent from the chunks": len(absent_docs),
+}]))
+display(pd.DataFrame([index_status(name) for name in sorted({cfg["index"] for cfg in CONFIGS.values()})]))
+if absent_docs:
+    display(pd.DataFrame([{"expected document absent from the chunks": ref,
+                           "questions": " | ".join(c["question"] for c in ELIGIBLE if ref in c["expected"])}
+                          for ref in absent_docs]))
+log.info("Corpus %s: %d documents | %d of %d expected documents absent",
+         CHUNKS_TABLE, len(corpus_refs), len(absent_docs), len(expected_docs))
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ### Key indicators, curves and misses
+# MAGIC - **≥1 expected doc in top K**: share of questions where the LLM gets at least one right document among the first K.
+# MAGIC - **expected docs found in top 10**: share of the expected documents among the first 10 (Recall@10); the next column
+# MAGIC   counts only the documents present in the chunks, so it measures the search alone.
+# MAGIC - **every expected doc in top 10**: share of questions fully covered.
+# MAGIC - **MRR**: 1 / rank of the first right document, averaged (1 = always first, 0.5 = second on average).
+# MAGIC - **Misses**: `absent from the chunks` = data gap; `in the chunks, never sent` = search failure;
+# MAGIC   `sent, but after rank 10` = ranking issue.
+# COMMAND ----------
+K5 = 5 if 5 in KS else min(KS)
+
+
+def search_sizes(name: str) -> str:
+    """Passages per query of a configuration, as the app runs it.
+
+    :param name: configuration label
+    :return: ``reranked+raw`` of an opening message in French or English, then of the other queries, and the
+        merge or BM25 options when set
+    """
+    env = {**{k: v for k, v in BASE_SEARCH_ENV.items() if v is not None}, **CONFIGS[name]["overrides"]}
+    text = (f"{env.get('CHAT_PAIR_RERANK_TOP_K', '?')}+{env.get('CHAT_PAIR_RAW_TOP_K') or 0}"
+            f" / {env.get('CHAT_RERANK_TOP_K', '?')}+{env.get('CHAT_RAW_TOP_K') or 0}")
+    extras = [f"merge={env['EVAL_MERGE']}" if env.get("EVAL_MERGE") else "",
+              f"split={env['EVAL_SPLIT_BM25']}" if env.get("EVAL_SPLIT_BM25") else "",
+              "codenorm=off" if env.get("EVAL_CODE_NORMALIZATION") == "off" else ""]
+    return " ".join([text, *[e for e in extras if e]])
+
+
+def recall_in_corpus(rows: pd.DataFrame, k: int) -> float:
+    """Recall@k counting only the expected documents present in the chunks.
+
+    :param rows: paired rows of one configuration
+    :param k: number of distinct documents looked at
+    :return: mean recall, NaN when no question has an expected document in the chunks
+    """
+    values = []
+    for expected, retrieved in zip(rows["expected"], rows["retrieved"]):
+        present = [ref for ref in expected if ref in corpus_refs]
+        if present:
+            values.append(len(set(present) & set(refs(retrieved)[:k])) / len(present))
+    return float(np.mean(values)) if values else float("nan")
+
+
+def kpi_table() -> pd.DataFrame:
+    """Key indicators, one row per configuration, on the paired questions.
+
+    :return: the table, configurations in the order of the run
     """
     rows = []
     for name in RUN:
-        s = summary[summary["config"] == name].iloc[0]
-        row = {"config": name, "spec": CONFIGS[name]["spec"], "questions": int(s["n_questions"])}
-        # A K above the documents the configuration sends would score the whole context again: n/a.
-        sent = s["n_docs"]
-        row.update({f"Recall@{k}": s[f"recall_at_{k}"] if k <= sent else float("nan") for k in KS})
-        row["Recall@all"] = s["recall_at_all"]
-        row.update({f"AllRefs@{k}": s[f"all_refs_at_{k}"] if k <= sent else float("nan")
-                    for k in KS if k in (5, K_MAIN)})
-        row["AllRefs@all"] = s["all_refs_at_all"]
-        row["MRR@all"] = s["mrr_at_all"]
-        row.update({"p95 latency (s)": s["search_p95_s"], "documents": s["n_docs"], "passages": s["n_passages"],
-                    "characters": s["chars"]})
-        rows.append(row)
-    board = pd.DataFrame(rows)
-    ref = board[board["config"] == reference].iloc[0]
-    for column in (f"Recall@{min(5, max(KS))}", f"Recall@{K_MAIN}", "Recall@all", "MRR@all"):
-        if column in board:
-            board[f"Δ {column}"] = board[column] - ref[column]
-    return board
+        f = paired[paired["config"] == name]
+        own = success[success["config"] == name]
+        rows.append({
+            "configuration": name,
+            "passages per query (first msg / other)": search_sizes(name),
+            "questions": len(f),
+            "errors": int(((pdf["config"] == name) & pdf["error"].notna()).sum()),
+            f"≥1 expected doc in top {K5}": (f[f"mrr_at_{K5}"] > 0).mean(),
+            f"≥1 expected doc in top {K_MAIN}": (f[f"mrr_at_{K_MAIN}"] > 0).mean(),
+            f"expected docs found in top {K_MAIN}": f[f"recall_at_{K_MAIN}"].mean(),
+            "same, docs present in the chunks only": recall_in_corpus(f, K_MAIN),
+            f"every expected doc in top {K_MAIN}": f[f"all_refs_at_{K_MAIN}"].mean(),
+            "expected docs found in the whole context": f["recall_at_all"].mean(),
+            "MRR": f["mrr_at_all"].mean(),
+            "docs sent to the LLM": own["n_docs"].mean(),
+            "p95 latency (s)": own["latency_s"].quantile(0.95),
+        })
+    table = pd.DataFrame(rows)
+    main = f"expected docs found in top {K_MAIN}"
+    table[f"Δ {main} vs {RUN[0]}"] = table[main] - table[main].iloc[0]
+    return table
 
 
-def styled(board: pd.DataFrame):
-    """Scoreboard with percentages, deltas in green / red and the best value of each metric in bold.
+def styled_kpi(table: pd.DataFrame):
+    """Key indicators with percentages, the best value of each share in bold and the delta in green or red.
 
-    :param board: output of ``scoreboard_table``
+    :param table: output of ``kpi_table``
     :return: pandas Styler
     """
-    share = [c for c in board.columns if c.startswith(("Recall@", "AllRefs@"))]
-    delta = [c for c in board.columns if c.startswith("Δ")]
-    fmt = {c: "{:.1%}" for c in share}
-    fmt.update({c: "{:+.1%}" if "MRR" not in c else "{:+.3f}" for c in delta})
-    fmt.update({"MRR@all": "{:.3f}", "p95 latency (s)": "{:.1f}", "documents": "{:.1f}",
-                "passages": "{:.1f}", "characters": "{:,.0f}"})
+    delta = [c for c in table.columns if c.startswith("Δ")]
+    share = [c for c in table.columns if c.startswith(("≥1", "expected", "same", "every"))]
+    fmt = {**{c: "{:.0%}" for c in share}, **{c: "{:+.0%}" for c in delta},
+           "MRR": "{:.2f}", "docs sent to the LLM": "{:.1f}", "p95 latency (s)": "{:.1f}"}
 
     def sign(value: float) -> str:
         """CSS color of a delta.
@@ -1108,9 +1180,43 @@ def styled(board: pd.DataFrame):
         """
         return "" if pd.isna(value) or abs(value) < 1e-9 else f"color: {'#0ca30c' if value > 0 else '#d03b3b'}"
 
-    style = (board.style.format(fmt, na_rep="n/a").hide(axis="index")
-             .highlight_max(subset=share + ["MRR@all"], props="font-weight: bold"))
+    style = (table.style.format(fmt, na_rep="n/a").hide(axis="index")
+             .highlight_max(subset=share + ["MRR"], props="font-weight: bold"))
     return (style.map if hasattr(style, "map") else style.applymap)(sign, subset=delta)
+
+
+def doc_rank(ref: str, retrieved: list[str]) -> int | None:
+    """Rank (1-based) of one document among the retrieved ones.
+
+    :param ref: canonical reference
+    :param retrieved: retrieved references, in context order
+    :return: the rank, None when not retrieved
+    """
+    docs = refs(retrieved)
+    return docs.index(ref) + 1 if ref in docs else None
+
+
+def misses_table() -> pd.DataFrame:
+    """Every expected document outside the top 10 of at least one configuration, with its rank everywhere.
+
+    :return: rows ``cause``, ``question``, ``expected document`` and one rank column per configuration
+        (``-`` = not sent to the LLM)
+    """
+    by_key = {(r["config"], r["case_id"]): r for _, r in paired.iterrows()}
+    rows = []
+    for case in ELIGIBLE:
+        if case["case_id"] not in common_ids:
+            continue
+        for ref in case["expected"]:
+            ranks = {name: doc_rank(ref, by_key[(name, case["case_id"])]["retrieved"]) for name in RUN}
+            if all(rank is not None and rank <= K_MAIN for rank in ranks.values()):
+                continue
+            cause = ("absent from the chunks" if ref not in corpus_refs else
+                     "in the chunks, never sent" if all(rank is None for rank in ranks.values()) else
+                     f"sent, but after rank {K_MAIN} somewhere")
+            rows.append({"cause": cause, "question": case["question"], "expected document": ref,
+                         **{name: "-" if rank is None else str(rank) for name, rank in ranks.items()}})
+    return pd.DataFrame(rows).sort_values(["cause", "question"]) if rows else pd.DataFrame()
 
 
 def ranks_table() -> pd.DataFrame:
@@ -1118,9 +1224,8 @@ def ranks_table() -> pd.DataFrame:
 
     :return: rows ``case_id``, ``question``, ``lang``, ``has_code``, ``expected`` and one column per configuration
     """
-    golden_by_id = {str(r["question_id"]): r.asDict() for r in golden_rows}
     base = paired[paired["config"] == RUN[0]][["case_id", "question", "expected"]].copy()
-    base["lang"] = base["case_id"].map(lambda c: str(golden_by_id.get(c, {}).get("lang") or "unknown").lower())
+    base["lang"] = base["case_id"].map(lambda c: GOLDEN_LANG.get(c, "unknown"))
     base["has_code"] = base["question"].map(lambda q: bool(find_codes(q, accept_lowercase=True)))
     for name in RUN:
         f = paired[paired["config"] == name].set_index("case_id")
@@ -1221,45 +1326,23 @@ def slice_figure(ranks: pd.DataFrame) -> tuple[plt.Figure, pd.DataFrame]:
     return fig, table
 
 
-def moved_table(ranks: pd.DataFrame, reference: str) -> pd.DataFrame:
-    """Questions whose first expected document moved, per configuration against the reference, largest move first.
-
-    :param ranks: output of ``ranks_table``
-    :param reference: label of the reference configuration
-    :return: rows ``config``, ``change``, ``question``, ``expected``, reference rank, configuration rank
-    """
-    rows = []
-    for name in RUN:
-        if name == reference:
-            continue
-        for _, r in ranks.iterrows():
-            delta = reciprocal(r[name]) - reciprocal(r[reference])
-            if abs(delta) > 1e-12:
-                rows.append({"config": name, "change": "improved" if delta > 0 else "regressed",
-                             "question": r["question"], "lang": r["lang"], "expected": ", ".join(r["expected"]),
-                             f"rank {reference}": r[reference], "rank": r[name], "delta_rr": delta})
-    moved = pd.DataFrame(rows)
-    if moved.empty:
-        return moved
-    return moved.sort_values(["config", "delta_rr"], key=lambda s: s if s.name == "config" else -s.abs())
-
 
 if not common_ids:
     log.info("Comparison skipped: no paired question")
 else:
-    REFERENCE = RUN[0]
-    board = scoreboard_table(REFERENCE)
+    display(styled_kpi(kpi_table()))
+    display(curve_figure())
+    misses = misses_table()
+    if not misses.empty:
+        display(misses.groupby("cause").size().rename("expected documents").reset_index())
+        display(misses)
     ranks = ranks_table()
-    slice_fig, slices = slice_figure(ranks)
-    moved = moved_table(ranks, REFERENCE)
-    counts = (moved.groupby(["config", "change"]).size().unstack(fill_value=0).reindex(RUN[1:]).fillna(0).astype(int)
-              if not moved.empty else pd.DataFrame())
-
-    display(styled(board))
-    for fig in (curve_figure(), rank_figure(ranks), slice_fig):
+    slice_fig, _ = slice_figure(ranks)
+    for fig in (rank_figure(ranks), slice_fig):
         display(fig)
-    if not counts.empty:
-        display(counts.reset_index())
-        display(moved.drop(columns="delta_rr"))
+
+error_rows = pdf[pdf["error"].notna()]
+if not error_rows.empty:
+    display(error_rows[["config", "question", "error"]])
 # Figures still open at the end of a cell are drawn a second time by Databricks.
 plt.close("all")
