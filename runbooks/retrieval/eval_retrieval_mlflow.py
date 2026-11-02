@@ -10,8 +10,8 @@
 # MAGIC - **Recall@K**: share of the expected documents among the first K.
 # MAGIC - **MRR@K**: 1 / rank of the first expected document (0 when missed).
 # MAGIC - **AllRefs@K**: share of questions with every expected document among the first K.
-# MAGIC - **@all**: the same over every document the configuration sends. A K above the mean number of documents a
-# MAGIC   configuration sends is shown `n/a` (it would score the whole context again).
+# MAGIC - **@all**: the same over every document the configuration sends. A K above the documents a question gets
+# MAGIC   scores its whole context.
 # MAGIC
 # MAGIC **Outputs**
 # MAGIC - Delta table `{pipeline_write_env}_proj.qualibot.<results_table_name>`: one row per configuration and question.
@@ -91,7 +91,7 @@ log.propagate = False
 # MAGIC | `golden_table_name` | `eval_golden_retrieval` | golden questions |
 # MAGIC | `results_table_name` | `eval_retrieval_runs_golden` | one row per (configuration, question) and run |
 # MAGIC | `indexes` | `chat` | configurations to measure, see below |
-# MAGIC | `ks` | `1,3,5,10,20` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM); the scoreboard adds the whole context and shows n/a for a K above the documents a configuration sends on average |
+# MAGIC | `ks` | `1,3,5,10,20` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM); a K above the documents sent scores the whole context; the scoreboard adds the whole context (`all`) |
 # MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
 # MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval` |
 # MAGIC | `rerun_existing` | `true` | `false` reuses the saved successful rows of an unchanged question, configuration and app code |
@@ -853,8 +853,7 @@ if not success.empty and int(success["n_docs"].max()) < max(KS):
 # MAGIC One run per configuration, named after it, on the paired questions, and no other run.
 # MAGIC - **Runs > Table**: one row per configuration. Parameters `top_k`, `brute`, `fusion`, `bm25`, `codes`; metrics
 # MAGIC   `recall_05`, `recall_10`, `recall_all`, `allrefs_10`, `allrefs_all`, `mrr`, `p95_s`, `docs`, `chars`.
-# MAGIC - **Runs > Chart**, charts `recall_by_k` and `allrefs_by_k`: one line per configuration, K on the x axis (step),
-# MAGIC   K up to the documents the configuration sends.
+# MAGIC - **Runs > Chart**, charts `recall_by_k` and `allrefs_by_k`: one line per configuration, K on the x axis (step).
 # MAGIC - A run opens on one row per question with its expected and retrieved documents and its scores.
 
 # COMMAND ----------
@@ -954,20 +953,11 @@ def log_config_metrics(row: pd.Series) -> None:
         if column in row:
             log_number(key, row[column])
     for k in KS:
-        if not pd.isna(row["n_docs"]) and k <= row["n_docs"]:
-            mlflow.log_metric("recall_by_k", float(row[f"recall_at_{k}"]), step=k)
-            mlflow.log_metric("allrefs_by_k", float(row[f"all_refs_at_{k}"]), step=k)
+        mlflow.log_metric("recall_by_k", float(row[f"recall_at_{k}"]), step=k)
+        mlflow.log_metric("allrefs_by_k", float(row[f"all_refs_at_{k}"]), step=k)
 
 
-def eval_scorers(sent: float) -> list:
-    """Headline scorers of one configuration, without the K above the documents it sends.
-
-    :param sent: mean number of distinct documents the configuration sends
-    :return: MLflow scorers
-    """
-    kept = [c for c in HEADLINE_METRICS
-            if c.endswith("_all") or (not pd.isna(sent) and int(c.rsplit("_", 1)[1]) <= sent)]
-    return [metric_scorer(c) for c in kept] + [output_scorer(f) for f in ("n_docs", "latency_s")]
+EVAL_SCORERS = [metric_scorer(c) for c in HEADLINE_METRICS] + [output_scorer(f) for f in ("n_docs", "latency_s")]
 
 
 for name in RUN:
@@ -986,7 +976,7 @@ for name in RUN:
                          "runner": RUNNER_VERSION, "config_signature": CONFIGS[name]["signature"]})
         mlflow.log_params({**config_params(name), "spec": CONFIGS[name]["spec"], "golden_table": GOLDEN_TABLE})
         mlflow.log_dict(SETTINGS[name], "engine_settings.json")
-        mlflow.genai.evaluate(data=data, scorers=eval_scorers(row["n_docs"]))
+        mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS)
         log_config_metrics(row)
     log.info("MLflow evaluation run=%s | config=%s | questions=%d", eval_run.info.run_id, name, len(data))
 

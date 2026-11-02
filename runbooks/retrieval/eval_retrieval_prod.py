@@ -15,7 +15,7 @@
 # MAGIC - **Recall@K** : part des documents attendus parmi les K premiers.
 # MAGIC - **MRR@K** : 1 / rang du premier document attendu (0 si manqué).
 # MAGIC - **AllRefs@K** : part des questions dont tous les documents attendus sont dans les K premiers.
-# MAGIC - **@all** : la même chose sur tout le contexte envoyé. Un K au-dessus du nombre moyen de documents envoyés affiche `n/a`.
+# MAGIC - **@all** : la même chose sur tout le contexte envoyé. Un K au-dessus des documents envoyés note tout le contexte.
 
 # COMMAND ----------
 # MAGIC %md
