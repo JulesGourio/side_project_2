@@ -59,7 +59,8 @@ logger.info("%s: dropped if it existed", WRITEBACK)
 current = spark.table(CHUNKS)
 expected_rows = current.count()
 props = {r["key"]: r["value"] for r in spark.sql(f"SHOW TBLPROPERTIES {CHUNKS}").collect()}
-spark.sql(f"ALTER TABLE {CHUNKS} SET TBLPROPERTIES ({', '.join(f'{chr(39)}{p}{chr(39)} = false' for p in WRITE_PROPS)})")
+spark.sql(f"ALTER TABLE {CHUNKS} SET TBLPROPERTIES ('delta.autoOptimize.optimizeWrite' = 'false', "
+          f"'delta.autoOptimize.autoCompact' = 'false')")
 new = spark.read.parquet(IMPORT_PATH)
 if new.count() != expected_rows:
     raise RuntimeError(f"{IMPORT_PATH} has {new.count()} rows, {CHUNKS} has {expected_rows}: chunks left as it is")
