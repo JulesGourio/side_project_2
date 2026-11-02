@@ -15,8 +15,9 @@
 # MAGIC
 # MAGIC **Outputs**
 # MAGIC - Delta table `{pipeline_write_env}_proj.qualibot.<results_table_name>`: one row per configuration and question.
-# MAGIC - MLflow experiment `mlflow_experiment`: one evaluation run per configuration (one row per question, its
-# MAGIC   documents and scores).
+# MAGIC - MLflow experiment `mlflow_experiment`: one run per configuration (one row per question, its documents and
+# MAGIC   scores) and, in the experiment description, the ranking, the effect of each setting and the documents every
+# MAGIC   configuration misses.
 # MAGIC - At the end of the notebook: corpus and index check (expected documents absent from the chunks), key indicators
 # MAGIC   per configuration, recall curves, every expected document missed in the top 10 with its cause, rank per question
 # MAGIC   and MRR by slice.
@@ -849,139 +850,6 @@ if not success.empty and int(success["n_docs"].max()) < max(KS):
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## MLflow evaluation runs
-# MAGIC One run per configuration, named after it, on the paired questions, and no other run.
-# MAGIC - **Runs > Table**: one row per configuration. Parameters `top_k`, `brute`, `fusion`, `bm25`, `codes`; metrics
-# MAGIC   `recall_05`, `recall_10`, `recall_all`, `allrefs_10`, `allrefs_all`, `mrr`, `p95_s`, `docs`, `chars`.
-# MAGIC - **Runs > Chart**, charts `recall_by_k` and `allrefs_by_k`: one line per configuration, K on the x axis (step).
-# MAGIC - A run opens on one row per question with its expected and retrieved documents and its scores.
-
-# COMMAND ----------
-from mlflow.genai.scorers import scorer
-
-
-def log_number(key: str, value) -> None:
-    """Log a metric unless it is missing or not finite.
-
-    :param key: metric name
-    :param value: metric value, None or NaN for none
-    """
-    if value is None or pd.isna(value):
-        return
-    number = float(value)
-    if math.isfinite(number):
-        mlflow.log_metric(key, number)
-
-
-client.workspace.mkdirs(EXPERIMENT.rsplit("/", 1)[0])
-mlflow.set_experiment(EXPERIMENT)
-metric_columns = [f"{metric}_at_{k}" for k in KS_ALL for metric in ("recall", "mrr", "all_refs")]
-
-
-def metric_scorer(column: str):
-    """Scorer returning one metric of ``score_at_k`` for a question.
-
-    :param column: ``<metric>_at_<k>``, e.g. ``recall_at_10`` or ``recall_at_all``
-    :return: MLflow scorer named after the column
-    """
-    suffix = column.rsplit("_", 1)[1]
-    k = suffix if suffix == "all" else int(suffix)
-
-    def score(inputs: dict, outputs: dict, expectations: dict) -> float:
-        """Metric of one question.
-
-        :param inputs: the question
-        :param outputs: retrieved references in context order
-        :param expectations: expected references
-        :return: the metric value
-        """
-        return score_at_k(expectations["expected_refs"], outputs["retrieved"], k)[column]
-
-    return scorer(score, name=column)
-
-
-def output_scorer(field: str):
-    """Scorer returning a technical value stored in the outputs (documents, passages, latency).
-
-    :param field: key of ``outputs``
-    :return: MLflow scorer named after the field
-    """
-    def score(outputs: dict) -> float:
-        """Value of one question.
-
-        :param outputs: outputs of the question
-        :return: the value
-        """
-        return float(outputs[field])
-
-    return scorer(score, name=field)
-
-
-# The evaluation page shows one column per scorer: only the headline scores.
-HEADLINE_METRICS = [c for c in metric_columns
-                    if c in {f"recall_at_{k}" for k in (1, 3, 5, 10, 20)}
-                    | {"all_refs_at_5", "all_refs_at_10", "recall_at_all", "mrr_at_all", "all_refs_at_all"}]
-
-
-def config_params(name: str) -> dict[str, str]:
-    """Search settings of a configuration as short MLflow parameters, for the runs table.
-
-    :param name: configuration label
-    :return: ``top_k`` (first message / other turns), ``brute``, ``fusion``, ``bm25``, ``codes``, ``index``
-    """
-    env = {**{k: v for k, v in BASE_SEARCH_ENV.items() if v is not None}, **CONFIGS[name]["overrides"]}
-    raw = max(int(env.get("CHAT_PAIR_RAW_TOP_K") or 0), int(env.get("CHAT_RAW_TOP_K") or 0))
-    return {
-        "top_k": f"{env.get('CHAT_PAIR_RERANK_TOP_K', '?')}/{env.get('CHAT_RERANK_TOP_K', '?')}",
-        "brute": "on" if raw else "off",
-        "fusion": env.get("EVAL_MERGE", "best"),
-        "bm25": f"split {env['EVAL_SPLIT_BM25']}" if env.get("EVAL_SPLIT_BM25") else "hybrid",
-        "codes": env.get("EVAL_CODE_NORMALIZATION", "on"),
-        "index": CONFIGS[name]["index"],
-    }
-
-
-def log_config_metrics(row: pd.Series) -> None:
-    """Short scalar metrics for the runs table, and Recall / AllRefs against K as steps for the line charts.
-
-    :param row: the configuration's row of ``summary``
-    """
-    for key, column in (("recall_05", "recall_at_5"), ("recall_10", "recall_at_10"), ("recall_all", "recall_at_all"),
-                        ("allrefs_10", "all_refs_at_10"), ("allrefs_all", "all_refs_at_all"), ("mrr", "mrr_at_all"),
-                        ("p95_s", "search_p95_s"), ("docs", "n_docs"), ("passages", "n_passages"),
-                        ("chars", "chars"), ("success_fraction", "success_fraction")):
-        if column in row:
-            log_number(key, row[column])
-    for k in KS:
-        mlflow.log_metric("recall_by_k", float(row[f"recall_at_{k}"]), step=k)
-        mlflow.log_metric("allrefs_by_k", float(row[f"all_refs_at_{k}"]), step=k)
-
-
-EVAL_SCORERS = [metric_scorer(c) for c in HEADLINE_METRICS] + [output_scorer(f) for f in ("n_docs", "latency_s")]
-
-
-for name in RUN:
-    rows = paired[paired["config"] == name]
-    if rows.empty:
-        continue
-    data = [{"inputs": {"question": r["question"], "case_id": r["case_id"], "division": r["division"]},
-             "outputs": {"retrieved": refs(r["retrieved"]), "n_docs": int(r["n_docs"]),
-                         "n_passages": int(r["n_passages"] or 0), "latency_s": float(r["latency_s"] or 0)},
-             "expectations": {"expected_refs": refs(r["expected"])}}
-            for _, r in rows.iterrows()]
-    row = summary[summary["config"] == name].iloc[0]
-    with mlflow.start_run(run_name=name) as eval_run:
-        mlflow.set_tags({"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
-            "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID,
-                         "runner": RUNNER_VERSION, "config_signature": CONFIGS[name]["signature"]})
-        mlflow.log_params({**config_params(name), "spec": CONFIGS[name]["spec"], "golden_table": GOLDEN_TABLE})
-        mlflow.log_dict(SETTINGS[name], "engine_settings.json")
-        mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS)
-        log_config_metrics(row)
-    log.info("MLflow evaluation run=%s | config=%s | questions=%d", eval_run.info.run_id, name, len(data))
-
-# COMMAND ----------
-# MAGIC %md
 # MAGIC ## Results
 # MAGIC 1. **Corpus and index**: an expected document absent from the chunks can never be found. It is a data gap, not a
 # MAGIC    search failure, and it explains most gaps between two environments.
@@ -1336,3 +1204,329 @@ if not error_rows.empty:
     display(error_rows[["config", "question", "error"]])
 # Figures still open at the end of a cell are drawn a second time by Databricks.
 plt.close("all")
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## MLflow
+# MAGIC Native MLflow only, one run per configuration and no other run, no artifact to open.
+# MAGIC - **Experiment page, description**: the ranking of the configurations, the effect of each setting and the questions
+# MAGIC   every configuration misses, rewritten at each execution.
+# MAGIC - **Runs > Table**: one row per configuration. Settings `top_k`, `brute`, `fusion`, `requete`, `codes`, `index`;
+# MAGIC   scores `recall_01` … `recall_20`, `recall_all`, `allrefs_10`, `mrr`, `docs` (MLflow adds `/mean`), `tokens_k`, `p95_s`.
+# MAGIC   Sort by clicking a column; group by a setting with **Group by**.
+# MAGIC - **Runs > Chart**: `recall_by_k`, one line per configuration, K on the x axis. The other charts are the bar charts
+# MAGIC   MLflow adds by itself; hide them on the screen.
+# MAGIC - **A run**: its settings in plain words as description, then the evaluation tab, one row per question with its
+# MAGIC   expected and retrieved documents and its scores. **Compare** on two runs shows the questions side by side.
+
+# COMMAND ----------
+from mlflow.genai.scorers import scorer
+from mlflow.tracking import MlflowClient
+
+K10 = 10 if 10 in KS else max(KS)
+CHARS_PER_TOKEN = 3.5  # technical French, the constant of the parsing pipeline
+NOISE = 1 / max(1, len(common_ids))  # one question
+SETTINGS_ORDER = ["top_k", "brute", "fusion", "requete", "data"]
+SETTING_LABELS = {"top_k": "Top-k", "brute": "Recherche brute", "fusion": "Fusion", "requete": "Requête",
+                  "data": "Index et codes"}
+# MLflow column name -> (score column of ``score_at_k``, K)
+SCORER_COLUMNS = {**{f"recall_{k:02d}": (f"recall_at_{k}", k) for k in KS}, "recall_all": ("recall_at_all", "all"),
+                  f"allrefs_{K10}": (f"all_refs_at_{K10}", K10), "mrr": ("mrr_at_all", "all")}
+
+
+def log_number(key: str, value) -> None:
+    """Log a metric unless it is missing or not finite.
+
+    :param key: metric name
+    :param value: metric value, None or NaN for none
+    """
+    if value is None or pd.isna(value):
+        return
+    number = float(value)
+    if math.isfinite(number):
+        mlflow.log_metric(key, number)
+
+
+def metric_scorer(name: str, column: str, k: int | str):
+    """Scorer returning one score of ``score_at_k`` for a question.
+
+    :param name: MLflow name, e.g. ``recall_05``
+    :param column: score column, e.g. ``recall_at_5``
+    :param k: K of that score, or ``all``
+    :return: MLflow scorer
+    """
+    def score(inputs: dict, outputs: dict, expectations: dict) -> float:
+        """Score of one question.
+
+        :param inputs: the question
+        :param outputs: retrieved references in context order
+        :param expectations: expected references
+        :return: the score
+        """
+        return score_at_k(expectations["expected_refs"], outputs["retrieved"], k)[column]
+
+    return scorer(score, name=name)
+
+
+def docs_scorer():
+    """Scorer returning the documents sent to the LLM for a question.
+
+    :return: MLflow scorer named ``docs``
+    """
+    def docs(outputs: dict) -> float:
+        """Documents of one question.
+
+        :param outputs: outputs of the question
+        :return: the number of distinct documents
+        """
+        return float(outputs["n_docs"])
+
+    return scorer(docs, name="docs")
+
+
+EVAL_SCORERS = [metric_scorer(name, column, k) for name, (column, k) in SCORER_COLUMNS.items()] + [docs_scorer()]
+
+
+def settings(name: str) -> dict[str, str]:
+    """Search settings of a configuration, as short MLflow parameters.
+
+    :param name: configuration label
+    :return: ``top_k`` (first message / other turns), ``brute``, ``fusion``, ``requete``, ``codes``, ``index``
+    """
+    env = {**{k: v for k, v in BASE_SEARCH_ENV.items() if v is not None}, **CONFIGS[name]["overrides"]}
+    raw = max(int(env.get("CHAT_PAIR_RAW_TOP_K") or 0), int(env.get("CHAT_RAW_TOP_K") or 0))
+    return {
+        "top_k": f"{env.get('CHAT_PAIR_RERANK_TOP_K', '?')}/{env.get('CHAT_RERANK_TOP_K', '?')}",
+        "brute": "on" if raw else "off",
+        "fusion": "rrf" if env.get("EVAL_MERGE") == "rrf" else "best",
+        "requete": f"ann+bm25 {env['EVAL_SPLIT_BM25']}" if env.get("EVAL_SPLIT_BM25") else "hybrid",
+        "codes": env.get("EVAL_CODE_NORMALIZATION", "on"),
+        "index": CONFIGS[name]["index"].rsplit(".", 1)[-1],
+    }
+
+
+def describe(params: dict[str, str]) -> str:
+    """The settings of a configuration in plain French.
+
+    :param params: output of ``settings``
+    :return: e.g. ``Top-k 16/12 · brute coupée · fusion meilleur rang · HYBRID · codes normalisés``
+    """
+    parts = [f"Top-k {params['top_k']}", "brute active" if params["brute"] == "on" else "brute coupée",
+             "fusion RRF" if params["fusion"] == "rrf" else "fusion meilleur rang",
+             "HYBRID" if params["requete"] == "hybrid" else f"ANN + BM25 séparés (poids BM25 {params['requete'][9:]})",
+             "codes normalisés" if params["codes"] == "on" else "sans normalisation des codes"]
+    if params["index"] != CONFIGS[RUN[0]]["index"].rsplit(".", 1)[-1]:
+        parts.append(f"index {params['index']}")
+    return " · ".join(parts)
+
+
+def tokens_k(row) -> float:
+    """Approximate thousands of tokens of passages a configuration sends to the LLM.
+
+    :param row: the configuration's row of ``summary``
+    :return: thousands of tokens
+    """
+    return row["chars"] / CHARS_PER_TOKEN / 1000
+
+
+def pct(value: float) -> str:
+    """A share as a French percentage with one decimal.
+
+    :param value: share from 0 to 1, NaN for none
+    :return: e.g. ``82,9 %``
+    """
+    return "–" if pd.isna(value) else f"{100 * value:.1f} %".replace(".", ",")
+
+
+def num(value: float, digits: int = 1) -> str:
+    """A number in French notation.
+
+    :param value: the number, NaN for none
+    :param digits: decimals
+    :return: e.g. ``13,4``
+    """
+    return "–" if pd.isna(value) else f"{value:.{digits}f}".replace(".", ",")
+
+
+def points(value: float, digits: int = 1, scale: float = 100.0) -> str:
+    """A delta with its sign, in points by default.
+
+    :param value: the delta
+    :param digits: decimals
+    :param scale: 100 for points of a share, 1 for a raw value
+    :return: e.g. ``+9,4``
+    """
+    if pd.isna(value):
+        return "–"
+    v = value * scale
+    return ("+" if v > 1e-9 else "−" if v < -1e-9 else "±") + f"{abs(v):.{digits}f}".replace(".", ",")
+
+
+def verdict(deltas: list[float]) -> str:
+    """One word on a change, read against the noise of one question.
+
+    :param deltas: one delta per pair of configurations, as share differences
+    :return: ``gagne``, ``perd``, ``sans effet`` or ``mitigé``
+    """
+    if all(d > NOISE / 2 for d in deltas):
+        return "**gagne**"
+    if all(d < -NOISE / 2 for d in deltas):
+        return "**perd**"
+    if all(abs(d) <= NOISE for d in deltas):
+        return "sans effet"
+    return "mitigé"
+
+
+def ranking(rows: dict[str, dict]) -> list[str]:
+    """Configurations, best Recall@5 first, then best MRR.
+
+    :param rows: label -> row of ``summary``
+    :return: labels
+    """
+    k5 = f"recall_at_{5 if 5 in KS else min(KS)}"
+    return sorted(rows, key=lambda n: (-rows[n][k5], -rows[n]["mrr_at_all"]))
+
+
+def ranking_markdown(rows: dict[str, dict], params: dict[str, dict], reference: str) -> str:
+    """Markdown table of the ranking.
+
+    :param rows: label -> row of ``summary``
+    :param params: label -> output of ``settings``
+    :param reference: label of the reference configuration
+    :return: markdown
+    """
+    k5 = 5 if 5 in KS else min(KS)
+    head = ([f"R@{k}" for k in KS] + ["R@all", f"AllRefs@{K10}", "MRR", "Docs", "k tokens", "p95 s", f"Δ R@{k5} vs réf."])
+    lines = ["| # | Configuration | Réglages | " + " | ".join(head) + " |", "|" + "---|" * (len(head) + 3)]
+    ref = rows[reference]
+    for i, name in enumerate(ranking(rows), 1):
+        r = rows[name]
+        cells = ([pct(r[f"recall_at_{k}"]) for k in KS]
+                 + [pct(r["recall_at_all"]), pct(r[f"all_refs_at_{K10}"]), num(r["mrr_at_all"], 3), num(r["n_docs"]),
+                    num(tokens_k(r)), num(r["search_p95_s"]), points(r[f"recall_at_{k5}"] - ref[f"recall_at_{k5}"])])
+        label = f"**{name}** (réf.)" if name == reference else f"**{name}**"
+        lines.append(f"| {i} | {label} | {describe(params[name])} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def effects_markdown(rows: dict[str, dict], params: dict[str, dict], reference: str) -> str:
+    """Markdown table of what changing one setting does, over every pair of configurations that differ by it only.
+
+    :param rows: label -> row of ``summary``
+    :param params: label -> output of ``settings``
+    :param reference: label of the reference configuration
+    :return: markdown, empty when no pair differs by one setting only
+    """
+    values = {n: {**{s: params[n][s] for s in SETTINGS_ORDER[:-1]},
+                  "data": f"{params[n]['index']} · codes {params[n]['codes']}"} for n in rows}
+
+    def order(setting: str, value: str) -> tuple:
+        """Sort key of a setting value: the reference's value first, then sizes in increasing order.
+
+        :param setting: name of the setting
+        :param value: its value
+        :return: sort key
+        """
+        digits = re.findall(r"\d+(?:\.\d+)?", value)
+        return (value != values[reference][setting], float(digits[0]) if digits else 0.0, value)
+
+    groups: dict[tuple, list[tuple[str, str]]] = {}
+    for setting in SETTINGS_ORDER:
+        buckets: dict[tuple, list[str]] = {}
+        for n in rows:
+            buckets.setdefault(tuple(values[n][s] for s in SETTINGS_ORDER if s != setting), []).append(n)
+        for members in buckets.values():
+            distinct = sorted({values[n][setting] for n in members}, key=lambda v: order(setting, v))
+            if len(distinct) < 2:
+                continue
+            base = next(n for n in members if values[n][setting] == distinct[0])
+            for n in members:
+                if values[n][setting] != distinct[0]:
+                    groups.setdefault((setting, distinct[0], values[n][setting]), []).append((base, n))
+    if not groups:
+        return ""
+    k5 = f"recall_at_{5 if 5 in KS else min(KS)}"
+    lines = ["| Réglage changé | De → à | Paires | Δ R@5 | Δ R@all | Δ MRR | Δ contexte (k tokens) | Verdict (R@5) |",
+             "|---|---|---|---|---|---|---|---|"]
+    for (setting, start, end), pairs in sorted(groups.items(),
+                                                key=lambda g: (SETTINGS_ORDER.index(g[0][0]), order(g[0][0], g[0][2]))):
+        def mean(key: str) -> float:
+            """Mean delta of a score over the pairs.
+
+            :param key: score column of ``summary``
+            :return: the mean
+            """
+            return sum(rows[b][key] - rows[a][key] for a, b in pairs) / len(pairs)
+
+        ctx = sum(tokens_k(rows[b]) - tokens_k(rows[a]) for a, b in pairs) / len(pairs)
+        lines.append(f"| {SETTING_LABELS[setting]} | {start} → {end} | {len(pairs)} | {points(mean(k5))} | "
+                     f"{points(mean('recall_at_all'))} | {points(mean('mrr_at_all'), 3, 1)} | {points(ctx, 1, 1)} | "
+                     f"{verdict([rows[b][k5] - rows[a][k5] for a, b in pairs])} |")
+    return "\n".join(lines)
+
+
+def missed_by_all_markdown() -> str:
+    """Markdown table of the expected documents that no configuration puts in its top 10.
+
+    :return: markdown, empty when there is none
+    """
+    misses = misses_table()
+    if misses.empty:
+        return ""
+    gone = misses[misses[RUN].apply(lambda r: all(v == "-" or int(v) > K10 for v in r), axis=1)]
+    if gone.empty:
+        return ""
+    lines = ["| Question | Document attendu | Cause |", "|---|---|---|"]
+    for _, r in gone.iterrows():
+        q = str(r["question"]).replace("|", "/")
+        cause = {"absent from the chunks": "absent des chunks", "in the chunks, never sent": "dans les chunks, jamais envoyé"
+                 }.get(r["cause"], f"envoyé, mais après le rang {K10}")
+        lines.append(f"| {q} | {r['expected document']} | {cause} |")
+    return "\n".join(lines)
+
+
+if common_ids:
+    client.workspace.mkdirs(EXPERIMENT.rsplit("/", 1)[0])
+    experiment_id = mlflow.set_experiment(EXPERIMENT).experiment_id
+    REFERENCE = RUN[0]
+    ROWS = {name: summary[summary["config"] == name].iloc[0].to_dict() for name in RUN}
+    PARAMS = {name: settings(name) for name in RUN}
+    ORDER = ranking(ROWS)
+    run_date = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    tags = {"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
+            "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID, "runner": RUNNER_VERSION}
+    for name in ORDER:
+        rows = paired[paired["config"] == name]
+        data = [{"inputs": {"question": r["question"], "case_id": r["case_id"], "division": r["division"]},
+                 "outputs": {"retrieved": refs(r["retrieved"]), "n_docs": int(r["n_docs"])},
+                 "expectations": {"expected_refs": refs(r["expected"])}}
+                for _, r in rows.iterrows()]
+        rank = ORDER.index(name) + 1
+        with mlflow.start_run(run_name=name) as eval_run:
+            mlflow.set_tags({**tags, "config_signature": CONFIGS[name]["signature"], "spec": CONFIGS[name]["spec"][:250],
+                             "mlflow.note.content": f"{describe(PARAMS[name])}\n\n{rank}e sur {len(RUN)} au Recall@5 "
+                                                    f"({pct(ROWS[name][f'recall_at_{5 if 5 in KS else min(KS)}'])}), "
+                                                    f"exécution du {run_date}."})
+            mlflow.log_params(PARAMS[name])
+            mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS)
+            log_number("tokens_k", tokens_k(ROWS[name]))
+            log_number("p95_s", ROWS[name]["search_p95_s"])
+            for k in KS:
+                mlflow.log_metric("recall_by_k", float(ROWS[name][f"recall_at_{k}"]), step=k)
+        log.info("MLflow run=%s | config=%s | questions=%d", eval_run.info.run_id, name, len(data))
+
+    effects = effects_markdown(ROWS, PARAMS, REFERENCE)
+    missed = missed_by_all_markdown()
+    note = "\n\n".join(part for part in [
+        f"## Dernière exécution : {run_date}",
+        f"{len(RUN)} configurations, {len(common_ids)} questions, référence **{REFERENCE}**. Recall@K : part des "
+        f"documents attendus dans les K premiers documents envoyés au modèle (au-delà des documents envoyés, tout le "
+        f"contexte). AllRefs : part des questions dont tous les documents attendus y sont. MRR : 1 / rang du premier "
+        f"document attendu. Une question vaut {num(100 * NOISE)} point.",
+        "### Classement (meilleur Recall@5 d'abord)", ranking_markdown(ROWS, PARAMS, REFERENCE),
+        "### Effet de chaque réglage" if effects else "",
+        "Chaque ligne compare des paires de configurations identiques sauf ce réglage." if effects else "", effects,
+        f"### Documents attendus qu'aucune configuration ne met dans son top {K10}" if missed else "", missed,
+    ] if part)
+    MlflowClient().set_experiment_tag(experiment_id, "mlflow.note.content", note)
+    log.info("MLflow experiment %s: %d runs, description updated", EXPERIMENT, len(RUN))
