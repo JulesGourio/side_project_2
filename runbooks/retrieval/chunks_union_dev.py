@@ -21,7 +21,10 @@ PROD_CHUNKS = "prod_proj.qualibot.chunks"
 TARGET_TABLE = "dev_proj.qualibot.chunks_union_prod"
 
 dev = spark.table(DEV_CHUNKS)
-prod = spark.table(PROD_CHUNKS).select(*dev.columns)
+# DEV may carry columns PROD lacks: PROD rows get them empty; the switch writes only the columns of PROD chunks.
+prod_raw = spark.table(PROD_CHUNKS)
+prod = prod_raw.select(*[F.col(f.name).cast(f.dataType).alias(f.name) if f.name in prod_raw.columns
+                         else F.lit(None).cast(f.dataType).alias(f.name) for f in dev.schema.fields])
 dev_docs = dev.select("IDDOC").distinct()
 dev_ids = dev.select("chunk_id").distinct()
 
