@@ -1153,6 +1153,22 @@ WHERE document_reference = 'MI-17993' AND revision_status_code = 1
 
 AA3. Refaire le sync des index DEV. Les 26 documents courants sans catégorie qui ont un historique dans le périmètre entrent dans le périmètre à tout run suivant ; `parse_filter` vide les parse tous.
 
+AB. Recherche du chat : 32 passages rerankés par requête, sans brute, triés par score du reranker, 50 max (commit f7da023, 2026-11-02).
+
+AB1. Bitbucket > Pipelines > Run pipeline > branche > `custom: deploy-dev`.
+
+AB2. Poser une question dans l'app DEV, puis dans l'éditeur SQL Lakebase DEV :
+
+```sql
+SELECT c.position, c.kept, c.drop_reason, h->>'q' AS q, (h->>'rank')::int AS rnk, (h->>'score')::float AS score
+FROM chat_retrieved_chunks c, jsonb_array_elements(c.hits) h
+WHERE c.trace_id = (SELECT trace_id FROM chat_turns ORDER BY created_at DESC LIMIT 1)
+  AND h->>'via' = 'rerank'
+ORDER BY q, rnk;
+```
+
+Attendu : `score` décroît quand `rnk` augmente dans chaque `q` (c'est bien le score du reranker), `position` suit le score, `drop_reason = over_cap` après 50.
+
 ## Fait
 
 - 2026-10-21 — Division COMMUN et exclusion de ONE_QMS-5S (section H) validées en DEV : `parse_manifest` = 5 242 documents (COMMUN 2 793, AS 1 953, AUTRE 249, sans division 110, IS 95, DIRECTIVE 42). Reste : reconstruire `chunks` et synchroniser l'index DEV pour que le chat utilise ces divisions.
