@@ -141,7 +141,7 @@ for name, default in [
     ("results_table_name", "eval_retrieval_runs_golden"),
     ("indexes", "chat"),
     ("reference", ""),
-    ("ks", "1,3,5,10,20"),
+    ("ks", "1,3,5,10,20,50"),
     ("max_parallel", "1"),
     ("mlflow_experiment", ""),
 ]:
@@ -202,7 +202,8 @@ def preset_configs(preset: str) -> str:
 
 PRESET = dbutils.widgets.get("preset")
 INDEXES = dbutils.widgets.get("indexes").strip() if PRESET == "perso" else preset_configs(PRESET)
-KS = sorted({int(x.strip()) for x in dbutils.widgets.get("ks").split(",") if x.strip()})
+# K = 50 is always measured: the presets send up to about 50 documents.
+KS = sorted({int(x.strip()) for x in dbutils.widgets.get("ks").split(",") if x.strip()} | {50})
 if not KS or any(x < 1 for x in KS):
     raise ValueError("ks must contain positive integers")
 # "all" = every document the configuration sends to the model.
@@ -1224,7 +1225,8 @@ def recall_in_corpus(rows: pd.DataFrame, k: int) -> float:
     return float(np.mean(values)) if values else float("nan")
 
 
-KPI_SHARES = [f"≥1 doc @{K5}", f"≥1 doc @{K_MAIN}", f"R@{K_MAIN}", f"R@{K_MAIN} indexés", f"AllRefs@{K_MAIN}", "R@all"]
+KPI_SHARES = [f"≥1 doc @{K5}", f"≥1 doc @{K_MAIN}", f"R@{K_MAIN}", f"R@{K_MAIN} indexés", f"AllRefs@{K_MAIN}", "R@50",
+              "R@all"]
 KPI_DELTA = f"Δ R@{K_MAIN}"
 
 
@@ -1237,11 +1239,12 @@ def kpi_table() -> pd.DataFrame:
     for name in ORDER:
         f = paired[paired["config"] == name]
         own = success[success["config"] == name]
-        rows.append(dict(zip(["Config", "Top-k", "Questions", "Erreurs", *KPI_SHARES, "MRR", "Docs", "Req. VS"], [
+        rows.append(dict(zip(["Config", "Top-k", "Questions", "Erreurs", *KPI_SHARES, "MRR", "Docs", "Chunks", "Req. VS"], [
             name, search_sizes(name), len(f), int(((pdf["config"] == name) & pdf["error"].notna()).sum()),
             (f[f"mrr_at_{K5}"] > 0).mean(), (f[f"mrr_at_{K_MAIN}"] > 0).mean(), f[f"recall_at_{K_MAIN}"].mean(),
-            recall_in_corpus(f, K_MAIN), f[f"all_refs_at_{K_MAIN}"].mean(), f["recall_at_all"].mean(),
-            f["mrr_at_all"].mean(), own["n_docs"].mean(), vs_queries(name)])))
+            recall_in_corpus(f, K_MAIN), f[f"all_refs_at_{K_MAIN}"].mean(), f["recall_at_50"].mean(),
+            f["recall_at_all"].mean(), f["mrr_at_all"].mean(), own["n_docs"].mean(), own["n_passages"].mean(),
+            vs_queries(name)])))
     table = pd.DataFrame(rows)
     main = f"R@{K_MAIN}"
     table[KPI_DELTA] = table[main] - table.loc[table["Config"] == REFERENCE, main].iloc[0]
@@ -1255,7 +1258,7 @@ def styled_kpi(table: pd.DataFrame) -> "pd.io.formats.style.Styler":
     :return: pandas Styler
     """
     fmt = {**{c: "{:.0%}" for c in KPI_SHARES}, KPI_DELTA: lambda v: f"{100 * v:+.1f}",
-           "MRR": "{:.2f}", "Docs": "{:.0f}"}
+           "MRR": "{:.2f}", "Docs": "{:.0f}", "Chunks": "{:.0f}"}
 
     def sign(value: float) -> str:
         """CSS color of a delta.
@@ -1537,8 +1540,8 @@ plt.close("all")
 # MAGIC - **Experiment page, description**: the ranking of the configurations, the effect of each setting and the questions
 # MAGIC   every configuration misses, rewritten at each execution.
 # MAGIC - **Runs > Table**: one row per configuration. Settings `top_k`, `brute`, `fusion`, `seuil`, `recherche`, `codes`, `index`,
-# MAGIC   `requetes_vs`; scores `recall_01` … `recall_20`, `recall_all`, `allrefs_10`, `allrefs_50`,
-# MAGIC   `allrefs_all`, `mrr_01` … `mrr_50`, `mrr_all`, `docs` (MLflow adds `/mean`),
+# MAGIC   `requetes_vs`; scores `recall_01` … `recall_50`, `recall_all`, `allrefs_10`, `allrefs_50`,
+# MAGIC   `allrefs_all`, `mrr_01` … `mrr_50`, `mrr_all`, `docs`, `chunks` (MLflow adds `/mean`),
 # MAGIC   `tokens_k`.
 # MAGIC   Sort by clicking a column; group by a setting with **Group by**.
 # MAGIC - **Runs > Chart**: `recall_by_k`, one line per configuration, K on the x axis. The other charts are the bar charts
@@ -1612,7 +1615,24 @@ def docs_scorer() -> object:
     return scorer(docs, name="docs")
 
 
-EVAL_SCORERS = [metric_scorer(name, column, k) for name, (column, k) in SCORER_COLUMNS.items()] + [docs_scorer()]
+def chunks_scorer() -> object:
+    """Scorer returning the passages sent to the LLM for a question.
+
+    :return: MLflow scorer named ``chunks``
+    """
+    def chunks(outputs: dict) -> float:
+        """Passages of one question.
+
+        :param outputs: outputs of the question
+        :return: the number of passages sent
+        """
+        return float(outputs.get("n_passages") or 0)
+
+    return scorer(chunks, name="chunks")
+
+
+EVAL_SCORERS = ([metric_scorer(name, column, k) for name, (column, k) in SCORER_COLUMNS.items()]
+                + [docs_scorer(), chunks_scorer()])
 
 
 def pct(value: float) -> str:
@@ -1672,14 +1692,15 @@ def ranking_markdown(rows: dict[str, dict], params: dict[str, dict], reference: 
     :return: markdown
     """
     k5 = 5 if 5 in KS else min(KS)
-    head = ([f"R@{k}" for k in KS] + ["R@all", f"AllRefs@{K10}", "AllRefs@all", "MRR", "Docs", "k tokens", f"Δ R@{k5} vs réf."])
+    head = ([f"R@{k}" for k in KS] + ["R@all", f"AllRefs@{K10}", "AllRefs@all", "MRR", "Docs", "Chunks", "k tokens",
+                                      f"Δ R@{k5} vs réf."])
     lines = ["| # | Configuration | Réglages | " + " | ".join(head) + " |", "|" + "---|" * (len(head) + 3)]
     ref = rows[reference]
     for i, name in enumerate(ranking(rows), 1):
         r = rows[name]
         cells = ([pct(r[f"recall_at_{k}"]) for k in KS]
                  + [pct(r["recall_at_all"]), pct(r[f"all_refs_at_{K10}"]), pct(r["all_refs_at_all"]),
-                    num(r["mrr_at_all"], 3), num(r["n_docs"]),
+                    num(r["mrr_at_all"], 3), num(r["n_docs"]), num(r["n_passages"]),
                     num(tokens_k(r)), points(r[f"recall_at_{k5}"] - ref[f"recall_at_{k5}"])])
         label = f"**{name}** (réf.)" if name == reference else f"**{name}**"
         lines.append(f"| {i} | {label} | {describe(params[name])} | " + " | ".join(cells) + " |")
@@ -1771,7 +1792,8 @@ if common_ids:
     for name in ORDER:
         rows = paired[paired["config"] == name]
         data = [{"inputs": {"question": r["question"], "case_id": r["case_id"], "division": r["division"]},
-                 "outputs": {"retrieved": refs(r["retrieved"]), "n_docs": int(r["n_docs"])},
+                 "outputs": {"retrieved": refs(r["retrieved"]), "n_docs": int(r["n_docs"]),
+                             "n_passages": int(r.get("n_passages") or 0)},
                  "expectations": {"expected_refs": refs(r["expected"])}}
                 for _, r in rows.iterrows()]
         rank = ORDER.index(name) + 1

@@ -35,7 +35,7 @@ resources:
         - name: reference
           default: ""
         - name: ks
-          default: "1,3,5,10,20"
+          default: "1,3,5,10,20,50"
         - name: max_parallel
           default: "4"
         - name: rerun_existing
