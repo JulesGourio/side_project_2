@@ -92,7 +92,7 @@ log.propagate = False
 # MAGIC | `app_code_path` | empty | another app code folder; wins over `app_code_env` |
 # MAGIC | `golden_table_name` | `eval_golden_retrieval` | golden questions |
 # MAGIC | `results_table_name` | `eval_retrieval_runs_golden` | one row per (configuration, question) and run |
-# MAGIC | `preset` | `deploye` | configurations to measure: `deploye` (the app as deployed), `tailles` (`deploye`, `top16`, `top32`, `top48` without raw search), `selection` (`deploye`, then `top32` and `top48` without raw search: app merge, `-score` merge by reranker score, `-score-s005` and `-score-s02` the same with the passages under 0.05 or 0.2 cut), `complet` (`deploye`, every top-k with and without raw search and RRF, `top16-bm25-30/50/70`), `perso` (the `indexes` widget) |
+# MAGIC | `preset` | `deploye` | configurations to measure: `deploye` (the app as deployed), `tailles` (`deploye`, `top16`, `top32`, `top48` without raw search), `complet` (`deploye`, every top-k with and without raw search and RRF, `top16-bm25-30/50/70`), `perso` (the `indexes` widget) |
 # MAGIC | `indexes` | `chat` | configurations to measure when `preset = perso`, see below |
 # MAGIC | `reference` | empty | configuration every other one is compared with; empty = the first of `indexes` |
 # MAGIC | `ks` | `1,3,5,10,20` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM); a K above the documents sent scores the whole context; the scoreboard adds the whole context (`all`) |
@@ -117,12 +117,11 @@ log.propagate = False
 # MAGIC | `rewrite` | endpoint name | model of the rewrite and of the translation (`CHAT_REWRITE_ENDPOINT`) |
 # MAGIC | `effort` | `off`, `minimal`, `low`, `medium`, `high` | reasoning effort of that model (`CHAT_REWRITE_REASONING_EFFORT`) |
 # MAGIC | `codenorm` | `on`, `off` | `off`: no code normalization at all in the app (query, exact-citation lookup, language variant choice) |
-# MAGIC | `merge` | `best`, `rrf`, `score` | merge of the result lists of a turn (REF and citation lookups unchanged). `best` = the app: one row per passage at its best rank, lists interleaved rank by rank. `rrf` = each passage scores the sum of `1 / (60 + rank)` over the lists that found it, so a passage found by several queries comes first. `score` = the reranked passages by their reranker score (the French and English queries are scored by the same model), then the raw ones |
-# MAGIC | `minscore` | a number | the reranked passages whose reranker score is under it are not sent; the log gives the score quantiles of each configuration |
+# MAGIC | `merge` | `best`, `rrf` | merge of the result lists of a turn (REF and citation lookups unchanged). `best` = the app: one row per passage at its best rank, lists interleaved rank by rank. `rrf` = each passage scores the sum of `1 / (60 + rank)` over the lists that found it, so a passage found by several queries comes first |
 # MAGIC | `split` | BM25 weight from 0 to 1 | each reranked HYBRID query becomes two reranked queries, `ANN` (embeddings) and `FULL_TEXT` (BM25), of k passages each, merged by `weight / (60 + BM25 rank) + (1 - weight) / (60 + embeddings rank)`, k kept |
 # MAGIC
 # MAGIC In the presets, `topN` = N reranked passages per query of an opening message (12, 21 or 32 for the other turns),
-# MAGIC `-brute` = the raw search on, `-rrf` = the RRF merge, `-score` = the merge by reranker score, `-sNNN` = the score cut, `bm25-30` = ANN and BM25 split with a BM25 weight of 0.3.
+# MAGIC `-brute` = the raw search on, `-rrf` = the RRF merge, `bm25-30` = ANN and BM25 split with a BM25 weight of 0.3.
 # MAGIC
 # MAGIC Examples with `preset = perso`:
 # MAGIC - code normalization against the index without it (DEV only, the only workspace with that index):
@@ -147,7 +146,7 @@ for name, default in [
 ]:
     dbutils.widgets.text(name, default)
 for name, default, choices in [
-    ("preset", "deploye", ["deploye", "tailles", "selection", "complet", "perso"]),
+    ("preset", "deploye", ["deploye", "tailles", "complet", "perso"]),
     ("rerun_existing", "true", ["true", "false"]),
     ("debug", "false", ["false", "true"]),
 ]:
@@ -172,7 +171,7 @@ PRESET_TOP_K = {16: 12, 32: 21, 48: 32}
 def preset_configs(preset: str) -> str:
     """Configurations of a preset, in the syntax of the ``indexes`` widget.
 
-    :param preset: ``deploye``, ``tailles``, ``selection`` or ``complet``
+    :param preset: ``deploye``, ``tailles`` or ``complet``
     :return: comma-separated configurations, the app as deployed (``deploye``) first
     """
     def sizes(k: int, raw: bool) -> str:
@@ -188,11 +187,6 @@ def preset_configs(preset: str) -> str:
     configs = ["deploye"]
     if preset == "tailles":
         configs += [f"top{k}|{sizes(k, False)}" for k in PRESET_TOP_K]
-    elif preset == "selection":
-        configs += [f"top{k}{name}|{sizes(k, False)}{options}" for k in (32, 48)
-                    for name, options in (("", ""), ("-score", "|merge=score"),
-                                          ("-score-s005", "|merge=score|minscore=0.05"),
-                                          ("-score-s02", "|merge=score|minscore=0.2"))]
     elif preset == "complet":
         configs += [f"top{k}{'-brute' if raw else ''}{'-rrf' if rrf else ''}|{sizes(k, raw)}{'|merge=rrf' if rrf else ''}"
                     for k in PRESET_TOP_K for raw in (True, False) for rrf in (False, True)]
@@ -259,7 +253,6 @@ SIZE_KEYS = {
     "codenorm": "EVAL_CODE_NORMALIZATION",
     "merge": "EVAL_MERGE",
     "split": "EVAL_SPLIT_BM25",
-    "minscore": "EVAL_MIN_RERANK_SCORE",
 }
 TOPK_KEYS = ["CHAT_RERANK_TOP_K", "CHAT_RAW_TOP_K", "CHAT_PAIR_RERANK_TOP_K", "CHAT_PAIR_RAW_TOP_K"]
 BASE_SEARCH_ENV = {env_name: os.environ.get(env_name) for env_name in SIZE_KEYS.values()}
@@ -299,8 +292,7 @@ def parse_configs(raw: str) -> dict[str, dict]:
                 if key == "rawon" else
                 value in {"on", "off"} if key in ("translate", "codenorm") else
                 value in {"off", "low", "minimal", "medium", "high"} if key == "effort" else
-                value in {"best", "rrf", "score"} if key == "merge" else
-                bool(re.fullmatch(r"\d+(\.\d+)?", value)) if key == "minscore" else
+                value in {"best", "rrf"} if key == "merge" else
                 bool(re.fullmatch(r"(0(\.\d+)?|1(\.0+)?)", value)) if key == "split" else
                 bool(value) if key == "rewrite" else value.isdigit()
             )
@@ -347,7 +339,6 @@ def set_code_normalization(enabled: bool) -> None:
 
 RRF_K = 60
 SEARCH_ORIGINAL = {}   # "merge_by_rank" and "query" -> app functions, filled once the engine is imported
-RERANK_SCORES = []     # reranker scores of every passage of the configuration being run, before any cut
 
 
 class QueryLists(list):
@@ -370,51 +361,23 @@ def rrf_merge(lists: list) -> list:
     return sorted(rows, key=lambda row: -score[row["chunk_id"]])
 
 
-def rerank_score(row: dict) -> float | None:
-    """Best reranker score of a passage over the reranked queries that returned it.
-
-    :param row: merged search row with its ``_hits``
-    :return: the score, None when no reranked query returned the passage
-    """
-    found = [h["score"] for h in row.get("_hits") or []
-             if h.get("via") == "rerank" and isinstance(h.get("score"), (int, float))]
-    return max(found) if found else None
-
-
-def score_merge(lists: list) -> list:
-    """Merge result lists by reranker score: the reranked passages, best score first, then the others in the app's
-    order.
-
-    :param lists: result lists, each in rank order
-    :return: one row per chunk (hits of every copy kept)
-    """
-    rows = SEARCH_ORIGINAL["merge_by_rank"](lists)
-    return sorted(rows, key=lambda row: (0, -rerank_score(row)) if rerank_score(row) is not None else (1, 0))
-
-
 def eval_merge_by_rank(lists: list) -> list:
-    """Stand-in for the app's merge of the Vector Search results.
+    """Stand-in for the app's merge of the Vector Search results: the app's merge unless ``merge=rrf``.
 
-    The app merges the reranked lists, then the raw lists, then both groups. The last call applies ``merge``
-    (``best`` = the app's merge, ``rrf``, ``score``) to every list of the turn, then drops the reranked passages under
-    ``minscore``.
+    The app merges the reranked lists, then the raw lists, then both groups; with ``merge=rrf`` the last call
+    merges every list of the turn at once.
 
     :param lists: result lists in rank order, or the groups returned by the first calls
     :return: one row per chunk, best first
     """
     original = SEARCH_ORIGINAL["merge_by_rank"]
-    if not (lists and all(isinstance(group, QueryLists) for group in lists)):
-        merged = QueryLists(original(lists))
-        merged.parts = [list(rows) for rows in lists]
-        return merged
-    parts = [part for group in lists for part in group.parts]
-    mode = os.environ.get("EVAL_MERGE", "best")
-    rows = rrf_merge(parts) if mode == "rrf" else score_merge(parts) if mode == "score" else list(original(lists))
-    RERANK_SCORES.extend(score for score in map(rerank_score, rows) if score is not None)
-    floor = os.environ.get("EVAL_MIN_RERANK_SCORE")
-    if floor:
-        rows = [row for row in rows if rerank_score(row) is None or rerank_score(row) >= float(floor)]
-    return rows
+    if os.environ.get("EVAL_MERGE", "best") != "rrf":
+        return original(lists)
+    if lists and all(isinstance(group, QueryLists) for group in lists):
+        return rrf_merge([part for group in lists for part in group.parts])
+    merged = QueryLists(original(lists))
+    merged.parts = [list(rows) for rows in lists]
+    return merged
 
 
 async def eval_query(host: str, token: str, index: str, query_text: str, k: int, filters: dict,
@@ -864,7 +827,6 @@ if TOTAL:
             if not cases:
                 continue
             apply_config(CONFIGS[name])
-            RERANK_SCORES.clear()
             log.info("[%s] index=%s | cases=%d | concurrency=%d", name,
                      CONFIGS[name]["index"], len(cases), MAX_PARALLEL)
             progress.set_description(f"Golden | {name}")
@@ -913,11 +875,6 @@ if TOTAL:
                 })
             spark.createDataFrame(batch, schema=SCHEMA).write.mode("append").format("delta").saveAsTable(RESULTS_TABLE)
             ALL_ROWS.extend(batch)
-            if RERANK_SCORES:
-                ordered = sorted(RERANK_SCORES)
-                quantiles = [ordered[round(q * (len(ordered) - 1))] for q in (0, 0.05, 0.1, 0.25, 0.5, 0.75, 1)]
-                log.info("[%s] reranker scores of %d passages before any cut: min %.4f | p5 %.4f | p10 %.4f | "
-                         "p25 %.4f | median %.4f | p75 %.4f | max %.4f", name, len(RERANK_SCORES), *quantiles)
             log.info("[%s] saved=%d | errors=%d", name, len(batch),
                      sum(bool(row["error"]) for row in batch))
 else:
@@ -1143,8 +1100,7 @@ def settings(name: str) -> dict[str, str]:
     return {
         "top_k": f"{s['pair_rerank_top_k']}/{s['rerank_top_k']}",
         "brute": "on" if max(s["pair_raw_top_k"], s["raw_top_k"]) else "off",
-        "fusion": env.get("EVAL_MERGE") or "best",
-        "seuil": env.get("EVAL_MIN_RERANK_SCORE") or "off",
+        "fusion": "rrf" if env.get("EVAL_MERGE") == "rrf" else "best",
         "recherche": f"ann+bm25 {env['EVAL_SPLIT_BM25']}" if env.get("EVAL_SPLIT_BM25") else "hybrid",
         "codes": env.get("EVAL_CODE_NORMALIZATION", "on"),
         "index": CONFIGS[name]["index"].rsplit(".", 1)[-1],
@@ -1159,9 +1115,7 @@ def describe(params: dict[str, str]) -> str:
     :return: e.g. ``Top-k 16/12 · brute coupée · fusion meilleur rang · HYBRID · codes normalisés · 2 requêtes``
     """
     parts = [f"Top-k {params['top_k']}", "brute active" if params["brute"] == "on" else "brute coupée",
-             {"rrf": "fusion RRF", "score": "fusion par score du reranker"}.get(params["fusion"],
-                                                                                 "fusion meilleur rang"),
-             f"passages sous le score {params['seuil']} coupés" if params["seuil"] != "off" else "sans seuil",
+             "fusion RRF" if params["fusion"] == "rrf" else "fusion meilleur rang",
              "HYBRID" if params["recherche"] == "hybrid"
              else f"ANN + BM25 séparés (poids BM25 {params['recherche'][9:]})",
              "codes normalisés" if params["codes"] == "on" else "sans normalisation des codes",
@@ -1539,7 +1493,7 @@ plt.close("all")
 # MAGIC Native MLflow only, one run per configuration and no other run, no artifact to open.
 # MAGIC - **Experiment page, description**: the ranking of the configurations, the effect of each setting and the questions
 # MAGIC   every configuration misses, rewritten at each execution.
-# MAGIC - **Runs > Table**: one row per configuration. Settings `top_k`, `brute`, `fusion`, `seuil`, `recherche`, `codes`, `index`,
+# MAGIC - **Runs > Table**: one row per configuration. Settings `top_k`, `brute`, `fusion`, `recherche`, `codes`, `index`,
 # MAGIC   `requetes_vs`; scores `recall_01` … `recall_50`, `recall_all`, `allrefs_10`, `allrefs_50`,
 # MAGIC   `allrefs_all`, `mrr_01` … `mrr_50`, `mrr_all`, `docs`, `chunks` (MLflow adds `/mean`),
 # MAGIC   `tokens_k`.
@@ -1554,9 +1508,8 @@ from mlflow.genai.scorers import scorer
 from mlflow.tracking import MlflowClient
 
 K10 = 10 if 10 in KS else max(KS)
-SETTINGS_ORDER = ["top_k", "brute", "fusion", "seuil", "recherche", "data"]
-SETTING_LABELS = {"top_k": "Top-k", "brute": "Recherche brute", "fusion": "Fusion", "seuil": "Seuil de score",
-                  "recherche": "Recherche",
+SETTINGS_ORDER = ["top_k", "brute", "fusion", "recherche", "data"]
+SETTING_LABELS = {"top_k": "Top-k", "brute": "Recherche brute", "fusion": "Fusion", "recherche": "Recherche",
                   "data": "Index et codes"}
 # MLflow column name -> (score column of ``score_at_k``, K)
 SCORER_COLUMNS = {**{f"recall_{k:02d}": (f"recall_at_{k}", k) for k in KS}, "recall_all": ("recall_at_all", "all"),
