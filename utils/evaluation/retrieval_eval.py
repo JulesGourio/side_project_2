@@ -487,12 +487,13 @@ SEARCH_ORIGINAL.update({"merge_by_rank": engine_search._merge_by_rank, "query": 
 engine_search._merge_by_rank = eval_merge_by_rank
 engine_search._query = eval_query
 
-# The deployed app may import these functions in fewer modules: patch only those that exist.
-for module, attribute in [(engine_search, "normalize_query"), (infra_vector_search, "normalize_query"),
-                          (engine_retrieval, "normalize_query"), (engine_retrieval, "canonical_codes"),
-                          (engine_retrieval, "cited_codes_asked")]:
-    if hasattr(module, attribute):
-        CODE_NORMALIZATION_STEPS[(module, attribute)] = getattr(module, attribute)
+CODE_NORMALIZATION_STEPS.update({
+    (engine_search, "normalize_query"): engine_search.normalize_query,
+    (infra_vector_search, "normalize_query"): infra_vector_search.normalize_query,
+    (engine_retrieval, "normalize_query"): engine_retrieval.normalize_query,
+    (engine_retrieval, "canonical_codes"): engine_retrieval.canonical_codes,
+    (engine_retrieval, "cited_codes_asked"): engine_retrieval.cited_codes_asked,
+})
 
 
 if not hasattr(engine, "retrieve_for_turn"):
