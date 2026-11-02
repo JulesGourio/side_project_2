@@ -110,6 +110,12 @@ def translate_only_enabled() -> bool:
     return os.getenv('CHAT_TRANSLATE_ONLY', 'off').strip().lower() in ('on', 'true', '1', 'yes')
 
 
+def stopwords_enabled() -> bool:
+    """Off by default. On: the French and English queries the rewrite or the translation wrote lose their stop words
+    (Snowball lists, ``stopwords.py``) before the search. The question as asked is searched unchanged."""
+    return os.getenv('CHAT_STOPWORDS', 'off').strip().lower() in ('on', 'true', '1', 'yes')
+
+
 def pair_rerank_top_k() -> int:
     return max(1, _int_env('CHAT_PAIR_RERANK_TOP_K', _PAIR_RERANK_TOP_K))
 
@@ -159,7 +165,8 @@ def settings() -> Dict[str, Any]:
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),
             'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(), 'raw_on': raw_on(),
             'max_search_passages': max_search_passages(), 'passage_order': passage_order(), 'translate_only': translate_only_enabled(),
-            'pair_rerank_top_k': pair_rerank_top_k(), 'pair_raw_top_k': pair_raw_top_k()}
+            'pair_rerank_top_k': pair_rerank_top_k(), 'pair_raw_top_k': pair_raw_top_k(),
+            'stopwords': stopwords_enabled()}
 
 
 def division_prompt(division: str) -> str:

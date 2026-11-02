@@ -11,8 +11,10 @@ from server.services.chat.engine.queries import opening_language, rewrite_querie
 from server.services.chat.engine.references import cited_codes_asked, exact_citations
 from server.services.chat.engine.types import DocumentPassages, PassageRecord, RetrievalResult, SearchRow
 from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search
+from server.services.chat.engine.stopwords import remove_stopwords
 from server.services.chat.engine.config import (
     division_filter, index_name, max_search_passages, pair_raw_top_k, pair_rerank_top_k, raw_on, raw_top_k, rerank_top_k,
+    stopwords_enabled,
 )
 from utils.parsing_pipeline.code_normalization import canonical_codes, normalize_query
 
@@ -191,6 +193,15 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
                     fr_query = en_query = question
                     degraded = True
             log.prompts.insert(0, 'rewrite')
+        if stopwords_enabled():
+            # Only what the rewrite or the translation wrote: the question as asked stays a sentence, the form the
+            # embedding and the reranker read best (a degraded turn searches nothing else).
+            removed = {}
+            if fr_query != question:
+                fr_query, removed['fr'] = remove_stopwords(fr_query, 'fr')
+            if en_query != question:
+                en_query, removed['en'] = remove_stopwords(en_query, 'en')
+            log.data['stopwords_removed'] = removed
         # A rewritten turn searches only its French and English rewrites: the question as asked is a follow-up that
         # means nothing alone, a near copy of one rewrite, or a language the documents are not written in.
         queries: List[str] = []

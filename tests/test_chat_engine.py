@@ -819,3 +819,39 @@ def test_named_refs_are_deduplicated_in_order_of_appearance():
 
     with patch.object(engine.retrieval, '_catalog', lambda: Catalog()):
         assert engine.retrieval.refs_named_in('x') == ['QP-1518_FR', 'QP-1518_EN', 'MR-1465']
+
+
+# --- Stop words (CHAT_STOPWORDS) ---
+
+def test_stop_words_leave_the_queries_unchanged_by_default(monkeypatch):
+    _, m = _run(monkeypatch, rewrite='FR: la qualification des contrôles CND\nEN: the NDT qualification')
+    d = m['log'].data
+    assert (d['fr_query'], d['en_query']) == ('la qualification des contrôles CND', 'the NDT qualification')
+    assert 'stopwords_removed' not in d and d['config']['stopwords'] is False
+
+
+def test_stop_words_are_removed_from_the_rewrites(monkeypatch):
+    monkeypatch.setenv('CHAT_STOPWORDS', 'on')
+    _, m = _run(monkeypatch, rewrite='FR: la qualification des contrôles CND\nEN: the NDT qualification')
+    d = m['log'].data
+    assert (d['fr_query'], d['en_query']) == ('qualification contrôles CND', 'NDT qualification')
+    assert d['stopwords_removed'] == {'fr': ['la', 'des'], 'en': ['the']}
+    assert sorted(p['query_text'] for p in m['sent']) == sorted(['qualification contrôles CND', 'NDT qualification'])
+    assert d['config']['stopwords'] is True
+
+
+def test_stop_words_are_removed_from_the_translation_only(monkeypatch):
+    monkeypatch.setenv('CHAT_STOPWORDS', 'on')
+    _lang(monkeypatch, 'fr')
+    _, m = _run(monkeypatch, rewrite='What are the NDT qualification procedures?')
+    d = m['log'].data
+    assert (d['fr_query'], d['en_query']) == (QUESTION, 'NDT qualification procedures?')
+    assert d['stopwords_removed'] == {'en': ['What', 'are', 'the']}
+    assert sorted(p['query_text'] for p in m['sent']) == sorted([QUESTION, 'NDT qualification procedures?'])
+
+
+def test_a_degraded_turn_searches_the_question_with_its_stop_words(monkeypatch):
+    monkeypatch.setenv('CHAT_STOPWORDS', 'on')
+    _, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
+    d = m['log'].data
+    assert d['fr_query'] == d['en_query'] == QUESTION and d['stopwords_removed'] == {}
