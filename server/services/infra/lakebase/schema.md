@@ -176,7 +176,7 @@ One row per passage retrieved for a turn, with its text. The table keeps the pas
 | `created_at` | TIMESTAMPTZ | write date |
 | `turn_id` | INTEGER NOT NULL | `chat_turns.id` (deleted with the turn) |
 | `trace_id` | TEXT | `trace_id` of the turn |
-| `position` | INTEGER | order of retrieval (merged by best rank) |
+| `position` | INTEGER | order of retrieval (merged by best reranker score, `CHAT_PASSAGE_ORDER`) |
 | `kept` | BOOLEAN NOT NULL, default `TRUE` | passage passed to the model |
 | `drop_reason` | TEXT | when set aside: `other_language` (another language of the same document was preferred) or `over_cap` (beyond `CHAT_MAX_SEARCH_PASSAGES`) |
 | `prompt_rank` | INTEGER | order in the prompt (passages passed only) |
