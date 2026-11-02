@@ -40,6 +40,15 @@ def loaded() -> bool:
     return bool(_live)
 
 
+def is_cited(code: str) -> bool:
+    """Whether a canonical code is cited by at least one document of the loaded references.
+
+    :param code: canonical code, e.g. ``CS25853``
+    :return: True when ``doc_references`` holds the code
+    """
+    return code in _live
+
+
 def citing_documents(code: str, division: str = 'ALL') -> List[Dict[str, Any]]:
     """The documents citing a code, most recently published first, with their catalog title, revision and date.
 

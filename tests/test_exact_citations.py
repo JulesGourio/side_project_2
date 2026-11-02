@@ -93,6 +93,19 @@ def test_a_question_asks_for_the_citing_documents_with_a_code_and_a_citing_word(
     assert references.cited_codes_asked(question) == asked
 
 
+@pytest.mark.parametrize('question, asked', [
+    ('Quels documents font référence à la CS25853 ?', [('CS25853', 'CS25853')]),
+    ('Quels documents citent CS 25853 ?', [('CS 25853', 'CS25853')]),
+    ('Which documents cite CS25853?', [('CS25853', 'CS25853')]),
+    ('Quels documents font référence à la CS 25.853 ?', [('CS 25.853', 'CS25853')]),
+    ('Que dit la CS25853 ?', []),
+    ('Quels documents citent CS99999 ?', []),
+])
+def test_a_code_written_as_the_references_store_it_is_asked(question, asked):
+    _load(('CS25853', 'QTR-01-159', 'AS', 1), ('CS25853', 'QTP-01-159', 'AS', 1))
+    assert references.cited_codes_asked(question) == asked
+
+
 def test_references_not_loaded_are_never_read_as_cited_by_none():
     assert references.exact_citations([('SF-1027', 'SF1027')], 'ALL') == {}
 

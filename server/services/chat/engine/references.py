@@ -27,19 +27,51 @@ _CITING_WORDS_RE = re.compile(
 
 ExactCitations = Dict[str, Tuple[str, List[dict]]]
 
+# A word of the question, separators included (CS25853, CS-25.853, QTR_01-159), and a word followed by a number
+# (CS 25853): candidates looked up as they are in doc_references.
+_WORD_RE = re.compile(r"[A-Za-z0-9]+(?:[-._/][A-Za-z0-9]+)*")
+_SEPARATORS_RE = re.compile(r"[-._/\s]")
+
+
+def _cited_words(question: str) -> List[Tuple[int, str, str]]:
+    """The words of the question that are, without separators and in upper case, a code of ``doc_references``.
+
+    The detection rules of ``find_codes`` miss some written forms of a code (``CS25853`` glued); the codes the corpus
+    really cites catch them.
+
+    :param question: the user question
+    :return: ``(position, word as written, canonical code)`` triples, in order
+    """
+    words = list(_WORD_RE.finditer(question or ''))
+    found = []
+    for i, word in enumerate(words):
+        candidates = [word]
+        if i + 1 < len(words) and question[word.end():words[i + 1].start()].isspace():
+            candidates.append((word, words[i + 1]))
+        for candidate in candidates:
+            start, end = (candidate.start(), candidate.end()) if not isinstance(candidate, tuple) \
+                else (candidate[0].start(), candidate[1].end())
+            written = question[start:end]
+            code = _SEPARATORS_RE.sub('', written).upper()
+            if any(c.isdigit() for c in code) and any(c.isalpha() for c in code) and doc_references.is_cited(code):
+                found.append((start, written, code))
+    return found
+
 
 def cited_codes_asked(question: str) -> List[Tuple[str, str]]:
     """The reference codes the question asks the citing documents of.
 
     :param question: the user question, without its date line
     :return: ``(code as written, canonical code)`` pairs, in order; empty when the question names no code or does not
-        ask where it is cited
+        ask where it is cited. A code is one ``find_codes`` detects or a word that is a code of ``doc_references``.
     """
     if not _CITING_WORDS_RE.search(question or ''):
         return []
+    found = [(start, question[start:end], canon) for start, end, canon in find_codes(question, accept_lowercase=True)]
+    found += _cited_words(question)
     written: Dict[str, str] = {}
-    for start, end, canon in find_codes(question, accept_lowercase=True):
-        written.setdefault(canon, question[start:end])
+    for _, w, canon in sorted(found, key=lambda f: f[0]):
+        written.setdefault(canon, w)
     return [(w, canon) for canon, w in written.items()]
 
 
