@@ -24,16 +24,15 @@ APP_FILES = "/Workspace/.bundle/qualibot/dev/files"
 SOURCE_CHUNKS = "prod_proj.qualibot.chunks"
 CHECKPOINT = "prod_proj.qualibot.parsing_checkpoint"
 TARGET_TABLE = "dev_proj.qualibot.chunks_rechunk_prod"
-# The reranker reads the first 2,000 characters of REF + semantic_headers + chunk_text, and chunk_text starts with the
-# [Source: ...] line (about 200 characters): the body stays under 1,650. The higher minimum and target fill passages
-# up to that ceiling instead of leaving many small ones (past_rerank in the log: share of passages over 2,000).
-SIZES = {"min_tokens": 250, "target_tokens": 300, "max_tokens": 470, "max_chars": 1650,
+# The sizes the DEV chunks were cut with, which score better than the smaller PROD ones even though the reranker reads
+# only the first 2,000 characters of a passage (past_rerank in the log).
+SIZES = {"min_tokens": 250, "target_tokens": 500, "max_tokens": 1000, "max_chars": 4000,
          "overlap_ratio": 0.12, "chars_per_token": 3.5}
 RERANK_CHARS = 2000
 MAX_CHUNKS_SPREADSHEET = 100
 # Only the first MAX_CHUNKS_SPREADSHEET passages of a spreadsheet are kept: its text is cut before chunking, so a huge
 # workbook does not exhaust the memory of a Python worker.
-SPREADSHEET_MAX_CHARS = MAX_CHUNKS_SPREADSHEET * 1650 * 3
+SPREADSHEET_MAX_CHARS = MAX_CHUNKS_SPREADSHEET * SIZES["max_chars"] * 3
 BOILERPLATE_MIN_DOCS = 20
 SOURCE_PREFIX_RE = r"^(\[Source: [^\n]*\]\n\n)"
 
