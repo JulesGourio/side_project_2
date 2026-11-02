@@ -1491,7 +1491,8 @@ plt.close("all")
 # MAGIC - **Experiment page, description**: the ranking of the configurations, the effect of each setting and the questions
 # MAGIC   every configuration misses, rewritten at each execution.
 # MAGIC - **Runs > Table**: one row per configuration. Settings `top_k`, `brute`, `fusion`, `recherche`, `codes`, `index`,
-# MAGIC   `requetes_vs`; scores `recall_01` … `recall_20`, `recall_all`, `allrefs_10`, `mrr`, `docs` (MLflow adds `/mean`),
+# MAGIC   `requetes_vs`; scores `recall_01` … `recall_20`, `recall_all`, `allrefs_10`, `allrefs_50`,
+# MAGIC   `allrefs_all`, `mrr`, `docs` (MLflow adds `/mean`),
 # MAGIC   `tokens_k`.
 # MAGIC   Sort by clicking a column; group by a setting with **Group by**.
 # MAGIC - **Runs > Chart**: `recall_by_k`, one line per configuration, K on the x axis. The other charts are the bar charts
@@ -1509,7 +1510,8 @@ SETTING_LABELS = {"top_k": "Top-k", "brute": "Recherche brute", "fusion": "Fusio
                   "data": "Index et codes"}
 # MLflow column name -> (score column of ``score_at_k``, K)
 SCORER_COLUMNS = {**{f"recall_{k:02d}": (f"recall_at_{k}", k) for k in KS}, "recall_all": ("recall_at_all", "all"),
-                  f"allrefs_{K10}": (f"all_refs_at_{K10}", K10), "mrr": ("mrr_at_all", "all")}
+                  f"allrefs_{K10}": (f"all_refs_at_{K10}", K10), "allrefs_50": ("all_refs_at_50", 50),
+                  "allrefs_all": ("all_refs_at_all", "all"), "mrr": ("mrr_at_all", "all")}
 
 
 def log_number(key: str, value) -> None:
@@ -1622,13 +1624,14 @@ def ranking_markdown(rows: dict[str, dict], params: dict[str, dict], reference: 
     :return: markdown
     """
     k5 = 5 if 5 in KS else min(KS)
-    head = ([f"R@{k}" for k in KS] + ["R@all", f"AllRefs@{K10}", "MRR", "Docs", "k tokens", f"Δ R@{k5} vs réf."])
+    head = ([f"R@{k}" for k in KS] + ["R@all", f"AllRefs@{K10}", "AllRefs@all", "MRR", "Docs", "k tokens", f"Δ R@{k5} vs réf."])
     lines = ["| # | Configuration | Réglages | " + " | ".join(head) + " |", "|" + "---|" * (len(head) + 3)]
     ref = rows[reference]
     for i, name in enumerate(ranking(rows), 1):
         r = rows[name]
         cells = ([pct(r[f"recall_at_{k}"]) for k in KS]
-                 + [pct(r["recall_at_all"]), pct(r[f"all_refs_at_{K10}"]), num(r["mrr_at_all"], 3), num(r["n_docs"]),
+                 + [pct(r["recall_at_all"]), pct(r[f"all_refs_at_{K10}"]), pct(r["all_refs_at_all"]),
+                    num(r["mrr_at_all"], 3), num(r["n_docs"]),
                     num(tokens_k(r)), points(r[f"recall_at_{k5}"] - ref[f"recall_at_{k5}"])])
         label = f"**{name}** (réf.)" if name == reference else f"**{name}**"
         lines.append(f"| {i} | {label} | {describe(params[name])} | " + " | ".join(cells) + " |")
