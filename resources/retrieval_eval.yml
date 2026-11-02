@@ -1,0 +1,113 @@
+# Retrieval evaluation of the chat: writes the golden set of the environment, then runs every golden question through
+# the search of the deployed app, once per configuration of the preset, and logs the scores to MLflow.
+# One job for dev, uat and prod, declared once at the root; each target at the end names the service principal it runs
+# as (run_as). Manual trigger only: every parameter can be changed in "Run now with different parameters".
+
+resources:
+  jobs:
+    retrieval_eval:
+      name: "Z_4_Qualibot_Retrieval_Eval"
+      queue:
+        enabled: true
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      notification_settings:
+        no_alert_for_canceled_runs: true
+      description: "Write <env>_proj.qualibot.eval_golden_retrieval, then measure whether the search of the deployed app returns the expected documents (preset deploye, tailles or complet; perso = the indexes parameter). Results in <env>_proj.qualibot.eval_retrieval_runs_golden and the MLflow experiment /Shared/qualibot/<env>_retrieval_eval."
+      max_concurrent_runs: 1
+      tags:
+        activity-type: ${var.job_activity_tag}
+        job-purpose: platform
+        project-name: qualibot
+        project: Qualibot
+      # Without it, run_as=SP makes the SP sole owner and humans lose View/Manage Run rights at deploy.
+      permissions:
+        - group_name: "Role-Project-LEAP-CoreAdmin"
+          level: CAN_MANAGE
+        - group_name: "Role-Project-LEAP-CoreDev"
+          level: CAN_MANAGE
+      parameters:
+        - name: preset
+          default: "deploye"
+        - name: indexes
+          default: "deploye"
+        - name: reference
+          default: ""
+        - name: ks
+          default: "1,3,5,10,20"
+        - name: max_parallel
+          default: "4"
+        - name: rerun_existing
+          default: "true"
+        - name: golden_table_name
+          default: "eval_golden_retrieval"
+        - name: results_table_name
+          default: "eval_retrieval_runs_golden"
+        - name: mlflow_experiment
+          default: "/Shared/qualibot/${var.pipeline_write_env}_retrieval_eval"
+        - name: debug
+          default: "false"
+      tasks:
+        - task_key: create_golden_retrieval_set
+          description: "Rewrite the golden set table from the list in the notebook and flag the expected REF absent from the chunks"
+          notebook_task:
+            notebook_path: ../utils/evaluation/create_golden_retrieval_set.py
+            source: WORKSPACE
+            base_parameters:
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              golden_table_name: "{{job.parameters.golden_table_name}}"
+              debug: "{{job.parameters.debug}}"
+          environment_key: default
+        - task_key: retrieval_eval
+          description: "Search every golden question once per configuration, score the documents sent to the model, log to MLflow"
+          depends_on:
+            - task_key: create_golden_retrieval_set
+          notebook_task:
+            notebook_path: ../utils/evaluation/retrieval_eval.py
+            source: WORKSPACE
+            base_parameters:
+              pipeline_write_env: ${var.pipeline_write_env}
+              pipeline_read_env: ${var.pipeline_write_env}
+              app_code_env: ${var.pipeline_write_env}
+              app_code_path: "${workspace.root_path}/files"
+              golden_table_name: "{{job.parameters.golden_table_name}}"
+              results_table_name: "{{job.parameters.results_table_name}}"
+              preset: "{{job.parameters.preset}}"
+              indexes: "{{job.parameters.indexes}}"
+              reference: "{{job.parameters.reference}}"
+              ks: "{{job.parameters.ks}}"
+              max_parallel: "{{job.parameters.max_parallel}}"
+              mlflow_experiment: "{{job.parameters.mlflow_experiment}}"
+              rerun_existing: "{{job.parameters.rerun_existing}}"
+              debug: "{{job.parameters.debug}}"
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+            dependencies:
+              - mlflow[databricks]==3.14.0
+
+targets:
+  dev:
+    resources:
+      jobs:
+        retrieval_eval:
+          run_as:
+            service_principal_name: fde6ff28-739f-4a41-b61e-604a298c8478  # job-runner-sa-dev
+
+  uat:
+    resources:
+      jobs:
+        retrieval_eval:
+          run_as:
+            service_principal_name: 3e5cd4e5-f765-4760-b974-ee7715258b39  # job-runner-sa-uat
+
+  prod:
+    resources:
+      jobs:
+        retrieval_eval:
+          run_as:
+            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02  # job-runner-sa-prod

@@ -2,12 +2,13 @@
 
 Scripts that measure the chatbot and the search: the MLflow experiment and the prompt registry of the chat, the scoring of
 the live traces, the retrieval and answer comparisons, the load tests, and a check of the vision endpoints. Three files
-run as jobs (`create_chat_experiment.py`, `register_chat_prompts.py`, `score_chat_traces.py`). The others are a library,
+run as jobs (`create_chat_experiment.py`, `register_chat_prompts.py`, `score_chat_traces.py`), and two more as the
+retrieval evaluation job (`create_golden_retrieval_set.py`, `retrieval_eval.py`). The others are a library,
 a command-line tool, or notebooks that someone runs by hand.
 
 Parent: [`utils/`](../README.md). The MLflow trace of a chat turn is written by
 [`server/services/chat/mlflow_turns.py`](../../server/services/chat/mlflow_turns.py). The jobs are in
-[`resources/chat_mlflow.yml`](../../resources/chat_mlflow.yml).
+[`resources/chat_mlflow.yml`](../../resources/chat_mlflow.yml) and [`resources/retrieval_eval.yml`](../../resources/retrieval_eval.yml).
 ## Files
 
 | File | What it does | How it runs |
@@ -19,7 +20,8 @@ Parent: [`utils/`](../README.md). The MLflow trace of a chat turn is written by
 | `check_vision_endpoints.py` | Sends each image of a folder, with a question, to each endpoint, and logs ok or fail per pair | CLI: `--profile`, `--images`, `--endpoints`, `--question`, `--timeout` |
 | `load_test_chat.py` | Sends real questions to the deployed app over its WebSocket, by steps of simultaneous questions | Notebook, run by hand |
 | `load_test_vector_search.py` | Sends Vector Search queries alone, by steps, to find where the endpoint refuses | Notebook, run by hand |
-| `retrieval_eval.py` | Checks whether the expected documents are among the passages sent to the model, without an answer | Notebook, run by hand |
+| `create_golden_retrieval_set.py` | Writes `<env>_proj.qualibot.eval_golden_retrieval` from the list `GOLDEN_SET` (question, expected REF, language, kind, division) and flags the expected REF absent from the chunks | First task of job `Z_4_Qualibot_Retrieval_Eval`, or notebook by hand |
+| `retrieval_eval.py` | Runs every golden question through the search of the deployed app once per configuration (presets `deploye`, `tailles`, `complet`, or `perso` = the `indexes` widget) and scores the documents sent to the model, without an answer: Delta results, one MLflow run per configuration, ranking table and charts | Second task of job `Z_4_Qualibot_Retrieval_Eval`, or notebook by hand |
 | `pairwise_answers.py` | Compares a reference version (model and index) with each contender, answer by answer, judged by another model | Notebook, run by hand |
 
 Command forms, from the repository root:

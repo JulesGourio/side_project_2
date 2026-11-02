@@ -266,3 +266,7 @@ Après le déploiement
 ## Fait
 
 _(rien de confirmé pour l'instant)_
+
+## 12. Évaluation du retrieval par job (2026-11-02, à faire après UAT)
+
+- [ ] `deploy-prod-jobs` (Bitbucket, SP PROD), puis `databricks bundle run retrieval_eval -t prod --profile PROD` (job `Z_4_Qualibot_Retrieval_Eval`, run as `b82d3b5a-b633-4738-8dde-68bb2142cb02`). Écrit `prod_proj.qualibot.eval_golden_retrieval`, `prod_proj.qualibot.eval_retrieval_runs_golden` et l'experiment `/Shared/qualibot/prod_retrieval_eval`. Pas d'index baseline en PROD : presets `deploye`, `tailles` ou `complet` seulement.

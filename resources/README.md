@@ -13,6 +13,7 @@ Parent: [root README](../README.md). The tasks run the notebooks and scripts of 
 | `app_schedules.yml` | Jobs that stop and start the apps (`utils/app_mgmt/stop_start_app_job.py`): `D_1_Qualibot_Apps_Stop_Nightly_*`, `W_1_Qualibot_Stop_Weekend_*`, `W_1_Qualibot_Start_Weekend_*` | `dev`, `uat` | `app_name` |
 | `chat_mlflow.yml` | `Z_2_Qualibot_Create_Chat_Experiment` (`create_chat_experiment.py`), `Z_3_Qualibot_Register_Chat_Prompts` (`register_chat_prompts.py`), `D_2_Qualibot_Score_Chat_Traces` (`score_chat_traces.py`, paused) | `dev`, `uat`, `prod` | `pipeline_write_env`, `bundle.name`, `bundle.target` |
 | `lakebase_sync.yml` | Lakebase export to the staging volume, then load of every exported table as Delta tables, `D_1_Qualibot_Lakebase_Export_To_Volume`; group membership of the visitors, `D_2_Qualibot_User_Capabilities_Sync`: the same jobs for every target | `dev`, `uat`, `prod` | `pipeline_write_env`, `lakebase_export_schedule_pause`, `lakebase_import_to_delta` |
+| `retrieval_eval.yml` | `Z_4_Qualibot_Retrieval_Eval`: golden set (`create_golden_retrieval_set.py`), then retrieval evaluation (`retrieval_eval.py`), run as the job service principal of the target | `dev`, `uat`, `prod` | `pipeline_write_env`, `notification_email` |
 | `parsing_pipeline.job.yml` | `D_1_Qualibot_Parsing_Pipeline`, six tasks `1_categories` to `6_update_kb_metadata` (see [`utils/parsing_pipeline/README.md`](../utils/parsing_pipeline/README.md)) | `dev`, `uat`, `prod` | `pipeline_write_env`, the `intraqual_*` and `parsing_*` variables, `bundle.target` |
 
 The apps are declared in `databricks.yml`, not here. Every variable read here is declared in the `variables:` section
@@ -29,6 +30,7 @@ Times are in `Europe/Brussels` (the schedules of the apps and of the pipeline); 
 | `D_1_Qualibot_Lakebase_Export_To_Volume` | `lakebase_export` | `dev`, `uat`, `prod` | 02:00 and 14:00 (`lakebase_export_schedule_pause`): `UNPAUSED` on every target. The Delta load (`lakebase_import_to_delta`) is `true` on each target in `databricks.yml` |
 | `Z_2_Qualibot_Create_Chat_Experiment` | `create_chat_experiment_<target>` | `dev`, `uat`, `prod` | manual |
 | `Z_3_Qualibot_Register_Chat_Prompts` | `register_chat_prompts_<target>` | `dev`, `uat`, `prod` | manual |
+| `Z_4_Qualibot_Retrieval_Eval` | `retrieval_eval` | `dev`, `uat`, `prod` | manual |
 | `D_2_Qualibot_Score_Chat_Traces` | `score_chat_traces_<target>` | `dev`, `uat`, `prod` | 02:30: `PAUSED` on `dev` and `prod`, `UNPAUSED` on `uat` (`dry_run` false) |
 | `D_1_Qualibot_Apps_Stop_Nightly_Dev` | `apps_stop_nightly_dev` | `dev` | 21:00 every day, `UNPAUSED` |
 | `W_1_Qualibot_Stop_Weekend_Dev` / `W_1_Qualibot_Start_Weekend_Dev` | `qualibot_stop_weekend_dev` / `qualibot_start_weekend_dev` | `dev` | Friday 21:00 / Monday 07:00, `PAUSED` |

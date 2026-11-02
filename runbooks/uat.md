@@ -1301,3 +1301,7 @@ Statut : à faire (non confirmé par Jules).
   databricks jobs run-now --json "@$env:TEMP\run6.json" --profile UAT
   ```
 - [ ] **K4. Contrôle** (Lakebase) : `SELECT code, chunk_ids FROM chunk_codes WHERE code IN ('SF-1027', 'AS9102');` puis la question « Dans quel document se trouve SF-1027 ? » doit citer Q0102QP_GB.
+
+## Évaluation du retrieval par job (2026-11-02, à faire après DEV)
+
+- [ ] `deploy-uat-jobs` (Bitbucket, SP UAT), puis `databricks bundle run retrieval_eval -t uat --profile UAT` (job `Z_4_Qualibot_Retrieval_Eval`, run as `3e5cd4e5-f765-4760-b974-ee7715258b39`). Écrit `uat_proj.qualibot.eval_golden_retrieval`, `uat_proj.qualibot.eval_retrieval_runs_golden` et l'experiment `/Shared/qualibot/uat_retrieval_eval`.

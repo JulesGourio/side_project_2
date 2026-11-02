@@ -399,3 +399,9 @@ Détail de chaque commentaire et de la décision : `runbooks/pr_review/README.md
 - `code_normalization.py` change `chunk_preprocessed` et `cited_codes` : en DEV, lancer le parsing avec `run_mode=rechunk`, puis `5_sync_index`, puis `6_update_kb_metadata` (`doc_references`). Vérifier dans le log de `6_update_kb_metadata` la ligne « Code normalization (version 2) reads every REF » (sinon AMBER avec les REF qu'aucun motif ne lit).
 - Le chat et la recherche d'impact réécrivent les requêtes avec le même module : poser « dans quel document cite-t-on SF-1027 ? » et « sf 1027 » en DEV.
 
+
+## 2026-11-02 — évaluation du retrieval dans `utils/evaluation` + job `Z_4_Qualibot_Retrieval_Eval`
+
+- `runbooks/retrieval/eval_retrieval_mlflow.py` devient `utils/evaluation/retrieval_eval.py` (l'ancien fichier du même nom et `eval_retrieval_prod.py` sont supprimés) ; widget `preset` (`deploye`, `tailles`, `complet`, `perso`).
+- `utils/evaluation/create_golden_retrieval_set.py` (widget `golden_table_name`, ex-`output_table_name`).
+- À retester en DEV : `deploy-dev-jobs`, puis `databricks bundle run retrieval_eval -t dev --profile DEV` (preset `deploye`), puis `--params preset=tailles`. Vérifier la table `dev_proj.qualibot.eval_golden_retrieval` (68 questions) et l'experiment `/Shared/qualibot/dev_retrieval_eval`.
