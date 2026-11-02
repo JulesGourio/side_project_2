@@ -1,6 +1,6 @@
 # Databricks notebook source
 # Rechunk of PROD, switch: loads the Parquet files copied to the PROD staging volume into
-# prod_proj.qualibot.chunks_rechunk_prod, checks them against prod_proj.qualibot.chunks, replaces the content of chunks
+# prod_proj.qualibot.chunks_union_prod, checks them against prod_proj.qualibot.chunks, replaces the content of chunks
 # with them and syncs chunks_index (created again if it is missing). The previous chunks stay reachable by Delta time
 # travel: the log prints the RESTORE command. Runs as the PROD job service principal, serverless, one cell.
 import logging
@@ -22,8 +22,8 @@ if not logger.handlers:
     logger.addHandler(_handler)
 logger.propagate = False
 
-IMPORT_PATH = "/Volumes/prod_proj/qualibot/staging/chunks_rechunk_prod"
-NEW_CHUNKS = "prod_proj.qualibot.chunks_rechunk_prod"
+IMPORT_PATH = "/Volumes/prod_proj/qualibot/staging/chunks_union_prod"
+NEW_CHUNKS = "prod_proj.qualibot.chunks_union_prod"
 CHUNKS = "prod_proj.qualibot.chunks"
 INDEX = "prod_proj.qualibot.chunks_index"
 ENDPOINT = "qualibot"

@@ -1,5 +1,5 @@
 # Databricks notebook source
-# Rechunk of PROD, export: writes dev_proj.qualibot.chunks_rechunk_prod as Parquet files in the DEV staging volume, to be
+# Chunks for PROD, export: writes dev_proj.qualibot.chunks_union_prod as Parquet files in the DEV staging volume, to be
 # copied to the PROD staging volume. Reads one table, writes only that folder. One cell, DEV workspace, your account.
 import logging
 import sys
@@ -12,8 +12,8 @@ if not logger.handlers:
     logger.addHandler(_handler)
 logger.propagate = False
 
-SOURCE_TABLE = "dev_proj.qualibot.chunks_rechunk_prod"
-EXPORT_PATH = "/Volumes/dev_proj/qualibot/staging/chunks_rechunk_prod"
+SOURCE_TABLE = "dev_proj.qualibot.chunks_union_prod"
+EXPORT_PATH = "/Volumes/dev_proj/qualibot/staging/chunks_union_prod"
 
 df = spark.table(SOURCE_TABLE)
 rows = df.count()
