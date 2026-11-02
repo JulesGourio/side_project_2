@@ -1492,7 +1492,7 @@ plt.close("all")
 # MAGIC   every configuration misses, rewritten at each execution.
 # MAGIC - **Runs > Table**: one row per configuration. Settings `top_k`, `brute`, `fusion`, `recherche`, `codes`, `index`,
 # MAGIC   `requetes_vs`; scores `recall_01` … `recall_20`, `recall_all`, `allrefs_10`, `allrefs_50`,
-# MAGIC   `allrefs_all`, `mrr`, `docs` (MLflow adds `/mean`),
+# MAGIC   `allrefs_all`, `mrr_01` … `mrr_50`, `mrr_all`, `docs` (MLflow adds `/mean`),
 # MAGIC   `tokens_k`.
 # MAGIC   Sort by clicking a column; group by a setting with **Group by**.
 # MAGIC - **Runs > Chart**: `recall_by_k`, one line per configuration, K on the x axis. The other charts are the bar charts
@@ -1511,7 +1511,8 @@ SETTING_LABELS = {"top_k": "Top-k", "brute": "Recherche brute", "fusion": "Fusio
 # MLflow column name -> (score column of ``score_at_k``, K)
 SCORER_COLUMNS = {**{f"recall_{k:02d}": (f"recall_at_{k}", k) for k in KS}, "recall_all": ("recall_at_all", "all"),
                   f"allrefs_{K10}": (f"all_refs_at_{K10}", K10), "allrefs_50": ("all_refs_at_50", 50),
-                  "allrefs_all": ("all_refs_at_all", "all"), "mrr": ("mrr_at_all", "all")}
+                  "allrefs_all": ("all_refs_at_all", "all"),
+                  **{f"mrr_{k:02d}": (f"mrr_at_{k}", k) for k in sorted({*KS, 50})}, "mrr_all": ("mrr_at_all", "all")}
 
 
 def log_number(key: str, value) -> None:
