@@ -7,12 +7,13 @@
 # MAGIC configuration of the `preset` widget (or of `indexes` with `preset = perso`). No answer is generated. The golden
 # MAGIC table is written by `create_golden_retrieval_set.py`; the job `Z_4_Qualibot_Retrieval_Eval` runs both.
 # MAGIC
-# MAGIC **Scores** (distinct documents in the order sent to the LLM, paired questions only):
-# MAGIC - **Recall@K**: share of the expected documents among the first K.
-# MAGIC - **MRR@K**: 1 / rank of the first expected document (0 when missed).
-# MAGIC - **AllRefs@K**: share of questions with every expected document among the first K.
-# MAGIC - **@all**: the same over every document the configuration sends. A K above the documents a question gets
-# MAGIC   scores its whole context.
+# MAGIC **Scores** (K counts chunks: the passages sent to the LLM, in the order of the search; the target stays the
+# MAGIC document, paired questions only):
+# MAGIC - **Recall@K**: share of the expected documents with at least one chunk among the first K chunks.
+# MAGIC - **MRR@K**: 1 / rank of the first chunk of an expected document (0 when none is among the first K).
+# MAGIC - **AllRefs@K**: share of questions with every expected document among the first K chunks.
+# MAGIC - **@all**: the same over every chunk the configuration sends. A K above the chunks a question gets scores its
+# MAGIC   whole context.
 # MAGIC
 # MAGIC **Outputs**
 # MAGIC - Delta table `{pipeline_write_env}_proj.qualibot.<results_table_name>`: one row per configuration and question.
@@ -95,7 +96,7 @@ log.propagate = False
 # MAGIC | `preset` | `deploye` | configurations to measure: `deploye` (the app as deployed), `tailles` (`deploye`, `top16`, `top32`, `top48` without raw search), `complet` (`deploye`, every top-k with and without raw search and RRF, `top16-bm25-30/50/70`), `perso` (the `indexes` widget) |
 # MAGIC | `indexes` | `chat` | configurations to measure when `preset = perso`, see below |
 # MAGIC | `reference` | empty | configuration every other one is compared with; empty = the first of `indexes` |
-# MAGIC | `ks` | `1,3,5,10,20` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM); a K above the documents sent scores the whole context; the scoreboard adds the whole context (`all`) |
+# MAGIC | `ks` | `1,3,5,10,20` | K values of Recall@K, MRR@K, AllRefs@K (chunks sent to the LLM); a K above the chunks sent scores the whole context; the scoreboard adds the whole context (`all`) |
 # MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
 # MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval` |
 # MAGIC | `rerun_existing` | `true` | `false` reuses the saved successful rows of an unchanged question, configuration and app code |
@@ -640,7 +641,8 @@ async def search(case: dict) -> dict:
     """Search one golden question as the app does, without an answer.
 
     :param case: golden question with ``question`` and ``division``
-    :return: ``retrieved`` (REF in context order), ``n_passages`` and ``chars`` of the passages sent
+    :return: ``retrieved`` (REF in context order), ``retrieved_chunks`` (the REF of each passage sent, in search
+        order), ``n_passages`` and ``chars`` of the passages sent
     """
     stage = "authentication"
     try:
@@ -664,6 +666,7 @@ async def search(case: dict) -> dict:
         documents = engine.group_documents(found["rows"])
         return {
             "retrieved": refs([ref for ref, _ in documents]),
+            "retrieved_chunks": [row["REF"] for row in found["rows"]],
             "n_passages": len(found["rows"]),
             "chars": sum(len(row.get("chunk_text") or "") for row in found["rows"]),
         }
@@ -740,15 +743,34 @@ async def make_semaphore(limit: int) -> asyncio.Semaphore:
 # MAGIC recomputed from the stored document ranking, so they do not require a new search.
 
 # COMMAND ----------
-def score_at_k(expected: list[str], retrieved: list[str], k: int | str) -> dict[str, float]:
-    """Recall, MRR and AllRefs of one question at K documents.
+def chunk_refs(values) -> list[str]:
+    """Canonical REF of each chunk, duplicates and order kept.
+
+    :param values: REF of the chunks sent, in search order
+    :return: one canonical REF per chunk
+    """
+    return [canon_ref(str(value)) for value in values or [] if value is not None and str(value).strip()]
+
+
+def chunks_of(row) -> list[str]:
+    """REF of each chunk sent for a result row; a row saved before chunks were recorded gives its documents.
+
+    :param row: result row (dict or pandas row) with ``retrieved`` and maybe ``retrieved_chunks``
+    :return: the REF list K is counted on
+    """
+    chunks = row.get("retrieved_chunks")
+    return list(chunks) if chunks is not None and len(chunks) else list(row.get("retrieved") or [])
+
+
+def score_at_k(expected: list[str], chunks: list[str], k: int | str) -> dict[str, float]:
+    """Recall, MRR and AllRefs of one question at K chunks.
 
     :param expected: expected REF
-    :param retrieved: REF sent to the model, in context order
-    :param k: number of documents looked at, or ``all`` for the whole context
+    :param chunks: REF of each chunk sent to the model, in search order (one entry per chunk)
+    :param k: number of chunks looked at, or ``all`` for every chunk sent
     :return: ``recall_at_<k>``, ``mrr_at_<k>``, ``all_refs_at_<k>``
     """
-    top = refs(retrieved) if k == "all" else refs(retrieved)[:k]
+    top = chunk_refs(chunks) if k == "all" else chunk_refs(chunks)[:k]
     relevant = set(refs(expected))
     if not relevant:
         raise ValueError("Expected documents cannot be empty")
@@ -761,16 +783,16 @@ def score_at_k(expected: list[str], retrieved: list[str], k: int | str) -> dict[
     }
 
 
-def scores(expected: list[str], retrieved: list[str]) -> dict[str, float]:
+def scores(expected: list[str], chunks: list[str]) -> dict[str, float]:
     """Every score of one question, for every K and the whole context.
 
     :param expected: expected REF
-    :param retrieved: REF sent to the model, in context order
+    :param chunks: REF of each chunk sent to the model, in search order
     :return: the outputs of ``score_at_k`` merged
     """
     result = {}
     for k in KS_ALL:
-        result.update(score_at_k(expected, retrieved, k))
+        result.update(score_at_k(expected, chunks, k))
     return result
 
 
@@ -788,6 +810,7 @@ SCHEMA = StructType([
     StructField("unknown_overlap", ArrayType(StringType()), False),
     StructField("score_eligible", BooleanType(), False),
     StructField("retrieved", ArrayType(StringType()), False),
+    StructField("retrieved_chunks", ArrayType(StringType()), True),
     StructField("metrics", MapType(StringType(), DoubleType()), False),
     StructField("n_docs", IntegerType(), False),
     StructField("n_passages", IntegerType(), True),
@@ -852,6 +875,7 @@ if TOTAL:
             for case, result in zip(cases, outputs):
                 error = result.get("error")
                 retrieved = refs(result.get("retrieved") or [])
+                chunks = [str(ref) for ref in result.get("retrieved_chunks") or []]
                 batch.append({
                     "execution_id": EXECUTION_ID,
                     "config": name,
@@ -866,14 +890,15 @@ if TOTAL:
                     "unknown_overlap": case["unknown_overlap"],
                     "score_eligible": case["score_eligible"],
                     "retrieved": retrieved,
-                    "metrics": scores(case["expected"], retrieved) if not error else {},
+                    "retrieved_chunks": chunks,
+                    "metrics": scores(case["expected"], chunks) if not error else {},
                     "n_docs": len(retrieved),
                     "n_passages": result.get("n_passages"),
                     "chars": result.get("chars"),
                     "latency_s": result.get("latency_s"),
                     "error": error,
                 })
-            spark.createDataFrame(batch, schema=SCHEMA).write.mode("append").format("delta").saveAsTable(RESULTS_TABLE)
+            spark.createDataFrame(batch, schema=SCHEMA).write.mode("append").format("delta").option("mergeSchema", "true").saveAsTable(RESULTS_TABLE)
             ALL_ROWS.extend(batch)
             log.info("[%s] saved=%d | errors=%d", name, len(batch),
                      sum(bool(row["error"]) for row in batch))
@@ -912,9 +937,10 @@ if not EVAL_ROWS:
 
 pdf = pd.DataFrame(EVAL_ROWS)
 case_scores = [
-    scores(r["expected"], r["retrieved"]) if not r.get("error") else {}
+    scores(r["expected"], chunks_of(r)) if not r.get("error") else {}
     for r in EVAL_ROWS
 ]
+pdf["chunks"] = [chunks_of(r) for r in EVAL_ROWS]
 for k in KS_ALL:
     for metric in ("recall", "mrr", "all_refs"):
         column = f"{metric}_at_{k}"
@@ -949,9 +975,9 @@ for name in RUN:
 summary = pd.DataFrame(SUMMARY)
 if not common_ids:
     log.warning("No successful question common to all configs; relevance scores are unavailable")
-if not success.empty and int(success["n_docs"].max()) < max(KS):
-    log.warning("Only %d distinct documents at most in retrieved context; @%d will be capped by the app context",
-                int(success["n_docs"].max()), max(KS))
+if not success.empty and int(success["n_passages"].max()) < max(KS):
+    log.warning("Only %d chunks at most in retrieved context; @%d will be capped by the app context",
+                int(success["n_passages"].max()), max(KS))
 
 # COMMAND ----------
 # MAGIC %md
@@ -960,7 +986,7 @@ if not success.empty and int(success["n_docs"].max()) < max(KS):
 # MAGIC    search failure, and it explains most gaps between two environments.
 # MAGIC 2. **Key indicators**: one row per configuration, on the same questions.
 # MAGIC 3. **Ranking**: Recall@1, @5, @10 and @all per configuration, best Recall@5 first, gap with the reference.
-# MAGIC 4. **Rank per question**: rank of the first expected document in each configuration, red when never sent.
+# MAGIC 4. **Rank per question**: rank of the first chunk of an expected document in each configuration, red when never sent.
 # MAGIC 5. **Quality against cost**: Recall@5 against the context sent to the model.
 # MAGIC 6. **Recall curves**: one panel per top-k, the reference dotted on each.
 # MAGIC 7. **Every expected document missed in the top 10**, with its cause.
@@ -988,15 +1014,15 @@ def reciprocal(rank) -> float:
     return 0.0 if rank is None or pd.isna(rank) else 1 / rank
 
 
-def first_rank(expected: list[str], retrieved: list[str]) -> int | None:
-    """Rank (1-based) of the first expected document among the retrieved ones.
+def first_rank(expected: list[str], chunks: list[str]) -> int | None:
+    """Rank (1-based) of the first chunk of an expected document among the chunks sent.
 
     :param expected: canonical expected references
-    :param retrieved: canonical retrieved references, in context order
-    :return: the rank, None when no expected document was retrieved
+    :param chunks: REF of each chunk sent, in search order
+    :return: the rank, None when no expected document was sent
     """
     relevant = set(refs(expected))
-    return next((i for i, ref in enumerate(refs(retrieved), 1) if ref in relevant), None)
+    return next((i for i, ref in enumerate(chunk_refs(chunks), 1) if ref in relevant), None)
 
 
 
@@ -1056,9 +1082,9 @@ log.info("Corpus %s: %d documents | %d of %d expected documents absent",
 # MAGIC | Colonne | Sens |
 # MAGIC |---|---|
 # MAGIC | Top-k | passages reclassés + bruts par requête, premier message / suite de conversation |
-# MAGIC | ≥1 doc @K | questions avec au moins un document attendu dans les K premiers |
-# MAGIC | R@K | part des documents attendus dans les K premiers ; « indexés » ne compte que les documents présents dans les chunks |
-# MAGIC | AllRefs@K | questions avec tous leurs documents attendus dans les K premiers |
+# MAGIC | ≥1 doc @K | questions avec au moins un document attendu dans les K premiers chunks |
+# MAGIC | R@K | part des documents attendus ayant un chunk dans les K premiers chunks ; « indexés » ne compte que les documents présents dans les chunks |
+# MAGIC | AllRefs@K | questions avec tous leurs documents attendus dans les K premiers chunks |
 # MAGIC | MRR | 1 / rang du premier document attendu (1 = toujours premier) |
 # MAGIC | Docs, Req. VS | documents envoyés au modèle, requêtes Vector Search par question |
 # MAGIC
@@ -1168,14 +1194,14 @@ def recall_in_corpus(rows: pd.DataFrame, k: int) -> float:
     """Recall@k counting only the expected documents present in the chunks.
 
     :param rows: paired rows of one configuration
-    :param k: number of distinct documents looked at
+    :param k: number of chunks looked at
     :return: mean recall, NaN when no question has an expected document in the chunks
     """
     values = []
-    for expected, retrieved in zip(rows["expected"], rows["retrieved"]):
+    for expected, chunks in zip(rows["expected"], rows["chunks"]):
         present = [ref for ref in expected if ref in corpus_refs]
         if present:
-            values.append(len(set(present) & set(refs(retrieved)[:k])) / len(present))
+            values.append(len(set(present) & set(chunk_refs(chunks)[:k])) / len(present))
     return float(np.mean(values)) if values else float("nan")
 
 
@@ -1244,15 +1270,15 @@ def styled_kpi(table: pd.DataFrame) -> "pd.io.formats.style.Styler":
     return (style.map if hasattr(style, "map") else style.applymap)(sign, subset=[KPI_DELTA])
 
 
-def doc_rank(ref: str, retrieved: list[str]) -> int | None:
-    """Rank (1-based) of one document among the retrieved ones.
+def doc_rank(ref: str, chunks: list[str]) -> int | None:
+    """Rank (1-based) of the first chunk of one document among the chunks sent.
 
     :param ref: canonical reference
-    :param retrieved: retrieved references, in context order
-    :return: the rank, None when not retrieved
+    :param chunks: REF of each chunk sent, in search order
+    :return: the rank, None when not sent
     """
-    docs = refs(retrieved)
-    return docs.index(ref) + 1 if ref in docs else None
+    ordered = chunk_refs(chunks)
+    return ordered.index(ref) + 1 if ref in ordered else None
 
 
 def misses_table() -> pd.DataFrame:
@@ -1267,7 +1293,7 @@ def misses_table() -> pd.DataFrame:
         if case["case_id"] not in common_ids:
             continue
         for ref in case["expected"]:
-            ranks = {name: doc_rank(ref, by_key[(name, case["case_id"])]["retrieved"]) for name in RUN}
+            ranks = {name: doc_rank(ref, by_key[(name, case["case_id"])]["chunks"]) for name in RUN}
             if all(rank is not None and rank <= K_MAIN for rank in ranks.values()):
                 continue
             cause = ("absent from the chunks" if ref not in corpus_refs else
@@ -1288,7 +1314,7 @@ def ranks_table() -> pd.DataFrame:
     base["has_code"] = base["question"].map(lambda q: bool(find_codes(q, accept_lowercase=True)))
     for name in RUN:
         f = paired[paired["config"] == name].set_index("case_id")
-        base[name] = [first_rank(f.at[c, "expected"], f.at[c, "retrieved"]) for c in base["case_id"]]
+        base[name] = [first_rank(f.at[c, "expected"], f.at[c, "chunks"]) for c in base["case_id"]]
     return base.reset_index(drop=True)
 
 
@@ -1427,7 +1453,7 @@ def curve(name: str) -> list[float]:
     """
     if name not in CURVES:
         f = paired[paired["config"] == name]
-        CURVES[name] = [np.mean([score_at_k(e, r, k)[f"recall_at_{k}"] for e, r in zip(f["expected"], f["retrieved"])])
+        CURVES[name] = [np.mean([score_at_k(e, r, k)[f"recall_at_{k}"] for e, r in zip(f["expected"], f["chunks"])])
                         for k in K_CURVE]
     return CURVES[name]
 
@@ -1457,7 +1483,7 @@ def curves_figure() -> plt.Figure:
         ax.set_xticklabels([str(k) for k in KS])
         ax.minorticks_off()
         percent_axis(ax.yaxis)
-        ax.set_xlabel("K premiers documents")
+        ax.set_xlabel("K premiers chunks")
         ax.set_title(title, loc="left", fontsize=10)
         ax.legend(fontsize=7, loc="lower right")
     for ax in list(axes.flat)[len(groups):]:
@@ -1543,11 +1569,11 @@ def metric_scorer(name: str, column: str, k: int | str) -> object:
         """Score of one question.
 
         :param inputs: the question
-        :param outputs: retrieved references in context order
+        :param outputs: ``retrieved_chunks``, the REF of each chunk sent, in search order
         :param expectations: expected references
         :return: the score
         """
-        return score_at_k(expectations["expected_refs"], outputs["retrieved"], k)[column]
+        return score_at_k(expectations["expected_refs"], outputs["retrieved_chunks"], k)[column]
 
     return scorer(score, name=name)
 
@@ -1745,7 +1771,8 @@ if common_ids:
     for name in ORDER:
         rows = paired[paired["config"] == name]
         data = [{"inputs": {"question": r["question"], "case_id": r["case_id"], "division": r["division"]},
-                 "outputs": {"retrieved": refs(r["retrieved"]), "n_docs": int(r["n_docs"]),
+                 "outputs": {"retrieved": refs(r["retrieved"]), "retrieved_chunks": chunk_refs(r["chunks"]),
+                             "n_docs": int(r["n_docs"]),
                              "n_passages": int(r.get("n_passages") or 0)},
                  "expectations": {"expected_refs": refs(r["expected"])}}
                 for _, r in rows.iterrows()]
@@ -1767,9 +1794,9 @@ if common_ids:
     note = "\n\n".join(part for part in [
         f"## Dernière exécution : {run_date}",
         f"{len(RUN)} configurations, {len(common_ids)} questions, référence **{REFERENCE}**. Recall@K : part des "
-        f"documents attendus dans les K premiers documents envoyés au modèle (au-delà des documents envoyés, tout le "
-        f"contexte). AllRefs : part des questions dont tous les documents attendus y sont. MRR : 1 / rang du premier "
-        f"document attendu. Une question vaut {num(100 * NOISE)} point.",
+        f"documents attendus ayant au moins un chunk parmi les K premiers chunks envoyés au modèle (au-delà des chunks "
+        f"envoyés, tout le contexte). AllRefs : part des questions dont tous les documents attendus y sont. MRR : 1 / "
+        f"rang du premier chunk d'un document attendu. Une question vaut {num(100 * NOISE)} point.",
         "### Classement (meilleur Recall@5 d'abord)", ranking_markdown(ROWS, PARAMS, REFERENCE),
         "### Effet de chaque réglage" if effects else "",
         "Chaque ligne compare des paires de configurations identiques sauf ce réglage." if effects else "", effects,
