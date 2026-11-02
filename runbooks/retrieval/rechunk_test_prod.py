@@ -101,24 +101,25 @@ def rechunk(batches):
         """
         return max(1, int(len(text) / SIZES["chars_per_token"])) if text else 0
 
+    # One document at a time in and out: a whole batch of document texts and their passages does not fit a worker.
     for pdf in batches:
-        rows = []
         for doc in pdf.itertuples(index=False):
             text = clean_text(doc.document_text)
             if not text:
                 continue
+            rows = []
             for chunk in chunking.chunk_markdown(text, count_tokens=count_tokens, **SIZES):
                 full = (doc.prefix or "") + chunk["chunk_text"]
                 rows.append([doc.doc_key, int(chunk["chunk_index"]), full, codes.normalize_codes(full),
                              " ".join(codes.cited_codes(full, doc.REF or "")), int(chunk["chunk_token_count"]),
                              chunk["chunk_content_type"], json.dumps(chunk.get("metadata") or {}, ensure_ascii=False)])
-        yield pd.DataFrame(rows, columns=OUT_COLUMNS)
+            yield pd.DataFrame(rows, columns=OUT_COLUMNS)
 
 
 try:
-    spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "16")
+    spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "4")
 except Exception:
-    logger.info("Arrow batch size left at its default")
+    logger.info("Arrow batch size left at its default: the 2,048 partitions keep each batch small")
 
 source = spark.table(SOURCE_CHUNKS)
 meta_columns = [c for c in ["REF", "division", "url", "doc_date", "titre", "type_document", "indice", "langue"]
@@ -143,7 +144,7 @@ texts = (checkpoint.select("IDDOC", "parse_status", "ingestion_timestamp", "docu
          .where("_rn = 1 AND parse_status = 'SUCCESS'")
          .select(F.col("IDDOC").cast("string").alias("doc_key"), "document_text", *ext))
 
-work = docs.join(texts, "doc_key").repartition(256, "doc_key")
+work = docs.join(texts, "doc_key").repartition(2048, "doc_key")
 passages = work.select("doc_key", "REF", "prefix", "document_text").mapInPandas(rechunk, OUT_SCHEMA)
 
 body_key = F.sha2(F.trim(F.regexp_replace(
