@@ -12,7 +12,7 @@ from server.services.infra import vs_gate
 from server.services.infra.config import VECTOR_SEARCH_QUERY_TIMEOUT_S
 from server.services.infra.vector_search import _ARCHIVE_NOTICE_MARKER, _COLUMNS
 from server.services.chat.turn_log import TurnLog, passage_title
-from server.services.chat.engine.config import raw_top_k, rerank_top_k
+from server.services.chat.engine.config import passage_order, raw_top_k, rerank_top_k
 from server.services.chat.engine.types import Hit, QueryPayload, SearchRow, VsFilters
 from utils.parsing_pipeline.code_normalization import normalize_query
 
@@ -202,11 +202,33 @@ async def _recorded_query(host: str, token: str, index: str, filters: VsFilters,
     return rows
 
 
+def _rerank_score(row: SearchRow) -> float | None:
+    """Best reranker score of a passage over the turn's queries.
+
+    :param row: merged row with its ``_hits``
+    :return: the highest score of its reranked hits, None when no reranked query scored it
+    """
+    scores = [h['score'] for h in row.get('_hits') or []
+              if h.get('via') == 'rerank' and isinstance(h.get('score'), (int, float))]
+    return max(scores) if scores else None
+
+
+def _by_rerank_score(rows: List[SearchRow]) -> List[SearchRow]:
+    """Passages ordered by their best reranker score, highest first; the passages without one follow in their order.
+
+    :param rows: merged rows, best rank first
+    :return: the same rows, reordered
+    """
+    scored = [(s, i, row) for i, row in enumerate(rows) if (s := _rerank_score(row)) is not None]
+    unscored = [row for row in rows if _rerank_score(row) is None]
+    return [row for _, _, row in sorted(scored, key=lambda x: (-x[0], x[1]))] + unscored
+
+
 async def search(host: str, token: str, index: str, queries: List[str], filters: VsFilters,
                  raw_queries: List[str] | None = None, log: TurnLog | None = None,
                  rerank_k: int | None = None, raw_k: int | None = None) -> List[SearchRow]:
     """Reranked top k for every query + raw top k for ``raw_queries`` (default: every query),
-    merged by best rank. A query (or the
+    merged by best reranker score (``CHAT_PASSAGE_ORDER=score``) or best rank. A query (or the
     reranked side) that fails is dropped when the rest answered; raises ``ChatVsiError`` only
     if everything failed. Without raw passages (``raw_top_k() == 0``), a refused reranker falls
     back to the raw search with the reranked size.
@@ -220,7 +242,7 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
     :param log: turn log to fill, created when None
     :param rerank_k: passages kept per reranked query, None for CHAT_RERANK_TOP_K
     :param raw_k: passages kept per raw query, None for CHAT_RAW_TOP_K; 0 skips the raw searches
-    :return: the merged rows, best rank first
+    :return: the merged rows, best first
     """
     log = log if log is not None else TurnLog()
     rerank_k = rerank_top_k() if rerank_k is None else rerank_k
@@ -288,9 +310,10 @@ async def search(host: str, token: str, index: str, queries: List[str], filters:
                            'errors': sorted({f'{type(f).__name__}: {str(f)[:200]}' for f in failed})},
                   exc=failed[0])
     n = len(queries)
-    return _merge_by_rank([_merge_by_rank(ok_part) for ok_part in (
+    merged = _merge_by_rank([_merge_by_rank(ok_part) for ok_part in (
         [r for r in results[:n] if not isinstance(r, BaseException)],
         [r for r in results[n:] if not isinstance(r, BaseException)]) if ok_part])
+    return _by_rerank_score(merged) if passage_order() == 'score' else merged
 
 
 async def fetch_documents(host: str, token: str, index: str, query: str, refs: List[str], k: int,

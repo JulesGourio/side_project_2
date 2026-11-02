@@ -43,9 +43,20 @@ env:
   - name: CHAT_TRANSLATE_ONLY
     value: "off"
   - name: CHAT_PAIR_RERANK_TOP_K
-    value: "16"
+    value: "32"
   - name: CHAT_PAIR_RAW_TOP_K
-    value: "16"
+    value: "0"
+  # Follow-ups and other languages: reranked passages per query of the bilingual rewrite, no raw search.
+  - name: CHAT_RERANK_TOP_K
+    value: "32"
+  - name: CHAT_RAW_TOP_K
+    value: "0"
+  # The merged passages are ordered by their best reranker score ("score") or best rank ("rank"), then capped
+  # (REF and citation lookups come on top).
+  - name: CHAT_PASSAGE_ORDER
+    value: "score"
+  - name: CHAT_MAX_SEARCH_PASSAGES
+    value: "50"
   # How much the rewrite / translation model thinks before answering (it is the main cost of that step): low, minimal, medium, high; empty = the
   # endpoint's default. An endpoint that refuses the parameter is called without it.
   - name: CHAT_REWRITE_REASONING_EFFORT

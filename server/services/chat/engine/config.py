@@ -22,10 +22,12 @@ _DEFAULT_INDEX = 'dev_proj.qualibot.chunks_index'
 _DEFAULT_LLM_ENDPOINT = 'databricks-gpt-6-luna'
 _DEFAULT_ANSWER_MAX_TOKENS = 8000                     # reasoning counts inside it
 _DEFAULT_REWRITE_MAX_TOKENS = 2000
-_RERANK_TOP_K = 12               # reranked passages kept per query
-_RAW_TOP_K = 12                  # raw HYBRID passages per query (0 = reranked passages only)
-_PAIR_RERANK_TOP_K = 16          # two reranked queries (question, translation) + one raw query: 48 candidates in all
-_PAIR_RAW_TOP_K = 16
+_RERANK_TOP_K = 32               # reranked passages kept per query
+_RAW_TOP_K = 0                   # raw HYBRID passages per query (0 = reranked passages only)
+_PAIR_RERANK_TOP_K = 32          # two reranked queries (question, translation)
+_PAIR_RAW_TOP_K = 0
+_MAX_SEARCH_PASSAGES = 50        # cap on the merged search passages
+_PASSAGE_ORDERS = ('score', 'rank')
 _RAW_ON_ALL = ('question', 'fr', 'en')
 _RAW_ON = 'fr'  # raw search on the French rewrite only, to keep the number of queries down
 
@@ -118,7 +120,17 @@ def pair_raw_top_k() -> int:
 
 def max_search_passages() -> int:
     """Cap on the merged search passages (REF lookups come on top); 0 = no cap."""
-    return max(0, _int_env('CHAT_MAX_SEARCH_PASSAGES', 0))
+    return max(0, _int_env('CHAT_MAX_SEARCH_PASSAGES', _MAX_SEARCH_PASSAGES))
+
+
+def passage_order() -> str:
+    """How the merged search passages are ordered before the cap.
+
+    :return: ``score`` (best reranker score of the passage over the turn's queries, then the raw passages in
+        rank order) or ``rank`` (best rank in any query)
+    """
+    order = os.getenv('CHAT_PASSAGE_ORDER', 'score').strip().lower()
+    return order if order in _PASSAGE_ORDERS else 'score'
 
 
 def translate_max_tokens() -> int:
@@ -146,7 +158,7 @@ def settings() -> Dict[str, Any]:
             'llm_fallbacks': chat_llm.answer_chain(llm_endpoint())[1:],
             'rewrite_llm': rewrite_endpoint(), 'answer_max_tokens': answer_max_tokens(),
             'rewrite_max_tokens': rewrite_max_tokens(), 'rerank_top_k': rerank_top_k(), 'raw_top_k': raw_top_k(), 'raw_on': raw_on(),
-            'max_search_passages': max_search_passages(), 'translate_only': translate_only_enabled(),
+            'max_search_passages': max_search_passages(), 'passage_order': passage_order(), 'translate_only': translate_only_enabled(),
             'pair_rerank_top_k': pair_rerank_top_k(), 'pair_raw_top_k': pair_raw_top_k()}
 
 

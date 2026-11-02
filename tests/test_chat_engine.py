@@ -196,8 +196,9 @@ def _vs(answer, sent):
         if isinstance(out, int):
             return httpx.Response(out, text='error' if out != 400 else 'reranker not enabled',
                                   request=httpx.Request('POST', url))
-        body = {'manifest': {'columns': [{'name': c} for c in COLS]},
-                'result': {'data_array': [[r[c] for c in COLS] for r in out]}}
+        cols = COLS + ['score'] * any('score' in r for r in out)
+        body = {'manifest': {'columns': [{'name': c} for c in cols]},
+                'result': {'data_array': [[r.get(c) for c in cols] for r in out]}}
         return httpx.Response(200, json=body, request=httpx.Request('POST', url))
     return _post
 
@@ -219,6 +220,18 @@ def _llm_stream(*deltas, error=None, llm=None):
             yield f'data: {json.dumps({"type": "usage", "input_tokens": 1, "output_tokens": 1})}\n\n'
         yield 'data: [DONE]\n\n'
     return _gen
+
+
+@pytest.fixture
+def raw_search(monkeypatch):
+    """Reranked and raw searches of 12 passages (16 on an opening message), merged by best rank, uncapped.
+
+    :param monkeypatch: pytest monkeypatch
+    :return: None
+    """
+    for name, value in (('CHAT_RERANK_TOP_K', '12'), ('CHAT_RAW_TOP_K', '12'), ('CHAT_PAIR_RERANK_TOP_K', '16'),
+                        ('CHAT_PAIR_RAW_TOP_K', '16'), ('CHAT_PASSAGE_ORDER', 'rank'), ('CHAT_MAX_SEARCH_PASSAGES', '0')):
+        monkeypatch.setenv(name, value)
 
 
 DEFAULT_ROWS = [_row('c1', 'QP-1518', 'passage 1'), _row('c2', 'MR-1465'), _row('c3', 'QP-1518', 'passage 2')]
@@ -273,6 +286,7 @@ def test_happy_path_contract(monkeypatch):
     assert meta['trace_id'].startswith('chat-')
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_the_two_rewrites_reranked_and_raw(monkeypatch):
     _, m = _run(monkeypatch)
     texts = [p['query_text'] for p in m['sent']]
@@ -292,6 +306,7 @@ def test_division_is_a_filter_on_the_single_index(monkeypatch):
     assert engine.division_filter('XX') == {} and engine.division_filter(None) == {}
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_union_merges_by_best_rank(monkeypatch):
     def answer(p):
         if 'reranker' in p:
@@ -308,6 +323,7 @@ def test_union_merges_by_best_rank(monkeypatch):
     assert [r['chunk_id'] for r in found['rows']] == ['r1', 'both', 'raw2']
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_failing_queries_are_dropped_when_others_answer(monkeypatch):
     events, _ = _run(monkeypatch, answer=lambda p: 503 if 'reranker' in p else DEFAULT_ROWS)
     assert 'error' not in _types(events) and _types(events)[-1] == '[DONE]'
@@ -327,6 +343,7 @@ def test_reranked_only_sends_no_raw_query(monkeypatch):
     assert len(m['sent']) == 2 and all('reranker' in p and p['num_results'] == 8 for p in m['sent'])
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_raw_search_on_every_query_when_asked(monkeypatch):
     monkeypatch.setenv('CHAT_RAW_ON', 'question,fr,en')
     _, m = _run(monkeypatch)
@@ -348,6 +365,7 @@ def test_failed_rewrite_searches_the_question_after_its_retries(monkeypatch):
     assert found['rows'] and found['log'].codes == ['rewrite_failed']
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_reranked_only_with_reranker_refused_falls_back_to_raw(monkeypatch):
     monkeypatch.setenv('CHAT_RAW_TOP_K', '0')
     events, m = _run(monkeypatch, answer=lambda p: 400 if 'reranker' in p else DEFAULT_ROWS)
@@ -368,6 +386,20 @@ def test_cap_keeps_the_best_ranked_search_passages(monkeypatch):
         asyncio.run(_go())
     assert [r['chunk_id'] for r in found['rows']] == ['a', 'b']
 
+
+def test_passages_ordered_by_best_reranker_score_then_capped(monkeypatch):
+    def answer(p):
+        if 'FR' in p['query_text'] or p['query_text'] == 'q':
+            return [{**_row('a', 'A-1'), 'score': 0.2}, {**_row('b', 'B-1'), 'score': 0.1}]
+        return [{**_row('c', 'C-1'), 'score': 0.9}, {**_row('a', 'A-1'), 'score': 0.5}, {**_row('d', 'D-1'), 'score': 0.05}]
+    monkeypatch.setenv('CHAT_MAX_SEARCH_PASSAGES', '3')
+    sent = []
+    monkeypatch.setattr(httpx.AsyncClient, 'post', _vs(answer, sent))
+    with (patch.object(chat_llm, 'complete', AsyncMock(return_value=('FR: q\nEN: other', 'x'))),
+          patch.object(engine.retrieval, 'refs_named_in', lambda t: [])):
+        found = asyncio.run(engine.retrieve_for_turn('https://h', 't', 'ALL', [{'role': 'user', 'content': QUESTION}]))
+    assert all('reranker' in p and p['num_results'] == 32 for p in sent)
+    assert [r['chunk_id'] for r in found['rows']] == ['c', 'a', 'b']
 
 def test_vector_search_down_is_an_error_event(monkeypatch):
     events, _ = _run(monkeypatch, answer=lambda p: 403)
@@ -438,6 +470,7 @@ async def _rewrite_down(*args, **kwargs):
     raise RuntimeError('all rewrite models down')
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_a_degraded_bilingual_turn_asks_as_many_candidates_as_a_normal_one(monkeypatch):
     _, normal = _run(monkeypatch)
     _, degraded = _run(monkeypatch, rewrite=_rewrite_down)
@@ -445,6 +478,7 @@ def test_a_degraded_bilingual_turn_asks_as_many_candidates_as_a_normal_one(monke
     assert len(degraded['sent']) == 2 and {p['query_text'] for p in degraded['sent']} == {QUESTION}
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_a_degraded_translate_turn_asks_as_many_candidates_as_a_normal_one(monkeypatch):
     _lang(monkeypatch, 'fr')
     _, normal = _run(monkeypatch)
@@ -477,6 +511,7 @@ def _lang(monkeypatch, code, translate_only=True):
         monkeypatch.setenv('CHAT_TRANSLATE_ONLY', 'on')
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_a_french_opening_question_is_only_translated_into_english(monkeypatch):
     _lang(monkeypatch, 'fr')
     _, m = _run(monkeypatch, rewrite='Search for NDT qualification procedures')
@@ -492,6 +527,7 @@ def test_a_french_opening_question_is_only_translated_into_english(monkeypatch):
     assert 'rewrite' in m['log'].timings_ms
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_an_english_opening_question_is_translated_into_french_and_the_raw_search_uses_the_french_one(monkeypatch):
     _lang(monkeypatch, 'en')
     messages = [{'role': 'user', 'content': 'What are the NDT qualification requirements?'}]
@@ -526,6 +562,7 @@ def test_a_failed_translation_degrades_the_turn_and_searches_the_question(monkey
     ('fr', False, 'off'),                      # switched off
     ('fr', False, ''),                         # not switched on: the default
 ])
+@pytest.mark.usefixtures('raw_search')
 def test_the_bilingual_rewrite_still_runs_otherwise(monkeypatch, code, history, env):
     _lang(monkeypatch, code, translate_only=env is None)             # None: the switch is on and still does not apply
     if env is not None:
@@ -540,6 +577,7 @@ def test_the_bilingual_rewrite_still_runs_otherwise(monkeypatch, code, history, 
     assert sorted(p['num_results'] for p in m['sent']) == [12, 12, 12]          # the default configuration
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_another_language_searches_only_the_french_and_english_rewrites(monkeypatch):
     _lang(monkeypatch, 'cs')
     _, m = _run(monkeypatch)
@@ -607,13 +645,15 @@ def test_settings_defaults(monkeypatch):
     s = engine.settings()
     assert s['index'] == 'dev_proj.qualibot.chunks_index' and s['llm'] == 'databricks-gpt-6-luna'
     assert s['rewrite_llm'] == 'databricks-gpt-6-luna' and s['answer_max_tokens'] == 8000
-    assert s['rerank_top_k'] == 12 and s['raw_top_k'] == 12 and s['max_search_passages'] == 0
+    assert s['rerank_top_k'] == 32 and s['raw_top_k'] == 0 and s['max_search_passages'] == 50
+    assert s['pair_rerank_top_k'] == 32 and s['pair_raw_top_k'] == 0 and s['passage_order'] == 'score'
 
 
 # ---------------------------------------------------------------------------
 # The turn log — what is saved to Lakebase chat_turns / chat_retrieved_chunks / errors
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures('raw_search')
 def test_turn_log_of_a_clean_turn(monkeypatch):
     _, m = _run(monkeypatch)
     log = m['log']
@@ -638,6 +678,7 @@ def test_turn_log_of_a_clean_turn(monkeypatch):
     assert log.passages[1]['cited'] is False and log.passages[0]['chunk_text'] == 'passage 1'
 
 
+@pytest.mark.usefixtures('raw_search')
 def test_turn_log_partial_search_is_a_degraded_turn(monkeypatch):
     events, m = _run(monkeypatch, answer=lambda p: 503 if 'reranker' in p else DEFAULT_ROWS)
     log = m['log']

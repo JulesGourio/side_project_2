@@ -114,6 +114,7 @@ log.propagate = False
 # MAGIC | `raw` | integer | raw hybrid passages per query there, 0 = reranked only (`CHAT_RAW_TOP_K`) |
 # MAGIC | `rawon` | `question`, `fr`, `en`, joined by `+` | queries that also get a raw search (`CHAT_RAW_ON`) |
 # MAGIC | `cap` | integer, 0 = none | cap on the merged passages before the REF lookups (`CHAT_MAX_SEARCH_PASSAGES`) |
+# MAGIC | `order` | `score` or `rank` | order of the merged passages before the cap: best reranker score or best rank (`CHAT_PASSAGE_ORDER`) |
 # MAGIC | `translate` | `on`, `off` | opening message only translated (two queries) instead of rewritten (`CHAT_TRANSLATE_ONLY`) |
 # MAGIC | `rewrite` | endpoint name | model of the rewrite and of the translation (`CHAT_REWRITE_ENDPOINT`) |
 # MAGIC | `effort` | `off`, `minimal`, `low`, `medium`, `high` | reasoning effort of that model (`CHAT_REWRITE_REASONING_EFFORT`) |
@@ -246,6 +247,7 @@ SIZE_KEYS = {
     "raw": "CHAT_RAW_TOP_K",
     "rawon": "CHAT_RAW_ON",
     "cap": "CHAT_MAX_SEARCH_PASSAGES",
+    "order": "CHAT_PASSAGE_ORDER",
     "translate": "CHAT_TRANSLATE_ONLY",
     "pairrerank": "CHAT_PAIR_RERANK_TOP_K",
     "pairraw": "CHAT_PAIR_RAW_TOP_K",
