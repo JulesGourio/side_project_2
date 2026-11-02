@@ -92,6 +92,7 @@ log.propagate = False
 # MAGIC | `golden_table_name` | `eval_golden_retrieval` | golden questions |
 # MAGIC | `results_table_name` | `eval_retrieval_runs_golden` | one row per (configuration, question) and run |
 # MAGIC | `indexes` | `chat` | configurations to measure, see below |
+# MAGIC | `reference` | empty | configuration every other one is compared with; empty = the first of `indexes` |
 # MAGIC | `ks` | `1,3,5,10,20` | K values of Recall@K, MRR@K, AllRefs@K (distinct documents sent to the LLM); a K above the documents sent scores the whole context; the scoreboard adds the whole context (`all`) |
 # MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
 # MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval` |
@@ -133,6 +134,7 @@ for name, default in [
     ("golden_table_name", "eval_golden_retrieval"),
     ("results_table_name", "eval_retrieval_runs_golden"),
     ("indexes", "chat"),
+    ("reference", ""),
     ("ks", "1,3,5,10,20"),
     ("max_parallel", "1"),
     ("mlflow_experiment", ""),
@@ -408,6 +410,9 @@ def app_fingerprint(root: str) -> str:
 
 CONFIGS = parse_configs(INDEXES)
 RUN = list(CONFIGS)
+REFERENCE = dbutils.widgets.get("reference").strip() or RUN[0]
+if REFERENCE not in CONFIGS:
+    raise ValueError(f"reference {REFERENCE!r} is not one of the configurations: {', '.join(RUN)}")
 APP_FINGERPRINT = app_fingerprint(APP)
 RUNNER_VERSION = "golden-only-persistent-loop-v1"
 
@@ -777,8 +782,6 @@ else:
 # MAGIC ## Paired relevance scores + technical metrics
 # MAGIC - `n_questions`: count of successful **paired** golden questions used for Recall/MRR/AllRefs.
 # MAGIC - `success_fraction`: successful eligible questions / all eligible questions for this config.
-# MAGIC - `search_p95_s`: P95 end-to-end retrieval latency on successful eligible questions
-# MAGIC   (translation, search and any retry backoff included).
 # MAGIC - `n_docs`, `n_passages`, `chars`: arithmetic means over successful eligible questions.
 # MAGIC
 # MAGIC `metrics` are recomputed using the chosen K values, including on resumed searches.
@@ -830,7 +833,6 @@ for name in RUN:
         "config": name,
         "n_questions": int(len(common)),
         "success_fraction": float(len(own) / len(ELIGIBLE)),
-        "search_p95_s": float(own["latency_s"].quantile(0.95)) if not own.empty else float("nan"),
         "n_docs": float(own["n_docs"].mean()) if not own.empty else float("nan"),
         "n_passages": float(own["n_passages"].mean()) if not own.empty else float("nan"),
         "chars": float(own["chars"].mean()) if not own.empty else float("nan"),
@@ -854,15 +856,17 @@ if not success.empty and int(success["n_docs"].max()) < max(KS):
 # MAGIC 1. **Corpus and index**: an expected document absent from the chunks can never be found. It is a data gap, not a
 # MAGIC    search failure, and it explains most gaps between two environments.
 # MAGIC 2. **Key indicators**: one row per configuration, on the same questions.
-# MAGIC 3. **Recall curves**: share of the expected documents found in the first K.
-# MAGIC 4. **Every expected document missed in the top 10**: its rank in each configuration and the cause.
-# MAGIC 5. **Rank per question** and **MRR by language and by question naming a code**.
+# MAGIC 3. **Ranking**: Recall@1, @5, @10 and @all per configuration, best Recall@5 first, gap with the reference.
+# MAGIC 4. **Rank per question**: rank of the first expected document in each configuration, red when never sent.
+# MAGIC 5. **Effect of the settings**: one cell per configuration, top-k against raw search and fusion.
+# MAGIC 6. **Quality against cost**: Recall@5 against the context sent to the model.
+# MAGIC 7. **Recall curves**: one panel per top-k, the reference dotted on each.
+# MAGIC 8. **MRR by language and by question naming a code**, then every expected document missed in the top 10.
 # COMMAND ----------
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 
-PALETTE = ["#2a78d6", "#eb6834", "#0ca30c", "#8a4fd0", "#d03b3b", "#1aa5a5", "#b8860b", "#52514e"]
 GRID, TEXT, MUTED = "#e1e0d9", "#0b0b0b", "#52514e"
 plt.rcParams.update({"axes.spines.top": False, "axes.spines.right": False, "axes.grid": True,
                      "grid.color": GRID, "grid.linewidth": 0.8, "axes.edgecolor": MUTED,
@@ -870,7 +874,8 @@ plt.rcParams.update({"axes.spines.top": False, "axes.spines.right": False, "axes
                      "font.size": 10, "legend.frameon": False})
 K_CURVE = list(range(1, max(KS) + 1))
 K_MAIN = 10 if 10 in KS else max(KS)
-COLORS = {name: PALETTE[i % len(PALETTE)] for i, name in enumerate(RUN)}
+GREEN, RED, ORANGE, BLUE, PURPLE = "#0ca30c", "#d03b3b", "#eb6834", "#2a78d6", "#8a4fd0"
+SCORE_CMAP = LinearSegmentedColormap.from_list("score", [RED, "#f2c94c", GREEN])
 
 
 def reciprocal(rank) -> float:
@@ -956,6 +961,93 @@ log.info("Corpus %s: %d documents | %d of %d expected documents absent",
 # MAGIC   `sent, but after rank 10` = ranking issue.
 # COMMAND ----------
 K5 = 5 if 5 in KS else min(KS)
+NOISE = 1 / max(1, len(common_ids))  # one question
+CHARS_PER_TOKEN = 3.5  # technical French, the constant of the parsing pipeline
+
+
+def config_env(name: str) -> dict[str, str]:
+    """Search variables of a configuration: the app's, then its overrides.
+
+    :param name: configuration label
+    :return: variable name -> value
+    """
+    return {**{k: v for k, v in BASE_SEARCH_ENV.items() if v is not None}, **CONFIGS[name]["overrides"]}
+
+
+def vs_queries(name: str) -> int:
+    """Vector Search queries sent for an opening question in French or English, REF lookups apart.
+
+    :param name: configuration label
+    :return: the reranked queries (two, four when ANN and BM25 are split) plus the raw ones
+    """
+    s, env = SETTINGS[name], config_env(name)
+    raw_k = s["pair_raw_top_k"] if s["translate_only"] else s["raw_top_k"]
+    return 2 * (2 if env.get("EVAL_SPLIT_BM25") else 1) + (len(s["raw_on"]) if raw_k else 0)
+
+
+def settings(name: str) -> dict[str, str]:
+    """Search settings of a configuration, as short MLflow parameters.
+
+    :param name: configuration label
+    :return: ``top_k`` (first message / other turns), ``brute``, ``fusion``, ``recherche``, ``codes``, ``index``,
+        ``requetes_vs``
+    """
+    s, env = SETTINGS[name], config_env(name)
+    return {
+        "top_k": f"{s['pair_rerank_top_k']}/{s['rerank_top_k']}",
+        "brute": "on" if max(s["pair_raw_top_k"], s["raw_top_k"]) else "off",
+        "fusion": "rrf" if env.get("EVAL_MERGE") == "rrf" else "best",
+        "recherche": f"ann+bm25 {env['EVAL_SPLIT_BM25']}" if env.get("EVAL_SPLIT_BM25") else "hybrid",
+        "codes": env.get("EVAL_CODE_NORMALIZATION", "on"),
+        "index": CONFIGS[name]["index"].rsplit(".", 1)[-1],
+        "requetes_vs": str(vs_queries(name)),
+    }
+
+
+def describe(params: dict[str, str]) -> str:
+    """The settings of a configuration in plain French.
+
+    :param params: output of ``settings``
+    :return: e.g. ``Top-k 16/12 · brute coupée · fusion meilleur rang · HYBRID · codes normalisés · 2 requêtes``
+    """
+    parts = [f"Top-k {params['top_k']}", "brute active" if params["brute"] == "on" else "brute coupée",
+             "fusion RRF" if params["fusion"] == "rrf" else "fusion meilleur rang",
+             "HYBRID" if params["recherche"] == "hybrid"
+             else f"ANN + BM25 séparés (poids BM25 {params['recherche'][9:]})",
+             "codes normalisés" if params["codes"] == "on" else "sans normalisation des codes",
+             f"{params['requetes_vs']} requêtes Vector Search par question"]
+    if params["index"] != MAIN_INDEX.rsplit(".", 1)[-1]:
+        parts.append(f"index {params['index']}")
+    return " · ".join(parts)
+
+
+def tokens_k(row) -> float:
+    """Approximate thousands of tokens of passages a configuration sends to the LLM.
+
+    :param row: the configuration's row of ``summary``
+    :return: thousands of tokens
+    """
+    return row["chars"] / CHARS_PER_TOKEN / 1000
+
+
+def ranking(rows: dict[str, dict]) -> list[str]:
+    """Configurations, best Recall@5 first, then best MRR.
+
+    :param rows: label -> row of ``summary``
+    :return: labels
+    """
+    return sorted(rows, key=lambda n: (-rows[n][f"recall_at_{K5}"], -rows[n]["mrr_at_all"]))
+
+
+ROWS = {name: summary[summary["config"] == name].iloc[0].to_dict() for name in RUN}
+PARAMS = {name: settings(name) for name in RUN}
+ORDER = ranking(ROWS)
+INDEX_COUNTS = pd.Series([CONFIGS[n]["index"] for n in RUN]).value_counts()
+MAIN_INDEX = CONFIGS[REFERENCE]["index"] if INDEX_COUNTS.get(CONFIGS[REFERENCE]["index"]) == INDEX_COUNTS.max() \
+    else INDEX_COUNTS.index[0]
+# Configurations that differ only by top-k, raw search and fusion: the grid and the curve panels.
+MAIN = [n for n in RUN if PARAMS[n]["recherche"] == "hybrid" and PARAMS[n]["codes"] == "on"
+        and CONFIGS[n]["index"] == MAIN_INDEX]
 
 
 def search_sizes(name: str) -> str:
@@ -965,9 +1057,8 @@ def search_sizes(name: str) -> str:
     :return: ``reranked+raw`` of an opening message in French or English, then of the other queries, and the
         merge or BM25 options when set
     """
-    env = {**{k: v for k, v in BASE_SEARCH_ENV.items() if v is not None}, **CONFIGS[name]["overrides"]}
-    text = (f"{env.get('CHAT_PAIR_RERANK_TOP_K', '?')}+{env.get('CHAT_PAIR_RAW_TOP_K') or 0}"
-            f" / {env.get('CHAT_RERANK_TOP_K', '?')}+{env.get('CHAT_RAW_TOP_K') or 0}")
+    s, env = SETTINGS[name], config_env(name)
+    text = f"{s['pair_rerank_top_k']}+{s['pair_raw_top_k']} / {s['rerank_top_k']}+{s['raw_top_k']}"
     extras = [f"merge={env['EVAL_MERGE']}" if env.get("EVAL_MERGE") else "",
               f"split={env['EVAL_SPLIT_BM25']}" if env.get("EVAL_SPLIT_BM25") else "",
               "codenorm=off" if env.get("EVAL_CODE_NORMALIZATION") == "off" else ""]
@@ -1011,11 +1102,11 @@ def kpi_table() -> pd.DataFrame:
             "expected docs found in the whole context": f["recall_at_all"].mean(),
             "MRR": f["mrr_at_all"].mean(),
             "docs sent to the LLM": own["n_docs"].mean(),
-            "p95 latency (s)": own["latency_s"].quantile(0.95),
+            "Vector Search queries per question": vs_queries(name),
         })
     table = pd.DataFrame(rows)
     main = f"expected docs found in top {K_MAIN}"
-    table[f"Δ {main} vs {RUN[0]}"] = table[main] - table[main].iloc[0]
+    table[f"Δ {main} vs {REFERENCE}"] = table[main] - table.loc[table["configuration"] == REFERENCE, main].iloc[0]
     return table
 
 
@@ -1028,7 +1119,7 @@ def styled_kpi(table: pd.DataFrame):
     delta = [c for c in table.columns if c.startswith("Δ")]
     share = [c for c in table.columns if c.startswith(("≥1", "expected", "same", "every"))]
     fmt = {**{c: "{:.0%}" for c in share}, **{c: "{:+.0%}" for c in delta},
-           "MRR": "{:.2f}", "docs sent to the LLM": "{:.1f}", "p95 latency (s)": "{:.1f}"}
+           "MRR": "{:.2f}", "docs sent to the LLM": "{:.1f}"}
 
     def sign(value: float) -> str:
         """CSS color of a delta.
@@ -1082,7 +1173,7 @@ def ranks_table() -> pd.DataFrame:
 
     :return: rows ``case_id``, ``question``, ``lang``, ``has_code``, ``expected`` and one column per configuration
     """
-    base = paired[paired["config"] == RUN[0]][["case_id", "question", "expected"]].copy()
+    base = paired[paired["config"] == REFERENCE][["case_id", "question", "expected"]].copy()
     base["lang"] = base["case_id"].map(lambda c: GOLDEN_LANG.get(c, "unknown"))
     base["has_code"] = base["question"].map(lambda q: bool(find_codes(q, accept_lowercase=True)))
     for name in RUN:
@@ -1091,113 +1182,276 @@ def ranks_table() -> pd.DataFrame:
     return base.reset_index(drop=True)
 
 
-def curve_figure() -> plt.Figure:
-    """Recall@K and AllRefs@K against K, every configuration on the same two panels.
+def percent_axis(axis) -> None:
+    """Format an axis as percentages.
+
+    :param axis: ``ax.xaxis`` or ``ax.yaxis``
+    """
+    axis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+
+
+def ranking_figure() -> plt.Figure:
+    """Recall@1, @5, @10 and @all of every configuration, best Recall@5 first, with the gap to the reference.
 
     :return: matplotlib figure
     """
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4.6), sharex=True)
-    for ax, metric, title in [(axes[0], "recall", "Recall@K: share of expected documents in the first K"),
-                              (axes[1], "all_refs", "AllRefs@K: every expected document in the first K")]:
-        for name in RUN:
-            f = paired[paired["config"] == name]
-            values = [np.mean([score_at_k(e, r, k)[f"{metric}_at_{k}"] for e, r in zip(f["expected"], f["retrieved"])])
-                      for k in K_CURVE]
-            ax.plot(K_CURVE, values, color=COLORS[name], label=name, marker="o", markersize=3,
-                    markevery=[k - 1 for k in KS])
-        ax.set_xscale("log")
-        ax.set_xticks(KS)
-        ax.set_xticklabels([str(k) for k in KS])
-        ax.minorticks_off()
-        ax.set_ylim(0, 1.02)
-        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
-        ax.set_xlabel("K (distinct documents, log scale)")
-        ax.set_title(title, loc="left", fontsize=10)
-    fig.legend(*axes[0].get_legend_handles_labels(), loc="upper right", ncol=min(len(RUN), 5))
-    fig.suptitle(f"{len(common_ids)} paired questions", x=0.01, ha="left", fontsize=11)
-    fig.tight_layout(rect=(0, 0, 1, 0.9))
+    marks = [(f"recall_at_{k}", f"R@{k}", marker, color)
+             for k, marker, color in [(min(KS), "o", PURPLE), (K5, "D", BLUE), (K_MAIN, "s", ORANGE)]]
+    marks = list({m[0]: m for m in marks}.values()) + [("recall_at_all", "R@all", "|", MUTED)]
+    ref = ROWS[REFERENCE]
+    fig, ax = plt.subplots(figsize=(12, 0.42 * len(ORDER) + 1.8))
+    for i, name in enumerate(ORDER):
+        r = ROWS[name]
+        ax.plot([r[f"recall_at_{min(KS)}"], r["recall_at_all"]], [i, i], color=GRID, lw=6, solid_capstyle="round",
+                zorder=1)
+        for key, label, marker, color in marks:
+            ax.scatter(r[key], i, marker=marker, s=200 if marker == "|" else 60, color=color, linewidths=2, zorder=3,
+                       label=label if i == 0 else None)
+        delta = r[f"recall_at_{K5}"] - ref[f"recall_at_{K5}"]
+        color = MUTED if name == REFERENCE or abs(delta) < NOISE - 1e-9 else GREEN if delta > 0 else RED
+        text = "référence" if name == REFERENCE else f"{100 * delta:+.1f} pts"
+        ax.text(1.01, i, text, va="center", fontsize=9, color=color, transform=ax.get_yaxis_transform())
+        ax.text(1.12, i, f"{tokens_k(r):.0f}k tokens · {vs_queries(name)} requêtes", va="center", fontsize=8,
+                color=MUTED, transform=ax.get_yaxis_transform())
+    ax.set_yticks(range(len(ORDER)))
+    ax.set_yticklabels([f"▶ {n}" if n == REFERENCE else n for n in ORDER])
+    ax.invert_yaxis()
+    low = min(ROWS[n][f"recall_at_{min(KS)}"] for n in ORDER)
+    ax.set_xlim(max(0.0, np.floor(low * 10) / 10 - 0.05), 1.0)
+    percent_axis(ax.xaxis)
+    ax.grid(axis="y", visible=False)
+    ax.legend(loc="lower left", ncol=len(marks), bbox_to_anchor=(0, 1.0), fontsize=9)
+    ax.set_title(f"Classement, meilleur R@{K5} d'abord · écart de R@{K5} avec {REFERENCE} "
+                 f"(vert / rouge = au moins une question d'écart)", loc="left", fontsize=11, pad=28)
+    fig.tight_layout()
+    fig.subplots_adjust(right=0.72)
     return fig
 
 
 def rank_figure(ranks: pd.DataFrame) -> plt.Figure:
-    """Heatmap of the rank of the first expected document, questions hardest first, one column per configuration.
+    """Rank of the first expected document per question and configuration, hardest questions first.
 
     :param ranks: output of ``ranks_table``
     :return: matplotlib figure
     """
-    observed = ranks[RUN].astype(float).max().max()
+    observed = ranks[ORDER].astype(float).max().max()
     missed = int(max(max(KS), 0 if pd.isna(observed) else observed)) + 1
-    values = ranks[RUN].astype(float).fillna(missed)
+    values = ranks[ORDER].astype(float).fillna(missed)
     order = values.mean(axis=1).sort_values(ascending=False).index
     values, labels = values.loc[order], ranks.loc[order, "question"]
-    cmap = LinearSegmentedColormap.from_list("rank", ["#0ca30c", "#f2c94c", "#eb6834", "#d03b3b"])
-    fig, ax = plt.subplots(figsize=(1.3 * len(RUN) + 6, 0.24 * len(values) + 1.6))
+    cmap = LinearSegmentedColormap.from_list("rank", [GREEN, "#f2c94c", ORANGE, RED])
+    fig, ax = plt.subplots(figsize=(0.7 * len(ORDER) + 7, 0.24 * len(values) + 2.2))
     ax.imshow(np.log(values.to_numpy()), cmap=cmap, aspect="auto", vmin=0, vmax=np.log(missed))
     for i in range(values.shape[0]):
         for j in range(values.shape[1]):
             rank = values.iat[i, j]
             ax.text(j, i, "-" if rank >= missed else str(int(rank)), ha="center", va="center", fontsize=7,
                     color="white" if rank >= 5 else TEXT)
-    ax.set_xticks(range(len(RUN)))
-    ax.set_xticklabels(RUN, rotation=30, ha="right")
+    ax.set_xticks(range(len(ORDER)))
+    ax.set_xticklabels([f"▶ {n}" if n == REFERENCE else n for n in ORDER], rotation=45, ha="left", fontsize=8)
     ax.xaxis.tick_top()
     ax.set_yticks(range(len(values)))
     ax.set_yticklabels([(q[:80] + "…") if len(q) > 80 else q for q in labels], fontsize=7)
     ax.grid(False)
-    ax.set_title("Rank of the first expected document (- = missed), hardest questions first", loc="left",
-                 fontsize=10, pad=40)
+    ax.set_title("Rang du premier document attendu dans le contexte envoyé (- en rouge = jamais envoyé), "
+                 "questions les plus dures en haut, configurations dans l'ordre du classement",
+                 loc="left", fontsize=10, pad=90)
     fig.tight_layout()
     return fig
 
 
-def slice_figure(ranks: pd.DataFrame) -> tuple[plt.Figure, pd.DataFrame]:
-    """MRR per language and per "the question names a code", one bar per configuration.
+def settings_grid_figure() -> plt.Figure | None:
+    """R@5, AllRefs@10 and context of the configurations that differ by top-k, raw search and fusion only.
+
+    :return: matplotlib figure, None when those configurations do not make a grid
+    """
+    tops = sorted({PARAMS[n]["top_k"] for n in MAIN}, key=lambda v: [int(x) for x in v.split("/")])
+    combos = [(b, f) for b in ("on", "off") for f in ("best", "rrf")
+              if any(PARAMS[n]["brute"] == b and PARAMS[n]["fusion"] == f for n in MAIN)]
+    if len(tops) * len(combos) < 4:
+        return None
+    cell = {}
+    # A configuration with explicit settings wins over the app as deployed when both fall in the same cell.
+    for n in sorted(MAIN, key=lambda n: not CONFIGS[n]["overrides"]):
+        cell.setdefault((PARAMS[n]["top_k"], PARAMS[n]["brute"], PARAMS[n]["fusion"]), n)
+    panels = [(f"recall_at_{K5}", f"R@{K5}"), (f"all_refs_at_{K_MAIN}", f"AllRefs@{K_MAIN}"), ("tokens", "k tokens envoyés")]
+    fig, axes = plt.subplots(1, 3, figsize=(4.6 * 3, 1.0 * len(tops) + 1.8))
+    for ax, (key, title) in zip(axes, panels):
+        grid = np.full((len(tops), len(combos)), np.nan)
+        for i, top in enumerate(tops):
+            for j, (b, f) in enumerate(combos):
+                name = cell.get((top, b, f))
+                if name:
+                    grid[i, j] = tokens_k(ROWS[name]) if key == "tokens" else ROWS[name][key]
+        if key == "tokens":
+            ax.imshow(grid, cmap=LinearSegmentedColormap.from_list("ctx", ["#e9f5e9", "#f2c94c", ORANGE]),
+                      vmin=np.nanmin(grid), vmax=np.nanmax(grid), aspect="auto")
+        else:
+            ax.imshow(grid, cmap=SCORE_CMAP, vmin=np.nanmin(grid), vmax=np.nanmax(grid), aspect="auto")
+        best = np.nanmax(grid)
+        for i in range(len(tops)):
+            for j in range(len(combos)):
+                v = grid[i, j]
+                text = "–" if np.isnan(v) else f"{v:.0f}k" if key == "tokens" else f"{v:.0%}"
+                bold = key != "tokens" and not np.isnan(v) and v == best
+                ax.text(j, i, text, ha="center", va="center", fontsize=11, color=TEXT,
+                        fontweight="bold" if bold else "normal")
+        ax.set_xticks(range(len(combos)))
+        ax.set_xticklabels([f"brute {b}\nfusion {'RRF' if f == 'rrf' else 'app'}" for b, f in combos], fontsize=8)
+        ax.set_yticks(range(len(tops)))
+        ax.set_yticklabels([f"top-k {t}" for t in tops])
+        ax.grid(False)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_title(title, loc="left", fontsize=11)
+    fig.suptitle("Effet des réglages : une case = une configuration (gras = meilleure case)", x=0.01, ha="left",
+                 fontsize=11)
+    fig.tight_layout()
+    return fig
+
+
+def config_style(name: str, i: int) -> tuple[str, str, str]:
+    """Color, line style and marker of a configuration: raw search on or off, RRF fusion, other settings.
+
+    :param name: configuration label
+    :param i: position among the configurations of the same panel, for the other settings
+    :return: color, line style, marker
+    """
+    p = PARAMS[name]
+    if name in MAIN:
+        return ORANGE if p["brute"] == "on" else BLUE, "--" if p["fusion"] == "rrf" else "-", \
+            "^" if p["fusion"] == "rrf" else "o"
+    if p["recherche"] != "hybrid":
+        return [PURPLE, "#c9a3f0", "#4b2483", "#1aa5a5"][i % 4], "-", "s"
+    return ["#9a998f", "#b8860b", "#1aa5a5"][i % 3], ":", "s"
+
+
+def cost_figure() -> plt.Figure:
+    """Recall@5 against the context sent to the model, one point per configuration.
+
+    :return: matplotlib figure
+    """
+    from matplotlib.lines import Line2D
+
+    fig, ax = plt.subplots(figsize=(11, 6.5))
+    for i, name in enumerate(RUN):
+        color, _, marker = config_style(name, i)
+        r = ROWS[name]
+        ax.scatter(tokens_k(r), r[f"recall_at_{K5}"], s=150, color=color, marker=marker, alpha=0.9,
+                   edgecolor="white", zorder=3)
+        ax.annotate(f"{name} (réf.)" if name == REFERENCE else name, (tokens_k(r), r[f"recall_at_{K5}"]),
+                    xytext=(7, 4), textcoords="offset points", fontsize=8, color=TEXT)
+    ax.legend(handles=[Line2D([], [], marker="o", ls="", color=BLUE, label="brute off"),
+                       Line2D([], [], marker="o", ls="", color=ORANGE, label="brute on"),
+                       Line2D([], [], marker="^", ls="", color=MUTED, label="fusion RRF"),
+                       Line2D([], [], marker="s", ls="", color=PURPLE, label="ANN + BM25 séparés"),
+                       Line2D([], [], marker="s", ls="", color="#9a998f", label="autre index ou codes")],
+              loc="lower right", fontsize=8)
+    ax.set_xlabel("Contexte envoyé au modèle (k tokens) : plus cher, plus lent à répondre")
+    ax.set_ylabel(f"R@{K5}")
+    percent_axis(ax.yaxis)
+    ax.set_title(f"Qualité contre coût : R@{K5} contre contexte envoyé (meilleur = en haut à gauche)", loc="left",
+                 fontsize=11)
+    fig.tight_layout()
+    return fig
+
+
+CURVES: dict[str, list[float]] = {}
+
+
+def curve(name: str) -> list[float]:
+    """Recall@K of a configuration for every K from 1 to the largest of ``ks``.
+
+    :param name: configuration label
+    :return: one mean recall per K of ``K_CURVE``
+    """
+    if name not in CURVES:
+        f = paired[paired["config"] == name]
+        CURVES[name] = [np.mean([score_at_k(e, r, k)[f"recall_at_{k}"] for e, r in zip(f["expected"], f["retrieved"])])
+                        for k in K_CURVE]
+    return CURVES[name]
+
+
+def curves_figure() -> plt.Figure:
+    """Recall@K curves, one panel per top-k and one for the other settings, the reference dotted on each.
+
+    :return: matplotlib figure
+    """
+    tops = sorted({PARAMS[n]["top_k"] for n in MAIN}, key=lambda v: [int(x) for x in v.split("/")])
+    groups = [(f"top-k {t}", [n for n in MAIN if PARAMS[n]["top_k"] == t]) for t in tops]
+    others = [n for n in RUN if n not in MAIN]
+    if others:
+        groups.append(("autres réglages", others))
+    ncols = min(4, len(groups))
+    nrows = math.ceil(len(groups) / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3.9 * nrows + 0.6), sharey=True, squeeze=False)
+    for ax, (title, names) in zip(axes.flat, groups):
+        if REFERENCE not in names:
+            ax.plot(K_CURVE, curve(REFERENCE), color=MUTED, ls=":", lw=1.5, label=f"{REFERENCE} (réf.)")
+        for i, name in enumerate(names):
+            color, style, _ = config_style(name, i)
+            ax.plot(K_CURVE, curve(name), color=color, ls=style, marker="o", markersize=3,
+                    markevery=[k - 1 for k in KS], label=f"{name} (réf.)" if name == REFERENCE else name)
+        ax.set_xscale("log")
+        ax.set_xticks(KS)
+        ax.set_xticklabels([str(k) for k in KS])
+        ax.minorticks_off()
+        percent_axis(ax.yaxis)
+        ax.set_xlabel("K premiers documents")
+        ax.set_title(title, loc="left", fontsize=10)
+        ax.legend(fontsize=7, loc="lower right")
+    for ax in list(axes.flat)[len(groups):]:
+        ax.set_visible(False)
+    axes[0][0].set_ylabel("Recall@K")
+    fig.suptitle("Courbes Recall@K (orange = brute on, bleu = brute off, tirets = fusion RRF, pointillé gris = "
+                 "référence)", x=0.01, ha="left", fontsize=11)
+    fig.tight_layout()
+    return fig
+
+
+def slice_figure(ranks: pd.DataFrame) -> plt.Figure:
+    """MRR per language and per "the question names a code", one row per configuration.
 
     :param ranks: output of ``ranks_table``
-    :return: the figure and its table (``slice``, ``value``, ``n`` and one MRR column per configuration)
+    :return: matplotlib figure
     """
-    rows = []
-    for column in ("lang", "has_code"):
+    columns = []
+    for column, title in (("lang", "langue"), ("has_code", "code")):
         for value, group in ranks.groupby(column):
-            row = {"slice": column, "value": str(value), "n": len(group)}
-            row.update({name: group[name].map(reciprocal).mean() for name in RUN})
-            rows.append(row)
-    table = pd.DataFrame(rows)
-    fig, ax = plt.subplots(figsize=(9, 0.5 * len(table) * max(1, len(RUN) / 2) + 1.2))
-    y = np.arange(len(table))
-    height = 0.8 / len(RUN)
-    for i, name in enumerate(RUN):
-        bars = ax.barh(y + (i - (len(RUN) - 1) / 2) * height, table[name], height=height * 0.95,
-                       color=COLORS[name], label=name)
-        for bar, value in zip(bars, table[name]):
-            ax.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2, f"{value:.2f}", va="center",
-                    fontsize=7, color=TEXT)
-    ax.set_yticks(y)
-    ax.set_yticklabels([f"{s} = {v}  (n={n})" for s, v, n in table[["slice", "value", "n"]].values])
-    ax.invert_yaxis()
-    ax.set_xlim(0, 1.12)
-    ax.set_xlabel("MRR (whole context)")
-    ax.grid(axis="y", visible=False)
-    ax.legend(loc="lower right", fontsize=8)
-    ax.set_title("MRR by language and by question naming a code", loc="left", fontsize=10)
+            label = ("cite un code" if value else "sans code") if column == "has_code" else f"{title} {value}"
+            columns.append((f"{label}\n(n={len(group)})", {n: group[n].map(reciprocal).mean() for n in ORDER}))
+    grid = np.array([[values[n] for _, values in columns] for n in ORDER])
+    fig, ax = plt.subplots(figsize=(1.6 * len(columns) + 4, 0.4 * len(ORDER) + 1.6))
+    ax.imshow(grid, cmap=SCORE_CMAP, vmin=np.nanmin(grid), vmax=np.nanmax(grid), aspect="auto")
+    for i in range(grid.shape[0]):
+        for j in range(grid.shape[1]):
+            ax.text(j, i, f"{grid[i, j]:.2f}", ha="center", va="center", fontsize=9, color=TEXT)
+    ax.set_xticks(range(len(columns)))
+    ax.set_xticklabels([label for label, _ in columns], fontsize=9)
+    ax.xaxis.tick_top()
+    ax.set_yticks(range(len(ORDER)))
+    ax.set_yticklabels([f"▶ {n}" if n == REFERENCE else n for n in ORDER], fontsize=9)
+    ax.grid(False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_title("MRR par langue et selon que la question cite un code", loc="left", fontsize=11, pad=36)
     fig.tight_layout()
-    return fig, table
-
+    return fig
 
 
 if not common_ids:
     log.info("Comparison skipped: no paired question")
 else:
     display(styled_kpi(kpi_table()))
-    display(curve_figure())
+    ranks = ranks_table()
+    grid_fig = settings_grid_figure()
+    for fig in (ranking_figure(), rank_figure(ranks), grid_fig, cost_figure(), curves_figure(), slice_figure(ranks)):
+        if fig is not None:
+            display(fig)
     misses = misses_table()
     if not misses.empty:
         display(misses.groupby("cause").size().rename("expected documents").reset_index())
         display(misses)
-    ranks = ranks_table()
-    slice_fig, _ = slice_figure(ranks)
-    for fig in (rank_figure(ranks), slice_fig):
-        display(fig)
 
 error_rows = pdf[pdf["error"].notna()]
 if not error_rows.empty:
@@ -1211,8 +1465,9 @@ plt.close("all")
 # MAGIC Native MLflow only, one run per configuration and no other run, no artifact to open.
 # MAGIC - **Experiment page, description**: the ranking of the configurations, the effect of each setting and the questions
 # MAGIC   every configuration misses, rewritten at each execution.
-# MAGIC - **Runs > Table**: one row per configuration. Settings `top_k`, `brute`, `fusion`, `requete`, `codes`, `index`;
-# MAGIC   scores `recall_01` … `recall_20`, `recall_all`, `allrefs_10`, `mrr`, `docs` (MLflow adds `/mean`), `tokens_k`, `p95_s`.
+# MAGIC - **Runs > Table**: one row per configuration. Settings `top_k`, `brute`, `fusion`, `recherche`, `codes`, `index`,
+# MAGIC   `requetes_vs`; scores `recall_01` … `recall_20`, `recall_all`, `allrefs_10`, `mrr`, `docs` (MLflow adds `/mean`),
+# MAGIC   `tokens_k`.
 # MAGIC   Sort by clicking a column; group by a setting with **Group by**.
 # MAGIC - **Runs > Chart**: `recall_by_k`, one line per configuration, K on the x axis. The other charts are the bar charts
 # MAGIC   MLflow adds by itself; hide them on the screen.
@@ -1224,10 +1479,8 @@ from mlflow.genai.scorers import scorer
 from mlflow.tracking import MlflowClient
 
 K10 = 10 if 10 in KS else max(KS)
-CHARS_PER_TOKEN = 3.5  # technical French, the constant of the parsing pipeline
-NOISE = 1 / max(1, len(common_ids))  # one question
-SETTINGS_ORDER = ["top_k", "brute", "fusion", "requete", "data"]
-SETTING_LABELS = {"top_k": "Top-k", "brute": "Recherche brute", "fusion": "Fusion", "requete": "Requête",
+SETTINGS_ORDER = ["top_k", "brute", "fusion", "recherche", "data"]
+SETTING_LABELS = {"top_k": "Top-k", "brute": "Recherche brute", "fusion": "Fusion", "recherche": "Recherche",
                   "data": "Index et codes"}
 # MLflow column name -> (score column of ``score_at_k``, K)
 SCORER_COLUMNS = {**{f"recall_{k:02d}": (f"recall_at_{k}", k) for k in KS}, "recall_all": ("recall_at_all", "all"),
@@ -1287,48 +1540,6 @@ def docs_scorer():
 EVAL_SCORERS = [metric_scorer(name, column, k) for name, (column, k) in SCORER_COLUMNS.items()] + [docs_scorer()]
 
 
-def settings(name: str) -> dict[str, str]:
-    """Search settings of a configuration, as short MLflow parameters.
-
-    :param name: configuration label
-    :return: ``top_k`` (first message / other turns), ``brute``, ``fusion``, ``requete``, ``codes``, ``index``
-    """
-    env = {**{k: v for k, v in BASE_SEARCH_ENV.items() if v is not None}, **CONFIGS[name]["overrides"]}
-    raw = max(int(env.get("CHAT_PAIR_RAW_TOP_K") or 0), int(env.get("CHAT_RAW_TOP_K") or 0))
-    return {
-        "top_k": f"{env.get('CHAT_PAIR_RERANK_TOP_K', '?')}/{env.get('CHAT_RERANK_TOP_K', '?')}",
-        "brute": "on" if raw else "off",
-        "fusion": "rrf" if env.get("EVAL_MERGE") == "rrf" else "best",
-        "requete": f"ann+bm25 {env['EVAL_SPLIT_BM25']}" if env.get("EVAL_SPLIT_BM25") else "hybrid",
-        "codes": env.get("EVAL_CODE_NORMALIZATION", "on"),
-        "index": CONFIGS[name]["index"].rsplit(".", 1)[-1],
-    }
-
-
-def describe(params: dict[str, str]) -> str:
-    """The settings of a configuration in plain French.
-
-    :param params: output of ``settings``
-    :return: e.g. ``Top-k 16/12 · brute coupée · fusion meilleur rang · HYBRID · codes normalisés``
-    """
-    parts = [f"Top-k {params['top_k']}", "brute active" if params["brute"] == "on" else "brute coupée",
-             "fusion RRF" if params["fusion"] == "rrf" else "fusion meilleur rang",
-             "HYBRID" if params["requete"] == "hybrid" else f"ANN + BM25 séparés (poids BM25 {params['requete'][9:]})",
-             "codes normalisés" if params["codes"] == "on" else "sans normalisation des codes"]
-    if params["index"] != CONFIGS[RUN[0]]["index"].rsplit(".", 1)[-1]:
-        parts.append(f"index {params['index']}")
-    return " · ".join(parts)
-
-
-def tokens_k(row) -> float:
-    """Approximate thousands of tokens of passages a configuration sends to the LLM.
-
-    :param row: the configuration's row of ``summary``
-    :return: thousands of tokens
-    """
-    return row["chars"] / CHARS_PER_TOKEN / 1000
-
-
 def pct(value: float) -> str:
     """A share as a French percentage with one decimal.
 
@@ -1377,16 +1588,6 @@ def verdict(deltas: list[float]) -> str:
     return "mitigé"
 
 
-def ranking(rows: dict[str, dict]) -> list[str]:
-    """Configurations, best Recall@5 first, then best MRR.
-
-    :param rows: label -> row of ``summary``
-    :return: labels
-    """
-    k5 = f"recall_at_{5 if 5 in KS else min(KS)}"
-    return sorted(rows, key=lambda n: (-rows[n][k5], -rows[n]["mrr_at_all"]))
-
-
 def ranking_markdown(rows: dict[str, dict], params: dict[str, dict], reference: str) -> str:
     """Markdown table of the ranking.
 
@@ -1396,14 +1597,14 @@ def ranking_markdown(rows: dict[str, dict], params: dict[str, dict], reference: 
     :return: markdown
     """
     k5 = 5 if 5 in KS else min(KS)
-    head = ([f"R@{k}" for k in KS] + ["R@all", f"AllRefs@{K10}", "MRR", "Docs", "k tokens", "p95 s", f"Δ R@{k5} vs réf."])
+    head = ([f"R@{k}" for k in KS] + ["R@all", f"AllRefs@{K10}", "MRR", "Docs", "k tokens", f"Δ R@{k5} vs réf."])
     lines = ["| # | Configuration | Réglages | " + " | ".join(head) + " |", "|" + "---|" * (len(head) + 3)]
     ref = rows[reference]
     for i, name in enumerate(ranking(rows), 1):
         r = rows[name]
         cells = ([pct(r[f"recall_at_{k}"]) for k in KS]
                  + [pct(r["recall_at_all"]), pct(r[f"all_refs_at_{K10}"]), num(r["mrr_at_all"], 3), num(r["n_docs"]),
-                    num(tokens_k(r)), num(r["search_p95_s"]), points(r[f"recall_at_{k5}"] - ref[f"recall_at_{k5}"])])
+                    num(tokens_k(r)), points(r[f"recall_at_{k5}"] - ref[f"recall_at_{k5}"])])
         label = f"**{name}** (réf.)" if name == reference else f"**{name}**"
         lines.append(f"| {i} | {label} | {describe(params[name])} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
@@ -1488,10 +1689,6 @@ def missed_by_all_markdown() -> str:
 if common_ids:
     client.workspace.mkdirs(EXPERIMENT.rsplit("/", 1)[0])
     experiment_id = mlflow.set_experiment(EXPERIMENT).experiment_id
-    REFERENCE = RUN[0]
-    ROWS = {name: summary[summary["config"] == name].iloc[0].to_dict() for name in RUN}
-    PARAMS = {name: settings(name) for name in RUN}
-    ORDER = ranking(ROWS)
     run_date = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     tags = {"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
             "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID, "runner": RUNNER_VERSION}
@@ -1510,7 +1707,6 @@ if common_ids:
             mlflow.log_params(PARAMS[name])
             mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS)
             log_number("tokens_k", tokens_k(ROWS[name]))
-            log_number("p95_s", ROWS[name]["search_p95_s"])
             for k in KS:
                 mlflow.log_metric("recall_by_k", float(ROWS[name][f"recall_at_{k}"]), step=k)
         log.info("MLflow run=%s | config=%s | questions=%d", eval_run.info.run_id, name, len(data))
