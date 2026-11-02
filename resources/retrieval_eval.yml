@@ -14,7 +14,7 @@ resources:
           - ${var.notification_email}
       notification_settings:
         no_alert_for_canceled_runs: true
-      description: "Write <env>_proj.qualibot.eval_golden_retrieval, then measure whether the search of the deployed app returns the expected documents (preset deploye, tailles or complet; perso = the indexes parameter). Results in <env>_proj.qualibot.eval_retrieval_runs_golden and the MLflow experiment /Shared/qualibot/<env>_retrieval_eval."
+      description: "Write <env>_proj.qualibot.eval_golden_retrieval, then measure whether the search of the deployed app returns the expected documents (preset deploye, tailles, selection or complet; perso = the indexes parameter). Results in <env>_proj.qualibot.eval_retrieval_runs_golden and the MLflow experiment /Shared/qualibot/<env>_retrieval_eval."
       max_concurrent_runs: 1
       tags:
         activity-type: ${var.job_activity_tag}
