@@ -25,9 +25,9 @@ SOURCE_CHUNKS = "prod_proj.qualibot.chunks"
 CHECKPOINT = "prod_proj.qualibot.parsing_checkpoint"
 TARGET_TABLE = "prod_proj.qualibot.chunks_test_tailles"
 # The reranker reads the first 2,000 characters of REF + semantic_headers + chunk_text, and chunk_text starts with the
-# [Source: ...] line: 1,800 characters of body keep the passage inside it. A higher minimum and target fill passages up
-# to that ceiling instead of leaving many small ones.
-SIZES = {"min_tokens": 250, "target_tokens": 330, "max_tokens": 520, "max_chars": 1800,
+# [Source: ...] line (about 200 characters): the body stays under 1,650. The higher minimum and target fill passages
+# up to that ceiling instead of leaving many small ones (past_rerank in the log: share of passages over 2,000).
+SIZES = {"min_tokens": 250, "target_tokens": 300, "max_tokens": 470, "max_chars": 1650,
          "overlap_ratio": 0.12, "chars_per_token": 3.5}
 RERANK_CHARS = 2000
 MAX_CHUNKS_SPREADSHEET = 100
