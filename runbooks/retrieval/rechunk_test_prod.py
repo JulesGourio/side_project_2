@@ -1,7 +1,7 @@
 # Databricks notebook source
-# Rechunk PROD, step 1: writes prod_proj.qualibot.chunks_test_tailles next to chunks, which is only read. Text passages
-# are cut again from the parsing checkpoint with the sizes below; image passages are copied as they are. No index.
-# Run on serverless, one cell, with your own account. Step 2 (rechunk_apply_prod.py) loads it into chunks.
+# Rechunk PROD, preview: cuts the text passages again from the parsing checkpoint with the sizes below (image passages
+# copied as they are) and compares them with prod_proj.qualibot.chunks. Reads only: the result is a temporary view of
+# the session, nothing is written. Run on serverless, one cell, with your own account.
 import json
 import logging
 import re
@@ -23,7 +23,7 @@ logger.propagate = False
 APP_FILES = "/Workspace/.bundle/qualibot/qualibot-prod/files"
 SOURCE_CHUNKS = "prod_proj.qualibot.chunks"
 CHECKPOINT = "prod_proj.qualibot.parsing_checkpoint"
-TARGET_TABLE = "prod_proj.qualibot.chunks_test_tailles"
+PREVIEW_VIEW = "chunks_preview"
 # The reranker reads the first 2,000 characters of REF + semantic_headers + chunk_text, and chunk_text starts with the
 # [Source: ...] line (about 200 characters): the body stays under 1,650. The higher minimum and target fill passages
 # up to that ceiling instead of leaving many small ones (past_rerank in the log: share of passages over 2,000).
@@ -33,10 +33,6 @@ RERANK_CHARS = 2000
 MAX_CHUNKS_SPREADSHEET = 100
 BOILERPLATE_MIN_DOCS = 20
 SOURCE_PREFIX_RE = r"^(\[Source: [^\n]*\]\n\n)"
-
-if TARGET_TABLE == SOURCE_CHUNKS:
-    raise RuntimeError("The test table must differ from the table the app uses")
-
 
 def read_source(name: str) -> str:
     """Source code of one pipeline module of the deployed PROD bundle.
@@ -174,12 +170,7 @@ new = new.select(*[F.col(f.name).cast(f.dataType).alias(f.name) if f.name in new
                    else F.lit(None).cast(f.dataType).alias(f.name) for f in source.schema.fields])
 result = new.unionByName(source.where(F.col("chunk_content_type") == "image"))
 
-logger.info("Writing %s (sizes %s)", TARGET_TABLE, SIZES)
-try:
-    result.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(TARGET_TABLE)
-except Exception as exc:
-    raise RuntimeError(f"Cannot write {TARGET_TABLE} with this account (CREATE TABLE on prod_proj.qualibot needed): "
-                       f"{str(exc)[:300]}") from exc
+result.createOrReplaceTempView(PREVIEW_VIEW)
 
 
 def stats(table: str) -> pd.DataFrame:
@@ -196,5 +187,5 @@ def stats(table: str) -> pd.DataFrame:
         FROM {table} GROUP BY ROLLUP(chunk_content_type) ORDER BY type""").toPandas()
 
 
-comparison = stats(SOURCE_CHUNKS).merge(stats(TARGET_TABLE), on="type", how="outer", suffixes=("_prod", "_test"))
-logger.info("Passages, PROD chunks against %s:\n%s", TARGET_TABLE, comparison.to_string(index=False))
+comparison = stats(SOURCE_CHUNKS).merge(stats(PREVIEW_VIEW), on="type", how="outer", suffixes=("_prod", "_new"))
+logger.info("Passages with the sizes %s, PROD chunks against the new cut:\n%s", SIZES, comparison.to_string(index=False))
