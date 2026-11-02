@@ -858,10 +858,9 @@ if not success.empty and int(success["n_docs"].max()) < max(KS):
 # MAGIC 2. **Key indicators**: one row per configuration, on the same questions.
 # MAGIC 3. **Ranking**: Recall@1, @5, @10 and @all per configuration, best Recall@5 first, gap with the reference.
 # MAGIC 4. **Rank per question**: rank of the first expected document in each configuration, red when never sent.
-# MAGIC 5. **Effect of the settings**: one cell per configuration, top-k against raw search and fusion.
-# MAGIC 6. **Quality against cost**: Recall@5 against the context sent to the model.
-# MAGIC 7. **Recall curves**: one panel per top-k, the reference dotted on each.
-# MAGIC 8. **MRR by language and by question naming a code**, then every expected document missed in the top 10.
+# MAGIC 5. **Quality against cost**: Recall@5 against the context sent to the model.
+# MAGIC 6. **Recall curves**: one panel per top-k, the reference dotted on each.
+# MAGIC 7. **Every expected document missed in the top 10**, with its cause.
 # COMMAND ----------
 import matplotlib.pyplot as plt
 import numpy as np
@@ -875,7 +874,6 @@ plt.rcParams.update({"axes.spines.top": False, "axes.spines.right": False, "axes
 K_CURVE = list(range(1, max(KS) + 1))
 K_MAIN = 10 if 10 in KS else max(KS)
 GREEN, RED, ORANGE, BLUE, PURPLE = "#0ca30c", "#d03b3b", "#eb6834", "#2a78d6", "#8a4fd0"
-SCORE_CMAP = LinearSegmentedColormap.from_list("score", [RED, "#f2c94c", GREEN])
 
 
 def reciprocal(rank) -> float:
@@ -951,14 +949,17 @@ log.info("Corpus %s: %d documents | %d of %d expected documents absent",
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ### Key indicators, curves and misses
-# MAGIC - **≥1 expected doc in top K**: share of questions where the LLM gets at least one right document among the first K.
-# MAGIC - **expected docs found in top 10**: share of the expected documents among the first 10 (Recall@10); the next column
-# MAGIC   counts only the documents present in the chunks, so it measures the search alone.
-# MAGIC - **every expected doc in top 10**: share of questions fully covered.
-# MAGIC - **MRR**: 1 / rank of the first right document, averaged (1 = always first, 0.5 = second on average).
-# MAGIC - **Misses**: `absent from the chunks` = data gap; `in the chunks, never sent` = search failure;
-# MAGIC   `sent, but after rank 10` = ranking issue.
+# MAGIC ### Tableau, graphiques et documents ratés
+# MAGIC | Colonne | Sens |
+# MAGIC |---|---|
+# MAGIC | Top-k | passages reclassés + bruts par requête, premier message / suite de conversation |
+# MAGIC | ≥1 doc @K | questions avec au moins un document attendu dans les K premiers |
+# MAGIC | R@K | part des documents attendus dans les K premiers ; « indexés » ne compte que les documents présents dans les chunks |
+# MAGIC | AllRefs@K | questions avec tous leurs documents attendus dans les K premiers |
+# MAGIC | MRR | 1 / rang du premier document attendu (1 = toujours premier) |
+# MAGIC | Docs, Req. VS | documents envoyés au modèle, requêtes Vector Search par question |
+# MAGIC
+# MAGIC Lignes dans l'ordre du classement, référence surlignée, meilleure valeur en gras.
 # COMMAND ----------
 K5 = 5 if 5 in KS else min(KS)
 NOISE = 1 / max(1, len(common_ids))  # one question
@@ -1054,15 +1055,10 @@ def search_sizes(name: str) -> str:
     """Passages per query of a configuration, as the app runs it.
 
     :param name: configuration label
-    :return: ``reranked+raw`` of an opening message in French or English, then of the other queries, and the
-        merge or BM25 options when set
+    :return: ``reranked+raw`` of an opening message in French or English, then of the other queries
     """
-    s, env = SETTINGS[name], config_env(name)
-    text = f"{s['pair_rerank_top_k']}+{s['pair_raw_top_k']} / {s['rerank_top_k']}+{s['raw_top_k']}"
-    extras = [f"merge={env['EVAL_MERGE']}" if env.get("EVAL_MERGE") else "",
-              f"split={env['EVAL_SPLIT_BM25']}" if env.get("EVAL_SPLIT_BM25") else "",
-              "codenorm=off" if env.get("EVAL_CODE_NORMALIZATION") == "off" else ""]
-    return " ".join([text, *[e for e in extras if e]])
+    s = SETTINGS[name]
+    return f"{s['pair_rerank_top_k']}+{s['pair_raw_top_k']} / {s['rerank_top_k']}+{s['raw_top_k']}"
 
 
 def recall_in_corpus(rows: pd.DataFrame, k: int) -> float:
@@ -1080,46 +1076,38 @@ def recall_in_corpus(rows: pd.DataFrame, k: int) -> float:
     return float(np.mean(values)) if values else float("nan")
 
 
+KPI_SHARES = [f"≥1 doc @{K5}", f"≥1 doc @{K_MAIN}", f"R@{K_MAIN}", f"R@{K_MAIN} indexés", f"AllRefs@{K_MAIN}", "R@all"]
+KPI_DELTA = f"Δ R@{K_MAIN}"
+
+
 def kpi_table() -> pd.DataFrame:
     """Key indicators, one row per configuration, on the paired questions.
 
-    :return: the table, configurations in the order of the run
+    :return: the table, configurations in ranking order
     """
     rows = []
-    for name in RUN:
+    for name in ORDER:
         f = paired[paired["config"] == name]
         own = success[success["config"] == name]
-        rows.append({
-            "configuration": name,
-            "passages per query (first msg / other)": search_sizes(name),
-            "questions": len(f),
-            "errors": int(((pdf["config"] == name) & pdf["error"].notna()).sum()),
-            f"≥1 expected doc in top {K5}": (f[f"mrr_at_{K5}"] > 0).mean(),
-            f"≥1 expected doc in top {K_MAIN}": (f[f"mrr_at_{K_MAIN}"] > 0).mean(),
-            f"expected docs found in top {K_MAIN}": f[f"recall_at_{K_MAIN}"].mean(),
-            "same, docs present in the chunks only": recall_in_corpus(f, K_MAIN),
-            f"every expected doc in top {K_MAIN}": f[f"all_refs_at_{K_MAIN}"].mean(),
-            "expected docs found in the whole context": f["recall_at_all"].mean(),
-            "MRR": f["mrr_at_all"].mean(),
-            "docs sent to the LLM": own["n_docs"].mean(),
-            "Vector Search queries per question": vs_queries(name),
-        })
+        rows.append(dict(zip(["Config", "Top-k", "Questions", "Erreurs", *KPI_SHARES, "MRR", "Docs", "Req. VS"], [
+            name, search_sizes(name), len(f), int(((pdf["config"] == name) & pdf["error"].notna()).sum()),
+            (f[f"mrr_at_{K5}"] > 0).mean(), (f[f"mrr_at_{K_MAIN}"] > 0).mean(), f[f"recall_at_{K_MAIN}"].mean(),
+            recall_in_corpus(f, K_MAIN), f[f"all_refs_at_{K_MAIN}"].mean(), f["recall_at_all"].mean(),
+            f["mrr_at_all"].mean(), own["n_docs"].mean(), vs_queries(name)])))
     table = pd.DataFrame(rows)
-    main = f"expected docs found in top {K_MAIN}"
-    table[f"Δ {main} vs {REFERENCE}"] = table[main] - table.loc[table["configuration"] == REFERENCE, main].iloc[0]
+    main = f"R@{K_MAIN}"
+    table[KPI_DELTA] = table[main] - table.loc[table["Config"] == REFERENCE, main].iloc[0]
     return table
 
 
 def styled_kpi(table: pd.DataFrame):
-    """Key indicators with percentages, the best value of each share in bold and the delta in green or red.
+    """Key indicators as compact percentages, the reference row highlighted, the best value of each score in bold.
 
     :param table: output of ``kpi_table``
     :return: pandas Styler
     """
-    delta = [c for c in table.columns if c.startswith("Δ")]
-    share = [c for c in table.columns if c.startswith(("≥1", "expected", "same", "every"))]
-    fmt = {**{c: "{:.0%}" for c in share}, **{c: "{:+.0%}" for c in delta},
-           "MRR": "{:.2f}", "docs sent to the LLM": "{:.1f}"}
+    fmt = {**{c: "{:.0%}" for c in KPI_SHARES}, KPI_DELTA: lambda v: f"{100 * v:+.1f}",
+           "MRR": "{:.2f}", "Docs": "{:.0f}"}
 
     def sign(value: float) -> str:
         """CSS color of a delta.
@@ -1127,11 +1115,28 @@ def styled_kpi(table: pd.DataFrame):
         :param value: the delta
         :return: CSS declaration
         """
-        return "" if pd.isna(value) or abs(value) < 1e-9 else f"color: {'#0ca30c' if value > 0 else '#d03b3b'}"
+        return "" if pd.isna(value) or abs(value) < NOISE - 1e-9 else f"color: {GREEN if value > 0 else RED}"
 
-    style = (table.style.format(fmt, na_rep="n/a").hide(axis="index")
-             .highlight_max(subset=share + ["MRR"], props="font-weight: bold"))
-    return (style.map if hasattr(style, "map") else style.applymap)(sign, subset=delta)
+    def reference_row(row: pd.Series) -> list[str]:
+        """Background of the reference row.
+
+        :param row: one row of the table
+        :return: one CSS declaration per cell
+        """
+        return ["background-color: #f1efe8" if row["Config"] == REFERENCE else ""] * len(row)
+
+    style = (table.style.format(fmt, na_rep="–").hide(axis="index")
+             .highlight_max(subset=KPI_SHARES + ["MRR"], props="font-weight: bold")
+             .apply(reference_row, axis=1)
+             .set_table_styles([
+                 {"selector": "", "props": "border-collapse: collapse; font-size: 13px;"},
+                 {"selector": "th", "props": "text-align: center; white-space: nowrap; padding: 6px 10px; "
+                                             "border-bottom: 2px solid #52514e; font-weight: 600;"},
+                 {"selector": "td", "props": "text-align: center; white-space: nowrap; padding: 5px 10px; "
+                                             "border-bottom: 1px solid #e1e0d9;"},
+                 {"selector": "td.col0, th.col_heading.col0", "props": "text-align: left;"},
+             ]))
+    return (style.map if hasattr(style, "map") else style.applymap)(sign, subset=[KPI_DELTA])
 
 
 def doc_rank(ref: str, retrieved: list[str]) -> int | None:
@@ -1260,56 +1265,6 @@ def rank_figure(ranks: pd.DataFrame) -> plt.Figure:
     return fig
 
 
-def settings_grid_figure() -> plt.Figure | None:
-    """R@5, AllRefs@10 and context of the configurations that differ by top-k, raw search and fusion only.
-
-    :return: matplotlib figure, None when those configurations do not make a grid
-    """
-    tops = sorted({PARAMS[n]["top_k"] for n in MAIN}, key=lambda v: [int(x) for x in v.split("/")])
-    combos = [(b, f) for b in ("on", "off") for f in ("best", "rrf")
-              if any(PARAMS[n]["brute"] == b and PARAMS[n]["fusion"] == f for n in MAIN)]
-    if len(tops) * len(combos) < 4:
-        return None
-    cell = {}
-    # A configuration with explicit settings wins over the app as deployed when both fall in the same cell.
-    for n in sorted(MAIN, key=lambda n: not CONFIGS[n]["overrides"]):
-        cell.setdefault((PARAMS[n]["top_k"], PARAMS[n]["brute"], PARAMS[n]["fusion"]), n)
-    panels = [(f"recall_at_{K5}", f"R@{K5}"), (f"all_refs_at_{K_MAIN}", f"AllRefs@{K_MAIN}"), ("tokens", "k tokens envoyés")]
-    fig, axes = plt.subplots(1, 3, figsize=(4.6 * 3, 1.0 * len(tops) + 1.8))
-    for ax, (key, title) in zip(axes, panels):
-        grid = np.full((len(tops), len(combos)), np.nan)
-        for i, top in enumerate(tops):
-            for j, (b, f) in enumerate(combos):
-                name = cell.get((top, b, f))
-                if name:
-                    grid[i, j] = tokens_k(ROWS[name]) if key == "tokens" else ROWS[name][key]
-        if key == "tokens":
-            ax.imshow(grid, cmap=LinearSegmentedColormap.from_list("ctx", ["#e9f5e9", "#f2c94c", ORANGE]),
-                      vmin=np.nanmin(grid), vmax=np.nanmax(grid), aspect="auto")
-        else:
-            ax.imshow(grid, cmap=SCORE_CMAP, vmin=np.nanmin(grid), vmax=np.nanmax(grid), aspect="auto")
-        best = np.nanmax(grid)
-        for i in range(len(tops)):
-            for j in range(len(combos)):
-                v = grid[i, j]
-                text = "–" if np.isnan(v) else f"{v:.0f}k" if key == "tokens" else f"{v:.0%}"
-                bold = key != "tokens" and not np.isnan(v) and v == best
-                ax.text(j, i, text, ha="center", va="center", fontsize=11, color=TEXT,
-                        fontweight="bold" if bold else "normal")
-        ax.set_xticks(range(len(combos)))
-        ax.set_xticklabels([f"brute {b}\nfusion {'RRF' if f == 'rrf' else 'app'}" for b, f in combos], fontsize=8)
-        ax.set_yticks(range(len(tops)))
-        ax.set_yticklabels([f"top-k {t}" for t in tops])
-        ax.grid(False)
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        ax.set_title(title, loc="left", fontsize=11)
-    fig.suptitle("Effet des réglages : une case = une configuration (gras = meilleure case)", x=0.01, ha="left",
-                 fontsize=11)
-    fig.tight_layout()
-    return fig
-
-
 def config_style(name: str, i: int) -> tuple[str, str, str]:
     """Color, line style and marker of a configuration: raw search on or off, RRF fusion, other settings.
 
@@ -1409,45 +1364,13 @@ def curves_figure() -> plt.Figure:
     return fig
 
 
-def slice_figure(ranks: pd.DataFrame) -> plt.Figure:
-    """MRR per language and per "the question names a code", one row per configuration.
-
-    :param ranks: output of ``ranks_table``
-    :return: matplotlib figure
-    """
-    columns = []
-    for column, title in (("lang", "langue"), ("has_code", "code")):
-        for value, group in ranks.groupby(column):
-            label = ("cite un code" if value else "sans code") if column == "has_code" else f"{title} {value}"
-            columns.append((f"{label}\n(n={len(group)})", {n: group[n].map(reciprocal).mean() for n in ORDER}))
-    grid = np.array([[values[n] for _, values in columns] for n in ORDER])
-    fig, ax = plt.subplots(figsize=(1.6 * len(columns) + 4, 0.4 * len(ORDER) + 1.6))
-    ax.imshow(grid, cmap=SCORE_CMAP, vmin=np.nanmin(grid), vmax=np.nanmax(grid), aspect="auto")
-    for i in range(grid.shape[0]):
-        for j in range(grid.shape[1]):
-            ax.text(j, i, f"{grid[i, j]:.2f}", ha="center", va="center", fontsize=9, color=TEXT)
-    ax.set_xticks(range(len(columns)))
-    ax.set_xticklabels([label for label, _ in columns], fontsize=9)
-    ax.xaxis.tick_top()
-    ax.set_yticks(range(len(ORDER)))
-    ax.set_yticklabels([f"▶ {n}" if n == REFERENCE else n for n in ORDER], fontsize=9)
-    ax.grid(False)
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.set_title("MRR par langue et selon que la question cite un code", loc="left", fontsize=11, pad=36)
-    fig.tight_layout()
-    return fig
-
-
 if not common_ids:
     log.info("Comparison skipped: no paired question")
 else:
     display(styled_kpi(kpi_table()))
     ranks = ranks_table()
-    grid_fig = settings_grid_figure()
-    for fig in (ranking_figure(), rank_figure(ranks), grid_fig, cost_figure(), curves_figure(), slice_figure(ranks)):
-        if fig is not None:
-            display(fig)
+    for fig in (ranking_figure(), rank_figure(ranks), cost_figure(), curves_figure()):
+        display(fig)
     misses = misses_table()
     if not misses.empty:
         display(misses.groupby("cause").size().rename("expected documents").reset_index())
