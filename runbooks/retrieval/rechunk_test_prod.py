@@ -1,21 +1,15 @@
 # Databricks notebook source
-# Rechunk test PROD: writes prod_proj.qualibot.chunks_test_tailles and its index chunks_test_tailles_index, next to
-# chunks / chunks_index, which are only read. Text passages are cut again from the parsing checkpoint with the sizes
-# below; image passages are copied as they are. Run on serverless, one cell, with your own account.
+# Rechunk PROD, step 1: writes prod_proj.qualibot.chunks_test_tailles next to chunks, which is only read. Text passages
+# are cut again from the parsing checkpoint with the sizes below; image passages are copied as they are. No index.
+# Run on serverless, one cell, with your own account. Step 2 (rechunk_apply_prod.py) loads it into chunks.
 import json
 import logging
 import re
 import sys
-import time
 import types
 
 import pandas as pd
 import pyspark.sql.functions as F
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import NotFound
-from databricks.sdk.service.vectorsearch import (
-    DeltaSyncVectorIndexSpecRequest, EmbeddingSourceColumn, PipelineType, VectorIndexType,
-)
 from pyspark.sql import Window
 
 logger = logging.getLogger("rechunk_test_prod")
@@ -30,18 +24,18 @@ APP_FILES = "/Workspace/.bundle/qualibot/qualibot-prod/files"
 SOURCE_CHUNKS = "prod_proj.qualibot.chunks"
 CHECKPOINT = "prod_proj.qualibot.parsing_checkpoint"
 TARGET_TABLE = "prod_proj.qualibot.chunks_test_tailles"
-TARGET_INDEX = "prod_proj.qualibot.chunks_test_tailles_index"
-ENDPOINT = "qualibot"
-EMBEDDING_MODEL = "databricks-qwen3-embedding-0-6b"
-# PROD today: 150 / 300 / 450 tokens, 1600 characters. DEV (better scores): 250 / 500 / 1000 tokens, 4000 characters.
-SIZES = {"min_tokens": 200, "target_tokens": 400, "max_tokens": 800, "max_chars": 3200,
+# The reranker reads the first 2,000 characters of REF + semantic_headers + chunk_text, and chunk_text starts with the
+# [Source: ...] line: 1,800 characters of body keep the passage inside it. A higher minimum and target fill passages up
+# to that ceiling instead of leaving many small ones.
+SIZES = {"min_tokens": 250, "target_tokens": 330, "max_tokens": 520, "max_chars": 1800,
          "overlap_ratio": 0.12, "chars_per_token": 3.5}
+RERANK_CHARS = 2000
 MAX_CHUNKS_SPREADSHEET = 100
 BOILERPLATE_MIN_DOCS = 20
 SOURCE_PREFIX_RE = r"^(\[Source: [^\n]*\]\n\n)"
 
-if TARGET_TABLE == SOURCE_CHUNKS or TARGET_INDEX.endswith(".chunks_index"):
-    raise RuntimeError("The test table and index must differ from the ones the app uses")
+if TARGET_TABLE == SOURCE_CHUNKS:
+    raise RuntimeError("The test table must differ from the table the app uses")
 
 
 def read_source(name: str) -> str:
@@ -182,59 +176,25 @@ result = new.unionByName(source.where(F.col("chunk_content_type") == "image"))
 
 logger.info("Writing %s (sizes %s)", TARGET_TABLE, SIZES)
 try:
-    (result.write.format("delta").mode("overwrite").option("overwriteSchema", "true")
-     .option("delta.enableChangeDataFeed", "true").saveAsTable(TARGET_TABLE))
+    result.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(TARGET_TABLE)
 except Exception as exc:
     raise RuntimeError(f"Cannot write {TARGET_TABLE} with this account (CREATE TABLE on prod_proj.qualibot needed): "
                        f"{str(exc)[:300]}") from exc
-spark.sql(f"ALTER TABLE {TARGET_TABLE} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
 
 
 def stats(table: str) -> pd.DataFrame:
-    """Passages and median length per type.
+    """Passages, median length and share past the reranker window, per type.
 
     :param table: chunk table
     :return: one row per type and a TOTAL row
     """
     return spark.sql(f"""
         SELECT coalesce(chunk_content_type, 'TOTAL') AS type, count(*) AS chunks, count(DISTINCT IDDOC) AS docs,
-               percentile(length(chunk_text), 0.5) AS median_chars
+               percentile(length(chunk_text), 0.5) AS median_chars,
+               round(avg(CASE WHEN length(coalesce(REF, '')) + length(coalesce(semantic_headers, ''))
+                                   + length(chunk_text) > {RERANK_CHARS} THEN 1.0 ELSE 0.0 END), 3) AS past_rerank
         FROM {table} GROUP BY ROLLUP(chunk_content_type) ORDER BY type""").toPandas()
 
 
 comparison = stats(SOURCE_CHUNKS).merge(stats(TARGET_TABLE), on="type", how="outer", suffixes=("_prod", "_test"))
-logger.info("Passages, PROD chunks against the test table:\n%s", comparison.to_string(index=False))
-target_rows = spark.table(TARGET_TABLE).count()
-
-w = WorkspaceClient()
-try:
-    w.vector_search_indexes.get_index(index_name=TARGET_INDEX)
-    logger.info("%s exists: sync", TARGET_INDEX)
-    w.vector_search_indexes.sync_index(index_name=TARGET_INDEX)
-except NotFound:
-    logger.info("%s absent: creation on endpoint %s", TARGET_INDEX, ENDPOINT)
-    w.vector_search_indexes.create_index(
-        name=TARGET_INDEX,
-        endpoint_name=ENDPOINT,
-        primary_key="chunk_id",
-        index_type=VectorIndexType.DELTA_SYNC,
-        delta_sync_index_spec=DeltaSyncVectorIndexSpecRequest(
-            source_table=TARGET_TABLE,
-            pipeline_type=PipelineType.TRIGGERED,
-            embedding_source_columns=[EmbeddingSourceColumn(name="chunk_preprocessed",
-                                                            embedding_model_endpoint_name=EMBEDDING_MODEL)],
-        ),
-    )
-
-deadline = time.time() + 3 * 3600
-while True:
-    status = w.vector_search_indexes.get_index(index_name=TARGET_INDEX).status
-    indexed = getattr(status, "indexed_row_count", None) or 0
-    logger.info("%s: ready=%s, %d / %d rows", TARGET_INDEX, status.ready, indexed, target_rows)
-    if status.ready and indexed >= target_rows:
-        logger.info("Index ready: run the evaluation with indexes = deploye,tailles_test=%s", TARGET_INDEX)
-        break
-    if time.time() > deadline:
-        logger.warning("Index still syncing after 3 h: the notebook stops, the sync goes on")
-        break
-    time.sleep(60)
+logger.info("Passages, PROD chunks against %s:\n%s", TARGET_TABLE, comparison.to_string(index=False))
