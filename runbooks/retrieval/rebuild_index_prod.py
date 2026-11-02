@@ -1,7 +1,7 @@
 # Databricks notebook source
 # Rebuild of prod_proj.qualibot.chunks_index: deletes the index, rewrites chunks in many files from the Parquet files of
 # the switch (same rows: many files let the index pipeline embed in parallel) and creates the index again with the
-# spec of the parsing pipeline. The index is absent until the rebuild ends. Runs as the PROD job service principal,
+# spec of the parsing pipeline, with SELECT for the app. The index is absent until the rebuild ends. Runs as the PROD job service principal,
 # serverless, one cell.
 import logging
 import sys
@@ -29,6 +29,7 @@ WRITEBACK = f"{INDEX}_writeback_table"
 ENDPOINT = "qualibot"
 EMBEDDING_MODEL = "databricks-qwen3-embedding-0-6b"
 EMBEDDED_COLUMN = "chunk_preprocessed"
+APP_NAME = "qualibot"
 TARGET_FILES = 128
 WRITE_PROPS = ["delta.autoOptimize.optimizeWrite", "delta.autoOptimize.autoCompact"]
 DELETE_TIMEOUT_S = 20 * 60
@@ -90,6 +91,10 @@ w.vector_search_indexes.create_index(
     ),
 )
 logger.info("%s: creation requested", INDEX)
+# A new index carries no grant: the app reads it with its own service principal.
+app_sp = w.apps.get(name=APP_NAME).service_principal_client_id
+spark.sql(f"GRANT SELECT ON TABLE {INDEX} TO `{app_sp}`")
+logger.info("%s: SELECT granted to the app service principal %s", INDEX, app_sp)
 started = time.time()
 while True:
     time.sleep(60)
