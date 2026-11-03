@@ -487,6 +487,15 @@ def test_a_degraded_translate_turn_asks_as_many_candidates_as_a_normal_one(monke
     assert _candidates_asked(degraded['sent']) == _candidates_asked(normal['sent']) == 48
 
 
+def test_a_degraded_turn_asks_the_reranker_for_50_at_most(monkeypatch):
+    monkeypatch.setenv('CHAT_RAW_TOP_K', '0')
+    monkeypatch.setenv('CHAT_RERANK_TOP_K', '32')
+    events, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
+    reranked = [p for p in m['sent'] if 'reranker' in p]
+    assert len(reranked) == 1 and reranked[0]['num_results'] == 50
+    assert all('reranker' in p for p in m['sent']) and 'error' not in _types(events)
+
+
 def test_rewrite_failure_degrades_the_turn_and_still_answers(monkeypatch):
     events, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
     assert 'error' not in _types(events) and 'sources' in _types(events)

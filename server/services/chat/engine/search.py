@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _RERANK_COLUMNS = ['REF', 'semantic_headers', 'chunk_text']
 _RERANKER_MODEL = 'databricks_reranker'
 _MAX_QUERY_CHARS = 20000         # Vector Search rejects query_text past ~29k chars
+_RERANK_MAX_RESULTS = 50         # Vector Search refuses more results when the reranker is on
 
 
 class ChatVsiError(Exception):
@@ -79,11 +80,13 @@ async def _query(host: str, token: str, index: str, query_text: str, k: int, fil
     :param index: full name of the Vector Search index
     :param query_text: text searched, cut to ``_MAX_QUERY_CHARS`` characters (a warning is logged when it is); each
         reference code gets its canonical form, the spelling the index also has (``SF-1027`` -> ``SF-1027 [SF1027]``)
-    :param k: number of results asked
+    :param k: number of results asked, cut to ``_RERANK_MAX_RESULTS`` with the reranker
     :param filters: Vector Search filters, empty for none
     :param rerank: whether the reranker orders the results
     :return: the rows of the response
     """
+    if rerank:
+        k = min(k, _RERANK_MAX_RESULTS)
     query_text = normalize_query(query_text)
     if len(query_text) > _MAX_QUERY_CHARS:
         logger.warning('chat: query of %d characters cut to %d for Vector Search', len(query_text), _MAX_QUERY_CHARS)
