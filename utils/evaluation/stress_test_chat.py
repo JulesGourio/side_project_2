@@ -131,7 +131,7 @@ if 'TRANSLATIONS' not in globals():
     TRANSLATED: set[str] = set()
 
 
-def _cached(name: str, call, key_of):
+def _cached(name: str, call, key_of) -> Any:
     """An app translation call that runs once per question, then gives back the same result (or the same failure).
 
     :param name: name of the call, part of the cache key
