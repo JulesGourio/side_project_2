@@ -12,10 +12,14 @@
 # MAGIC - `MODE = "rate"`: for each value of `QUESTIONS_PER_MINUTE`, questions are sent at that pace for `DURATION_MIN`
 # MAGIC   minutes, whether the previous ones are answered or not, as real users do. One step per value, in order.
 # MAGIC - `MODE = "burst"`: `BURST_SIZE` questions sent at the same instant.
-# MAGIC - `LLM = False`: search only, no LLM call at all (the question is searched as asked). Measures Vector Search alone.
+# MAGIC - `LLM_FOR_TRANSLATION = False`: before the test, every golden question gets its translation or rewrite once, with
+# MAGIC   the app's own calls; the test then reuses them, so the search runs on the same queries as in the app, without
+# MAGIC   loading the translation model. `True`: each question calls it live, as the app does.
+# MAGIC - `LLM_FOR_GENERATION = False`: no answer, the question stops after the search (passages ready for the model).
+# MAGIC   `True`: the answer is generated, as in the app.
 # MAGIC
-# MAGIC The run stops after a step where more than half of the questions failed. With `LLM = True`, every question costs
-# MAGIC one translation or rewrite and one answer on the endpoints real users share.
+# MAGIC The run stops after a step where more than half of the questions failed. The LLM calls run on the endpoints real
+# MAGIC users share.
 # MAGIC
 # MAGIC Run on serverless, in the PROD workspace, with your own account.
 
@@ -33,11 +37,13 @@ MODE = "rate"                              # "rate": questions sent at a fixed p
 QUESTIONS_PER_MINUTE = [30, 60, 120, 240]  # "rate": one step per value, in questions per minute
 DURATION_MIN = 1                           # "rate": length of each step, in minutes
 BURST_SIZE = 50                            # "burst": questions sent at the same instant
-LLM = True                                 # False: search only, no LLM call
+LLM_FOR_TRANSLATION = False                # False: translations made once before the test, then reused
+LLM_FOR_GENERATION = True                  # False: search only, no answer generated
 
 # COMMAND ----------
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -112,24 +118,54 @@ def load_engine() -> dict[str, Any]:
     from server.services.chat.turn_log import TurnLog
     from server.services.infra.doc_catalog import augment_sources, with_document_info
     from server.services.infra.http_clients import close_shared_clients
-    if not LLM:
-        async def _no_llm(*_args, **_kwargs) -> None:
-            """Stands for the rewrite and the translation: the app then searches the question as asked.
-
-            :param _args: ignored
-            :param _kwargs: ignored
-            """
-            raise RuntimeError('no LLM call in this test')
-        retrieval.translate_query = _no_llm
-        retrieval.rewrite_queries = _no_llm
+    if not LLM_FOR_TRANSLATION:
+        retrieval.translate_query = _cached('translate_query', retrieval.translate_query, lambda a: (a[2], a[3]))
+        retrieval.rewrite_queries = _cached('rewrite_queries', retrieval.rewrite_queries, lambda a: json.dumps(a[2]))
+        translation_bridge.translate_question_to_en = _cached(
+            'translate_question_to_en', translation_bridge.translate_question_to_en, lambda a: a[0])
     return dict(locals())
+
+
+if 'TRANSLATIONS' not in globals():
+    TRANSLATIONS: dict[tuple, tuple[str, Any]] = {}   # kept across runs of the notebook: the golden set does not change
+    TRANSLATED: set[str] = set()
+
+
+def _cached(name: str, call, key_of):
+    """An app translation call that runs once per question, then gives back the same result (or the same failure).
+
+    :param name: name of the call, part of the cache key
+    :param call: the app's coroutine function
+    :param key_of: positional arguments -> the part of the key that identifies the question
+    :return: a coroutine function with the same signature
+    """
+    async def wrapper(*args, **kwargs) -> Any:
+        """See ``_cached``.
+
+        :param args: positional arguments of the app call
+        :param kwargs: keyword arguments of the app call
+        :return: what the first call returned
+        """
+        key = (name, key_of(args))
+        if key not in TRANSLATIONS:
+            try:
+                TRANSLATIONS[key] = ('ok', await call(*args, **kwargs))
+            except Exception as exc:  # noqa: BLE001 - the failure is replayed as the app would have met it
+                TRANSLATIONS[key] = ('error', exc)
+        kind, value = TRANSLATIONS[key]
+        if kind == 'error':
+            raise value
+        # The bridge's context is changed later in the turn: each question gets its own copy.
+        return (value[0], copy.copy(value[1])) if name == 'translate_question_to_en' else value
+    return wrapper
 
 
 GOLDEN = [{'content': r['question'], 'division': (r['division'] or 'ALL').upper()}
           for r in spark.table(GOLDEN_TABLE).select('question', 'division').collect() if r['question']]
 if not GOLDEN:
     raise RuntimeError(f'{GOLDEN_TABLE} has no question.')
-logger.info('%d golden questions | mode %s | LLM %s | %s', len(GOLDEN), MODE, LLM,
+logger.info('%d golden questions | mode %s | LLM translation %s, generation %s | %s', len(GOLDEN), MODE,
+            'live' if LLM_FOR_TRANSLATION else 'made once before', LLM_FOR_GENERATION,
             f'steps {RATES} questions/min, {DURATION_MIN} min each' if MODE == 'rate' else f'{BURST_SIZE} at once')
 
 # COMMAND ----------
@@ -149,22 +185,15 @@ def _facts(log, t0: float, status: str, first: float | None, error: str = '') ->
             'steps_ms': dict(log.timings_ms), 'warnings': ','.join(log.codes) or None}
 
 
-async def ask(question: dict[str, str]) -> dict[str, Any]:
+async def ask(question: dict[str, str], generate: bool = LLM_FOR_GENERATION) -> dict[str, Any]:
     """One question through the engine, step by step as the app's chat route runs it, without the save.
 
     :param question: ``{'content', 'division'}``
+    :param generate: False stops after the search, before the answer
     :return: see ``_facts``
     """
     log, t0 = E['TurnLog'](), time.monotonic()
     msgs = E['_trim_history'](E['_clean_messages']([{'role': 'user', 'content': question['content']}]))
-    if not LLM:
-        try:
-            await E['retrieval'].retrieve_for_turn(HOST, token(), E['normalize_division'](question['division']),
-                                                   E['retrieval']._clean_history(E['_with_today_date'](msgs)), log=log)
-        except Exception as exc:  # noqa: BLE001 - a failed search is a result
-            return _facts(log, t0, 'error', None, f'{type(exc).__name__}: {str(exc)[:200]}')
-        return _facts(log, t0, 'ok', time.monotonic() - t0)
-
     tok, tb, ctx = token(), E['translation_bridge'], None
     if E['TRANSLATE_BRIDGE_ENABLED']:
         with log.timed('translate_in'):
@@ -174,6 +203,14 @@ async def ask(question: dict[str, str]) -> dict[str, Any]:
             log.issue('translate_in_failed', 'translate_in', ctx.error)
         if ctx.needs_translation:
             msgs = [{'role': 'user', 'content': en}]
+    if not generate:
+        try:
+            await E['retrieval'].retrieve_for_turn(HOST, tok, E['normalize_division'](question['division']),
+                                                   E['retrieval']._clean_history(E['_with_today_date'](msgs)), log=log)
+        except Exception as exc:  # noqa: BLE001 - a failed search is a result
+            return _facts(log, t0, 'error', None, f'{type(exc).__name__}: {str(exc)[:200]}')
+        return _facts(log, t0, log.finish('ok'), time.monotonic() - t0)
+
     stream = E['stream_chat'](HOST, tok, question['division'], E['_with_today_date'](msgs),
                               answer_language=tb.answer_language(ctx, question['content']), log=log)
     text, sources, citations, first = [], [], [], None
@@ -229,14 +266,38 @@ async def ask_timed(question: dict[str, str]) -> dict[str, Any]:
         return {'status': 'error', 'total_s': time.monotonic() - t0, 'error': f'{type(exc).__name__}: {str(exc)[:200]}'}
 
 
+async def translate_all() -> None:
+    """Each golden question's translation or rewrite, made once with the app's calls (8 at a time), before the test."""
+    gate = asyncio.Semaphore(8)
+
+    async def one(q: dict[str, str]) -> None:
+        """Run the question up to the search: its translation calls fill ``TRANSLATIONS``.
+
+        :param q: golden question
+        """
+        async with gate:
+            await ask(q, generate=False)
+
+    todo = [q for q in GOLDEN if q['content'] not in TRANSLATED]
+    if todo:
+        logger.info('translating %d questions once, before the test', len(todo))
+        await asyncio.gather(*(one(q) for q in todo))
+        TRANSLATED.update(q['content'] for q in todo)
+    failed = sum(kind == 'error' for kind, _ in TRANSLATIONS.values())
+    logger.info('translations ready: %d calls stored, %d failed (replayed as failures)', len(TRANSLATIONS), failed)
+
+
 async def run() -> list[dict[str, Any]]:
     """Every step, one after the other: send its questions on schedule, then wait for all of them.
 
     :return: one row per question
     """
-    rows, n, t_run = [], 0, time.monotonic()
+    rows, n = [], 0
     steps = [(f'{r}/min', r) for r in RATES] if MODE == 'rate' else [(f'burst {BURST_SIZE}', None)]
     try:
+        if not LLM_FOR_TRANSLATION:
+            await translate_all()
+        t_run = time.monotonic()
         for label, rate in steps:
             count = round(rate * DURATION_MIN) if rate else BURST_SIZE
             gap = 60.0 / rate if rate else 0.0
