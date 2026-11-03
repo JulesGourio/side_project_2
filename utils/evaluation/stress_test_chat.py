@@ -1,52 +1,50 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Qualibot : stress test du chat
+# MAGIC # Qualibot: chat stress test
 # MAGIC
-# MAGIC Simule des utilisateurs qui posent des questions au chat, mesure ce qu'ils vivent (temps avant le premier mot,
-# MAGIC temps total, erreurs, refus) et trace la charge dans le temps. Réglé par défaut pour **PROD**.
+# MAGIC Simulates users asking the chat questions, measures what they experience (time to the first word, total time,
+# MAGIC errors, refusals) and charts the load over time. Defaults target **PROD**.
 # MAGIC
-# MAGIC **Deux cibles** (`cible`)
-# MAGIC - `app` : les questions passent par l'app déployée, exactement comme le navigateur (WebSocket `/api/chat/ws`,
-# MAGIC   même en-tête `Origin`, même historique envoyé à chaque tour). Tout est réel : l'instance de l'app, sa file
-# MAGIC   d'attente, la limite par utilisateur, la traduction, Vector Search, les modèles, l'enregistrement en Lakebase et
-# MAGIC   les traces MLflow.
-# MAGIC - `moteur` : le code de l'app déployée (`dossier_app`) est chargé dans ce notebook et chaque question suit les
-# MAGIC   mêmes étapes que la route WebSocket (`server/routers/chat/ws.py`) : nettoyage et fenêtre de l'historique, date,
-# MAGIC   traduction de la question, `stream_chat` (réécriture, recherche, réponse, mêmes limites de concurrence),
-# MAGIC   marqueurs de citation, sources du catalogue, traduction retour. Seuls l'enregistrement en Lakebase et la trace
-# MAGIC   MLflow sont sautés : rien n'est écrit dans l'historique de l'app. La limite par utilisateur de l'app peut être
-# MAGIC   appliquée à chaque utilisateur simulé (`limite_par_utilisateur`).
+# MAGIC **Two targets** (`cible`)
+# MAGIC - `app`: the questions go through the deployed app exactly as the browser sends them (WebSocket `/api/chat/ws`,
+# MAGIC   same `Origin` header, same history sent at every turn). Everything is real: the app instance, its queue, the
+# MAGIC   per-user limit, the translation, Vector Search, the models, the Lakebase save and the MLflow traces.
+# MAGIC - `moteur`: the deployed app code (`dossier_app`) is loaded in this notebook and each question follows the steps of
+# MAGIC   the WebSocket route (`server/routers/chat/ws.py`): history cleaning and window, date, question translation,
+# MAGIC   `stream_chat` (rewrite, search, answer, same concurrency limits), citation markers, catalog sources, translation
+# MAGIC   back. Only the Lakebase save and the MLflow trace are skipped: nothing is written to the app history. The app's
+# MAGIC   per-user limit can be applied to each simulated user (`limite_par_utilisateur`).
 # MAGIC
-# MAGIC **Appels LLM** (`appels_llm`, cible `moteur` seulement ; la cible `app` fait toujours le tour complet)
-# MAGIC - `complet` : le tour entier, réponse comprise.
-# MAGIC - `recherche` : tout jusqu'aux passages envoyés au modèle (`retrieve_for_turn` : traduction ou réécriture LLM,
-# MAGIC   Vector Search, recherche par REF et citations exactes), sans générer la réponse. Peu coûteux.
-# MAGIC - `aucun` : aucun appel LLM. La recherche part de la question telle que posée, comme l'app quand la réécriture
-# MAGIC   échoue. Mesure Vector Search seul.
+# MAGIC **LLM calls** (`appels_llm`, target `moteur` only; target `app` always runs the full turn)
+# MAGIC - `complet`: the whole turn, answer included.
+# MAGIC - `recherche`: everything up to the passages sent to the model (`retrieve_for_turn`: LLM translation or rewrite,
+# MAGIC   Vector Search, REF lookups and exact citations), without generating the answer. Cheap.
+# MAGIC - `aucun`: no LLM call. The search uses the question as asked, as the app does when the rewrite fails. Measures
+# MAGIC   Vector Search alone.
 # MAGIC
-# MAGIC **Profils de charge** (`profil`)
-# MAGIC - `vague` : `utilisateurs` questions envoyées toutes au même instant.
-# MAGIC - `realiste` : `utilisateurs` personnes arrivent pendant `duree_s` secondes (arrivées au hasard, loi de Poisson,
-# MAGIC   ou régulières). Chacune mène une conversation de `tours_par_session` questions et lit chaque réponse pendant
-# MAGIC   `reflexion_s` secondes en moyenne avant la suivante.
-# MAGIC - `rejeu` : rejoue une vraie période de la table des messages (`rejeu_jour`, `rejeu_fenetre_min`) : mêmes
-# MAGIC   conversations, mêmes questions, mêmes écarts entre questions, accélérés `acceleration` fois.
+# MAGIC **Load profiles** (`profil`)
+# MAGIC - `vague`: `utilisateurs` questions sent at the same instant.
+# MAGIC - `realiste`: `utilisateurs` people arrive over `duree_s` seconds (random Poisson arrivals, or regular ones). Each
+# MAGIC   holds a conversation of `tours_par_session` questions and reads each answer for `reflexion_s` seconds on average
+# MAGIC   before the next one.
+# MAGIC - `rejeu`: replays a real period of the messages table (`rejeu_jour`, `rejeu_fenetre_min`): same conversations,
+# MAGIC   same questions, same gaps between questions, sped up `acceleration` times.
 # MAGIC
-# MAGIC **Sécurités** : `lancer = non` (défaut) affiche seulement le plan (nombre de tours, pic de requêtes par minute,
-# MAGIC refus attendus par la limite de l'app) sans rien envoyer. `max_tours` plafonne le nombre de questions.
-# MAGIC `arret_erreurs_pct` arrête d'envoyer de nouvelles questions quand trop des 20 dernières ont échoué. En cible `app`,
-# MAGIC `nettoyer = oui` supprime à la fin (suppression logique, comme le bouton de l'app) les conversations créées.
+# MAGIC **Safeguards**: `lancer = non` (default) only shows the plan (number of turns, peak of requests per minute, refusals
+# MAGIC expected from the app limit) and sends nothing. `max_tours` caps the number of questions. `arret_erreurs_pct` stops
+# MAGIC sending new questions when too many of the last 20 failed. With target `app`, `nettoyer = oui` soft-deletes the
+# MAGIC conversations created by the test at the end, as the app's delete button does.
 # MAGIC
-# MAGIC **Ce que coûte et laisse un run**
-# MAGIC - `complet` : par question, une traduction ou réécriture, une réponse et parfois une traduction de la question et
-# MAGIC   de la réponse, sur les mêmes endpoints que les vrais utilisateurs (`databricks-gpt-6-luna`, secours
-# MAGIC   `databricks-gpt-5-6-luna`). Une saturation pendant le test les touche aussi.
-# MAGIC - cible `app` : chaque question est enregistrée sous votre utilisateur (`chat_sessions`, `chat_messages`,
-# MAGIC   `chat_turns`, traces MLflow). Les conversations sont retrouvables par `session_id` dans la table de résultats.
-# MAGIC - `table_resultats` : une ligne par question, avec le `run_id` du run.
+# MAGIC **What a run costs and leaves behind**
+# MAGIC - `complet`: per question, one translation or rewrite, one answer and sometimes a translation of the question and of
+# MAGIC   the answer, on the same endpoints as the real users (`databricks-gpt-6-luna`, fallback `databricks-gpt-5-6-luna`).
+# MAGIC   A saturation during the test hits them too.
+# MAGIC - target `app`: every question is saved under your user (`chat_sessions`, `chat_messages`, `chat_turns`, MLflow
+# MAGIC   traces). The conversations can be found by `session_id` in the results table.
+# MAGIC - `table_resultats`: one row per question, with the `run_id` of the run.
 # MAGIC
-# MAGIC **Résultats** : indicateurs clés, chronologie de chaque question, charge et latence dans le temps, distribution des
-# MAGIC temps, détail des étapes (cible `moteur`), erreurs par message, historique des runs.
+# MAGIC **Results**: key figures, timeline of every question, load and latency over time, time distribution, step breakdown
+# MAGIC (target `moteur`), errors by message, history of the runs.
 
 # COMMAND ----------
 
@@ -65,41 +63,41 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Paramètres
+# MAGIC ## Parameters
 # MAGIC
-# MAGIC | Paramètre | Défaut | Sens |
+# MAGIC | Parameter | Default | Meaning |
 # MAGIC |---|---|---|
-# MAGIC | `dossier_app` | `/Workspace/.bundle/qualibot/qualibot-prod/files` | code de l'app déployée : sa configuration (`app.yaml`, `target_config.env`) et, en cible `moteur`, son moteur |
-# MAGIC | `lancer` | `non` | `non` = plan seul, rien n'est envoyé ; `oui` = lance le test |
-# MAGIC | `cible` | `app` | `app` = l'app déployée ; `moteur` = le code de l'app dans ce notebook (voir en haut) |
-# MAGIC | `appels_llm` | `complet` | `complet`, `recherche` ou `aucun` (cible `moteur` seulement) |
-# MAGIC | `profil` | `realiste` | `vague`, `realiste` ou `rejeu` |
-# MAGIC | `utilisateurs` | `20` | `vague` : questions envoyées d'un coup ; `realiste` : personnes qui arrivent. Ignoré par `rejeu` |
-# MAGIC | `duree_s` | `60` | `realiste` : fenêtre d'arrivée des personnes, en secondes |
-# MAGIC | `arrivees` | `poisson` | `realiste` : `poisson` = au hasard comme de vrais utilisateurs ; `reguliere` = une arrivée tous les `duree_s / utilisateurs` |
-# MAGIC | `tours_par_session` | `1-3` | questions par conversation : un nombre (`2`) ou un intervalle tiré au hasard (`1-3`). `vague` avec `1` = une seule question chacun |
-# MAGIC | `reflexion_s` | `20` | temps moyen de lecture d'une réponse avant la question suivante (tiré entre 0,5 et 1,5 fois cette valeur) |
-# MAGIC | `rejeu_jour` | `auto` | `rejeu` : `auto` = l'heure la plus chargée de la table des messages ; sinon début de la période, `AAAA-MM-JJ HH:MM` (UTC) |
-# MAGIC | `rejeu_fenetre_min` | `60` | `rejeu` : durée de la période rejouée, en minutes |
-# MAGIC | `acceleration` | `1` | `rejeu` : 1 = vitesse réelle, 4 = la période passe 4 fois plus vite (4 fois plus de charge) |
-# MAGIC | `source_questions` | `sessions` | `sessions` = vraies conversations de `table_messages` (suites de questions réelles) ; `golden` = questions de `table_golden` ; `mix` = les deux |
-# MAGIC | `division` | `reelle` | `reelle` = la division de la question d'origine ; `ALL`, `AS` ou `IS` = forcée pour toutes |
-# MAGIC | `timeout_s` | `300` | une question sans fin après ce délai compte en `timeout` |
-# MAGIC | `max_tours` | `200` | plafond de questions envoyées pendant le run |
-# MAGIC | `arret_erreurs_pct` | `50` | plus de questions nouvelles quand plus de ce % des 20 dernières a échoué (0 = jamais) |
-# MAGIC | `limite_par_utilisateur` | `oui` | cible `moteur` : applique la limite de l'app (`RATE_LIMIT_PER_MINUTE`) à chaque utilisateur simulé |
-# MAGIC | `nettoyer` | `oui` | cible `app` : supprime à la fin les conversations créées par le test |
-# MAGIC | `url_app` | URL de l'app PROD | adresse de l'app (vide = lue avec `w.apps.get('qualibot')`) |
-# MAGIC | `jeton_app` | vide | cible `app` : vide = identité de ce notebook ; sinon un jeton collé (`databricks auth token -p <profil>`, valable 1 h) ou `secret:<scope>/<clé>` |
-# MAGIC | `table_messages` | `prod_proj.qualibot.chat_messages` | vraies questions (copie Delta de Lakebase) |
-# MAGIC | `table_golden` | `prod_proj.qualibot.eval_golden_retrieval` | questions de référence |
-# MAGIC | `table_resultats` | `prod_proj.qualibot.eval_stress_test_runs` | une ligne par question ; vide = rien n'est écrit |
-# MAGIC | `graine` | `7` | graine du hasard : même graine et mêmes paramètres = même plan |
+# MAGIC | `dossier_app` | `/Workspace/.bundle/qualibot/qualibot-prod/files` | deployed app code: its configuration (`app.yaml`, `target_config.env`) and, with target `moteur`, its engine |
+# MAGIC | `lancer` | `non` | `non` = plan only, nothing is sent; `oui` = runs the test |
+# MAGIC | `cible` | `app` | `app` = the deployed app; `moteur` = the app code in this notebook (see above) |
+# MAGIC | `appels_llm` | `complet` | `complet`, `recherche` or `aucun` (target `moteur` only) |
+# MAGIC | `profil` | `realiste` | `vague`, `realiste` or `rejeu` |
+# MAGIC | `utilisateurs` | `20` | `vague`: questions sent at once; `realiste`: people arriving. Ignored by `rejeu` |
+# MAGIC | `duree_s` | `60` | `realiste`: arrival window of the people, in seconds |
+# MAGIC | `arrivees` | `poisson` | `realiste`: `poisson` = random, like real users; `reguliere` = one arrival every `duree_s / utilisateurs` |
+# MAGIC | `tours_par_session` | `1-3` | questions per conversation: a number (`2`) or a range drawn at random (`1-3`). `vague` with `1` = a single question each |
+# MAGIC | `reflexion_s` | `20` | mean reading time of an answer before the next question (drawn between 0.5 and 1.5 times this value) |
+# MAGIC | `rejeu_jour` | `auto` | `rejeu`: `auto` = the busiest period of the messages table; else start of the period, `YYYY-MM-DD HH:MM` (UTC) |
+# MAGIC | `rejeu_fenetre_min` | `60` | `rejeu`: length of the replayed period, in minutes |
+# MAGIC | `acceleration` | `1` | `rejeu`: 1 = real speed, 4 = the period runs 4 times faster (4 times the load) |
+# MAGIC | `source_questions` | `sessions` | `sessions` = real conversations of `table_messages` (real follow-up questions); `golden` = questions of `table_golden`; `mix` = both |
+# MAGIC | `division` | `reelle` | `reelle` = the division of the original question; `ALL`, `AS` or `IS` = forced for all |
+# MAGIC | `timeout_s` | `300` | a question with no end after this delay counts as `timeout` |
+# MAGIC | `max_tours` | `200` | cap on the questions sent during the run |
+# MAGIC | `arret_erreurs_pct` | `50` | no new question once more than this % of the last 20 failed (0 = never) |
+# MAGIC | `limite_par_utilisateur` | `oui` | target `moteur`: applies the app limit (`RATE_LIMIT_PER_MINUTE`) to each simulated user |
+# MAGIC | `nettoyer` | `oui` | target `app`: deletes the conversations created by the test at the end |
+# MAGIC | `url_app` | PROD app URL | address of the app (empty = read with `w.apps.get('qualibot')`) |
+# MAGIC | `jeton_app` | empty | target `app`: empty = identity of this notebook; else a pasted token (`databricks auth token -p <profile>`, valid 1 h) or `secret:<scope>/<key>` |
+# MAGIC | `table_messages` | `prod_proj.qualibot.chat_messages` | real questions (Delta copy of Lakebase) |
+# MAGIC | `table_golden` | `prod_proj.qualibot.eval_golden_retrieval` | reference questions |
+# MAGIC | `table_resultats` | `prod_proj.qualibot.eval_stress_test_runs` | one row per question; empty = nothing is written |
+# MAGIC | `graine` | `7` | random seed: same seed and same parameters = same plan |
 # MAGIC
-# MAGIC **Limite par utilisateur en cible `app`** : toutes les questions partent sous un seul utilisateur (ce notebook ou le
-# MAGIC jeton). Au-delà de `RATE_LIMIT_PER_MINUTE` questions par minute (30 par défaut), l'app les refuse : elles comptent en
-# MAGIC `limite`. Le plan affiche combien sont attendues. Pour mesurer la capacité au-delà, relever cette valeur dans l'app
-# MAGIC pendant le test, ou utiliser la cible `moteur`.
+# MAGIC **Per-user limit with target `app`**: every question is sent under a single user (this notebook or the token).
+# MAGIC Beyond `RATE_LIMIT_PER_MINUTE` questions per minute (30 by default) the app refuses them: they count as `limite`.
+# MAGIC The plan shows how many are expected. To measure the capacity beyond it, raise this value in the app during the
+# MAGIC test, or use target `moteur`.
 
 # COMMAND ----------
 
@@ -203,7 +201,7 @@ P = {
     'graine': int(_get('graine')),
 }
 if P['cible'] == 'app' and P['llm'] != 'complet':
-    raise ValueError("La cible app fait toujours le tour complet : appels_llm = complet, ou cible = moteur.")
+    raise ValueError('Target app always runs the full turn: set appels_llm = complet, or cible = moteur.')
 
 RUN_ID = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
 w = WorkspaceClient()
@@ -260,7 +258,7 @@ def run_async(coro) -> Any:
         return ex.submit(asyncio.run, coro).result()
 
 
-logger.info('run %s | cible=%s llm=%s profil=%s | app %s | limite app %d questions/min/utilisateur',
+logger.info('run %s | cible=%s llm=%s profil=%s | app %s | app limit %d questions/min/user',
             RUN_ID, P['cible'], P['llm'], P['profil'], P['url_app'], RATE_LIMIT)
 
 # COMMAND ----------
@@ -294,7 +292,7 @@ def load_real_messages() -> pd.DataFrame:
     """
     name = P['table_messages']
     if not _table_exists(name):
-        logger.warning('table %s absente : pas de vraies conversations', name)
+        logger.warning('table %s missing: no real conversations', name)
         return pd.DataFrame(columns=['session_id', 'created_at', 'content', 'division'])
     df = spark.table(name)
     cond = "role = 'user' AND length(content) BETWEEN 3 AND 4000"
@@ -319,7 +317,7 @@ def load_golden() -> list[dict[str, str]]:
     """
     name = P['table_golden']
     if not _table_exists(name):
-        logger.warning('table %s absente : pas de questions de référence', name)
+        logger.warning('table %s missing: no reference questions', name)
         return []
     df = spark.table(name)
     division = 'division' if 'division' in df.columns else "'ALL'"
@@ -331,15 +329,15 @@ REAL = load_real_messages()
 GOLDEN = load_golden()
 SESSIONS = [[{'content': r.content, 'division': r.division} for r in g.itertuples()]
             for _, g in REAL.groupby('session_id', sort=False)]
-logger.info('%d vraies questions dans %d conversations (%d à plusieurs questions), %d questions de référence',
+logger.info('%d real questions in %d conversations (%d with several questions), %d reference questions',
             len(REAL), len(SESSIONS), sum(len(s) > 1 for s in SESSIONS), len(GOLDEN))
 if P['profil'] != 'rejeu' and not SESSIONS and not GOLDEN:
-    raise RuntimeError('Aucune question : ni table_messages ni table_golden ne donne de question.')
+    raise RuntimeError('No question: neither table_messages nor table_golden gives any.')
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Plan du test
+# MAGIC ## Test plan
 
 # COMMAND ----------
 
@@ -396,10 +394,10 @@ def build_plan() -> list[dict[str, Any]]:
     users = []
     if P['profil'] == 'rejeu':
         if REAL.empty:
-            raise RuntimeError(f"Le profil rejeu lit {P['table_messages']}, absente ou vide.")
+            raise RuntimeError(f"Profile rejeu reads {P['table_messages']}, which is missing or empty.")
         start, end = _replay_window()
         window = REAL[(REAL['created_at'] >= start) & (REAL['created_at'] < end)]
-        logger.info('période rejouée : %s -> %s UTC, %d questions', start, end, len(window))
+        logger.info('replayed period: %s -> %s UTC, %d questions', start, end, len(window))
         for i, (_, g) in enumerate(window.groupby('session_id', sort=False)):
             at = [(t - start).total_seconds() / P['acceleration'] for t in g['created_at']]
             users.append({'user': f'u{i:03d}', 'start_s': at[0],
@@ -456,17 +454,17 @@ SUMMARY = plan_summary(PLAN)
 display(pd.DataFrame([SUMMARY]))
 expected_refused = max(0, SUMMARY['pic_questions_par_minute'] - RATE_LIMIT)
 if P['cible'] == 'app' and expected_refused:
-    logger.warning('cible app : un seul utilisateur, %d questions/min au pic pour une limite de %d. Environ %d '
-                   'questions seront refusées par l\'app (statut limite).', SUMMARY['pic_questions_par_minute'],
+    logger.warning('target app: a single user, %d questions/min at the peak for a limit of %d. About %d '
+                   'questions will be refused by the app (status limite).', SUMMARY['pic_questions_par_minute'],
                    RATE_LIMIT, expected_refused)
-logger.info('exemple de conversation : %s', [t['content'][:80] for t in PLAN[0]['turns']] if PLAN else '-')
+logger.info('sample conversation: %s', [t['content'][:80] for t in PLAN[0]['turns']] if PLAN else '-')
 if not P['lancer']:
-    logger.info('lancer = non : plan seul, rien n\'a été envoyé. Passer lancer = oui pour lancer le test.')
+    logger.info('lancer = non: plan only, nothing was sent. Set lancer = oui to run the test.')
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Une question, comme l'app
+# MAGIC ## One question, as the app answers it
 
 # COMMAND ----------
 
@@ -495,7 +493,7 @@ async def ask_app(messages: list[dict[str, str]], division: str, session_id: str
             try:
                 m = json.loads(await ws.recv())
             except websockets.ConnectionClosed as exc:
-                return {'status': 'refus', 'error': f'connexion fermée par l\'app sans réponse ({exc.code})'}
+                return {'status': 'refus', 'error': f'connection closed by the app without an answer ({exc.code})'}
             kind = m.get('type')
             if kind == 'delta' and first is None:
                 first = time.monotonic() - t0
@@ -558,7 +556,7 @@ async def ask_engine(messages: list[dict[str, str]], division: str, user_key: st
     """
     e = ENGINE
     if P['limite_utilisateur'] and e['check_rate_limit'](user_key):
-        return {'status': 'limite', 'error': 'limite par utilisateur de l\'app (RATE_LIMIT_PER_MINUTE)'}
+        return {'status': 'limite', 'error': 'per-user limit of the app (RATE_LIMIT_PER_MINUTE)'}
     log = e['TurnLog']()
     t0 = time.monotonic()
     msgs = e['_trim_history'](e['_clean_messages'](messages))
@@ -601,7 +599,7 @@ async def ask_engine(messages: list[dict[str, str]], division: str, user_key: st
             if chunk.startswith('data: [DONE]'):
                 if not (user_content and accumulated):
                     log.fail('llm', 'EmptyAnswer', 'stream ended with no text')
-                    result = {'status': 'erreur', 'error': 'réponse vide'}
+                    result = {'status': 'erreur', 'error': 'empty answer'}
                     break
                 final = e['_apply_citation_markers'](''.join(accumulated), citations)
                 sources = await asyncio.to_thread(e['augment_sources'], ''.join(accumulated), sources)
@@ -638,7 +636,7 @@ async def ask_engine(messages: list[dict[str, str]], division: str, user_key: st
                 result = {'status': 'erreur', 'ttft_s': first, 'error': ev.get('error', '')}
                 break
         if result is None:
-            result = {'status': 'erreur', 'error': 'flux terminé sans fin de réponse'}
+            result = {'status': 'erreur', 'error': 'stream ended without the end of the answer'}
     finally:
         await stream.aclose()
     status = log.finish(outcome)
@@ -649,7 +647,7 @@ async def ask_engine(messages: list[dict[str, str]], division: str, user_key: st
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Lancement
+# MAGIC ## Run
 
 # COMMAND ----------
 
@@ -678,13 +676,13 @@ async def run_test(plan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], st
         if state['stop']:
             return True
         if state['sent'] >= P['max_tours']:
-            state['stop'] = f"plafond max_tours ({P['max_tours']}) atteint"
+            state['stop'] = f"max_tours cap ({P['max_tours']}) reached"
             return True
         last = rows[-20:]
         if P['arret_pct'] > 0 and len(last) >= 10:
             failed = sum(r['statut'] not in ('ok', 'degrade') for r in last)
             if failed * 100 / len(last) > P['arret_pct']:
-                state['stop'] = f"{failed} échecs sur les {len(last)} dernières questions (> {P['arret_pct']:.0f} %)"
+                state['stop'] = f"{failed} failures in the last {len(last)} questions (> {P['arret_pct']:.0f} %)"
                 return True
         return False
 
@@ -696,7 +694,7 @@ async def run_test(plan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], st
                 coro = ask_engine(messages, division, f'stress-{RUN_ID}-{user}', engine_token())
             return await asyncio.wait_for(coro, P['timeout_s'])
         except asyncio.TimeoutError:
-            return {'status': 'timeout', 'error': f"pas de fin après {P['timeout_s']:.0f} s"}
+            return {'status': 'timeout', 'error': f"no end after {P['timeout_s']:.0f} s"}
         except Exception as exc:  # noqa: BLE001 - a refused connection is a result too
             return {'status': 'refus', 'error': f'{type(exc).__name__}: {str(exc)[:300]}'}
 
@@ -735,7 +733,7 @@ async def run_test(plan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], st
                 'avertissements': ','.join(out.get('issues') or []) or None})
             done = len(rows)
             if done % 10 == 0:
-                logger.info('%d questions terminées, %d en cours', done, state['in_flight'])
+                logger.info('%d questions done, %d in progress', done, state['in_flight'])
             if out['status'] in ('ok', 'degrade'):
                 history = messages + [{'role': 'assistant', 'content': out.get('answer') or ''}]
             # A failed turn is left out of the history, as the browser does (history.ts).
@@ -756,31 +754,31 @@ if P['lancer']:
     if P['cible'] == 'app':
         probe = run_async(ask_app([{'role': 'user', 'content': 'Bonjour'}], 'ALL', PROBE_SESSION, app_token()))
         if probe['status'] != 'ok':
-            raise RuntimeError(f"L'app refuse ce notebook ({probe.get('error')}). Coller un jeton dans jeton_app "
-                               "(databricks auth token -p <profil PROD>), ou cible = moteur.")
-        logger.info('sonde ok : l\'app répond à ce notebook en %.1f s', probe.get('ttft_s') or 0)
+            raise RuntimeError(f"The app refuses this notebook ({probe.get('error')}). Paste a token into jeton_app "
+                               "(databricks auth token -p <PROD profile>), or set cible = moteur.")
+        logger.info('probe ok: the app answers this notebook in %.1f s', probe.get('ttft_s') or 0)
     else:
         load_engine()
-    logger.info('départ : %d questions prévues', SUMMARY['questions'])
+    logger.info('start: %d questions planned', SUMMARY['questions'])
     ROWS, STOP_REASON = run_async(run_test(PLAN))
-    logger.info('fin : %d questions%s', len(ROWS), f' ; arrêt anticipé : {STOP_REASON}' if STOP_REASON else '')
+    logger.info('end: %d questions%s', len(ROWS), f'; stopped early: {STOP_REASON}' if STOP_REASON else '')
     if P['table_resultats'] and ROWS:
         (spark.createDataFrame(ROWS, schema=_SCHEMA)
          .write.mode('append').option('mergeSchema', 'true').saveAsTable(P['table_resultats']))
-        logger.info('résultats écrits dans %s (run_id = %s)', P['table_resultats'], RUN_ID)
+        logger.info('results written to %s (run_id = %s)', P['table_resultats'], RUN_ID)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Résultats
+# MAGIC ## Results
 
 # COMMAND ----------
 
 STATUS_COLORS = {'ok': '#2E7D5B', 'degrade': '#D99A1E', 'erreur': '#C8453B', 'limite': '#7E57C2',
                  'timeout': '#5B6770', 'refus': '#8D6E63'}
-STATUS_LABELS = {'ok': 'réponse', 'degrade': 'réponse dégradée', 'erreur': 'erreur affichée',
-                 'limite': 'refus (limite par utilisateur)', 'timeout': 'sans fin (timeout)',
-                 'refus': 'connexion refusée'}
+STATUS_LABELS = {'ok': 'answer', 'degrade': 'degraded answer', 'erreur': 'error shown',
+                 'limite': 'refused (per-user limit)', 'timeout': 'no end (timeout)',
+                 'refus': 'connection refused'}
 plt.rcParams.update({'figure.dpi': 110, 'axes.spines.top': False, 'axes.spines.right': False,
                      'axes.grid': True, 'grid.alpha': .25, 'axes.titleweight': 'bold', 'axes.titlesize': 12,
                      'font.size': 10, 'legend.frameon': False})
@@ -796,16 +794,16 @@ def kpis(df: pd.DataFrame) -> pd.DataFrame:
     answered = df[df['statut'].isin(['ok', 'degrade'])]
     span = max(1e-9, float((df['depart_s'] + df['total_s']).max() - df['depart_s'].min()))
     return pd.DataFrame([{
-        'questions': len(df), 'réponses %': round(len(answered) * 100 / max(1, len(df)), 1),
-        'dégradées': int((df['statut'] == 'degrade').sum()), 'erreurs': int((df['statut'] == 'erreur').sum()),
-        'refus limite': int((df['statut'] == 'limite').sum()), 'timeouts': int((df['statut'] == 'timeout').sum()),
-        'connexions refusées': int((df['statut'] == 'refus').sum()),
-        '1er mot p50 s': _pct(answered['ttft_s'], .5), '1er mot p95 s': _pct(answered['ttft_s'], .95),
+        'questions': len(df), 'answered %': round(len(answered) * 100 / max(1, len(df)), 1),
+        'degraded': int((df['statut'] == 'degrade').sum()), 'errors': int((df['statut'] == 'erreur').sum()),
+        'refused (limit)': int((df['statut'] == 'limite').sum()), 'timeouts': int((df['statut'] == 'timeout').sum()),
+        'connections refused': int((df['statut'] == 'refus').sum()),
+        'first word p50 s': _pct(answered['ttft_s'], .5), 'first word p95 s': _pct(answered['ttft_s'], .95),
         'total p50 s': _pct(answered['total_s'], .5), 'total p95 s': _pct(answered['total_s'], .95),
         'total max s': _pct(answered['total_s'], 1.0),
-        'réponses / min': round(len(answered) / span * 60, 1), 'pic en cours': int(in_flight_curve(df)[1].max()),
-        'attente file p95 s': _pct(df['queue_wait_ms'].astype(float) / 1000, .95),
-        'coût €': round(float(df['cost_eur'].fillna(0).sum()), 3) if df['cost_eur'].notna().any() else None,
+        'answers / min': round(len(answered) / span * 60, 1), 'peak in progress': int(in_flight_curve(df)[1].max()),
+        'queue wait p95 s': _pct(df['queue_wait_ms'].astype(float) / 1000, .95),
+        'cost €': round(float(df['cost_eur'].fillna(0).sum()), 3) if df['cost_eur'].notna().any() else None,
     }])
 
 
@@ -832,9 +830,9 @@ def chart_timeline(df: pd.DataFrame) -> None:
         ax.barh(i, first, left=r['depart_s'], height=.8, color=color, alpha=.35, linewidth=0)
         ax.barh(i, max(0, r['total_s'] - first), left=r['depart_s'] + first, height=.8, color=color, linewidth=0)
     ax.invert_yaxis()
-    ax.set_xlabel('secondes depuis le départ du test')
-    ax.set_ylabel('questions, dans l\'ordre d\'envoi')
-    ax.set_title('Chronologie : clair = attente du premier mot, foncé = écriture de la réponse', pad=28)
+    ax.set_xlabel('seconds since the start of the test')
+    ax.set_ylabel('questions, in sending order')
+    ax.set_title('Timeline: light = waiting for the first word, dark = answer being written', pad=28)
     ax.legend(handles=_legend_handles(d['statut']), loc='lower center', bbox_to_anchor=(.5, 1.0), ncol=6)
     ax.grid(axis='y', visible=False)
     plt.tight_layout()
@@ -842,33 +840,33 @@ def chart_timeline(df: pd.DataFrame) -> None:
 
 
 def chart_load(df: pd.DataFrame) -> None:
-    """Top: questions in progress and questions sent per 5 s. Bottom: time to the first word and total time of each
+    """Top: questions in progress and questions sent per time bin. Bottom: time to the first word and total time of each
     answer, at its end, with the p95 over the last 15 answers."""
     t, live = in_flight_curve(df)
     fig, (a1, a2) = plt.subplots(2, 1, figsize=(13, 7.5), sharex=True, gridspec_kw={'height_ratios': [1, 1.3]})
     width = max(1.0, float(np.ceil(t.max() / 60)))
     bins = np.arange(0, t.max() + width, width)
-    a1.hist(df['depart_s'], bins=bins, color='#90A4AE', alpha=.55, label=f'questions envoyées (par {width:.0f} s)')
-    a1.step(t, live, where='post', color='#1F4E79', linewidth=2, label='questions en cours')
+    a1.hist(df['depart_s'], bins=bins, color='#90A4AE', alpha=.55, label=f'questions sent (per {width:.0f} s)')
+    a1.step(t, live, where='post', color='#1F4E79', linewidth=2, label='questions in progress')
     refused = df[df['statut'] == 'limite']
     if len(refused):
         a1.scatter(refused['depart_s'], np.zeros(len(refused)), marker='v', color=STATUS_COLORS['limite'],
-                   label='refus limite', zorder=3)
+                   label='refused (limit)', zorder=3)
     a1.set_ylabel('questions')
-    a1.set_title('Charge')
+    a1.set_title('Load')
     a1.legend(loc='upper right')
     d = df.assign(fin_s=df['depart_s'] + df['total_s']).sort_values('fin_s')
     ok = d[d['statut'].isin(['ok', 'degrade'])]
     for s, g in d.groupby('statut'):
         a2.scatter(g['fin_s'], g['total_s'], s=22, color=STATUS_COLORS.get(s, '#999'), alpha=.85,
-                   label=f'temps total : {STATUS_LABELS.get(s, s)}')
+                   label=f'total time: {STATUS_LABELS.get(s, s)}')
     if len(ok):
-        a2.scatter(ok['fin_s'], ok['ttft_s'], s=14, marker='x', color='#1F4E79', alpha=.7, label='premier mot')
+        a2.scatter(ok['fin_s'], ok['ttft_s'], s=14, marker='x', color='#1F4E79', alpha=.7, label='first word')
         roll = ok['total_s'].rolling(15, min_periods=3).quantile(.95)
-        a2.plot(ok['fin_s'], roll, color='#C8453B', linewidth=1.8, label='p95 du temps total (15 dernières)')
-    a2.set_xlabel('secondes depuis le départ du test')
-    a2.set_ylabel('secondes')
-    a2.set_title('Latence au fil du test')
+        a2.plot(ok['fin_s'], roll, color='#C8453B', linewidth=1.8, label='p95 of the total time (last 15)')
+    a2.set_xlabel('seconds since the start of the test')
+    a2.set_ylabel('seconds')
+    a2.set_title('Latency during the test')
     a2.legend(loc='upper center', bbox_to_anchor=(.5, -.16), fontsize=8, ncol=4)
     plt.tight_layout()
     plt.show()
@@ -878,10 +876,10 @@ def chart_distribution(df: pd.DataFrame) -> None:
     """Share of the answers obtained within x seconds, for the first word and for the whole answer."""
     ok = df[df['statut'].isin(['ok', 'degrade'])]
     if ok.empty:
-        logger.info('aucune réponse : pas de distribution')
+        logger.info('no answer: no distribution')
         return
     fig, ax = plt.subplots(figsize=(13, 4.5))
-    for col, label, color in [('ttft_s', 'premier mot', '#1F4E79'), ('total_s', 'réponse complète', '#2E7D5B')]:
+    for col, label, color in [('ttft_s', 'first word', '#1F4E79'), ('total_s', 'complete answer', '#2E7D5B')]:
         v = np.sort(ok[col].dropna().to_numpy())
         if not len(v):
             continue
@@ -891,26 +889,26 @@ def chart_distribution(df: pd.DataFrame) -> None:
             ax.axvline(x, color=color, linestyle=ls, linewidth=1)
             ax.annotate(f'p{int(q * 100)} {x:.1f} s', (x, q * 100), xytext=(4, -12), textcoords='offset points',
                         color=color, fontsize=9)
-    ax.set_xlabel('secondes')
-    ax.set_ylabel('% des réponses obtenues')
+    ax.set_xlabel('seconds')
+    ax.set_ylabel('% of the answers received')
     ax.set_ylim(0, 102)
-    ax.set_title('Distribution des temps (courbe cumulée)')
+    ax.set_title('Time distribution (cumulative)')
     ax.legend(loc='lower right')
     plt.tight_layout()
     plt.show()
 
 
-STAGES = [('translate_in', 'traduction question'), ('rewrite', 'réécriture / traduction'),
-          ('search', 'recherche (Vector Search, REF)'), ('queue_wait', 'attente d\'un créneau de réponse'),
-          ('generation', 'génération de la réponse'), ('translate_back', 'traduction réponse')]
+STAGES = [('translate_in', 'question translation'), ('rewrite', 'rewrite / translation'),
+          ('search', 'search (Vector Search, REF)'), ('queue_wait', 'wait for an answer slot'),
+          ('generation', 'answer generation'), ('translate_back', 'answer translation')]
 STAGE_COLORS = ['#B0BEC5', '#90CAF9', '#1F4E79', '#C8453B', '#2E7D5B', '#80CBC4']
 
 
 def chart_stages(df: pd.DataFrame) -> None:
-    """Cible ``moteur``: median and p95 of each step of a turn, and the wait for an answer slot against the load."""
+    """Target ``moteur``: median and p95 of each step of a turn, and the wait for an answer slot against the load."""
     t = pd.DataFrame([json.loads(x or '{}') for x in df['etapes_ms']], index=df.index)
     if t.empty or 'retrieval' not in t:
-        logger.info('pas de détail des étapes (cible app : voir chat_turns dans Lakebase)')
+        logger.info('no step breakdown (target app: see chat_turns in Lakebase)')
         return
     t['search'] = t['retrieval'] - (t['rewrite'].fillna(0) if 'rewrite' in t else 0)
     present = [(k, lbl, c) for (k, lbl), c in zip(STAGES, STAGE_COLORS) if k in t and t[k].notna().any()]
@@ -923,16 +921,16 @@ def chart_stages(df: pd.DataFrame) -> None:
             if v > .8:
                 a1.text(left + v / 2, row, f'{v:.1f}', ha='center', va='center', color='white', fontsize=8)
             left += v
-    a1.set_yticks([0, 1], ['médiane', 'p95'])
+    a1.set_yticks([0, 1], ['median', 'p95'])
     a1.invert_yaxis()
-    a1.set_xlabel('secondes (chaque étape prise à son propre percentile)')
-    a1.set_title('Où passe le temps d\'un tour')
+    a1.set_xlabel('seconds (each step at its own percentile)')
+    a1.set_title('Where the time of a turn goes')
     a1.legend(loc='upper center', bbox_to_anchor=(.5, -.22), ncol=3, fontsize=8)
     if 'queue_wait' in t and t['queue_wait'].notna().any():
         a2.scatter(df['en_vol_au_depart'], t['queue_wait'].fillna(0) / 1000, s=18, color='#C8453B', alpha=.7)
-        a2.set_xlabel('questions déjà en cours à l\'envoi')
-        a2.set_ylabel('attente d\'un créneau (s)')
-        a2.set_title('File d\'attente des réponses')
+        a2.set_xlabel('questions already in progress when sent')
+        a2.set_ylabel('wait for a slot (s)')
+        a2.set_title('Answer queue')
     else:
         a2.axis('off')
     plt.tight_layout()
@@ -954,18 +952,18 @@ if ROWS:
                 .sort_values('questions', ascending=False))
     if DF['avertissements'].notna().any():
         display(DF['avertissements'].dropna().str.split(',').explode().value_counts()
-                .rename('questions').rename_axis('avertissement').reset_index())
+                .rename('questions').rename_axis('warning').reset_index())
     display(DF[['user', 'tour', 'division', 'question', 'depart_s', 'en_vol_au_depart', 'ttft_s', 'total_s',
                 'statut', 'erreur', 'answer_endpoint']].sort_values('depart_s'))
     if STOP_REASON:
-        logger.warning('arrêt anticipé : %s', STOP_REASON)
+        logger.warning('stopped early: %s', STOP_REASON)
 else:
-    logger.info('aucun résultat (lancer = non)')
+    logger.info('no result (lancer = non)')
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Nettoyage (cible `app`) et historique des runs
+# MAGIC ## Cleanup (target `app`) and history of the runs
 
 # COMMAND ----------
 
@@ -989,7 +987,7 @@ if ROWS and P['cible'] == 'app' and P['nettoyer']:
     sessions = sorted({r['session_id'] for r in ROWS if r['statut'] in ('ok', 'degrade', 'erreur', 'timeout')}
                       | {PROBE_SESSION})
     done, failed = delete_sessions(sessions)
-    logger.info('nettoyage : %d conversations supprimées, %d non trouvées ou en échec', done, failed)
+    logger.info('cleanup: %d conversations deleted, %d not found or failed', done, failed)
 
 if P['table_resultats'] and _table_exists(P['table_resultats']):
     display(spark.sql(f"""
