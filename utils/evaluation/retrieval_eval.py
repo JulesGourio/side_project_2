@@ -296,6 +296,7 @@ def parse_configs(raw: str) -> dict[str, dict]:
                 value in {"on", "off"} if key in ("translate", "codenorm") else
                 value in {"off", "low", "minimal", "medium", "high"} if key == "effort" else
                 value in {"best", "rrf"} if key == "merge" else
+                value in {"score", "rank"} if key == "order" else
                 bool(re.fullmatch(r"(0(\.\d+)?|1(\.0+)?)", value)) if key == "split" else
                 bool(value) if key == "rewrite" else value.isdigit()
             )
