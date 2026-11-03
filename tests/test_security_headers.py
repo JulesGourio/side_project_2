@@ -18,7 +18,8 @@ def test_health_response_carries_security_headers() -> None:
     csp = response.headers['Content-Security-Policy']
     assert "default-src 'self'" in csp
     assert "script-src 'self'" in csp
-    assert "object-src 'none'" in csp
+    assert "object-src 'self' blob:" in csp
+    assert "frame-src 'self' blob:" in csp
     assert "frame-ancestors 'self'" in csp
     assert 'fonts.googleapis.com' not in csp
     assert response.headers['X-Content-Type-Options'] == 'nosniff'

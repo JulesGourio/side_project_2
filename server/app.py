@@ -88,7 +88,7 @@ SECURITY_HEADERS = {
   'Content-Security-Policy': (
     "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
     "font-src 'self' data:; script-src 'self'; connect-src 'self'; frame-src 'self' blob:; "
-    "object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+    "object-src 'self' blob:; base-uri 'self'; frame-ancestors 'self'"
   ),
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'same-origin',

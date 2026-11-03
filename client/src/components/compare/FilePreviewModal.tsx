@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FileText, Loader2 } from 'lucide-react';
 import { ExactDocxPreview } from '@/components/shared/ExactDocxPreview';
 import { DOCX_MIME_TYPE, PDF_MIME_TYPE, docBlob } from './files';
@@ -28,6 +28,24 @@ export function useOfficePreview(file: DocFile | null) {
   return { html, loading, load };
 }
 
+/**
+ * Shows a PDF in an iframe through a blob: URL. A data: URL is refused by the page's CSP (frame-src and object-src),
+ * and the browser then shows "Ce contenu a été bloqué" instead of the document.
+ */
+function PdfFrame({ data, name }: { data: string; name: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+    const next = URL.createObjectURL(new Blob([bytes], { type: PDF_MIME_TYPE }));
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [data]);
+
+  if (!url) return null;
+  return <iframe src={url} className="w-full h-full border-0" title={name} />;
+}
+
 function Unavailable({ name }: { name: string }) {
   return (
     <div className="w-full h-full flex flex-col items-center justify-center gap-4" style={{ color: 'var(--color-text-muted)' }}>
@@ -47,7 +65,7 @@ export function FilePreviewModal({ label, file, preview, onClose }: {
   const { mimeType, data, name } = file;
   let body;
   if (mimeType === PDF_MIME_TYPE) {
-    body = <iframe src={`data:application/pdf;base64,${data}`} className="w-full h-full border-0" title={name} />;
+    body = <PdfFrame data={data} name={name} />;
   } else if (mimeType.startsWith('image/')) {
     body = (
       <div className="w-full h-full flex items-center justify-center p-4 overflow-auto">
