@@ -271,7 +271,7 @@ def _linked_prompts(experiment_id: str, keys: List[str]) -> str:
 
 
 def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = '') -> None:
-    """Attaches the user's thumbs up / down to the turn's trace (blocking; run it in a thread, never raises).
+    """Attaches the user's thumbs up / down to the turn's trace, and the comment as its own ``user_comment`` assessment (blocking; run it in a thread, never raises).
 
     :param mlflow_trace_id: trace of the turn
     :param vote: ``up`` or ``down``
@@ -283,10 +283,12 @@ def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = 
     try:
         import mlflow
         from mlflow.entities import AssessmentSource, AssessmentSourceType
-        mlflow.log_feedback(
-            trace_id=mlflow_trace_id, name='user_vote', value=vote == 'up',
-            source=AssessmentSource(source_type=AssessmentSourceType.HUMAN, source_id=_hash(user_id or 'unknown')),
-            rationale=(comment or '')[:2000] or None)
+        source = AssessmentSource(source_type=AssessmentSourceType.HUMAN, source_id=_hash(user_id or 'unknown'))
+        comment = (comment or '').strip()[:2000]
+        mlflow.log_feedback(trace_id=mlflow_trace_id, name='user_vote', value=vote == 'up',
+                            source=source, rationale=comment or None)
+        if comment:
+            mlflow.log_feedback(trace_id=mlflow_trace_id, name='user_comment', value=comment, source=source)
     except Exception as exc:  # noqa: BLE001
         logger.warning('mlflow_turns: vote on %s not logged: %s', mlflow_trace_id, exc)
 

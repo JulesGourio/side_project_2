@@ -185,14 +185,19 @@ def test_tags_for_the_free_scorers(spans, monkeypatch):
 def test_vote_becomes_an_assessment(monkeypatch):
     import mlflow
     monkeypatch.setenv('CHAT_MLFLOW_EXPERIMENT', 'chat')
-    seen = {}
-    monkeypatch.setattr(mlflow, 'log_feedback', lambda **kw: seen.update(kw))
+    calls = []
+    monkeypatch.setattr(mlflow, 'log_feedback', lambda **kw: calls.append(kw))
     mlflow_turns.log_vote('tr-1', 'down', 'wrong number', 'jane@example.com')
-    assert seen['trace_id'] == 'tr-1' and seen['name'] == 'user_vote' and seen['value'] is False
-    assert seen['rationale'] == 'wrong number' and 'jane' not in seen['source'].source_id
-    seen.clear()
+    seen = {c['name']: c for c in calls}
+    assert seen['user_vote']['trace_id'] == 'tr-1' and seen['user_vote']['value'] is False
+    assert seen['user_vote']['rationale'] == 'wrong number' and 'jane' not in seen['user_vote']['source'].source_id
+    assert seen['user_comment']['value'] == 'wrong number'
+    calls.clear()
+    mlflow_turns.log_vote('tr-1', 'up')                            # no comment: the vote only
+    assert [c['name'] for c in calls] == ['user_vote']
+    calls.clear()
     mlflow_turns.log_vote('', 'up')                                # unknown trace: nothing logged
-    assert not seen
+    assert not calls
 
 
 def test_vote_never_raises(monkeypatch):
