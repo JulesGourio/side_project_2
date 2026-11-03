@@ -37,7 +37,7 @@ engine in [services/chat/engine](../../services/chat/engine/README.md).
 - Failed and aborted turns are saved with their status. Only `ok` messages appear in the session list, in a session
   read and in a shared conversation.
 - Deleting a session is soft: its rows are flagged, not deleted.
-- A session has one share token. It is created on the first share and reused afterwards, so a link keeps working.
+- A session has one share token. It is minted when the session row is created, and reused afterwards, so a link keeps working. The share endpoint still mints one if a row has none (rows created before this rule).
   Anyone with the link and the chat capability reads the conversation. Duplicating it copies the messages into a
   session owned by the caller.
 - A vote is stored in `chat_feedbacks`. When the turn has an MLflow trace, the vote is also sent to that trace from a

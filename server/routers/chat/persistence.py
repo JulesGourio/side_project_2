@@ -2,6 +2,7 @@
 
 import json
 import logging
+import secrets
 from typing import List, Tuple
 
 import asyncpg
@@ -18,7 +19,8 @@ async def _upsert_session(conn: asyncpg.Connection, session_id: str, user_id: st
     """Create the chat session row, or bump its ``updated_at`` when it exists and belongs to ``user_id``.
 
     A session id that already belongs to someone else is left untouched: the caller cannot write into it. The share
-    token is created only when the owner shares the conversation.
+    token is minted with the row, so every conversation has one from the start; it stays unused until the owner shares
+    the conversation.
 
     :param conn: an acquired Lakebase connection.
     :param session_id: id of the conversation (the browser creates it).
@@ -31,12 +33,12 @@ async def _upsert_session(conn: asyncpg.Connection, session_id: str, user_id: st
     """
     status = await conn.execute(
         '''
-        INSERT INTO chat_sessions (id, user_id, workspace_id, workspace_url, name)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (id) DO UPDATE SET updated_at = CASE WHEN $6 THEN NOW() ELSE chat_sessions.updated_at END
+        INSERT INTO chat_sessions (id, user_id, workspace_id, workspace_url, name, share_token)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (id) DO UPDATE SET updated_at = CASE WHEN $7 THEN NOW() ELSE chat_sessions.updated_at END
         WHERE chat_sessions.user_id = EXCLUDED.user_id
         ''',
-        session_id, user_id, workspace_id, workspace_url, name, touch,
+        session_id, user_id, workspace_id, workspace_url, name, secrets.token_urlsafe(20), touch,
     )
     return status.endswith(' 1')
 
