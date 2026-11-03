@@ -363,9 +363,9 @@ def test_save_turn_strips_division_and_registers_user():
     assert mock_upsert.await_args.kwargs['email'] == 'user@example.com'
 
     # Session upsert (first conn.execute) receives the stripped, truncated name
-    # Arg order: …, name, touch.
+    # Arg order: …, name, share token, touch.
     first_execute_args = conn.execute.await_args_list[0].args
-    session_name = first_execute_args[-2]
+    session_name = first_execute_args[-3]
     assert first_execute_args[-1] is True          # an answered turn moves the thread to today
     assert session_name == 'How do I wire it?'
     assert 'Division' not in session_name
