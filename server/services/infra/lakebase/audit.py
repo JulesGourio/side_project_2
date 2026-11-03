@@ -237,7 +237,7 @@ async def store_llm_request(
             )
         return row['id'] if row else None
     except Exception as e:
-        logger.debug('store_llm_request failed: %s', e)
+        logger.warning('store_llm_request failed: %s', e)
         return None
 
 
