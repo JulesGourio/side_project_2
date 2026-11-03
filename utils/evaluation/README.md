@@ -19,6 +19,7 @@ Parent: [`utils/`](../README.md). The MLflow trace of a chat turn is written by
 | `chat_scorers.py` | The scorers: free ones on every trace (language, citation, degraded turn, fallback model, latency, cost), LLM judges on a sample (groundedness, fidelity, limits, relevance) | Library, imported by `score_chat_traces.py` and by `tests/test_chat_scorers.py` |
 | `check_vision_endpoints.py` | Sends each image of a folder, with a question, to each endpoint, and logs ok or fail per pair | CLI: `--profile`, `--images`, `--endpoints`, `--question`, `--timeout` |
 | `load_test_chat.py` | Sends real questions to the deployed app over its WebSocket, by steps of simultaneous questions | Notebook, run by hand |
+| `stress_test_chat.py` | Simulates users of the chat (a burst at once, arrivals spread over a window with multi-turn conversations, or a replay of a real period of `chat_messages`), through the deployed app or through its engine loaded in the notebook (full turn, search only, or no LLM call), and charts what they get: timeline, load, latency, distribution, steps. PROD defaults; `lancer = non` shows the plan only | Notebook, run by hand |
 | `load_test_vector_search.py` | Sends Vector Search queries alone, by steps, to find where the endpoint refuses | Notebook, run by hand |
 | `create_golden_retrieval_set.py` | Writes `<env>_proj.qualibot.eval_golden_retrieval` from the list `GOLDEN_SET` (question, expected REF, language, kind, division) and flags the expected REF absent from the chunks | First task of job `Z_4_Qualibot_Retrieval_Eval`, or notebook by hand |
 | `retrieval_eval.py` | Runs every golden question through the search of the deployed app once per configuration (presets `deploye`, `tailles`, `complet`, or `perso` = the `indexes` widget) and scores the documents sent to the model, without an answer: Delta results, one MLflow run per configuration, ranking table and charts | Second task of job `Z_4_Qualibot_Retrieval_Eval`, or notebook by hand |
@@ -45,5 +46,7 @@ folder or when there is no image or no endpoint. Inside a job, the two experimen
   defaults to `true`.
 - `register_chat_prompts.py` needs the experiment to exist. It stops with an error when it does not.
 - The load tests, the retrieval evaluation and the pairwise comparison are not in any job. Their parameters are widgets.
+- The stress test sends nothing until `lancer = oui`. Through the app, every question runs under the caller's user and is
+  bounded by `RATE_LIMIT_PER_MINUTE` like any user; `nettoyer = oui` soft-deletes the test conversations at the end.
 
 Tests of the chat scorers and of the prompt registration are described in [`tests/README.md`](../../tests/README.md).
