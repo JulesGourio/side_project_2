@@ -125,7 +125,6 @@ def load_engine() -> dict[str, Any]:
     return dict(locals())
 
 
-E = load_engine()
 GOLDEN = [{'content': r['question'], 'division': (r['division'] or 'ALL').upper()}
           for r in spark.table(GOLDEN_TABLE).select('question', 'division').collect() if r['question']]
 if not GOLDEN:
@@ -269,6 +268,7 @@ async def run() -> list[dict[str, Any]]:
     return rows
 
 
+E = load_engine()   # fresh modules each run: their HTTP clients and locks belong to the event loop that created them
 with ThreadPoolExecutor(max_workers=1) as _ex:   # the notebook may already run an event loop
     DF = pd.DataFrame(_ex.submit(asyncio.run, run()).result())
 for _col in ('ttft_s', 'cost_eur', 'steps_ms', 'error', 'model', 'warnings'):
