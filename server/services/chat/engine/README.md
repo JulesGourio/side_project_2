@@ -44,6 +44,10 @@ loads are in [prompts](../../../prompts/README.md).
 
 - Every model the engine calls is a `CHAT_*` endpoint. The defaults are GPT Luna models.
 - A query that fails is dropped when another query answered. `ChatVsiError` is raised only when every query failed.
+- A reranked Vector Search query asks for 50 results at most (`_RERANK_MAX_RESULTS` in `search.py`): Vector Search refuses
+  more with the reranker on. A larger size is cut to 50, for example a degraded turn, whose single query asks for the
+  candidates of two (2 x `CHAT_RERANK_TOP_K`). Without the cap the index refuses the reranker and the turn falls back
+  to a raw search. Any `CHAT_*RERANK_TOP_K` above 50 has the same cap.
 - Every passage retrieved is recorded on the turn, kept or set aside. A passage set aside has a reason: `other_language`
   or `over_cap`.
 - The rewrite drops the company and document-type words that the conversation does not use (`strip_added_noise`).
