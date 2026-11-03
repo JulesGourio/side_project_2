@@ -13,6 +13,7 @@ Traces upload in MLflow's own background queue, so the call is local and short.
     │   ├─ rewrite                  LLM: messages, FR + EN search queries (model, tokens, cost)
     │   ├─ search                   the Vector Search calls, one span each (query, rerank / raw, results, duration)
     │   ├─ ref_lookup               REFs named in the conversation
+    │   ├─ citation_lookup          "which documents cite X?": the codes, and the citing documents per code
     │   └─ passages_sent            RETRIEVER: the passages' full text, prompt order (what the judges read)
     ├─ answer                       LLM: messages, tokens, cost, time to first token, streaming time, tokens/s, truncation, fallback
     │   ├─ queue_wait               wait for a free answer slot
@@ -423,6 +424,10 @@ def _write_trace(log: Any, name: str) -> str | None:
         if 'ref_lookup' in timings:
             child(retrieval, 'ref_lookup', SpanType.CHAIN, starts.get('ref_lookup', start), timings['ref_lookup'],
                   inputs=data.get('named_refs'))
+        if data.get('exact_citations'):
+            child(retrieval, 'citation_lookup', SpanType.CHAIN, starts.get('citation_lookup', start),
+                  timings.get('citation_lookup') or 0, inputs={'codes': sorted(data['exact_citations'])},
+                  outputs={'citing_documents': data['exact_citations']})
         child(retrieval, 'passages_sent', SpanType.RETRIEVER, start + timings['retrieval'], 0,
               inputs={'question': data.get('question'), 'fr_query': data.get('fr_query')},
               outputs=[_document(p) for p in sent],

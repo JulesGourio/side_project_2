@@ -121,6 +121,7 @@ def test_span_tree_and_timings(spans):
                          ('queue_wait', 'answer'), ('call_1', 'answer'), ('call_2', 'answer')):
         assert s[name].parent is s[parent], name
     assert 'translate_in' not in s and 'ref_lookup' not in s            # steps that did not run
+    assert 'citation_lookup' not in s
     t0 = 1_000_000_000
     assert s['search'].kwargs['start_time_ns'] == t0 + 320_000_000
     assert s['search'].ended['end'] == t0 + 720_000_000
@@ -180,6 +181,17 @@ def test_tags_for_the_free_scorers(spans, monkeypatch):
     assert tags['rewrite_mode'] == 'translate' and tags['passages_sent'] == '2' and tags['first_token_ms'] == '1200' and tags['total_ms'] == '4000'
     assert tags['cost_eur'] == '0.005' and tags['question_lang_guess'] == 'fr' and tags['answer_lang_guess'] == 'fr'
     assert 'mlflow.linkedPrompts' not in tags                     # no log.prompts
+
+
+def test_citation_lookup_span(spans):
+    log = _turn()
+    log.data['exact_citations'] = {'AB-123': 4}
+    log.timings_ms['citation_lookup'] = 90
+    log.starts_ms['citation_lookup'] = 700
+    mlflow_turns._write_trace(log, 'chat')
+    span = _by_name(spans)['citation_lookup']
+    assert span.parent is _by_name(spans)['retrieval']
+    assert span.kwargs['inputs'] == {'codes': ['AB-123']} and span.ended['outputs'] == {'citing_documents': {'AB-123': 4}}
 
 
 def test_vote_becomes_an_assessment(monkeypatch):
