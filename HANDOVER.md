@@ -116,9 +116,64 @@ Détail : `utils/parsing_pipeline/README.md`.
 
 ## 5. Lakebase
 
-- Tables de l'app : conversations (`chat_sessions`, `chat_messages`, `chat_turns`, `chat_retrieved_chunks`, `chat_feedbacks`), comparaison (`compare_messages`, `compare_feedbacks`, `llm_requests`), impact (`impact_*`), caches, `app_errors`, `doc_catalog`, `catalog_metadata`, `users`.
-- L'app crée et complète son schéma au démarrage. L'app se connecte avec son propre SP (rôle `app-doc-compare-sp`, id en dur dans `databricks.yml` : à changer seulement si l'app est recréée).
-- Chaque env a son Lakebase ; ils ne sont pas copiés d'un env à l'autre en fonctionnement normal. Sauvegarde : le job d'export (§2).
+Projet `qualibot`, branche `production`, base `doccompare`, un par env (jamais copié d'un env à l'autre en fonctionnement normal). L'app crée et complète son schéma au démarrage et s'y connecte avec son propre SP (rôle `app-doc-compare-sp`, id en dur dans `databricks.yml` : à changer seulement si l'app est recréée). Colonnes de chaque table : `server/services/infra/lakebase/schema.md`.
+
+| Groupe | Tables | Écrites par |
+|---|---|---|
+| Chat | `chat_sessions` (conversation), `chat_messages` (messages), `chat_feedbacks` (pouces), `chat_turns` (un tour = question + réponse, avec étapes, durées, modèles, tokens, coût, statut), `chat_retrieved_chunks` (chaque passage trouvé, gardé ou écarté) | l'app |
+| Comparaison | `compare_messages` (historique), `compare_feedbacks`, `llm_requests` (un appel d'analyse) | l'app |
+| Recherche d'impact | `impact_requests`, `impact_document_results` (un document jugé), `impact_feedbacks` | l'app |
+| Caches | `impact_cache`, `analysis_cache`, `summary_cache` | l'app |
+| Erreurs | `app_errors` (erreur ou avertissement d'une étape, avec `severity`, `stage`, `origin`) | l'app |
+| Utilisateurs | `users` (utilisateur connu, `groups`, `can_chat`, `can_compare`, `groups_synced_at`) | l'app, et le job `D_2_Qualibot_User_Capabilities_Sync` pour les groupes |
+| Catalogue | `doc_catalog` (REF, titre, lien, révision, date de chaque document) ; `doc_references` (pour chaque code de référence, les documents qui le citent) | tâche `6_update_kb_metadata` après chaque run de parsing |
+| Date de la base | `catalog_metadata` (une ligne, `id = 1` : « documents à jour au ») | tâche `6_update_kb_metadata` ; saisie à la main possible |
+
+### Les « codes »
+
+- **Codes d'avertissement d'un tour** (`chat_turns.warnings`, un code par problème ; le détail est dans `app_errors` avec le même `trace_id`). Le statut d'un tour est `ok`, `degraded` (au moins un avertissement), `error` ou `aborted`.
+
+| Code | Sens |
+|---|---|
+| `translate_in_failed` | traduction de la question en échec : recherche avec la question d'origine |
+| `rewrite_failed` / `rewrite_fallback` | aucune réécriture / réécriture faite par le modèle de repli |
+| `vs_partial` | certaines requêtes Vector Search ont échoué |
+| `rerank_refused` | l'index a refusé le reranker |
+| `no_passages` | aucun passage trouvé |
+| `llm_fallback` / `llm_retried` | réponse donnée par le modèle de repli / appels retentés (429, timeout) |
+| `answer_continued` / `answer_interrupted` | réponse coupée puis reprise / coupée sans reprise possible |
+| `translate_back_failed` | traduction de la réponse en échec |
+| `persist_failed`, `user_upsert_failed`, `session_not_owned` | écriture des messages, mise à jour de `users`, session d'un autre utilisateur |
+| `query_truncated` | requête trop longue coupée |
+| `client_disconnected`, `send_failed` | information sur la connexion du navigateur |
+
+- **Codes de référence** (ex. `SF-1027`) : à chaque passage, `cited_codes` liste les codes qu'il cite et `chunk_preprocessed` les écrit sous une seule orthographe (`SF-1027 [SF1027]`), à l'identique côté requêtes de l'app (module `utils/parsing_pipeline/code_normalization.py`). `doc_references` est construite à partir de `cited_codes` : elle permet de répondre à « quels documents citent X ? » avec la liste complète.
+- **Jointure** : `trace_id` (`chat-` + 32 caractères hexadécimaux) relie `chat_turns`, `chat_retrieved_chunks`, `app_errors` et `chat_messages` ; `chat_turns.mlflow_trace_id` relie au trace MLflow.
+
+### Export du Lakebase vers Delta
+
+Job `D_1_Qualibot_Lakebase_Export_To_Volume`, deux tâches : `export_lakebase_to_volume` (une table = un fichier JSON Lines dans `/Volumes/<env>_proj/qualibot/staging/lakebase_export`) puis `import_lakebase_tables_to_delta` (charge chaque fichier dans une table Delta du même nom dans `<env>_proj.qualibot`, saute une table vide). Serverless obligatoire (le Lakebase n'est pas joignable depuis un cluster classique). Les variables `lakebase_import_to_delta` (charger ou non) et `lakebase_tables_to_skip` (tables exclues de l'export) se règlent par env dans `databricks.yml`. Les fichiers contiennent des données utilisateur (questions, réponses, identifiants) : ils restent dans le volume.
+
+### Qui lit les copies Delta
+
+- Le dashboard Lakeview **Qualibot Usage Tracking** (suivi d'usage). Les tables exactes qu'il lit sont définies dans le dashboard lui-même, pas dans le dépôt : **à vérifier dans Databricks**. La note de limite du README indique que celui de DEV lit encore d'anciennes tables.
+- Les alertes SQL (`resources/alerts.yml`, une série par env, mêmes noms) :
+
+| Alerte | Tables lues | Heure |
+|---|---|---|
+| Documents sans passages | `parsed_documents`, `chunks` | 09:00 |
+| Erreurs de parsing | `parsed_documents` | 09:00 |
+| Échecs du chat | `chat_messages` | 03:00 et 15:00 |
+| Jobs en échec | `system.lakeflow.jobs`, `system.lakeflow.job_run_timeline` (limité aux jobs du workspace de l'env) | 08:00 |
+| Nouvelles erreurs | `app_errors` | 03:00 |
+| Tours dégradés | `chat_turns` | 03:00 |
+
+  Les alertes tournent sur un warehouse SQL par env (`alerts_warehouse_id`) et sont en pause ou actives selon `alerts_pause_status`.
+- La notation des traces du chat (`D_2_Qualibot_Score_Chat_Traces`) : `chat_messages`, `chat_sessions`, `chat_feedbacks`, `chat_turns`, `chat_retrieved_chunks`, `app_errors`.
+
+### Groupes des utilisateurs (table `users`)
+
+Le job `D_2_Qualibot_User_Capabilities_Sync` lit, dans `system.access.audit`, le dernier événement d'ajout ou de retrait par (utilisateur, groupe suivi). Groupes suivis : pour le chat `Role-Project-LEAP-End-users-Qualibot-ChatBot`, `Role-LATECOERE-User-Internal`, `Role-Project-LEAP-CoreDev`, `Role-Project-LEAP-CoreAdmin` ; pour la comparaison `Role-Project-LEAP-End-users-Qualibot-DocCompare`, CoreDev, CoreAdmin. Il écrit `groups`, `can_chat`, `can_compare`, `groups_synced_at`. Le SP du job doit avoir SELECT sur `system.access.audit`.
 
 ## 6. Accès à l'app
 
