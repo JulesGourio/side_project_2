@@ -10,7 +10,7 @@ Parent: [root README](../README.md). The tasks run the notebooks and scripts of 
 | File | Jobs defined | Targets | Target variables read |
 |---|---|---|---|
 | `alerts.yml` | Six Databricks SQL alerts on the parsing, the chat and the jobs (`parsed_without_chunks`, `parse_errors`, `chat_failure_rate`, `job_failures`, `new_error_kinds`, `chat_degraded_turns`), running on every target | every target | `pipeline_write_env`, `alerts_warehouse_id`, `alerts_workspace_id`, `alerts_pause_status`, `notification_email` |
-| `app_schedules.yml` | Jobs that stop and start the apps (`utils/app_mgmt/stop_start_app_job.py`): `D_1_Qualibot_Apps_Stop_Nightly_*`, `W_1_Qualibot_Stop_Weekend_*`, `W_1_Qualibot_Start_Weekend_*` | `dev`, `uat` | `app_name` |
+| `app_schedules.yml` | Jobs that stop and start the apps (`utils/app_mgmt/stop_start_app_job.py`): `D_1_Qualibot_Apps_Stop_Nightly_*`, `W_1_Qualibot_Stop_Weekend_*`, `W_1_Qualibot_Start_Weekend_*`, `W_1_Qualibot_Stop/Start_*_Prod` | `dev`, `uat`, `prod` | `app_name` |
 | `chat_mlflow.yml` | `Z_2_Qualibot_Create_Chat_Experiment` (`create_chat_experiment.py`), `Z_3_Qualibot_Register_Chat_Prompts` (`register_chat_prompts.py`), `D_2_Qualibot_Score_Chat_Traces` (`score_chat_traces.py`, paused) | `dev`, `uat`, `prod` | `pipeline_write_env`, `bundle.name`, `bundle.target` |
 | `lakebase_sync.yml` | Lakebase export to the staging volume, then load of every exported table as Delta tables, `D_1_Qualibot_Lakebase_Export_To_Volume`; group membership of the visitors, `D_2_Qualibot_User_Capabilities_Sync`: the same jobs for every target | `dev`, `uat`, `prod` | `pipeline_write_env`, `lakebase_export_schedule_pause`, `lakebase_import_to_delta` |
 | `retrieval_eval.yml` | `Z_4_Qualibot_Retrieval_Eval`: golden set (`create_golden_retrieval_set.py`), then retrieval evaluation (`retrieval_eval.py`), run as the job service principal of the target | `dev`, `uat`, `prod` | `pipeline_write_env`, `notification_email` |
@@ -35,6 +35,7 @@ Times are in `Europe/Brussels` (the schedules of the apps and of the pipeline); 
 | `D_1_Qualibot_Apps_Stop_Nightly_Dev` | `apps_stop_nightly_dev` | `dev` | 21:00 every day, `UNPAUSED` |
 | `W_1_Qualibot_Stop_Weekend_Dev` / `W_1_Qualibot_Start_Weekend_Dev` | `qualibot_stop_weekend_dev` / `qualibot_start_weekend_dev` | `dev` | Friday 21:00 / Monday 07:00, `PAUSED` |
 | `W_1_Qualibot_Stop_Weekend_Uat` / `W_1_Qualibot_Start_Weekend_Uat` | `qualibot_stop_weekend_uat` / `qualibot_start_weekend_uat` | `uat` | Friday 21:00 / Monday 07:00, `UNPAUSED` |
+| `W_1_Qualibot_Stop_Weekend_Prod` / `W_1_Qualibot_Start_Weekday_Prod` | `qualibot_stop_weekend_prod` / `qualibot_start_weekday_prod` | `prod` | Friday 21:00 / Monday 07:00, `PAUSED` until switched to `UNPAUSED` (see the comment in `app_schedules.yml`) |
 
 The job names carry no target suffix: a target gets its own workspace or its own bundle state, so the same name never clashes.
 

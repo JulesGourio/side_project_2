@@ -1,6 +1,6 @@
 # app_mgmt
 
-Stops or starts Databricks Apps on a schedule: nightly and at the weekend for the non-production targets. One notebook
+Stops or starts Databricks Apps on a schedule: nightly and at the weekend for the non-production targets, weekly for PROD. One notebook
 serves every such job.
 
 Parent: [`utils/`](../README.md). The jobs are defined in [`resources/app_schedules.yml`](../../resources/app_schedules.yml).
@@ -20,6 +20,8 @@ Parent: [`utils/`](../README.md). The jobs are defined in [`resources/app_schedu
 | `W_1_Qualibot_Start_Weekend_Dev` | `dev` | start | `${var.app_name}` |
 | `W_1_Qualibot_Stop_Weekend_Uat` | `uat` | stop | `qualibot` |
 | `W_1_Qualibot_Start_Weekend_Uat` | `uat` | start | `qualibot` |
+| `W_1_Qualibot_Stop_Weekend_Prod` | `prod` | stop | `${var.app_name}` |
+| `W_1_Qualibot_Start_Weekday_Prod` | `prod` | start | `${var.app_name}` |
 
 The jobs run in the workspace of their target, under the identity set in their `run_as`. The `dev` jobs and the UAT jobs
 have different identities, and the identity needs CAN_MANAGE on each app it stops or starts.

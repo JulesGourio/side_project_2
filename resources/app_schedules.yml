@@ -235,3 +235,102 @@ targets:
             quartz_cron_expression: "0 0 7 ? * MON"
             timezone_id: "Europe/Brussels"
             pause_status: UNPAUSED
+
+  prod:
+    resources:
+      jobs:
+
+        # ── App off-hours (PROD) ─────────────────────────────────────────────
+        # Weekly only (no nightly job): the app runs Monday 07:00 to Friday 21:00, stopped at the weekend.
+        # PAUSED on purpose: the PROD app is not yet validated (deploy blocked, state import pending). To activate,
+        # change both pause_status to UNPAUSED and deploy.
+        # run_as is the PROD job SP (job-runner-sa-prod); it needs CAN_MANAGE on the PROD app.
+        qualibot_stop_weekend_prod:
+          name: "W_1_Qualibot_Stop_Weekend_Prod"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
+          description: "Stop the PROD qualibot app on Friday at 21h (weekend off)."
+          max_concurrent_runs: 1
+          tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "b82d3b5a-b633-4738-8dde-68bb2142cb02"  # PROD job SP
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02  # job-runner-sa-prod
+          tasks:
+            - task_key: stop_app
+              notebook_task:
+                notebook_path: ../utils/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "stop"
+                  app_names: ${var.app_name}
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk==0.120.0
+          schedule:
+            quartz_cron_expression: "0 0 21 ? * FRI"
+            timezone_id: "Europe/Brussels"
+            pause_status: PAUSED
+
+        qualibot_start_weekday_prod:
+          name: "W_1_Qualibot_Start_Weekday_Prod"
+          queue:
+            enabled: true
+          email_notifications:
+            on_failure:
+              - ${var.notification_email}
+          notification_settings:
+            no_alert_for_canceled_runs: true
+          description: "Start the PROD qualibot app on Monday at 07h (weekdays on)."
+          max_concurrent_runs: 1
+          tags:
+            activity-type: ${var.job_activity_tag}
+            job-purpose: platform
+            project-name: qualibot
+            project: Qualibot
+          permissions:
+            - group_name: "Role-Project-LEAP-CoreAdmin"
+              level: CAN_MANAGE
+            - group_name: "Role-Project-LEAP-CoreDev"
+              level: CAN_MANAGE
+            - service_principal_name: "b82d3b5a-b633-4738-8dde-68bb2142cb02"  # PROD job SP
+              level: CAN_MANAGE
+          run_as:
+            service_principal_name: b82d3b5a-b633-4738-8dde-68bb2142cb02  # job-runner-sa-prod
+          tasks:
+            - task_key: start_app
+              notebook_task:
+                notebook_path: ../utils/app_mgmt/stop_start_app_job.py
+                source: WORKSPACE
+                base_parameters:
+                  action: "start"
+                  app_names: ${var.app_name}
+              environment_key: default
+          environments:
+            - environment_key: default
+              spec:
+                environment_version: "2"
+                dependencies:
+                  - databricks-sdk==0.120.0
+          schedule:
+            quartz_cron_expression: "0 0 7 ? * MON"
+            timezone_id: "Europe/Brussels"
+            pause_status: PAUSED
