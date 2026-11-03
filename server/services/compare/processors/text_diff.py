@@ -23,6 +23,7 @@ from server.services.compare.processors._diff_engines import (
 )
 from server.services.compare.conversion import DOC_TRUNCATED_NOTE
 from server.services.compare.processors.base import BaseProcessor, ProcessMetadata, ProcessResult
+from server.services.compare.report_language import with_language_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,8 @@ class TextDiffProcessor(BaseProcessor):
 
         messages: List[Dict[str, Any]] = []
         if system_prompt or not comparative:
+            if not comparative:        # a custom comparative prompt is sent as written
+                system_prompt = with_language_instruction(system_prompt, new_text, method_name == 'structured')
             messages.append({'role': 'system', 'content': system_prompt})
         messages.append({'role': 'user', 'content': content})
         return ProcessResult(
