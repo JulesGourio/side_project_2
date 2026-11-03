@@ -432,6 +432,7 @@ async def stream_analysis(host: str, token: str, endpoint: str, messages: List[D
                 call_messages = [*messages, {'role': 'assistant', 'content': written},
                                  {'role': 'user', 'content': CONTINUE_PROMPT}]
             got = ''
+            call_usage: dict | None = None      # a stream may repeat cumulative usage on every chunk: the last one is the call's
             try:
                 async for kind, value in _stream_once(host, token, candidate, call_messages, max_tokens,
                                                       thinking_budget, temperature):
@@ -443,10 +444,7 @@ async def stream_analysis(host: str, token: str, endpoint: str, messages: List[D
                         got += value
                         yield _sse({'type': 'response.output_text.delta', 'delta': value})
                     elif kind == 'usage':
-                        usage_seen = True
-                        for k in ('input_tokens', 'output_tokens', 'thinking_tokens'):
-                            usage[k] += value.get(k) or 0
-                        usage['cost_eur'] = round(usage['cost_eur'] + (value.get('cost_eur') or 0.0), 6)
+                        call_usage = value
                     elif kind == 'truncated':
                         truncated = True
                 if not got:
@@ -466,6 +464,12 @@ async def stream_analysis(host: str, token: str, endpoint: str, messages: List[D
                     continuations += 1
                     if continuations > _MAX_CONTINUATIONS:
                         break
+            finally:
+                if call_usage:
+                    usage_seen = True
+                    for k in ('input_tokens', 'output_tokens', 'thinking_tokens'):
+                        usage[k] += call_usage.get(k) or 0
+                    usage['cost_eur'] = round(usage['cost_eur'] + (call_usage.get('cost_eur') or 0.0), 6)
         if answered or continuations > _MAX_CONTINUATIONS:
             break
 

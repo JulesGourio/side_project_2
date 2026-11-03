@@ -216,6 +216,21 @@ def test_judge_that_every_endpoint_fails_is_a_user_message_with_the_cause(monkey
 
 # --- Streamed analysis ---
 
+def test_usage_repeated_on_every_chunk_is_counted_once(monkeypatch):
+    """A stream that carries the cumulative usage on each chunk reports the last one, not their sum."""
+    def body(payload):
+        lines = [f'data: {json.dumps({"object": "chat.completion.chunk", "choices": [{"delta": {"content": d}, "finish_reason": None}], "usage": {"prompt_tokens": 1000, "completion_tokens": i + 1}})}\n\n'
+                 for i, d in enumerate(['a', 'b', 'c'])]
+        lines.append('data: [DONE]\n\n')
+        return httpx.Response(200, content=''.join(lines).encode(), headers={'content-type': 'text/event-stream'})
+
+    FakeService({SONNET: body}, monkeypatch)
+    events = _events(_run(_collect(stream_analysis(HOST, 't', SONNET, [{'role': 'user', 'content': 'q'}],
+                                                    100, 4000, 0.0))))
+    usage = next(e for e in events if e['type'] == 'usage')
+    assert (usage['input_tokens'], usage['output_tokens']) == (1000, 3)
+
+
 def test_analysis_falls_back_and_streams_the_answer(monkeypatch):
     service = FakeService({SONNET: _status(429), GPT_5_6_LUNA: _sse('Hello ', 'world.')}, monkeypatch)
     events = _events(_run(_collect(stream_analysis(HOST, 't', SONNET, [{'role': 'user', 'content': 'q'}],
