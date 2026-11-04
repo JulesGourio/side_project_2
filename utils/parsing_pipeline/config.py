@@ -278,12 +278,12 @@ IMAGE_FORMAT = "PNG"  # PNG = lossless, no compression artifacts on text/diagram
 USE_TIKTOKEN = True
 CHARS_PER_TOKEN = 3.5
 # Passage sizes (chunking.py), overridable per run; utils/evaluation/retrieval_eval.py measures their effect on retrieval.
-MIN_CHUNK_TOKENS = int(_env("PARSING_MIN_CHUNK_TOKENS", "150"))
-TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "300"))
-MAX_CHUNK_TOKENS = int(_env("PARSING_MAX_CHUNK_TOKENS", "450"))
+MIN_CHUNK_TOKENS = int(_env("PARSING_MIN_CHUNK_TOKENS", "300"))
+TARGET_CHUNK_TOKENS = int(_env("PARSING_TARGET_CHUNK_TOKENS", "450"))
+MAX_CHUNK_TOKENS = int(_env("PARSING_MAX_CHUNK_TOKENS", "550"))
 # Character ceiling on top of tokens: dot leaders / form underscores count few tokens for many
 # characters, and the Vector Search reranker reads only the first 2,000 characters.
-MAX_CHUNK_CHARS = int(_env("PARSING_MAX_CHUNK_CHARS", "1600"))
+MAX_CHUNK_CHARS = int(_env("PARSING_MAX_CHUNK_CHARS", "1950"))
 # Overlap between consecutive passages of one section (fraction of TARGET).
 CHUNK_OVERLAP_RATIO = float(_env("PARSING_CHUNK_OVERLAP_RATIO", "0.12"))
 # A passage body found in at least this many documents is marked "boilerplate".

@@ -191,8 +191,8 @@ variables with the defaults listed at the top of `config.py`.
 
 - The Markdown is cut on the headings of levels 1 to 3. A passage never spans two sections of level 1 or 2; a
   section too small to stand alone joins the next one.
-- Sizes are bounded in tokens (tiktoken `cl100k_base`: 150 minimum, 300 target, 450 maximum) and in characters
-  (1 600), because dot leaders and form underscores use few tokens for many characters.
+- Sizes are bounded in tokens (tiktoken `cl100k_base`: 300 minimum, 450 target, 550 maximum) and in characters
+  (1 950), because dot leaders and form underscores use few tokens for many characters.
 - Consecutive passages of one section overlap by 12 % of the target size. Tables longer than the target are split
   by rows, with the header repeated.
 - `semantic_headers` is the heading path common to the blocks of a passage. The passage starts with the section

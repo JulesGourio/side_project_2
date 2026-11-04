@@ -69,10 +69,10 @@ _DEFAULTS: Dict[str, Any] = {
     "USE_TIKTOKEN": False,
     "CHARS_PER_TOKEN": 3.5,
     # Chunking
-    "MIN_CHUNK_TOKENS": 250,
-    "TARGET_CHUNK_TOKENS": 500,
-    "MAX_CHUNK_TOKENS": 1000,
-    "MAX_CHUNK_CHARS": 4000,
+    "MIN_CHUNK_TOKENS": 300,
+    "TARGET_CHUNK_TOKENS": 450,
+    "MAX_CHUNK_TOKENS": 550,
+    "MAX_CHUNK_CHARS": 1950,
     "CHUNK_OVERLAP_RATIO": 0.12,
     # Worker-config fallback file (must match VOLUME_BASE_PATH/_parsing_config.json)
     "WORKER_CONFIG_JSON": (
@@ -342,10 +342,10 @@ def chunk_document(text: str) -> List[Dict[str, Any]]:
         return []
     return chunking.chunk_markdown(
         text,
-        min_tokens=int(_cfg("MIN_CHUNK_TOKENS", fallback=250)),
-        target_tokens=int(_cfg("TARGET_CHUNK_TOKENS", fallback=500)),
-        max_tokens=int(_cfg("MAX_CHUNK_TOKENS", fallback=1000)),
-        max_chars=int(_cfg("MAX_CHUNK_CHARS", fallback=4000)),
+        min_tokens=int(_cfg("MIN_CHUNK_TOKENS", fallback=300)),
+        target_tokens=int(_cfg("TARGET_CHUNK_TOKENS", fallback=450)),
+        max_tokens=int(_cfg("MAX_CHUNK_TOKENS", fallback=550)),
+        max_chars=int(_cfg("MAX_CHUNK_CHARS", fallback=1950)),
         overlap_ratio=float(_cfg("CHUNK_OVERLAP_RATIO", fallback=0.12)),
         chars_per_token=float(_cfg("CHARS_PER_TOKEN", fallback=3.5)),
         count_tokens=count_tokens,

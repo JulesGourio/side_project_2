@@ -95,7 +95,7 @@ Détail : `utils/parsing_pipeline/README.md`.
 - **Périmètre** : `parse_manifest` ne contient que les documents Intraqual courants (dernière révision, état validé, non masqués) qui sont dans l'une des catégories racines retenues (processus One QMS, AS programmes, AS instructions de travail, AS processus, directives groupe, training, VA, organization) ou dans les deux sous-catégories « To be classified ». La liste est dans `utils/parsing_pipeline/config.py` (`SCOPE_ROOT_IDCATS`, `SCOPE_SUB_IDCATS`). Garde-fou : si le nombre de documents du périmètre baisse de plus de 30 % par rapport au run précédent (ce qui signale presque toujours un problème de lecture des sources, pas un vrai retrait), `2_manifest` échoue sans rien supprimer ; pour une réduction voulue, mettre `PARSING_MAX_SCOPE_DROP_PCT` à 0 le temps d'un run.
 - **Parseurs** : PDF, DOCX, PPTX et HTML passent par Docling. `xml_fallback` : lecteur XML de secours des DOCX/PPTX quand Docling échoue. Un PDF scanné (moins de 150 caractères de texte) passe en OCR par le modèle de vision (statut `pending_llm_ocr` en attendant).
 - **Catégorie manquante** : si une révision n'a pas de catégorie, on regarde si une révision précédente du même document en a une ; si oui elle est reprise, sinon le document est ignoré.
-- **Tailles de passages** (`utils/parsing_pipeline/config.py`) : `MIN_CHUNK_TOKENS = 150`, `TARGET_CHUNK_TOKENS = 300`, `MAX_CHUNK_TOKENS = 450`, `MAX_CHUNK_CHARS = 1600`. Un passage est coupé aux titres de niveau 1 à 3 ; il vise 300 tokens, ne descend pas sous 150 (un morceau trop petit est fusionné avec le suivant), ne dépasse pas 450 tokens ni 1600 caractères (le plafond en caractères existe pour les lignes de points et de tirets, qui coûtent peu de tokens). Deux passages voisins se recouvrent de 12 %. Pour agrandir les passages : changer ces quatre constantes (ou les variables `PARSING_MIN_CHUNK_TOKENS`, `PARSING_TARGET_CHUNK_TOKENS`, `PARSING_MAX_CHUNK_TOKENS`, `PARSING_MAX_CHUNK_CHARS`), garder les valeurs de repli identiques dans `utils/parsing_pipeline/worker.py`, déployer avec `deploy-<env>-jobs`, puis lancer un run `rechunk`. Le reranker de Vector Search ne lit que les 2000 premiers caractères d'un passage : au-delà, le texte n'aide plus le classement.
+- **Tailles de passages** (`utils/parsing_pipeline/config.py`) : `MIN_CHUNK_TOKENS = 300`, `TARGET_CHUNK_TOKENS = 450`, `MAX_CHUNK_TOKENS = 550`, `MAX_CHUNK_CHARS = 1950`. Un passage est coupé aux titres de niveau 1 à 3 ; il vise 450 tokens, ne descend pas sous 300 (un morceau trop petit est fusionné avec le suivant), ne dépasse pas 550 tokens ni 1950 caractères (le plafond en caractères protège les lignes de points et de tirets, qui coûtent peu de tokens). Deux passages voisins se recouvrent de 12 %. Le reranker de Vector Search ne lit que les 2000 premiers caractères d'un passage, d'où le plafond sous 2000. Les mêmes valeurs sont en repli dans `utils/parsing_pipeline/worker.py` : les garder identiques. Ces valeurs s'appliquent aux nouveaux documents et à tout `rechunk` ou `full` ; les passages déjà en base gardent leur ancienne taille tant qu'aucun `rechunk` n'est lancé (non lancé pour l'instant). Pour les changer : modifier ces constantes (ou les variables `PARSING_MIN_CHUNK_TOKENS`, `PARSING_TARGET_CHUNK_TOKENS`, `PARSING_MAX_CHUNK_TOKENS`, `PARSING_MAX_CHUNK_CHARS`), déployer avec `deploy-<env>-jobs`, puis lancer un run `rechunk`.
 - **Images** : extraites dans le volume `images` par `3_parse`, décrites par `4_describe_images`. Modèles de vision : `databricks-gpt-6-luna` avec repli `databricks-gpt-5-6-luna`, chacun avec son propre quota. Embeddings de l'index : `databricks-qwen3-embedding-0-6b`.
 
 ### Pièges
@@ -252,7 +252,47 @@ Ordre de priorité : `utils/deploy/target_env.json` (surcharges par env, rendu e
 
 Voir le README (profil CLI, `.env.local`, `python -m uvicorn server.app:app`, `bun run dev`). Sous Windows, retirer `DATABRICKS_TOKEN` de l'environnement s'il existe : `Remove-Item Env:\DATABRICKS_TOKEN`.
 
-## 9. À traiter / questions ouvertes
+## 9. Comparaison de documents (DocCompare)
+
+Onglet `/compare` (`client/src/components/compare/`, API `server/routers/compare/`, logique `server/services/compare/`). Accès : groupes DocCompare, CoreDev, CoreAdmin (`require_compare`). Activation : `COMPARE_ENABLED`.
+
+**Ce que fait l'utilisateur** : il dépose deux versions d'un document (PDF, images, Word, PowerPoint, Excel, XML ; 20 Mo maximum chacun) et obtient, séparément ou ensemble :
+- un **résumé des changements** (Markdown, une ligne par changement, export PDF) ;
+- un **tableau des changements** (type, criticité haute / moyenne / basse, numéros `C1`, `C2`…, export Excel) ;
+- une **recherche d'impact** (§10) ;
+- le **résumé d'un seul document**.
+
+**Déroulement d'une analyse** (`POST /api/compare/analyze`, flux SSE) : le navigateur calcule le SHA-256 des deux fichiers et envoie les fichiers avec la méthode (`standard` = résumé, `structured` = tableau). Le serveur vérifie le cache (clé = hash des deux fichiers + version de l'app), attend un créneau (`COMPARE_MAX_CONCURRENT`), transforme les fichiers par un *processeur* selon leur type (`server/services/compare/processors/`, versions proposées dans `versions.yml`), calcule la différence, puis appelle le modèle. Une ligne d'audit est écrite dans la table Lakebase `llm_requests` (statut `ok`, `error` ou `aborted`). Les très gros écarts (plus de 60 000 caractères) sont découpés aux limites de sections en morceaux de 45 000 caractères, analysés en parallèle puis fusionnés (`chunked_analysis.py`). Si le navigateur se déconnecte, l'appel au modèle s'arrête.
+
+**Modèles** : analyse `databricks-claude-sonnet-5-5` (`COMPARE_ANALYSIS_ENDPOINT`, avec réflexion adaptative, effort `COMPARE_THINKING_EFFORT`) ; repli sur `COMPARE_LLM_FALLBACK_ENDPOINTS` (sinon GPT-5.6 Luna ou GPT-6 Luna). Résumé d'un document et images : `databricks-gpt-6-luna` (`COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT`). Un endpoint qui échoue est mis au repos, le suivant de la chaîne est essayé ; l'erreur n'est levée que si aucun ne répond. Prompts : fichiers de `server/prompts/compare/`.
+
+**Réglages** (`app.yaml`, surcharges par env dans `utils/deploy/target_env.json`) : `COMPARE_MAX_TOKENS`, `COMPARE_ANALYSIS_TIMEOUT_S` (300), `COMPARE_METHOD_<TYPE>` (méthode par défaut par type de fichier), `COMPARE_SUMMARY_MAX_CHARS` (300 000), `COMPARE_VOLUME_PATH`.
+
+**Sauvegarde et historique** : si `COMPARE_VOLUME_PATH` est défini (par env : `/Volumes/<env>_proj/qualibot/doc_compare`), un dossier de session reçoit les deux fichiers, le texte de l'analyse puis l'Excel ou le PDF. L'historique est dans la table Lakebase `compare_messages`, les votes dans `compare_feedbacks`, les résumés en cache dans `summary_cache`, les analyses en cache dans `analysis_cache`. Le navigateur garde aussi les documents et résultats en local storage (rechargement de page) ; un échec de sauvegarde n'empêche jamais l'affichage.
+
+**Aperçus** : PDF et images lus localement ; DOCX converti en PDF fidèle par LibreOffice (`soffice.py`, archive du volume `doc_compare`, variable `SOFFICE_ARCHIVE_VOLUME_PATH`) ; `.doc` par antiword (installé au démarrage par `start.sh`) ; autres formats convertis en HTML.
+
+**Limites connues** : les tableaux situés dans les en-têtes et pieds de page des DOCX ne sont pas comparés (ils contiennent surtout des tableaux de révision). Les images du tableau sont associées aux lignes par ordre d'apparition, pas par numéro de page.
+
+## 10. Recherche d'impact
+
+Sert à répondre à : « quels autres documents de la base sont touchés par ces changements ? ». Route `POST /api/compare/impact` (flux NDJSON), code `server/routers/compare/impact.py`, `server/services/compare/impact_queries.py`, client `client/src/components/compare/impact/`.
+
+**Déroulement** :
+1. Les changements viennent du tableau (ou, à défaut, du résumé), numérotés `C1`, `C2`…
+2. `impact_queries.py` construit une requête de recherche par changement (jusqu'à `COMPARE_IMPACT_MAX_QUERIES` = 30 ; les changements de plus faible criticité partagent la dernière requête). Une requête est plafonnée à 2000 caractères. Les changements qui n'entrent dans aucune requête sont listés (`changes_not_searched`) et signalés à l'utilisateur.
+3. Chaque requête interroge l'index Vector Search `COMPARE_IMPACT_INDEX` (`<env>_proj.qualibot.chunks_index`, le même que le chat) et renvoie `COMPARE_IMPACT_PER_QUERY_RESULTS` = 40 passages.
+4. Les documents candidats sont classés ; les `COMPARE_IMPACT_MAX_CANDIDATES` = 15 meilleurs partent chez le juge. Un document comparé peut s'exclure lui-même des résultats.
+5. Pour chaque candidat, un appel du modèle juge (`COMPARE_IMPACT_ENDPOINT` = `databricks-gpt-6-luna`, prompt `server/prompts/compare/impact_judge.md`) rend un verdict `impacted`, `check` (à vérifier), `not_impacted` ou `error`, la raison, et chaque passage en conflit avec une citation mot pour mot. Le modèle `gemini-3-1-flash-lite` a été écarté pour le juge : trop de faux positifs.
+6. Le flux envoie `plan` (changements, candidats, requêtes), un événement `document` par document jugé au fur et à mesure, puis `done` (consommation, durée).
+
+**Cache et audit** : le résultat est mis en cache (table `impact_cache`, clé = hash des fichiers, liste des changements, index, modèle) seulement si aucun document n'a échoué ; `force_refresh` l'ignore. Lignes d'audit : `impact_requests` (la recherche) et `impact_document_results` (chaque document jugé). Votes : `impact_feedbacks` (un par verdict de document, plus un avis général).
+
+**Interface** : résultats « par document » ou « par changement », filtre par verdict, clic sur `C12` pour aller à la ligne du tableau, export Excel de la liste d'actions (`POST /api/compare/impact/export-excel`), résultat rattaché à l'entrée d'historique.
+
+**Dépendances côté données** : la qualité dépend de `chunks_index` (donc du parsing, §3). Si l'index ne répond pas, la recherche ne se lance pas ; l'interface ne propose la recherche que si le nom d'index est valide.
+
+## 11. À traiter / questions ouvertes
 
 - Épingler les versions des bibliothèques installées sur le cluster de parsing.
 - Corriger `2_manifest` pour qu'un run avec `parse_filter` ne supprime pas les chunks des anciennes révisions sans parser les nouvelles.
