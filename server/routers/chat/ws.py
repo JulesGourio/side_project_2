@@ -9,7 +9,7 @@ from typing import Tuple
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
-from server.logging_setup import request_id, user_hash
+from server.logging_setup import request_id
 from server.services.chat import mlflow_turns
 from server.services.chat.engine import normalize_division, stream_chat
 from server.routers.errors import TOO_MANY_REQUESTS
@@ -35,17 +35,17 @@ logger = logging.getLogger(__name__)
 
 
 def _log_turn_summary(log: TurnLog, division: str, user_id: str, msgs: int) -> None:
-    """The one INFO line of a chat turn: who (hashed), status, durations per step, MLflow trace id. No question text.
+    """The one INFO line of a chat turn: who (user id), status, durations per step, MLflow trace id. No question text.
 
     :param log: the finished turn
     :param division: division asked
-    :param user_id: user of the turn, logged hashed
+    :param user_id: user of the turn
     :param msgs: number of messages sent by the client
     """
     steps = ' '.join(f'{k}={v}ms' for k, v in log.timings_ms.items())
     level = logging.ERROR if log.status == 'error' else logging.WARNING if log.status == 'degraded' else logging.INFO
     logger.log(level, 'chat turn: status=%s division=%s user=%s msgs=%d issues=%s %s trace_id=%s',
-               log.status, division, user_hash(user_id), msgs, ','.join(log.codes) or '-', steps, log.trace_id)
+               log.status, division, user_id, msgs, ','.join(log.codes) or '-', steps, log.trace_id)
 router = APIRouter()
 
 
@@ -128,7 +128,7 @@ async def chat_ws(websocket: WebSocket) -> None:
     workspace_url = get_workspace_url()
 
     if await session_of_another_user(get_pool(), session_id, user_id):
-        logger.warning('chat [ws]: session %s belongs to another user, turn refused (user=%s)', session_id, user_hash(user_id))
+        logger.warning('chat [ws]: session %s belongs to another user, turn refused (user=%s)', session_id, user_id)
         await websocket.send_json({'type': 'error', 'error': 'Conversation not found'})
         await websocket.close()
         return

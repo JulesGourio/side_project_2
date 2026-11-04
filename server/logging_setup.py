@@ -9,7 +9,6 @@ Rules (see ``server/README.md``):
 """
 
 import contextvars
-import hashlib
 import logging
 import os
 
@@ -29,15 +28,6 @@ class _RequestIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = request_id.get()
         return True
-
-
-def user_hash(user: str | None) -> str:
-    """Short stable hash of a user id or email, to follow a user in the logs without naming them.
-
-    :param user: user id or email, may be empty
-    :return: 8 hex characters, ``-`` when there is no user
-    """
-    return hashlib.sha256(user.lower().encode()).hexdigest()[:8] if user else '-'
 
 
 def is_quiet_path(path: str) -> bool:

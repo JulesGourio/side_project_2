@@ -117,21 +117,22 @@ async def log_requests(request: Request, call_next) -> Response:
   token = request_id.set(req_id)
   start = time.monotonic()
   quiet = is_quiet_path(request.url.path)
+  user = request.headers.get('x-forwarded-user', '').strip() or '-'
   try:
     response = await call_next(request)
     elapsed = time.monotonic() - start
     response.headers['X-Request-ID'] = req_id
     # One line per request, after it ends. Health and static files only when they fail.
     if response.status_code >= 500:
-      logger.error('%s %s -> %d (%.2fs)', request.method, request.url.path, response.status_code, elapsed)
+      logger.error('%s %s -> %d (%.2fs) user=%s', request.method, request.url.path, response.status_code, elapsed, user)
     elif response.status_code >= 400 and not quiet:
-      logger.warning('%s %s -> %d (%.2fs)', request.method, request.url.path, response.status_code, elapsed)
+      logger.warning('%s %s -> %d (%.2fs) user=%s', request.method, request.url.path, response.status_code, elapsed, user)
     elif not quiet:
-      logger.info('%s %s -> %d (%.2fs)', request.method, request.url.path, response.status_code, elapsed)
+      logger.info('%s %s -> %d (%.2fs) user=%s', request.method, request.url.path, response.status_code, elapsed, user)
     return response
   except Exception:
-    logger.exception('%s %s -> unhandled exception after %.2fs', request.method, request.url.path,
-                     time.monotonic() - start)
+    logger.exception('%s %s -> unhandled exception after %.2fs user=%s', request.method, request.url.path,
+                     time.monotonic() - start, user)
     raise
   finally:
     request_id.reset(token)
