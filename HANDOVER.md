@@ -370,7 +370,7 @@ Espace de travail PROD : https://dbc-77b87d5a-6bcb.cloud.databricks.com
 databricks jobs list --profile PROD -o json | ConvertFrom-Json | Where-Object { $_.settings.name -like '*Qualibot*' } | ForEach-Object { "$($_.settings.name)  https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/$($_.job_id)" }
 ```
 
-**Lakebase** : projet `qualibot`, branche `production`, base `doccompare` ; l'écran du projet s'ouvre depuis la page Lakebase de l'espace de travail PROD (l'URL exacte n'est pas dans le dépôt : à compléter ici).
+**Lakebase** : projet `qualibot`, branche `production`, base `doccompare` ; https://dbc-77b87d5a-6bcb.cloud.databricks.com/lakebase/projects/deb195f2-6189-419e-a640-b29fa71e540c
 
 ## 13. À traiter / questions ouvertes
 
