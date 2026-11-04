@@ -2368,6 +2368,122 @@
         "GROUP BY fingerprint\n",
         "ORDER BY occurrences DESC"
       ]
+    },
+    {
+      "name": "doc_diagnostic",
+      "displayName": "Document Diagnostic",
+      "queryLines": [
+        "WITH rev AS (\n",
+        "  SELECT document_revision_ID AS IDDOC, document_reference AS ref, document_title AS titre, published_date,\n",
+        "         revision_status_code, lifecycle_state_code, is_hidden, root_category_ID, category_ID_path\n",
+        "  FROM prod_gold.quality_system.document_revisions_intraqual\n",
+        "),\n",
+        "cat AS (\n",
+        "  SELECT ancestor_category_ID AS id, first(ancestor_category_name) AS name\n",
+        "  FROM prod_gold.quality_system.category_ancestors_intraqual GROUP BY ancestor_category_ID\n",
+        "),\n",
+        "cur AS (\n",
+        "  SELECT ref, MAX(IDDOC) AS current_iddoc FROM rev WHERE revision_status_code = 1 GROUP BY ref\n",
+        "),\n",
+        "pd AS (\n",
+        "  SELECT IDDOC, ref AS pd_ref, titre AS pd_titre, indice, parse_status, error_trace, source_file_name,\n",
+        "         source_file_extension, source_file_size_bytes\n",
+        "  FROM uat_proj.qualibot.parsed_documents\n",
+        "),\n",
+        "ck AS (\n",
+        "  SELECT IDDOC, MAX(ref) AS ck_ref FROM uat_proj.qualibot.parsing_checkpoint GROUP BY IDDOC\n",
+        "),\n",
+        "ch AS (\n",
+        "  SELECT IDDOC, COUNT(*) AS n_chunks FROM uat_proj.qualibot.chunks GROUP BY IDDOC\n",
+        "),\n",
+        "excl AS (\n",
+        "  SELECT IDDOC, MAX(reason) AS reason FROM uat_proj.qualibot.rag_exclusions GROUP BY IDDOC\n",
+        "),\n",
+        "ids AS (\n",
+        "  SELECT IDDOC FROM rev UNION SELECT IDDOC FROM pd UNION SELECT IDDOC FROM ck\n",
+        "),\n",
+        "j AS (\n",
+        "  SELECT\n",
+        "    i.IDDOC,\n",
+        "    COALESCE(rev.ref, pd.pd_ref, ck.ck_ref) AS ref,\n",
+        "    COALESCE(rev.titre, pd.pd_titre) AS titre,\n",
+        "    pd.indice, rev.published_date, cat.name AS root_category,\n",
+        "    rev.revision_status_code, rev.lifecycle_state_code, rev.is_hidden,\n",
+        "    pd.parse_status, pd.error_trace, pd.source_file_name, pd.source_file_extension,\n",
+        "    ROUND(pd.source_file_size_bytes / 1024.0, 1) AS file_size_kb,\n",
+        "    COALESCE(ch.n_chunks, 0) AS n_chunks,\n",
+        "    cur.current_iddoc,\n",
+        "    excl.reason AS exclusion_reason,\n",
+        "    rev.IDDOC IS NOT NULL AS in_intraqual,\n",
+        "    ck.IDDOC IS NOT NULL AS has_checkpoint,\n",
+        "    pd.IDDOC IS NOT NULL AS has_parsed_row,\n",
+        "    (rev.root_category_ID IN (3870, 948, 3209, 12, 962, 3208, 4001, 3867) OR exists(rev.category_ID_path, x -> x IN (3967, 4006))) AS in_categories,\n",
+        "    (rev.published_date IS NULL OR rev.published_date >= DATE'2016-01-01'\n",
+        "       OR rev.root_category_ID IN (3870, 948, 3209, 12, 962, 3208, 4001, 3867, 3798)) AS date_ok\n",
+        "  FROM ids i\n",
+        "    LEFT JOIN rev ON rev.IDDOC = i.IDDOC\n",
+        "    LEFT JOIN cat ON cat.id = rev.root_category_ID\n",
+        "    LEFT JOIN cur ON cur.ref = rev.ref\n",
+        "    LEFT JOIN pd ON pd.IDDOC = i.IDDOC\n",
+        "    LEFT JOIN ck ON ck.IDDOC = i.IDDOC\n",
+        "    LEFT JOIN ch ON ch.IDDOC = i.IDDOC\n",
+        "    LEFT JOIN excl ON excl.IDDOC = i.IDDOC\n",
+        "),\n",
+        "v AS (\n",
+        "  SELECT *,\n",
+        "    CASE\n",
+        "      WHEN n_chunks > 0 THEN '01 IN CHATBOT'\n",
+        "      WHEN NOT in_intraqual THEN '02 NOT IN INTRAQUAL'\n",
+        "      WHEN revision_status_code <> 1 THEN '03 NOT CURRENT REVISION'\n",
+        "      WHEN lifecycle_state_code <> 7 THEN '04 NOT PUBLISHED'\n",
+        "      WHEN is_hidden THEN '05 HIDDEN'\n",
+        "      WHEN NOT in_categories THEN '06 CATEGORY OUT OF SCOPE'\n",
+        "      WHEN NOT date_ok THEN '07 BEFORE 2016'\n",
+        "      WHEN exclusion_reason IS NOT NULL OR parse_status IN ('SKIPPED_REF_MANUAL', 'SKIPPED_CATEGORY_EXCLUDED')\n",
+        "        THEN '08 MANUAL EXCLUSION'\n",
+        "      WHEN parse_status = 'SKIPPED_SUPERSEDED_REVISION' THEN '09 REPLACED BY NEWER REVISION'\n",
+        "      WHEN NOT has_parsed_row AND has_checkpoint THEN '10 PARSED, RESULT NOT BUILT'\n",
+        "      WHEN NOT has_parsed_row THEN '11 NOT PROCESSED YET'\n",
+        "      WHEN parse_status = 'ERROR' THEN '12 PARSE ERROR'\n",
+        "      WHEN parse_status = 'EMPTY_TEXT' THEN '13 NO TEXT, NEEDS OCR'\n",
+        "      WHEN parse_status = 'IMAGES_PENDING' THEN '14 IMAGES TO DESCRIBE'\n",
+        "      WHEN parse_status = 'SKIP_TOO_LARGE' THEN '15 FILE TOO LARGE'\n",
+        "      WHEN parse_status IN ('SKIPPED_EMPTY_SMALL_FILE', 'SKIPPED_EMPTY_IMAGES') THEN '16 EMPTY DOCUMENT'\n",
+        "      WHEN parse_status = 'SKIPPED_EMPTY_FOLDER' THEN '17 NO FILE ON VOLUME'\n",
+        "      WHEN parse_status = 'SUCCESS' THEN '18 PARSED BUT NO PASSAGE'\n",
+        "      ELSE '19 OTHER STATUS'\n",
+        "    END AS reason\n",
+        "  FROM j\n",
+        ")\n",
+        "SELECT\n",
+        "  ref, IDDOC, titre, indice, published_date, root_category, reason,\n",
+        "  CASE LEFT(reason, 2)\n",
+        "    WHEN '01' THEN CONCAT(CAST(n_chunks AS STRING), ' passages in the chunks table (the index follows its next sync)')\n",
+        "    WHEN '02' THEN 'Absent from the Intraqual tables: deleted at the source, or an identifier that never existed'\n",
+        "    WHEN '03' THEN CONCAT('An older revision (revision_status_code=', CAST(revision_status_code AS STRING),\n",
+        "                          '); the current one is IDDOC ', COALESCE(CAST(current_iddoc AS STRING), 'none (REF withdrawn)'))\n",
+        "    WHEN '04' THEN CONCAT('Not published: lifecycle_state_code=', CAST(lifecycle_state_code AS STRING), ' (only 7 is published)')\n",
+        "    WHEN '05' THEN 'Hidden in Intraqual (is_hidden = true)'\n",
+        "    WHEN '06' THEN CONCAT('Root category \"', COALESCE(root_category, 'none'), '\" is not in the indexed scope')\n",
+        "    WHEN '07' THEN 'Published before 2016-01-01 and not in an exempt category: kept for the impact search only'\n",
+        "    WHEN '08' THEN CONCAT('Manual exclusion', COALESCE(CONCAT(': ', exclusion_reason), ''))\n",
+        "    WHEN '09' THEN CONCAT('Older revision of the same REF; only the newest revision is indexed (current IDDOC ',\n",
+        "                          COALESCE(CAST(current_iddoc AS STRING), '?'), ')')\n",
+        "    WHEN '10' THEN 'A parsed text exists in the checkpoint but the passage tables were not rebuilt for it: the next run builds it'\n",
+        "    WHEN '11' THEN 'In scope, never processed: the next pipeline run picks it up'\n",
+        "    WHEN '12' THEN CONCAT('Parsing failed (retried by the next run): ', COALESCE(LEFT(error_trace, 200), ''))\n",
+        "    WHEN '13' THEN 'No text could be extracted (scan) and the file is above the empty-file threshold: waiting for OCR'\n",
+        "    WHEN '14' THEN 'No text, images still to be described by the vision model'\n",
+        "    WHEN '15' THEN 'File above the size ceiling of its format: not parsed'\n",
+        "    WHEN '16' THEN 'No text or no usable image, and a file of at most 50 KiB: treated as empty'\n",
+        "    WHEN '17' THEN 'No parseable file in the Intraqual volume folder of this document'\n",
+        "    WHEN '18' THEN 'Parsing succeeded but produced no passage; the pipeline marks it MISSING_CHUNKS on its next run'\n",
+        "    ELSE CONCAT('Status ', COALESCE(parse_status, 'unknown'))\n",
+        "  END AS explanation,\n",
+        "  parse_status, source_file_name, source_file_extension, file_size_kb, n_chunks, current_iddoc\n",
+        "FROM v\n",
+        "ORDER BY ref, IDDOC DESC"
+      ]
     }
   ],
   "relationshipGraphs": [
@@ -8066,8 +8182,8 @@
             "name": "ds_header",
             "multilineTextboxSpec": {
               "lines": [
-                "## Document Search\n",
-                "Pick a REF below to check whether it was parsed correctly and see exactly what's indexed for it.\n"
+                "## Document explorer\n",
+                "Pick one or more REF. First table: the exact reason each document is, or is not, in the chatbot. Below: the parsing record, the parsed text and the indexed passages."
               ]
             }
           },
@@ -8132,6 +8248,23 @@
                   ],
                   "disaggregated": false
                 }
+              },
+              {
+                "name": "diag_ref_q",
+                "query": {
+                  "datasetName": "doc_diagnostic",
+                  "fields": [
+                    {
+                      "name": "ref",
+                      "expression": "`ref`"
+                    },
+                    {
+                      "name": "ref_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
               }
             ],
             "spec": {
@@ -8154,6 +8287,10 @@
                   {
                     "fieldName": "ref",
                     "queryName": "content_ref_q"
+                  },
+                  {
+                    "fieldName": "ref",
+                    "queryName": "diag_ref_q"
                   }
                 ]
               }
@@ -8164,6 +8301,253 @@
             "y": 2,
             "width": 12,
             "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "ds_diag_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "doc_diagnostic",
+                  "fields": [
+                    {
+                      "name": "ref",
+                      "expression": "`ref`"
+                    },
+                    {
+                      "name": "IDDOC",
+                      "expression": "`IDDOC`"
+                    },
+                    {
+                      "name": "titre",
+                      "expression": "`titre`"
+                    },
+                    {
+                      "name": "indice",
+                      "expression": "`indice`"
+                    },
+                    {
+                      "name": "published_date",
+                      "expression": "`published_date`"
+                    },
+                    {
+                      "name": "root_category",
+                      "expression": "`root_category`"
+                    },
+                    {
+                      "name": "reason",
+                      "expression": "`reason`"
+                    },
+                    {
+                      "name": "explanation",
+                      "expression": "`explanation`"
+                    },
+                    {
+                      "name": "parse_status",
+                      "expression": "`parse_status`"
+                    },
+                    {
+                      "name": "file_size_kb",
+                      "expression": "`file_size_kb`"
+                    },
+                    {
+                      "name": "source_file_extension",
+                      "expression": "`source_file_extension`"
+                    },
+                    {
+                      "name": "n_chunks",
+                      "expression": "`n_chunks`"
+                    },
+                    {
+                      "name": "current_iddoc",
+                      "expression": "`current_iddoc`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Why a document is, or is not, in the chatbot",
+                "showTitle": true
+              },
+              "widgetType": "table",
+              "rowsPerPage": 25,
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "ref",
+                    "displayName": "REF",
+                    "columnWidth": 110
+                  },
+                  {
+                    "fieldName": "IDDOC",
+                    "displayName": "IDDOC",
+                    "columnWidth": 80
+                  },
+                  {
+                    "fieldName": "titre",
+                    "displayName": "Title",
+                    "columnWidth": 260
+                  },
+                  {
+                    "fieldName": "indice",
+                    "displayName": "Rev.",
+                    "columnWidth": 50
+                  },
+                  {
+                    "fieldName": "published_date",
+                    "displayName": "Published",
+                    "columnWidth": 100
+                  },
+                  {
+                    "fieldName": "root_category",
+                    "displayName": "Root category",
+                    "columnWidth": 200
+                  },
+                  {
+                    "fieldName": "reason",
+                    "displayName": "Reason",
+                    "columnWidth": 230
+                  },
+                  {
+                    "fieldName": "explanation",
+                    "displayName": "Explanation",
+                    "columnWidth": 520
+                  },
+                  {
+                    "fieldName": "parse_status",
+                    "displayName": "Parse status",
+                    "columnWidth": 190
+                  },
+                  {
+                    "fieldName": "file_size_kb",
+                    "displayName": "Size (KB)",
+                    "columnWidth": 90
+                  },
+                  {
+                    "fieldName": "source_file_extension",
+                    "displayName": "Type",
+                    "columnWidth": 70
+                  },
+                  {
+                    "fieldName": "n_chunks",
+                    "displayName": "Passages",
+                    "columnWidth": 80
+                  },
+                  {
+                    "fieldName": "current_iddoc",
+                    "displayName": "Current IDDOC",
+                    "columnWidth": 110
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "ds_diag_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "doc_diagnostic",
+                  "fields": [
+                    {
+                      "name": "reason",
+                      "expression": "`reason`"
+                    },
+                    {
+                      "name": "count(*)",
+                      "expression": "COUNT(`*`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Documents by reason",
+                "showTitle": true
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "reason",
+                  "displayName": "Reason",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(*)",
+                  "displayName": "Documents",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact"
+                  },
+                  "scale": {
+                    "type": "quantitative",
+                    "domain": {
+                      "min": 0
+                    }
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "ds_legend",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Reading the reasons (first matching case wins)\n",
+                "1. **IN CHATBOT**: passages exist in the chunks table.\n",
+                "2. **NOT IN INTRAQUAL**: deleted at the source.\n",
+                "3. **NOT CURRENT REVISION**: an older revision, the current one is named.\n",
+                "4. **NOT PUBLISHED** / 5. **HIDDEN**: status gate (published = lifecycle state 7, visible).\n",
+                "6. **CATEGORY OUT OF SCOPE**: root category is not one of the indexed roots.\n",
+                "7. **BEFORE 2016**: archive, impact search only.\n",
+                "8. **MANUAL EXCLUSION**, 9. **REPLACED BY NEWER REVISION**: only the newest revision of a REF is indexed.\n",
+                "10. **PARSED, RESULT NOT BUILT**, 11. **NOT PROCESSED YET**: in scope, the next run handles it.\n",
+                "12. **PARSE ERROR**, 13. **NO TEXT, NEEDS OCR**, 14. **IMAGES TO DESCRIBE**, 15. **FILE TOO LARGE**, 16. **EMPTY DOCUMENT** (file of at most 50 KiB without text), 17. **NO FILE ON VOLUME**, 18. **PARSED BUT NO PASSAGE**: pipeline outcomes."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 12,
+            "height": 7
           }
         },
         {
@@ -8245,7 +8629,7 @@
               "frame": {
                 "showTitle": true,
                 "title": {
-                  "value": "Document metadata",
+                  "value": "Parsing record",
                   "fields": []
                 }
               },
@@ -8330,7 +8714,7 @@
           },
           "position": {
             "x": 0,
-            "y": 3,
+            "y": 25,
             "width": 12,
             "height": 5
           }
@@ -8378,7 +8762,7 @@
               "frame": {
                 "showTitle": true,
                 "title": {
-                  "value": "Parsed text, before chunking",
+                  "value": "Parsed text, before chunking (checkpoint, includes revisions no longer indexed)",
                   "fields": []
                 }
               },
@@ -8416,7 +8800,7 @@
           },
           "position": {
             "x": 0,
-            "y": 8,
+            "y": 30,
             "width": 12,
             "height": 6
           }
@@ -8502,7 +8886,7 @@
           },
           "position": {
             "x": 0,
-            "y": 14,
+            "y": 36,
             "width": 12,
             "height": 8
           }

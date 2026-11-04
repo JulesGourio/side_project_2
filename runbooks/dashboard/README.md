@@ -33,3 +33,7 @@ Dashboard id (from the query names of the export): `01f13d51cb401021adbe60218638
 - **Every cost dataset scans `system.billing.usage`** (5 datasets). A view in `uat_proj.qualibot` read by the five would divide the scans by five; needs a grant run as the SP.
 - **PROD**: workspace host, app URL (`qualibot-3155144190025826.aws.databricksapps.com`), MLflow experiment ids in `trace_link`, volume links are UAT values; a PROD dashboard needs the script parametrised with those.
 - **One dashboard per environment** (decided 2026-11-04): validate UAT first, then parametrise `build_dashboard.py` per env (catalogs, workspace id, host, app URL, experiment ids, Lakebase project, volume links).
+
+## Document explorer: diagnostic
+
+Dataset `doc_diagnostic`: one row per document, first matching case wins (01 in chatbot, 02 not in Intraqual, 03 not current revision, 04 not published, 05 hidden, 06 category out of scope, 07 before 2016, 08 manual exclusion, 09 replaced by newer revision, 10 parsed result not built, 11 not processed yet, 12 parse error, 13 needs OCR, 14 images to describe, 15 file too large, 16 empty document, 17 no file on volume, 18 parsed but no passage, 19 other). "Parsed text" reads `parsing_checkpoint` (all historical rows), hence more refs than `parsed_documents`/`chunks`.

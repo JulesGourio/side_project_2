@@ -816,6 +816,136 @@ for it in gf:
             "disaggregated": False}})
         w["spec"]["encodings"]["fields"].append({"fieldName": "turn_date", "queryName": qn})
 
+# ---------------------------------------------------------------- 11b. Document diagnostic: why a document is, or is not, in the chatbot
+ROOTS_IN_SCOPE = "3870, 948, 3209, 12, 962, 3208, 4001, 3867"
+ROOTS_DATE_EXEMPT = ROOTS_IN_SCOPE + ", 3798"
+d["datasets"].append({
+    "name": "doc_diagnostic", "displayName": "Document Diagnostic",
+    "queryLines": (f"""
+WITH rev AS (
+  SELECT document_revision_ID AS IDDOC, document_reference AS ref, document_title AS titre, published_date,
+         revision_status_code, lifecycle_state_code, is_hidden, root_category_ID, category_ID_path
+  FROM prod_gold.quality_system.document_revisions_intraqual
+),
+cat AS (
+  SELECT ancestor_category_ID AS id, first(ancestor_category_name) AS name
+  FROM prod_gold.quality_system.category_ancestors_intraqual GROUP BY ancestor_category_ID
+),
+cur AS (
+  SELECT ref, MAX(IDDOC) AS current_iddoc FROM rev WHERE revision_status_code = 1 GROUP BY ref
+),
+pd AS (
+  SELECT IDDOC, ref AS pd_ref, titre AS pd_titre, indice, parse_status, error_trace, source_file_name,
+         source_file_extension, source_file_size_bytes
+  FROM {ENV}_proj.qualibot.parsed_documents
+),
+ck AS (
+  SELECT IDDOC, MAX(ref) AS ck_ref FROM {ENV}_proj.qualibot.parsing_checkpoint GROUP BY IDDOC
+),
+ch AS (
+  SELECT IDDOC, COUNT(*) AS n_chunks FROM {ENV}_proj.qualibot.chunks GROUP BY IDDOC
+),
+excl AS (
+  SELECT IDDOC, MAX(reason) AS reason FROM {ENV}_proj.qualibot.rag_exclusions GROUP BY IDDOC
+),
+ids AS (
+  SELECT IDDOC FROM rev UNION SELECT IDDOC FROM pd UNION SELECT IDDOC FROM ck
+),
+j AS (
+  SELECT
+    i.IDDOC,
+    COALESCE(rev.ref, pd.pd_ref, ck.ck_ref) AS ref,
+    COALESCE(rev.titre, pd.pd_titre) AS titre,
+    pd.indice, rev.published_date, cat.name AS root_category,
+    rev.revision_status_code, rev.lifecycle_state_code, rev.is_hidden,
+    pd.parse_status, pd.error_trace, pd.source_file_name, pd.source_file_extension,
+    ROUND(pd.source_file_size_bytes / 1024.0, 1) AS file_size_kb,
+    COALESCE(ch.n_chunks, 0) AS n_chunks,
+    cur.current_iddoc,
+    excl.reason AS exclusion_reason,
+    rev.IDDOC IS NOT NULL AS in_intraqual,
+    ck.IDDOC IS NOT NULL AS has_checkpoint,
+    pd.IDDOC IS NOT NULL AS has_parsed_row,
+    (rev.root_category_ID IN ({ROOTS_IN_SCOPE}) OR exists(rev.category_ID_path, x -> x IN (3967, 4006))) AS in_categories,
+    (rev.published_date IS NULL OR rev.published_date >= DATE'2016-01-01'
+       OR rev.root_category_ID IN ({ROOTS_DATE_EXEMPT})) AS date_ok
+  FROM ids i
+    LEFT JOIN rev ON rev.IDDOC = i.IDDOC
+    LEFT JOIN cat ON cat.id = rev.root_category_ID
+    LEFT JOIN cur ON cur.ref = rev.ref
+    LEFT JOIN pd ON pd.IDDOC = i.IDDOC
+    LEFT JOIN ck ON ck.IDDOC = i.IDDOC
+    LEFT JOIN ch ON ch.IDDOC = i.IDDOC
+    LEFT JOIN excl ON excl.IDDOC = i.IDDOC
+),
+v AS (
+  SELECT *,
+    CASE
+      WHEN n_chunks > 0 THEN '01 IN CHATBOT'
+      WHEN NOT in_intraqual THEN '02 NOT IN INTRAQUAL'
+      WHEN revision_status_code <> 1 THEN '03 NOT CURRENT REVISION'
+      WHEN lifecycle_state_code <> 7 THEN '04 NOT PUBLISHED'
+      WHEN is_hidden THEN '05 HIDDEN'
+      WHEN NOT in_categories THEN '06 CATEGORY OUT OF SCOPE'
+      WHEN NOT date_ok THEN '07 BEFORE 2016'
+      WHEN exclusion_reason IS NOT NULL OR parse_status IN ('SKIPPED_REF_MANUAL', 'SKIPPED_CATEGORY_EXCLUDED')
+        THEN '08 MANUAL EXCLUSION'
+      WHEN parse_status = 'SKIPPED_SUPERSEDED_REVISION' THEN '09 REPLACED BY NEWER REVISION'
+      WHEN NOT has_parsed_row AND has_checkpoint THEN '10 PARSED, RESULT NOT BUILT'
+      WHEN NOT has_parsed_row THEN '11 NOT PROCESSED YET'
+      WHEN parse_status = 'ERROR' THEN '12 PARSE ERROR'
+      WHEN parse_status = 'EMPTY_TEXT' THEN '13 NO TEXT, NEEDS OCR'
+      WHEN parse_status = 'IMAGES_PENDING' THEN '14 IMAGES TO DESCRIBE'
+      WHEN parse_status = 'SKIP_TOO_LARGE' THEN '15 FILE TOO LARGE'
+      WHEN parse_status IN ('SKIPPED_EMPTY_SMALL_FILE', 'SKIPPED_EMPTY_IMAGES') THEN '16 EMPTY DOCUMENT'
+      WHEN parse_status = 'SKIPPED_EMPTY_FOLDER' THEN '17 NO FILE ON VOLUME'
+      WHEN parse_status = 'SUCCESS' THEN '18 PARSED BUT NO PASSAGE'
+      ELSE '19 OTHER STATUS'
+    END AS reason
+  FROM j
+)
+SELECT
+  ref, IDDOC, titre, indice, published_date, root_category, reason,
+  CASE LEFT(reason, 2)
+    WHEN '01' THEN CONCAT(CAST(n_chunks AS STRING), ' passages in the chunks table (the index follows its next sync)')
+    WHEN '02' THEN 'Absent from the Intraqual tables: deleted at the source, or an identifier that never existed'
+    WHEN '03' THEN CONCAT('An older revision (revision_status_code=', CAST(revision_status_code AS STRING),
+                          '); the current one is IDDOC ', COALESCE(CAST(current_iddoc AS STRING), 'none (REF withdrawn)'))
+    WHEN '04' THEN CONCAT('Not published: lifecycle_state_code=', CAST(lifecycle_state_code AS STRING), ' (only 7 is published)')
+    WHEN '05' THEN 'Hidden in Intraqual (is_hidden = true)'
+    WHEN '06' THEN CONCAT('Root category "', COALESCE(root_category, 'none'), '" is not in the indexed scope')
+    WHEN '07' THEN 'Published before 2016-01-01 and not in an exempt category: kept for the impact search only'
+    WHEN '08' THEN CONCAT('Manual exclusion', COALESCE(CONCAT(': ', exclusion_reason), ''))
+    WHEN '09' THEN CONCAT('Older revision of the same REF; only the newest revision is indexed (current IDDOC ',
+                          COALESCE(CAST(current_iddoc AS STRING), '?'), ')')
+    WHEN '10' THEN 'A parsed text exists in the checkpoint but the passage tables were not rebuilt for it: the next run builds it'
+    WHEN '11' THEN 'In scope, never processed: the next pipeline run picks it up'
+    WHEN '12' THEN CONCAT('Parsing failed (retried by the next run): ', COALESCE(LEFT(error_trace, 200), ''))
+    WHEN '13' THEN 'No text could be extracted (scan) and the file is above the empty-file threshold: waiting for OCR'
+    WHEN '14' THEN 'No text, images still to be described by the vision model'
+    WHEN '15' THEN 'File above the size ceiling of its format: not parsed'
+    WHEN '16' THEN 'No text or no usable image, and a file of at most 50 KiB: treated as empty'
+    WHEN '17' THEN 'No parseable file in the Intraqual volume folder of this document'
+    WHEN '18' THEN 'Parsing succeeded but produced no passage; the pipeline marks it MISSING_CHUNKS on its next run'
+    ELSE CONCAT('Status ', COALESCE(parse_status, 'unknown'))
+  END AS explanation,
+  parse_status, source_file_name, source_file_extension, file_size_kb, n_chunks, current_iddoc
+FROM v
+ORDER BY ref, IDDOC DESC
+""").strip("\n").splitlines(keepends=True),
+})
+# the REF filter also drives the diagnostic
+for pg in d["pages"]:
+    for it in pg["layout"]:
+        w = it["widget"]
+        if w["name"] == "ds_filter_ref":
+            w["queries"].append({"name": "diag_ref_q", "query": {"datasetName": "doc_diagnostic", "fields": [
+                {"name": "ref", "expression": "`ref`"},
+                {"name": "ref_associativity", "expression": "COUNT_IF(`associative_filter_predicate_group`)"}],
+                "disaggregated": False}})
+            w["spec"]["encodings"]["fields"].append({"fieldName": "ref", "queryName": "diag_ref_q"})
+LOG.append("Document explorer: diagnostic of each document (reason it is, or is not, in the chatbot)")
+
 # ---------------------------------------------------------------- 12. restructure: 7 pages, one 12-column grid, one palette
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 d["uiSettings"]["theme"]["visualizationColors"] = PALETTE
@@ -994,12 +1124,67 @@ parsing = [
     take(PA, "table_ocr_backlog", 0, 41, 12, 6, "OCR backlog detail"),
 ]
 
+def diag_table() -> dict:
+    """Table of the document diagnostic.
+
+    :return: Layout item.
+    """
+    cols = [("ref", "REF", 110), ("IDDOC", "IDDOC", 80), ("titre", "Title", 260), ("indice", "Rev.", 50),
+            ("published_date", "Published", 100), ("root_category", "Root category", 200), ("reason", "Reason", 230),
+            ("explanation", "Explanation", 520), ("parse_status", "Parse status", 190), ("file_size_kb", "Size (KB)", 90),
+            ("source_file_extension", "Type", 70), ("n_chunks", "Passages", 80), ("current_iddoc", "Current IDDOC", 110)]
+    return {"widget": {"name": "ds_diag_table",
+                       "queries": [{"name": "main_query", "query": {"datasetName": "doc_diagnostic", "fields": [
+                           {"name": c, "expression": f"`{c}`"} for c, _, _ in cols], "disaggregated": True}}],
+                       "spec": {"version": 2, "frame": {"title": "Why a document is, or is not, in the chatbot", "showTitle": True},
+                                "widgetType": "table", "rowsPerPage": 25,
+                                "encodings": {"columns": [{"fieldName": c, "displayName": n, "columnWidth": w_}
+                                                          for c, n, w_ in cols]},
+                                "data": {"queryName": "main_query"}}},
+            "position": {"x": 0, "y": 3, "width": 12, "height": 8}}
+
+
+def diag_bar() -> dict:
+    """Bar chart of documents by reason.
+
+    :return: Layout item.
+    """
+    return {"widget": {"name": "ds_diag_bar",
+                       "queries": [{"name": "main_query", "query": {"datasetName": "doc_diagnostic", "fields": [
+                           {"name": "reason", "expression": "`reason`"},
+                           {"name": "count(*)", "expression": "COUNT(`*`)"}], "disaggregated": False}}],
+                       "spec": {"version": 3, "frame": {"title": "Documents by reason", "showTitle": True},
+                                "widgetType": "bar",
+                                "encodings": {"x": {"fieldName": "reason", "displayName": "Reason", "scale": {"type": "categorical"}},
+                                              "y": {"fieldName": "count(*)", "displayName": "Documents",
+                                                    "format": {"type": "number-plain", "abbreviation": "compact"},
+                                                    "scale": {"type": "quantitative", "domain": {"min": 0}}},
+                                              "label": {"show": True}},
+                                "data": {"queryName": "main_query"}}},
+            "position": {"x": 0, "y": 11, "width": 12, "height": 7}}
+
+
 explorer = [
-    take("Document Search", "ds_header", 0, 0, 12, 2),
+    header("ds_header", "Document explorer",
+           "Pick one or more REF. First table: the exact reason each document is, or is not, in the chatbot. Below: the parsing record, the parsed text and the indexed passages."),
     take("Document Search", "ds_filter_ref", 0, 2, 12, 1),
-    take("Document Search", "ds_table_meta", 0, 3, 12, 5, "Document metadata"),
-    take("Document Search", "ds_table_text", 0, 8, 12, 6, "Parsed text, before chunking"),
-    take("Document Search", "ds_table_chunks", 0, 14, 12, 8, "Indexed chunks, as the chatbot sees them"),
+    diag_table(),
+    diag_bar(),
+    {"widget": {"name": "ds_legend", "multilineTextboxSpec": {"lines": [
+        "### Reading the reasons (first matching case wins)\n",
+        "1. **IN CHATBOT**: passages exist in the chunks table.\n",
+        "2. **NOT IN INTRAQUAL**: deleted at the source.\n",
+        "3. **NOT CURRENT REVISION**: an older revision, the current one is named.\n",
+        "4. **NOT PUBLISHED** / 5. **HIDDEN**: status gate (published = lifecycle state 7, visible).\n",
+        "6. **CATEGORY OUT OF SCOPE**: root category is not one of the indexed roots.\n",
+        "7. **BEFORE 2016**: archive, impact search only.\n",
+        "8. **MANUAL EXCLUSION**, 9. **REPLACED BY NEWER REVISION**: only the newest revision of a REF is indexed.\n",
+        "10. **PARSED, RESULT NOT BUILT**, 11. **NOT PROCESSED YET**: in scope, the next run handles it.\n",
+        "12. **PARSE ERROR**, 13. **NO TEXT, NEEDS OCR**, 14. **IMAGES TO DESCRIBE**, 15. **FILE TOO LARGE**, 16. **EMPTY DOCUMENT** (file of at most 50 KiB without text), 17. **NO FILE ON VOLUME**, 18. **PARSED BUT NO PASSAGE**: pipeline outcomes."]}},
+     "position": {"x": 0, "y": 18, "width": 12, "height": 7}},
+    take("Document Search", "ds_table_meta", 0, 25, 12, 5, "Parsing record"),
+    take("Document Search", "ds_table_text", 0, 30, 12, 6, "Parsed text, before chunking (checkpoint, includes revisions no longer indexed)"),
+    take("Document Search", "ds_table_chunks", 0, 36, 12, 8, "Indexed chunks, as the chatbot sees them"),
 ]
 
 costs = [
