@@ -2,13 +2,16 @@
 
 Complète le README (qui décrit le code). Ici : ce qu'il faut savoir pour **opérer** l'app depuis un poste **Windows** (PowerShell, navigateur Bitbucket et Databricks). Les noms de fichiers sont ceux du dépôt.
 
+
+**Sommaire** : [1 Architecture](#1-architecture) · [2 Jobs](#2-les-jobs) · [3 Parsing](#3-pipeline-de-parsing) · [4 Index](#4-index-et-volumes) · [5 Lakebase](#5-lakebase) · [6 Accès](#6-accès-à-lapp) · [7 Éval retrieval](#7-évaluation-de-la-recherche-mlflow) · [8 Déploiement](#8-déploiement) · [9 DocCompare](#9-comparaison-de-documents-doccompare) · [10 Impact](#10-recherche-dimpact) · [11 Chatbot](#11-chatbot) · [12 Ouvert](#12-à-traiter--questions-ouvertes)
+
 ## 1. Architecture
 
-- **App** : FastAPI (`server/`) + React (`client/`), Databricks App `qualibot`. Trois fonctions : comparaison de documents, recherche d'impact, chat.
-- **Données** : une chaîne de parsing quotidienne produit des tables Delta et un index Vector Search `chunks_index`, lu par le chat et la recherche d'impact (`utils/parsing_pipeline/README.md`).
-- **Historique** (conversations, feedbacks, erreurs, caches) : Lakebase (Postgres), projet `qualibot`, base `doccompare`. Colonnes : `server/services/infra/lakebase/schema.md`.
+- **App** : FastAPI ([`server/`](server/)) + React ([`client/`](client/)), Databricks App `qualibot`. Trois fonctions : comparaison de documents, recherche d'impact, chat.
+- **Données** : une chaîne de parsing quotidienne produit des tables Delta et un index Vector Search `chunks_index`, lu par le chat et la recherche d'impact ([`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md)).
+- **Historique** (conversations, feedbacks, erreurs, caches) : Lakebase (Postgres), projet `qualibot`, base `doccompare`. Colonnes : [`server/services/infra/lakebase/schema.md`](server/services/infra/lakebase/schema.md).
 - **Source des documents** : Intraqual, catalogue `prod_landingzone.intraqual` (lu par les trois envs, jamais modifié).
-- **Déploiement** : bundle Databricks `qualibot` (`databricks.yml`, `resources/*.yml`) lancé par des pipelines Bitbucket (`bitbucket-pipelines.yml`), voir §8.
+- **Déploiement** : bundle Databricks `qualibot` ([`databricks.yml`](databricks.yml), `resources/*.yml`) lancé par des pipelines Bitbucket ([`bitbucket-pipelines.yml`](bitbucket-pipelines.yml)), voir §8.
 
 | Env | Workspace | Tables | SP qui exécute les jobs |
 |---|---|---|---|
@@ -19,12 +22,12 @@ Complète le README (qui décrit le code). Ici : ce qu'il faut savoir pour **op�
 - Mêmes noms de tables, volumes et index dans chaque env. Volumes : `doc_compare` (outils LibreOffice), `images` (images extraites), `staging` (échanges et exports), `docling_models`.
 - Profils CLI Windows : `DEV`, `UAT`, `PROD` (fichier `%USERPROFILE%\.databrickscfg`).
 - Groupes : CoreAdmin et CoreDev (CAN_MANAGE) ; End-users DocCompare et ChatBot (CAN_USE).
-- Alertes SQL : `resources/alerts.yml`.
+- Alertes SQL : [`resources/alerts.yml`](resources/alerts.yml).
 - Ordre de travail : on change et on teste en DEV, puis UAT, puis PROD. Les copies entre envs passent par un volume `staging` (export dans un env, import dans l'autre), jamais par une copie directe de table.
 
 ## 2. Les jobs
 
-Définis dans `resources/`. Mêmes noms dans les trois envs. Fuseau : Europe/Brussels.
+Définis dans [`resources/`](resources/). Mêmes noms dans les trois envs. Fuseau : Europe/Brussels.
 
 | Job | Rôle | Planning | DEV / UAT / PROD |
 |---|---|---|---|
@@ -39,7 +42,7 @@ Définis dans `resources/`. Mêmes noms dans les trois envs. Fuseau : Europe/Bru
 | `W_1_Qualibot_Stop_Weekend_<Env>` | Arrête l'app | vendredi 21:00 | UAT actif ; DEV et PROD en pause |
 | `W_1_Qualibot_Start_Weekend_<Env>` (PROD : `Start_Weekday_Prod`) | Démarre l'app | lundi 07:00 | UAT actif ; DEV et PROD en pause |
 
-Les plannings se changent dans `databricks.yml` (variables `parsing_schedule_pause`, `lakebase_export_schedule_pause`, `alerts_pause_status`) puis `deploy-<env>-jobs`.
+Les plannings se changent dans [`databricks.yml`](databricks.yml) (variables `parsing_schedule_pause`, `lakebase_export_schedule_pause`, `alerts_pause_status`) puis `deploy-<env>-jobs`.
 
 ### Lancer un job à la main (PowerShell)
 
@@ -62,7 +65,7 @@ Le job de parsing a `max_concurrent_runs: 1` et une file : un deuxième run atte
 
 ## 3. Pipeline de parsing
 
-Détail : `utils/parsing_pipeline/README.md`.
+Détail : [`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md).
 
 `1_categories` → `2_manifest` → `3_parse` → (`3b_parse_pdf` sur GPU, seulement s'il y a plus de 30 PDFs à traiter) → `3c_chunks` → `4_describe_images` → `5_sync_index` → `6_update_kb_metadata`
 
@@ -92,10 +95,10 @@ Détail : `utils/parsing_pipeline/README.md`.
 
 - **Checkpoint** : la table `parsing_checkpoint`. Une ligne par tentative de parsing d'un fichier, avec l'IDDOC du document, `document_sha256` (empreinte du contenu du fichier), `ingestion_timestamp`, `parse_status` (`SUCCESS`, `ERROR`, `EMPTY_TEXT`, …), le parseur utilisé (Docling, XML, etc.) et le contenu extrait. C'est le cache du parsing : au run suivant, un document n'est reparsé que si le couple (IDDOC, `document_sha256`) n'a pas de ligne `SUCCESS` réutilisable. On vérifie donc sur le **contenu du fichier** (son empreinte), pas sur sa date ni son chemin. La table garde l'historique des tentatives : pour compter les états, prendre la dernière ligne de chaque IDDOC.
 - **Un IDDOC = une révision.** Chaque révision d'un document a un nouvel IDDOC ; l'ancien sort du périmètre et ses chunks sont supprimés. Si plusieurs IDDOC partagent une REF, seule la révision la plus récente garde ses chunks.
-- **Périmètre** : `parse_manifest` ne contient que les documents Intraqual courants (dernière révision, état validé, non masqués) qui sont dans l'une des catégories racines retenues (processus One QMS, AS programmes, AS instructions de travail, AS processus, directives groupe, training, VA, organization) ou dans les deux sous-catégories « To be classified ». La liste est dans `utils/parsing_pipeline/config.py` (`SCOPE_ROOT_IDCATS`, `SCOPE_SUB_IDCATS`). Garde-fou : si le nombre de documents du périmètre baisse de plus de 30 % par rapport au run précédent (ce qui signale presque toujours un problème de lecture des sources, pas un vrai retrait), `2_manifest` échoue sans rien supprimer ; pour une réduction voulue, mettre `PARSING_MAX_SCOPE_DROP_PCT` à 0 le temps d'un run.
+- **Périmètre** : `parse_manifest` ne contient que les documents Intraqual courants (dernière révision, état validé, non masqués) qui sont dans l'une des catégories racines retenues (processus One QMS, AS programmes, AS instructions de travail, AS processus, directives groupe, training, VA, organization) ou dans les deux sous-catégories « To be classified ». La liste est dans [`utils/parsing_pipeline/config.py`](utils/parsing_pipeline/config.py) (`SCOPE_ROOT_IDCATS`, `SCOPE_SUB_IDCATS`). Garde-fou : si le nombre de documents du périmètre baisse de plus de 30 % par rapport au run précédent (ce qui signale presque toujours un problème de lecture des sources, pas un vrai retrait), `2_manifest` échoue sans rien supprimer ; pour une réduction voulue, mettre `PARSING_MAX_SCOPE_DROP_PCT` à 0 le temps d'un run.
 - **Parseurs** : PDF, DOCX, PPTX et HTML passent par Docling. `xml_fallback` : lecteur XML de secours des DOCX/PPTX quand Docling échoue. Un PDF scanné (moins de 150 caractères de texte) passe en OCR par le modèle de vision (statut `pending_llm_ocr` en attendant).
 - **Catégorie manquante** : si une révision n'a pas de catégorie, on regarde si une révision précédente du même document en a une ; si oui elle est reprise, sinon le document est ignoré.
-- **Tailles de passages** (`utils/parsing_pipeline/config.py`) : `MIN_CHUNK_TOKENS = 300`, `TARGET_CHUNK_TOKENS = 450`, `MAX_CHUNK_TOKENS = 550`, `MAX_CHUNK_CHARS = 1950`. Un passage est coupé aux titres de niveau 1 à 3 ; il vise 450 tokens, ne descend pas sous 300 (un morceau trop petit est fusionné avec le suivant), ne dépasse pas 550 tokens ni 1950 caractères (le plafond en caractères protège les lignes de points et de tirets, qui coûtent peu de tokens). Deux passages voisins se recouvrent de 12 %. Le reranker de Vector Search ne lit que les 2000 premiers caractères d'un passage, d'où le plafond sous 2000. Les mêmes valeurs sont en repli dans `utils/parsing_pipeline/worker.py` : les garder identiques. Ces valeurs s'appliquent aux nouveaux documents et à tout `rechunk` ou `full` ; les passages déjà en base gardent leur ancienne taille tant qu'aucun `rechunk` n'est lancé (non lancé pour l'instant). Pour les changer : modifier ces constantes (ou les variables `PARSING_MIN_CHUNK_TOKENS`, `PARSING_TARGET_CHUNK_TOKENS`, `PARSING_MAX_CHUNK_TOKENS`, `PARSING_MAX_CHUNK_CHARS`), déployer avec `deploy-<env>-jobs`, puis lancer un run `rechunk`.
+- **Tailles de passages** ([`utils/parsing_pipeline/config.py`](utils/parsing_pipeline/config.py)) : `MIN_CHUNK_TOKENS = 300`, `TARGET_CHUNK_TOKENS = 450`, `MAX_CHUNK_TOKENS = 550`, `MAX_CHUNK_CHARS = 1950`. Un passage est coupé aux titres de niveau 1 à 3 ; il vise 450 tokens, ne descend pas sous 300 (un morceau trop petit est fusionné avec le suivant), ne dépasse pas 550 tokens ni 1950 caractères (le plafond en caractères protège les lignes de points et de tirets, qui coûtent peu de tokens). Deux passages voisins se recouvrent de 12 %. Le reranker de Vector Search ne lit que les 2000 premiers caractères d'un passage, d'où le plafond sous 2000. Les mêmes valeurs sont en repli dans [`utils/parsing_pipeline/worker.py`](utils/parsing_pipeline/worker.py) : les garder identiques. Ces valeurs s'appliquent aux nouveaux documents et à tout `rechunk` ou `full` ; les passages déjà en base gardent leur ancienne taille tant qu'aucun `rechunk` n'est lancé (non lancé pour l'instant). Pour les changer : modifier ces constantes (ou les variables `PARSING_MIN_CHUNK_TOKENS`, `PARSING_TARGET_CHUNK_TOKENS`, `PARSING_MAX_CHUNK_TOKENS`, `PARSING_MAX_CHUNK_CHARS`), déployer avec `deploy-<env>-jobs`, puis lancer un run `rechunk`.
 - **Images** : extraites dans le volume `images` par `3_parse`, décrites par `4_describe_images`. Modèles de vision : `databricks-gpt-6-luna` avec repli `databricks-gpt-5-6-luna`, chacun avec son propre quota. Embeddings de l'index : `databricks-qwen3-embedding-0-6b`.
 
 ### Pièges
@@ -115,7 +118,7 @@ Détail : `utils/parsing_pipeline/README.md`.
 
 ## 5. Lakebase
 
-Projet `qualibot`, branche `production`, base `doccompare`, un par env (jamais copié d'un env à l'autre en fonctionnement normal). L'app crée et complète son schéma au démarrage et s'y connecte avec son propre SP (rôle `app-doc-compare-sp`, id en dur dans `databricks.yml` : à changer seulement si l'app est recréée). Colonnes de chaque table : `server/services/infra/lakebase/schema.md`.
+Projet `qualibot`, branche `production`, base `doccompare`, un par env (jamais copié d'un env à l'autre en fonctionnement normal). L'app crée et complète son schéma au démarrage et s'y connecte avec son propre SP (rôle `app-doc-compare-sp`, id en dur dans [`databricks.yml`](databricks.yml) : à changer seulement si l'app est recréée). Colonnes de chaque table : [`server/services/infra/lakebase/schema.md`](server/services/infra/lakebase/schema.md).
 
 | Groupe | Tables | Écrites par |
 |---|---|---|
@@ -146,17 +149,17 @@ Projet `qualibot`, branche `production`, base `doccompare`, un par env (jamais c
 | `query_truncated` | requête trop longue coupée |
 | `client_disconnected`, `send_failed` | information sur la connexion du navigateur |
 
-- **Codes de référence** (ex. `SF-1027`) : à chaque passage, `cited_codes` liste les codes qu'il cite et `chunk_preprocessed` les écrit sous une seule orthographe (`SF-1027 [SF1027]`), à l'identique côté requêtes de l'app (module `utils/parsing_pipeline/code_normalization.py`). `doc_references` est construite à partir de `cited_codes` : elle permet de répondre à « quels documents citent X ? » avec la liste complète.
+- **Codes de référence** (ex. `SF-1027`) : à chaque passage, `cited_codes` liste les codes qu'il cite et `chunk_preprocessed` les écrit sous une seule orthographe (`SF-1027 [SF1027]`), à l'identique côté requêtes de l'app (module [`utils/parsing_pipeline/code_normalization.py`](utils/parsing_pipeline/code_normalization.py)). `doc_references` est construite à partir de `cited_codes` : elle permet de répondre à « quels documents citent X ? » avec la liste complète.
 - **Jointure** : `trace_id` (`chat-` + 32 caractères hexadécimaux) relie `chat_turns`, `chat_retrieved_chunks`, `app_errors` et `chat_messages` ; `chat_turns.mlflow_trace_id` relie au trace MLflow.
 
 ### Export du Lakebase vers Delta
 
-Job `D_1_Qualibot_Lakebase_Export_To_Volume`, deux tâches : `export_lakebase_to_volume` (une table = un fichier JSON Lines dans `/Volumes/<env>_proj/qualibot/staging/lakebase_export`) puis `import_lakebase_tables_to_delta` (charge chaque fichier dans une table Delta du même nom dans `<env>_proj.qualibot`, saute une table vide). Serverless obligatoire (le Lakebase n'est pas joignable depuis un cluster classique). Les variables `lakebase_import_to_delta` (charger ou non) et `lakebase_tables_to_skip` (tables exclues de l'export) se règlent par env dans `databricks.yml`. Les fichiers contiennent des données utilisateur (questions, réponses, identifiants) : ils restent dans le volume.
+Job `D_1_Qualibot_Lakebase_Export_To_Volume`, deux tâches : `export_lakebase_to_volume` (une table = un fichier JSON Lines dans `/Volumes/<env>_proj/qualibot/staging/lakebase_export`) puis `import_lakebase_tables_to_delta` (charge chaque fichier dans une table Delta du même nom dans `<env>_proj.qualibot`, saute une table vide). Serverless obligatoire (le Lakebase n'est pas joignable depuis un cluster classique). Les variables `lakebase_import_to_delta` (charger ou non) et `lakebase_tables_to_skip` (tables exclues de l'export) se règlent par env dans [`databricks.yml`](databricks.yml). Les fichiers contiennent des données utilisateur (questions, réponses, identifiants) : ils restent dans le volume.
 
 ### Qui lit les copies Delta
 
 - Le dashboard Lakeview **Qualibot Usage Tracking** (suivi d'usage). Les tables exactes qu'il lit sont définies dans le dashboard lui-même, pas dans le dépôt : **à vérifier dans Databricks**. La note de limite du README indique que celui de DEV lit encore d'anciennes tables.
-- Les alertes SQL (`resources/alerts.yml`, une série par env, mêmes noms) :
+- Les alertes SQL ([`resources/alerts.yml`](resources/alerts.yml), une série par env, mêmes noms) :
 
 | Alerte | Tables lues | Heure |
 |---|---|---|
@@ -182,14 +185,14 @@ Le job `D_2_Qualibot_User_Capabilities_Sync` lit, dans `system.access.audit`, le
 
 ## 7. Évaluation de la recherche (MLflow)
 
-- Job `Z_4_Qualibot_Retrieval_Eval` (`resources/retrieval_eval.yml`, notebooks dans `utils/evaluation/`), manuel, un job par env. Il écrit d'abord la table du jeu de questions (`<env>_proj.qualibot.eval_golden_retrieval`, la liste est dans le notebook `create_golden_retrieval_set.py`), puis joue chaque question contre la recherche réelle de l'app, une fois par configuration, et enregistre les scores dans MLflow (expérience `/Shared/qualibot/<env>_retrieval_eval`).
+- Job `Z_4_Qualibot_Retrieval_Eval` ([`resources/retrieval_eval.yml`](resources/retrieval_eval.yml), notebooks dans [`utils/evaluation/`](utils/evaluation/)), manuel, un job par env. Il écrit d'abord la table du jeu de questions (`<env>_proj.qualibot.eval_golden_retrieval`, la liste est dans le notebook `create_golden_retrieval_set.py`), puis joue chaque question contre la recherche réelle de l'app, une fois par configuration, et enregistre les scores dans MLflow (expérience `/Shared/qualibot/<env>_retrieval_eval`).
 - Une question réussit quand un passage d'un des documents attendus (REF) figure parmi les K premiers passages envoyés au modèle. Indicateurs : rappel@K, tous les documents attendus@K, MRR.
 - Paramètres du job : `preset` (`deploye` = config actuellement déployée, `tailles`, `complet`, `perso`), `indexes`, `reference` (config de référence pour les comparaisons), `ks`, `max_parallel` (16), `rerun_existing`, `mlflow_experiment`.
 - Un résultat est mis en cache sous le nom de la configuration + la signature du code : après un changement de l'index (nouveau découpage par exemple), renommer les configurations (suffixe) et mettre `rerun_existing=false`.
 
 ### Configuration actuelle du chat en PROD
 
-Valeurs de `app.yaml` (aucune surcharge pour PROD dans `utils/deploy/target_env.json`) :
+Valeurs de [`app.yaml`](app.yaml) (aucune surcharge pour PROD dans [`utils/deploy/target_env.json`](utils/deploy/target_env.json)) :
 - Première question d'une conversation (français ou anglais) : traduite dans l'autre langue (`CHAT_TRANSLATE_ONLY` activé dans les trois envs), puis deux requêtes de **32 passages** chacune (`CHAT_PAIR_RERANK_TOP_K=32`).
 - Questions suivantes et autres langues : réécriture bilingue, **32 passages** par requête (`CHAT_RERANK_TOP_K=32`).
 - **Pas de recherche brute** (`CHAT_RAW_TOP_K=0`, `CHAT_PAIR_RAW_TOP_K=0`).
@@ -209,15 +212,15 @@ Valeurs de `app.yaml` (aucune surcharge pour PROD dans `utils/deploy/target_env.
 
 ## 8. Déploiement
 
-Le code est déployé depuis le dépôt Bitbucket avec des **pipelines manuels** (fichier `bitbucket-pipelines.yml`) : rien ne part sur un simple push. Lancement : Bitbucket → Pipelines → **Run pipeline** → choisir la branche → **Custom** → choisir le pipeline dans la liste.
+Le code est déployé depuis le dépôt Bitbucket avec des **pipelines manuels** (fichier [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml)) : rien ne part sur un simple push. Lancement : Bitbucket → Pipelines → **Run pipeline** → choisir la branche → **Custom** → choisir le pipeline dans la liste.
 
-Chaque environnement Bitbucket (`dev`, `uat`, `production`) porte un jeton `DATABRICKS_TOKEN` du SP de l'env ; le script `utils/deploy/bitbucket_deploy.sh` écrit le profil et lance `databricks bundle deploy`. L'interface (`client/out`) est construite à chaque déploiement, jamais versionnée.
+Chaque environnement Bitbucket (`dev`, `uat`, `production`) porte un jeton `DATABRICKS_TOKEN` du SP de l'env ; le script [`utils/deploy/bitbucket_deploy.sh`](utils/deploy/bitbucket_deploy.sh) écrit le profil et lance `databricks bundle deploy`. L'interface (`client/out`) est construite à chaque déploiement, jamais versionnée.
 
 ### Les deux pipelines à connaître, pour chaque env
 
 | Pipeline | Ce qu'il fait | Quand l'utiliser |
 |---|---|---|
-| `deploy-<env>` | Valide et déploie le bundle (jobs, notebooks, ressources, permissions), **puis redéploie et redémarre l'app** | Changement du code de l'app (`server/`, `client/`), de `app.yaml` ou de `target_env.json` |
+| `deploy-<env>` | Valide et déploie le bundle (jobs, notebooks, ressources, permissions), **puis redéploie et redémarre l'app** | Changement du code de l'app ([`server/`](server/), [`client/`](client/)), de [`app.yaml`](app.yaml) ou de `target_env.json` |
 | `deploy-<env>-jobs` | Valide et déploie le bundle **sans toucher à l'app** : elle continue de tourner avec son code actuel | Changement des notebooks de parsing, des jobs, des plannings, des variables du bundle |
 
 Avec `<env>` = `dev`, `uat` ou `prod` : `deploy-dev`, `deploy-dev-jobs`, `deploy-uat`, `deploy-uat-jobs`, `deploy-prod`, `deploy-prod-jobs`.
@@ -231,14 +234,14 @@ Règles : DEV sans test préalable ; UAT et PROD lancent d'abord la suite de tes
 | `tests` | Lance seulement la suite de tests (Python et frontend) |
 | `plan-dev`, `plan-uat` | Lecture seule : affiche ce que le bundle changerait, sans rien déployer |
 | `prod-state-check` | Lecture seule : contrôle l'état du bundle et des objets PROD |
-| `prod-state-fix` | Une seule fois : détache l'état du bundle de l'ancien schéma `prod_landingzone.qualibot` et rattache les objets de `prod_proj.qualibot` (script `utils/deploy/prod_state_fix.sh`) |
+| `prod-state-fix` | Une seule fois : détache l'état du bundle de l'ancien schéma `prod_landingzone.qualibot` et rattache les objets de `prod_proj.qualibot` (script [`utils/deploy/prod_state_fix.sh`](utils/deploy/prod_state_fix.sh)) |
 | `migrate-dev-state`, `migrate-uat-state` | Une seule fois : déplace l'état du bundle vers le nouveau dossier `/Workspace/.bundle/qualibot/` |
 | `uat-state-fix`, `bind-uat-lakebase`, `bind-uat-staging`, `unbind-dev-test-volume` | Réparations d'état du bundle UAT et DEV (détacher ou rattacher un objet existant) |
 | `sync-prod-data` | Copie le volume des modèles Docling d'UAT vers PROD en deux étapes |
 
 ### Configuration de l'app par env
 
-Ordre de priorité : `utils/deploy/target_env.json` (surcharges par env, rendu en `target_config.env` au déploiement), puis `app.yaml` (valeurs par défaut commentées), puis les valeurs du code. Les variables du bundle (planning, workers, index synchronisés, cluster policy) sont dans `databricks.yml`, une section par env.
+Ordre de priorité : [`utils/deploy/target_env.json`](utils/deploy/target_env.json) (surcharges par env, rendu en `target_config.env` au déploiement), puis [`app.yaml`](app.yaml) (valeurs par défaut commentées), puis les valeurs du code. Les variables du bundle (planning, workers, index synchronisés, cluster policy) sont dans [`databricks.yml`](databricks.yml), une section par env.
 
 ## 9. Comparaison de documents (DocCompare)
 
@@ -250,7 +253,7 @@ Accès : groupes DocCompare, CoreDev, CoreAdmin (`require_compare`). Activation 
 
 ### Comment une analyse est réalisée
 
-Route `POST /api/compare/analyze` (`server/routers/compare/analyze.py`), réponse en flux SSE.
+Route `POST /api/compare/analyze` ([`server/routers/compare/analyze.py`](server/routers/compare/analyze.py)), réponse en flux SSE.
 
 1. **Hash et cache.** Le navigateur calcule le SHA-256 des deux fichiers. Le serveur cherche une analyse identique en cache (table `analysis_cache`, clé = hash des deux fichiers + version de l'app + réglages qui façonnent le rapport : méthode, modèle, prompt) ; s'il y en a une, il la rejoue. `force_refresh` l'ignore.
 2. **Créneau.** Au plus `COMPARE_MAX_CONCURRENT` analyses en même temps ; les autres attendent.
@@ -260,7 +263,7 @@ Route `POST /api/compare/analyze` (`server/routers/compare/analyze.py`), répons
    - PPTX / PPT : texte et images par diapositive ;
    - XML : texte des éléments ; Excel : différence cellule par cellule, lignes appariées sur la première colonne ; images : les deux images envoyées à un modèle de vision après redimensionnement.
 4. **Différence (moteurs partagés, `_diff_engines/`).** Les paragraphes similaires des deux versions sont alignés ; le résultat montre les changements dans le texte (`~~supprimé~~`, `**ajouté**`). Le moteur fusionne les en-têtes et pieds de page répétés, le même changement répété sur chaque page, détecte le texte déplacé plutôt que supprimé, et distingue un vrai changement d'un changement de style (un verbe modal « doit » devient « peut » est substantiel, deux verbes du même groupe d'obligation ne le sont pas). Les images des deux versions sont appariées par empreinte (modifiée, retournée, supprimée, ajoutée). La différence est coupée à `COMPARE_MAX_DIFF_CHARS` ; l'utilisateur est prévenu quand la fin du rapport manque.
-5. **Méthode et prompt.** `standard` (résumé Markdown), `structured` (tableau JSON) ou `comparative` (cachée dans l'interface). La liste des méthodes proposées par type de fichier est dans `processors/versions.yml`, la méthode par défaut dans `COMPARE_METHOD_<TYPE>`. Les prompts sont dans `server/prompts/compare/` (`analysis_standard.md`, `analysis_structured.md`, `analysis_default.md`).
+5. **Méthode et prompt.** `standard` (résumé Markdown), `structured` (tableau JSON) ou `comparative` (cachée dans l'interface). La liste des méthodes proposées par type de fichier est dans `processors/versions.yml`, la méthode par défaut dans `COMPARE_METHOD_<TYPE>`. Les prompts sont dans [`server/prompts/compare/`](server/prompts/compare/) (`analysis_standard.md`, `analysis_structured.md`, `analysis_default.md`).
 6. **Appel du modèle.** `databricks-claude-sonnet-5-5` (`COMPARE_ANALYSIS_ENDPOINT`, réflexion adaptative réglée par `COMPARE_THINKING_EFFORT`), avec repli sur `COMPARE_LLM_FALLBACK_ENDPOINTS` (sinon GPT-5.6 Luna ou GPT-6 Luna). Un endpoint en échec est mis au repos et le suivant est essayé ; l'erreur n'est levée que si aucun ne répond. Au-delà de `COMPARE_CHUNK_THRESHOLD_CHARS` (60 000 caractères), la différence est coupée aux limites de sections en morceaux de `COMPARE_CHUNK_SIZE_CHARS` (45 000), analysés en parallèle puis fusionnés dans un seul flux (`chunked_analysis.py`).
 7. **Fin.** Une ligne d'audit est écrite dans `llm_requests` (statut `ok`, `error` ou `aborted`, durées, tokens, coût). Si le navigateur se déconnecte, l'appel au modèle s'arrête et la ligne est `aborted`.
 
@@ -272,7 +275,7 @@ Route `POST /api/compare/analyze` (`server/routers/compare/analyze.py`), répons
 
 - Si `COMPARE_VOLUME_PATH` est défini (par env : `/Volumes/<env>_proj/qualibot/doc_compare`), un dossier de session reçoit les deux fichiers, le texte de l'analyse puis l'Excel ou le PDF. Les routes `save` / `load` (`volume.py`) refusent tout chemin hors de ce volume.
 - Historique : table Lakebase `compare_messages` ; votes : `compare_feedbacks`. Le navigateur garde aussi documents et résultats en local storage ; un échec de sauvegarde n'empêche jamais l'affichage.
-- Aperçus : PDF et images lus dans le navigateur ; DOCX converti en PDF fidèle par LibreOffice (`soffice.py`, archive dans le volume `doc_compare`, variable `SOFFICE_ARCHIVE_VOLUME_PATH`) ; `.doc` par antiword (installé au démarrage par `start.sh`) ; autres formats convertis en HTML.
+- Aperçus : PDF et images lus dans le navigateur ; DOCX converti en PDF fidèle par LibreOffice (`soffice.py`, archive dans le volume `doc_compare`, variable `SOFFICE_ARCHIVE_VOLUME_PATH`) ; `.doc` par antiword (installé au démarrage par [`start.sh`](start.sh)) ; autres formats convertis en HTML.
 
 ### Limites connues
 
@@ -280,7 +283,7 @@ Les tableaux situés dans les en-têtes et pieds de page des DOCX ne sont pas co
 
 ## 10. Recherche d'impact
 
-Question à laquelle elle répond : « quels autres documents de la base sont touchés par les changements de cette comparaison ? ». Documentation : [client/src/components/compare/README.md](client/src/components/compare/README.md) (section Impact search), [server/routers/compare/README.md](server/routers/compare/README.md). Code : [server/routers/compare/impact.py](server/routers/compare/impact.py) (route et flux), [server/services/compare/impact_queries.py](server/services/compare/impact_queries.py) (changements et requêtes), [server/services/infra/vector_search.py](server/services/infra/vector_search.py) (recherche, agrégation, juge), prompt [server/prompts/compare/impact_judge.md](server/prompts/compare/impact_judge.md). Interface : `client/src/components/compare/impact/`.
+Question à laquelle elle répond : « quels autres documents de la base sont touchés par les changements de cette comparaison ? ». Documentation : [client/src/components/compare/README.md](client/src/components/compare/README.md) (section Impact search), [server/routers/compare/README.md](server/routers/compare/README.md). Code : [server/routers/compare/impact.py](server/routers/compare/impact.py) (route et flux), [server/services/compare/impact_queries.py](server/services/compare/impact_queries.py) (changements et requêtes), [server/services/infra/vector_search.py](server/services/infra/vector_search.py) (recherche, agrégation, juge), prompt [server/prompts/compare/impact_judge.md](server/prompts/compare/impact_judge.md). Interface : [`client/src/components/compare/impact/`](client/src/components/compare/impact/).
 
 ### Comment elle est réalisée
 
