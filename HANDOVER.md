@@ -364,11 +364,20 @@ Espace de travail PROD : https://dbc-77b87d5a-6bcb.cloud.databricks.com
 | Volume `staging` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/volumes/prod_proj/qualibot/staging |
 | Index `chunks_index` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/prod_proj/qualibot/chunks_index |
 
-**Jobs** (ouvrir la liste et filtrer sur le nom) : `D_1_Qualibot_Parsing_Pipeline`, `D_1_Qualibot_Lakebase_Export_To_Volume`, `D_2_Qualibot_User_Capabilities_Sync`, `D_2_Qualibot_Score_Chat_Traces`, `Z_2_…` (expérience), `Z_3_Qualibot_Register_Chat_Prompts`, `Z_4_…` (évaluation retrieval), jobs d'arrêt/démarrage de l'app. Les identifiants de jobs ne sont pas dans le dépôt ; pour obtenir le lien direct de chacun, PowerShell :
+**Jobs PROD**
 
-```powershell
-databricks jobs list --profile PROD -o json | ConvertFrom-Json | Where-Object { $_.settings.name -like '*Qualibot*' } | ForEach-Object { "$($_.settings.name)  https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/$($_.job_id)" }
-```
+| Job | Lien |
+|---|---|
+| `D_1_Qualibot_Parsing_Pipeline` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/319182500454150 |
+| `D_1_Qualibot_Lakebase_Export_To_Volume` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/172239397407691 |
+| `D_2_Qualibot_User_Capabilities_Sync` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/898973603694951 |
+| `D_2_Qualibot_Score_Chat_Traces` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/661647982791628 |
+| `Z_2_Qualibot_Create_Chat_Experiment` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/3123577015114 |
+| `Z_3_Qualibot_Register_Chat_Prompts` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/940803650450984 |
+| `Z_3_Qualibot_Endpoint_Creation` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/492260422393526 |
+| `Z_4_Qualibot_Retrieval_Eval` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/694804097755110 |
+| `W_1_Qualibot_Start_Weekday_Prod` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/1051468687947987 |
+| `W_1_Qualibot_Stop_Weekend_Prod` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/559666163027745 |
 
 **Lakebase** : projet `qualibot`, branche `production`, base `doccompare` ; https://dbc-77b87d5a-6bcb.cloud.databricks.com/lakebase/projects/deb195f2-6189-419e-a640-b29fa71e540c
 
