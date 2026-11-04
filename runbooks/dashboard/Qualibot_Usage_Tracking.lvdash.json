@@ -1306,12 +1306,14 @@
         "    date(ingestion_timestamp) AS since,\n",
         "    CAST(datediff(current_date(), ingestion_timestamp) AS INT) AS days,\n",
         "    'ERROR' AS category,\n",
-        "    CAST(NULL AS BIGINT) AS n_chunks\n",
+        "    CAST(NULL AS BIGINT) AS n_chunks,\n",
+        "    source_file_extension,\n",
+        "    ROUND(source_file_size_bytes / 1024.0, 1) AS file_size_kb\n",
         "  FROM uat_proj.qualibot.parsed_documents\n",
         "  WHERE parse_status = 'ERROR'\n",
         "),\n",
         "current_backlog AS (\n",
-        "  SELECT IDDOC, ref, date(ingestion_timestamp) AS ingested_on\n",
+        "  SELECT IDDOC, ref, source_file_name, source_file_extension, source_file_size_bytes, date(ingestion_timestamp) AS ingested_on\n",
         "  FROM uat_proj.qualibot.parsed_documents\n",
         "  WHERE parse_status = 'EMPTY_TEXT'\n",
         "),\n",
@@ -1328,12 +1330,14 @@
         "needs_ocr AS (\n",
         "  SELECT\n",
         "    cb.IDDOC, cb.ref,\n",
-        "    CAST(NULL AS STRING) AS source_file_name,\n",
+        "    cb.source_file_name,\n",
         "    CAST(NULL AS STRING) AS error_trace,\n",
         "    COALESCE(h.first_seen, cb.ingested_on) AS since,\n",
         "    CAST(datediff(current_date(), COALESCE(h.first_seen, cb.ingested_on)) AS INT) AS days,\n",
         "    'NEEDS_OCR' AS category,\n",
-        "    COALESCE(cc.n_chunks, 0) AS n_chunks\n",
+        "    COALESCE(cc.n_chunks, 0) AS n_chunks,\n",
+        "    cb.source_file_extension,\n",
+        "    ROUND(cb.source_file_size_bytes / 1024.0, 1) AS file_size_kb\n",
         "  FROM current_backlog cb\n",
         "  LEFT JOIN backlog_history h ON h.IDDOC = cb.IDDOC\n",
         "  LEFT JOIN chunk_counts cc ON cc.IDDOC = cb.IDDOC\n",
@@ -1739,7 +1743,7 @@
       "displayName": "HC - OCR Backlog Detail",
       "queryLines": [
         "WITH current_backlog AS (\n",
-        "  SELECT IDDOC, ref, date(ingestion_timestamp) AS ingested_on\n",
+        "  SELECT IDDOC, ref, source_file_name, source_file_extension, source_file_size_bytes, date(ingestion_timestamp) AS ingested_on\n",
         "  FROM uat_proj.qualibot.parsed_documents\n",
         "  WHERE parse_status = 'EMPTY_TEXT'\n",
         "),\n",
@@ -1756,6 +1760,9 @@
         "SELECT\n",
         "  cb.IDDOC,\n",
         "  cb.ref,\n",
+        "  cb.source_file_name,\n",
+        "  cb.source_file_extension,\n",
+        "  ROUND(cb.source_file_size_bytes / 1024.0, 1) AS file_size_kb,\n",
         "  COALESCE(h.first_seen, cb.ingested_on) AS first_seen,\n",
         "  datediff(current_date(), COALESCE(h.first_seen, cb.ingested_on)) AS days_in_backlog,\n",
         "  COALESCE(cc.n_chunks, 0) AS n_chunks,\n",
@@ -1940,7 +1947,8 @@
       "displayName": "Document Search - Metadata",
       "queryLines": [
         "SELECT\n",
-        "  IDDOC, ref, titre, parse_status, parser_strategy,\n",
+        "  IDDOC, ref, titre, parse_status, parser_strategy, source_file_name, source_file_extension,\n",
+        "  ROUND(source_file_size_bytes / 1024.0, 1) AS file_size_kb,\n",
         "  image_count, images_needing_description,\n",
         "  document_char_count, document_token_count,\n",
         "  doc_date, indice, chunking_strategy, change_type, ingestion_timestamp\n",
@@ -7838,6 +7846,14 @@
                     {
                       "name": "HC__Error_Details__error_trace",
                       "expression": "`HC__Error_Details`.`error_trace`"
+                    },
+                    {
+                      "name": "HC__Error_Details__file_size_kb",
+                      "expression": "`HC__Error_Details`.`file_size_kb`"
+                    },
+                    {
+                      "name": "HC__Error_Details__source_file_extension",
+                      "expression": "`HC__Error_Details`.`source_file_extension`"
                     }
                   ],
                   "filters": [],
@@ -7864,6 +7880,24 @@
                   {
                     "fieldName": "HC__Error_Details__ref",
                     "displayName": "Ref"
+                  },
+                  {
+                    "fieldName": "HC__Error_Details__file_size_kb",
+                    "displayName": "Size (KB)",
+                    "columnWidth": 90,
+                    "format": {
+                      "type": "number-plain",
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "type": "exact",
+                        "places": 1
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "HC__Error_Details__source_file_extension",
+                    "displayName": "Type",
+                    "columnWidth": 70
                   },
                   {
                     "fieldName": "HC__Error_Details__category",
@@ -7930,6 +7964,18 @@
                     {
                       "name": "HC__OCR_Backlog_Detail__kb_status",
                       "expression": "`HC__OCR_Backlog_Detail`.`kb_status`"
+                    },
+                    {
+                      "name": "HC__OCR_Backlog_Detail__source_file_name",
+                      "expression": "`HC__OCR_Backlog_Detail`.`source_file_name`"
+                    },
+                    {
+                      "name": "HC__OCR_Backlog_Detail__file_size_kb",
+                      "expression": "`HC__OCR_Backlog_Detail`.`file_size_kb`"
+                    },
+                    {
+                      "name": "HC__OCR_Backlog_Detail__source_file_extension",
+                      "expression": "`HC__OCR_Backlog_Detail`.`source_file_extension`"
                     }
                   ],
                   "disaggregated": true
@@ -7953,6 +7999,29 @@
                   },
                   {
                     "fieldName": "HC__OCR_Backlog_Detail__ref"
+                  },
+                  {
+                    "fieldName": "HC__OCR_Backlog_Detail__source_file_name",
+                    "displayName": "File",
+                    "columnWidth": 260
+                  },
+                  {
+                    "fieldName": "HC__OCR_Backlog_Detail__file_size_kb",
+                    "displayName": "Size (KB)",
+                    "columnWidth": 90,
+                    "format": {
+                      "type": "number-plain",
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "type": "exact",
+                        "places": 1
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "HC__OCR_Backlog_Detail__source_file_extension",
+                    "displayName": "Type",
+                    "columnWidth": 70
                   },
                   {
                     "fieldName": "HC__OCR_Backlog_Detail__first_seen",
@@ -8152,6 +8221,18 @@
                     {
                       "name": "DocSearch__Meta__change_type",
                       "expression": "`DocSearch__Meta`.`change_type`"
+                    },
+                    {
+                      "name": "DocSearch__Meta__source_file_name",
+                      "expression": "`DocSearch__Meta`.`source_file_name`"
+                    },
+                    {
+                      "name": "DocSearch__Meta__file_size_kb",
+                      "expression": "`DocSearch__Meta`.`file_size_kb`"
+                    },
+                    {
+                      "name": "DocSearch__Meta__source_file_extension",
+                      "expression": "`DocSearch__Meta`.`source_file_extension`"
                     }
                   ],
                   "disaggregated": true
@@ -8176,6 +8257,29 @@
                   {
                     "fieldName": "DocSearch__Meta__ref",
                     "displayName": "Ref"
+                  },
+                  {
+                    "fieldName": "DocSearch__Meta__source_file_name",
+                    "displayName": "File",
+                    "columnWidth": 260
+                  },
+                  {
+                    "fieldName": "DocSearch__Meta__file_size_kb",
+                    "displayName": "Size (KB)",
+                    "columnWidth": 90,
+                    "format": {
+                      "type": "number-plain",
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "type": "exact",
+                        "places": 1
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "DocSearch__Meta__source_file_extension",
+                    "displayName": "Type",
+                    "columnWidth": 70
                   },
                   {
                     "fieldName": "DocSearch__Meta__titre",

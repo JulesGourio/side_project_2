@@ -355,12 +355,14 @@ WITH true_errors AS (
     date(ingestion_timestamp) AS since,
     CAST(datediff(current_date(), ingestion_timestamp) AS INT) AS days,
     'ERROR' AS category,
-    CAST(NULL AS BIGINT) AS n_chunks
+    CAST(NULL AS BIGINT) AS n_chunks,
+    source_file_extension,
+    ROUND(source_file_size_bytes / 1024.0, 1) AS file_size_kb
   FROM {ENV}_proj.qualibot.parsed_documents
   WHERE parse_status = 'ERROR'
 ),
 current_backlog AS (
-  SELECT IDDOC, ref, date(ingestion_timestamp) AS ingested_on
+  SELECT IDDOC, ref, source_file_name, source_file_extension, source_file_size_bytes, date(ingestion_timestamp) AS ingested_on
   FROM {ENV}_proj.qualibot.parsed_documents
   WHERE parse_status = 'EMPTY_TEXT'
 ),
@@ -377,12 +379,14 @@ chunk_counts AS (
 needs_ocr AS (
   SELECT
     cb.IDDOC, cb.ref,
-    CAST(NULL AS STRING) AS source_file_name,
+    cb.source_file_name,
     CAST(NULL AS STRING) AS error_trace,
     COALESCE(h.first_seen, cb.ingested_on) AS since,
     CAST(datediff(current_date(), COALESCE(h.first_seen, cb.ingested_on)) AS INT) AS days,
     'NEEDS_OCR' AS category,
-    COALESCE(cc.n_chunks, 0) AS n_chunks
+    COALESCE(cc.n_chunks, 0) AS n_chunks,
+    cb.source_file_extension,
+    ROUND(cb.source_file_size_bytes / 1024.0, 1) AS file_size_kb
   FROM current_backlog cb
   LEFT JOIN backlog_history h ON h.IDDOC = cb.IDDOC
   LEFT JOIN chunk_counts cc ON cc.IDDOC = cb.IDDOC
@@ -395,7 +399,7 @@ ORDER BY category, since
 
 set_sql("hc_ocr_backlog_detail", f"""
 WITH current_backlog AS (
-  SELECT IDDOC, ref, date(ingestion_timestamp) AS ingested_on
+  SELECT IDDOC, ref, source_file_name, source_file_extension, source_file_size_bytes, date(ingestion_timestamp) AS ingested_on
   FROM {ENV}_proj.qualibot.parsed_documents
   WHERE parse_status = 'EMPTY_TEXT'
 ),
@@ -412,6 +416,9 @@ chunk_counts AS (
 SELECT
   cb.IDDOC,
   cb.ref,
+  cb.source_file_name,
+  cb.source_file_extension,
+  ROUND(cb.source_file_size_bytes / 1024.0, 1) AS file_size_kb,
   COALESCE(h.first_seen, cb.ingested_on) AS first_seen,
   datediff(current_date(), COALESCE(h.first_seen, cb.ingested_on)) AS days_in_backlog,
   COALESCE(cc.n_chunks, 0) AS n_chunks,
@@ -454,6 +461,39 @@ sub("dc_log", r"CONCAT\('Out of scope: courant=', sc\.COURANT, ' etat=', sc\.ETA
     "CONCAT('Out of scope: revision_status=', CAST(sc.COURANT AS STRING), ' lifecycle_state=', CAST(sc.ETAT AS STRING), ' hidden=', CAST(sc.NONVISIBLE AS STRING))")
 sub("dc_log", r"' \(pipeline bug: no processed_files entry written for empty folders\)'", "' (no parsed_documents row)'")
 sub("doc_search_meta", r"'SKIPPED_SOURCE_REMOVED'\)", "'SKIPPED_SOURCE_REMOVED', 'SKIPPED_SUPERSEDED_REVISION')")
+sub("doc_search_meta", r"IDDOC, ref, titre, parse_status, parser_strategy,",
+    "IDDOC, ref, titre, parse_status, parser_strategy, source_file_name, source_file_extension,\n  ROUND(source_file_size_bytes / 1024.0, 1) AS file_size_kb,")
+
+
+def add_columns(page: str, name: str, src: str, cols: list, after: str) -> None:
+    """Adds columns to a table widget, after an existing column.
+
+    :param page: Page display name.
+    :param name: Widget name.
+    :param src: Relationship source name of the dataset (None for a widget reading the dataset directly).
+    :param cols: [(field, display name, width)].
+    :param after: Existing field whose column the new ones follow.
+    """
+    w = widget(page, name)
+    q = w["queries"][0]["query"]
+    enc = w["spec"]["encodings"]["columns"]
+    pos = next(i for i, c in enumerate(enc) if c["fieldName"].endswith(after)) + 1
+    for k, (field, display, width) in enumerate(cols):
+        fname = f"{src}__{field}" if src else field
+        expr = f"`{src}`.`{field}`" if src else f"`{field}`"
+        q["fields"].append({"name": fname, "expression": expr})
+        col = {"fieldName": fname, "displayName": display, "columnWidth": width}
+        if field == "file_size_kb":
+            col["format"] = {"type": "number-plain", "abbreviation": "none", "decimalPlaces": {"type": "exact", "places": 1}}
+        enc.insert(pos + k, col)
+
+
+SIZE_COLS = [("file_size_kb", "Size (KB)", 90), ("source_file_extension", "Type", 70)]
+add_columns("Health Check - Parsing", "table_errors", "HC__Error_Details", SIZE_COLS, "ref")
+add_columns("Health Check - Parsing", "table_ocr_backlog", "HC__OCR_Backlog_Detail",
+            [("source_file_name", "File", 260)] + SIZE_COLS, "ref")
+add_columns("Document Search", "ds_table_meta", "DocSearch__Meta",
+            [("source_file_name", "File", 260)] + SIZE_COLS, "ref")
 set_sql("doc_search_text", f"""
 WITH best AS (
   SELECT
