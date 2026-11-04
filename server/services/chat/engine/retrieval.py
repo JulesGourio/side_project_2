@@ -213,7 +213,8 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         earlier_turns = '\n'.join(m['content'] for m in conversation[:-1])
         named = await asyncio.to_thread(_refs_named_in_turns, question, earlier_turns)
         log.data.update({'index_name': index, 'fr_query': normalize_query(fr_query), 'en_query': normalize_query(en_query),
-                         'named_refs': named})
+                         'named_refs': named,
+                         'queries_searched': list(queries)})
 
         by_name = {'question': question, 'fr': fr_query, 'en': en_query}
         raw_texts: List[str] = []

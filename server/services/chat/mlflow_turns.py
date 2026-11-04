@@ -410,6 +410,7 @@ def _write_trace(log: Any, name: str) -> str | None:
             search = mlflow.start_span_no_context(
                 'search', span_type=SpanType.CHAIN, parent_span=retrieval, start_time_ns=at(starts.get('search', start)),
                 inputs={'queries': {'question': data.get('question'), 'fr': data.get('fr_query'), 'en': data.get('en_query')},
+                        'queries_searched': data.get('queries_searched'),
                         'index': data.get('index_name')})
             for call in log.vs_calls:
                 label = _vs_call_label(call)
