@@ -7,7 +7,7 @@ from typing import Dict, Iterable, List, Tuple
 
 from server.services.infra.doc_catalog import _catalog, canon_ref, document_info, site_code
 from server.services.chat.turn_log import TurnLog, passage_date
-from server.services.chat.engine.queries import opening_language, rewrite_queries, translate_query
+from server.services.chat.engine.queries import needs_original_query, opening_language, rewrite_queries, translate_query
 from server.services.chat.engine.references import cited_codes_asked, exact_citations
 from server.services.chat.engine.types import DocumentPassages, PassageRecord, RetrievalResult, SearchRow
 from server.services.chat.engine.search import _merge_by_rank, fetch_documents, search
@@ -175,6 +175,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         log.today = today.group(0).strip()[7:-1] if today else ''
         language = opening_language(conversation, question)
         degraded = False
+        orig_query = ''
         log.data['rewrite_mode'] = 'translate' if language else 'rewrite'
         if language:
             with log.timed('rewrite'):
@@ -187,12 +188,14 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         else:
             with log.timed('rewrite'):
                 try:
-                    fr_query, en_query = await rewrite_queries(
+                    fr_query, en_query, orig_query = await rewrite_queries(
                         host, token, conversation[:-1] + [{'role': 'user', 'content': question}], log=log)
                 except Exception:   # already logged by rewrite_queries: the turn goes on with the question as asked
                     fr_query = en_query = question
                     degraded = True
             log.prompts.insert(0, 'rewrite')
+            if needs_original_query(question):
+                log.prompts.insert(1, 'rewrite_original')
         if stopwords_enabled():
             # Only what the rewrite or the translation wrote: the question as asked stays a sentence, the form the
             # embedding and the reranker read best (a degraded turn searches nothing else).
@@ -205,7 +208,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         # A rewritten turn searches only its French and English rewrites: the question as asked is a follow-up that
         # means nothing alone, a near copy of one rewrite, or a language the documents are not written in.
         queries: List[str] = []
-        for q in ([question] if language else []) + [fr_query, en_query]:
+        for q in ([question] if language else []) + [fr_query, en_query, orig_query]:
             if q and q.casefold() not in {x.casefold() for x in queries}:
                 queries.append(q)
 
@@ -214,7 +217,7 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         named = await asyncio.to_thread(_refs_named_in_turns, question, earlier_turns)
         log.data.update({'index_name': index, 'fr_query': normalize_query(fr_query), 'en_query': normalize_query(en_query),
                          'named_refs': named,
-                         'queries_searched': list(queries)})
+                         'orig_query': orig_query, 'queries_searched': list(queries)})
 
         by_name = {'question': question, 'fr': fr_query, 'en': en_query}
         raw_texts: List[str] = []
@@ -263,5 +266,5 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
         log.data.update({'passages_retrieved': len(log.passages), 'passages_sent': len(rows)})
         if not rows:
             log.issue('no_passages', 'search', 'the search returned no passage', upstream=index)
-    return {'question': question, 'fr_query': fr_query, 'en_query': en_query, 'rows': rows, 'named': named,
+    return {'question': question, 'fr_query': fr_query, 'en_query': en_query, 'orig_query': orig_query, 'rows': rows, 'named': named,
             'index': index, 'log': log, 'exact_citations': exact}

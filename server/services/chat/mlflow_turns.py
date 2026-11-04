@@ -401,7 +401,7 @@ def _write_trace(log: Any, name: str) -> str | None:
             rewrite_io = log.model_io.get('rewrite') or {}
             child(retrieval, rewrite_name, SpanType.LLM, starts.get('rewrite', start), timings['rewrite'],
                   inputs={'messages': rewrite_io['messages']} if rewrite_io.get('messages') else {'question': data.get('question')},
-                  outputs={'fr': data.get('fr_query'), 'en': data.get('en_query')},
+                  outputs={'fr': data.get('fr_query'), 'en': data.get('en_query'), 'orig': data.get('orig_query')},
                   status=rewrite_status,
                   attributes={SpanAttributeKey.MODEL: data.get('rewrite_endpoint'),
                               SpanAttributeKey.CHAT_USAGE: rewrite_usage,
@@ -409,7 +409,8 @@ def _write_trace(log: Any, name: str) -> str | None:
         if 'search' in timings:
             search = mlflow.start_span_no_context(
                 'search', span_type=SpanType.CHAIN, parent_span=retrieval, start_time_ns=at(starts.get('search', start)),
-                inputs={'queries': {'question': data.get('question'), 'fr': data.get('fr_query'), 'en': data.get('en_query')},
+                inputs={'queries': {'question': data.get('question'), 'fr': data.get('fr_query'), 'en': data.get('en_query'),
+                                    'orig': data.get('orig_query')},
                         'queries_searched': data.get('queries_searched'),
                         'index': data.get('index_name')})
             for call in log.vs_calls:

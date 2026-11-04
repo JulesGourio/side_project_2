@@ -19,6 +19,7 @@ FILES: Dict[str, str] = {
     'system_division': 'system/division.md',
     'system_as_references': 'system/as_reference_ordering.md',
     'rewrite': 'rewrite.md',
+    'rewrite_original': 'rewrite_original.md',
     'translate_query': 'translate_query.md',
     'language_reminder': 'language_reminder.md',
     'exact_citations': 'exact_citations.md',

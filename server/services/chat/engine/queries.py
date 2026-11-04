@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 _TRANSLATE_NAMES = {'fr': 'French', 'en': 'English'}
 
 REWRITE_PROMPT = prompts.read('rewrite')
+REWRITE_ORIGINAL_PROMPT = prompts.read('rewrite_original')
 
 
 def opening_language(conversation: List[Dict[str, str]], question: str) -> str | None:
@@ -33,23 +34,32 @@ def opening_language(conversation: List[Dict[str, str]], question: str) -> str |
     return code if code in _TRANSLATE_NAMES else None
 
 
-def split_bilingual(text: str) -> Tuple[str, str]:
-    """(French query, English query) from the rewrite; a reply without the ``FR:``/``EN:``
-    labels is taken as the French query.
+def split_bilingual(text: str) -> Tuple[str, str, str]:
+    """(French query, English query, query in the question's language) from the rewrite; a reply without the
+    ``FR:``/``EN:`` labels is taken as the French query.
 
     :param text: reply of the rewrite model
-    :return: the French and the English query, an empty string for a missing one
+    :return: the French, the English and the original-language query, an empty string for a missing one
     """
-    fr, en = '', ''
+    found = {'FR': '', 'EN': '', 'ORIG': ''}
     for line in (text or '').splitlines():
         head, _, rest = line.strip().partition(':')
-        if head.strip().upper() == 'FR' and rest.strip():
-            fr = rest.strip()
-        elif head.strip().upper() == 'EN' and rest.strip():
-            en = rest.strip()
-    if not fr and not en:
-        fr = (text or '').strip()
-    return fr, en
+        label = head.strip().upper()
+        if label in found and rest.strip():
+            found[label] = rest.strip()
+    if not any(found.values()):
+        found['FR'] = (text or '').strip()
+    return found['FR'], found['EN'], found['ORIG']
+
+
+def needs_original_query(question: str) -> bool:
+    """True when ``question`` is not confidently French or English: the rewrite then also writes the query in the
+    question's own language.
+
+    :param question: the user question, without its date line
+    :return: whether a query in the question's language is searched too
+    """
+    return translation_bridge.fast_lang_guess(question) not in _TRANSLATE_NAMES
 
 
 def strip_added_noise(query: str, conversation_text: str) -> str:
@@ -106,18 +116,21 @@ async def translate_query(host: str, token: str, question: str, target: str,
 
 
 async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, str]],
-                          log: TurnLog | None = None) -> Tuple[str, str]:
-    """(French query, English query) for the last question; raises when every rewrite model failed after its retries.
+                          log: TurnLog | None = None) -> Tuple[str, str, str]:
+    """(French, English, original-language query) for the last question; raises when every rewrite model failed
+    after its retries. The original-language query is empty when the question is French or English.
 
     :param host: Databricks workspace URL
     :param token: Databricks access token
     :param conversation: cleaned conversation, its last item the question
     :param log: turn log to fill, created when None
-    :return: the French and the English search queries, filler removed
+    :return: the French, English and original-language search queries, filler removed
     """
     log = log if log is not None else TurnLog()
     transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in conversation)
-    messages = [{'role': 'system', 'content': REWRITE_PROMPT}, {'role': 'user', 'content': transcript}]
+    original = needs_original_query(conversation[-1]['content'])
+    system = REWRITE_PROMPT + ('\n\n' + REWRITE_ORIGINAL_PROMPT if original else '')
+    messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': transcript}]
     log.model_io['rewrite'] = {'messages': messages}
     chain = chat_llm.rewrite_chain(rewrite_endpoint(), llm_endpoint())
     info: Dict[str, Any] = {}
@@ -140,6 +153,6 @@ async def rewrite_queries(host: str, token: str, conversation: List[Dict[str, st
         logger.warning('chat: search query rewritten by fallback %s', used)
         log.issue('rewrite_fallback', 'rewrite', f'rewritten by {used} instead of {rewrite_endpoint()}',
                   upstream=used, context={'expected': rewrite_endpoint(), 'attempts': info.get('attempts')})
-    fr, en = split_bilingual(text)
+    fr, en, orig = split_bilingual(text)
     said = ' '.join(m['content'] for m in conversation)
-    return strip_added_noise(fr, said), strip_added_noise(en, said)
+    return strip_added_noise(fr, said), strip_added_noise(en, said), strip_added_noise(orig, said) if original and orig else ''

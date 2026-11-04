@@ -25,6 +25,8 @@ CHAT_TURN_COLUMNS: List[tuple] = [
     # search-query rewrite
     ('fr_query',              'TEXT'),
     ('en_query',              'TEXT'),
+    ('orig_query',            'TEXT'),               # query in the question's own language (not French or English); empty otherwise
+    ('queries_searched',      'JSONB'),              # the queries sent to the search, duplicates removed
     ('rewrite_ok',            'BOOLEAN'),
     ('rewrite_mode',          'TEXT'),               # translate: opening message in French / English, translated into the other; rewrite: bilingual rewrite
     ('stopwords_removed',     'JSONB'),              # CHAT_STOPWORDS on: {fr, en: words removed from that query}; NULL when off

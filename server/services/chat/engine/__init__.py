@@ -15,7 +15,7 @@ from server.services.chat.engine.config import (
     prompt_parts,
     settings,
 )
-from server.services.chat.engine.queries import REWRITE_PROMPT, rewrite_queries, split_bilingual, strip_added_noise
+from server.services.chat.engine.queries import REWRITE_PROMPT, needs_original_query, rewrite_queries, split_bilingual, strip_added_noise
 from server.services.chat.engine.retrieval import _clean_history, group_documents, retrieve_for_turn
 
 __all__ = [
@@ -31,6 +31,7 @@ __all__ = [
     'parse_citations',
     'prompt_parts',
     'retrieve_for_turn',
+    'needs_original_query',
     'rewrite_queries',
     'settings',
     'split_bilingual',

@@ -623,8 +623,9 @@ def test_a_rewrite_that_still_adds_the_company_is_cleaned(monkeypatch):
 
 
 def test_split_bilingual():
-    assert engine.split_bilingual('FR: requête\nEN: query') == ('requête', 'query')
-    assert engine.split_bilingual('juste une requête') == ('juste une requête', '')
+    assert engine.split_bilingual('FR: requête\nEN: query') == ('requête', 'query', '')
+    assert engine.split_bilingual('FR: requête\nEN: query\nORIG: consulta') == ('requête', 'query', 'consulta')
+    assert engine.split_bilingual('juste une requête') == ('juste une requête', '', '')
 
 
 def test_instructions_per_division():
@@ -864,3 +865,21 @@ def test_a_degraded_turn_searches_the_question_with_its_stop_words(monkeypatch):
     _, m = _run(monkeypatch, rewrite=RuntimeError('all rewrite models down'))
     d = m['log'].data
     assert d['fr_query'] == d['en_query'] == QUESTION and d['stopwords_removed'] == {}
+
+
+# --- Query in the question's own language ---
+
+def test_spanish_question_also_searches_its_own_language(monkeypatch):
+    spanish = [{'role': 'user', 'content': 'quien necesito contactar para crear un centro de costes ?'}]
+    _, m = _run(monkeypatch, messages=spanish,
+                rewrite='FR: qui contacter pour créer un centre de coûts\nEN: who to contact to create a cost center\n'
+                        'ORIG: a quién contactar para crear un centro de costes')
+    d = m['log'].data
+    assert d['orig_query'] == 'a quién contactar para crear un centro de costes'
+    assert len(d['queries_searched']) == 3 and d['orig_query'] in d['queries_searched']
+    assert 'ORIG:' in m['rewrite'].call_args[0][3][0]['content']
+
+
+def test_french_question_has_no_original_language_query(monkeypatch):
+    _, m = _run(monkeypatch)
+    assert m['log'].data['orig_query'] == '' and len(m['log'].data['queries_searched']) == 2

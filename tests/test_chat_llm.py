@@ -201,7 +201,7 @@ def test_rewrite_falls_back_when_the_first_model_returns_nothing(monkeypatch):
     monkeypatch.setenv('CHAT_REWRITE_ENDPOINT', PRIMARY)
     monkeypatch.setenv('CHAT_REWRITE_FALLBACK_ENDPOINTS', BACKUP)
     q = asyncio.run(engine.rewrite_queries('https://h', 't', [{'role': 'user', 'content': 'NDT?'}]))
-    assert q == ('qualification CND', 'NDT qualification') and BACKUP in sent[-1]
+    assert q == ('qualification CND', 'NDT qualification', '') and BACKUP in sent[-1]
 
 
 # --- Vector Search -----------------------------------------------------------
