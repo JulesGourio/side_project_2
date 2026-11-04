@@ -818,7 +818,6 @@ for it in gf:
 
 # ---------------------------------------------------------------- 11b. Document diagnostic: why a document is, or is not, in the chatbot
 ROOTS_IN_SCOPE = "3870, 948, 3209, 12, 962, 3208, 4001, 3867"
-ROOTS_DATE_EXEMPT = ROOTS_IN_SCOPE + ", 3798"
 d["datasets"].append({
     "name": "doc_diagnostic", "displayName": "Document Diagnostic",
     "queryLines": (f"""
@@ -866,9 +865,7 @@ j AS (
     rev.IDDOC IS NOT NULL AS in_intraqual,
     ck.IDDOC IS NOT NULL AS has_checkpoint,
     pd.IDDOC IS NOT NULL AS has_parsed_row,
-    (rev.root_category_ID IN ({ROOTS_IN_SCOPE}) OR exists(rev.category_ID_path, x -> x IN (3967, 4006))) AS in_categories,
-    (rev.published_date IS NULL OR rev.published_date >= DATE'2016-01-01'
-       OR rev.root_category_ID IN ({ROOTS_DATE_EXEMPT})) AS date_ok
+    (rev.root_category_ID IN ({ROOTS_IN_SCOPE}) OR exists(rev.category_ID_path, x -> x IN (3967, 4006))) AS in_categories
   FROM ids i
     LEFT JOIN rev ON rev.IDDOC = i.IDDOC
     LEFT JOIN cat ON cat.id = rev.root_category_ID
@@ -887,7 +884,6 @@ v AS (
       WHEN lifecycle_state_code <> 7 THEN '04 NOT PUBLISHED'
       WHEN is_hidden THEN '05 HIDDEN'
       WHEN NOT in_categories THEN '06 CATEGORY OUT OF SCOPE'
-      WHEN NOT date_ok THEN '07 BEFORE 2016'
       WHEN exclusion_reason IS NOT NULL OR parse_status IN ('SKIPPED_REF_MANUAL', 'SKIPPED_CATEGORY_EXCLUDED')
         THEN '08 MANUAL EXCLUSION'
       WHEN parse_status = 'SKIPPED_SUPERSEDED_REVISION' THEN '09 REPLACED BY NEWER REVISION'
@@ -914,7 +910,6 @@ SELECT
     WHEN '04' THEN CONCAT('Not published: lifecycle_state_code=', CAST(lifecycle_state_code AS STRING), ' (only 7 is published)')
     WHEN '05' THEN 'Hidden in Intraqual (is_hidden = true)'
     WHEN '06' THEN CONCAT('Root category "', COALESCE(root_category, 'none'), '" is not in the indexed scope')
-    WHEN '07' THEN 'Published before 2016-01-01 and not in an exempt category: kept for the impact search only'
     WHEN '08' THEN CONCAT('Manual exclusion', COALESCE(CONCAT(': ', exclusion_reason), ''))
     WHEN '09' THEN CONCAT('Older revision of the same REF; only the newest revision is indexed (current IDDOC ',
                           COALESCE(CAST(current_iddoc AS STRING), '?'), ')')
@@ -1177,7 +1172,6 @@ explorer = [
         "3. **NOT CURRENT REVISION**: an older revision, the current one is named.\n",
         "4. **NOT PUBLISHED** / 5. **HIDDEN**: status gate (published = lifecycle state 7, visible).\n",
         "6. **CATEGORY OUT OF SCOPE**: root category is not one of the indexed roots.\n",
-        "7. **BEFORE 2016**: archive, impact search only.\n",
         "8. **MANUAL EXCLUSION**, 9. **REPLACED BY NEWER REVISION**: only the newest revision of a REF is indexed.\n",
         "10. **PARSED, RESULT NOT BUILT**, 11. **NOT PROCESSED YET**: in scope, the next run handles it.\n",
         "12. **PARSE ERROR**, 13. **NO TEXT, NEEDS OCR**, 14. **IMAGES TO DESCRIBE**, 15. **FILE TOO LARGE**, 16. **EMPTY DOCUMENT** (file of at most 50 KiB without text), 17. **NO FILE ON VOLUME**, 18. **PARSED BUT NO PASSAGE**: pipeline outcomes."]}},
