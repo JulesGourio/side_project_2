@@ -235,11 +235,11 @@ async def _token_refresh_loop(
             if old_pool:
                 await _retire_pool(old_pool)
             delay = _next_refresh_delay(expires_in_s)
-            logger.info(f'Lakebase token refreshed (next refresh in {delay:.0f}s)')
+            logger.debug('Lakebase token refreshed (next refresh in %.0fs)', delay)
         except Exception as e:
             # The current token keeps expiring regardless: retry soon instead of waiting for the next cycle.
             delay = 60
-            logger.error(f'Lakebase token refresh failed (retrying in {delay}s): {e}')
+            logger.exception('Lakebase token refresh failed (retrying in %ss)', delay)
 
 
 # --- Public API ---

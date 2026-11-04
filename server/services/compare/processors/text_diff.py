@@ -119,7 +119,7 @@ class TextDiffProcessor(BaseProcessor):
         :return: the messages with their metadata and the image pairs
         """
         comparative = method_name == 'comparative'
-        logger.info('%s [%s]: %s — %s → %s', type(self).__name__, method_name,
+        logger.debug('%s [%s]: %s — %s → %s', type(self).__name__, method_name,
                     'section canonical diff' if comparative else 'paragraph semantic diff', old_name, new_name)
         old_text, new_text, old_images, new_images = self.extract(old_bytes, old_name, new_bytes, new_name)
         old_text, old_cut = _without_doc_note(old_text)

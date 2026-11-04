@@ -360,7 +360,7 @@ def augment_sources(content: str, sources: List[dict]) -> List[dict]:
                 existing_urls.add(url)
             added += 1
         if added:
-            logger.info('doc_catalog: added %d cited documents to sources', added)
+            logger.debug('doc_catalog: added %d cited documents to sources', added)
 
         # 3. Append language-variant siblings for every REF now present.
         added_variants = 0
@@ -375,7 +375,7 @@ def augment_sources(content: str, sources: List[dict]) -> List[dict]:
                     existing_urls.add(url)
                 added_variants += 1
         if added_variants:
-            logger.info('doc_catalog: added %d language-variant documents to sources', added_variants)
+            logger.debug('doc_catalog: added %d language-variant documents to sources', added_variants)
         return sources
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning('doc_catalog: augment_sources failed: %s', exc)

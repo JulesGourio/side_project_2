@@ -128,7 +128,7 @@ def _antiword_extract(doc_bytes: bytes, filename: str) -> str | None:
     try:
         proc, encoding = _run_antiword(tmp_path, _ANTIWORD_UTF8, filename), 'utf-8'
         if proc is not None and proc.returncode != 0:
-            logger.info('antiword UTF-8 mapping failed for %s, using the default mapping', filename)
+            logger.debug('antiword UTF-8 mapping failed for %s, using the default mapping', filename)
             proc, encoding = _run_antiword(tmp_path, [], filename), 'cp1252'
         if proc is None:
             return None
@@ -235,7 +235,7 @@ def pptx_to_slide_images(pptx_bytes: bytes, filename: str = 'presentation.pptx')
     try:
         pdf_bytes = convert_docx_to_pdf(pptx_bytes, suffix=suffix)
     except (SofficeUnavailable, SofficeConversionError) as exc:
-        logger.info('LibreOffice cannot render %s (%s) — the caller falls back to the Python renderer', filename, exc)
+        logger.debug('LibreOffice cannot render %s (%s) — the caller falls back to the Python renderer', filename, exc)
         return []
 
     with pymupdf.open(stream=pdf_bytes, filetype='pdf') as pdf:

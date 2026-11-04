@@ -9,6 +9,7 @@ from typing import Tuple
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from server.logging_setup import request_id
 from server.services.chat import mlflow_turns
 from server.services.chat.engine import normalize_division, stream_chat
 from server.routers.errors import TOO_MANY_REQUESTS
@@ -31,6 +32,20 @@ from server.routers.chat.helpers import (
 from server.routers.chat.persistence import _save_turn, session_of_another_user
 
 logger = logging.getLogger(__name__)
+
+
+def _log_turn_summary(log: TurnLog, division: str, user_id: str, msgs: int) -> None:
+    """The one INFO line of a chat turn: who (user id), status, durations per step, MLflow trace id. No question text.
+
+    :param log: the finished turn
+    :param division: division asked
+    :param user_id: user of the turn
+    :param msgs: number of messages sent by the client
+    """
+    steps = ' '.join(f'{k}={v}ms' for k, v in log.timings_ms.items())
+    level = logging.ERROR if log.status == 'error' else logging.WARNING if log.status == 'degraded' else logging.INFO
+    logger.log(level, 'chat turn: status=%s division=%s user=%s msgs=%d issues=%s %s trace_id=%s',
+               log.status, division, user_id, msgs, ','.join(log.codes) or '-', steps, log.trace_id)
 router = APIRouter()
 
 
@@ -119,9 +134,7 @@ async def chat_ws(websocket: WebSocket) -> None:
         return
 
     user_content = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), '')
-    logger.info('chat turn [ws]: division=%s endpoint=%s session=%s user=%s msgs=%d q=%r trace_id=%s',
-                division, endpoint, session_id, identity.get('email') or user_id,
-                len(messages), user_content[:160], log.trace_id)
+    request_id.set(log.trace_id[-12:])   # every log line of this turn carries the same id (the MLflow trace id suffix)
     log.data.update({'session_id': session_id, 'user_id': user_id, 'workspace_id': workspace_id,
                      'division': normalize_division(division),
                      'question': user_content, 'history_messages': len(messages)})
@@ -201,7 +214,7 @@ async def chat_ws(websocket: WebSocket) -> None:
         log.answer = final_content
         msg_id = await _persist('ok', final_content)
         outcome = 'ok'
-        logger.info('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
+        logger.debug('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
                     division, endpoint, len(collected_sources), len(collected_citations))
         await websocket.send_json({
             'type': 'done',
@@ -236,7 +249,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                     if messages_for_engine[i]['role'] == 'user':
                         messages_for_engine[i]['content'] = en_question
                         break
-                logger.info('chat translate-bridge [ws]: lang=%s en_q=%r', translate_ctx.lang_code, en_question[:160])
+                logger.debug('chat translate-bridge [ws]: lang=%s', translate_ctx.lang_code)
 
         # Named in the language reminder: English when the bridge translated the question (it translates the answer back),
         # else the detected French/English, else a local guess.
@@ -330,6 +343,7 @@ async def chat_ws(websocket: WebSocket) -> None:
         if user_content:
             # After 'done' was sent: the user does not wait for this write.
             log.finish(outcome)
+            _log_turn_summary(log, division, user_id, len(messages))
             await mlflow_turns.export_turn(log)
             await store_chat_turn(log, endpoint=route, user_message_id=saved[0], assistant_message_id=saved[1])
         try:

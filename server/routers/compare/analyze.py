@@ -244,7 +244,7 @@ async def _keepalive_until_done(task: asyncio.Future, req_id: str) -> AsyncGener
         done, _ = await asyncio.wait({task}, timeout=10.0)
         if done:
             return
-        logger.info(f'[{req_id}] Building messages… {asyncio.get_event_loop().time() - build_start:.0f}s')
+        logger.debug(f'[{req_id}] Building messages… {asyncio.get_event_loop().time() - build_start:.0f}s')
         yield ': keepalive\n\n'
 
 
@@ -326,7 +326,7 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
     :param request: the incoming request, to notice a browser that left.
     """
     req_id = job.req_id
-    logger.info(f'[{req_id}] SSE stream start: {job.old_name!r} vs {job.new_name!r}')
+    logger.debug(f'[{req_id}] SSE stream start: {job.old_name!r} vs {job.new_name!r}')
 
     yield ': keepalive\n\n'
 
@@ -417,14 +417,14 @@ async def _analysis_events(job: _AnalysisJob, request: Request) -> AsyncGenerato
         run['chunked_parts'] = len(message_parts) if message_parts else 0
         t_llm = time.monotonic()
         if message_parts:
-            logger.info(f'[{req_id}] LLM streaming start (chunked ×{len(message_parts)})')
+            logger.debug(f'[{req_id}] LLM streaming start (chunked ×{len(message_parts)})')
             llm_stream = stream_analysis_chunked(
                 job.host, job.token, job.endpoint, message_parts,
                 job.cfg['max_tokens'], job.cfg['thinking_budget'], job.cfg['temperature'],
                 structured=(result.metadata.method == 'structured'), info=answered,
             )
         else:
-            logger.info(f'[{req_id}] LLM streaming start')
+            logger.debug(f'[{req_id}] LLM streaming start')
             llm_stream = stream_analysis(
                 job.host, job.token, job.endpoint, result.messages,
                 job.cfg['max_tokens'], job.cfg['thinking_budget'], job.cfg['temperature'], info=answered,
@@ -542,7 +542,7 @@ async def analyze_documents(
     cache_version = _analysis_cache_version(cfg, processor, pv)
     cached = None if force_refresh.lower() == 'true' else await get_cached_analysis(old_hash, new_hash, cache_version)
     if cached:
-        logger.info(f'Cache hit for hashes {old_hash[:12]}…/{new_hash[:12]}…')
+        logger.debug(f'Cache hit for hashes {old_hash[:12]}…/{new_hash[:12]}…')
         return StreamingResponse(_cached_stream(cached), media_type='text/event-stream', headers=_SSE_HEADERS)
 
     job = _AnalysisJob(

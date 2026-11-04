@@ -117,7 +117,7 @@ class ImageProcessor(BaseProcessor):
         else:
             sp = SYSTEM_PROMPT_STANDARD
 
-        logger.info(f'ImageProcessor [{self.method}]: visual comparison — {old_name} → {new_name}')
+        logger.debug(f'ImageProcessor [{self.method}]: visual comparison — {old_name} → {new_name}')
 
         ext = ('.' + old_name.rsplit('.', 1)[-1]) if '.' in old_name else '.jpg'
         old_img, old_mime = _normalise_image(old_bytes, ext)

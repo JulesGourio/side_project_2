@@ -509,7 +509,7 @@ class ExcelProcessor(BaseProcessor):
         else:
             sp = SYSTEM_PROMPT_STANDARD
 
-        logger.info(f'ExcelProcessor [{self.method}]: cell diff — {old_name} → {new_name}')
+        logger.debug(f'ExcelProcessor [{self.method}]: cell diff — {old_name} → {new_name}')
         diff_text, old_summary, new_summary = _build_diff(old_bytes, old_name, new_bytes, new_name)
         diff_text = truncate_diff(diff_text)
 

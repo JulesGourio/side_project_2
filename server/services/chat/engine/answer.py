@@ -203,8 +203,7 @@ async def stream_chat(host: str, token: str, division: str, messages: List[Dict[
         return
     rows = found['rows']
     documents = group_documents(rows)
-    logger.info('chat: division=%s index=%s fr_query=%r en_query=%r passages=%d documents=%d trace_id=%s',
-                div, found['index'], found['fr_query'], found['en_query'], len(rows), len(documents), trace_id)
+    logger.debug('chat: division=%s index=%s passages=%d documents=%d', div, found['index'], len(rows), len(documents))
 
     parser = CitationStreamParser(documents)
     usage: AnswerUsage = {}

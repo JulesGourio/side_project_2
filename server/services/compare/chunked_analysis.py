@@ -187,7 +187,7 @@ def split_messages_for_chunking(
         part_messages[user_idx] = {'role': 'user', 'content': blocks}
         parts.append(part_messages)
 
-    logger.info('Diff of %d chars split into %d LLM calls (chunk size %d)', len(body), n, chunk_chars)
+    logger.debug('Diff of %d chars split into %d LLM calls (chunk size %d)', len(body), n, chunk_chars)
     return parts
 
 
@@ -341,7 +341,7 @@ async def stream_analysis_chunked(
         :return: the buffered outcome of ``_run_part``
         """
         async with sem:
-            logger.info('Chunked analysis: part %d/%d start', idx + 1, n)
+            logger.debug('Chunked analysis: part %d/%d start', idx + 1, n)
             return await _run_part(host, token, endpoint_name, msgs,
                                    max_tokens, thinking_budget, temperature, info=part_infos[idx])
 
@@ -376,14 +376,14 @@ async def stream_analysis_chunked(
 
             if structured:
                 objects = extract_json_objects(res['text'])
-                logger.info('Chunked analysis: part %d/%d done — %d rows', part_idx + 1, n, len(objects))
+                logger.debug('Chunked analysis: part %d/%d done — %d rows', part_idx + 1, n, len(objects))
                 if objects:
                     payload = ',\n'.join(json.dumps(o, ensure_ascii=False) for o in objects)
                     prefix = '[\n' if emitted_objects == 0 else ',\n'
                     yield _delta_event(f'{prefix}{payload}')
                     emitted_objects += len(objects)
             else:
-                logger.info('Chunked analysis: part %d/%d done — %d chars', part_idx + 1, n, len(res['text']))
+                logger.debug('Chunked analysis: part %d/%d done — %d chars', part_idx + 1, n, len(res['text']))
                 if res['text'] and _is_no_change_part(res['text']):
                     # Kept only if no other part reports a change; between real changes it would read as one.
                     no_change_text = no_change_text or res['text']
