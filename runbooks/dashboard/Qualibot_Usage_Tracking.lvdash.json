@@ -874,6 +874,7 @@
         "  m.sources_json,\n",
         "  m.status,\n",
         "  m.trace_id,\n",
+        "  tt.mlflow_trace_id,\n",
         "  m.deleted,\n",
         "  m.question_lang,\n",
         "  s.name AS session_name,\n",
@@ -934,6 +935,8 @@
         "    ) fb\n",
         "      ON m.id = fb.message_id\n",
         "      AND fb.rn = 1\n",
+        "    LEFT JOIN (SELECT assistant_message_id, MAX(mlflow_trace_id) AS mlflow_trace_id FROM uat_proj.qualibot.chat_turns WHERE mlflow_trace_id IS NOT NULL AND mlflow_trace_id != '' GROUP BY assistant_message_id) tt\n",
+        "      ON m.id = tt.assistant_message_id\n",
         "WHERE\n",
         "  NOT array_contains(\n",
         "    COALESCE(u.groups, CAST(ARRAY() AS ARRAY<STRING>)),\n",
@@ -1007,6 +1010,11 @@
           "displayName": "share_link",
           "description": "Link to shared conversation",
           "expression": "CASE WHEN share_token IS NOT NULL AND share_token != '' THEN CONCAT('https://qualibot-3155144190025826.aws.databricksapps.com/chat/shared/', share_token) ELSE NULL END"
+        },
+        {
+          "displayName": "trace_link",
+          "description": "Link to the MLflow trace of the message",
+          "expression": "CASE WHEN mlflow_trace_id IS NOT NULL AND mlflow_trace_id != '' THEN CONCAT('https://dbc-3a17bfce-9e88.cloud.databricks.com/ml/experiments/258804869957724/traces?o=3155144190025826&selectedEvaluationId=', REPLACE(REPLACE(mlflow_trace_id, ':', '%3A'), '/', '%2F')) WHEN trace_id RLIKE '^tr-[0-9a-f]{32}$' THEN CONCAT('https://dbc-3a17bfce-9e88.cloud.databricks.com/ml/experiments/', CASE WHEN division = 'AS' THEN '2748374992560664' WHEN division = 'IS' THEN '2748374992560665' ELSE '4171178917767011' END, '/traces?o=3155144190025826&selectedEvaluationId=', trace_id) ELSE NULL END"
         }
       ]
     },
@@ -1236,7 +1244,8 @@
         "      WHEN u.email IN ('armando.tapia@latecoere.aero', 'brianda.penunuri@latecoere.aero', 'estefania.aldana@latecoere.aero', 'hector.galindo@latecoere.aero', 'iveth.herrejon@latecoere.aero', 'karim.quijada@latecoere.aero', 'marco.loya@latecoere.aero', 'maria.valenzuela@latecoere.aero') THEN 'Hermosillo'\n",
         "    END\n",
         "  ) AS workplace,\n",
-        "  CONCAT('https://qualibot-3155144190025826.aws.databricksapps.com/chat/shared/', u.share_token) AS share_link\n",
+        "  CONCAT('https://qualibot-3155144190025826.aws.databricksapps.com/chat/shared/', u.share_token) AS share_link,\n",
+        "  CASE WHEN tt.mlflow_trace_id IS NOT NULL AND tt.mlflow_trace_id != '' THEN CONCAT('https://dbc-3a17bfce-9e88.cloud.databricks.com/ml/experiments/258804869957724/traces?o=3155144190025826&selectedEvaluationId=', REPLACE(REPLACE(tt.mlflow_trace_id, ':', '%3A'), '/', '%2F')) WHEN a.trace_id RLIKE '^tr-[0-9a-f]{32}$' THEN CONCAT('https://dbc-3a17bfce-9e88.cloud.databricks.com/ml/experiments/', CASE WHEN u.division = 'AS' THEN '2748374992560664' WHEN u.division = 'IS' THEN '2748374992560665' ELSE '4171178917767011' END, '/traces?o=3155144190025826&selectedEvaluationId=', a.trace_id) ELSE NULL END AS trace_link\n",
         "FROM\n",
         "  user_msgs u\n",
         "    LEFT JOIN asst_next_rn an\n",
@@ -1244,6 +1253,7 @@
         "    LEFT JOIN all_msgs a\n",
         "      ON a.session_id = u.session_id\n",
         "      AND a.msg_rn = an.next_asst_rn\n",
+        "    LEFT JOIN (SELECT assistant_message_id, MAX(mlflow_trace_id) AS mlflow_trace_id FROM uat_proj.qualibot.chat_turns WHERE mlflow_trace_id IS NOT NULL AND mlflow_trace_id != '' GROUP BY assistant_message_id) tt ON tt.assistant_message_id = a.id\n",
         "    LEFT JOIN (\n",
         "      SELECT hr_key, Workplace FROM (\n",
         "        SELECT\n",
@@ -4148,6 +4158,10 @@
                       "expression": "`ChatBot_Conversations_Paired`.`share_link`"
                     },
                     {
+                      "name": "ChatBot_Conversations_Paired__trace_link",
+                      "expression": "`ChatBot_Conversations_Paired`.`trace_link`"
+                    },
+                    {
                       "name": "ChatBot_Conversations_Paired__division",
                       "expression": "`ChatBot_Conversations_Paired`.`division`"
                     },
@@ -4178,6 +4192,10 @@
                     {
                       "name": "`ChatBot_Conversations_Paired`.`share_link`",
                       "expression": "`ChatBot_Conversations_Paired`.`share_link`"
+                    },
+                    {
+                      "name": "`ChatBot_Conversations_Paired`.`trace_link`",
+                      "expression": "`ChatBot_Conversations_Paired`.`trace_link`"
                     }
                   ],
                   "disaggregated": true
@@ -4225,6 +4243,23 @@
                     "style": {
                       "type": "basic",
                       "foregroundColor": "#2a78d6",
+                      "textDecoration": "underline"
+                    }
+                  },
+                  {
+                    "fieldName": "ChatBot_Conversations_Paired__trace_link",
+                    "displayName": "MLflow",
+                    "actions": {
+                      "click": {
+                        "type": "link",
+                        "urlTemplate": "{{ `ChatBot_Conversations_Paired`.`trace_link` }}",
+                        "openInNewTab": true
+                      }
+                    },
+                    "formatTemplate": "🔍 Trace",
+                    "style": {
+                      "type": "basic",
+                      "foregroundColor": "#6250d6",
                       "textDecoration": "underline"
                     }
                   },
@@ -4314,8 +4349,16 @@
                       "expression": "`ChatBot_Messages`.`share_link`"
                     },
                     {
+                      "name": "ChatBot_Messages__trace_link",
+                      "expression": "`ChatBot_Messages`.`trace_link`"
+                    },
+                    {
                       "name": "`ChatBot_Messages`.`share_link`",
                       "expression": "`ChatBot_Messages`.`share_link`"
+                    },
+                    {
+                      "name": "`ChatBot_Messages`.`trace_link`",
+                      "expression": "`ChatBot_Messages`.`trace_link`"
                     }
                   ],
                   "filters": [
@@ -4384,6 +4427,23 @@
                     "style": {
                       "type": "basic",
                       "foregroundColor": "#2a78d6",
+                      "textDecoration": "underline"
+                    }
+                  },
+                  {
+                    "fieldName": "ChatBot_Messages__trace_link",
+                    "displayName": "Trace MLflow",
+                    "actions": {
+                      "click": {
+                        "type": "link",
+                        "urlTemplate": "{{ `ChatBot_Messages`.`trace_link` }}",
+                        "openInNewTab": true
+                      }
+                    },
+                    "formatTemplate": "🔍 Trace",
+                    "style": {
+                      "type": "basic",
+                      "foregroundColor": "#6250d6",
                       "textDecoration": "underline"
                     }
                   }
@@ -5673,8 +5733,7 @@
                       "keyword": "temporalite"
                     }
                   ],
-                  "disaggregated": false,
-                  "fields": []
+                  "disaggregated": false
                 }
               }
             ],

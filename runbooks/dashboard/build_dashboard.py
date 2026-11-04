@@ -501,17 +501,43 @@ LOG.append("quality: MLflow section and dataset removed (ka_mlflow_scorer_assess
 d["pages"] = [p for p in d["pages"] if p["displayName"] != "ChatBot - Quality"]
 PAGES.pop("ChatBot - Quality")
 DS.pop("chat_quality_data")
-sub("chat_conversations_paired", r",\s*CASE WHEN a\.trace_id IS NOT NULL.*?AS trace_link", "", flags=re.S)
-DS["chat_data"]["columns"] = [c for c in DS["chat_data"]["columns"] if c["displayName"] != "trace_link"]
-for pg in PAGES.values():
-    for it in pg["layout"]:
-        w = it["widget"]
-        for q in w.get("queries", []):
-            q["query"]["fields"] = [f for f in q["query"].get("fields", []) if "trace_link" not in f["expression"]]
-        enc = w.get("spec", {}).get("encodings", {})
-        if "columns" in enc:
-            enc["columns"] = [c for c in enc["columns"] if "trace_link" not in c["fieldName"]]
-LOG.append("page ChatBot - Quality (LLM judge) and trace links removed")
+HOST = "https://dbc-3a17bfce-9e88.cloud.databricks.com/ml/experiments/"
+TAIL = "/traces?o=3155144190025826&selectedEvaluationId="
+
+
+def trace_link_sql(trace_col: str, division_col: str, mlflow_col: str) -> str:
+    """SQL expression of the link to the MLflow trace of a message.
+
+    :param trace_col: Column with the chat trace id (`tr-<hex>` for the former KA traces).
+    :param division_col: Column with the division.
+    :param mlflow_col: Column with the MLflow trace id of the turn (`trace:/<catalog>.<schema>.<experiment>/<hex>`).
+    :return: SQL expression, NULL when the message has no trace.
+    """
+    return (
+        f"CASE "
+        f"WHEN {mlflow_col} IS NOT NULL AND {mlflow_col} != '' THEN CONCAT('{HOST}258804869957724{TAIL}', "
+        f"REPLACE(REPLACE({mlflow_col}, ':', '%3A'), '/', '%2F')) "
+        f"WHEN {trace_col} RLIKE '^tr-[0-9a-f]{{32}}$' THEN CONCAT('{HOST}', "
+        f"CASE WHEN {division_col} = 'AS' THEN '2748374992560664' WHEN {division_col} = 'IS' THEN '2748374992560665' "
+        f"ELSE '4171178917767011' END, '{TAIL}', {trace_col}) "
+        f"ELSE NULL END"
+    )
+
+
+TURNS_JOIN = (f"(SELECT assistant_message_id, MAX(mlflow_trace_id) AS mlflow_trace_id "
+              f"FROM {ENV}_proj.qualibot.chat_turns WHERE mlflow_trace_id IS NOT NULL AND mlflow_trace_id != '' "
+              f"GROUP BY assistant_message_id)")
+sub("chat_conversations_paired", r"CASE WHEN a\.trace_id IS NOT NULL.*?AS trace_link",
+    trace_link_sql("a.trace_id", "u.division", "tt.mlflow_trace_id") + " AS trace_link", flags=re.S)
+sub("chat_conversations_paired", r"(AND a\.msg_rn = an\.next_asst_rn)",
+    "AND a.msg_rn = an.next_asst_rn\n    LEFT JOIN " + TURNS_JOIN + " tt ON tt.assistant_message_id = a.id")
+sub("chat_data", r"m\.trace_id,", "m.trace_id,\n  tt.mlflow_trace_id,")
+sub("chat_data", r"AND fb\.rn = 1\s*\nWHERE", "AND fb.rn = 1\n    LEFT JOIN " + TURNS_JOIN + " tt\n      ON m.id = tt.assistant_message_id\nWHERE")
+for c in DS["chat_data"]["columns"]:
+    if c["displayName"] == "trace_link":
+        c["expression"] = trace_link_sql("trace_id", "division", "mlflow_trace_id")
+        c["description"] = "Link to the MLflow trace of the message"
+LOG.append("page ChatBot - Quality (LLM judge) removed; trace links rebuilt (turn trace in qualibot_chat_traces, KA traces by division)")
 
 # ---------------------------------------------------------------- 9. unused datasets
 for name in ("debug_recent_users", "hc_index_freshness", "scoring_runs_data", "scoring_runs_summary"):
