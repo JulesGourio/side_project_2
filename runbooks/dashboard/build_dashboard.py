@@ -150,6 +150,8 @@ for name in DS:
     set_sql(name, sql)
 LOG.append("legacy table names -> <env>_proj.qualibot.* (parsing tables, compare_messages, compare_feedbacks)")
 
+LOG.append("DocCompare file links point to the uat_proj volume")
+
 # ---------------------------------------------------------------- 3. group exclusion: deterministic, NULL-safe
 for name in DS:
     sql = get_sql(name)
@@ -748,5 +750,285 @@ for it in gf:
             "disaggregated": False}})
         w["spec"]["encodings"]["fields"].append({"fieldName": "turn_date", "queryName": qn})
 
-OUT.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+# ---------------------------------------------------------------- 12. restructure: 7 pages, one 12-column grid, one palette
+PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
+d["uiSettings"]["theme"]["visualizationColors"] = PALETTE
+COLOR_MAP = {"#2E7D32": "#0ca30c", "#C62828": "#d03b3b", "#D32F2F": "#d03b3b", "#E65100": "#ec835a",
+             "#EF6C00": "#ec835a", "#1976D2": "#2a78d6", "#7B1FA2": "#6250d6", "#1B5E93": "#2a78d6"}
+
+W = {}
+for pg in d["pages"]:
+    for it in pg["layout"]:
+        W[(pg["displayName"], it["widget"]["name"])] = it
+OLD_PAGES = {pg["displayName"]: pg for pg in d["pages"]}
+
+
+def pie_to_bar(w: dict) -> None:
+    """Turns a pie widget into a vertical bar of the same query.
+
+    :param w: Widget dict (modified in place).
+    """
+    sp = w.get("spec", {})
+    if sp.get("widgetType") != "pie":
+        return
+    ang, col = sp["encodings"]["angle"], sp["encodings"]["color"]
+    sp["widgetType"] = "bar"
+    sp["encodings"] = {
+        "x": {"fieldName": col["fieldName"], "displayName": col.get("displayName", ""), "scale": {"type": "categorical"}},
+        "y": {"fieldName": ang["fieldName"], "displayName": ang.get("displayName", "Count"),
+              "format": {"type": "number-plain", "abbreviation": "compact"},
+              "scale": {"type": "quantitative", "domain": {"min": 0}}},
+        "color": {"fieldName": col["fieldName"], "displayName": col.get("displayName", ""), "legend": {"hide": True},
+                  "scale": col.get("scale", {"type": "categorical"})},
+        "label": {"show": True},
+    }
+
+
+def take(page: str, name: str, x: int, y: int, w: int, h: int, title: str | None = None) -> dict:
+    """Copy of an existing widget, placed on the 12-column grid.
+
+    :param page: Source page display name.
+    :param name: Widget name.
+    :param x: Grid column (0-11).
+    :param y: Grid row.
+    :param w: Width in columns.
+    :param h: Height in rows.
+    :param title: New title, or None to keep it.
+    :return: Layout item.
+    """
+    it = copy.deepcopy(W[(page, name)])
+    it["position"] = {"x": x, "y": y, "width": w, "height": h}
+    if title:
+        set_title(it["widget"], title)
+    pie_to_bar(it["widget"])
+    return it
+
+
+def header(name: str, title: str, text: str, y: int = 0) -> dict:
+    """Page header text box.
+
+    :param name: Widget name.
+    :param title: Page title.
+    :param text: One-line description.
+    :param y: Grid row.
+    :return: Layout item.
+    """
+    return {"widget": {"name": name, "multilineTextboxSpec": {"lines": [f"## {title}\n", text]}},
+            "position": {"x": 0, "y": y, "width": 12, "height": 2}}
+
+
+def section(name: str, title: str, text: str, y: int) -> dict:
+    """Section title text box.
+
+    :param name: Widget name.
+    :param title: Section title.
+    :param text: One-line description.
+    :param y: Grid row.
+    :return: Layout item.
+    """
+    return {"widget": {"name": name, "multilineTextboxSpec": {"lines": [f"### {title}\n", text]}},
+            "position": {"x": 0, "y": y, "width": 12, "height": 2}}
+
+
+U, C, R, DC, PA, CO = ("Adoption & Growth", "ChatBot - Overview", "ChatBot - Reliability", "DocCompare - Overview",
+                       "Health Check - Parsing", "Qualibot Costing")
+CS, DP, DS_, IC = "ChatBot - Satisfaction", "DocCompare - Performance", "DocCompare - Satisfaction", "Intraqual Changes"
+
+usage = [
+    header("u_header", "Usage", "Adoption and activity of ChatBot and DocCompare. Test and admin accounts are excluded."),
+    take(U, "kpi_inscrits", 0, 2, 4, 3, "Registered this month"),
+    take(U, "kpi_questions_cb", 4, 2, 4, 3, "ChatBot questions, last week"),
+    take(U, "kpi_analyses_dc", 8, 2, 4, 3, "DocCompare analyses, last week"),
+    take(U, "counter_ad_cb", 0, 5, 3, 3, "ChatBot eligible users"),
+    take(U, "counter_taux_cb", 3, 5, 3, 3, "ChatBot activation rate"),
+    take(U, "counter_ad_dc", 6, 5, 3, 3, "DocCompare eligible users"),
+    take(U, "counter_taux_dc", 9, 5, 3, 3, "DocCompare activation rate"),
+    take(U, "growth_chart", 0, 8, 12, 7, "Cumulative users and rights granted"),
+    take(U, "bar_activity_cb", 0, 15, 6, 7, "ChatBot, weekly active users"),
+    take(U, "bar_activity_dc", 6, 15, 6, 7, "DocCompare, weekly active users"),
+    take(U, "bar_activation", 0, 22, 6, 7, "Activation by tool"),
+    take(U, "table_non_utilisateurs", 6, 22, 6, 7, "Eligible users who never used the tool"),
+]
+
+chatbot = [
+    header("c_header", "ChatBot", "Questions, satisfaction and conversations of the document chatbot. Reliability and errors are on the next page."),
+    take(C, "total_questions", 0, 2, 2, 3, "Questions"),
+    take(C, "total_sessions", 2, 2, 2, 3, "Sessions"),
+    take(C, "total_users_chat", 4, 2, 2, 3, "Active users"),
+    take(C, "counter_questions_session", 6, 2, 2, 3, "Questions per session"),
+    take(CS, "counter_satisfaction", 8, 2, 2, 3, "Satisfaction rate"),
+    take(CS, "counter_feedback_rate", 10, 2, 2, 3, "Feedback rate"),
+    take(C, "bar_activity", 0, 5, 8, 7, "Questions per week"),
+    take(C, "pie_division", 8, 5, 4, 7, "Questions by division"),
+    take(C, "pie_langue", 0, 12, 4, 6, "Questions by language"),
+    take(C, "pie_workplace", 4, 12, 4, 6, "Questions by site"),
+    take(CS, "pie_votes", 8, 12, 4, 6, "Votes"),
+    take(CS, "bar_fb_week", 0, 18, 6, 7, "Feedback per week"),
+    take(C, "table_top_users_site", 6, 18, 6, 7, "Top user by site"),
+    take(C, "conversations_table", 0, 25, 12, 10, "Conversation history"),
+    take(CS, "table_fb_detail", 0, 35, 12, 9, "Feedback details"),
+]
+
+reliability = [
+    header("r_header", "ChatBot reliability", "One row per chat turn. Degraded: answered, but a step did not run as configured. Error: no answer. Copy of Lakebase, as fresh as the last export."),
+    take(R, "rel_turns", 0, 2, 2, 3, "Turns"),
+    take(R, "rel_err_rate", 2, 2, 2, 3, "Error rate"),
+    take(R, "rel_deg_rate", 4, 2, 2, 3, "Degraded rate"),
+    take(R, "rel_ttft", 6, 2, 2, 3, "Avg first token (s)"),
+    take(C, "counter_sourcing", 8, 2, 2, 3, "Answers with sources"),
+    take(C, "counter_longueur", 10, 2, 2, 3, "Avg answer length (chars)"),
+    take(R, "rel_status_day", 0, 5, 6, 7),
+    take(R, "rel_latency", 6, 5, 6, 7),
+    take(C, "pie_sourcing", 0, 12, 4, 6, "Answers with and without sources"),
+    take(C, "bar_erreurs_semaine", 4, 12, 8, 6, "Failed messages per week"),
+    take(R, "rel_errors_table", 0, 18, 12, 8),
+    take(R, "rel_turns_table", 0, 26, 12, 8),
+]
+
+doccompare = [
+    header("dc_header", "DocCompare", "Document comparison analyses: volume, satisfaction and performance."),
+    take(DC, "total_analyses", 0, 2, 2, 3, "Analyses"),
+    take(DC, "users_inscrits", 2, 2, 2, 3, "Registered users"),
+    take(DS_, "taux_sat", 4, 2, 2, 3, "Satisfaction rate"),
+    take(DP, "avg_gen", 6, 2, 2, 3, "Avg generation (s)"),
+    take(DP, "avg_ttft", 8, 2, 2, 3, "Avg first token (s)"),
+    take(DP, "avg_tokens", 10, 2, 2, 3, "Avg tokens per analysis"),
+    take(DC, "temporalite_filter", 0, 5, 8, 1),
+    take(DC, "analyses_bar", 0, 6, 8, 7, "Analyses per period"),
+    take(DC, "bar_method", 8, 6, 4, 7, "Analyses by version"),
+    take(DC, "pie_filetype", 0, 13, 4, 6, "File types"),
+    take(DS_, "pie_votes", 4, 13, 4, 6, "Votes"),
+    take(DP, "tokens_method", 8, 13, 4, 6, "Tokens by version"),
+    take(DP, "gen_day", 0, 19, 6, 7, "Avg generation time per week (s)"),
+    take(DP, "scatter_gen_tokens", 6, 19, 6, 7, "Generation time vs tokens"),
+    take(U, "table_classement", 0, 26, 12, 7, "Top users"),
+    take(DC, "table_messages", 0, 33, 12, 9, "Analyses"),
+    take(DS_, "fb_detail", 0, 42, 12, 8, "Feedback details"),
+]
+
+parsing = [
+    header("p_header", "Parsing", "Health of the parsing pipeline and document changes detected in Intraqual."),
+    take(PA, "counter_docs_in_scope", 0, 2, 2, 3, "Documents in scope"),
+    take(PA, "counter_true_errors", 2, 2, 2, 3, "Documents in error"),
+    take(PA, "counter_ocr_backlog", 4, 2, 2, 3, "OCR backlog"),
+    take(PA, "counter_chunks_total", 6, 2, 2, 3, "Chunks"),
+    take(PA, "counter_images_total", 8, 2, 2, 3, "Images described"),
+    take(PA, "counter_avg_parse_time", 10, 2, 2, 3, "Avg parse time (s/doc)"),
+    take(IC, "ic_counter_total", 0, 5, 3, 3, "Changes, 30 days"),
+    take(IC, "ic_counter_new", 3, 5, 3, 3, "New documents, 30 days"),
+    take(IC, "ic_counter_revised", 6, 5, 3, 3, "Revised documents, 30 days"),
+    take(IC, "ic_counter_not_indexed", 9, 5, 3, 3, "Not indexed, 30 days"),
+    take(PA, "bar_trend", 0, 8, 6, 7, "Documents per run outcome, 30 days"),
+    take(IC, "ic_bar_trend", 6, 8, 6, 7, "Changes per day, 30 days"),
+    take(PA, "bar_chunks", 0, 15, 6, 6, "Chunks by division"),
+    take(PA, "bar_image_backlog", 6, 15, 6, 6, "Image description backlog"),
+    take(PA, "table_runs", 0, 21, 12, 6, "Run history"),
+    take(IC, "ic_table_log", 0, 27, 12, 8, "Document changes and indexing status"),
+    take(PA, "table_errors", 0, 35, 12, 6, "Documents in error"),
+    take(PA, "table_ocr_backlog", 0, 41, 12, 6, "OCR backlog detail"),
+]
+
+explorer = [
+    take("Document Search", "ds_header", 0, 0, 12, 2),
+    take("Document Search", "ds_filter_ref", 0, 2, 12, 1),
+    take("Document Search", "ds_table_meta", 0, 3, 12, 5, "Document metadata"),
+    take("Document Search", "ds_table_text", 0, 8, 12, 6, "Parsed text, before chunking"),
+    take("Document Search", "ds_table_chunks", 0, 14, 12, 8, "Indexed chunks, as the chatbot sees them"),
+]
+
+costs = [
+    take(CO, "header", 0, 0, 12, 2),
+    take(CO, "filter_category", 0, 2, 4, 2),
+    take(CO, "filter_env", 4, 2, 4, 2),
+    take(CO, "counter_total", 0, 4, 3, 5, "Total cost, 30 days (USD)"),
+    take(CO, "pie_category", 3, 4, 5, 5, "Cost by category"),
+    take(CO, "pie_env", 8, 4, 4, 5, "Cost by environment"),
+    take(CO, "bar_daily_category", 0, 9, 12, 8, "Daily cost by category"),
+    take(CO, "line_trend", 0, 17, 6, 7, "Daily cost trend"),
+    take(CO, "bar_endpoint", 6, 17, 6, 7, "Cost by endpoint"),
+    take(CO, "table_jobs", 0, 24, 12, 8, "Pipeline jobs"),
+    take(CO, "table_detail", 0, 32, 12, 8, "Detail by day and category"),
+    take(CO, "filter_day", 0, 40, 4, 2),
+    take(CO, "bar_hourly", 0, 42, 12, 8, "Hourly cost for the selected day"),
+    take(CO, "header_compare_llm", 0, 50, 12, 2),
+    take(CO, "counter_compare_total", 0, 52, 3, 3, "Estimated cost, 30 days (EUR)"),
+    take(CO, "counter_compare_requests", 3, 52, 3, 3, "Requests, 30 days"),
+    take(CO, "bar_compare_daily", 6, 52, 6, 6, "Estimated cost per day and endpoint"),
+    take(CO, "table_compare_llm", 0, 58, 12, 6, "Estimate detail"),
+    section("co_legacy", "Legacy: Knowledge Assistant", "Billed Agent Bricks endpoints of the former chatbot. Remove once the ka-* endpoints are deleted.", 64),
+    take(CO, "counter_ka_requests", 0, 66, 3, 3, "Requests, 30 days"),
+    take(CO, "counter_ka_cpr", 3, 66, 3, 3, "Avg cost per request (USD)"),
+    take(CO, "counter_ka_tokens", 6, 66, 3, 3, "Cents per request"),
+    take(CO, "counter_ka_mtoken", 9, 66, 3, 3, "Cost, 30 days (USD)"),
+    take(CO, "bar_ka_requests", 0, 69, 6, 7, "Daily cost by environment"),
+    take(CO, "line_ka_cpr", 6, 69, 6, 7, "Cost per request, DEV (cents)"),
+    take(CO, "line_tokens_daily", 0, 76, 6, 6, "Daily cost by endpoint"),
+    take(CO, "line_requests_daily", 6, 76, 6, 6, "Daily cost by environment"),
+    take(CO, "table_ka_usage", 0, 82, 12, 8, "Usage detail"),
+    take(CO, "table_endpoint_usage", 0, 90, 12, 6, "Billing detail by endpoint"),
+    take(CO, "header_methodology", 0, 96, 12, 5),
+]
+
+PCT_FMT = {"type": "number-percent", "decimalPlaces": {"type": "exact", "places": 1}}
+for items in (usage, chatbot, reliability, doccompare, parsing, explorer, costs):
+    for it in items:
+        w = it["widget"]
+        if w.get("name") in ("counter_erreur", "counter_sourcing", "counter_satisfaction", "counter_feedback_rate",
+                             "counter_taux_dc", "counter_taux_cb", "taux_sat") and "spec" in w:
+            w["spec"]["encodings"]["value"]["format"] = PCT_FMT
+        if w.get("name") == "avg_ttft":
+            w["spec"]["encodings"]["value"]["displayName"] = "Seconds"
+
+gf_page = next(pg for pg in d["pages"] if pg["displayName"] == "Global Filters")
+LAYOUT = "GRID_V1"
+d["pages"] = [
+    {"name": n, "displayName": t, "layout": lay, "pageType": "PAGE_TYPE_CANVAS", "layoutVersion": LAYOUT}
+    for n, t, lay in (("usage", "Usage", usage), ("chatbot", "ChatBot", chatbot),
+                      ("chatbot_reliability", "ChatBot reliability", reliability), ("doccompare", "DocCompare", doccompare),
+                      ("parsing", "Parsing", parsing), ("document_explorer", "Document explorer", explorer),
+                      ("costs", "Costs", costs))
+] + [gf_page]
+
+
+def recolor(o):
+    """Replaces the former chart colors by the validated palette, recursively.
+
+    :param o: JSON value.
+    :return: The value with new colors.
+    """
+    if isinstance(o, str):
+        return COLOR_MAP.get(o, COLOR_MAP.get(o.upper(), o))
+    if isinstance(o, list):
+        return [recolor(x) for x in o]
+    if isinstance(o, dict):
+        return {k: (v if k == "visualizationColors" else recolor(v)) for k, v in o.items()}
+    return o
+
+
+d["pages"] = recolor(d["pages"])
+LOG.append("restructured into 7 pages on one 12-column grid, pies as bars, validated palette")
+
+# unused datasets (no widget query, no relationship expression)
+SRC_NAME = {x["name"]: x["datasetName"] for x in d["relationshipGraphs"][0]["sources"]}
+used = set()
+for pg in d["pages"]:
+    for it in pg["layout"]:
+        for q in it["widget"].get("queries", []):
+            qq = q["query"]
+            if qq.get("datasetName"):
+                used.add(qq["datasetName"])
+            for f in qq.get("fields", []) + qq.get("filters", []):
+                for src_name in re.findall(r"`([A-Za-z0-9_]+)`\.`", f["expression"]):
+                    if src_name in SRC_NAME:
+                        used.add(SRC_NAME[src_name])
+for rel in d["relationshipGraphs"][0].get("relationships", []):
+    for side in ("from", "to"):
+        used.add(SRC_NAME[rel[side]])
+dropped = [x["name"] for x in d["datasets"] if x["name"] not in used]
+d["datasets"] = [x for x in d["datasets"] if x["name"] in used]
+d["relationshipGraphs"][0]["sources"] = [s_ for s_ in d["relationshipGraphs"][0]["sources"] if s_["datasetName"] in used]
+LOG.append("datasets no longer used removed: " + ", ".join(dropped))
+
+text = json.dumps(d, indent=2, ensure_ascii=False).replace("volumes/uat_landingzone/qualibot/doc_compare", f"volumes/{ENV}_proj/qualibot/doc_compare")
+OUT.write_text(text + "\n", encoding="utf-8")
 print("\n".join("- " + x for x in LOG))

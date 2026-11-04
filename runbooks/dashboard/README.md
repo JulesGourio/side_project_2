@@ -3,6 +3,10 @@
 Files: `original/Qualibot_Usage_Tracking.lvdash.json` (export as received 2026-11-03), `build_dashboard.py` (applies every fix below), `Qualibot_Usage_Tracking.lvdash.json` (result, UAT). Regenerate with `python3 build_dashboard.py`.
 Dashboard id (from the query names of the export): `01f13d51cb401021adbe602186380270`. Everything is hardcoded to UAT (`ENV` in the script).
 
+## Structure (2026-11-04)
+
+7 pages on one 12-column grid (the former Adoption page was laid out on 24 columns, the others on 12): Usage, ChatBot (Overview + Satisfaction), ChatBot reliability, DocCompare (Overview + Satisfaction + Performance), Parsing (Health Check + Intraqual Changes), Document explorer, Costs (summary, detail, estimates, then a Legacy KA section to delete with the `ka-*` endpoints). Each page: header, KPI row, charts, tables. Pies became bars, rates are percentages, titles are plain English, chart colors are the validated 8-slot categorical palette (`uiSettings.theme.visualizationColors`), status colors (votes, run outcomes) are the reserved status steps. The `users_access_overview` table (duplicate of the inactive-users table) and the ChatBot members table were dropped.
+
 ## Corrected by the script
 
 | Area | Fix |
