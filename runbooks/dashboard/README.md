@@ -22,8 +22,9 @@ Dashboard id (from the query names of the export): `01f13d51cb401021adbe60218638
 
 ## Not changed, needs a decision or a measurement
 
-- **ChatBot - Quality** still reads the Knowledge-Assistant era tables (`uat_landingzone.qualibot.chat_quality_scores`, `ka_mlflow_scorer_assessments`, `chat_message_trace_backfill`). The scorers now write `<env>_proj.qualibot.chat_trace_scores` (long format: `chat_trace_id, scored_at, scorer, value, rationale, division, status, vote, judge`), DEV only for now: rebuild the page on it once UAT has traces.
+- **ChatBot - Quality**: the MLflow section is removed (`uat_proj.qualibot.ka_mlflow_scorer_assessments` does not exist, 2026-11-04 check). The LLM-judge section still reads `uat_landingzone.qualibot.chat_quality_scores` (last row 2026-10-15). The scorers now write `<env>_proj.qualibot.chat_trace_scores` (long format: `chat_trace_id, scored_at, scorer, value, rationale, division, status, vote, judge`), absent in UAT: rebuild the page on it once it exists.
 - **KA cost block** (AGENT_BRICKS) is empty 30 days after the last KA endpoint is gone; remove it then.
-- **Lakebase project id** (`d9fd81bc-...`) and Vector Search endpoint `qualibot` are hardcoded in the cost datasets: costs of DEV/PROD Lakebase and other endpoints are not counted. List them (check cell, billing part), then widen the filters.
+- **Costs**: the three Lakebase projects (UAT `d9fd81bc`, DEV `e9185a28`, PROD `deb195f2`) are counted; the old KA vector endpoints `ka-*-vs-endpoint` (DEV 5, UAT 1, still billed) appear as the category "Vector Search (old KA endpoints)".
 - **Every cost dataset scans `system.billing.usage`** (5 datasets). A view in `uat_proj.qualibot` read by the five would divide the scans by five; needs a grant run as the SP.
 - **PROD**: workspace host, app URL (`qualibot-3155144190025826.aws.databricksapps.com`), MLflow experiment ids in `trace_link`, volume links are UAT values; a PROD dashboard needs the script parametrised with those.
+- **One dashboard per environment** (decided 2026-11-04): validate UAT first, then parametrise `build_dashboard.py` per env (catalogs, workspace id, host, app URL, experiment ids, Lakebase project, volume links).

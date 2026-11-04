@@ -470,6 +470,31 @@ WHERE b.rn = 1
 """)
 LOG.append("intraqual changes / doc search: current tables, status lists, scope table of the data asset")
 
+# ---------------------------------------------------------------- 8b. costs: every Lakebase project and the old KA vector endpoints
+LAKEBASE_PROJECTS = "'d9fd81bc-5865-4ef0-8718-520a9e8d6c68', 'e9185a28-13c6-42da-9ccc-0dbcf6b97b60', 'deb195f2-6189-419e-a640-b29fa71e540c'"
+for name in ("qb_cost_all", "qb_cost_hourly"):
+    sub(name, r"u\.usage_metadata\.project_id = 'd9fd81bc-5865-4ef0-8718-520a9e8d6c68'",
+        f"u.usage_metadata.project_id IN ({LAKEBASE_PROJECTS})")
+    sub(name, r"AND u\.usage_metadata\.endpoint_name = 'qualibot'",
+        "AND (u.usage_metadata.endpoint_name = 'qualibot' OR u.usage_metadata.endpoint_name ILIKE 'ka-%-vs-endpoint')")
+    sub(name, r"WHEN billing_origin_product = 'VECTOR_SEARCH' THEN 'Vector Search'",
+        "WHEN billing_origin_product = 'VECTOR_SEARCH' AND endpoint_name ILIKE 'ka-%' THEN 'Vector Search (old KA endpoints)'\n    WHEN billing_origin_product = 'VECTOR_SEARCH' THEN 'Vector Search'")
+LOG.append("costs: 3 Lakebase projects, old KA vector endpoints shown as their own category")
+
+# ---------------------------------------------------------------- 8c. Quality page: MLflow KA-era section removed (source table absent)
+qp = PAGES["ChatBot - Quality"]["layout"]
+gone = [i for i in qp if i["widget"]["name"].startswith("mlflow_")]
+cut = max(i["position"]["y"] + i["position"]["height"] for i in gone)
+top = min(i["position"]["y"] for i in gone)
+qp[:] = [i for i in qp if i not in gone]
+for i in qp:
+    if i["position"]["y"] >= cut:
+        i["position"]["y"] -= cut - top
+DS.pop("mlflow_scorer_data")
+d["datasets"] = [x for x in d["datasets"] if x["name"] in DS]
+d["relationshipGraphs"][0]["sources"] = [s for s in d["relationshipGraphs"][0]["sources"] if s["datasetName"] in DS]
+LOG.append("quality: MLflow section and dataset removed (ka_mlflow_scorer_assessments does not exist)")
+
 # ---------------------------------------------------------------- 9. unused datasets
 for name in ("debug_recent_users", "hc_index_freshness"):
     DS.pop(name)

@@ -1,149 +1,6 @@
 {
   "datasets": [
     {
-      "name": "mlflow_scorer_data",
-      "displayName": "MLflow Native Scorer Assessments (Continuous Monitoring)",
-      "queryLines": [
-        "WITH user_lookup AS (\n",
-        "  SELECT user_id, MAX(REPLACE(REPLACE(email, '\\n', ''), '\\r', '')) AS email, MAX(display_name) AS display_name, FLATTEN(COLLECT_SET(groups)) AS groups\n",
-        "  FROM uat_proj.qualibot.users\n",
-        "  GROUP BY user_id\n",
-        "),\n",
-        "msgs AS (\n",
-        "  SELECT\n",
-        "    id, created_at, session_id, division, role, content, trace_id, user_id,\n",
-        "    CASE WHEN role = 'user' AND content LIKE '[Division:%' AND LOCATE('state it explicitly.', content) > 0\n",
-        "      THEN REGEXP_REPLACE(SUBSTRING(content, LOCATE('state it explicitly.', content) + 20), '^[\\n\\r ]+', '')\n",
-        "      ELSE content END AS clean_content\n",
-        "  FROM uat_proj.qualibot.chat_messages\n",
-        "  WHERE status = 'ok' AND deleted = false\n",
-        "),\n",
-        "windowed AS (\n",
-        "  SELECT\n",
-        "    id, created_at, session_id, division, role, content, trace_id, user_id,\n",
-        "    LAST_VALUE(CASE WHEN role = 'user' THEN clean_content END) IGNORE NULLS OVER (\n",
-        "      PARTITION BY session_id ORDER BY created_at ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING\n",
-        "    ) AS user_question\n",
-        "  FROM msgs\n",
-        "),\n",
-        "threaded AS (\n",
-        "  SELECT id AS message_id, created_at, session_id, division, content AS answer, trace_id, user_id, user_question\n",
-        "  FROM windowed\n",
-        "  WHERE role = 'assistant'\n",
-        "),\n",
-        "trace_to_message AS (\n",
-        "  SELECT message_id, trace_id FROM threaded WHERE trace_id RLIKE '^tr-[0-9a-f]{32}$'\n",
-        "  UNION\n",
-        "  SELECT message_id, trace_id FROM uat_proj.qualibot.chat_message_trace_backfill WHERE trace_id IS NOT NULL\n",
-        "),\n",
-        "assessments_pivoted AS (\n",
-        "  SELECT\n",
-        "    trace_id, division, MAX(request_time) AS request_time,\n",
-        "    MAX(CASE WHEN scorer_name = 'safety' THEN value END) AS safety_value,\n",
-        "    MAX(CASE WHEN scorer_name = 'safety' THEN rationale END) AS safety_rationale,\n",
-        "    MAX(CASE WHEN scorer_name = 'groundedness' THEN value END) AS groundedness_value,\n",
-        "    MAX(CASE WHEN scorer_name = 'groundedness' THEN rationale END) AS groundedness_rationale,\n",
-        "    MAX(CASE WHEN scorer_name = 'relevance_to_query' THEN value END) AS relevance_value,\n",
-        "    MAX(CASE WHEN scorer_name = 'relevance_to_query' THEN rationale END) AS relevance_rationale,\n",
-        "    MAX(CASE WHEN scorer_name = 'completeness' THEN value END) AS completeness_value,\n",
-        "    MAX(CASE WHEN scorer_name = 'completeness' THEN rationale END) AS completeness_rationale,\n",
-        "    MAX(CASE WHEN scorer_name = 'language_match' THEN value END) AS language_match_value,\n",
-        "    MAX(CASE WHEN scorer_name = 'language_match' THEN rationale END) AS language_match_rationale,\n",
-        "    MAX(CASE WHEN scorer_name = 'no_empty_refusal' THEN value END) AS no_empty_refusal_value,\n",
-        "    MAX(CASE WHEN scorer_name = 'response_length_check' THEN value END) AS response_length_value,\n",
-        "    MAX(CASE WHEN scorer_name = 'latency_check' THEN value END) AS latency_value,\n",
-        "    MAX(CASE WHEN scorer_name = 'document_citation_count' THEN value END) AS citation_count_value\n",
-        "  FROM uat_proj.qualibot.ka_mlflow_scorer_assessments\n",
-        "  GROUP BY trace_id, division\n",
-        ")\n",
-        "SELECT\n",
-        "  ap.trace_id,\n",
-        "  ap.division,\n",
-        "  timestamp_millis(ap.request_time) AS request_time,\n",
-        "  th.message_id,\n",
-        "  th.session_id,\n",
-        "  th.user_question,\n",
-        "  th.answer,\n",
-        "  COALESCE(u.email, 'Unknown user') AS email,\n",
-        "  CONCAT('https://qualibot-3155144190025826.aws.databricksapps.com/chat/shared/', s.share_token) AS qualibot_link,\n",
-        "  ap.safety_value, ap.safety_rationale,\n",
-        "  ap.groundedness_value, ap.groundedness_rationale,\n",
-        "  ap.relevance_value, ap.relevance_rationale,\n",
-        "  ap.completeness_value, ap.completeness_rationale,\n",
-        "  ap.language_match_value, ap.language_match_rationale,\n",
-        "  ap.no_empty_refusal_value,\n",
-        "  ap.response_length_value,\n",
-        "  ap.latency_value,\n",
-        "  ap.citation_count_value\n",
-        "FROM assessments_pivoted ap\n",
-        "JOIN trace_to_message t ON t.trace_id = ap.trace_id\n",
-        "JOIN threaded th ON th.message_id = t.message_id\n",
-        "LEFT JOIN uat_proj.qualibot.chat_sessions s ON s.id = th.session_id\n",
-        "LEFT JOIN user_lookup u ON u.user_id = th.user_id\n",
-        "WHERE\n",
-        "  NOT array_contains(COALESCE(u.groups, CAST(ARRAY() AS ARRAY<STRING>)), 'Role-Project-LEAP-CoreDev')\n",
-        "  AND NOT array_contains(COALESCE(u.groups, CAST(ARRAY() AS ARRAY<STRING>)), 'Role-Project-LEAP-CoreAdmin')\n",
-        "ORDER BY request_time DESC\n"
-      ],
-      "columns": [
-        {
-          "displayName": "Safety Flag",
-          "description": "pass / fail / no verdict",
-          "expression": "CASE WHEN safety_value = 'yes' THEN 'PASS' WHEN safety_value = 'no' THEN 'FAIL' ELSE '-' END"
-        },
-        {
-          "displayName": "Groundedness Flag",
-          "description": "pass / fail / no verdict",
-          "expression": "CASE WHEN groundedness_value = 'yes' THEN 'PASS' WHEN groundedness_value = 'no' THEN 'FAIL' ELSE '-' END"
-        },
-        {
-          "displayName": "Relevance Flag",
-          "description": "pass / fail / no verdict",
-          "expression": "CASE WHEN relevance_value = 'yes' THEN 'PASS' WHEN relevance_value = 'no' THEN 'FAIL' ELSE '-' END"
-        },
-        {
-          "displayName": "Completeness Flag",
-          "description": "pass / fail / no verdict",
-          "expression": "CASE WHEN completeness_value = 'yes' THEN 'PASS' WHEN completeness_value = 'no' THEN 'FAIL' ELSE '-' END"
-        },
-        {
-          "displayName": "Language Flag",
-          "description": "pass / fail / no verdict",
-          "expression": "CASE WHEN language_match_value = 'yes' THEN 'PASS' WHEN language_match_value = 'no' THEN 'FAIL' ELSE '-' END"
-        },
-        {
-          "displayName": "Other Checks Flag",
-          "description": "Compact no-empty-refusal / response-length / latency result, in that order",
-          "expression": "CONCAT('Refus ', CASE WHEN no_empty_refusal_value = 'True' THEN 'OK' WHEN no_empty_refusal_value = 'False' THEN 'FAIL' ELSE '-' END, '  Len ', CASE WHEN response_length_value = 'True' THEN 'OK' WHEN response_length_value = 'False' THEN 'FAIL' ELSE '-' END, '  Lat ', CASE WHEN latency_value = 'True' THEN 'OK' WHEN latency_value = 'False' THEN 'FAIL' ELSE '-' END)"
-        },
-        {
-          "displayName": "Failure Rationale",
-          "description": "One line per FAILED MLflow scorer only (empty if everything passed)",
-          "expression": "REPLACE(CONCAT_WS('\\n', CASE WHEN safety_value = 'no' THEN CONCAT('Safety: ', safety_rationale) END, CASE WHEN groundedness_value = 'no' THEN CONCAT('Groundedness: ', groundedness_rationale) END, CASE WHEN relevance_value = 'no' THEN CONCAT('Relevance: ', relevance_rationale) END, CASE WHEN completeness_value = 'no' THEN CONCAT('Completeness: ', completeness_rationale) END, CASE WHEN language_match_value = 'no' THEN CONCAT('Language: ', language_match_rationale) END), '\\n', '<br>')"
-        },
-        {
-          "displayName": "Safety Fail",
-          "description": "1 if the MLflow safety scorer failed, else 0",
-          "expression": "CASE WHEN safety_value = 'no' THEN 1 ELSE 0 END"
-        },
-        {
-          "displayName": "Groundedness Fail",
-          "description": "1 if the MLflow groundedness scorer failed, else 0",
-          "expression": "CASE WHEN groundedness_value = 'no' THEN 1 ELSE 0 END"
-        },
-        {
-          "displayName": "Relevance Fail",
-          "description": "1 if the MLflow relevance scorer failed, else 0",
-          "expression": "CASE WHEN relevance_value = 'no' THEN 1 ELSE 0 END"
-        },
-        {
-          "displayName": "Completeness Fail",
-          "description": "1 if the MLflow completeness scorer failed, else 0",
-          "expression": "CASE WHEN completeness_value = 'no' THEN 1 ELSE 0 END"
-        }
-      ]
-    },
-    {
       "name": "feedbacks_data",
       "displayName": "Feedbacks",
       "queryLines": [
@@ -1850,7 +1707,7 @@
         "      -- (live-checked 2026-09-03), and it hosts only Qualibot's 3 indexes.\n",
         "      (\n",
         "        u.billing_origin_product = 'VECTOR_SEARCH'\n",
-        "        AND u.usage_metadata.endpoint_name = 'qualibot'\n",
+        "        AND (u.usage_metadata.endpoint_name = 'qualibot' OR u.usage_metadata.endpoint_name ILIKE 'ka-%-vs-endpoint')\n",
         "      )\n",
         "      -- Knowledge Assistants (Agent Bricks serving)\n",
         "      OR (\n",
@@ -1867,7 +1724,7 @@
         "      -- project in the workspace (other teams have their own).\n",
         "      OR (\n",
         "        u.billing_origin_product = 'LAKEBASE'\n",
-        "        AND u.usage_metadata.project_id = 'd9fd81bc-5865-4ef0-8718-520a9e8d6c68'\n",
+        "        AND u.usage_metadata.project_id IN ('d9fd81bc-5865-4ef0-8718-520a9e8d6c68', 'e9185a28-13c6-42da-9ccc-0dbcf6b97b60', 'deb195f2-6189-419e-a640-b29fa71e540c')\n",
         "      )\n",
         "    )\n",
         "  GROUP BY ALL\n",
@@ -1882,6 +1739,7 @@
         "  CASE\n",
         "    WHEN billing_origin_product = 'JOBS' THEN 'Jobs (Parsing Pipeline & Admin)'\n",
         "    WHEN billing_origin_product = 'APPS' THEN 'Application (compute)'\n",
+        "    WHEN billing_origin_product = 'VECTOR_SEARCH' AND endpoint_name ILIKE 'ka-%' THEN 'Vector Search (old KA endpoints)'\n",
         "    WHEN billing_origin_product = 'VECTOR_SEARCH' THEN 'Vector Search'\n",
         "    WHEN billing_origin_product = 'AGENT_BRICKS' THEN 'KA Serving (Agent Bricks)'\n",
         "    WHEN billing_origin_product = 'LAKEBASE' AND sku_name LIKE '%STORAGE%' THEN 'Lakebase Storage'\n",
@@ -2786,7 +2644,7 @@
         "    AND (\n",
         "      (\n",
         "        u.billing_origin_product = 'VECTOR_SEARCH'\n",
-        "        AND u.usage_metadata.endpoint_name = 'qualibot'\n",
+        "        AND (u.usage_metadata.endpoint_name = 'qualibot' OR u.usage_metadata.endpoint_name ILIKE 'ka-%-vs-endpoint')\n",
         "      )\n",
         "      OR (\n",
         "        u.billing_origin_product = 'AGENT_BRICKS'\n",
@@ -2799,7 +2657,7 @@
         "      )\n",
         "      OR (\n",
         "        u.billing_origin_product = 'LAKEBASE'\n",
-        "        AND u.usage_metadata.project_id = 'd9fd81bc-5865-4ef0-8718-520a9e8d6c68'\n",
+        "        AND u.usage_metadata.project_id IN ('d9fd81bc-5865-4ef0-8718-520a9e8d6c68', 'e9185a28-13c6-42da-9ccc-0dbcf6b97b60', 'deb195f2-6189-419e-a640-b29fa71e540c')\n",
         "      )\n",
         "    )\n",
         "  GROUP BY\n",
@@ -2822,6 +2680,7 @@
         "  CASE\n",
         "    WHEN billing_origin_product = 'JOBS' THEN 'Jobs'\n",
         "    WHEN billing_origin_product = 'APPS' THEN 'Apps'\n",
+        "    WHEN billing_origin_product = 'VECTOR_SEARCH' AND endpoint_name ILIKE 'ka-%' THEN 'Vector Search (old KA endpoints)'\n",
         "    WHEN billing_origin_product = 'VECTOR_SEARCH' THEN 'Vector Search'\n",
         "    WHEN billing_origin_product = 'AGENT_BRICKS' THEN 'KA Serving'\n",
         "    WHEN\n",
@@ -3105,10 +2964,6 @@
         {
           "name": "ChatBot_Top_User_by_Site",
           "datasetName": "chat_top_user_by_site"
-        },
-        {
-          "name": "MLflow_Native_Scorer_Assessments_Continuous_Monitoring",
-          "datasetName": "mlflow_scorer_data"
         },
         {
           "name": "Qualibot__Hourly_Cost_Detail",
@@ -6317,451 +6172,6 @@
       "layout": [
         {
           "widget": {
-            "name": "mlflow_header",
-            "multilineTextboxSpec": {
-              "lines": [
-                "## MLflow Native Scorers (Continuous Monitoring)\n",
-                "\n",
-                "Registered directly on the KA's own MLflow experiments (`sample_rate=1.0`, every new turn judged automatically going forward) -- also visible on the MLflow agents page. Different prompts/judge than the section below, a second independent opinion on the same dimensions. One row per question."
-              ]
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 0,
-            "width": 12,
-            "height": 2
-          }
-        },
-        {
-          "widget": {
-            "name": "mlflow_counter_safety",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "mlflow_scorer_data",
-                  "fields": [
-                    {
-                      "name": "sum(Safety Fail)",
-                      "expression": "SUM(`Safety Fail`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "title": "CRITICAL - MLflow Safety Failures",
-                "showTitle": true
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "sum(Safety Fail)",
-                  "format": {
-                    "type": "number-plain",
-                    "abbreviation": "none",
-                    "decimalPlaces": {
-                      "type": "exact",
-                      "places": 0
-                    }
-                  },
-                  "displayName": "Count"
-                }
-              }
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "mlflow_counter_groundedness",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "mlflow_scorer_data",
-                  "fields": [
-                    {
-                      "name": "sum(Groundedness Fail)",
-                      "expression": "SUM(`Groundedness Fail`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "title": "CRITICAL - MLflow Groundedness Failures",
-                "showTitle": true
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "sum(Groundedness Fail)",
-                  "format": {
-                    "type": "number-plain",
-                    "abbreviation": "none",
-                    "decimalPlaces": {
-                      "type": "exact",
-                      "places": 0
-                    }
-                  },
-                  "displayName": "Count"
-                }
-              }
-            }
-          },
-          "position": {
-            "x": 3,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "mlflow_counter_relevance",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "mlflow_scorer_data",
-                  "fields": [
-                    {
-                      "name": "sum(Relevance Fail)",
-                      "expression": "SUM(`Relevance Fail`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "title": "CRITICAL - MLflow Relevance Failures",
-                "showTitle": true
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "sum(Relevance Fail)",
-                  "format": {
-                    "type": "number-plain",
-                    "abbreviation": "none",
-                    "decimalPlaces": {
-                      "type": "exact",
-                      "places": 0
-                    }
-                  },
-                  "displayName": "Count"
-                }
-              }
-            }
-          },
-          "position": {
-            "x": 6,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "mlflow_counter_completeness",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "mlflow_scorer_data",
-                  "fields": [
-                    {
-                      "name": "sum(Completeness Fail)",
-                      "expression": "SUM(`Completeness Fail`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "title": "CRITICAL - MLflow Completeness Failures",
-                "showTitle": true
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "sum(Completeness Fail)",
-                  "format": {
-                    "type": "number-plain",
-                    "abbreviation": "none",
-                    "decimalPlaces": {
-                      "type": "exact",
-                      "places": 0
-                    }
-                  },
-                  "displayName": "Count"
-                }
-              }
-            }
-          },
-          "position": {
-            "x": 9,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "mlflow_table_detail",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "mlflow_scorer_data",
-                  "fields": [
-                    {
-                      "name": "request_time",
-                      "expression": "`request_time`"
-                    },
-                    {
-                      "name": "division",
-                      "expression": "`division`"
-                    },
-                    {
-                      "name": "email",
-                      "expression": "`email`"
-                    },
-                    {
-                      "name": "Safety Flag",
-                      "expression": "`Safety Flag`"
-                    },
-                    {
-                      "name": "Groundedness Flag",
-                      "expression": "`Groundedness Flag`"
-                    },
-                    {
-                      "name": "Relevance Flag",
-                      "expression": "`Relevance Flag`"
-                    },
-                    {
-                      "name": "Completeness Flag",
-                      "expression": "`Completeness Flag`"
-                    },
-                    {
-                      "name": "Language Flag",
-                      "expression": "`Language Flag`"
-                    },
-                    {
-                      "name": "Other Checks Flag",
-                      "expression": "`Other Checks Flag`"
-                    },
-                    {
-                      "name": "citation_count_value",
-                      "expression": "`citation_count_value`"
-                    },
-                    {
-                      "name": "Failure Rationale",
-                      "expression": "`Failure Rationale`"
-                    },
-                    {
-                      "name": "user_question",
-                      "expression": "`user_question`"
-                    },
-                    {
-                      "name": "answer",
-                      "expression": "`answer`"
-                    },
-                    {
-                      "name": "qualibot_link",
-                      "expression": "`qualibot_link`"
-                    }
-                  ],
-                  "disaggregated": true
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "table",
-              "rowsPerPage": 25,
-              "frame": {
-                "title": "MLflow Scorer Detail -- one row per question",
-                "showTitle": true
-              },
-              "encodings": {
-                "columns": [
-                  {
-                    "fieldName": "request_time",
-                    "displayName": "Date"
-                  },
-                  {
-                    "fieldName": "division",
-                    "displayName": "Division"
-                  },
-                  {
-                    "fieldName": "email",
-                    "displayName": "User",
-                    "columnWidth": 140
-                  },
-                  {
-                    "fieldName": "Safety Flag",
-                    "displayName": "Safety",
-                    "style": {
-                      "type": "basic",
-                      "rules": [
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "FAIL"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#FF3621"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "fieldName": "Groundedness Flag",
-                    "displayName": "Grounded",
-                    "style": {
-                      "type": "basic",
-                      "rules": [
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "FAIL"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#FF3621"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "fieldName": "Relevance Flag",
-                    "displayName": "Relevant",
-                    "style": {
-                      "type": "basic",
-                      "rules": [
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "FAIL"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#FF3621"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "fieldName": "Completeness Flag",
-                    "displayName": "Complete",
-                    "style": {
-                      "type": "basic",
-                      "rules": [
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "FAIL"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#FF3621"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "fieldName": "Language Flag",
-                    "displayName": "Lang",
-                    "style": {
-                      "type": "basic",
-                      "rules": [
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "FAIL"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#FF3621"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "fieldName": "Other Checks Flag",
-                    "displayName": "Other Checks",
-                    "columnWidth": 170
-                  },
-                  {
-                    "fieldName": "citation_count_value",
-                    "displayName": "Citations",
-                    "columnWidth": 90
-                  },
-                  {
-                    "fieldName": "Failure Rationale",
-                    "displayName": "Rationale (failures only)",
-                    "columnWidth": 260,
-                    "style": {
-                      "type": "html"
-                    }
-                  },
-                  {
-                    "fieldName": "user_question",
-                    "displayName": "User Question",
-                    "columnWidth": 240
-                  },
-                  {
-                    "fieldName": "answer",
-                    "displayName": "Answer",
-                    "columnWidth": 260,
-                    "style": {
-                      "type": "html"
-                    }
-                  },
-                  {
-                    "fieldName": "qualibot_link",
-                    "displayName": "Qualibot Link",
-                    "columnWidth": 250
-                  }
-                ]
-              }
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 5,
-            "width": 12,
-            "height": 12
-          }
-        },
-        {
-          "widget": {
             "name": "header",
             "multilineTextboxSpec": {
               "lines": [
@@ -6773,7 +6183,7 @@
           },
           "position": {
             "x": 0,
-            "y": 17,
+            "y": 0,
             "width": 12,
             "height": 2
           }
@@ -6821,7 +6231,7 @@
           },
           "position": {
             "x": 0,
-            "y": 19,
+            "y": 2,
             "width": 3,
             "height": 3
           }
@@ -6874,7 +6284,7 @@
           },
           "position": {
             "x": 3,
-            "y": 19,
+            "y": 2,
             "width": 3,
             "height": 3
           }
@@ -6922,7 +6332,7 @@
           },
           "position": {
             "x": 6,
-            "y": 19,
+            "y": 2,
             "width": 3,
             "height": 3
           }
@@ -6970,7 +6380,7 @@
           },
           "position": {
             "x": 9,
-            "y": 19,
+            "y": 2,
             "width": 3,
             "height": 3
           }
@@ -7229,7 +6639,7 @@
           },
           "position": {
             "x": 0,
-            "y": 22,
+            "y": 5,
             "width": 12,
             "height": 12
           }
