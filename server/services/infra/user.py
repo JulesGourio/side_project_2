@@ -274,11 +274,11 @@ async def get_capabilities(request: Request) -> dict:
             groups |= scim_groups
             sources.append('SCIM')
         except Exception as e:
-            logger.info('Capabilities %s: SCIM not read (%s)', key, e)
+            logger.debug('Capabilities %s: SCIM not read (%s)', key, e)
 
     caps = _caps_from_groups(groups)
     if caps['groups']:
-        logger.info('Capabilities %s: can_chat=%s can_compare=%s (%s) groups=%s', key, caps['can_chat'],
+        logger.debug('Capabilities %s: can_chat=%s can_compare=%s (%s) groups=%s', key, caps['can_chat'],
                     caps['can_compare'], '+'.join(sources), caps['groups'])
     elif not table_read:
         logger.warning('Capabilities %s: no allowed group found and users table not read (%s) — chat only, uncached',
@@ -287,7 +287,7 @@ async def get_capabilities(request: Request) -> dict:
         return dict(_DEFAULT_CAPS)
     else:
         caps = dict(_DEFAULT_CAPS)
-        logger.info('Capabilities %s: no allowed group found (%s) — chat only', key, '+'.join(sources))
+        logger.debug('Capabilities %s: no allowed group found (%s) — chat only', key, '+'.join(sources))
     _remember_caps(key, now, caps)
     await _remember_identity(forwarded, email or header_email, display_name)
     return caps

@@ -214,7 +214,7 @@ async def chat_ws(websocket: WebSocket) -> None:
         log.answer = final_content
         msg_id = await _persist('ok', final_content)
         outcome = 'ok'
-        logger.info('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
+        logger.debug('chat turn done [ws]: division=%s endpoint=%s sources=%d citations=%d',
                     division, endpoint, len(collected_sources), len(collected_citations))
         await websocket.send_json({
             'type': 'done',

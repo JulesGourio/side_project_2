@@ -70,7 +70,7 @@ async def export_excel(
     if image_pairs_json:
         try:
             image_pairs = json.loads(image_pairs_json)
-            logger.info('export-excel: %d image pair(s) received', len(image_pairs) if image_pairs else 0)
+            logger.debug('export-excel: %d image pair(s) received', len(image_pairs) if image_pairs else 0)
         except Exception as e:
             logger.warning('export-excel: failed to parse image_pairs_json: %s', e)
 
@@ -261,7 +261,7 @@ async def save_excel_to_session(
     if image_pairs_json:
         try:
             image_pairs = json.loads(image_pairs_json)
-            logger.info('save-excel: %d image pair(s) received', len(image_pairs) if image_pairs else 0)
+            logger.debug('save-excel: %d image pair(s) received', len(image_pairs) if image_pairs else 0)
         except Exception as e2:
             logger.warning('save-excel: failed to parse image_pairs_json: %s', e2)
 

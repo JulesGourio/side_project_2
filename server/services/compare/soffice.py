@@ -372,7 +372,7 @@ def convert_docx_to_pdf(docx_bytes: bytes, timeout_s: int = _CONVERT_TIMEOUT_S, 
                     f'soffice rc={out.returncode}: {(out.stderr or out.stdout).strip()[:800]}'
                 )
             pdf_bytes = pdf.read_bytes()
-            logger.info(
+            logger.debug(
                 'soffice: converted %.0f kB docx -> %.0f kB pdf in %.1fs',
                 len(docx_bytes) / 1e3, len(pdf_bytes) / 1e3, time.monotonic() - started,
             )

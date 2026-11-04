@@ -83,7 +83,7 @@ async def preview_document_pdf(file: UploadFile = File(...)) -> Response:
     try:
         pdf_bytes = await asyncio.to_thread(convert_docx_to_pdf, content, suffix=suffix)
     except SofficeUnavailable as e:
-        logger.info('preview/pdf: no engine (%s)', e)
+        logger.debug('preview/pdf: no engine (%s)', e)
         return JSONResponse({'error': 'Exact PDF rendering unavailable'}, status_code=501)
     except Exception as e:
         logger.warning('preview/pdf: conversion of %r failed: %s', name, e)
