@@ -1,7 +1,9 @@
-"""Builds the corrected UAT dashboard from original/Qualibot_Usage_Tracking.lvdash.json.
+"""Builds the Usage Tracking dashboard of one environment from original/Qualibot_Usage_Tracking.lvdash.json.
 
-Usage: python3 build_dashboard.py   (writes Qualibot_Usage_Tracking.lvdash.json next to this file)
+Usage: python3 build_dashboard.py [dev|uat|prod]   (default uat; writes
+resources/dashboards/qualibot_usage_tracking_<env>.lvdash.json, deployed by the bundle)
 """
+import sys
 import copy
 import json
 import re
@@ -9,9 +11,21 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 SRC = HERE / "original" / "Qualibot_Usage_Tracking.lvdash.json"
-OUT = HERE / "Qualibot_Usage_Tracking.lvdash.json"
 
-ENV = "uat"
+TARGET = sys.argv[1] if len(sys.argv) > 1 else "uat"
+ENV = "uat"  # the dashboard is built on the UAT names, then retargeted at the end
+CONFIGS = {
+    "dev": {"workspace_id": "2865348338307293", "host": "https://dbc-c623749d-731b.cloud.databricks.com",
+            "experiment_id": None, "lakebase_project": "e9185a28-13c6-42da-9ccc-0dbcf6b97b60", "label": "DEV"},
+    "uat": {"workspace_id": "3155144190025826", "host": "https://dbc-3a17bfce-9e88.cloud.databricks.com",
+            "experiment_id": "258804869957724", "lakebase_project": "d9fd81bc-5865-4ef0-8718-520a9e8d6c68",
+            "label": "UAT"},
+    "prod": {"workspace_id": "1210945332048776", "host": "https://dbc-77b87d5a-6bcb.cloud.databricks.com",
+             "experiment_id": None, "lakebase_project": "deb195f2-6189-419e-a640-b29fa71e540c", "label": "PROD (LEAP-Core)"},
+}
+CFG = CONFIGS[TARGET]
+UAT = CONFIGS["uat"]
+OUT = HERE.parent.parent / "resources" / "dashboards" / f"qualibot_usage_tracking_{TARGET}.lvdash.json"
 DASH_ID = "01f13d51cb401021adbe602186380270"
 EXCLUDED_EMAILS = (
     "'sam.crawshayjones@latecoere.aero', 'yann.depledt.external@latecoere.aero', "
@@ -140,8 +154,8 @@ RENAMES = [
     (r"uat_landingzone\.qualibot\._pipeline_checkpoint_v1", f"{ENV}_proj.qualibot.parsing_checkpoint"),
     (r"uat_proj\.qualibot\.messages\b", f"{ENV}_proj.qualibot.compare_messages"),
     (r"uat_proj\.qualibot\.feedbacks\b", f"{ENV}_proj.qualibot.compare_feedbacks"),
-    (r"dev_landingzone\.qualibot\.chat_messages", "dev_proj.qualibot.chat_messages"),
-    (r"dev_landingzone\.qualibot\.messages\b", "dev_proj.qualibot.compare_messages"),
+    (r"dev_landingzone\.qualibot\.chat_messages", f"{ENV}_proj.qualibot.chat_messages"),
+    (r"dev_landingzone\.qualibot\.messages\b", f"{ENV}_proj.qualibot.compare_messages"),
 ]
 for name in DS:
     sql = get_sql(name)
@@ -198,14 +212,8 @@ WITH ka_billing AS (
   GROUP BY u.usage_date, u.workspace_id, u.usage_metadata.endpoint_name
 ),
 chat_daily AS (
-  SELECT 'DEV' AS env, DATE(TRY_CAST(created_at AS TIMESTAMP)) AS usage_date, COUNT(*) AS n_user_messages
-  FROM dev_proj.qualibot.chat_messages
-  WHERE role = 'user' AND deleted = false
-    AND DATE(TRY_CAST(created_at AS TIMESTAMP)) >= current_date() - INTERVAL 30 DAYS
-  GROUP BY 2
-  UNION ALL
-  SELECT 'UAT', DATE(TRY_CAST(created_at AS TIMESTAMP)), COUNT(*)
-  FROM uat_proj.qualibot.chat_messages
+  SELECT '{CFG["label"].split(" ")[0]}' AS env, DATE(TRY_CAST(created_at AS TIMESTAMP)) AS usage_date, COUNT(*) AS n_user_messages
+  FROM {ENV}_proj.qualibot.chat_messages
   WHERE role = 'user' AND deleted = false
     AND DATE(TRY_CAST(created_at AS TIMESTAMP)) >= current_date() - INTERVAL 30 DAYS
   GROUP BY 2
@@ -513,7 +521,7 @@ WHERE b.rn = 1
 LOG.append("intraqual changes / doc search: current tables, status lists, scope table of the data asset")
 
 # ---------------------------------------------------------------- 8b. costs: every Lakebase project and the old KA vector endpoints
-LAKEBASE_PROJECTS = "'d9fd81bc-5865-4ef0-8718-520a9e8d6c68', 'e9185a28-13c6-42da-9ccc-0dbcf6b97b60', 'deb195f2-6189-419e-a640-b29fa71e540c'"
+LAKEBASE_PROJECTS = ", ".join(f"'{c['lakebase_project']}'" for c in CONFIGS.values())
 for name in ("qb_cost_all", "qb_cost_hourly"):
     sub(name, r"u\.usage_metadata\.project_id = 'd9fd81bc-5865-4ef0-8718-520a9e8d6c68'",
         f"u.usage_metadata.project_id IN ({LAKEBASE_PROJECTS})")
@@ -541,8 +549,8 @@ LOG.append("quality: MLflow section and dataset removed (ka_mlflow_scorer_assess
 d["pages"] = [p for p in d["pages"] if p["displayName"] != "ChatBot - Quality"]
 PAGES.pop("ChatBot - Quality")
 DS.pop("chat_quality_data")
-HOST = "https://dbc-3a17bfce-9e88.cloud.databricks.com/ml/experiments/"
-TAIL = "/traces?o=3155144190025826&selectedEvaluationId="
+HOST = UAT["host"] + "/ml/experiments/"
+TAIL = f"/traces?o={UAT['workspace_id']}&selectedEvaluationId="
 
 
 def trace_link_sql(trace_col: str, division_col: str, mlflow_col: str) -> str:
@@ -553,9 +561,11 @@ def trace_link_sql(trace_col: str, division_col: str, mlflow_col: str) -> str:
     :param mlflow_col: Column with the MLflow trace id of the turn (`trace:/<catalog>.<schema>.<experiment>/<hex>`).
     :return: SQL expression, NULL when the message has no trace.
     """
+    if CFG["experiment_id"] is None:
+        return "CAST(NULL AS STRING)"
     return (
         f"CASE "
-        f"WHEN {mlflow_col} IS NOT NULL AND {mlflow_col} != '' THEN CONCAT('{HOST}258804869957724{TAIL}', "
+        f"WHEN {mlflow_col} IS NOT NULL AND {mlflow_col} != '' THEN CONCAT('{HOST}{CFG["experiment_id"]}{TAIL}', "
         f"REPLACE(REPLACE({mlflow_col}, ':', '%3A'), '/', '%2F')) "
         f"WHEN {trace_col} RLIKE '^tr-[0-9a-f]{{32}}$' THEN CONCAT('{HOST}', "
         f"CASE WHEN {division_col} = 'AS' THEN '2748374992560664' WHEN {division_col} = 'IS' THEN '2748374992560665' "
@@ -1300,5 +1310,11 @@ d["relationshipGraphs"][0]["sources"] = [s_ for s_ in d["relationshipGraphs"][0]
 LOG.append("datasets no longer used removed: " + ", ".join(dropped))
 
 text = json.dumps(d, indent=2, ensure_ascii=False).replace("volumes/uat_landingzone/qualibot/doc_compare", f"volumes/{ENV}_proj/qualibot/doc_compare")
+if TARGET != "uat":
+    # Links and catalogs of the UAT workspace become those of the target workspace.
+    text = text.replace(UAT["host"], CFG["host"]).replace(f"o={UAT['workspace_id']}", f"o={CFG['workspace_id']}")
+    text = text.replace(f"qualibot-{UAT['workspace_id']}.aws", f"qualibot-{CFG['workspace_id']}.aws")
+    text = text.replace("uat_proj", f"{TARGET}_proj")
+OUT.parent.mkdir(parents=True, exist_ok=True)
 OUT.write_text(text + "\n", encoding="utf-8")
 print("\n".join("- " + x for x in LOG))

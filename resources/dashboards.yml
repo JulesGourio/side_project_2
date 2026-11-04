@@ -1,0 +1,9 @@
+# AI/BI dashboard of the usage tracking, deployed to every target. One file per target, generated from a single
+# template by runbooks/dashboard/build_dashboard.py; each reads its own <env>_proj.qualibot tables.
+
+resources:
+  dashboards:
+    qualibot_usage_tracking:
+      display_name: "Qualibot Usage Tracking (${bundle.target})"
+      file_path: ./dashboards/qualibot_usage_tracking_${bundle.target}.lvdash.json
+      warehouse_id: ${var.alerts_warehouse_id}

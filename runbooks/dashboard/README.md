@@ -1,6 +1,6 @@
 # Dashboard "Qualibot Usage Tracking" (Lakeview)
 
-Files: `original/Qualibot_Usage_Tracking.lvdash.json` (export as received 2026-11-03), `build_dashboard.py` (applies every fix below), `Qualibot_Usage_Tracking.lvdash.json` (result, UAT). Regenerate with `python3 build_dashboard.py`.
+Files: `original/Qualibot_Usage_Tracking.lvdash.json` (export as received 2026-11-03), `build_dashboard.py` (applies every fix below), the results `../../resources/dashboards/qualibot_usage_tracking_{dev,uat,prod}.lvdash.json`, deployed by the bundle (`resources/dashboards.yml`, one dashboard per target). Regenerate all three with `python3 build_dashboard.py dev && python3 build_dashboard.py uat && python3 build_dashboard.py prod`.
 Dashboard id (from the query names of the export): `01f13d51cb401021adbe602186380270`. Everything is hardcoded to UAT (`ENV` in the script).
 
 ## Structure (2026-11-04)
@@ -32,7 +32,7 @@ Dashboard id (from the query names of the export): `01f13d51cb401021adbe60218638
 - **Costs**: the three Lakebase projects (UAT `d9fd81bc`, DEV `e9185a28`, PROD `deb195f2`) are counted; the old KA vector endpoints `ka-*-vs-endpoint` (DEV 5, UAT 1, still billed) appear as the category "Vector Search (old KA endpoints)".
 - **Every cost dataset scans `system.billing.usage`** (5 datasets). A view in `uat_proj.qualibot` read by the five would divide the scans by five; needs a grant run as the SP.
 - **PROD**: workspace host, app URL (`qualibot-3155144190025826.aws.databricksapps.com`), MLflow experiment ids in `trace_link`, volume links are UAT values; a PROD dashboard needs the script parametrised with those.
-- **One dashboard per environment** (decided 2026-11-04): validate UAT first, then parametrise `build_dashboard.py` per env (catalogs, workspace id, host, app URL, experiment ids, Lakebase project, volume links).
+- **One dashboard per environment** (2026-11-04): the script is built on the UAT names and retargeted at the end (catalog, workspace id, host, app URL, volume links). Per env in `CONFIGS`: workspace, host, MLflow experiment id (trace links are empty on dev and prod until the id is filled in), Lakebase project. Costs read the account-wide billing tables, so the three dashboards show the same cost pages. Open: the PROD "PROD only / PROD+UAT" button with the 2026-11-04 date filter.
 
 ## Document explorer: diagnostic
 
