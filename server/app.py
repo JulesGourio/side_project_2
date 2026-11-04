@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
+from server.logging_setup import is_quiet_path, request_id, setup_logging
 from server import tracing  # noqa: F401 — sets up MLflow tracking URI
 from server.routers import chat, compare, config, exports, feedback, health, history, preview
 from server.services.infra.doc_catalog import catalog_refresher
@@ -25,12 +26,7 @@ from server.services.infra.lakebase import get_pool, init_lakebase, shutdown_lak
 from server.services.chat.translation_bridge import shutdown_http_client as shutdown_translation_bridge
 from server.services.infra.http_clients import close_shared_clients
 
-logging.basicConfig(
-  level=logging.INFO,
-  format='%(asctime)s UTC - %(name)s - %(levelname)s - %(message)s',
-  datefmt='%Y-%m-%d %H:%M:%S',
-  handlers=[logging.StreamHandler()],
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 env_local_loaded = load_dotenv(dotenv_path='.env.local')
@@ -118,18 +114,27 @@ async def log_requests(request: Request, call_next) -> Response:
   :return: the response of the downstream handler, with the ``X-Request-ID`` header set
   """
   req_id = str(uuid.uuid4())[:8]
+  token = request_id.set(req_id)
   start = time.monotonic()
-  logger.info(f'[{req_id}] --> {request.method} {request.url.path}')
+  quiet = is_quiet_path(request.url.path)
   try:
     response = await call_next(request)
     elapsed = time.monotonic() - start
-    logger.info(f'[{req_id}] <-- {response.status_code} ({elapsed:.2f}s)')
     response.headers['X-Request-ID'] = req_id
+    # One line per request, after it ends. Health and static files only when they fail.
+    if response.status_code >= 500:
+      logger.error('%s %s -> %d (%.2fs)', request.method, request.url.path, response.status_code, elapsed)
+    elif response.status_code >= 400 and not quiet:
+      logger.warning('%s %s -> %d (%.2fs)', request.method, request.url.path, response.status_code, elapsed)
+    elif not quiet:
+      logger.info('%s %s -> %d (%.2fs)', request.method, request.url.path, response.status_code, elapsed)
     return response
-  except Exception as exc:
-    elapsed = time.monotonic() - start
-    logger.error(f'[{req_id}] !! unhandled exception after {elapsed:.2f}s: {exc}', exc_info=True)
+  except Exception:
+    logger.exception('%s %s -> unhandled exception after %.2fs', request.method, request.url.path,
+                     time.monotonic() - start)
     raise
+  finally:
+    request_id.reset(token)
 
 
 @app.exception_handler(Exception)
