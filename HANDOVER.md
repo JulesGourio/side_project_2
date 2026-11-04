@@ -44,25 +44,6 @@ Définis dans [`resources/`](resources/). Mêmes noms dans les trois envs. Fusea
 
 Les plannings se changent dans [`databricks.yml`](databricks.yml) (variables `parsing_schedule_pause`, `lakebase_export_schedule_pause`, `alerts_pause_status`) puis `deploy-<env>-jobs`.
 
-### Lancer un job à la main (PowerShell)
-
-Interface : Databricks → Jobs → le job → **Run now with different parameters**. En ligne de commande :
-
-```powershell
-# 1. trouver l'id du job (remplacer DEV par UAT ou PROD)
-databricks jobs list --profile DEV -o json | ConvertFrom-Json |
-  Where-Object { $_.settings.name -eq 'D_1_Qualibot_Parsing_Pipeline' } |
-  Select-Object job_id
-
-# 2. lancer avec des paramètres (fichier en ASCII : PowerShell 5 ajoute sinon un BOM qui casse le JSON)
-$id = 123456789   # job_id trouvé ci-dessus
-@{ job_id = $id; job_parameters = @{ run_mode = 'incremental'; max_parse_files = '500' } } |
-  ConvertTo-Json -Depth 5 | Set-Content run.json -Encoding ascii
-databricks jobs run-now --profile DEV --json "@run.json"
-```
-
-Le job de parsing a `max_concurrent_runs: 1` et une file : un deuxième run attend le premier.
-
 ## 3. Pipeline de parsing
 
 Détail : [`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md).
@@ -212,9 +193,7 @@ Valeurs de [`app.yaml`](app.yaml) (aucune surcharge pour PROD dans [`utils/deplo
 
 ## 8. Déploiement
 
-Le code est déployé depuis le dépôt Bitbucket avec des **pipelines manuels** (fichier [`bitbucket-pipelines.yml`](bitbucket-pipelines.yml)) : rien ne part sur un simple push. Lancement : Bitbucket → Pipelines → **Run pipeline** → choisir la branche → **Custom** → choisir le pipeline dans la liste.
-
-Chaque environnement Bitbucket (`dev`, `uat`, `production`) porte un jeton `DATABRICKS_TOKEN` du SP de l'env ; le script [`utils/deploy/bitbucket_deploy.sh`](utils/deploy/bitbucket_deploy.sh) écrit le profil et lance `databricks bundle deploy`. L'interface (`client/out`) est construite à chaque déploiement, jamais versionnée.
+Pipelines Bitbucket **manuels** ([`bitbucket-pipelines.yml`](bitbucket-pipelines.yml)) : Pipelines → **Run pipeline** → branche → **Custom** → nom du pipeline. Rien ne part sur un push. Chaque environnement Bitbucket (`dev`, `uat`, `production`) porte le jeton du SP de l'env ; [`utils/deploy/bitbucket_deploy.sh`](utils/deploy/bitbucket_deploy.sh) lance `databricks bundle deploy`. L'interface est reconstruite à chaque déploiement.
 
 ### Les deux pipelines à connaître, pour chaque env
 
@@ -239,9 +218,7 @@ Règles : DEV sans test préalable ; UAT et PROD lancent d'abord la suite de tes
 | `uat-state-fix`, `bind-uat-lakebase`, `bind-uat-staging`, `unbind-dev-test-volume` | Réparations d'état du bundle UAT et DEV (détacher ou rattacher un objet existant) |
 | `sync-prod-data` | Copie le volume des modèles Docling d'UAT vers PROD en deux étapes |
 
-### Configuration de l'app par env
-
-Ordre de priorité : [`utils/deploy/target_env.json`](utils/deploy/target_env.json) (surcharges par env, rendu en `target_config.env` au déploiement), puis [`app.yaml`](app.yaml) (valeurs par défaut commentées), puis les valeurs du code. Les variables du bundle (planning, workers, index synchronisés, cluster policy) sont dans [`databricks.yml`](databricks.yml), une section par env.
+Configuration de l'app par env : [`utils/deploy/target_env.json`](utils/deploy/target_env.json) (surcharges) > [`app.yaml`](app.yaml) (défauts) > code. Variables du bundle (plannings, workers, index) : [`databricks.yml`](databricks.yml).
 
 ## 9. Comparaison de documents (DocCompare)
 
@@ -266,6 +243,26 @@ Route `POST /api/compare/analyze` ([`server/routers/compare/analyze.py`](server/
 5. **Méthode et prompt.** `standard` (résumé Markdown), `structured` (tableau JSON) ou `comparative` (cachée dans l'interface). La liste des méthodes proposées par type de fichier est dans `processors/versions.yml`, la méthode par défaut dans `COMPARE_METHOD_<TYPE>`. Les prompts sont dans [`server/prompts/compare/`](server/prompts/compare/) (`analysis_standard.md`, `analysis_structured.md`, `analysis_default.md`).
 6. **Appel du modèle.** `databricks-claude-sonnet-5-5` (`COMPARE_ANALYSIS_ENDPOINT`, réflexion adaptative réglée par `COMPARE_THINKING_EFFORT`), avec repli sur `COMPARE_LLM_FALLBACK_ENDPOINTS` (sinon GPT-5.6 Luna ou GPT-6 Luna). Un endpoint en échec est mis au repos et le suivant est essayé ; l'erreur n'est levée que si aucun ne répond. Au-delà de `COMPARE_CHUNK_THRESHOLD_CHARS` (60 000 caractères), la différence est coupée aux limites de sections en morceaux de `COMPARE_CHUNK_SIZE_CHARS` (45 000), analysés en parallèle puis fusionnés dans un seul flux (`chunked_analysis.py`).
 7. **Fin.** Une ligne d'audit est écrite dans `llm_requests` (statut `ok`, `error` ou `aborted`, durées, tokens, coût). Si le navigateur se déconnecte, l'appel au modèle s'arrête et la ligne est `aborted`.
+
+### Comment le diff est calculé
+
+Code : [`processors/text_diff.py`](server/services/compare/processors/text_diff.py) (gabarit commun aux processeurs de texte), [`_diff_engines/engines.py`](server/services/compare/processors/_diff_engines/engines.py) (moteur principal), [`collapse.py`](server/services/compare/processors/_diff_engines/collapse.py) et [`relocation.py`](server/services/compare/processors/_diff_engines/relocation.py) (nettoyage), [`text.py`](server/services/compare/processors/_diff_engines/text.py) (tests de changement substantiel), [`images.py`](server/services/compare/processors/_diff_engines/images.py) (images), [`prompts.py`](server/services/compare/processors/_diff_engines/prompts.py) (prompts système). Le modèle ne reçoit pas les deux documents entiers : il reçoit **une différence déjà calculée par du code**, qu'il met en forme et explique. C'est ce qui rend l'analyse fiable et peu coûteuse.
+
+Moteur principal `paragraph_semantic_diff`, dans l'ordre :
+1. **Découpage en blocs.** Chaque texte est découpé en blocs (un paragraphe, une ligne de tableau), chacun avec sa section, sa page et une forme de comparaison normalisée (minuscules, points de conduite et espaces réduits). Les blocs « (Suite) » / « (Continued) » coupés par un saut de page sont recollés.
+2. **En-têtes et pieds répétés.** Un texte qui revient sur chaque page (nom de société, titre de norme, tampon `4/39`) est dédoublonné, sinon il apparaîtrait comme une nouvelle section par page.
+3. **Appariement exact.** Les blocs identiques dans les deux versions sont écartés. Les blocs répétés sont appariés par **position** (pas dans l'ordre d'apparition), ce qui évite une suppression fantôme.
+4. **Re-segmentation.** Un paragraphe simplement redécoupé autrement par l'extraction (deux blocs devenus un, ou l'inverse) est annulé.
+5. **Appariement par similarité.** Les blocs restants de l'ancienne et de la nouvelle version sont comparés deux à deux (rapport de mots supérieur à 0,55, au moins 3 mots) ; les meilleurs couples deviennent des entrées **MODIFIED** avec marquage dans le texte (`~~supprimé~~`, `**ajouté**`), le reste devient **REMOVED** ou **ADDED**. Des bornes rapides (longueurs, mots communs) évitent la plupart des comparaisons coûteuses.
+6. **Deuxième et troisième chance.** Une ligne de tableau très réécrite mais de même étiquette de ligne et de même section est appariée plutôt que listée supprimée puis ajoutée. Un titre qui change seulement de numéro (`3. INSPECTION` devient `4. INSPECTION`) est apparié ; une vraie valeur modifiée (`2.5 mm max` devient `3.5 mm max`) n'est jamais masquée.
+7. **Ce qui n'est pas un vrai changement est filtré.** Un changement de verbe modal est substantiel seulement entre groupes d'obligation (obligatoire, permis, conseillé : « doit » vers « peut »), pas à l'intérieur d'un groupe. Un changement de pagination seule est ignoré. Un même changement répété sur chaque page, ou un restyle sur tout le document, est replié en une seule entrée annotée. Du texte déplacé (et non supprimé) est repéré par `relocation.py` et marqué comme déplacé ; les artefacts de découpage de l'extraction sont éliminés.
+8. **Sortie.** Entrées groupées par section dans l'ordre du document. Le nombre de blocs filtrés est transmis. Le texte est coupé à `COMPARE_MAX_DIFF_CHARS` (l'utilisateur est prévenu).
+
+La méthode `comparative` utilise un autre moteur, `section_canonical_diff` (différence unifiée groupée par titre). Les seuils sont des variables d'environnement (`COMPARE_PAIR_RATIO_THRESHOLD`, `COMPARE_ARTIFACT_MAX_WORDS`, `COMPARE_BOILERPLATE_MIN_PAGES`, `COMPARE_SYSTEMIC_SUB_MIN`, `COMPARE_WORD_LEVEL_CHECK`…, liste dans le [README des moteurs](server/services/compare/processors/_diff_engines/README.md)).
+
+**Images** : chaque image est réduite à une empreinte (`dhash`, `ahash`, puis une empreinte 16 x 16 qui confirme l'identité d'un couple). Les couples sont classés MODIFIED, ORIENTATION CHANGED, REMOVED ou ADDED, et les paires sont envoyées au modèle avec le diff texte.
+
+**Excel** : différence cellule par cellule, lignes appariées sur la première colonne ; une colonne de formules ou de dates qui change dans plus de la moitié des lignes (feuilles d'au moins 20 lignes) est considérée recalculée et seulement signalée ; une feuille présente d'un seul côté est signalée avec ses colonnes et ses 30 premières lignes. Si la première colonne n'est pas une clé unique, c'est une différence ligne à ligne. **Images (fichiers image)** : les deux images partent telles quelles à un modèle de vision.
 
 ### Résumé d'un seul document
 
@@ -310,18 +307,20 @@ La qualité vient de l'index `chunks_index` (donc du parsing, §3 : périmètre,
 
 ## 11. Chatbot
 
-Le chat n'est pas détaillé ici : tout est dans les README suivants.
+Détail dans les README : [moteur](server/services/chat/engine/README.md) (le plus utile), [services](server/services/chat/README.md), [route WebSocket](server/routers/chat/README.md), [interface](client/src/components/chat/README.md), [prompts](server/prompts/README.md), [infra / Vector Search / Lakebase](server/services/infra/README.md), [schéma des tables](server/services/infra/lakebase/schema.md). Fichiers clés : [`engine/queries.py`](server/services/chat/engine/queries.py) (traduction et réécriture), [`engine/search.py`](server/services/chat/engine/search.py) (recherches), [`engine/retrieval.py`](server/services/chat/engine/retrieval.py) (tout avant la réponse), [`engine/answer.py`](server/services/chat/engine/answer.py) (prompt et flux de réponse), [`engine/references.py`](server/services/chat/engine/references.py) (« quels documents citent X ? »), [`engine/citations.py`](server/services/chat/engine/citations.py), [`llm.py`](server/services/chat/llm.py) (chaîne de modèles), [`routers/chat/ws.py`](server/routers/chat/ws.py).
 
-| Sujet | Documentation |
-|---|---|
-| Interface du chat (pages, composants, flux WebSocket, historique, partage) | [client/src/components/chat/README.md](client/src/components/chat/README.md) |
-| Route du chat (WebSocket, sessions, persistance, citations) | [server/routers/chat/README.md](server/routers/chat/README.md) |
-| Services du chat (appels LLM, traduction, journal de tour, traces MLflow) | [server/services/chat/README.md](server/services/chat/README.md) |
-| Moteur du chat (réécriture, recherches, prompt, citations, « qui cite X ? ») | [server/services/chat/engine/README.md](server/services/chat/engine/README.md) |
-| Prompts du chat et de la comparaison | [server/prompts/README.md](server/prompts/README.md) |
-| Recherche Vector Search, Lakebase, catalogue de documents | [server/services/infra/README.md](server/services/infra/README.md) |
-| Colonnes des tables Lakebase du chat | [server/services/infra/lakebase/schema.md](server/services/infra/lakebase/schema.md) |
-| Configuration actuelle du chat et variantes testées | section 7 de ce document |
+### Fonctionnement en bref
+
+Le navigateur ouvre un WebSocket (`/api/chat/ws`) et envoie la conversation, l'identifiant de session et la division (ALL, AS, IS). Pour chaque question :
+1. **Accès** : refus si l'utilisateur n'a pas le droit chat (§6) ou si le chat est désactivé.
+2. **Langue et requêtes** : la première question d'une conversation (français ou anglais) est seulement **traduite** dans l'autre langue (`CHAT_TRANSLATE_ONLY`) ; les questions suivantes et les autres langues sont **réécrites** par un modèle en une requête française et une anglaise (une question de suivi seule n'a pas de sens). Les noms de société et types de documents que la conversation n'emploie pas sont retirés de la réécriture.
+3. **Recherche** : deux requêtes hybrides (vecteurs + mots-clés) sur `chunks_index`, filtrées sur la division, chacune reclassée (reranker) sur 32 passages. Les listes sont fusionnées par meilleur score de reranker et plafonnées à 50 passages. Les codes de référence (`SF-1027`) sont écrits sous leur forme canonique dans les requêtes comme dans l'index.
+4. **Références nommées et citations** : les REF cités dans la question ou la conversation sont cherchés directement (via le catalogue). Pour « quels documents citent X ? », la liste vient de la table `doc_references`, pas d'une recherche.
+5. **Un document, une langue** : si un document existe en plusieurs langues, on garde la variante qui cite le code demandé, sinon la plus récente, sinon celle de la langue de la question.
+6. **Prompt et réponse** : les documents sont numérotés `[1]`, `[2]`… avec leur révision et leur date, les passages viennent avant la question, la date du jour est fournie. Le modèle (`databricks-gpt-6-luna`, repli `databricks-gpt-5-6-luna`, chaîne dans `llm.py`) répond en flux ; les marqueurs `[n]` deviennent des citations cliquables et la réponse se termine par un tableau des documents utilisés. Une réponse coupée est reprise sur l'endpoint suivant (deux fois au plus).
+7. **Journal** : chaque tour est écrit dans Lakebase (`chat_turns`, `chat_retrieved_chunks`, `chat_messages`, `app_errors`, voir §5) et une trace MLflow est envoyée. L'utilisateur ne voit jamais d'erreur technique : un seul message générique, la cause est dans `app_errors`.
+
+Les prompts sont des fichiers dans [`server/prompts/chat/`](server/prompts/chat/) ; après modification, relancer le job `Z_3_Qualibot_Register_Chat_Prompts`. La configuration actuelle et les variantes testées sont au §7.
 
 ## 12. À traiter / questions ouvertes
 
