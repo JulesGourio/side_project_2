@@ -3,11 +3,11 @@
 Complète le README (qui décrit le code). Ici : ce qu'il faut savoir pour **opérer** l'app depuis un poste **Windows** (PowerShell, navigateur Bitbucket et Databricks). Les noms de fichiers sont ceux du dépôt.
 
 
-**Sommaire** : [1 Architecture](#1-architecture) · [2 Jobs](#2-les-jobs) · [3 Parsing](#3-pipeline-de-parsing) · [4 Index](#4-index-et-volumes) · [5 Lakebase](#5-lakebase) · [6 Accès](#6-accès-à-lapp) · [7 Éval retrieval](#7-évaluation-de-la-recherche-mlflow) · [8 Déploiement](#8-déploiement) · [9 DocCompare](#9-comparaison-de-documents-doccompare) · [10 Impact](#10-recherche-dimpact) · [11 Chatbot](#11-chatbot) · [12 Liens PROD](#12-liens-prod) · [13 Ouvert](#13-à-traiter--questions-ouvertes)
+**Sommaire** : [1 Architecture](#1-architecture) · [2 Jobs](#2-les-jobs) · [3 Parsing](#3-pipeline-de-parsing) · [4 Index](#4-index-et-volumes) · [5 Lakebase](#5-lakebase) · [6 Accès](#6-accès-à-lapp) · [7 Éval retrieval](#7-évaluation-de-la-recherche-mlflow) · [8 Déploiement](#8-déploiement) · [9 DocCompare](#9-comparaison-de-documents-doccompare) · [10 Impact](#10-recherche-dimpact) · [11 Chatbot](#11-chatbot) · [12 Ouvert](#12-à-traiter--questions-ouvertes)
 
 ## 1. Architecture
 
-- **App** : FastAPI ([`server/`](server/)) + React ([`client/`](client/)), Databricks App `qualibot`. Trois fonctions : comparaison de documents, recherche d'impact, chat.
+- **App** : FastAPI ([`server/`](server/)) + React ([`client/`](client/)), Databricks App `qualibot` ([PROD](https://dbc-77b87d5a-6bcb.cloud.databricks.com/apps/qualibot)). Trois fonctions : comparaison de documents, recherche d'impact, chat.
 - **Données** : une chaîne de parsing quotidienne produit des tables Delta et un index Vector Search `chunks_index`, lu par le chat et la recherche d'impact ([`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md)).
 - **Historique** (conversations, feedbacks, erreurs, caches) : Lakebase (Postgres), projet `qualibot`, base `doccompare`. Colonnes : [`server/services/infra/lakebase/schema.md`](server/services/infra/lakebase/schema.md).
 - **Source des documents** : Intraqual, catalogue `prod_landingzone.intraqual` (lu par les trois envs, jamais modifié).
@@ -17,30 +17,31 @@ Complète le README (qui décrit le code). Ici : ce qu'il faut savoir pour **op�
 |---|---|---|---|
 | DEV | `dbc-c623749d-731b` | `dev_proj.qualibot` | `fde6ff28-739f-4a41-b61e-604a298c8478` (job-runner-sa-dev) |
 | UAT | `dbc-3a17bfce-9e88` | `uat_proj.qualibot` | `3e5cd4e5-f765-4760-b974-ee7715258b39` (job-runner-sa-uat) |
-| PROD | `dbc-77b87d5a-6bcb` | `prod_proj.qualibot` | `b82d3b5a-b633-4738-8dde-68bb2142cb02` (job-runner-sa-prod) |
+| PROD | [`dbc-77b87d5a-6bcb`](https://dbc-77b87d5a-6bcb.cloud.databricks.com) | [`prod_proj.qualibot`](https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/prod_proj/qualibot) | `b82d3b5a-b633-4738-8dde-68bb2142cb02` (job-runner-sa-prod) |
 
 - Mêmes noms de tables, volumes et index dans chaque env. Volumes : `doc_compare` (outils LibreOffice), `images` (images extraites), `staging` (échanges et exports), `docling_models`.
 - Profils CLI Windows : `DEV`, `UAT`, `PROD` (fichier `%USERPROFILE%\.databrickscfg`).
 - Groupes : CoreAdmin et CoreDev (CAN_MANAGE) ; End-users DocCompare et ChatBot (CAN_USE).
-- Alertes SQL : [`resources/alerts.yml`](resources/alerts.yml).
+- Alertes SQL : [`resources/alerts.yml`](resources/alerts.yml) ([PROD](https://dbc-77b87d5a-6bcb.cloud.databricks.com/sql/alerts)).
 - Ordre de travail : on change et on teste en DEV, puis UAT, puis PROD. Les copies entre envs passent par un volume `staging` (export dans un env, import dans l'autre), jamais par une copie directe de table.
 
 ## 2. Les jobs
 
 Définis dans [`resources/`](resources/). Mêmes noms dans les trois envs. Fuseau : Europe/Brussels.
 
-| Job | Rôle | Planning | DEV / UAT / PROD |
-|---|---|---|---|
-| `D_1_Qualibot_Parsing_Pipeline` | Parsing, chunks, descriptions d'images, index (§3) | tous les jours 04:00 | en pause / actif / actif |
-| `D_1_Qualibot_Lakebase_Export_To_Volume` | Copie les tables Lakebase vers le volume `staging` puis vers des tables Delta (alimente les alertes et le dashboard d'usage) | 02:00 et 14:00 | actif partout |
-| `D_2_Qualibot_User_Capabilities_Sync` | Lit `system.access.audit` et écrit les groupes de chaque utilisateur dans la table `users` du Lakebase (base de l'accès à l'app) | toutes les 2 h | actif partout |
-| `D_2_Qualibot_Score_Chat_Traces` | Note les traces MLflow du chat (juges LLM sur échantillon) | 02:30 | en pause / actif / en pause |
-| `Z_2_Qualibot_Create_Chat_Experiment` | Crée l'expérience MLflow des traces | manuel | |
-| `Z_3_Qualibot_Register_Chat_Prompts` | Enregistre les prompts du chat dans MLflow (à relancer après toute modification d'un prompt) | manuel | |
-| `Z_4_Qualibot_Retrieval_Eval` | Évaluation de la recherche du chat (§7) | manuel | |
-| `D_1_Qualibot_Apps_Stop_Nightly_Dev` | Arrête l'app DEV | tous les jours 21:00 | DEV seulement |
-| `W_1_Qualibot_Stop_Weekend_<Env>` | Arrête l'app | vendredi 21:00 | UAT actif ; DEV et PROD en pause |
-| `W_1_Qualibot_Start_Weekend_<Env>` (PROD : `Start_Weekday_Prod`) | Démarre l'app | lundi 07:00 | UAT actif ; DEV et PROD en pause |
+| Job | Rôle | Planning | DEV / UAT / PROD | Lien PROD |
+|---|---|---|---|---|
+| `D_1_Qualibot_Parsing_Pipeline` | Parsing, chunks, descriptions d'images, index (§3) | tous les jours 04:00 | en pause / actif / actif | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/319182500454150) |
+| `D_1_Qualibot_Lakebase_Export_To_Volume` | Copie les tables Lakebase vers le volume `staging` puis vers des tables Delta (alimente les alertes et le dashboard d'usage) | 02:00 et 14:00 | actif partout | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/172239397407691) |
+| `D_2_Qualibot_User_Capabilities_Sync` | Lit `system.access.audit` et écrit les groupes de chaque utilisateur dans la table `users` du Lakebase (base de l'accès à l'app) | toutes les 2 h | actif partout | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/898973603694951) |
+| `D_2_Qualibot_Score_Chat_Traces` | Note les traces MLflow du chat (juges LLM sur échantillon) | 02:30 | en pause / actif / en pause | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/661647982791628) |
+| `Z_2_Qualibot_Create_Chat_Experiment` | Crée l'expérience MLflow des traces | manuel | | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/3123577015114) |
+| `Z_3_Qualibot_Register_Chat_Prompts` | Enregistre les prompts du chat dans MLflow (à relancer après toute modification d'un prompt) | manuel | | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/940803650450984) |
+| `Z_4_Qualibot_Retrieval_Eval` | Évaluation de la recherche du chat (§7) | manuel | | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/694804097755110) |
+| `D_1_Qualibot_Apps_Stop_Nightly_Dev` | Arrête l'app DEV | tous les jours 21:00 | DEV seulement | n/a (DEV) |
+| `W_1_Qualibot_Stop_Weekend_<Env>` | Arrête l'app | vendredi 21:00 | UAT actif ; DEV et PROD en pause | [Stop](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/559666163027745) |
+| `W_1_Qualibot_Start_Weekend_<Env>` (PROD : `Start_Weekday_Prod`) | Démarre l'app | lundi 07:00 | UAT actif ; DEV et PROD en pause | [Start](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/1051468687947987) |
+| `Z_3_Qualibot_Endpoint_Creation` | Crée un endpoint de serving | manuel | | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/492260422393526) |
 
 Les plannings se changent dans [`databricks.yml`](databricks.yml) (variables `parsing_schedule_pause`, `lakebase_export_schedule_pause`, `alerts_pause_status`) puis `deploy-<env>-jobs`.
 
@@ -93,13 +94,15 @@ Détail : [`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md)
 
 ## 4. Index et volumes
 
-- Un seul index pour le chat et la recherche d'impact : `<env>_proj.qualibot.chunks_index` (filtre `division` pour AS / IS). L'index utilisé par l'app ne doit pas changer sans prévenir : l'app redémarre automatiquement.
-- `chunks_baseline_index` (DEV) : index de comparaison pour l'évaluation, à reconstruire avant chaque benchmark.
-- Catalogue de documents (REF, titres, révisions) : table Lakebase `doc_catalog`, réécrite par `6_update_kb_metadata`, rechargée par l'app toutes les 30 minutes.
+| Élément | Rôle | Lien PROD |
+|---|---|---|
+| `<env>_proj.qualibot.chunks_index` | Index unique du chat et de la recherche d'impact (filtre `division` pour AS / IS). Ne pas le changer sans prévenir : l'app redémarre automatiquement. | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/prod_proj/qualibot/chunks_index) |
+| Volume `staging` | Export / import entre envs et Lakebase vers Delta | [ouvrir](https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/volumes/prod_proj/qualibot/staging) |
+| `chunks_baseline_index` (DEV) | Index de comparaison pour l'évaluation, à reconstruire avant chaque benchmark | DEV seulement |
 
 ## 5. Lakebase
 
-Projet `qualibot`, branche `production`, base `doccompare`, un par env (jamais copié d'un env à l'autre en fonctionnement normal). L'app crée et complète son schéma au démarrage et s'y connecte avec son propre SP (rôle `app-doc-compare-sp`, id en dur dans [`databricks.yml`](databricks.yml) : à changer seulement si l'app est recréée). Colonnes de chaque table : [`server/services/infra/lakebase/schema.md`](server/services/infra/lakebase/schema.md).
+Projet `qualibot`, branche `production`, base `doccompare` ([PROD](https://dbc-77b87d5a-6bcb.cloud.databricks.com/lakebase/projects/deb195f2-6189-419e-a640-b29fa71e540c)), un par env (jamais copié d'un env à l'autre en fonctionnement normal). L'app crée et complète son schéma au démarrage et s'y connecte avec son propre SP (rôle `app-doc-compare-sp`, id en dur dans [`databricks.yml`](databricks.yml) : à changer seulement si l'app est recréée). Colonnes de chaque table : [`server/services/infra/lakebase/schema.md`](server/services/infra/lakebase/schema.md).
 
 | Groupe | Tables | Écrites par |
 |---|---|---|
@@ -148,7 +151,7 @@ Job `D_1_Qualibot_Lakebase_Export_To_Volume`, deux tâches : `export_lakebase_to
 ### Qui lit les copies Delta
 
 - Le dashboard Lakeview **Qualibot Usage Tracking** (suivi d'usage). Les tables exactes qu'il lit sont définies dans le dashboard lui-même, pas dans le dépôt : **à vérifier dans Databricks**. La note de limite du README indique que celui de DEV lit encore d'anciennes tables.
-- Les alertes SQL ([`resources/alerts.yml`](resources/alerts.yml), une série par env, mêmes noms) :
+- Les alertes SQL ([PROD](https://dbc-77b87d5a-6bcb.cloud.databricks.com/sql/alerts), [`resources/alerts.yml`](resources/alerts.yml), une série par env, mêmes noms) :
 
 | Alerte | Tables lues | Heure |
 |---|---|---|
@@ -351,37 +354,7 @@ Le navigateur ouvre un WebSocket (`/api/chat/ws`) et envoie la conversation, l'i
 
 Les prompts sont des fichiers dans [`server/prompts/chat/`](server/prompts/chat/) ; après modification, relancer le job `Z_3_Qualibot_Register_Chat_Prompts`. La configuration actuelle et les variantes testées sont au §7.
 
-## 12. Liens PROD
-
-Espace de travail PROD : https://dbc-77b87d5a-6bcb.cloud.databricks.com
-
-| Quoi | Lien |
-|---|---|
-| Liste des jobs | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs |
-| App `qualibot` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/apps/qualibot |
-| Alertes SQL | https://dbc-77b87d5a-6bcb.cloud.databricks.com/sql/alerts |
-| Catalogue / schéma `prod_proj.qualibot` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/prod_proj/qualibot |
-| Volume `staging` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/volumes/prod_proj/qualibot/staging |
-| Index `chunks_index` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/prod_proj/qualibot/chunks_index |
-
-**Jobs PROD**
-
-| Job | Lien |
-|---|---|
-| `D_1_Qualibot_Parsing_Pipeline` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/319182500454150 |
-| `D_1_Qualibot_Lakebase_Export_To_Volume` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/172239397407691 |
-| `D_2_Qualibot_User_Capabilities_Sync` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/898973603694951 |
-| `D_2_Qualibot_Score_Chat_Traces` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/661647982791628 |
-| `Z_2_Qualibot_Create_Chat_Experiment` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/3123577015114 |
-| `Z_3_Qualibot_Register_Chat_Prompts` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/940803650450984 |
-| `Z_3_Qualibot_Endpoint_Creation` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/492260422393526 |
-| `Z_4_Qualibot_Retrieval_Eval` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/694804097755110 |
-| `W_1_Qualibot_Start_Weekday_Prod` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/1051468687947987 |
-| `W_1_Qualibot_Stop_Weekend_Prod` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/559666163027745 |
-
-**Lakebase** : projet `qualibot`, branche `production`, base `doccompare` ; https://dbc-77b87d5a-6bcb.cloud.databricks.com/lakebase/projects/deb195f2-6189-419e-a640-b29fa71e540c
-
-## 13. À traiter / questions ouvertes
+## 12. À traiter / questions ouvertes
 
 - Épingler les versions des bibliothèques installées sur le cluster de parsing.
 - Corriger `2_manifest` pour qu'un run avec `parse_filter` ne supprime pas les chunks des anciennes révisions sans parser les nouvelles.
