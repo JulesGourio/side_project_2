@@ -816,6 +816,22 @@ for it in gf:
             "disaggregated": False}})
         w["spec"]["encodings"]["fields"].append({"fieldName": "turn_date", "queryName": qn})
 
+# ---------------------------------------------------------------- 11a. ChatBot eligible users include the Internal sub-group
+INTERNAL_GROUP = "Role-LATECOERE-User-Internal"
+sub(
+    "adoption_droits",
+    r"request_params\['targetGroupName'\] = 'Role-Project-LEAP-End-users-Qualibot-ChatBot'",
+    "request_params['targetGroupName'] IN ('Role-Project-LEAP-End-users-Qualibot-ChatBot', "
+    f"'{INTERNAL_GROUP}')",
+    count=2,
+)
+# a member is a person: group names added as principals (CoreDev, the sub-group itself) are not counted
+sub(
+    "adoption_droits",
+    r"(action_name = 'addPrincipalToGroup'\s+AND request_params\['targetGroupName'\] IN \('Role-Project-LEAP-End-users-Qualibot-ChatBot')",
+    "action_name = 'addPrincipalToGroup'\n    AND request_params['targetUserName'] LIKE '%@%'\n    AND request_params['targetGroupName'] IN ('Role-Project-LEAP-End-users-Qualibot-ChatBot'",
+)
+
 # ---------------------------------------------------------------- 11b. Document diagnostic: why a document is, or is not, in the chatbot
 ROOTS_IN_SCOPE = "3870, 948, 3209, 12, 962, 3208, 4001, 3867"
 d["datasets"].append({
