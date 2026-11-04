@@ -3,7 +3,7 @@
 Complète le README (qui décrit le code). Ici : ce qu'il faut savoir pour **opérer** l'app depuis un poste **Windows** (PowerShell, navigateur Bitbucket et Databricks). Les noms de fichiers sont ceux du dépôt.
 
 
-**Sommaire** : [1 Architecture](#1-architecture) · [2 Jobs](#2-les-jobs) · [3 Parsing](#3-pipeline-de-parsing) · [4 Index](#4-index-et-volumes) · [5 Lakebase](#5-lakebase) · [6 Accès](#6-accès-à-lapp) · [7 Éval retrieval](#7-évaluation-de-la-recherche-mlflow) · [8 Déploiement](#8-déploiement) · [9 DocCompare](#9-comparaison-de-documents-doccompare) · [10 Impact](#10-recherche-dimpact) · [11 Chatbot](#11-chatbot) · [12 Ouvert](#12-à-traiter--questions-ouvertes)
+**Sommaire** : [1 Architecture](#1-architecture) · [2 Jobs](#2-les-jobs) · [3 Parsing](#3-pipeline-de-parsing) · [4 Index](#4-index-et-volumes) · [5 Lakebase](#5-lakebase) · [6 Accès](#6-accès-à-lapp) · [7 Éval retrieval](#7-évaluation-de-la-recherche-mlflow) · [8 Déploiement](#8-déploiement) · [9 DocCompare](#9-comparaison-de-documents-doccompare) · [10 Impact](#10-recherche-dimpact) · [11 Chatbot](#11-chatbot) · [12 Liens PROD](#12-liens-prod) · [13 Ouvert](#13-à-traiter--questions-ouvertes)
 
 ## 1. Architecture
 
@@ -111,6 +111,14 @@ Projet `qualibot`, branche `production`, base `doccompare`, un par env (jamais c
 | Utilisateurs | `users` (utilisateur connu, `groups`, `can_chat`, `can_compare`, `groups_synced_at`) | l'app, et le job `D_2_Qualibot_User_Capabilities_Sync` pour les groupes |
 | Catalogue | `doc_catalog` (REF, titre, lien, révision, date de chaque document) ; `doc_references` (pour chaque code de référence, les documents qui le citent) | tâche `6_update_kb_metadata` après chaque run de parsing |
 | Date de la base | `catalog_metadata` (une ligne, `id = 1` : « documents à jour au ») | tâche `6_update_kb_metadata` ; saisie à la main possible |
+
+### Fonctionnement technique
+
+Descriptions détaillées : [`server/services/infra/lakebase/README.md`](server/services/infra/lakebase/README.md) (module), [`schema.md`](server/services/infra/lakebase/schema.md) (colonnes), [`utils/lakebase_sync/README.md`](utils/lakebase_sync/README.md) (export et groupes).
+- **Connexion** ([`connection.py`](server/services/infra/lakebase/connection.py)) : pool de connexions Postgres ; le jeton d'accès du SP est renouvelé automatiquement (durée de vie d'environ 1 h). Hôte, projet, branche, base : [`utils/ops_config.py`](utils/ops_config.py).
+- **Schéma** ([`schema.py`](server/services/infra/lakebase/schema.py), [`columns.py`](server/services/infra/lakebase/columns.py)) : créé et complété au démarrage de l'app, de façon idempotente (ajout de colonnes sans perte).
+- **Écritures « au mieux »** : une erreur d'écriture dans les journaux (`chat_turns`, `app_errors`…) ne casse jamais la réponse à l'utilisateur ; elle est journalisée. Si le Lakebase est indisponible, les routes qui en dépendent répondent 503.
+- **Autres modules** : [`users.py`](server/services/infra/lakebase/users.py) (utilisateurs et groupes), [`cache.py`](server/services/infra/lakebase/cache.py) (caches), [`audit.py`](server/services/infra/lakebase/audit.py) (journaux).
 
 ### Les « codes »
 
@@ -264,6 +272,27 @@ La méthode `comparative` utilise un autre moteur, `section_canonical_diff` (dif
 
 **Excel** : différence cellule par cellule, lignes appariées sur la première colonne ; une colonne de formules ou de dates qui change dans plus de la moitié des lignes (feuilles d'au moins 20 lignes) est considérée recalculée et seulement signalée ; une feuille présente d'un seul côté est signalée avec ses colonnes et ses 30 premières lignes. Si la première colonne n'est pas une clé unique, c'est une différence ligne à ligne. **Images (fichiers image)** : les deux images partent telles quelles à un modèle de vision.
 
+### Ce qui est filtré (règles condensées)
+
+Quatre couches successives écartent le bruit avant d'afficher une différence.
+
+**A. À l'extraction** : PDF : numéros de page parasites supprimés, bandes d'en-tête (18 % du haut) et de pied (12 % du bas) ignorées, cellules de tableau dédoublonnées. DOCX : paragraphes de table des matières ignorés, lignes de tableau en double dédoublonnées, modifications suivies acceptées (on compare le texte final).
+
+**B. Moteur de diff** :
+- Blocs identiques écartés ; en-têtes et pieds de **15 mots au plus** répétés sur au moins 3 pages (fenêtre de 25 lignes) dédoublonnés ; blocs « (Suite) » recollés.
+- Re-segmentation (au moins 8 mots, séries de 2 à 3 blocs) annulée.
+- Paire modifiée **non substantielle** écartée : distance inférieure à 5 %, aucun changement au niveau du mot, mêmes nombres, mêmes références pièces, même profil de verbes modaux, mêmes références normatives.
+- Restes courts identiques (12 mots au plus, dérive inférieure à 3,5 %) écartés ; cellules fusionnées (rapport d'au moins 3) ; changement de pagination seule ignoré.
+- Texte **déplacé** (au moins 6 mots, couverture de 75 % ou plus, série de 8 mots) marqué RELOCATED et non supprimé/ajouté.
+- Même changement répété sur au moins 3 pages replié en une entrée ; au moins 3 lignes de table des matières repliées ; substitution systématique (au moins 5 entrées, sans chiffre) repliée.
+- Troncature du diff à 600 000 caractères (utilisateur prévenu).
+
+**C. Prompt** : les prompts `analysis_standard.md` et `analysis_structured.md` ([`server/prompts/compare/`](server/prompts/compare/)) listent ce que le modèle ne doit pas rapporter (reformulations sans effet, mise en forme, numérotation, pagination).
+
+**D. Affichage** : les lignes d'importance « Low » sont masquées par défaut ; les changements « Editorial » et « Structural » ne sont pas cherchés par la recherche d'impact.
+
+Seuils réglables : variables `COMPARE_*` listées dans le [README des moteurs](server/services/compare/processors/_diff_engines/README.md).
+
 ### Résumé d'un seul document
 
 `POST /api/compare/summarize` : texte envoyé à `COMPARE_SUMMARY_ENDPOINT` (`databricks-gpt-6-luna`, texte coupé à `COMPARE_SUMMARY_MAX_CHARS` = 300 000 caractères), image envoyée à `COMPARE_SUMMARY_IMAGE_ENDPOINT`. Mis en cache par hash du fichier (`summary_cache`). Un document sans texte donne un résumé « pas de contenu », pas une erreur.
@@ -322,7 +351,28 @@ Le navigateur ouvre un WebSocket (`/api/chat/ws`) et envoie la conversation, l'i
 
 Les prompts sont des fichiers dans [`server/prompts/chat/`](server/prompts/chat/) ; après modification, relancer le job `Z_3_Qualibot_Register_Chat_Prompts`. La configuration actuelle et les variantes testées sont au §7.
 
-## 12. À traiter / questions ouvertes
+## 12. Liens PROD
+
+Espace de travail PROD : https://dbc-77b87d5a-6bcb.cloud.databricks.com
+
+| Quoi | Lien |
+|---|---|
+| Liste des jobs | https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs |
+| App `qualibot` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/apps/qualibot |
+| Alertes SQL | https://dbc-77b87d5a-6bcb.cloud.databricks.com/sql/alerts |
+| Catalogue / schéma `prod_proj.qualibot` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/prod_proj/qualibot |
+| Volume `staging` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/volumes/prod_proj/qualibot/staging |
+| Index `chunks_index` | https://dbc-77b87d5a-6bcb.cloud.databricks.com/explore/data/prod_proj/qualibot/chunks_index |
+
+**Jobs** (ouvrir la liste et filtrer sur le nom) : `D_1_Qualibot_Parsing_Pipeline`, `D_1_Qualibot_Lakebase_Export_To_Volume`, `D_2_Qualibot_User_Capabilities_Sync`, `D_2_Qualibot_Score_Chat_Traces`, `Z_2_…` (expérience), `Z_3_Qualibot_Register_Chat_Prompts`, `Z_4_…` (évaluation retrieval), jobs d'arrêt/démarrage de l'app. Les identifiants de jobs ne sont pas dans le dépôt ; pour obtenir le lien direct de chacun, PowerShell :
+
+```powershell
+databricks jobs list --profile PROD -o json | ConvertFrom-Json | Where-Object { $_.settings.name -like '*Qualibot*' } | ForEach-Object { "$($_.settings.name)  https://dbc-77b87d5a-6bcb.cloud.databricks.com/jobs/$($_.job_id)" }
+```
+
+**Lakebase** : projet `qualibot`, branche `production`, base `doccompare` ; l'écran du projet s'ouvre depuis la page Lakebase de l'espace de travail PROD (l'URL exacte n'est pas dans le dépôt : à compléter ici).
+
+## 13. À traiter / questions ouvertes
 
 - Épingler les versions des bibliothèques installées sur le cluster de parsing.
 - Corriger `2_manifest` pour qu'un run avec `parse_filter` ne supprime pas les chunks des anciennes révisions sans parser les nouvelles.
