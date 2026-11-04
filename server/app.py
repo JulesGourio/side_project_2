@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
-from server.logging_setup import is_quiet_path, request_id, setup_logging
+from server.logging_setup import SLOW_REQUEST_S, request_id, setup_logging
 from server import tracing  # noqa: F401 — sets up MLflow tracking URI
 from server.routers import chat, compare, config, exports, feedback, health, history, preview
 from server.services.infra.doc_catalog import catalog_refresher
@@ -116,18 +116,21 @@ async def log_requests(request: Request, call_next) -> Response:
   req_id = str(uuid.uuid4())[:8]
   token = request_id.set(req_id)
   start = time.monotonic()
-  quiet = is_quiet_path(request.url.path)
   user = request.headers.get('x-forwarded-user', '').strip() or '-'
   try:
     response = await call_next(request)
     elapsed = time.monotonic() - start
     response.headers['X-Request-ID'] = req_id
-    # One line per request, after it ends. Health and static files only when they fail.
+    # One line per request, after it ends. A successful GET (page load, config, lists) is DEBUG unless it is slow;
+    # the chat turn has its own summary line (ws.py).
+    is_read = request.method in ('GET', 'HEAD', 'OPTIONS')
     if response.status_code >= 500:
       logger.error('%s %s -> %d (%.2fs) user=%s', request.method, request.url.path, response.status_code, elapsed, user)
-    elif response.status_code >= 400 and not quiet:
+    elif response.status_code >= 400:
       logger.warning('%s %s -> %d (%.2fs) user=%s', request.method, request.url.path, response.status_code, elapsed, user)
-    elif not quiet:
+    elif is_read and elapsed < SLOW_REQUEST_S:
+      logger.debug('%s %s -> %d (%.2fs) user=%s', request.method, request.url.path, response.status_code, elapsed, user)
+    else:
       logger.info('%s %s -> %d (%.2fs) user=%s', request.method, request.url.path, response.status_code, elapsed, user)
     return response
   except Exception:

@@ -1,7 +1,8 @@
 """Logging of the app: one setup, one correlation id, no noise.
 
 Rules (see ``server/README.md``):
-- INFO: one summary line per request and per chat turn (id, user, status, durations). Nothing else per call.
+- INFO: one summary line per chat turn (id, user, status, durations) and per request that changes something (POST/PUT/DELETE),
+  is slow or fails. A successful GET is DEBUG. Nothing else per call.
 - WARNING: something degraded that is worth reading. A normal fallback or retry is DEBUG.
 - ERROR: always with the stack trace (``logger.exception`` or ``exc_info=True``).
 - No user question, prompt or token in a log (the question is in the MLflow trace).
@@ -16,9 +17,12 @@ import os
 request_id: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='-')
 
 # Paths that are polled or static: no log line for them when they succeed.
+# A successful GET slower than this is logged at INFO.
+SLOW_REQUEST_S = 1.0
+
 QUIET_PATHS = ('/api/health', '/images/', '/logos/', '/videos/', '/content/', '/assets/', '/favicon')
 
-_NOISY_LOGGERS = ('httpx', 'httpcore', 'urllib3', 'uvicorn.access', 'mlflow', 'databricks', 'azure', 'asyncio',
+_NOISY_LOGGERS = ('uvicorn', 'uvicorn.error', 'httpx', 'httpcore', 'urllib3', 'uvicorn.access', 'mlflow', 'databricks', 'azure', 'asyncio',
                   'PIL', 'fsevents', 'matplotlib')
 
 

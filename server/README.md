@@ -57,9 +57,9 @@ Locally, `app.py` loads `.env.local` when it exists. Each module reads the setti
 
 ## Logs
 
-- One setup, `logging_setup.py`. `LOG_LEVEL` (env, default `INFO`) sets the level; `DEBUG` shows the per-call details. httpx, mlflow, uvicorn.access and the Databricks SDK stay at WARNING unless the app runs at DEBUG.
+- One setup, `logging_setup.py`. `LOG_LEVEL` (env, default `INFO`) sets the level; `DEBUG` shows the per-call details. httpx, mlflow, uvicorn and the Databricks SDK stay at WARNING unless the app runs at DEBUG.
 - Every line carries `[id]`: the request id, or the end of the MLflow trace id for a chat turn, so one request or one turn is followed with one search.
-- INFO: one line per request after it ends (`GET /api/x -> 200 (0.12s) user=<id>`, none for health and static files unless they fail) and one line per chat turn (`chat turn: status=... division=... user=<id> issues=... <step>=<ms> trace_id=...`).
+- INFO: one line per chat turn (`chat turn: status=... division=... user=<id> issues=... <step>=<ms> trace_id=...`), and one line per request that changes something (POST/PUT/DELETE), is slower than 1 s or fails (`POST /api/x -> 200 (0.12s) user=<id>`). A successful fast GET (page load, config, lists) is DEBUG. uvicorn's own lines (connection open/closed, WebSocket accepted) are off.
 - WARNING: something degraded worth reading. ERROR: always with the stack trace. A normal fallback or retry is DEBUG.
 - No question, prompt or token in a log: the question is in the MLflow trace. The user is the `x-forwarded-user` id (`<user id>@<workspace id>`).
 - The SCIM read of the visitor's groups (`services/infra/user.py`) is best effort and never logged: its error text carries the app's auth config. The `Capabilities` line (DEBUG) gives the groups found.
