@@ -1007,11 +1007,6 @@
           "displayName": "share_link",
           "description": "Link to shared conversation",
           "expression": "CASE WHEN share_token IS NOT NULL AND share_token != '' THEN CONCAT('https://qualibot-3155144190025826.aws.databricksapps.com/chat/shared/', share_token) ELSE NULL END"
-        },
-        {
-          "displayName": "trace_link",
-          "description": "Direct link to the MLflow trace for this message",
-          "expression": "CASE WHEN trace_id IS NOT NULL AND trace_id != '' THEN CONCAT('https://dbc-3a17bfce-9e88.cloud.databricks.com/ml/experiments/', CASE WHEN division = 'AS' THEN '2748374992560664' WHEN division = 'IS' THEN '2748374992560665' ELSE '4171178917767011' END, '/traces?o=3155144190025826&selectedEvaluationId=', trace_id) ELSE NULL END"
         }
       ]
     },
@@ -1481,8 +1476,7 @@
         "      WHEN u.email IN ('armando.tapia@latecoere.aero', 'brianda.penunuri@latecoere.aero', 'estefania.aldana@latecoere.aero', 'hector.galindo@latecoere.aero', 'iveth.herrejon@latecoere.aero', 'karim.quijada@latecoere.aero', 'marco.loya@latecoere.aero', 'maria.valenzuela@latecoere.aero') THEN 'Hermosillo'\n",
         "    END\n",
         "  ) AS workplace,\n",
-        "  CONCAT('https://qualibot-3155144190025826.aws.databricksapps.com/chat/shared/', u.share_token) AS share_link,\n",
-        "  CASE WHEN a.trace_id IS NOT NULL AND a.trace_id != '' THEN CONCAT('https://dbc-3a17bfce-9e88.cloud.databricks.com/ml/experiments/', CASE WHEN u.division = 'AS' THEN '2748374992560664' WHEN u.division = 'IS' THEN '2748374992560665' ELSE '4171178917767011' END, '/traces?o=3155144190025826&selectedEvaluationId=', a.trace_id) ELSE NULL END AS trace_link\n",
+        "  CONCAT('https://qualibot-3155144190025826.aws.databricksapps.com/chat/shared/', u.share_token) AS share_link\n",
         "FROM\n",
         "  user_msgs u\n",
         "    LEFT JOIN asst_next_rn an\n",
@@ -1857,234 +1851,6 @@
         "  AND u.billing_origin_product = 'AGENT_BRICKS'\n",
         "GROUP BY ALL\n",
         "ORDER BY u.usage_date DESC, env, endpoint_name\n"
-      ]
-    },
-    {
-      "name": "chat_quality_data",
-      "displayName": "ChatBot Quality Scores (LLM Judge)",
-      "queryLines": [
-        "SELECT\n",
-        "  q.message_id,\n",
-        "  q.created_at,\n",
-        "  q.session_id,\n",
-        "  q.division,\n",
-        "  q.user_question,\n",
-        "  q.answer,\n",
-        "  q.citation_count,\n",
-        "  q.relevance__value,\n",
-        "  q.relevance__rationale,\n",
-        "  q.safety__value,\n",
-        "  q.safety__rationale,\n",
-        "  q.groundedness__value,\n",
-        "  q.groundedness__rationale,\n",
-        "  q.language_match__value,\n",
-        "  q.language_match__rationale,\n",
-        "  q.completeness__value,\n",
-        "  q.completeness__rationale,\n",
-        "  q.retrieval_recall,\n",
-        "  q.retrieval_query,\n",
-        "  q.retrieval_source,\n",
-        "  q.total_input_tokens,\n",
-        "  q.total_output_tokens,\n",
-        "  q.rag_answer,\n",
-        "  q.cited_refs,\n",
-        "  q.retrieved_refs,\n",
-        "  ARRAY_JOIN(q.cited_refs, '; ') AS cited_docs_str,\n",
-        "  ARRAY_JOIN(q.retrieved_refs, '; ') AS retrieved_docs_str,\n",
-        "  q.answer_comparison__value,\n",
-        "  q.answer_comparison__category,\n",
-        "  q.answer_comparison__likely_better,\n",
-        "  q.answer_comparison__rationale,\n",
-        "  q.scored_at,\n",
-        "  COALESCE(u.email, 'Unknown user') AS email,\n",
-        "  u.display_name\n",
-        "FROM\n",
-        "  uat_landingzone.qualibot.chat_quality_scores q\n",
-        "    LEFT JOIN uat_proj.qualibot.chat_messages m\n",
-        "      ON q.message_id = m.id\n",
-        "    LEFT JOIN (\n",
-        "      SELECT\n",
-        "        user_id,\n",
-        "        MAX(REPLACE(REPLACE(email, '\\n', ''), '\\r', '')) AS email,\n",
-        "        MAX(display_name) AS display_name,\n",
-        "        FLATTEN(COLLECT_SET(groups)) AS groups\n",
-        "      FROM uat_proj.qualibot.users\n",
-        "      GROUP BY\n",
-        "        user_id\n",
-        "    ) u\n",
-        "      ON m.user_id = u.user_id\n",
-        "WHERE\n",
-        "  NOT array_contains(\n",
-        "    COALESCE(u.groups, CAST(ARRAY() AS ARRAY<STRING>)),\n",
-        "    'Role-Project-LEAP-CoreDev'\n",
-        "  )\n",
-        "  AND NOT array_contains(\n",
-        "    COALESCE(u.groups, CAST(ARRAY() AS ARRAY<STRING>)),\n",
-        "    'Role-Project-LEAP-CoreAdmin'\n",
-        "  )\n",
-        "ORDER BY\n",
-        "  CASE WHEN relevance__value = false OR groundedness__value = false OR completeness__value = false THEN 0 ELSE 1 END,\n",
-        "  created_at DESC\n"
-      ],
-      "columns": [
-        {
-          "displayName": "Date",
-          "description": "Turn date for daily grouping",
-          "expression": "DATE(CAST(created_at AS TIMESTAMP))"
-        },
-        {
-          "displayName": "Semaine",
-          "description": "Week start for weekly grouping",
-          "expression": "DATE_TRUNC('week', CAST(created_at AS TIMESTAMP))"
-        },
-        {
-          "displayName": "Utilisateur",
-          "description": "Short user name",
-          "expression": "REPLACE(email, '@latecoere.aero', '')"
-        },
-        {
-          "displayName": "Pertinent",
-          "description": "1 if the relevance judge passed, 0 if failed",
-          "expression": "CASE WHEN relevance__value = true THEN 1 WHEN relevance__value = false THEN 0 END"
-        },
-        {
-          "displayName": "Groundé",
-          "description": "1 if the groundedness judge passed, 0 if failed",
-          "expression": "CASE WHEN groundedness__value = true THEN 1 WHEN groundedness__value = false THEN 0 END"
-        },
-        {
-          "displayName": "Sûr",
-          "description": "1 if the Safety judge passed, 0 if failed",
-          "expression": "CASE WHEN safety__value = true THEN 1 WHEN safety__value = false THEN 0 END"
-        },
-        {
-          "displayName": "Langue OK",
-          "description": "1 if the response matched the question's language, 0 if not",
-          "expression": "CASE WHEN language_match__value = true THEN 1 WHEN language_match__value = false THEN 0 END"
-        },
-        {
-          "displayName": "Complet",
-          "description": "1 if the completeness judge passed, 0 if failed",
-          "expression": "CASE WHEN completeness__value = true THEN 1 WHEN completeness__value = false THEN 0 END"
-        },
-        {
-          "displayName": "Retrieval Recall Complet",
-          "description": "1 if 100% of the KA's cited REFs were found by our independent retrieval, 0 otherwise (NULL if no retrieval_recall)",
-          "expression": "CASE WHEN retrieval_recall IS NULL THEN NULL WHEN retrieval_recall = 1.0 THEN 1 ELSE 0 END"
-        },
-        {
-          "displayName": "Is Real Trace",
-          "description": "1 if retrieval read the KA's real MLflow trace, 0 if the independent-query fallback proxy was used, NULL if retrieval_source is neither (shouldn't happen on UAT rows)",
-          "expression": "CASE WHEN retrieval_source = 'trace' THEN 1 WHEN retrieval_source = 'query_fallback' THEN 0 END"
-        },
-        {
-          "displayName": "Recall (Real Trace)",
-          "description": "retrieval_recall, only for turns where retrieval_source = trace",
-          "expression": "CASE WHEN retrieval_source = 'trace' THEN retrieval_recall END"
-        },
-        {
-          "displayName": "Recall (Query Fallback)",
-          "description": "retrieval_recall, only for turns where retrieval_source = query_fallback",
-          "expression": "CASE WHEN retrieval_source = 'query_fallback' THEN retrieval_recall END"
-        },
-        {
-          "displayName": "Turn a échoué",
-          "description": "1 if relevance, groundedness or completeness judge failed",
-          "expression": "CASE WHEN relevance__value = false OR groundedness__value = false OR completeness__value = false THEN 1 ELSE 0 END"
-        },
-        {
-          "displayName": "Safety Fail",
-          "description": "1 if the safety judge failed, else 0",
-          "expression": "CASE WHEN safety__value = false THEN 1 ELSE 0 END"
-        },
-        {
-          "displayName": "Groundedness Fail",
-          "description": "1 if the groundedness judge failed, else 0",
-          "expression": "CASE WHEN groundedness__value = false THEN 1 ELSE 0 END"
-        },
-        {
-          "displayName": "Relevance Fail",
-          "description": "1 if the relevance judge failed, else 0",
-          "expression": "CASE WHEN relevance__value = false THEN 1 ELSE 0 END"
-        },
-        {
-          "displayName": "Completeness Fail",
-          "description": "1 if the completeness judge failed, else 0",
-          "expression": "CASE WHEN completeness__value = false THEN 1 ELSE 0 END"
-        },
-        {
-          "displayName": "Safety Flag",
-          "description": "✓ pass / ✗ fail / — no verdict",
-          "expression": "CASE WHEN safety__value = true THEN '✓' WHEN safety__value = false THEN '✗' ELSE '—' END"
-        },
-        {
-          "displayName": "Groundedness Flag",
-          "description": "✓ pass / ✗ fail / — no verdict",
-          "expression": "CASE WHEN groundedness__value = true THEN '✓' WHEN groundedness__value = false THEN '✗' ELSE '—' END"
-        },
-        {
-          "displayName": "Other Checks Flag",
-          "description": "Compact Relevance / Language / Completeness result",
-          "expression": "CONCAT('Rel ', CASE WHEN relevance__value = true THEN '✓' WHEN relevance__value = false THEN '✗' ELSE '—' END, '  Lang ', CASE WHEN language_match__value = true THEN '✓' WHEN language_match__value = false THEN '✗' ELSE '—' END, '  Comp ', CASE WHEN completeness__value = true THEN '✓' WHEN completeness__value = false THEN '✗' ELSE '—' END)"
-        },
-        {
-          "displayName": "Retrieval Label",
-          "description": "trace = exact (KA's own real retrieval); query_fallback = independent-query proxy, can under-count citations and cause a false-negative groundedness/completeness failure",
-          "expression": "CASE WHEN retrieval_source = 'trace' THEN 'Exact (trace)' WHEN retrieval_source = 'query_fallback' THEN 'Proxy (fallback)' ELSE 'n/a' END"
-        },
-        {
-          "displayName": "Failure Rationale",
-          "description": "One line per FAILED dimension only (empty if everything passed) -- not just the worst one -- <br>-joined for HTML display",
-          "expression": "REPLACE(CONCAT_WS('\\n', CASE WHEN safety__value = false THEN CONCAT('Safety: ', safety__rationale) END, CASE WHEN groundedness__value = false THEN CONCAT('Groundedness: ', groundedness__rationale) END, CASE WHEN relevance__value = false THEN CONCAT('Relevance: ', relevance__rationale) END, CASE WHEN completeness__value = false THEN CONCAT('Completeness: ', completeness__rationale) END, CASE WHEN language_match__value = false THEN 'Language: response language did not match the question' END), '\\n', '<br>')"
-        },
-        {
-          "displayName": "Comparison Flag",
-          "description": "Shadow-RAG comparison flag with proper Unicode symbols",
-          "expression": "CASE WHEN answer_comparison__value = true AND answer_comparison__likely_better = 'ka' THEN '✓ (KA still more complete)' WHEN answer_comparison__value = true AND answer_comparison__likely_better = 'rag' THEN '✓ (RAG still more complete)' WHEN answer_comparison__value = true THEN '✓' WHEN answer_comparison__value = false AND answer_comparison__likely_better = 'rag' THEN '✗ RAG likely better' WHEN answer_comparison__value = false AND answer_comparison__likely_better = 'ka' THEN '✗ KA likely better' WHEN answer_comparison__value = false THEN '✗ unclear' ELSE '—' END"
-        },
-        {
-          "displayName": "Comparison Detail",
-          "description": "Category + rationale whenever the judge named a likely-better side (ka or rag) -- shown for a real mismatch AND for a match where one answer is still judged more complete. Empty only when likely_better is unclear or there's no comparison at all.",
-          "expression": "CASE WHEN answer_comparison__likely_better != 'unclear' THEN CONCAT('[', answer_comparison__category, '] ', answer_comparison__rationale) END"
-        }
-      ]
-    },
-    {
-      "name": "scoring_runs_data",
-      "displayName": "Quality Scoring Runs (real tokens/cost)",
-      "queryLines": [
-        "SELECT\n",
-        "  run_ts,\n",
-        "  CAST(run_ts AS TIMESTAMP) AS run_ts_ts,\n",
-        "  n_messages,\n",
-        "  n_llm_calls,\n",
-        "  total_input_tokens,\n",
-        "  total_output_tokens,\n",
-        "  estimated_cost_usd,\n",
-        "  judge_model\n",
-        "FROM\n",
-        "  uat_landingzone.qualibot.chat_quality_scoring_runs\n"
-      ],
-      "columns": [
-        {
-          "displayName": "Date",
-          "description": "Run date",
-          "expression": "DATE(CAST(run_ts AS TIMESTAMP))"
-        }
-      ]
-    },
-    {
-      "name": "scoring_runs_summary",
-      "displayName": "Quality Scoring Cost Summary (aggregated)",
-      "queryLines": [
-        "SELECT\n",
-        "  SUM(estimated_cost_usd) AS total_cost_usd,\n",
-        "  SUM(n_messages) AS total_messages,\n",
-        "  SUM(total_input_tokens) AS total_input_tokens,\n",
-        "  SUM(total_output_tokens) AS total_output_tokens,\n",
-        "  SUM(estimated_cost_usd) / NULLIF(SUM(n_messages), 0) AS cost_per_message\n",
-        "FROM\n",
-        "  uat_landingzone.qualibot.chat_quality_scoring_runs\n"
       ]
     },
     {
@@ -2908,18 +2674,6 @@
         {
           "name": "KA_Endpoint_Usage_Requests__Tokens",
           "datasetName": "ka_endpoint_usage"
-        },
-        {
-          "name": "ChatBot_Quality_Scores_LLM_Judge",
-          "datasetName": "chat_quality_data"
-        },
-        {
-          "name": "Quality_Scoring_Runs_real_tokenscost",
-          "datasetName": "scoring_runs_data"
-        },
-        {
-          "name": "Quality_Scoring_Cost_Summary_aggregated",
-          "datasetName": "scoring_runs_summary"
         },
         {
           "name": "Qualibot__Compare_Direct_LLM_Cost",
@@ -4252,10 +4006,6 @@
                       "expression": "`ChatBot_Conversations_Paired`.`share_link`"
                     },
                     {
-                      "name": "ChatBot_Conversations_Paired__trace_link",
-                      "expression": "`ChatBot_Conversations_Paired`.`trace_link`"
-                    },
-                    {
                       "name": "ChatBot_Conversations_Paired__division",
                       "expression": "`ChatBot_Conversations_Paired`.`division`"
                     },
@@ -4286,10 +4036,6 @@
                     {
                       "name": "`ChatBot_Conversations_Paired`.`share_link`",
                       "expression": "`ChatBot_Conversations_Paired`.`share_link`"
-                    },
-                    {
-                      "name": "`ChatBot_Conversations_Paired`.`trace_link`",
-                      "expression": "`ChatBot_Conversations_Paired`.`trace_link`"
                     }
                   ],
                   "disaggregated": true
@@ -4337,23 +4083,6 @@
                     "style": {
                       "type": "basic",
                       "foregroundColor": "#1976D2",
-                      "textDecoration": "underline"
-                    }
-                  },
-                  {
-                    "fieldName": "ChatBot_Conversations_Paired__trace_link",
-                    "displayName": "MLflow",
-                    "actions": {
-                      "click": {
-                        "type": "link",
-                        "urlTemplate": "{{ `ChatBot_Conversations_Paired`.`trace_link` }}",
-                        "openInNewTab": true
-                      }
-                    },
-                    "formatTemplate": "🔍 Trace",
-                    "style": {
-                      "type": "basic",
-                      "foregroundColor": "#7B1FA2",
                       "textDecoration": "underline"
                     }
                   },
@@ -5589,16 +5318,8 @@
                       "expression": "`ChatBot_Messages`.`share_link`"
                     },
                     {
-                      "name": "ChatBot_Messages__trace_link",
-                      "expression": "`ChatBot_Messages`.`trace_link`"
-                    },
-                    {
                       "name": "`ChatBot_Messages`.`share_link`",
                       "expression": "`ChatBot_Messages`.`share_link`"
-                    },
-                    {
-                      "name": "`ChatBot_Messages`.`trace_link`",
-                      "expression": "`ChatBot_Messages`.`trace_link`"
                     }
                   ],
                   "filters": [
@@ -5669,23 +5390,6 @@
                       "foregroundColor": "#1976D2",
                       "textDecoration": "underline"
                     }
-                  },
-                  {
-                    "fieldName": "ChatBot_Messages__trace_link",
-                    "displayName": "Trace MLflow",
-                    "actions": {
-                      "click": {
-                        "type": "link",
-                        "urlTemplate": "{{ `ChatBot_Messages`.`trace_link` }}",
-                        "openInNewTab": true
-                      }
-                    },
-                    "formatTemplate": "🔍 Trace",
-                    "style": {
-                      "type": "basic",
-                      "foregroundColor": "#7B1FA2",
-                      "textDecoration": "underline"
-                    }
                   }
                 ]
               },
@@ -5699,949 +5403,6 @@
             "y": 11,
             "width": 12,
             "height": 9
-          }
-        }
-      ],
-      "pageType": "PAGE_TYPE_CANVAS",
-      "layoutVersion": "GRID_V1"
-    },
-    {
-      "name": "intraqual_changes",
-      "displayName": "Intraqual Changes",
-      "layout": [
-        {
-          "widget": {
-            "name": "ic_header",
-            "multilineTextboxSpec": {
-              "lines": [
-                "## Intraqual Document Changes\n",
-                "One row per document Intraqual added or changed (REF, indice, or publication date) -- includes IDDOC reassignments that used to be invisible.\n"
-              ]
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 0,
-            "width": 12,
-            "height": 2
-          }
-        },
-        {
-          "widget": {
-            "name": "ic_counter_total",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "fields": [
-                    {
-                      "name": "max(DC__Counters__n_total_30d)",
-                      "expression": "MAX(`DC__Counters`.`n_total_30d`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "showTitle": true,
-                "title": {
-                  "value": "Changes (30d)",
-                  "fields": []
-                }
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "max(DC__Counters__n_total_30d)",
-                  "rowNumber": 0
-                }
-              },
-              "data": {
-                "queryName": "main_query"
-              }
-            }
-          },
-          "position": {
-            "x": 3,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "ic_counter_new",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "fields": [
-                    {
-                      "name": "max(DC__Counters__n_new_30d)",
-                      "expression": "MAX(`DC__Counters`.`n_new_30d`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "showTitle": true,
-                "title": {
-                  "value": "New Documents (30d)",
-                  "fields": []
-                }
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "max(DC__Counters__n_new_30d)",
-                  "rowNumber": 0,
-                  "style": {
-                    "rules": [
-                      {
-                        "condition": {
-                          "operand": {
-                            "type": "data-value",
-                            "value": "0"
-                          },
-                          "operator": ">"
-                        },
-                        "fontColor": "#2E7D32"
-                      }
-                    ]
-                  }
-                }
-              },
-              "data": {
-                "queryName": "main_query"
-              }
-            }
-          },
-          "position": {
-            "x": 6,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "ic_counter_revised",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "fields": [
-                    {
-                      "name": "max(DC__Counters__n_revised_30d)",
-                      "expression": "MAX(`DC__Counters`.`n_revised_30d`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "showTitle": true,
-                "title": {
-                  "value": "Revised Documents (30d)",
-                  "fields": []
-                }
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "max(DC__Counters__n_revised_30d)",
-                  "rowNumber": 0,
-                  "style": {
-                    "rules": [
-                      {
-                        "condition": {
-                          "operand": {
-                            "type": "data-value",
-                            "value": "0"
-                          },
-                          "operator": ">"
-                        },
-                        "fontColor": "#E65100"
-                      }
-                    ]
-                  }
-                }
-              },
-              "data": {
-                "queryName": "main_query"
-              }
-            }
-          },
-          "position": {
-            "x": 9,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "ic_bar_trend",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "fields": [
-                    {
-                      "name": "DC__Trend__day",
-                      "expression": "`DC__Trend`.`day`"
-                    },
-                    {
-                      "name": "sum(DC__Trend__n)",
-                      "expression": "SUM(`DC__Trend`.`n`)"
-                    },
-                    {
-                      "name": "DC__Trend__event_type",
-                      "expression": "`DC__Trend`.`event_type`"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 3,
-              "widgetType": "bar",
-              "frame": {
-                "showTitle": true,
-                "title": {
-                  "value": "Changes by Day (30d)",
-                  "fields": []
-                }
-              },
-              "encodings": {
-                "x": {
-                  "fieldName": "DC__Trend__day",
-                  "displayName": "day",
-                  "scale": {
-                    "type": "temporal"
-                  }
-                },
-                "y": {
-                  "fieldName": "sum(DC__Trend__n)",
-                  "displayName": "n",
-                  "scale": {
-                    "type": "quantitative"
-                  }
-                },
-                "color": {
-                  "fieldName": "DC__Trend__event_type",
-                  "displayName": "event_type",
-                  "scale": {
-                    "type": "categorical",
-                    "mappings": [
-                      {
-                        "value": "NEW",
-                        "color": "#2E7D32"
-                      },
-                      {
-                        "value": "REVISED",
-                        "color": "#E65100"
-                      }
-                    ]
-                  }
-                }
-              },
-              "data": {
-                "queryName": "main_query"
-              }
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 5,
-            "width": 12,
-            "height": 6
-          }
-        },
-        {
-          "widget": {
-            "name": "ic_table_log",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "fields": [
-                    {
-                      "name": "DC__Log__IDDOC",
-                      "expression": "`DC__Log`.`IDDOC`"
-                    },
-                    {
-                      "name": "DC__Log__new_ref",
-                      "expression": "`DC__Log`.`new_ref`"
-                    },
-                    {
-                      "name": "DC__Log__event_type",
-                      "expression": "`DC__Log`.`event_type`"
-                    },
-                    {
-                      "name": "DC__Log__indexing_status",
-                      "expression": "`DC__Log`.`indexing_status`"
-                    },
-                    {
-                      "name": "DC__Log__parse_status",
-                      "expression": "`DC__Log`.`parse_status`"
-                    },
-                    {
-                      "name": "DC__Log__old_ref",
-                      "expression": "`DC__Log`.`old_ref`"
-                    },
-                    {
-                      "name": "DC__Log__old_indice",
-                      "expression": "`DC__Log`.`old_indice`"
-                    },
-                    {
-                      "name": "DC__Log__new_indice",
-                      "expression": "`DC__Log`.`new_indice`"
-                    },
-                    {
-                      "name": "DC__Log__old_doc_date",
-                      "expression": "`DC__Log`.`old_doc_date`"
-                    },
-                    {
-                      "name": "DC__Log__new_doc_date",
-                      "expression": "`DC__Log`.`new_doc_date`"
-                    },
-                    {
-                      "name": "DC__Log__logged_at",
-                      "expression": "`DC__Log`.`logged_at`"
-                    },
-                    {
-                      "name": "DC__Log__last_indexed_at",
-                      "expression": "`DC__Log`.`last_indexed_at`"
-                    }
-                  ],
-                  "disaggregated": true
-                }
-              }
-            ],
-            "spec": {
-              "frame": {
-                "showTitle": true,
-                "title": {
-                  "value": "Intraqual Change Log (with indexing diagnostic)",
-                  "fields": []
-                }
-              },
-              "version": 2,
-              "widgetType": "table",
-              "encodings": {
-                "columns": [
-                  {
-                    "fieldName": "DC__Log__IDDOC"
-                  },
-                  {
-                    "fieldName": "DC__Log__new_ref",
-                    "displayName": "Ref"
-                  },
-                  {
-                    "fieldName": "DC__Log__event_type",
-                    "displayName": "Type"
-                  },
-                  {
-                    "fieldName": "DC__Log__indexing_status",
-                    "displayName": "Indexing Status"
-                  },
-                  {
-                    "fieldName": "DC__Log__parse_status",
-                    "displayName": "Parse Status"
-                  },
-                  {
-                    "fieldName": "DC__Log__old_ref",
-                    "displayName": "Old Ref"
-                  },
-                  {
-                    "fieldName": "DC__Log__old_indice",
-                    "displayName": "Old Indice"
-                  },
-                  {
-                    "fieldName": "DC__Log__new_indice",
-                    "displayName": "New Indice"
-                  },
-                  {
-                    "fieldName": "DC__Log__old_doc_date",
-                    "displayName": "Old Date"
-                  },
-                  {
-                    "fieldName": "DC__Log__new_doc_date",
-                    "displayName": "New Date"
-                  },
-                  {
-                    "fieldName": "DC__Log__logged_at",
-                    "displayName": "Logged At"
-                  },
-                  {
-                    "fieldName": "DC__Log__last_indexed_at",
-                    "displayName": "Last Processed At"
-                  }
-                ]
-              },
-              "data": {
-                "queryName": "main_query"
-              }
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 11,
-            "width": 12,
-            "height": 8
-          }
-        },
-        {
-          "widget": {
-            "name": "ic_counter_not_indexed",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "fields": [
-                    {
-                      "name": "max(DC__Counters__n_not_indexed_30d)",
-                      "expression": "MAX(`DC__Counters`.`n_not_indexed_30d`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "frame": {
-                "showTitle": true,
-                "title": {
-                  "value": "Not Indexed (30d)",
-                  "fields": []
-                }
-              },
-              "version": 2,
-              "widgetType": "counter",
-              "encodings": {
-                "value": {
-                  "fieldName": "max(DC__Counters__n_not_indexed_30d)",
-                  "rowNumber": 0,
-                  "style": {
-                    "rules": [
-                      {
-                        "condition": {
-                          "operand": {
-                            "type": "data-value",
-                            "value": "0"
-                          },
-                          "operator": ">"
-                        },
-                        "fontColor": "#D32F2F"
-                      }
-                    ]
-                  }
-                }
-              },
-              "data": {
-                "queryName": "main_query"
-              }
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        }
-      ],
-      "pageType": "PAGE_TYPE_CANVAS",
-      "layoutVersion": "GRID_V1"
-    },
-    {
-      "name": "chatbot_qualite",
-      "displayName": "ChatBot - Quality",
-      "layout": [
-        {
-          "widget": {
-            "name": "header",
-            "multilineTextboxSpec": {
-              "lines": [
-                "## LLM-as-a-Judge (Custom Prompts)\n",
-                "\n",
-                "Every already-answered ChatBot turn, judged by our own direct Luna calls (score_production_qa.py) - separate prompts and pipeline than the MLflow section above."
-              ]
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 0,
-            "width": 12,
-            "height": 2
-          }
-        },
-        {
-          "widget": {
-            "name": "counter_critical_safety",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "chat_quality_data",
-                  "fields": [
-                    {
-                      "name": "sum(Safety Fail)",
-                      "expression": "SUM(`Safety Fail`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "title": "CRITICAL - Safety Failures",
-                "showTitle": true
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "sum(Safety Fail)",
-                  "format": {
-                    "type": "number-plain",
-                    "abbreviation": "none",
-                    "decimalPlaces": {
-                      "type": "exact",
-                      "places": 0
-                    }
-                  },
-                  "displayName": "Count"
-                }
-              }
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "counter_critical_groundedness",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "fields": [
-                    {
-                      "name": "sum(ChatBot_Quality_Scores_LLM_Judge__Groundedness Fail)",
-                      "expression": "SUM(`ChatBot_Quality_Scores_LLM_Judge`.`Groundedness Fail`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "frame": {
-                "showTitle": true,
-                "title": {
-                  "value": "CRITICAL - Groundedness Failures (Hallucination Risk)",
-                  "fields": []
-                }
-              },
-              "version": 2,
-              "widgetType": "counter",
-              "encodings": {
-                "value": {
-                  "fieldName": "sum(ChatBot_Quality_Scores_LLM_Judge__Groundedness Fail)",
-                  "format": {
-                    "type": "number-plain",
-                    "abbreviation": "none",
-                    "decimalPlaces": {
-                      "type": "exact",
-                      "places": 0
-                    }
-                  },
-                  "displayName": "Count"
-                }
-              },
-              "data": {
-                "queryName": "main_query"
-              }
-            }
-          },
-          "position": {
-            "x": 3,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "counter_critical_relevance",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "chat_quality_data",
-                  "fields": [
-                    {
-                      "name": "sum(Relevance Fail)",
-                      "expression": "SUM(`Relevance Fail`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "title": "Relevance Failures",
-                "showTitle": true
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "sum(Relevance Fail)",
-                  "format": {
-                    "type": "number-plain",
-                    "abbreviation": "none",
-                    "decimalPlaces": {
-                      "type": "exact",
-                      "places": 0
-                    }
-                  },
-                  "displayName": "Count"
-                }
-              }
-            }
-          },
-          "position": {
-            "x": 6,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "counter_critical_completeness",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "chat_quality_data",
-                  "fields": [
-                    {
-                      "name": "sum(Completeness Fail)",
-                      "expression": "SUM(`Completeness Fail`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              }
-            ],
-            "spec": {
-              "version": 2,
-              "widgetType": "counter",
-              "frame": {
-                "title": "Completeness Failures",
-                "showTitle": true
-              },
-              "encodings": {
-                "value": {
-                  "fieldName": "sum(Completeness Fail)",
-                  "format": {
-                    "type": "number-plain",
-                    "abbreviation": "none",
-                    "decimalPlaces": {
-                      "type": "exact",
-                      "places": 0
-                    }
-                  },
-                  "displayName": "Count"
-                }
-              }
-            }
-          },
-          "position": {
-            "x": 9,
-            "y": 2,
-            "width": 3,
-            "height": 3
-          }
-        },
-        {
-          "widget": {
-            "name": "table_per_response",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "fields": [
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__Date",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`Date`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__Utilisateur",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`Utilisateur`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__division",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`division`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__Safety Flag",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`Safety Flag`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__Groundedness Flag",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`Groundedness Flag`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__Other Checks Flag",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`Other Checks Flag`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__Retrieval Label",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`Retrieval Label`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__retrieval_recall",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`retrieval_recall`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__Comparison Flag",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`Comparison Flag`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__Comparison Detail",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`Comparison Detail`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__cited_docs_str",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`cited_docs_str`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__retrieved_docs_str",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`retrieved_docs_str`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__Failure Rationale",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`Failure Rationale`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__user_question",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`user_question`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__answer",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`answer`"
-                    },
-                    {
-                      "name": "ChatBot_Quality_Scores_LLM_Judge__rag_answer",
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`rag_answer`"
-                    }
-                  ],
-                  "filters": [
-                    {
-                      "expression": "`ChatBot_Quality_Scores_LLM_Judge`.`answer_comparison__value` IS NOT NULL"
-                    }
-                  ],
-                  "disaggregated": true
-                }
-              }
-            ],
-            "spec": {
-              "frame": {
-                "showTitle": true,
-                "title": {
-                  "value": "Per-Response Quality Detail -- Shadow-RAG Comparison (new eval only, failures sorted first)",
-                  "fields": []
-                }
-              },
-              "version": 2,
-              "rowsPerPage": 25,
-              "widgetType": "table",
-              "encodings": {
-                "columns": [
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__Date",
-                    "displayName": "Date"
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__Utilisateur",
-                    "displayName": "User"
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__division",
-                    "displayName": "Division"
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__Safety Flag",
-                    "displayName": "Safety",
-                    "style": {
-                      "type": "basic",
-                      "rules": [
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "✗"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#FF3621"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__Groundedness Flag",
-                    "displayName": "Groundedness",
-                    "style": {
-                      "type": "basic",
-                      "rules": [
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "✗"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#FF3621"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__Other Checks Flag",
-                    "columnWidth": 160,
-                    "displayName": "Other Checks"
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__Retrieval Label",
-                    "columnWidth": 130,
-                    "displayName": "Retrieval"
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__retrieval_recall",
-                    "displayName": "Recall"
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__Comparison Flag",
-                    "displayName": "RAG Match?",
-                    "style": {
-                      "type": "basic",
-                      "rules": [
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "RAG likely better"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#B71C1C"
-                        },
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "KA likely better"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#E65100"
-                        },
-                        {
-                          "condition": {
-                            "operand": {
-                              "type": "data-value",
-                              "value": "unclear"
-                            },
-                            "operator": "contains"
-                          },
-                          "backgroundColor": "#9E9E9E"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__Comparison Detail",
-                    "columnWidth": 260,
-                    "displayName": "Comparison Detail (mismatch only)",
-                    "style": {
-                      "type": "html"
-                    }
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__cited_docs_str",
-                    "columnWidth": 160,
-                    "displayName": "Cited Docs"
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__retrieved_docs_str",
-                    "columnWidth": 160,
-                    "displayName": "Retrieved Docs"
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__Failure Rationale",
-                    "columnWidth": 280,
-                    "displayName": "Rationale (failed checks only)",
-                    "style": {
-                      "type": "html"
-                    }
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__user_question",
-                    "columnWidth": 220,
-                    "displayName": "Question"
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__answer",
-                    "columnWidth": 260,
-                    "displayName": "Answer",
-                    "style": {
-                      "type": "html"
-                    }
-                  },
-                  {
-                    "fieldName": "ChatBot_Quality_Scores_LLM_Judge__rag_answer",
-                    "columnWidth": 260,
-                    "displayName": "RAG Answer (shadow, same passages)",
-                    "style": {
-                      "type": "html"
-                    }
-                  }
-                ]
-              },
-              "data": {
-                "queryName": "main_query"
-              }
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 5,
-            "width": 12,
-            "height": 12
           }
         }
       ],
@@ -7290,6 +6051,467 @@
       "pageType": "PAGE_TYPE_CANVAS"
     },
     {
+      "name": "intraqual_changes",
+      "displayName": "Intraqual Changes",
+      "layout": [
+        {
+          "widget": {
+            "name": "ic_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Intraqual Document Changes\n",
+                "One row per document Intraqual added or changed (REF, indice, or publication date) -- includes IDDOC reassignments that used to be invisible.\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ic_counter_total",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "max(DC__Counters__n_total_30d)",
+                      "expression": "MAX(`DC__Counters`.`n_total_30d`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Changes (30d)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "max(DC__Counters__n_total_30d)",
+                  "rowNumber": 0
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ic_counter_new",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "max(DC__Counters__n_new_30d)",
+                      "expression": "MAX(`DC__Counters`.`n_new_30d`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "New Documents (30d)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "max(DC__Counters__n_new_30d)",
+                  "rowNumber": 0,
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0"
+                          },
+                          "operator": ">"
+                        },
+                        "fontColor": "#2E7D32"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ic_counter_revised",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "max(DC__Counters__n_revised_30d)",
+                      "expression": "MAX(`DC__Counters`.`n_revised_30d`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Revised Documents (30d)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "max(DC__Counters__n_revised_30d)",
+                  "rowNumber": 0,
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0"
+                          },
+                          "operator": ">"
+                        },
+                        "fontColor": "#E65100"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ic_bar_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "DC__Trend__day",
+                      "expression": "`DC__Trend`.`day`"
+                    },
+                    {
+                      "name": "sum(DC__Trend__n)",
+                      "expression": "SUM(`DC__Trend`.`n`)"
+                    },
+                    {
+                      "name": "DC__Trend__event_type",
+                      "expression": "`DC__Trend`.`event_type`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Changes by Day (30d)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "DC__Trend__day",
+                  "displayName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(DC__Trend__n)",
+                  "displayName": "n",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "DC__Trend__event_type",
+                  "displayName": "event_type",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "NEW",
+                        "color": "#2E7D32"
+                      },
+                      {
+                        "value": "REVISED",
+                        "color": "#E65100"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "ic_table_log",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "DC__Log__IDDOC",
+                      "expression": "`DC__Log`.`IDDOC`"
+                    },
+                    {
+                      "name": "DC__Log__new_ref",
+                      "expression": "`DC__Log`.`new_ref`"
+                    },
+                    {
+                      "name": "DC__Log__event_type",
+                      "expression": "`DC__Log`.`event_type`"
+                    },
+                    {
+                      "name": "DC__Log__indexing_status",
+                      "expression": "`DC__Log`.`indexing_status`"
+                    },
+                    {
+                      "name": "DC__Log__parse_status",
+                      "expression": "`DC__Log`.`parse_status`"
+                    },
+                    {
+                      "name": "DC__Log__old_ref",
+                      "expression": "`DC__Log`.`old_ref`"
+                    },
+                    {
+                      "name": "DC__Log__old_indice",
+                      "expression": "`DC__Log`.`old_indice`"
+                    },
+                    {
+                      "name": "DC__Log__new_indice",
+                      "expression": "`DC__Log`.`new_indice`"
+                    },
+                    {
+                      "name": "DC__Log__old_doc_date",
+                      "expression": "`DC__Log`.`old_doc_date`"
+                    },
+                    {
+                      "name": "DC__Log__new_doc_date",
+                      "expression": "`DC__Log`.`new_doc_date`"
+                    },
+                    {
+                      "name": "DC__Log__logged_at",
+                      "expression": "`DC__Log`.`logged_at`"
+                    },
+                    {
+                      "name": "DC__Log__last_indexed_at",
+                      "expression": "`DC__Log`.`last_indexed_at`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Intraqual Change Log (with indexing diagnostic)",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "DC__Log__IDDOC"
+                  },
+                  {
+                    "fieldName": "DC__Log__new_ref",
+                    "displayName": "Ref"
+                  },
+                  {
+                    "fieldName": "DC__Log__event_type",
+                    "displayName": "Type"
+                  },
+                  {
+                    "fieldName": "DC__Log__indexing_status",
+                    "displayName": "Indexing Status"
+                  },
+                  {
+                    "fieldName": "DC__Log__parse_status",
+                    "displayName": "Parse Status"
+                  },
+                  {
+                    "fieldName": "DC__Log__old_ref",
+                    "displayName": "Old Ref"
+                  },
+                  {
+                    "fieldName": "DC__Log__old_indice",
+                    "displayName": "Old Indice"
+                  },
+                  {
+                    "fieldName": "DC__Log__new_indice",
+                    "displayName": "New Indice"
+                  },
+                  {
+                    "fieldName": "DC__Log__old_doc_date",
+                    "displayName": "Old Date"
+                  },
+                  {
+                    "fieldName": "DC__Log__new_doc_date",
+                    "displayName": "New Date"
+                  },
+                  {
+                    "fieldName": "DC__Log__logged_at",
+                    "displayName": "Logged At"
+                  },
+                  {
+                    "fieldName": "DC__Log__last_indexed_at",
+                    "displayName": "Last Processed At"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "ic_counter_not_indexed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "max(DC__Counters__n_not_indexed_30d)",
+                      "expression": "MAX(`DC__Counters`.`n_not_indexed_30d`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Not Indexed (30d)",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(DC__Counters__n_not_indexed_30d)",
+                  "rowNumber": 0,
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0"
+                          },
+                          "operator": ">"
+                        },
+                        "fontColor": "#D32F2F"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
       "name": "global_filters",
       "displayName": "Global Filters",
       "layout": [
@@ -7383,23 +6605,6 @@
                 }
               },
               {
-                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_quality_data_Date",
-                "query": {
-                  "datasetName": "chat_quality_data",
-                  "fields": [
-                    {
-                      "name": "Date",
-                      "expression": "`Date`"
-                    },
-                    {
-                      "name": "Date_associativity",
-                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
-                    }
-                  ],
-                  "disaggregated": false
-                }
-              },
-              {
                 "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_conversations_paired_session_date",
                 "query": {
                   "datasetName": "chat_conversations_paired",
@@ -7462,10 +6667,6 @@
                   {
                     "fieldName": "Date",
                     "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_data_Date"
-                  },
-                  {
-                    "fieldName": "Date",
-                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_quality_data_Date"
                   },
                   {
                     "fieldName": "session_date",
@@ -10765,7 +9966,8 @@
                       "keyword": "temporalite"
                     }
                   ],
-                  "disaggregated": false
+                  "disaggregated": false,
+                  "fields": []
                 }
               }
             ],

@@ -17,12 +17,13 @@ Dashboard id (from the query names of the export): `01f13d51cb401021adbe60218638
 | DocCompare | One feedback per message in `messages_users` (no duplicated analyses); day/week/month totals equal (weekend activity kept, weeks and months zero-filled). |
 | Health check | "Needs OCR" detail starts from the current backlog (docs absent from run history were dropped); 30-day trend built from `parsing_run_health`; "Docs in Scope" excludes `SKIPPED_*`; "Last Run Duration" renamed "Avg Parse Time (s/doc)". |
 | Document search | `doc_search_text` ranks the checkpoint without its text column, then joins the text. |
-| Filters | Period filter also applies to chat, quality, conversations and turns; user filter titled; 3 mojibake titles repaired; `debug_recent_users` and `hc_index_freshness` removed. |
+| Filters | Period filter also applies to chat, conversations and turns; user filter titled; 3 mojibake titles repaired; `debug_recent_users` and `hc_index_freshness` removed. |
 | New page | "ChatBot - Reliability": `chat_turns` (turns by status, error and degraded rate, first-token and total latency p50/p95, degraded/failed turns) and `app_errors` by fingerprint. |
 
 ## Not changed, needs a decision or a measurement
 
-- **ChatBot - Quality**: the MLflow section is removed (`uat_proj.qualibot.ka_mlflow_scorer_assessments` does not exist, 2026-11-04 check). The LLM-judge section still reads `uat_landingzone.qualibot.chat_quality_scores` (last row 2026-10-15). The scorers now write `<env>_proj.qualibot.chat_trace_scores` (long format: `chat_trace_id, scored_at, scorer, value, rationale, division, status, vote, judge`), absent in UAT: rebuild the page on it once it exists.
+- **ChatBot - Quality** (LLM judge, MLflow) removed 2026-11-04, with the trace links (`trace_link`, wrong experiment ids) and the datasets `chat_quality_data`, `mlflow_scorer_data`, `scoring_runs_*`. A page on `<env>_proj.qualibot.chat_trace_scores` (long format: `chat_trace_id, scored_at, scorer, value, rationale, division, status, vote, judge`) comes once that table exists in UAT; trace links need the experiment id of `/Shared/Experiment/qualibot_chat_traces`.
+- DocCompare links (`lien_ancien/nouveau/analyse`) still point to the volume `uat_landingzone/qualibot/doc_compare`; check the volume location.
 - **KA cost block** (AGENT_BRICKS) is empty 30 days after the last KA endpoint is gone; remove it then.
 - **Costs**: the three Lakebase projects (UAT `d9fd81bc`, DEV `e9185a28`, PROD `deb195f2`) are counted; the old KA vector endpoints `ka-*-vs-endpoint` (DEV 5, UAT 1, still billed) appear as the category "Vector Search (old KA endpoints)".
 - **Every cost dataset scans `system.billing.usage`** (5 datasets). A view in `uat_proj.qualibot` read by the five would divide the scans by five; needs a grant run as the SP.

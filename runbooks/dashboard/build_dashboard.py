@@ -495,8 +495,24 @@ d["datasets"] = [x for x in d["datasets"] if x["name"] in DS]
 d["relationshipGraphs"][0]["sources"] = [s for s in d["relationshipGraphs"][0]["sources"] if s["datasetName"] in DS]
 LOG.append("quality: MLflow section and dataset removed (ka_mlflow_scorer_assessments does not exist)")
 
+# ---------------------------------------------------------------- 8d. Quality page (LLM judge) and trace links removed
+d["pages"] = [p for p in d["pages"] if p["displayName"] != "ChatBot - Quality"]
+PAGES.pop("ChatBot - Quality")
+DS.pop("chat_quality_data")
+sub("chat_conversations_paired", r",\s*CASE WHEN a\.trace_id IS NOT NULL.*?AS trace_link", "", flags=re.S)
+DS["chat_data"]["columns"] = [c for c in DS["chat_data"]["columns"] if c["displayName"] != "trace_link"]
+for pg in PAGES.values():
+    for it in pg["layout"]:
+        w = it["widget"]
+        for q in w.get("queries", []):
+            q["query"]["fields"] = [f for f in q["query"].get("fields", []) if "trace_link" not in f["expression"]]
+        enc = w.get("spec", {}).get("encodings", {})
+        if "columns" in enc:
+            enc["columns"] = [c for c in enc["columns"] if "trace_link" not in c["fieldName"]]
+LOG.append("page ChatBot - Quality (LLM judge) and trace links removed")
+
 # ---------------------------------------------------------------- 9. unused datasets
-for name in ("debug_recent_users", "hc_index_freshness"):
+for name in ("debug_recent_users", "hc_index_freshness", "scoring_runs_data", "scoring_runs_summary"):
     DS.pop(name)
 d["datasets"] = [x for x in d["datasets"] if x["name"] in DS]
 d["relationshipGraphs"][0]["sources"] = [s for s in d["relationshipGraphs"][0]["sources"] if s["datasetName"] in DS]
@@ -509,8 +525,7 @@ for it in gf:
     if w["name"] == "3fcbea78":
         w["spec"]["frame"] = {"showTitle": True, "title": "Utilisateur"}
     if w["name"] == "date_range":
-        for ds_name, field in (("chat_data", "Date"), ("chat_quality_data", "Date"),
-                               ("chat_conversations_paired", "session_date")):
+        for ds_name, field in (("chat_data", "Date"), ("chat_conversations_paired", "session_date")):
             qn = f"dashboards/{DASH_ID}/datasets/{ds_name}_{field}"
             w["queries"].append({"name": qn, "query": {"datasetName": ds_name, "fields": [
                 {"name": field, "expression": f"`{field}`"},
@@ -718,7 +733,7 @@ layout = [
      "position": {"x": 0, "y": 20, "width": 12, "height": 8}},
 ]
 page = {"name": "chatbot_reliability", "displayName": PG, "layout": layout, "pageType": "PAGE_TYPE_CANVAS"}
-idx = [p["displayName"] for p in d["pages"]].index("ChatBot - Quality")
+idx = [p["displayName"] for p in d["pages"]].index("ChatBot - Satisfaction")
 d["pages"].insert(idx + 1, page)
 LOG.append("new page ChatBot - Reliability (chat_turns, app_errors)")
 
