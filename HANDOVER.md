@@ -236,63 +236,91 @@ Règles : DEV sans test préalable ; UAT et PROD lancent d'abord la suite de tes
 | `uat-state-fix`, `bind-uat-lakebase`, `bind-uat-staging`, `unbind-dev-test-volume` | Réparations d'état du bundle UAT et DEV (détacher ou rattacher un objet existant) |
 | `sync-prod-data` | Copie le volume des modèles Docling d'UAT vers PROD en deux étapes |
 
-### Déploiement depuis le poste (alternative)
-
-```powershell
-# à la racine du dépôt, profil déjà connecté (databricks auth login --profile DEV)
-.\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
-```
-Options : `-SkipBuild` (pas de reconstruction du frontend), `-SyncOnly` (envoie le code sans reconstruire ni redémarrer), `-Infra` (lance `databricks bundle deploy` : ressources, permissions, liaisons de volumes ; demande MANAGE sur le catalogue).
-
 ### Configuration de l'app par env
 
 Ordre de priorité : `utils/deploy/target_env.json` (surcharges par env, rendu en `target_config.env` au déploiement), puis `app.yaml` (valeurs par défaut commentées), puis les valeurs du code. Les variables du bundle (planning, workers, index synchronisés, cluster policy) sont dans `databricks.yml`, une section par env.
 
-### Lancer l'app en local
-
-Voir le README (profil CLI, `.env.local`, `python -m uvicorn server.app:app`, `bun run dev`). Sous Windows, retirer `DATABRICKS_TOKEN` de l'environnement s'il existe : `Remove-Item Env:\DATABRICKS_TOKEN`.
-
 ## 9. Comparaison de documents (DocCompare)
 
-Onglet `/compare` (`client/src/components/compare/`, API `server/routers/compare/`, logique `server/services/compare/`). Accès : groupes DocCompare, CoreDev, CoreAdmin (`require_compare`). Activation : `COMPARE_ENABLED`.
+Documentation de référence : [client/src/components/compare/README.md](client/src/components/compare/README.md) (interface, flux, historique), [server/routers/compare/README.md](server/routers/compare/README.md) (routes), [server/services/compare/README.md](server/services/compare/README.md) (services et LLM), [server/services/compare/processors/README.md](server/services/compare/processors/README.md) (extraction par type de fichier), [server/services/compare/processors/_diff_engines/README.md](server/services/compare/processors/_diff_engines/README.md) (moteurs de différence), [server/services/compare/processors/docx/README.md](server/services/compare/processors/docx/README.md) (DOCX).
 
-**Ce que fait l'utilisateur** : il dépose deux versions d'un document (PDF, images, Word, PowerPoint, Excel, XML ; 20 Mo maximum chacun) et obtient, séparément ou ensemble :
-- un **résumé des changements** (Markdown, une ligne par changement, export PDF) ;
-- un **tableau des changements** (type, criticité haute / moyenne / basse, numéros `C1`, `C2`…, export Excel) ;
-- une **recherche d'impact** (§10) ;
-- le **résumé d'un seul document**.
+Accès : groupes DocCompare, CoreDev, CoreAdmin (`require_compare`). Activation : `COMPARE_ENABLED`.
 
-**Déroulement d'une analyse** (`POST /api/compare/analyze`, flux SSE) : le navigateur calcule le SHA-256 des deux fichiers et envoie les fichiers avec la méthode (`standard` = résumé, `structured` = tableau). Le serveur vérifie le cache (clé = hash des deux fichiers + version de l'app), attend un créneau (`COMPARE_MAX_CONCURRENT`), transforme les fichiers par un *processeur* selon leur type (`server/services/compare/processors/`, versions proposées dans `versions.yml`), calcule la différence, puis appelle le modèle. Une ligne d'audit est écrite dans la table Lakebase `llm_requests` (statut `ok`, `error` ou `aborted`). Les très gros écarts (plus de 60 000 caractères) sont découpés aux limites de sections en morceaux de 45 000 caractères, analysés en parallèle puis fusionnés (`chunked_analysis.py`). Si le navigateur se déconnecte, l'appel au modèle s'arrête.
+**Ce que fait l'utilisateur** : il dépose deux versions d'un document (PDF, images, Word, PowerPoint, Excel, XML ; 20 Mo maximum chacun) et obtient, séparément ou ensemble : un **résumé des changements** (Markdown, une ligne par changement, export PDF), un **tableau des changements** (type, criticité haute / moyenne / basse, numéros `C1`, `C2`…, export Excel), une **recherche d'impact** (§10), ou le **résumé d'un seul document**.
 
-**Modèles** : analyse `databricks-claude-sonnet-5-5` (`COMPARE_ANALYSIS_ENDPOINT`, avec réflexion adaptative, effort `COMPARE_THINKING_EFFORT`) ; repli sur `COMPARE_LLM_FALLBACK_ENDPOINTS` (sinon GPT-5.6 Luna ou GPT-6 Luna). Résumé d'un document et images : `databricks-gpt-6-luna` (`COMPARE_SUMMARY_ENDPOINT`, `COMPARE_SUMMARY_IMAGE_ENDPOINT`). Un endpoint qui échoue est mis au repos, le suivant de la chaîne est essayé ; l'erreur n'est levée que si aucun ne répond. Prompts : fichiers de `server/prompts/compare/`.
+### Comment une analyse est réalisée
 
-**Réglages** (`app.yaml`, surcharges par env dans `utils/deploy/target_env.json`) : `COMPARE_MAX_TOKENS`, `COMPARE_ANALYSIS_TIMEOUT_S` (300), `COMPARE_METHOD_<TYPE>` (méthode par défaut par type de fichier), `COMPARE_SUMMARY_MAX_CHARS` (300 000), `COMPARE_VOLUME_PATH`.
+Route `POST /api/compare/analyze` (`server/routers/compare/analyze.py`), réponse en flux SSE.
 
-**Sauvegarde et historique** : si `COMPARE_VOLUME_PATH` est défini (par env : `/Volumes/<env>_proj/qualibot/doc_compare`), un dossier de session reçoit les deux fichiers, le texte de l'analyse puis l'Excel ou le PDF. L'historique est dans la table Lakebase `compare_messages`, les votes dans `compare_feedbacks`, les résumés en cache dans `summary_cache`, les analyses en cache dans `analysis_cache`. Le navigateur garde aussi les documents et résultats en local storage (rechargement de page) ; un échec de sauvegarde n'empêche jamais l'affichage.
+1. **Hash et cache.** Le navigateur calcule le SHA-256 des deux fichiers. Le serveur cherche une analyse identique en cache (table `analysis_cache`, clé = hash des deux fichiers + version de l'app + réglages qui façonnent le rapport : méthode, modèle, prompt) ; s'il y en a une, il la rejoue. `force_refresh` l'ignore.
+2. **Créneau.** Au plus `COMPARE_MAX_CONCURRENT` analyses en même temps ; les autres attendent.
+3. **Extraction (processeur).** Un processeur par type de fichier (`processors/factory.py`, `EXTENSION_MAP`) lit les deux fichiers et en sort le texte et les images :
+   - PDF : PyMuPDF, texte par bloc avec balises de page, fusion des paragraphes coupés par un saut de page, lignes de tableaux, images dédoublonnées par hash ;
+   - DOCX / DOC : lignes dans l'ordre du document balisées `[Page N, Para M]` (`.doc` lu par antiword puis olefile) ;
+   - PPTX / PPT : texte et images par diapositive ;
+   - XML : texte des éléments ; Excel : différence cellule par cellule, lignes appariées sur la première colonne ; images : les deux images envoyées à un modèle de vision après redimensionnement.
+4. **Différence (moteurs partagés, `_diff_engines/`).** Les paragraphes similaires des deux versions sont alignés ; le résultat montre les changements dans le texte (`~~supprimé~~`, `**ajouté**`). Le moteur fusionne les en-têtes et pieds de page répétés, le même changement répété sur chaque page, détecte le texte déplacé plutôt que supprimé, et distingue un vrai changement d'un changement de style (un verbe modal « doit » devient « peut » est substantiel, deux verbes du même groupe d'obligation ne le sont pas). Les images des deux versions sont appariées par empreinte (modifiée, retournée, supprimée, ajoutée). La différence est coupée à `COMPARE_MAX_DIFF_CHARS` ; l'utilisateur est prévenu quand la fin du rapport manque.
+5. **Méthode et prompt.** `standard` (résumé Markdown), `structured` (tableau JSON) ou `comparative` (cachée dans l'interface). La liste des méthodes proposées par type de fichier est dans `processors/versions.yml`, la méthode par défaut dans `COMPARE_METHOD_<TYPE>`. Les prompts sont dans `server/prompts/compare/` (`analysis_standard.md`, `analysis_structured.md`, `analysis_default.md`).
+6. **Appel du modèle.** `databricks-claude-sonnet-5-5` (`COMPARE_ANALYSIS_ENDPOINT`, réflexion adaptative réglée par `COMPARE_THINKING_EFFORT`), avec repli sur `COMPARE_LLM_FALLBACK_ENDPOINTS` (sinon GPT-5.6 Luna ou GPT-6 Luna). Un endpoint en échec est mis au repos et le suivant est essayé ; l'erreur n'est levée que si aucun ne répond. Au-delà de `COMPARE_CHUNK_THRESHOLD_CHARS` (60 000 caractères), la différence est coupée aux limites de sections en morceaux de `COMPARE_CHUNK_SIZE_CHARS` (45 000), analysés en parallèle puis fusionnés dans un seul flux (`chunked_analysis.py`).
+7. **Fin.** Une ligne d'audit est écrite dans `llm_requests` (statut `ok`, `error` ou `aborted`, durées, tokens, coût). Si le navigateur se déconnecte, l'appel au modèle s'arrête et la ligne est `aborted`.
 
-**Aperçus** : PDF et images lus localement ; DOCX converti en PDF fidèle par LibreOffice (`soffice.py`, archive du volume `doc_compare`, variable `SOFFICE_ARCHIVE_VOLUME_PATH`) ; `.doc` par antiword (installé au démarrage par `start.sh`) ; autres formats convertis en HTML.
+### Résumé d'un seul document
 
-**Limites connues** : les tableaux situés dans les en-têtes et pieds de page des DOCX ne sont pas comparés (ils contiennent surtout des tableaux de révision). Les images du tableau sont associées aux lignes par ordre d'apparition, pas par numéro de page.
+`POST /api/compare/summarize` : texte envoyé à `COMPARE_SUMMARY_ENDPOINT` (`databricks-gpt-6-luna`, texte coupé à `COMPARE_SUMMARY_MAX_CHARS` = 300 000 caractères), image envoyée à `COMPARE_SUMMARY_IMAGE_ENDPOINT`. Mis en cache par hash du fichier (`summary_cache`). Un document sans texte donne un résumé « pas de contenu », pas une erreur.
+
+### Sauvegarde, historique, aperçus
+
+- Si `COMPARE_VOLUME_PATH` est défini (par env : `/Volumes/<env>_proj/qualibot/doc_compare`), un dossier de session reçoit les deux fichiers, le texte de l'analyse puis l'Excel ou le PDF. Les routes `save` / `load` (`volume.py`) refusent tout chemin hors de ce volume.
+- Historique : table Lakebase `compare_messages` ; votes : `compare_feedbacks`. Le navigateur garde aussi documents et résultats en local storage ; un échec de sauvegarde n'empêche jamais l'affichage.
+- Aperçus : PDF et images lus dans le navigateur ; DOCX converti en PDF fidèle par LibreOffice (`soffice.py`, archive dans le volume `doc_compare`, variable `SOFFICE_ARCHIVE_VOLUME_PATH`) ; `.doc` par antiword (installé au démarrage par `start.sh`) ; autres formats convertis en HTML.
+
+### Limites connues
+
+Les tableaux situés dans les en-têtes et pieds de page des DOCX ne sont pas comparés (ils contiennent surtout des tableaux de révision). Dans le tableau des changements, les images sont associées aux lignes par ordre d'apparition, pas par numéro de page (le numéro rendu par le modèle n'est pas fiable).
 
 ## 10. Recherche d'impact
 
-Sert à répondre à : « quels autres documents de la base sont touchés par ces changements ? ». Route `POST /api/compare/impact` (flux NDJSON), code `server/routers/compare/impact.py`, `server/services/compare/impact_queries.py`, client `client/src/components/compare/impact/`.
+Question à laquelle elle répond : « quels autres documents de la base sont touchés par les changements de cette comparaison ? ». Documentation : [client/src/components/compare/README.md](client/src/components/compare/README.md) (section Impact search), [server/routers/compare/README.md](server/routers/compare/README.md). Code : [server/routers/compare/impact.py](server/routers/compare/impact.py) (route et flux), [server/services/compare/impact_queries.py](server/services/compare/impact_queries.py) (changements et requêtes), [server/services/infra/vector_search.py](server/services/infra/vector_search.py) (recherche, agrégation, juge), prompt [server/prompts/compare/impact_judge.md](server/prompts/compare/impact_judge.md). Interface : `client/src/components/compare/impact/`.
 
-**Déroulement** :
-1. Les changements viennent du tableau (ou, à défaut, du résumé), numérotés `C1`, `C2`…
-2. `impact_queries.py` construit une requête de recherche par changement (jusqu'à `COMPARE_IMPACT_MAX_QUERIES` = 30 ; les changements de plus faible criticité partagent la dernière requête). Une requête est plafonnée à 2000 caractères. Les changements qui n'entrent dans aucune requête sont listés (`changes_not_searched`) et signalés à l'utilisateur.
-3. Chaque requête interroge l'index Vector Search `COMPARE_IMPACT_INDEX` (`<env>_proj.qualibot.chunks_index`, le même que le chat) et renvoie `COMPARE_IMPACT_PER_QUERY_RESULTS` = 40 passages.
-4. Les documents candidats sont classés ; les `COMPARE_IMPACT_MAX_CANDIDATES` = 15 meilleurs partent chez le juge. Un document comparé peut s'exclure lui-même des résultats.
-5. Pour chaque candidat, un appel du modèle juge (`COMPARE_IMPACT_ENDPOINT` = `databricks-gpt-6-luna`, prompt `server/prompts/compare/impact_judge.md`) rend un verdict `impacted`, `check` (à vérifier), `not_impacted` ou `error`, la raison, et chaque passage en conflit avec une citation mot pour mot. Le modèle `gemini-3-1-flash-lite` a été écarté pour le juge : trop de faux positifs.
-6. Le flux envoie `plan` (changements, candidats, requêtes), un événement `document` par document jugé au fur et à mesure, puis `done` (consommation, durée).
+### Comment elle est réalisée
 
-**Cache et audit** : le résultat est mis en cache (table `impact_cache`, clé = hash des fichiers, liste des changements, index, modèle) seulement si aucun document n'a échoué ; `force_refresh` l'ignore. Lignes d'audit : `impact_requests` (la recherche) et `impact_document_results` (chaque document jugé). Votes : `impact_feedbacks` (un par verdict de document, plus un avis général).
+Route `POST /api/compare/impact`, réponse en flux NDJSON (une ligne JSON par événement).
 
-**Interface** : résultats « par document » ou « par changement », filtre par verdict, clic sur `C12` pour aller à la ligne du tableau, export Excel de la liste d'actions (`POST /api/compare/impact/export-excel`), résultat rattaché à l'entrée d'historique.
+1. **Liste numérotée des changements** (`extract_changes`). Le texte reçu est celui du tableau (JSON : section, type, criticité, avant, après, raison), sinon du résumé (Markdown : une section `##` puis une ligne par changement), sinon du texte libre. Chaque changement reçoit un identifiant stable `C1`, `C2`… dans l'ordre du document, que le juge et l'interface réutilisent. Les changements « éditorial / structurel » (renumérotation, table des matières) sont gardés dans la liste pour que les numéros correspondent au tableau, mais ne sont pas recherchés ; s'il n'y a que ça, ils sont recherchés quand même. « Aucun changement significatif » (dans plusieurs langues) donne un résultat vide sans appel de modèle.
+2. **Une requête par changement** (`changes_to_queries`). Chaque changement devient une requête courte (au plus 2000 caractères : un texte long dilue le vecteur et ne trouve rien de précis). Jusqu'à `COMPARE_IMPACT_MAX_QUERIES` = 30 requêtes ; au-delà, les changements de plus faible criticité sont regroupés par section, et ceux qui ne tiennent encore dans aucune requête sont listés dans `changes_not_searched` (l'utilisateur est prévenu que des impacts peuvent manquer).
+3. **Recherche** (`_fetch_chunks_multi`). Chaque requête interroge l'index Vector Search `COMPARE_IMPACT_INDEX` (`<env>_proj.qualibot.chunks_index`, le même index que le chat) en recherche hybride et rend `COMPARE_IMPACT_PER_QUERY_RESULTS` = 40 passages. Une requête en échec est retentée ; si toutes échouent, la recherche s'arrête avec une erreur, si seulement certaines échouent l'avertissement `VectorSearchPartial` est enregistré dans `app_errors` et le résultat n'est pas mis en cache. Le jeton utilisé est celui du SP de l'app ; en cas de refus 403 il est réessayé avec le jeton du visiteur.
+4. **Agrégation par document** (`_aggregate_docs`). Les passages sont regroupés par document, un même passage trouvé par plusieurs changements n'est gardé qu'une fois avec l'union des changements qui l'ont fait remonter. Les documents sont classés par nombre de changements couverts puis meilleur score. Les variantes de langue d'un même document (REF qui ne diffère que par le suffixe de langue ou de site) sont fusionnées. Le document comparé lui-même (et ses variantes) est exclu. Les `COMPARE_IMPACT_MAX_CANDIDATES` = 15 meilleurs partent chez le juge ; les suivants sont listés comme non jugés.
+5. **Juge, un appel par document candidat** (`_judge`, parallèle, avec reprises). Le modèle `COMPARE_IMPACT_ENDPOINT` (`databricks-gpt-6-luna`, repli `databricks-gpt-5-6-luna`) reçoit la liste des changements (plafonnée à `COMPARE_IMPACT_MAX_QUERY_CHARS` = 20 000 caractères) et les passages du candidat, et répond en JSON : `impacted`, `confidence` (haute / moyenne / basse), `reason`, et pour chaque passage en conflit le numéro du passage, les changements concernés, la section, une **citation mot pour mot** et une explication. La citation est retrouvée dans le texte du passage pour être surlignée dans l'interface. Le modèle `gemini-3-1-flash-lite` a été écarté pour ce rôle : trop de faux positifs.
+6. **Verdict** (`_status`) : `impacted`, `check` (à vérifier), `not_impacted` ou `error`. Un verdict « impacté » dont aucune citation n'est retrouvée dans le texte, ou une confiance basse, devient `check` : une affirmation invérifiable n'est jamais présentée comme certaine. Un appel du juge qui échoue donne ce document en `error` sans arrêter les autres.
+7. **Flux envoyé** : événement `plan` (changements, nombre de requêtes réussies et en échec, passages trouvés, candidats, documents exclus ou non jugés, changements non recherchés), un événement `document` par document dès qu'il est jugé, puis `done` (tokens, coût, durée, id de la requête). Les documents sont ensuite triés (impactés d'abord).
 
-**Dépendances côté données** : la qualité dépend de `chunks_index` (donc du parsing, §3). Si l'index ne répond pas, la recherche ne se lance pas ; l'interface ne propose la recherche que si le nom d'index est valide.
+### Cache, audit, retours
 
-## 11. À traiter / questions ouvertes
+- **Cache** (table `impact_cache`) : clé = hash des deux fichiers + version de l'app + liste des changements + index + modèle. Un résultat n'est mis en cache que s'il est complet : aucune requête en échec, aucun juge en erreur, aucun jugement venant d'un modèle de repli. `force_refresh` ignore le cache.
+- **Audit** : `impact_requests` (la recherche : durées, requêtes, passages, tokens, coût, statut `ok` / `error` / `aborted`) et `impact_document_results` (chaque document jugé). Les dégradations vont dans `app_errors` (sévérité `warning`).
+- **Votes** : `POST /api/compare/impact/feedback` → `impact_feedbacks` (un vote par verdict de document, plus un avis général sur la recherche).
+- **Interface** : résultats « par document » ou « par changement », filtre par verdict, un clic sur `C12` ramène à la ligne du tableau, export Excel de la liste d'actions (`POST /api/compare/impact/export-excel`), résultat rattaché à l'entrée d'historique (`PUT /api/history/{id}/impact`).
+
+### Ce dont elle dépend
+
+La qualité vient de l'index `chunks_index` (donc du parsing, §3 : périmètre, tailles de passages) et du modèle juge. L'interface ne propose la recherche que si le nom d'index est valide (`/api/config/app`).
+
+## 11. Chatbot
+
+Le chat n'est pas détaillé ici : tout est dans les README suivants.
+
+| Sujet | Documentation |
+|---|---|
+| Interface du chat (pages, composants, flux WebSocket, historique, partage) | [client/src/components/chat/README.md](client/src/components/chat/README.md) |
+| Route du chat (WebSocket, sessions, persistance, citations) | [server/routers/chat/README.md](server/routers/chat/README.md) |
+| Services du chat (appels LLM, traduction, journal de tour, traces MLflow) | [server/services/chat/README.md](server/services/chat/README.md) |
+| Moteur du chat (réécriture, recherches, prompt, citations, « qui cite X ? ») | [server/services/chat/engine/README.md](server/services/chat/engine/README.md) |
+| Prompts du chat et de la comparaison | [server/prompts/README.md](server/prompts/README.md) |
+| Recherche Vector Search, Lakebase, catalogue de documents | [server/services/infra/README.md](server/services/infra/README.md) |
+| Colonnes des tables Lakebase du chat | [server/services/infra/lakebase/schema.md](server/services/infra/lakebase/schema.md) |
+| Configuration actuelle du chat et variantes testées | section 7 de ce document |
+
+## 12. À traiter / questions ouvertes
 
 - Épingler les versions des bibliothèques installées sur le cluster de parsing.
 - Corriger `2_manifest` pour qu'un run avec `parse_filter` ne supprime pas les chunks des anciennes révisions sans parser les nouvelles.
