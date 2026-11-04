@@ -821,10 +821,19 @@ ROOTS_IN_SCOPE = "3870, 948, 3209, 12, 962, 3208, 4001, 3867"
 d["datasets"].append({
     "name": "doc_diagnostic", "displayName": "Document Diagnostic",
     "queryLines": (f"""
-WITH rev AS (
+WITH rev0 AS (
   SELECT document_revision_ID AS IDDOC, document_reference AS ref, document_title AS titre, published_date,
-         revision_status_code, lifecycle_state_code, is_hidden, root_category_ID, category_ID_path
+         revision_status_code, lifecycle_state_code, is_hidden, root_category_ID, category_ID_path,
+         last(CASE WHEN root_category_ID IS NOT NULL THEN struct(root_category_ID AS rc, category_ID_path AS cp) END, true)
+           OVER (PARTITION BY document_reference ORDER BY document_revision_ID
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS earlier
   FROM prod_gold.quality_system.document_revisions_intraqual
+),
+rev AS (
+  SELECT IDDOC, ref, titre, published_date, revision_status_code, lifecycle_state_code, is_hidden,
+         COALESCE(root_category_ID, earlier.rc) AS root_category_ID,
+         CASE WHEN root_category_ID IS NULL THEN earlier.cp ELSE category_ID_path END AS category_ID_path
+  FROM rev0
 ),
 cat AS (
   SELECT ancestor_category_ID AS id, first(ancestor_category_name) AS name
