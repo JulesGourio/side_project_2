@@ -121,6 +121,8 @@
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS history_messages INTEGER",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS fr_query TEXT",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS en_query TEXT",
+  "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS orig_query TEXT",
+  "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS queries_searched JSONB",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS rewrite_ok BOOLEAN",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS rewrite_mode TEXT",
   "ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS stopwords_removed JSONB",
