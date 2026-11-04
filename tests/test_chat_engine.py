@@ -796,6 +796,15 @@ def test_the_most_recent_language_variant_is_kept():
     assert [r['chunk_id'] for r in engine.retrieval.one_language_per_document(rows)] == ['g1']
 
 
+def test_the_variant_in_the_question_language_wins_over_a_newer_one():
+    rows = [_dated('f1', 'QP-1518_FR', '2025-01-01'), _dated('g1', 'QP-1518_GB', '2025-11-14'),
+            _dated('s1', 'QP-1518_ES', '2024-01-01')]
+    pick = engine.retrieval.one_language_per_document
+    assert [r['chunk_id'] for r in pick(rows, language='fr')] == ['f1']
+    assert [r['chunk_id'] for r in pick(rows, language='es')] == ['s1']
+    assert [r['chunk_id'] for r in pick(rows, language='en')] == ['g1']
+
+
 def test_the_variant_in_the_question_language_breaks_a_date_tie():
     rows = [_dated('b1', 'QP-1518_BG', '2025-09-16'), _dated('f1', 'QP-1518_FR', '2025-09-16')]
     assert [r['chunk_id'] for r in engine.retrieval.one_language_per_document(rows, language='fr')] == ['f1']

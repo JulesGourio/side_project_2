@@ -6,6 +6,7 @@ import re
 from typing import Dict, Iterable, List, Tuple
 
 from server.services.infra.doc_catalog import _catalog, canon_ref, document_info, site_code
+from server.services.chat.translation_bridge import fast_lang_guess
 from server.services.chat.turn_log import TurnLog, passage_date
 from server.services.chat.engine.queries import needs_original_query, opening_language, rewrite_queries, translate_query
 from server.services.chat.engine.references import cited_codes_asked, exact_citations
@@ -27,8 +28,8 @@ _CITING_LOOKUP_K = 20            # passages fetched from them
 _DATE_PREFIX_RE = re.compile(r'^\[Date: \d{4}-\d{2}-\d{2}\]\n\n')
 # Inline citation markers the chat route bakes into stored answers (⟦n⟧) — present in history.
 _STORED_MARKER_RE = re.compile(r'⟦\d+⟧')
-# REF suffixes of a variant written in the question's language (opening_language: 'fr' or 'en').
-_LANGUAGE_SUFFIXES = {'fr': ('FR',), 'en': ('EN', 'GB')}
+# REF suffixes of the variants written in a question's language (fastText code of the question).
+_LANGUAGE_SUFFIXES = {'fr': ('FR',), 'en': ('EN', 'GB'), 'es': ('ES', 'MX'), 'pt': ('BR',), 'bg': ('BG',), 'cs': ('CZ',)}
 
 
 # --- Conversation helpers ---
@@ -94,12 +95,12 @@ def one_language_per_document(rows: List[SearchRow], question_codes: Iterable[st
     """Only the passages of one language variant of each document (Q0102QP_GB or Q0102QP_BG, not both).
 
     The variant kept is, in this order: the one whose passages cite a reference code of the question (the other
-    language may be an older revision that does not cite it yet), then the most recently published, then the one in
-    the question's language, then the best ranked.
+    language may be an older revision that does not cite it yet), then the one in the question's language, then the
+    most recently published, then the best ranked.
 
     :param rows: passages in rank order
     :param question_codes: canonical reference codes of the question (``code_normalization``)
-    :param language: language of the question, ``fr`` or ``en``; None when unknown
+    :param language: language of the question (fastText code, e.g. ``fr``, ``en``, ``es``); None when unknown
     :return: the passages of the chosen variant of each document, in rank order
     """
     codes = set(question_codes)
@@ -110,7 +111,7 @@ def one_language_per_document(rows: List[SearchRow], question_codes: Iterable[st
         cites = bool(codes & set(canonical_codes(row.get('chunk_text') or '')))
         best = variants.setdefault(canon_ref(ref), {}).get(ref)
         if best is None:
-            best = (False, _variant_date(row), site_code(ref) in preferred, -rank)
+            best = (False, site_code(ref) in preferred, _variant_date(row), -rank)
         variants[canon_ref(ref)][ref] = (best[0] or cites,) + best[1:]
     chosen = {canon: max(by_ref, key=by_ref.get) for canon, by_ref in variants.items()}
     return [row for row in rows if chosen[canon_ref(row['REF'])] == row['REF']]
@@ -254,7 +255,8 @@ async def retrieve_for_turn(host: str, token: str, division: str, conversation: 
                                                   via='citation_lookup', log=log)
                 rows = _merge_by_rank([found, rows])
         candidates = rows
-        rows = one_language_per_document(rows, canonical_codes(question, accept_lowercase=True), language)
+        rows = one_language_per_document(rows, canonical_codes(question, accept_lowercase=True),
+                                         fast_lang_guess(question))
 
         # Every passage retrieved, in retrieval order (the ones past the search cap last), kept or not.
         kept = {r['chunk_id'] for r in rows}
