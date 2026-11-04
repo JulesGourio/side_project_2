@@ -105,8 +105,9 @@ variables with the defaults listed at the top of `config.py`.
   the gate filters it out: the history is never searched for a better one.
 - **Division** (`categories.build_division_reference`): from the root of the main category (`AS -`, `IS -`, PROCESSES,
   DIRECTIVE); under the process tree (`00-LATECOERE PROCESSES_One QMS`) a leaf category named `AS` or `IS` sets it,
-  and every other document is `GROUP` (shared by the divisions). Documents published before `DOC_DATE_CUTOFF`
-  (2016-01-01) go to `chunks_archive` except under the date-exempt roots (`DATE_EXEMPT_ROOT_IDCATS`, none today).
+  and every other document is `GROUP` (shared by the divisions). Every in-scope document is indexed
+  whatever its date: `DATE_EXEMPT_ROOT_IDCATS` holds every scope root and `3798`, so `DOC_DATE_CUTOFF` (2016-01-01) routes
+  to `chunks_archive` only a document outside those roots, none in scope.
 - **Manifest**: `2_manifest` keeps the in-scope documents, with their REF, title, revision (`indice`), date,
   category hierarchy, document type and `parse_content` flag. A category listed in `EXCLUDED_IDCATS` and a REF
   listed in `MANUAL_REF_EXCLUSIONS` are excluded.
@@ -124,8 +125,8 @@ variables with the defaults listed at the top of `config.py`.
 - **Volume folders** are classified by `2_manifest`: `KEEP` (parsed), `DELETE` (out of scope), `ORPHAN` (IDDOC
   unknown in `document_revisions_intraqual`, kept on the volume, not parsed), `SKIP` (name not `D_<IDDOC>` or `Dm_<IDDOC>`), `MANUAL`,
   `CAT_EXCL`.
-- **Archive**: a document published before `DOC_DATE_CUTOFF` is parsed like the others, but its passages go
-  to `chunks_archive` and never to `chunks`. `parsed_documents.is_filtered_by_date` is `true` for these. A document
+- **Archive**: a document published before `DOC_DATE_CUTOFF` and outside `DATE_EXEMPT_ROOT_IDCATS` (none in scope) is
+  parsed like the others, but its passages go to `chunks_archive` and never to `chunks`. `parsed_documents.is_filtered_by_date` is `true` for these. A document
   without date counts as recent. `archive_notices` holds one passage per archived document (REF, title, revision,
   type, date and a statement that the content is not indexed), rebuilt on every run and removed from `chunks`.
   Archives feed the impact search only: nothing from them reaches the RAG (decided 2026-10-22). The cutoff is

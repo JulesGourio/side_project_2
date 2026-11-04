@@ -29,7 +29,7 @@ The operator runbooks (`dev.md`, `uat.md`, `prod.md`, `retest.md`) are written i
 
 | Environment | Done | Remains, in order |
 |---|---|---|
-| DEV | Official scope (3 roots), date 2016, divisions AS/IS/GROUP, batch fix, parsing run and checks passed | Rebuild `chunks_index` (`dev.md` I), test the chat with the AS and IS filters, reset the temporary DEV settings (`dev.md` H, K) |
+| DEV | Official scope (3 roots), divisions AS/IS/GROUP (no date limit in scope), batch fix, parsing run and checks passed | Rebuild `chunks_index` (`dev.md` I), test the chat with the AS and IS filters, reset the temporary DEV settings (`dev.md` H, K) |
 | UAT | Test index `chunks_index_test` deleted | `uat.md` H: push, `deploy-uat-jobs`, `full` run, checks, `deploy-uat`; then `uat.md` I: clean-up list from the table dates |
 | PROD | Profile checked, access probe run (PROD reads neither DEV nor UAT; `prod_proj.qualibot` does not exist yet; the former schema `prod_landingzone.qualibot` holds 13 tables) | `prod.md` 0.3 P2 to P8: legacy jobs, prepare the schema, clone the former parsing state, endpoint, grants, deployment on explicit approval, first `full` run, drop of the former schema last |
 
