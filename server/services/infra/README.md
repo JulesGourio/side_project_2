@@ -30,7 +30,7 @@ Parent: [services](../README.md).
   the chat only: the Databricks app permission already decides who reaches the app, and a visitor in a group only
   through another group is in neither source; Compare stays with the groups that name it. The result is cached for
   `CAPS_TTL_S`. When the `users` table cannot be read and SCIM gives no allowed group, the chat is granted and Compare is not, uncached.
-  The group names are the constants of `user.py`.
+  The group names are the constants of `user.py`. The SCIM read is best effort: its failure and its result are not logged; the `Capabilities user=...` line (DEBUG) shows the groups found.
 - `CAPS_BYPASS=true` grants both capabilities to every visitor. `tests/test_deploy_config.py` keeps it off outside DEV.
 - When `ENV` is unset, `_is_dev()` is true. A request without an `x-forwarded-user` header then gets both capabilities,
   and `get_user_identity` returns the workspace identity instead of none.

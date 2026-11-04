@@ -254,17 +254,15 @@ async def get_capabilities(request: Request) -> dict:
 
     header_email = request.headers.get('x-forwarded-email', '').strip()
     groups: set[str] = set()
-    sources: list[str] = []
     table_read = True
     try:
         stored = await _stored_groups(forwarded.split('@', 1)[0], header_email)
     except Exception as e:
         stored = None
         table_read = False
-        logger.warning('Capabilities %s: users table not read (%s)', key, e)
+        logger.warning('Capabilities user=%s: users table not read (%s)', key, e)
     if stored is not None:
         groups |= stored
-        sources.append('TABLE')
 
     email = display_name = ''
     obo_token = request.headers.get('x-forwarded-access-token', '').strip()
@@ -272,22 +270,20 @@ async def get_capabilities(request: Request) -> dict:
         try:
             scim_groups, email, display_name = await asyncio.to_thread(_scim_identity, obo_token)
             groups |= scim_groups
-            sources.append('SCIM')
-        except Exception as e:
-            logger.debug('Capabilities %s: SCIM not read (%s)', key, e)
+        except Exception:  # noqa: BLE001 — best effort, deliberately not logged (the error carries the app's auth config)
+            pass
 
     caps = _caps_from_groups(groups)
     if caps['groups']:
-        logger.debug('Capabilities %s: can_chat=%s can_compare=%s (%s) groups=%s', key, caps['can_chat'],
-                    caps['can_compare'], '+'.join(sources), caps['groups'])
+        logger.debug('Capabilities user=%s can_chat=%s can_compare=%s groups=%s', key, caps['can_chat'],
+                     caps['can_compare'], caps['groups'])
     elif not table_read:
-        logger.warning('Capabilities %s: no allowed group found and users table not read (%s) — chat only, uncached',
-                       key, '+'.join(sources) or 'no source')
+        logger.warning('Capabilities user=%s: no allowed group found and users table not read — chat only, uncached', key)
         await _remember_identity(forwarded, email or header_email, display_name)
         return dict(_DEFAULT_CAPS)
     else:
         caps = dict(_DEFAULT_CAPS)
-        logger.debug('Capabilities %s: no allowed group found (%s) — chat only', key, '+'.join(sources))
+        logger.debug('Capabilities user=%s: no allowed group found — chat only', key)
     _remember_caps(key, now, caps)
     await _remember_identity(forwarded, email or header_email, display_name)
     return caps
