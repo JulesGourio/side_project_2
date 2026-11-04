@@ -47,7 +47,7 @@ Les plannings se changent dans [`databricks.yml`](databricks.yml) (variables `pa
 
 ## 3. Pipeline de parsing
 
-Détail : [`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md).
+Détail : [`utils/parsing_pipeline/README.md`](utils/parsing_pipeline/README.md). Schéma draw.io : [`docs/parsing.drawio`](docs/parsing.drawio).
 
 `1_categories` → `2_manifest` → `3_parse` → (`3b_parse_pdf` sur GPU, seulement s'il y a plus de 30 PDFs à traiter) → `3c_chunks` → `4_describe_images` → `5_sync_index` → `6_update_kb_metadata`
 
@@ -338,6 +338,8 @@ Route `POST /api/compare/impact`, réponse en flux NDJSON (une ligne JSON par é
 La qualité vient de l'index `chunks_index` (donc du parsing, §3 : périmètre, tailles de passages) et du modèle juge. L'interface ne propose la recherche que si le nom d'index est valide (`/api/config/app`).
 
 ## 11. Chatbot
+
+Schéma draw.io complet d'un tour (étapes, modèles, top_k, traces) : [`docs/chat_workflow.drawio`](docs/chat_workflow.drawio).
 
 Détail dans les README : [moteur](server/services/chat/engine/README.md) (le plus utile), [services](server/services/chat/README.md), [route WebSocket](server/routers/chat/README.md), [interface](client/src/components/chat/README.md), [prompts](server/prompts/README.md), [infra / Vector Search / Lakebase](server/services/infra/README.md), [schéma des tables](server/services/infra/lakebase/schema.md). Fichiers clés : [`engine/queries.py`](server/services/chat/engine/queries.py) (traduction et réécriture), [`engine/search.py`](server/services/chat/engine/search.py) (recherches), [`engine/retrieval.py`](server/services/chat/engine/retrieval.py) (tout avant la réponse), [`engine/answer.py`](server/services/chat/engine/answer.py) (prompt et flux de réponse), [`engine/references.py`](server/services/chat/engine/references.py) (« quels documents citent X ? »), [`engine/citations.py`](server/services/chat/engine/citations.py), [`llm.py`](server/services/chat/llm.py) (chaîne de modèles), [`routers/chat/ws.py`](server/routers/chat/ws.py).
 
