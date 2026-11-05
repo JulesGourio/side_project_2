@@ -18,50 +18,45 @@ Légende : `[x]` fait et vérifié dans Databricks, `[~]` code poussé mais pas 
 
 ## 1. Une seule experiment, sans pollution
 
-Ce que Databricks permet : les traces d'une évaluation (`mlflow.genai.evaluate`) vont dans la même table de traces
-que l'app. On ne peut pas les envoyer ailleurs sans changer d'experiment. Par contre, chaque trace d'évaluation est
-rattachée à son run, et on peut la marquer.
+Les traces d'évaluation vont forcément dans la même table que celles de l'app (même experiment). Databricks ne permet
+pas de les cacher par défaut dans l'onglet Traces à ma connaissance : on filtre.
 
-- [ ] Tag `qualibot.source` sur **toutes** les traces : `app` (app, `mlflow_turns.py`), `eval_retrieval`, `eval_generation`.
-- [ ] Vue enregistrée dans l'onglet Traces : filtre `tags.qualibot.source = 'app'` (traces des utilisateurs seules).
-- [ ] Les métriques restent dans Evaluation runs et Agent versions : elles sont sur les runs et les modèles, pas sur les traces.
-- [ ] L'ancienne experiment `dev_retrieval_eval` : gardée en lecture seule, plus rien n'y écrit (question Q5).
+- [~] Tag `qualibot.source` sur chaque trace : `app` pour l'app, `evaluation` pour une évaluation (`mlflow_turns.py`, à déployer).
+- [~] Colonne User des traces : l'identifiant réel de la personne (son e-mail) pour l'app, `evaluation` sinon (à déployer).
+  Avant, l'identifiant était haché.
+- [ ] Vue enregistrée dans l'onglet Traces : filtre `qualibot.source = app` ; une deuxième vue `evaluation`.
+- [ ] Ancienne experiment `dev_retrieval_eval` : laissée de côté (deux experiments seulement si la vue unique ne convient pas).
 
 ## 2. Agent versions = une configuration complète
 
-Une Agent version (LoggedModel) par **signature** de configuration. Même configuration = même version, réutilisée.
+- [~] `server/services/chat/spec.py` : `spec()` = chaque réglage qui peut changer une réponse, une clé par réglage
+  (retrieval, réponse, réécriture, traduction, chaque prompt, empreinte du code). `signature()`, `version_name()`,
+  `describe()` (une ligne en français).
+- [~] `tests/test_chat_spec.py` (28 tests, verts) : toute variable `CHAT_*` lue par le serveur est dans la spec ou
+  déclarée opérationnelle (timeouts, accès, logs) ; changer une variable change sa clé et la signature.
+- [ ] Nom : `qualibot-<env>-k32-21-sansbrute-<sig6>` pour la version déployée d'un environnement,
+  `qualibot-k16-12-sansbrute-<sig6>` pour une config d'évaluation. Toujours la spec complète en paramètres de la fiche.
+- [ ] Fiche : chaque clé de la spec en paramètre, `describe()` en description, prompts liés (section Prompts).
+- [ ] L'app déclare sa version active au démarrage (`set_active_model`, nom ci-dessus) : ses traces sont rattachées à la version déployée.
 
-- [ ] `server/services/chat/spec.py` (nouveau) : `spec()` renvoie **tous** les réglages qui influencent une réponse, un
-  par clé, à plat : index, top-k (premier message / suite), recherche brute, fusion, ordre des passages, plafond de
-  passages, mots vides, normalisation des codes, traduction seule, modèles (réponse, réécriture, traduction, secours),
-  effort de raisonnement, max tokens, versions de prompts (`chat_system_base@v3`…), empreinte du code du moteur.
-- [ ] `signature = sha256(spec)` : un seul réglage change, la signature change, nouvelle Agent version.
-- [ ] Test `tests/test_chat_spec.py` : chaque variable `CHAT_*` lue par `server/services/chat/` et chaque prompt de
-  `prompts.FILES` apparaît dans `spec()`. Un nouveau réglage oublié dans la spec fait échouer le test.
-- [ ] Fiche de l'Agent version : chaque clé de la spec en **paramètre** (une ligne par réglage), plus une description
-  texte lisible (« Top-k 32/21 · brute coupée · fusion meilleur rang · GPT-6 Luna · prompts base v3… »).
-- [ ] Nom lisible au lieu de `deploye` (question Q2), par exemple `qualibot-k32-21-sansbrute-a1b2c3`.
-- [ ] Prompts de la version : chargés via `load_prompt(..., link_to_model=True)`, ils apparaissent dans la section Prompts de la fiche.
-- [ ] L'app déclare sa version active (`set_active_model`) : les traces de prod sont rattachées à l'Agent version déployée.
+## 3. Datasets, Evaluation runs et traces d'évaluation lisibles
 
-## 3. Datasets et Evaluation runs
+- [ ] Plus de traces « replay » : l'évaluation rejoue la vraie recherche (`retrieve_for_turn`) et écrit la trace avec
+  le **même code que l'app** (`mlflow_turns`) : mêmes étapes (traduction, recherches, rerank, passages envoyés),
+  mêmes tags, coût compris, `qualibot.source = evaluation`.
+- [ ] Le script de Génie (`retrieval_eval_to_chat_experiment.py`) est fusionné dans `retrieval_eval.py` : dataset
+  `golden_retrieval_eval`, Agent version par config, `mlflow.genai.evaluate(data=dataset, model_id=...)`.
+- [ ] Toutes les métriques remplies (`recall_*`, `allrefs_*`, `mrr_*`, `docs`, `chunks`, `tokens_k`, `cost_eur`), sinon le run échoue.
+- [ ] Prix : `cost_eur` en tag sur chaque trace (déjà le cas pour l'app) et en métrique des Evaluation runs. À vérifier
+  si Databricks affiche une colonne coût native (sinon le tag reste la source).
+- [ ] Plus tard : évaluation de la génération (juges de `chat_scorers.py`) dans la même Agent version.
 
-- [ ] Dataset UC `dev_proj.qualibot.golden_retrieval_eval` (déjà créé par Génie) rempli depuis `eval_golden_retrieval`
-  à chaque run du job, versionné (`golden_version`).
-- [ ] `retrieval_eval.py` : `mlflow.genai.evaluate(data=<dataset UC>, model_id=<Agent version>)` → le dataset apparaît
-  dans « Datasets used » et le run dans Evaluation runs et sur la fiche de la version.
-- [ ] Toutes les métriques (`recall_01..50`, `allrefs_10/50/all`, `mrr_*`, `docs`, `chunks`, `tokens_k`) sont
-  remplies pour chaque run, sinon le run échoue (fini les colonnes vides).
-- [ ] Le script de Génie `retrieval_eval_to_chat_*.py` est fusionné dans `retrieval_eval.py` : pas de deuxième script (Q1).
-- [ ] Étape 2, plus tard : évaluation de la génération (juges de `chat_scorers.py` sur le golden set) dans la même Agent version.
+## 4. Évaluation automatique au déploiement
 
-## 4. Évaluation automatique au déploiement PROD
-
-- [ ] Le job `Z_4_Qualibot_Retrieval_Eval` calcule la signature de la configuration déployée. Si une Agent version
-  avec cette signature a déjà un run d'évaluation, il s'arrête en 1 minute (rien à faire).
-- [ ] Le pipeline Bitbucket `deploy-prod` lance ce job en dernière étape avec `databricks jobs run-now` **sans
-  attendre** (fire and forget) : le déploiement ne dépend pas du résultat. Le job envoie son mail habituel en cas d'échec.
-- [ ] Même chose en DEV et en UAT (`deploy-dev`, `deploy-uat`).
+- [ ] Le job `Z_4_Qualibot_Retrieval_Eval` reçoit `preset=deploye` et calcule la spec déployée ; si son Agent
+  version a déjà un run d'évaluation, il s'arrête tout de suite.
+- [ ] Les pipelines `deploy-dev`, `deploy-uat`, `deploy-prod` le lancent en dernière étape avec `databricks jobs run-now`
+  sans attendre (le déploiement ne dépend pas du résultat ; mail en cas d'échec).
 
 ## 5. Nettoyage
 
@@ -69,14 +64,7 @@ Une Agent version (LoggedModel) par **signature** de configuration. Même config
 - [ ] Supprimer le run en échec `retrieval-deploye` et l'Agent version `qualibot-retrieval-deploye-95c74aa9` une fois la nouvelle en place.
 - [ ] Vérifier que le cluster LEAP Unity Catalog n'a plus `mlflow 3.14.0` installé à la main (autres utilisateurs).
 
-## Questions ouvertes
+## Réponses de Jules (2026-11-05)
 
-- **Q1.** Script de Génie : colle-moi `qualibot_tests/repo_changes/utils/evaluation/retrieval_eval_to_chat_*.py`,
-  ou je repars de `retrieval_eval.py` du repo (recommandé) ?
-- **Q2.** Nom des Agent versions : `qualibot-k32-21-sansbrute-<6 car. de signature>` (recommandé) ou une date
-  (`qualibot-2026-11-05-<sig>`) ?
-- **Q3.** La spec inclut aussi la génération (modèles, prompts, max tokens, effort de raisonnement) : oui (recommandé) ?
-- **Q4.** Évaluation au déploiement : preset `deploye` seul (une config, ~5 min, recommandé), ou `tailles` ?
-- **Q5.** Ancienne experiment `dev_retrieval_eval` : on la garde en lecture seule (recommandé) ou on la supprime ?
-- **Q6.** Les traces d'évaluation restent visibles (filtrables par `qualibot.source`) : c'est le seul moyen d'avoir
-  le détail question par question dans Evaluation runs. OK ?
+Q1 : prendre le meilleur des deux scripts. Q2 : nom lisible pour la version déployée, specs consultables ailleurs.
+Q3 : génération dans la spec, oui. Q4 : seulement la nouvelle version déployée. Q5 : de côté. Q6 : OK, idéalement cachées par défaut.

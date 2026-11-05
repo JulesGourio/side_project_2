@@ -4,7 +4,7 @@ Coverage:
   - off without CHAT_MLFLOW_EXPERIMENT, or when the experiment does not exist
   - the span tree: steps nested as documented, at their recorded offsets and durations
   - the retriever span returns the passages sent, in prompt order; dropped ones are only counted
-  - tags, session and hashed user on the root; failed turn -> ERROR; no raw user id leaves the app
+  - tags, session and user on the root (the user's id for the app, the evaluation's name otherwise); failed turn -> ERROR
 """
 
 import asyncio
@@ -163,13 +163,23 @@ def test_every_vector_search_call_is_a_span_under_search(spans):
                                                          'score': 0.91, 'chunk_id': 'c1'}
 
 
-def test_root_tags_user_hash_and_status(spans):
+def test_root_tags_user_and_status(spans):
     mlflow_turns._write_trace(_turn('error'), 'chat')
     root = _by_name(spans)['chat_turn']
     assert root.kwargs['tags']['status'] == 'error' and root.kwargs['tags']['division'] == 'AS'
+    assert root.kwargs['tags']['qualibot.source'] == 'app'
     assert root.kwargs['metadata']['mlflow.trace.session'] == 's1'
-    assert 'jane' not in root.kwargs['metadata']['mlflow.trace.user']
+    assert root.kwargs['metadata']['mlflow.trace.user'] == 'jane@example.com'
     assert root.ended['status'] == 'ERROR' and root.ended['outputs'] == 'The answer'
+
+
+def test_evaluation_turn_is_marked(spans):
+    log = _turn('ok')
+    log.data['trace_source'] = 'evaluation'
+    mlflow_turns._write_trace(log, 'chat')
+    root = _by_name(spans)['chat_turn']
+    assert root.kwargs['tags']['qualibot.source'] == 'evaluation'
+    assert root.kwargs['metadata']['mlflow.trace.user'] == 'evaluation'
 
 
 def test_tags_for_the_free_scorers(spans, monkeypatch):

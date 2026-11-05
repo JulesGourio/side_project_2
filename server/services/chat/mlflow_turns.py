@@ -398,6 +398,7 @@ def _write_trace(log: Any, name: str) -> str | None:
 
     issues = [{'code': i['code'], 'stage': i['stage'], 'severity': i['severity'],
                'message': (i['message'] or '')[:MLFLOW_MAX_ISSUE_CHARS], 'at_ms': i['at_ms']} for i in log.issues]
+    source = str(data.get('trace_source') or 'app')                 # app, or the evaluation that replayed the turn
     tags = {
         'chat_trace_id': log.trace_id, 'division': str(data.get('division') or ''), 'status': log.status,
         'question_lang': str(data.get('question_lang') or ''), 'answer_endpoint': str(data.get('answer_endpoint') or ''),
@@ -408,12 +409,14 @@ def _write_trace(log: Any, name: str) -> str | None:
         'cost_eur': str(round((data.get('cost_eur') or 0) + (data.get('rewrite_cost_eur') or 0), 6)),
         'question_lang_guess': _language_guess(data.get('question')), 'answer_lang_guess': _language_guess(log.answer),
         'rewrite_mode': str(data.get('rewrite_mode') or ''),
+        'qualibot.source': source,
     }
     linked = _linked_prompts(experiment_id, getattr(log, 'prompts', []))
     if linked:
         tags['mlflow.linkedPrompts'] = linked
     metadata = {k: v for k, v in {'mlflow.trace.session': data.get('session_id'),
-                                  'mlflow.trace.user': _hash(str(data['user_id'])) if data.get('user_id') else None
+                                  'mlflow.trace.user': str(data['user_id']) if source == 'app' and data.get('user_id')
+                                  else source
                                   }.items() if v}
     root = mlflow.start_span_no_context(
         'chat_turn', span_type=SpanType.CHAIN, inputs={'question': data.get('question') or '',
