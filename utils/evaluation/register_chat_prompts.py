@@ -16,7 +16,7 @@ Inside a job the script runs through ``exec`` (no ``__file__``), so the job pass
 
 The identity running it needs USE CATALOG, USE SCHEMA and CREATE FUNCTION on the schema. With ``--warehouse-id`` it also
 gives the app's service principal USE CATALOG, USE SCHEMA, CREATE FUNCTION on the schema (Unity Catalog refuses the
-trace link with "Permission denied to create prompt in schema" without it) and EXECUTE on each prompt: the app links the prompt versions to its traces in the registry.
+trace link with "Permission denied to create prompt in schema" without it) and EXECUTE on the schema (a prompt is not a function that GRANT can name): the app links the prompt versions to its traces in the registry.
 """
 import argparse
 import json
@@ -47,7 +47,7 @@ def _link_to_experiment(name: str, experiment_id: str) -> None:
 
 
 def grant_app(names: list[str], app: str, warehouse_id: str, profile: str) -> None:
-    """Gives the app's service principal the schema privileges the trace link needs, and EXECUTE on each prompt.
+    """Gives the app's service principal the schema privileges the trace link needs.
 
     :param names: Full names of the prompts, ``catalog.schema.chat_<key>``.
     :param app: Name of the Databricks app that writes the chat traces.
@@ -60,22 +60,14 @@ def grant_app(names: list[str], app: str, warehouse_id: str, profile: str) -> No
     errors = []
     catalog, schema = names[0].split('.')[:2]
     for statement in (f'GRANT USE CATALOG ON CATALOG `{catalog}` TO `{principal}`',
-                      f'GRANT USE SCHEMA, CREATE FUNCTION ON SCHEMA `{catalog}`.`{schema}` TO `{principal}`'):
+                      f'GRANT USE SCHEMA, CREATE FUNCTION, EXECUTE ON SCHEMA `{catalog}`.`{schema}` TO `{principal}`'):
         result = w.statement_execution.execute_statement(statement=statement, warehouse_id=warehouse_id, wait_timeout='30s')
         if result.status.state.value == 'SUCCEEDED':
             logger.info('%s: done', statement)
         else:
             errors.append(f'{statement}: {result.status.error.message if result.status.error else result.status}')
-    for name in names:
-        full_name = '.'.join(f'`{part}`' for part in name.split('.'))
-        result = w.statement_execution.execute_statement(
-            statement=f'GRANT EXECUTE ON FUNCTION {full_name} TO `{principal}`', warehouse_id=warehouse_id, wait_timeout='30s')
-        if result.status.state.value == 'SUCCEEDED':
-            logger.info('EXECUTE on %s granted to app %s (%s)', name, app, principal)
-        else:
-            errors.append(f'{name}: {result.status.error.message if result.status.error else result.status}')
     if errors:
-        raise RuntimeError('EXECUTE not granted to the app on: ' + '; '.join(errors))
+        raise RuntimeError('Grants to the app failed: ' + '; '.join(errors))
 
 
 def register(schema: str, experiment: str) -> list[str]:
