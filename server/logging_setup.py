@@ -30,6 +30,11 @@ class _RequestIdFilter(logging.Filter):
     """Adds ``record.request_id`` (from the ``request_id`` context variable) to every record."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Sets the request id on the record and keeps it.
+
+        :param record: log record being emitted
+        :return: always True
+        """
         record.request_id = request_id.get()
         return True
 

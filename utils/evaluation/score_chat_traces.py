@@ -113,6 +113,64 @@ since_ms = int(since.timestamp() * 1000)
 found = mlflow.search_traces(locations=[experiment.experiment_id], filter_string=f'timestamp > {since_ms}',
                              order_by=['timestamp DESC'], max_results=LIMIT * 3, return_type='list')
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Prompt versions linked to the traces
+# MAGIC The app only knows the prompt versions from the experiment tags and records them in the trace tag
+# MAGIC `mlflow.linkedPrompts`; the trace view and the prompt's page show a link only once the registry records it
+# MAGIC (`LinkPromptsToTraces`), which needs registry access the app does not have. This cell records it for every trace of
+# MAGIC the window not yet tagged `prompts_linked`, dry run included (no token cost).
+
+# COMMAND ----------
+
+from mlflow.entities.model_registry import PromptVersion
+from mlflow.tracking._model_registry.utils import _get_store as _registry_store
+
+mlflow.set_registry_uri('databricks-uc')
+# The Unity Catalog store logs a refused link at DEBUG only.
+logging.getLogger('mlflow.store._unity_catalog.registry.rest_store').setLevel(logging.DEBUG)
+_versions = {}
+
+
+def _prompt_version(name: str, version: str) -> PromptVersion | None:
+    """Registered prompt version, loaded once per run.
+
+    :param name: full name of the prompt, ``catalog.schema.chat_<key>``
+    :param version: version number, as a string
+    :return: the PromptVersion, None when the registry does not return it
+    """
+    if (name, version) not in _versions:
+        try:
+            _versions[(name, version)] = mlflow.genai.load_prompt(f'prompts:/{name}/{version}', link_to_model=False)
+        except Exception as exc:  # noqa: BLE001 — the trace is left unlinked, the next run retries
+            logger.warning('prompt %s v%s not loadable: %s', name, version, exc)
+            _versions[(name, version)] = None
+    return _versions[(name, version)]
+
+
+linked, untagged, failed = 0, 0, 0
+for tr in found:
+    tags = tr.info.tags or {}
+    if tags.get('prompts_linked'):
+        continue
+    try:
+        entries = json.loads(tags.get('mlflow.linkedPrompts') or '[]')
+    except ValueError:
+        entries = []
+    versions = [v for v in (_prompt_version(e['name'], str(e['version'])) for e in entries) if v is not None]
+    if not versions:
+        untagged += 1
+        continue
+    try:
+        _registry_store().link_prompts_to_trace(prompt_versions=versions, trace_id=tr.info.trace_id)
+        mlflow.set_trace_tag(tr.info.trace_id, 'prompts_linked', datetime.now(timezone.utc).strftime('%Y-%m-%d'))
+        linked += 1
+    except Exception as exc:  # noqa: BLE001 — retried on the next run
+        failed += 1
+        logger.warning('prompts not linked to %s: %s', tr.info.trace_id, exc)
+logger.info('prompt links: %d traces linked, %d without a linkedPrompts tag, %d failed', linked, untagged, failed)
+
 
 def _vote(trace) -> str:
     """Thumbs vote of the user on a trace.

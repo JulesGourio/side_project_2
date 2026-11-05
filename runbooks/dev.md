@@ -559,6 +559,20 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Si la liaison aux prompts (tag `mlflow.linkedPrompts`) reste absente, lire dans les logs de l'app la ligne `prompt … differs from the
   registered version` : elle indique qu'il faut relancer l'enregistrement des prompts (`databricks bundle run register_chat_prompts_dev -t dev --profile DEV`).
 
+- [ ] **0.14ter Prompts liés aux traces + onglet Prompts** (2026-11-05, à faire) : le tag `mlflow.linkedPrompts` posé par l'app ne crée
+  pas le lien côté registre Unity Catalog (`LinkPromptsToTraces`) ; le job de notation le crée désormais (même à blanc, sans coût de
+  tokens) ; le job d'enregistrement vérifie que l'onglet Prompts de l'expérience liste les prompts.
+
+  ```powershell
+  databricks bundle deploy -t dev --profile DEV
+  databricks bundle run register_chat_prompts_dev -t dev --profile DEV
+  databricks bundle run score_chat_traces_dev -t dev --profile DEV
+  ```
+
+  Attendu : run 1 `Prompts tab of experiment … : N prompts listed: dev_proj.qualibot.chat_…` ; run 2 `prompt links: X traces linked,
+  Y without a linkedPrompts tag, 0 failed`. Dans l'UI, l'onglet Prompts de l'expérience a un sélecteur catalogue/schéma : choisir
+  `dev_proj` / `qualibot`. Si Y = toutes les traces : l'app ne pose pas le tag (logs de l'app, ligne `prompt … differs from the registered version`).
+
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
   - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, Les tables
     d'évaluation (`eval_*`, `eval_golden_questions`, `eval_synthetic_questions`, `eval_feedback_failures`) sont les défauts des notebooks :

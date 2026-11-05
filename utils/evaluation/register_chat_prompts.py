@@ -70,6 +70,13 @@ def register(schema: str, experiment: str) -> None:
         _link_to_experiment(name, found.experiment_id)
         client.set_experiment_tag(found.experiment_id, f'chat_prompt.{key}',
                                   json.dumps({'name': name, 'version': str(version), 'sha': sha}))
+    catalog, schema_name = schema.split('.', 1)
+    listed = mlflow.genai.search_prompts(
+        filter_string=f"catalog = '{catalog}' AND schema = '{schema_name}' AND experiment_id = '{found.experiment_id}'")
+    logger.info('Prompts tab of experiment %s (schema %s selected): %d prompts listed: %s', found.experiment_id, schema,
+                len(listed), ', '.join(sorted(p.name for p in listed)))
+    if not listed:
+        raise RuntimeError(f'No prompt of {schema} is linked to experiment {found.experiment_id}')
 
 
 def main() -> None:
