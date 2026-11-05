@@ -40,6 +40,8 @@ def _link_to_experiment(name: str, experiment_id: str) -> None:
     tags = getattr(tags, 'tags', tags) or {}                           # a dict or a Prompt, depending on the MLflow version
     ids = [i for i in (tags.get(EXPERIMENT_IDS_TAG, '') or '').strip(',').split(',') if i]
     if experiment_id not in ids:
+        if EXPERIMENT_IDS_TAG in tags:                                 # a local SQL store INSERTs instead of upserting
+            mlflow.genai.delete_prompt_tag(name, EXPERIMENT_IDS_TAG)
         mlflow.genai.set_prompt_tag(name, EXPERIMENT_IDS_TAG, ',' + ','.join(ids + [experiment_id]) + ',')
 
 
@@ -96,6 +98,8 @@ def register(schema: str, experiment: str) -> list[str]:
         _link_to_experiment(name, found.experiment_id)
         client.set_experiment_tag(found.experiment_id, f'chat_prompt.{key}',
                                   json.dumps({'name': name, 'version': str(version), 'sha': sha}))
+    if '.' not in schema:                                              # no Unity Catalog (local store): nothing to list
+        return [prompts.registry_name(schema, key) for key in prompts.FILES]
     catalog, schema_name = schema.split('.', 1)
     listed = mlflow.genai.search_prompts(
         filter_string=f"catalog = '{catalog}' AND schema = '{schema_name}' AND experiment_id = '{found.experiment_id}'")
