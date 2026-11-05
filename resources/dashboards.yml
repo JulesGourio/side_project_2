@@ -8,5 +8,7 @@ resources:
       file_path: ./dashboards/qualibot_usage_tracking_${bundle.target}.lvdash.json
       warehouse_id: ${var.alerts_warehouse_id}
       permissions:
-        - user_name: "jules.gourio.external@latecoere.aero"
+        - group_name: "Role-Project-LEAP-CoreDev"
+          level: CAN_MANAGE
+        - group_name: "Role-Project-LEAP-CoreAdmin"
           level: CAN_MANAGE
