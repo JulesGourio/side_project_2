@@ -69,7 +69,7 @@ resources:
               - psycopg2-binary==2.9.10
               - databricks-sdk==0.120.0
       schedule:
-        quartz_cron_expression: "0 0 2,14 * * ?"
+        quartz_cron_expression: "0 0 * * * ?"
         timezone_id: "Europe/Brussels"
         pause_status: ${var.lakebase_export_schedule_pause}
 

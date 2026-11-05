@@ -17,6 +17,7 @@ from server.services.chat.llm import TIRED_MESSAGE
 from server.services.chat.config import ALLOWED_ORIGINS, TRANSLATE_BRIDGE_ENABLED
 from server.services.chat.translation_bridge import (
     answer_language as answer_language_for,
+    fast_lang_guess,
     translate_answer_back,
     translate_question_to_en,
 )
@@ -176,7 +177,7 @@ async def chat_ws(websocket: WebSocket) -> None:
                 status=status,
                 error_msg=error_text,
                 division=division,
-                question_lang=translate_ctx.lang_code if translate_ctx else '',
+                question_lang=translate_ctx.lang_code if translate_ctx else log.data.get('question_lang') or '',
                 log=log,
             )
         return saved[1]
@@ -250,6 +251,9 @@ async def chat_ws(websocket: WebSocket) -> None:
                         messages_for_engine[i]['content'] = en_question
                         break
                 logger.debug('chat translate-bridge [ws]: lang=%s', translate_ctx.lang_code)
+        elif user_content:
+            # Bridge off: keep the local guess (None when unsure) so the usage dashboard can count the language of the question.
+            log.data['question_lang'] = fast_lang_guess(user_content) or ''
 
         # Named in the language reminder: English when the bridge translated the question (it translates the answer back),
         # else the detected French/English, else a local guess.

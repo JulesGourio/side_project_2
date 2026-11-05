@@ -79,6 +79,11 @@
           "displayName": "Version",
           "description": "Processing method with version number",
           "expression": "CASE processing_method WHEN 'standard' THEN 'V1 (standard)' WHEN 'structured' THEN 'V2 (structured)' WHEN 'comparative' THEN 'V3 (comparative)' ELSE processing_method END"
+        },
+        {
+          "displayName": "Origin",
+          "description": "PROD live = after the UAT copy of 2026-10-30; Imported from UAT = rows copied from UAT (PROD only)",
+          "expression": "'Live'"
         }
       ]
     },
@@ -259,6 +264,11 @@
           "displayName": "Analyses sem. dernière",
           "description": "Nombre d'analyses la semaine dernière",
           "expression": "COUNT_IF(created_at >= DATEADD(WEEK, -1, DATE_TRUNC('week', CURRENT_DATE())) AND created_at < DATE_TRUNC('week', CURRENT_DATE()))"
+        },
+        {
+          "displayName": "Origin",
+          "description": "PROD live = after the UAT copy of 2026-10-30; Imported from UAT = rows copied from UAT (PROD only)",
+          "expression": "'Live'"
         }
       ]
     },
@@ -1015,7 +1025,22 @@
         {
           "displayName": "trace_link",
           "description": "Link to the MLflow trace of the message",
-          "expression": "CAST(NULL AS STRING)"
+          "expression": "CASE WHEN mlflow_trace_id RLIKE '^trace:/[^/]*[.][0-9]+/' THEN CONCAT('https://dbc-c623749d-731b.cloud.databricks.com/ml/experiments/', REGEXP_EXTRACT(mlflow_trace_id, '^trace:/[^/]*[.]([0-9]+)/', 1), '/traces?o=2865348338307293&selectedEvaluationId=', REPLACE(REPLACE(mlflow_trace_id, ':', '%3A'), '/', '%2F')) WHEN mlflow_trace_id IS NOT NULL AND mlflow_trace_id != '' AND '' != '' THEN CONCAT('https://dbc-c623749d-731b.cloud.databricks.com/ml/experiments/None/traces?o=2865348338307293&selectedEvaluationId=', REPLACE(REPLACE(mlflow_trace_id, ':', '%3A'), '/', '%2F')) WHEN trace_id RLIKE '^tr-[0-9a-f]{32}$' THEN CONCAT('https://dbc-c623749d-731b.cloud.databricks.com/ml/experiments/', CASE WHEN division = 'AS' THEN '2748374992560664' WHEN division = 'IS' THEN '2748374992560665' ELSE '4171178917767011' END, '/traces?o=2865348338307293&selectedEvaluationId=', trace_id) ELSE NULL END"
+        },
+        {
+          "displayName": "Origin",
+          "description": "PROD live = after the UAT copy of 2026-10-30; Imported from UAT = rows copied from UAT (PROD only)",
+          "expression": "'Live'"
+        },
+        {
+          "displayName": "Language",
+          "description": "Stored language code, else keyword guess on the question",
+          "expression": "COALESCE(CASE WHEN question_lang IS NULL OR question_lang IN ('', 'und', 'is', 'as', 'unknown') THEN NULL ELSE question_lang END, CASE WHEN LOWER(COALESCE(user_question, content)) RLIKE '[ñ¿¡]' OR LOWER(COALESCE(user_question, content)) RLIKE '(^|[^a-zà-ÿ])(el|los|las|una|qué|cómo|cuál|cuáles|puedo|necesito|hay|del|para|dónde|donde|cuando|cuándo)([^a-zà-ÿ]|$)' THEN 'es' WHEN LOWER(COALESCE(user_question, content)) RLIKE '(^|[^a-zà-ÿ])(le|les|des|est|quel|quelle|quels|comment|pour|dans|une|que|qui|sont|avec|où)([^a-zà-ÿ]|$)' THEN 'fr' WHEN LOWER(COALESCE(user_question, content)) RLIKE '(^|[^a-z])(the|what|how|is|are|of|and|for|which|where|when|can|does|do)([^a-z]|$)' THEN 'en' ELSE 'unknown' END)"
+        },
+        {
+          "displayName": "Feedback",
+          "description": "up, down, or none when the message has no feedback",
+          "expression": "COALESCE(feedback_vote, 'none')"
         }
       ]
     },
@@ -1121,6 +1146,11 @@
           "displayName": "Profondeur",
           "description": "Session depth category",
           "expression": "CASE WHEN nb_questions <= 1 THEN '1 question' WHEN nb_questions <= 3 THEN '2-3 questions' WHEN nb_questions <= 5 THEN '4-5 questions' ELSE '6+ questions' END"
+        },
+        {
+          "displayName": "Origin",
+          "description": "PROD live = after the UAT copy of 2026-10-30; Imported from UAT = rows copied from UAT (PROD only)",
+          "expression": "'Live'"
         }
       ]
     },
@@ -1246,7 +1276,7 @@
         "    END\n",
         "  ) AS workplace,\n",
         "  CONCAT('https://qualibot-2865348338307293.aws.databricksapps.com/chat/shared/', u.share_token) AS share_link,\n",
-        "  CAST(NULL AS STRING) AS trace_link\n",
+        "  CASE WHEN tt.mlflow_trace_id RLIKE '^trace:/[^/]*[.][0-9]+/' THEN CONCAT('https://dbc-c623749d-731b.cloud.databricks.com/ml/experiments/', REGEXP_EXTRACT(tt.mlflow_trace_id, '^trace:/[^/]*[.]([0-9]+)/', 1), '/traces?o=2865348338307293&selectedEvaluationId=', REPLACE(REPLACE(tt.mlflow_trace_id, ':', '%3A'), '/', '%2F')) WHEN tt.mlflow_trace_id IS NOT NULL AND tt.mlflow_trace_id != '' AND '' != '' THEN CONCAT('https://dbc-c623749d-731b.cloud.databricks.com/ml/experiments/None/traces?o=2865348338307293&selectedEvaluationId=', REPLACE(REPLACE(tt.mlflow_trace_id, ':', '%3A'), '/', '%2F')) WHEN a.trace_id RLIKE '^tr-[0-9a-f]{32}$' THEN CONCAT('https://dbc-c623749d-731b.cloud.databricks.com/ml/experiments/', CASE WHEN u.division = 'AS' THEN '2748374992560664' WHEN u.division = 'IS' THEN '2748374992560665' ELSE '4171178917767011' END, '/traces?o=2865348338307293&selectedEvaluationId=', a.trace_id) ELSE NULL END AS trace_link\n",
         "FROM\n",
         "  user_msgs u\n",
         "    LEFT JOIN asst_next_rn an\n",
@@ -1281,6 +1311,16 @@
           "displayName": "Language Group",
           "description": "Groups rare/undetermined languages into unknown",
           "expression": "CASE WHEN question_lang IN ('und', 'is', 'as', 'unknown') THEN 'unknown' ELSE question_lang END"
+        },
+        {
+          "displayName": "Origin",
+          "description": "PROD live = after the UAT copy of 2026-10-30; Imported from UAT = rows copied from UAT (PROD only)",
+          "expression": "'Live'"
+        },
+        {
+          "displayName": "Language",
+          "description": "Stored language code, else keyword guess on the question",
+          "expression": "COALESCE(CASE WHEN question_lang IS NULL OR question_lang IN ('', 'und', 'is', 'as', 'unknown') THEN NULL ELSE question_lang END, CASE WHEN LOWER(question) RLIKE '[ñ¿¡]' OR LOWER(question) RLIKE '(^|[^a-zà-ÿ])(el|los|las|una|qué|cómo|cuál|cuáles|puedo|necesito|hay|del|para|dónde|donde|cuando|cuándo)([^a-zà-ÿ]|$)' THEN 'es' WHEN LOWER(question) RLIKE '(^|[^a-zà-ÿ])(le|les|des|est|quel|quelle|quels|comment|pour|dans|une|que|qui|sont|avec|où)([^a-zà-ÿ]|$)' THEN 'fr' WHEN LOWER(question) RLIKE '(^|[^a-z])(the|what|how|is|are|of|and|for|which|where|when|can|does|do)([^a-z]|$)' THEN 'en' ELSE 'unknown' END)"
         }
       ]
     },
@@ -2300,6 +2340,16 @@
           "displayName": "Semaine",
           "description": "Week start",
           "expression": "DATE_TRUNC('week', created_at)"
+        },
+        {
+          "displayName": "Origin",
+          "description": "PROD live = after the UAT copy of 2026-10-30; Imported from UAT = rows copied from UAT (PROD only)",
+          "expression": "'Live'"
+        },
+        {
+          "displayName": "Language",
+          "description": "Stored language code",
+          "expression": "COALESCE(CASE WHEN question_lang IS NULL OR question_lang IN ('', 'und', 'is', 'as', 'unknown') THEN NULL ELSE question_lang END, 'unknown')"
         }
       ]
     },
@@ -3855,15 +3905,11 @@
                       "expression": "COUNT(STRUCT(`ChatBot_Conversations_Paired`.`*`))"
                     },
                     {
-                      "name": "ChatBot_Conversations_Paired__Language Group",
-                      "expression": "`ChatBot_Conversations_Paired`.`Language Group`"
+                      "name": "ChatBot_Conversations_Paired__Language",
+                      "expression": "`ChatBot_Conversations_Paired`.`Language`"
                     }
                   ],
-                  "filters": [
-                    {
-                      "expression": "`ChatBot_Conversations_Paired`.`question_lang` IS NOT NULL"
-                    }
-                  ],
+                  "filters": [],
                   "disaggregated": false
                 }
               }
@@ -3880,7 +3926,7 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "ChatBot_Conversations_Paired__Language Group",
+                  "fieldName": "ChatBot_Conversations_Paired__Language",
                   "displayName": "Language",
                   "scale": {
                     "type": "categorical"
@@ -3901,7 +3947,7 @@
                   }
                 },
                 "color": {
-                  "fieldName": "ChatBot_Conversations_Paired__Language Group",
+                  "fieldName": "ChatBot_Conversations_Paired__Language",
                   "displayName": "Language",
                   "legend": {
                     "hide": true
@@ -3943,11 +3989,7 @@
                       "expression": "`ChatBot_Conversations_Paired`.`workplace`"
                     }
                   ],
-                  "filters": [
-                    {
-                      "expression": "`ChatBot_Conversations_Paired`.`question_lang` IS NOT NULL"
-                    }
-                  ],
+                  "filters": [],
                   "disaggregated": false
                 }
               }
@@ -4112,8 +4154,8 @@
                   "datasetName": "chat_data",
                   "fields": [
                     {
-                      "name": "feedback_vote",
-                      "expression": "`feedback_vote`"
+                      "name": "Feedback",
+                      "expression": "`Feedback`"
                     },
                     {
                       "name": "Semaine",
@@ -4126,9 +4168,6 @@
                   ],
                   "filters": [
                     {
-                      "expression": "`feedback_vote` IS NOT NULL"
-                    },
-                    {
                       "expression": "`role` = 'assistant'"
                     }
                   ],
@@ -4139,7 +4178,7 @@
             "spec": {
               "version": 3,
               "frame": {
-                "title": "Feedback per week",
+                "title": "Feedback per week (green up, red down, grey none)",
                 "showTitle": true
               },
               "mark": {
@@ -4156,7 +4195,7 @@
                 },
                 "y": {
                   "fieldName": "count(*)",
-                  "displayName": "Feedbacks",
+                  "displayName": "Messages",
                   "scale": {
                     "type": "quantitative",
                     "domain": {
@@ -4165,8 +4204,8 @@
                   }
                 },
                 "color": {
-                  "fieldName": "feedback_vote",
-                  "displayName": "Vote",
+                  "fieldName": "Feedback",
+                  "displayName": "Feedback",
                   "scale": {
                     "type": "categorical",
                     "mappings": [
@@ -4177,6 +4216,10 @@
                       {
                         "value": "down",
                         "color": "#d03b3b"
+                      },
+                      {
+                        "value": "none",
+                        "color": "#9aa0a6"
                       }
                     ]
                   }
@@ -10875,6 +10918,245 @@
             "y": 1,
             "width": 1,
             "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "origin_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_data_Origin",
+                "query": {
+                  "datasetName": "chat_data",
+                  "fields": [
+                    {
+                      "name": "Origin",
+                      "expression": "`Origin`"
+                    },
+                    {
+                      "name": "Origin_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_conversations_paired_Origin",
+                "query": {
+                  "datasetName": "chat_conversations_paired",
+                  "fields": [
+                    {
+                      "name": "Origin",
+                      "expression": "`Origin`"
+                    },
+                    {
+                      "name": "Origin_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_turns_data_Origin",
+                "query": {
+                  "datasetName": "chat_turns_data",
+                  "fields": [
+                    {
+                      "name": "Origin",
+                      "expression": "`Origin`"
+                    },
+                    {
+                      "name": "Origin_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_sessions_agg_Origin",
+                "query": {
+                  "datasetName": "chat_sessions_agg",
+                  "fields": [
+                    {
+                      "name": "Origin",
+                      "expression": "`Origin`"
+                    },
+                    {
+                      "name": "Origin_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/messages_users_Origin",
+                "query": {
+                  "datasetName": "messages_users",
+                  "fields": [
+                    {
+                      "name": "Origin",
+                      "expression": "`Origin`"
+                    },
+                    {
+                      "name": "Origin_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/feedbacks_data_Origin",
+                "query": {
+                  "datasetName": "feedbacks_data",
+                  "fields": [
+                    {
+                      "name": "Origin",
+                      "expression": "`Origin`"
+                    },
+                    {
+                      "name": "Origin_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Data origin"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "Origin",
+                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_data_Origin"
+                  },
+                  {
+                    "fieldName": "Origin",
+                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_conversations_paired_Origin"
+                  },
+                  {
+                    "fieldName": "Origin",
+                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_turns_data_Origin"
+                  },
+                  {
+                    "fieldName": "Origin",
+                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_sessions_agg_Origin"
+                  },
+                  {
+                    "fieldName": "Origin",
+                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/messages_users_Origin"
+                  },
+                  {
+                    "fieldName": "Origin",
+                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/feedbacks_data_Origin"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 1,
+            "y": 1,
+            "width": 4,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "language_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_data_Language",
+                "query": {
+                  "datasetName": "chat_data",
+                  "fields": [
+                    {
+                      "name": "Language",
+                      "expression": "`Language`"
+                    },
+                    {
+                      "name": "Language_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_conversations_paired_Language",
+                "query": {
+                  "datasetName": "chat_conversations_paired",
+                  "fields": [
+                    {
+                      "name": "Language",
+                      "expression": "`Language`"
+                    },
+                    {
+                      "name": "Language_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_turns_data_Language",
+                "query": {
+                  "datasetName": "chat_turns_data",
+                  "fields": [
+                    {
+                      "name": "Language",
+                      "expression": "`Language`"
+                    },
+                    {
+                      "name": "Language_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Language"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "Language",
+                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_data_Language"
+                  },
+                  {
+                    "fieldName": "Language",
+                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_conversations_paired_Language"
+                  },
+                  {
+                    "fieldName": "Language",
+                    "queryName": "dashboards/01f13d51cb401021adbe602186380270/datasets/chat_turns_data_Language"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 1,
+            "width": 4,
+            "height": 1
           }
         }
       ],

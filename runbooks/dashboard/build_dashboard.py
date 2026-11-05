@@ -561,11 +561,14 @@ def trace_link_sql(trace_col: str, division_col: str, mlflow_col: str) -> str:
     :param mlflow_col: Column with the MLflow trace id of the turn (`trace:/<catalog>.<schema>.<experiment>/<hex>`).
     :return: SQL expression, NULL when the message has no trace.
     """
-    if CFG["experiment_id"] is None:
-        return "CAST(NULL AS STRING)"
+    # The experiment id is part of the turn's trace id (trace:/<catalog>.<schema>.<experiment id>/<hex>): the link needs no per-env
+    # configuration (a PROD/DEV dashboard used to get NULL links because CONFIGS had no id).
+    exp = f"REGEXP_EXTRACT({mlflow_col}, '^trace:/[^/]*[.]([0-9]+)/', 1)"
     return (
         f"CASE "
-        f"WHEN {mlflow_col} IS NOT NULL AND {mlflow_col} != '' THEN CONCAT('{HOST}{CFG["experiment_id"]}{TAIL}', "
+        f"WHEN {mlflow_col} RLIKE '^trace:/[^/]*[.][0-9]+/' THEN CONCAT('{HOST}', {exp}, '{TAIL}', "
+        f"REPLACE(REPLACE({mlflow_col}, ':', '%3A'), '/', '%2F')) "
+        f"WHEN {mlflow_col} IS NOT NULL AND {mlflow_col} != '' AND '{CFG["experiment_id"] or ""}' != '' THEN CONCAT('{HOST}{CFG["experiment_id"]}{TAIL}', "
         f"REPLACE(REPLACE({mlflow_col}, ':', '%3A'), '/', '%2F')) "
         f"WHEN {trace_col} RLIKE '^tr-[0-9a-f]{{32}}$' THEN CONCAT('{HOST}', "
         f"CASE WHEN {division_col} = 'AS' THEN '2748374992560664' WHEN {division_col} = 'IS' THEN '2748374992560665' "
@@ -1284,6 +1287,122 @@ def recolor(o):
         return {k: (v if k == "visualizationColors" else recolor(v)) for k, v in o.items()}
     return o
 
+
+# ---------------------------------------------------------------- 13. data origin, language, no-feedback bars
+# PROD only: before this instant the Lakebase of PROD held the UAT content copied on 2026-10-30 (export of 16:09, load 16:42).
+PROD_LIVE_FROM = "2026-10-30 17:00:00"
+DS_ALL = {x["name"]: x for x in d["datasets"]}
+
+
+def add_calc(ds_name: str, display: str, expr: str, desc: str) -> None:
+    """Adds a calculated column to a dataset (replaces the one of the same name).
+
+    :param ds_name: Dataset name.
+    :param display: Column name.
+    :param expr: SQL expression.
+    :param desc: Description.
+    """
+    cols = [c for c in DS_ALL[ds_name].get("columns", []) if c["displayName"] != display]
+    cols.append({"displayName": display, "description": desc, "expression": expr})
+    DS_ALL[ds_name]["columns"] = cols
+
+
+def origin_expr(ts: str) -> str:
+    """SQL expression of the data origin of a row.
+
+    :param ts: SQL timestamp expression of the row.
+    :return: SQL expression.
+    """
+    if TARGET != "prod":
+        return "'Live'"
+    return f"CASE WHEN TRY_CAST({ts} AS TIMESTAMP) >= TIMESTAMP'{PROD_LIVE_FROM}' THEN 'PROD live' ELSE 'Imported from UAT' END"
+
+
+def lang_expr(lang: str, text: str | None) -> str:
+    """SQL expression of the language of a question: the stored code, else a keyword guess on the text (rows saved while the
+    translation bridge was off have no code).
+
+    :param lang: Column with the stored ISO code.
+    :param text: SQL expression of the question text, or None.
+    :return: SQL expression (es, fr, en, other codes as stored, unknown).
+    """
+    stored = f"CASE WHEN {lang} IS NULL OR {lang} IN ('', 'und', 'is', 'as', 'unknown') THEN NULL ELSE {lang} END"
+    if text is None:
+        return f"COALESCE({stored}, 'unknown')"
+    t = f"LOWER({text})"
+    return (f"COALESCE({stored}, CASE "
+            f"WHEN {t} RLIKE '[ñ¿¡]' OR {t} RLIKE '(^|[^a-zà-ÿ])(el|los|las|una|qué|cómo|cuál|cuáles|puedo|necesito|hay|del|para|dónde|donde|cuando|cuándo)([^a-zà-ÿ]|$)' THEN 'es' "
+            f"WHEN {t} RLIKE '(^|[^a-zà-ÿ])(le|les|des|est|quel|quelle|quels|comment|pour|dans|une|que|qui|sont|avec|où)([^a-zà-ÿ]|$)' THEN 'fr' "
+            f"WHEN {t} RLIKE '(^|[^a-z])(the|what|how|is|are|of|and|for|which|where|when|can|does|do)([^a-z]|$)' THEN 'en' "
+            f"ELSE 'unknown' END)")
+
+
+for name, ts in (("chat_data", "created_at"), ("chat_conversations_paired", "debut_session"), ("chat_turns_data", "created_at"),
+                 ("chat_sessions_agg", "debut_session"), ("messages_users", "created_at"), ("feedbacks_data", "created_at")):
+    add_calc(name, "Origin", origin_expr(ts), "PROD live = after the UAT copy of 2026-10-30; Imported from UAT = rows copied from UAT (PROD only)")
+add_calc("chat_data", "Language", lang_expr("question_lang", "COALESCE(user_question, content)"),
+         "Stored language code, else keyword guess on the question")
+add_calc("chat_conversations_paired", "Language", lang_expr("question_lang", "question"),
+         "Stored language code, else keyword guess on the question")
+add_calc("chat_turns_data", "Language", lang_expr("question_lang", None), "Stored language code")
+add_calc("chat_data", "Feedback", "COALESCE(feedback_vote, 'none')", "up, down, or none when the message has no feedback")
+# the language chart reads the new column; it no longer drops the questions saved without a code
+for pg in d["pages"]:
+    for it in pg["layout"]:
+        w = it["widget"]
+        if w["name"] in ("pie_langue", "pie_workplace"):
+            w["queries"][0]["query"]["filters"] = []
+            if w["name"] == "pie_langue":
+                for f in w["queries"][0]["query"]["fields"]:
+                    if "Language Group" in f["expression"]:
+                        f["expression"] = "`ChatBot_Conversations_Paired`.`Language`"
+                        f["name"] = "ChatBot_Conversations_Paired__Language"
+                for k in ("x", "color"):
+                    w["spec"]["encodings"][k]["fieldName"] = "ChatBot_Conversations_Paired__Language"
+        if w["name"] == "bar_fb_week":
+            q = w["queries"][0]["query"]
+            q["filters"] = [{"expression": "`role` = 'assistant'"}]
+            for f in q["fields"]:
+                if f["name"] == "feedback_vote":
+                    f["name"], f["expression"] = "Feedback", "`Feedback`"
+            w["spec"]["encodings"]["color"].update({"fieldName": "Feedback", "displayName": "Feedback"})
+            w["spec"]["encodings"]["color"]["scale"]["mappings"].append({"value": "none", "color": "#9aa0a6"})
+            w["spec"]["encodings"]["y"]["displayName"] = "Messages"
+            set_title(w, "Feedback per week (green up, red down, grey none)")
+
+
+def global_filter(name: str, title: str, field: str, dsets: list, x: int, y: int) -> dict:
+    """Builds a multi-select global filter on a calculated column present in several datasets.
+
+    :param name: Widget name.
+    :param title: Title.
+    :param field: Column name.
+    :param dsets: Datasets the filter applies to.
+    :param x: Grid column.
+    :param y: Grid row.
+    :return: Layout item.
+    """
+    qs, names = [], []
+    for ds_name in dsets:
+        qn = f"dashboards/{DASH_ID}/datasets/{ds_name}_{field}"
+        names.append(qn)
+        qs.append({"name": qn, "query": {"datasetName": ds_name, "fields": [
+            {"name": field, "expression": f"`{field}`"},
+            {"name": f"{field}_associativity", "expression": "COUNT_IF(`associative_filter_predicate_group`)"}],
+            "disaggregated": False}})
+    return {"widget": {"name": name, "queries": qs, "spec": {
+        "version": 2, "frame": {"showTitle": True, "title": title}, "widgetType": "filter-multi-select",
+        "encodings": {"fields": [{"fieldName": field, "queryName": qn} for qn in names]}}},
+        "position": {"x": x, "y": y, "width": 4, "height": 1}}
+
+
+gf_page["layout"].append(global_filter(
+    "origin_filter", "Data origin (PROD live / imported from UAT)" if TARGET == "prod" else "Data origin", "Origin",
+    ["chat_data", "chat_conversations_paired", "chat_turns_data", "chat_sessions_agg", "messages_users", "feedbacks_data"], 1, 1))
+gf_page["layout"].append(global_filter(
+    "language_filter", "Language", "Language", ["chat_data", "chat_conversations_paired", "chat_turns_data"], 5, 1))
+LOG.append("global filters Origin (PROD live vs imported from UAT) and Language; language chart/workplace no longer drop NULL question_lang; "
+           "feedback histogram has grey 'none' bars")
 
 d["pages"] = recolor(d["pages"])
 LOG.append("restructured into 7 pages on one 12-column grid, pies as bars, validated palette")

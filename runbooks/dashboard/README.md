@@ -34,6 +34,14 @@ Dashboard id (from the query names of the export): `01f13d51cb401021adbe60218638
 - **PROD**: workspace host, app URL (`qualibot-3155144190025826.aws.databricksapps.com`), MLflow experiment ids in `trace_link`, volume links are UAT values; a PROD dashboard needs the script parametrised with those.
 - **One dashboard per environment** (2026-11-04): the script is built on the UAT names and retargeted at the end (catalog, workspace id, host, app URL, volume links). Per env in `CONFIGS`: workspace, host, MLflow experiment id (trace links are empty on dev and prod until the id is filled in), Lakebase project. Costs read the account-wide billing tables, so the three dashboards show the same cost pages. Open: the PROD "PROD only / PROD+UAT" button with the 2026-11-04 date filter.
 
+## Update 2026-11-05
+
+- **Global filters** `Origin` (PROD: `PROD live` after 2026-10-30 17:00, `Imported from UAT` before; constant `Live` on dev/uat) and `Language`, on the chat, conversations, turns, sessions and DocCompare datasets.
+- **Language**: `question_lang` was NULL on every recent row because the translation bridge is off (`CHAT_TRANSLATE_BRIDGE_ENABLED=false`); the chart and its `IS NOT NULL` filter dropped them (same filter on the site chart). The `Language` column falls back to a keyword guess (es/fr/en) on the question; the app now stores the local fastText guess (`ws.py`), so new rows carry a code.
+- **Trace links**: the experiment id is read from `mlflow_trace_id` (no per-env config); NULL before only because `experiment_id` was None on dev/prod.
+- **Feedback per week**: grey `none` bars for answers without feedback.
+- **Import job** `D_1_Qualibot_Lakebase_Export_To_Volume` hourly (`0 0 * * * ?`, was 02:00/14:00).
+
 ## Document explorer: diagnostic
 
 Dataset `doc_diagnostic`: one row per document, first matching case wins (01 in chatbot, 02 not in Intraqual, 03 not current revision, 04 not published, 05 hidden, 06 category out of scope, (no date rule: 07 removed) 08 manual exclusion, 09 replaced by newer revision, 10 parsed result not built, 11 not processed yet, 12 parse error, 13 needs OCR, 14 images to describe, 15 file too large, 16 empty document, 17 no file on volume, 18 parsed but no passage, 19 other). "Parsed text" reads `parsing_checkpoint` (all historical rows), hence more refs than `parsed_documents`/`chunks`.
