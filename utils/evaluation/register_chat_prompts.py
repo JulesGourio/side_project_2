@@ -83,6 +83,8 @@ def register(schema: str, experiment: str) -> list[str]:
         raise RuntimeError(f'Experiment {experiment} does not exist: run the create_chat_experiment job first')
     client = mlflow.MlflowClient()
     mlflow.set_experiment(experiment_id=found.experiment_id)           # prompts register and load under it
+    if '.' in schema:                                                  # the Prompts tab of an experiment lists one UC schema
+        client.set_experiment_tag(found.experiment_id, 'mlflow.promptRegistryLocation', schema)
     for key in prompts.FILES:
         name, text, sha = prompts.registry_name(schema, key), prompts.read(key), prompts.digest(key)
         current = mlflow.genai.load_prompt(f'prompts:/{name}@deployed', allow_missing=True, link_to_model=False,
@@ -102,17 +104,14 @@ def register(schema: str, experiment: str) -> list[str]:
     if '.' not in schema:                                              # no Unity Catalog (local store): nothing to list
         return [prompts.registry_name(schema, key) for key in prompts.FILES]
     catalog, schema_name = schema.split('.', 1)
-    try:
-        listed = mlflow.genai.search_prompts(
-            filter_string=f"catalog = '{catalog}' AND schema = '{schema_name}' AND experiment_id = '{found.experiment_id}'")
-    except mlflow.exceptions.MlflowException as exc:                   # some workspaces refuse any search filter
-        logger.warning('Prompts tab of experiment %s not checked: %s', found.experiment_id, exc)
-        return [prompts.registry_name(schema, key) for key in prompts.FILES]
-    logger.info('Prompts tab of experiment %s (schema %s selected): %d prompts listed: %s', found.experiment_id, schema,
-                len(listed), ', '.join(sorted(p.name for p in listed)))
-    if not listed:
-        raise RuntimeError(f'No prompt of {schema} is linked to experiment {found.experiment_id}')
-    return [prompts.registry_name(schema, key) for key in prompts.FILES]
+    expected = {prompts.registry_name(schema, key) for key in prompts.FILES}
+    listed = {p.name for p in mlflow.genai.search_prompts(filter_string=f"catalog = '{catalog}' AND schema = '{schema_name}'")}
+    if missing := expected - listed:
+        raise RuntimeError(f'Prompts missing from {schema}: {", ".join(sorted(missing))}')
+    if client.get_experiment(found.experiment_id).tags.get('mlflow.promptRegistryLocation') != schema:
+        raise RuntimeError(f'Experiment {found.experiment_id} is not linked to {schema}')
+    logger.info('Experiment %s linked to %s: %d prompts', found.experiment_id, schema, len(expected))
+    return sorted(expected)
 
 
 def main() -> None:
