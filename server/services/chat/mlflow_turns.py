@@ -37,12 +37,13 @@ import threading
 import time
 from typing import Any, Dict, List, Tuple
 
-from server.services.chat import prompts
+from server.services.chat import agent_version, prompts
 from server.services.chat.config import (
     MLFLOW_EXPORT_TIMEOUT_S, MLFLOW_MAX_DOC_CHARS, MLFLOW_MAX_ISSUE_CHARS, MLFLOW_PROMPT_EMPTY_TTL_S,
     MLFLOW_PROMPT_TAG, MLFLOW_PROMPT_TTL_S, MLFLOW_RETRY_MISSING_S,
 )
 from server.services.chat import translation_bridge
+from server.services.infra import streaming
 from server.services.infra.doc_catalog import document_info
 from server.services.chat.turn_log import passage_date, passage_title
 
@@ -337,6 +338,22 @@ def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = 
         logger.warning('mlflow_turns: vote on %s not logged: %s', mlflow_trace_id, exc)
 
 
+def _agent_version(experiment_id: str, source: str) -> str | None:
+    """Agent version the app runs, for its own traces (an evaluation passes its version in ``log.data['model_id']``).
+
+    :param experiment_id: chat experiment
+    :param source: ``app`` or the evaluation's name
+    :return: the model id, None for an evaluation or when the version cannot be created
+    """
+    if source != 'app':
+        return None
+    try:
+        return agent_version.ensure(experiment_id, deployed=agent_version.deployed_env())
+    except Exception as exc:  # noqa: BLE001 — the trace is written without its version
+        logger.warning('mlflow_turns: agent version not attached to the trace: %s', exc)
+        return None
+
+
 def _write_trace(log: Any, name: str) -> str | None:
     """Writes the finished turn as one MLflow trace.
 
@@ -410,13 +427,15 @@ def _write_trace(log: Any, name: str) -> str | None:
         'question_lang_guess': _language_guess(data.get('question')), 'answer_lang_guess': _language_guess(log.answer),
         'rewrite_mode': str(data.get('rewrite_mode') or ''),
         'qualibot.source': source,
+        **{k: str(v) for k, v in (data.get('trace_tags') or {}).items()},
     }
     linked = _linked_prompts(experiment_id, getattr(log, 'prompts', []))
     if linked:
         tags['mlflow.linkedPrompts'] = linked
     metadata = {k: v for k, v in {'mlflow.trace.session': data.get('session_id'),
                                   'mlflow.trace.user': str(data['user_id']) if source == 'app' and data.get('user_id')
-                                  else source
+                                  else source,
+                                  'mlflow.modelId': data.get('model_id') or _agent_version(experiment_id, source),
                                   }.items() if v}
     root = mlflow.start_span_no_context(
         'chat_turn', span_type=SpanType.CHAIN, inputs={'question': data.get('question') or '',
@@ -431,7 +450,8 @@ def _write_trace(log: Any, name: str) -> str | None:
               timings['translate_in'], inputs={'messages': io['messages']} if io.get('messages') else data.get('question'),
               outputs=data.get('question_en'),
               attributes={'question_lang': data.get('question_lang'), SpanAttributeKey.MODEL: io.get('endpoint'),
-                          SpanAttributeKey.CHAT_USAGE: _usage(*tokens('translate_in'))})
+                          SpanAttributeKey.CHAT_USAGE: _usage(*tokens('translate_in')),
+                          SpanAttributeKey.LLM_COST: _llm_cost(io.get('endpoint'), *tokens('translate_in'))})
 
     if 'retrieval' in timings:
         start = starts.get('retrieval', 0)
@@ -453,6 +473,9 @@ def _write_trace(log: Any, name: str) -> str | None:
                   status=rewrite_status,
                   attributes={SpanAttributeKey.MODEL: data.get('rewrite_endpoint'),
                               SpanAttributeKey.CHAT_USAGE: rewrite_usage,
+                              SpanAttributeKey.LLM_COST: _llm_cost(data.get('rewrite_endpoint'),
+                                                                   data.get('rewrite_input_tokens'),
+                                                                   data.get('rewrite_output_tokens')),
                               'cost_eur': data.get('rewrite_cost_eur')})
         if 'search' in timings:
             search = mlflow.start_span_no_context(
@@ -527,6 +550,8 @@ def _write_trace(log: Any, name: str) -> str | None:
                    end_time_ns=at(start + wait + generation),
                    attributes={SpanAttributeKey.MODEL: data.get('answer_endpoint'),
                                SpanAttributeKey.CHAT_USAGE: _usage(data.get('input_tokens'), output_tokens),
+                               SpanAttributeKey.LLM_COST: _llm_cost(data.get('answer_endpoint'), data.get('input_tokens'),
+                                                                    output_tokens),
                                'thinking_tokens': data.get('thinking_tokens'), 'cost_eur': data.get('cost_eur'),
                                'queue_wait_ms': wait, 'time_to_first_token_ms': first_ms, 'streaming_ms': streaming_ms,
                                'tokens_per_second': round(output_tokens * 1000 / streaming_ms, 1) if streaming_ms and output_tokens else None,
@@ -539,7 +564,8 @@ def _write_trace(log: Any, name: str) -> str | None:
         child(root, 'translate_back', SpanType.LLM if io.get('messages') else SpanType.CHAIN, starts.get('translate_back', 0),
               timings['translate_back'], inputs={'messages': io['messages']} if io.get('messages') else None,
               outputs=log.answer or None,
-              attributes={SpanAttributeKey.MODEL: io.get('endpoint'), SpanAttributeKey.CHAT_USAGE: _usage(*tokens('translate_back'))})
+              attributes={SpanAttributeKey.MODEL: io.get('endpoint'), SpanAttributeKey.CHAT_USAGE: _usage(*tokens('translate_back')),
+                          SpanAttributeKey.LLM_COST: _llm_cost(io.get('endpoint'), *tokens('translate_back'))})
     if 'persist' in timings:
         child(root, 'persist', SpanType.CHAIN, starts.get('persist', 0), timings['persist'])
 
@@ -553,6 +579,21 @@ def _write_trace(log: Any, name: str) -> str | None:
                          'input_tokens_total': sum(int(i or 0) for i, _ in parts),
                          'output_tokens_total': sum(int(o or 0) for _, o in parts)})
     return root.trace_id
+
+
+def _llm_cost(endpoint: str | None, input_tokens: int | None, output_tokens: int | None) -> Dict[str, float] | None:
+    """Cost of one model call in US dollars, as MLflow's trace views add it up (``mlflow.llm.cost``).
+
+    :param endpoint: serving endpoint; an unlisted one uses the default price
+    :param input_tokens: input tokens, None when unknown
+    :param output_tokens: output tokens, None when unknown
+    :return: ``input_cost``, ``output_cost`` and ``total_cost``, or None when no count is known
+    """
+    if input_tokens is None and output_tokens is None:
+        return None
+    price = streaming._PRICING_USD.get(endpoint or '', streaming._DEFAULT_PRICING)
+    i, o = int(input_tokens or 0) * price['input'] / 1e6, int(output_tokens or 0) * price['output'] / 1e6
+    return {'input_cost': round(i, 8), 'output_cost': round(o, 8), 'total_cost': round(i + o, 8)}
 
 
 def _usage(input_tokens: int | None, output_tokens: int | None) -> Dict[str, int] | None:

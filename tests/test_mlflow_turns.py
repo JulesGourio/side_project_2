@@ -35,6 +35,7 @@ def spans(monkeypatch):
     monkeypatch.setattr(mlflow, 'start_span_no_context',
                         lambda name, **kw: _Span(name, kw.get('parent_span'), kw, recorded))
     monkeypatch.setattr(mlflow_turns, '_experiment', {'chat': '7'})
+    monkeypatch.setattr(mlflow_turns.agent_version, 'ensure', lambda experiment_id, **kw: f'm-app-{experiment_id}')
     return recorded
 
 
@@ -170,16 +171,19 @@ def test_root_tags_user_and_status(spans):
     assert root.kwargs['tags']['qualibot.source'] == 'app'
     assert root.kwargs['metadata']['mlflow.trace.session'] == 's1'
     assert root.kwargs['metadata']['mlflow.trace.user'] == 'jane@example.com'
+    assert root.kwargs['metadata']['mlflow.modelId'] == 'm-app-7'
     assert root.ended['status'] == 'ERROR' and root.ended['outputs'] == 'The answer'
 
 
 def test_evaluation_turn_is_marked(spans):
     log = _turn('ok')
-    log.data['trace_source'] = 'evaluation'
+    log.data.update({'trace_source': 'evaluation', 'model_id': 'm-eval', 'trace_tags': {'qualibot.case_id': 'q7'}})
     mlflow_turns._write_trace(log, 'chat')
     root = _by_name(spans)['chat_turn']
     assert root.kwargs['tags']['qualibot.source'] == 'evaluation'
+    assert root.kwargs['tags']['qualibot.case_id'] == 'q7'
     assert root.kwargs['metadata']['mlflow.trace.user'] == 'evaluation'
+    assert root.kwargs['metadata']['mlflow.modelId'] == 'm-eval'
 
 
 def test_tags_for_the_free_scorers(spans, monkeypatch):
@@ -366,3 +370,16 @@ def test_each_model_call_splits_into_time_to_first_token_and_generation(spans):
     attributes = s['answer'].ended['attributes']
     assert attributes['queue_wait_ms'] == 50 and attributes['time_to_first_token_ms'] == 500
     assert attributes['streaming_ms'] == 2500 and attributes['tokens_per_second'] == 20.0
+
+
+def test_llm_spans_carry_their_cost_in_dollars(spans):
+    from mlflow.tracing.constant import SpanAttributeKey
+    from server.services.infra import streaming
+    mlflow_turns._write_trace(_turn('ok'), 'chat')
+    attributes = [{**(s.kwargs.get('attributes') or {}), **(s.ended or {}).get('attributes', {})} for s in spans]
+    costs = [a[SpanAttributeKey.LLM_COST] for a in attributes if a.get(SpanAttributeKey.LLM_COST)]
+    assert costs                                                       # the answer (the rewrite has no token count here)
+    cost = costs[0]
+    price = streaming._PRICING_USD.get('luna', streaming._DEFAULT_PRICING)
+    assert cost['total_cost'] == pytest.approx(cost['input_cost'] + cost['output_cost'])
+    assert cost['input_cost'] == pytest.approx(100 * price['input'] / 1e6)
