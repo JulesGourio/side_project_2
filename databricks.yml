@@ -102,6 +102,7 @@ sync:
     - "client/public/**"         # source assets duplicated in client/out after build
     - "client/node_modules/**"
     - "runbooks/**"              # not deployed
+    - "resources/dashboards/**"  # read locally by the dashboards resource; synced, the workspace would turn each file into a stray dashboard
     - "archive/**"               # superseded documentation, never read at runtime
     - ".git/**"
     - ".databricks/**"           # local CLI cache — contains 64MB+ terraform binaries
