@@ -17,9 +17,11 @@
 # MAGIC
 # MAGIC **Outputs**
 # MAGIC - Delta table `{pipeline_write_env}_proj.qualibot.<results_table_name>`: one row per configuration and question.
-# MAGIC - MLflow experiment `mlflow_experiment`: one run per configuration (one row per question, its documents and
-# MAGIC   scores) and, in the experiment description, the ranking, the effect of each setting and the documents every
-# MAGIC   configuration misses.
+# MAGIC - The app's chat experiment (`CHAT_MLFLOW_EXPERIMENT`, or `mlflow_experiment`): every question searched becomes a
+# MAGIC   trace written by the app's own code (`mlflow_turns`), tagged `qualibot.source = evaluation`; each configuration
+# MAGIC   is an agent version (`agent_version`: its full spec as parameters, the version the app runs when the settings are
+# MAGIC   the same); one evaluation run per configuration scores those traces, linked to its agent version and to the
+# MAGIC   dataset `golden_retrieval_eval`; with several configurations, a run `golden · comparaison` holds the ranking.
 # MAGIC - At the end of the notebook: corpus and index check (expected documents absent from the chunks), key indicators
 # MAGIC   per configuration, ranking, rank per question, quality against cost, recall curves and every expected document
 # MAGIC   missed in the top 10 with its cause.
@@ -98,7 +100,9 @@ log.propagate = False
 # MAGIC | `reference` | empty | configuration every other one is compared with; empty = the first of `indexes` |
 # MAGIC | `ks` | `1,3,5,10,20` | K values of Recall@K, MRR@K, AllRefs@K (chunks sent to the LLM); a K above the chunks sent scores the whole context; the scoreboard adds the whole context (`all`) |
 # MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
-# MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = `/Shared/qualibot/{write_env}_retrieval_eval` |
+# MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = the app's `CHAT_MLFLOW_EXPERIMENT` |
+# MAGIC | `warehouse_id` | empty | SQL warehouse reading the Unity Catalog traces; empty = the app's `CHAT_MLFLOW_WAREHOUSE_ID` |
+# MAGIC | `only_if_new` | `false` | `true` (after a deploy): `deploye` only, and nothing when its agent version was already evaluated on this golden set |
 # MAGIC | `rerun_existing` | `true` | `false` reuses the saved successful rows of an unchanged question, configuration and app code |
 # MAGIC | `debug` | `false` | logs the traceback of every failed attempt |
 # MAGIC
@@ -145,10 +149,12 @@ for name, default in [
     ("ks", "1,3,5,10,20,50"),
     ("max_parallel", "1"),
     ("mlflow_experiment", ""),
+    ("warehouse_id", ""),
 ]:
     dbutils.widgets.text(name, default)
 for name, default, choices in [
     ("preset", "deploye", ["deploye", "tailles", "complet", "perso"]),
+    ("only_if_new", "false", ["false", "true"]),
     ("rerun_existing", "true", ["true", "false"]),
     ("debug", "false", ["false", "true"]),
 ]:
@@ -196,7 +202,8 @@ def preset_configs(preset: str) -> str:
     return ",".join(configs)
 
 
-PRESET = dbutils.widgets.get("preset")
+ONLY_IF_NEW = dbutils.widgets.get("only_if_new") == "true"
+PRESET = "deploye" if ONLY_IF_NEW else dbutils.widgets.get("preset")
 INDEXES = dbutils.widgets.get("indexes").strip() if PRESET == "perso" else preset_configs(PRESET)
 # K = 50 is always measured: the presets send up to about 50 documents.
 KS = sorted({int(x.strip()) for x in dbutils.widgets.get("ks").split(",") if x.strip()} | {50})
@@ -207,8 +214,8 @@ KS_ALL = [*KS, "all"]
 MAX_PARALLEL = max(1, int(dbutils.widgets.get("max_parallel")))
 RERUN = dbutils.widgets.get("rerun_existing") == "true"
 DEBUG = dbutils.widgets.get("debug") == "true"
-EXPERIMENT = (dbutils.widgets.get("mlflow_experiment").strip()
-              or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval")
+EXPERIMENT_WIDGET = dbutils.widgets.get("mlflow_experiment").strip()
+WAREHOUSE_WIDGET = dbutils.widgets.get("warehouse_id").strip()
 EXECUTION_ID = uuid.uuid4().hex
 log.info("Golden only | table=%s | results=%s | preset=%s | ks=%s | execution=%s",
          GOLDEN_TABLE, RESULTS_TABLE, PRESET, KS, EXECUTION_ID)
@@ -237,6 +244,16 @@ if os.path.isfile(target_path):
             if match:
                 os.environ[match.group(1)] = (shlex.split(match.group(2)) or [""])[0]
 
+# The chat experiment of the app (traces, prompts, agent versions), unless the widget names another one.
+EXPERIMENT = EXPERIMENT_WIDGET or os.environ.get("CHAT_MLFLOW_EXPERIMENT", "")
+if not EXPERIMENT:
+    raise ValueError("No MLflow experiment: set mlflow_experiment or CHAT_MLFLOW_EXPERIMENT in the app configuration")
+if EXPERIMENT_WIDGET:
+    os.environ.pop("CHAT_MLFLOW_EXPERIMENT_ID", None)
+if WAREHOUSE_WIDGET:
+    os.environ["CHAT_MLFLOW_WAREHOUSE_ID"] = WAREHOUSE_WIDGET
+# The app's own value: the spec of a configuration is the app's, the evaluation pins the rewrite fallback below.
+APP_REWRITE_FALLBACKS = os.environ.get("CHAT_REWRITE_FALLBACK_ENDPOINTS")
 os.environ["CHAT_REWRITE_FALLBACK_ENDPOINTS"] = (
     os.environ.get("CHAT_REWRITE_ENDPOINT") or os.environ["CHAT_LLM_ENDPOINT"]
 )
@@ -481,6 +498,7 @@ RUNNER_VERSION = "golden-only-persistent-loop-v1"
 for module in [name for name in sys.modules if name.split(".")[0] in ("server", "utils")]:
     del sys.modules[module]
 from server.services.chat import engine
+from server.services.chat import agent_version, mlflow_turns, spec as chat_spec
 from server.routers.chat import TRANSLATE_BRIDGE_ENABLED, _trim_history, _with_today_date
 from server.services.infra.doc_catalog import canon_ref
 from server.services.chat.translation_bridge import translate_question_to_en
@@ -536,6 +554,46 @@ for label, cfg in CONFIGS.items():
         "doc_references": DOC_REFERENCES,
     })
 log.info("Configs: %s", {name: cfg["spec"] for name, cfg in CONFIGS.items()})
+
+
+def config_spec(cfg: dict) -> dict[str, str]:
+    """Spec of a configuration (``server/services/chat/spec.py``): the app's settings with the configuration's overrides.
+
+    The rewrite fallback the evaluation pins is put back to the app's value, and a setting that only the evaluation
+    has (fusion, ANN/BM25 split) is added: the configuration ``deploye`` gets the spec, hence the agent version, of
+    the app as deployed.
+
+    :param cfg: one value of ``parse_configs``
+    :return: the spec
+    """
+    apply_config(cfg)
+    pinned = os.environ.pop("CHAT_REWRITE_FALLBACK_ENDPOINTS", None)
+    if APP_REWRITE_FALLBACKS is not None:
+        os.environ["CHAT_REWRITE_FALLBACK_ENDPOINTS"] = APP_REWRITE_FALLBACKS
+    try:
+        values = chat_spec.spec(code_normalization=os.environ.get("EVAL_CODE_NORMALIZATION", "on") != "off")
+    finally:
+        os.environ.pop("CHAT_REWRITE_FALLBACK_ENDPOINTS", None)
+        if pinned is not None:
+            os.environ["CHAT_REWRITE_FALLBACK_ENDPOINTS"] = pinned
+    for key, env_name in (("eval.fusion", "EVAL_MERGE"), ("eval.ann_bm25_split", "EVAL_SPLIT_BM25")):
+        if os.environ.get(env_name) and os.environ[env_name] != "best":
+            values[key] = os.environ[env_name]
+    return values
+
+
+SPECS = {label: config_spec(cfg) for label, cfg in CONFIGS.items()}
+VERSION_NAMES = {label: chat_spec.version_name(values) for label, values in SPECS.items()}
+log.info("Agent versions: %s", VERSION_NAMES)
+
+# MLflow: the app's chat experiment, activated as the app does, so the traces land in its Unity Catalog tables.
+mlflow.set_tracking_uri("databricks")
+mlflow.set_registry_uri("databricks-uc")
+EXPERIMENT_ID = mlflow_turns._experiment_id(EXPERIMENT)
+if not EXPERIMENT_ID:
+    raise RuntimeError(f"MLflow experiment {EXPERIMENT} not found: run the create_chat_experiment job first")
+VERSIONS = {label: agent_version.ensure(EXPERIMENT_ID, values) for label, values in SPECS.items()}
+log.info("MLflow experiment %s (%s), agent versions %s", EXPERIMENT, EXPERIMENT_ID, VERSIONS)
 
 client = WorkspaceClient()
 HOST = client.config.host.rstrip("/")
@@ -608,6 +666,16 @@ if not ELIGIBLE:
 log.info("Golden: %d total | %d with expected refs | %d eligible | %d unknown conflicts",
          len(golden_rows), len(CASES), len(ELIGIBLE), len(CASES) - len(ELIGIBLE))
 
+# After a deploy: nothing to do when the deployed version was already measured on this golden set.
+if ONLY_IF_NEW:
+    measured = (mlflow.get_logged_model(VERSIONS["deploye"]).tags or {}).get(agent_version.EVALUATED_TAG)
+    if measured == GOLDEN_VERSION:
+        log.info("Agent version %s already evaluated on golden set %s: nothing to do",
+                 VERSION_NAMES["deploye"], GOLDEN_VERSION)
+        dbutils.notebook.exit(f"already evaluated: {VERSION_NAMES['deploye']}")
+    log.info("Agent version %s not evaluated on golden set %s yet (last: %s)", VERSION_NAMES["deploye"],
+             GOLDEN_VERSION, measured or "never")
+
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Retrieval with a persistent asyncio loop
@@ -640,12 +708,42 @@ def error_description(exc: Exception) -> str:
     return f"[runner] {type(exc).__name__}: {str(exc)[:500]}"
 
 
-async def search(case: dict) -> dict:
-    """Search one golden question as the app does, without an answer.
+def write_trace(found: dict, case: dict, config: str, documents: list) -> str | None:
+    """Writes the search of one golden question as a trace of the chat experiment, with the app's own code: same
+    spans as a user's turn (rewrite or translation, Vector Search queries, passages sent), marked ``evaluation``.
+
+    :param found: output of ``retrieve_for_turn``, with its turn log
+    :param case: golden question
+    :param config: configuration label
+    :param documents: documents sent to the model, ``(REF, passages)`` in context order
+    :return: the trace id, None when the trace could not be written
+    """
+    turn = found["log"]
+    turn.data.update({
+        "question": case["question"], "division": engine.normalize_division(case["division"]),
+        "trace_source": "evaluation", "model_id": VERSIONS[config],
+        "session_id": f"golden-{EXECUTION_ID[:8]}-{config}",
+        "trace_tags": {"qualibot.eval_execution": EXECUTION_ID, "qualibot.eval_config": config,
+                       "qualibot.case_id": case["case_id"], "qualibot.golden_version": GOLDEN_VERSION,
+                       "qualibot.agent_version": VERSION_NAMES[config]},
+    })
+    turn.answer = ("Documents envoyés au modèle : " + ", ".join(ref for ref, _ in documents)) if documents else \
+        "Aucun document envoyé au modèle"
+    turn.finish("ok")
+    try:
+        return mlflow_turns._write_trace(turn, EXPERIMENT)
+    except Exception as exc:  # noqa: BLE001 — the search is scored without its trace
+        log.warning("case=%s config=%s trace not written: %s", case["case_id"], config, exc)
+        return None
+
+
+async def search(case: dict, config: str) -> dict:
+    """Search one golden question as the app does, without an answer, and write its trace.
 
     :param case: golden question with ``question`` and ``division``
+    :param config: configuration label
     :return: ``retrieved`` (REF in context order), ``retrieved_chunks`` (the REF of each passage sent, in search
-        order), ``n_passages`` and ``chars`` of the passages sent
+        order), ``n_passages`` and ``chars`` of the passages sent, ``cost_eur`` of the model calls, ``mlflow_trace_id``
     """
     stage = "authentication"
     try:
@@ -667,7 +765,11 @@ async def search(case: dict) -> dict:
         )
         stage = "group_documents"
         documents = engine.group_documents(found["rows"])
+        stage = "mlflow_trace"
+        trace_id = await asyncio.to_thread(write_trace, found, case, config, documents)
         return {
+            "mlflow_trace_id": trace_id,
+            "cost_eur": float(found["log"].data.get("rewrite_cost_eur") or 0.0),
             "retrieved": refs([ref for ref, _ in documents]),
             "retrieved_chunks": [row["REF"] for row in found["rows"]],
             "n_passages": len(found["rows"]),
@@ -677,10 +779,11 @@ async def search(case: dict) -> dict:
         raise RetrievalStageError(stage, exc) from exc
 
 
-async def run_case(case: dict, semaphore: asyncio.Semaphore) -> dict:
+async def run_case(case: dict, config: str, semaphore: asyncio.Semaphore) -> dict:
     """Search one question, retried twice after 5 and 20 seconds.
 
     :param case: golden question
+    :param config: configuration label
     :param semaphore: limit on simultaneous searches
     :return: output of ``search`` with ``latency_s``, or ``error`` and ``latency_s`` after the last failure
     """
@@ -688,7 +791,7 @@ async def run_case(case: dict, semaphore: asyncio.Semaphore) -> dict:
     for attempt, wait in enumerate((5, 20, None), 1):
         try:
             async with semaphore:
-                result = await search(case)
+                result = await search(case, config)
             result["latency_s"] = round(time.monotonic() - started, 3)
             return result
         except Exception as exc:
@@ -820,6 +923,8 @@ SCHEMA = StructType([
     StructField("chars", LongType(), True),
     StructField("latency_s", DoubleType(), True),
     StructField("error", StringType(), True),
+    StructField("mlflow_trace_id", StringType(), True),
+    StructField("cost_eur", DoubleType(), True),
 ])
 
 DONE = set()
@@ -860,7 +965,7 @@ if TOTAL:
                 make_semaphore(MAX_PARALLEL), retrieval_loop
             ).result()
             futures = {
-                asyncio.run_coroutine_threadsafe(run_case(case, semaphore), retrieval_loop): i
+                asyncio.run_coroutine_threadsafe(run_case(case, name, semaphore), retrieval_loop): i
                 for i, case in enumerate(cases)
             }
             outputs = [None] * len(cases)
@@ -900,6 +1005,8 @@ if TOTAL:
                     "chars": result.get("chars"),
                     "latency_s": result.get("latency_s"),
                     "error": error,
+                    "mlflow_trace_id": result.get("mlflow_trace_id"),
+                    "cost_eur": result.get("cost_eur"),
                 })
             spark.createDataFrame(batch, schema=SCHEMA).write.mode("append").format("delta").option("mergeSchema", "true").saveAsTable(RESULTS_TABLE)
             ALL_ROWS.extend(batch)
@@ -968,6 +1075,8 @@ for name in RUN:
         "n_docs": float(own["n_docs"].mean()) if not own.empty else float("nan"),
         "n_passages": float(own["n_passages"].mean()) if not own.empty else float("nan"),
         "chars": float(own["chars"].mean()) if not own.empty else float("nan"),
+        "cost_eur": (float(own["cost_eur"].mean()) if not own.empty and "cost_eur" in own
+                     and own["cost_eur"].notna().any() else float("nan")),
     }
     for k in KS_ALL:
         for metric in ("recall", "mrr", "all_refs"):
@@ -1519,18 +1628,17 @@ plt.close("all")
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## MLflow
-# MAGIC Native MLflow only, one run per configuration and no other run, no artifact to open.
-# MAGIC - **Experiment page, description**: the ranking of the configurations, the effect of each setting and the questions
-# MAGIC   every configuration misses, rewritten at each execution.
-# MAGIC - **Runs > Table**: one row per configuration. Settings `top_k`, `brute`, `fusion`, `recherche`, `codes`, `index`,
-# MAGIC   `requetes_vs`; scores `recall_01` … `recall_50`, `recall_all`, `allrefs_10`, `allrefs_50`,
-# MAGIC   `allrefs_all`, `mrr_01` … `mrr_50`, `mrr_all`, `docs`, `chunks` (MLflow adds `/mean`),
-# MAGIC   `tokens_k`.
-# MAGIC   Sort by clicking a column; group by a setting with **Group by**.
-# MAGIC - **Runs > Chart**: `recall_by_k`, one line per configuration, K on the x axis. The other charts are the bar charts
-# MAGIC   MLflow adds by itself; hide them on the screen.
-# MAGIC - **A run**: its settings in plain words as description, then the evaluation tab, one row per question with its
-# MAGIC   expected and retrieved documents and its scores. **Compare** on two runs shows the questions side by side.
+# MAGIC Everything in the app's chat experiment, native MLflow only.
+# MAGIC - **Traces**: one trace per question and configuration, the same spans as a user's turn (translation or rewrite,
+# MAGIC   Vector Search queries, passages sent, cost), user `evaluation`, tags `qualibot.source = evaluation`,
+# MAGIC   `qualibot.eval_config`, `qualibot.case_id`, `qualibot.eval_execution`; session `golden-<execution>-<config>`.
+# MAGIC - **Datasets**: `<write_env>_proj.qualibot.golden_retrieval_eval`, the eligible golden questions.
+# MAGIC - **Evaluation runs**: one run `golden · <agent version>` per configuration, its scores `recall_01` … `recall_50`,
+# MAGIC   `recall_all`, `allrefs_*`, `mrr_*`, `docs`, `chunks` (MLflow adds `/mean`), `tokens_k`, `cost_eur`,
+# MAGIC   `recall_by_k` (K on the x axis); with several configurations, `golden · comparaison` holds the ranking.
+# MAGIC - **Agent versions**: one per configuration spec (every setting as a parameter, the spec in one line as
+# MAGIC   description, prompts linked), its evaluation runs, metrics and traces; the app's version carries
+# MAGIC   `qualibot.deployed.<env>`, and `qualibot.evaluated.retrieval` = the golden set it was measured on.
 
 # COMMAND ----------
 from mlflow.genai.scorers import scorer
@@ -1560,6 +1668,22 @@ def log_number(key: str, value) -> None:
         mlflow.log_metric(key, number)
 
 
+# Trace id -> what the search of that question sent: the scorers read it, a trace's root output is a text.
+SEARCHED: dict[str, dict] = {}
+
+
+def searched(trace, outputs) -> dict:
+    """What the search of a question sent to the model.
+
+    :param trace: the question's trace, None for a row scored without trace
+    :param outputs: the row's outputs: a dict with ``retrieved_chunks`` when scored without trace
+    :return: ``retrieved_chunks``, ``n_docs``, ``n_passages``
+    """
+    if isinstance(outputs, dict) and "retrieved_chunks" in outputs:
+        return outputs
+    return SEARCHED[trace.info.trace_id]
+
+
 def metric_scorer(name: str, column: str, k: int | str) -> object:
     """Scorer returning one score of ``score_at_k`` for a question.
 
@@ -1568,15 +1692,15 @@ def metric_scorer(name: str, column: str, k: int | str) -> object:
     :param k: K of that score, or ``all``
     :return: MLflow scorer
     """
-    def score(inputs: dict, outputs: dict, expectations: dict) -> float:
+    def score(trace, outputs, expectations: dict) -> float:
         """Score of one question.
 
-        :param inputs: the question
-        :param outputs: ``retrieved_chunks``, the REF of each chunk sent, in search order
+        :param trace: the question's trace
+        :param outputs: the question's outputs
         :param expectations: expected references
         :return: the score
         """
-        return score_at_k(expectations["expected_refs"], outputs["retrieved_chunks"], k)[column]
+        return score_at_k(expectations["expected_refs"], searched(trace, outputs)["retrieved_chunks"], k)[column]
 
     return scorer(score, name=name)
 
@@ -1586,13 +1710,14 @@ def docs_scorer() -> object:
 
     :return: MLflow scorer named ``docs``
     """
-    def docs(outputs: dict) -> float:
+    def docs(trace, outputs) -> float:
         """Documents of one question.
 
-        :param outputs: outputs of the question
+        :param trace: the question's trace
+        :param outputs: the question's outputs
         :return: the number of distinct documents
         """
-        return float(outputs["n_docs"])
+        return float(searched(trace, outputs)["n_docs"])
 
     return scorer(docs, name="docs")
 
@@ -1602,13 +1727,14 @@ def chunks_scorer() -> object:
 
     :return: MLflow scorer named ``chunks``
     """
-    def chunks(outputs: dict) -> float:
+    def chunks(trace, outputs) -> float:
         """Passages of one question.
 
-        :param outputs: outputs of the question
+        :param trace: the question's trace
+        :param outputs: the question's outputs
         :return: the number of passages sent
         """
-        return float(outputs.get("n_passages") or 0)
+        return float(searched(trace, outputs).get("n_passages") or 0)
 
     return scorer(chunks, name="chunks")
 
@@ -1765,45 +1891,126 @@ def missed_by_all_markdown() -> str:
     return "\n".join(lines)
 
 
+def golden_dataset() -> object:
+    """The evaluation dataset ``<write_env>_proj.qualibot.golden_retrieval_eval`` of the chat experiment, created on first use,
+    its records merged with the eligible golden questions (Datasets tab).
+
+    :return: the dataset, None when it cannot be created (the runs are then logged without it)
+    """
+    from mlflow.genai import datasets as genai_datasets
+    name = f"{WRITE_ENV}_proj.qualibot.golden_retrieval_eval"
+    try:
+        try:
+            dataset = genai_datasets.get_dataset(name=name)
+        except Exception:  # noqa: BLE001 — absent: the exception type depends on the MLflow version
+            dataset = genai_datasets.create_dataset(name=name, experiment_id=EXPERIMENT_ID)
+        dataset.merge_records([{"inputs": {"question": c["question"], "case_id": c["case_id"], "division": c["division"]},
+                                "expectations": {"expected_refs": c["expected"]}} for c in ELIGIBLE])
+        log.info("Dataset %s: %d golden questions", name, len(ELIGIBLE))
+        return dataset
+    except Exception as exc:  # noqa: BLE001 — the evaluation stays usable without the Datasets tab
+        log.warning("Dataset %s not written: %s", name, exc)
+        return None
+
+
+def fetch_traces(trace_ids: list[str], timeout_s: float = 300.0) -> dict[str, object]:
+    """The traces written during the searches, once the Unity Catalog tables have them.
+
+    :param trace_ids: trace ids of the questions
+    :param timeout_s: how long to wait for the last ones
+    :return: trace id -> trace, without the ones still missing after ``timeout_s``
+    """
+    found, deadline = {}, time.monotonic() + timeout_s
+    while True:
+        for trace_id in [t for t in trace_ids if t not in found]:
+            trace = mlflow.get_trace(trace_id, silent=True)
+            if trace is not None and trace.data.spans:
+                found[trace_id] = trace
+        if len(found) == len(trace_ids) or time.monotonic() > deadline:
+            return found
+        time.sleep(15)
+
+
+def link_dataset(run_id: str, model_id: str) -> None:
+    """Records the golden dataset as an input of the run and of the agent version (Datasets used).
+
+    :param run_id: evaluation run
+    :param model_id: agent version
+    """
+    if GOLDEN_DATASET is None:
+        return
+    from mlflow.entities import DatasetInput, LoggedModelInput
+    try:
+        MlflowClient().log_inputs(run_id=run_id, datasets=[DatasetInput(dataset=GOLDEN_DATASET._to_mlflow_entity())],
+                                  models=[LoggedModelInput(model_id=model_id)])
+    except Exception as exc:  # noqa: BLE001 — the run stays valid without the link
+        log.warning("Dataset not linked to run %s: %s", run_id, exc)
+
+
 if common_ids:
-    client.workspace.mkdirs(EXPERIMENT.rsplit("/", 1)[0])
-    experiment_id = mlflow.set_experiment(EXPERIMENT).experiment_id
     run_date = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     tags = {"eval": "retrieval", "source": "golden", "golden_version": GOLDEN_VERSION,
-            "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID, "runner": RUNNER_VERSION}
+            "golden_questions": str(len(ELIGIBLE)), "execution_id": EXECUTION_ID, "runner": RUNNER_VERSION,
+            "qualibot.source": "evaluation"}
+    GOLDEN_DATASET = golden_dataset()
+    mlflow.flush_trace_async_logging()
     for name in ORDER:
         rows = paired[paired["config"] == name]
-        data = [{"inputs": {"question": r["question"], "case_id": r["case_id"], "division": r["division"]},
-                 "outputs": {"retrieved": refs(r["retrieved"]), "retrieved_chunks": chunk_refs(r["chunks"]),
-                             "n_docs": int(r["n_docs"]),
-                             "n_passages": int(r.get("n_passages") or 0)},
-                 "expectations": {"expected_refs": refs(r["expected"])}}
-                for _, r in rows.iterrows()]
+        model_id, version = VERSIONS[name], VERSION_NAMES[name]
+        expectations = {r["mlflow_trace_id"]: {"expected_refs": refs(r["expected"])}
+                        for _, r in rows.iterrows() if isinstance(r.get("mlflow_trace_id"), str)}
+        traces = fetch_traces(list(expectations))
+        SEARCHED.update({t: {"retrieved_chunks": chunk_refs(r["chunks"]), "n_docs": int(r["n_docs"]),
+                             "n_passages": int(r.get("n_passages") or 0)}
+                         for _, r in rows.iterrows() if (t := r.get("mlflow_trace_id")) in traces})
+        if traces:
+            if len(traces) < len(rows):
+                log.warning("[%s] %d of %d questions scored: the others have no trace", name, len(traces), len(rows))
+            data = pd.DataFrame({"trace": list(traces.values()),
+                                 "expectations": [expectations[t] for t in traces]})
+        else:
+            log.warning("[%s] no trace found: scored on the saved searches, MLflow writes minimal traces", name)
+            data = [{"inputs": {"question": r["question"], "case_id": r["case_id"], "division": r["division"]},
+                     "outputs": {"retrieved": refs(r["retrieved"]), "retrieved_chunks": chunk_refs(r["chunks"]),
+                                 "n_docs": int(r["n_docs"]), "n_passages": int(r.get("n_passages") or 0)},
+                     "expectations": {"expected_refs": refs(r["expected"])}}
+                    for _, r in rows.iterrows()]
         rank = ORDER.index(name) + 1
-        with mlflow.start_run(run_name=name) as eval_run:
-            mlflow.set_tags({**tags, "config_signature": CONFIGS[name]["signature"], "spec": CONFIGS[name]["spec"][:250],
-                             "mlflow.note.content": f"{describe(PARAMS[name])}\n\n{rank}e sur {len(RUN)} au Recall@5 "
+        label = "version déployée" if name == "deploye" else f"configuration {name}"
+        with mlflow.start_run(run_name=f"golden · {version}") as eval_run:
+            mlflow.set_tags({**tags, "qualibot.config": name, "qualibot.agent_version": version,
+                             "config_signature": CONFIGS[name]["signature"], "spec": CONFIGS[name]["spec"][:250],
+                             "mlflow.note.content": f"{label.capitalize()} : {chat_spec.describe(SPECS[name])}\n\n"
+                                                    f"{rank}e sur {len(RUN)} au Recall@5 "
                                                     f"({pct(ROWS[name][f'recall_at_{5 if 5 in KS else min(KS)}'])}), "
-                                                    f"exécution du {run_date}."})
-            mlflow.log_params(PARAMS[name])
-            mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS)
-            log_number("tokens_k", tokens_k(ROWS[name]))
+                                                    f"golden {GOLDEN_VERSION}, exécution du {run_date}."})
+            mlflow.log_params({**PARAMS[name], "agent_version": version, "config": name})
+            mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS, model_id=model_id)
+            link_dataset(eval_run.info.run_id, model_id)
+            for key, value in (("tokens_k", tokens_k(ROWS[name])), ("cost_eur", ROWS[name].get("cost_eur"))):
+                if value is not None and not pd.isna(value):
+                    mlflow.log_metric(key, float(value), model_id=model_id)
             for k in KS:
-                mlflow.log_metric("recall_by_k", float(ROWS[name][f"recall_at_{k}"]), step=k)
-        log.info("MLflow run=%s | config=%s | questions=%d", eval_run.info.run_id, name, len(data))
+                mlflow.log_metric("recall_by_k", float(ROWS[name][f"recall_at_{k}"]), step=k, model_id=model_id)
+        mlflow.set_logged_model_tags(model_id, {agent_version.EVALUATED_TAG: GOLDEN_VERSION,
+                                                "qualibot.last_eval_run": eval_run.info.run_id})
+        log.info("MLflow run=%s | agent version=%s | config=%s | questions=%d | traces=%d",
+                 eval_run.info.run_id, version, name, len(rows), len(traces))
 
-    effects = effects_markdown(ROWS, PARAMS, REFERENCE)
-    missed = missed_by_all_markdown()
-    note = "\n\n".join(part for part in [
-        f"## Dernière exécution : {run_date}",
-        f"{len(RUN)} configurations, {len(common_ids)} questions, référence **{REFERENCE}**. Recall@K : part des "
-        f"documents attendus ayant au moins un chunk parmi les K premiers chunks envoyés au modèle (au-delà des chunks "
-        f"envoyés, tout le contexte). AllRefs : part des questions dont tous les documents attendus y sont. MRR : 1 / "
-        f"rang du premier chunk d'un document attendu. Une question vaut {num(100 * NOISE)} point.",
-        "### Classement (meilleur Recall@5 d'abord)", ranking_markdown(ROWS, PARAMS, REFERENCE),
-        "### Effet de chaque réglage" if effects else "",
-        "Chaque ligne compare des paires de configurations identiques sauf ce réglage." if effects else "", effects,
-        f"### Documents attendus qu'aucune configuration ne met dans son top {K10}" if missed else "", missed,
-    ] if part)
-    MlflowClient().set_experiment_tag(experiment_id, "mlflow.note.content", note)
-    log.info("MLflow experiment %s: %d runs, description updated", EXPERIMENT, len(RUN))
+    if len(RUN) > 1:
+        effects = effects_markdown(ROWS, PARAMS, REFERENCE)
+        missed = missed_by_all_markdown()
+        note = "\n\n".join(part for part in [
+            f"## Comparaison du {run_date}",
+            f"{len(RUN)} configurations, {len(common_ids)} questions, référence **{REFERENCE}**. Recall@K : part des "
+            f"documents attendus ayant au moins un chunk parmi les K premiers chunks envoyés au modèle (au-delà des chunks "
+            f"envoyés, tout le contexte). AllRefs : part des questions dont tous les documents attendus y sont. MRR : 1 / "
+            f"rang du premier chunk d'un document attendu. Une question vaut {num(100 * NOISE)} point.",
+            "### Classement (meilleur Recall@5 d'abord)", ranking_markdown(ROWS, PARAMS, REFERENCE),
+            "### Effet de chaque réglage" if effects else "",
+            "Chaque ligne compare des paires de configurations identiques sauf ce réglage." if effects else "", effects,
+            f"### Documents attendus qu'aucune configuration ne met dans son top {K10}" if missed else "", missed,
+        ] if part)
+        with mlflow.start_run(run_name=f"golden · comparaison {run_date}"):
+            mlflow.set_tags({**tags, "qualibot.config": "comparaison", "mlflow.note.content": note})
+        log.info("Comparison run written (%d configurations)", len(RUN))
