@@ -7,3 +7,6 @@ resources:
       display_name: "Qualibot Usage Tracking (${bundle.target})"
       file_path: ./dashboards/qualibot_usage_tracking_${bundle.target}.lvdash.json
       warehouse_id: ${var.alerts_warehouse_id}
+      permissions:
+        - user_name: "jules.gourio.external@latecoere.aero"
+          level: CAN_MANAGE
