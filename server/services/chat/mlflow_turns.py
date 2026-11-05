@@ -86,6 +86,7 @@ def _activate(mlflow: Any, experiment_id: str) -> bool:
             return True
     try:
         mlflow.set_experiment(experiment_id=experiment_id)
+        mlflow.set_registry_uri('databricks-uc')                    # where the exporter links the prompt versions
     except Exception as exc:  # noqa: BLE001 — retried on the next turn
         logger.warning('mlflow_turns: experiment %s could not be activated, no trace written: %s', experiment_id, exc)
         return False
@@ -271,6 +272,48 @@ def _linked_prompts(experiment_id: str, keys: List[str]) -> str:
     return json.dumps(linked) if linked else ''
 
 
+class _LinkFailureRelay(logging.Handler):
+    """Relays, as a warning of this module, a prompt link the Unity Catalog store refused (it logs it at DEBUG only)."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Logs the refused link as a warning.
+
+        :param record: record of the Unity Catalog registry store
+        """
+        if 'link prompts' in record.getMessage():
+            logger.warning('mlflow_turns: prompt versions not linked to the trace: %s', record.exc_info and record.exc_info[1])
+
+
+def _watch_link_failures() -> None:
+    """Makes the refused prompt links visible in the app logs, once per process."""
+    store_logger = logging.getLogger('mlflow.store._unity_catalog.registry.rest_store')
+    if not any(isinstance(h, _LinkFailureRelay) for h in store_logger.handlers):
+        store_logger.addHandler(_LinkFailureRelay(level=logging.DEBUG))
+        store_logger.setLevel(logging.DEBUG)
+        store_logger.propagate = False
+
+
+def _register_linked_prompts(trace_id: str, linked: str) -> None:
+    """Hands the linked prompt versions to MLflow's trace manager: once the trace is uploaded, its exporter records the
+    link in the Unity Catalog registry, which the trace view and each prompt's page show.
+
+    :param trace_id: id of the trace being written, before its root span ends
+    :param linked: JSON of the linked prompts, ``[{"name": ..., "version": ...}]``
+    """
+    try:
+        from mlflow.entities.model_registry import PromptVersion
+        from mlflow.tracing.trace_manager import InMemoryTraceManager
+        manager = InMemoryTraceManager.get_instance()
+        _watch_link_failures()
+        for entry in json.loads(linked):
+            key = entry['name'].rsplit('.', 1)[-1].removeprefix('chat_')
+            manager.register_prompt(trace_id=trace_id,
+                                    prompt=PromptVersion(name=entry['name'], version=int(entry['version']),
+                                                         template=prompts.read(key)))
+    except Exception as exc:  # noqa: BLE001 — the trace is written without the registry link
+        logger.warning('mlflow_turns: prompt versions not handed to the trace: %s', exc)
+
+
 def log_vote(mlflow_trace_id: str, vote: str, comment: str = '', user_id: str = '') -> None:
     """Attaches the user's thumbs up / down to the turn's trace, and the comment as its own ``user_comment`` assessment (blocking; run it in a thread, never raises).
 
@@ -376,6 +419,8 @@ def _write_trace(log: Any, name: str) -> str | None:
         'chat_turn', span_type=SpanType.CHAIN, inputs={'question': data.get('question') or '',
                                                        'division': data.get('division')},
         tags=tags, metadata=metadata, experiment_id=experiment_id, start_time_ns=t0)
+    if linked:
+        _register_linked_prompts(root.trace_id, linked)
 
     if 'translate_in' in timings:
         io = log.model_io.get('translate_in') or {}

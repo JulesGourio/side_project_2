@@ -247,6 +247,20 @@ def test_registered_prompts_are_linked_to_the_trace(spans, monkeypatch):
                       {'name': 'dev_proj.qualibot.chat_system_base', 'version': '3'}]
 
 
+def test_linked_prompts_are_handed_to_the_trace_manager(spans, monkeypatch):
+    from mlflow.tracing.trace_manager import InMemoryTraceManager
+    from server.services.chat import prompts
+    _experiment_tags(monkeypatch, _tag('system_base', 'dev_proj.qualibot.chat_system_base', 3, prompts.digest('system_base')))
+    handed = []
+    fake = type('M', (), {'register_prompt': lambda self, trace_id, prompt: handed.append((trace_id, prompt))})()
+    monkeypatch.setattr(InMemoryTraceManager, 'get_instance', classmethod(lambda cls: fake))
+    log = _turn()
+    log.prompts = ['system_base']
+    mlflow_turns._write_trace(log, 'chat')
+    assert [(t, p.name, str(p.version), p.template) for t, p in handed] == [
+        ('tr-fake', 'dev_proj.qualibot.chat_system_base', '3', prompts.read('system_base'))]
+
+
 def test_a_prompt_edited_since_registration_is_not_linked(spans, monkeypatch):
     _experiment_tags(monkeypatch, _tag('system_base', 'dev_proj.qualibot.chat_system_base', 1, '0000000000000000'))
     log = _turn()

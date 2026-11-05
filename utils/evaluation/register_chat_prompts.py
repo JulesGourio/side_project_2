@@ -14,7 +14,8 @@ USAGE
 
 Inside a job the script runs through ``exec`` (no ``__file__``), so the job passes ``--app-root``.
 
-The identity running it needs USE CATALOG, USE SCHEMA and CREATE FUNCTION on the schema.
+The identity running it needs USE CATALOG, USE SCHEMA and CREATE FUNCTION on the schema. With ``--warehouse-id`` it also
+gives the app's service principal EXECUTE on each prompt: the app links the prompt versions to its traces in the registry.
 """
 import argparse
 import json
@@ -42,11 +43,36 @@ def _link_to_experiment(name: str, experiment_id: str) -> None:
         mlflow.genai.set_prompt_tag(name, EXPERIMENT_IDS_TAG, ',' + ','.join(ids + [experiment_id]) + ',')
 
 
-def register(schema: str, experiment: str) -> None:
+def grant_app(names: list[str], app: str, warehouse_id: str, profile: str) -> None:
+    """Gives the app's service principal EXECUTE on each prompt.
+
+    :param names: Full names of the prompts, ``catalog.schema.chat_<key>``.
+    :param app: Name of the Databricks app that writes the chat traces.
+    :param warehouse_id: SQL warehouse that runs the GRANT statements.
+    :param profile: Databricks CLI profile; empty inside a job.
+    """
+    from databricks.sdk import WorkspaceClient
+    w = WorkspaceClient(profile=profile or None)
+    principal = w.apps.get(app).service_principal_client_id
+    errors = []
+    for name in names:
+        full_name = '.'.join(f'`{part}`' for part in name.split('.'))
+        result = w.statement_execution.execute_statement(
+            statement=f'GRANT EXECUTE ON FUNCTION {full_name} TO `{principal}`', warehouse_id=warehouse_id, wait_timeout='30s')
+        if result.status.state.value == 'SUCCEEDED':
+            logger.info('EXECUTE on %s granted to app %s (%s)', name, app, principal)
+        else:
+            errors.append(f'{name}: {result.status.error.message if result.status.error else result.status}')
+    if errors:
+        raise RuntimeError('EXECUTE not granted to the app on: ' + '; '.join(errors))
+
+
+def register(schema: str, experiment: str) -> list[str]:
     """Register every chat prompt under ``schema`` and tag the experiment with each version.
 
     :param schema: Catalog and schema of the prompt registry, ``catalog.schema``.
     :param experiment: Workspace path of the chat experiment.
+    :return: full names of the registered prompts.
     """
     from server.services.chat import prompts
     found = mlflow.get_experiment_by_name(experiment)
@@ -77,6 +103,7 @@ def register(schema: str, experiment: str) -> None:
                 len(listed), ', '.join(sorted(p.name for p in listed)))
     if not listed:
         raise RuntimeError(f'No prompt of {schema} is linked to experiment {found.experiment_id}')
+    return [prompts.registry_name(schema, key) for key in prompts.FILES]
 
 
 def main() -> None:
@@ -84,13 +111,17 @@ def main() -> None:
     parser.add_argument('--profile', default='', help='Databricks CLI profile; empty inside a job')
     parser.add_argument('--schema', required=True, help='catalog.schema of the prompt registry (dev_proj.qualibot)')
     parser.add_argument('--experiment', required=True, help='chat experiment that receives the version tags')
+    parser.add_argument('--app', default='qualibot', help='Databricks app that writes the chat traces')
+    parser.add_argument('--warehouse-id', default='', help='SQL warehouse for the GRANTs to the app; empty = no grant')
     parser.add_argument('--app-root', default='', help='folder holding `server/` (default: two levels above this file)')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     sys.path.insert(0, args.app_root or str(Path(__file__).resolve().parents[2]))
     mlflow.set_tracking_uri(f'databricks://{args.profile}' if args.profile else 'databricks')
     mlflow.set_registry_uri(f'databricks-uc://{args.profile}' if args.profile else 'databricks-uc')
-    register(args.schema, args.experiment)
+    names = register(args.schema, args.experiment)
+    if args.warehouse_id:
+        grant_app(names, args.app, args.warehouse_id, args.profile)
 
 
 if __name__ == '__main__':
