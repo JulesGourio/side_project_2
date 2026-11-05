@@ -110,8 +110,12 @@ def register(schema: str, experiment: str) -> list[str]:
     if '.' not in schema:                                              # no Unity Catalog (local store): nothing to list
         return [prompts.registry_name(schema, key) for key in prompts.FILES]
     catalog, schema_name = schema.split('.', 1)
-    listed = mlflow.genai.search_prompts(
-        filter_string=f"catalog = '{catalog}' AND schema = '{schema_name}' AND experiment_id = '{found.experiment_id}'")
+    try:
+        listed = mlflow.genai.search_prompts(
+            filter_string=f"catalog = '{catalog}' AND schema = '{schema_name}' AND experiment_id = '{found.experiment_id}'")
+    except mlflow.exceptions.MlflowException as exc:                   # some workspaces refuse any search filter
+        logger.warning('Prompts tab of experiment %s not checked: %s', found.experiment_id, exc)
+        return [prompts.registry_name(schema, key) for key in prompts.FILES]
     logger.info('Prompts tab of experiment %s (schema %s selected): %d prompts listed: %s', found.experiment_id, schema,
                 len(listed), ', '.join(sorted(p.name for p in listed)))
     if not listed:
