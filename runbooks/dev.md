@@ -559,19 +559,24 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   Si la liaison aux prompts (tag `mlflow.linkedPrompts`) reste absente, lire dans les logs de l'app la ligne `prompt … differs from the
   registered version` : elle indique qu'il faut relancer l'enregistrement des prompts (`databricks bundle run register_chat_prompts_dev -t dev --profile DEV`).
 
-- [ ] **0.14ter Prompts liés aux traces + onglet Prompts** (2026-11-05, à faire) : le tag `mlflow.linkedPrompts` posé par l'app ne crée
-  pas le lien côté registre Unity Catalog (`LinkPromptsToTraces`) ; le job de notation le crée désormais (même à blanc, sans coût de
-  tokens) ; le job d'enregistrement vérifie que l'onglet Prompts de l'expérience liste les prompts.
+- [ ] **0.14ter Prompts liés aux traces + onglet Prompts** (2026-11-05, à faire) : l'app déclare à MLflow les versions de prompt de
+  chaque tour ; l'exporteur crée le lien dans le registre UC (`LinkPromptsToTraces`) juste après l'envoi de la trace. Le job
+  d'enregistrement donne au SP de l'app EXECUTE sur chaque prompt (nécessaire au lien) et vérifie l'onglet Prompts ; le job de
+  notation relie aussi les traces déjà écrites (même à blanc, sans coût de tokens).
 
   ```powershell
   databricks bundle deploy -t dev --profile DEV
   databricks bundle run register_chat_prompts_dev -t dev --profile DEV
+  Remove-Item Env:DATABRICKS_TOKEN -ErrorAction SilentlyContinue
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  .\utils\deploy\deploy_qualibot.ps1 -AppEnv dev
   databricks bundle run score_chat_traces_dev -t dev --profile DEV
   ```
 
-  Attendu : run 1 `Prompts tab of experiment … : N prompts listed: dev_proj.qualibot.chat_…` ; run 2 `prompt links: X traces linked,
-  Y without a linkedPrompts tag, 0 failed`. Dans l'UI, l'onglet Prompts de l'expérience a un sélecteur catalogue/schéma : choisir
-  `dev_proj` / `qualibot`. Si Y = toutes les traces : l'app ne pose pas le tag (logs de l'app, ligne `prompt … differs from the registered version`).
+  Attendu : run 1 `Prompts tab of experiment … : N prompts listed` puis `EXECUTE on … granted to app qualibot` par prompt. Poser une
+  question dans l'app DEV : sa trace dans `/Shared/Experiment/qualibot_chat_traces` affiche ses prompts ; sinon, ligne
+  `mlflow_turns: prompt versions not linked to the trace` dans les logs de l'app. Dernier run : `prompt links: X traces linked,
+  Y without a linkedPrompts tag, 0 failed`. Onglet Prompts de l'expérience : choisir `dev_proj` / `qualibot` dans le sélecteur.
 
 - [ ] **0.15 Nettoyage** (seulement après 0.12 et 0.13 réussis) :
   - garder dans `dev_proj.qualibot` tout ce que liste `SHOW TABLES IN dev_proj.qualibot;`, Les tables
