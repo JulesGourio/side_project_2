@@ -573,6 +573,9 @@ Toutes les commandes sont ici, dans l'ordre où il faut les lancer. Cocher et da
   databricks bundle run score_chat_traces_dev -t dev --profile DEV
   ```
 
+  Si l'app logge `PERMISSION_DENIED: Permission denied to create prompt in schema qualibot` : le SP de l'app n'a pas CREATE
+  FUNCTION sur le schéma ; le job d'enregistrement ci-dessus l'accorde (USE CATALOG, USE SCHEMA, CREATE FUNCTION), le relancer.
+
   Attendu : run 1 `Prompts tab of experiment … : N prompts listed` puis `EXECUTE on … granted to app qualibot` par prompt. Poser une
   question dans l'app DEV : sa trace dans `/Shared/Experiment/qualibot_chat_traces` affiche ses prompts ; sinon, ligne
   `mlflow_turns: prompt versions not linked to the trace` dans les logs de l'app. Dernier run : `prompt links: X traces linked,
