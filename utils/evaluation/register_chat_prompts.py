@@ -139,6 +139,9 @@ def main() -> None:
     names = register(args.schema, args.experiment)
     if args.warehouse_id:
         grant_app(names, args.app, args.warehouse_id, args.profile)
+        logger.info('Grants to app %s done', args.app)
+    else:
+        logger.warning('No --warehouse-id: nothing granted to app %s', args.app)
 
 
 if __name__ == '__main__':
