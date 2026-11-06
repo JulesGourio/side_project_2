@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 6
+NORMALIZATION_VERSION = 7
 
 
 # --- Model ---
@@ -213,7 +213,14 @@ QUERY_STOP_PREFIXES = frozenset({"IF", "GO", "MO", "PRO", "VA", "LA", "LE", "DE"
 
 # Canonical forms that are words written letter by letter (D.E.S, F.I.N) or fillers (E.E.E): never codes.
 STOP_CODES = frozenset({"DES", "FIN", "NON", "OUI", "LES", "ETC", "THE", "AND", "FOR", "PAR", "SUR", "UNE", "AAA",
-                        "EEE", "III", "XXX"})
+                        "EEE", "III", "XXX",
+                        # labels the pipeline writes before an image description, and signature boilerplate of forms
+                        "TABLE", "FLOWCHART", "DIAGRAM", "DATACHART", "SCHEMATIC", "PHOTOTECH", "TEXTDOC",
+                        "NAMEDATE", "NODATUM", "JMENODATUM"})
+
+# Month abbreviations: MAR/2024, OCT2023 are dates, not codes.
+MONTHS = ("JAN", "FEB", "FEV", "MAR", "APR", "AVR", "MAY", "MAI", "JUN", "JUIN", "JUL", "JUIL", "AUG", "AOU", "SEP",
+          "SEPT", "OCT", "NOV", "DEC")
 
 # Family prefixes that the documents also write in parts (PR/LAT/105, IN/AQ/559, FD_AQL_2193, IN/E/035).
 SPLIT_PREFIXES: Dict[str, Tuple[str, ...]] = {
@@ -464,20 +471,21 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
         counter_examples=("8-DE", "4-D")),
     CodePattern(
         "GEN-01", "Letters and digits written as a code",
-        rf"{_START}(?P<code>[A-Z]{{1,6}}(?:{_SEP}|(?<=[A-Z])(?=\d))\d{{2,8}}[A-Z]?){_END}(?![^\W_])"
+        rf"{_START}(?!(?:{_one_of(MONTHS)}){_SEP}?\d)(?P<code>[A-Z]{{1,6}}{_SEP}\d{{2,10}}[A-Z]?(?={_END})"
+        rf"|[A-Z]{{1,6}}\d{{2,10}}[A-Z]?(?={_END}|\.\d{{1,2}}(?![\d.])))(?![^\W_.]|\.\d{{3}})"
         rf"{_LANGUAGE}",
         examples=(("Q0014", "Q0014"), ("P50", "P50"), ("S-02", "S02"), ("P-30", "P30"), ("IAQ080002", "IAQ080002"),
                   ("DLV318007", "DLV318007"), ("QIS-46", "QIS46"), ("MM-093", "MM093"), ("IT-030", "IT030"),
-                  ("QP-202", "QP202")),
-        counter_examples=("Page 31", "le 24", "A", "p. 54", "2024-10-28", "x36000", "P5"),
+                  ("QP-202", "QP202"), ("AP2190.7", "AP2190"), ("F925144602", "F925144602")),
+        counter_examples=("Page 31", "le 24", "A", "p. 54", "2024-10-28", "x36000", "P5", "19/MAR/2024", "H35.25"),
         min_length=3),
     CodePattern(
         "UND-01", "Identifier joined by underscores",
-        rf"(?<![A-Za-z0-9_])(?P<code>(?!(?:{'|'.join(_LANGUAGES)})_)[A-Z][A-Z0-9]{{0,11}}(?:_[A-Z0-9]{{1,12}}){{1,4}})"
+        rf"(?<![A-Za-z0-9_])(?P<code>(?!(?:{'|'.join(_LANGUAGES)})_)[A-Z]{{1,12}}(?:_[A-Z0-9]{{1,12}}){{1,4}})"
         rf"(?![A-Za-z0-9_])(?!{_SEP}[A-Za-z0-9])",
         examples=(("ZPP_NOEC", "ZPPNOEC"), ("S_ALR_87013611", "SALR87013611"), ("MRP_CENTER", "MRPCENTER"),
                   ("Z_PUSH_FLOW", "ZPUSHFLOW"), ("FNC_V1", "FNCV1")),
-        counter_examples=("FR_EN", "GB_FR", "Mrp_center", "_A_B"),
+        counter_examples=("FR_EN", "GB_FR", "Mrp_center", "_A_B", "[TEXT_DOC]", "NAME_DATE"),
         min_length=5),
     CodePattern(
         "GEN-02", "Known prefix and a number",
