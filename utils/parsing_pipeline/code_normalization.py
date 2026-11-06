@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 9
+NORMALIZATION_VERSION = 10
 
 
 # --- Model ---
@@ -445,13 +445,14 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
     CodePattern(
         "REG-03", "FAA or EASA rule written with a space",
         rf"""{_START}(?P<code>
-            (?:FAR|AMC|GM|CS|AC|CFR)[ ]?-?[ ]?(?:\d{{2,3}}\.[A-Z]\.\d{{1,4}}|\d{{2,3}}[.-]\d{{1,4}}(?:-\d{{1,2}})?)
+            (?:FAR|AMC|GM|CS|AC|CFR)[ ]?-?[ ]?\d{{2,3}}[.-]\d{{1,4}}(?:-\d{{1,2}})?(?!\.[A-Z])
           | FAR[ ]?\d{{2,3}} | CS[ ]?-?[ ]?2[2-9]
         )(?![A-Za-z0-9]){_END}""",
         examples=(("FAR 25.1301", "FAR251301"), ("FAR 25-571", "FAR25571"), ("FAR 121", "FAR121"),
-                  ("AMC 145.A.60", "AMC145A60"), ("CS -25", "CS25"),
+                  ("CS -25", "CS25"),
                   ("AC 20-29", "AC2029"), ("AC 25.1529-1", "AC2515291")),
         counter_examples=("AC 01", "AC 1510", "CS 2000", "FAR")),
+        # AMC 145.A.60 stays read as the EASA paragraph 145A60 (REG-02).
     CodePattern(
         "FRM-01", "FAA form",
         rf"{_START}(?P<code>(?i:FORM)[ ]?-?[ ]?\d{{4}}-\d{{1,2}})(?![A-Za-z0-9]){_END}",
@@ -489,11 +490,11 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
         min_length=3),
     CodePattern(
         "UND-01", "Identifier joined by underscores",
-        rf"(?<![A-Za-z0-9_])(?P<code>(?!(?:{'|'.join(_LANGUAGES)})_)[A-Z]{{1,12}}(?:_[A-Z0-9]{{1,12}}){{1,4}})"
+        rf"(?<![A-Za-z0-9_])(?P<code>(?!(?:{'|'.join(_LANGUAGES)})_)[A-Z]{{1,12}}(?:_[A-Z]{{1,12}}){{0,3}}_[A-Z0-9]{{1,12}})"
         rf"(?![A-Za-z0-9_])(?!{_SEP}[A-Za-z0-9])",
         examples=(("ZPP_NOEC", "ZPPNOEC"), ("S_ALR_87013611", "SALR87013611"), ("MRP_CENTER", "MRPCENTER"),
                   ("Z_PUSH_FLOW", "ZPUSHFLOW"), ("FNC_V1", "FNCV1")),
-        counter_examples=("FR_EN", "GB_FR", "Mrp_center", "_A_B", "[TEXT_DOC]", "NAME_DATE"),
+        counter_examples=("FR_EN", "GB_FR", "Mrp_center", "_A_B", "[TEXT_DOC]", "NAME_DATE", "QP_IQ22_184"),
         min_length=5),
     CodePattern(
         "GEN-02", "Known prefix and a number",
