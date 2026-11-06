@@ -150,24 +150,54 @@ def version_name(values: Dict[str, str], prefix: str = 'qualibot') -> str:
     return f'{prefix}-{short_label(values)}-{signature(values)[:6]}'
 
 
-def describe(values: Dict[str, str]) -> str:
-    """The spec in one line of plain French, for the agent version's description.
+# Spec key -> (section, what it is). The text of an agent version lists every key of the spec under these headings.
+DESCRIPTIONS: Dict[str, tuple] = {
+    'retrieval.index': ('Retrieval', 'Vector Search index the passages are searched in'),
+    'retrieval.top_k_first_message': ('Retrieval', 'reranked passages kept per query for the first message of a conversation'),
+    'retrieval.top_k_follow_up': ('Retrieval', 'reranked passages kept per query for follow-up questions and other languages'),
+    'retrieval.raw_top_k_first_message': ('Retrieval', 'raw hybrid (not reranked) passages per query, first message; 0 = no raw search'),
+    'retrieval.raw_top_k_follow_up': ('Retrieval', 'raw hybrid passages per query, follow-ups; 0 = no raw search'),
+    'retrieval.raw_on': ('Retrieval', 'queries that also get a raw search (question, French rewrite, English rewrite)'),
+    'retrieval.max_passages': ('Retrieval', 'cap on the merged search passages, before the reference lookups'),
+    'retrieval.passage_order': ('Retrieval', 'order of the merged passages: best reranker score, or best rank'),
+    'retrieval.translate_only': ('Retrieval', 'true = the first message is only translated into the other language (two queries); false = bilingual rewrite'),
+    'retrieval.stopwords': ('Retrieval', 'true = French and English stop words removed from the keyword side of the queries'),
+    'retrieval.translate_bridge': ('Retrieval', 'true = the question is translated to English before the search'),
+    'retrieval.code_normalization': ('Retrieval', 'true = document codes (REF, SF1027 style) normalised in queries and lookups'),
+    'answer.endpoint': ('Answer', 'serving endpoint that writes the answer'),
+    'answer.fallbacks': ('Answer', 'endpoints tried in order when the answer endpoint fails'),
+    'answer.max_tokens': ('Answer', 'token budget of the answer (reasoning included)'),
+    'answer.reasoning_min_tokens': ('Answer', 'minimum budget given to a reasoning model'),
+    'answer.history_max_tokens': ('Answer', 'tokens of conversation history sent to the model'),
+    'rewrite.endpoint': ('Rewrite', 'serving endpoint that rewrites the question'),
+    'rewrite.fallbacks': ('Rewrite', 'endpoints tried in order when the rewrite endpoint fails'),
+    'rewrite.max_tokens': ('Rewrite', 'token budget of the rewrite'),
+    'rewrite.reasoning_effort': ('Rewrite', 'reasoning effort asked of the rewrite model; empty = none'),
+    'translate.endpoint': ('Translation', 'serving endpoint that translates the question'),
+    'translate.fallbacks': ('Translation', 'endpoints tried in order when the translation endpoint fails'),
+    'translate.max_tokens': ('Translation', 'token budget of the translation'),
+    'code.engine': ('Code', 'fingerprint of the engine, model-call, prompt-loading and code-normalisation source files'),
+    'eval.fusion': ('Evaluation only', 'merge of the result lists: rrf = reciprocal rank fusion (the app merges by best rank)'),
+    'eval.ann_bm25_split': ('Evaluation only', 'BM25 weight when each hybrid query is split into an embeddings query and a keyword query'),
+}
+for _key in prompts.FILES:
+    DESCRIPTIONS[f'prompt.{_key}'] = ('Prompts', f'SHA-256 prefix of the prompt file `{prompts.FILES[_key]}` (registered as chat_{_key})')
 
-    :param values: output of ``spec``
-    :return: e.g. ``Top-k 32/21 · brute coupée · tri par score · 50 passages max · réponse databricks-gpt-6-luna …``
+
+def describe(values: Dict[str, str], title: str = '') -> str:
+    """The whole configuration as text, in English, one line per setting, for an agent version's description.
+
+    :param values: output of ``spec`` (an evaluation may add ``eval.*`` keys)
+    :param title: first line, e.g. the version name; empty for none
+    :return: markdown: a heading per section (Retrieval, Answer, Rewrite, Translation, Prompts, Code), then ``- key = value: what it is``
+        for every key of ``values``
     """
-    raw = max(int(values['retrieval.raw_top_k_first_message']), int(values['retrieval.raw_top_k_follow_up']))
-    parts = [
-        f"Top-k {values['retrieval.top_k_first_message']}/{values['retrieval.top_k_follow_up']}",
-        f"brute {values['retrieval.raw_top_k_first_message']}/{values['retrieval.raw_top_k_follow_up']} "
-        f"sur {values['retrieval.raw_on']}" if raw else 'brute coupée',
-        f"tri par {values['retrieval.passage_order']}", f"{values['retrieval.max_passages']} passages max",
-        'traduction seule au 1er message' if values['retrieval.translate_only'] == 'true' else 'réécriture bilingue',
-        'codes normalisés' if values['retrieval.code_normalization'] == 'true' else 'codes non normalisés',
-        f"index {values['retrieval.index']}",
-        f"réponse {values['answer.endpoint']} (secours {values['answer.fallbacks']}, {values['answer.max_tokens']} tokens)",
-        f"réécriture {values['rewrite.endpoint']} (effort {values['rewrite.reasoning_effort']})",
-        f"traduction {values['translate.endpoint']}",
-        f"code {values['code.engine']}",
-    ]
-    return ' · '.join(parts)
+    sections: Dict[str, list] = {}
+    for key, value in values.items():
+        section, meaning = DESCRIPTIONS.get(key, ('Other', 'setting of the spec'))
+        sections.setdefault(section, []).append(f'- `{key}` = `{value}`: {meaning}')
+    lines = [f'# {title}', ''] if title else []
+    for section in ('Retrieval', 'Answer', 'Rewrite', 'Translation', 'Prompts', 'Code', 'Evaluation only', 'Other'):
+        if section in sections:
+            lines += [f'## {section}', *sections[section], '']
+    return '\n'.join(lines).rstrip()

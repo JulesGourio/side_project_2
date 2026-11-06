@@ -79,10 +79,11 @@ def ensure(experiment_id: str, values: Dict[str, str] | None = None, deployed: s
                                         output_format='list')
     if found:
         model_id = found[0].model_id
+        mlflow.set_logged_model_tags(model_id, {'mlflow.note.content': chat_spec.describe(values, name)})
     else:
         model_id = mlflow.create_external_model(
             name=name, model_type='agent', experiment_id=experiment_id, params=values,
-            tags={'qualibot.signature': signature, 'mlflow.note.content': chat_spec.describe(values)}).model_id
+            tags={'qualibot.signature': signature, 'mlflow.note.content': chat_spec.describe(values, name)}).model_id
         logger.info('agent_version: %s created (%s), %d prompts linked', name, model_id,
                     _link_prompts(mlflow, experiment_id, model_id, values))
     if deployed:

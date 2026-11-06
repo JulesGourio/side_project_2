@@ -56,7 +56,7 @@ def test_created_once_with_the_spec_as_params(registry):
     model = next(iter(registry['models'].values()))
     assert registry['created'] == 1 and model.params == registry['values']
     assert model.tags['qualibot.signature'] == spec.signature(registry['values'])
-    assert model.tags['mlflow.note.content'].startswith('Top-k ')
+    assert model.tags['mlflow.note.content'].startswith('# qualibot-k') and '## Retrieval' in model.tags['mlflow.note.content']
 
 
 def test_prompts_linked_only_when_the_hash_matches(registry):

@@ -1999,7 +1999,7 @@ if common_ids:
         with mlflow.start_run(run_name=f"golden · {version}") as eval_run:
             mlflow.set_tags({**tags, "qualibot.config": name, "qualibot.agent_version": version,
                              "config_signature": CONFIGS[name]["signature"], "spec": CONFIGS[name]["spec"][:250],
-                             "mlflow.note.content": f"{label.capitalize()} : {chat_spec.describe(SPECS[name])}\n\n"
+                             "mlflow.note.content": f"{label.capitalize()}, agent version {version}. Full configuration: see the agent version.\n\n"
                                                     f"{rank}e sur {len(RUN)} au Recall@5 "
                                                     f"({pct(ROWS[name][f'recall_at_{5 if 5 in KS else min(KS)}'])}), "
                                                     f"golden {GOLDEN_VERSION}, exécution du {run_date}."})

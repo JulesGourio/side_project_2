@@ -83,4 +83,14 @@ def test_version_name_is_readable() -> None:
     values = spec.spec()
     name = spec.version_name(values, 'qualibot-prod')
     assert re.fullmatch(r'qualibot-prod-k\d+-\d+(-brute)?-[0-9a-f]{6}', name)
-    assert spec.describe(values).startswith('Top-k ')
+    assert spec.describe(values, name).startswith(f'# {name}')
+
+
+def test_the_description_writes_every_setting_in_english() -> None:
+    """Every key of the spec, and every extra key an evaluation adds, is written with its value and a meaning."""
+    values = {**spec.spec(), 'eval.fusion': 'rrf', 'eval.ann_bm25_split': '0.5'}
+    text = spec.describe(values, 'qualibot-test')
+    for key, value in values.items():
+        assert f'`{key}` = `{value}`' in text, key
+    assert 'setting of the spec' not in text, 'a key has no entry in spec.DESCRIPTIONS'
+    assert all(not any(ch in text for ch in 'éèàçù') for _ in [0])
