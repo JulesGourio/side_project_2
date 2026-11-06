@@ -216,7 +216,7 @@ def test_generic_codes_and_underscore_identifiers_are_read():
     for text, code in (('Q0014', 'Q0014'), ('P50', 'P50'), ('QIS-46', 'QIS46'), ('IAQ080002', 'IAQ080002'),
                        ('PAQ 0921', 'PAQ0921'), ('ZPP\\_NOEC', 'ZPPNOEC'), ('S_ALR_87013611', 'SALR87013611')):
         assert cn.canonical_codes(text) == [code]
-    assert cn.canonical_codes('MI-13793-07') == ['MI13793']
+    assert cn.canonical_codes('MI-13793-07') == ['MI13793', 'MI1379307']
     assert cn.canonical_codes('Page 31, le 24, p. 54, FR_EN, 12.5') == []
 
 
@@ -234,7 +234,20 @@ def test_a_code_after_a_word_and_an_underscore_is_read_alone():
 
 
 def test_generic_codes_keep_their_number_groups_and_never_beat_a_family():
-    for text, code in (('TR22-137-000', 'TR22137000'), ('Q05-006', 'Q05006'), ('ABD 0024', 'ABD0024'),
-                       ('PN 1179-12-300-001', 'PN117912300001'), ('MI-13793-07', 'MI13793')):
-        assert cn.canonical_codes(text) == [code]
+    for text, codes in (('TR22-137-000', ['TR22137000', 'TR22']), ('Q05-006', ['Q05006', 'Q05']),
+                        ('ABD 0024', ['ABD0024']), ('PN 1179-12-300-001', ['PN117912300001']),
+                        ('MI-13793-07', ['MI13793', 'MI1379307'])):
+        assert cn.canonical_codes(text) == codes
     assert cn.canonical_codes('TEL 05.61.72.40.00') == []
+
+
+def test_a_cut_code_keeps_its_longer_reading_and_a_wrapper_keeps_the_codes_inside():
+    assert cn.normalize_codes('DLV-31-9020-10 ok') == 'DLV-31-9020-10 [DLV319020] [DLV31902010] ok'
+    assert cn.canonical_codes('QAP 117-110-10-02') == ['QAP1171101002', '1171101002']
+    assert cn.canonical_codes('ECM_EVD_LAT_P_0001') == ['ECMEVDLATP0001', 'EVDLATP0001']
+    assert cn.canonical_codes('ERJ 170-190') == ['ERJ170']
+    assert cn.canonical_codes('ST_A320_90VU_P') == ['A320']
+    for text in ('LA 29.01.2021', '18°C/60%', 'PO 2024'):
+        assert cn.canonical_codes(text) == []
+    text = 'Voir NSA8147-18-16 et QAP 117-110-10-02.'
+    assert cn.normalize_codes(cn.normalize_codes(text)) == cn.normalize_codes(text)

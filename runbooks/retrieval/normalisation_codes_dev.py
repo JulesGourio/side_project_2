@@ -1,12 +1,12 @@
-# Normalisation des codes (regles version 11) : controle puis table + index de test en DEV. UNE seule cellule, a coller.
+# Normalisation des codes (regles version 12) : controle puis table + index de test en DEV. UNE seule cellule, a coller.
 # Compute : cluster classique DEV, tes droits suffisent (CREATE TABLE sur dev_proj.qualibot, CAN USE sur l'endpoint
 # Vector Search). Lecture seule tant que APPLIQUER = False (section 2).
-# APPLIQUER = True : cree dev_proj.qualibot.chunks_codes_v11 (copie de chunks, colonnes chunk_preprocessed et cited_codes
-# recalculees depuis chunk_text, pas de rechunk) et son index chunks_codes_v11_index, meme endpoint et meme modele que
+# APPLIQUER = True : cree dev_proj.qualibot.chunks_codes_v12 (copie de chunks, colonnes chunk_preprocessed et cited_codes
+# recalculees depuis chunk_text, pas de rechunk) et son index chunks_codes_v12_index, meme endpoint et meme modele que
 # chunks_index. chunks et chunks_index ne bougent pas tant que ECRIRE_CHUNKS = False.
 
 # =====================================================================================================================
-# 1. REGLES DE LECTURE DES CODES (copie exacte du module du pipeline, version 11)
+# 1. REGLES DE LECTURE DES CODES (copie exacte du module du pipeline, version 12)
 # =====================================================================================================================
 import re
 import sys
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 11
+NORMALIZATION_VERSION = 12
 
 
 # --- Model ---
@@ -53,12 +53,15 @@ class CodePattern:
 
 
 class CodeMatch(NamedTuple):
-    """A code of a text: span (language suffix included), canonical form, id of the pattern that found it."""
+    """A code of a text: span (language suffix included), canonical form, id of the pattern that found it, and the
+    other canonical forms the same span stands for (``DLV-31-9020-10`` -> ``DLV319020`` and ``DLV31902010``)."""
 
     start: int
     end: int
     canonical: str
     pattern_id: str
+    variants: Tuple[str, ...] = ()
+    variants_end: int = 0  # end of the longest reading among the variants; 0 when none goes past ``end``
 
 
 # --- Building blocks of the patterns ---
@@ -77,7 +80,9 @@ _END = r"(?!\d)(?![.,]\d)"
 # Number groups after a code's first number (TR22-137-000, ST-60_048128, Q99.0017): a dot starts a group only before 3
 # digits or more, or a version (AP2190.7) and a decimal (H35.25) would join the code; a slash lists other codes
 # (PRLAT506/549).
-_NUMBER_GROUPS = r"(?:(?:[-_]\d{2,6}|\.\d{3,6})[A-Z]?){0,3}"
+_NUMBER_GROUPS = r"(?:(?:[-_]\d{1,6}|\.\d{3,6})[A-Z]?){0,3}"
+# A date written with numbers (29.01.2021, 02/10/00): never the number of a code.
+_DATE = r"(?:0?[1-9]|[12]\d|3[01])[-./](?:0?[1-9]|1[0-2])[-./]\d{2,4}(?!\d)"
 _LANGUAGES = ("FR", "EN", "GB", "MX", "BG", "CZ", "BR", "ES", "ESP")
 # Language suffixes after a code: glued by a separator (SF-1027_BG, MI-1413_Fr, INE028_FR_EN), or after a space when
 # no number follows (FORM-566 MX, but not EN 9100).
@@ -164,7 +169,7 @@ CODE_FAMILIES: Dict[str, CodeFamily] = {
 # --- Lexicon ---
 
 # Prefixes whose documents write numbers that no family shape describes (PAQ 0921, ITC 000447, LAT 215.300.0090) (ITC 000447, WP 11116).
-KNOWN_PREFIXES = ("ITC", "WP", "PS", "DAM", "UADAE", "DGL", "LAT", "PAQ", "IAQ")
+KNOWN_PREFIXES = ("ITC", "WP", "PS", "DAM", "UADAE", "DGL", "LAT", "PAQ", "IAQ", "AQ", "QUAL")
 
 # Prefixes never treated as codes, even when a catalog REF uses them: words and language codes that a number follows
 # in ordinary text ("GB 128", "in 300").
@@ -186,6 +191,12 @@ STOP_CODES = frozenset({"DES", "FIN", "NON", "OUI", "LES", "ETC", "THE", "AND", 
 SPACED_STOP_WORDS = ("PAGE", "LINE", "FIG", "FIGURE", "TABLE", "BOX", "ORDER", "CEDEX", "TEL", "FAX", "PHONE", "NO",
                      "ART", "TOME", "STEP", "ETAPE", "ITEM", "LOT", "QTY", "QTE", "REV", "ISSUE", "ED", "VOL", "CH",
                      "SECTION", "ANNEX", "ANNEXE", "PIECE", "BP", "CS", "ZI", "ZA", "RN", "RD", "TOTAL")
+
+# Words that a number follows when it identifies a thing: aircraft serial, SAP article, part, serial, work and purchase
+# orders (MSN 9237, SAP 1003181, WO 6747502).
+SPACED_ID_PREFIXES = ("MSN", "SAP", "PN", "SN", "WO", "PO", "OF")
+# Products named by a brand and a number (Turco 4460, Ardrox 970), in any case.
+PRODUCT_PREFIXES = ("TURCO", "ARDROX", "SEMKIT", "EPOCH", "UNIMAG", "ALODINE", "SOCOSURF", "BONDERITE")
 
 # Month abbreviations: MAR/2024, OCT2023 are dates, not codes.
 MONTHS = ("JAN", "FEB", "FEV", "MAR", "APR", "AVR", "MAY", "MAI", "JUN", "JUIN", "JUL", "JUIL", "AUG", "AOU", "SEP",
@@ -333,10 +344,11 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
     CodePattern(
         "REF-14", "Segmented internal code",
         rf"{_START}(?P<code>(?:{_one_of(SEGMENTED_PREFIXES)}){_SEP}(?:[A-Z]{{2,4}}{_SEP}){{0,2}}[A-Z]{{1,8}}{_SEP}?"
-        rf"\d{{3,5}}){_END}{_LANGUAGE}",
+        rf"\d{{3,5}}(?:[-_]\d{{2,5}}(?![A-Za-z0-9]))?){_END}{_LANGUAGE}",
         examples=(("IN_MRPC003_EN", "INMRPC003"), ("IN_APO_0001", "INAPO0001"), ("IQ-BEL-QA-018", "IQBELQA018"),
                   ("IQ_BEL-ME-004", "IQBELME004"), ("LMX-NF-008", "LMXNF008"), ("LMX-MI-14229", "LMXMI14229"),
-                  ("EVD-EMB-0006", "EVDEMB0006"), ("IN-PLANNING-002", "INPLANNING002"), ("IN_P_0015_FR", "INP0015")),
+                  ("EVD-EMB-0006", "EVDEMB0006"), ("IN-PLANNING-002", "INPLANNING002"), ("IN_P_0015_FR", "INP0015"),
+                  ("IQ_AUDIT_2016_137", "IQAUDIT2016137")),
         counter_examples=("IN-SITU", "LMX-NF")),
     CodePattern(
         "REF-15", "L site code",
@@ -355,19 +367,20 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
         counter_examples=("R03-12", "R3-10-002")),
     CodePattern(
         "STD-01", "Standard",
-        rf"""{_START}(?P<code>(?:
+        rf"""{_START}(?P<code>(?P<base>(?:
             (?:{_one_of(STANDARD_PREFIXES)})(?:[-_/.]|[ ]{{1,2}})?{_STANDARD_NUMBER}
           | (?:{_one_of(STANDARD_WORD_PREFIXES)})(?:[-_/.]?|[ ](?!(?:19|20)\d\d(?!\d))){_STANDARD_NUMBER}
           | (?:AIPI|AIPS)[-_ ]?\d{{2}}[-. ]?\d{{2}}[-. ]?\d{{3}}
           | (?:AITM|BMS)[-_ ]?\d{{1,2}}[-.]\d{{1,4}}
           | MIL[-_ ]?(?:STD|HDBK|PRF|DTL|SPEC|[A-Z])[-_ ]?\d{{3,5}}
           | ASTM[-_ ]?[A-G]\d{{2,4}}
-        )[A-Z]?(?:[-.]\d{{1,4}}[A-Z]?)?)(?![A-Za-z0-9]){_END}""",
+        ))(?:[A-Z]?(?:[-.]\d{{1,4}}[A-Z]?)?|[A-Z]{{1,3}}\d{{1,4}}[A-Z]{{0,2}}|[A-Z]{{2,3}}))(?![A-Za-z0-9]){_END}""",
         examples=(("EN 9100", "EN9100"), ("NAS 1789", "NAS1789"), ("ISO 9001:2015", "ISO9001"),
                   ("prEN 6122", "PREN6122"), ("BAC 5578", "BAC5578"), ("NE 40-012", "NE40012"),
                   ("MIL-STD-810G", "MILSTD810G"), ("MIL-A-8625", "MILA8625"), ("AITM6-2001", "AITM62001"),
                   ("BMS 8-276", "BMS8276"), ("AIPI 05-05-001", "AIPI0505001"), ("AIPS01.02.017", "AIPS0102017"),
-                  ("ASTM-B117", "ASTMB117"), ("JISQ 9100", "JISQ9100")),
+                  ("ASTM-B117", "ASTMB117"), ("JISQ 9100", "JISQ9100"),
+                  ("ABS2306A0410", "ABS2306A0410"), ("NSA936507PC", "NSA936507PC")),
         counter_examples=("EN 2024", "EN 12", "AS 2019", "NAS 12")),
     CodePattern(
         "STD-02", "Customer specification",
@@ -441,12 +454,12 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
     CodePattern(
         "REG-03", "FAA or EASA rule written with a space",
         rf"""{_START}(?P<code>
-            (?:FAR|AMC|GM|CS|AC|CFR)[ ]?-?[ ]?\d{{2,3}}[.-]\d{{1,4}}(?:-\d{{1,2}})?(?!\.[A-Z])
+            (?:FAR|AMC|GM|CS|AC|CFR)[ ]?-?[ ]?\d{{2,3}}[.-]\d{{1,4}}[A-Z]?(?:-\d{{1,2}})?(?!\.[A-Z])(?![-.]\d)
           | FAR[ ]?\d{{2,3}} | CS[ ]?-?[ ]?2[2-9]
         )(?![A-Za-z0-9]){_END}""",
         examples=(("FAR 25.1301", "FAR251301"), ("FAR 25-571", "FAR25571"), ("FAR 121", "FAR121"),
                   ("CS -25", "CS25"),
-                  ("AC 20-29", "AC2029"), ("AC 25.1529-1", "AC2515291")),
+                  ("AC 20-29", "AC2029"), ("AC 25.1529-1", "AC2515291"), ("AC 20-128A", "AC20128A")),
         counter_examples=("AC 01", "AC 1510", "CS 2000", "FAR")),
         # AMC 145.A.60 stays read as the EASA paragraph 145A60 (REG-02).
     CodePattern(
@@ -470,23 +483,23 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
         counter_examples=("T-3-12", "I-26-58")),
     CodePattern(
         "DOT-01", "Number written with dots",
-        r"(?<![A-Za-z0-9.])(?P<code>(?:AQ|Q)\.\d{2}(?:\.\d{2,5}){1,3}|V\d{3}\.\d{5}\.\d{3}\.\d{2})(?![A-Za-z0-9]|\.\d)",
+        r"(?<![A-Za-z0-9.])(?P<code>(?:AQ|Q)\.[ ]?\d{2}(?:\.\d{2,5}){1,3}|V\d{3}\.\d{5}\.\d{3}\.\d{2})(?![A-Za-z0-9]|\.\d)",
         examples=(("AQ.04.04.05", "AQ040405"), ("AQ.16.00", "AQ1600"), ("Q.11.00.00", "Q110000"),
-                  ("V533.20141.206.00", "V5332014120600")),
+                  ("V533.20141.206.00", "V5332014120600"), ("Q. 13.00.13", "Q130013")),
         counter_examples=("Q.4", "AQ.1")),
     CodePattern(
         "GEN-01", "Letters and digits written as a code",
-        rf"{_START}(?!(?:{_one_of(MONTHS)}){_SEP}?\d)(?P<code>[A-Z]{{1,6}}{_SEP}\d{{2,10}}[A-Z]?{_NUMBER_GROUPS}"
+        rf"{_START}(?<!°)(?!(?:{_one_of(MONTHS)}){_SEP}?\d)(?P<code>(?P<base>[A-Z]{{1,6}}{_SEP}\d{{2,10}}[A-Z]?){_NUMBER_GROUPS}"
         rf"(?={_END})(?!{_SEP}\d)"
-        rf"|[A-Z]{{1,6}}\d{{2,10}}[A-Z]?{_NUMBER_GROUPS}(?={_END}|\.\d{{1,2}}(?![\d.]))(?!{_SEP}\d{{3}}))"
-        rf"(?![^\W_.]|\.\d{{3}}){_LANGUAGE}",
+        rf"|(?P<base_glued>[A-Z]{{1,6}}\d{{2,10}}[A-Z]?){_NUMBER_GROUPS}(?={_END}|\.\d{{1,2}}(?![\d.]))(?!{_SEP}\d{{3}}))"
+        rf"(?![^\W_.]|\.\d{{3}}|[ ]?%){_LANGUAGE}",
         examples=(("Q0014", "Q0014"), ("P50", "P50"), ("S-02", "S02"), ("P-30", "P30"),
                   ("DLV318007", "DLV318007"), ("QIS-46", "QIS46"), ("MM-093", "MM093"), ("IT-030", "IT030"),
                   ("QP-202", "QP202"), ("AP2190.7", "AP2190"), ("F925144602", "F925144602"),
                   ("Q05-006", "Q05006"), ("TR22-137-000", "TR22137000"), ("DT10-8510", "DT108510"),
                   ("H001-002-12-R", "H00100212"), ("Q99.0017", "Q990017"), ("ST-60\\_048128", "ST60048128")),
         counter_examples=("Page 31", "le 24", "A", "p. 54", "2024-10-28", "x36000", "P5", "19/MAR/2024", "H35.25",
-                          "DTP_15-5"),
+                          "18°C/60%"),
         min_length=3),
     CodePattern(
         "UND-01", "Identifier joined by underscores",
@@ -509,12 +522,17 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
         min_length=4),
     CodePattern(
         "GEN-03", "Capitals, a space and a number that is not a quantity",
-        rf"""{_START}(?!(?:{_one_of(SPACED_STOP_WORDS + MONTHS)})[ ])(?P<code>[A-Z]{{2,5}}[ ]
-            (?:0\d{{3,7}}|\d{{2,6}}(?:[-.]\d{{2,6}}){{1,3}}))(?![A-Za-z0-9]){_END}""",
+        rf"""{_START}(?P<code>
+            (?!(?:{_one_of(SPACED_STOP_WORDS + MONTHS)})[ ])[A-Z]{{2,5}}[ ](?!{_DATE})
+              (?:0\d{{3,7}}|\d{{2,6}}(?:[-.]\d{{2,6}}){{1,3}})
+          | (?:{_one_of(SPACED_ID_PREFIXES)})[ ]?(?!(?:19|20)\d\d(?!\d))\d{{3,10}}(?:[-.]\d{{1,6}}){{0,3}}
+          | (?i:{_one_of(PRODUCT_PREFIXES)})[ ]\d{{2,5}}
+        )(?![A-Za-z0-9]){_END}""",
         examples=(("ABD 0024", "ABD0024"), ("MSN 0583", "MSN0583"), ("PN 1179-12-300-001", "PN117912300001"),
-                  ("SN 01.14.014", "SN0114014")),
+                  ("SN 01.14.014", "SN0114014"), ("MSN 9237", "MSN9237"), ("SAP 1003181", "SAP1003181"),
+                  ("Turco 4460", "TURCO4460")),
         counter_examples=("PAGE 0012", "LOHY 40", "TEL 05.61.72.40.00", "ABD 1500", "MAR 0024", "LOG 09/90",
-                          "CRJ 700/900"),
+                          "CRJ 700/900", "LA 29.01.2021", "PO 2024"),
         min_length=6),
 )
 
@@ -569,6 +587,12 @@ def _compile(query: bool) -> Tuple[Tuple[CodePattern, Pattern], ...]:
 
 # Patterns that read any code-like token: a specific pattern starting at the same place knows the code's shape better.
 _GENERIC_PATTERNS = frozenset({"GEN-01", "GEN-03"})
+# Patterns that wrap a whole identifier: the codes of other patterns inside it are kept as variants
+# (QAP 117-110-10-02 also stands for 1171101002, ECM_EVD_LAT_P_0001 for EVDLATP0001).
+_WRAPPER_PATTERNS = frozenset({"UND-01", "GEN-03"})
+# Closed lists: a longer reading starting with them is another thing (ERJ 170-190 is two aircraft, 7050 T7451 115 a
+# material and a size), and a chain around them never hides them (ST_A320_90VU).
+_CLOSED_PATTERNS = frozenset({"ACF-01", "MAT-01"})
 
 _COMPILED: Dict[bool, Tuple[Tuple[CodePattern, Pattern], ...]] = {False: _compile(False), True: _compile(True)}
 
@@ -597,7 +621,7 @@ def _word_start(text: str, pos: int) -> int:
     return pos
 
 
-def _accepted(text: str, start: int, code_end: int, code: str, query: bool) -> bool:
+def _accepted(text: str, start: int, code_end: int, code: str, query: bool, closed: bool = False) -> bool:
     """Boundary rules that the regexes leave to code: a code glued to a word, a code inside a longer chain, a word in
     lower case in a question.
 
@@ -606,6 +630,7 @@ def _accepted(text: str, start: int, code_end: int, code: str, query: bool) -> b
     :param code_end: end of the code (suffix excluded)
     :param code: canonical form
     :param query: the text is a question
+    :param closed: the code comes from a closed list (aircraft, materials): a chain around it never hides it
     :return: True when the span is a code of the text
     """
     if code in STOP_CODES:
@@ -625,7 +650,7 @@ def _accepted(text: str, start: int, code_end: int, code: str, query: bool) -> b
     # Only a number continues the chain (A30 in A30-12): a word after it is a suffix (A320_PROG, IQ22_PP) or the next
     # item of a list (A320/A321, F7X/F8X).
     after = code_end + 1 < len(text) and text[code_end] in _CHAIN and text[code_end + 1].isdigit()
-    if (before or after) and len(code) < _MIN_LENGTH_IN_CHAIN:
+    if (before or after) and len(code) < _MIN_LENGTH_IN_CHAIN and not closed:
         return False
     if query:
         head = re.match(r"[^\W\d_]*", written).group(0)
@@ -652,16 +677,45 @@ def match_codes(text: str, accept_lowercase: bool = False) -> List[CodeMatch]:
         for m in regex.finditer(folded):
             code = canonical(m.group("code"))
             if len(code) >= pattern.min_length and _accepted(folded, m.start(), m.end("code"), code,
-                                                              accept_lowercase):
+                                                              accept_lowercase, pattern.pattern_id in _CLOSED_PATTERNS):
                 start, end = (back[m.start()], back[m.end() - 1] + 1) if back else (m.start(), m.end())
+                base = canonical(next((m.group(g) for g in regex.groupindex if g.startswith("base") and m.group(g)),
+                                      ""))
                 found.append((start, pattern.pattern_id in _GENERIC_PATTERNS, -end, rank,
-                              CodeMatch(start, end, code, pattern.pattern_id)))
+                              CodeMatch(start, end, code, pattern.pattern_id, (base,) if base and base != code else ())))
+    candidates = [f[-1] for f in found]
     kept, last_end = [], -1
     for start, _, _, _, match in sorted(found):
         if start >= last_end:
-            kept.append(match)
+            forms, longest = _variants(match, candidates)
+            kept.append(match._replace(variants=forms, variants_end=longest))
             last_end = match.end
     return kept
+
+
+def _variants(kept: CodeMatch, candidates: List[CodeMatch]) -> Tuple[Tuple[str, ...], int]:
+    """The other canonical forms a kept code stands for: a longer reading of the same identifier
+    (``DLV-31-9020-10``: ``DLV31902010`` beside ``DLV319020``), and the codes of other patterns inside a wrapping
+    identifier (``QAP 117-110-10-02``: ``1171101002``).
+
+    :param kept: the code kept for its span, with its own variants
+    :param candidates: every code the patterns found in the text, overlapping or not
+    :return: the variants, without the code itself, in order of first appearance, and the end of the longest reading
+        among them (0 when none goes past the code)
+    """
+    forms, longest = list(kept.variants), 0
+    for other in candidates:
+        if other.canonical == kept.canonical or other.pattern_id == kept.pattern_id:
+            continue
+        longer = (other.start == kept.start and other.end > kept.end and other.canonical.startswith(kept.canonical)
+                  and kept.pattern_id not in _CLOSED_PATTERNS)
+        inner = (kept.pattern_id in _WRAPPER_PATTERNS and other.pattern_id not in _GENERIC_PATTERNS | _WRAPPER_PATTERNS
+                 and kept.start <= other.start and other.end <= kept.end)
+        if longer or inner:
+            forms.append(other.canonical)
+            if longer:
+                longest = max(longest, other.end)
+    return tuple(dict.fromkeys(f for f in forms if f != kept.canonical)), longest
 
 
 def find_codes(text: str, accept_lowercase: bool = False) -> List[Tuple[int, int, str]]:
@@ -691,7 +745,8 @@ def _brackets_after(text: str, pos: int) -> List[str]:
 
 def normalize_codes(text: str, accept_lowercase: bool = False) -> str:
     """The text with `` [canonical]`` after each code written another way: ``SF-1027`` -> ``SF-1027 [SF1027]``; after
-    the glued word when there is one (``MI-13991Table [MI13991]``).
+    the glued word when there is one (``MI-13991Table [MI13991]``); the variants of a code follow its canonical form
+    (``DLV-31-9020-10 [DLV319020] [DLV31902010]``).
 
     A code written as its canonical form, or already followed by its bracket, is left as it is: running the function
     twice changes nothing.
@@ -702,10 +757,15 @@ def normalize_codes(text: str, accept_lowercase: bool = False) -> str:
     """
     out, position = [], 0
     for m in match_codes(text, accept_lowercase):
-        end = _word_end(text, m.end)
-        if end < position or text[m.start:end] == m.canonical or m.canonical in _brackets_after(text, end):
+        end = _word_end(text, max(m.end, m.variants_end))
+        if end < position:
             continue
-        out += [text[position:end], f" [{m.canonical}]"]
+        written = [] if text[m.start:_word_end(text, m.end)] == m.canonical else [m.canonical]
+        present = set(_brackets_after(text, end))
+        forms = [f for f in dict.fromkeys(written + list(m.variants)) if f not in present]
+        if not forms:
+            continue
+        out += [text[position:end], "".join(f" [{f}]" for f in forms)]
         position = end
     return "".join(out) + text[position:] if out else text
 
@@ -726,7 +786,7 @@ def canonical_codes(text: str, accept_lowercase: bool = False) -> List[str]:
     :param accept_lowercase: the text is a question
     :return: e.g. ``["SF1027", "QP1518"]``
     """
-    return list(dict.fromkeys(m.canonical for m in match_codes(text, accept_lowercase)))
+    return list(dict.fromkeys(c for m in match_codes(text, accept_lowercase) for c in (m.canonical, *m.variants)))
 
 
 def cited_codes(chunk_text: str, ref: str) -> List[str]:
@@ -873,7 +933,7 @@ def _cut(body, kept):
                 continue
             start, end = (back[m.start()], back[m.end() - 1] + 1) if back else (m.start(), m.end())
             for k in kept:
-                if start < k.end and end > k.end and code != k.canonical:
+                if start < k.end and end > k.end and code != k.canonical and code not in k.variants:
                     out.append((k.canonical, k.pattern_id, code, pattern.pattern_id,
                                 body[max(0, k.start - 20):end + 20].replace("\n", " ")))
     return out
@@ -893,6 +953,8 @@ def _analyse(rows):
             pattern_of = {}
             for m in matches:
                 pattern_of.setdefault(m.canonical, (m.pattern_id, body[max(0, m.start - 40):m.end + 40]))
+                for v in m.variants:
+                    pattern_of.setdefault(v, (m.pattern_id + " variante", body[max(0, m.start - 40):m.end + 40]))
             added = [(c, pattern_of.get(c, ("?", ""))[0], pattern_of.get(c, ("?", ""))[1].replace("\n", " "))
                      for c in new_cited if c not in set(old_cited)]
             # Perdu = absent apres, et pas remplace par sa forme complete (IQ22 -> IQ22184 n'est pas une perte).
