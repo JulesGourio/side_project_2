@@ -1739,8 +1739,21 @@ def chunks_scorer() -> object:
     return scorer(chunks, name="chunks")
 
 
-EVAL_SCORERS = ([metric_scorer(name, column, k) for name, (column, k) in SCORER_COLUMNS.items()]
+# Each scorer writes one assessment per question into the Unity Catalog trace tables: a handful is scored on the traces
+# (their assessments show in the trace view), every other score is logged on the run from the saved searches.
+TRACE_SCORERS = ["recall_05", "recall_10", "allrefs_10", "mrr_all"]
+EVAL_SCORERS = ([metric_scorer(name, *SCORER_COLUMNS[name]) for name in TRACE_SCORERS if name in SCORER_COLUMNS]
                 + [docs_scorer(), chunks_scorer()])
+
+
+def run_metrics(rows: pd.DataFrame) -> dict[str, float]:
+    """The scores of a configuration that are not scored on the traces, as the ``<name>/mean`` metrics MLflow gives the others.
+
+    :param rows: the configuration's paired result rows
+    :return: metric name -> mean over the questions
+    """
+    return {f"{name}/mean": float(rows[column].mean()) for name, (column, _) in SCORER_COLUMNS.items()
+            if name not in TRACE_SCORERS and column in rows and rows[column].notna().any()}
 
 
 def pct(value: float) -> str:
@@ -1978,7 +1991,9 @@ if common_ids:
         expectations = {r["mlflow_trace_id"]: {"expected_refs": refs(r["expected"])}
                         for _, r in rows.iterrows() if isinstance(r.get("mlflow_trace_id"), str)}
         log.info("[%s] reading %d traces", name, len(expectations))
+        reading_started = time.monotonic()
         traces = fetch_traces(list(expectations))
+        log.info("[%s] %d traces read in %d s", name, len(traces), time.monotonic() - reading_started)
         SEARCHED.update({t: {"retrieved_chunks": chunk_refs(r["chunks"]), "n_docs": int(r["n_docs"]),
                              "n_passages": int(r.get("n_passages") or 0)}
                          for _, r in rows.iterrows() if (t := r.get("mlflow_trace_id")) in traces})
@@ -2004,8 +2019,11 @@ if common_ids:
                                                     f"({pct(ROWS[name][f'recall_at_{5 if 5 in KS else min(KS)}'])}), "
                                                     f"golden {GOLDEN_VERSION}, exécution du {run_date}."})
             mlflow.log_params({**PARAMS[name], "agent_version": version, "config": name})
+            scoring_started = time.monotonic()
             log.info("[%s] scoring %d questions with %d scorers", name, len(data), len(EVAL_SCORERS))
             mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS, model_id=model_id)
+            log.info("[%s] scored in %d s", name, time.monotonic() - scoring_started)
+            mlflow.log_metrics(run_metrics(rows), model_id=model_id)
             link_dataset(eval_run.info.run_id, model_id)
             for key, value in (("tokens_k", tokens_k(ROWS[name])), ("cost_eur", ROWS[name].get("cost_eur"))):
                 if value is not None and not pd.isna(value):
