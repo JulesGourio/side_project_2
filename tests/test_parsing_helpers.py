@@ -48,16 +48,17 @@ def test_old_snapshots_are_dropped_but_the_latest_is_kept() -> None:
 
 
 def test_a_settled_state_right_after_the_trigger_is_not_the_end_of_the_sync() -> None:
-    # The index still shows yesterday's state: not seen updating, rows differ from the table, grace not over.
-    assert not sync_settled(True, "ONLINE_NO_PENDING_UPDATE", 68808, 104000, False, 30, 600)
+    # The index still shows yesterday's state: not seen updating, grace not over.
+    assert not sync_settled(True, "ONLINE_NO_PENDING_UPDATE", False, 30, 600)
 
 
 def test_a_sync_is_over_once_its_update_was_seen_and_the_index_settled() -> None:
-    assert not sync_settled(True, "ONLINE_TRIGGERED_UPDATE", 70000, 104000, True, 60, 600)
-    assert sync_settled(True, "ONLINE_NO_PENDING_UPDATE", 104000, 104000, True, 900, 600)
+    assert not sync_settled(True, "ONLINE_TRIGGERED_UPDATE", True, 60, 600)
+    assert sync_settled(True, "ONLINE_NO_PENDING_UPDATE", True, 900, 600)
 
 
-def test_a_sync_with_nothing_to_apply_ends_when_the_rows_match_or_after_the_grace() -> None:
-    assert sync_settled(True, "ONLINE_NO_PENDING_UPDATE", 68808, 68808, False, 30, 600)
-    assert sync_settled(True, "ONLINE_NO_PENDING_UPDATE", 68800, 68808, False, 600, 600)
-    assert not sync_settled(False, "ONLINE_NO_PENDING_UPDATE", 68808, 68808, True, 900, 600)
+def test_an_update_in_place_is_waited_for_even_when_the_rows_already_match() -> None:
+    # A reprocess updates rows without adding any: the index count equals the table before the update even starts.
+    assert not sync_settled(True, "ONLINE_NO_PENDING_UPDATE", False, 30, 600)
+    assert sync_settled(True, "ONLINE_NO_PENDING_UPDATE", False, 600, 600)
+    assert not sync_settled(False, "ONLINE_NO_PENDING_UPDATE", True, 900, 600)

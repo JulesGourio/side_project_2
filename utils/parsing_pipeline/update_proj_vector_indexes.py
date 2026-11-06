@@ -432,7 +432,7 @@ if failed:
 
 # MAGIC %md
 # MAGIC ## Wait for the syncs to finish
-# MAGIC Waits for each index to leave a syncing state so the job reflects the real outcome. Right after the trigger an index still shows its previous settled state: it counts as done only once its update was seen running, or it holds as many rows as its source table, or 10 minutes passed with nothing to apply. A failed or offline index raises immediately instead of waiting out the timeout, and an index that stays on a failed update (it keeps serving its last good rows) raises after a few polls. `wait_minutes = 0` triggers and returns.
+# MAGIC Waits for each index to leave a syncing state so the job reflects the real outcome. Right after the trigger an index still shows its previous settled state: it counts as done only once its update was seen running, or 10 minutes passed with nothing to apply (the row count proves nothing: an update in place leaves it unchanged). A failed or offline index raises immediately instead of waiting out the timeout, and an index that stays on a failed update (it keeps serving its last good rows) raises after a few polls. `wait_minutes = 0` triggers and returns.
 
 # COMMAND ----------
 
@@ -462,8 +462,6 @@ else:
             if st and sync_settled(
                 bool(st.ready),
                 state,
-                st.indexed_row_count,
-                expected[name],
                 seen_updating[name],
                 time.time() - started_at,
                 START_GRACE_S,
