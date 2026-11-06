@@ -61,3 +61,10 @@ Fichiers à recopier dans Bitbucket : tous ceux ci-dessus + `resources/chat_mlfl
 
 - [ ] Évaluation de la génération (juges de `chat_scorers.py`) dans les mêmes Agent versions.
 - [ ] Deux experiments si la vue unique ne convient pas (décision de Jules, de côté pour l'instant).
+
+## 2026-11-06 : deux experiments (demande de Jules)
+
+Les traces d'évaluation sont séparées de celles de l'app : l'éval écrit dans `/Shared/qualibot/<env>_retrieval_eval`
+(paramètre `mlflow_experiment` du job), l'app reste dans `/Shared/Experiment/qualibot_chat_traces`. Le dataset, les Agent
+versions et les runs d'éval sont dans l'experiment d'éval ; ses Agent versions lient les prompts nommés par l'experiment
+de l'app. L'Agent version que l'app fait tourner reste dans l'experiment de l'app.

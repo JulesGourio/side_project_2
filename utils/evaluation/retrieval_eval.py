@@ -17,7 +17,7 @@
 # MAGIC
 # MAGIC **Outputs**
 # MAGIC - Delta table `{pipeline_write_env}_proj.qualibot.<results_table_name>`: one row per configuration and question.
-# MAGIC - The app's chat experiment (`CHAT_MLFLOW_EXPERIMENT`, or `mlflow_experiment`): every question searched becomes a
+# MAGIC - The evaluation's own experiment (`mlflow_experiment`), apart from the app's traces: every question searched becomes a
 # MAGIC   trace written by the app's own code (`mlflow_turns`), tagged `qualibot.source = evaluation`; each configuration
 # MAGIC   is an agent version (`agent_version`: its full spec as parameters, the version the app runs when the settings are
 # MAGIC   the same); one evaluation run per configuration scores those traces, linked to its agent version and to the
@@ -100,7 +100,7 @@ log.propagate = False
 # MAGIC | `reference` | empty | configuration every other one is compared with; empty = the first of `indexes` |
 # MAGIC | `ks` | `1,3,5,10,20` | K values of Recall@K, MRR@K, AllRefs@K (chunks sent to the LLM); a K above the chunks sent scores the whole context; the scoreboard adds the whole context (`all`) |
 # MAGIC | `max_parallel` | `1` | questions searched at once (each sends 2 to 5 Vector Search queries) |
-# MAGIC | `mlflow_experiment` | empty | MLflow experiment; empty = the app's `CHAT_MLFLOW_EXPERIMENT` |
+# MAGIC | `mlflow_experiment` | empty | MLflow experiment of the evaluation; empty = `/Shared/qualibot/{write_env}_retrieval_eval`, never the app's |
 # MAGIC | `warehouse_id` | empty | SQL warehouse reading the Unity Catalog traces; empty = the app's `CHAT_MLFLOW_WAREHOUSE_ID` |
 # MAGIC | `only_if_new` | `false` | `true` (after a deploy): `deploye` only, and nothing when its agent version was already evaluated on this golden set |
 # MAGIC | `rerun_existing` | `true` | `false` reuses the saved successful rows of an unchanged question, configuration and app code |
@@ -244,12 +244,11 @@ if os.path.isfile(target_path):
             if match:
                 os.environ[match.group(1)] = (shlex.split(match.group(2)) or [""])[0]
 
-# The chat experiment of the app (traces, prompts, agent versions), unless the widget names another one.
-EXPERIMENT = EXPERIMENT_WIDGET or os.environ.get("CHAT_MLFLOW_EXPERIMENT", "")
-if not EXPERIMENT:
-    raise ValueError("No MLflow experiment: set mlflow_experiment or CHAT_MLFLOW_EXPERIMENT in the app configuration")
-if EXPERIMENT_WIDGET:
-    os.environ.pop("CHAT_MLFLOW_EXPERIMENT_ID", None)
+APP_EXPERIMENT = os.environ.get("CHAT_MLFLOW_EXPERIMENT", "")     # the app's: where the registered prompts are named
+EXPERIMENT = EXPERIMENT_WIDGET or f"/Shared/qualibot/{WRITE_ENV}_retrieval_eval"
+# The evaluation traces never go to the app's experiment: the app writes to its own (CHAT_MLFLOW_EXPERIMENT).
+os.environ["CHAT_MLFLOW_EXPERIMENT"] = EXPERIMENT
+os.environ.pop("CHAT_MLFLOW_EXPERIMENT_ID", None)
 if WAREHOUSE_WIDGET:
     os.environ["CHAT_MLFLOW_WAREHOUSE_ID"] = WAREHOUSE_WIDGET
 # The app's own value: the spec of a configuration is the app's, the evaluation pins the rewrite fallback below.
@@ -586,13 +585,18 @@ SPECS = {label: config_spec(cfg) for label, cfg in CONFIGS.items()}
 VERSION_NAMES = {label: chat_spec.version_name(values) for label, values in SPECS.items()}
 log.info("Agent versions: %s", VERSION_NAMES)
 
-# MLflow: the app's chat experiment, activated as the app does, so the traces land in its Unity Catalog tables.
+# MLflow: the evaluation's own experiment (traces, dataset, agent versions, runs), found as the app finds its experiment.
 mlflow.set_tracking_uri("databricks")
 mlflow.set_registry_uri("databricks-uc")
+WorkspaceClient().workspace.mkdirs(EXPERIMENT.rsplit("/", 1)[0])
+mlflow.set_experiment(EXPERIMENT)                                  # created on first use, separate from the app's
 EXPERIMENT_ID = mlflow_turns._experiment_id(EXPERIMENT)
 if not EXPERIMENT_ID:
     raise RuntimeError(f"MLflow experiment {EXPERIMENT} not found: run the create_chat_experiment job first")
-VERSIONS = {label: agent_version.ensure(EXPERIMENT_ID, values) for label, values in SPECS.items()}
+app_experiment = mlflow.get_experiment_by_name(APP_EXPERIMENT) if APP_EXPERIMENT else None
+VERSIONS = {label: agent_version.ensure(EXPERIMENT_ID, values,
+                                        prompts_experiment_id=app_experiment.experiment_id if app_experiment else "")
+            for label, values in SPECS.items()}
 log.info("MLflow experiment %s (%s), agent versions %s", EXPERIMENT, EXPERIMENT_ID, VERSIONS)
 
 client = WorkspaceClient()
@@ -1628,7 +1632,7 @@ plt.close("all")
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## MLflow
-# MAGIC Everything in the app's chat experiment, native MLflow only.
+# MAGIC Everything in the evaluation's own experiment, native MLflow only.
 # MAGIC - **Traces**: one trace per question and configuration, the same spans as a user's turn (translation or rewrite,
 # MAGIC   Vector Search queries, passages sent, cost), user `evaluation`, tags `qualibot.source = evaluation`,
 # MAGIC   `qualibot.eval_config`, `qualibot.case_id`, `qualibot.eval_execution`; session `golden-<execution>-<config>`.

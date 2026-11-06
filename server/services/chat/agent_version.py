@@ -59,12 +59,14 @@ def _link_prompts(mlflow: Any, experiment_id: str, model_id: str, values: Dict[s
     return linked
 
 
-def ensure(experiment_id: str, values: Dict[str, str] | None = None, deployed: str = '') -> str:
+def ensure(experiment_id: str, values: Dict[str, str] | None = None, deployed: str = '',
+           prompts_experiment_id: str = '') -> str:
     """Model id of the agent version of a spec, created on first use.
 
     :param experiment_id: chat experiment
     :param values: spec of the version, None for the one the process runs now
     :param deployed: environment that runs this version (tags it ``qualibot.deployed.<env>``), empty for none
+    :param prompts_experiment_id: experiment whose ``chat_prompt.<key>`` tags name the registered prompts, empty = ``experiment_id``
     :return: the model id
     """
     import mlflow
@@ -85,7 +87,7 @@ def ensure(experiment_id: str, values: Dict[str, str] | None = None, deployed: s
             name=name, model_type='agent', experiment_id=experiment_id, params=values,
             tags={'qualibot.signature': signature, 'mlflow.note.content': chat_spec.describe(values, name)}).model_id
         logger.info('agent_version: %s created (%s), %d prompts linked', name, model_id,
-                    _link_prompts(mlflow, experiment_id, model_id, values))
+                    _link_prompts(mlflow, prompts_experiment_id or experiment_id, model_id, values))
     if deployed:
         mlflow.set_logged_model_tags(model_id, {DEPLOYED_TAG.format(env=deployed):
                                                 datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')})

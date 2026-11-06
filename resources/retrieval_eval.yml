@@ -14,7 +14,7 @@ resources:
           - ${var.notification_email}
       notification_settings:
         no_alert_for_canceled_runs: true
-      description: "Write <env>_proj.qualibot.eval_golden_retrieval, then measure whether the search of the deployed app returns the expected documents (preset deploye, tailles or complet; perso = the indexes parameter). Results in <env>_proj.qualibot.eval_retrieval_runs_golden and the app's chat experiment (traces, dataset, agent versions, evaluation runs). only_if_new=true (after a deploy): the deployed version only, skipped when already evaluated."
+      description: "Write <env>_proj.qualibot.eval_golden_retrieval, then measure whether the search of the deployed app returns the expected documents (preset deploye, tailles or complet; perso = the indexes parameter). Results in <env>_proj.qualibot.eval_retrieval_runs_golden and its own experiment /Shared/qualibot/<env>_retrieval_eval (traces, dataset, agent versions, evaluation runs), apart from the app's traces. only_if_new=true (after a deploy): the deployed version only, skipped when already evaluated."
       max_concurrent_runs: 1
       tags:
         activity-type: ${var.job_activity_tag}
@@ -45,7 +45,7 @@ resources:
         - name: results_table_name
           default: "eval_retrieval_runs_golden"
         - name: mlflow_experiment
-          default: ${var.chat_mlflow_experiment}
+          default: "/Shared/qualibot/${var.pipeline_write_env}_retrieval_eval"
         - name: warehouse_id
           default: ${var.alerts_warehouse_id}
         - name: only_if_new
