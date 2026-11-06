@@ -82,5 +82,5 @@ def test_version_name_is_readable() -> None:
     """The version name carries the search sizes and 6 characters of the signature."""
     values = spec.spec()
     name = spec.version_name(values, 'qualibot-prod')
-    assert re.fullmatch(r'qualibot-prod-k\d+-\d+-(sans)?brute-[0-9a-f]{6}', name)
+    assert re.fullmatch(r'qualibot-prod-k\d+-\d+(-brute)?-[0-9a-f]{6}', name)
     assert spec.describe(values).startswith('Top-k ')

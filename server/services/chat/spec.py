@@ -134,11 +134,10 @@ def short_label(values: Dict[str, str]) -> str:
     """The search settings that differ most between versions, readable in a name.
 
     :param values: output of ``spec``
-    :return: e.g. ``k32-21-sansbrute`` (top-k first message / follow-ups, raw search on or off)
+    :return: e.g. ``k32-21`` (top-k first message / follow-ups), ``k32-21-brute`` when the raw search is on
     """
     raw = max(int(values['retrieval.raw_top_k_first_message']), int(values['retrieval.raw_top_k_follow_up']))
-    return (f"k{values['retrieval.top_k_first_message']}-{values['retrieval.top_k_follow_up']}-"
-            f"{'brute' if raw else 'sansbrute'}")
+    return f"k{values['retrieval.top_k_first_message']}-{values['retrieval.top_k_follow_up']}" + ('-brute' if raw else '')
 
 
 def version_name(values: Dict[str, str], prefix: str = 'qualibot') -> str:
@@ -146,7 +145,7 @@ def version_name(values: Dict[str, str], prefix: str = 'qualibot') -> str:
 
     :param values: output of ``spec``
     :param prefix: ``qualibot``, or ``qualibot-<env>`` for the version an environment runs
-    :return: e.g. ``qualibot-prod-k32-21-sansbrute-a1b2c3``
+    :return: e.g. ``qualibot-prod-k32-21-a1b2c3``
     """
     return f'{prefix}-{short_label(values)}-{signature(values)[:6]}'
 

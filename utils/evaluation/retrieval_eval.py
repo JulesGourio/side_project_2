@@ -1914,21 +1914,39 @@ def golden_dataset() -> object:
 
 
 def fetch_traces(trace_ids: list[str], timeout_s: float = 300.0) -> dict[str, object]:
-    """The traces written during the searches, once the Unity Catalog tables have them.
+    """The traces written during the searches, once the Unity Catalog tables have them (fetched 16 at a time).
 
     :param trace_ids: trace ids of the questions
     :param timeout_s: how long to wait for the last ones
     :return: trace id -> trace, without the ones still missing after ``timeout_s``
     """
-    found, deadline = {}, time.monotonic() + timeout_s
-    while True:
-        for trace_id in [t for t in trace_ids if t not in found]:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def get(trace_id: str) -> object:
+        """One trace, None while it is not readable yet.
+
+        :param trace_id: trace id
+        :return: the trace with its spans, or None
+        """
+        try:
             trace = mlflow.get_trace(trace_id, silent=True)
-            if trace is not None and trace.data.spans:
-                found[trace_id] = trace
-        if len(found) == len(trace_ids) or time.monotonic() > deadline:
-            return found
-        time.sleep(15)
+        except Exception as exc:  # noqa: BLE001 — retried at the next round
+            log.debug("trace %s not readable yet: %s", trace_id, exc)
+            return None
+        return trace if trace is not None and trace.data.spans else None
+
+    found, started = {}, time.monotonic()
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        while True:
+            missing = [t for t in trace_ids if t not in found]
+            for trace_id, trace in zip(missing, pool.map(get, missing)):
+                if trace is not None:
+                    found[trace_id] = trace
+            waited = time.monotonic() - started
+            log.info("Traces read: %d/%d after %d s", len(found), len(trace_ids), waited)
+            if len(found) == len(trace_ids) or waited > timeout_s:
+                return found
+            time.sleep(15)
 
 
 def link_dataset(run_id: str, model_id: str) -> None:
@@ -1959,6 +1977,7 @@ if common_ids:
         model_id, version = VERSIONS[name], VERSION_NAMES[name]
         expectations = {r["mlflow_trace_id"]: {"expected_refs": refs(r["expected"])}
                         for _, r in rows.iterrows() if isinstance(r.get("mlflow_trace_id"), str)}
+        log.info("[%s] reading %d traces", name, len(expectations))
         traces = fetch_traces(list(expectations))
         SEARCHED.update({t: {"retrieved_chunks": chunk_refs(r["chunks"]), "n_docs": int(r["n_docs"]),
                              "n_passages": int(r.get("n_passages") or 0)}
@@ -1985,6 +2004,7 @@ if common_ids:
                                                     f"({pct(ROWS[name][f'recall_at_{5 if 5 in KS else min(KS)}'])}), "
                                                     f"golden {GOLDEN_VERSION}, exécution du {run_date}."})
             mlflow.log_params({**PARAMS[name], "agent_version": version, "config": name})
+            log.info("[%s] scoring %d questions with %d scorers", name, len(data), len(EVAL_SCORERS))
             mlflow.genai.evaluate(data=data, scorers=EVAL_SCORERS, model_id=model_id)
             link_dataset(eval_run.info.run_id, model_id)
             for key, value in (("tokens_k", tokens_k(ROWS[name])), ("cost_eur", ROWS[name].get("cost_eur"))):
