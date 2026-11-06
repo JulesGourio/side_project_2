@@ -1926,40 +1926,36 @@ def golden_dataset() -> object:
         return None
 
 
-def fetch_traces(trace_ids: list[str], timeout_s: float = 300.0) -> dict[str, object]:
-    """The traces written during the searches, once the Unity Catalog tables have them (fetched 16 at a time).
+def fetch_traces(trace_ids: list[str], config: str, timeout_s: float = 120.0) -> dict[str, object]:
+    """The traces written during the searches of a configuration, in one search of the chat experiment.
+
+    One ``search_traces`` on the execution and configuration tags, repeated every 20 s until every trace is there or
+    ``timeout_s`` has passed: a read per trace is far slower on Unity Catalog trace tables. The first error is logged.
 
     :param trace_ids: trace ids of the questions
+    :param config: configuration label, a tag of its traces
     :param timeout_s: how long to wait for the last ones
     :return: trace id -> trace, without the ones still missing after ``timeout_s``
     """
-    from concurrent.futures import ThreadPoolExecutor
-
-    def get(trace_id: str) -> object:
-        """One trace, None while it is not readable yet.
-
-        :param trace_id: trace id
-        :return: the trace with its spans, or None
-        """
+    wanted = set(trace_ids)
+    filter_string = (f"tags.`qualibot.eval_execution` = '{EXECUTION_ID}' AND tags.`qualibot.eval_config` = '{config}'")
+    found, started, last_error = {}, time.monotonic(), None
+    while True:
         try:
-            trace = mlflow.get_trace(trace_id, silent=True)
-        except Exception as exc:  # noqa: BLE001 — retried at the next round
-            log.debug("trace %s not readable yet: %s", trace_id, exc)
-            return None
-        return trace if trace is not None and trace.data.spans else None
-
-    found, started = {}, time.monotonic()
-    with ThreadPoolExecutor(max_workers=16) as pool:
-        while True:
-            missing = [t for t in trace_ids if t not in found]
-            for trace_id, trace in zip(missing, pool.map(get, missing)):
-                if trace is not None:
-                    found[trace_id] = trace
-            waited = time.monotonic() - started
-            log.info("Traces read: %d/%d after %d s", len(found), len(trace_ids), waited)
-            if len(found) == len(trace_ids) or waited > timeout_s:
-                return found
-            time.sleep(15)
+            for trace in mlflow.search_traces(experiment_ids=[EXPERIMENT_ID], filter_string=filter_string,
+                                              max_results=len(wanted) + 50, return_type="list",
+                                              sql_warehouse_id=os.environ.get("CHAT_MLFLOW_WAREHOUSE_ID") or None):
+                if trace.info.trace_id in wanted and trace.data.spans:
+                    found[trace.info.trace_id] = trace
+        except Exception as exc:  # noqa: BLE001 — retried until the timeout
+            if str(exc) != last_error:
+                log.warning("[%s] search_traces failed: %s", config, str(exc)[:400])
+            last_error = str(exc)
+        waited = time.monotonic() - started
+        log.info("[%s] traces read: %d/%d after %d s", config, len(found), len(wanted), waited)
+        if len(found) == len(wanted) or waited > timeout_s:
+            return found
+        time.sleep(20)
 
 
 def link_dataset(run_id: str, model_id: str) -> None:
@@ -1992,7 +1988,7 @@ if common_ids:
                         for _, r in rows.iterrows() if isinstance(r.get("mlflow_trace_id"), str)}
         log.info("[%s] reading %d traces", name, len(expectations))
         reading_started = time.monotonic()
-        traces = fetch_traces(list(expectations))
+        traces = fetch_traces(list(expectations), name)
         log.info("[%s] %d traces read in %d s", name, len(traces), time.monotonic() - reading_started)
         SEARCHED.update({t: {"retrieved_chunks": chunk_refs(r["chunks"]), "n_docs": int(r["n_docs"]),
                              "n_passages": int(r.get("n_passages") or 0)}
