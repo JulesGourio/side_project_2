@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a reprocess.
-NORMALIZATION_VERSION = 12
+NORMALIZATION_VERSION = 13
 
 
 # --- Model ---
@@ -387,13 +387,15 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
           | (?:AITM|BMS)[-_ ]?\d{{1,2}}[-.]\d{{1,4}}
           | MIL[-_ ]?(?:STD|HDBK|PRF|DTL|SPEC|[A-Z])[-_ ]?\d{{3,5}}
           | ASTM[-_ ]?[A-G]\d{{2,4}}
-        ))(?:[A-Z]?(?:[-.]\d{{1,4}}[A-Z]?)?|[A-Z]{{1,3}}\d{{1,4}}[A-Z]{{0,2}}|[A-Z]{{2,3}}))(?![A-Za-z0-9]){_END}""",
+        ))(?:[A-Z]?(?:[-.]\d{{1,4}}[A-Z]?)?|[A-Z]{{1,3}}\d{{1,4}}[A-Z]{{0,2}}(?P<tail>-\d{{1,4}}[A-Z]?)?|[A-Z]{{2,3}}))
+        (?![A-Za-z0-9]){_END}""",
         examples=(("EN 9100", "EN9100"), ("NAS 1789", "NAS1789"), ("ISO 9001:2015", "ISO9001"),
                   ("prEN 6122", "PREN6122"), ("BAC 5578", "BAC5578"), ("NE 40-012", "NE40012"),
                   ("MIL-STD-810G", "MILSTD810G"), ("MIL-A-8625", "MILA8625"), ("AITM6-2001", "AITM62001"),
                   ("BMS 8-276", "BMS8276"), ("AIPI 05-05-001", "AIPI0505001"), ("AIPS01.02.017", "AIPS0102017"),
                   ("ASTM-B117", "ASTMB117"), ("JISQ 9100", "JISQ9100"),
-                  ("ABS2306A0410", "ABS2306A0410"), ("NSA936507PC", "NSA936507PC")),
+                  ("ABS2306A0410", "ABS2306A0410"), ("NSA936507PC", "NSA936507PC"),
+                  ("MS20426AD3-5", "MS20426AD35")),
         counter_examples=("EN 2024", "EN 12", "AS 2019", "NAS 12")),
     CodePattern(
         "STD-02", "Customer specification",
@@ -692,10 +694,13 @@ def match_codes(text: str, accept_lowercase: bool = False) -> List[CodeMatch]:
             if len(code) >= pattern.min_length and _accepted(folded, m.start(), m.end("code"), code,
                                                               accept_lowercase, pattern.pattern_id in _CLOSED_PATTERNS):
                 start, end = (back[m.start()], back[m.end() - 1] + 1) if back else (m.start(), m.end())
-                base = canonical(next((m.group(g) for g in regex.groupindex if g.startswith("base") and m.group(g)),
-                                      ""))
+                # A dash number after a part reference is its length or size: the reference without it is a code too.
+                bases = [canonical(folded[m.start("code"):m.start(g)]) for g in regex.groupindex
+                         if g.startswith("tail") and m.group(g)]
+                bases += [canonical(m.group(g)) for g in regex.groupindex if g.startswith("base") and m.group(g)]
+                variants = tuple(dict.fromkeys(b for b in bases if b and b != code))
                 found.append((start, pattern.pattern_id in _GENERIC_PATTERNS, -end, rank,
-                              CodeMatch(start, end, code, pattern.pattern_id, (base,) if base and base != code else ())))
+                              CodeMatch(start, end, code, pattern.pattern_id, variants)))
     candidates = [f[-1] for f in found]
     kept, last_end = [], -1
     for start, _, _, _, match in sorted(found):

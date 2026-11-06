@@ -251,3 +251,9 @@ def test_a_cut_code_keeps_its_longer_reading_and_a_wrapper_keeps_the_codes_insid
         assert cn.canonical_codes(text) == []
     text = 'Voir NSA8147-18-16 et QAP 117-110-10-02.'
     assert cn.normalize_codes(cn.normalize_codes(text)) == cn.normalize_codes(text)
+
+
+def test_a_part_reference_with_a_dash_number_keeps_the_reference_without_it():
+    assert cn.canonical_codes('Rivet MS20426AD3-5') == ['MS20426AD35', 'MS20426AD3', 'MS20426']
+    assert cn.normalize_codes('MS20426AD3-5 1 1') == 'MS20426AD3-5 [MS20426AD35] [MS20426AD3] [MS20426] 1 1'
+    assert cn.canonical_codes('NE 40-012') == ['NE40012', 'NE40']
