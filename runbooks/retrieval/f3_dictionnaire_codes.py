@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 8
+NORMALIZATION_VERSION = 9
 
 
 # --- Model ---
@@ -469,6 +469,41 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
         rf"{_START}(?P<code>[85]-[DS]|[23]-D)(?![A-Za-z0-9])",
         examples=(("8-D", "8D"), ("5-S", "5S"), ("3-D", "3D")),
         counter_examples=("8-DE", "4-D")),
+    CodePattern(
+        "REG-03", "FAA or EASA rule written with a space",
+        rf"""{_START}(?P<code>
+            (?:FAR|AMC|GM|CS|AC|CFR)[ ]?-?[ ]?(?:\d{{2,3}}\.[A-Z]\.\d{{1,4}}|\d{{2,3}}[.-]\d{{1,4}}(?:-\d{{1,2}})?)
+          | FAR[ ]?\d{{2,3}} | CS[ ]?-?[ ]?2[2-9]
+        )(?![A-Za-z0-9]){_END}""",
+        examples=(("FAR 25.1301", "FAR251301"), ("FAR 25-571", "FAR25571"), ("FAR 121", "FAR121"),
+                  ("AMC 145.A.60", "AMC145A60"), ("CS -25", "CS25"),
+                  ("AC 20-29", "AC2029"), ("AC 25.1529-1", "AC2515291")),
+        counter_examples=("AC 01", "AC 1510", "CS 2000", "FAR")),
+    CodePattern(
+        "FRM-01", "FAA form",
+        rf"{_START}(?P<code>(?i:FORM)[ ]?-?[ ]?\d{{4}}-\d{{1,2}})(?![A-Za-z0-9]){_END}",
+        examples=(("FORM 8130-3", "FORM81303"), ("Form 8120-10", "FORM812010")),
+        counter_examples=("Form 55", "FORM 52")),
+    CodePattern(
+        "STD-03", "Specification written with a space",
+        rf"""{_START}(?P<code>(?:IGC|IPDA|AIMS|NFL|NF[ ]L|DGQT|BATS)[ ]?
+            (?:\d{{2}}[-.]\d{{1,3}}(?:[-.]\d{{2,4}})?|\d{{4,8}}))(?![A-Za-z0-9]){_END}""",
+        examples=(("IGC 04.11.100", "IGC0411100"), ("IGC 0466100", "IGC0466100"), ("IPDA 83-13", "IPDA8313"),
+                  ("AIMS 04-05-001", "AIMS0405001"), ("NFL 06-160", "NFL06160"), ("NF L 15-540", "NFL15540"),
+                  ("DGQT 65410", "DGQT65410"), ("DGQT 04.2.286", "DGQT042286"), ("BATS 5402", "BATS5402")),
+        counter_examples=("IPDA 71", "DGQT 12", "NFL 17")),
+    CodePattern(
+        "SEG-01", "Letters, 2 digits, 4 digits",
+        rf"(?<![A-Za-z0-9])(?P<code>(?:\d{{2}}-)?[A-Z]{{1,3}}-\d{{2}}-\d{{4}}(?:/\d)?)(?![A-Za-z0-9/]){_END}",
+        examples=(("T-34-9020", "T349020"), ("T-34-9020/2", "T3490202"), ("J-42-8000", "J428000"),
+                  ("ORJ-42-8213", "ORJ428213"), ("80-T-35-1101", "80T351101")),
+        counter_examples=("T-3-12", "I-26-58")),
+    CodePattern(
+        "DOT-01", "Number written with dots",
+        r"(?<![A-Za-z0-9.])(?P<code>(?:AQ|Q)\.\d{2}(?:\.\d{2,5}){1,3}|V\d{3}\.\d{5}\.\d{3}\.\d{2})(?![A-Za-z0-9]|\.\d)",
+        examples=(("AQ.04.04.05", "AQ040405"), ("AQ.16.00", "AQ1600"), ("Q.11.00.00", "Q110000"),
+                  ("V533.20141.206.00", "V5332014120600")),
+        counter_examples=("Q.4", "AQ.1")),
     CodePattern(
         "GEN-01", "Letters and digits written as a code",
         rf"{_START}(?!(?:{_one_of(MONTHS)}){_SEP}?\d)(?P<code>[A-Z]{{1,6}}{_SEP}\d{{2,10}}[A-Z]?(?={_END})"
