@@ -206,9 +206,10 @@ DATE_EXEMPT_ROOT_IDCATS: set[int] = SCOPE_ROOT_IDCATS | {3798}
 EMPTY_SMALL_FILE_SIZE_BYTES = int(_env("PARSING_EMPTY_SMALL_FILE_SIZE_BYTES", "51200"))  # 50 KiB
 
 # --- Run mode ---
-RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full" | "rechunk"
+RUN_MODE = _env("PARSING_RUN_MODE", "incremental")  # "incremental" | "full" | "rechunk" | "reprocess"
 # "full": scan every in-scope document, parse only the files whose (IDDOC, content hash) has no reusable checkpoint
 # row, then rebuild every table from the checkpoint. "rechunk": the same rebuild, without scanning or parsing.
+# "reprocess": no rebuild; chunk_preprocessed and cited_codes recomputed from chunk_text with the current code rules.
 
 # Ceiling on the files one run may parse: above it, 3_parse stops before the GPU parse. 0 = no ceiling (a deliberate
 # full re-parse). A daily run parses tens of files; thousands mean the checkpoint was not recognised.

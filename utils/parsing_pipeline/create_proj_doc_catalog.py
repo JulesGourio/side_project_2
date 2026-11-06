@@ -35,7 +35,7 @@
 # MAGIC # Technical debt
 # MAGIC - The Intraqual host of the REF link is written here and in `worker.intraqual_ref_url`: change both together.
 # MAGIC - With several target databases the rewrite is one transaction per database, not one across all of them.
-# MAGIC - `doc_references` is empty for the passages written before the `cited_codes` column, until a `rechunk` run.
+# MAGIC - `doc_references` is empty for the passages written before the `cited_codes` column, until a `reprocess` run.
 
 # COMMAND ----------
 
@@ -62,7 +62,7 @@ dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference
 dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
 dbutils.widgets.text("debug", "false")
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full or rechunk")
+dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full, rechunk or reprocess")
 dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targeted run (empty: no filter)")
 dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
 dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
@@ -294,7 +294,7 @@ if HAS_CITED_CODES:
 
 # MAGIC %md
 # MAGIC ## Code normalization coverage
-# MAGIC The passages and the questions are normalised by the patterns of `code_normalization.py`. A REF in scope that no pattern reads is not normalised: a new REF format (a pattern to add) or a new prefix (`CODE_FAMILIES` to regenerate), then the chunks rebuilt (`run_mode=rechunk`). AMBER: the run goes on.
+# MAGIC The passages and the questions are normalised by the patterns of `code_normalization.py`. A REF in scope that no pattern reads is not normalised: a new REF format (a pattern to add) or a new prefix (`CODE_FAMILIES` to regenerate), then a `run_mode=reprocess` run. AMBER: the run goes on.
 
 # COMMAND ----------
 

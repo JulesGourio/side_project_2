@@ -1,5 +1,5 @@
 """Phases of the `3_parse` task that write the tables: parsed_documents, chunks, chunks_archive, image_metadata, the
-run health, the change log, the archive notices, and the ghost-document guard.
+run health, the change log, the archive notices, the ghost-document guard, and the reprocess of the code columns.
 
 Driver-side only: nothing here is shipped to the executors.
 """
@@ -16,6 +16,8 @@ from tables import (
     table_exists,
     write_table,
 )
+from code_normalization import NORMALIZATION_VERSION
+from worker import cited_codes_udf, preprocessed_text_udf
 from config import (
     PIPELINE_WRITE_ENV,
     ARCHIVE_NOTICE_CONTENT_TYPE,
@@ -34,6 +36,7 @@ logger = get_logger(__name__)
 
 # Kept from the existing row when it is DONE, SKIPPED or FAILED_LIMIT: the description and what it cost.
 _IMAGE_MERGE_TEMP = f"{PIPELINE_WRITE_ENV}_proj.qualibot._image_metadata_merge_temp"
+_REPROCESS_TEMP = f"{PIPELINE_WRITE_ENV}_proj.qualibot._reprocess_codes_temp"
 
 
 def _merge_image_metadata(df_image_metadata) -> None:
@@ -357,3 +360,50 @@ def flag_ghost_documents() -> None:
         f"[GHOST GUARD] {len(ghost_iddocs)} SUCCESS doc(s) with zero chunks "
         f"auto-flagged as MISSING_CHUNKS for next run: {ghost_iddocs}"
     )
+
+
+def reprocess_codes(iddocs: set[int] | None) -> dict[str, int]:
+    """Recompute ``chunk_preprocessed`` and ``cited_codes`` of the passages from their ``chunk_text`` with the current
+    code rules, and update only the passages whose value changes. The passages themselves are not rebuilt.
+
+    :param iddocs: IDDOCs to reprocess, None for every passage.
+    :return: number of passages updated per table.
+    """
+    updated = {}
+    for table in (TARGET_CHUNK_TABLE, TARGET_CHUNK_TABLE_ARCHIVE):
+        if not table_exists(table):
+            logger.info(f"{table} does not exist: nothing to reprocess")
+            continue
+        version = spark.sql(f"DESCRIBE HISTORY {table} LIMIT 1").first()["version"]
+        df = spark.table(table)
+        if iddocs:
+            df = df.filter(f.col("IDDOC").isin(sorted(iddocs)))
+        df_changed = (
+            df.select(
+                "chunk_id",
+                "chunk_preprocessed",
+                "cited_codes",
+                preprocessed_text_udf(f.col("chunk_text")).alias("new_pre"),
+                cited_codes_udf(f.col("chunk_text"), f.col("REF")).alias("new_cited"),
+            )
+            .filter(
+                ~f.col("chunk_preprocessed").eqNullSafe(f.col("new_pre"))
+                | ~f.col("cited_codes").eqNullSafe(f.col("new_cited"))
+            )
+            .select("chunk_id", "new_pre", "new_cited")
+        )
+        # Saved first: the source is computed from the table it updates.
+        write_table(df_changed, _REPROCESS_TEMP, "overwrite", overwrite_schema=True)
+        count = spark.table(_REPROCESS_TEMP).count()
+        if count:
+            spark.sql(
+                f"""MERGE INTO {table} t USING {_REPROCESS_TEMP} s ON t.chunk_id = s.chunk_id
+                    WHEN MATCHED THEN UPDATE SET t.chunk_preprocessed = s.new_pre, t.cited_codes = s.new_cited"""
+            )
+        spark.sql(f"DROP TABLE IF EXISTS {_REPROCESS_TEMP}")
+        updated[table] = count
+        logger.info(
+            f"{table}: {count} passages updated (code rules version {NORMALIZATION_VERSION}) | "
+            f"rollback: RESTORE TABLE {table} TO VERSION AS OF {version}"
+        )
+    return updated

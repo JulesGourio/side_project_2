@@ -1191,6 +1191,22 @@ ORDER BY q, rnk;
 
 Attendu : `score` décroît quand `rnk` augmente dans chaque `q` (c'est bien le score du reranker), `position` suit le score, `drop_reason = over_cap` après 50.
 
+AC. Codes v12 dans `chunks` avec `run_mode=reprocess` (2026-11-06). Attendu : environ 42 111 passages modifiés dans `chunks` (même nombre que la cellule one-shot).
+
+AC1. Reporter le commit sur Bitbucket, puis Bitbucket > Pipelines > Run pipeline > branche > `custom: deploy-dev-jobs`.
+
+AC2. PowerShell :
+
+```powershell
+$body = @{ job_id = 362367007936662; job_parameters = @{ run_mode = "reprocess" } } | ConvertTo-Json
+Set-Content -Encoding ascii -Path "$env:TEMP\reprocess_dev.json" -Value $body
+databricks jobs run-now --profile DEV --json "@$env:TEMP\reprocess_dev.json" --no-wait
+```
+
+AC3. Log de `3c_chunks` : `dev_proj.qualibot.chunks: N passages updated (code rules version 12) | rollback: RESTORE TABLE ... TO VERSION AS OF V`. Puis `5_sync_index` et `6_update_kb_metadata` en vert.
+
+AC4. Bitbucket > Pipelines > Run pipeline > branche > `custom: deploy-dev` (l'app lit les questions avec les mêmes règles).
+
 ## Fait
 
 - 2026-10-21 — Division COMMUN et exclusion de ONE_QMS-5S (section H) validées en DEV : `parse_manifest` = 5 242 documents (COMMUN 2 793, AS 1 953, AUTRE 249, sans division 110, IS 95, DIRECTIVE 42). Reste : reconstruire `chunks` et synchroniser l'index DEV pour que le chat utilise ces divisions.

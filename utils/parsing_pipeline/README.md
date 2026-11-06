@@ -77,8 +77,8 @@ Run-time choices: job parameters of `D_1_Qualibot_Parsing_Pipeline`, changed at 
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `run_mode` | `incremental` | `incremental`, `full` (reparse everything, the checkpoint is cloned first) or `rechunk` (rebuild from the checkpoint, no scan, no parse) |
-| `parse_filter` | empty | IDDOCs separated by commas or semicolons: restricts the run to them. `incremental` only: `full` and `rechunk` rewrite the chunk and image tables from the targeted documents, so `3_parse` refuses them with a filter |
+| `run_mode` | `incremental` | `incremental`, `full` (reparse everything, the checkpoint is cloned first), `rechunk` (rebuild from the checkpoint, no scan, no parse) or `reprocess` (only `chunk_preprocessed` and `cited_codes` recomputed from `chunk_text` with the current code rules, the passages that change are updated in place; tasks 1, 2, 3 and 4 do nothing, the indexes sync only those passages) |
+| `parse_filter` | empty | IDDOCs separated by commas or semicolons: restricts the run to them. `incremental` and `reprocess` only: `full` and `rechunk` rewrite the chunk and image tables from the targeted documents, so `3_parse` refuses them with a filter |
 | `max_parse_files` | `500` | Most files one run may parse; `0` = no ceiling |
 | `max_source_staleness_hours` | `36` | Freshness guard of `1_categories`; `0` disables it |
 | `redescribe_all_images` | `false` | `true`: describe every image again |
@@ -233,7 +233,7 @@ variables with the defaults listed at the top of `config.py`.
   the prefixes that are also words (`if 2`, `go 2024`). `CODE_FAMILIES` is generated from the catalog REFs:
   `python code_normalization.py <file with one REF per line>` prints the block. Task `6_update_kb_metadata` warns
   (AMBER) when `doc_catalog` has REFs that no pattern reads. Any change to the module bumps `NORMALIZATION_VERSION`
-  and needs a `rechunk` run, then a sync of the indexes.
+  and needs a `reprocess` run (it syncs the indexes).
 - `cited_codes` lists the codes a passage cites, canonical forms separated by spaces, without its `[Source: …]` line
   and without the codes of its own document (`code_normalization.cited_codes`). Task `6_update_kb_metadata` builds
   `doc_references` from it.

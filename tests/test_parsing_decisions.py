@@ -89,6 +89,7 @@ def test_scope_guard(previous, current, pct, expected) -> None:
         ("incremental", [123], False),
         ("full", None, False),
         ("rechunk", None, False),
+        ("reprocess", [123], False),
         ("full", [], False),
     ],
 )

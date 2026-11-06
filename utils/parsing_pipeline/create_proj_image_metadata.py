@@ -61,7 +61,7 @@ dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference
 dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
 dbutils.widgets.text("debug", "false")
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full or rechunk")
+dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full, rechunk or reprocess")
 dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targeted run (empty: no filter)")
 dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
 dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
@@ -159,6 +159,18 @@ REBUILD_IMAGE_CHUNKS = (
     dbutils.widgets.get("rebuild_image_chunks") == "true" or cfg.REDESCRIBE_ALL_IMAGES
 )
 
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Run mode
+# MAGIC `reprocess` rewrites only the code columns of the passages, in `3c_chunks`: this task has nothing to do.
+
+# COMMAND ----------
+
+if dbutils.widgets.get("run_mode") == "reprocess":
+    logger.info("run_mode=reprocess: nothing to do in this task")
+    dbutils.notebook.exit("reprocess")
 
 # COMMAND ----------
 

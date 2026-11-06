@@ -33,6 +33,7 @@ resources:
       max_concurrent_runs: 1
       # Run-time choices, changed per run ("Run now with different parameters"); not bundle variables.
       parameters:
+        # incremental | full | rechunk | reprocess (code columns only, after a change to code_normalization.py)
         - name: run_mode
           default: "incremental"
         - name: parse_filter

@@ -17,8 +17,8 @@ The same rules run on both sides, or the brackets never meet: the parsing pipeli
 table of the documents that cite each code (``doc_references``, read by the chat for "which documents cite X?").
 
 ``CODE_FAMILIES`` is generated from the catalog REFs (``python code_normalization.py <file with one REF per line>``
-prints the block). Any change to this module changes the passages: bump ``NORMALIZATION_VERSION``, rebuild the chunk
-tables (``run_mode=rechunk``) and sync the indexes.
+prints the block). Any change to this module changes the passages: bump ``NORMALIZATION_VERSION`` and run the parsing job with
+``run_mode=reprocess``, which rewrites ``chunk_preprocessed`` and ``cited_codes`` from ``chunk_text`` and syncs the indexes.
 """
 
 import re
@@ -27,7 +27,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
-# Version of the rules written into the passages: passages normalised by another version need a rechunk.
+# Version of the rules written into the passages: passages normalised by another version need a reprocess.
 NORMALIZATION_VERSION = 12
 
 

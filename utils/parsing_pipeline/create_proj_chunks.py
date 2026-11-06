@@ -93,7 +93,7 @@ dbutils.widgets.text("reference_read_env", "prod", "Environment of the reference
 dbutils.widgets.dropdown("bypass_quality_checks", "false", ["false", "true"], "true: RED quality checks are logged as AMBER")
 dbutils.widgets.text("debug", "false")
 dbutils.widgets.dropdown("log_level", "info", ["debug", "info", "warning", "error", "critical"])
-dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full or rechunk")
+dbutils.widgets.text("run_mode", "incremental", "Parsing run mode: incremental, full, rechunk or reprocess")
 dbutils.widgets.text("parse_filter", "", "Comma-separated IDDOC list for a targeted run (empty: no filter)")
 dbutils.widgets.text("max_parse_files", "500", "Most files one run may parse; 0 = no ceiling")
 dbutils.widgets.text("max_source_staleness_hours", "36", "Freshness window of the Intraqual tables; 0 disables the guard")
@@ -179,6 +179,18 @@ logger = log_utils.setup_applevel_logger(log_level=log_utils.LOGGER_MAPPING[LOG_
 # COMMAND ----------
 
 parse_steps.setup_workers(REPO_DIR)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Run mode
+# MAGIC `reprocess` recomputes `chunk_preprocessed` and `cited_codes` of `chunks` and `chunks_archive` from their `chunk_text` with the current code rules, and updates only the passages that change (`parse_filter` restricts it to those IDDOCs). The passages, the images and the checkpoint are not touched; the log gives the `RESTORE` version of each table.
+
+# COMMAND ----------
+
+if cfg.RUN_MODE == "reprocess":
+    output_steps.reprocess_codes(set(cfg.PARSE_FILTER) if cfg.PARSE_FILTER else None)
+    dbutils.notebook.exit("reprocess")
 
 # COMMAND ----------
 
