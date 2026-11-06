@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 3
+NORMALIZATION_VERSION = 4
 
 
 # --- Model ---
@@ -108,7 +108,9 @@ _SEP = rf"[-_./{_DASHES}]"
 _SPACE = "[ \u00a0]"
 # Between a prefix and its number: one space, or one or two separators with up to three spaces around them
 # (MI - 1365, SF – 1027, 19 --058).
-_GAP = rf"(?:{_SPACE}{{0,3}}{_SEP}{{1,2}}{_SPACE}{{0,3}}|{_SPACE})?"
+# A line break counts as a space: tables and wrapped lines write MI, -, 1311 on three lines.
+_BLANK = "[ \u00a0\n]"
+_GAP = rf"(?:{_BLANK}{{0,3}}{_SEP}{{1,2}}{_BLANK}{{0,3}}|{_BLANK}{{1,3}})?"
 _START = r"(?<![^\W_])"
 # A code never ends inside a number: neither before a digit nor before a decimal part (12.5, 0,55).
 _END = r"(?!\d)(?![.,]\d)"
@@ -185,6 +187,10 @@ CODE_FAMILIES: Dict[str, CodeFamily] = {
     'UDC': CodeFamily(digits=(2, 2), groups=(2, 2), group_digits=(3, 3), spaced=False),
     'UDE': CodeFamily(digits=(1, 2), groups=(2, 3), group_digits=(2, 3), spaced=False),
     'UDH': CodeFamily(digits=(1, 1), groups=(3, 3), group_digits=(2, 3), spaced=False),
+    'DAM': CodeFamily(digits=(2, 2), groups=(2, 2), group_digits=(4, 4), spaced=False),
+    'PS': CodeFamily(digits=(3, 3), groups=(1, 1), group_digits=(0, 0), spaced=False),
+    'UADAE': CodeFamily(digits=(2, 2), groups=(2, 2), group_digits=(3, 3), spaced=False),
+    'WP': CodeFamily(digits=(5, 5), groups=(1, 1), group_digits=(0, 0), spaced=False),
     'VA': CodeFamily(digits=(3, 7), groups=(1, 2), group_digits=(1, 1), spaced=False),
     'VDDR': CodeFamily(digits=(2, 2), groups=(2, 2), group_digits=(3, 3), spaced=False),
     'VDDX': CodeFamily(digits=(2, 2), groups=(2, 2), group_digits=(3, 3), spaced=False),
@@ -247,6 +253,23 @@ def _one_of(words: Iterable[str]) -> str:
     return "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
 
 
+def _prefix_alternatives(prefixes: List[str]) -> str:
+    """The prefixes as written in capitals, plus their other spellings: ``Mi-1203``, ``Qp-1304`` (short prefixes: first
+    letter in capital and a separator right after, so that ``mi 12`` or ``sf-1027`` in lower case stay words) and
+    ``Form 330``, ``form-346`` (prefixes of 4 letters or more, in any case).
+
+    :param prefixes: prefix regexes of one family shape
+    :return: regex alternation, without group
+    """
+    ordered = sorted(prefixes, key=len, reverse=True)
+    alternatives = list(ordered)
+    for prefix in ordered:
+        if not prefix.isalpha():
+            continue
+        alternatives.append(f"(?i:{prefix})" if len(prefix) >= 4 else f"{prefix[0]}(?i:{prefix[1:]})(?={_SEP})")
+    return "|".join(alternatives)
+
+
 def _family_regex() -> str:
     """Regex of the prefix-number families: one alternative per family shape, the prefixes sharing it alternate.
 
@@ -266,7 +289,7 @@ def _family_regex() -> str:
             group = rf"{between}\d{{{family.group_digits[0]},{family.group_digits[1]}}}(?!\d){letter}"
             more = rf"(?:{group}){{{family.groups[0] - 1},{family.groups[1] - 1}}}"
         alternatives.append(
-            rf"(?:{'|'.join(sorted(prefixes, key=len, reverse=True))}){_GAP}"
+            rf"(?:{_prefix_alternatives(prefixes)}){_GAP}"
             rf"\d{{{family.digits[0]},{family.digits[1]}}}(?!\d){letter}{more}")
     return rf"{_START}(?P<code>{'|'.join(alternatives)}){_END}{_LANGUAGE}"
 

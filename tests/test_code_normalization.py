@@ -203,3 +203,10 @@ def test_the_preview_notebook_holds_the_same_code():
 def test_markdown_escaped_underscores_do_not_cut_a_code():
     assert cn.canonical_codes('See scorecard IQ25\\_385\\_1.') == ['IQ253851']
     assert cn.normalize_codes('See IQ25\\_385\\_1.') == 'See IQ25\\_385\\_1 [IQ253851].'
+
+
+def test_codes_written_across_lines_and_in_other_cases_are_read():
+    for text, code in (('MI\n-\n1311', 'MI1311'), ('GO-\n1259', 'GO1259'), ('Mi-1203', 'MI1203'), ('Form 330', 'FORM330'),
+                       ('form-346', 'FORM346'), ('WP 11116', 'WP11116'), ('PS-001', 'PS001')):
+        assert cn.canonical_codes(text) == [code]
+    assert cn.canonical_codes('mi 1234 words, sf-1027, Page 31') == []
