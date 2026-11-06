@@ -550,10 +550,11 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
     CodePattern(
         "GEN-03", "Capitals, a space and a number that is not a quantity",
         rf"""{_START}(?!(?:{_one_of(SPACED_STOP_WORDS + MONTHS)})[ ])(?P<code>[A-Z]{{2,5}}[ ]
-            (?:0\d{{3,7}}|\d{{2,6}}(?:[-./]\d{{2,6}}){{1,3}}))(?![A-Za-z0-9]){_END}""",
+            (?:0\d{{3,7}}|\d{{2,6}}(?:[-.]\d{{2,6}}){{1,3}}))(?![A-Za-z0-9]){_END}""",
         examples=(("ABD 0024", "ABD0024"), ("MSN 0583", "MSN0583"), ("PN 1179-12-300-001", "PN117912300001"),
                   ("SN 01.14.014", "SN0114014")),
-        counter_examples=("PAGE 0012", "LOHY 40", "TEL 05.61.72.40.00", "ABD 1500", "MAR 0024"),
+        counter_examples=("PAGE 0012", "LOHY 40", "TEL 05.61.72.40.00", "ABD 1500", "MAR 0024", "LOG 09/90",
+                          "CRJ 700/900"),
         min_length=6),
 )
 
