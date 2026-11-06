@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 5
+NORMALIZATION_VERSION = 6
 
 
 # --- Model ---
@@ -444,6 +444,14 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
                   ("QP-202", "QP202")),
         counter_examples=("Page 31", "le 24", "A", "p. 54", "2024-10-28", "x36000", "P5"),
         min_length=3),
+    CodePattern(
+        "UND-01", "Identifier joined by underscores",
+        rf"(?<![A-Za-z0-9_])(?P<code>(?!(?:{'|'.join(_LANGUAGES)})_)[A-Z][A-Z0-9]{{0,11}}(?:_[A-Z0-9]{{1,12}}){{1,4}})"
+        rf"(?![A-Za-z0-9_])(?!{_SEP}[A-Za-z0-9])",
+        examples=(("ZPP_NOEC", "ZPPNOEC"), ("S_ALR_87013611", "SALR87013611"), ("MRP_CENTER", "MRPCENTER"),
+                  ("Z_PUSH_FLOW", "ZPUSHFLOW"), ("FNC_V1", "FNCV1")),
+        counter_examples=("FR_EN", "GB_FR", "Mrp_center", "_A_B"),
+        min_length=5),
     CodePattern(
         "GEN-02", "Known prefix and a number",
         rf"{_START}(?P<code>(?:{_one_of(KNOWN_PREFIXES)})"

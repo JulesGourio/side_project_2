@@ -210,3 +210,11 @@ def test_codes_written_across_lines_and_in_other_cases_are_read():
                        ('form-346', 'FORM346'), ('WP 11116', 'WP11116'), ('PS-001', 'PS001')):
         assert cn.canonical_codes(text) == [code]
     assert cn.canonical_codes('mi 1234 words, sf-1027, Page 31') == []
+
+
+def test_generic_codes_and_underscore_identifiers_are_read():
+    for text, code in (('Q0014', 'Q0014'), ('P50', 'P50'), ('QIS-46', 'QIS46'), ('IAQ080002', 'IAQ080002'),
+                       ('PAQ 0921', 'PAQ0921'), ('ZPP\\_NOEC', 'ZPPNOEC'), ('S_ALR_87013611', 'SALR87013611')):
+        assert cn.canonical_codes(text) == [code]
+    assert cn.canonical_codes('MI-13793-07') == ['MI13793']
+    assert cn.canonical_codes('Page 31, le 24, p. 54, FR_EN, 12.5') == []
