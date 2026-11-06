@@ -27,7 +27,7 @@ version : ses traces de prod et ses runs d'éval sont au même endroit.
 - [~] `server/services/chat/mlflow_turns.py` : tag `qualibot.source`, User réel, `mlflow.modelId` (version de l'app), coût `mlflow.llm.cost` sur les spans LLM, tags et version passés par une évaluation.
 - [~] `utils/evaluation/retrieval_eval.py` : chaque question cherchée écrit sa trace avec le code de l'app. Une Agent version par config, `evaluate` sur ces traces (fini les traces « replay »), dataset golden, `cost_eur`, `only_if_new`.
 - [~] `resources/retrieval_eval.yml` : experiment de l'app par défaut, `warehouse_id`, `only_if_new`, `max_parallel` 16.
-- [~] `utils/deploy/start_retrieval_eval.sh` + `bitbucket_deploy.sh` : après `deploy-dev`, `deploy-uat` et `deploy-prod` (mode app), le job est lancé sans attendre, avec `preset=deploye` et `only_if_new=true`. Il s'arrête tout de suite si la version est déjà mesurée. Un échec ne casse jamais le déploiement.
+- [ ] **Mis de côté (2026-11-06, demande de Jules) :** lancement automatique de l'éval par `deploy-dev/uat/prod`. `bitbucket_deploy.sh` ne l'appelle plus ; `utils/deploy/start_retrieval_eval.sh` (job lancé sans attendre, `preset=deploye`, `only_if_new=true`) reste prêt, il suffit de remettre `bash utils/deploy/start_retrieval_eval.sh "$PROFILE"` après `bundle run doc-compare`.
 - [~] `utils/evaluation/register_chat_prompts.py` : onglet Prompts, droits du SP de l'app.
 - [~] Tests : `tests/test_chat_spec.py` (une variable `CHAT_*` oubliée fait échouer), `tests/test_agent_version.py`, `tests/test_mlflow_turns.py`.
 
@@ -36,14 +36,14 @@ Fichiers à recopier dans Bitbucket : tous ceux ci-dessus + `resources/chat_mlfl
 
 ## Vérifications, dans l'ordre (DEV)
 
-- [ ] 1. Pipeline `deploy-dev`. À la fin du log : `Retrieval evaluation started (job …), not awaited`.
+- [ ] 1. Pipeline `deploy-dev` (il ne lance plus l'éval ; la lancer à la main : `databricks bundle run retrieval_eval -t dev --profile DEV`).
 - [ ] 2. `databricks bundle run register_chat_prompts_dev -t dev --profile DEV` : SUCCESS, `Experiment … linked to dev_proj.qualibot: 9 prompts`, `Grants to app qualibot done`.
 - [ ] 3. Onglet **Prompts** : les 9 `chat_*`.
 - [ ] 4. Une question dans l'app DEV, puis onglet **Traces** : ta ligne a ton e-mail en User, le tag `qualibot.source = app` et un coût. Aucun `prompt versions not linked` ni `agent version not attached` dans les logs de l'app.
 - [ ] 5. Onglet **Agent versions** : `qualibot-k…-…-…` avec le tag `qualibot.deployed.dev` et les paramètres de la spec. Ta trace de l'étape 4 apparaît dans sa liste de traces. Section Prompts remplie.
 - [ ] 6. Run du job `Z_4_Qualibot_Retrieval_Eval` lancé à l'étape 1. Dans le log : `Agent versions: {…}`, puis `MLflow run=… | agent version=… | traces=61`. Onglets **Evaluation runs** (run `golden · qualibot-…`, toutes les colonnes remplies), **Datasets** (`golden_retrieval_eval`) et **Traces** (filtre `qualibot.source = evaluation` : mêmes étapes que l'app).
 - [ ] 7. Même Agent version qu'à l'étape 5, maintenant avec le run d'éval et le tag `qualibot.evaluated.retrieval`.
-- [ ] 8. Relancer `deploy-dev` sans changement. Le job s'arrête en environ 1 min avec `already evaluated`.
+- [ ] 8. (Quand le lancement automatique sera remis) relancer `deploy-dev` sans changement : le job s'arrête en environ 1 min avec `already evaluated`.
 - [ ] 9. Onglet **Traces** : enregistrer deux vues, `qualibot.source = app` (par défaut) et `qualibot.source = evaluation`.
 - [ ] 10. Nettoyage de l'essai Génie : Agent version `qualibot-retrieval-deploye-95c74aa9`, runs `retrieval-deploye` et traces « replay », job `Z_TEST_Qualibot_Link_Pr…` et `qualibot_tests/`. Vérifier que `mlflow 3.14.0` n'est plus installé à la main sur le cluster LEAP.
 - [ ] 11. Puis UAT, puis PROD (`deploy-uat`, `deploy-prod`) : mêmes vérifications 1 à 8.

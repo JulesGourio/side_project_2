@@ -2,8 +2,7 @@
 # One Bitbucket step: write the job-runner profile for an environment, then deploy the bundle.
 #
 # USAGE: bash utils/deploy/bitbucket_deploy.sh <dev|uat|prod> <app|jobs|setup>
-#   app   : validate, deploy, restart the app (bundle run doc-compare), then start the retrieval evaluation of the
-#           deployed version without waiting for it (utils/deploy/start_retrieval_eval.sh)
+#   app   : validate, deploy, then restart the app (bundle run doc-compare)
 #   jobs  : validate, deploy; the app keeps running its current code
 #   setup : install the Databricks CLI and write the profile only
 #
@@ -76,5 +75,4 @@ databricks bundle deploy   -t "$BUNDLE_TARGET" -p "$PROFILE"
 
 if [ "$MODE" = app ]; then
     databricks bundle run doc-compare -t "$BUNDLE_TARGET" -p "$PROFILE"
-    bash utils/deploy/start_retrieval_eval.sh "$PROFILE"
 fi
