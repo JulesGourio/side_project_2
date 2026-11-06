@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 10
+NORMALIZATION_VERSION = 11
 
 
 # --- Model ---
@@ -87,6 +87,10 @@ _GAP = rf"(?:{_BLANK}{{0,3}}{_SEP}{{1,2}}{_BLANK}{{0,3}}|{_BLANK}{{1,3}})?"
 _START = r"(?<![^\W_])"
 # A code never ends inside a number: neither before a digit nor before a decimal part (12.5, 0,55).
 _END = r"(?!\d)(?![.,]\d)"
+# Number groups after a code's first number (TR22-137-000, ST-60_048128, Q99.0017): a dot starts a group only before 3
+# digits or more, or a version (AP2190.7) and a decimal (H35.25) would join the code; a slash lists other codes
+# (PRLAT506/549).
+_NUMBER_GROUPS = r"(?:(?:[-_]\d{2,6}|\.\d{3,6})[A-Z]?){0,3}"
 _LANGUAGES = ("FR", "EN", "GB", "MX", "BG", "CZ", "BR", "ES", "ESP")
 # Language suffixes after a code: glued by a separator (SF-1027_BG, MI-1413_Fr, INE028_FR_EN), or after a space when
 # no number follows (FORM-566 MX, but not EN 9100).
@@ -190,6 +194,11 @@ STOP_CODES = frozenset({"DES", "FIN", "NON", "OUI", "LES", "ETC", "THE", "AND", 
                         # labels the pipeline writes before an image description, and signature boilerplate of forms
                         "TABLE", "FLOWCHART", "DIAGRAM", "DATACHART", "SCHEMATIC", "PHOTOTECH", "TEXTDOC",
                         "NAMEDATE", "NODATUM", "JMENODATUM"})
+
+# Capital words that a number follows in running text (PAGE 0012, TEL 05.61.72.40): never the prefix of a code.
+SPACED_STOP_WORDS = ("PAGE", "LINE", "FIG", "FIGURE", "TABLE", "BOX", "ORDER", "CEDEX", "TEL", "FAX", "PHONE", "NO",
+                     "ART", "TOME", "STEP", "ETAPE", "ITEM", "LOT", "QTY", "QTE", "REV", "ISSUE", "ED", "VOL", "CH",
+                     "SECTION", "ANNEX", "ANNEXE", "PIECE", "BP", "CS", "ZI", "ZA", "RN", "RD", "TOTAL")
 
 # Month abbreviations: MAR/2024, OCT2023 are dates, not codes.
 MONTHS = ("JAN", "FEB", "FEV", "MAR", "APR", "AVR", "MAY", "MAI", "JUN", "JUIN", "JUL", "JUIL", "AUG", "AOU", "SEP",
@@ -384,8 +393,8 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
         counter_examples=("AC 7", "MEP 1", "D6-123")),
     CodePattern(
         "ATA-01", "ATA chapter",
-        rf"{_START}(?P<code>ATA[ -]?\d{{2}}){_END}(?![A-Za-z0-9])",
-        examples=(("ATA 52", "ATA52"), ("ATA-25", "ATA25")),
+        rf"{_START}(?P<code>ATA[ -]?(?:\d{{2}}|100|2200)){_END}(?![A-Za-z0-9])",
+        examples=(("ATA 52", "ATA52"), ("ATA-25", "ATA25"), ("ATA 100", "ATA100")),
         counter_examples=("ATA 2024", "ATA")),
     CodePattern(
         "ACF-01", "Aircraft",
@@ -480,31 +489,45 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
         counter_examples=("Q.4", "AQ.1")),
     CodePattern(
         "GEN-01", "Letters and digits written as a code",
-        rf"{_START}(?!(?:{_one_of(MONTHS)}){_SEP}?\d)(?P<code>[A-Z]{{1,6}}{_SEP}\d{{2,10}}[A-Z]?(?={_END})"
-        rf"|[A-Z]{{1,6}}\d{{2,10}}[A-Z]?(?={_END}|\.\d{{1,2}}(?![\d.])))(?![^\W_.]|\.\d{{3}})"
-        rf"{_LANGUAGE}",
-        examples=(("Q0014", "Q0014"), ("P50", "P50"), ("S-02", "S02"), ("P-30", "P30"), ("IAQ080002", "IAQ080002"),
+        rf"{_START}(?!(?:{_one_of(MONTHS)}){_SEP}?\d)(?P<code>[A-Z]{{1,6}}{_SEP}\d{{2,10}}[A-Z]?{_NUMBER_GROUPS}"
+        rf"(?={_END})(?!{_SEP}\d)"
+        rf"|[A-Z]{{1,6}}\d{{2,10}}[A-Z]?{_NUMBER_GROUPS}(?={_END}|\.\d{{1,2}}(?![\d.]))(?!{_SEP}\d{{3}}))"
+        rf"(?![^\W_.]|\.\d{{3}}){_LANGUAGE}",
+        examples=(("Q0014", "Q0014"), ("P50", "P50"), ("S-02", "S02"), ("P-30", "P30"),
                   ("DLV318007", "DLV318007"), ("QIS-46", "QIS46"), ("MM-093", "MM093"), ("IT-030", "IT030"),
-                  ("QP-202", "QP202"), ("AP2190.7", "AP2190"), ("F925144602", "F925144602")),
-        counter_examples=("Page 31", "le 24", "A", "p. 54", "2024-10-28", "x36000", "P5", "19/MAR/2024", "H35.25"),
+                  ("QP-202", "QP202"), ("AP2190.7", "AP2190"), ("F925144602", "F925144602"),
+                  ("Q05-006", "Q05006"), ("TR22-137-000", "TR22137000"), ("DT10-8510", "DT108510"),
+                  ("H001-002-12-R", "H00100212"), ("Q99.0017", "Q990017"), ("ST-60\\_048128", "ST60048128")),
+        counter_examples=("Page 31", "le 24", "A", "p. 54", "2024-10-28", "x36000", "P5", "19/MAR/2024", "H35.25",
+                          "DTP_15-5"),
         min_length=3),
     CodePattern(
         "UND-01", "Identifier joined by underscores",
-        rf"(?<![A-Za-z0-9_])(?P<code>(?!(?:{'|'.join(_LANGUAGES)})_)[A-Z]{{1,12}}(?:_[A-Z]{{1,12}}){{0,3}}_[A-Z0-9]{{1,12}})"
+        rf"(?<![A-Za-z0-9_])(?P<code>(?!(?:{'|'.join(_LANGUAGES)})_)[A-Z]{{1,12}}(?:_[A-Z]{{1,12}}){{0,3}}_(?:[A-Z]{{1,12}}|\d{{1,12}}|[A-Z]\d{{1,2}}))"
         rf"(?![A-Za-z0-9_])(?!{_SEP}[A-Za-z0-9])",
         examples=(("ZPP_NOEC", "ZPPNOEC"), ("S_ALR_87013611", "SALR87013611"), ("MRP_CENTER", "MRPCENTER"),
                   ("Z_PUSH_FLOW", "ZPUSHFLOW"), ("FNC_V1", "FNCV1")),
-        counter_examples=("FR_EN", "GB_FR", "Mrp_center", "_A_B", "[TEXT_DOC]", "NAME_DATE", "QP_IQ22_184"),
+        counter_examples=("FR_EN", "GB_FR", "Mrp_center", "_A_B", "[TEXT_DOC]", "NAME_DATE", "QP_IQ22_184",
+                          "EPR_B777", "AFP_AIRBUS_A400M"),
         min_length=5),
     CodePattern(
         "GEN-02", "Known prefix and a number",
         rf"{_START}(?P<code>(?:{_one_of(KNOWN_PREFIXES)})"
         rf"{_GAP}\d{{2,9}}(?:(?:{_SEP}|{_BLANK})\d{{1,6}}){{0,3}}){_END}(?![^\W_]){_LANGUAGE}",
         examples=(("PAQ 0921", "PAQ0921"), ("PAQ 0405", "PAQ0405"), ("ITC 00.04.47", "ITC000447"),
-                  ("LAT 215.300.0090", "LAT2153000090"), ("DGL10-56", "DGL1056")),
+                  ("LAT 215.300.0090", "LAT2153000090"), ("DGL10-56", "DGL1056"),
+                  ("IAQ080002", "IAQ080002")),
         counter_examples=("PAQ", "ITC 2"),
         lowercase_in_query=True,
         min_length=4),
+    CodePattern(
+        "GEN-03", "Capitals, a space and a number that is not a quantity",
+        rf"""{_START}(?!(?:{_one_of(SPACED_STOP_WORDS + MONTHS)})[ ])(?P<code>[A-Z]{{2,5}}[ ]
+            (?:0\d{{3,7}}|\d{{2,6}}(?:[-./]\d{{2,6}}){{1,3}}))(?![A-Za-z0-9]){_END}""",
+        examples=(("ABD 0024", "ABD0024"), ("MSN 0583", "MSN0583"), ("PN 1179-12-300-001", "PN117912300001"),
+                  ("SN 01.14.014", "SN0114014")),
+        counter_examples=("PAGE 0012", "LOHY 40", "TEL 05.61.72.40.00", "ABD 1500", "MAR 0024"),
+        min_length=6),
 )
 
 # --- Matching ---
@@ -556,6 +579,9 @@ def _compile(query: bool) -> Tuple[Tuple[CodePattern, Pattern], ...]:
                  for p in CODE_PATTERNS)
 
 
+# Patterns that read any code-like token: a specific pattern starting at the same place knows the code's shape better.
+_GENERIC_PATTERNS = frozenset({"GEN-01", "GEN-03"})
+
 _COMPILED: Dict[bool, Tuple[Tuple[CodePattern, Pattern], ...]] = {False: _compile(False), True: _compile(True)}
 
 
@@ -568,6 +594,18 @@ def _word_end(text: str, pos: int) -> int:
     """
     while pos < len(text) and text[pos].isalnum():
         pos += 1
+    return pos
+
+
+def _word_start(text: str, pos: int) -> int:
+    """Start of the run of letters and digits that ends at ``pos``.
+
+    :param text: text
+    :param pos: position in the text, just after the run
+    :return: index of the first character of the run
+    """
+    while pos > 0 and text[pos - 1].isalnum():
+        pos -= 1
     return pos
 
 
@@ -590,8 +628,12 @@ def _accepted(text: str, start: int, code_end: int, code: str, query: bool) -> b
         glued = text[code_end:_word_end(text, code_end)]
         if not (written[-1].isdigit() and _NON_ALNUM_RE.search(written) and glued.isalpha()):
             return False
-    # A slash separates the items of a list (A320/A321, F7X/F8X), not the parts of one identifier.
-    before = start > 1 and text[start - 1] in _CHAIN and text[start - 1] != "/" and text[start - 2].isalnum()
+    # A slash separates the items of a list (A320/A321, F7X/F8X), not the parts of one identifier. A word before the
+    # separator names what the code is about (EPR_B777, Projet_A350); a short or numbered part starts a longer
+    # identifier (145.A.30, PTD-TEST-6-A-01).
+    head = text[_word_start(text, start - 1):start - 1] if start > 1 else ""
+    before = (start > 1 and text[start - 1] in _CHAIN and text[start - 1] != "/" and text[start - 2].isalnum()
+              and (len(head) <= 2 or any(c.isdigit() for c in head)))
     # Only a number continues the chain (A30 in A30-12): a word after it is a suffix (A320_PROG, IQ22_PP) or the next
     # item of a list (A320/A321, F7X/F8X).
     after = code_end + 1 < len(text) and text[code_end] in _CHAIN and text[code_end + 1].isdigit()
@@ -606,7 +648,8 @@ def _accepted(text: str, start: int, code_end: int, code: str, query: bool) -> b
 
 def match_codes(text: str, accept_lowercase: bool = False) -> List[CodeMatch]:
     """The codes of a text, left to right, without overlap: of two overlapping codes the one starting first wins, then
-    the longest, then the one of the first pattern.
+    a specific pattern over a generic one (MI-13793-07 is MI13793, the shape of its family), then the longest, then
+    the one of the first pattern.
 
     :param text: passage or question
     :param accept_lowercase: the text is a question: patterns with ``lowercase_in_query`` ignore the case
@@ -623,9 +666,10 @@ def match_codes(text: str, accept_lowercase: bool = False) -> List[CodeMatch]:
             if len(code) >= pattern.min_length and _accepted(folded, m.start(), m.end("code"), code,
                                                               accept_lowercase):
                 start, end = (back[m.start()], back[m.end() - 1] + 1) if back else (m.start(), m.end())
-                found.append((start, -end, rank, CodeMatch(start, end, code, pattern.pattern_id)))
+                found.append((start, pattern.pattern_id in _GENERIC_PATTERNS, -end, rank,
+                              CodeMatch(start, end, code, pattern.pattern_id)))
     kept, last_end = [], -1
-    for start, _, _, match in sorted(found):
+    for start, _, _, _, match in sorted(found):
         if start >= last_end:
             kept.append(match)
             last_end = match.end

@@ -225,3 +225,16 @@ def test_a_word_suffix_or_a_list_does_not_hide_a_code():
                         ('F7X/F8X', ['F7X', 'F8X'])):
         assert cn.canonical_codes(text) == codes
     assert cn.canonical_codes('145.A.30') == ['145A30']
+
+
+def test_a_code_after_a_word_and_an_underscore_is_read_alone():
+    for text, code in (('EPRSUIVIRET_F7X', 'F7X'), ('Projet_A350_FIB', 'A350'), ('AFP_AIRBUS_A400M', 'A400M'),
+                       ('AS_EN9100', 'EN9100'), ('DTP_15-5PH', '155PH'), ('QP_IQ22_184', 'IQ22184')):
+        assert cn.canonical_codes(text) == [code]
+
+
+def test_generic_codes_keep_their_number_groups_and_never_beat_a_family():
+    for text, code in (('TR22-137-000', 'TR22137000'), ('Q05-006', 'Q05006'), ('ABD 0024', 'ABD0024'),
+                       ('PN 1179-12-300-001', 'PN117912300001'), ('MI-13793-07', 'MI13793')):
+        assert cn.canonical_codes(text) == [code]
+    assert cn.canonical_codes('TEL 05.61.72.40.00') == []
