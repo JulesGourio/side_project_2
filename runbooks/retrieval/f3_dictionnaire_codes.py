@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 2
+NORMALIZATION_VERSION = 3
 
 
 # --- Model ---
@@ -454,6 +454,21 @@ def _fold(text: str) -> str:
     return "".join(out)
 
 
+_MD_ESCAPE_RE = re.compile(r"\\(?=[-_*\[\]()#.!`~<>+|{}])")
+
+
+def _unescape(text: str) -> Tuple[str, List[int]]:
+    """The text without the Markdown escapes the parsers write (``IQ25\\_385\\_1`` -> ``IQ25_385_1``).
+
+    :param text: passage or question
+    :return: the cleaned text and, for each of its characters, the position in ``text`` (empty when unchanged)
+    """
+    if "\\" not in text:
+        return text, []
+    kept = [i for i in range(len(text)) if not (text[i] == "\\" and _MD_ESCAPE_RE.match(text, i))]
+    return "".join(text[i] for i in kept), kept
+
+
 def canonical(code: str) -> str:
     """Canonical spelling of a code: upper-cased, letters and digits only, diacritics dropped.
 
@@ -528,14 +543,16 @@ def match_codes(text: str, accept_lowercase: bool = False) -> List[CodeMatch]:
     """
     if not text:
         return []
-    folded = _fold(text)
+    cleaned, back = _unescape(text)
+    folded = _fold(cleaned)
     found = []
     for rank, (pattern, regex) in enumerate(_COMPILED[accept_lowercase]):
         for m in regex.finditer(folded):
             code = canonical(m.group("code"))
             if len(code) >= pattern.min_length and _accepted(folded, m.start(), m.end("code"), code,
                                                               accept_lowercase):
-                found.append((m.start(), -m.end(), rank, CodeMatch(m.start(), m.end(), code, pattern.pattern_id)))
+                start, end = (back[m.start()], back[m.end() - 1] + 1) if back else (m.start(), m.end())
+                found.append((start, -end, rank, CodeMatch(start, end, code, pattern.pattern_id)))
     kept, last_end = [], -1
     for start, _, _, match in sorted(found):
         if start >= last_end:

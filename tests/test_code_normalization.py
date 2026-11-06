@@ -198,3 +198,8 @@ def test_the_preview_notebook_holds_the_same_code():
     start, end = '# --- code normalization: start ---\n', '# --- code normalization: end ---\n'
     copied = notebook[notebook.index(start) + len(start):notebook.index(end)]
     assert copied == module[module.index('import re\n'):module.index('\n\nif __name__')].rstrip() + '\n'
+
+
+def test_markdown_escaped_underscores_do_not_cut_a_code():
+    assert cn.canonical_codes('See scorecard IQ25\\_385\\_1.') == ['IQ253851']
+    assert cn.normalize_codes('See IQ25\\_385\\_1.') == 'See IQ25\\_385\\_1 [IQ253851].'
