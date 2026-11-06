@@ -1,5 +1,5 @@
 # Verification de l'index apres reprocess (lecture seule). Une cellule, cluster classique PROD, tes droits suffisent.
-# Compare, pour 20 passages modifies par le reprocess, chunk_preprocessed dans la table et dans l'index.
+# Compare, pour 20 passages modifies par le reprocess, chunk_preprocessed dans la table et dans l'index (API REST).
 import json
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import functions as F
@@ -9,9 +9,11 @@ INDEX = "prod_proj.qualibot.chunks_index"
 AVANT = 56  # version de chunks juste avant le MERGE du reprocess
 
 w = WorkspaceClient()
-st = w.vector_search_indexes.get_index(index_name=INDEX).status
-print(f"Etat index : {st.detailed_state} | ready={st.ready} | lignes indexees={st.indexed_row_count}")
-print(f"Message : {st.message}")
+info = w.api_client.do("GET", f"/api/2.0/vector-search/indexes/{INDEX}")
+st = info.get("status") or {}
+print(f"Etat index : {st.get('detailed_state')} | ready={st.get('ready')} | lignes indexees={st.get('indexed_row_count')}")
+print(f"Message : {st.get('message')}")
+print(f"Source : {(info.get('delta_sync_index_spec') or {}).get('source_table')}")
 
 old = spark.read.option("versionAsOf", AVANT).table(TABLE).select("chunk_id", F.col("chunk_preprocessed").alias("avant"))
 new = spark.table(TABLE).select("chunk_id", F.col("chunk_preprocessed").alias("apres"))
@@ -20,10 +22,10 @@ changed = (old.join(new, "chunk_id").filter(~F.col("avant").eqNullSafe(F.col("ap
 
 a_jour = ancien = absent = 0
 for r in changed:
-    res = w.vector_search_indexes.query_index(
-        index_name=INDEX, columns=["chunk_id", "chunk_preprocessed"], query_text="code",
-        filters_json=json.dumps({"chunk_id": r.chunk_id}), num_results=1)
-    rows = (res.result.data_array or []) if res.result else []
+    res = w.api_client.do("POST", f"/api/2.0/vector-search/indexes/{INDEX}/query", body={
+        "columns": ["chunk_id", "chunk_preprocessed"], "query_text": "code",
+        "filters_json": json.dumps({"chunk_id": r.chunk_id}), "num_results": 1})
+    rows = (res.get("result") or {}).get("data_array") or []
     if not rows:
         absent += 1
         print(f"{r.chunk_id} : absent de l'index")
