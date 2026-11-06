@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 7
+NORMALIZATION_VERSION = 8
 
 
 # --- Model ---
@@ -581,8 +581,11 @@ def _accepted(text: str, start: int, code_end: int, code: str, query: bool) -> b
         glued = text[code_end:_word_end(text, code_end)]
         if not (written[-1].isdigit() and _NON_ALNUM_RE.search(written) and glued.isalpha()):
             return False
-    before = start > 1 and text[start - 1] in _CHAIN and text[start - 2].isalnum()
-    after = code_end + 1 < len(text) and text[code_end] in _CHAIN and text[code_end + 1].isalnum()
+    # A slash separates the items of a list (A320/A321, F7X/F8X), not the parts of one identifier.
+    before = start > 1 and text[start - 1] in _CHAIN and text[start - 1] != "/" and text[start - 2].isalnum()
+    # Only a number continues the chain (A30 in A30-12): a word after it is a suffix (A320_PROG, IQ22_PP) or the next
+    # item of a list (A320/A321, F7X/F8X).
+    after = code_end + 1 < len(text) and text[code_end] in _CHAIN and text[code_end + 1].isdigit()
     if (before or after) and len(code) < _MIN_LENGTH_IN_CHAIN:
         return False
     if query:

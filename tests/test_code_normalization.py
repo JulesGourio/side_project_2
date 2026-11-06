@@ -218,3 +218,10 @@ def test_generic_codes_and_underscore_identifiers_are_read():
         assert cn.canonical_codes(text) == [code]
     assert cn.canonical_codes('MI-13793-07') == ['MI13793']
     assert cn.canonical_codes('Page 31, le 24, p. 54, FR_EN, 12.5') == []
+
+
+def test_a_word_suffix_or_a_list_does_not_hide_a_code():
+    for text, codes in (('A320_PROG', ['A320']), ('IQ22_PP', ['IQ22']), ('see A320/A321', ['A320', 'A321']),
+                        ('F7X/F8X', ['F7X', 'F8X'])):
+        assert cn.canonical_codes(text) == codes
+    assert cn.canonical_codes('145.A.30') == ['145A30']
