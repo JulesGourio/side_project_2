@@ -123,7 +123,7 @@ def test_cited_codes_leave_out_the_source_line_and_the_passages_own_document():
 # --- Coverage of the catalog and generation of the families ---
 
 def test_unmatched_refs_lists_the_refs_no_pattern_reads():
-    assert cn.unmatched_refs(['SF-1029', 'QIS-46A-352 A', 'LdB IT-243', 'Q0697MI_FR', 'ZZ-0001', '']) == ['ZZ-0001']
+    assert cn.unmatched_refs(['SF-1029', 'QIS-46A-352 A', 'LdB IT-243', 'Q0697MI_FR', 'ZZZZZZZ-0001', '']) == ['ZZZZZZZ-0001']
 
 
 def test_families_are_generated_from_the_catalog_refs():

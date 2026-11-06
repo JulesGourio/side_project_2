@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, NamedTuple, Pattern, Tuple
 
 # Version of the rules written into the passages: passages normalised by another version need a rechunk.
-NORMALIZATION_VERSION = 4
+NORMALIZATION_VERSION = 5
 
 
 # --- Model ---
@@ -198,6 +198,9 @@ CODE_FAMILIES: Dict[str, CodeFamily] = {
 
 
 # --- Lexicon ---
+
+# Prefixes whose documents write numbers that no family shape describes (PAQ 0921, ITC 000447, LAT 215.300.0090) (ITC 000447, WP 11116).
+KNOWN_PREFIXES = ("ITC", "WP", "PS", "DAM", "UADAE", "DGL", "LAT", "PAQ", "IAQ")
 
 # Prefixes never treated as codes, even when a catalog REF uses them: words and language codes that a number follows
 # in ordinary text ("GB 128", "in 300").
@@ -459,8 +462,25 @@ CODE_PATTERNS: Tuple[CodePattern, ...] = (
         rf"{_START}(?P<code>[85]-[DS]|[23]-D)(?![A-Za-z0-9])",
         examples=(("8-D", "8D"), ("5-S", "5S"), ("3-D", "3D")),
         counter_examples=("8-DE", "4-D")),
+    CodePattern(
+        "GEN-01", "Letters and digits written as a code",
+        rf"{_START}(?P<code>[A-Z]{{1,6}}(?:{_SEP}|(?<=[A-Z])(?=\d))\d{{2,8}}[A-Z]?){_END}(?![^\W_])"
+        rf"{_LANGUAGE}",
+        examples=(("Q0014", "Q0014"), ("P50", "P50"), ("S-02", "S02"), ("P-30", "P30"), ("IAQ080002", "IAQ080002"),
+                  ("DLV318007", "DLV318007"), ("QIS-46", "QIS46"), ("MM-093", "MM093"), ("IT-030", "IT030"),
+                  ("QP-202", "QP202")),
+        counter_examples=("Page 31", "le 24", "A", "p. 54", "2024-10-28", "x36000", "P5"),
+        min_length=3),
+    CodePattern(
+        "GEN-02", "Known prefix and a number",
+        rf"{_START}(?P<code>(?:{_one_of(KNOWN_PREFIXES)})"
+        rf"{_GAP}\d{{2,9}}(?:(?:{_SEP}|{_BLANK})\d{{1,6}}){{0,3}}){_END}(?![^\W_]){_LANGUAGE}",
+        examples=(("PAQ 0921", "PAQ0921"), ("PAQ 0405", "PAQ0405"), ("ITC 00.04.47", "ITC000447"),
+                  ("LAT 215.300.0090", "LAT2153000090"), ("DGL10-56", "DGL1056")),
+        counter_examples=("PAQ", "ITC 2"),
+        lowercase_in_query=True,
+        min_length=4),
 )
-
 
 # --- Matching ---
 
